@@ -1,0 +1,160 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;1,400&family=Source+Serif+4:ital,wght@0,400;1,400&display=swap');
+@import "tailwindcss";
+@config "../tailwind.config.js";
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BASE LAYER — Global resets and element styles
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@layer base {
+  /* Global reset */
+  * {
+    @apply font-normal;
+    cursor: inherit;
+  }
+
+  html {
+    @apply bg-cabinet-bg text-cabinet-bone antialiased;
+    font-feature-settings: "liga" 1, "kern" 1;
+    cursor: default;
+  }
+
+  body {
+    @apply font-body text-base min-h-screen;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  /* Headings */
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-display font-normal tracking-wide;
+  }
+
+  h1 { @apply text-4xl; }
+  h2 { @apply text-3xl; }
+  h3 { @apply text-2xl; }
+
+  /* Links */
+  a {
+    @apply text-cabinet-bone border-b border-transparent transition-colors duration-300;
+    cursor: pointer;
+  }
+
+  a:hover {
+    @apply border-cabinet-fabric;
+  }
+
+  /* Focus states — minimal for atmosphere but accessible */
+  *:focus {
+    @apply outline-none;
+  }
+
+  *:focus-visible {
+    @apply ring-1 ring-cabinet-fabric ring-offset-2 ring-offset-cabinet-bg;
+  }
+
+  /* Buttons */
+  button {
+    cursor: pointer;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    @apply w-2;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-cabinet-bg;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-cabinet-wood rounded-full;
+  }
+
+  /* Firefox scrollbar */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #5A524C #2E2B28;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   COMPONENTS LAYER — Reusable component classes
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@layer components {
+  /* Button — cabinet style */
+  .btn-cabinet {
+    @apply px-6 py-3
+           border border-cabinet-fabric
+           text-cabinet-bone font-display
+           bg-transparent
+           transition-all duration-300 ease-cabinet
+           hover:bg-cabinet-wood/20
+           focus-visible:ring-1 focus-visible:ring-cabinet-fabric;
+  }
+
+  /* Hit area — invisible interactive zone */
+  .hit-area {
+    @apply absolute cursor-pointer
+           transition-all duration-300 ease-cabinet
+           hover:bg-cabinet-bone/5;
+  }
+
+  /* Card container */
+  .cabinet-card {
+    @apply bg-cabinet-wood/30
+           shadow-cabinet
+           transition-all duration-400 ease-cabinet;
+  }
+
+  /* Quote text — author style */
+  .cabinet-quote {
+    @apply font-display text-lg text-cabinet-dust
+           italic leading-relaxed;
+  }
+
+  /* Image with hover effect */
+  .cabinet-image {
+    @apply transition-all duration-600 ease-cabinet
+           hover:scale-[1.02] hover:shadow-cabinet-lg;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   UTILITIES LAYER — Helper classes
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@layer utilities {
+  /* Animation delays */
+  .animation-delay-100 { animation-delay: 100ms; }
+  .animation-delay-200 { animation-delay: 200ms; }
+  .animation-delay-300 { animation-delay: 300ms; }
+  .animation-delay-400 { animation-delay: 400ms; }
+  .animation-delay-500 { animation-delay: 500ms; }
+
+  /* Radial gradient for vignette effect */
+  .bg-gradient-radial {
+    background: radial-gradient(
+      ellipse at center,
+      transparent 0%,
+      transparent 50%,
+      rgba(46, 43, 40, 0.5) 100%
+    );
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ACCESSIBILITY — Reduced motion support
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
