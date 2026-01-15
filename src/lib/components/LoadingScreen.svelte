@@ -1,29 +1,44 @@
 <script lang="ts">
   import { fade } from 'svelte/transition';
-  import { cubicOut } from 'svelte/easing';
 
   interface Props {
     message?: string;
   }
 
-  let { message = '' }: Props = $props();
+  let { message = 'Извлечение из хранилища...' }: Props = $props();
 </script>
 
 <div
-  class="min-h-screen bg-cabinet-bg flex items-center justify-center"
-  in:fade={{ duration: 300, easing: cubicOut }}
-  out:fade={{ duration: 200, easing: cubicOut }}
+  class="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#0a0806]"
+  in:fade={{ duration: 300 }}
+  out:fade={{ duration: 500 }}
 >
-  <div class="text-center">
-    <!-- Три точки с анимацией -->
-    <div class="flex justify-center gap-1 mb-4" aria-hidden="true">
-      <span class="w-1.5 h-1.5 bg-cabinet-dust rounded-full animate-pulse" style="animation-delay: 0ms;"></span>
-      <span class="w-1.5 h-1.5 bg-cabinet-dust rounded-full animate-pulse" style="animation-delay: 150ms;"></span>
-      <span class="w-1.5 h-1.5 bg-cabinet-dust rounded-full animate-pulse" style="animation-delay: 300ms;"></span>
-    </div>
+  <!-- Noise overlay -->
+  <div class="absolute inset-0 bg-noise opacity-[0.06] mix-blend-overlay pointer-events-none" aria-hidden="true"></div>
 
-    {#if message}
-      <p class="text-cabinet-dust text-sm">{message}</p>
-    {/if}
+  <!-- Vignette -->
+  <div class="absolute inset-0 bg-vignette pointer-events-none" aria-hidden="true"></div>
+
+  <!-- Content -->
+  <div class="relative z-10 text-center">
+    <!-- Spinning border -->
+    <div
+      class="w-16 h-16 border border-[#d4c5b0]/20 border-t-[#d4c5b0]/60 rounded-full animate-spin mb-6 mx-auto"
+      aria-hidden="true"
+    ></div>
+
+    <!-- Message -->
+    <p
+      class="font-cinzel text-[#8a7f70] text-xs tracking-[0.4em] uppercase animate-pulse"
+      aria-live="polite"
+    >
+      {message}
+    </p>
   </div>
 </div>
+
+<style>
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+</style>

@@ -1,15 +1,13 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { fade } from 'svelte/transition';
-  import { cubicOut } from 'svelte/easing';
 
   interface Props {
     href?: string;
     label?: string;
-    delay?: number;
   }
 
-  let { href = '/', label = 'Назад в кабинет', delay = 200 }: Props = $props();
+  let { href = '/', label = 'Вернуться в зал' }: Props = $props();
 
   function handleClick() {
     goto(href);
@@ -17,14 +15,17 @@
 </script>
 
 <button
-  class="group flex items-center gap-2 text-cabinet-dust
-         hover:text-cabinet-bone transition-colors duration-400"
+  class="group inline-flex items-center gap-3 font-cinzel text-[10px] tracking-[0.3em] uppercase
+         text-[#8a7f70] hover:text-[#d4c5b0] transition-all duration-500
+         focus:outline-none focus-visible:ring-1 focus-visible:ring-[#d4c5b0]/50"
   onclick={handleClick}
-  in:fade={{ delay, duration: 400, easing: cubicOut }}
+  in:fade={{ duration: 800 }}
 >
   <span
-    class="transform group-hover:-translate-x-1 transition-transform duration-300"
+    class="transform transition-transform duration-500 group-hover:-translate-x-1"
     aria-hidden="true"
-  >←</span>
-  <span class="text-sm">{label}</span>
+  >
+    ←
+  </span>
+  <span>{label}</span>
 </button>

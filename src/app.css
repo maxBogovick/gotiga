@@ -1,56 +1,63 @@
-@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;1,400&family=Source+Serif+4:ital,wght@0,400;1,400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600&family=UnifrakturMaguntia&display=swap');
 @import "tailwindcss";
-@config "../tailwind.config.js";
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   BASE LAYER — Global resets and element styles
+   BASE LAYER — Gothic Museum Foundation
    ═══════════════════════════════════════════════════════════════════════════ */
 
 @layer base {
-  /* Global reset */
   * {
-    @apply font-normal;
     cursor: inherit;
   }
 
   html {
-    @apply bg-cabinet-bg text-cabinet-bone antialiased;
+    @apply antialiased;
+    background-color: #0a0806;
+    color: #d4c5b0;
     font-feature-settings: "liga" 1, "kern" 1;
     cursor: default;
   }
 
   body {
-    @apply font-body text-base min-h-screen;
+    @apply min-h-screen;
+    font-family: 'Cinzel', serif;
+    background-color: #0a0806;
     user-select: none;
     -webkit-user-select: none;
+    scrollbar-color: #2a2622 #0a0806;
   }
 
-  /* Headings */
+  /* Gothic Headings */
   h1, h2, h3, h4, h5, h6 {
-    @apply font-display font-normal tracking-wide;
+    font-family: 'UnifrakturMaguntia', cursive;
+    @apply tracking-wide;
+    color: #e6decb;
   }
 
-  h1 { @apply text-4xl; }
-  h2 { @apply text-3xl; }
+  h1 { @apply text-5xl lg:text-7xl; }
+  h2 { @apply text-3xl lg:text-4xl; }
   h3 { @apply text-2xl; }
 
   /* Links */
   a {
-    @apply text-cabinet-bone border-b border-transparent transition-colors duration-300;
+    @apply transition-colors duration-500;
+    color: #8a7f70;
     cursor: pointer;
   }
 
   a:hover {
-    @apply border-cabinet-fabric;
+    color: #d4c5b0;
   }
 
-  /* Focus states — minimal for atmosphere but accessible */
+  /* Focus states */
   *:focus {
     @apply outline-none;
   }
 
   *:focus-visible {
-    @apply ring-1 ring-cabinet-fabric ring-offset-2 ring-offset-cabinet-bg;
+    @apply ring-1 ring-offset-2;
+    ring-color: #d4c5b0;
+    ring-offset-color: #0a0806;
   }
 
   /* Buttons */
@@ -58,89 +65,157 @@
     cursor: pointer;
   }
 
-  /* Custom scrollbar */
+  /* Custom scrollbar — Gothic style */
   ::-webkit-scrollbar {
     @apply w-2;
   }
 
   ::-webkit-scrollbar-track {
-    @apply bg-cabinet-bg;
+    background: #0a0806;
   }
 
   ::-webkit-scrollbar-thumb {
-    @apply bg-cabinet-wood rounded-full;
+    background: #2a2622;
+    border-radius: 2px;
   }
 
-  /* Firefox scrollbar */
-  * {
-    scrollbar-width: thin;
-    scrollbar-color: #5A524C #2E2B28;
+  ::-webkit-scrollbar-thumb:hover {
+    background: #3a3632;
   }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   COMPONENTS LAYER — Reusable component classes
+   COMPONENTS LAYER — Gothic UI Elements
    ═══════════════════════════════════════════════════════════════════════════ */
 
 @layer components {
-  /* Button — cabinet style */
-  .btn-cabinet {
-    @apply px-6 py-3
-           border border-cabinet-fabric
-           text-cabinet-bone font-display
-           bg-transparent
-           transition-all duration-300 ease-cabinet
-           hover:bg-cabinet-wood/20
-           focus-visible:ring-1 focus-visible:ring-cabinet-fabric;
+  /* Primary Button — Gothic */
+  .btn-gothic {
+    @apply px-8 py-3 transition-all duration-500;
+    font-family: 'Cinzel', serif;
+    border: 1px solid rgba(212, 197, 176, 0.2);
+    color: #d4c5b0;
+    background: transparent;
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    font-size: 0.75rem;
   }
 
-  /* Hit area — invisible interactive zone */
-  .hit-area {
-    @apply absolute cursor-pointer
-           transition-all duration-300 ease-cabinet
-           hover:bg-cabinet-bone/5;
+  .btn-gothic:hover {
+    background: rgba(212, 197, 176, 0.05);
+    border-color: rgba(212, 197, 176, 0.4);
   }
 
-  /* Card container */
-  .cabinet-card {
-    @apply bg-cabinet-wood/30
-           shadow-cabinet
-           transition-all duration-400 ease-cabinet;
+  /* Card — Gothic Archive Style */
+  .card-gothic {
+    @apply p-6 transition-all duration-700;
+    background: rgba(20, 18, 16, 0.6);
+    border: 1px solid rgba(212, 197, 176, 0.1);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
   }
 
-  /* Quote text — author style */
-  .cabinet-quote {
-    @apply font-display text-lg text-cabinet-dust
-           italic leading-relaxed;
+  .card-gothic:hover {
+    border-color: rgba(212, 197, 176, 0.2);
+    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5);
   }
 
-  /* Image with hover effect */
-  .cabinet-image {
-    @apply transition-all duration-600 ease-cabinet
-           hover:scale-[1.02] hover:shadow-cabinet-lg;
+  /* Navigation Link */
+  .nav-gothic {
+    @apply flex items-center gap-2 transition-all duration-500;
+    font-family: 'Cinzel', serif;
+    font-size: 0.625rem;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: #8a7f70;
+  }
+
+  .nav-gothic:hover {
+    color: #d4c5b0;
+  }
+
+  /* Decorative Corner */
+  .corner-decoration {
+    @apply absolute w-4 h-4 transition-colors duration-500;
+    border-color: rgba(212, 197, 176, 0.2);
+  }
+
+  .corner-decoration:hover,
+  .group:hover .corner-decoration {
+    border-color: rgba(212, 197, 176, 0.6);
+  }
+
+  /* Noise Texture Overlay */
+  .bg-noise {
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  }
+
+  /* Vignette Effect */
+  .bg-vignette {
+    background: radial-gradient(
+      circle at 50% 50%,
+      transparent 0%,
+      rgba(10, 8, 6, 0.3) 50%,
+      rgba(10, 8, 6, 0.8) 90%,
+      #0a0806 100%
+    );
   }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   UTILITIES LAYER — Helper classes
+   UTILITIES LAYER — Gothic Helpers
    ═══════════════════════════════════════════════════════════════════════════ */
 
 @layer utilities {
+  /* Font families */
+  .font-gothic {
+    font-family: 'UnifrakturMaguntia', cursive;
+  }
+
+  .font-cinzel {
+    font-family: 'Cinzel', serif;
+  }
+
+  /* Gothic text colors */
+  .text-bone {
+    color: #d4c5b0;
+  }
+
+  .text-muted {
+    color: #8a7f70;
+  }
+
+  .text-parchment {
+    color: #e6decb;
+  }
+
+  /* Gothic backgrounds */
+  .bg-abyss {
+    background-color: #0a0806;
+  }
+
+  .bg-dark {
+    background-color: #141210;
+  }
+
   /* Animation delays */
   .animation-delay-100 { animation-delay: 100ms; }
   .animation-delay-200 { animation-delay: 200ms; }
   .animation-delay-300 { animation-delay: 300ms; }
-  .animation-delay-400 { animation-delay: 400ms; }
   .animation-delay-500 { animation-delay: 500ms; }
 
-  /* Radial gradient for vignette effect */
-  .bg-gradient-radial {
-    background: radial-gradient(
-      ellipse at center,
-      transparent 0%,
-      transparent 50%,
-      rgba(46, 43, 40, 0.5) 100%
-    );
+  /* Text shadow for gothic glow */
+  .text-glow {
+    text-shadow: 0 0 30px rgba(212, 197, 176, 0.2);
+  }
+
+  /* Grayscale to color transition */
+  .grayscale-hover {
+    @apply grayscale transition-all duration-700;
+  }
+
+  .grayscale-hover:hover,
+  .group:hover .grayscale-hover {
+    @apply grayscale-0;
   }
 }
 

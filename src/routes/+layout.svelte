@@ -6,16 +6,16 @@
 
   let { children } = $props();
 
-  // Ключ для анимации переходов
+  // Key for page transitions
   let key = $derived(page.url.pathname);
 </script>
 
-<div class="min-h-screen bg-cabinet-bg">
+<div class="min-h-screen bg-[#0a0806]">
   {#key key}
     <main
       class="min-h-screen"
-      in:fade={{ duration: 400, delay: 200, easing: cubicOut }}
-      out:fade={{ duration: 300, easing: cubicOut }}
+      in:fade={{ duration: 600, delay: 300, easing: cubicOut }}
+      out:fade={{ duration: 400, easing: cubicOut }}
     >
       {@render children()}
     </main>
