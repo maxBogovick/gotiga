@@ -3,7 +3,13 @@ CREATE TABLE IF NOT EXISTS figurines (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     short_text TEXT,
+    full_description TEXT,
+    dimensions TEXT,
+    material TEXT,
+    technique TEXT,
     year INTEGER,
+    ambience_path TEXT,
+    secret_text TEXT,
     status TEXT NOT NULL DEFAULT 'available'
         CHECK (status IN ('available', 'sold', 'reserved')),
     sort_order INTEGER NOT NULL DEFAULT 0,
@@ -60,3 +66,19 @@ CREATE TABLE IF NOT EXISTS cabinet_zones (
     target_route TEXT NOT NULL,  -- куда ведёт клик
     sort_order INTEGER NOT NULL DEFAULT 0
 );
+
+-- Таблица этапов создания (Гримуар)
+CREATE TABLE IF NOT EXISTS process_steps (
+    id TEXT PRIMARY KEY,
+    figurine_id TEXT NOT NULL REFERENCES figurines(id) ON DELETE CASCADE,
+    step_type TEXT NOT NULL
+        CHECK (step_type IN ('sketch', 'prototype', 'modeling', 'painting', 'finish')),
+    description TEXT,
+    image_path TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Индекс для этапов
+CREATE INDEX IF NOT EXISTS idx_process_steps_figurine
+    ON process_steps(figurine_id, sort_order);

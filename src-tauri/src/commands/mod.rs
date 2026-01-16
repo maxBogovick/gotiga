@@ -58,8 +58,38 @@ pub async fn get_figurine(
         Some(fig) => {
             let images = repo.get_images_for_figurine(&id)
                 .map_err(|e| format!("Database error: {}", e))?;
+            
+            let steps = repo.get_process_steps_for_figurine(&id)
+                .map_err(|e| format!("Database error: {}", e))?;
 
-            Ok(Some(FigurineDto::from_figurine(fig, images)))
+            // Fetch related items
+            let related_raw = repo.get_related_figurines(&id)
+                .map_err(|e| format!("Database error: {}", e))?;
+            
+            let mut related_items = Vec::new();
+            for r_fig in related_raw {
+                 let r_images = repo.get_images_for_figurine(&r_fig.id)
+                    .map_err(|e| format!("Database error: {}", e))?;
+                 
+                 let r_face_image = r_images.iter()
+                    .find(|img| img.image_type == ImageType::Face)
+                    .map(|img| {
+                        if img.file_path.starts_with("http") {
+                            img.file_path.clone()
+                        } else {
+                            format!("asset://localhost/{}", img.file_path)
+                        }
+                    });
+                
+                related_items.push(FigurineListItemDto {
+                    id: r_fig.id,
+                    name: r_fig.name,
+                    status: r_fig.status.as_str().to_string(),
+                    face_image_url: r_face_image,
+                });
+            }
+
+            Ok(Some(FigurineDto::from_figurine(fig, images, steps, related_items)))
         }
         None => Ok(None)
     }

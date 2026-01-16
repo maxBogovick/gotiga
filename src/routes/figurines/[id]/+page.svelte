@@ -1,16 +1,26 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/state';
-  import { fade, fly } from 'svelte/transition';
-  import { cubicOut } from 'svelte/easing';
+  import { fade, fly, slide } from 'svelte/transition';
+  import { cubicOut, quintOut } from 'svelte/easing';
   import { api } from '$lib/api';
   import type { Figurine } from '$lib/types/api';
+  import OrderModal from '$lib/components/OrderModal.svelte';
+  import BrassLens from '$lib/components/BrassLens.svelte';
+  import DustParticles from '$lib/components/DustParticles.svelte';
+  import CandleReveal from '$lib/components/CandleReveal.svelte';
 
   // State
   let figurine = $state<Figurine | null>(null);
   let selectedImageIndex = $state(0);
   let isLoading = $state(true);
   let error = $state<string | null>(null);
+  let isGrimoireOpen = $state(false);
+  let showOrderModal = $state(false);
+  let isAudioPlaying = $state(false);
+  let isCandleLit = $state(false);
+  let audioRef: HTMLAudioElement | null = null;
+  let audioVolume = $state(0);
 
   // Derived
   let id = $derived(page.params.id);
@@ -34,6 +44,57 @@
     }
   }
 
+  function toggleGrimoire() {
+    isGrimoireOpen = !isGrimoireOpen;
+  }
+  
+  function toggleCandle() {
+      isCandleLit = !isCandleLit;
+  }
+  
+  function toggleAudio() {
+      if (!audioRef || !figurine?.ambiencePath) return;
+      
+      if (isAudioPlaying) {
+          // Fade out
+          fadeOutAudio();
+      } else {
+          // Fade in
+          audioRef.volume = 0;
+          audioRef.play().catch(e => console.error("Audio play failed", e));
+          isAudioPlaying = true;
+          fadeInAudio();
+      }
+  }
+  
+  function fadeInAudio() {
+      if (!audioRef) return;
+      let vol = 0;
+      const interval = setInterval(() => {
+          if (vol < 0.5) {
+              vol += 0.05;
+              audioRef!.volume = vol;
+          } else {
+              clearInterval(interval);
+          }
+      }, 100);
+  }
+
+  function fadeOutAudio() {
+      if (!audioRef) return;
+      let vol = audioRef.volume;
+      const interval = setInterval(() => {
+          if (vol > 0.05) {
+              vol -= 0.05;
+              audioRef!.volume = vol;
+          } else {
+              clearInterval(interval);
+              audioRef!.pause();
+              isAudioPlaying = false;
+          }
+      }, 100);
+  }
+
   // Lifecycle
   onMount(async () => {
     try {
@@ -52,145 +113,352 @@
       isLoading = false;
     }
   });
+
+  onDestroy(() => {
+      if (audioRef) {
+          audioRef.pause();
+          audioRef = null;
+      }
+  });
 </script>
 
 <svelte:head>
   <title>{figurine?.name ?? 'Архив'} — Детали</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
-  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600&family=UnifrakturMaguntia&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600&family=UnifrakturMaguntia&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400&family=Reenie+Beanie&display=swap" rel="stylesheet">
 </svelte:head>
 
-<div class="fixed inset-0 bg-[#0a0806] -z-50"></div>
+<div class="fixed inset-0 bg-cabinet-bg -z-50"></div>
 <div class="fixed inset-0 pointer-events-none z-0 bg-noise opacity-[0.08] mix-blend-overlay"></div>
-<div class="fixed inset-0 pointer-events-none z-0 bg-[radial-gradient(circle_at_top,rgba(40,35,30,0.2)_0%,#0a0806_80%)]"></div>
+<div class="fixed inset-0 pointer-events-none z-0 bg-[radial-gradient(circle_at_top,rgba(40,35,30,0.3)_0%,#1A1816_90%)]"></div>
+
+<DustParticles />
 
 {#if isLoading}
-  <div class="min-h-screen flex flex-col items-center justify-center text-[#d4c5b0]" out:fade>
-    <div class="w-12 h-12 border border-[#d4c5b0]/20 border-t-[#d4c5b0] rounded-full animate-spin mb-6"></div>
-    <span class="font-['Cinzel'] tracking-[0.3em] text-xs uppercase animate-pulse">Извлечение из хранилища...</span>
+  <div class="min-h-screen flex flex-col items-center justify-center text-cabinet-bone" out:fade>
+    <div class="relative w-16 h-16 mb-8">
+       <div class="absolute inset-0 border border-cabinet-bone/20 rounded-full animate-ping"></div>
+       <div class="absolute inset-0 border-t border-cabinet-bone rounded-full animate-spin"></div>
+    </div>
+    <span class="font-['Cinzel'] tracking-[0.3em] text-xs uppercase animate-pulse text-cabinet-dust">Извлечение из хранилища...</span>
   </div>
 
 {:else if error}
   <div class="min-h-screen flex flex-col items-center justify-center p-8 text-center" in:fade>
-    <h2 class="font-['UnifrakturMaguntia'] text-4xl text-[#8a7f70] mb-4">Увы</h2>
-    <p class="font-['Cinzel'] text-[#d4c5b0] mb-8">{error}</p>
-    <a href="/figurines" class="px-6 py-2 border border-[#d4c5b0]/30 text-[#d4c5b0] font-['Cinzel'] hover:bg-[#d4c5b0]/10 transition-colors uppercase text-xs tracking-widest">
-      Вернуться к списку
+    <h2 class="font-['UnifrakturMaguntia'] text-5xl text-cabinet-fabric mb-6">Увы</h2>
+    <p class="font-['Cinzel'] text-cabinet-bone mb-12 text-lg">{error}</p>
+    <a href="/figurines" class="px-8 py-3 border border-cabinet-bone/30 text-cabinet-bone font-['Cinzel'] hover:bg-cabinet-wood-light transition-colors uppercase text-sm tracking-widest relative group">
+      <span class="absolute inset-0 w-0 bg-cabinet-bone/5 transition-all duration-300 group-hover:w-full"></span>
+      <span class="relative">Вернуться к списку</span>
     </a>
   </div>
 
 {:else if figurine}
-  <div class="min-h-screen relative z-10 text-[#d4c5b0] font-['Cinzel'] pb-20">
+  <!-- Audio Element -->
+  {#if figurine.ambiencePath}
+      <audio bind:this={audioRef} src={figurine.ambiencePath} loop></audio>
+  {/if}
+  
+  <CandleReveal isActive={isCandleLit} />
 
-    <div class="max-w-7xl mx-auto px-6 lg:px-12 py-10">
+  <div class="min-h-screen relative z-10 text-cabinet-bone font-['Cinzel'] pb-24 overflow-x-hidden">
 
-      <nav class="mb-12" in:fade={{ duration: 800 }}>
-        <a href="/figurines" class="inline-flex items-center text-xs tracking-[0.2em] text-[#8a7f70] hover:text-[#d4c5b0] transition-colors group">
-          <span class="mr-2 transform group-hover:-translate-x-1 transition-transform">←</span>
+    <OrderModal
+            isOpen={showOrderModal}
+            figurineName={figurine.name}
+            onClose={() => showOrderModal = false}
+    />
+
+    <div class="max-w-7xl mx-auto px-6 lg:px-12 py-12">
+
+      <!-- Navigation -->
+      <nav class="mb-16 flex justify-between items-center" in:fade={{ duration: 800 }}>
+        <a href="/figurines" class="inline-flex items-center text-xs tracking-[0.2em] text-cabinet-dust hover:text-cabinet-bone transition-colors group opacity-70 hover:opacity-100">
+          <span class="mr-3 transform group-hover:-translate-x-1 transition-transform font-serif text-lg">←</span>
           ВЕРНУТЬСЯ В АРХИВ
         </a>
+        <div class="flex items-center gap-6">
+            <button
+                onclick={toggleCandle}
+                class="flex items-center gap-3 text-xs tracking-[0.2em] uppercase transition-colors {isCandleLit ? 'text-[#ffaa00] opacity-100 drop-shadow-[0_0_5px_rgba(255,170,0,0.5)]' : 'text-cabinet-wood-muted opacity-60 hover:opacity-100'}"
+                aria-label="Зажечь свечу"
+            >
+                <span class="text-base">{isCandleLit ? '🔥' : '🕯️'}</span>
+                {isCandleLit ? 'Потушить' : 'Свеча'}
+            </button>
+
+            {#if figurine.ambiencePath}
+                <button 
+                    onclick={toggleAudio}
+                    class="flex items-center gap-3 text-xs tracking-[0.2em] uppercase transition-colors {isAudioPlaying ? 'text-cabinet-bone opacity-100' : 'text-cabinet-wood-muted opacity-60 hover:opacity-100'}"
+                    aria-label="Переключить атмосферу"
+                >
+                    <span class="relative flex h-3 w-3">
+                      {#if isAudioPlaying}
+                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-cabinet-bone opacity-75"></span>
+                      {/if}
+                      <span class="relative inline-flex rounded-full h-3 w-3 {isAudioPlaying ? 'bg-cabinet-bone' : 'bg-cabinet-wood'}"></span>
+                    </span>
+                    {isAudioPlaying ? 'Тишина' : 'Шепот'}
+                </button>
+            {/if}
+            <span class="text-[10px] tracking-[0.3em] text-cabinet-wood-muted uppercase border border-cabinet-wood-muted/30 px-3 py-1 rounded-full">
+              Ref. {id.slice(-3)}
+            </span>
+        </div>
       </nav>
 
-      <div class="grid lg:grid-cols-12 gap-12 lg:gap-20 items-start">
+      <div class="grid lg:grid-cols-12 gap-12 lg:gap-24 items-start mb-20">
 
-        <div class="lg:col-span-7 space-y-8" in:fly={{ y: 20, duration: 1000, delay: 200, easing: cubicOut }}>
+        <!-- Left Column: Visuals -->
+        <div class="lg:col-span-7 space-y-10 sticky top-10" in:fly={{ y: 20, duration: 1000, delay: 200, easing: cubicOut }}>
 
-          <div class="relative p-1 bg-[#141210] border border-[#2a2622] shadow-2xl group">
-            <div class="absolute top-0 left-0 w-8 h-8 border-t-2 border-l-2 border-[#d4c5b0]/20 z-20"></div>
-            <div class="absolute top-0 right-0 w-8 h-8 border-t-2 border-r-2 border-[#d4c5b0]/20 z-20"></div>
-            <div class="absolute bottom-0 left-0 w-8 h-8 border-b-2 border-l-2 border-[#d4c5b0]/20 z-20"></div>
-            <div class="absolute bottom-0 right-0 w-8 h-8 border-b-2 border-r-2 border-[#d4c5b0]/20 z-20"></div>
+          <!-- Main Image Frame -->
+          <div class="relative p-2 bg-[#141210] shadow-cabinet-lg group">
+             <!-- Frame decorations -->
+            <div class="absolute top-0 left-0 w-16 h-16 border-t border-l border-cabinet-bone/30 z-20"></div>
+            <div class="absolute top-0 right-0 w-16 h-16 border-t border-r border-cabinet-bone/30 z-20"></div>
+            <div class="absolute bottom-0 left-0 w-16 h-16 border-b border-l border-cabinet-bone/30 z-20"></div>
+            <div class="absolute bottom-0 right-0 w-16 h-16 border-b border-r border-cabinet-bone/30 z-20"></div>
 
-            <div class="relative aspect-[4/5] overflow-hidden bg-black/50">
+            <div class="relative aspect-[4/5] overflow-hidden bg-black/60">
               {#key currentImage?.id}
-                <img
-                        src={currentImage?.url}
-                        alt={figurine.name}
-                        class="absolute inset-0 w-full h-full object-contain transition-all duration-700 ease-in-out"
-                        in:fade={{ duration: 400 }}
-                />
+                <div class="absolute inset-0 w-full h-full" in:fade={{ duration: 600 }}>
+                    <BrassLens
+                            src={currentImage?.url}
+                            alt={figurine.name}
+                            class="w-full h-full"
+                    />
+                </div>
               {/key}
-              <div class="absolute inset-0 pointer-events-none bg-noise opacity-[0.15] mix-blend-overlay"></div>
-              <div class="absolute inset-0 pointer-events-none shadow-[inset_0_0_50px_rgba(0,0,0,0.8)]"></div>
+              <!-- Texture overlays -->
+              <div class="absolute inset-0 pointer-events-none bg-noise opacity-[0.12] mix-blend-overlay"></div>
+              <div class="absolute inset-0 pointer-events-none shadow-[inset_0_0_80px_rgba(0,0,0,0.9)]"></div>
+              
+              <!-- Subtle vignette animation -->
+              <div class="absolute inset-0 pointer-events-none bg-gradient-to-t from-cabinet-bg-deep/80 via-transparent to-transparent opacity-60"></div>
             </div>
           </div>
 
+          <!-- Thumbnails -->
           {#if sortedImages.length > 1}
-            <div class="flex flex-wrap gap-4 pt-4 justify-center lg:justify-start">
+            <div class="flex flex-wrap gap-4 pt-2 justify-center lg:justify-start">
               {#each sortedImages as img, i}
                 <button
-                        class="relative w-16 h-16 sm:w-20 sm:h-20 border transition-all duration-300 overflow-hidden group
-                         {selectedImageIndex === i ? 'border-[#d4c5b0] opacity-100' : 'border-[#d4c5b0]/20 opacity-50 hover:opacity-80 hover:border-[#d4c5b0]/50'}"
+                        class="relative w-20 h-20 border transition-all duration-500 overflow-hidden group
+                         {selectedImageIndex === i ? 'border-cabinet-bone opacity-100 scale-105' : 'border-cabinet-wood opacity-40 hover:opacity-80 hover:border-cabinet-bone/60'}"
                         onclick={() => selectImage(i)}
                         aria-label="Показать вид {i + 1}"
                 >
                   <img src={img.url} alt="" class="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all duration-500" />
+                  {#if selectedImageIndex === i}
+                     <div class="absolute inset-0 bg-cabinet-bone/10 pointer-events-none mix-blend-overlay"></div>
+                  {/if}
                 </button>
               {/each}
             </div>
           {/if}
         </div>
 
-        <div class="lg:col-span-5 relative" in:fly={{ y: 20, duration: 1000, delay: 400, easing: cubicOut }}>
+        <!-- Right Column: Narrative & Data -->
+        <div class="lg:col-span-5 relative space-y-12" in:fly={{ y: 20, duration: 1000, delay: 400, easing: cubicOut }}>
 
-          <div class="mb-8 border-b border-[#d4c5b0]/10 pb-8 relative">
-            <h1 class="font-['UnifrakturMaguntia'] text-5xl sm:text-6xl text-[#e6decb] leading-none mb-4 drop-shadow-lg">
+          <!-- Header Section -->
+          <div class="relative">
+            <div class="absolute -left-6 top-2 bottom-2 w-[1px] bg-gradient-to-b from-transparent via-cabinet-bone/30 to-transparent"></div>
+            
+            <h1 class="font-['UnifrakturMaguntia'] text-5xl sm:text-7xl text-[#e6decb] leading-[0.9] mb-6 drop-shadow-2xl">
               {figurine.name}
             </h1>
-            {#if figurine.year}
-              <p class="text-[#8a7f70] text-sm tracking-[0.3em]">ANNO {figurine.year}</p>
+            
+            {#if figurine.secretText}
+               <div class="absolute -top-10 right-0 max-w-[200px] text-right transform rotate-2">
+                  <p class="secret-ink font-['Reenie_Beanie'] text-xl leading-none">
+                     {figurine.secretText}
+                  </p>
+               </div>
             {/if}
-
-            <div class="absolute top-0 right-0 lg:-right-4 transform rotate-12 opacity-80 pointer-events-none border-2 border-double rounded px-4 py-2 uppercase tracking-widest text-xs font-bold mix-blend-screen
-                {figurine.status === 'sold' ? 'text-red-900 border-red-900/40 bg-red-900/5' :
-                 figurine.status === 'reserved' ? 'text-amber-700 border-amber-700/40 bg-amber-900/5' :
-                 'text-green-900 border-green-900/40 bg-green-900/5'}">
-              {#if figurine.status === 'sold'}Утрачено
+            
+            <div class="flex items-center gap-6 text-cabinet-dust text-sm tracking-[0.2em] uppercase">
+              {#if figurine.year}
+                <span class="opacity-80">Anno {figurine.year}</span>
+              {/if}
+              <span class="w-1 h-1 bg-cabinet-bone/40 rounded-full"></span>
+              <span class="{figurine.status === 'sold' ? 'text-accent-red' : figurine.status === 'reserved' ? 'text-accent-olive' : 'text-cabinet-bone'}">
+                 {#if figurine.status === 'sold'}Утрачено
               {:else if figurine.status === 'reserved'}Бронь
               {:else}В наличии{/if}
+              </span>
             </div>
           </div>
 
+          <!-- Short Narrative Quote -->
           {#if figurine.shortText}
-            <blockquote class="relative mb-10 pl-6 border-l-2 border-[#d4c5b0]/20">
-              <p class="text-lg text-[#d4c5b0] italic leading-relaxed opacity-90 font-serif">
-                "{figurine.shortText}"
+            <blockquote class="relative my-8">
+              <span class="absolute -top-4 -left-2 text-6xl text-cabinet-wood/20 font-serif leading-none">“</span>
+              <p class="text-xl text-cabinet-bone italic leading-relaxed opacity-90 font-['Cormorant_Garamond'] pl-6 border-l-2 border-cabinet-bone/10">
+                {figurine.shortText}
               </p>
             </blockquote>
           {/if}
 
-          <div class="space-y-4 mb-12 text-sm text-[#8a7f70]">
-            <div class="flex justify-between border-b border-[#d4c5b0]/5 pb-2 border-dashed">
-              <span class="uppercase tracking-widest">Категория</span>
-              <span class="text-[#d4c5b0]">Миниатюра</span>
-            </div>
-            <div class="flex justify-between border-b border-[#d4c5b0]/5 pb-2 border-dashed">
-              <span class="uppercase tracking-widest">Материал</span>
-              <span class="text-[#d4c5b0]">Полимер, Акрил</span>
-            </div>
-            <div class="flex justify-between border-b border-[#d4c5b0]/5 pb-2 border-dashed">
-              <span class="uppercase tracking-widest">Реестровый №</span>
-              <span class="text-[#d4c5b0]">#{id.slice(0,6).toUpperCase()}</span>
-            </div>
-          </div>
+          <!-- Full Description (The Story) -->
+          {#if figurine.fullDescription}
+             <div class="prose prose-invert prose-p:text-cabinet-dust prose-p:font-['Cormorant_Garamond'] prose-p:text-lg prose-p:leading-8 prose-p:mb-4">
+                <h3 class="text-cabinet-bone font-['Cinzel'] text-xs tracking-[0.3em] uppercase mb-4 opacity-70 border-b border-cabinet-bone/10 pb-2 inline-block">История</h3>
+                <p class="first-letter:text-5xl first-letter:font-['UnifrakturMaguntia'] first-letter:text-cabinet-bone first-letter:float-left first-letter:mr-3 first-letter:mt-[-10px]">
+                    {figurine.fullDescription}
+                </p>
+             </div>
+          {/if}
 
+          <!-- Artifact Details Grid -->
+          <div class="bg-cabinet-wood-light/10 border border-cabinet-bone/10 p-6 relative">
+             <div class="absolute top-0 left-0 w-2 h-2 border-t border-l border-cabinet-bone/40"></div>
+             <div class="absolute bottom-0 right-0 w-2 h-2 border-b border-r border-cabinet-bone/40"></div>
+             
+             <h3 class="text-center font-['Cinzel'] text-xs tracking-[0.4em] text-cabinet-bone/60 uppercase mb-8 flex items-center justify-center gap-4">
+                <span class="h-[1px] w-8 bg-cabinet-bone/20"></span>
+                Атрибуты
+                <span class="h-[1px] w-8 bg-cabinet-bone/20"></span>
+             </h3>
+
+             <div class="grid grid-cols-1 gap-y-6 text-sm font-['Cinzel']">
+                
+                {#if figurine.dimensions}
+                <div class="flex justify-between items-baseline border-b border-dashed border-cabinet-bone/10 pb-2 hover:bg-cabinet-wood/10 transition-colors px-2">
+                   <span class="text-cabinet-dust uppercase tracking-widest text-xs">Габариты</span>
+                   <span class="text-cabinet-bone text-right">{figurine.dimensions}</span>
+                </div>
+                {/if}
+
+                {#if figurine.material}
+                <div class="flex justify-between items-baseline border-b border-dashed border-cabinet-bone/10 pb-2 hover:bg-cabinet-wood/10 transition-colors px-2">
+                   <span class="text-cabinet-dust uppercase tracking-widest text-xs">Материал</span>
+                   <span class="text-cabinet-bone text-right max-w-[60%]">{figurine.material}</span>
+                </div>
+                {/if}
+
+                 {#if figurine.technique}
+                <div class="flex justify-between items-baseline border-b border-dashed border-cabinet-bone/10 pb-2 hover:bg-cabinet-wood/10 transition-colors px-2">
+                   <span class="text-cabinet-dust uppercase tracking-widest text-xs">Техника</span>
+                   <span class="text-cabinet-bone text-right max-w-[60%]">{figurine.technique}</span>
+                </div>
+                {/if}
+                
+                <div class="flex justify-between items-baseline border-b border-dashed border-cabinet-bone/10 pb-2 hover:bg-cabinet-wood/10 transition-colors px-2">
+                   <span class="text-cabinet-dust uppercase tracking-widest text-xs">Код</span>
+                   <span class="text-cabinet-bone text-right font-mono text-xs opacity-60">ARC-{id.toUpperCase()}</span>
+                </div>
+             </div>
+          </div>
+          
+           <!-- Action Button -->
           {#if figurine.status === 'available'}
-            <button class="w-full group relative px-8 py-4 bg-transparent overflow-hidden transition-all hover:bg-[#d4c5b0]/5 border border-[#d4c5b0]/30 hover:border-[#d4c5b0]/60">
-              <div class="absolute inset-0 w-0 bg-[#d4c5b0]/10 transition-all duration-[250ms] ease-out group-hover:w-full"></div>
-              <span class="relative text-[#d4c5b0] tracking-[0.3em] uppercase text-sm font-semibold flex items-center justify-center gap-3">
-                <span class="w-1 h-1 bg-[#d4c5b0] rounded-full"></span>
-                Отправить запрос
-                <span class="w-1 h-1 bg-[#d4c5b0] rounded-full"></span>
-              </span>
-            </button>
-            <p class="text-center text-[10px] text-[#8a7f70] mt-3 tracking-wider uppercase opacity-60">
-              * Доставка вороном не осуществляется
-            </p>
+            <div class="pt-6">
+                <button
+                        onclick={() => showOrderModal = true}
+                        class="w-full group relative px-8 py-5 bg-transparent overflow-hidden transition-all duration-500 hover:bg-cabinet-bone/5 border border-cabinet-bone/30 hover:border-cabinet-bone/80 cursor-pointer"
+                >
+                  <div class="absolute inset-0 w-0 bg-cabinet-bone/10 transition-all duration-[400ms] ease-out group-hover:w-full"></div>
+                  
+                  <span class="relative text-cabinet-bone tracking-[0.3em] uppercase text-sm font-semibold flex items-center justify-center gap-4">
+                    <span class="w-1.5 h-1.5 border border-cabinet-bone rotate-45 group-hover:rotate-90 transition-transform duration-500"></span>
+                    Запросить Артефакт
+                    <span class="w-1.5 h-1.5 border border-cabinet-bone rotate-45 group-hover:rotate-90 transition-transform duration-500"></span>
+                  </span>
+                </button>
+                <p class="text-center text-[10px] text-cabinet-wood-muted mt-4 tracking-wider uppercase opacity-60 font-serif italic">
+                   * Передача осуществляется только в надежные руки
+                </p>
+            </div>
           {/if}
 
         </div>
       </div>
+      
+       <!-- Grimoire (Chronicle of Creation) -->
+      {#if figurine.processSteps && figurine.processSteps.length > 0}
+         <div class="border-t border-cabinet-bone/20 pt-16">
+            <button
+                onclick={toggleGrimoire}
+                class="mx-auto flex flex-col items-center gap-4 group cursor-pointer"
+            >
+                <span class="font-['UnifrakturMaguntia'] text-2xl text-cabinet-bone opacity-80 group-hover:opacity-100 transition-opacity">
+                   {isGrimoireOpen ? 'Закрыть Гримуар' : 'Раскрыть Тайну Создания'}
+                </span>
+                 <div class="w-px h-16 bg-gradient-to-b from-cabinet-bone/0 via-cabinet-bone/40 to-cabinet-bone/0 group-hover:h-24 transition-all duration-500"></div>
+            </button>
+            
+            {#if isGrimoireOpen}
+               <div transition:slide={{ duration: 1000, easing: quintOut }} class="overflow-hidden">
+                  <div class="mt-16 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-12 max-w-6xl mx-auto px-4">
+                     {#each figurine.processSteps as step, i}
+                        <div
+                                class="relative bg-[#F5F1E6] p-4 shadow-[0_10px_40px_rgba(0,0,0,0.5)] transform transition-transform duration-500 hover:-translate-y-2 group"
+                                style="transform: rotate({(i % 2 === 0 ? 1 : -1) * (Math.random() * 3)}deg);"
+                        >
+                            <!-- Tape or clip effect -->
+                            <div class="absolute -top-3 left-1/2 -translate-x-1/2 w-24 h-8 bg-[#e8e1d0] opacity-80 rotate-1 shadow-sm"></div>
+                            
+                            <!-- Image -->
+                            <div class="aspect-[4/3] overflow-hidden bg-gray-200 mb-4 filter sepia-[0.3] contrast-[0.9]">
+                               <img src={step.imageUrl} alt={step.stepType} class="w-full h-full object-cover transition-all duration-700 group-hover:scale-105 group-hover:sepia-0" />
+                            </div>
+                            
+                            <!-- Handwritten Note -->
+                            <div class="font-['Reenie_Beanie'] text-2xl text-[#2c2825] leading-none opacity-90 pl-2">
+                               {step.description}
+                            </div>
+                            
+                            <!-- Step Type Stamp -->
+                             <div class="absolute bottom-2 right-4 text-[10px] uppercase tracking-widest font-['Cinzel'] text-[#2c2825]/40 border border-[#2c2825]/20 px-2 py-0.5 rounded-sm">
+                                {step.stepType}
+                             </div>
+                        </div>
+                     {/each}
+                  </div>
+                   <div class="text-center mt-20 mb-10">
+                       <p class="font-['Cinzel'] text-xs text-cabinet-wood-muted tracking-[0.3em] uppercase opacity-50">Конец записей</p>
+                   </div>
+               </div>
+            {/if}
+         </div>
+      {/if}
+
+      <!-- Neighboring Shadows (Related Items) -->
+      {#if figurine.relatedItems && figurine.relatedItems.length > 0}
+        <div class="mt-24 pt-12 border-t border-cabinet-bone/10 relative">
+            <h3 class="font-['UnifrakturMaguntia'] text-3xl text-cabinet-bone/80 text-center mb-12 flex items-center justify-center gap-4">
+               <span class="opacity-30">~</span> Соседние Тени <span class="opacity-30">~</span>
+            </h3>
+            
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
+               {#each figurine.relatedItems as item}
+                  <a href="/figurines/{item.id}" class="group relative block bg-[#141210] border border-[#2a2622] p-4 transition-all duration-500 hover:-translate-y-2 hover:shadow-[0_10px_30px_rgba(0,0,0,0.5)]">
+                      <div class="aspect-square overflow-hidden mb-4 relative">
+                          <img 
+                            src={item.faceImageUrl} 
+                            alt={item.name} 
+                            class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110 grayscale group-hover:grayscale-0"
+                          />
+                          <div class="absolute inset-0 bg-noise opacity-[0.1] mix-blend-overlay pointer-events-none"></div>
+                          <div class="absolute inset-0 shadow-[inset_0_0_30px_rgba(0,0,0,0.8)] pointer-events-none"></div>
+                      </div>
+                      
+                      <div class="text-center">
+                          <h4 class="font-['UnifrakturMaguntia'] text-xl text-cabinet-bone/90 mb-1 group-hover:text-cabinet-bone transition-colors">{item.name}</h4>
+                          <span class="text-[10px] uppercase tracking-[0.2em] text-cabinet-wood-muted">
+                              {item.status === 'sold' ? 'Утрачено' : item.status === 'reserved' ? 'Бронь' : 'В наличии'}
+                          </span>
+                      </div>
+                  </a>
+               {/each}
+            </div>
+        </div>
+      {/if}
+      
     </div>
   </div>
 {/if}

@@ -11,9 +11,17 @@ export interface Figurine {
   id: string;
   name: string;
   shortText: string | null;
+  fullDescription: string | null;
+  dimensions: string | null;
+  material: string | null;
+  technique: string | null;
   year: number | null;
+  ambiencePath: string | null;
+  secretText: string | null;
   status: 'available' | 'sold' | 'reserved';
   images: FigurineImage[];
+  processSteps: ProcessStep[];
+  relatedItems: FigurineListItem[];
 }
 
 export interface FigurineImage {
@@ -21,6 +29,13 @@ export interface FigurineImage {
   imageType: 'face' | 'detail' | 'full';
   url: string;
   altText: string | null;
+}
+
+export interface ProcessStep {
+  id: string;
+  stepType: 'sketch' | 'prototype' | 'modeling' | 'painting' | 'finish';
+  description: string | null;
+  imageUrl: string;
 }
 
 export interface AuthorText {

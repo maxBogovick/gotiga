@@ -9,7 +9,13 @@ pub struct Figurine {
     pub id: String,
     pub name: String,
     pub short_text: Option<String>,
+    pub full_description: Option<String>,
+    pub dimensions: Option<String>,
+    pub material: Option<String>,
+    pub technique: Option<String>,
     pub year: Option<i32>,
+    pub ambience_path: Option<String>,
+    pub secret_text: Option<String>,
     pub status: FigurineStatus,
     pub sort_order: i32,
 }
@@ -110,6 +116,47 @@ pub struct CabinetZone {
     pub target_route: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct ProcessStep {
+    pub id: String,
+    pub figurine_id: String,
+    pub step_type: ProcessStepType,
+    pub description: Option<String>,
+    pub image_path: String,
+    pub sort_order: i32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProcessStepType {
+    Sketch,
+    Prototype,
+    Modeling,
+    Painting,
+    Finish,
+}
+
+impl ProcessStepType {
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "sketch" => Self::Sketch,
+            "prototype" => Self::Prototype,
+            "modeling" => Self::Modeling,
+            "painting" => Self::Painting,
+            _ => Self::Finish,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Sketch => "sketch",
+            Self::Prototype => "prototype",
+            Self::Modeling => "modeling",
+            Self::Painting => "painting",
+            Self::Finish => "finish",
+        }
+    }
+}
+
 // ============================================================
 // DTO (для передачи на frontend, сериализуемые)
 // ============================================================
@@ -120,20 +167,66 @@ pub struct FigurineDto {
     pub id: String,
     pub name: String,
     pub short_text: Option<String>,
+    pub full_description: Option<String>,
+    pub dimensions: Option<String>,
+    pub material: Option<String>,
+    pub technique: Option<String>,
     pub year: Option<i32>,
+    pub ambience_path: Option<String>,
+    pub secret_text: Option<String>,
     pub status: String,
     pub images: Vec<ImageDto>,
+    pub process_steps: Vec<ProcessStepDto>,
+    pub related_items: Vec<FigurineListItemDto>,
 }
 
 impl FigurineDto {
-    pub fn from_figurine(figurine: Figurine, images: Vec<Image>) -> Self {
+    pub fn from_figurine(
+        figurine: Figurine, 
+        images: Vec<Image>, 
+        process_steps: Vec<ProcessStep>,
+        related_items: Vec<FigurineListItemDto>
+    ) -> Self {
         Self {
             id: figurine.id,
             name: figurine.name,
             short_text: figurine.short_text,
+            full_description: figurine.full_description,
+            dimensions: figurine.dimensions,
+            material: figurine.material,
+            technique: figurine.technique,
             year: figurine.year,
+            ambience_path: figurine.ambience_path,
+            secret_text: figurine.secret_text,
             status: figurine.status.as_str().to_string(),
             images: images.into_iter().map(ImageDto::from).collect(),
+            process_steps: process_steps.into_iter().map(ProcessStepDto::from).collect(),
+            related_items,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessStepDto {
+    pub id: String,
+    pub step_type: String,
+    pub description: Option<String>,
+    pub image_url: String,
+}
+
+impl From<ProcessStep> for ProcessStepDto {
+    fn from(step: ProcessStep) -> Self {
+        let image_url = if step.image_path.starts_with("http") {
+            step.image_path
+        } else {
+            format!("asset://localhost/{}", step.image_path)
+        };
+        Self {
+            id: step.id,
+            step_type: step.step_type.as_str().to_string(),
+            description: step.description,
+            image_url,
         }
     }
 }
