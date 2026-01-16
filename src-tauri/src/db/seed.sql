@@ -17,7 +17,7 @@ INSERT INTO figurines (id, name, short_text, full_description, dimensions, mater
  '28 x 12 x 10 cm',
  'Полимерная глина, винтажный текстиль, антикварная фурнитура',
  'Лепка, состаривание, роспись маслом',
- 2023, '/sounds/wind_ambience.mp3', 
+ 2023, '/sounds/wind.mp3',
  'Ключ от черной двери находится под порогом третьего дома.', 
  'available', 1),
 
@@ -27,7 +27,7 @@ INSERT INTO figurines (id, name, short_text, full_description, dimensions, mater
  '32 x 15 x 14 cm',
  'Папье-маше, дерево, проволока',
  'Смешанная техника, грунтовка, тонировка акрилом',
- 2024, '/sounds/whisper_ambience.mp3', 
+ 2024, '/sounds/creepe-trol.mp3',
  'В 1904 году этот дом сгорел, но стены остались стоять.', 
  'available', 2),
 
@@ -47,7 +47,7 @@ INSERT INTO figurines (id, name, short_text, full_description, dimensions, mater
  '30 x 18 x 12 cm',
  'Керамика, кожа, металл',
  'Гончарная лепка, обжиг, чернение',
- 2024, '/sounds/fireplace_ambience.mp3', 
+ 2024, '/sounds/bonfire.mp3',
  'Зима будет долгой. Запасайте дрова и терпение.', 
  'available', 4);
 
@@ -66,8 +66,8 @@ INSERT INTO images (id, figurine_id, image_type, file_path, alt_text, sort_order
 -- ЭТАПЫ СОЗДАНИЯ (ГРИМУАР)
 INSERT INTO process_steps (id, figurine_id, step_type, description, image_path, sort_order) VALUES
 -- fig-001 (Хранительница)
-('step-001-1', 'fig-001', 'sketch', 'Первый набросок в свете свечи. Лицо пришло во сне.', 'https://images.unsplash.com/photo-1513364776144-60967b0f800f?q=80&w=1000&auto=format&fit=crop', 1),
-('step-001-2', 'fig-001', 'modeling', 'Глина была холодной и неподатливой, словно сопротивлялась рождению.', 'https://images.unsplash.com/photo-1505562130589-9e76363c4c36?q=80&w=1000&auto=format&fit=crop', 2),
+('step-001-1', 'fig-001', 'sketch', 'Первый набросок в свете свечи. Лицо пришло во сне.', 'http://localhost:1420/images/workshop/master-1.jpg', 1),
+('step-001-2', 'fig-001', 'modeling', 'Глина была холодной и неподатливой, словно сопротивлялась рождению.', 'http://localhost:1420/images/workshop/master-2.jpg', 2),
 ('step-001-3', 'fig-001', 'painting', 'Нанесение теней. Использую сажу и масло, чтобы передать возраст.', 'https://images.unsplash.com/photo-1579783902614-a3fb3927b6a5?q=80&w=1000&auto=format&fit=crop', 3),
 
 -- fig-002 (Слушающий)

@@ -9,6 +9,8 @@
   import BrassLens from '$lib/components/BrassLens.svelte';
   import DustParticles from '$lib/components/DustParticles.svelte';
   import CandleReveal from '$lib/components/CandleReveal.svelte';
+  import MemoryMirror from '$lib/components/MemoryMirror.svelte';
+  import SecretText from '$lib/components/SecretText.svelte';
 
   // State
   let figurine = $state<Figurine | null>(null);
@@ -273,10 +275,8 @@
             </h1>
             
             {#if figurine.secretText}
-               <div class="absolute -top-10 right-0 max-w-[200px] text-right transform rotate-2">
-                  <p class="secret-ink font-['Reenie_Beanie'] text-xl leading-none">
-                     {figurine.secretText}
-                  </p>
+               <div class="absolute -top-10 right-0 max-w-[300px] text-right transform rotate-2 z-20">
+                  <SecretText text={figurine.secretText} isCandleLit={isCandleLit} />
                </div>
             {/if}
             
@@ -386,44 +386,17 @@
                 class="mx-auto flex flex-col items-center gap-4 group cursor-pointer"
             >
                 <span class="font-['UnifrakturMaguntia'] text-2xl text-cabinet-bone opacity-80 group-hover:opacity-100 transition-opacity">
-                   {isGrimoireOpen ? 'Закрыть Гримуар' : 'Раскрыть Тайну Создания'}
+                   Заглянуть в Зеркало Памяти
                 </span>
                  <div class="w-px h-16 bg-gradient-to-b from-cabinet-bone/0 via-cabinet-bone/40 to-cabinet-bone/0 group-hover:h-24 transition-all duration-500"></div>
             </button>
             
-            {#if isGrimoireOpen}
-               <div transition:slide={{ duration: 1000, easing: quintOut }} class="overflow-hidden">
-                  <div class="mt-16 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-12 max-w-6xl mx-auto px-4">
-                     {#each figurine.processSteps as step, i}
-                        <div
-                                class="relative bg-[#F5F1E6] p-4 shadow-[0_10px_40px_rgba(0,0,0,0.5)] transform transition-transform duration-500 hover:-translate-y-2 group"
-                                style="transform: rotate({(i % 2 === 0 ? 1 : -1) * (Math.random() * 3)}deg);"
-                        >
-                            <!-- Tape or clip effect -->
-                            <div class="absolute -top-3 left-1/2 -translate-x-1/2 w-24 h-8 bg-[#e8e1d0] opacity-80 rotate-1 shadow-sm"></div>
-                            
-                            <!-- Image -->
-                            <div class="aspect-[4/3] overflow-hidden bg-gray-200 mb-4 filter sepia-[0.3] contrast-[0.9]">
-                               <img src={step.imageUrl} alt={step.stepType} class="w-full h-full object-cover transition-all duration-700 group-hover:scale-105 group-hover:sepia-0" />
-                            </div>
-                            
-                            <!-- Handwritten Note -->
-                            <div class="font-['Reenie_Beanie'] text-2xl text-[#2c2825] leading-none opacity-90 pl-2">
-                               {step.description}
-                            </div>
-                            
-                            <!-- Step Type Stamp -->
-                             <div class="absolute bottom-2 right-4 text-[10px] uppercase tracking-widest font-['Cinzel'] text-[#2c2825]/40 border border-[#2c2825]/20 px-2 py-0.5 rounded-sm">
-                                {step.stepType}
-                             </div>
-                        </div>
-                     {/each}
-                  </div>
-                   <div class="text-center mt-20 mb-10">
-                       <p class="font-['Cinzel'] text-xs text-cabinet-wood-muted tracking-[0.3em] uppercase opacity-50">Конец записей</p>
-                   </div>
-               </div>
-            {/if}
+            <MemoryMirror 
+                isOpen={isGrimoireOpen} 
+                steps={figurine.processSteps}
+                finalImage={currentImage?.url}
+                onClose={() => isGrimoireOpen = false} 
+            />
          </div>
       {/if}
 
