@@ -25,6 +25,7 @@
     user-select: none;
     -webkit-user-select: none;
     scrollbar-color: #2a2622 #0a0806;
+    overflow-x: hidden;
   }
 
   /* Gothic Headings */

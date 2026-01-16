@@ -1346,6 +1346,5 @@
     /* Global styles */
     :global(body) {
         background: #0a0806;
-        overflow: hidden;
     }
 </style>

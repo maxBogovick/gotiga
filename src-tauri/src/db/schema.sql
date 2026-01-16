@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS figurines (
     technique TEXT,
     year INTEGER,
     ambience_path TEXT,
+    video_url TEXT,
     secret_text TEXT,
     status TEXT NOT NULL DEFAULT 'available'
         CHECK (status IN ('available', 'sold', 'reserved')),

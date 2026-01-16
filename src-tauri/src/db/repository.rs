@@ -14,7 +14,7 @@ impl<'a> Repository<'a> {
 
     pub fn get_all_figurines(&self) -> Result<Vec<Figurine>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, short_text, full_description, dimensions, material, technique, year, ambience_path, secret_text, status, sort_order
+            "SELECT id, name, short_text, full_description, dimensions, material, technique, year, ambience_path, video_url, secret_text, status, sort_order
              FROM figurines
              ORDER BY sort_order"
         )?;
@@ -30,9 +30,10 @@ impl<'a> Repository<'a> {
                 technique: row.get(6)?,
                 year: row.get(7)?,
                 ambience_path: row.get(8)?,
-                secret_text: row.get(9)?,
-                status: FigurineStatus::from_str(&row.get::<_, String>(10)?),
-                sort_order: row.get(11)?,
+                video_url: row.get(9)?,
+                secret_text: row.get(10)?,
+                status: FigurineStatus::from_str(&row.get::<_, String>(11)?),
+                sort_order: row.get(12)?,
             })
         })?;
 
@@ -41,7 +42,7 @@ impl<'a> Repository<'a> {
 
     pub fn get_figurine_by_id(&self, id: &str) -> Result<Option<Figurine>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, short_text, full_description, dimensions, material, technique, year, ambience_path, secret_text, status, sort_order
+            "SELECT id, name, short_text, full_description, dimensions, material, technique, year, ambience_path, video_url, secret_text, status, sort_order
              FROM figurines
              WHERE id = ?"
         )?;
@@ -59,9 +60,10 @@ impl<'a> Repository<'a> {
                 technique: row.get(6)?,
                 year: row.get(7)?,
                 ambience_path: row.get(8)?,
-                secret_text: row.get(9)?,
-                status: FigurineStatus::from_str(&row.get::<_, String>(10)?),
-                sort_order: row.get(11)?,
+                video_url: row.get(9)?,
+                secret_text: row.get(10)?,
+                status: FigurineStatus::from_str(&row.get::<_, String>(11)?),
+                sort_order: row.get(12)?,
             }))
         } else {
             Ok(None)
@@ -171,7 +173,7 @@ impl<'a> Repository<'a> {
         // but we can do it in a single complex query or just rely on the join logic.
         
         let mut stmt = self.conn.prepare(
-            "SELECT DISTINCT f.id, f.name, f.short_text, f.full_description, f.dimensions, f.material, f.technique, f.year, f.ambience_path, f.secret_text, f.status, f.sort_order
+            "SELECT DISTINCT f.id, f.name, f.short_text, f.full_description, f.dimensions, f.material, f.technique, f.year, f.ambience_path, f.video_url, f.secret_text, f.status, f.sort_order
              FROM figurines f
              JOIN figurines current ON current.id = ?1
              WHERE f.id != ?1
@@ -194,9 +196,10 @@ impl<'a> Repository<'a> {
                 technique: row.get(6)?,
                 year: row.get(7)?,
                 ambience_path: row.get(8)?,
-                secret_text: row.get(9)?,
-                status: FigurineStatus::from_str(&row.get::<_, String>(10)?),
-                sort_order: row.get(11)?,
+                video_url: row.get(9)?,
+                secret_text: row.get(10)?,
+                status: FigurineStatus::from_str(&row.get::<_, String>(11)?),
+                sort_order: row.get(12)?,
             })
         })?;
 

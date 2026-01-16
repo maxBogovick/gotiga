@@ -17,6 +17,7 @@ export interface Figurine {
   technique: string | null;
   year: number | null;
   ambiencePath: string | null;
+  videoUrl?: string | null;
   secretText: string | null;
   status: 'available' | 'sold' | 'reserved';
   images: FigurineImage[];

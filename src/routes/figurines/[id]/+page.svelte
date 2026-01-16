@@ -164,7 +164,7 @@
   
   <CandleReveal isActive={isCandleLit} />
 
-  <div class="min-h-screen relative z-10 text-cabinet-bone font-['Cinzel'] pb-24 overflow-x-hidden">
+  <div class="min-h-screen relative z-10 text-cabinet-bone font-['Cinzel'] pb-24">
 
     <OrderModal
             isOpen={showOrderModal}
@@ -397,6 +397,58 @@
                 finalImage={currentImage?.url}
                 onClose={() => isGrimoireOpen = false} 
             />
+         </div>
+      {/if}
+
+      <!-- Visual Chronicle (Video Projection) -->
+      {#if figurine.videoUrl}
+         <div class="mt-24 relative">
+             <div class="flex items-center justify-center gap-6 mb-12">
+                 <div class="h-px w-16 bg-gradient-to-r from-transparent to-cabinet-bone/30"></div>
+                 <h3 class="font-['UnifrakturMaguntia'] text-3xl text-cabinet-bone text-center tracking-wide">
+                     Живые Картины
+                 </h3>
+                 <div class="h-px w-16 bg-gradient-to-l from-transparent to-cabinet-bone/30"></div>
+             </div>
+
+             <div class="relative w-full max-w-4xl mx-auto group perspective-container">
+                 <!-- Projection Frame -->
+                 <div class="relative bg-[#0c0a08] p-3 shadow-[0_20px_50px_rgba(0,0,0,0.8)] border border-cabinet-bone/10 transition-transform duration-700 hover:scale-[1.01]">
+                     
+                     <!-- Ornate Corners -->
+                     <div class="absolute top-0 left-0 w-8 h-8 border-t border-l border-cabinet-bone/40 transition-all duration-500 group-hover:w-12 group-hover:h-12"></div>
+                     <div class="absolute top-0 right-0 w-8 h-8 border-t border-r border-cabinet-bone/40 transition-all duration-500 group-hover:w-12 group-hover:h-12"></div>
+                     <div class="absolute bottom-0 left-0 w-8 h-8 border-b border-l border-cabinet-bone/40 transition-all duration-500 group-hover:w-12 group-hover:h-12"></div>
+                     <div class="absolute bottom-0 right-0 w-8 h-8 border-b border-r border-cabinet-bone/40 transition-all duration-500 group-hover:w-12 group-hover:h-12"></div>
+
+                     <!-- The Screen -->
+                     <div class="relative aspect-video overflow-hidden bg-black">
+                         <div class="absolute inset-0 bg-[radial-gradient(circle,rgba(30,25,20,0.2)_0%,rgba(0,0,0,0.8)_100%)] pointer-events-none z-10"></div>
+                         
+                         <video 
+                            controls 
+                            class="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity duration-1000 sepia-[0.3]"
+                            poster={currentImage?.url}
+                            preload="metadata"
+                         >
+                             <source src={figurine.videoUrl} type="video/mp4" />
+                             Ваш браузер не поддерживает элемент video.
+                         </video>
+
+                         <!-- Old Film Grain Overlay -->
+                         <div class="absolute inset-0 pointer-events-none bg-noise opacity-[0.07] mix-blend-overlay z-20"></div>
+                         
+                         <!-- Scratches/Artifacts (CSS animation could go here) -->
+                     </div>
+                 </div>
+
+                 <!-- Ambient Glow -->
+                 <div class="absolute -inset-4 bg-cabinet-bone/5 blur-3xl -z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-1000"></div>
+             </div>
+             
+             <p class="text-center font-['Cinzel'] text-[10px] tracking-[0.4em] text-cabinet-wood-muted mt-8 uppercase opacity-60">
+                 Архивная пленка №{id.slice(-3)}
+             </p>
          </div>
       {/if}
 

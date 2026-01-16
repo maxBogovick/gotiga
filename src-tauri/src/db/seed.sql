@@ -10,7 +10,7 @@ DELETE FROM figurines;
 DELETE FROM cabinet_zones;
 
 -- ФИГУРЫ
-INSERT INTO figurines (id, name, short_text, full_description, dimensions, material, technique, year, ambience_path, secret_text, status, sort_order) VALUES
+INSERT INTO figurines (id, name, short_text, full_description, dimensions, material, technique, year, ambience_path, secret_text, status, sort_order, video_url) VALUES
 ('fig-001', 'Хранительница порога', 
  'Она стоит там, где заканчивается один дом и начинается другой.', 
  'Она была создана в часы сумерек, когда тени удлиняются и искажают привычные очертания комнаты. Её взгляд направлен не на зрителя, а сквозь него, туда, где за спиной стоит незримое прошлое. Одеяние, напоминающее истлевшую парчу, скрывает руки, которые, возможно, держат ключи от дверей, что никогда не должны быть открыты. Каждая складка её платья хранит пыль дорог, которые она никогда не проходила, но о которых знает всё.',
@@ -19,7 +19,7 @@ INSERT INTO figurines (id, name, short_text, full_description, dimensions, mater
  'Лепка, состаривание, роспись маслом',
  2023, '/sounds/wind.mp3',
  'Ключ от черной двери находится под порогом третьего дома.', 
- 'available', 1),
+ 'available', 1, '/videos/fig-001/1.mp4'),
 
 ('fig-002', 'Тот, кто слушает стены', 
  'В каждом доме есть тот, кто помнит все разговоры.', 
@@ -29,7 +29,7 @@ INSERT INTO figurines (id, name, short_text, full_description, dimensions, mater
  'Смешанная техника, грунтовка, тонировка акрилом',
  2024, '/sounds/creepe-trol.mp3',
  'В 1904 году этот дом сгорел, но стены остались стоять.', 
- 'available', 2),
+ 'available', 2, '/videos/fig-002/1.mp4'),
 
 ('fig-003', 'Собирательница пыли', 
  'Она никогда не подметала следы. Дом сам их забывал.', 
@@ -39,7 +39,7 @@ INSERT INTO figurines (id, name, short_text, full_description, dimensions, mater
  'Лепка, валяние, роспись пастелью',
  2023, NULL, 
  'Время не лечит, оно лишь покрывает всё слоем забвения.', 
- 'sold', 3),
+ 'sold', 3, '/videos/fig-003/1.mp4'),
 
 ('fig-004', 'Молчаливый гость', 
  'Он пришёл с севера, но никогда не говорил откуда именно.', 
@@ -49,7 +49,7 @@ INSERT INTO figurines (id, name, short_text, full_description, dimensions, mater
  'Гончарная лепка, обжиг, чернение',
  2024, '/sounds/bonfire.mp3',
  'Зима будет долгой. Запасайте дрова и терпение.', 
- 'available', 4);
+ 'available', 4, null);
 
 -- ИЗОБРАЖЕНИЯ (Unsplash скульптуры/куклы)
 INSERT INTO images (id, figurine_id, image_type, file_path, alt_text, sort_order) VALUES
