@@ -10,11 +10,15 @@ CREATE TABLE IF NOT EXISTS figurines (
     year INTEGER,
     ambience_path TEXT,
     video_url TEXT,
+    ambience_data BLOB, -- Встроенное аудио
+    video_data BLOB,    -- Встроенное видео
     secret_text TEXT,
+    is_visible BOOLEAN NOT NULL DEFAULT 1,
     status TEXT NOT NULL DEFAULT 'available'
         CHECK (status IN ('available', 'sold', 'reserved')),
     sort_order INTEGER NOT NULL DEFAULT 0,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT (datetime('now'))
 );
 
 -- Индекс для сортировки
@@ -28,9 +32,11 @@ CREATE TABLE IF NOT EXISTS images (
     image_type TEXT NOT NULL
         CHECK (image_type IN ('face', 'detail', 'full')),
     file_path TEXT NOT NULL,
+    data BLOB, -- Встроенное изображение
     alt_text TEXT,
     sort_order INTEGER NOT NULL DEFAULT 0,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT (datetime('now'))
 );
 
 -- Индексы для изображений
@@ -45,10 +51,12 @@ CREATE TABLE IF NOT EXISTS texts (
     category TEXT NOT NULL
         CHECK (category IN ('author', 'workshop')),
     content TEXT NOT NULL,
-    caption TEXT,  -- для workshop: подпись к фото
-    image_path TEXT,  -- для workshop: путь к изображению
+    caption TEXT,
+    image_path TEXT,
+    image_data BLOB, -- Встроенное изображение мастерской
     sort_order INTEGER NOT NULL DEFAULT 0,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT (datetime('now'))
 );
 
 -- Индекс для текстов
@@ -60,11 +68,11 @@ CREATE TABLE IF NOT EXISTS cabinet_zones (
     id TEXT PRIMARY KEY,
     zone_type TEXT NOT NULL
         CHECK (zone_type IN ('showcase', 'desk', 'shelf', 'note')),
-    x_percent REAL NOT NULL,  -- позиция X в процентах
-    y_percent REAL NOT NULL,  -- позиция Y в процентах
+    x_percent REAL NOT NULL,
+    y_percent REAL NOT NULL,
     width_percent REAL NOT NULL,
     height_percent REAL NOT NULL,
-    target_route TEXT NOT NULL,  -- куда ведёт клик
+    target_route TEXT NOT NULL,
     sort_order INTEGER NOT NULL DEFAULT 0
 );
 
@@ -76,8 +84,10 @@ CREATE TABLE IF NOT EXISTS process_steps (
         CHECK (step_type IN ('sketch', 'prototype', 'modeling', 'painting', 'finish')),
     description TEXT,
     image_path TEXT NOT NULL,
+    image_data BLOB, -- Встроенное изображение этапа
     sort_order INTEGER NOT NULL DEFAULT 0,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT (datetime('now'))
 );
 
 -- Индекс для этапов

@@ -1,5 +1,18 @@
 use rusqlite::{params, Connection, Result};
 use crate::models::*;
+use chrono::{Utc, TimeZone};
+
+fn get_iso_date(row: &rusqlite::Row, index: usize) -> Result<String> {
+    use rusqlite::types::ValueRef;
+    match row.get_ref(index)? {
+        ValueRef::Integer(i) => {
+            let dt = Utc.timestamp_opt(i, 0).unwrap();
+            Ok(dt.to_rfc3339())
+        },
+        ValueRef::Text(s) => Ok(std::str::from_utf8(s).unwrap_or_default().to_string()),
+        _ => Ok(Utc::now().to_rfc3339()),
+    }
+}
 
 pub struct Repository<'a> {
     conn: &'a Connection,
@@ -14,7 +27,7 @@ impl<'a> Repository<'a> {
 
     pub fn get_all_figurines(&self) -> Result<Vec<Figurine>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, short_text, full_description, dimensions, material, technique, year, ambience_path, video_url, secret_text, status, sort_order
+            "SELECT id, name, short_text, full_description, dimensions, material, technique, year, ambience_path, video_url, secret_text, status, sort_order, updated_at, is_visible
              FROM figurines
              ORDER BY sort_order"
         )?;
@@ -34,6 +47,8 @@ impl<'a> Repository<'a> {
                 secret_text: row.get(10)?,
                 status: FigurineStatus::from_str(&row.get::<_, String>(11)?),
                 sort_order: row.get(12)?,
+                updated_at: get_iso_date(row, 13)?,
+                is_visible: row.get(14)?,
             })
         })?;
 
@@ -42,7 +57,7 @@ impl<'a> Repository<'a> {
 
     pub fn get_figurine_by_id(&self, id: &str) -> Result<Option<Figurine>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, short_text, full_description, dimensions, material, technique, year, ambience_path, video_url, secret_text, status, sort_order
+            "SELECT id, name, short_text, full_description, dimensions, material, technique, year, ambience_path, video_url, secret_text, status, sort_order, updated_at, is_visible
              FROM figurines
              WHERE id = ?"
         )?;
@@ -64,17 +79,111 @@ impl<'a> Repository<'a> {
                 secret_text: row.get(10)?,
                 status: FigurineStatus::from_str(&row.get::<_, String>(11)?),
                 sort_order: row.get(12)?,
+                updated_at: get_iso_date(row, 13)?,
+                is_visible: row.get(14)?,
             }))
         } else {
             Ok(None)
         }
     }
 
+    // === WRITE OPERATIONS (SYNC) ===
+
+    pub fn upsert_figurine(&self, f: &Figurine) -> Result<()> {
+        let mut stmt = self.conn.prepare(
+            "INSERT INTO figurines (
+                id, name, short_text, full_description, dimensions, material, technique, 
+                year, ambience_path, video_url, secret_text, status, sort_order, is_visible, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+            ON CONFLICT(id) DO UPDATE SET
+                name=excluded.name,
+                short_text=excluded.short_text,
+                full_description=excluded.full_description,
+                dimensions=excluded.dimensions,
+                material=excluded.material,
+                technique=excluded.technique,
+                year=excluded.year,
+                ambience_path=excluded.ambience_path,
+                video_url=excluded.video_url,
+                secret_text=excluded.secret_text,
+                status=excluded.status,
+                sort_order=excluded.sort_order,
+                is_visible=excluded.is_visible,
+                updated_at=excluded.updated_at"
+        )?;
+
+        stmt.execute(params![
+            f.id,
+            f.name,
+            f.short_text,
+            f.full_description,
+            f.dimensions,
+            f.material,
+            f.technique,
+            f.year,
+            f.ambience_path,
+            f.video_url,
+            f.secret_text,
+            f.status.as_str(),
+            f.sort_order,
+            f.is_visible,
+            f.updated_at // This is String now
+        ])?;
+
+        Ok(())
+    }
+
     // === IMAGES ===
+
+    pub fn replace_images(&self, figurine_id: &str, images: Vec<Image>) -> Result<()> {
+        // Удаляем старые
+        self.conn.execute(
+            "DELETE FROM images WHERE figurine_id = ?",
+            params![figurine_id],
+        )?;
+
+        // Вставляем новые
+        let mut stmt = self.conn.prepare(
+            "INSERT INTO images (id, figurine_id, image_type, file_path, alt_text, sort_order, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
+        )?;
+
+        for (i, img) in images.into_iter().enumerate() {
+            stmt.execute(params![
+                img.id,
+                figurine_id,
+                img.image_type.as_str(),
+                img.file_path,
+                img.alt_text,
+                i as i32,
+                img.updated_at // String
+            ])?;
+        }
+
+        Ok(())
+    }
+
+    pub fn get_all_images(&self) -> Result<Vec<Image>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, figurine_id, image_type, file_path, alt_text, sort_order, updated_at FROM images"
+        )?;
+        let iter = stmt.query_map([], |row| {
+            Ok(Image {
+                id: row.get(0)?,
+                figurine_id: row.get(1)?,
+                image_type: ImageType::from_str(&row.get::<_, String>(2)?),
+                file_path: row.get(3)?,
+                alt_text: row.get(4)?,
+                sort_order: row.get(5)?,
+                updated_at: get_iso_date(row, 6)?,
+            })
+        })?;
+        iter.collect()
+    }
 
     pub fn get_images_for_figurine(&self, figurine_id: &str) -> Result<Vec<Image>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, figurine_id, image_type, file_path, alt_text, sort_order
+            "SELECT id, figurine_id, image_type, file_path, alt_text, sort_order, updated_at
              FROM images
              WHERE figurine_id = ?
              ORDER BY sort_order"
@@ -88,6 +197,7 @@ impl<'a> Repository<'a> {
                 file_path: row.get(3)?,
                 alt_text: row.get(4)?,
                 sort_order: row.get(5)?,
+                updated_at: get_iso_date(row, 6)?,
             })
         })?;
 
@@ -98,7 +208,7 @@ impl<'a> Repository<'a> {
 
     pub fn get_texts_by_category(&self, category: &str) -> Result<Vec<Text>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, category, content, caption, image_path, sort_order
+            "SELECT id, category, content, caption, image_path, sort_order, updated_at
              FROM texts
              WHERE category = ?
              ORDER BY sort_order"
@@ -112,6 +222,7 @@ impl<'a> Repository<'a> {
                 caption: row.get(3)?,
                 image_path: row.get(4)?,
                 sort_order: row.get(5)?,
+                updated_at: get_iso_date(row, 6)?,
             })
         })?;
 
@@ -145,7 +256,7 @@ impl<'a> Repository<'a> {
 
     pub fn get_process_steps_for_figurine(&self, figurine_id: &str) -> Result<Vec<ProcessStep>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, figurine_id, step_type, description, image_path, sort_order
+            "SELECT id, figurine_id, step_type, description, image_path, sort_order, updated_at
              FROM process_steps
              WHERE figurine_id = ?
              ORDER BY sort_order"
@@ -159,21 +270,46 @@ impl<'a> Repository<'a> {
                 description: row.get(3)?,
                 image_path: row.get(4)?,
                 sort_order: row.get(5)?,
+                updated_at: get_iso_date(row, 6)?,
             })
         })?;
 
         iter.collect()
     }
 
+    // === PROCESS STEPS WRITE ===
+    pub fn replace_process_steps(&self, figurine_id: &str, steps: Vec<ProcessStep>) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM process_steps WHERE figurine_id = ?",
+            params![figurine_id],
+        )?;
+
+        let mut stmt = self.conn.prepare(
+            "INSERT INTO process_steps (id, figurine_id, step_type, description, image_path, sort_order, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
+        )?;
+
+        for (i, step) in steps.into_iter().enumerate() {
+            stmt.execute(params![
+                step.id,
+                figurine_id,
+                step.step_type.as_str(),
+                step.description,
+                step.image_path,
+                i as i32,
+                step.updated_at
+            ])?;
+        }
+
+        Ok(())
+    }
+
     // === RELATED ITEMS ===
 
     pub fn get_related_figurines(&self, id: &str) -> Result<Vec<Figurine>> {
-        // Find "neighbors": same year OR similar material
-        // We need to get the current figurine's year and material first, 
-        // but we can do it in a single complex query or just rely on the join logic.
         
         let mut stmt = self.conn.prepare(
-            "SELECT DISTINCT f.id, f.name, f.short_text, f.full_description, f.dimensions, f.material, f.technique, f.year, f.ambience_path, f.video_url, f.secret_text, f.status, f.sort_order
+            "SELECT DISTINCT f.id, f.name, f.short_text, f.full_description, f.dimensions, f.material, f.technique, f.year, f.ambience_path, f.video_url, f.secret_text, f.status, f.sort_order, f.updated_at, f.is_visible
              FROM figurines f
              JOIN figurines current ON current.id = ?1
              WHERE f.id != ?1
@@ -181,6 +317,7 @@ impl<'a> Repository<'a> {
                 f.year = current.year 
                 OR (current.material IS NOT NULL AND f.material LIKE '%' || substr(current.material, 1, 4) || '%')
              )
+             AND f.is_visible = 1
              ORDER BY random()
              LIMIT 3"
         )?;
@@ -200,9 +337,45 @@ impl<'a> Repository<'a> {
                 secret_text: row.get(10)?,
                 status: FigurineStatus::from_str(&row.get::<_, String>(11)?),
                 sort_order: row.get(12)?,
+                updated_at: get_iso_date(row, 13)?,
+                is_visible: row.get(14)?,
             })
         })?;
 
         iter.collect()
+    }
+
+    // === BLOB MANAGEMENT (FOR PORTABLE EXPORT) ===
+
+    pub fn update_figurine_blobs(&self, id: &str, ambience: Option<Vec<u8>>, video: Option<Vec<u8>>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE figurines SET ambience_data = ?1, video_data = ?2 WHERE id = ?3",
+            params![ambience, video, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_image_blob(&self, id: &str, data: Vec<u8>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE images SET data = ?1 WHERE id = ?2",
+            params![data, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_step_blob(&self, id: &str, data: Vec<u8>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE process_steps SET image_data = ?1 WHERE id = ?2",
+            params![data, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_text_blob(&self, id: &str, data: Vec<u8>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE texts SET image_data = ?1 WHERE id = ?2",
+            params![data, id],
+        )?;
+        Ok(())
     }
 }

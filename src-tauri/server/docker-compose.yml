@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgres://gotiga:gotiga_password@db:5432/gotiga
+      - ADMIN_API_KEY=change_me_in_prod
+      - PUBLIC_URL=http://localhost:3000
+      - UPLOAD_DIR=/app/uploads
+    volumes:
+      - ./uploads:/app/uploads
+    depends_on:
+      - db
+
+  db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: gotiga
+      POSTGRES_PASSWORD: gotiga_password
+      POSTGRES_DB: gotiga
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+volumes:
+  pgdata:

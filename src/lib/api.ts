@@ -7,6 +7,11 @@ import type {
   CabinetZone
 } from './types/api';
 
+export interface AppSettings {
+  serverUrl: string;
+  apiKey: string;
+}
+
 /**
  * Custom error class for API errors
  */
@@ -86,9 +91,41 @@ export const api = {
    * Get interactive zones for the cabinet room
    */
   async getCabinetZones(): Promise<CabinetZone[]> {
-    return safeInvoke<CabinetZone[]>('get_cabinet_zones');
+    return await invoke('get_cabinet_zones');
   },
-} as const;
+
+  // === ADMIN API ===
+
+  async importMedia(filePath: string, mediaType: 'images' | 'videos' | 'audio'): Promise<string> {
+    return await invoke('import_media', { filePath, mediaType });
+  },
+
+  async saveFigurine(figurine: Figurine): Promise<void> {
+    return await invoke('save_figurine', { figurine });
+  },
+
+  async exportRelease(): Promise<string> {
+    return await invoke('export_release');
+  },
+
+  async pullUpdates(): Promise<string> {
+    return await invoke('pull_updates');
+  },
+
+  // === SETTINGS & PUSH ===
+
+  async getSettings(): Promise<AppSettings> {
+    return await invoke('get_settings');
+  },
+
+  async saveSettings(settings: AppSettings): Promise<void> {
+    return await invoke('save_settings', { settings });
+  },
+
+  async pushFigurine(figurine: Figurine): Promise<string> {
+    return await invoke('push_figurine', { figurine });
+  }
+};
 
 // Type for the api object
 export type Api = typeof api;

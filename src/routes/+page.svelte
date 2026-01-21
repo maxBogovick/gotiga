@@ -203,6 +203,10 @@
                 <div class="bar-ornament left">◆ MDCCCXC ◆</div>
                 <div class="bar-title">GOTHIC MUSEUM</div>
                 <div class="bar-ornament right">◆ EST ◆</div>
+                
+                <a href="/admin" class="absolute right-8 opacity-10 hover:opacity-80 transition-opacity duration-500 text-xl" aria-label="Вход для смотрителя">
+                    🗝
+                </a>
             </div>
 
             <div class="cinema-bar bottom-bar">
@@ -1223,124 +1227,6 @@
         box-shadow: 0 0 15px rgba(212, 197, 176, 0.9);
         transition: left 0.08s ease, top 0.08s ease;
         z-index: 1000;
-    }
-
-    /* === ZONE INFO CARD === */
-    .zone-info-card {
-        position: fixed;
-        pointer-events: none;
-        z-index: 60;
-        margin: 50px 0 0 50px;
-        background: rgba(0, 0, 0, 0.92);
-        backdrop-filter: blur(15px);
-        padding: 30px 40px;
-        min-width: 320px;
-        border: 2px solid rgba(212, 197, 176, 0.4);
-        box-shadow:
-                0 30px 80px rgba(0, 0, 0, 0.9),
-                inset 0 0 40px rgba(212, 197, 176, 0.05);
-    }
-
-    .card-frame {
-        position: absolute;
-        inset: 0;
-        pointer-events: none;
-    }
-
-    .card-corner {
-        position: absolute;
-        width: 18px;
-        height: 18px;
-        border: 2px solid rgba(212, 197, 176, 0.6);
-    }
-
-    .card-corner.tl {
-        top: -2px;
-        left: -2px;
-        border-right: none;
-        border-bottom: none;
-    }
-
-    .card-corner.tr {
-        top: -2px;
-        right: -2px;
-        border-left: none;
-        border-bottom: none;
-    }
-
-    .card-corner.bl {
-        bottom: -2px;
-        left: -2px;
-        border-right: none;
-        border-top: none;
-    }
-
-    .card-corner.br {
-        bottom: -2px;
-        right: -2px;
-        border-left: none;
-        border-top: none;
-    }
-
-    .card-content {
-        position: relative;
-        z-index: 2;
-    }
-
-    .card-icon {
-        font-size: 56px;
-        margin-bottom: 16px;
-        filter: drop-shadow(0 0 20px currentColor);
-        animation: icon-float 3s ease-in-out infinite;
-    }
-
-    @keyframes icon-float {
-        0%, 100% {
-            transform: translateY(0);
-        }
-        50% {
-            transform: translateY(-8px);
-        }
-    }
-
-    .card-title {
-        font-family: 'UnifrakturMaguntia', cursive;
-        font-size: 32px;
-        letter-spacing: 4px;
-        margin-bottom: 12px;
-        text-shadow: 0 0 20px currentColor;
-    }
-
-    .card-divider {
-        width: 100%;
-        height: 2px;
-        margin: 16px 0;
-        box-shadow: 0 0 8px currentColor;
-    }
-
-    .card-description {
-        font-family: 'Cormorant Garamond', serif;
-        font-size: 16px;
-        font-style: italic;
-        letter-spacing: 2px;
-        color: rgba(212, 197, 176, 0.7);
-        margin-bottom: 20px;
-    }
-
-    .card-arrow {
-        font-size: 28px;
-        color: #d4c5b0;
-        text-align: right;
-        animation: arrow-bounce 1s ease-in-out infinite;
-    }
-
-    @keyframes arrow-bounce {
-        0%, 100% {
-            transform: translateX(0);
-        }
-        50% {
-            transform: translateX(8px);
-        }
     }
 
     /* Global styles */

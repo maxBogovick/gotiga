@@ -31,17 +31,21 @@
   /* Gothic Headings */
   h1, h2, h3, h4, h5, h6 {
     font-family: 'UnifrakturMaguntia', cursive;
-    @apply tracking-wide;
+    letter-spacing: 0.025em; /* tracking-wide */
     color: #e6decb;
   }
 
-  h1 { @apply text-5xl lg:text-7xl; }
-  h2 { @apply text-3xl lg:text-4xl; }
-  h3 { @apply text-2xl; }
+  h1 { font-size: 3rem; } /* text-5xl fallback */
+  @media (min-width: 1024px) { h1 { font-size: 4.5rem; } } /* lg:text-7xl */
+  
+  h2 { font-size: 1.875rem; }
+  @media (min-width: 1024px) { h2 { font-size: 2.25rem; } }
+
+  h3 { font-size: 1.5rem; }
 
   /* Links */
   a {
-    @apply transition-colors duration-500;
+    transition: color 500ms;
     color: #8a7f70;
     cursor: pointer;
   }
@@ -52,13 +56,12 @@
 
   /* Focus states */
   *:focus {
-    @apply outline-none;
+    outline: none;
   }
 
   *:focus-visible {
-    @apply ring-1 ring-offset-2;
-    ring-color: #d4c5b0;
-    ring-offset-color: #0a0806;
+    outline: 1px solid #d4c5b0;
+    outline-offset: 2px;
   }
 
   /* Buttons */

@@ -39,6 +39,11 @@
 
   let currentImage = $derived(sortedImages[selectedImageIndex]);
 
+  // Helper
+  function resolveUrl(path: string | undefined | null) {
+      return path ?? '';
+  }
+
   // Functions
   function selectImage(index: number) {
     if (index !== selectedImageIndex) {
@@ -159,7 +164,7 @@
 {:else if figurine}
   <!-- Audio Element -->
   {#if figurine.ambiencePath}
-      <audio bind:this={audioRef} src={figurine.ambiencePath} loop></audio>
+      <audio bind:this={audioRef} src={resolveUrl(figurine.ambiencePath)} loop></audio>
   {/if}
   
   <CandleReveal isActive={isCandleLit} />
@@ -253,7 +258,7 @@
                         onclick={() => selectImage(i)}
                         aria-label="Показать вид {i + 1}"
                 >
-                  <img src={img.url} alt="" class="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all duration-500" />
+                  <img src={resolveUrl(img.url)} alt="" class="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all duration-500" />
                   {#if selectedImageIndex === i}
                      <div class="absolute inset-0 bg-cabinet-bone/10 pointer-events-none mix-blend-overlay"></div>
                   {/if}
@@ -394,7 +399,7 @@
             <MemoryMirror 
                 isOpen={isGrimoireOpen} 
                 steps={figurine.processSteps}
-                finalImage={currentImage?.url}
+                finalImage={resolveUrl(currentImage?.url)}
                 onClose={() => isGrimoireOpen = false} 
             />
          </div>
@@ -428,10 +433,10 @@
                          <video 
                             controls 
                             class="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity duration-1000 sepia-[0.3]"
-                            poster={currentImage?.url}
+                            poster={resolveUrl(currentImage?.url)}
                             preload="metadata"
                          >
-                             <source src={figurine.videoUrl} type="video/mp4" />
+                             <source src={resolveUrl(figurine.videoUrl)} type="video/mp4" />
                              Ваш браузер не поддерживает элемент video.
                          </video>
 
@@ -464,7 +469,7 @@
                   <a href="/figurines/{item.id}" class="group relative block bg-[#141210] border border-[#2a2622] p-4 transition-all duration-500 hover:-translate-y-2 hover:shadow-[0_10px_30px_rgba(0,0,0,0.5)]">
                       <div class="aspect-square overflow-hidden mb-4 relative">
                           <img 
-                            src={item.faceImageUrl} 
+                            src={resolveUrl(item.faceImageUrl)} 
                             alt={item.name} 
                             class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110 grayscale group-hover:grayscale-0"
                           />

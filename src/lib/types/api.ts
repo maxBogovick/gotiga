@@ -20,6 +20,8 @@ export interface Figurine {
   videoUrl?: string | null;
   secretText: string | null;
   status: 'available' | 'sold' | 'reserved';
+  sortOrder: number;
+  isVisible: boolean;
   images: FigurineImage[];
   processSteps: ProcessStep[];
   relatedItems: FigurineListItem[];
@@ -53,7 +55,7 @@ export interface WorkshopItem {
 
 export interface CabinetZone {
   id: string;
-  zoneType: 'showcase' | 'desk' | 'shelf' | 'note';
+  zoneType: 'showcase' | 'desk' | 'shelf' | 'note' | 'curator' | 'cabinet' | 'portrait' | 'windows';
   x: number;
   y: number;
   width: number;
