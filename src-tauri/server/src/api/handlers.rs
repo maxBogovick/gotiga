@@ -2,6 +2,8 @@ use axum::{
     extract::{Path, State, Multipart, Query},
     Json,
     http::StatusCode,
+    response::IntoResponse,
+    body::Bytes,
 };
 use crate::services::AppService;
 use crate::models::*;
@@ -9,18 +11,19 @@ use crate::error::{Result, AppError};
 use uuid::Uuid;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
-use axum::response::IntoResponse;
+
+// === PUBLIC READ-ONLY HANDLERS ===
 
 pub async fn health_check() -> impl IntoResponse {
     (StatusCode::OK, Json(serde_json::json!({ "status": "ok", "version": "1.0.0" })))
 }
 
-pub async fn get_sync_manifest(
+/*pub async fn get_sync_manifest(
     State(service): State<AppService>
 ) -> Result<Json<Manifest>> {
-    let manifest = service.generate_manifest().await?;
+    //let manifest = service.generate_manifest().await?;
     Ok(Json(manifest))
-}
+}*/
 
 #[derive(serde::Deserialize)]
 pub struct ListParams {
@@ -38,7 +41,7 @@ pub async fn list_figurines(
 
 pub async fn get_figurine(
     State(service): State<AppService>,
-    Path(id): Path<Uuid>,
+    Path(id): Path<String>, // Changed to String
 ) -> Result<Json<FigurineDto>> {
     let dto = service.get_figurine_details(id).await?;
     Ok(Json(dto))
@@ -65,86 +68,30 @@ pub async fn get_cabinet_zones(
     Ok(Json(zones))
 }
 
-// === ADMIN HANDLERS ===
+// === ASSET STREAMING ===
 
-pub async fn upsert_figurine(
+pub async fn get_asset(
     State(service): State<AppService>,
-    Json(payload): Json<FigurineDto>,
-) -> Result<Json<serde_json::Value>> {
-    let id = service.upsert_figurine(payload).await?;
-    Ok(Json(serde_json::json!({ "id": id })))
-}
-
-pub async fn delete_figurine(
-    State(service): State<AppService>,
-    Path(id): Path<Uuid>,
-) -> Result<StatusCode> {
-    service.delete_figurine(id).await?;
-    Ok(StatusCode::NO_CONTENT)
-}
-
-pub async fn upload_file(
-    State(config): State<crate::config::Config>,
-    mut multipart: Multipart,
-) -> Result<Json<serde_json::Value>> {
-    let mut file_url = None;
-    let mut relative_path = None;
-
-    while let Some(field) = multipart.next_field().await.map_err(|e| AppError::BadRequest(e.to_string()))? {
-        let name = field.name().unwrap_or("").to_string();
-        
-        if name == "file" {
-            let file_name = field.file_name().unwrap_or("unknown").to_string();
-            let content_type = field.content_type().unwrap_or("application/octet-stream").to_string();
-            let data = field.bytes().await.map_err(|e| AppError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
-
-            let extension = std::path::Path::new(&file_name)
-                .extension()
-                .and_then(std::ffi::OsStr::to_str)
-                .unwrap_or("bin");
-
-            let type_dir = if content_type.starts_with("image/") {
-                "images"
-            } else if content_type.starts_with("video/") {
-                "videos"
-            } else {
-                "misc"
-            };
-
-            let uuid = Uuid::new_v4();
-            let new_filename = format!("{}.{}", uuid, extension);
-            let rel_path = format!("{}/{}", type_dir, new_filename);
-            
-            let save_dir = format!("{}/{}", config.upload_dir, type_dir);
-            fs::create_dir_all(&save_dir).await.map_err(AppError::Io)?;
-
-            let full_path = format!("{}/{}", save_dir, new_filename);
-            let mut file = fs::File::create(&full_path).await.map_err(AppError::Io)?;
-            file.write_all(&data).await.map_err(AppError::Io)?;
-
-            let public_url = format!("{}/static/{}", config.public_url.trim_end_matches('/'), rel_path);
-            
-            file_url = Some(public_url);
-            relative_path = Some(rel_path);
-        }
-    }
-
-    if let (Some(url), Some(rel)) = (file_url, relative_path) {
-        Ok(Json(serde_json::json!({ "url": url, "relativePath": rel })))
-    } else {
-        Err(AppError::BadRequest("No file field found".to_string()))
+    Path((table, id)): Path<(String, String)>, // Changed to String
+) -> Result<impl IntoResponse> {
+    let data = service.get_asset(&table, id).await?;
+    match data {
+        Some(bytes) => {
+            // Simple MIME detection
+            let mime = "application/octet-stream";
+            Ok((
+                [(axum::http::header::CONTENT_TYPE, mime)],
+                Bytes::from(bytes)
+            ))
+        },
+        None => Err(AppError::NotFound("Asset not found".to_string()))
     }
 }
 
-pub async fn overwrite_release(
-    State(service): State<AppService>,
-    Json(payload): Json<ReleasePayload>,
-) -> Result<StatusCode> {
-    service.process_full_release(payload).await?;
-    Ok(StatusCode::OK)
-}
+// === ADMIN / RELEASE MANAGEMENT ===
 
 pub async fn upload_release_db(
+    State(service): State<AppService>,
     State(config): State<crate::config::Config>,
     mut multipart: Multipart,
 ) -> Result<StatusCode> {
@@ -153,25 +100,32 @@ pub async fn upload_release_db(
         if name == "file" {
             let data = field.bytes().await.map_err(|e| AppError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
             
+            let release_id = Uuid::new_v4();
+            let file_name = format!("release_{}.db", release_id);
             let save_dir = format!("{}/releases", config.upload_dir);
             fs::create_dir_all(&save_dir).await.map_err(AppError::Io)?;
             
-            let full_path = format!("{}/latest.db", save_dir);
+            let full_path = format!("{}/{}", save_dir, file_name);
             let mut file = fs::File::create(&full_path).await.map_err(AppError::Io)?;
             file.write_all(&data).await.map_err(AppError::Io)?;
+            
+            // Register and Hot Swap
+            service.register_new_release(&full_path).await?;
             
             return Ok(StatusCode::OK);
         }
     }
-    Err(AppError::BadRequest("No file field".to_string()))
+    Err(AppError::BadRequest("No file field found".to_string()))
 }
 
 pub async fn download_release_db(
-    State(config): State<crate::config::Config>,
+    State(service): State<AppService>,
 ) -> Result<impl IntoResponse> {
-    let path = format!("{}/releases/latest.db", config.upload_dir);
+    let path = service.get_active_release_path().await?
+        .ok_or_else(|| AppError::NotFound("No active release".to_string()))?;
+
     if !std::path::Path::new(&path).exists() {
-        return Err(AppError::NotFound("No release database found".to_string()));
+        return Err(AppError::NotFound("Release file missing on disk".to_string()));
     }
 
     let file = fs::read(&path).await.map_err(AppError::Io)?;
@@ -180,4 +134,19 @@ pub async fn download_release_db(
         [(axum::http::header::CONTENT_DISPOSITION, "attachment; filename=\"latest.db\"")],
         file
     ))
+}
+
+pub async fn list_releases(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<Release>>> {
+    let releases = service.list_releases().await?;
+    Ok(Json(releases))
+}
+
+pub async fn switch_release(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    service.switch_to_release(id).await?;
+    Ok(StatusCode::OK)
 }

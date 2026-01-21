@@ -60,7 +60,7 @@ pub enum TextCategory {
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
 pub struct Figurine {
-    pub id: Uuid,
+    pub id: String,
     pub name: String,
     pub short_text: Option<String>,
     pub full_description: Option<String>,
@@ -80,8 +80,8 @@ pub struct Figurine {
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
 pub struct Image {
-    pub id: Uuid,
-    pub figurine_id: Uuid,
+    pub id: String,
+    pub figurine_id: String,
     pub image_type: ImageType,
     pub file_path: String,
     pub alt_text: Option<String>,
@@ -92,8 +92,8 @@ pub struct Image {
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
 pub struct ProcessStep {
-    pub id: Uuid,
-    pub figurine_id: Uuid,
+    pub id: String,
+    pub figurine_id: String,
     pub step_type: StepType,
     pub description: Option<String>,
     pub image_path: String,
@@ -104,7 +104,7 @@ pub struct ProcessStep {
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
 pub struct Text {
-    pub id: Uuid,
+    pub id: String,
     pub category: TextCategory,
     pub content: String,
     pub caption: Option<String>,
@@ -116,7 +116,7 @@ pub struct Text {
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
 pub struct CabinetZone {
-    pub id: Uuid,
+    pub id: String,
     pub zone_type: ZoneType,
     pub x_percent: f64,
     pub y_percent: f64,
@@ -126,6 +126,17 @@ pub struct CabinetZone {
     pub sort_order: i32,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Release {
+    pub id: Uuid, // Release ID is Postgres UUID, keep as Uuid
+    pub version: i32,
+    pub file_path: String,
+    pub is_active: bool,
+    pub created_at: DateTime<Utc>,
+    pub description: Option<String>,
+}
+
 // ============================================================
 // DTOs (API Contract)
 // ============================================================
@@ -133,7 +144,7 @@ pub struct CabinetZone {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FigurineListItemDto {
-    pub id: Uuid,
+    pub id: String,
     pub name: String,
     pub status: FigurineStatus,
     pub face_image_url: Option<String>,
@@ -142,16 +153,16 @@ pub struct FigurineListItemDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImageDto {
-    pub id: Option<Uuid>, // Optional for creation
+    pub id: Option<String>,
     pub image_type: ImageType,
-    pub url: String, // Full URL in response, relative path or URL in request
+    pub url: String,
     pub alt_text: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProcessStepDto {
-    pub id: Option<Uuid>,
+    pub id: Option<String>,
     pub step_type: StepType,
     pub description: Option<String>,
     pub image_url: String,
@@ -160,7 +171,7 @@ pub struct ProcessStepDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FigurineDto {
-    pub id: Option<Uuid>, // Optional for creation
+    pub id: Option<String>,
     pub name: String,
     pub short_text: Option<String>,
     pub full_description: Option<String>,
@@ -175,19 +186,18 @@ pub struct FigurineDto {
     pub sort_order: i32,
     pub is_visible: bool,
     
-    // Relations
     #[serde(default)]
     pub images: Vec<ImageDto>,
     #[serde(default)]
     pub process_steps: Vec<ProcessStepDto>,
-    #[serde(default, skip_deserializing)] // Computed on server
+    #[serde(default, skip_deserializing)]
     pub related_items: Vec<FigurineListItemDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CabinetZoneDto {
-    pub id: Uuid,
+    pub id: String,
     pub zone_type: ZoneType,
     pub x: f64,
     pub y: f64,
@@ -199,14 +209,14 @@ pub struct CabinetZoneDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextDto {
-    pub id: Uuid,
+    pub id: String,
     pub content: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkshopItemDto {
-    pub id: Uuid,
+    pub id: String,
     pub content: String,
     pub caption: Option<String>,
     pub image_url: Option<String>,
