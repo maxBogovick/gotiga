@@ -6,7 +6,9 @@ import type {
     WorkshopItem,
     CabinetZone,
     AppSettings,
-    ServerRelease
+    ServerRelease,
+    AuthorProfile,
+    OrderRequest,
 } from './types/api';
 
 export type { AppSettings };
@@ -40,7 +42,11 @@ async function webFetch<T>(path: string, options?: RequestInit): Promise<T> {
         const text = await res.text().catch(() => '');
         throw new Error(`API ${res.status}: ${text}`);
     }
-    return res.json();
+    const ct = res.headers.get('content-type') ?? '';
+    if (!ct.includes('json') || res.status === 204) return undefined as T;
+    const text = await res.text();
+    if (!text) return undefined as T;
+    return JSON.parse(text);
 }
 
 function authHeaders(): Record<string, string> {
@@ -49,10 +55,27 @@ function authHeaders(): Record<string, string> {
 }
 
 export const api = {
-    // === READ ===
+    // === AUTH ===
+    async adminLogin(login: string, password: string): Promise<string> {
+        const data = await webFetch<{ token: string }>('/admin/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ login, password }),
+        });
+        return data.token;
+    },
+
+    // === READ (public) ===
     async getAllFigurines(): Promise<FigurineListItem[]> {
         if (isTauri) return invoke('get_all_figurines');
         return webFetch('/figurines?visible=true');
+    },
+
+    async getAllFigurinesAdmin(): Promise<FigurineListItem[]> {
+        if (isTauri) return invoke('get_all_figurines');
+        return webFetch('/figurines?visible=false', {
+            headers: authHeaders(),
+        });
     },
 
     async getFigurine(id: string): Promise<Figurine | null> {
@@ -90,6 +113,18 @@ export const api = {
         });
     },
 
+    async deleteFigurine(id: string): Promise<void> {
+        if (isTauri) {
+            // Tauri: not implemented server-side, simulate
+            return;
+        }
+        const res = await fetch(`${webApiBase()}/figurines/${id}`, {
+            method: 'DELETE',
+            headers: authHeaders(),
+        });
+        if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+    },
+
     // fileOrPath is a local path string in Tauri, a File object on web
     async importMedia(fileOrPath: string | File, mediaType: 'images' | 'videos' | 'audio'): Promise<string> {
         if (isTauri) {
@@ -98,7 +133,6 @@ export const api = {
         const file = fileOrPath as File;
         const form = new FormData();
         form.append('file', file);
-        form.append('type', mediaType === 'videos' ? 'video' : mediaType === 'audio' ? 'audio' : 'image');
         const res = await fetch(`${webApiBase()}/upload`, {
             method: 'POST',
             headers: authHeaders(),
@@ -153,12 +187,27 @@ export const api = {
 
     async getMainBackground(): Promise<string | null> {
         if (isTauri) return invoke('get_main_background');
-        return null;
+        try {
+            const data = await webFetch<{ url: string | null }>('/main-background');
+            return data.url;
+        } catch {
+            return null;
+        }
     },
 
-    async setMainBackground(filePath: string): Promise<string> {
-        if (isTauri) return invoke('set_main_background', { filePath });
-        return filePath;
+    async setMainBackground(fileOrPath: string | File): Promise<string> {
+        if (isTauri) return invoke('set_main_background', { filePath: fileOrPath as string });
+        const file = fileOrPath as File;
+        const form = new FormData();
+        form.append('file', file);
+        const res = await fetch(`${webApiBase()}/main-background`, {
+            method: 'POST',
+            headers: authHeaders(),
+            body: form,
+        });
+        if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+        const data = await res.json();
+        return data.url as string;
     },
 
     // === SYNC & SETTINGS ===
@@ -192,7 +241,7 @@ export const api = {
     async getServerReleases(): Promise<ServerRelease[]> {
         if (isTauri) return invoke('get_server_releases');
         try {
-            return await webFetch('/releases');
+            return await webFetch('/admin/releases', { headers: authHeaders() });
         } catch {
             return [];
         }
@@ -200,9 +249,31 @@ export const api = {
 
     async activateServerRelease(id: string): Promise<void> {
         if (isTauri) return invoke('activate_server_release', { id });
-        await webFetch(`/releases/${id}/activate`, {
+        await webFetch(`/admin/releases/${id}/activate`, {
             method: 'POST',
             headers: authHeaders(),
+        });
+    },
+
+    async getAuthorProfile(): Promise<AuthorProfile> {
+        if (isTauri) return invoke('get_author_profile');
+        return webFetch('/author/profile');
+    },
+
+    async saveAuthorProfile(profile: AuthorProfile): Promise<void> {
+        if (isTauri) return invoke('save_author_profile', { profile });
+        await webFetch('/author/profile', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(profile),
+        });
+    },
+
+    async submitOrder(order: OrderRequest): Promise<void> {
+        await webFetch('/orders', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(order),
         });
     },
 };

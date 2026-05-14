@@ -226,6 +226,83 @@ pub struct WorkshopItemDto {
 }
 
 // ============================================================
+// Admin Request DTOs
+// ============================================================
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoginRequest {
+    pub login: String,
+    pub password: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveFigurineRequest {
+    pub id: String,
+    pub name: String,
+    pub short_text: Option<String>,
+    pub full_description: Option<String>,
+    pub dimensions: Option<String>,
+    pub material: Option<String>,
+    pub technique: Option<String>,
+    pub year: Option<i32>,
+    pub ambience_path: Option<String>,
+    pub video_url: Option<String>,
+    pub secret_text: Option<String>,
+    pub status: FigurineStatus,
+    pub sort_order: i32,
+    pub is_visible: bool,
+    #[serde(default)]
+    pub images: Vec<SaveImageRequest>,
+    #[serde(default)]
+    pub process_steps: Vec<SaveStepRequest>,
+    #[serde(default)]
+    pub related_item_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveImageRequest {
+    pub id: String,
+    pub image_type: ImageType,
+    pub url: String,
+    pub alt_text: Option<String>,
+    pub sort_order: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveStepRequest {
+    pub id: String,
+    pub step_type: StepType,
+    pub description: Option<String>,
+    pub image_url: String,
+    pub sort_order: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveTextRequest {
+    pub id: String,
+    pub content: String,
+    pub caption: Option<String>,
+    pub image_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveZoneRequest {
+    pub id: String,
+    pub zone_type: ZoneType,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    pub target_route: String,
+}
+
+// ============================================================
 // Misc
 // ============================================================
 
@@ -246,4 +323,27 @@ pub struct ReleasePayload {
     pub author_texts: Vec<TextDto>,
     pub workshop_items: Vec<WorkshopItemDto>,
     pub zones: Vec<CabinetZoneDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthorProfile {
+    pub name: String,
+    pub tagline: Option<String>,
+    pub bio: Option<String>,
+    pub photo_url: Option<String>,
+    pub instagram: Option<String>,
+    pub telegram: Option<String>,
+    pub vk: Option<String>,
+    pub email: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrderRequest {
+    pub figurine_id: String,
+    pub figurine_name: String,
+    pub requester_name: String,
+    pub requester_email: String,
+    pub message: Option<String>,
 }

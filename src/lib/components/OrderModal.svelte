@@ -1,8 +1,9 @@
 <script lang="ts">
   import { fade, scale, fly } from 'svelte/transition';
   import { cubicOut, elasticOut } from 'svelte/easing';
+  import { api, isTauri } from '$lib/api';
 
-  let { isOpen = false, figurineName = '', onClose = () => {} } = $props();
+  let { isOpen = false, figurineName = '', figurineId = '', onClose = () => {} } = $props();
 
   let name = $state('');
   let email = $state('');
@@ -24,21 +25,37 @@
   }
 
   async function handleSubmit() {
-    if (!name || !email) return;
+    if (!name.trim() || !email.trim()) return;
 
     isSubmitting = true;
 
-    // Build a mailto: link with the request details
     const subject = encodeURIComponent(`Запрос артефакта: ${figurineName}`);
     const body = encodeURIComponent(
-      `Имя просителя: ${name}\nОбратный адрес: ${email}\n\nПослание:\n${message || '—'}\n\n— Отправлено через Архивъ`
+      `Имя просителя: ${name.trim()}\nОбратный адрес: ${email.trim()}\n\nПослание:\n${message.trim() || '—'}\n\n— Отправлено через Архивъ`
     );
-
-    // Small delay for the "wax sealing" feel
-    await new Promise(r => setTimeout(r, 800));
-
     const contactEmail = localStorage.getItem('gotiga_contact_email') || 'info@gotiga.art';
-    window.open(`mailto:${contactEmail}?subject=${subject}&body=${body}`, '_blank');
+    const href = `mailto:${contactEmail}?subject=${subject}&body=${body}`;
+
+    // Trigger mailto immediately (before any await to keep user-gesture context)
+    const a = document.createElement('a');
+    a.href = href;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
+    // Notify server (Telegram) in parallel — silently ignore failures
+    if (!isTauri) {
+      api.submitOrder({
+        figurineId: figurineId || 'unknown',
+        figurineName,
+        requesterName: name.trim(),
+        requesterEmail: email.trim(),
+        message: message.trim() || null,
+      }).catch(() => {});
+    }
+
+    await new Promise(r => setTimeout(r, 800));
 
     isSubmitting = false;
     isSealed = true;

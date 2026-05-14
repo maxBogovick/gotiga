@@ -11,6 +11,7 @@
   import CandleReveal from '$lib/components/CandleReveal.svelte';
   import MemoryMirror from '$lib/components/MemoryMirror.svelte';
   import SecretText from '$lib/components/SecretText.svelte';
+  import Lightbox from '$lib/components/Lightbox.svelte';
 
   // State
   let figurine = $state<Figurine | null>(null);
@@ -21,6 +22,8 @@
   let showOrderModal = $state(false);
   let isAudioPlaying = $state(false);
   let isCandleLit = $state(false);
+  let showLightbox = $state(false);
+  let lightboxStartIndex = $state(0);
   let audioRef = $state<HTMLAudioElement | null>(null);
   let audioVolume = $state(0);
   let videoRef = $state<HTMLVideoElement | null>(null);
@@ -53,6 +56,15 @@
   function resolveUrl(path: string | undefined | null) {
       return path ?? '';
   }
+
+  function openLightbox(index: number) {
+    lightboxStartIndex = index;
+    showLightbox = true;
+  }
+
+  let lightboxImages = $derived(
+    sortedImages.map(img => ({ url: resolveUrl(img.url), alt: img.altText ?? '' }))
+  );
 
   // Functions
   function selectImage(index: number) {
@@ -184,8 +196,17 @@
     <OrderModal
             isOpen={showOrderModal}
             figurineName={figurine.name}
+            figurineId={figurine.id}
             onClose={() => showOrderModal = false}
     />
+
+    {#if showLightbox}
+      <Lightbox
+        images={lightboxImages}
+        startIndex={lightboxStartIndex}
+        onClose={() => showLightbox = false}
+      />
+    {/if}
 
     <div class="max-w-7xl mx-auto px-6 lg:px-12 py-12">
 
@@ -239,7 +260,7 @@
             <div class="absolute bottom-0 left-0 w-16 h-16 border-b border-l border-cabinet-bone/30 z-20"></div>
             <div class="absolute bottom-0 right-0 w-16 h-16 border-b border-r border-cabinet-bone/30 z-20"></div>
 
-            <div class="relative aspect-[4/5] overflow-hidden bg-black/60">
+            <div class="relative aspect-[4/5] overflow-hidden bg-black/60 group/main">
               {#key currentImage?.id}
                 <div class="absolute inset-0 w-full h-full" in:fade={{ duration: 600 }}>
                     <BrassLens
@@ -249,6 +270,19 @@
                     />
                 </div>
               {/key}
+              <!-- Lightbox trigger hint -->
+              {#if sortedImages.length > 0}
+                <button
+                  onclick={() => openLightbox(selectedImageIndex)}
+                  class="absolute bottom-3 right-3 z-30 flex items-center gap-1.5 px-2.5 py-1.5 bg-black/50 border border-white/10 hover:border-white/30 hover:bg-black/70 transition-all duration-200 opacity-0 group-hover/main:opacity-100 font-['Cinzel'] text-[9px] tracking-widest text-white/50 hover:text-white/80"
+                  aria-label="Открыть полный экран"
+                >
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.2">
+                    <path d="M1 4V1h3M6 1h3v3M9 6v3H6M4 9H1V6"/>
+                  </svg>
+                  Полный экран
+                </button>
+              {/if}
               <!-- Texture overlays -->
               <div class="absolute inset-0 pointer-events-none bg-noise opacity-[0.12] mix-blend-overlay"></div>
               <div class="absolute inset-0 pointer-events-none shadow-[inset_0_0_80px_rgba(0,0,0,0.9)]"></div>
@@ -260,19 +294,31 @@
 
           <!-- Thumbnails -->
           {#if sortedImages.length > 1}
-            <div class="flex flex-wrap gap-4 pt-2 justify-center lg:justify-start">
+            <div class="flex flex-wrap gap-3 pt-2 justify-center lg:justify-start">
               {#each sortedImages as img, i}
-                <button
-                        class="relative w-20 h-20 border transition-all duration-500 overflow-hidden group
-                         {selectedImageIndex === i ? 'border-cabinet-bone opacity-100 scale-105' : 'border-cabinet-wood opacity-40 hover:opacity-80 hover:border-cabinet-bone/60'}"
-                        onclick={() => selectImage(i)}
-                        aria-label="Показать вид {i + 1}"
-                >
-                  <img src={resolveUrl(img.url)} alt="" class="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all duration-500" />
-                  {#if selectedImageIndex === i}
-                     <div class="absolute inset-0 bg-cabinet-bone/10 pointer-events-none mix-blend-overlay"></div>
-                  {/if}
-                </button>
+                <div class="relative group/thumb">
+                  <button
+                    class="relative w-20 h-20 border transition-all duration-500 overflow-hidden
+                     {selectedImageIndex === i ? 'border-cabinet-bone opacity-100 scale-105' : 'border-cabinet-wood opacity-40 hover:opacity-80 hover:border-cabinet-bone/60'}"
+                    onclick={() => selectImage(i)}
+                    aria-label="Показать вид {i + 1}"
+                  >
+                    <img src={resolveUrl(img.url)} alt="" class="w-full h-full object-cover grayscale group-hover/thumb:grayscale-0 transition-all duration-500" />
+                    {#if selectedImageIndex === i}
+                      <div class="absolute inset-0 bg-cabinet-bone/10 pointer-events-none mix-blend-overlay"></div>
+                    {/if}
+                  </button>
+                  <!-- Lightbox open on double-click / expand icon -->
+                  <button
+                    onclick={() => openLightbox(i)}
+                    class="absolute inset-0 flex items-end justify-end p-1 opacity-0 group-hover/thumb:opacity-100 transition-opacity"
+                    aria-label="Открыть увеличенно"
+                  >
+                    <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="rgba(212,197,176,0.7)" stroke-width="1.5">
+                      <path d="M1 4V1h3M6 1h3v3M9 6v3H6M4 9H1V6"/>
+                    </svg>
+                  </button>
+                </div>
               {/each}
             </div>
           {/if}

@@ -3,7 +3,7 @@
 export interface FigurineListItem {
     id: string;
     name: string;
-    status: string;
+    status: 'available' | 'sold' | 'reserved';
     faceImageUrl: string | null;
 }
 
@@ -74,4 +74,23 @@ export interface ServerRelease {
 export interface AppSettings {
     serverUrl: string;
     apiKey: string;
+}
+
+export interface AuthorProfile {
+    name: string;
+    tagline: string | null;
+    bio: string | null;
+    photoUrl: string | null;
+    instagram: string | null;
+    telegram: string | null;
+    vk: string | null;
+    email: string | null;
+}
+
+export interface OrderRequest {
+    figurineId: string;
+    figurineName: string;
+    requesterName: string;
+    requesterEmail: string;
+    message: string | null;
 }

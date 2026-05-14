@@ -6,6 +6,7 @@ use axum::{
     body::Bytes,
 };
 use crate::services::AppService;
+use crate::config::Config;
 use crate::models::*;
 use crate::error::{Result, AppError};
 use uuid::Uuid;
@@ -76,6 +77,24 @@ pub async fn get_workshop_items(
     Ok(Json(items))
 }
 
+// Combined GET dispatcher: /content/texts/:param (author | workshop)
+pub async fn get_texts_by_param(
+    State(service): State<AppService>,
+    Path(param): Path<String>,
+) -> Result<axum::response::Response> {
+    match param.as_str() {
+        "author" => {
+            let texts = service.get_author_texts().await?;
+            Ok(Json(texts).into_response())
+        },
+        "workshop" => {
+            let items = service.get_workshop_items().await?;
+            Ok(Json(items).into_response())
+        },
+        _ => Err(AppError::NotFound(format!("Unknown text category: {}", param))),
+    }
+}
+
 pub async fn get_cabinet_zones(
     State(service): State<AppService>,
 ) -> Result<Json<Vec<CabinetZoneDto>>> {
@@ -101,6 +120,160 @@ pub async fn get_asset(
         },
         None => Err(AppError::NotFound("Asset not found".to_string()))
     }
+}
+
+// === ADMIN AUTH ===
+
+pub async fn admin_login(
+    State(config): State<Config>,
+    Json(creds): Json<LoginRequest>,
+) -> Result<Json<serde_json::Value>> {
+    if creds.login == config.admin_login && creds.password == config.admin_password {
+        Ok(Json(serde_json::json!({ "token": config.admin_api_key })))
+    } else {
+        Err(AppError::Unauthorized)
+    }
+}
+
+// === ADMIN FIGURINE CRUD ===
+
+pub async fn save_figurine(
+    State(service): State<AppService>,
+    Json(req): Json<SaveFigurineRequest>,
+) -> Result<StatusCode> {
+    service.save_figurine(req).await?;
+    Ok(StatusCode::OK)
+}
+
+pub async fn delete_figurine(
+    State(service): State<AppService>,
+    Path(id): Path<String>,
+) -> Result<StatusCode> {
+    service.delete_figurine(id).await?;
+    Ok(StatusCode::OK)
+}
+
+// === ADMIN MEDIA UPLOAD ===
+
+pub async fn upload_file(
+    State(_service): State<AppService>,
+    State(config): State<Config>,
+    mut multipart: Multipart,
+) -> Result<Json<serde_json::Value>> {
+    while let Some(field) = multipart.next_field().await.map_err(|e| AppError::BadRequest(e.to_string()))? {
+        let name = field.name().unwrap_or("").to_string();
+        if name == "file" {
+            let filename = field.file_name().unwrap_or("file").to_string();
+            let ext = std::path::Path::new(&filename)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("bin")
+                .to_lowercase();
+            let data = field.bytes().await.map_err(|e| AppError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+
+            let subdir = match ext.as_str() {
+                "mp4" | "webm" | "mov" | "avi" => "videos",
+                "mp3" | "wav" | "ogg" | "m4a" | "aac" => "audio",
+                _ => "images",
+            };
+            let media_dir = format!("{}/{}", config.upload_dir, subdir);
+            fs::create_dir_all(&media_dir).await.map_err(AppError::Io)?;
+
+            let file_id = Uuid::new_v4();
+            let file_name = format!("{}.{}", file_id, ext);
+            let full_path = format!("{}/{}", media_dir, file_name);
+            let mut file = fs::File::create(&full_path).await.map_err(AppError::Io)?;
+            file.write_all(&data).await.map_err(AppError::Io)?;
+
+            let url = format!("/static/{}/{}", subdir, file_name);
+            return Ok(Json(serde_json::json!({ "url": url })));
+        }
+    }
+    Err(AppError::BadRequest("No file field found".to_string()))
+}
+
+// === ADMIN ZONE CRUD ===
+
+pub async fn save_zone(
+    State(service): State<AppService>,
+    Json(req): Json<SaveZoneRequest>,
+) -> Result<StatusCode> {
+    service.save_zone(req).await?;
+    Ok(StatusCode::OK)
+}
+
+pub async fn delete_zone(
+    State(service): State<AppService>,
+    Path(id): Path<String>,
+) -> Result<StatusCode> {
+    service.delete_zone(id).await?;
+    Ok(StatusCode::OK)
+}
+
+// === ADMIN TEXT CRUD ===
+
+pub async fn save_text(
+    State(service): State<AppService>,
+    Path(param): Path<String>,
+    Json(req): Json<SaveTextRequest>,
+) -> Result<StatusCode> {
+    let cat = match param.as_str() {
+        "author" => TextCategory::Author,
+        "workshop" => TextCategory::Workshop,
+        _ => return Err(AppError::BadRequest(format!("Unknown category: {}", param))),
+    };
+    service.save_text(cat, req).await?;
+    Ok(StatusCode::OK)
+}
+
+pub async fn delete_text(
+    State(service): State<AppService>,
+    Path(id): Path<String>,
+) -> Result<StatusCode> {
+    service.delete_text_item(id).await?;
+    Ok(StatusCode::OK)
+}
+
+// === ADMIN BACKGROUND ===
+
+pub async fn get_main_background(
+    State(service): State<AppService>,
+) -> Result<Json<serde_json::Value>> {
+    let url = service.get_background().await?;
+    Ok(Json(serde_json::json!({ "url": url })))
+}
+
+pub async fn upload_main_background(
+    State(service): State<AppService>,
+    State(config): State<Config>,
+    mut multipart: Multipart,
+) -> Result<Json<serde_json::Value>> {
+    while let Some(field) = multipart.next_field().await.map_err(|e| AppError::BadRequest(e.to_string()))? {
+        let name = field.name().unwrap_or("").to_string();
+        if name == "file" {
+            let filename = field.file_name().unwrap_or("bg.jpg").to_string();
+            let ext = std::path::Path::new(&filename)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("jpg")
+                .to_lowercase();
+            let data = field.bytes().await.map_err(|e| AppError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+
+            let bg_dir = format!("{}/backgrounds", config.upload_dir);
+            fs::create_dir_all(&bg_dir).await.map_err(AppError::Io)?;
+
+            let file_name = format!("cabinet-bg.{}", ext);
+            let full_path = format!("{}/{}", bg_dir, file_name);
+            let mut file = fs::File::create(&full_path).await.map_err(AppError::Io)?;
+            file.write_all(&data).await.map_err(AppError::Io)?;
+
+            let relative = format!("/static/backgrounds/{}", file_name);
+            service.set_background(relative.clone()).await?;
+            let public_url = service.get_background().await?.unwrap_or(relative);
+            return Ok(Json(serde_json::json!({ "url": public_url })));
+        }
+    }
+    Err(AppError::BadRequest("No file field found".to_string()))
 }
 
 // === ADMIN / RELEASE MANAGEMENT ===
@@ -163,5 +336,33 @@ pub async fn switch_release(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode> {
     service.switch_to_release(id).await?;
+    Ok(StatusCode::OK)
+}
+
+// === AUTHOR PROFILE ===
+
+pub async fn get_author_profile(
+    State(service): State<AppService>,
+) -> Result<Json<crate::models::AuthorProfile>> {
+    let profile = service.get_author_profile().await?;
+    Ok(Json(profile))
+}
+
+pub async fn save_author_profile(
+    State(service): State<AppService>,
+    Json(profile): Json<crate::models::AuthorProfile>,
+) -> Result<StatusCode> {
+    service.save_author_profile(profile).await?;
+    Ok(StatusCode::OK)
+}
+
+// === ORDERS ===
+
+pub async fn create_order(
+    State(service): State<AppService>,
+    Json(order): Json<crate::models::OrderRequest>,
+) -> Result<StatusCode> {
+    // Fire-and-forget — never fail the request due to notification errors
+    let _ = service.send_order_notification(&order).await;
     Ok(StatusCode::OK)
 }

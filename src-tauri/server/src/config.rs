@@ -9,6 +9,10 @@ pub struct Config {
     pub upload_dir: String,
     pub public_url: String,
     pub rust_log: String,
+    pub admin_login: String,
+    pub admin_password: String,
+    pub telegram_bot_token: Option<String>,
+    pub telegram_chat_id: Option<String>,
 }
 
 impl Config {
@@ -24,6 +28,10 @@ impl Config {
             upload_dir: dotenvy::var("UPLOAD_DIR").unwrap_or_else(|_| "./uploads".to_string()),
             public_url: dotenvy::var("PUBLIC_URL").expect("PUBLIC_URL must be set"),
             rust_log: dotenvy::var("RUST_LOG").unwrap_or_else(|_| "info,sqlx=warn".into()),
+            admin_login: dotenvy::var("ADMIN_LOGIN").unwrap_or_else(|_| "admin".to_string()),
+            admin_password: dotenvy::var("ADMIN_PASSWORD").unwrap_or_else(|_| "123".to_string()),
+            telegram_bot_token: dotenvy::var("TELEGRAM_BOT_TOKEN").ok(),
+            telegram_chat_id: dotenvy::var("TELEGRAM_CHAT_ID").ok(),
         }
     }
 }

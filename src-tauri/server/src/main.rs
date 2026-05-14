@@ -1,6 +1,6 @@
 use gotiga_server::{api, config, db, services};
-use std::net::SocketAddr;
 use sqlx::postgres::PgPoolOptions;
+use std::net::SocketAddr;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
@@ -16,7 +16,12 @@ async fn main() -> anyhow::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    tracing::info!("Starting server on {}:{}", config.host, config.port);
+    tracing::info!(
+        "Starting server on {}:{} | db: {}",
+        config.host,
+        config.port,
+        config.database_url
+    );
 
     // 3. Connect to DB
     let pool = PgPoolOptions::new()
@@ -34,10 +39,13 @@ async fn main() -> anyhow::Result<()> {
     // 5. Initialize Layers
     let repo = db::Repository::new(pool);
     let service = services::AppService::new(repo, config.clone());
-    
+
     // Initialize content pool (hot load active release)
     if let Err(e) = service.initialize().await {
-        tracing::warn!("Failed to load active release: {}. Server will start in empty mode.", e);
+        tracing::warn!(
+            "Failed to load active release: {}. Server will start in empty mode.",
+            e
+        );
     }
 
     let router = api::router(service, config.clone());
@@ -46,7 +54,7 @@ async fn main() -> anyhow::Result<()> {
     let addr: SocketAddr = format!("{}:{}", config.host, config.port)
         .parse()
         .expect("Invalid address");
-    
+
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, router)
         .with_graceful_shutdown(shutdown_signal())
@@ -77,6 +85,6 @@ async fn shutdown_signal() {
         _ = ctrl_c => {},
         _ = terminate => {},
     }
-    
+
     tracing::info!("Signal received, starting graceful shutdown");
 }

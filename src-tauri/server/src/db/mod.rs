@@ -27,9 +27,14 @@ impl Repository {
     pub async fn load_content_pool(&self, path: &str) -> Result<()> {
         let opts = sqlx::sqlite::SqliteConnectOptions::new()
             .filename(path)
-            .read_only(true);
+            .create_if_missing(false)
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
 
         let pool = SqlitePool::connect_with(opts).await?;
+        // Enable foreign keys
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&pool)
+            .await?;
         self.set_content_pool(pool).await;
         Ok(())
     }
@@ -303,6 +308,166 @@ impl Repository {
     
         
     
+            // === ADMIN WRITE OPERATIONS ===
+
+            pub async fn upsert_figurine(&self, f: &crate::models::SaveFigurineRequest) -> Result<()> {
+                let pool = self.content().await?;
+                sqlx::query(
+                    "INSERT INTO figurines (id, name, short_text, full_description, dimensions, material, technique, year, ambience_path, video_url, secret_text, is_visible, status, sort_order, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                     ON CONFLICT(id) DO UPDATE SET
+                       name=excluded.name, short_text=excluded.short_text, full_description=excluded.full_description,
+                       dimensions=excluded.dimensions, material=excluded.material, technique=excluded.technique,
+                       year=excluded.year, ambience_path=excluded.ambience_path, video_url=excluded.video_url,
+                       secret_text=excluded.secret_text, is_visible=excluded.is_visible, status=excluded.status,
+                       sort_order=excluded.sort_order, updated_at=datetime('now')"
+                )
+                .bind(&f.id).bind(&f.name).bind(&f.short_text).bind(&f.full_description)
+                .bind(&f.dimensions).bind(&f.material).bind(&f.technique).bind(f.year)
+                .bind(&f.ambience_path).bind(&f.video_url).bind(&f.secret_text)
+                .bind(f.is_visible).bind(&f.status).bind(f.sort_order)
+                .execute(&pool).await?;
+                Ok(())
+            }
+
+            pub async fn delete_figurine(&self, id: &str) -> Result<()> {
+                let pool = self.content().await?;
+                sqlx::query("DELETE FROM figurines WHERE id = ?")
+                    .bind(id).execute(&pool).await?;
+                Ok(())
+            }
+
+            pub async fn replace_images(&self, figurine_id: &str, images: &[crate::models::SaveImageRequest]) -> Result<()> {
+                let pool = self.content().await?;
+                sqlx::query("DELETE FROM images WHERE figurine_id = ?")
+                    .bind(figurine_id).execute(&pool).await?;
+                for (idx, img) in images.iter().enumerate() {
+                    let sort = img.sort_order.unwrap_or(idx as i32);
+                    sqlx::query(
+                        "INSERT INTO images (id, figurine_id, image_type, file_path, alt_text, sort_order) VALUES (?, ?, ?, ?, ?, ?)"
+                    )
+                    .bind(&img.id).bind(figurine_id).bind(&img.image_type)
+                    .bind(&img.url).bind(&img.alt_text).bind(sort)
+                    .execute(&pool).await?;
+                }
+                Ok(())
+            }
+
+            pub async fn replace_steps(&self, figurine_id: &str, steps: &[crate::models::SaveStepRequest]) -> Result<()> {
+                let pool = self.content().await?;
+                sqlx::query("DELETE FROM process_steps WHERE figurine_id = ?")
+                    .bind(figurine_id).execute(&pool).await?;
+                for (idx, step) in steps.iter().enumerate() {
+                    let sort = step.sort_order.unwrap_or(idx as i32);
+                    sqlx::query(
+                        "INSERT INTO process_steps (id, figurine_id, step_type, description, image_path, sort_order) VALUES (?, ?, ?, ?, ?, ?)"
+                    )
+                    .bind(&step.id).bind(figurine_id).bind(&step.step_type)
+                    .bind(&step.description).bind(&step.image_url).bind(sort)
+                    .execute(&pool).await?;
+                }
+                Ok(())
+            }
+
+            pub async fn upsert_zone(&self, z: &crate::models::SaveZoneRequest, sort_order: i32) -> Result<()> {
+                let pool = self.content().await?;
+                sqlx::query(
+                    "INSERT INTO cabinet_zones (id, zone_type, x_percent, y_percent, width_percent, height_percent, target_route, sort_order)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                     ON CONFLICT(id) DO UPDATE SET
+                       zone_type=excluded.zone_type, x_percent=excluded.x_percent, y_percent=excluded.y_percent,
+                       width_percent=excluded.width_percent, height_percent=excluded.height_percent,
+                       target_route=excluded.target_route, sort_order=excluded.sort_order"
+                )
+                .bind(&z.id).bind(&z.zone_type).bind(z.x).bind(z.y)
+                .bind(z.width).bind(z.height).bind(&z.target_route).bind(sort_order)
+                .execute(&pool).await?;
+                Ok(())
+            }
+
+            pub async fn delete_zone(&self, id: &str) -> Result<()> {
+                let pool = self.content().await?;
+                sqlx::query("DELETE FROM cabinet_zones WHERE id = ?")
+                    .bind(id).execute(&pool).await?;
+                Ok(())
+            }
+
+            pub async fn get_zone_count(&self) -> Result<i32> {
+                let pool = self.content().await?;
+                let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM cabinet_zones")
+                    .fetch_one(&pool).await?;
+                Ok(row.0 as i32)
+            }
+
+            pub async fn upsert_text(&self, t: &crate::models::SaveTextRequest, category: &crate::models::TextCategory) -> Result<()> {
+                let pool = self.content().await?;
+                sqlx::query(
+                    "INSERT INTO texts (id, category, content, caption, image_path, sort_order, updated_at)
+                     VALUES (?, ?, ?, ?, ?, COALESCE((SELECT sort_order FROM texts WHERE id = ?), (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM texts WHERE category = ?)), datetime('now'))
+                     ON CONFLICT(id) DO UPDATE SET
+                       content=excluded.content, caption=excluded.caption,
+                       image_path=excluded.image_path, updated_at=datetime('now')"
+                )
+                .bind(&t.id).bind(category).bind(&t.content).bind(&t.caption)
+                .bind(&t.image_url).bind(&t.id).bind(category)
+                .execute(&pool).await?;
+                Ok(())
+            }
+
+            pub async fn delete_text(&self, id: &str) -> Result<()> {
+                let pool = self.content().await?;
+                sqlx::query("DELETE FROM texts WHERE id = ?")
+                    .bind(id).execute(&pool).await?;
+                Ok(())
+            }
+
+            pub async fn get_main_background(&self) -> Result<Option<String>> {
+                let pool = self.content().await?;
+                let row: Option<(String,)> = sqlx::query_as(
+                    "SELECT file_path FROM app_resources WHERE key = 'main_background'"
+                )
+                .fetch_optional(&pool).await?;
+                Ok(row.map(|r| r.0))
+            }
+
+            pub async fn set_main_background(&self, url: &str) -> Result<()> {
+                let pool = self.content().await?;
+                sqlx::query(
+                    "INSERT INTO app_resources (key, file_path, updated_at) VALUES ('main_background', ?, datetime('now'))
+                     ON CONFLICT(key) DO UPDATE SET file_path=excluded.file_path, updated_at=datetime('now')"
+                )
+                .bind(url).execute(&pool).await?;
+                Ok(())
+            }
+
+            pub async fn get_author_profile(&self) -> Result<Option<crate::models::AuthorProfile>> {
+                let pool = self.content().await?;
+                let row: Option<(String,)> = sqlx::query_as(
+                    "SELECT file_path FROM app_resources WHERE key = 'author_profile'"
+                )
+                .fetch_optional(&pool).await?;
+                match row {
+                    None => Ok(None),
+                    Some((json,)) => {
+                        let profile = serde_json::from_str(&json)
+                            .unwrap_or_default();
+                        Ok(Some(profile))
+                    }
+                }
+            }
+
+            pub async fn save_author_profile(&self, profile: &crate::models::AuthorProfile) -> Result<()> {
+                let pool = self.content().await?;
+                let json = serde_json::to_string(profile)
+                    .map_err(|e| AppError::Internal(e.to_string()))?;
+                sqlx::query(
+                    "INSERT INTO app_resources (key, file_path, updated_at) VALUES ('author_profile', ?, datetime('now'))
+                     ON CONFLICT(key) DO UPDATE SET file_path=excluded.file_path, updated_at=datetime('now')"
+                )
+                .bind(json).execute(&pool).await?;
+                Ok(())
+            }
+
             // === MEDIA STREAMING ===
     
             
@@ -310,42 +475,31 @@ impl Repository {
             // Generic blob fetcher
     
             pub async fn get_blob(&self, table: &str, column: &str, id: String) -> Result<Option<Vec<u8>>> {
-    
                 let pool = self.content().await?;
-    
-                // Validate table/column to prevent SQL injection (since we format string)
-    
-                match (table, column) {
-    
-                    ("images", "data") |
-    
-                    ("process_steps", "image_data") |
-    
-                    ("figurines", "video_data") |
-    
-                    ("figurines", "ambience_data") |
-    
-                    ("texts", "image_data") => {},
-    
-                    _ => return Err(AppError::BadRequest("Invalid media target".to_string())),
-    
+
+                // app_resources uses `key` not `id` — handle separately
+                if table == "app_resources" && column == "data" {
+                    let row: Option<(Vec<u8>,)> = sqlx::query_as(
+                        "SELECT data FROM app_resources WHERE key = ?"
+                    ).bind(&id).fetch_optional(&pool).await?;
+                    return Ok(row.map(|r| r.0));
                 }
-    
-        
-    
+
+                // Validate table/column to prevent SQL injection (since we format the query string)
+                match (table, column) {
+                    ("images", "data") |
+                    ("process_steps", "image_data") |
+                    ("figurines", "video_data") |
+                    ("figurines", "ambience_data") |
+                    ("texts", "image_data") => {},
+                    _ => return Err(AppError::BadRequest("Invalid media target".to_string())),
+                }
+
                 let query = format!("SELECT {} FROM {} WHERE id = ?", column, table);
-    
                 let row: Option<(Vec<u8>,)> = sqlx::query_as(&query)
-    
                     .bind(id)
-    
                     .fetch_optional(&pool)
-    
                     .await?;
-    
-                    
-    
                 Ok(row.map(|r| r.0))
-    
             }
 }

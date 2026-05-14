@@ -3,6 +3,7 @@ use crate::db::Repository;
 use crate::error::Result;
 use crate::models::*;
 use uuid::Uuid;
+use reqwest::Client;
 
 #[derive(Clone)]
 pub struct AppService {
@@ -62,10 +63,16 @@ impl AppService {
         format!("{}/api/v1/assets/{}/{}", base, table, id)
     }
 
-    // Use external URL if already http, otherwise serve via asset endpoint
+    // Resolve a stored path/URL to a full URL for the frontend:
+    // - "http..." → use as-is (external URL or legacy full URL)
+    // - "/static/..." → prepend public_url (web-uploaded file, stored as relative path)
+    // - anything else → serve via blob asset endpoint (Tauri-embedded BLOB path)
     fn resolve_url(&self, file_path: &str, table: &str, id: &str) -> String {
         if file_path.starts_with("http") {
             file_path.to_string()
+        } else if file_path.starts_with("/static/") {
+            let base = self.config.public_url.trim_end_matches('/');
+            format!("{}{}", base, file_path)
         } else {
             self.asset_url(table, id)
         }
@@ -182,6 +189,102 @@ impl AppService {
         }).collect())
     }
 
+    // === ADMIN WRITE ===
+
+    pub async fn save_figurine(&self, req: crate::models::SaveFigurineRequest) -> Result<()> {
+        self.repo.upsert_figurine(&req).await?;
+        self.repo.replace_images(&req.id, &req.images).await?;
+        self.repo.replace_steps(&req.id, &req.process_steps).await?;
+        Ok(())
+    }
+
+    pub async fn delete_figurine(&self, id: String) -> Result<()> {
+        self.repo.delete_figurine(&id).await
+    }
+
+    pub async fn save_zone(&self, req: crate::models::SaveZoneRequest) -> Result<()> {
+        let count = self.repo.get_zone_count().await?;
+        self.repo.upsert_zone(&req, count).await
+    }
+
+    pub async fn delete_zone(&self, id: String) -> Result<()> {
+        self.repo.delete_zone(&id).await
+    }
+
+    pub async fn save_text(&self, category: crate::models::TextCategory, req: crate::models::SaveTextRequest) -> Result<()> {
+        self.repo.upsert_text(&req, &category).await
+    }
+
+    pub async fn delete_text_item(&self, id: String) -> Result<()> {
+        self.repo.delete_text(&id).await
+    }
+
+    pub async fn get_background(&self) -> Result<Option<String>> {
+        let path = self.repo.get_main_background().await?;
+        Ok(path.map(|p| {
+            if p.starts_with("http") {
+                p
+            } else if p.starts_with("/static/") {
+                let base = self.config.public_url.trim_end_matches('/');
+                format!("{}{}", base, p)
+            } else {
+                // Tauri-embedded local path — serve BLOB from app_resources.data
+                let base = self.config.public_url.trim_end_matches('/');
+                format!("{}/api/v1/assets/background/main_background", base)
+            }
+        }))
+    }
+
+    pub async fn set_background(&self, url: String) -> Result<()> {
+        self.repo.set_main_background(&url).await
+    }
+
+    // === AUTHOR PROFILE ===
+
+    pub async fn get_author_profile(&self) -> Result<AuthorProfile> {
+        Ok(self.repo.get_author_profile().await?.unwrap_or_default())
+    }
+
+    pub async fn save_author_profile(&self, profile: AuthorProfile) -> Result<()> {
+        self.repo.save_author_profile(&profile).await
+    }
+
+    // === ORDERS / NOTIFICATIONS ===
+
+    pub async fn send_order_notification(&self, order: &OrderRequest) -> Result<()> {
+        let (Some(token), Some(chat_id)) = (
+            self.config.telegram_bot_token.as_deref(),
+            self.config.telegram_chat_id.as_deref(),
+        ) else {
+            return Ok(());
+        };
+
+        let text = format!(
+            "📦 *Новый запрос на артефакт*\n\n\
+            🏺 Фигурка: {}\n\
+            👤 Имя: {}\n\
+            📧 Email: {}\n\
+            💬 Сообщение: {}",
+            escape_markdown(&order.figurine_name),
+            escape_markdown(&order.requester_name),
+            escape_markdown(&order.requester_email),
+            escape_markdown(order.message.as_deref().unwrap_or("—")),
+        );
+
+        let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+        let client = Client::new();
+        let _ = client.post(&url)
+            .json(&serde_json::json!({
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": "MarkdownV2"
+            }))
+            .send()
+            .await;
+
+        Ok(())
+    }
+
     pub async fn get_asset(&self, table: &str, id: String) -> Result<Option<Vec<u8>>> {
         let (real_table, column) = match table {
             "images" => ("images", "data"),
@@ -189,9 +292,21 @@ impl AppService {
             "figurines_video" => ("figurines", "video_data"),
             "figurines_audio" => ("figurines", "ambience_data"),
             "texts" => ("texts", "image_data"),
+            "background" => ("app_resources", "data"),
             _ => return Err(crate::error::AppError::BadRequest("Invalid asset type".to_string())),
         };
-        
+
         self.repo.get_blob(real_table, column, id).await
     }
+}
+
+fn escape_markdown(s: &str) -> String {
+    // Telegram MarkdownV2 special chars
+    s.chars().fold(String::new(), |mut acc, c| {
+        if matches!(c, '_'|'*'|'['|']'|'('|')'|'~'|'`'|'>'|'#'|'+'|'-'|'='|'|'|'{'|'}'|'.'|'!') {
+            acc.push('\\');
+        }
+        acc.push(c);
+        acc
+    })
 }

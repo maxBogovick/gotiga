@@ -6,26 +6,53 @@
   import { fade } from 'svelte/transition';
   import { BackButton, LoadingScreen } from '$lib/components'; // Убедитесь, что BackButton стилизована или удалите импорт, если она не подходит
 
+  type StatusFilter = 'all' | 'available' | 'reserved' | 'sold';
+
   // State
   let figurines = $state<FigurineListItem[]>([]);
   let isLoading = $state(true);
   let error = $state<string | null>(null);
   let prefersReducedMotion = $state(false);
   let searchQuery = $state('');
+  let statusFilter = $state<StatusFilter>('all');
+
+  const PAGE_SIZE = 12;
+  let displayLimit = $state(PAGE_SIZE);
 
   let filtered = $derived(
-    searchQuery.trim()
-      ? figurines.filter(f => f.name.toLowerCase().includes(searchQuery.toLowerCase()))
-      : figurines
+    figurines
+      .filter(f => statusFilter === 'all' || f.status === statusFilter)
+      .filter(f => !searchQuery.trim() || f.name.toLowerCase().includes(searchQuery.toLowerCase()))
   );
+
+  let visible = $derived(filtered.slice(0, displayLimit));
+  let hasMore = $derived(filtered.length > displayLimit);
+
+  $effect(() => {
+    // Reset pagination whenever the filter/search changes
+    void statusFilter;
+    void searchQuery;
+    displayLimit = PAGE_SIZE;
+  });
+
+  let statusCounts = $derived({
+    all: figurines.length,
+    available: figurines.filter(f => f.status === 'available').length,
+    reserved: figurines.filter(f => f.status === 'reserved').length,
+    sold: figurines.filter(f => f.status === 'sold').length,
+  });
 
   // Derived
   let countText = $derived(() => {
-    const n = figurines.length;
-    if (n === 0) return 'Пустота';
-    if (n === 1) return 'I Экспонат';
-    if (n >= 2 && n <= 4) return `${toRoman(n)} Экспоната`;
-    return `${toRoman(n)} Экспонатов`;
+    const total = figurines.length;
+    const shown = filtered.length;
+    if (total === 0) return 'Пустота';
+    if (statusFilter !== 'all' || searchQuery.trim()) {
+      return `${shown} из ${toRoman(total)}`;
+    }
+    if (total === 1) return 'I Экспонат';
+    if (total >= 2 && total <= 4) return `${toRoman(total)} Экспоната`;
+    return `${toRoman(total)} Экспонатов`;
   });
 
   // Helper для римских цифр (для атмосферы)
@@ -108,23 +135,56 @@
             <p class="text-xl text-[#d4c5b0] border-l-2 border-[#d4c5b0]/20 pl-4">{countText()}</p>
           </div>
         </div>
-        <!-- Search -->
-        <div class="relative max-w-sm">
-          <input
-            bind:value={searchQuery}
-            type="text"
-            placeholder="Поиск по имени..."
-            class="w-full bg-transparent border border-[#d4c5b0]/15 focus:border-[#d4c5b0]/40 px-4 py-2 text-xs tracking-widest text-[#d4c5b0] placeholder-[#8a7f70]/50 outline-none transition-colors font-['Cinzel'] uppercase"
-          />
-          {#if searchQuery}
-            <button onclick={() => searchQuery = ''} class="absolute right-3 top-1/2 -translate-y-1/2 text-[#8a7f70] hover:text-[#d4c5b0] text-xs">✕</button>
-          {/if}
+        <!-- Search + Filters -->
+        <div class="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
+          <!-- Search -->
+          <div class="relative w-full sm:max-w-xs">
+            <input
+              bind:value={searchQuery}
+              type="text"
+              placeholder="Поиск по имени..."
+              class="w-full bg-transparent border border-[#d4c5b0]/15 focus:border-[#d4c5b0]/40 px-4 py-2 text-xs tracking-widest text-[#d4c5b0] placeholder-[#8a7f70]/50 outline-none transition-colors font-['Cinzel'] uppercase"
+            />
+            {#if searchQuery}
+              <button onclick={() => searchQuery = ''} class="absolute right-3 top-1/2 -translate-y-1/2 text-[#8a7f70] hover:text-[#d4c5b0] text-xs">✕</button>
+            {/if}
+          </div>
+
+          <!-- Status filter pills -->
+          <div class="flex flex-wrap gap-2" role="group" aria-label="Фильтр по статусу">
+            {#each ([
+              { key: 'all',       label: 'Все',        count: statusCounts.all },
+              { key: 'available', label: 'В наличии',  count: statusCounts.available },
+              { key: 'reserved',  label: 'Бронь',      count: statusCounts.reserved },
+              { key: 'sold',      label: 'Утрачено',   count: statusCounts.sold },
+            ] as const) as pill}
+              {#if pill.key === 'all' || pill.count > 0}
+                <button
+                  onclick={() => statusFilter = pill.key}
+                  class="flex items-center gap-1.5 px-3 py-1 text-[10px] tracking-widest uppercase border transition-all duration-200 font-['Cinzel']
+                    {statusFilter === pill.key
+                      ? 'border-[#d4c5b0]/50 text-[#d4c5b0] bg-[#d4c5b0]/8'
+                      : 'border-[#d4c5b0]/10 text-[#8a7f70] hover:border-[#d4c5b0]/25 hover:text-[#d4c5b0]/70'}"
+                >
+                  {#if pill.key === 'available'}
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-500/70 flex-shrink-0"></span>
+                  {:else if pill.key === 'reserved'}
+                    <span class="w-1.5 h-1.5 rounded-full bg-amber-500/70 flex-shrink-0"></span>
+                  {:else if pill.key === 'sold'}
+                    <span class="w-1.5 h-1.5 rounded-full bg-red-800/70 flex-shrink-0"></span>
+                  {/if}
+                  {pill.label}
+                  <span class="opacity-40">{pill.count}</span>
+                </button>
+              {/if}
+            {/each}
+          </div>
         </div>
       </div>
 
       {#if filtered.length > 0}
         <ul class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-8 gap-y-16">
-          {#each filtered as figurine, i (figurine.id)}
+          {#each visible as figurine, i (figurine.id)}
             <li class="group perspective-container" in:fade={{ delay: i * 100, duration: 800 }}>
               <button
                       class="w-full text-left relative focus:outline-none"
@@ -156,14 +216,37 @@
                   <h2 class="font-['UnifrakturMaguntia'] text-xl sm:text-2xl text-[#d4c5b0] mb-1 group-hover:text-white transition-colors tracking-wide">
                     {figurine.name}
                   </h2>
-                  <p class="text-[10px] tracking-[0.2em] uppercase text-[#8a7f70] group-hover:text-[#d4c5b0]/70 transition-colors">
-                    Экспонат №{i + 1}
-                  </p>
+                  <div class="flex items-center gap-2">
+                    <p class="text-[10px] tracking-[0.2em] uppercase text-[#8a7f70] group-hover:text-[#d4c5b0]/70 transition-colors">
+                      Экспонат №{i + 1}
+                    </p>
+                    <span class="text-[#8a7f70]/30">·</span>
+                    <span class="flex items-center gap-1 text-[10px] tracking-[0.15em] uppercase
+                      {figurine.status === 'available' ? 'text-emerald-600/70' : figurine.status === 'reserved' ? 'text-amber-600/70' : 'text-[#5c544a]'}">
+                      <span class="w-1 h-1 rounded-full flex-shrink-0
+                        {figurine.status === 'available' ? 'bg-emerald-500/60' : figurine.status === 'reserved' ? 'bg-amber-500/60' : 'bg-[#5c544a]'}
+                      "></span>
+                      {figurine.status === 'available' ? 'В наличии' : figurine.status === 'reserved' ? 'Бронь' : 'Утрачено'}
+                    </span>
+                  </div>
                 </div>
               </button>
             </li>
           {/each}
         </ul>
+
+        {#if hasMore}
+          <div class="mt-20 flex justify-center" in:fade>
+            <button
+              onclick={() => displayLimit += PAGE_SIZE}
+              class="group flex items-center gap-4 px-10 py-4 border border-[#d4c5b0]/20 hover:border-[#d4c5b0]/50 text-[#8a7f70] hover:text-[#d4c5b0] font-['Cinzel'] text-xs tracking-[0.3em] uppercase transition-all duration-500"
+            >
+              <span>Открыть следующих</span>
+              <span class="text-[#d4c5b0]/30 group-hover:text-[#d4c5b0]/60 transition-colors">{Math.min(PAGE_SIZE, filtered.length - displayLimit)}</span>
+              <span class="transition-transform group-hover:translate-y-0.5">↓</span>
+            </button>
+          </div>
+        {/if}
       {:else if searchQuery}
         <div class="flex flex-col items-center justify-center py-32 border border-dashed border-[#d4c5b0]/10 rounded-lg" in:fade>
           <p class="font-['UnifrakturMaguntia'] text-3xl text-[#8a7f70] mb-2 opacity-50">Не найдено...</p>
