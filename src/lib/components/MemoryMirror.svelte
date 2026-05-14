@@ -2,12 +2,17 @@
   import { onMount, onDestroy } from 'svelte';
   import { fade } from 'svelte/transition';
 
-  let { 
-    finalImage, 
-    steps = [], 
-    isOpen = false, 
-    onClose = () => {} 
-  } = $props();
+  let {
+    finalImage,
+    steps = [],
+    isOpen = false,
+    onClose = () => {}
+  } = $props<{
+    finalImage: string;
+    steps: { id: string; stepType: string; description: string | null; imageUrl: string }[];
+    isOpen: boolean;
+    onClose: () => void;
+  }>();
 
   let canvas: HTMLCanvasElement;
   let ctx: CanvasRenderingContext2D | null;
@@ -182,8 +187,8 @@
                         </span>
                     </div>
                 {/if}
-                <!-- Texture -->
-                <div class="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/aged-paper.png')] opacity-30 mix-blend-multiply"></div>
+                <!-- Texture (subtle grain) -->
+                <div class="absolute inset-0 paper-texture"></div>
             </div>
         {/key}
 
@@ -234,3 +239,12 @@
     </button>
   </div>
 {/if}
+
+<style>
+  .paper-texture {
+    opacity: 0.2;
+    mix-blend-mode: multiply;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+    background-size: 150px 150px;
+  }
+</style>

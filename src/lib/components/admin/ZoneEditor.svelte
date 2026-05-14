@@ -1,8 +1,7 @@
 <script lang="ts">
     import { onMount } from 'svelte';
-    import { api } from '$lib/api';
+    import { api, isTauri } from '$lib/api';
     import type { CabinetZone } from '$lib/types/api';
-    import { open } from '@tauri-apps/plugin-dialog';
     import { fade } from 'svelte/transition';
 
     let zones = $state<CabinetZone[]>([]);
@@ -33,22 +32,34 @@
     }
 
     async function changeBackground() {
-        const selected = await open({
-            multiple: false,
-            filters: [{ name: 'Images', extensions: ['jpg', 'png', 'webp'] }]
-        });
-
-        if (selected && typeof selected === 'string') {
-            try {
-                // Upload and save to DB in one go
-                const url = await api.setMainBackground(selected);
-                
-                bgImage = resolveUrl(url);
-                message = 'Фон обновлен';
-                setTimeout(() => message = '', 2000);
-            } catch (e) {
-                alert('Ошибка загрузки фона: ' + e);
+        try {
+            let fileOrPath: string | File;
+            if (isTauri) {
+                const { open } = await import('@tauri-apps/plugin-dialog');
+                const selected = await open({
+                    multiple: false,
+                    filters: [{ name: 'Images', extensions: ['jpg', 'png', 'webp'] }]
+                });
+                if (!selected || typeof selected !== 'string') return;
+                fileOrPath = selected;
+            } else {
+                fileOrPath = await new Promise<File>((resolve, reject) => {
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.accept = 'image/jpeg,image/png,image/webp';
+                    input.onchange = () => {
+                        const file = input.files?.[0];
+                        if (file) resolve(file); else reject(new Error('Файл не выбран'));
+                    };
+                    input.click();
+                });
             }
+            const url = await api.setMainBackground(fileOrPath as string);
+            bgImage = resolveUrl(url);
+            message = 'Фон обновлен';
+            setTimeout(() => message = '', 2000);
+        } catch (e) {
+            if (String(e) !== 'Error: Файл не выбран') alert('Ошибка загрузки фона: ' + e);
         }
     }
 
@@ -130,7 +141,7 @@
                             top: {zone.y}%; 
                             width: {zone.width}%; 
                             height: {zone.height}%;
-                            border-color: {selectedZone?.id === zone.id ? '#amber-500' : 'rgba(212, 197, 176, 0.3)'};
+                            border-color: {selectedZone?.id === zone.id ? '#f59e0b' : 'rgba(212, 197, 176, 0.3)'};
                             z-index: {selectedZone?.id === zone.id ? 10 : 1};
                         "
                     >

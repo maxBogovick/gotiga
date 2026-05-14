@@ -43,43 +43,38 @@ impl Repository {
     // === SYSTEM (Postgres) ===
 
     pub async fn add_release(&self, file_path: &str, description: Option<String>) -> Result<Uuid> {
-        let rec = sqlx::query!(
-            r#"
-            INSERT INTO releases (file_path, description)
-            VALUES ($1, $2)
-            RETURNING id
-            "#,
-            file_path, description
+        let rec: (Uuid,) = sqlx::query_as(
+            "INSERT INTO releases (file_path, description) VALUES ($1, $2) RETURNING id"
         )
-            .fetch_one(&self.pg_pool)
-            .await?;
-        Ok(rec.id)
+        .bind(file_path)
+        .bind(description)
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(rec.0)
     }
 
     pub async fn activate_release(&self, id: Uuid) -> Result<()> {
         let mut tx = self.pg_pool.begin().await?;
 
-        // Deactivate all
-        sqlx::query!("UPDATE releases SET is_active = false WHERE is_active = true")
+        sqlx::query("UPDATE releases SET is_active = false WHERE is_active = true")
             .execute(&mut *tx).await?;
 
-        // Activate target
-        sqlx::query!("UPDATE releases SET is_active = true WHERE id = $1", id)
+        sqlx::query("UPDATE releases SET is_active = true WHERE id = $1")
+            .bind(id)
             .execute(&mut *tx).await?;
 
         tx.commit().await?;
         Ok(())
     }
 
-        pub async fn get_active_release_path(&self) -> Result<Option<String>> {
-            let rec = sqlx::query!(
-                "SELECT file_path FROM releases WHERE is_active = true LIMIT 1"
-            )
-            .fetch_optional(&self.pg_pool)
-            .await?;
-            
-            Ok(rec.map(|r| r.file_path))
-        }
+    pub async fn get_active_release_path(&self) -> Result<Option<String>> {
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT file_path FROM releases WHERE is_active = true LIMIT 1"
+        )
+        .fetch_optional(&self.pg_pool)
+        .await?;
+        Ok(row.map(|r| r.0))
+    }
     
         pub async fn get_releases(&self) -> Result<Vec<Release>> {
             let releases = sqlx::query_as::<_, Release>(

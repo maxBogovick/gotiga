@@ -13,13 +13,21 @@
     y = e.clientY;
   }
 
+  function handleTouchMove(e: TouchEvent) {
+    if (!isActive || e.touches.length === 0) return;
+    x = e.touches[0].clientX;
+    y = e.touches[0].clientY;
+  }
+
   onMount(() => {
     window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('touchmove', handleTouchMove, { passive: true });
   });
 
   onDestroy(() => {
       if (typeof window !== 'undefined') {
           window.removeEventListener('mousemove', handleMouseMove);
+          window.removeEventListener('touchmove', handleTouchMove);
       }
   });
 </script>

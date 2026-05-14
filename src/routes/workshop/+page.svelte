@@ -100,7 +100,8 @@
     </header>
 
     {#if items.length > 0}
-      <div class="relative min-h-[120vh] mt-10">
+      <!-- Desktop: scattered absolute layout. Mobile: responsive grid -->
+      <div class="hidden md:block relative min-h-[120vh] mt-10">
         {#each items as item, i}
           {@const style = getItemStyle(i)}
           <div
@@ -150,6 +151,33 @@
           </div>
         {/each}
       </div>
+      <!-- Mobile grid layout -->
+      <div class="grid md:hidden grid-cols-1 sm:grid-cols-2 gap-8 mt-10">
+        {#each items as item, i}
+          <div in:fly={{ y: 30, opacity: 0, duration: 600, delay: 100 + (i * 80) }}>
+            <button
+                    class="relative block w-full text-left focus:outline-none group"
+                    onclick={() => toggleExpand(item.id)}
+            >
+              <div class="bg-[#1c1917] p-4 shadow-[10px_10px_30px_rgba(0,0,0,0.5)] border border-[#2a2622] group-hover:border-[#d4c5b0]/30 transition-colors duration-500">
+                {#if item.imageUrl}
+                  <div class="relative aspect-square overflow-hidden mb-4 bg-black">
+                    <img src={item.imageUrl} alt="" class="w-full h-full object-cover opacity-60 grayscale group-hover:grayscale-0 group-hover:opacity-90 transition-all duration-1000" loading="lazy" />
+                    <div class="absolute inset-0 shadow-[inset_0_0_40px_rgba(0,0,0,0.7)] pointer-events-none"></div>
+                  </div>
+                {/if}
+                {#if item.caption}
+                  <p class="font-serif text-[13px] text-[#8a7f70] leading-snug italic opacity-80 group-hover:opacity-100 group-hover:text-[#d4c5b0] transition-all">{item.caption}</p>
+                {/if}
+                {#if expandedItem === item.id}
+                  <div class="mt-4 text-sm text-[#d4c5b0]/70 italic leading-relaxed border-t border-[#d4c5b0]/10 pt-4">{item.content}</div>
+                {/if}
+              </div>
+            </button>
+          </div>
+        {/each}
+      </div>
+
     {:else}
       <div class="text-center py-40 border border-dashed border-[#d4c5b0]/10" in:fade>
         <p class="font-['UnifrakturMaguntia'] text-2xl text-[#8a7f70] opacity-40 uppercase tracking-[0.2em]">

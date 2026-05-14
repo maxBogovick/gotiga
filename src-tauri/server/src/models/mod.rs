@@ -56,6 +56,8 @@ pub enum TextCategory {
 
 // ============================================================
 // ENTITIES (DB MAPPING)
+// SQLite stores timestamps as TEXT ("YYYY-MM-DD HH:MM:SS"),
+// so we use String instead of DateTime<Utc> for SQLite entities.
 // ============================================================
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
@@ -74,8 +76,8 @@ pub struct Figurine {
     pub is_visible: bool,
     pub status: FigurineStatus,
     pub sort_order: i32,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
@@ -86,8 +88,8 @@ pub struct Image {
     pub file_path: String,
     pub alt_text: Option<String>,
     pub sort_order: i32,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
@@ -98,8 +100,8 @@ pub struct ProcessStep {
     pub description: Option<String>,
     pub image_path: String,
     pub sort_order: i32,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
@@ -110,8 +112,8 @@ pub struct Text {
     pub caption: Option<String>,
     pub image_path: Option<String>,
     pub sort_order: i32,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
@@ -126,10 +128,11 @@ pub struct CabinetZone {
     pub sort_order: i32,
 }
 
+// Postgres — timestamps are real TIMESTAMPTZ, use DateTime<Utc>
 #[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Release {
-    pub id: Uuid, // Release ID is Postgres UUID, keep as Uuid
+    pub id: Uuid,
     pub version: i32,
     pub file_path: String,
     pub is_active: bool,
@@ -138,7 +141,7 @@ pub struct Release {
 }
 
 // ============================================================
-// DTOs (API Contract)
+// DTOs (API Contract — camelCase for JS frontend)
 // ============================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,7 +156,7 @@ pub struct FigurineListItemDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImageDto {
-    pub id: Option<String>,
+    pub id: String,
     pub image_type: ImageType,
     pub url: String,
     pub alt_text: Option<String>,
@@ -162,7 +165,7 @@ pub struct ImageDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProcessStepDto {
-    pub id: Option<String>,
+    pub id: String,
     pub step_type: StepType,
     pub description: Option<String>,
     pub image_url: String,
@@ -171,7 +174,7 @@ pub struct ProcessStepDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FigurineDto {
-    pub id: Option<String>,
+    pub id: String,
     pub name: String,
     pub short_text: Option<String>,
     pub full_description: Option<String>,
@@ -185,12 +188,12 @@ pub struct FigurineDto {
     pub status: FigurineStatus,
     pub sort_order: i32,
     pub is_visible: bool,
-    
+
     #[serde(default)]
     pub images: Vec<ImageDto>,
     #[serde(default)]
     pub process_steps: Vec<ProcessStepDto>,
-    #[serde(default, skip_deserializing)]
+    #[serde(default)]
     pub related_items: Vec<FigurineListItemDto>,
 }
 
@@ -223,7 +226,7 @@ pub struct WorkshopItemDto {
 }
 
 // ============================================================
-// Sync Manifest DTO (Backward Compatibility)
+// Misc
 // ============================================================
 
 #[derive(Debug, Serialize)]

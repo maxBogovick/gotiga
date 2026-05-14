@@ -1,6 +1,6 @@
 <script lang="ts">
     import { onMount } from 'svelte';
-    import { api } from '$lib/api';
+    import { api, isTauri } from '$lib/api';
     import type { ServerRelease } from '$lib/types/api';
     import { fade } from 'svelte/transition';
 
@@ -37,7 +37,7 @@
     }
 
     async function handleActivate(release: ServerRelease) {
-        if (release.is_active) return;
+        if (release.isActive) return;
         if (!confirm(`Активировать версию ${release.version} (${release.description || 'Без описания'})? Пользователи начнут получать этот контент.`)) return;
 
         try {
@@ -56,6 +56,27 @@
             showMessage('Синхронизация завершена: ' + res, 'success');
         } catch (e) {
             showMessage('Ошибка синхронизации: ' + e, 'error');
+        }
+    }
+
+    async function handleUpload(e: Event) {
+        const file = (e.target as HTMLInputElement).files?.[0];
+        if (!file) return;
+        isExporting = true;
+        try {
+            const form = new FormData();
+            form.append('file', file);
+            const { serverUrl, apiKey } = (await api.getSettings());
+            const base = serverUrl ? `${serverUrl}/api/v1` : '/api/v1';
+            const headers: Record<string, string> = apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
+            const res = await fetch(`${base}/admin/releases`, { method: 'POST', headers, body: form });
+            if (!res.ok) throw new Error(`${res.status}: ${await res.text().catch(() => '')}`);
+            showMessage('Релиз загружен и активирован', 'success');
+            await loadReleases();
+        } catch (e) {
+            showMessage('Ошибка загрузки: ' + e, 'error');
+        } finally {
+            isExporting = false;
         }
     }
 
@@ -85,12 +106,20 @@
             {#if message}
                 <span class="text-xs transition-opacity duration-500 text-[#d4c5b0]" in:fade>{message}</span>
             {/if}
-            <button onclick={handlePull} class="btn-gothic border-blue-900/40 text-blue-400">
-                📥 Скачать активную
-            </button>
-            <button onclick={handleExport} class="btn-gothic border-amber-900/40 text-amber-600" disabled={isExporting}>
-                {isExporting ? 'Создание...' : '📦 Создать релиз'}
-            </button>
+            {#if isTauri}
+                <button onclick={handlePull} class="btn-gothic border-blue-900/40 text-blue-400">
+                    📥 Скачать активную
+                </button>
+                <button onclick={handleExport} class="btn-gothic border-amber-900/40 text-amber-600" disabled={isExporting}>
+                    {isExporting ? 'Создание...' : '📦 Создать релиз'}
+                </button>
+            {:else}
+                <span class="text-[10px] text-[#8a7f70] italic">Загрузите .db файл через кнопку ниже</span>
+                <label class="btn-gothic border-amber-900/40 text-amber-600 cursor-pointer">
+                    📦 Загрузить релиз
+                    <input type="file" accept=".db,.sqlite" class="hidden" onchange={handleUpload} />
+                </label>
+            {/if}
         </div>
     </div>
 
@@ -113,7 +142,7 @@
                 </div>
             {:else}
                 {#each releases as release}
-                    <div class="grid grid-cols-12 items-center p-3 border border-[#d4c5b0]/5 hover:bg-[#d4c5b0]/5 transition-colors group {release.is_active ? 'bg-[#d4c5b0]/5' : ''}">
+                    <div class="grid grid-cols-12 items-center p-3 border border-[#d4c5b0]/5 hover:bg-[#d4c5b0]/5 transition-colors group {release.isActive ? 'bg-[#d4c5b0]/5' : ''}">
                         <div class="col-span-1 text-[#d4c5b0] font-bold">{release.version}</div>
                         <div class="col-span-1">
                             {#if release.isActive}

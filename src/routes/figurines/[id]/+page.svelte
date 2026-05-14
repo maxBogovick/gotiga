@@ -21,11 +21,21 @@
   let showOrderModal = $state(false);
   let isAudioPlaying = $state(false);
   let isCandleLit = $state(false);
-  let audioRef: HTMLAudioElement | null = null;
+  let audioRef = $state<HTMLAudioElement | null>(null);
   let audioVolume = $state(0);
+  let videoRef = $state<HTMLVideoElement | null>(null);
+
+  function toggleFullscreen() {
+      if (!videoRef) return;
+      if (document.fullscreenElement) {
+          document.exitFullscreen();
+      } else {
+          videoRef.requestFullscreen().catch(() => {});
+      }
+  }
 
   // Derived
-  let id = $derived(page.params.id);
+  let id = $derived(page.params.id ?? '');
 
   let sortedImages = $derived(
           figurine?.images
@@ -390,8 +400,9 @@
                 onclick={toggleGrimoire}
                 class="mx-auto flex flex-col items-center gap-4 group cursor-pointer"
             >
-                <span class="font-['UnifrakturMaguntia'] text-2xl text-cabinet-bone opacity-80 group-hover:opacity-100 transition-opacity">
+                <span class="relative font-['UnifrakturMaguntia'] text-2xl text-cabinet-bone opacity-80 group-hover:opacity-100 transition-opacity">
                    Заглянуть в Зеркало Памяти
+                   <span class="absolute -top-1 -right-3 w-2 h-2 rounded-full bg-[#d4c5b0]/60 animate-ping"></span>
                 </span>
                  <div class="w-px h-16 bg-gradient-to-b from-cabinet-bone/0 via-cabinet-bone/40 to-cabinet-bone/0 group-hover:h-24 transition-all duration-500"></div>
             </button>
@@ -430,8 +441,9 @@
                      <div class="relative aspect-video overflow-hidden bg-black">
                          <div class="absolute inset-0 bg-[radial-gradient(circle,rgba(30,25,20,0.2)_0%,rgba(0,0,0,0.8)_100%)] pointer-events-none z-10"></div>
                          
-                         <video 
-                            controls 
+                         <video
+                            bind:this={videoRef}
+                            controls
                             class="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity duration-1000 sepia-[0.3]"
                             poster={resolveUrl(currentImage?.url)}
                             preload="metadata"
@@ -442,6 +454,13 @@
 
                          <!-- Old Film Grain Overlay -->
                          <div class="absolute inset-0 pointer-events-none bg-noise opacity-[0.07] mix-blend-overlay z-20"></div>
+
+                         <!-- Custom fullscreen button -->
+                         <button
+                             onclick={toggleFullscreen}
+                             class="absolute top-3 right-3 z-30 bg-black/60 hover:bg-black/80 border border-cabinet-bone/20 hover:border-cabinet-bone/50 p-2 transition-all opacity-0 group-hover:opacity-100 font-['Cinzel'] text-[10px] uppercase tracking-widest text-cabinet-bone"
+                             title="На весь экран"
+                         >⛶</button>
                          
                          <!-- Scratches/Artifacts (CSS animation could go here) -->
                      </div>

@@ -12,6 +12,21 @@ use uuid::Uuid;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
+fn detect_mime(bytes: &[u8], table: &str) -> &'static str {
+    if table.contains("video") {
+        return "video/mp4";
+    }
+    if table.contains("audio") || table == "figurines_audio" {
+        return "audio/mpeg";
+    }
+    match bytes.get(..4) {
+        Some([0xFF, 0xD8, 0xFF, _]) => "image/jpeg",
+        Some([0x89, 0x50, 0x4E, 0x47]) => "image/png",
+        Some([0x52, 0x49, 0x46, 0x46]) => "image/webp",
+        _ => "application/octet-stream",
+    }
+}
+
 // === PUBLIC READ-ONLY HANDLERS ===
 
 pub async fn health_check() -> impl IntoResponse {
@@ -77,8 +92,8 @@ pub async fn get_asset(
     let data = service.get_asset(&table, id).await?;
     match data {
         Some(bytes) => {
-            // Simple MIME detection
-            let mime = "application/octet-stream";
+            // Detect MIME from first bytes (magic numbers)
+            let mime = detect_mime(&bytes, table.as_str());
             Ok((
                 [(axum::http::header::CONTENT_TYPE, mime)],
                 Bytes::from(bytes)

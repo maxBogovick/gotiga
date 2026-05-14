@@ -21,6 +21,25 @@
     width = rect.width;
     height = rect.height;
   }
+
+  function handleTouchStart(e: TouchEvent) {
+    if (!container || e.touches.length === 0) return;
+    e.preventDefault();
+    showLens = true;
+    const rect = container.getBoundingClientRect();
+    x = e.touches[0].clientX - rect.left;
+    y = e.touches[0].clientY - rect.top;
+    width = rect.width;
+    height = rect.height;
+  }
+
+  function handleTouchMove(e: TouchEvent) {
+    if (!container || e.touches.length === 0) return;
+    e.preventDefault();
+    const rect = container.getBoundingClientRect();
+    x = e.touches[0].clientX - rect.left;
+    y = e.touches[0].clientY - rect.top;
+  }
 </script>
 
 <div
@@ -29,6 +48,9 @@
   onmousemove={handleMouseMove}
   onmouseenter={() => showLens = true}
   onmouseleave={() => showLens = false}
+  ontouchstart={handleTouchStart}
+  ontouchmove={handleTouchMove}
+  ontouchend={() => showLens = false}
   role="img"
   aria-label={alt}
 >

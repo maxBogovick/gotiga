@@ -59,7 +59,16 @@ impl AppService {
 
     fn asset_url(&self, table: &str, id: &str) -> String {
         let base = self.config.public_url.trim_end_matches('/');
-        format!("{}/assets/{}/{}", base, table, id)
+        format!("{}/api/v1/assets/{}/{}", base, table, id)
+    }
+
+    // Use external URL if already http, otherwise serve via asset endpoint
+    fn resolve_url(&self, file_path: &str, table: &str, id: &str) -> String {
+        if file_path.starts_with("http") {
+            file_path.to_string()
+        } else {
+            self.asset_url(table, id)
+        }
     }
 
     pub async fn list_figurines(&self, visible_only: bool) -> Result<Vec<FigurineListItemDto>> {
@@ -70,7 +79,7 @@ impl AppService {
             let images = self.repo.get_images_by_figurine(f.id.clone()).await?;
             let face_img = images.iter()
                 .find(|i| i.image_type == ImageType::Face)
-                .map(|i| self.asset_url("images", &i.id));
+                .map(|i| self.resolve_url(&i.file_path, "images", &i.id));
 
             result.push(FigurineListItemDto {
                 id: f.id,
@@ -95,7 +104,7 @@ impl AppService {
             let r_imgs = self.repo.get_images_by_figurine(r.id.clone()).await?;
             let face = r_imgs.iter()
                 .find(|i| i.image_type == ImageType::Face)
-                .map(|i| self.asset_url("images", &i.id));
+                .map(|i| self.resolve_url(&i.file_path, "images", &i.id));
 
             related_items.push(FigurineListItemDto {
                 id: r.id,
@@ -106,21 +115,21 @@ impl AppService {
         }
 
         let image_dtos = images.into_iter().map(|i| ImageDto {
-            id: Some(i.id.clone()),
+            id: i.id.clone(),
             image_type: i.image_type,
-            url: self.asset_url("images", &i.id),
+            url: self.resolve_url(&i.file_path, "images", &i.id),
             alt_text: i.alt_text,
         }).collect();
 
         let step_dtos = steps.into_iter().map(|s| ProcessStepDto {
-            id: Some(s.id.clone()),
+            id: s.id.clone(),
             step_type: s.step_type,
             description: s.description,
-            image_url: self.asset_url("process_steps", &s.id),
+            image_url: self.resolve_url(&s.image_path, "process_steps", &s.id),
         }).collect();
 
         Ok(FigurineDto {
-            id: Some(figurine.id.clone()),
+            id: figurine.id.clone(),
             name: figurine.name,
             short_text: figurine.short_text,
             full_description: figurine.full_description,
@@ -128,8 +137,10 @@ impl AppService {
             material: figurine.material,
             technique: figurine.technique,
             year: figurine.year,
-            ambience_path: figurine.ambience_path.as_ref().map(|_| self.asset_url("figurines_audio", &figurine.id)),
-            video_url: figurine.video_url.as_ref().map(|_| self.asset_url("figurines_video", &figurine.id)),
+            ambience_path: figurine.ambience_path.as_ref()
+                .map(|p| self.resolve_url(p, "figurines_audio", &figurine.id)),
+            video_url: figurine.video_url.as_ref()
+                .map(|p| self.resolve_url(p, "figurines_video", &figurine.id)),
             secret_text: figurine.secret_text,
             status: figurine.status,
             sort_order: figurine.sort_order,
@@ -154,7 +165,7 @@ impl AppService {
             id: t.id.clone(),
             content: t.content,
             caption: t.caption,
-            image_url: t.image_path.as_ref().map(|_| self.asset_url("texts", &t.id)),
+            image_url: t.image_path.as_ref().map(|p| self.resolve_url(p, "texts", &t.id)),
         }).collect())
     }
 

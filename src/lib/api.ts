@@ -1,106 +1,208 @@
 // src/lib/api.ts
-import { invoke } from '@tauri-apps/api/core';
 import type {
     FigurineListItem,
     Figurine,
     AuthorText,
     WorkshopItem,
     CabinetZone,
-    AppSettings, ServerRelease
+    AppSettings,
+    ServerRelease
 } from './types/api';
+
+export type { AppSettings };
+
+// Tauri 2.x injects __TAURI_INTERNALS__ into the webview
+export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+
+// --- Tauri helpers ---
+async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+    const { invoke: tauriInvoke } = await import('@tauri-apps/api/core');
+    return tauriInvoke<T>(cmd, args);
+}
+
+// --- Web helpers ---
+function getWebSettings(): AppSettings {
+    if (typeof localStorage === 'undefined') return { serverUrl: '', apiKey: '' };
+    return {
+        serverUrl: localStorage.getItem('gotiga_server_url') ?? '',
+        apiKey: localStorage.getItem('gotiga_api_key') ?? '',
+    };
+}
+
+function webApiBase(): string {
+    const { serverUrl } = getWebSettings();
+    return serverUrl ? `${serverUrl}/api/v1` : '/api/v1';
+}
+
+async function webFetch<T>(path: string, options?: RequestInit): Promise<T> {
+    const res = await fetch(`${webApiBase()}${path}`, options);
+    if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`API ${res.status}: ${text}`);
+    }
+    return res.json();
+}
+
+function authHeaders(): Record<string, string> {
+    const { apiKey } = getWebSettings();
+    return apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
+}
 
 export const api = {
     // === READ ===
     async getAllFigurines(): Promise<FigurineListItem[]> {
-        return invoke('get_all_figurines');
+        if (isTauri) return invoke('get_all_figurines');
+        return webFetch('/figurines?visible=true');
     },
 
     async getFigurine(id: string): Promise<Figurine | null> {
-        return invoke('get_figurine', { id });
+        if (isTauri) return invoke('get_figurine', { id });
+        try {
+            return await webFetch(`/figurines/${id}`);
+        } catch (e: unknown) {
+            if (e instanceof Error && e.message.includes('404')) return null;
+            throw e;
+        }
     },
 
     async getAuthorTexts(): Promise<AuthorText[]> {
-        return invoke('get_author_texts');
+        if (isTauri) return invoke('get_author_texts');
+        return webFetch('/content/texts/author');
     },
 
     async getWorkshopContent(): Promise<WorkshopItem[]> {
-        return invoke('get_workshop_content');
+        if (isTauri) return invoke('get_workshop_content');
+        return webFetch('/content/texts/workshop');
     },
 
     async getCabinetZones(): Promise<CabinetZone[]> {
-        return invoke('get_cabinet_zones');
+        if (isTauri) return invoke('get_cabinet_zones');
+        return webFetch('/cabinet/zones');
     },
 
     // === WRITE (ADMIN) ===
-
     async saveFigurine(figurine: Figurine): Promise<void> {
-        return invoke('save_figurine', { figurine });
+        if (isTauri) return invoke('save_figurine', { figurine });
+        await webFetch('/figurines', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(figurine),
+        });
     },
 
-    async importMedia(filePath: string, mediaType: 'images' | 'videos' | 'audio'): Promise<string> {
-        return invoke('import_media', { filePath, mediaType });
+    // fileOrPath is a local path string in Tauri, a File object on web
+    async importMedia(fileOrPath: string | File, mediaType: 'images' | 'videos' | 'audio'): Promise<string> {
+        if (isTauri) {
+            return invoke('import_media', { filePath: fileOrPath as string, mediaType });
+        }
+        const file = fileOrPath as File;
+        const form = new FormData();
+        form.append('file', file);
+        form.append('type', mediaType === 'videos' ? 'video' : mediaType === 'audio' ? 'audio' : 'image');
+        const res = await fetch(`${webApiBase()}/upload`, {
+            method: 'POST',
+            headers: authHeaders(),
+            body: form,
+        });
+        if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+        const data = await res.json();
+        return data.url as string;
     },
 
     async saveCabinetZone(zone: CabinetZone): Promise<void> {
-        return invoke('save_cabinet_zone', { zone });
+        if (isTauri) return invoke('save_cabinet_zone', { zone });
+        await webFetch('/cabinet/zones', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(zone),
+        });
     },
 
     async deleteCabinetZone(id: string): Promise<void> {
-        return invoke('delete_cabinet_zone', { id });
+        if (isTauri) return invoke('delete_cabinet_zone', { id });
+        const res = await fetch(`${webApiBase()}/cabinet/zones/${id}`, {
+            method: 'DELETE',
+            headers: authHeaders(),
+        });
+        if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
     },
 
-    // Used for both Author Texts and Workshop Items
     async saveText(item: WorkshopItem | AuthorText, category: 'author' | 'workshop'): Promise<void> {
-        // Ensure AuthorText fits WorkshopItem shape if needed, or backend handles it
-        // Backend expects generic structure: id, content, caption, imageUrl
         const dto = {
             id: item.id,
             content: item.content,
-            caption: (item as WorkshopItem).caption || null,
-            imageUrl: (item as WorkshopItem).imageUrl || null
+            caption: (item as WorkshopItem).caption ?? null,
+            imageUrl: (item as WorkshopItem).imageUrl ?? null,
         };
-        return invoke('save_text', { dto, category });
+        if (isTauri) return invoke('save_text', { dto, category });
+        await webFetch(`/content/texts/${category}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(dto),
+        });
     },
 
     async deleteText(id: string): Promise<void> {
-        return invoke('delete_text', { id });
+        if (isTauri) return invoke('delete_text', { id });
+        const res = await fetch(`${webApiBase()}/content/texts/${id}`, {
+            method: 'DELETE',
+            headers: authHeaders(),
+        });
+        if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
     },
 
     async getMainBackground(): Promise<string | null> {
-        return invoke('get_main_background');
+        if (isTauri) return invoke('get_main_background');
+        return null;
     },
 
     async setMainBackground(filePath: string): Promise<string> {
-        return invoke('set_main_background', { filePath });
+        if (isTauri) return invoke('set_main_background', { filePath });
+        return filePath;
     },
 
     // === SYNC & SETTINGS ===
-
     async getSettings(): Promise<AppSettings> {
-        return invoke('get_settings');
+        if (isTauri) return invoke('get_settings');
+        return getWebSettings();
     },
 
     async saveSettings(settings: AppSettings): Promise<void> {
-        return invoke('save_settings', { settings });
+        if (isTauri) return invoke('save_settings', { settings });
+        localStorage.setItem('gotiga_server_url', settings.serverUrl);
+        localStorage.setItem('gotiga_api_key', settings.apiKey);
     },
 
     async exportRelease(): Promise<string> {
-        return invoke('export_release');
+        if (isTauri) return invoke('export_release');
+        throw new Error('В веб-режиме данные сохраняются напрямую на сервер без создания релизов.');
     },
 
     async pullUpdates(): Promise<string> {
-        return invoke('pull_updates');
+        if (isTauri) return invoke('pull_updates');
+        throw new Error('В веб-режиме данные загружаются напрямую с сервера.');
     },
 
     async pushFigurine(figurine: Figurine): Promise<string> {
-        return invoke('push_figurine', { figurine });
+        if (isTauri) return invoke('push_figurine', { figurine });
+        await api.saveFigurine(figurine);
+        return 'Сохранено на сервере';
     },
 
     async getServerReleases(): Promise<ServerRelease[]> {
-        return invoke('get_server_releases');
+        if (isTauri) return invoke('get_server_releases');
+        try {
+            return await webFetch('/releases');
+        } catch {
+            return [];
+        }
     },
 
     async activateServerRelease(id: string): Promise<void> {
-        return invoke('activate_server_release', { id });
-    }
+        if (isTauri) return invoke('activate_server_release', { id });
+        await webFetch(`/releases/${id}/activate`, {
+            method: 'POST',
+            headers: authHeaders(),
+        });
+    },
 };

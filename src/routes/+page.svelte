@@ -24,17 +24,28 @@
 
     const DEFAULT_ZONES: CabinetZone[] = [
         { id: 'curator', zoneType: 'curator', x: 38, y: 15, width: 24, height: 75, targetRoute: '/author' },
-        { id: 'cabinet', zoneType: 'cabinet', x: 76, y: 42, width: 20, height: 45, targetRoute: '/collection' },
-        { id: 'portrait', zoneType: 'portrait', x: 8, y: 28, width: 15, height: 30, targetRoute: '/about' },
-        { id: 'windows', zoneType: 'windows', x: 25, y: 2, width: 50, height: 20, targetRoute: '/gallery' },
+        { id: 'cabinet', zoneType: 'cabinet', x: 76, y: 42, width: 20, height: 45, targetRoute: '/figurines' },
+        { id: 'portrait', zoneType: 'portrait', x: 8, y: 28, width: 15, height: 30, targetRoute: '/author' },
+        { id: 'windows', zoneType: 'windows', x: 25, y: 2, width: 50, height: 20, targetRoute: '/workshop' },
     ];
 
     const ZONE_DATA: Record<string, { label: string; description: string; icon: string; accent: string }> = {
-        curator: { label: 'КУРАТОР', description: 'Мастер теней и кукол', icon: '⚰', accent: '#8b7355' },
-        cabinet: { label: 'АРХИВЪ', description: 'Реликвии забвения', icon: '🕯', accent: '#9b8b7e' },
-        portrait: { label: 'ИСТОРИЯ', description: 'Хроники проклятых', icon: '🗝', accent: '#a0937e' },
-        windows: { label: 'ВИТРАЖИ', description: 'Разбитый свет', icon: '🌙', accent: '#8b8b9b' },
+        // типы из ZoneEditor (server-side)
+        showcase:  { label: 'АРХИВЪ',     description: 'Реликвии забвения',      icon: '🕯', accent: '#9b8b7e' },
+        desk:      { label: 'МАСТЕРСКАЯ', description: 'Место, где рождается форма', icon: '🌙', accent: '#8b8b9b' },
+        shelf:     { label: 'ВИТРИНА',    description: 'Хроники проклятых',       icon: '🗝', accent: '#a0937e' },
+        note:      { label: 'АВТОР',      description: 'Мастер теней и кукол',    icon: '⚰', accent: '#8b7355' },
+        // типы из DEFAULT_ZONES (fallback)
+        curator:   { label: 'КУРАТОР',    description: 'Мастер теней и кукол',    icon: '⚰', accent: '#8b7355' },
+        cabinet:   { label: 'АРХИВЪ',     description: 'Реликвии забвения',       icon: '🕯', accent: '#9b8b7e' },
+        portrait:  { label: 'ИСТОРИЯ',    description: 'Хроники проклятых',       icon: '🗝', accent: '#a0937e' },
+        windows:   { label: 'ВИТРАЖИ',    description: 'Разбитый свет',           icon: '🌙', accent: '#8b8b9b' },
     };
+
+    // Фолбэк для неизвестных типов зон
+    function getZoneData(zoneType: string) {
+        return ZONE_DATA[zoneType] ?? { label: zoneType.toUpperCase(), description: 'Исследуйте', icon: '✦', accent: '#8b7355' };
+    }
 
     // --- Logic ---
     async function init() {
@@ -98,21 +109,42 @@
         });
     }
 
+    function handleTouchMove(e: TouchEvent) {
+        if (e.touches.length === 0) return;
+        const { innerWidth, innerHeight } = window;
+        const t = e.touches[0];
+        parallaxSpring.set({
+            x: (t.clientX / innerWidth - 0.5) * 2,
+            y: (t.clientY / innerHeight - 0.5) * 2
+        });
+    }
+
     async function handleZoneInteraction(zone: CabinetZone) {
         if (isNavigating) return;
         isNavigating = true;
         await goto(zone.targetRoute);
     }
 
+    let showHint = $state(false);
+    let hintDismissed = $state(false);
+
     onMount(() => {
         init();
+
+        // Show hint after 3s if user hasn't hovered any zone yet
+        const hintTimer = setTimeout(() => {
+            if (!hoveredZone) showHint = true;
+        }, 3000);
 
         // Ambient flicker effect
         const flickerInterval = setInterval(() => {
             ambientIntensity = 0.92 + Math.random() * 0.08;
         }, 150);
 
-        return () => clearInterval(flickerInterval);
+        return () => {
+            clearInterval(flickerInterval);
+            clearTimeout(hintTimer);
+        };
     });
 </script>
 
@@ -124,9 +156,9 @@
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Playfair+Display:wght@700;900&family=UnifrakturMaguntia&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 </svelte:head>
 
-<svelte:window onmousemove={handleMouseMove} />
+<svelte:window onmousemove={handleMouseMove} ontouchmove={handleTouchMove} />
 
-<div class="main-wrapper">
+<div class="main-wrapper" ontouchmove={handleTouchMove}>
 
     <!-- Ambient particles -->
     <div class="particles-container">
@@ -217,12 +249,29 @@
             </div>
 
             <div class="cinema-bar bottom-bar">
-                <div class="bar-hint">
-                    {#if !hoveredZone}
-                        <span class="hint-icon">☠</span>
-                        <span class="hint-text">Исследуйте тени прошлого</span>
-                    {/if}
-                </div>
+                {#if hoveredZone && ZONE_DATA[hoveredZone.zoneType]}
+                    <!-- Hovered zone info -->
+                    <div class="bar-zone-info" in:fade={{ duration: 200 }}>
+                        <span class="bar-zone-icon">{ZONE_DATA[hoveredZone.zoneType].icon}</span>
+                        <div class="bar-zone-text">
+                            <span class="bar-zone-name">{ZONE_DATA[hoveredZone.zoneType].label}</span>
+                            <span class="bar-zone-desc">{ZONE_DATA[hoveredZone.zoneType].description}</span>
+                        </div>
+                    </div>
+                {:else}
+                    <!-- Bottom navigation: unique routes -->
+                    <nav class="bottom-nav" in:fade={{ duration: 300 }}>
+                        {#each [...new Map(zones.map(z => [z.targetRoute, z])).values()] as zone}
+                            {@const zd = ZONE_DATA[zone.zoneType]}
+                            {#if zd}
+                                <a href={zone.targetRoute} class="bottom-nav-item">
+                                    <span class="bottom-nav-icon">{zd.icon}</span>
+                                    <span class="bottom-nav-label">{zd.label}</span>
+                                </a>
+                            {/if}
+                        {/each}
+                    </nav>
+                {/if}
             </div>
 
             <!-- Main image container with 3D parallax -->
@@ -300,6 +349,7 @@
 </div>
 
 {#snippet zoneButton(zone: CabinetZone, index: number)}
+    {@const zd = ZONE_DATA[zone.zoneType]}
     <button
             class="zone-button"
             style="
@@ -310,10 +360,11 @@
             --zone-delay: {index * 0.8}s;
         "
             onclick={() => handleZoneInteraction(zone)}
-            onmouseenter={() => hoveredZone = zone}
+            onmouseenter={() => { hoveredZone = zone; hintDismissed = true; }}
             onmouseleave={() => hoveredZone = null}
+            ontouchstart={() => { hintDismissed = true; }}
             disabled={isNavigating}
-            aria-label={ZONE_DATA[zone.zoneType]?.label}
+            aria-label={zd?.label}
     >
         <!-- Breathing guide -->
         <div class="zone-guide"></div>
@@ -339,6 +390,15 @@
             <span class="rune r3">✦</span>
             <span class="rune r4">✦</span>
         </div>
+
+        <!-- Floating label — always visible at low opacity, full on hover -->
+        {#if zd}
+            <div class="zone-label">
+                <span class="zone-label-icon">{zd.icon}</span>
+                <span class="zone-label-name">{zd.label}</span>
+                <span class="zone-label-desc">{zd.description}</span>
+            </div>
+        {/if}
     </button>
 {/snippet}
 
@@ -732,8 +792,14 @@
 
     .bottom-bar {
         bottom: 0;
-        border-top: 1px solid rgba(212, 197, 176, 0.2);
+        height: 64px;
+        border-top: 1px solid rgba(212, 197, 176, 0.18);
         justify-content: center;
+        padding: 0;
+        background: linear-gradient(to top,
+            rgba(10, 8, 6, 0.98) 0%,
+            rgba(10, 8, 6, 0.82) 100%
+        );
     }
 
     .bar-ornament {
@@ -1239,5 +1305,198 @@
     /* Global styles */
     :global(body) {
         background: #0a0806;
+    }
+
+    /* === ZONE LABELS (Вариант 1) === */
+    .zone-label {
+        position: absolute;
+        bottom: 12%;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+        opacity: 0.75;
+        transition: opacity 0.4s ease, transform 0.4s ease;
+        pointer-events: none;
+        text-align: center;
+        white-space: nowrap;
+    }
+
+    .zone-button:hover .zone-label {
+        opacity: 1;
+        transform: translateX(-50%) translateY(-8px);
+    }
+
+    .zone-label-icon {
+        font-size: 22px;
+        filter: drop-shadow(0 0 8px rgba(212, 197, 176, 0.7));
+        transition: filter 0.4s ease;
+    }
+
+    .zone-button:hover .zone-label-icon {
+        filter: drop-shadow(0 0 16px rgba(255, 220, 150, 0.9));
+    }
+
+    .zone-label-name {
+        font-family: 'Cinzel', serif;
+        font-size: 10px;
+        letter-spacing: 0.35em;
+        color: #e6decb;
+        text-transform: uppercase;
+        text-shadow:
+            0 0 12px rgba(0,0,0,0.9),
+            0 1px 3px rgba(0,0,0,1),
+            0 0 20px rgba(212, 197, 176, 0.4);
+        background: rgba(0,0,0,0.45);
+        padding: 3px 10px 3px 12px;
+        transition: text-shadow 0.4s ease, background 0.4s ease;
+    }
+
+    .zone-button:hover .zone-label-name {
+        color: #fff;
+        background: rgba(0,0,0,0.65);
+        text-shadow:
+            0 0 20px rgba(212, 197, 176, 0.9),
+            0 1px 3px rgba(0,0,0,1);
+    }
+
+    .zone-label-desc {
+        font-family: 'Cormorant Garamond', serif;
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        color: rgba(212, 197, 176, 0.85);
+        font-style: italic;
+        opacity: 0;
+        transform: translateY(5px);
+        transition: opacity 0.35s ease 0.05s, transform 0.35s ease 0.05s;
+        text-shadow: 0 1px 4px rgba(0,0,0,1), 0 0 12px rgba(0,0,0,0.9);
+        background: rgba(0,0,0,0.5);
+        padding: 2px 8px 2px 10px;
+    }
+
+    .zone-button:hover .zone-label-desc {
+        opacity: 1;
+        transform: translateY(0);
+    }
+
+    /* === BOTTOM NAVIGATION (Вариант 3) === */
+    .bottom-nav {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0;
+        height: 100%;
+    }
+
+    .bottom-nav-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 36px;
+        height: 100%;
+        text-decoration: none;
+        color: rgba(212, 197, 176, 0.75);
+        font-family: 'Cinzel', serif;
+        font-size: 11px;
+        letter-spacing: 0.3em;
+        text-transform: uppercase;
+        border-right: 1px solid rgba(212, 197, 176, 0.12);
+        transition: color 0.35s ease, background 0.35s ease;
+        position: relative;
+    }
+
+    .bottom-nav-item:first-child {
+        border-left: 1px solid rgba(212, 197, 176, 0.12);
+    }
+
+    .bottom-nav-item::after {
+        content: '';
+        position: absolute;
+        bottom: 0;
+        left: 50%;
+        width: 0;
+        height: 1px;
+        background: rgba(212, 197, 176, 0.6);
+        transition: width 0.35s ease, left 0.35s ease;
+    }
+
+    .bottom-nav-item:hover {
+        color: #e6decb;
+        background: rgba(212, 197, 176, 0.05);
+    }
+
+    .bottom-nav-item:hover::after {
+        width: 100%;
+        left: 0;
+    }
+
+    .bottom-nav-icon {
+        font-size: 16px;
+    }
+
+    /* Hovered zone info in bottom bar */
+    .bar-zone-info {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        height: 100%;
+        padding: 0 24px;
+    }
+
+    .bar-zone-icon {
+        font-size: 22px;
+    }
+
+    .bar-zone-text {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+    }
+
+    .bar-zone-name {
+        font-family: 'Cinzel', serif;
+        font-size: 12px;
+        letter-spacing: 0.35em;
+        color: #e6decb;
+        text-transform: uppercase;
+    }
+
+    .bar-zone-desc {
+        font-family: 'Cormorant Garamond', serif;
+        font-size: 14px;
+        letter-spacing: 0.08em;
+        color: rgba(212, 197, 176, 0.65);
+        font-style: italic;
+    }
+
+    /* Disable custom cursor on touch-only devices */
+    @media (hover: none) {
+        .main-wrapper {
+            cursor: default;
+        }
+        .zone-button {
+            cursor: pointer;
+        }
+        .cursor-system {
+            display: none;
+        }
+
+        /* На тач: лейблы всегда видны ярко */
+        .zone-label {
+            opacity: 1;
+        }
+
+        /* Нижняя навигация — на мобиле чуть компактнее */
+        .bottom-nav-item {
+            padding: 0 20px;
+            font-size: 10px;
+            letter-spacing: 0.18em;
+        }
+
+        .bottom-nav-icon {
+            font-size: 18px;
+        }
     }
 </style>

@@ -7,8 +7,11 @@
 
   // Internal state
   let settings = $state<AppSettings>({ serverUrl: 'http://localhost:3000', apiKey: '' });
+  let contactEmail = $state('');
   let isSaving = $state(false);
+  let isTesting = $state(false);
   let error = $state<string | null>(null);
+  let testStatus = $state<'idle' | 'ok' | 'fail'>('idle');
 
   // Load settings when opened
   $effect(() => {
@@ -20,8 +23,24 @@
   async function loadSettings() {
     try {
         settings = await api.getSettings();
+        contactEmail = localStorage.getItem('gotiga_contact_email') ?? '';
+        testStatus = 'idle';
     } catch (e) {
         console.error("Failed to load settings", e);
+    }
+  }
+
+  async function testConnection() {
+    isTesting = true;
+    testStatus = 'idle';
+    try {
+        const base = settings.serverUrl ? `${settings.serverUrl}/api/v1` : '/api/v1';
+        const res = await fetch(`${base}/health`, { signal: AbortSignal.timeout(5000) });
+        testStatus = res.ok ? 'ok' : 'fail';
+    } catch {
+        testStatus = 'fail';
+    } finally {
+        isTesting = false;
     }
   }
 
@@ -34,6 +53,8 @@
         settings.serverUrl = settings.serverUrl.slice(0, -1);
       }
       await api.saveSettings(settings);
+      if (contactEmail) localStorage.setItem('gotiga_contact_email', contactEmail);
+      else localStorage.removeItem('gotiga_contact_email');
       onClose();
     } catch (e) {
       error = String(e);
@@ -72,13 +93,39 @@
 
             <label class="block">
                 <span class="text-xs uppercase tracking-widest text-[#8a7f70] block mb-2">Ключ Доступа (API Key)</span>
-                <input 
+                <input
                     bind:value={settings.apiKey}
-                    type="password" 
+                    type="password"
                     placeholder="••••••••••••••••"
                     class="w-full bg-[#141210] border border-[#d4c5b0]/20 p-3 text-sm focus:border-[#d4c5b0]/60 outline-none transition-colors"
                 />
             </label>
+
+            <label class="block">
+                <span class="text-xs uppercase tracking-widest text-[#8a7f70] block mb-2">Email для заявок</span>
+                <input
+                    bind:value={contactEmail}
+                    type="email"
+                    placeholder="info@gotiga.art"
+                    class="w-full bg-[#141210] border border-[#d4c5b0]/20 p-3 text-sm focus:border-[#d4c5b0]/60 outline-none transition-colors"
+                />
+            </label>
+
+            <div class="flex items-center gap-3">
+                <button
+                    onclick={testConnection}
+                    disabled={isTesting}
+                    class="flex-1 py-2 border text-xs uppercase tracking-widest transition-all
+                        {testStatus === 'ok' ? 'border-green-700/50 text-green-400 bg-green-900/10' :
+                         testStatus === 'fail' ? 'border-red-700/50 text-red-400 bg-red-900/10' :
+                         'border-[#d4c5b0]/20 text-[#8a7f70] hover:text-[#d4c5b0] hover:bg-[#d4c5b0]/5'}"
+                >
+                    {#if isTesting}Проверка...
+                    {:else if testStatus === 'ok'}✓ Связь установлена
+                    {:else if testStatus === 'fail'}✗ Нет ответа
+                    {:else}Проверить соединение{/if}
+                </button>
+            </div>
         </div>
 
         {#if error}

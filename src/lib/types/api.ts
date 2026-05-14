@@ -17,7 +17,7 @@ export interface FigurineImage {
 export interface ProcessStep {
     id: string;
     stepType: 'sketch' | 'prototype' | 'modeling' | 'painting' | 'finish';
-    description: string;
+    description: string | null;
     imageUrl: string;
 }
 
@@ -55,7 +55,7 @@ export interface WorkshopItem {
 
 export interface CabinetZone {
     id: string;
-    zoneType: 'showcase' | 'desk' | 'shelf' | 'note';
+    zoneType: string;
     x: number;
     y: number;
     width: number;

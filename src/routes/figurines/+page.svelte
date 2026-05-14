@@ -11,6 +11,13 @@
   let isLoading = $state(true);
   let error = $state<string | null>(null);
   let prefersReducedMotion = $state(false);
+  let searchQuery = $state('');
+
+  let filtered = $derived(
+    searchQuery.trim()
+      ? figurines.filter(f => f.name.toLowerCase().includes(searchQuery.toLowerCase()))
+      : figurines
+  );
 
   // Derived
   let countText = $derived(() => {
@@ -86,24 +93,38 @@
   <div class="min-h-screen relative z-10 overflow-hidden font-['Cinzel'] text-[#d4c5b0]">
 
     <div class="container mx-auto px-6 sm:px-12 py-12">
-      <div class="flex justify-between items-end mb-16 sm:mb-24 border-b border-[#d4c5b0]/10 pb-6" in:fade={{ duration: 1000 }}>
-        <div>
-          <a href="/" class="group flex items-center text-xs tracking-[0.2em] text-[#8a7f70] hover:text-[#d4c5b0] transition-colors mb-4 opacity-60 hover:opacity-100">
-            <span class="mr-2 transition-transform group-hover:-translate-x-1">←</span> Назад в Зал
-          </a>
-          <h1 class="font-['UnifrakturMaguntia'] text-5xl sm:text-7xl text-[#e6decb] opacity-90 drop-shadow-2xl tracking-wide">
-            Архивъ Существ
-          </h1>
+      <div class="mb-16 sm:mb-24 border-b border-[#d4c5b0]/10 pb-6" in:fade={{ duration: 1000 }}>
+        <div class="flex justify-between items-end mb-8">
+          <div>
+            <a href="/" class="group flex items-center text-xs tracking-[0.2em] text-[#8a7f70] hover:text-[#d4c5b0] transition-colors mb-4 opacity-60 hover:opacity-100">
+              <span class="mr-2 transition-transform group-hover:-translate-x-1">←</span> Назад в Зал
+            </a>
+            <h1 class="font-['UnifrakturMaguntia'] text-5xl sm:text-7xl text-[#e6decb] opacity-90 drop-shadow-2xl tracking-wide">
+              Архивъ Существ
+            </h1>
+          </div>
+          <div class="hidden sm:block text-right">
+            <p class="text-xs tracking-[0.4em] text-[#8a7f70] uppercase mb-1">Статус коллекции</p>
+            <p class="text-xl text-[#d4c5b0] border-l-2 border-[#d4c5b0]/20 pl-4">{countText()}</p>
+          </div>
         </div>
-        <div class="hidden sm:block text-right">
-          <p class="text-xs tracking-[0.4em] text-[#8a7f70] uppercase mb-1">Статус коллекции</p>
-          <p class="text-xl text-[#d4c5b0] border-l-2 border-[#d4c5b0]/20 pl-4">{countText()}</p>
+        <!-- Search -->
+        <div class="relative max-w-sm">
+          <input
+            bind:value={searchQuery}
+            type="text"
+            placeholder="Поиск по имени..."
+            class="w-full bg-transparent border border-[#d4c5b0]/15 focus:border-[#d4c5b0]/40 px-4 py-2 text-xs tracking-widest text-[#d4c5b0] placeholder-[#8a7f70]/50 outline-none transition-colors font-['Cinzel'] uppercase"
+          />
+          {#if searchQuery}
+            <button onclick={() => searchQuery = ''} class="absolute right-3 top-1/2 -translate-y-1/2 text-[#8a7f70] hover:text-[#d4c5b0] text-xs">✕</button>
+          {/if}
         </div>
       </div>
 
-      {#if figurines.length > 0}
+      {#if filtered.length > 0}
         <ul class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-8 gap-y-16">
-          {#each figurines as figurine, i (figurine.id)}
+          {#each filtered as figurine, i (figurine.id)}
             <li class="group perspective-container" in:fade={{ delay: i * 100, duration: 800 }}>
               <button
                       class="w-full text-left relative focus:outline-none"
@@ -143,6 +164,11 @@
             </li>
           {/each}
         </ul>
+      {:else if searchQuery}
+        <div class="flex flex-col items-center justify-center py-32 border border-dashed border-[#d4c5b0]/10 rounded-lg" in:fade>
+          <p class="font-['UnifrakturMaguntia'] text-3xl text-[#8a7f70] mb-2 opacity-50">Не найдено...</p>
+          <p class="text-xs tracking-widest text-[#5c544a] uppercase">Архив не содержит записи «{searchQuery}»</p>
+        </div>
       {:else}
         <div class="flex flex-col items-center justify-center py-32 border border-dashed border-[#d4c5b0]/10 rounded-lg">
           <p class="font-['UnifrakturMaguntia'] text-3xl text-[#8a7f70] mb-2 opacity-50">Пустота...</p>

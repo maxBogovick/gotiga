@@ -1,8 +1,7 @@
 <script lang="ts">
     import { onMount } from 'svelte';
-    import { api } from '$lib/api';
+    import { api, isTauri } from '$lib/api';
     import type { Figurine, FigurineListItem } from '$lib/types/api';
-    import { open } from '@tauri-apps/plugin-dialog';
     import { fade, slide } from 'svelte/transition';
     import SettingsModal from '$lib/components/SettingsModal.svelte';
     import ZoneEditor from '$lib/components/admin/ZoneEditor.svelte';
@@ -47,6 +46,17 @@
         figurines = await api.getAllFigurines();
     }
 
+    async function moveFigurine(id: string, direction: 1 | -1) {
+        const full = await api.getFigurine(id);
+        if (!full) return;
+        full.sortOrder = (full.sortOrder ?? 0) + direction;
+        try {
+            await api.saveFigurine(full);
+            await loadFigurines();
+            if (selectedFigurine?.id === id) selectedFigurine = { ...full };
+        } catch {/* silent */}
+    }
+
     async function editFigurine(id: string) {
         const full = await api.getFigurine(id);
         if (full) {
@@ -58,43 +68,64 @@
         selectedFigurine = { ...emptyFigurine, id: crypto.randomUUID() };
     }
 
+    function pickFileWeb(type: 'images' | 'videos' | 'audio'): Promise<File> {
+        return new Promise((resolve, reject) => {
+            const input = document.createElement('input');
+            input.type = 'file';
+            if (type === 'images') input.accept = 'image/jpeg,image/png,image/webp';
+            else if (type === 'videos') input.accept = 'video/mp4,video/webm';
+            else input.accept = 'audio/mpeg,audio/wav,audio/ogg';
+            input.onchange = () => {
+                const file = input.files?.[0];
+                if (file) resolve(file);
+                else reject(new Error('Файл не выбран'));
+            };
+            input.click();
+        });
+    }
+
     async function handlePickFile(type: 'images' | 'videos' | 'audio', stepIndex?: number) {
         if (!selectedFigurine) return;
 
-        const filters = [];
-        if (type === 'images') filters.push({ name: 'Images', extensions: ['jpg', 'png', 'webp'] });
-        else if (type === 'videos') filters.push({ name: 'Videos', extensions: ['mp4', 'webm'] });
-        else if (type === 'audio') filters.push({ name: 'Audio', extensions: ['mp3', 'wav', 'ogg'] });
+        try {
+            let fileOrPath: string | File;
 
-        const selected = await open({
-            multiple: false,
-            filters
-        });
+            if (isTauri) {
+                const { open } = await import('@tauri-apps/plugin-dialog');
+                const filters = [];
+                if (type === 'images') filters.push({ name: 'Images', extensions: ['jpg', 'png', 'webp'] });
+                else if (type === 'videos') filters.push({ name: 'Videos', extensions: ['mp4', 'webm'] });
+                else filters.push({ name: 'Audio', extensions: ['mp3', 'wav', 'ogg'] });
+                const selected = await open({ multiple: false, filters });
+                if (!selected || typeof selected !== 'string') return;
+                fileOrPath = selected;
+            } else {
+                fileOrPath = await pickFileWeb(type);
+            }
 
-        if (selected && typeof selected === 'string') {
-            try {
-                const targetFolder = type === 'audio' ? 'audio' : 'images'; 
-                const backendType = type === 'videos' ? 'videos' : (type === 'audio' ? 'audio' : 'images');
-                
-                const localUrl = await api.importMedia(selected, backendType);
-                
-                if (type === 'videos') {
-                    selectedFigurine.videoUrl = localUrl;
-                } else if (type === 'audio') {
-                    selectedFigurine.ambiencePath = localUrl;
-                } else if (typeof stepIndex === 'number') {
-                    selectedFigurine.processSteps[stepIndex].imageUrl = localUrl;
-                } else {
-                    selectedFigurine.images = [...selectedFigurine.images, {
-                        id: crypto.randomUUID(),
-                        imageType: 'full',
-                        url: localUrl,
-                        altText: ''
-                    }];
-                }
-                showMessage('Файл импортирован', 'success');
-            } catch (e) {
-                showMessage('Ошибка импорта: ' + e, 'error');
+            const backendType: 'images' | 'videos' | 'audio' =
+                type === 'videos' ? 'videos' : type === 'audio' ? 'audio' : 'images';
+            const localUrl = await api.importMedia(fileOrPath, backendType);
+
+            if (type === 'videos') {
+                selectedFigurine.videoUrl = localUrl;
+            } else if (type === 'audio') {
+                selectedFigurine.ambiencePath = localUrl;
+            } else if (typeof stepIndex === 'number') {
+                selectedFigurine.processSteps[stepIndex].imageUrl = localUrl;
+            } else {
+                selectedFigurine.images = [...selectedFigurine.images, {
+                    id: crypto.randomUUID(),
+                    imageType: 'full',
+                    url: localUrl,
+                    altText: ''
+                }];
+            }
+            showMessage('Файл импортирован', 'success');
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e);
+            if (msg !== 'Файл не выбран') {
+                showMessage('Ошибка импорта: ' + msg, 'error');
             }
         }
     }
@@ -212,15 +243,29 @@
                         <button onclick={createNew} class="btn-gothic text-[10px]">✚ Новый</button>
                     </div>
                     
-                    <div class="flex-1 overflow-y-auto space-y-2 pr-2">
+                    <div class="flex-1 overflow-y-auto space-y-1 pr-2">
                         {#each figurines as fig}
-                            <button 
-                                onclick={() => editFigurine(fig.id)}
-                                class="w-full text-left p-3 border border-[#d4c5b0]/10 hover:border-[#d4c5b0]/40 transition-colors group {selectedFigurine?.id === fig.id ? 'bg-[#d4c5b0]/5 border-[#d4c5b0]/30' : ''}"
-                            >
-                                <div class="text-sm font-bold group-hover:text-white transition-colors">{fig.name}</div>
-                                <div class="text-[10px] uppercase opacity-40">{fig.status} • {fig.id.slice(0,8)}</div>
-                            </button>
+                            <div class="flex items-stretch gap-1 group/row">
+                                <button
+                                    onclick={() => editFigurine(fig.id)}
+                                    class="flex-1 text-left p-3 border border-[#d4c5b0]/10 hover:border-[#d4c5b0]/40 transition-colors {selectedFigurine?.id === fig.id ? 'bg-[#d4c5b0]/5 border-[#d4c5b0]/30' : ''}"
+                                >
+                                    <div class="text-sm font-bold group-hover/row:text-white transition-colors">{fig.name}</div>
+                                    <div class="text-[10px] uppercase opacity-40">{fig.status}</div>
+                                </button>
+                                <div class="flex flex-col opacity-0 group-hover/row:opacity-100 transition-opacity">
+                                    <button
+                                        onclick={() => moveFigurine(fig.id, -1)}
+                                        class="flex-1 px-1 border border-[#d4c5b0]/10 hover:bg-[#d4c5b0]/10 text-[#8a7f70] hover:text-[#d4c5b0] text-[10px]"
+                                        title="Поднять выше"
+                                    >▲</button>
+                                    <button
+                                        onclick={() => moveFigurine(fig.id, 1)}
+                                        class="flex-1 px-1 border border-[#d4c5b0]/10 hover:bg-[#d4c5b0]/10 text-[#8a7f70] hover:text-[#d4c5b0] text-[10px]"
+                                        title="Опустить ниже"
+                                    >▼</button>
+                                </div>
+                            </div>
                         {/each}
                     </div>
 

@@ -28,13 +28,21 @@
 
     isSubmitting = true;
 
-    // Simulate network request / "Raven flying time"
-    await new Promise(r => setTimeout(r, 2000));
+    // Build a mailto: link with the request details
+    const subject = encodeURIComponent(`Запрос артефакта: ${figurineName}`);
+    const body = encodeURIComponent(
+      `Имя просителя: ${name}\nОбратный адрес: ${email}\n\nПослание:\n${message || '—'}\n\n— Отправлено через Архивъ`
+    );
+
+    // Small delay for the "wax sealing" feel
+    await new Promise(r => setTimeout(r, 800));
+
+    const contactEmail = localStorage.getItem('gotiga_contact_email') || 'info@gotiga.art';
+    window.open(`mailto:${contactEmail}?subject=${subject}&body=${body}`, '_blank');
 
     isSubmitting = false;
     isSealed = true;
 
-    // Close automatically after showing the seal
     setTimeout(() => {
       close();
     }, 3000);
@@ -140,7 +148,7 @@
                               disabled={isSubmitting}
                               class="group relative inline-flex items-center justify-center px-10 py-4 overflow-hidden font-['Cinzel'] font-bold tracking-widest text-[#E6DCC8] bg-[#4A1C1C] hover:bg-[#5C2222] transition-all duration-500 shadow-lg disabled:opacity-80 disabled:cursor-not-allowed border border-[#2A2622]/20 clip-corners"
                       >
-                         <span class="absolute inset-0 w-full h-full bg-[url('https://www.transparenttextures.com/patterns/aged-paper.png')] opacity-10"></span>
+                         <span class="absolute inset-0 w-full h-full bg-noise opacity-10"></span>
                          <span class="absolute w-0 h-0 transition-all duration-500 ease-out bg-[#7A2E2E] rounded-full group-hover:w-72 group-hover:h-72 opacity-50"></span>
                          
                          <span class="relative flex items-center gap-3 z-10">

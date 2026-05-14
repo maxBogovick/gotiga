@@ -119,14 +119,28 @@
       mouse.y = e.y;
   }
 
+  function handleTouchMove(e: TouchEvent) {
+      if (e.touches.length > 0) {
+          mouse.x = e.touches[0].clientX;
+          mouse.y = e.touches[0].clientY;
+      }
+  }
+
+  function handleTouchEnd() {
+      mouse.x = -1000;
+      mouse.y = -1000;
+  }
+
   onMount(() => {
     ctx = canvas.getContext('2d');
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
-    
+
     window.addEventListener('resize', handleResize);
     window.addEventListener('mousemove', handleMouseMove);
-    
+    window.addEventListener('touchmove', handleTouchMove, { passive: true });
+    window.addEventListener('touchend', handleTouchEnd);
+
     init();
     animate();
   });
@@ -135,6 +149,8 @@
     if (typeof window !== 'undefined') {
         window.removeEventListener('resize', handleResize);
         window.removeEventListener('mousemove', handleMouseMove);
+        window.removeEventListener('touchmove', handleTouchMove);
+        window.removeEventListener('touchend', handleTouchEnd);
         cancelAnimationFrame(animationFrameId);
     }
   });
