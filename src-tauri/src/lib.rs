@@ -90,6 +90,7 @@ pub fn run() {
                 FigurineVideo(String),
                 FigurineAudio(String),
                 Text(String),
+                AppResource(String),
             }
 
             let content = match rusqlite::Connection::open(&db_path) {
@@ -136,6 +137,14 @@ pub fn run() {
                     ) {
                         found = Some((data, BlobSource::Text(id)));
                     }
+                    // Поиск в app_resources
+                    else if let Ok((key, data)) = conn.query_row(
+                        "SELECT key, data FROM app_resources WHERE file_path = ?1",
+                        [&relative_path],
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+                    ) {
+                        found = Some((data, BlobSource::AppResource(key)));
+                    }
 
                     found
                 },
@@ -174,6 +183,8 @@ pub fn run() {
                                 conn.execute("UPDATE figurines SET ambience_path = ?1 WHERE id = ?2", [&new_db_path_value, &id]),
                             BlobSource::Text(id) => 
                                 conn.execute("UPDATE texts SET image_path = ?1 WHERE id = ?2", [&new_db_path_value, &id]),
+                            BlobSource::AppResource(key) => 
+                                conn.execute("UPDATE app_resources SET file_path = ?1 WHERE key = ?2", [&new_db_path_value, &key]),
                         };
                         
                         if let Err(e) = res {
@@ -230,6 +241,14 @@ pub fn run() {
             commands::push_figurine,
             commands::get_settings,
             commands::save_settings,
+            commands::get_server_releases,
+            commands::activate_server_release,
+            commands::save_cabinet_zone,
+            commands::delete_cabinet_zone,
+            commands::save_text,
+            commands::delete_text,
+            commands::get_main_background,
+            commands::set_main_background,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

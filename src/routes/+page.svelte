@@ -20,7 +20,7 @@
     const cursorSpring = spring({ x: 50, y: 50 }, { stiffness: 0.06, damping: 0.4 });
     const parallaxSpring = spring({ x: 0, y: 0 }, { stiffness: 0.04, damping: 0.45 });
 
-    const IMAGE_URL = '/images/bg-main.png';
+    let imageUrl = $state('/images/cabinet-room.jpg');
 
     const DEFAULT_ZONES: CabinetZone[] = [
         { id: 'curator', zoneType: 'curator', x: 38, y: 15, width: 24, height: 75, targetRoute: '/author' },
@@ -45,10 +45,17 @@
                 if (loadingProgress >= 100) clearInterval(progressInterval);
             }, 120);
 
-            const [dbZones] = await Promise.all([
+            // Fetch zones and background image
+            const [dbZones, bgPath] = await Promise.all([
                 api.getCabinetZones().catch(() => DEFAULT_ZONES),
-                preloadImage(IMAGE_URL)
+                api.getMainBackground().catch(() => null)
             ]);
+            
+            if (bgPath) {
+                imageUrl = bgPath;
+            }
+
+            await preloadImage(imageUrl);
 
             zones = dbZones && dbZones.length > 0 ? dbZones : DEFAULT_ZONES;
 
@@ -246,7 +253,7 @@
                 <div class="depth-layer depth-3"></div>
 
                 <img
-                        src={IMAGE_URL}
+                        src={imageUrl}
                         alt="Gothic Museum Interior"
                         class="museum-image"
                         draggable="false"

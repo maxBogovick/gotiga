@@ -61,9 +61,9 @@ pub struct Image {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ImageType {
-    Face,
-    Detail,
-    Full,
+    Face,   // крупный план лица
+    Detail, // детали
+    Full,   // полный вид
 }
 
 impl ImageType {
@@ -84,7 +84,7 @@ impl ImageType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Text {
     pub id: String,
     pub category: TextCategory,
@@ -95,7 +95,7 @@ pub struct Text {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TextCategory {
     Author,
     Workshop,
@@ -110,7 +110,7 @@ impl TextCategory {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CabinetZone {
     pub id: String,
     pub zone_type: String,
@@ -126,7 +126,7 @@ pub struct ProcessStep {
     pub id: String,
     pub figurine_id: String,
     pub step_type: ProcessStepType,
-    pub description: Option<String>,
+    pub description: String,
     pub image_path: String,
     pub sort_order: i32,
     pub updated_at: String,
@@ -144,11 +144,11 @@ pub enum ProcessStepType {
 impl ProcessStepType {
     pub fn from_str(s: &str) -> Self {
         match s {
-            "sketch" => Self::Sketch,
             "prototype" => Self::Prototype,
             "modeling" => Self::Modeling,
             "painting" => Self::Painting,
-            _ => Self::Finish,
+            "finish" => Self::Finish,
+            _ => Self::Sketch,
         }
     }
 
@@ -163,8 +163,18 @@ impl ProcessStepType {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerRelease {
+    pub id: String,
+    pub version: i32,
+    pub created_at: String,
+    pub description: Option<String>,
+    pub is_active: bool,
+}
+
 // ============================================================
-// DTO (для передачи на frontend, сериализуемые и десериализуемые)
+// DTO (для передачи на frontend, сериализуемые)
 // ============================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -193,18 +203,15 @@ impl FigurineDto {
     pub fn from_figurine(
         figurine: Figurine, 
         images: Vec<Image>, 
-        process_steps: Vec<ProcessStep>,
+        steps: Vec<ProcessStep>, 
         related_items: Vec<FigurineListItemDto>,
-        _base_path: &str
+        base_path: &str
     ) -> Self {
-        // Helper to resolve path
-        let resolve = |path: Option<String>| -> Option<String> {
-            path.map(|p| {
-                if p.starts_with("http") { p } 
-                else { format!("cabinet://localhost/{}", p) }
-            })
+        // Helper to prepend protocol if path exists
+        let resolve = |p: String| {
+            if p.starts_with("http") { p } else { format!("cabinet://localhost/{}", p) }
         };
-
+        
         Self {
             id: figurine.id,
             name: figurine.name,
@@ -214,40 +221,15 @@ impl FigurineDto {
             material: figurine.material,
             technique: figurine.technique,
             year: figurine.year,
-            ambience_path: resolve(figurine.ambience_path),
-            video_url: resolve(figurine.video_url),
+            ambience_path: figurine.ambience_path.map(|p| resolve(p)),
+            video_url: figurine.video_url.map(|p| resolve(p)),
             secret_text: figurine.secret_text,
             status: figurine.status.as_str().to_string(),
             sort_order: figurine.sort_order,
             is_visible: figurine.is_visible,
-            images: images.into_iter().map(|i| ImageDto::from_image(i, _base_path)).collect(),
-            process_steps: process_steps.into_iter().map(|s| ProcessStepDto::from_step(s, _base_path)).collect(),
+            images: images.into_iter().map(|i| ImageDto::from_image(i, base_path)).collect(),
+            process_steps: steps.into_iter().map(|s| ProcessStepDto::from_step(s, base_path)).collect(),
             related_items,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProcessStepDto {
-    pub id: String,
-    pub step_type: String,
-    pub description: Option<String>,
-    pub image_url: String,
-}
-
-impl ProcessStepDto {
-    pub fn from_step(step: ProcessStep, _base_path: &str) -> Self {
-        let image_url = if step.image_path.starts_with("http") {
-            step.image_path
-        } else {
-             format!("cabinet://localhost/{}", step.image_path)
-        };
-        Self {
-            id: step.id,
-            step_type: step.step_type.as_str().to_string(),
-            description: step.description,
-            image_url,
         }
     }
 }
@@ -257,22 +239,37 @@ impl ProcessStepDto {
 pub struct ImageDto {
     pub id: String,
     pub image_type: String,
-    pub url: String,
+    pub url: String,  // путь для frontend (asset://)
     pub alt_text: Option<String>,
 }
 
 impl ImageDto {
     pub fn from_image(image: Image, _base_path: &str) -> Self {
-        let url = if image.file_path.starts_with("http") {
-            image.file_path
-        } else {
-            format!("cabinet://localhost/{}", image.file_path)
-        };
         Self {
             id: image.id,
             image_type: image.image_type.as_str().to_string(),
-            url,
+            url: format!("cabinet://localhost/{}", image.file_path),
             alt_text: image.alt_text,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessStepDto {
+    pub id: String,
+    pub step_type: String,
+    pub description: String,
+    pub image_url: String,
+}
+
+impl ProcessStepDto {
+    pub fn from_step(step: ProcessStep, _base_path: &str) -> Self {
+        Self {
+            id: step.id,
+            step_type: step.step_type.as_str().to_string(),
+            description: step.description,
+            image_url: format!("cabinet://localhost/{}", step.image_path),
         }
     }
 }
@@ -313,18 +310,11 @@ pub struct WorkshopItemDto {
 
 impl WorkshopItemDto {
     pub fn from_text(text: Text, _base_path: &str) -> Self {
-        let image_url = text.image_path.map(|p| {
-            if p.starts_with("http") {
-                p
-            } else {
-                format!("cabinet://localhost/{}", p)
-            }
-        });
         Self {
             id: text.id,
             content: text.content,
             caption: text.caption,
-            image_url,
+            image_url: text.image_path.map(|p| format!("cabinet://localhost/{}", p)),
         }
     }
 }
@@ -353,13 +343,4 @@ impl From<CabinetZone> for CabinetZoneDto {
             target_route: zone.target_route,
         }
     }
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReleasePayload {
-    pub figurines: Vec<FigurineDto>,
-    pub author_texts: Vec<TextDto>,
-    pub workshop_items: Vec<WorkshopItemDto>,
-    pub zones: Vec<CabinetZoneDto>,
 }

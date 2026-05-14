@@ -93,3 +93,11 @@ CREATE TABLE IF NOT EXISTS process_steps (
 -- Индекс для этапов
 CREATE INDEX IF NOT EXISTS idx_process_steps_figurine
     ON process_steps(figurine_id, sort_order);
+
+-- Таблица общих ресурсов приложения (фон, логотипы и т.д.)
+CREATE TABLE IF NOT EXISTS app_resources (
+    key TEXT PRIMARY KEY,
+    file_path TEXT NOT NULL,
+    data BLOB, -- Встроенное изображение
+    updated_at TEXT DEFAULT (datetime('now'))
+);

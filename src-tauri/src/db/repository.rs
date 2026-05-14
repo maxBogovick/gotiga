@@ -204,6 +204,62 @@ impl<'a> Repository<'a> {
         iter.collect()
     }
 
+
+
+    pub fn get_cabinet_zones(&self) -> Result<Vec<CabinetZone>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, zone_type, x_percent, y_percent, width_percent, height_percent, target_route
+             FROM cabinet_zones
+             ORDER BY sort_order"
+        )?;
+
+        let iter = stmt.query_map([], |row| {
+            Ok(CabinetZone {
+                id: row.get(0)?,
+                zone_type: row.get(1)?,
+                x_percent: row.get(2)?,
+                y_percent: row.get(3)?,
+                width_percent: row.get(4)?,
+                height_percent: row.get(5)?,
+                target_route: row.get(6)?,
+            })
+        })?;
+
+        iter.collect()
+    }
+
+    pub fn upsert_cabinet_zone(&self, z: &CabinetZone) -> Result<()> {
+        let mut stmt = self.conn.prepare(
+            "INSERT INTO cabinet_zones (id, zone_type, x_percent, y_percent, width_percent, height_percent, target_route, sort_order)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(id) DO UPDATE SET
+                zone_type=excluded.zone_type,
+                x_percent=excluded.x_percent,
+                y_percent=excluded.y_percent,
+                width_percent=excluded.width_percent,
+                height_percent=excluded.height_percent,
+                target_route=excluded.target_route,
+                sort_order=excluded.sort_order"
+        )?;
+
+        stmt.execute(params![
+            z.id,
+            z.zone_type,
+            z.x_percent,
+            z.y_percent,
+            z.width_percent,
+            z.height_percent,
+            z.target_route,
+            0 // sort_order logic not implemented fully yet, default 0
+        ])?;
+        Ok(())
+    }
+
+    pub fn delete_cabinet_zone(&self, id: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM cabinet_zones WHERE id = ?", params![id])?;
+        Ok(())
+    }
+
     // === TEXTS ===
 
     pub fn get_texts_by_category(&self, category: &str) -> Result<Vec<Text>> {
@@ -229,30 +285,40 @@ impl<'a> Repository<'a> {
         iter.collect()
     }
 
-    // === CABINET ZONES ===
-
-    pub fn get_cabinet_zones(&self) -> Result<Vec<CabinetZone>> {
+    pub fn upsert_text(&self, t: &Text) -> Result<()> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, zone_type, x_percent, y_percent, width_percent, height_percent, target_route
-             FROM cabinet_zones
-             ORDER BY sort_order"
+            "INSERT INTO texts (id, category, content, caption, image_path, sort_order, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(id) DO UPDATE SET
+                category=excluded.category,
+                content=excluded.content,
+                caption=excluded.caption,
+                image_path=excluded.image_path,
+                sort_order=excluded.sort_order,
+                updated_at=excluded.updated_at"
         )?;
 
-        let iter = stmt.query_map([], |row| {
-            Ok(CabinetZone {
-                id: row.get(0)?,
-                zone_type: row.get(1)?,
-                x_percent: row.get(2)?,
-                y_percent: row.get(3)?,
-                width_percent: row.get(4)?,
-                height_percent: row.get(5)?,
-                target_route: row.get(6)?,
-            })
-        })?;
+        let category_str = match t.category {
+            TextCategory::Author => "author",
+            TextCategory::Workshop => "workshop",
+        };
 
-        iter.collect()
+        stmt.execute(params![
+            t.id,
+            category_str,
+            t.content,
+            t.caption,
+            t.image_path,
+            t.sort_order,
+            t.updated_at
+        ])?;
+        Ok(())
     }
-    // === PROCESS STEPS ===
+
+    pub fn delete_text(&self, id: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM texts WHERE id = ?", params![id])?;
+        Ok(())
+    }
 
     pub fn get_process_steps_for_figurine(&self, figurine_id: &str) -> Result<Vec<ProcessStep>> {
         let mut stmt = self.conn.prepare(
@@ -376,6 +442,38 @@ impl<'a> Repository<'a> {
             "UPDATE texts SET image_data = ?1 WHERE id = ?2",
             params![data, id],
         )?;
+        Ok(())
+    }
+
+    // === APP RESOURCES (SYSTEM ASSETS) ===
+
+    pub fn get_app_resource(&self, key: &str) -> Result<Option<String>> {
+        let mut stmt = self.conn.prepare("SELECT file_path FROM app_resources WHERE key = ?1")?;
+        let mut rows = stmt.query(params![key])?;
+
+        if let Some(row) = rows.next()? {
+            Ok(Some(row.get(0)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn upsert_app_resource(&self, key: &str, file_path: &str, data: Option<Vec<u8>>) -> Result<()> {
+        let mut stmt = self.conn.prepare(
+            "INSERT INTO app_resources (key, file_path, data, updated_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(key) DO UPDATE SET
+                file_path=excluded.file_path,
+                data=excluded.data,
+                updated_at=excluded.updated_at"
+        )?;
+
+        stmt.execute(params![
+            key,
+            file_path,
+            data,
+            Utc::now().to_rfc3339()
+        ])?;
         Ok(())
     }
 }

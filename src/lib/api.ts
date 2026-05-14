@@ -1,131 +1,106 @@
+// src/lib/api.ts
 import { invoke } from '@tauri-apps/api/core';
 import type {
-  FigurineListItem,
-  Figurine,
-  AuthorText,
-  WorkshopItem,
-  CabinetZone
+    FigurineListItem,
+    Figurine,
+    AuthorText,
+    WorkshopItem,
+    CabinetZone,
+    AppSettings, ServerRelease
 } from './types/api';
 
-export interface AppSettings {
-  serverUrl: string;
-  apiKey: string;
-}
-
-/**
- * Custom error class for API errors
- */
-export class ApiError extends Error {
-  constructor(
-    message: string,
-    public readonly code?: string,
-    public readonly originalError?: unknown
-  ) {
-    super(message);
-    this.name = 'ApiError';
-  }
-}
-
-/**
- * Wraps Tauri invoke calls with error handling
- */
-async function safeInvoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  try {
-    return await invoke<T>(command, args);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`[API] ${command} failed:`, error);
-    throw new ApiError(`Ошибка при выполнении ${command}: ${message}`, command, error);
-  }
-}
-
-/**
- * API client for Cabinet of Curiosities
- */
 export const api = {
-  // ═══════════════════════════════════════════════════════════════
-  // FIGURINES
-  // ═══════════════════════════════════════════════════════════════
+    // === READ ===
+    async getAllFigurines(): Promise<FigurineListItem[]> {
+        return invoke('get_all_figurines');
+    },
 
-  /**
-   * Get list of all figurines (for showcase)
-   */
-  async getAllFigurines(): Promise<FigurineListItem[]> {
-    return safeInvoke<FigurineListItem[]>('get_all_figurines');
-  },
+    async getFigurine(id: string): Promise<Figurine | null> {
+        return invoke('get_figurine', { id });
+    },
 
-  /**
-   * Get detailed figurine info by ID
-   * @returns Figurine or null if not found
-   */
-  async getFigurine(id: string): Promise<Figurine | null> {
-    if (!id) {
-      throw new ApiError('ID фигуры не указан', 'INVALID_ID');
+    async getAuthorTexts(): Promise<AuthorText[]> {
+        return invoke('get_author_texts');
+    },
+
+    async getWorkshopContent(): Promise<WorkshopItem[]> {
+        return invoke('get_workshop_content');
+    },
+
+    async getCabinetZones(): Promise<CabinetZone[]> {
+        return invoke('get_cabinet_zones');
+    },
+
+    // === WRITE (ADMIN) ===
+
+    async saveFigurine(figurine: Figurine): Promise<void> {
+        return invoke('save_figurine', { figurine });
+    },
+
+    async importMedia(filePath: string, mediaType: 'images' | 'videos' | 'audio'): Promise<string> {
+        return invoke('import_media', { filePath, mediaType });
+    },
+
+    async saveCabinetZone(zone: CabinetZone): Promise<void> {
+        return invoke('save_cabinet_zone', { zone });
+    },
+
+    async deleteCabinetZone(id: string): Promise<void> {
+        return invoke('delete_cabinet_zone', { id });
+    },
+
+    // Used for both Author Texts and Workshop Items
+    async saveText(item: WorkshopItem | AuthorText, category: 'author' | 'workshop'): Promise<void> {
+        // Ensure AuthorText fits WorkshopItem shape if needed, or backend handles it
+        // Backend expects generic structure: id, content, caption, imageUrl
+        const dto = {
+            id: item.id,
+            content: item.content,
+            caption: (item as WorkshopItem).caption || null,
+            imageUrl: (item as WorkshopItem).imageUrl || null
+        };
+        return invoke('save_text', { dto, category });
+    },
+
+    async deleteText(id: string): Promise<void> {
+        return invoke('delete_text', { id });
+    },
+
+    async getMainBackground(): Promise<string | null> {
+        return invoke('get_main_background');
+    },
+
+    async setMainBackground(filePath: string): Promise<string> {
+        return invoke('set_main_background', { filePath });
+    },
+
+    // === SYNC & SETTINGS ===
+
+    async getSettings(): Promise<AppSettings> {
+        return invoke('get_settings');
+    },
+
+    async saveSettings(settings: AppSettings): Promise<void> {
+        return invoke('save_settings', { settings });
+    },
+
+    async exportRelease(): Promise<string> {
+        return invoke('export_release');
+    },
+
+    async pullUpdates(): Promise<string> {
+        return invoke('pull_updates');
+    },
+
+    async pushFigurine(figurine: Figurine): Promise<string> {
+        return invoke('push_figurine', { figurine });
+    },
+
+    async getServerReleases(): Promise<ServerRelease[]> {
+        return invoke('get_server_releases');
+    },
+
+    async activateServerRelease(id: string): Promise<void> {
+        return invoke('activate_server_release', { id });
     }
-    return safeInvoke<Figurine | null>('get_figurine', { id });
-  },
-
-  // ═══════════════════════════════════════════════════════════════
-  // TEXTS
-  // ═══════════════════════════════════════════════════════════════
-
-  /**
-   * Get author presence texts
-   */
-  async getAuthorTexts(): Promise<AuthorText[]> {
-    return safeInvoke<AuthorText[]>('get_author_texts');
-  },
-
-  /**
-   * Get workshop content items
-   */
-  async getWorkshopContent(): Promise<WorkshopItem[]> {
-    return safeInvoke<WorkshopItem[]>('get_workshop_content');
-  },
-
-  // ═══════════════════════════════════════════════════════════════
-  // CABINET ZONES
-  // ═══════════════════════════════════════════════════════════════
-
-  /**
-   * Get interactive zones for the cabinet room
-   */
-  async getCabinetZones(): Promise<CabinetZone[]> {
-    return await invoke('get_cabinet_zones');
-  },
-
-  // === ADMIN API ===
-
-  async importMedia(filePath: string, mediaType: 'images' | 'videos' | 'audio'): Promise<string> {
-    return await invoke('import_media', { filePath, mediaType });
-  },
-
-  async saveFigurine(figurine: Figurine): Promise<void> {
-    return await invoke('save_figurine', { figurine });
-  },
-
-  async exportRelease(): Promise<string> {
-    return await invoke('export_release');
-  },
-
-  async pullUpdates(): Promise<string> {
-    return await invoke('pull_updates');
-  },
-
-  // === SETTINGS & PUSH ===
-
-  async getSettings(): Promise<AppSettings> {
-    return await invoke('get_settings');
-  },
-
-  async saveSettings(settings: AppSettings): Promise<void> {
-    return await invoke('save_settings', { settings });
-  },
-
-  async pushFigurine(figurine: Figurine): Promise<string> {
-    return await invoke('push_figurine', { figurine });
-  }
 };
-
-// Type for the api object
-export type Api = typeof api;

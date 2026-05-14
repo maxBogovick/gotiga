@@ -245,6 +245,115 @@ pub async fn save_figurine(
 }
 
 #[tauri::command]
+pub async fn save_cabinet_zone(
+    zone: CabinetZoneDto,
+    db: State<'_, Database>
+) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let repo = Repository::new(&conn);
+
+    let model = CabinetZone {
+        id: zone.id,
+        zone_type: zone.zone_type,
+        x_percent: zone.x,
+        y_percent: zone.y,
+        width_percent: zone.width,
+        height_percent: zone.height,
+        target_route: zone.target_route,
+    };
+
+    repo.upsert_cabinet_zone(&model).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_cabinet_zone(
+    id: String,
+    db: State<'_, Database>
+) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let repo = Repository::new(&conn);
+    repo.delete_cabinet_zone(&id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn save_text(
+    dto: WorkshopItemDto, // Using this generic DTO which fits both
+    category: String,
+    db: State<'_, Database>,
+    fs: State<'_, FileService>
+) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let repo = Repository::new(&conn);
+    
+    let clean_path = |p: Option<String>| -> Option<String> {
+        p.map(|s| fs.clean_path(&s))
+    };
+
+    let cat = if category == "author" { TextCategory::Author } else { TextCategory::Workshop };
+
+    let model = Text {
+        id: dto.id,
+        category: cat,
+        content: dto.content,
+        caption: dto.caption,
+        image_path: clean_path(dto.image_url),
+        sort_order: 0,
+        updated_at: Utc::now().to_rfc3339(),
+    };
+
+    repo.upsert_text(&model).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_text(
+    id: String,
+    db: State<'_, Database>
+) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let repo = Repository::new(&conn);
+    repo.delete_text(&id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_main_background(
+    db: State<'_, Database>,
+    fs: State<'_, FileService>
+) -> Result<Option<String>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let repo = Repository::new(&conn);
+    let base_path = fs.get_base_path_string();
+
+    match repo.get_app_resource("main_background").map_err(|e| e.to_string())? {
+        Some(path) => Ok(Some(resolve_path(&base_path, &path))),
+        None => Ok(None)
+    }
+}
+
+#[tauri::command]
+pub async fn set_main_background(
+    file_path: String,
+    db: State<'_, Database>,
+    fs: State<'_, FileService>
+) -> Result<String, String> {
+    // 1. Импорт файла в локальное хранилище (images)
+    let relative_path = fs.import_file(&file_path, "images")?;
+    
+    // 2. Чтение байтов для BLOB
+    let full_path = fs.get_full_path(&relative_path);
+    let data = std::fs::read(&full_path).map_err(|e| e.to_string())?;
+
+    // 3. Сохранение в БД
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let repo = Repository::new(&conn);
+    repo.upsert_app_resource("main_background", &relative_path, Some(data))
+        .map_err(|e| e.to_string())?;
+
+    // 4. Возврат cabinet:// URL
+    let base_path = fs.get_base_path_string();
+    Ok(resolve_path(&base_path, &relative_path))
+}
+
+#[tauri::command]
 pub async fn export_release(
     db: State<'_, Database>,
     sync: State<'_, SyncService>,
@@ -272,4 +381,23 @@ pub async fn push_figurine(
 ) -> Result<String, String> {
     let settings = settings_service.get_settings();
     sync.push_figurine(figurine, &settings).await
+}
+
+#[tauri::command]
+pub async fn get_server_releases(
+    sync: State<'_, SyncService>,
+    settings_service: State<'_, SettingsService>
+) -> Result<Vec<ServerRelease>, String> {
+    let settings = settings_service.get_settings();
+    sync.list_server_releases(&settings).await
+}
+
+#[tauri::command]
+pub async fn activate_server_release(
+    id: String,
+    sync: State<'_, SyncService>,
+    settings_service: State<'_, SettingsService>
+) -> Result<(), String> {
+    let settings = settings_service.get_settings();
+    sync.activate_server_release(&id, &settings).await
 }

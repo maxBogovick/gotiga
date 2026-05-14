@@ -285,4 +285,45 @@ impl SyncService {
             None => Ok(None)
         }
     }
+
+    // ADMIN: List Releases
+    pub async fn list_server_releases(&self, settings: &AppSettings) -> Result<Vec<crate::models::ServerRelease>, String> {
+        if settings.server_url.is_empty() {
+            return Err("Server URL not configured".to_string());
+        }
+
+        let client = reqwest::Client::new();
+        let url = format!("{}/api/v1/releases", settings.server_url);
+
+        let releases = client.get(&url)
+            .header("Authorization", format!("Bearer {}", settings.api_key))
+            .send()
+            .await.map_err(|e| format!("Request failed: {}", e))?
+            .json::<Vec<crate::models::ServerRelease>>()
+            .await.map_err(|e| format!("Parse error: {}", e))?;
+
+        Ok(releases)
+    }
+
+    // ADMIN: Activate Release
+    pub async fn activate_server_release(&self, id: &str, settings: &AppSettings) -> Result<(), String> {
+        if settings.server_url.is_empty() {
+            return Err("Server URL not configured".to_string());
+        }
+        
+        let client = reqwest::Client::new();
+        let url = format!("{}/api/v1/releases/{}/activate", settings.server_url, id);
+
+        let res = client.post(&url)
+            .header("Authorization", format!("Bearer {}", settings.api_key))
+            .send()
+            .await.map_err(|e| format!("Request failed: {}", e))?;
+
+        if !res.status().is_success() {
+            let txt = res.text().await.unwrap_or_default();
+            return Err(format!("Server error: {}", txt));
+        }
+
+        Ok(())
+    }
 }
