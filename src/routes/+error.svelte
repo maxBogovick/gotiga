@@ -1,16 +1,15 @@
 <script lang="ts">
   import { page } from '$app/state';
   import NotFound from '$lib/components/NotFound.svelte';
+  import { t } from '$lib/i18n';
 
   let status = $derived(page.status);
+  let title   = $derived(status === 404 ? $t('notFoundTitle') : $t('errorTitle'));
   let message = $derived(
     status === 404
-      ? 'Сей экспонат утрачен или никогда не существовал в реестре.'
-      : `Хранилище содержит повреждённую запись. Код: ${status}`
+      ? $t('errorNotFound')
+      : `${$t('errorGeneric')} ${status}`
   );
 </script>
 
-<NotFound
-  title={status === 404 ? 'Увы' : 'Ошибка'}
-  {message}
-/>
+<NotFound {title} {message} />

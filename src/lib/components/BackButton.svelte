@@ -1,13 +1,15 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { fade } from 'svelte/transition';
+  import { t } from '$lib/i18n';
 
   interface Props {
     href?: string;
     label?: string;
   }
 
-  let { href = '/', label = 'Вернуться в зал' }: Props = $props();
+  let { href = '/', label }: Props = $props();
+  let displayLabel = $derived(label ?? $t('notFoundBack'));
 
   function handleClick() {
     goto(href);
@@ -27,5 +29,5 @@
   >
     ←
   </span>
-  <span>{label}</span>
+  <span>{displayLabel}</span>
 </button>

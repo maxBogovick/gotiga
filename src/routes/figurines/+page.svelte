@@ -4,7 +4,8 @@
   import { api } from '$lib/api';
   import type { FigurineListItem } from '$lib/types/api';
   import { fade } from 'svelte/transition';
-  import { BackButton, LoadingScreen } from '$lib/components'; // Убедитесь, что BackButton стилизована или удалите импорт, если она не подходит
+  import { BackButton, LoadingScreen } from '$lib/components';
+  import { t } from '$lib/i18n';
 
   type StatusFilter = 'all' | 'available' | 'reserved' | 'sold';
 
@@ -42,17 +43,14 @@
     sold: figurines.filter(f => f.status === 'sold').length,
   });
 
-  // Derived
   let countText = $derived(() => {
     const total = figurines.length;
     const shown = filtered.length;
-    if (total === 0) return 'Пустота';
+    if (total === 0) return $t('archiveEmpty');
     if (statusFilter !== 'all' || searchQuery.trim()) {
-      return `${shown} из ${toRoman(total)}`;
+      return `${shown} / ${toRoman(total)}`;
     }
-    if (total === 1) return 'I Экспонат';
-    if (total >= 2 && total <= 4) return `${toRoman(total)} Экспоната`;
-    return `${toRoman(total)} Экспонатов`;
+    return `${toRoman(total)}`;
   });
 
   // Helper для римских цифр (для атмосферы)
@@ -75,11 +73,10 @@
 
     try {
       figurines = await api.getAllFigurines();
-      // Имитация задержки для кинематографичности, если данных мало
       if (figurines.length < 5) await new Promise(r => setTimeout(r, 500));
     } catch (e) {
       console.error('Failed to load figurines:', e);
-      error = 'Архив поврежден. Данные недоступны.';
+      error = 'archive_damaged';
     } finally {
       isLoading = false;
     }
@@ -87,8 +84,8 @@
 </script>
 
 <svelte:head>
-  <title>Архивъ — Коллекция Миниатюр</title>
-  <meta name="description" content="Реестр готических миниатюр" />
+  <title>Archive — Gothic Miniatures Collection</title>
+  <meta name="description" content="Gothic miniatures registry" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600&family=UnifrakturMaguntia&display=swap" rel="stylesheet">
@@ -101,18 +98,18 @@
 {#if isLoading}
   <div class="min-h-screen flex flex-col items-center justify-center z-50 text-[#d4c5b0]" out:fade>
     <div class="w-16 h-16 border-t-2 border-b-2 border-[#d4c5b0]/30 rounded-full animate-spin mb-4"></div>
-    <span class="font-['Cinzel'] tracking-[0.3em] text-xs animate-pulse">Изучение архивов...</span>
+    <span class="font-['Cinzel'] tracking-[0.3em] text-xs animate-pulse">{$t('archiveStudying')}</span>
   </div>
 {:else if error}
   <div class="min-h-screen flex items-center justify-center p-8 z-10 relative">
     <div class="text-center max-w-md border border-red-900/30 bg-black/40 p-10 backdrop-blur-sm">
-      <h3 class="font-['UnifrakturMaguntia'] text-3xl text-red-900/60 mb-4">Ошибка</h3>
-      <p class="font-['Cinzel'] text-[#8a7f70] mb-8 text-sm tracking-wide">{error}</p>
+      <h3 class="font-['UnifrakturMaguntia'] text-3xl text-red-900/60 mb-4">✕</h3>
+      <p class="font-['Cinzel'] text-[#8a7f70] mb-8 text-sm tracking-wide">{$t('archiveDamaged')}</p>
       <button
               class="px-8 py-3 border border-[#d4c5b0]/20 text-[#d4c5b0] font-['Cinzel'] hover:bg-[#d4c5b0]/5 transition-colors uppercase text-xs tracking-widest"
               onclick={() => window.location.reload()}
       >
-        Повторить ритуал
+        {$t('archiveRepeat')}
       </button>
     </div>
   </div>
@@ -124,25 +121,24 @@
         <div class="flex justify-between items-end mb-8">
           <div>
             <a href="/" class="group flex items-center text-xs tracking-[0.2em] text-[#8a7f70] hover:text-[#d4c5b0] transition-colors mb-4 opacity-60 hover:opacity-100">
-              <span class="mr-2 transition-transform group-hover:-translate-x-1">←</span> Назад в Зал
+              {$t('archiveBackLink')}
             </a>
             <h1 class="font-['UnifrakturMaguntia'] text-5xl sm:text-7xl text-[#e6decb] opacity-90 drop-shadow-2xl tracking-wide">
-              Архивъ Существ
+              {$t('archivePageTitle')}
             </h1>
           </div>
           <div class="hidden sm:block text-right">
-            <p class="text-xs tracking-[0.4em] text-[#8a7f70] uppercase mb-1">Статус коллекции</p>
+            <p class="text-xs tracking-[0.4em] text-[#8a7f70] uppercase mb-1">{$t('archiveStatusCount')}</p>
             <p class="text-xl text-[#d4c5b0] border-l-2 border-[#d4c5b0]/20 pl-4">{countText()}</p>
           </div>
         </div>
         <!-- Search + Filters -->
         <div class="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
-          <!-- Search -->
           <div class="relative w-full sm:max-w-xs">
             <input
               bind:value={searchQuery}
               type="text"
-              placeholder="Поиск по имени..."
+              placeholder={$t('archiveSearchPlaceholder')}
               class="w-full bg-transparent border border-[#d4c5b0]/15 focus:border-[#d4c5b0]/40 px-4 py-2 text-xs tracking-widest text-[#d4c5b0] placeholder-[#8a7f70]/50 outline-none transition-colors font-['Cinzel'] uppercase"
             />
             {#if searchQuery}
@@ -150,13 +146,12 @@
             {/if}
           </div>
 
-          <!-- Status filter pills -->
-          <div class="flex flex-wrap gap-2" role="group" aria-label="Фильтр по статусу">
+          <div class="flex flex-wrap gap-2" role="group" aria-label="Status filter">
             {#each ([
-              { key: 'all',       label: 'Все',        count: statusCounts.all },
-              { key: 'available', label: 'В наличии',  count: statusCounts.available },
-              { key: 'reserved',  label: 'Бронь',      count: statusCounts.reserved },
-              { key: 'sold',      label: 'Утрачено',   count: statusCounts.sold },
+              { key: 'all',       labelKey: 'archiveStatusAll',       count: statusCounts.all },
+              { key: 'available', labelKey: 'archiveStatusAvailable', count: statusCounts.available },
+              { key: 'reserved',  labelKey: 'archiveStatusReserved',  count: statusCounts.reserved },
+              { key: 'sold',      labelKey: 'archiveStatusSold',      count: statusCounts.sold },
             ] as const) as pill}
               {#if pill.key === 'all' || pill.count > 0}
                 <button
@@ -173,7 +168,7 @@
                   {:else if pill.key === 'sold'}
                     <span class="w-1.5 h-1.5 rounded-full bg-red-800/70 flex-shrink-0"></span>
                   {/if}
-                  {pill.label}
+                  {$t(pill.labelKey)}
                   <span class="opacity-40">{pill.count}</span>
                 </button>
               {/if}
@@ -189,7 +184,7 @@
               <button
                       class="w-full text-left relative focus:outline-none"
                       onclick={() => goto(`/figurines/${figurine.id}`)}
-                      aria-label="Открыть {figurine.name}"
+                      aria-label="{figurine.name}"
               >
                 <div class="relative aspect-[3/4] mb-6 overflow-hidden bg-[#141210] border border-[#d4c5b0]/10 shadow-2xl transition-all duration-700 group-hover:border-[#d4c5b0]/30 group-hover:shadow-[0_0_30px_-10px_rgba(212,197,176,0.15)] group-hover:-translate-y-2">
 
@@ -218,7 +213,7 @@
                   </h2>
                   <div class="flex items-center gap-2">
                     <p class="text-[10px] tracking-[0.2em] uppercase text-[#8a7f70] group-hover:text-[#d4c5b0]/70 transition-colors">
-                      Экспонат №{i + 1}
+                      {$t('archiveExhibit')}{i + 1}
                     </p>
                     <span class="text-[#8a7f70]/30">·</span>
                     <span class="flex items-center gap-1 text-[10px] tracking-[0.15em] uppercase
@@ -226,7 +221,7 @@
                       <span class="w-1 h-1 rounded-full flex-shrink-0
                         {figurine.status === 'available' ? 'bg-emerald-500/60' : figurine.status === 'reserved' ? 'bg-amber-500/60' : 'bg-[#5c544a]'}
                       "></span>
-                      {figurine.status === 'available' ? 'В наличии' : figurine.status === 'reserved' ? 'Бронь' : 'Утрачено'}
+                      {figurine.status === 'available' ? $t('archiveStatusAvailableLabel') : figurine.status === 'reserved' ? $t('archiveStatusReservedLabel') : $t('archiveStatusSoldLabel')}
                     </span>
                   </div>
                 </div>
@@ -241,7 +236,7 @@
               onclick={() => displayLimit += PAGE_SIZE}
               class="group flex items-center gap-4 px-10 py-4 border border-[#d4c5b0]/20 hover:border-[#d4c5b0]/50 text-[#8a7f70] hover:text-[#d4c5b0] font-['Cinzel'] text-xs tracking-[0.3em] uppercase transition-all duration-500"
             >
-              <span>Открыть следующих</span>
+              <span>{$t('archiveLoadMore')}</span>
               <span class="text-[#d4c5b0]/30 group-hover:text-[#d4c5b0]/60 transition-colors">{Math.min(PAGE_SIZE, filtered.length - displayLimit)}</span>
               <span class="transition-transform group-hover:translate-y-0.5">↓</span>
             </button>
@@ -249,13 +244,13 @@
         {/if}
       {:else if searchQuery}
         <div class="flex flex-col items-center justify-center py-32 border border-dashed border-[#d4c5b0]/10 rounded-lg" in:fade>
-          <p class="font-['UnifrakturMaguntia'] text-3xl text-[#8a7f70] mb-2 opacity-50">Не найдено...</p>
-          <p class="text-xs tracking-widest text-[#5c544a] uppercase">Архив не содержит записи «{searchQuery}»</p>
+          <p class="font-['UnifrakturMaguntia'] text-3xl text-[#8a7f70] mb-2 opacity-50">{$t('archiveNotFound')}</p>
+          <p class="text-xs tracking-widest text-[#5c544a] uppercase">{$t('archiveNoEntry')} «{searchQuery}»</p>
         </div>
       {:else}
         <div class="flex flex-col items-center justify-center py-32 border border-dashed border-[#d4c5b0]/10 rounded-lg">
-          <p class="font-['UnifrakturMaguntia'] text-3xl text-[#8a7f70] mb-2 opacity-50">Пустота...</p>
-          <p class="text-xs tracking-widest text-[#5c544a] uppercase">Коллекция ожидает пополнения</p>
+          <p class="font-['UnifrakturMaguntia'] text-3xl text-[#8a7f70] mb-2 opacity-50">{$t('archiveEmpty')}</p>
+          <p class="text-xs tracking-widest text-[#5c544a] uppercase">{$t('archiveEmptyHint')}</p>
         </div>
       {/if}
 

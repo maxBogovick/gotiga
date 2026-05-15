@@ -6,6 +6,8 @@
     import { spring } from 'svelte/motion';
     import { api } from '$lib/api';
     import type { CabinetZone } from '$lib/types/api';
+    import { t } from '$lib/i18n';
+    import LangSwitcher from '$lib/components/LangSwitcher.svelte';
 
     // --- State ---
     let zones = $state<CabinetZone[]>([]);
@@ -29,22 +31,31 @@
         { id: 'windows', zoneType: 'windows', x: 25, y: 2, width: 50, height: 20, targetRoute: '/workshop' },
     ];
 
-    const ZONE_DATA: Record<string, { label: string; description: string; icon: string; accent: string }> = {
-        // типы из ZoneEditor (server-side)
-        showcase:  { label: 'АРХИВЪ',     description: 'Реликвии забвения',      icon: '🕯', accent: '#9b8b7e' },
-        desk:      { label: 'МАСТЕРСКАЯ', description: 'Место, где рождается форма', icon: '🌙', accent: '#8b8b9b' },
-        shelf:     { label: 'ВИТРИНА',    description: 'Хроники проклятых',       icon: '🗝', accent: '#a0937e' },
-        note:      { label: 'АВТОР',      description: 'Мастер теней и кукол',    icon: '⚰', accent: '#8b7355' },
-        // типы из DEFAULT_ZONES (fallback)
-        curator:   { label: 'КУРАТОР',    description: 'Мастер теней и кукол',    icon: '⚰', accent: '#8b7355' },
-        cabinet:   { label: 'АРХИВЪ',     description: 'Реликвии забвения',       icon: '🕯', accent: '#9b8b7e' },
-        portrait:  { label: 'ИСТОРИЯ',    description: 'Хроники проклятых',       icon: '🗝', accent: '#a0937e' },
-        windows:   { label: 'ВИТРАЖИ',    description: 'Разбитый свет',           icon: '🌙', accent: '#8b8b9b' },
+    const ZONE_STATIC: Record<string, { icon: string; accent: string; labelKey: string; descKey: string }> = {
+        showcase: { icon: '🕯', accent: '#9b8b7e', labelKey: 'zoneShowcase', descKey: 'zoneShowcaseDesc' },
+        desk:     { icon: '🌙', accent: '#8b8b9b', labelKey: 'zoneDesk',     descKey: 'zoneDeskDesc'     },
+        shelf:    { icon: '🗝', accent: '#a0937e', labelKey: 'zoneShelf',    descKey: 'zoneShelfDesc'    },
+        note:     { icon: '⚰', accent: '#8b7355', labelKey: 'zoneNote',     descKey: 'zoneNoteDesc'     },
+        curator:  { icon: '⚰', accent: '#8b7355', labelKey: 'zoneCurator',  descKey: 'zoneCuratorDesc'  },
+        cabinet:  { icon: '🕯', accent: '#9b8b7e', labelKey: 'zoneCabinet',  descKey: 'zoneCabinetDesc'  },
+        portrait: { icon: '🗝', accent: '#a0937e', labelKey: 'zonePortrait', descKey: 'zonePortraitDesc' },
+        windows:  { icon: '🌙', accent: '#8b8b9b', labelKey: 'zoneWindows',  descKey: 'zoneWindowsDesc'  },
     };
 
-    // Фолбэк для неизвестных типов зон
+    // Build translated ZONE_DATA reactively
+    let ZONE_DATA = $derived(
+        Object.fromEntries(
+            Object.entries(ZONE_STATIC).map(([k, v]) => [k, {
+                label: $t(v.labelKey as import('$lib/i18n').TranslationKey),
+                description: $t(v.descKey as import('$lib/i18n').TranslationKey),
+                icon: v.icon,
+                accent: v.accent,
+            }])
+        ) as Record<string, { label: string; description: string; icon: string; accent: string }>
+    );
+
     function getZoneData(zoneType: string) {
-        return ZONE_DATA[zoneType] ?? { label: zoneType.toUpperCase(), description: 'Исследуйте', icon: '✦', accent: '#8b7355' };
+        return ZONE_DATA[zoneType] ?? { label: zoneType.toUpperCase(), description: $t('zoneExplore'), icon: '✦', accent: '#8b7355' };
     }
 
     // --- Logic ---
@@ -243,7 +254,10 @@
                 <div class="bar-title">GOTHIC MUSEUM</div>
                 <div class="bar-ornament right">◆ EST ◆</div>
                 
-                <a href="/admin" class="absolute right-8 opacity-10 hover:opacity-80 transition-opacity duration-500 text-xl" aria-label="Вход для смотрителя">
+                <div class="absolute right-16 top-1/2 -translate-y-1/2 opacity-40 hover:opacity-100 transition-opacity duration-300">
+                    <LangSwitcher />
+                </div>
+                <a href="/admin" class="absolute right-8 opacity-10 hover:opacity-80 transition-opacity duration-500 text-xl" aria-label="Admin entrance">
                     🗝
                 </a>
             </div>

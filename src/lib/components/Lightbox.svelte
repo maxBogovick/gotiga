@@ -1,5 +1,6 @@
 <script lang="ts">
   import { fade } from 'svelte/transition';
+  import { t } from '$lib/i18n';
 
   type LightboxImage = { url: string; alt?: string };
 
@@ -67,7 +68,7 @@
   ontouchend={handleTouchEnd}
   role="dialog"
   aria-modal="true"
-  aria-label="Просмотр изображения"
+  aria-label="Image viewer"
 >
   <!-- Top bar -->
   <div class="absolute top-0 inset-x-0 flex items-center justify-between px-6 py-5 z-10">
@@ -81,7 +82,7 @@
     <button
       onclick={onClose}
       class="w-10 h-10 flex items-center justify-center text-white/40 hover:text-white border border-white/10 hover:border-white/30 transition-all duration-200 text-lg leading-none"
-      aria-label="Закрыть"
+      aria-label={$t('lightboxClose')}
     >✕</button>
   </div>
 
@@ -124,7 +125,7 @@
     <button
       onclick={(e) => { e.stopPropagation(); prev(); }}
       class="absolute left-3 top-1/2 -translate-y-1/2 z-10 w-12 h-12 flex items-center justify-center text-white/30 hover:text-white border border-white/10 hover:border-white/30 hover:bg-white/5 transition-all duration-200 group"
-      aria-label="Предыдущее"
+      aria-label={$t('lightboxPrevious')}
     >
       <span class="text-lg transition-transform duration-200 group-hover:-translate-x-0.5">←</span>
     </button>
@@ -133,7 +134,7 @@
     <button
       onclick={(e) => { e.stopPropagation(); next(); }}
       class="absolute right-3 top-1/2 -translate-y-1/2 z-10 w-12 h-12 flex items-center justify-center text-white/30 hover:text-white border border-white/10 hover:border-white/30 hover:bg-white/5 transition-all duration-200 group"
-      aria-label="Следующее"
+      aria-label={$t('lightboxNext')}
     >
       <span class="text-lg transition-transform duration-200 group-hover:translate-x-0.5">→</span>
     </button>
@@ -147,7 +148,7 @@
           onclick={(e) => { e.stopPropagation(); current = i; }}
           class="flex-shrink-0 w-12 h-12 overflow-hidden border transition-all duration-200
             {i === current ? 'border-white/60 opacity-100' : 'border-white/10 opacity-30 hover:opacity-60 hover:border-white/30'}"
-          aria-label="Фото {i + 1}"
+          aria-label="{$t('lightboxPhoto')} {i + 1}"
         >
           <img src={img.url} alt="" class="w-full h-full object-cover" draggable="false" />
         </button>

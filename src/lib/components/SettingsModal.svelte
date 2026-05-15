@@ -1,6 +1,7 @@
 <script lang="ts">
   import { fade, scale } from 'svelte/transition';
   import { api, type AppSettings } from '$lib/api';
+  import { t } from '$lib/i18n';
 
   // Runes for props
   let { isOpen, onClose } = $props<{ isOpen: boolean; onClose: () => void }>();
@@ -77,22 +78,22 @@
         <div class="absolute bottom-0 left-0 w-4 h-4 border-b border-l border-[#d4c5b0]/50"></div>
         <div class="absolute bottom-0 right-0 w-4 h-4 border-b border-r border-[#d4c5b0]/50"></div>
 
-        <h2 class="text-2xl font-bold mb-2 text-center text-[#e6decb] tracking-wider uppercase">Настройки Связи</h2>
+        <h2 class="text-2xl font-bold mb-2 text-center text-[#e6decb] tracking-wider uppercase">{$t('settingsTitle')}</h2>
         <div class="w-full h-px bg-gradient-to-r from-transparent via-[#d4c5b0]/30 to-transparent mb-8"></div>
 
         <div class="space-y-6">
             <label class="block">
-                <span class="text-xs uppercase tracking-widest text-[#8a7f70] block mb-2">Адрес Сервера</span>
-                <input 
+                <span class="text-xs uppercase tracking-widest text-[#8a7f70] block mb-2">{$t('settingsServerUrl')}</span>
+                <input
                     bind:value={settings.serverUrl}
-                    type="text" 
+                    type="text"
                     placeholder="https://api.gotiga.com"
                     class="w-full bg-[#141210] border border-[#d4c5b0]/20 p-3 text-sm focus:border-[#d4c5b0]/60 outline-none transition-colors"
                 />
             </label>
 
             <label class="block">
-                <span class="text-xs uppercase tracking-widest text-[#8a7f70] block mb-2">Ключ Доступа (API Key)</span>
+                <span class="text-xs uppercase tracking-widest text-[#8a7f70] block mb-2">{$t('settingsApiKey')}</span>
                 <input
                     bind:value={settings.apiKey}
                     type="password"
@@ -102,7 +103,7 @@
             </label>
 
             <label class="block">
-                <span class="text-xs uppercase tracking-widest text-[#8a7f70] block mb-2">Email для заявок</span>
+                <span class="text-xs uppercase tracking-widest text-[#8a7f70] block mb-2">{$t('settingsContactEmail')}</span>
                 <input
                     bind:value={contactEmail}
                     type="email"
@@ -120,10 +121,10 @@
                          testStatus === 'fail' ? 'border-red-700/50 text-red-400 bg-red-900/10' :
                          'border-[#d4c5b0]/20 text-[#8a7f70] hover:text-[#d4c5b0] hover:bg-[#d4c5b0]/5'}"
                 >
-                    {#if isTesting}Проверка...
-                    {:else if testStatus === 'ok'}✓ Связь установлена
-                    {:else if testStatus === 'fail'}✗ Нет ответа
-                    {:else}Проверить соединение{/if}
+                    {#if isTesting}{$t('settingsTesting')}
+                    {:else if testStatus === 'ok'}{$t('settingsTestOk')}
+                    {:else if testStatus === 'fail'}{$t('settingsTestFail')}
+                    {:else}{$t('settingsTest')}{/if}
                 </button>
             </div>
         </div>
@@ -135,18 +136,18 @@
         {/if}
 
         <div class="mt-8 flex gap-4">
-            <button 
+            <button
                 onclick={onClose}
                 class="flex-1 py-3 border border-[#d4c5b0]/20 text-[#8a7f70] hover:text-[#d4c5b0] hover:bg-[#d4c5b0]/5 transition-all text-xs uppercase tracking-widest"
             >
-                Отмена
+                {$t('settingsCancel')}
             </button>
-            <button 
+            <button
                 onclick={handleSave}
                 disabled={isSaving}
                 class="flex-1 py-3 bg-[#d4c5b0]/10 border border-[#d4c5b0]/40 hover:bg-[#d4c5b0]/20 text-[#d4c5b0] transition-all text-xs uppercase tracking-widest"
             >
-                {isSaving ? 'Сохранение...' : 'Применить'}
+                {isSaving ? '…' : $t('settingsApply')}
             </button>
         </div>
     </div>

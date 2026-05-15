@@ -2,6 +2,7 @@
   import { fade, scale, fly } from 'svelte/transition';
   import { cubicOut, elasticOut } from 'svelte/easing';
   import { api, isTauri } from '$lib/api';
+  import { t } from '$lib/i18n';
 
   let { isOpen = false, figurineName = '', figurineId = '', onClose = () => {} } = $props();
 
@@ -29,9 +30,9 @@
 
     isSubmitting = true;
 
-    const subject = encodeURIComponent(`Запрос артефакта: ${figurineName}`);
+    const subject = encodeURIComponent(`${$t('orderEmailSubject')}${figurineName}`);
     const body = encodeURIComponent(
-      `Имя просителя: ${name.trim()}\nОбратный адрес: ${email.trim()}\n\nПослание:\n${message.trim() || '—'}\n\n— Отправлено через Архивъ`
+      `${$t('orderEmailPetitioner')}${name.trim()}\n${$t('orderEmailAddress')}${email.trim()}\n\n${$t('orderEmailMessage')}${message.trim() || '—'}\n\n${$t('orderEmailSentVia')}`
     );
     const contactEmail = localStorage.getItem('gotiga_contact_email') || 'info@gotiga.art';
     const href = `mailto:${contactEmail}?subject=${subject}&body=${body}`;
@@ -74,7 +75,7 @@
           onclick={close}
           role="button"
           tabindex="-1"
-          aria-label="Закрыть"
+          aria-label={$t('lightboxClose')}
   >
     <!-- The Letter/Scroll Container -->
     <div
@@ -108,7 +109,7 @@
                 <div out:fade={{ duration: 300 }}>
                   <div class="text-center mb-10 relative">
                     <span class="absolute -top-6 left-1/2 -translate-x-1/2 text-5xl opacity-10 font-['UnifrakturMaguntia']">~</span>
-                    <h3 class="font-['UnifrakturMaguntia'] text-4xl mb-2 text-[#1A1816] drop-shadow-sm tracking-wide">Запрос Артефакта</h3>
+                    <h3 class="font-['UnifrakturMaguntia'] text-4xl mb-2 text-[#1A1816] drop-shadow-sm tracking-wide">{$t('orderTitle')}</h3>
                     <div class="flex items-center justify-center gap-3 text-[#5A524C]">
                         <span class="h-px w-8 bg-[#5A524C]/30"></span>
                         <p class="italic text-lg font-semibold tracking-wide">Ref: {figurineName}</p>
@@ -125,10 +126,10 @@
                               bind:value={name}
                               required
                               class="peer w-full bg-transparent border-b-2 border-[#2A2622]/20 py-2 text-2xl text-[#1A1816] font-['UnifrakturMaguntia'] focus:outline-none focus:border-[#7A2E2E] transition-colors placeholder-transparent"
-                              placeholder="Имя"
+                              placeholder={$t('orderNameLabel')}
                       />
                       <label for="name" class="absolute left-0 -top-4 text-xs font-['Cinzel'] font-bold tracking-[0.2em] text-[#5A524C] uppercase transition-all peer-placeholder-shown:text-base peer-placeholder-shown:top-2 peer-placeholder-shown:text-[#5A524C]/60 peer-focus:-top-4 peer-focus:text-xs peer-focus:text-[#7A2E2E]">
-                          Имя Просителя
+                          {$t('orderNameLabel')}
                       </label>
                     </div>
 
@@ -142,20 +143,20 @@
                               placeholder="Email"
                       />
                        <label for="email" class="absolute left-0 -top-4 text-xs font-['Cinzel'] font-bold tracking-[0.2em] text-[#5A524C] uppercase transition-all peer-placeholder-shown:text-base peer-placeholder-shown:top-2 peer-placeholder-shown:text-[#5A524C]/60 peer-focus:-top-4 peer-focus:text-xs peer-focus:text-[#7A2E2E]">
-                          Адрес для Ворона
+                          {$t('orderEmailLabel')}
                       </label>
                     </div>
 
                     <div class="relative group pt-2">
                        <label for="message" class="block text-xs font-['Cinzel'] font-bold tracking-[0.2em] text-[#5A524C] uppercase mb-2">
-                          Тайное Послание
+                          {$t('orderMessageLabel')}
                        </label>
                       <textarea
                               id="message"
                               bind:value={message}
                               rows="3"
                               class="w-full bg-[#2A2622]/5 border border-[#2A2622]/10 p-3 text-lg italic text-[#1A1816] focus:outline-none focus:border-[#7A2E2E]/50 focus:bg-[#2A2622]/10 transition-colors placeholder-[#5A524C]/40 resize-none rounded-sm"
-                              placeholder="Напишите свои пожелания..."
+                              placeholder={$t('orderMessagePlaceholder')}
                       ></textarea>
                     </div>
 
@@ -171,9 +172,9 @@
                          <span class="relative flex items-center gap-3 z-10">
                            {#if isSubmitting}
                              <span class="w-4 h-4 border-2 border-[#E6DCC8]/50 border-t-[#E6DCC8] rounded-full animate-spin"></span>
-                             <span class="animate-pulse">Скрепление...</span>
+                             <span class="animate-pulse">{$t('orderSubmitting')}</span>
                            {:else}
-                             <span>Поставить Печать</span>
+                             <span>{$t('orderSubmit')}</span>
                              <span class="text-lg opacity-70">✒</span>
                            {/if}
                          </span>
@@ -182,7 +183,7 @@
                      
                     <div class="text-center mt-6">
                         <button onclick={close} type="button" class="text-xs font-['Cinzel'] text-[#5A524C]/60 hover:text-[#7A2E2E] tracking-widest uppercase border-b border-transparent hover:border-[#7A2E2E]/30 transition-all">
-                            Отозвать Прошение
+                            {$t('orderCancel')}
                         </button>
                     </div>
 
@@ -206,14 +207,14 @@
                       <div class="absolute top-8 left-10 w-8 h-4 bg-white opacity-20 blur-sm rounded-full rotate-45"></div>
                    </div>
 
-                   <h3 class="font-['UnifrakturMaguntia'] text-5xl text-[#2A2622] mb-4 tracking-wide">Принято</h3>
-                   
+                   <h3 class="font-fraktur text-5xl text-[#2A2622] mb-4 tracking-wide">{$t('orderSuccessTitle')}</h3>
+
                    <div class="relative max-w-xs text-center">
-                       <span class="absolute -left-4 top-0 text-4xl text-[#2A2622]/10 font-serif">“</span>
+                       <span class="absolute -left-4 top-0 text-4xl text-[#2A2622]/10 font-serif">"</span>
                        <p class="font-['Cinzel'] text-[#5A524C] text-sm leading-relaxed font-semibold">
-                         Ваш запрос запечатан. Ворон уже в пути. Ожидайте знака, когда тени станут длиннее.
+                         {$t('orderSuccessText')}
                        </p>
-                       <span class="absolute -right-2 bottom-0 text-4xl text-[#2A2622]/10 font-serif rotate-180">“</span>
+                       <span class="absolute -right-2 bottom-0 text-4xl text-[#2A2622]/10 font-serif rotate-180">"</span>
                    </div>
                 </div>
               {/if}
@@ -245,6 +246,10 @@
       box-shadow: 
         inset 2px 2px 15px rgba(0,0,0,0.3),
         inset -2px -2px 10px rgba(255,255,255,0.1);
+  }
+
+  .font-fraktur {
+    font-family: 'UnifrakturMaguntia', serif;
   }
 
   .bg-noise {

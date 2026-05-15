@@ -3,6 +3,7 @@
     import { api, isTauri } from '$lib/api';
     import type { CabinetZone } from '$lib/types/api';
     import { fade } from 'svelte/transition';
+    import { t } from '$lib/i18n';
 
     let zones = $state<CabinetZone[]>([]);
     let selectedZone = $state<CabinetZone | null>(null);
@@ -10,10 +11,10 @@
     let bgImage = $state('/images/cabinet-room.jpg');
 
     const zoneTypes = [
-        { value: 'showcase', label: 'Витрина (showcase)', defaultRoute: '/figurines' },
-        { value: 'desk',     label: 'Стол (desk)',        defaultRoute: '/workshop' },
-        { value: 'shelf',    label: 'Полка (shelf)',       defaultRoute: '/figurines' },
-        { value: 'note',     label: 'Записка (note)',      defaultRoute: '/author' },
+        { value: 'showcase', label: 'Showcase', defaultRoute: '/figurines' },
+        { value: 'desk',     label: 'Desk',     defaultRoute: '/workshop' },
+        { value: 'shelf',    label: 'Shelf',    defaultRoute: '/figurines' },
+        { value: 'note',     label: 'Note',     defaultRoute: '/author' },
     ];
 
     // === Drag/resize state ===
@@ -103,16 +104,16 @@
                     input.accept = 'image/jpeg,image/png,image/webp';
                     input.onchange = () => {
                         const file = input.files?.[0];
-                        if (file) resolve(file); else reject(new Error('Файл не выбран'));
+                        if (file) resolve(file); else reject(new Error('no file'));
                     };
                     input.click();
                 });
             }
             const url = await api.setMainBackground(fileOrPath as string);
             bgImage = url;
-            showMsg('Фон обновлён');
+            showMsg($t('adminZoneBgUpdated'));
         } catch (e) {
-            if (String(e) !== 'Error: Файл не выбран') alert('Ошибка: ' + e);
+            if (String(e) !== 'Error: no file') alert(String(e));
         }
     }
 
@@ -137,12 +138,12 @@
             // Re-select the saved zone from fresh list
             const fresh = zones.find(z => z.id === selectedZone?.id);
             if (fresh) selectedZone = { ...fresh };
-            showMsg('Зона сохранена');
+            showMsg($t('adminZoneSaved'));
         } catch (e) { alert(e); }
     }
 
     async function remove() {
-        if (!selectedZone || !confirm('Удалить зону?')) return;
+        if (!selectedZone || !confirm($t('adminZoneDeleteConfirm'))) return;
         try {
             await api.deleteCabinetZone(selectedZone.id);
             selectedZone = null;
@@ -165,13 +166,13 @@
 
 <div class="h-full flex flex-col">
     <div class="flex justify-between items-center mb-4 shrink-0">
-        <h2 class="text-xl font-gothic text-[#d4c5b0]">Картография (Зоны)</h2>
+        <h2 class="text-xl font-gothic text-[#d4c5b0]">{$t('adminZoneHeading')}</h2>
         <div class="flex gap-3 items-center">
             {#if message}
                 <span class="text-green-400 text-xs" in:fade>{message}</span>
             {/if}
-            <button onclick={changeBackground} class="btn-gothic border-amber-900/40 text-amber-600">🖼 Изменить фон</button>
-            <button onclick={createNew} class="btn-gothic">✚ Новая зона</button>
+            <button onclick={changeBackground} class="btn-gothic border-amber-900/40 text-amber-600">{$t('adminZoneChangeBg')}</button>
+            <button onclick={createNew} class="btn-gothic">{$t('adminZoneNew')}</button>
         </div>
     </div>
 
@@ -237,7 +238,7 @@
                         style="left:{selectedZone.x}%;top:{selectedZone.y}%;width:{selectedZone.width}%;height:{selectedZone.height}%;cursor:grab;z-index:10;"
                         onmousedown={(e) => { if (e.button === 0) startDrag(e, selectedZone!, 'move'); }}
                     >
-                        <span class="text-[10px] bg-black/70 px-1 text-amber-300 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap">Новая зона</span>
+                        <span class="text-[10px] bg-black/70 px-1 text-amber-300 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap">{$t('adminZoneNewLabel')}</span>
                         <!-- Resize corner for ghost -->
                         <div
                             role="button" tabindex="-1"
@@ -258,7 +259,7 @@
             </div>
 
             <div class="absolute bottom-2 left-2 text-[9px] text-[#8a7f70] bg-black/60 px-2 py-1 pointer-events-none">
-                Перетащите зону мышью • Уголки — изменить размер
+                {$t('adminZoneDragHint')}
             </div>
         </div>
 
@@ -266,19 +267,19 @@
         <div class="bg-[#141210]/50 p-5 border border-[#d4c5b0]/10 overflow-y-auto">
             {#if selectedZone}
                 <div class="space-y-5">
-                    <h3 class="font-bold text-[#d4c5b0] border-b border-[#d4c5b0]/20 pb-2 text-sm uppercase tracking-widest">Параметры</h3>
+                    <h3 class="font-bold text-[#d4c5b0] border-b border-[#d4c5b0]/20 pb-2 text-sm uppercase tracking-widest">{$t('adminZoneParams')}</h3>
 
                     <label class="block">
-                        <span class="label">Тип зоны</span>
+                        <span class="label">{$t('adminZoneType')}</span>
                         <select bind:value={selectedZone.zoneType} class="input-gothic">
-                            {#each zoneTypes as t}
-                                <option value={t.value}>{t.label}</option>
+                            {#each zoneTypes as zt}
+                                <option value={zt.value}>{zt.label}</option>
                             {/each}
                         </select>
                     </label>
 
                     <label class="block">
-                        <span class="label">Целевой маршрут</span>
+                        <span class="label">{$t('adminZoneRoute')}</span>
                         <input bind:value={selectedZone.targetRoute} class="input-gothic" placeholder="/figurines" />
                     </label>
 
@@ -292,11 +293,11 @@
                             <input type="number" bind:value={selectedZone.y} class="input-gothic" min="0" max="100" step="0.5" />
                         </label>
                         <label class="block">
-                            <span class="label">Ширина (%)</span>
+                            <span class="label">{$t('adminZoneWidth')}</span>
                             <input type="number" bind:value={selectedZone.width} class="input-gothic" min="1" max="100" step="0.5" />
                         </label>
                         <label class="block">
-                            <span class="label">Высота (%)</span>
+                            <span class="label">{$t('adminZoneHeight')}</span>
                             <input type="number" bind:value={selectedZone.height} class="input-gothic" min="1" max="100" step="0.5" />
                         </label>
                     </div>
@@ -307,13 +308,13 @@
                     </div>
 
                     <div class="pt-4 flex gap-2">
-                        <button onclick={remove} class="btn-gothic border-red-900/40 text-red-500 flex-1">Удалить</button>
-                        <button onclick={save} class="btn-gothic bg-[#d4c5b0]/10 text-[#d4c5b0] flex-1">Сохранить</button>
+                        <button onclick={remove} class="btn-gothic border-red-900/40 text-red-500 flex-1">{$t('adminDelete')}</button>
+                        <button onclick={save} class="btn-gothic bg-[#d4c5b0]/10 text-[#d4c5b0] flex-1">{$t('adminSave')}</button>
                     </div>
                 </div>
             {:else}
                 <div class="text-[#8a7f70] text-center mt-10 opacity-40 text-sm">
-                    Выберите зону или создайте новую
+                    {$t('adminZoneSelectPrompt')}
                 </div>
             {/if}
         </div>

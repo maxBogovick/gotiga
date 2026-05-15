@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { fade } from 'svelte/transition';
+  import { t } from '$lib/i18n';
 
   let {
     finalImage,
@@ -24,7 +25,7 @@
   
   let loadedFinalImage: HTMLImageElement | null = null;
   let currentStepIndex = $state(0);
-  let restoreInterval: number;
+  let restoreInterval: ReturnType<typeof setInterval>;
   let isDrawing = false;
 
   // 1. Load Image
@@ -154,9 +155,9 @@
     transition:fade={{ duration: 800 }}
   >
     <div class="absolute top-8 text-center pointer-events-none z-10">
-        <h2 class="font-['UnifrakturMaguntia'] text-4xl text-[#d4c5b0] opacity-80 mb-2">Зеркало Памяти</h2>
+        <h2 class="font-['UnifrakturMaguntia'] text-4xl text-[#d4c5b0] opacity-80 mb-2">{$t('mirrorTitle')}</h2>
         <p class="font-['Cinzel'] text-xs text-[#8a7f70] tracking-[0.3em] uppercase">
-            Протрите стекло, чтобы увидеть прошлое
+            {$t('mirrorHint')}
         </p>
     </div>
 

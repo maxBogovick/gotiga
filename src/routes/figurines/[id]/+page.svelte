@@ -12,6 +12,7 @@
   import MemoryMirror from '$lib/components/MemoryMirror.svelte';
   import SecretText from '$lib/components/SecretText.svelte';
   import Lightbox from '$lib/components/Lightbox.svelte';
+  import { t } from '$lib/i18n';
 
   // State
   let figurine = $state<Figurine | null>(null);
@@ -129,7 +130,7 @@
     try {
       const result = await api.getFigurine(id);
       if (!result) {
-        error = 'Запись в архиве отсутствует';
+        error = $t('figurineError');
       } else {
         figurine = result;
         // Небольшая задержка для атмосферы
@@ -137,7 +138,7 @@
       }
     } catch (e) {
       console.error('Failed to load figurine:', e);
-      error = 'Страница архива повреждена';
+      error = $t('figurineError');
     } finally {
       isLoading = false;
     }
@@ -152,7 +153,7 @@
 </script>
 
 <svelte:head>
-  <title>{figurine?.name ?? 'Архив'} — Детали</title>
+  <title>{figurine?.name ?? $t('zoneShowcase')} — Details</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600&family=UnifrakturMaguntia&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400&family=Reenie+Beanie&display=swap" rel="stylesheet">
@@ -170,16 +171,16 @@
        <div class="absolute inset-0 border border-cabinet-bone/20 rounded-full animate-ping"></div>
        <div class="absolute inset-0 border-t border-cabinet-bone rounded-full animate-spin"></div>
     </div>
-    <span class="font-['Cinzel'] tracking-[0.3em] text-xs uppercase animate-pulse text-cabinet-dust">Извлечение из хранилища...</span>
+    <span class="font-['Cinzel'] tracking-[0.3em] text-xs uppercase animate-pulse text-cabinet-dust">{$t('figurineExtracting')}</span>
   </div>
 
 {:else if error}
   <div class="min-h-screen flex flex-col items-center justify-center p-8 text-center" in:fade>
-    <h2 class="font-['UnifrakturMaguntia'] text-5xl text-cabinet-fabric mb-6">Увы</h2>
+    <h2 class="font-['UnifrakturMaguntia'] text-5xl text-cabinet-fabric mb-6">{$t('figurineError')}</h2>
     <p class="font-['Cinzel'] text-cabinet-bone mb-12 text-lg">{error}</p>
     <a href="/figurines" class="px-8 py-3 border border-cabinet-bone/30 text-cabinet-bone font-['Cinzel'] hover:bg-cabinet-wood-light transition-colors uppercase text-sm tracking-widest relative group">
       <span class="absolute inset-0 w-0 bg-cabinet-bone/5 transition-all duration-300 group-hover:w-full"></span>
-      <span class="relative">Вернуться к списку</span>
+      <span class="relative">{$t('figurineErrorBack')}</span>
     </a>
   </div>
 
@@ -214,23 +215,23 @@
       <nav class="mb-16 flex justify-between items-center" in:fade={{ duration: 800 }}>
         <a href="/figurines" class="inline-flex items-center text-xs tracking-[0.2em] text-cabinet-dust hover:text-cabinet-bone transition-colors group opacity-70 hover:opacity-100">
           <span class="mr-3 transform group-hover:-translate-x-1 transition-transform font-serif text-lg">←</span>
-          ВЕРНУТЬСЯ В АРХИВ
+          {$t('figurineBackToArchive')}
         </a>
         <div class="flex items-center gap-6">
             <button
                 onclick={toggleCandle}
                 class="flex items-center gap-3 text-xs tracking-[0.2em] uppercase transition-colors {isCandleLit ? 'text-[#ffaa00] opacity-100 drop-shadow-[0_0_5px_rgba(255,170,0,0.5)]' : 'text-cabinet-wood-muted opacity-60 hover:opacity-100'}"
-                aria-label="Зажечь свечу"
+                aria-label={$t('figurineCandle')}
             >
                 <span class="text-base">{isCandleLit ? '🔥' : '🕯️'}</span>
-                {isCandleLit ? 'Потушить' : 'Свеча'}
+                {isCandleLit ? $t('figurineExtinguish') : $t('figurineCandle')}
             </button>
 
             {#if figurine.ambiencePath}
                 <button 
                     onclick={toggleAudio}
                     class="flex items-center gap-3 text-xs tracking-[0.2em] uppercase transition-colors {isAudioPlaying ? 'text-cabinet-bone opacity-100' : 'text-cabinet-wood-muted opacity-60 hover:opacity-100'}"
-                    aria-label="Переключить атмосферу"
+                    aria-label={$t('figurineWhisper')}
                 >
                     <span class="relative flex h-3 w-3">
                       {#if isAudioPlaying}
@@ -238,7 +239,7 @@
                       {/if}
                       <span class="relative inline-flex rounded-full h-3 w-3 {isAudioPlaying ? 'bg-cabinet-bone' : 'bg-cabinet-wood'}"></span>
                     </span>
-                    {isAudioPlaying ? 'Тишина' : 'Шепот'}
+                    {isAudioPlaying ? $t('figurineSilence') : $t('figurineWhisper')}
                 </button>
             {/if}
             <span class="text-[10px] tracking-[0.3em] text-cabinet-wood-muted uppercase border border-cabinet-wood-muted/30 px-3 py-1 rounded-full">
@@ -275,12 +276,12 @@
                 <button
                   onclick={() => openLightbox(selectedImageIndex)}
                   class="absolute bottom-3 right-3 z-30 flex items-center gap-1.5 px-2.5 py-1.5 bg-black/50 border border-white/10 hover:border-white/30 hover:bg-black/70 transition-all duration-200 opacity-0 group-hover/main:opacity-100 font-['Cinzel'] text-[9px] tracking-widest text-white/50 hover:text-white/80"
-                  aria-label="Открыть полный экран"
+                  aria-label={$t('figurineFullscreen')}
                 >
                   <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.2">
                     <path d="M1 4V1h3M6 1h3v3M9 6v3H6M4 9H1V6"/>
                   </svg>
-                  Полный экран
+                  {$t('figurineFullscreen')}
                 </button>
               {/if}
               <!-- Texture overlays -->
@@ -301,7 +302,7 @@
                     class="relative w-20 h-20 border transition-all duration-500 overflow-hidden
                      {selectedImageIndex === i ? 'border-cabinet-bone opacity-100 scale-105' : 'border-cabinet-wood opacity-40 hover:opacity-80 hover:border-cabinet-bone/60'}"
                     onclick={() => selectImage(i)}
-                    aria-label="Показать вид {i + 1}"
+                    aria-label="{$t('figurineShowView')} {i + 1}"
                   >
                     <img src={resolveUrl(img.url)} alt="" class="w-full h-full object-cover grayscale group-hover/thumb:grayscale-0 transition-all duration-500" />
                     {#if selectedImageIndex === i}
@@ -312,7 +313,7 @@
                   <button
                     onclick={() => openLightbox(i)}
                     class="absolute inset-0 flex items-end justify-end p-1 opacity-0 group-hover/thumb:opacity-100 transition-opacity"
-                    aria-label="Открыть увеличенно"
+                    aria-label={$t('figurineOpenEnlarged')}
                   >
                     <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="rgba(212,197,176,0.7)" stroke-width="1.5">
                       <path d="M1 4V1h3M6 1h3v3M9 6v3H6M4 9H1V6"/>
@@ -347,9 +348,7 @@
               {/if}
               <span class="w-1 h-1 bg-cabinet-bone/40 rounded-full"></span>
               <span class="{figurine.status === 'sold' ? 'text-accent-red' : figurine.status === 'reserved' ? 'text-accent-olive' : 'text-cabinet-bone'}">
-                 {#if figurine.status === 'sold'}Утрачено
-              {:else if figurine.status === 'reserved'}Бронь
-              {:else}В наличии{/if}
+                {figurine.status === 'sold' ? $t('figurineStatusSold') : figurine.status === 'reserved' ? $t('figurineStatusReserved') : $t('figurineStatusAvailable')}
               </span>
             </div>
           </div>
@@ -367,7 +366,7 @@
           <!-- Full Description (The Story) -->
           {#if figurine.fullDescription}
              <div class="prose prose-invert prose-p:text-cabinet-dust prose-p:font-['Cormorant_Garamond'] prose-p:text-lg prose-p:leading-8 prose-p:mb-4">
-                <h3 class="text-cabinet-bone font-['Cinzel'] text-xs tracking-[0.3em] uppercase mb-4 opacity-70 border-b border-cabinet-bone/10 pb-2 inline-block">История</h3>
+                <h3 class="text-cabinet-bone font-['Cinzel'] text-xs tracking-[0.3em] uppercase mb-4 opacity-70 border-b border-cabinet-bone/10 pb-2 inline-block">{$t('figurineHistory')}</h3>
                 <p class="first-letter:text-5xl first-letter:font-['UnifrakturMaguntia'] first-letter:text-cabinet-bone first-letter:float-left first-letter:mr-3 first-letter:mt-[-10px]">
                     {figurine.fullDescription}
                 </p>
@@ -381,7 +380,7 @@
              
              <h3 class="text-center font-['Cinzel'] text-xs tracking-[0.4em] text-cabinet-bone/60 uppercase mb-8 flex items-center justify-center gap-4">
                 <span class="h-[1px] w-8 bg-cabinet-bone/20"></span>
-                Атрибуты
+                {$t('figurineAttributes')}
                 <span class="h-[1px] w-8 bg-cabinet-bone/20"></span>
              </h3>
 
@@ -389,27 +388,27 @@
                 
                 {#if figurine.dimensions}
                 <div class="flex justify-between items-baseline border-b border-dashed border-cabinet-bone/10 pb-2 hover:bg-cabinet-wood/10 transition-colors px-2">
-                   <span class="text-cabinet-dust uppercase tracking-widest text-xs">Габариты</span>
+                   <span class="text-cabinet-dust uppercase tracking-widest text-xs">{$t('figurineDimensions')}</span>
                    <span class="text-cabinet-bone text-right">{figurine.dimensions}</span>
                 </div>
                 {/if}
 
                 {#if figurine.material}
                 <div class="flex justify-between items-baseline border-b border-dashed border-cabinet-bone/10 pb-2 hover:bg-cabinet-wood/10 transition-colors px-2">
-                   <span class="text-cabinet-dust uppercase tracking-widest text-xs">Материал</span>
+                   <span class="text-cabinet-dust uppercase tracking-widest text-xs">{$t('figurineMaterial')}</span>
                    <span class="text-cabinet-bone text-right max-w-[60%]">{figurine.material}</span>
                 </div>
                 {/if}
 
                  {#if figurine.technique}
                 <div class="flex justify-between items-baseline border-b border-dashed border-cabinet-bone/10 pb-2 hover:bg-cabinet-wood/10 transition-colors px-2">
-                   <span class="text-cabinet-dust uppercase tracking-widest text-xs">Техника</span>
+                   <span class="text-cabinet-dust uppercase tracking-widest text-xs">{$t('figurineTechnique')}</span>
                    <span class="text-cabinet-bone text-right max-w-[60%]">{figurine.technique}</span>
                 </div>
                 {/if}
                 
                 <div class="flex justify-between items-baseline border-b border-dashed border-cabinet-bone/10 pb-2 hover:bg-cabinet-wood/10 transition-colors px-2">
-                   <span class="text-cabinet-dust uppercase tracking-widest text-xs">Код</span>
+                   <span class="text-cabinet-dust uppercase tracking-widest text-xs">{$t('figurineCode')}</span>
                    <span class="text-cabinet-bone text-right font-mono text-xs opacity-60">ARC-{id.toUpperCase()}</span>
                 </div>
              </div>
@@ -426,12 +425,12 @@
                   
                   <span class="relative text-cabinet-bone tracking-[0.3em] uppercase text-sm font-semibold flex items-center justify-center gap-4">
                     <span class="w-1.5 h-1.5 border border-cabinet-bone rotate-45 group-hover:rotate-90 transition-transform duration-500"></span>
-                    Запросить Артефакт
+                    {$t('figurineRequest')}
                     <span class="w-1.5 h-1.5 border border-cabinet-bone rotate-45 group-hover:rotate-90 transition-transform duration-500"></span>
                   </span>
                 </button>
                 <p class="text-center text-[10px] text-cabinet-wood-muted mt-4 tracking-wider uppercase opacity-60 font-serif italic">
-                   * Передача осуществляется только в надежные руки
+                   {$t('figurineRequestNote')}
                 </p>
             </div>
           {/if}
@@ -447,7 +446,7 @@
                 class="mx-auto flex flex-col items-center gap-4 group cursor-pointer"
             >
                 <span class="relative font-['UnifrakturMaguntia'] text-2xl text-cabinet-bone opacity-80 group-hover:opacity-100 transition-opacity">
-                   Заглянуть в Зеркало Памяти
+                   {$t('figurineGrimoire')}
                    <span class="absolute -top-1 -right-3 w-2 h-2 rounded-full bg-[#d4c5b0]/60 animate-ping"></span>
                 </span>
                  <div class="w-px h-16 bg-gradient-to-b from-cabinet-bone/0 via-cabinet-bone/40 to-cabinet-bone/0 group-hover:h-24 transition-all duration-500"></div>
@@ -468,7 +467,7 @@
              <div class="flex items-center justify-center gap-6 mb-12">
                  <div class="h-px w-16 bg-gradient-to-r from-transparent to-cabinet-bone/30"></div>
                  <h3 class="font-['UnifrakturMaguntia'] text-3xl text-cabinet-bone text-center tracking-wide">
-                     Живые Картины
+                     {$t('figurineVideo')}
                  </h3>
                  <div class="h-px w-16 bg-gradient-to-l from-transparent to-cabinet-bone/30"></div>
              </div>
@@ -495,7 +494,7 @@
                             preload="metadata"
                          >
                              <source src={resolveUrl(figurine.videoUrl)} type="video/mp4" />
-                             Ваш браузер не поддерживает элемент video.
+                             {$t('figurineBrowserNoVideo')}
                          </video>
 
                          <!-- Old Film Grain Overlay -->
@@ -505,7 +504,7 @@
                          <button
                              onclick={toggleFullscreen}
                              class="absolute top-3 right-3 z-30 bg-black/60 hover:bg-black/80 border border-cabinet-bone/20 hover:border-cabinet-bone/50 p-2 transition-all opacity-0 group-hover:opacity-100 font-['Cinzel'] text-[10px] uppercase tracking-widest text-cabinet-bone"
-                             title="На весь экран"
+                             title={$t('figurineFullscreen')}
                          >⛶</button>
                          
                          <!-- Scratches/Artifacts (CSS animation could go here) -->
@@ -517,7 +516,7 @@
              </div>
              
              <p class="text-center font-['Cinzel'] text-[10px] tracking-[0.4em] text-cabinet-wood-muted mt-8 uppercase opacity-60">
-                 Архивная пленка №{id.slice(-3)}
+                 {$t('figurineVideoFilm')}{id.slice(-3)}
              </p>
          </div>
       {/if}
@@ -526,7 +525,7 @@
       {#if figurine.relatedItems && figurine.relatedItems.length > 0}
         <div class="mt-24 pt-12 border-t border-cabinet-bone/10 relative">
             <h3 class="font-['UnifrakturMaguntia'] text-3xl text-cabinet-bone/80 text-center mb-12 flex items-center justify-center gap-4">
-               <span class="opacity-30">~</span> Соседние Тени <span class="opacity-30">~</span>
+               <span class="opacity-30">~</span> {$t('figurineRelated')} <span class="opacity-30">~</span>
             </h3>
             
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
@@ -545,7 +544,7 @@
                       <div class="text-center">
                           <h4 class="font-['UnifrakturMaguntia'] text-xl text-cabinet-bone/90 mb-1 group-hover:text-cabinet-bone transition-colors">{item.name}</h4>
                           <span class="text-[10px] uppercase tracking-[0.2em] text-cabinet-wood-muted">
-                              {item.status === 'sold' ? 'Утрачено' : item.status === 'reserved' ? 'Бронь' : 'В наличии'}
+                              {item.status === 'sold' ? $t('figurineStatusSold') : item.status === 'reserved' ? $t('figurineStatusReserved') : $t('figurineStatusAvailable')}
                           </span>
                       </div>
                   </a>

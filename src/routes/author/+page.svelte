@@ -4,6 +4,7 @@
   import { cubicOut } from 'svelte/easing';
   import { api } from '$lib/api';
   import type { AuthorText, AuthorProfile } from '$lib/types/api';
+  import { t } from '$lib/i18n';
 
   let texts = $state<AuthorText[]>([]);
   let profile = $state<AuthorProfile | null>(null);
@@ -33,7 +34,7 @@
       ]);
     } catch (e) {
       console.error('Failed to load author page:', e);
-      error = 'Слова растворились в тишине...';
+      error = $t('authorError');
     } finally {
       isLoading = false;
     }
@@ -43,12 +44,12 @@
     profile.instagram ? { label: 'Instagram', icon: 'ig', href: `https://instagram.com/${profile.instagram.replace('@','')}` } : null,
     profile.telegram  ? { label: 'Telegram',  icon: 'tg', href: `https://t.me/${profile.telegram.replace('@','')}` }           : null,
     profile.vk        ? { label: 'VK',        icon: 'vk', href: `https://vk.com/${profile.vk.replace('@','')}`  }              : null,
-    profile.email     ? { label: 'Написать',  icon: 'em', href: `mailto:${profile.email}` }                                    : null,
+    profile.email     ? { label: $t('authorContactLabel'), icon: 'em', href: `mailto:${profile.email}` }                       : null,
   ].filter(Boolean) : []);
 </script>
 
 <svelte:head>
-  <title>О Мастере — Архивъ</title>
+  <title>About the Master — Archive</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400&family=UnifrakturMaguntia&display=swap" rel="stylesheet">
@@ -62,12 +63,12 @@
 
 {#if isLoading}
   <div class="min-h-screen flex items-center justify-center" out:fade>
-    <span class="font-['Cinzel'] text-[#8a7f70] tracking-[0.5em] text-xs animate-pulse uppercase">Тишина...</span>
+    <span class="font-['Cinzel'] text-[#8a7f70] tracking-[0.5em] text-xs animate-pulse uppercase">{$t('authorSilence')}</span>
   </div>
 {:else if error}
   <div class="min-h-screen flex flex-col items-center justify-center p-8 text-center" in:fade>
-    <p class="font-['Cinzel'] text-[#8a7f70] mb-6 tracking-widest">{error}</p>
-    <a href="/" class="text-[#d4c5b0] border-b border-[#d4c5b0]/20 pb-1 text-xs tracking-widest">ВЕРНУТЬСЯ</a>
+    <p class="font-['Cinzel'] text-[#8a7f70] mb-6 tracking-widest">{$t('authorError')}</p>
+    <a href="/" class="text-[#d4c5b0] border-b border-[#d4c5b0]/20 pb-1 text-xs tracking-widest">{$t('authorReturnLink')}</a>
   </div>
 {:else}
   <div class="min-h-screen relative z-10 font-['Cinzel'] text-[#d4c5b0] pb-32">
@@ -75,7 +76,7 @@
 
       <nav class="mb-16" in:fade={{ duration: 1000 }}>
         <a href="/" class="group flex items-center text-[10px] tracking-[0.4em] text-[#8a7f70] hover:text-[#d4c5b0] transition-colors uppercase">
-          <span class="mr-3 transition-transform group-hover:-translate-x-1">←</span> К порогу кабинета
+          <span class="mr-3 transition-transform group-hover:-translate-x-1">←</span> {$t('authorBack').replace('← ', '')}
         </a>
       </nav>
 
@@ -114,7 +115,7 @@
 
               <!-- Bio -->
               <div class="flex-1 min-w-0">
-                <p class="text-[10px] tracking-[0.4em] text-[#8a7f70] uppercase mb-3">Создатель</p>
+                <p class="text-[10px] tracking-[0.4em] text-[#8a7f70] uppercase mb-3">{$t('authorCreator')}</p>
                 <h1 class="font-['UnifrakturMaguntia'] text-4xl lg:text-5xl text-[#e6decb] mb-4 leading-tight">
                   {profile.name}
                 </h1>
@@ -168,7 +169,7 @@
       {:else}
         <header class="mb-24 text-center" in:fade={{ duration: 1000 }}>
           <h1 class="font-['UnifrakturMaguntia'] text-5xl lg:text-7xl text-[#e6decb] mb-6 opacity-80 drop-shadow-2xl">
-            Голосъ Автора
+            {$t('authorVoiceTitle')}
           </h1>
           <div class="w-24 h-px bg-gradient-to-r from-transparent via-[#d4c5b0]/30 to-transparent mx-auto"></div>
         </header>
@@ -178,7 +179,7 @@
       {#if texts.length > 0}
         {#if profile && profile.name}
           <div class="mb-16 text-center" in:fade={{ delay: 400 }}>
-            <p class="text-[10px] tracking-[0.4em] text-[#8a7f70] uppercase">Записи мастера</p>
+            <p class="text-[10px] tracking-[0.4em] text-[#8a7f70] uppercase">{$t('authorMasterNotes')}</p>
             <div class="w-24 h-px bg-gradient-to-r from-transparent via-[#d4c5b0]/20 to-transparent mx-auto mt-4"></div>
           </div>
         {/if}
@@ -213,7 +214,7 @@
         </div>
       {:else if !profile?.name}
         <div class="text-center py-20 opacity-40">
-          <p class="tracking-[0.3em] uppercase text-xs">Листы чисты...</p>
+          <p class="tracking-[0.3em] uppercase text-xs">{$t('authorEmpty')}</p>
         </div>
       {/if}
 

@@ -3,6 +3,7 @@
   import { api } from '$lib/api';
   import type { AuthorProfile } from '$lib/types/api';
   import { fade } from 'svelte/transition';
+  import { t } from '$lib/i18n';
 
   let profile = $state<AuthorProfile>({
     name: '',
@@ -38,10 +39,10 @@
     message = '';
     try {
       await api.saveAuthorProfile(profile);
-      message = 'Профиль сохранён';
+      message = $t('adminProfileSaved');
       messageType = 'ok';
     } catch (e) {
-      message = 'Ошибка сохранения';
+      message = $t('adminProfileError');
       messageType = 'err';
     } finally {
       isSaving = false;
@@ -55,15 +56,15 @@
 
     <div class="flex items-center justify-between">
       <div>
-        <h2 class="text-sm tracking-[0.3em] uppercase text-[#d4c5b0]">Профиль мастера</h2>
-        <p class="text-[10px] text-[#8a7f70] mt-1">Отображается на странице /author</p>
+        <h2 class="text-sm tracking-[0.3em] uppercase text-[#d4c5b0]">{$t('adminProfileHeading')}</h2>
+        <p class="text-[10px] text-[#8a7f70] mt-1">{$t('adminProfileDesc')}</p>
       </div>
       <button
         onclick={save}
         disabled={isSaving}
         class="btn-gothic text-xs px-5 py-2 disabled:opacity-50"
       >
-        {isSaving ? 'Сохранение...' : 'Сохранить'}
+        {isSaving ? $t('adminSaving') : $t('adminSave')}
       </button>
     </div>
 
@@ -74,47 +75,47 @@
     {/if}
 
     {#if isLoading}
-      <p class="text-xs text-[#8a7f70] animate-pulse">Загрузка...</p>
+      <p class="text-xs text-[#8a7f70] animate-pulse">{$t('adminLoading')}</p>
     {:else}
       <div class="space-y-5">
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label class="block text-[10px] tracking-[0.2em] uppercase text-[#8a7f70] mb-1">Имя *</label>
+            <label class="block text-[10px] tracking-[0.2em] uppercase text-[#8a7f70] mb-1">{$t('adminProfileName')}</label>
             <input
               bind:value={profile.name}
               type="text"
-              placeholder="Иван Мастеров"
+              placeholder="Ivan Masterov"
               class="admin-input w-full"
             />
           </div>
           <div>
-            <label class="block text-[10px] tracking-[0.2em] uppercase text-[#8a7f70] mb-1">Подзаголовок</label>
+            <label class="block text-[10px] tracking-[0.2em] uppercase text-[#8a7f70] mb-1">{$t('adminProfileTagline')}</label>
             <input
               bind:value={profile.tagline}
               type="text"
-              placeholder="Скульптор готических миниатюр"
+              placeholder="Gothic miniature sculptor"
               class="admin-input w-full"
             />
           </div>
         </div>
 
         <div>
-          <label class="block text-[10px] tracking-[0.2em] uppercase text-[#8a7f70] mb-1">Биография</label>
+          <label class="block text-[10px] tracking-[0.2em] uppercase text-[#8a7f70] mb-1">{$t('adminProfileBio')}</label>
           <textarea
             bind:value={profile.bio}
             rows="6"
-            placeholder="Расскажите о себе... Используйте пустую строку для разделения абзацев."
+            placeholder={$t('adminProfileBioPlaceholder')}
             class="admin-input w-full resize-y"
           ></textarea>
         </div>
 
         <div>
-          <label class="block text-[10px] tracking-[0.2em] uppercase text-[#8a7f70] mb-1">URL фотографии</label>
+          <label class="block text-[10px] tracking-[0.2em] uppercase text-[#8a7f70] mb-1">{$t('adminProfilePhoto')}</label>
           <input
             bind:value={profile.photoUrl}
             type="text"
-            placeholder="https://... или /static/images/photo.jpg"
+            placeholder="https://... or /static/images/photo.jpg"
             class="admin-input w-full"
           />
           {#if profile.photoUrl}
@@ -125,7 +126,7 @@
         </div>
 
         <div class="border-t border-[#d4c5b0]/10 pt-5">
-          <p class="text-[10px] tracking-[0.3em] uppercase text-[#8a7f70] mb-4">Социальные сети</p>
+          <p class="text-[10px] tracking-[0.3em] uppercase text-[#8a7f70] mb-4">{$t('adminProfileSocials')}</p>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label class="block text-[10px] tracking-widest text-[#8a7f70] mb-1">Instagram</label>
@@ -144,8 +145,8 @@
             <div>
               <label class="block text-[10px] tracking-widest text-[#8a7f70] mb-1">VK</label>
               <div class="flex items-center">
-                <span class="text-[#8a7f70] text-xs mr-1">vk.com/</span>
-                <input bind:value={profile.vk} type="text" placeholder="id или короткий адрес" class="admin-input flex-1" />
+                <span class="text-[#8a7f70] text-xs mr-1">{$t('adminProfileVkPath')}</span>
+                <input bind:value={profile.vk} type="text" placeholder="id or short address" class="admin-input flex-1" />
               </div>
             </div>
             <div>

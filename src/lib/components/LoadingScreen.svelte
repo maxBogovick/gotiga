@@ -1,11 +1,13 @@
 <script lang="ts">
   import { fade } from 'svelte/transition';
+  import { t } from '$lib/i18n';
 
   interface Props {
     message?: string;
   }
 
-  let { message = 'Извлечение из хранилища...' }: Props = $props();
+  let { message }: Props = $props();
+  let displayMessage = $derived(message ?? $t('loadingExtracting'));
 </script>
 
 <div
@@ -32,7 +34,7 @@
       class="font-cinzel text-[#8a7f70] text-xs tracking-[0.4em] uppercase animate-pulse"
       aria-live="polite"
     >
-      {message}
+      {displayMessage}
     </p>
   </div>
 </div>

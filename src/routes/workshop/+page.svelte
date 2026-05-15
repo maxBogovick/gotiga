@@ -5,6 +5,7 @@
   import { api } from '$lib/api';
   import type { WorkshopItem } from '$lib/types/api';
   import { BackButton, LoadingScreen } from '$lib/components';
+  import { t } from '$lib/i18n';
 
   // State (Svelte 5 Runes)
   let items = $state<WorkshopItem[]>([]);
@@ -49,7 +50,7 @@
       await new Promise(r => setTimeout(r, 400));
     } catch (e) {
       console.error('Failed to load workshop:', e);
-      error = 'Чертежи утеряны в тенях...';
+      error = 'workshopError';
     } finally {
       isLoading = false;
     }
@@ -57,7 +58,7 @@
 </script>
 
 <svelte:head>
-  <title>Мастерская — Anno 2024</title>
+  <title>Workshop — Gothic Museum</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600&family=UnifrakturMaguntia&display=swap" rel="stylesheet">
@@ -74,9 +75,9 @@
   <LoadingScreen />
 {:else if error}
   <div class="min-h-screen flex flex-col items-center justify-center p-8 z-10 relative font-['Cinzel']">
-    <p class="text-[#8a7f70] mb-6 tracking-widest uppercase text-sm">{error}</p>
+    <p class="text-[#8a7f70] mb-6 tracking-widest uppercase text-sm">{$t('workshopError')}</p>
     <button class="px-6 py-2 border border-[#d4c5b0]/20 text-[#d4c5b0] hover:bg-[#d4c5b0]/5" onclick={() => window.location.reload()}>
-      Попробовать снова
+      {$t('workshopRetry')}
     </button>
   </div>
 {:else}
@@ -84,18 +85,18 @@
 
     <div class="mb-10" in:fade={{ duration: 800 }}>
       <a href="/" class="text-[10px] tracking-[0.4em] text-[#8a7f70] hover:text-[#d4c5b0] transition-colors group">
-        ← ВЕРНУТЬСЯ В ЗАЛ
+        {$t('workshopBack')}
       </a>
     </div>
 
     <header class="mb-20 max-w-xl">
       <h1 class="font-['UnifrakturMaguntia'] text-5xl lg:text-7xl text-[#e6decb] mb-4 opacity-90 drop-shadow-2xl"
           in:fly={{ x: -20, duration: 1000 }}>
-        Мастерская
+        {$t('zoneDesk')}
       </h1>
       <p class="text-[#8a7f70] text-xs leading-relaxed tracking-widest uppercase border-l border-[#d4c5b0]/20 pl-6"
          in:fade={{ delay: 500 }}>
-        Место, где глина обретает имя, а тени — форму. Внимательно изучайте чертежи.
+        {$t('workshopSubtitle')}
       </p>
     </header>
 
@@ -181,7 +182,7 @@
     {:else}
       <div class="text-center py-40 border border-dashed border-[#d4c5b0]/10" in:fade>
         <p class="font-['UnifrakturMaguntia'] text-2xl text-[#8a7f70] opacity-40 uppercase tracking-[0.2em]">
-          Мастерская заброшена...
+          {$t('workshopEmpty')}
         </p>
       </div>
     {/if}

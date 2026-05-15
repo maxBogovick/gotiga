@@ -1,6 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { fade } from 'svelte/transition';
+  import { t } from '$lib/i18n';
 
   interface Props {
     title?: string;
@@ -10,11 +11,15 @@
   }
 
   let {
-    title = 'Увы',
-    message = 'Сей экспонат утрачен или никогда не существовал в реестре.',
+    title,
+    message,
     backHref = '/',
-    backLabel = 'Вернуться в зал'
+    backLabel,
   }: Props = $props();
+
+  let displayTitle   = $derived(title   ?? $t('notFoundTitle'));
+  let displayMessage = $derived(message ?? $t('notFoundMessage'));
+  let displayBack    = $derived(backLabel ?? $t('notFoundBack'));
 </script>
 
 <div class="fixed inset-0 bg-[#0a0806] -z-50"></div>
@@ -28,7 +33,7 @@
   <div class="text-center max-w-md">
     <!-- Gothic Title -->
     <h1 class="font-gothic text-5xl text-[#8a7f70] mb-6 opacity-80">
-      {title}
+      {displayTitle}
     </h1>
 
     <!-- Decorative line -->
@@ -36,7 +41,7 @@
 
     <!-- Message -->
     <p class="font-cinzel text-[#d4c5b0] mb-10 leading-relaxed text-sm tracking-wide">
-      {message}
+      {displayMessage}
     </p>
 
     <!-- Button -->
@@ -44,7 +49,7 @@
       class="btn-gothic"
       onclick={() => goto(backHref)}
     >
-      {backLabel}
+      {displayBack}
     </button>
   </div>
 </div>

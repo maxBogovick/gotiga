@@ -8,6 +8,8 @@
     import TextEditor from '$lib/components/admin/TextEditor.svelte';
     import ReleaseManager from '$lib/components/admin/ReleaseManager.svelte';
     import ProfileEditor from '$lib/components/admin/ProfileEditor.svelte';
+    import { t } from '$lib/i18n';
+    import LangSwitcher from '$lib/components/LangSwitcher.svelte';
 
     // === AUTH ===
     let isAuthenticated = $state(false);
@@ -26,7 +28,7 @@
             isAuthenticated = true;
             await loadFigurines();
         } catch {
-            loginError = 'Неверный логин или пароль';
+            loginError = $t('adminLoginError');
         } finally {
             loginLoading = false;
         }
@@ -102,7 +104,7 @@
                 ? await api.getAllFigurines()
                 : await api.getAllFigurinesAdmin();
         } catch (e) {
-            showMessage('Ошибка загрузки: ' + e, 'error');
+            showMessage($t('adminMsgLoadError') + e, 'error');
         }
     }
 
@@ -121,7 +123,7 @@
     }
 
     async function editFigurine(id: string) {
-        if (hasUnsaved && !confirm('Есть несохранённые изменения. Покинуть?')) return;
+        if (hasUnsaved && !confirm($t('adminMsgUnsavedLeave'))) return;
         const full = await api.getFigurine(id);
         if (full) {
             selectedFigurine = { ...full };
@@ -130,19 +132,19 @@
     }
 
     function createNew() {
-        if (hasUnsaved && !confirm('Есть несохранённые изменения. Покинуть?')) return;
+        if (hasUnsaved && !confirm($t('adminMsgUnsavedLeave'))) return;
         selectedFigurine = { ...emptyFigurine, id: crypto.randomUUID(), sortOrder: figurines.length };
         savedSnapshot = '';
     }
 
     function duplicateFigurine(fig: FigurineListItem) {
-        if (hasUnsaved && !confirm('Есть несохранённые изменения. Покинуть?')) return;
+        if (hasUnsaved && !confirm($t('adminMsgUnsavedLeave'))) return;
         api.getFigurine(fig.id).then(full => {
             if (!full) return;
             selectedFigurine = {
                 ...full,
                 id: crypto.randomUUID(),
-                name: full.name + ' (копия)',
+                name: full.name + $t('adminRegistryCopySuffix'),
                 sortOrder: figurines.length,
                 isVisible: false,
             };
@@ -151,7 +153,7 @@
     }
 
     async function deleteFigurine(fig: FigurineListItem) {
-        if (!confirm(`Удалить «${fig.name}»? Это действие необратимо.`)) return;
+        if (!confirm($t('adminRegistryDeleteConfirm'))) return;
         isDeleting = true;
         try {
             await api.deleteFigurine(fig.id);
@@ -160,9 +162,9 @@
                 savedSnapshot = '';
             }
             await loadFigurines();
-            showMessage('Запись удалена', 'success');
+            showMessage($t('adminMsgDeleteSuccess'), 'success');
         } catch (e) {
-            showMessage('Ошибка удаления: ' + e, 'error');
+            showMessage($t('adminMsgDeleteError') + e, 'error');
         } finally {
             isDeleting = false;
         }
@@ -178,7 +180,7 @@
             input.onchange = () => {
                 const file = input.files?.[0];
                 if (file) resolve(file);
-                else reject(new Error('Файл не выбран'));
+                else reject(new Error('no file'));
             };
             input.click();
         });
@@ -219,10 +221,10 @@
                     altText: ''
                 }];
             }
-            showMessage('Файл загружен', 'success');
+            showMessage($t('adminMsgFileUploaded'), 'success');
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : String(e);
-            if (msg !== 'Файл не выбран') showMessage('Ошибка: ' + msg, 'error');
+            if (msg !== 'no file') showMessage($t('adminMsgError') + msg, 'error');
         } finally {
             if (type === 'videos') uploadingVideo = false;
             if (type === 'audio') uploadingAudio = false;
@@ -263,17 +265,17 @@
         try {
             await api.saveFigurine(selectedFigurine);
             savedSnapshot = JSON.stringify(selectedFigurine);
-            showMessage(isTauri ? 'Сохранено в архив' : 'Сохранено на сервере', 'success');
+            showMessage(isTauri ? $t('adminMsgSavedArchive') : $t('adminMsgSavedServer'), 'success');
             await loadFigurines();
         } catch (e) {
-            showMessage('Ошибка: ' + e, 'error');
+            showMessage($t('adminMsgError') + e, 'error');
         } finally {
             isSaving = false;
         }
     }
 
     function cancelEdit() {
-        if (hasUnsaved && !confirm('Есть несохранённые изменения. Отменить?')) return;
+        if (hasUnsaved && !confirm($t('adminMsgUnsavedCancel'))) return;
         selectedFigurine = null;
         savedSnapshot = '';
     }
@@ -308,14 +310,14 @@
 
         <div class="text-center mb-10">
             <div class="text-5xl mb-4 opacity-60">🗝</div>
-            <h1 class="text-2xl font-bold tracking-[0.3em] uppercase text-[#e6decb]">Реестр</h1>
-            <p class="text-[10px] tracking-widest text-[#8a7f70] uppercase mt-1">Смотрителя</p>
+            <h1 class="text-2xl font-bold tracking-[0.3em] uppercase text-[#e6decb]">{$t('adminLoginHeading')}</h1>
+            <p class="text-[10px] tracking-widest text-[#8a7f70] uppercase mt-1">{$t('adminLoginSub')}</p>
             <div class="w-full h-px bg-gradient-to-r from-transparent via-[#d4c5b0]/30 to-transparent mt-6"></div>
         </div>
 
         <form onsubmit={(e) => { e.preventDefault(); handleLogin(); }} class="space-y-6">
             <label class="block">
-                <span class="text-[10px] uppercase tracking-widest text-[#8a7f70] block mb-2">Имя</span>
+                <span class="text-[10px] uppercase tracking-widest text-[#8a7f70] block mb-2">{$t('adminLoginName')}</span>
                 <input
                     bind:value={loginForm.login}
                     type="text"
@@ -324,7 +326,7 @@
                 />
             </label>
             <label class="block">
-                <span class="text-[10px] uppercase tracking-widest text-[#8a7f70] block mb-2">Пароль</span>
+                <span class="text-[10px] uppercase tracking-widest text-[#8a7f70] block mb-2">{$t('adminLoginPassword')}</span>
                 <input
                     bind:value={loginForm.password}
                     type="password"
@@ -342,7 +344,7 @@
                 disabled={loginLoading}
                 class="w-full py-3 bg-[#d4c5b0]/10 border border-[#d4c5b0]/30 text-[#d4c5b0] text-xs uppercase tracking-widest hover:bg-[#d4c5b0]/20 transition-all disabled:opacity-40"
             >
-                {loginLoading ? 'Проверка...' : 'Войти'}
+                {$t(loginLoading ? 'adminLoginCheck' : 'adminLoginEnter')}
             </button>
         </form>
     </div>
@@ -355,12 +357,18 @@
     <!-- Header -->
     <header class="flex justify-between items-center px-6 py-4 border-b border-[#d4c5b0]/20 bg-[#0a0806] z-10 shrink-0">
         <div>
-            <h1 class="text-2xl font-gothic mb-0.5">Реестр Смотрителя</h1>
-            <p class="text-[10px] tracking-[0.3em] text-[#8a7f70] uppercase">Панель управления</p>
+            <h1 class="text-2xl font-gothic mb-0.5">{$t('adminTitle')}</h1>
+            <p class="text-[10px] tracking-[0.3em] text-[#8a7f70] uppercase">{$t('adminSubtitle')}</p>
         </div>
 
         <nav class="flex gap-1 bg-[#141210] p-1 border border-[#d4c5b0]/20">
-            {#each [['registry','Реестр'],['zones','Зоны'],['author','Автор'],['workshop','Мастерская'],['releases','Релизы']] as [tab, label]}
+            {#each [
+              ['registry', $t('adminTabRegistry')],
+              ['zones',    $t('adminTabZones')],
+              ['author',   $t('adminTabAuthor')],
+              ['workshop', $t('adminTabWorkshop')],
+              ['releases', $t('adminTabReleases')],
+            ] as [tab, label]}
                 <button
                     onclick={() => activeTab = tab as typeof activeTab}
                     class="px-4 py-2 text-xs uppercase tracking-widest transition-colors {activeTab === tab ? 'bg-[#d4c5b0]/10 text-white' : 'text-[#8a7f70] hover:text-[#d4c5b0]'}"
@@ -369,11 +377,12 @@
         </nav>
 
         <div class="flex gap-2 items-center">
-            <button onclick={() => showSettings = true} class="btn-gothic text-lg px-3" title="Настройки">⚙</button>
+            <LangSwitcher />
+            <button onclick={() => showSettings = true} class="btn-gothic text-lg px-3" title={$t('adminSettings')}>⚙</button>
             {#if !isTauri}
-                <button onclick={handleLogout} class="btn-gothic text-[10px] opacity-50 hover:opacity-100">Выход</button>
+                <button onclick={handleLogout} class="btn-gothic text-[10px] opacity-50 hover:opacity-100">{$t('adminLogout')}</button>
             {/if}
-            <a href="/" class="btn-gothic opacity-60">← В Музей</a>
+            <a href="/" class="btn-gothic opacity-60">{$t('adminToMuseum')}</a>
         </div>
     </header>
 
@@ -388,8 +397,8 @@
             <!-- Sidebar -->
             <aside class="col-span-3 flex flex-col gap-3 border-r border-[#d4c5b0]/10 pr-5 overflow-hidden">
                 <div class="flex justify-between items-center shrink-0">
-                    <h2 class="text-xs uppercase tracking-widest text-[#8a7f70]">Архив</h2>
-                    <button onclick={createNew} class="btn-gothic text-[10px]">✚ Новый</button>
+                    <h2 class="text-xs uppercase tracking-widest text-[#8a7f70]">{$t('adminRegistryHeading')}</h2>
+                    <button onclick={createNew} class="btn-gothic text-[10px]">{$t('adminRegistryNew')}</button>
                 </div>
 
                 <!-- Search -->
@@ -397,7 +406,7 @@
                     <input
                         bind:value={searchQuery}
                         type="text"
-                        placeholder="Поиск..."
+                        placeholder={$t('adminRegistrySearch')}
                         class="w-full bg-[#0a0806] border border-[#d4c5b0]/15 px-3 py-2 text-xs text-[#d4c5b0] outline-none focus:border-[#d4c5b0]/40 transition-colors"
                     />
                     {#if searchQuery}
@@ -434,29 +443,29 @@
                             <div class="flex flex-col opacity-0 group-hover/row:opacity-100 transition-opacity shrink-0">
                                 <button onclick={() => moveFigurine(fig.id, -1)}
                                     class="flex-1 w-5 border border-[#d4c5b0]/8 hover:bg-[#d4c5b0]/10 text-[#8a7f70] hover:text-[#d4c5b0] text-[9px] flex items-center justify-center"
-                                    title="Выше">▲</button>
+                                    title={$t('adminRegistryTooltipUp')}>▲</button>
                                 <button onclick={() => moveFigurine(fig.id, 1)}
                                     class="flex-1 w-5 border border-[#d4c5b0]/8 hover:bg-[#d4c5b0]/10 text-[#8a7f70] hover:text-[#d4c5b0] text-[9px] flex items-center justify-center"
-                                    title="Ниже">▼</button>
+                                    title={$t('adminRegistryTooltipDown')}>▼</button>
                                 <button onclick={() => duplicateFigurine(fig)}
                                     class="flex-1 w-5 border border-[#d4c5b0]/8 hover:bg-[#d4c5b0]/10 text-[#8a7f70] hover:text-amber-400 text-[9px] flex items-center justify-center"
-                                    title="Дублировать">⎘</button>
+                                    title={$t('adminRegistryDuplicate')}>⎘</button>
                                 <button onclick={() => deleteFigurine(fig)} disabled={isDeleting}
                                     class="flex-1 w-5 border border-[#d4c5b0]/8 hover:bg-red-950 text-[#8a7f70] hover:text-red-400 text-[9px] flex items-center justify-center"
-                                    title="Удалить">✕</button>
+                                    title={$t('adminRegistryDelete')}>✕</button>
                             </div>
                         </div>
                     {/each}
 
                     {#if filteredFigurines.length === 0}
                         <div class="text-center text-[#8a7f70] text-xs py-6 opacity-40">
-                            {searchQuery ? 'Не найдено' : 'Нет записей'}
+                            {searchQuery ? $t('adminRegistryNotFound') : $t('adminRegistryEmpty')}
                         </div>
                     {/if}
                 </div>
 
                 <div class="pt-3 border-t border-[#d4c5b0]/10 shrink-0 text-[10px] text-[#8a7f70] text-center opacity-50">
-                    {figurines.length} записей
+                    {figurines.length} {$t('adminRegistryCount')}
                 </div>
             </aside>
 
@@ -468,77 +477,77 @@
                         {#if hasUnsaved}
                             <div class="mb-6 px-4 py-2 bg-amber-950/40 border border-amber-900/40 text-amber-400 text-[10px] uppercase tracking-widest flex items-center gap-2" in:fade>
                                 <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
-                                Есть несохранённые изменения
+                                {$t('adminRegistryUnsaved')}
                             </div>
                         {/if}
 
                         <div class="grid grid-cols-2 gap-6 mb-8">
                             <div class="space-y-4">
                                 <label class="block">
-                                    <span class="label">Название</span>
+                                    <span class="label">{$t('adminFieldName')}</span>
                                     <input bind:value={selectedFigurine.name} class="input-gothic" />
                                 </label>
                                 <label class="block">
-                                    <span class="label">Год (Anno)</span>
+                                    <span class="label">{$t('adminFieldYear')}</span>
                                     <input type="number" bind:value={selectedFigurine.year} class="input-gothic" />
                                 </label>
                                 <label class="block">
-                                    <span class="label">Статус</span>
+                                    <span class="label">{$t('adminFieldStatus')}</span>
                                     <select bind:value={selectedFigurine.status} class="input-gothic">
-                                        <option value="available">В наличии</option>
-                                        <option value="sold">Утрачено</option>
-                                        <option value="reserved">Бронь</option>
+                                        <option value="available">{$t('adminFieldStatusAvail')}</option>
+                                        <option value="sold">{$t('adminFieldStatusSold')}</option>
+                                        <option value="reserved">{$t('adminFieldStatusRes')}</option>
                                     </select>
                                 </label>
                             </div>
                             <div class="space-y-4">
                                 <label class="block">
-                                    <span class="label">Размеры</span>
-                                    <input bind:value={selectedFigurine.dimensions} class="input-gothic" placeholder="20×15×10 см" />
+                                    <span class="label">{$t('adminFieldDimensions')}</span>
+                                    <input bind:value={selectedFigurine.dimensions} class="input-gothic" placeholder="20×15×10 cm" />
                                 </label>
                                 <label class="block">
-                                    <span class="label">Материал</span>
+                                    <span class="label">{$t('adminFieldMaterial')}</span>
                                     <input bind:value={selectedFigurine.material} class="input-gothic" />
                                 </label>
                                 <label class="block">
-                                    <span class="label">Техника</span>
+                                    <span class="label">{$t('adminFieldTechnique')}</span>
                                     <input bind:value={selectedFigurine.technique} class="input-gothic" />
                                 </label>
                                 <div class="flex gap-4">
                                     <label class="block flex-1">
-                                        <span class="label">Сортировка</span>
+                                        <span class="label">{$t('adminFieldSortOrder')}</span>
                                         <input type="number" bind:value={selectedFigurine.sortOrder} class="input-gothic" />
                                     </label>
                                     <label class="flex items-end gap-2 pb-3">
                                         <input type="checkbox" bind:checked={selectedFigurine.isVisible} class="accent-[#d4c5b0] w-4 h-4" />
-                                        <span class="text-xs text-[#d4c5b0]">Видимый</span>
+                                        <span class="text-xs text-[#d4c5b0]">{$t('adminFieldVisible')}</span>
                                     </label>
                                 </div>
                             </div>
                         </div>
 
                         <label class="block mb-6">
-                            <span class="label">Краткое описание (цитата)</span>
+                            <span class="label">{$t('adminFieldQuote')}</span>
                             <textarea bind:value={selectedFigurine.shortText} class="input-gothic h-20"></textarea>
                         </label>
 
                         <label class="block mb-6">
-                            <span class="label">Секретный текст (для лупы)</span>
+                            <span class="label">{$t('adminFieldSecret')}</span>
                             <textarea bind:value={selectedFigurine.secretText} class="input-gothic h-16 opacity-70"></textarea>
                         </label>
 
                         <label class="block mb-8">
-                            <span class="label">Полная история</span>
+                            <span class="label">{$t('adminFieldHistory')}</span>
                             <textarea bind:value={selectedFigurine.fullDescription} class="input-gothic h-40"></textarea>
                         </label>
 
                         <!-- Media -->
                         <div class="border-t border-[#d4c5b0]/10 pt-8 mb-8">
-                            <h3 class="text-xl font-gothic mb-6">Медиа-материалы</h3>
+                            <h3 class="text-xl font-gothic mb-6">{$t('adminMediaHeading')}</h3>
                             <div class="grid grid-cols-2 gap-6 mb-6">
                                 <!-- Video -->
                                 <div class="p-4 border border-dashed border-[#d4c5b0]/20 flex flex-col gap-2">
-                                    <span class="label block">Видео ролик</span>
+                                    <span class="label block">{$t('adminMediaVideo')}</span>
                                     {#if selectedFigurine.videoUrl}
                                         <video
                                             src={resolveUrl(selectedFigurine.videoUrl)}
@@ -551,38 +560,38 @@
                                                 onclick={() => handlePickFile('videos')}
                                                 disabled={uploadingVideo}
                                                 class="text-[10px] text-[#d4c5b0]/60 hover:text-white uppercase disabled:opacity-40"
-                                            >Заменить</button>
+                                            >{$t('adminMediaReplace')}</button>
                                             <button
                                                 onclick={() => { selectedFigurine!.videoUrl = null; externalVideoUrl = ''; }}
                                                 class="text-[10px] text-red-700 hover:text-red-400 uppercase"
-                                            >✕ Удалить</button>
+                                            >{$t('adminMediaDeleteFile')}</button>
                                         </div>
                                     {:else}
                                         <div class="flex flex-col gap-2">
                                             <input
                                                 type="url"
                                                 bind:value={externalVideoUrl}
-                                                placeholder="https://... внешняя ссылка"
+                                                placeholder="https://... external link"
                                                 class="input-gothic text-xs"
                                             />
                                             {#if externalVideoUrl.trim()}
                                                 <button
                                                     onclick={() => { selectedFigurine!.videoUrl = externalVideoUrl.trim(); externalVideoUrl = ''; }}
                                                     class="btn-gothic text-xs w-full"
-                                                >Использовать ссылку</button>
+                                                >{$t('adminMediaUseLink')}</button>
                                             {:else}
                                                 <button
                                                     onclick={() => handlePickFile('videos')}
                                                     disabled={uploadingVideo}
                                                     class="btn-gothic text-xs w-full disabled:opacity-40"
-                                                >{uploadingVideo ? 'Загружается…' : 'Выбрать MP4'}</button>
+                                                >{uploadingVideo ? '…' : $t('adminMediaPickMp4')}</button>
                                             {/if}
                                         </div>
                                     {/if}
                                 </div>
                                 <!-- Audio -->
                                 <div class="p-4 border border-dashed border-[#d4c5b0]/20 flex flex-col gap-2">
-                                    <span class="label block">Атмосфера (аудио)</span>
+                                    <span class="label block">{$t('adminMediaAudio')}</span>
                                     {#if selectedFigurine.ambiencePath}
                                         <audio
                                             src={resolveUrl(selectedFigurine.ambiencePath)}
@@ -595,18 +604,18 @@
                                                 onclick={() => handlePickFile('audio')}
                                                 disabled={uploadingAudio}
                                                 class="text-[10px] text-[#d4c5b0]/60 hover:text-white uppercase disabled:opacity-40"
-                                            >Заменить</button>
+                                            >{$t('adminMediaReplace')}</button>
                                             <button
                                                 onclick={() => selectedFigurine!.ambiencePath = null}
                                                 class="text-[10px] text-red-700 hover:text-red-400 uppercase"
-                                            >✕ Удалить</button>
+                                            >{$t('adminMediaDeleteFile')}</button>
                                         </div>
                                     {:else}
                                         <button
                                             onclick={() => handlePickFile('audio')}
                                             disabled={uploadingAudio}
                                             class="btn-gothic text-xs w-full disabled:opacity-40"
-                                        >{uploadingAudio ? 'Загружается…' : 'Выбрать MP3'}</button>
+                                        >{uploadingAudio ? '…' : $t('adminMediaPickMp3')}</button>
                                     {/if}
                                 </div>
                             </div>
@@ -614,8 +623,8 @@
                             <!-- Images gallery -->
                             <div class="p-4 border border-dashed border-[#d4c5b0]/20">
                                 <div class="flex justify-between items-center mb-4">
-                                    <span class="label">Фотографии ({selectedFigurine.images.length})</span>
-                                    <button onclick={() => handlePickFile('images')} class="btn-gothic text-[10px]">+ Добавить</button>
+                                    <span class="label">{$t('adminMediaPhotos')} ({selectedFigurine.images.length})</span>
+                                    <button onclick={() => handlePickFile('images')} class="btn-gothic text-[10px]">{$t('adminMediaAddPhoto')}</button>
                                 </div>
                                 <div class="flex flex-wrap gap-3">
                                     {#each selectedFigurine.images as img, imgIdx}
@@ -627,12 +636,12 @@
                                                 <!-- Overlay controls -->
                                                 <div class="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1">
                                                     <button onclick={() => selectedFigurine!.images = selectedFigurine!.images.filter(i => i.id !== img.id)}
-                                                        class="text-[10px] text-red-300 hover:text-red-100 uppercase px-2 py-0.5 border border-red-900/50 hover:bg-red-950">✕ Удалить</button>
+                                                        class="text-[10px] text-red-300 hover:text-red-100 uppercase px-2 py-0.5 border border-red-900/50 hover:bg-red-950">{$t('adminMediaDeleteFile')}</button>
                                                     {#if img.imageType !== 'face'}
                                                         <button onclick={() => setFaceImage(img.id)}
-                                                            class="text-[9px] text-[#d4c5b0] hover:text-amber-300 uppercase px-2 py-0.5 border border-[#d4c5b0]/20">★ Обложка</button>
+                                                            class="text-[9px] text-[#d4c5b0] hover:text-amber-300 uppercase px-2 py-0.5 border border-[#d4c5b0]/20">{$t('adminMediaCover')}</button>
                                                     {:else}
-                                                        <span class="text-[9px] text-amber-400 uppercase">★ Обложка</span>
+                                                        <span class="text-[9px] text-amber-400 uppercase">{$t('adminMediaCover')}</span>
                                                     {/if}
                                                     <div class="flex gap-1">
                                                         <button onclick={() => moveImage(imgIdx, -1)} disabled={imgIdx === 0}
@@ -643,14 +652,14 @@
                                                 </div>
 
                                                 {#if img.imageType === 'face'}
-                                                    <div class="absolute bottom-0 left-0 right-0 bg-amber-500/80 text-black text-[8px] text-center py-0.5 font-bold">ОБЛОЖКА</div>
+                                                    <div class="absolute bottom-0 left-0 right-0 bg-amber-500/80 text-black text-[8px] text-center py-0.5 font-bold">{$t('adminMediaCoverBadge')}</div>
                                                 {/if}
                                             </div>
                                             <!-- Alt text -->
                                             <input
                                                 bind:value={img.altText}
                                                 type="text"
-                                                placeholder="Alt текст..."
+                                                placeholder={$t('adminMediaAltPlaceholder')}
                                                 class="w-28 bg-[#0a0806] border border-[#d4c5b0]/10 px-1.5 py-1 text-[9px] text-[#8a7f70] focus:border-[#d4c5b0]/30 outline-none"
                                             />
                                         </div>
@@ -662,8 +671,8 @@
                         <!-- Process Steps -->
                         <div class="border-t border-[#d4c5b0]/10 pt-8 mb-8">
                             <div class="flex justify-between items-center mb-6">
-                                <h3 class="text-xl font-gothic">Гримуар (Этапы создания)</h3>
-                                <button onclick={addProcessStep} class="btn-gothic text-xs">+ Этап</button>
+                                <h3 class="text-xl font-gothic">{$t('adminGrimoireHeading')}</h3>
+                                <button onclick={addProcessStep} class="btn-gothic text-xs">{$t('adminGrimoireAddStep')}</button>
                             </div>
                             <div class="space-y-3">
                                 {#each selectedFigurine.processSteps as step, i}
@@ -673,7 +682,7 @@
                                                 <img src={resolveUrl(step.imageUrl)} alt="" class="w-full h-full object-cover" />
                                                 <button onclick={() => step.imageUrl = ''} class="absolute top-0 right-0 bg-black/70 text-white p-0.5 text-[9px] opacity-0 group-hover:opacity-100">✕</button>
                                             {:else}
-                                                <button onclick={() => handlePickFile('images', i)} class="text-[10px] uppercase text-[#8a7f70] hover:text-[#d4c5b0]">Фото</button>
+                                                <button onclick={() => handlePickFile('images', i)} class="text-[10px] uppercase text-[#8a7f70] hover:text-[#d4c5b0]">{$t('adminGrimoirePhoto')}</button>
                                             {/if}
                                         </div>
                                         <div class="flex-1 grid gap-2">
@@ -684,20 +693,20 @@
                                                 <option value="painting">Painting</option>
                                                 <option value="finish">Finish</option>
                                             </select>
-                                            <textarea bind:value={step.description} class="input-gothic h-14 text-xs" placeholder="Описание этапа..."></textarea>
+                                            <textarea bind:value={step.description} class="input-gothic h-14 text-xs" placeholder={$t('adminGrimoireStepDesc')}></textarea>
                                         </div>
                                         <button onclick={() => removeProcessStep(i)} class="text-[#8a7f70] hover:text-red-500 self-center text-sm">✕</button>
                                     </div>
                                 {/each}
                                 {#if selectedFigurine.processSteps.length === 0}
-                                    <div class="text-center text-[#8a7f70] text-xs py-4 opacity-40">Нет этапов</div>
+                                    <div class="text-center text-[#8a7f70] text-xs py-4 opacity-40">{$t('adminGrimoireEmpty')}</div>
                                 {/if}
                             </div>
                         </div>
 
                         <!-- Action bar -->
                         <div class="flex justify-end gap-3 pb-10">
-                            <button onclick={cancelEdit} class="btn-gothic opacity-50">Отмена</button>
+                            <button onclick={cancelEdit} class="btn-gothic opacity-50">{$t('adminFormCancel')}</button>
                             {#if isTauri}
                                 <button
                                     onclick={async () => {
@@ -705,23 +714,23 @@
                                         try {
                                             await api.pushFigurine(selectedFigurine!);
                                             savedSnapshot = JSON.stringify(selectedFigurine);
-                                            showMessage('Отправлено в облако', 'success');
-                                        } catch(e) { showMessage('Ошибка: ' + e, 'error'); }
+                                            showMessage($t('adminFormSentToCloud'), 'success');
+                                        } catch(e) { showMessage($t('adminMsgError') + e, 'error'); }
                                     }}
                                     class="btn-gothic border-blue-900/40 text-blue-300 min-w-[160px]"
-                                >📡 В облако</button>
+                                >{$t('adminFormToCloud')}</button>
                             {/if}
                             <button onclick={save} disabled={isSaving}
                                 class="btn-gothic min-w-[200px] transition-colors
                                     {hasUnsaved ? 'bg-amber-950/40 border-amber-800/60 text-amber-200 hover:bg-amber-900/40' : 'bg-[#d4c5b0]/10'}">
-                                {isSaving ? 'Сохранение...' : hasUnsaved ? '● Сохранить изменения' : 'Сохранено ✓'}
+                                {isSaving ? $t('adminFormSaving') : hasUnsaved ? $t('adminFormSaveChanges') : $t('adminFormSaved')}
                             </button>
                         </div>
                     </div>
                 {:else}
                     <div class="h-full flex flex-col items-center justify-center text-[#8a7f70] opacity-30">
                         <span class="text-5xl mb-4">📜</span>
-                        <p class="text-sm">Выберите запись или создайте новую</p>
+                        <p class="text-sm">{$t('adminRegistrySelectPrompt')}</p>
                     </div>
                 {/if}
             </main>
@@ -733,7 +742,7 @@
             <div in:fade class="h-full flex flex-col">
                 <!-- Sub-tabs for author section -->
                 <div class="flex gap-1 border-b border-[#d4c5b0]/10 px-4 pt-2 flex-shrink-0">
-                    {#each [['profile','Профиль'],['texts','Записи']] as [sub, label]}
+                    {#each [[('profile'), $t('adminSubProfile')],[('texts'), $t('adminSubTexts')]] as [sub, label]}
                         {@const authorSubTab = activeAuthorSubTab}
                         <button
                             onclick={() => activeAuthorSubTab = sub as 'profile' | 'texts'}
