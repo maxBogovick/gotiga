@@ -61,40 +61,40 @@
   <title>Workshop — Gothic Museum</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
-  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600&family=UnifrakturMaguntia&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Fraunces&display=swap" rel="stylesheet">
 </svelte:head>
 
-<div class="fixed inset-0 bg-[#0a0806] -z-50 overflow-hidden">
+<div class="fixed inset-0 bg-[#f8f1e7] -z-50 overflow-hidden">
   <div class="absolute inset-0 opacity-[0.15] pointer-events-none wood-texture-heavy"></div>
-  <div class="absolute -top-20 -left-20 w-[60vw] h-[60vw] bg-[#d4c5b0]/5 rounded-full blur-[120px] pointer-events-none"></div>
-  <div class="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_center,transparent_0%,#0a0806_95%)]"></div>
+  <div class="absolute -top-20 -left-20 w-[60vw] h-[60vw] bg-[#34251c]/5 rounded-full blur-[120px] pointer-events-none"></div>
+  <div class="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_center,transparent_0%,#f8f1e7_95%)]"></div>
   <div class="absolute inset-0 pointer-events-none bg-noise opacity-[0.06] mix-blend-overlay"></div>
 </div>
 
 {#if isLoading}
   <LoadingScreen />
 {:else if error}
-  <div class="min-h-screen flex flex-col items-center justify-center p-8 z-10 relative font-['Cinzel']">
-    <p class="text-[#8a7f70] mb-6 tracking-widest uppercase text-sm">{$t('workshopError')}</p>
-    <button class="px-6 py-2 border border-[#d4c5b0]/20 text-[#d4c5b0] hover:bg-[#d4c5b0]/5" onclick={() => window.location.reload()}>
+  <div class="min-h-screen flex flex-col items-center justify-center p-8 z-10 relative font-['Inter']">
+    <p class="text-[#5f4636] mb-6 tracking-wide uppercase text-sm">{$t('workshopError')}</p>
+    <button class="px-6 py-2 border border-[#34251c]/20 text-[#34251c] hover:bg-[#34251c]/5" onclick={() => window.location.reload()}>
       {$t('workshopRetry')}
     </button>
   </div>
 {:else}
-  <div class="min-h-screen relative z-10 p-6 lg:p-16 font-['Cinzel'] text-[#d4c5b0]">
+  <div class="min-h-screen relative z-10 p-6 lg:p-16 font-['Inter'] text-[#34251c]">
 
     <div class="mb-10" in:fade={{ duration: 800 }}>
-      <a href="/" class="text-[10px] tracking-[0.4em] text-[#8a7f70] hover:text-[#d4c5b0] transition-colors group">
+      <a href="/" class="text-[10px] tracking-[0.10em] text-[#5f4636] hover:text-[#34251c] transition-colors group">
         {$t('workshopBack')}
       </a>
     </div>
 
     <header class="mb-20 max-w-xl">
-      <h1 class="font-['UnifrakturMaguntia'] text-5xl lg:text-7xl text-[#e6decb] mb-4 opacity-90 drop-shadow-2xl"
+      <h1 class="font-['Fraunces'] text-5xl lg:text-7xl text-[#6f3b24] mb-4 opacity-90 drop-shadow-2xl"
           in:fly={{ x: -20, duration: 1000 }}>
         {$t('zoneDesk')}
       </h1>
-      <p class="text-[#8a7f70] text-xs leading-relaxed tracking-widest uppercase border-l border-[#d4c5b0]/20 pl-6"
+      <p class="text-[#5f4636] text-xs leading-relaxed tracking-wide uppercase border-l border-[#34251c]/20 pl-6"
          in:fade={{ delay: 500 }}>
         {$t('workshopSubtitle')}
       </p>
@@ -119,23 +119,23 @@
                     class="relative block w-56 lg:w-72 text-left focus:outline-none"
                     onclick={() => toggleExpand(item.id)}
             >
-              <div class="bg-[#1c1917] p-4 shadow-[10px_10px_30px_rgba(0,0,0,0.5)] border border-[#2a2622] group-hover:border-[#d4c5b0]/30 transition-colors duration-500">
+              <div class="bg-[#fff9f0] p-4 shadow-[10px_10px_30px_rgba(111,59,36,0.14)] border border-[#d8c6b1] group-hover:border-[#34251c]/30 transition-colors duration-500">
 
                 {#if item.imageUrl}
-                  <div class="relative aspect-square overflow-hidden mb-4 bg-black">
+                  <div class="relative aspect-square overflow-hidden mb-4 bg-[#2f2117]">
                     <img
                             src={item.imageUrl}
                             alt=""
                             class="w-full h-full object-cover opacity-60 grayscale group-hover:grayscale-0 group-hover:opacity-90 transition-all duration-1000"
                             loading="lazy"
                     />
-                    <div class="absolute inset-0 bg-[#d4c5b0]/5 mix-blend-multiply pointer-events-none"></div>
-                    <div class="absolute inset-0 shadow-[inset_0_0_40px_rgba(0,0,0,0.7)] pointer-events-none"></div>
+                    <div class="absolute inset-0 bg-[#34251c]/5 mix-blend-multiply pointer-events-none"></div>
+                    <div class="absolute inset-0 shadow-[inset_0_0_40px_rgba(111,59,36,0.18)] pointer-events-none"></div>
                   </div>
                 {/if}
 
                 {#if item.caption}
-                  <p class="font-serif text-[13px] text-[#8a7f70] leading-snug italic opacity-80 group-hover:opacity-100 group-hover:text-[#d4c5b0] transition-all">
+                  <p class="font-serif text-[13px] text-[#5f4636] leading-snug italic opacity-80 group-hover:opacity-100 group-hover:text-[#34251c] transition-all">
                     {item.caption}
                   </p>
                 {/if}
@@ -147,7 +147,7 @@
                 {/if}
               </div>
 
-              <div class="absolute -bottom-4 -right-2 -z-10 w-[95%] h-full bg-black/40 blur-xl opacity-0 group-hover:opacity-100 transition-opacity"></div>
+              <div class="absolute -bottom-4 -right-2 -z-10 w-[95%] h-full bg-[#6f3b24]/10 blur-xl opacity-0 group-hover:opacity-100 transition-opacity"></div>
             </button>
           </div>
         {/each}
@@ -160,18 +160,18 @@
                     class="relative block w-full text-left focus:outline-none group"
                     onclick={() => toggleExpand(item.id)}
             >
-              <div class="bg-[#1c1917] p-4 shadow-[10px_10px_30px_rgba(0,0,0,0.5)] border border-[#2a2622] group-hover:border-[#d4c5b0]/30 transition-colors duration-500">
+              <div class="bg-[#fff9f0] p-4 shadow-[10px_10px_30px_rgba(111,59,36,0.14)] border border-[#d8c6b1] group-hover:border-[#34251c]/30 transition-colors duration-500">
                 {#if item.imageUrl}
-                  <div class="relative aspect-square overflow-hidden mb-4 bg-black">
+                  <div class="relative aspect-square overflow-hidden mb-4 bg-[#2f2117]">
                     <img src={item.imageUrl} alt="" class="w-full h-full object-cover opacity-60 grayscale group-hover:grayscale-0 group-hover:opacity-90 transition-all duration-1000" loading="lazy" />
-                    <div class="absolute inset-0 shadow-[inset_0_0_40px_rgba(0,0,0,0.7)] pointer-events-none"></div>
+                    <div class="absolute inset-0 shadow-[inset_0_0_40px_rgba(111,59,36,0.18)] pointer-events-none"></div>
                   </div>
                 {/if}
                 {#if item.caption}
-                  <p class="font-serif text-[13px] text-[#8a7f70] leading-snug italic opacity-80 group-hover:opacity-100 group-hover:text-[#d4c5b0] transition-all">{item.caption}</p>
+                  <p class="font-serif text-[13px] text-[#5f4636] leading-snug italic opacity-80 group-hover:opacity-100 group-hover:text-[#34251c] transition-all">{item.caption}</p>
                 {/if}
                 {#if expandedItem === item.id}
-                  <div class="mt-4 text-sm text-[#d4c5b0]/70 italic leading-relaxed border-t border-[#d4c5b0]/10 pt-4">{item.content}</div>
+                  <div class="mt-4 text-sm text-[#34251c]/70 italic leading-relaxed border-t border-[#34251c]/10 pt-4">{item.content}</div>
                 {/if}
               </div>
             </button>
@@ -180,8 +180,8 @@
       </div>
 
     {:else}
-      <div class="text-center py-40 border border-dashed border-[#d4c5b0]/10" in:fade>
-        <p class="font-['UnifrakturMaguntia'] text-2xl text-[#8a7f70] opacity-40 uppercase tracking-[0.2em]">
+      <div class="text-center py-40 border border-dashed border-[#34251c]/10" in:fade>
+        <p class="font-['Fraunces'] text-2xl text-[#5f4636] opacity-70 uppercase tracking-[0.06em]">
           {$t('workshopEmpty')}
         </p>
       </div>
@@ -203,7 +203,7 @@
   }
 
   :global(body) {
-    background-color: #0a0806;
+    background-color: #f8f1e7;
     cursor: default; /* На этой странице можно оставить стандартный курсор или адаптировать наш */
   }
 </style>

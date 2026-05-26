@@ -56,32 +56,32 @@
 
     <div class="flex items-center justify-between">
       <div>
-        <h2 class="text-sm tracking-[0.3em] uppercase text-[#d4c5b0]">{$t('adminProfileHeading')}</h2>
-        <p class="text-[10px] text-[#8a7f70] mt-1">{$t('adminProfileDesc')}</p>
+        <h2 class="text-sm tracking-[0.08em] uppercase text-[#34251c]">{$t('adminProfileHeading')}</h2>
+        <p class="text-[10px] text-[#5f4636] mt-1">{$t('adminProfileDesc')}</p>
       </div>
       <button
         onclick={save}
         disabled={isSaving}
-        class="btn-gothic text-xs px-5 py-2 disabled:opacity-50"
+        class="btn-gothic text-xs px-5 py-2 disabled:opacity-75"
       >
         {isSaving ? $t('adminSaving') : $t('adminSave')}
       </button>
     </div>
 
     {#if message}
-      <p class="text-xs tracking-widest {messageType === 'ok' ? 'text-emerald-400' : 'text-red-400'}" in:fade>
+      <p class="text-xs tracking-wide {messageType === 'ok' ? 'text-emerald-400' : 'text-red-400'}" in:fade>
         {message}
       </p>
     {/if}
 
     {#if isLoading}
-      <p class="text-xs text-[#8a7f70] animate-pulse">{$t('adminLoading')}</p>
+      <p class="text-xs text-[#5f4636] animate-pulse">{$t('adminLoading')}</p>
     {:else}
       <div class="space-y-5">
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label for="profile-name" class="block text-[10px] tracking-[0.2em] uppercase text-[#8a7f70] mb-1">{$t('adminProfileName')}</label>
+            <label for="profile-name" class="block text-[10px] tracking-[0.06em] uppercase text-[#5f4636] mb-1">{$t('adminProfileName')}</label>
             <input
               id="profile-name"
               bind:value={profile.name}
@@ -91,7 +91,7 @@
             />
           </div>
           <div>
-            <label for="profile-tagline" class="block text-[10px] tracking-[0.2em] uppercase text-[#8a7f70] mb-1">{$t('adminProfileTagline')}</label>
+            <label for="profile-tagline" class="block text-[10px] tracking-[0.06em] uppercase text-[#5f4636] mb-1">{$t('adminProfileTagline')}</label>
             <input
               id="profile-tagline"
               bind:value={profile.tagline}
@@ -103,7 +103,7 @@
         </div>
 
         <div>
-          <label for="profile-bio" class="block text-[10px] tracking-[0.2em] uppercase text-[#8a7f70] mb-1">{$t('adminProfileBio')}</label>
+          <label for="profile-bio" class="block text-[10px] tracking-[0.06em] uppercase text-[#5f4636] mb-1">{$t('adminProfileBio')}</label>
           <textarea
             id="profile-bio"
             bind:value={profile.bio}
@@ -114,7 +114,7 @@
         </div>
 
         <div>
-          <label for="profile-photo" class="block text-[10px] tracking-[0.2em] uppercase text-[#8a7f70] mb-1">{$t('adminProfilePhoto')}</label>
+          <label for="profile-photo" class="block text-[10px] tracking-[0.06em] uppercase text-[#5f4636] mb-1">{$t('adminProfilePhoto')}</label>
           <input
             id="profile-photo"
             bind:value={profile.photoUrl}
@@ -123,38 +123,38 @@
             class="admin-input w-full"
           />
           {#if profile.photoUrl}
-            <div class="mt-2 w-20 h-24 overflow-hidden border border-[#d4c5b0]/10">
+            <div class="mt-2 w-20 h-24 overflow-hidden border border-[#34251c]/10">
               <img src={profile.photoUrl} alt="preview" class="w-full h-full object-cover opacity-70 grayscale" />
             </div>
           {/if}
         </div>
 
-        <div class="border-t border-[#d4c5b0]/10 pt-5">
-          <p class="text-[10px] tracking-[0.3em] uppercase text-[#8a7f70] mb-4">{$t('adminProfileSocials')}</p>
+        <div class="border-t border-[#34251c]/10 pt-5">
+          <p class="text-[10px] tracking-[0.08em] uppercase text-[#5f4636] mb-4">{$t('adminProfileSocials')}</p>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label for="profile-instagram" class="block text-[10px] tracking-widest text-[#8a7f70] mb-1">Instagram</label>
+              <label for="profile-instagram" class="block text-[10px] tracking-wide text-[#5f4636] mb-1">Instagram</label>
               <div class="flex items-center">
-                <span class="text-[#8a7f70] text-xs mr-1">@</span>
+                <span class="text-[#5f4636] text-xs mr-1">@</span>
                 <input id="profile-instagram" bind:value={profile.instagram} type="text" placeholder="username" class="admin-input flex-1" />
               </div>
             </div>
             <div>
-              <label for="profile-telegram" class="block text-[10px] tracking-widest text-[#8a7f70] mb-1">Telegram</label>
+              <label for="profile-telegram" class="block text-[10px] tracking-wide text-[#5f4636] mb-1">Telegram</label>
               <div class="flex items-center">
-                <span class="text-[#8a7f70] text-xs mr-1">@</span>
+                <span class="text-[#5f4636] text-xs mr-1">@</span>
                 <input id="profile-telegram" bind:value={profile.telegram} type="text" placeholder="username" class="admin-input flex-1" />
               </div>
             </div>
             <div>
-              <label for="profile-vk" class="block text-[10px] tracking-widest text-[#8a7f70] mb-1">VK</label>
+              <label for="profile-vk" class="block text-[10px] tracking-wide text-[#5f4636] mb-1">VK</label>
               <div class="flex items-center">
-                <span class="text-[#8a7f70] text-xs mr-1">{$t('adminProfileVkPath')}</span>
+                <span class="text-[#5f4636] text-xs mr-1">{$t('adminProfileVkPath')}</span>
                 <input id="profile-vk" bind:value={profile.vk} type="text" placeholder="id or short address" class="admin-input flex-1" />
               </div>
             </div>
             <div>
-              <label for="profile-email" class="block text-[10px] tracking-widest text-[#8a7f70] mb-1">Email</label>
+              <label for="profile-email" class="block text-[10px] tracking-wide text-[#5f4636] mb-1">Email</label>
               <input id="profile-email" bind:value={profile.email} type="email" placeholder="master@gotiga.art" class="admin-input w-full" />
             </div>
           </div>
@@ -168,8 +168,8 @@
 <style>
   .admin-input {
     background: transparent;
-    border: 1px solid rgba(212, 197, 176, 0.15);
-    color: #d4c5b0;
+    border: 1px solid rgba(198, 95, 60, 0.15);
+    color: #34251c;
     padding: 0.4rem 0.6rem;
     font-size: 0.75rem;
     font-family: inherit;
@@ -177,9 +177,9 @@
     transition: border-color 0.2s;
   }
   .admin-input:focus {
-    border-color: rgba(212, 197, 176, 0.4);
+    border-color: rgba(198, 95, 60, 0.4);
   }
   .admin-input::placeholder {
-    color: rgba(138, 127, 112, 0.4);
+    color: rgba(95, 70, 54, 0.78);
   }
 </style>

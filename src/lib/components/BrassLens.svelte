@@ -70,11 +70,11 @@
         left: {x - lensSize / 2}px;
         /* Brass Rim & Shadows */
         box-shadow: 
-            0 20px 50px rgba(0,0,0,0.8),
+            0 20px 50px rgba(111,59,36,0.18),
             inset 0 0 40px rgba(20,10,0,0.9);
         border: 2px solid #b5a642;
         outline: 4px solid #5c5322;
-        background: #0a0806;
+        background: #f8f1e7;
       "
     >
       <!-- Zoomed Content Wrapper -->
@@ -101,10 +101,10 @@
       <div class="absolute top-4 left-6 w-12 h-6 bg-white/10 blur-md rounded-full rotate-[-45deg] pointer-events-none"></div>
 
       <!-- 3. Dust/Scratches on the lens itself -->
-      <div class="absolute inset-0 bg-noise opacity-30 mix-blend-soft-light pointer-events-none"></div>
+      <div class="absolute inset-0 bg-noise opacity-60 mix-blend-soft-light pointer-events-none"></div>
       
       <!-- 4. Vignette inside lens -->
-      <div class="absolute inset-0 rounded-full bg-[radial-gradient(circle,transparent_50%,rgba(0,0,0,0.6)_100%)] pointer-events-none"></div>
+      <div class="absolute inset-0 rounded-full bg-[radial-gradient(circle,transparent_50%,rgba(111,59,36,0.22)_100%)] pointer-events-none"></div>
     </div>
   {/if}
 </div>

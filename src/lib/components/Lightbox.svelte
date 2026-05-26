@@ -72,7 +72,7 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <div
-  class="fixed inset-0 z-[200] bg-black/96 flex items-center justify-center"
+  class="fixed inset-0 z-[200] bg-[#2f2117]/96 flex items-center justify-center"
   transition:fade={{ duration: 220 }}
   onclick={handleBackdropClick}
   ontouchstart={handleTouchStart}
@@ -86,7 +86,7 @@
   <!-- Top bar -->
   <div class="absolute top-0 inset-x-0 flex items-center justify-between px-6 py-5 z-10">
     {#if images.length > 1}
-      <span class="font-['Cinzel'] text-xs tracking-[0.3em] text-white/30 select-none">
+      <span class="font-['Inter'] text-xs tracking-[0.08em] text-[#fff9f0]/55 select-none">
         {current + 1}&thinsp;/&thinsp;{images.length}
       </span>
     {:else}
@@ -94,7 +94,7 @@
     {/if}
     <button
       onclick={onClose}
-      class="w-10 h-10 flex items-center justify-center text-white/40 hover:text-white border border-white/10 hover:border-white/30 transition-all duration-200 text-lg leading-none"
+      class="w-10 h-10 flex items-center justify-center text-[#fff9f0]/60 hover:text-[#fff9f0] border border-[#fff9f0]/25 hover:border-[#fff9f0]/45 transition-all duration-200 text-lg leading-none"
       aria-label={$t('lightboxClose')}
     >✕</button>
   </div>
@@ -107,7 +107,7 @@
         <!-- Loading skeleton -->
         {#if !isImageLoaded}
           <div class="absolute inset-0 flex items-center justify-center">
-            <div class="w-8 h-8 border border-white/20 border-t-white/60 rounded-full animate-spin"></div>
+            <div class="w-8 h-8 border border-[#fff9f0]/35 border-t-white/60 rounded-full animate-spin"></div>
           </div>
         {/if}
 
@@ -127,7 +127,7 @@
 
     <!-- Caption -->
     {#if images[current]?.alt}
-      <div class="absolute bottom-8 left-1/2 -translate-x-1/2 font-['Cinzel'] text-xs tracking-widest text-white/30 text-center max-w-sm px-4">
+      <div class="absolute bottom-8 left-1/2 -translate-x-1/2 font-['Inter'] text-xs tracking-wide text-[#fff9f0]/55 text-center max-w-sm px-4">
         {images[current].alt}
       </div>
     {/if}
@@ -137,7 +137,7 @@
   {#if images.length > 1}
     <button
       onclick={(e) => { e.stopPropagation(); prev(); }}
-      class="absolute left-3 top-1/2 -translate-y-1/2 z-10 w-12 h-12 flex items-center justify-center text-white/30 hover:text-white border border-white/10 hover:border-white/30 hover:bg-white/5 transition-all duration-200 group"
+      class="absolute left-3 top-1/2 -translate-y-1/2 z-10 w-12 h-12 flex items-center justify-center text-[#fff9f0]/55 hover:text-[#fff9f0] border border-[#fff9f0]/25 hover:border-[#fff9f0]/45 hover:bg-[#fff9f0]/10 transition-all duration-200 group"
       aria-label={$t('lightboxPrevious')}
     >
       <span class="text-lg transition-transform duration-200 group-hover:-translate-x-0.5">←</span>
@@ -146,7 +146,7 @@
     <!-- Next arrow -->
     <button
       onclick={(e) => { e.stopPropagation(); next(); }}
-      class="absolute right-3 top-1/2 -translate-y-1/2 z-10 w-12 h-12 flex items-center justify-center text-white/30 hover:text-white border border-white/10 hover:border-white/30 hover:bg-white/5 transition-all duration-200 group"
+      class="absolute right-3 top-1/2 -translate-y-1/2 z-10 w-12 h-12 flex items-center justify-center text-[#fff9f0]/55 hover:text-[#fff9f0] border border-[#fff9f0]/25 hover:border-[#fff9f0]/45 hover:bg-[#fff9f0]/10 transition-all duration-200 group"
       aria-label={$t('lightboxNext')}
     >
       <span class="text-lg transition-transform duration-200 group-hover:translate-x-0.5">→</span>
@@ -160,7 +160,7 @@
         <button
           onclick={(e) => { e.stopPropagation(); current = i; }}
           class="flex-shrink-0 w-12 h-12 overflow-hidden border transition-all duration-200
-            {i === current ? 'border-white/60 opacity-100' : 'border-white/10 opacity-30 hover:opacity-60 hover:border-white/30'}"
+            {i === current ? 'border-[#fff9f0]/70 opacity-100' : 'border-[#fff9f0]/25 opacity-60 hover:opacity-60 hover:border-[#fff9f0]/45'}"
           aria-label="{$t('lightboxPhoto')} {i + 1}"
         >
           <img src={img.url} alt="" class="w-full h-full object-cover" draggable="false" />

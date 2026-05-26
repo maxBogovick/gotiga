@@ -75,7 +75,7 @@
 {#if isOpen}
   <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
     <div
-      class="absolute inset-0 bg-black/80 backdrop-blur-sm"
+      class="absolute inset-0 bg-[#6f3b24]/35 backdrop-blur-sm"
       transition:fade
       onclick={onClose}
       onkeydown={handleBackdropKeydown}
@@ -85,45 +85,45 @@
     ></div>
     
     <div 
-      class="relative bg-[#0c0a08] border border-[#d4c5b0]/30 w-full max-w-md p-8 shadow-[0_0_50px_rgba(0,0,0,0.8)] font-cinzel text-[#d4c5b0]"
+      class="relative bg-[#fff9f0] border border-[#34251c]/30 w-full max-w-md p-8 shadow-[0_0_50px_rgba(111,59,36,0.18)] font-cinzel text-[#34251c]"
       transition:scale={{ start: 0.95 }}
     >
-        <div class="absolute top-0 left-0 w-4 h-4 border-t border-l border-[#d4c5b0]/50"></div>
-        <div class="absolute top-0 right-0 w-4 h-4 border-t border-r border-[#d4c5b0]/50"></div>
-        <div class="absolute bottom-0 left-0 w-4 h-4 border-b border-l border-[#d4c5b0]/50"></div>
-        <div class="absolute bottom-0 right-0 w-4 h-4 border-b border-r border-[#d4c5b0]/50"></div>
+        <div class="absolute top-0 left-0 w-4 h-4 border-t border-l border-[#34251c]/50"></div>
+        <div class="absolute top-0 right-0 w-4 h-4 border-t border-r border-[#34251c]/50"></div>
+        <div class="absolute bottom-0 left-0 w-4 h-4 border-b border-l border-[#34251c]/50"></div>
+        <div class="absolute bottom-0 right-0 w-4 h-4 border-b border-r border-[#34251c]/50"></div>
 
-        <h2 class="text-2xl font-bold mb-2 text-center text-[#e6decb] tracking-wider uppercase">{$t('settingsTitle')}</h2>
-        <div class="w-full h-px bg-gradient-to-r from-transparent via-[#d4c5b0]/30 to-transparent mb-8"></div>
+        <h2 class="text-2xl font-bold mb-2 text-center text-[#6f3b24] tracking-wider uppercase">{$t('settingsTitle')}</h2>
+        <div class="w-full h-px bg-gradient-to-r from-transparent via-[#34251c]/30 to-transparent mb-8"></div>
 
         <div class="space-y-6">
             <label class="block">
-                <span class="text-xs uppercase tracking-widest text-[#8a7f70] block mb-2">{$t('settingsServerUrl')}</span>
+                <span class="text-xs uppercase tracking-wide text-[#5f4636] block mb-2">{$t('settingsServerUrl')}</span>
                 <input
                     bind:value={settings.serverUrl}
                     type="text"
                     placeholder="https://api.gotiga.com"
-                    class="w-full bg-[#141210] border border-[#d4c5b0]/20 p-3 text-sm focus:border-[#d4c5b0]/60 outline-none transition-colors"
+                    class="w-full bg-[#fff9f0] border border-[#34251c]/20 p-3 text-sm focus:border-[#34251c]/60 outline-none transition-colors"
                 />
             </label>
 
             <label class="block">
-                <span class="text-xs uppercase tracking-widest text-[#8a7f70] block mb-2">{$t('settingsApiKey')}</span>
+                <span class="text-xs uppercase tracking-wide text-[#5f4636] block mb-2">{$t('settingsApiKey')}</span>
                 <input
                     bind:value={settings.apiKey}
                     type="password"
                     placeholder="••••••••••••••••"
-                    class="w-full bg-[#141210] border border-[#d4c5b0]/20 p-3 text-sm focus:border-[#d4c5b0]/60 outline-none transition-colors"
+                    class="w-full bg-[#fff9f0] border border-[#34251c]/20 p-3 text-sm focus:border-[#34251c]/60 outline-none transition-colors"
                 />
             </label>
 
             <label class="block">
-                <span class="text-xs uppercase tracking-widest text-[#8a7f70] block mb-2">{$t('settingsContactEmail')}</span>
+                <span class="text-xs uppercase tracking-wide text-[#5f4636] block mb-2">{$t('settingsContactEmail')}</span>
                 <input
                     bind:value={contactEmail}
                     type="email"
                     placeholder="info@gotiga.art"
-                    class="w-full bg-[#141210] border border-[#d4c5b0]/20 p-3 text-sm focus:border-[#d4c5b0]/60 outline-none transition-colors"
+                    class="w-full bg-[#fff9f0] border border-[#34251c]/20 p-3 text-sm focus:border-[#34251c]/60 outline-none transition-colors"
                 />
             </label>
 
@@ -131,10 +131,10 @@
                 <button
                     onclick={testConnection}
                     disabled={isTesting}
-                    class="flex-1 py-2 border text-xs uppercase tracking-widest transition-all
+                    class="flex-1 py-2 border text-xs uppercase tracking-wide transition-all
                         {testStatus === 'ok' ? 'border-green-700/50 text-green-400 bg-green-900/10' :
                          testStatus === 'fail' ? 'border-red-700/50 text-red-400 bg-red-900/10' :
-                         'border-[#d4c5b0]/20 text-[#8a7f70] hover:text-[#d4c5b0] hover:bg-[#d4c5b0]/5'}"
+                         'border-[#34251c]/20 text-[#5f4636] hover:text-[#34251c] hover:bg-[#34251c]/5'}"
                 >
                     {#if isTesting}{$t('settingsTesting')}
                     {:else if testStatus === 'ok'}{$t('settingsTestOk')}
@@ -153,14 +153,14 @@
         <div class="mt-8 flex gap-4">
             <button
                 onclick={onClose}
-                class="flex-1 py-3 border border-[#d4c5b0]/20 text-[#8a7f70] hover:text-[#d4c5b0] hover:bg-[#d4c5b0]/5 transition-all text-xs uppercase tracking-widest"
+                class="flex-1 py-3 border border-[#34251c]/20 text-[#5f4636] hover:text-[#34251c] hover:bg-[#34251c]/5 transition-all text-xs uppercase tracking-wide"
             >
                 {$t('settingsCancel')}
             </button>
             <button
                 onclick={handleSave}
                 disabled={isSaving}
-                class="flex-1 py-3 bg-[#d4c5b0]/10 border border-[#d4c5b0]/40 hover:bg-[#d4c5b0]/20 text-[#d4c5b0] transition-all text-xs uppercase tracking-widest"
+                class="flex-1 py-3 bg-[#34251c]/10 border border-[#34251c]/40 hover:bg-[#34251c]/20 text-[#34251c] transition-all text-xs uppercase tracking-wide"
             >
                 {isSaving ? '…' : $t('settingsApply')}
             </button>

@@ -317,38 +317,38 @@
 
 <!-- ===== LOGIN SCREEN ===== -->
 {#if !isAuthenticated && !isTauri}
-<div class="h-screen bg-[#0a0806] flex items-center justify-center font-cinzel">
-    <div class="relative w-full max-w-sm p-10 border border-[#d4c5b0]/20 bg-[#0c0a08] shadow-[0_0_80px_rgba(0,0,0,0.9)]">
+<div class="h-screen bg-[#f8f1e7] flex items-center justify-center font-cinzel">
+    <div class="relative w-full max-w-sm p-10 border border-[#34251c]/20 bg-[#fff9f0] shadow-[0_0_80px_rgba(111,59,36,0.20)]">
         <!-- Corner marks -->
-        <div class="absolute top-0 left-0 w-5 h-5 border-t border-l border-[#d4c5b0]/40"></div>
-        <div class="absolute top-0 right-0 w-5 h-5 border-t border-r border-[#d4c5b0]/40"></div>
-        <div class="absolute bottom-0 left-0 w-5 h-5 border-b border-l border-[#d4c5b0]/40"></div>
-        <div class="absolute bottom-0 right-0 w-5 h-5 border-b border-r border-[#d4c5b0]/40"></div>
+        <div class="absolute top-0 left-0 w-5 h-5 border-t border-l border-[#34251c]/40"></div>
+        <div class="absolute top-0 right-0 w-5 h-5 border-t border-r border-[#34251c]/40"></div>
+        <div class="absolute bottom-0 left-0 w-5 h-5 border-b border-l border-[#34251c]/40"></div>
+        <div class="absolute bottom-0 right-0 w-5 h-5 border-b border-r border-[#34251c]/40"></div>
 
         <div class="text-center mb-10">
             <div class="text-5xl mb-4 opacity-60">🗝</div>
-            <h1 class="text-2xl font-bold tracking-[0.3em] uppercase text-[#e6decb]">{$t('adminLoginHeading')}</h1>
-            <p class="text-[10px] tracking-widest text-[#8a7f70] uppercase mt-1">{$t('adminLoginSub')}</p>
-            <div class="w-full h-px bg-gradient-to-r from-transparent via-[#d4c5b0]/30 to-transparent mt-6"></div>
+            <h1 class="text-2xl font-bold tracking-[0.08em] uppercase text-[#6f3b24]">{$t('adminLoginHeading')}</h1>
+            <p class="text-[10px] tracking-wide text-[#5f4636] uppercase mt-1">{$t('adminLoginSub')}</p>
+            <div class="w-full h-px bg-gradient-to-r from-transparent via-[#34251c]/30 to-transparent mt-6"></div>
         </div>
 
         <form onsubmit={(e) => { e.preventDefault(); handleLogin(); }} class="space-y-6">
             <label class="block">
-                <span class="text-[10px] uppercase tracking-widest text-[#8a7f70] block mb-2">{$t('adminLoginName')}</span>
+                <span class="text-[10px] uppercase tracking-wide text-[#5f4636] block mb-2">{$t('adminLoginName')}</span>
                 <input
                     bind:value={loginForm.login}
                     type="text"
                     autocomplete="username"
-                    class="w-full bg-[#141210] border border-[#d4c5b0]/20 p-3 text-sm text-[#d4c5b0] focus:border-[#d4c5b0]/60 outline-none transition-colors"
+                    class="w-full bg-[#fff9f0] border border-[#34251c]/20 p-3 text-sm text-[#34251c] focus:border-[#34251c]/60 outline-none transition-colors"
                 />
             </label>
             <label class="block">
-                <span class="text-[10px] uppercase tracking-widest text-[#8a7f70] block mb-2">{$t('adminLoginPassword')}</span>
+                <span class="text-[10px] uppercase tracking-wide text-[#5f4636] block mb-2">{$t('adminLoginPassword')}</span>
                 <input
                     bind:value={loginForm.password}
                     type="password"
                     autocomplete="current-password"
-                    class="w-full bg-[#141210] border border-[#d4c5b0]/20 p-3 text-sm text-[#d4c5b0] focus:border-[#d4c5b0]/60 outline-none transition-colors"
+                    class="w-full bg-[#fff9f0] border border-[#34251c]/20 p-3 text-sm text-[#34251c] focus:border-[#34251c]/60 outline-none transition-colors"
                 />
             </label>
 
@@ -359,7 +359,7 @@
             <button
                 type="submit"
                 disabled={loginLoading}
-                class="w-full py-3 bg-[#d4c5b0]/10 border border-[#d4c5b0]/30 text-[#d4c5b0] text-xs uppercase tracking-widest hover:bg-[#d4c5b0]/20 transition-all disabled:opacity-40"
+                class="w-full py-3 bg-[#34251c]/10 border border-[#34251c]/30 text-[#34251c] text-xs uppercase tracking-wide hover:bg-[#34251c]/20 transition-all disabled:opacity-70"
             >
                 {$t(loginLoading ? 'adminLoginCheck' : 'adminLoginEnter')}
             </button>
@@ -369,16 +369,16 @@
 
 <!-- ===== ADMIN UI ===== -->
 {:else}
-<div class="h-screen bg-[#0a0806] text-[#d4c5b0] font-cinzel flex flex-col overflow-hidden">
+<div class="h-screen bg-[#f8f1e7] text-[#34251c] font-cinzel flex flex-col overflow-hidden">
 
     <!-- Header -->
-    <header class="flex justify-between items-center px-6 py-4 border-b border-[#d4c5b0]/20 bg-[#0a0806] z-10 shrink-0">
+    <header class="flex justify-between items-center px-6 py-4 border-b border-[#34251c]/20 bg-[#f8f1e7] z-10 shrink-0">
         <div>
             <h1 class="text-2xl font-gothic mb-0.5">{$t('adminTitle')}</h1>
-            <p class="text-[10px] tracking-[0.3em] text-[#8a7f70] uppercase">{$t('adminSubtitle')}</p>
+            <p class="text-[10px] tracking-[0.08em] text-[#5f4636] uppercase">{$t('adminSubtitle')}</p>
         </div>
 
-        <nav class="flex gap-1 bg-[#141210] p-1 border border-[#d4c5b0]/20">
+        <nav class="flex gap-1 bg-[#fff9f0] p-1 border border-[#34251c]/20">
             {#each [
               ['registry', $t('adminTabRegistry')],
               ['zones',    $t('adminTabZones')],
@@ -389,7 +389,7 @@
             ] as [tab, label]}
                 <button
                     onclick={() => activeTab = tab as typeof activeTab}
-                    class="px-4 py-2 text-xs uppercase tracking-widest transition-colors {activeTab === tab ? 'bg-[#d4c5b0]/10 text-white' : 'text-[#8a7f70] hover:text-[#d4c5b0]'}"
+                    class="px-4 py-2 text-xs uppercase tracking-wide transition-colors {activeTab === tab ? 'bg-[#c65f3c]/12 text-[#34251c]' : 'text-[#5f4636] hover:text-[#34251c]'}"
                 >{label}</button>
             {/each}
         </nav>
@@ -398,7 +398,7 @@
             <LangSwitcher />
             <button onclick={() => showSettings = true} class="btn-gothic text-lg px-3" title={$t('adminSettings')}>⚙</button>
             {#if !isTauri}
-                <button onclick={handleLogout} class="btn-gothic text-[10px] opacity-50 hover:opacity-100">{$t('adminLogout')}</button>
+                <button onclick={handleLogout} class="btn-gothic text-[10px] opacity-75 hover:opacity-100">{$t('adminLogout')}</button>
             {/if}
             <a href="/" class="btn-gothic opacity-60">{$t('adminToMuseum')}</a>
         </div>
@@ -413,9 +413,9 @@
         <div class="grid grid-cols-12 gap-6 h-full" in:fade>
 
             <!-- Sidebar -->
-            <aside class="col-span-3 flex flex-col gap-3 border-r border-[#d4c5b0]/10 pr-5 overflow-hidden">
+            <aside class="col-span-3 flex flex-col gap-3 border-r border-[#34251c]/10 pr-5 overflow-hidden">
                 <div class="flex justify-between items-center shrink-0">
-                    <h2 class="text-xs uppercase tracking-widest text-[#8a7f70]">{$t('adminRegistryHeading')}</h2>
+                    <h2 class="text-xs uppercase tracking-wide text-[#5f4636]">{$t('adminRegistryHeading')}</h2>
                     <button onclick={createNew} class="btn-gothic text-[10px]">{$t('adminRegistryNew')}</button>
                 </div>
 
@@ -425,12 +425,12 @@
                         bind:value={searchQuery}
                         type="text"
                         placeholder={$t('adminRegistrySearch')}
-                        class="w-full bg-[#0a0806] border border-[#d4c5b0]/15 px-3 py-2 text-xs text-[#d4c5b0] outline-none focus:border-[#d4c5b0]/40 transition-colors"
+                        class="w-full bg-[#f8f1e7] border border-[#34251c]/15 px-3 py-2 text-xs text-[#34251c] outline-none focus:border-[#34251c]/40 transition-colors"
                     />
                     {#if searchQuery}
                         <button
                             onclick={() => searchQuery = ''}
-                            class="absolute right-2 top-1/2 -translate-y-1/2 text-[#8a7f70] hover:text-[#d4c5b0] text-xs"
+                            class="absolute right-2 top-1/2 -translate-y-1/2 text-[#5f4636] hover:text-[#34251c] text-xs"
                         >✕</button>
                     {/if}
                 </div>
@@ -443,16 +443,16 @@
                                 onclick={() => editFigurine(fig.id)}
                                 class="flex-1 text-left px-3 py-2.5 border transition-colors min-w-0
                                     {selectedFigurine?.id === fig.id
-                                        ? 'bg-[#d4c5b0]/5 border-[#d4c5b0]/30'
-                                        : 'border-[#d4c5b0]/8 hover:border-[#d4c5b0]/30 border-transparent'}"
+                                        ? 'bg-[#34251c]/5 border-[#34251c]/30'
+                                        : 'border-[#34251c]/8 hover:border-[#34251c]/30 border-transparent'}"
                             >
-                                <div class="text-xs font-bold truncate group-hover/row:text-white transition-colors">
+                                <div class="text-xs font-bold truncate group-hover/row:text-[#6f3b24] transition-colors">
                                     {fig.name}
                                     {#if hasUnsaved && selectedFigurine?.id === fig.id}
                                         <span class="text-amber-400 ml-1">*</span>
                                     {/if}
                                 </div>
-                                <div class="text-[9px] uppercase opacity-30 flex gap-2">
+                                <div class="text-[9px] uppercase opacity-60 flex gap-2">
                                     <span>{fig.status}</span>
                                 </div>
                             </button>
@@ -460,40 +460,40 @@
                             <!-- Action column (visible on hover) -->
                             <div class="flex flex-col opacity-0 group-hover/row:opacity-100 transition-opacity shrink-0">
                                 <button onclick={() => moveFigurine(fig.id, -1)}
-                                    class="flex-1 w-5 border border-[#d4c5b0]/8 hover:bg-[#d4c5b0]/10 text-[#8a7f70] hover:text-[#d4c5b0] text-[9px] flex items-center justify-center"
+                                    class="flex-1 w-5 border border-[#34251c]/8 hover:bg-[#34251c]/10 text-[#5f4636] hover:text-[#34251c] text-[9px] flex items-center justify-center"
                                     title={$t('adminRegistryTooltipUp')}>▲</button>
                                 <button onclick={() => moveFigurine(fig.id, 1)}
-                                    class="flex-1 w-5 border border-[#d4c5b0]/8 hover:bg-[#d4c5b0]/10 text-[#8a7f70] hover:text-[#d4c5b0] text-[9px] flex items-center justify-center"
+                                    class="flex-1 w-5 border border-[#34251c]/8 hover:bg-[#34251c]/10 text-[#5f4636] hover:text-[#34251c] text-[9px] flex items-center justify-center"
                                     title={$t('adminRegistryTooltipDown')}>▼</button>
                                 <button onclick={() => duplicateFigurine(fig)}
-                                    class="flex-1 w-5 border border-[#d4c5b0]/8 hover:bg-[#d4c5b0]/10 text-[#8a7f70] hover:text-amber-400 text-[9px] flex items-center justify-center"
+                                    class="flex-1 w-5 border border-[#34251c]/8 hover:bg-[#34251c]/10 text-[#5f4636] hover:text-amber-400 text-[9px] flex items-center justify-center"
                                     title={$t('adminRegistryDuplicate')}>⎘</button>
                                 <button onclick={() => deleteFigurine(fig)} disabled={isDeleting}
-                                    class="flex-1 w-5 border border-[#d4c5b0]/8 hover:bg-red-950 text-[#8a7f70] hover:text-red-400 text-[9px] flex items-center justify-center"
+                                    class="flex-1 w-5 border border-[#34251c]/8 hover:bg-red-950 text-[#5f4636] hover:text-red-400 text-[9px] flex items-center justify-center"
                                     title={$t('adminRegistryDelete')}>✕</button>
                             </div>
                         </div>
                     {/each}
 
                     {#if filteredFigurines.length === 0}
-                        <div class="text-center text-[#8a7f70] text-xs py-6 opacity-40">
+                        <div class="text-center text-[#5f4636] text-xs py-6 opacity-70">
                             {searchQuery ? $t('adminRegistryNotFound') : $t('adminRegistryEmpty')}
                         </div>
                     {/if}
                 </div>
 
-                <div class="pt-3 border-t border-[#d4c5b0]/10 shrink-0 text-[10px] text-[#8a7f70] text-center opacity-50">
+                <div class="pt-3 border-t border-[#34251c]/10 shrink-0 text-[10px] text-[#5f4636] text-center opacity-75">
                     {figurines.length} {$t('adminRegistryCount')}
                 </div>
             </aside>
 
             <!-- Editor -->
-            <main class="col-span-9 bg-[#141210]/50 border border-[#d4c5b0]/10 relative h-full overflow-y-auto">
+            <main class="col-span-9 bg-[#fff9f0]/50 border border-[#34251c]/10 relative h-full overflow-y-auto">
                 {#if selectedFigurine}
                     <div class="p-8">
                         <!-- Unsaved indicator bar -->
                         {#if hasUnsaved}
-                            <div class="mb-6 px-4 py-2 bg-amber-950/40 border border-amber-900/40 text-amber-400 text-[10px] uppercase tracking-widest flex items-center gap-2" in:fade>
+                            <div class="mb-6 px-4 py-2 bg-amber-950/40 border border-amber-900/40 text-amber-400 text-[10px] uppercase tracking-wide flex items-center gap-2" in:fade>
                                 <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
                                 {$t('adminRegistryUnsaved')}
                             </div>
@@ -537,8 +537,8 @@
                                         <input type="number" bind:value={selectedFigurine.sortOrder} class="input-gothic" />
                                     </label>
                                     <label class="flex items-end gap-2 pb-3">
-                                        <input type="checkbox" bind:checked={selectedFigurine.isVisible} class="accent-[#d4c5b0] w-4 h-4" />
-                                        <span class="text-xs text-[#d4c5b0]">{$t('adminFieldVisible')}</span>
+                                        <input type="checkbox" bind:checked={selectedFigurine.isVisible} class="accent-[#34251c] w-4 h-4" />
+                                        <span class="text-xs text-[#34251c]">{$t('adminFieldVisible')}</span>
                                     </label>
                                 </div>
                             </div>
@@ -560,17 +560,17 @@
                         </label>
 
                         <!-- Media -->
-                        <div class="border-t border-[#d4c5b0]/10 pt-8 mb-8">
+                        <div class="border-t border-[#34251c]/10 pt-8 mb-8">
                             <h3 class="text-xl font-gothic mb-6">{$t('adminMediaHeading')}</h3>
                             <div class="grid grid-cols-2 gap-6 mb-6">
                                 <!-- Video -->
-                                <div class="p-4 border border-dashed border-[#d4c5b0]/20 flex flex-col gap-2">
+                                <div class="p-4 border border-dashed border-[#34251c]/20 flex flex-col gap-2">
                                     <span class="label block">{$t('adminMediaVideo')}</span>
                                     {#if selectedFigurine.videoUrl}
                                         <video
                                             src={resolveUrl(selectedFigurine.videoUrl)}
                                             controls
-                                            class="w-full max-h-36 bg-black"
+                                            class="w-full max-h-36 bg-[#2f2117]"
                                             preload="metadata"
                                         >
                                             <track kind="captions" />
@@ -579,7 +579,7 @@
                                             <button
                                                 onclick={() => handlePickFile('videos')}
                                                 disabled={uploadingVideo}
-                                                class="text-[10px] text-[#d4c5b0]/60 hover:text-white uppercase disabled:opacity-40"
+                                                class="text-[10px] text-[#34251c]/85 hover:text-[#6f3b24] uppercase disabled:opacity-70"
                                             >{$t('adminMediaReplace')}</button>
                                             <button
                                                 onclick={() => { selectedFigurine!.videoUrl = null; externalVideoUrl = ''; }}
@@ -603,14 +603,14 @@
                                                 <button
                                                     onclick={() => handlePickFile('videos')}
                                                     disabled={uploadingVideo}
-                                                    class="btn-gothic text-xs w-full disabled:opacity-40"
+                                                    class="btn-gothic text-xs w-full disabled:opacity-70"
                                                 >{uploadingVideo ? '…' : $t('adminMediaPickMp4')}</button>
                                             {/if}
                                         </div>
                                     {/if}
                                 </div>
                                 <!-- Audio -->
-                                <div class="p-4 border border-dashed border-[#d4c5b0]/20 flex flex-col gap-2">
+                                <div class="p-4 border border-dashed border-[#34251c]/20 flex flex-col gap-2">
                                     <span class="label block">{$t('adminMediaAudio')}</span>
                                     {#if selectedFigurine.ambiencePath}
                                         <audio
@@ -623,7 +623,7 @@
                                             <button
                                                 onclick={() => handlePickFile('audio')}
                                                 disabled={uploadingAudio}
-                                                class="text-[10px] text-[#d4c5b0]/60 hover:text-white uppercase disabled:opacity-40"
+                                                class="text-[10px] text-[#34251c]/85 hover:text-[#6f3b24] uppercase disabled:opacity-70"
                                             >{$t('adminMediaReplace')}</button>
                                             <button
                                                 onclick={() => selectedFigurine!.ambiencePath = null}
@@ -634,14 +634,14 @@
                                         <button
                                             onclick={() => handlePickFile('audio')}
                                             disabled={uploadingAudio}
-                                            class="btn-gothic text-xs w-full disabled:opacity-40"
+                                            class="btn-gothic text-xs w-full disabled:opacity-70"
                                         >{uploadingAudio ? '…' : $t('adminMediaPickMp3')}</button>
                                     {/if}
                                 </div>
                             </div>
 
                             <!-- Images gallery -->
-                            <div class="p-4 border border-dashed border-[#d4c5b0]/20">
+                            <div class="p-4 border border-dashed border-[#34251c]/20">
                                 <div class="flex justify-between items-center mb-4">
                                     <span class="label">{$t('adminMediaPhotos')} ({selectedFigurine.images.length})</span>
                                     <button onclick={() => handlePickFile('images')} class="btn-gothic text-[10px]">{$t('adminMediaAddPhoto')}</button>
@@ -650,24 +650,24 @@
                                     {#each selectedFigurine.images as img, imgIdx}
                                         <div class="flex flex-col gap-1">
                                             <div class="w-28 h-28 border overflow-hidden relative group transition-colors
-                                                {img.imageType === 'face' ? 'border-amber-500' : 'border-[#d4c5b0]/20'}">
+                                                {img.imageType === 'face' ? 'border-amber-500' : 'border-[#34251c]/20'}">
                                                 <img src={resolveUrl(img.thumbUrl ?? img.url)} alt={img.altText ?? ''} class="w-full h-full object-cover" />
 
                                                 <!-- Overlay controls -->
-                                                <div class="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1">
+                                                <div class="absolute inset-0 bg-[#6f3b24]/25 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1">
                                                     <button onclick={() => selectedFigurine!.images = selectedFigurine!.images.filter(i => i.id !== img.id)}
                                                         class="text-[10px] text-red-300 hover:text-red-100 uppercase px-2 py-0.5 border border-red-900/50 hover:bg-red-950">{$t('adminMediaDeleteFile')}</button>
                                                     {#if img.imageType !== 'face'}
                                                         <button onclick={() => setFaceImage(img.id)}
-                                                            class="text-[9px] text-[#d4c5b0] hover:text-amber-300 uppercase px-2 py-0.5 border border-[#d4c5b0]/20">{$t('adminMediaCover')}</button>
+                                                            class="text-[9px] text-[#34251c] hover:text-amber-300 uppercase px-2 py-0.5 border border-[#34251c]/20">{$t('adminMediaCover')}</button>
                                                     {:else}
                                                         <span class="text-[9px] text-amber-400 uppercase">{$t('adminMediaCover')}</span>
                                                     {/if}
                                                     <div class="flex gap-1">
                                                         <button onclick={() => moveImage(imgIdx, -1)} disabled={imgIdx === 0}
-                                                            class="text-[10px] text-[#d4c5b0] hover:text-white px-1.5 border border-[#d4c5b0]/20 disabled:opacity-30">←</button>
+                                                            class="text-[10px] text-[#34251c] hover:text-[#6f3b24] px-1.5 border border-[#34251c]/20 disabled:opacity-60">←</button>
                                                         <button onclick={() => moveImage(imgIdx, 1)} disabled={imgIdx === selectedFigurine.images.length - 1}
-                                                            class="text-[10px] text-[#d4c5b0] hover:text-white px-1.5 border border-[#d4c5b0]/20 disabled:opacity-30">→</button>
+                                                            class="text-[10px] text-[#34251c] hover:text-[#6f3b24] px-1.5 border border-[#34251c]/20 disabled:opacity-60">→</button>
                                                     </div>
                                                 </div>
 
@@ -680,7 +680,7 @@
                                                 bind:value={img.altText}
                                                 type="text"
                                                 placeholder={$t('adminMediaAltPlaceholder')}
-                                                class="w-28 bg-[#0a0806] border border-[#d4c5b0]/10 px-1.5 py-1 text-[9px] text-[#8a7f70] focus:border-[#d4c5b0]/30 outline-none"
+                                                class="w-28 bg-[#f8f1e7] border border-[#34251c]/10 px-1.5 py-1 text-[9px] text-[#5f4636] focus:border-[#34251c]/30 outline-none"
                                             />
                                         </div>
                                     {/each}
@@ -689,20 +689,20 @@
                         </div>
 
                         <!-- Process Steps -->
-                        <div class="border-t border-[#d4c5b0]/10 pt-8 mb-8">
+                        <div class="border-t border-[#34251c]/10 pt-8 mb-8">
                             <div class="flex justify-between items-center mb-6">
                                 <h3 class="text-xl font-gothic">{$t('adminGrimoireHeading')}</h3>
                                 <button onclick={addProcessStep} class="btn-gothic text-xs">{$t('adminGrimoireAddStep')}</button>
                             </div>
                             <div class="space-y-3">
                                 {#each selectedFigurine.processSteps as step, i}
-                                    <div class="p-4 bg-[#0a0806] border border-[#d4c5b0]/10 flex gap-4 items-start">
-                                        <div class="w-20 h-20 bg-[#1a1816] flex items-center justify-center border border-[#d4c5b0]/20 relative group shrink-0">
+                                    <div class="p-4 bg-[#f8f1e7] border border-[#34251c]/10 flex gap-4 items-start">
+                                        <div class="w-20 h-20 bg-[#f1e3d1] flex items-center justify-center border border-[#34251c]/20 relative group shrink-0">
                                             {#if step.imageUrl}
                                                 <img src={resolveUrl(step.imageUrl)} alt="" class="w-full h-full object-cover" />
-                                                <button onclick={() => step.imageUrl = ''} class="absolute top-0 right-0 bg-black/70 text-white p-0.5 text-[9px] opacity-0 group-hover:opacity-100">✕</button>
+                                                <button onclick={() => step.imageUrl = ''} class="absolute top-0 right-0 bg-[#6f3b24]/30 text-[#fff9f0] p-0.5 text-[9px] opacity-0 group-hover:opacity-100">✕</button>
                                             {:else}
-                                                <button onclick={() => handlePickFile('images', i)} class="text-[10px] uppercase text-[#8a7f70] hover:text-[#d4c5b0]">{$t('adminGrimoirePhoto')}</button>
+                                                <button onclick={() => handlePickFile('images', i)} class="text-[10px] uppercase text-[#5f4636] hover:text-[#34251c]">{$t('adminGrimoirePhoto')}</button>
                                             {/if}
                                         </div>
                                         <div class="flex-1 grid gap-2">
@@ -715,18 +715,18 @@
                                             </select>
                                             <textarea bind:value={step.description} class="input-gothic h-14 text-xs" placeholder={$t('adminGrimoireStepDesc')}></textarea>
                                         </div>
-                                        <button onclick={() => removeProcessStep(i)} class="text-[#8a7f70] hover:text-red-500 self-center text-sm">✕</button>
+                                        <button onclick={() => removeProcessStep(i)} class="text-[#5f4636] hover:text-red-500 self-center text-sm">✕</button>
                                     </div>
                                 {/each}
                                 {#if selectedFigurine.processSteps.length === 0}
-                                    <div class="text-center text-[#8a7f70] text-xs py-4 opacity-40">{$t('adminGrimoireEmpty')}</div>
+                                    <div class="text-center text-[#5f4636] text-xs py-4 opacity-70">{$t('adminGrimoireEmpty')}</div>
                                 {/if}
                             </div>
                         </div>
 
                         <!-- Action bar -->
                         <div class="flex justify-end gap-3 pb-10">
-                            <button onclick={cancelEdit} class="btn-gothic opacity-50">{$t('adminFormCancel')}</button>
+                            <button onclick={cancelEdit} class="btn-gothic opacity-75">{$t('adminFormCancel')}</button>
                             {#if isTauri}
                                 <button
                                     onclick={async () => {
@@ -742,13 +742,13 @@
                             {/if}
                             <button onclick={save} disabled={isSaving}
                                 class="btn-gothic min-w-[200px] transition-colors
-                                    {hasUnsaved ? 'bg-amber-950/40 border-amber-800/60 text-amber-200 hover:bg-amber-900/40' : 'bg-[#d4c5b0]/10'}">
+                                    {hasUnsaved ? 'bg-amber-950/40 border-amber-800/60 text-amber-200 hover:bg-amber-900/40' : 'bg-[#34251c]/10'}">
                                 {isSaving ? $t('adminFormSaving') : hasUnsaved ? $t('adminFormSaveChanges') : $t('adminFormSaved')}
                             </button>
                         </div>
                     </div>
                 {:else}
-                    <div class="h-full flex flex-col items-center justify-center text-[#8a7f70] opacity-30">
+                    <div class="h-full flex flex-col items-center justify-center text-[#5f4636] opacity-60">
                         <span class="text-5xl mb-4">📜</span>
                         <p class="text-sm">{$t('adminRegistrySelectPrompt')}</p>
                     </div>
@@ -765,13 +765,13 @@
         {:else if activeTab === 'author'}
             <div in:fade class="h-full flex flex-col">
                 <!-- Sub-tabs for author section -->
-                <div class="flex gap-1 border-b border-[#d4c5b0]/10 px-4 pt-2 flex-shrink-0">
+                <div class="flex gap-1 border-b border-[#34251c]/10 px-4 pt-2 flex-shrink-0">
                     {#each [[('profile'), $t('adminSubProfile')],[('texts'), $t('adminSubTexts')]] as [sub, label]}
                         {@const authorSubTab = activeAuthorSubTab}
                         <button
                             onclick={() => activeAuthorSubTab = sub as 'profile' | 'texts'}
-                            class="px-3 py-1.5 text-[10px] uppercase tracking-widest border-b-2 transition-colors -mb-px
-                                {authorSubTab === sub ? 'border-[#d4c5b0]/50 text-[#d4c5b0]' : 'border-transparent text-[#8a7f70] hover:text-[#d4c5b0]'}"
+                            class="px-3 py-1.5 text-[10px] uppercase tracking-wide border-b-2 transition-colors -mb-px
+                                {authorSubTab === sub ? 'border-[#34251c]/50 text-[#34251c]' : 'border-transparent text-[#5f4636] hover:text-[#34251c]'}"
                         >{label}</button>
                     {/each}
                 </div>
@@ -793,7 +793,7 @@
     {#if message.text}
         <div
             class="fixed bottom-6 right-6 px-5 py-3 border text-sm z-50
-                {message.type === 'error' ? 'bg-red-950 border-red-800 text-red-200' : 'bg-[#1a1814] border-[#d4c5b0]/30 text-[#d4c5b0]'}"
+                {message.type === 'error' ? 'bg-red-950 border-red-800 text-red-200' : 'bg-[#fff9f0] border-[#34251c]/30 text-[#34251c]'}"
             in:slide={{ axis: 'x' }}
         >{message.text}</div>
     {/if}
@@ -804,8 +804,8 @@
     .label {
         font-size: 10px;
         text-transform: uppercase;
-        letter-spacing: 0.1em;
-        color: #8a7f70;
+        letter-spacing: 0.04em;
+        color: #5f4636;
         margin-bottom: 0.35rem;
         display: block;
         font-weight: 700;
@@ -813,35 +813,35 @@
 
     .input-gothic {
         width: 100%;
-        background-color: #0a0806;
-        border: 1px solid rgba(212, 197, 176, 0.2);
+        background-color: #f8f1e7;
+        border: 1px solid rgba(198, 95, 60, 0.2);
         padding: 0.65rem 0.75rem;
         font-size: 0.875rem;
-        color: #d4c5b0;
+        color: #34251c;
         outline: none;
         transition: border-color 0.2s;
         font-family: inherit;
     }
 
     .input-gothic:focus {
-        border-color: rgba(212, 197, 176, 0.55);
+        border-color: rgba(198, 95, 60, 0.55);
     }
 
     textarea.input-gothic { resize: none; }
 
     .btn-gothic {
         padding: 0.45rem 1.25rem;
-        border: 1px solid rgba(212, 197, 176, 0.3);
+        border: 1px solid rgba(198, 95, 60, 0.3);
         font-size: 11px;
         text-transform: uppercase;
         letter-spacing: 0.08em;
         cursor: pointer;
         transition: all 0.2s;
         background: transparent;
-        color: #d4c5b0;
+        color: #34251c;
         font-family: inherit;
     }
 
-    .btn-gothic:hover { background-color: rgba(212, 197, 176, 0.06); }
+    .btn-gothic:hover { background-color: rgba(198, 95, 60, 0.06); }
     .btn-gothic:disabled { opacity: 0.3; cursor: not-allowed; }
 </style>

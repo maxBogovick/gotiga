@@ -157,14 +157,14 @@
     <div class="flex items-center justify-between gap-4 shrink-0">
         <div>
             <h2 class="text-xl font-gothic">Media Library</h2>
-            <p class="text-[10px] uppercase tracking-widest text-[#8a7f70] mt-1">
+            <p class="text-[10px] uppercase tracking-wide text-[#5f4636] mt-1">
                 {inventory ? `${inventory.files.length} files / ${inventory.usedCount} used / ${inventory.orphanCount} orphan / ${formatSize(inventory.totalSizeBytes)}` : 'Scanning media'}
             </p>
         </div>
         <div class="flex items-center gap-2">
-            <button onclick={loadInventory} disabled={loading} class="btn-gothic text-[10px] disabled:opacity-40">Refresh</button>
-            <button onclick={buildCleanupReport} disabled={loading} class="btn-gothic text-[10px] disabled:opacity-40">Preview cleanup</button>
-            <button onclick={cleanupUnused} disabled={loading || !cleanupReport || cleanupReport.files.length === 0} class="btn-gothic text-[10px] border-red-900/40 text-red-300 disabled:opacity-40">Delete unused</button>
+            <button onclick={loadInventory} disabled={loading} class="btn-gothic text-[10px] disabled:opacity-70">Refresh</button>
+            <button onclick={buildCleanupReport} disabled={loading} class="btn-gothic text-[10px] disabled:opacity-70">Preview cleanup</button>
+            <button onclick={cleanupUnused} disabled={loading || !cleanupReport || cleanupReport.files.length === 0} class="btn-gothic text-[10px] border-red-900/40 text-red-300 disabled:opacity-70">Delete unused</button>
         </div>
     </div>
 
@@ -180,23 +180,23 @@
         {#each ['all', 'used', 'orphan', 'missing'] as item}
             <button
                 onclick={() => filter = item as typeof filter}
-                class="px-3 py-2 border text-[10px] uppercase tracking-widest transition-colors
-                    {filter === item ? 'border-[#d4c5b0]/50 bg-[#d4c5b0]/10 text-white' : 'border-[#d4c5b0]/15 text-[#8a7f70] hover:text-[#d4c5b0]'}"
+                class="px-3 py-2 border text-[10px] uppercase tracking-wide transition-colors
+                    {filter === item ? 'border-[#34251c]/50 bg-[#c65f3c]/12 text-[#34251c]' : 'border-[#34251c]/15 text-[#5f4636] hover:text-[#34251c]'}"
             >{item}</button>
         {/each}
     </div>
 
     {#if cleanupReport}
-        <div class="border border-[#d4c5b0]/15 px-4 py-3 shrink-0">
+        <div class="border border-[#34251c]/15 px-4 py-3 shrink-0">
             <div class="flex items-center justify-between gap-3">
                 <div>
-                    <div class="text-xs uppercase tracking-widest text-[#d4c5b0]">Cleanup report before deletion</div>
-                    <div class="text-[10px] text-[#8a7f70] mt-1">{cleanupReport.files.length} orphan file(s), {formatSize(cleanupReport.totalSizeBytes)}</div>
+                    <div class="text-xs uppercase tracking-wide text-[#34251c]">Cleanup report before deletion</div>
+                    <div class="text-[10px] text-[#5f4636] mt-1">{cleanupReport.files.length} orphan file(s), {formatSize(cleanupReport.totalSizeBytes)}</div>
                 </div>
-                <button onclick={() => cleanupReport = null} class="text-[10px] uppercase text-[#8a7f70] hover:text-[#d4c5b0]">Dismiss</button>
+                <button onclick={() => cleanupReport = null} class="text-[10px] uppercase text-[#5f4636] hover:text-[#34251c]">Dismiss</button>
             </div>
             {#if cleanupReport.files.length > 0}
-                <div class="mt-3 max-h-24 overflow-y-auto text-[10px] text-[#8a7f70] font-mono space-y-1">
+                <div class="mt-3 max-h-24 overflow-y-auto text-[10px] text-[#5f4636] font-mono space-y-1">
                     {#each cleanupReport.files as file}
                         <div>{file.path} ({formatSize(file.sizeBytes)})</div>
                     {/each}
@@ -206,8 +206,8 @@
     {/if}
 
     <div class="grid grid-cols-[minmax(0,1fr)_320px] gap-4 min-h-0 flex-1">
-        <div class="border border-[#d4c5b0]/10 overflow-hidden min-h-0">
-            <div class="grid grid-cols-[76px_minmax(0,1fr)_90px_90px_88px] gap-3 px-3 py-2 border-b border-[#d4c5b0]/10 text-[9px] uppercase tracking-widest text-[#8a7f70]">
+        <div class="border border-[#34251c]/10 overflow-hidden min-h-0">
+            <div class="grid grid-cols-[76px_minmax(0,1fr)_90px_90px_88px] gap-3 px-3 py-2 border-b border-[#34251c]/10 text-[9px] uppercase tracking-wide text-[#5f4636]">
                 <span>Preview</span>
                 <span>Path</span>
                 <span>Variant</span>
@@ -218,56 +218,56 @@
                 {#each filteredFiles as file (file.path)}
                     <button
                         onclick={() => selectedPath = file.path}
-                        class="grid grid-cols-[76px_minmax(0,1fr)_90px_90px_88px] gap-3 items-center w-full text-left px-3 py-2 border-b border-[#d4c5b0]/8 transition-colors
-                            {selectedPath === file.path ? 'bg-[#d4c5b0]/10' : 'hover:bg-[#d4c5b0]/5'}"
+                        class="grid grid-cols-[76px_minmax(0,1fr)_90px_90px_88px] gap-3 items-center w-full text-left px-3 py-2 border-b border-[#34251c]/8 transition-colors
+                            {selectedPath === file.path ? 'bg-[#34251c]/10' : 'hover:bg-[#34251c]/5'}"
                     >
-                        <div class="w-14 h-14 border border-[#d4c5b0]/10 bg-[#0a0806] overflow-hidden flex items-center justify-center">
+                        <div class="w-14 h-14 border border-[#34251c]/10 bg-[#f8f1e7] overflow-hidden flex items-center justify-center">
                             {#if file.mediaType === 'image' && file.exists}
                                 <img src={file.url} alt="" class="w-full h-full object-cover" />
                             {:else}
-                                <span class="text-[9px] uppercase text-[#8a7f70]">{file.mediaType}</span>
+                                <span class="text-[9px] uppercase text-[#5f4636]">{file.mediaType}</span>
                             {/if}
                         </div>
                         <div class="min-w-0">
-                            <div class="text-xs text-[#d4c5b0] font-mono truncate">{file.path}</div>
+                            <div class="text-xs text-[#34251c] font-mono truncate">{file.path}</div>
                             {#if !file.exists}
                                 <div class="text-[10px] text-red-300 uppercase mt-1">Missing on disk</div>
                             {/if}
                         </div>
-                        <div class="text-[10px] text-[#8a7f70] uppercase">{file.variant ?? file.mediaType}</div>
-                        <div class="text-[10px] text-[#8a7f70]">{formatSize(file.sizeBytes)}</div>
+                        <div class="text-[10px] text-[#5f4636] uppercase">{file.variant ?? file.mediaType}</div>
+                        <div class="text-[10px] text-[#5f4636]">{formatSize(file.sizeBytes)}</div>
                         <div class="text-[10px] {file.usages.length ? 'text-emerald-300' : 'text-amber-300'}">
                             {file.usages.length ? `${file.usages.length} used` : 'orphan'}
                         </div>
                     </button>
                 {/each}
                 {#if filteredFiles.length === 0}
-                    <div class="p-8 text-center text-xs text-[#8a7f70]">No media files match this filter.</div>
+                    <div class="p-8 text-center text-xs text-[#5f4636]">No media files match this filter.</div>
                 {/if}
             </div>
         </div>
 
-        <aside class="border border-[#d4c5b0]/10 p-4 min-h-0 overflow-y-auto">
+        <aside class="border border-[#34251c]/10 p-4 min-h-0 overflow-y-auto">
             {#if selectedFile}
                 <div class="space-y-4">
                     <div>
-                        <div class="text-[10px] uppercase tracking-widest text-[#8a7f70] mb-2">Selected file</div>
-                        <div class="text-xs font-mono break-all text-[#d4c5b0]">{selectedFile.path}</div>
+                        <div class="text-[10px] uppercase tracking-wide text-[#5f4636] mb-2">Selected file</div>
+                        <div class="text-xs font-mono break-all text-[#34251c]">{selectedFile.path}</div>
                     </div>
 
                     {#if selectedFile.mediaType === 'image' && selectedFile.exists}
-                        <img src={selectedFile.url} alt="" class="w-full aspect-square object-cover border border-[#d4c5b0]/15" />
+                        <img src={selectedFile.url} alt="" class="w-full aspect-square object-cover border border-[#34251c]/15" />
                     {/if}
 
-                    <div class="grid grid-cols-2 gap-2 text-[10px] text-[#8a7f70]">
-                        <div>Type</div><div class="text-[#d4c5b0]">{selectedFile.mediaType}</div>
-                        <div>Variant</div><div class="text-[#d4c5b0]">{selectedFile.variant ?? '-'}</div>
-                        <div>Size</div><div class="text-[#d4c5b0]">{formatSize(selectedFile.sizeBytes)}</div>
+                    <div class="grid grid-cols-2 gap-2 text-[10px] text-[#5f4636]">
+                        <div>Type</div><div class="text-[#34251c]">{selectedFile.mediaType}</div>
+                        <div>Variant</div><div class="text-[#34251c]">{selectedFile.variant ?? '-'}</div>
+                        <div>Size</div><div class="text-[#34251c]">{formatSize(selectedFile.sizeBytes)}</div>
                         <div>Status</div><div class={selectedFile.exists ? 'text-emerald-300' : 'text-red-300'}>{selectedFile.exists ? 'Exists' : 'Missing'}</div>
                     </div>
 
                     <div>
-                        <div class="text-[10px] uppercase tracking-widest text-[#8a7f70] mb-2">Used in</div>
+                        <div class="text-[10px] uppercase tracking-wide text-[#5f4636] mb-2">Used in</div>
                         {#if selectedFile.usages.length}
                             <div class="space-y-2">
                                 {#each selectedFile.usages as usage}
@@ -275,12 +275,12 @@
                                         type="button"
                                         onclick={() => canOpenFigurine(usage.entityType) && onEditFigurine(usage.entityId)}
                                         disabled={!canOpenFigurine(usage.entityType)}
-                                        class="w-full text-left border border-[#d4c5b0]/10 p-2 transition-colors
-                                            {canOpenFigurine(usage.entityType) ? 'hover:border-[#d4c5b0]/35 hover:bg-[#d4c5b0]/5 cursor-pointer' : 'cursor-default'}"
+                                        class="w-full text-left border border-[#34251c]/10 p-2 transition-colors
+                                            {canOpenFigurine(usage.entityType) ? 'hover:border-[#34251c]/35 hover:bg-[#34251c]/5 cursor-pointer' : 'cursor-default'}"
                                         title={canOpenFigurine(usage.entityType) ? 'Open card editor' : ''}
                                     >
-                                        <div class="text-xs text-[#d4c5b0]">{usage.label}</div>
-                                        <div class="text-[10px] text-[#8a7f70] mt-1">{usage.entityType} / {usage.field}</div>
+                                        <div class="text-xs text-[#34251c]">{usage.label}</div>
+                                        <div class="text-[10px] text-[#5f4636] mt-1">{usage.entityType} / {usage.field}</div>
                                     </button>
                                 {/each}
                             </div>
@@ -292,17 +292,17 @@
                     <button
                         onclick={replaceSelected}
                         disabled={loading || selectedFile.usages.length === 0 || !selectedFile.exists}
-                        class="btn-gothic w-full text-xs disabled:opacity-40"
+                        class="btn-gothic w-full text-xs disabled:opacity-70"
                     >Replace file everywhere</button>
 
                     {#if selectedFile.usages.length > 0}
-                        <div class="text-[10px] leading-relaxed text-[#8a7f70]">
+                        <div class="text-[10px] leading-relaxed text-[#5f4636]">
                             Used files are protected from cleanup. Remove references in the editor or use replacement instead.
                         </div>
                     {/if}
                 </div>
             {:else}
-                <div class="h-full flex items-center justify-center text-xs text-[#8a7f70] text-center">
+                <div class="h-full flex items-center justify-center text-xs text-[#5f4636] text-center">
                     Select a file to inspect usages and replacement options.
                 </div>
             {/if}

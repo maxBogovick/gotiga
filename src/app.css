@@ -1,34 +1,35 @@
-@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600&family=UnifrakturMaguntia&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,500;9..144,650;9..144,750&display=swap');
 @import "tailwindcss";
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   DESIGN TOKENS — Gothic Museum Palette
+   DESIGN TOKENS — Warm Atelier Palette
    ═══════════════════════════════════════════════════════════════════════════ */
 
 @theme {
   /* Backgrounds */
-  --color-abyss:    #0a0806;   /* deepest bg */
-  --color-deep:     #141210;   /* panels, inputs */
-  --color-panel:    #1a1816;   /* dark surfaces */
-  --color-frame:    #2a2622;   /* scrollbar, borders */
+  --color-abyss:    #f8f1e7;   /* page bg */
+  --color-deep:     #fff9f0;   /* panels, inputs */
+  --color-panel:    #f1e3d1;   /* warm surfaces */
+  --color-frame:    #d8c6b1;   /* scrollbar, borders */
 
   /* Text / accents */
-  --color-bone:     #d4c5b0;   /* primary text */
-  --color-parchment:#e6decb;   /* headings, highlights */
-  --color-muted:    #8a7f70;   /* secondary text */
-  --color-dim:      #5a524c;   /* very muted */
+  --color-bone:     #34251c;   /* primary text */
+  --color-parchment:#6f3b24;   /* headings, highlights */
+  --color-muted:    #5f4636;   /* secondary text */
+  --color-dim:      #7c6554;   /* subdued text */
 
   /* Accent colors */
-  --color-crimson:  #7a2e2e;   /* primary red accent */
-  --color-burgundy: #4a1c1c;   /* dark red */
+  --color-crimson:  #c65f3c;   /* terracotta accent */
+  --color-burgundy: #9e452d;   /* dark terracotta */
 
   /* Fonts */
-  --font-cinzel:    'Cinzel', serif;
-  --font-fraktur:   'UnifrakturMaguntia', cursive;
+  --font-cinzel:    'Inter', system-ui, sans-serif;
+  --font-gothic:    'Fraunces', Georgia, serif;
+  --font-fraktur:   'Fraunces', Georgia, serif;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   BASE LAYER — Gothic Museum Foundation
+   BASE LAYER — Warm Atelier Foundation
    ═══════════════════════════════════════════════════════════════════════════ */
 
 @layer base {
@@ -38,27 +39,28 @@
 
   html {
     @apply antialiased;
-    background-color: #0a0806;
-    color: #d4c5b0;
+    background-color: #f8f1e7;
+    color: #34251c;
     font-feature-settings: "liga" 1, "kern" 1;
     cursor: default;
   }
 
   body {
     @apply min-h-screen;
-    font-family: 'Cinzel', serif;
-    background-color: #0a0806;
+    font-family: 'Inter', system-ui, sans-serif;
+    background-color: #f8f1e7;
     user-select: none;
     -webkit-user-select: none;
-    scrollbar-color: #2a2622 #0a0806;
+    scrollbar-color: #c9a875 #f8f1e7;
     overflow-x: hidden;
   }
 
-  /* Gothic Headings */
+  /* Warm atelier headings */
   h1, h2, h3, h4, h5, h6 {
-    font-family: 'UnifrakturMaguntia', cursive;
-    letter-spacing: 0.025em; /* tracking-wide */
-    color: #e6decb;
+    font-family: 'Fraunces', Georgia, serif;
+    letter-spacing: 0;
+    color: #6f3b24;
+    font-weight: 650;
   }
 
   h1 { font-size: 3rem; } /* text-5xl fallback */
@@ -72,12 +74,12 @@
   /* Links */
   a {
     transition: color 500ms;
-    color: #8a7f70;
+    color: #5f4636;
     cursor: pointer;
   }
 
   a:hover {
-    color: #d4c5b0;
+    color: #34251c;
   }
 
   /* Focus states */
@@ -86,8 +88,27 @@
   }
 
   *:focus-visible {
-    outline: 1px solid #d4c5b0;
+    outline: 1px solid #c65f3c;
     outline-offset: 2px;
+  }
+
+  input,
+  textarea,
+  select,
+  button {
+    font-family: 'Inter', system-ui, sans-serif;
+    color: #34251c;
+  }
+
+  input,
+  textarea,
+  select {
+    background-color: #fff9f0;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: rgba(95, 70, 54, 0.78);
   }
 
   /* Buttons */
@@ -95,83 +116,84 @@
     cursor: pointer;
   }
 
-  /* Custom scrollbar — Gothic style */
+  /* Custom scrollbar */
   ::-webkit-scrollbar {
     @apply w-2;
   }
 
   ::-webkit-scrollbar-track {
-    background: #0a0806;
+    background: #f8f1e7;
   }
 
   ::-webkit-scrollbar-thumb {
-    background: #2a2622;
+    background: #d8c6b1;
     border-radius: 2px;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: #3a3632;
+    background: #c9a875;
   }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   COMPONENTS LAYER — Gothic UI Elements
+   COMPONENTS LAYER — Warm UI Elements
    ═══════════════════════════════════════════════════════════════════════════ */
 
 @layer components {
-  /* Primary Button — Gothic */
+  /* Primary Button */
   .btn-gothic {
     @apply px-8 py-3 transition-all duration-500;
-    font-family: 'Cinzel', serif;
-    border: 1px solid rgba(212, 197, 176, 0.2);
-    color: #d4c5b0;
-    background: transparent;
+    font-family: 'Inter', system-ui, sans-serif;
+    border: 1px solid rgba(198, 95, 60, 0.25);
+    color: #6f3b24;
+    background: rgba(255, 249, 240, 0.72);
     text-transform: uppercase;
-    letter-spacing: 0.2em;
+    letter-spacing: 0.06em;
     font-size: 0.75rem;
   }
 
   .btn-gothic:hover {
-    background: rgba(212, 197, 176, 0.05);
-    border-color: rgba(212, 197, 176, 0.4);
+    background: rgba(198, 95, 60, 0.09);
+    border-color: rgba(198, 95, 60, 0.45);
+    color: #34251c;
   }
 
-  /* Card — Gothic Archive Style */
+  /* Card */
   .card-gothic {
     @apply p-6 transition-all duration-700;
-    background: rgba(20, 18, 16, 0.6);
-    border: 1px solid rgba(212, 197, 176, 0.1);
-    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+    background: rgba(255, 249, 240, 0.82);
+    border: 1px solid rgba(216, 198, 177, 0.8);
+    box-shadow: 0 18px 40px rgba(111, 59, 36, 0.12);
   }
 
   .card-gothic:hover {
-    border-color: rgba(212, 197, 176, 0.2);
-    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5);
+    border-color: rgba(198, 95, 60, 0.28);
+    box-shadow: 0 24px 56px rgba(111, 59, 36, 0.16);
   }
 
   /* Navigation Link */
   .nav-gothic {
     @apply flex items-center gap-2 transition-all duration-500;
-    font-family: 'Cinzel', serif;
+    font-family: 'Inter', system-ui, sans-serif;
     font-size: 0.625rem;
-    letter-spacing: 0.3em;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: #8a7f70;
+    color: #5f4636;
   }
 
   .nav-gothic:hover {
-    color: #d4c5b0;
+    color: #34251c;
   }
 
   /* Decorative Corner */
   .corner-decoration {
     @apply absolute w-4 h-4 transition-colors duration-500;
-    border-color: rgba(212, 197, 176, 0.2);
+    border-color: rgba(198, 95, 60, 0.25);
   }
 
   .corner-decoration:hover,
   .group:hover .corner-decoration {
-    border-color: rgba(212, 197, 176, 0.6);
+    border-color: rgba(198, 95, 60, 0.55);
   }
 
   /* Noise Texture Overlay */
@@ -184,9 +206,9 @@
     background: radial-gradient(
       circle at 50% 50%,
       transparent 0%,
-      rgba(10, 8, 6, 0.3) 50%,
-      rgba(10, 8, 6, 0.8) 90%,
-      #0a0806 100%
+      rgba(248, 241, 231, 0.15) 50%,
+      rgba(111, 59, 36, 0.14) 90%,
+      rgba(248, 241, 231, 0.86) 100%
     );
   }
 }
@@ -202,9 +224,9 @@
   .animation-delay-300 { animation-delay: 300ms; }
   .animation-delay-500 { animation-delay: 500ms; }
 
-  /* Text shadow for gothic glow */
+  /* Soft warm text shadow */
   .text-glow {
-    text-shadow: 0 0 30px rgba(212, 197, 176, 0.2);
+    text-shadow: 0 8px 24px rgba(198, 95, 60, 0.14);
   }
 
   /* Grayscale to color transition */

@@ -22,7 +22,7 @@
   let displayBack    = $derived(backLabel ?? $t('notFoundBack'));
 </script>
 
-<div class="fixed inset-0 bg-[#0a0806] -z-50"></div>
+<div class="fixed inset-0 bg-[#f8f1e7] -z-50"></div>
 <div class="fixed inset-0 bg-noise opacity-[0.06] mix-blend-overlay pointer-events-none" aria-hidden="true"></div>
 <div class="fixed inset-0 bg-vignette pointer-events-none" aria-hidden="true"></div>
 
@@ -32,15 +32,15 @@
 >
   <div class="text-center max-w-md">
     <!-- Gothic Title -->
-    <h1 class="font-gothic text-5xl text-[#8a7f70] mb-6 opacity-80">
+    <h1 class="font-gothic text-5xl text-[#5f4636] mb-6 opacity-80">
       {displayTitle}
     </h1>
 
     <!-- Decorative line -->
-    <div class="w-24 h-px bg-gradient-to-r from-transparent via-[#d4c5b0]/30 to-transparent mx-auto mb-8" aria-hidden="true"></div>
+    <div class="w-24 h-px bg-gradient-to-r from-transparent via-[#34251c]/30 to-transparent mx-auto mb-8" aria-hidden="true"></div>
 
     <!-- Message -->
-    <p class="font-cinzel text-[#d4c5b0] mb-10 leading-relaxed text-sm tracking-wide">
+    <p class="font-cinzel text-[#34251c] mb-10 leading-relaxed text-sm tracking-wide">
       {displayMessage}
     </p>
 

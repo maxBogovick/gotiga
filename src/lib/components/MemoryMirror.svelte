@@ -54,7 +54,7 @@
           } else {
               // Placeholder while loading
               if (ctx) {
-                  ctx.fillStyle = '#141210';
+                  ctx.fillStyle = '#fff9f0';
                   ctx.fillRect(0, 0, width, height);
               }
           }
@@ -153,12 +153,12 @@
 
 {#if isOpen}
   <div 
-    class="fixed inset-0 z-[80] bg-[#0a0806]/95 backdrop-blur-md flex flex-col items-center justify-center p-4"
+    class="fixed inset-0 z-[80] bg-[#f8f1e7]/95 backdrop-blur-md flex flex-col items-center justify-center p-4"
     transition:fade={{ duration: 800 }}
   >
     <div class="absolute top-8 text-center pointer-events-none z-10">
-        <h2 class="font-['UnifrakturMaguntia'] text-4xl text-[#d4c5b0] opacity-80 mb-2">{$t('mirrorTitle')}</h2>
-        <p class="font-['Cinzel'] text-xs text-[#8a7f70] tracking-[0.3em] uppercase">
+        <h2 class="font-['Fraunces'] text-4xl text-[#34251c] opacity-80 mb-2">{$t('mirrorTitle')}</h2>
+        <p class="font-['Inter'] text-xs text-[#5f4636] tracking-[0.08em] uppercase">
             {$t('mirrorHint')}
         </p>
     </div>
@@ -168,7 +168,7 @@
         bind:clientWidth={width}
         bind:clientHeight={height}
         bind:this={container}
-        class="relative w-full max-w-4xl aspect-[4/3] bg-[#141210] shadow-[0_0_100px_rgba(0,0,0,0.8)] border border-[#2a2622] rounded-sm overflow-hidden select-none"
+        class="relative w-full max-w-4xl aspect-[4/3] bg-[#fff9f0] shadow-[0_0_100px_rgba(111,59,36,0.18)] border border-[#d8c6b1] rounded-sm overflow-hidden select-none"
     >
         <!-- LAYER 1 (BOTTOM): THE PAST (Sketch) -->
         <!-- This is what appears when you wipe -->
@@ -185,7 +185,7 @@
                     />
                     <!-- Overlay Note -->
                     <div class="absolute bottom-8 left-0 right-0 text-center pointer-events-none">
-                        <span class="bg-black/60 backdrop-blur-sm px-6 py-2 font-['Cormorant_Garamond'] text-2xl text-[#d4c5b0] italic rounded-full border border-[#d4c5b0]/20">
+                        <span class="bg-[#6f3b24]/25 backdrop-blur-sm px-6 py-2 font-['Georgia'] text-2xl text-[#34251c] italic rounded-full border border-[#34251c]/20">
                              {steps[currentStepIndex].description}
                         </span>
                     </div>
@@ -210,8 +210,8 @@
         ></canvas>
 
         <!-- DECORATIONS -->
-        <div class="absolute inset-0 pointer-events-none border-[1px] border-[#d4c5b0]/10 m-4"></div>
-        <div class="absolute inset-0 pointer-events-none shadow-[inset_0_0_150px_rgba(0,0,0,0.9)]"></div>
+        <div class="absolute inset-0 pointer-events-none border-[1px] border-[#34251c]/10 m-4"></div>
+        <div class="absolute inset-0 pointer-events-none shadow-[inset_0_0_150px_rgba(111,59,36,0.20)]"></div>
 
     </div>
 
@@ -219,16 +219,16 @@
     <div class="mt-8 flex gap-4 z-50">
         {#each steps as step, i}
             <button
-                class="group flex flex-col items-center gap-2 transition-all duration-300 {currentStepIndex === i ? 'opacity-100 scale-110' : 'opacity-40 hover:opacity-80'}"
+                class="group flex flex-col items-center gap-2 transition-all duration-300 {currentStepIndex === i ? 'opacity-100 scale-110' : 'opacity-70 hover:opacity-80'}"
                 onclick={() => currentStepIndex = i}
             >
-                <div class="w-12 h-12 rounded-full border border-[#8a7f70] overflow-hidden relative shadow-lg bg-black">
+                <div class="w-12 h-12 rounded-full border border-[#5f4636] overflow-hidden relative shadow-lg bg-[#2f2117]">
                     <img src={step.imageUrl} alt="" class="w-full h-full object-cover grayscale" />
                     {#if currentStepIndex === i}
-                        <div class="absolute inset-0 border-2 border-[#d4c5b0] rounded-full"></div>
+                        <div class="absolute inset-0 border-2 border-[#34251c] rounded-full"></div>
                     {/if}
                 </div>
-                <span class="font-['Cinzel'] text-[10px] uppercase tracking-widest text-[#8a7f70]">{step.stepType}</span>
+                <span class="font-['Inter'] text-[10px] uppercase tracking-wide text-[#5f4636]">{step.stepType}</span>
             </button>
         {/each}
     </div>
@@ -236,7 +236,7 @@
     <!-- Close -->
     <button 
         onclick={onClose}
-        class="absolute top-8 right-8 text-[#5c4d41] hover:text-[#d4c5b0] transition-colors font-['UnifrakturMaguntia'] text-3xl z-50"
+        class="absolute top-8 right-8 text-[#5f4636] hover:text-[#34251c] transition-colors font-['Fraunces'] text-3xl z-50"
     >
         ✕
     </button>

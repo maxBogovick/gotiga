@@ -76,7 +76,7 @@
     }
 
     draw(ctx: CanvasRenderingContext2D) {
-      ctx.fillStyle = `rgba(212, 197, 176, ${this.alpha})`; // Cabinet bone color
+      ctx.fillStyle = `rgba(198, 95, 60, ${this.alpha})`; // Cabinet bone color
       ctx.beginPath();
       ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
       ctx.closePath();

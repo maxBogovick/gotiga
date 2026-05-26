@@ -104,9 +104,9 @@
 
 <div class="h-full flex gap-6">
     <!-- List -->
-    <div class="w-1/3 border-r border-[#d4c5b0]/10 pr-6 flex flex-col">
+    <div class="w-1/3 border-r border-[#34251c]/10 pr-6 flex flex-col">
         <div class="flex justify-between items-center mb-4">
-            <h2 class="text-xl font-gothic text-[#d4c5b0]">
+            <h2 class="text-xl font-gothic text-[#34251c]">
                 {category === 'author' ? $t('adminTextAuthorCategory') : $t('adminTextWorkshopCategory')}
             </h2>
             <button onclick={createNew} class="btn-gothic text-xs">{$t('adminTextAdd')}</button>
@@ -114,20 +114,20 @@
 
         <div class="flex-1 overflow-y-auto space-y-2">
             {#each items as item}
-                <div class="p-3 border border-[#d4c5b0]/10 hover:border-[#d4c5b0]/40 bg-[#141210]/30 group relative transition-colors">
+                <div class="p-3 border border-[#34251c]/10 hover:border-[#34251c]/40 bg-[#fff9f0]/30 group relative transition-colors">
                     <button onclick={() => edit(item)} class="w-full text-left pr-6">
-                        <div class="text-sm text-[#d4c5b0] line-clamp-2 italic">
+                        <div class="text-sm text-[#34251c] line-clamp-2 italic">
                             "{item.content || '...'}"
                         </div>
                         {#if (item as WorkshopItem).caption}
-                            <div class="text-[10px] text-[#8a7f70] mt-1">
+                            <div class="text-[10px] text-[#5f4636] mt-1">
                                 {(item as WorkshopItem).caption}
                             </div>
                         {/if}
                     </button>
                     <button 
                         onclick={() => remove(item.id)}
-                        class="absolute top-2 right-2 text-[#8a7f70] hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                        class="absolute top-2 right-2 text-[#5f4636] hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
                     >✕</button>
                 </div>
             {/each}
@@ -137,8 +137,8 @@
     <!-- Editor -->
     <div class="flex-1">
         {#if selectedItem}
-            <div class="bg-[#141210]/50 p-6 border border-[#d4c5b0]/10 h-full flex flex-col" in:fade>
-                <h3 class="font-bold text-[#d4c5b0] border-b border-[#d4c5b0]/20 pb-4 mb-6">{$t('adminTextEditing')}</h3>
+            <div class="bg-[#fff9f0]/50 p-6 border border-[#34251c]/10 h-full flex flex-col" in:fade>
+                <h3 class="font-bold text-[#34251c] border-b border-[#34251c]/20 pb-4 mb-6">{$t('adminTextEditing')}</h3>
 
                 <div class="space-y-6 flex-1">
                     <label class="block">
@@ -155,11 +155,11 @@
                         <div>
                             <span class="label block mb-2">{$t('adminTextImage')}</span>
                             <div class="flex gap-4 items-start">
-                                <div class="w-32 h-32 bg-black border border-[#d4c5b0]/20 flex items-center justify-center overflow-hidden">
+                                <div class="w-32 h-32 bg-[#2f2117] border border-[#34251c]/20 flex items-center justify-center overflow-hidden">
                                     {#if (selectedItem as WorkshopItem).imageUrl}
                                         <img src={resolveUrl((selectedItem as WorkshopItem).imageUrl)} alt="" class="w-full h-full object-cover" />
                                     {:else}
-                                        <span class="text-[#8a7f70] text-xs">{$t('adminTextNoPhoto')}</span>
+                                        <span class="text-[#5f4636] text-xs">{$t('adminTextNoPhoto')}</span>
                                     {/if}
                                 </div>
                                 <div class="space-y-2">
@@ -180,11 +180,11 @@
 
                 <div class="pt-6 flex justify-end gap-4">
                     <span class="text-green-500 text-xs self-center transition-opacity duration-500" class:opacity-0={!message}>{message}</span>
-                    <button onclick={save} class="btn-gothic bg-[#d4c5b0]/10 text-[#d4c5b0] min-w-[120px]">{$t('adminTextSave')}</button>
+                    <button onclick={save} class="btn-gothic bg-[#34251c]/10 text-[#34251c] min-w-[120px]">{$t('adminTextSave')}</button>
                 </div>
             </div>
         {:else}
-            <div class="h-full flex items-center justify-center text-[#8a7f70] opacity-30">
+            <div class="h-full flex items-center justify-center text-[#5f4636] opacity-60">
                 {$t('adminTextSelectPrompt')}
             </div>
         {/if}
@@ -195,8 +195,8 @@
     .label {
         font-size: 10px;
         text-transform: uppercase;
-        letter-spacing: 0.1em;
-        color: #8a7f70;
+        letter-spacing: 0.04em;
+        color: #5f4636;
         margin-bottom: 0.5rem;
         display: block;
         font-weight: 700;
@@ -204,22 +204,22 @@
 
     .input-gothic {
         width: 100%;
-        background-color: #0a0806;
-        border: 1px solid rgba(212, 197, 176, 0.2);
+        background-color: #f8f1e7;
+        border: 1px solid rgba(198, 95, 60, 0.2);
         padding: 0.75rem;
         font-size: 0.875rem;
-        color: #d4c5b0;
+        color: #34251c;
         outline: none;
         transition: all 0.2s;
     }
     
     .input-gothic:focus {
-        border-color: rgba(212, 197, 176, 0.6);
+        border-color: rgba(198, 95, 60, 0.6);
     }
 
     .btn-gothic {
         padding: 0.5rem 1rem;
-        border: 1px solid rgba(212, 197, 176, 0.3);
+        border: 1px solid rgba(198, 95, 60, 0.3);
         font-size: 11px;
         text-transform: uppercase;
         cursor: pointer;
@@ -227,6 +227,6 @@
     }
     
     .btn-gothic:hover {
-        background-color: rgba(212, 197, 176, 0.1);
+        background-color: rgba(198, 95, 60, 0.1);
     }
 </style>

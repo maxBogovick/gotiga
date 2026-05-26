@@ -15,7 +15,7 @@
   );
 </script>
 
-<div class="min-h-screen bg-[#0a0806]">
+<div class="min-h-screen bg-[#f8f1e7]">
   <!-- Persistent language switcher — top-right, shown on all content pages -->
   {#if !hideSwitcher}
     <div class="fixed top-4 right-5 z-50">

@@ -6,35 +6,35 @@ export default {
     colors: {
       // Основные цвета проекта
       'cabinet': {
-        'bg': '#2E2B28',           // тёмный тёплый фон
-        'bg-deep': '#1A1816',      // глубокий темный из примера
-        'wood': '#5A524C',         // дерево
-        'wood-light': 'rgba(90, 82, 76, 0.2)', // translucent wood
-        'wood-muted': 'rgba(90, 82, 76, 0.3)', // muted wood for placeholders
-        'fabric': '#8C7E73',       // состаренная ткань
-        'bone': '#CFC6B8',         // кость / кожа (основной текст)
-        'bone-highlight': 'rgba(207, 198, 184, 0.05)', // highlight for zones
-        'bone-border': 'rgba(207, 198, 184, 0.1)',    // border for zones
-        'dust': '#A39B91',         // пыль (вторичный текст)
-        'muted': '#9C8E7D',        // приглушенный акцент из примера
-        'glow': '#D4CDB8',         // свечение из примера
+        'bg': '#F8F1E7',
+        'bg-deep': '#EBDCC8',
+        'wood': '#C9A875',
+        'wood-light': 'rgba(198, 95, 60, 0.12)',
+        'wood-muted': 'rgba(52, 37, 28, 0.78)',
+        'fabric': '#A86124',
+        'bone': '#34251C',
+        'bone-highlight': 'rgba(198, 95, 60, 0.08)',
+        'bone-border': 'rgba(198, 95, 60, 0.18)',
+        'dust': '#5F4636',
+        'muted': '#7C6554',
+        'glow': '#C65F3C',
       },
       // Акценты (использовать ОЧЕНЬ редко)
       'accent': {
-        'red': '#7A2E2E',          // выцветший бордовый
-        'olive': '#6A705F',        // пыльно-оливковый
+        'red': '#A94438',
+        'olive': '#6F7D45',
       },
       // Служебные
       'transparent': 'transparent',
       'current': 'currentColor',
       // Чёрный для теней
-      'black': '#000000',
+      'black': '#2F2117',
     },
 
     // Шрифты
     fontFamily: {
-      'display': ['"Cormorant Garamond"', 'serif'],  // заголовки, имена
-      'body': ['"Source Serif 4"', 'serif'],         // основной текст
+      'display': ['"Fraunces"', 'Georgia', 'serif'],
+      'body': ['"Inter"', 'system-ui', 'sans-serif'],
     },
 
     // ВАЖНО: Убираем все font-weight кроме normal
@@ -71,9 +71,9 @@ export default {
 
       // Тени (мягкие, тёплые)
       boxShadow: {
-        'cabinet': '0 4px 20px rgba(0, 0, 0, 0.3)',
-        'cabinet-lg': '0 8px 40px rgba(0, 0, 0, 0.4)',
-        'cabinet-inner': 'inset 0 2px 10px rgba(0, 0, 0, 0.2)',
+        'cabinet': '0 4px 20px rgba(111, 59, 36, 0.12)',
+        'cabinet-lg': '0 8px 40px rgba(111, 59, 36, 0.16)',
+        'cabinet-inner': 'inset 0 2px 10px rgba(111, 59, 36, 0.12)',
       },
 
       // Прозрачности для overlay

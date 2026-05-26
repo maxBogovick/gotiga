@@ -166,7 +166,7 @@
 
 <div class="h-full flex flex-col">
     <div class="flex justify-between items-center mb-4 shrink-0">
-        <h2 class="text-xl font-gothic text-[#d4c5b0]">{$t('adminZoneHeading')}</h2>
+        <h2 class="text-xl font-gothic text-[#34251c]">{$t('adminZoneHeading')}</h2>
         <div class="flex gap-3 items-center">
             {#if message}
                 <span class="text-green-400 text-xs" in:fade>{message}</span>
@@ -181,10 +181,10 @@
         <!-- Visual canvas -->
         <div
             bind:this={canvasEl}
-            class="lg:col-span-2 bg-black/50 relative border border-[#d4c5b0]/20 overflow-hidden select-none"
+            class="lg:col-span-2 bg-[#6f3b24]/20 relative border border-[#34251c]/20 overflow-hidden select-none"
             style="cursor: {dragMode === 'move' ? 'grabbing' : 'default'}"
         >
-            <img src={bgImage} alt="Cabinet" class="w-full h-full object-contain pointer-events-none opacity-50" />
+            <img src={bgImage} alt="Cabinet" class="w-full h-full object-contain pointer-events-none opacity-75" />
 
             <div class="absolute inset-0">
                 <!-- Existing zones -->
@@ -201,13 +201,13 @@
                             top: {zone.y}%;
                             width: {zone.width}%;
                             height: {zone.height}%;
-                            border: 2px solid {isSelected ? '#f59e0b' : 'rgba(212,197,176,0.3)'};
+                            border: 2px solid {isSelected ? '#f59e0b' : 'rgba(198, 95, 60,0.3)'};
                             z-index: {isSelected ? 10 : 1};
                             cursor: {isSelected ? 'grab' : 'pointer'};
                             background: {isSelected ? 'rgba(245,158,11,0.08)' : 'transparent'};
                         "
                     >
-                        <span class="text-[10px] bg-black/70 px-1 text-[#d4c5b0] opacity-60 group-hover:opacity-100 pointer-events-none select-none">
+                        <span class="text-[10px] bg-[#6f3b24]/30 px-1 text-[#34251c] opacity-60 group-hover:opacity-100 pointer-events-none select-none">
                             {zone.zoneType}
                         </span>
 
@@ -220,7 +220,7 @@
                                 <div
                                     role="button"
                                     tabindex="-1"
-                                    class="absolute {pos} w-3 h-3 bg-amber-500 border-2 border-[#0a0806] {tr}"
+                                    class="absolute {pos} w-3 h-3 bg-amber-500 border-2 border-[#f8f1e7] {tr}"
                                     style="cursor: {cur}; z-index: 20;"
                                     onmousedown={(e) => { if (e.button === 0) startDrag(e, zone, `resize-${corner}` as DragMode); }}
                                 ></div>
@@ -238,11 +238,11 @@
                         style="left:{selectedZone.x}%;top:{selectedZone.y}%;width:{selectedZone.width}%;height:{selectedZone.height}%;cursor:grab;z-index:10;"
                         onmousedown={(e) => { if (e.button === 0) startDrag(e, selectedZone!, 'move'); }}
                     >
-                        <span class="text-[10px] bg-black/70 px-1 text-amber-300 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap">{$t('adminZoneNewLabel')}</span>
+                        <span class="text-[10px] bg-[#6f3b24]/30 px-1 text-amber-300 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap">{$t('adminZoneNewLabel')}</span>
                         <!-- Resize corner for ghost -->
                         <div
                             role="button" tabindex="-1"
-                            class="absolute bottom-0 right-0 w-3 h-3 bg-amber-500 border-2 border-[#0a0806] translate-x-1/2 translate-y-1/2"
+                            class="absolute bottom-0 right-0 w-3 h-3 bg-amber-500 border-2 border-[#f8f1e7] translate-x-1/2 translate-y-1/2"
                             style="cursor:se-resize;z-index:20;"
                             onmousedown={(e) => { if (e.button === 0) startDrag(e, selectedZone!, 'resize-br'); }}
                         ></div>
@@ -258,16 +258,16 @@
                 {/if}
             </div>
 
-            <div class="absolute bottom-2 left-2 text-[9px] text-[#8a7f70] bg-black/60 px-2 py-1 pointer-events-none">
+            <div class="absolute bottom-2 left-2 text-[9px] text-[#5f4636] bg-[#6f3b24]/25 px-2 py-1 pointer-events-none">
                 {$t('adminZoneDragHint')}
             </div>
         </div>
 
         <!-- Inspector -->
-        <div class="bg-[#141210]/50 p-5 border border-[#d4c5b0]/10 overflow-y-auto">
+        <div class="bg-[#fff9f0]/50 p-5 border border-[#34251c]/10 overflow-y-auto">
             {#if selectedZone}
                 <div class="space-y-5">
-                    <h3 class="font-bold text-[#d4c5b0] border-b border-[#d4c5b0]/20 pb-2 text-sm uppercase tracking-widest">{$t('adminZoneParams')}</h3>
+                    <h3 class="font-bold text-[#34251c] border-b border-[#34251c]/20 pb-2 text-sm uppercase tracking-wide">{$t('adminZoneParams')}</h3>
 
                     <label class="block">
                         <span class="label">{$t('adminZoneType')}</span>
@@ -303,17 +303,17 @@
                     </div>
 
                     <!-- Live coordinate readout -->
-                    <div class="text-[9px] text-[#8a7f70] bg-[#0a0806] p-2 border border-[#d4c5b0]/10 font-mono">
+                    <div class="text-[9px] text-[#5f4636] bg-[#f8f1e7] p-2 border border-[#34251c]/10 font-mono">
                         x:{selectedZone.x.toFixed(1)}% y:{selectedZone.y.toFixed(1)}% w:{selectedZone.width.toFixed(1)}% h:{selectedZone.height.toFixed(1)}%
                     </div>
 
                     <div class="pt-4 flex gap-2">
                         <button onclick={remove} class="btn-gothic border-red-900/40 text-red-500 flex-1">{$t('adminDelete')}</button>
-                        <button onclick={save} class="btn-gothic bg-[#d4c5b0]/10 text-[#d4c5b0] flex-1">{$t('adminSave')}</button>
+                        <button onclick={save} class="btn-gothic bg-[#34251c]/10 text-[#34251c] flex-1">{$t('adminSave')}</button>
                     </div>
                 </div>
             {:else}
-                <div class="text-[#8a7f70] text-center mt-10 opacity-40 text-sm">
+                <div class="text-[#5f4636] text-center mt-10 opacity-70 text-sm">
                     {$t('adminZoneSelectPrompt')}
                 </div>
             {/if}
@@ -325,8 +325,8 @@
     .label {
         font-size: 10px;
         text-transform: uppercase;
-        letter-spacing: 0.1em;
-        color: #8a7f70;
+        letter-spacing: 0.04em;
+        color: #5f4636;
         margin-bottom: 0.4rem;
         display: block;
         font-weight: 700;
@@ -334,28 +334,28 @@
 
     .input-gothic {
         width: 100%;
-        background-color: #0a0806;
-        border: 1px solid rgba(212, 197, 176, 0.2);
+        background-color: #f8f1e7;
+        border: 1px solid rgba(198, 95, 60, 0.2);
         padding: 0.5rem;
         font-size: 0.875rem;
-        color: #d4c5b0;
+        color: #34251c;
         outline: none;
         font-family: inherit;
     }
 
-    .input-gothic:focus { border-color: rgba(212, 197, 176, 0.5); }
+    .input-gothic:focus { border-color: rgba(198, 95, 60, 0.5); }
 
     .btn-gothic {
         padding: 0.45rem 1rem;
-        border: 1px solid rgba(212, 197, 176, 0.3);
+        border: 1px solid rgba(198, 95, 60, 0.3);
         font-size: 11px;
         text-transform: uppercase;
         cursor: pointer;
         transition: all 0.2s;
         background: transparent;
-        color: #d4c5b0;
+        color: #34251c;
         font-family: inherit;
     }
 
-    .btn-gothic:hover { background-color: rgba(212, 197, 176, 0.08); }
+    .btn-gothic:hover { background-color: rgba(198, 95, 60, 0.08); }
 </style>
