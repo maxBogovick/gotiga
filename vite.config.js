@@ -9,6 +9,10 @@ const apiProxy = {
     target: process.env.VITE_API_URL || "http://localhost:3000",
     changeOrigin: true,
   },
+  "/static": {
+    target: process.env.VITE_API_URL || "http://localhost:3000",
+    changeOrigin: true,
+  },
 };
 
 // https://vite.dev/config/

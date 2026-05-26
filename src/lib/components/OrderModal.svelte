@@ -65,6 +65,13 @@
       close();
     }, 3000);
   }
+
+  function handleBackdropKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      close();
+    }
+  }
 </script>
 
 {#if isOpen}
@@ -73,16 +80,19 @@
           class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#050403]/90 backdrop-blur-sm"
           transition:fade={{ duration: 400 }}
           onclick={close}
+          onkeydown={handleBackdropKeydown}
           role="button"
-          tabindex="-1"
+          tabindex="0"
           aria-label={$t('lightboxClose')}
   >
     <!-- The Letter/Scroll Container -->
     <div
             class="relative w-full max-w-lg perspective-1000"
             onclick={(e) => e.stopPropagation()}
+            onkeydown={(e) => e.stopPropagation()}
             role="dialog"
             aria-modal="true"
+            tabindex="-1"
             in:fly={{ y: 50, duration: 800, easing: cubicOut }}
     >
 

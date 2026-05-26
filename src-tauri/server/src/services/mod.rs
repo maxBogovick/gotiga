@@ -4,6 +4,9 @@ use crate::error::Result;
 use crate::models::*;
 use uuid::Uuid;
 use reqwest::Client;
+use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::path::Path;
 
 #[derive(Clone)]
 pub struct AppService {
@@ -86,7 +89,12 @@ impl AppService {
             let images = self.repo.get_images_by_figurine(f.id.clone()).await?;
             let face_img = images.iter()
                 .find(|i| i.image_type == ImageType::Face)
-                .map(|i| self.resolve_url(&i.file_path, "images", &i.id));
+                .map(|i| {
+                    i.thumb_path
+                        .as_ref()
+                        .map(|p| self.resolve_url(p, "images_thumb", &i.id))
+                        .unwrap_or_else(|| self.resolve_url(&i.file_path, "images", &i.id))
+                });
 
             result.push(FigurineListItemDto {
                 id: f.id,
@@ -111,7 +119,12 @@ impl AppService {
             let r_imgs = self.repo.get_images_by_figurine(r.id.clone()).await?;
             let face = r_imgs.iter()
                 .find(|i| i.image_type == ImageType::Face)
-                .map(|i| self.resolve_url(&i.file_path, "images", &i.id));
+                .map(|i| {
+                    i.thumb_path
+                        .as_ref()
+                        .map(|p| self.resolve_url(p, "images_thumb", &i.id))
+                        .unwrap_or_else(|| self.resolve_url(&i.file_path, "images", &i.id))
+                });
 
             related_items.push(FigurineListItemDto {
                 id: r.id,
@@ -125,6 +138,10 @@ impl AppService {
             id: i.id.clone(),
             image_type: i.image_type,
             url: self.resolve_url(&i.file_path, "images", &i.id),
+            original_url: i.original_path.as_ref()
+                .map(|p| self.resolve_url(p, "images_original", &i.id)),
+            thumb_url: i.thumb_path.as_ref()
+                .map(|p| self.resolve_url(p, "images_thumb", &i.id)),
             alt_text: i.alt_text,
         }).collect();
 
@@ -288,6 +305,8 @@ impl AppService {
     pub async fn get_asset(&self, table: &str, id: String) -> Result<Option<Vec<u8>>> {
         let (real_table, column) = match table {
             "images" => ("images", "data"),
+            "images_original" => ("images", "original_data"),
+            "images_thumb" => ("images", "thumb_data"),
             "process_steps" => ("process_steps", "image_data"),
             "figurines_video" => ("figurines", "video_data"),
             "figurines_audio" => ("figurines", "ambience_data"),
@@ -297,6 +316,186 @@ impl AppService {
         };
 
         self.repo.get_blob(real_table, column, id).await
+    }
+
+    fn clean_media_path(&self, path: &str) -> String {
+        let base = self.config.public_url.trim_end_matches('/');
+        path.strip_prefix(base)
+            .unwrap_or(path)
+            .trim_start_matches("/static/")
+            .trim_start_matches('/')
+            .replace('\\', "/")
+    }
+
+    fn public_media_url(&self, path: &str) -> String {
+        let base = self.config.public_url.trim_end_matches('/');
+        format!("{}/static/{}", base, path.trim_start_matches('/'))
+    }
+
+    fn is_managed_media_path(path: &str) -> bool {
+        path.starts_with("images/") || path.starts_with("videos/") || path.starts_with("audio/") || path.starts_with("backgrounds/")
+    }
+
+    fn media_type_for_path(path: &str) -> String {
+        if path.starts_with("images/") || path.starts_with("backgrounds/") {
+            "image".to_string()
+        } else if path.starts_with("videos/") {
+            "video".to_string()
+        } else if path.starts_with("audio/") {
+            "audio".to_string()
+        } else {
+            "other".to_string()
+        }
+    }
+
+    fn variant_for_path(path: &str) -> Option<String> {
+        if path.starts_with("images/original/") {
+            Some("original".to_string())
+        } else if path.starts_with("images/preview/") {
+            Some("preview".to_string())
+        } else if path.starts_with("images/thumb/") {
+            Some("thumb".to_string())
+        } else {
+            None
+        }
+    }
+
+    fn collect_upload_files(&self) -> Result<Vec<(String, u64)>> {
+        let mut files = Vec::new();
+        for folder in ["images", "videos", "audio", "backgrounds"] {
+            let dir = Path::new(&self.config.upload_dir).join(folder);
+            if dir.exists() {
+                Self::collect_files_recursive(Path::new(&self.config.upload_dir), &dir, &mut files)?;
+            }
+        }
+        files.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(files)
+    }
+
+    fn collect_files_recursive(base: &Path, dir: &Path, files: &mut Vec<(String, u64)>) -> Result<()> {
+        for entry in fs::read_dir(dir).map_err(crate::error::AppError::Io)? {
+            let entry = entry.map_err(crate::error::AppError::Io)?;
+            let path = entry.path();
+            if path.is_dir() {
+                Self::collect_files_recursive(base, &path, files)?;
+                continue;
+            }
+            if !path.is_file() {
+                continue;
+            }
+            let rel = path
+                .strip_prefix(base)
+                .map_err(|e| crate::error::AppError::Internal(e.to_string()))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            let size = fs::metadata(&path).map_err(crate::error::AppError::Io)?.len();
+            files.push((rel, size));
+        }
+        Ok(())
+    }
+
+    pub async fn media_inventory(&self) -> Result<MediaInventoryDto> {
+        let mut usage_map: HashMap<String, Vec<MediaUsageDto>> = HashMap::new();
+        for mut usage in self.repo.get_media_usages().await? {
+            let cleaned = self.clean_media_path(&usage.path);
+            if !Self::is_managed_media_path(&cleaned) {
+                continue;
+            }
+            usage.path = cleaned;
+            usage_map.entry(usage.path.clone()).or_default().push(usage);
+        }
+
+        let files_on_disk = self.collect_upload_files()?;
+        let file_size_map: HashMap<String, u64> = files_on_disk.into_iter().collect();
+        let mut known_paths: HashSet<String> = usage_map.keys().cloned().collect();
+        known_paths.extend(file_size_map.keys().cloned());
+
+        let mut files = known_paths.into_iter().map(|path| {
+            let size_bytes = file_size_map.get(&path).copied().unwrap_or(0);
+            let exists = file_size_map.contains_key(&path);
+            let usages = usage_map.remove(&path).unwrap_or_default();
+            MediaFileDto {
+                url: self.public_media_url(&path),
+                media_type: Self::media_type_for_path(&path),
+                variant: Self::variant_for_path(&path),
+                size_bytes,
+                exists,
+                path,
+                usages,
+            }
+        }).collect::<Vec<_>>();
+
+        files.sort_by(|a, b| {
+            b.usages.len()
+                .cmp(&a.usages.len())
+                .then_with(|| a.path.cmp(&b.path))
+        });
+
+        let orphan_count = files.iter().filter(|file| file.usages.is_empty()).count();
+        let used_count = files.len().saturating_sub(orphan_count);
+        let total_size_bytes = files.iter().map(|file| file.size_bytes).sum();
+        Ok(MediaInventoryDto { files, orphan_count, used_count, total_size_bytes })
+    }
+
+    pub async fn unused_media_report(&self) -> Result<MediaCleanupReportDto> {
+        let inventory = self.media_inventory().await?;
+        let files = inventory.files
+            .into_iter()
+            .filter(|file| file.exists && file.usages.is_empty())
+            .collect::<Vec<_>>();
+        let total_size_bytes = files.iter().map(|file| file.size_bytes).sum();
+        Ok(MediaCleanupReportDto { files, total_size_bytes })
+    }
+
+    pub async fn cleanup_unused_media(&self) -> Result<Vec<String>> {
+        let report = self.unused_media_report().await?;
+        let mut removed = Vec::new();
+        for file in report.files {
+            let path = Path::new(&self.config.upload_dir).join(&file.path);
+            if path.exists() && path.is_file() {
+                fs::remove_file(&path).map_err(crate::error::AppError::Io)?;
+                removed.push(file.path);
+            }
+        }
+        Ok(removed)
+    }
+
+    pub async fn replace_media_everywhere(
+        &self,
+        old_path: &str,
+        new_preview_path: &str,
+        new_original_path: Option<&str>,
+        new_thumb_path: Option<&str>,
+    ) -> Result<MediaReplaceResultDto> {
+        let old_path = self.clean_media_path(old_path);
+        let base = self.config.public_url.trim_end_matches('/');
+        let old_aliases = [
+            old_path.clone(),
+            format!("/static/{}", old_path),
+            format!("{}/static/{}", base, old_path),
+        ];
+        let mut updated_references = 0usize;
+        for alias in old_aliases {
+            updated_references += self.repo.replace_media_path_everywhere(
+                &alias,
+                new_preview_path,
+                new_original_path,
+                new_thumb_path,
+            ).await?;
+        }
+        let mut imported_paths = vec![new_preview_path.to_string()];
+        if let Some(path) = new_original_path {
+            imported_paths.push(path.to_string());
+        }
+        if let Some(path) = new_thumb_path {
+            imported_paths.push(path.to_string());
+        }
+        Ok(MediaReplaceResultDto {
+            old_path,
+            new_path: new_preview_path.to_string(),
+            updated_references,
+            imported_paths,
+        })
     }
 }
 

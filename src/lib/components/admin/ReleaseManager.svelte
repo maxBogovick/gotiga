@@ -61,6 +61,16 @@
         }
     }
 
+    async function handleCleanupMedia() {
+        if (!confirm('Remove local media files that are no longer referenced by the database?')) return;
+        try {
+            const removed = await api.cleanupUnusedMedia();
+            showMessage(`Removed ${removed.length} unused media file(s)`, 'success');
+        } catch (e) {
+            showMessage('Cleanup error: ' + e, 'error');
+        }
+    }
+
     async function handleUpload(e: Event) {
         const file = (e.target as HTMLInputElement).files?.[0];
         if (!file) return;
@@ -110,6 +120,9 @@
                 <span class="text-xs transition-opacity duration-500 {messageType === 'error' ? 'text-red-400' : 'text-[#d4c5b0]'}" in:fade>{message}</span>
             {/if}
             {#if isTauri}
+                <button onclick={handleCleanupMedia} class="btn-gothic border-red-900/40 text-red-400">
+                    Cleanup media
+                </button>
                 <button onclick={handlePull} class="btn-gothic border-blue-900/40 text-blue-400">
                     {$t('adminReleaseDownloadActive')}
                 </button>

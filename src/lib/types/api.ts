@@ -11,6 +11,8 @@ export interface FigurineImage {
     id: string;
     imageType: 'face' | 'detail' | 'full';
     url: string;
+    originalUrl: string | null;
+    thumbUrl: string | null;
     altText: string | null;
 }
 
@@ -93,4 +95,41 @@ export interface OrderRequest {
     requesterName: string;
     requesterEmail: string;
     message: string | null;
+}
+
+export interface MediaUsage {
+    path: string;
+    label: string;
+    entityType: string;
+    entityId: string;
+    field: string;
+}
+
+export interface MediaFile {
+    path: string;
+    url: string;
+    mediaType: 'image' | 'video' | 'audio' | 'other';
+    variant: string | null;
+    sizeBytes: number;
+    exists: boolean;
+    usages: MediaUsage[];
+}
+
+export interface MediaInventory {
+    files: MediaFile[];
+    orphanCount: number;
+    usedCount: number;
+    totalSizeBytes: number;
+}
+
+export interface MediaCleanupReport {
+    files: MediaFile[];
+    totalSizeBytes: number;
+}
+
+export interface MediaReplaceResult {
+    oldPath: string;
+    newPath: string;
+    updatedReferences: number;
+    importedPaths: string[];
 }

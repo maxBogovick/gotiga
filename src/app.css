@@ -2,6 +2,32 @@
 @import "tailwindcss";
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   DESIGN TOKENS — Gothic Museum Palette
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@theme {
+  /* Backgrounds */
+  --color-abyss:    #0a0806;   /* deepest bg */
+  --color-deep:     #141210;   /* panels, inputs */
+  --color-panel:    #1a1816;   /* dark surfaces */
+  --color-frame:    #2a2622;   /* scrollbar, borders */
+
+  /* Text / accents */
+  --color-bone:     #d4c5b0;   /* primary text */
+  --color-parchment:#e6decb;   /* headings, highlights */
+  --color-muted:    #8a7f70;   /* secondary text */
+  --color-dim:      #5a524c;   /* very muted */
+
+  /* Accent colors */
+  --color-crimson:  #7a2e2e;   /* primary red accent */
+  --color-burgundy: #4a1c1c;   /* dark red */
+
+  /* Fonts */
+  --font-cinzel:    'Cinzel', serif;
+  --font-fraktur:   'UnifrakturMaguntia', cursive;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    BASE LAYER — Gothic Museum Foundation
    ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -170,37 +196,6 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 @layer utilities {
-  /* Font families */
-  .font-gothic {
-    font-family: 'UnifrakturMaguntia', cursive;
-  }
-
-  .font-cinzel {
-    font-family: 'Cinzel', serif;
-  }
-
-  /* Gothic text colors */
-  .text-bone {
-    color: #d4c5b0;
-  }
-
-  .text-muted {
-    color: #8a7f70;
-  }
-
-  .text-parchment {
-    color: #e6decb;
-  }
-
-  /* Gothic backgrounds */
-  .bg-abyss {
-    background-color: #0a0806;
-  }
-
-  .bg-dark {
-    background-color: #141210;
-  }
-
   /* Animation delays */
   .animation-delay-100 { animation-delay: 100ms; }
   .animation-delay-200 { animation-delay: 200ms; }

@@ -9,9 +9,17 @@ import type {
     ServerRelease,
     AuthorProfile,
     OrderRequest,
+    MediaInventory,
+    MediaCleanupReport,
+    MediaReplaceResult,
 } from './types/api';
 
 export type { AppSettings };
+export type ImportedMedia = {
+    url: string;
+    originalUrl?: string | null;
+    thumbUrl?: string | null;
+};
 
 // Tauri 2.x injects __TAURI_INTERNALS__ into the webview
 export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -34,6 +42,16 @@ function getWebSettings(): AppSettings {
 function webApiBase(): string {
     const { serverUrl } = getWebSettings();
     return serverUrl ? `${serverUrl}/api/v1` : '/api/v1';
+}
+
+function webPublicUrl(url: unknown): string | null {
+    if (typeof url !== 'string' || !url) return null;
+    if (url.startsWith('http')) return url;
+    if (url.startsWith('/static/')) {
+        const { serverUrl } = getWebSettings();
+        return serverUrl ? `${serverUrl}${url}` : url;
+    }
+    return url;
 }
 
 async function webFetch<T>(path: string, options?: RequestInit): Promise<T> {
@@ -114,10 +132,7 @@ export const api = {
     },
 
     async deleteFigurine(id: string): Promise<void> {
-        if (isTauri) {
-            // Tauri: not implemented server-side, simulate
-            return;
-        }
+        if (isTauri) return invoke('delete_figurine', { id });
         const res = await fetch(`${webApiBase()}/figurines/${id}`, {
             method: 'DELETE',
             headers: authHeaders(),
@@ -125,10 +140,56 @@ export const api = {
         if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
     },
 
+    async cleanupUnusedMedia(): Promise<string[]> {
+        if (isTauri) return invoke('cleanup_unused_media');
+        throw new Error('Очистка локальных медиа доступна только в Tauri-приложении.');
+    },
+
+    async getMediaInventory(): Promise<MediaInventory> {
+        if (isTauri) return invoke('get_media_inventory');
+        return webFetch('/admin/media', { headers: authHeaders() });
+    },
+
+    async getUnusedMediaReport(): Promise<MediaCleanupReport> {
+        if (isTauri) return invoke('get_unused_media_report');
+        return webFetch('/admin/media/cleanup-report', { headers: authHeaders() });
+    },
+
+    async cleanupReportedUnusedMedia(): Promise<string[]> {
+        if (isTauri) return invoke('cleanup_reported_unused_media');
+        const data = await webFetch<{ removed: string[] }>('/admin/media/cleanup', {
+            method: 'POST',
+            headers: authHeaders(),
+        });
+        return data.removed;
+    },
+
+    async replaceMediaEverywhere(oldPath: string, replacementFilePath: string | File): Promise<MediaReplaceResult> {
+        if (isTauri) {
+            return invoke('replace_media_everywhere', { oldPath, replacementFilePath });
+        }
+        const form = new FormData();
+        form.append('targetPath', oldPath);
+        form.append('file', replacementFilePath as File);
+        const res = await fetch(`${webApiBase()}/admin/media/replace`, {
+            method: 'POST',
+            headers: authHeaders(),
+            body: form,
+        });
+        if (!res.ok) throw new Error(`Replace failed: ${res.status}`);
+        return res.json();
+    },
+
     // fileOrPath is a local path string in Tauri, a File object on web
     async importMedia(fileOrPath: string | File, mediaType: 'images' | 'videos' | 'audio'): Promise<string> {
+        const media = await api.importMediaWithVariants(fileOrPath, mediaType);
+        return media.url;
+    },
+
+    async importMediaWithVariants(fileOrPath: string | File, mediaType: 'images' | 'videos' | 'audio'): Promise<ImportedMedia> {
         if (isTauri) {
-            return invoke('import_media', { filePath: fileOrPath as string, mediaType });
+            const url = await invoke<string>('import_media', { filePath: fileOrPath as string, mediaType });
+            return { url };
         }
         const file = fileOrPath as File;
         const form = new FormData();
@@ -140,7 +201,11 @@ export const api = {
         });
         if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
         const data = await res.json();
-        return data.url as string;
+        return {
+            url: webPublicUrl(data.url) ?? '',
+            originalUrl: webPublicUrl(data.originalUrl),
+            thumbUrl: webPublicUrl(data.thumbUrl),
+        };
     },
 
     async saveCabinetZone(zone: CabinetZone): Promise<void> {

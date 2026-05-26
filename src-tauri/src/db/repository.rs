@@ -1,6 +1,7 @@
 use rusqlite::{params, Connection, Result};
 use crate::models::*;
 use chrono::{Utc, TimeZone};
+use std::collections::HashSet;
 
 fn get_iso_date(row: &rusqlite::Row, index: usize) -> Result<String> {
     use rusqlite::types::ValueRef;
@@ -133,6 +134,11 @@ impl<'a> Repository<'a> {
         Ok(())
     }
 
+    pub fn delete_figurine(&self, id: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM figurines WHERE id = ?", params![id])?;
+        Ok(())
+    }
+
     // === IMAGES ===
 
     pub fn replace_images(&self, figurine_id: &str, images: Vec<Image>) -> Result<()> {
@@ -144,8 +150,8 @@ impl<'a> Repository<'a> {
 
         // Вставляем новые
         let mut stmt = self.conn.prepare(
-            "INSERT INTO images (id, figurine_id, image_type, file_path, alt_text, sort_order, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
+            "INSERT INTO images (id, figurine_id, image_type, file_path, original_path, thumb_path, alt_text, sort_order, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
         )?;
 
         for (i, img) in images.into_iter().enumerate() {
@@ -154,6 +160,8 @@ impl<'a> Repository<'a> {
                 figurine_id,
                 img.image_type.as_str(),
                 img.file_path,
+                img.original_path,
+                img.thumb_path,
                 img.alt_text,
                 i as i32,
                 img.updated_at // String
@@ -165,7 +173,7 @@ impl<'a> Repository<'a> {
 
     pub fn get_all_images(&self) -> Result<Vec<Image>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, figurine_id, image_type, file_path, alt_text, sort_order, updated_at FROM images"
+            "SELECT id, figurine_id, image_type, file_path, original_path, thumb_path, alt_text, sort_order, updated_at FROM images"
         )?;
         let iter = stmt.query_map([], |row| {
             Ok(Image {
@@ -173,17 +181,272 @@ impl<'a> Repository<'a> {
                 figurine_id: row.get(1)?,
                 image_type: ImageType::from_str(&row.get::<_, String>(2)?),
                 file_path: row.get(3)?,
-                alt_text: row.get(4)?,
-                sort_order: row.get(5)?,
-                updated_at: get_iso_date(row, 6)?,
+                original_path: row.get(4)?,
+                thumb_path: row.get(5)?,
+                alt_text: row.get(6)?,
+                sort_order: row.get(7)?,
+                updated_at: get_iso_date(row, 8)?,
             })
         })?;
         iter.collect()
     }
 
+    pub fn get_all_media_paths(&self) -> Result<HashSet<String>> {
+        let mut paths = HashSet::new();
+
+        let mut stmt = self.conn.prepare("SELECT file_path FROM images")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        for row in rows {
+            paths.insert(row?);
+        }
+
+        let mut stmt = self.conn.prepare("SELECT original_path FROM images WHERE original_path IS NOT NULL")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        for row in rows {
+            paths.insert(row?);
+        }
+
+        let mut stmt = self.conn.prepare("SELECT thumb_path FROM images WHERE thumb_path IS NOT NULL")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        for row in rows {
+            paths.insert(row?);
+        }
+
+        let mut stmt = self.conn.prepare("SELECT image_path FROM process_steps")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        for row in rows {
+            paths.insert(row?);
+        }
+
+        let mut stmt = self.conn.prepare("SELECT image_path FROM texts WHERE image_path IS NOT NULL")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        for row in rows {
+            paths.insert(row?);
+        }
+
+        let mut stmt = self.conn.prepare("SELECT ambience_path FROM figurines WHERE ambience_path IS NOT NULL")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        for row in rows {
+            paths.insert(row?);
+        }
+
+        let mut stmt = self.conn.prepare("SELECT video_url FROM figurines WHERE video_url IS NOT NULL")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        for row in rows {
+            paths.insert(row?);
+        }
+
+        let mut stmt = self.conn.prepare("SELECT file_path FROM app_resources")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        for row in rows {
+            paths.insert(row?);
+        }
+
+        Ok(paths)
+    }
+
+    pub fn get_media_usages(&self) -> Result<Vec<MediaUsageDto>> {
+        let mut usages = Vec::new();
+
+        let mut stmt = self.conn.prepare(
+            "SELECT i.id, i.file_path, i.original_path, i.thumb_path, f.id, f.name
+             FROM images i
+             LEFT JOIN figurines f ON f.id = i.figurine_id"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+            ))
+        })?;
+        for row in rows {
+            let (image_id, preview, original, thumb, fig_id, fig_name) = row?;
+            let label = format!("Image for {}", fig_name.unwrap_or_else(|| "Unknown figurine".to_string()));
+            let entity_id = fig_id.unwrap_or_else(|| image_id.clone());
+            usages.push(MediaUsageDto {
+                path: preview,
+                label: label.clone(),
+                entity_type: "figurineImage".to_string(),
+                entity_id: entity_id.clone(),
+                field: "preview".to_string(),
+            });
+            if let Some(path) = original {
+                usages.push(MediaUsageDto {
+                    path,
+                    label: label.clone(),
+                    entity_type: "figurineImage".to_string(),
+                    entity_id: entity_id.clone(),
+                    field: "original".to_string(),
+                });
+            }
+            if let Some(path) = thumb {
+                usages.push(MediaUsageDto {
+                    path,
+                    label: label.clone(),
+                    entity_type: "figurineImage".to_string(),
+                    entity_id: entity_id.clone(),
+                    field: "thumb".to_string(),
+                });
+            }
+        }
+
+        let mut stmt = self.conn.prepare(
+            "SELECT ps.id, ps.image_path, f.id, f.name
+             FROM process_steps ps
+             LEFT JOIN figurines f ON f.id = ps.figurine_id"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        })?;
+        for row in rows {
+            let (step_id, path, fig_id, fig_name) = row?;
+            usages.push(MediaUsageDto {
+                path,
+                label: format!("Process step for {}", fig_name.unwrap_or_else(|| "Unknown figurine".to_string())),
+                entity_type: "processStep".to_string(),
+                entity_id: fig_id.unwrap_or(step_id),
+                field: "image".to_string(),
+            });
+        }
+
+        let mut stmt = self.conn.prepare(
+            "SELECT id, category, caption, image_path FROM texts WHERE image_path IS NOT NULL"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?;
+        for row in rows {
+            let (id, category, caption, path) = row?;
+            usages.push(MediaUsageDto {
+                path,
+                label: caption.unwrap_or_else(|| format!("{} text", category)),
+                entity_type: "text".to_string(),
+                entity_id: id,
+                field: "image".to_string(),
+            });
+        }
+
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, ambience_path, video_url FROM figurines"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        })?;
+        for row in rows {
+            let (id, name, ambience, video) = row?;
+            if let Some(path) = ambience {
+                usages.push(MediaUsageDto {
+                    path,
+                    label: format!("Audio for {}", name),
+                    entity_type: "figurine".to_string(),
+                    entity_id: id.clone(),
+                    field: "ambience".to_string(),
+                });
+            }
+            if let Some(path) = video {
+                usages.push(MediaUsageDto {
+                    path,
+                    label: format!("Video for {}", name),
+                    entity_type: "figurine".to_string(),
+                    entity_id: id.clone(),
+                    field: "video".to_string(),
+                });
+            }
+        }
+
+        let mut stmt = self.conn.prepare("SELECT key, file_path FROM app_resources WHERE key != 'author_profile'")?;
+        let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+        for row in rows {
+            let (key, path) = row?;
+            usages.push(MediaUsageDto {
+                path,
+                label: format!("App resource {}", key),
+                entity_type: "appResource".to_string(),
+                entity_id: key,
+                field: "file".to_string(),
+            });
+        }
+
+        Ok(usages)
+    }
+
+    pub fn replace_media_path_everywhere(
+        &self,
+        old_path: &str,
+        new_preview_path: &str,
+        new_original_path: Option<&str>,
+        new_thumb_path: Option<&str>,
+    ) -> Result<usize> {
+        let mut updated = 0usize;
+
+        if new_preview_path.starts_with("images/preview/") {
+            updated += self.conn.execute(
+                "UPDATE images
+                 SET file_path = ?1, original_path = ?2, thumb_path = ?3
+                 WHERE file_path = ?4 OR original_path = ?4 OR thumb_path = ?4",
+                params![new_preview_path, new_original_path, new_thumb_path, old_path],
+            )?;
+        } else {
+            updated += self.conn.execute(
+                "UPDATE images SET file_path = ?1 WHERE file_path = ?2",
+                params![new_preview_path, old_path],
+            )?;
+            updated += self.conn.execute(
+                "UPDATE images SET original_path = ?1 WHERE original_path = ?2",
+                params![new_preview_path, old_path],
+            )?;
+            updated += self.conn.execute(
+                "UPDATE images SET thumb_path = ?1 WHERE thumb_path = ?2",
+                params![new_preview_path, old_path],
+            )?;
+        }
+
+        updated += self.conn.execute(
+            "UPDATE process_steps SET image_path = ?1 WHERE image_path = ?2",
+            params![new_preview_path, old_path],
+        )?;
+        updated += self.conn.execute(
+            "UPDATE texts SET image_path = ?1 WHERE image_path = ?2",
+            params![new_preview_path, old_path],
+        )?;
+        updated += self.conn.execute(
+            "UPDATE figurines SET ambience_path = ?1 WHERE ambience_path = ?2",
+            params![new_preview_path, old_path],
+        )?;
+        updated += self.conn.execute(
+            "UPDATE figurines SET video_url = ?1 WHERE video_url = ?2",
+            params![new_preview_path, old_path],
+        )?;
+        updated += self.conn.execute(
+            "UPDATE app_resources SET file_path = ?1 WHERE file_path = ?2 AND key != 'author_profile'",
+            params![new_preview_path, old_path],
+        )?;
+
+        Ok(updated)
+    }
+
     pub fn get_images_for_figurine(&self, figurine_id: &str) -> Result<Vec<Image>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, figurine_id, image_type, file_path, alt_text, sort_order, updated_at
+            "SELECT id, figurine_id, image_type, file_path, original_path, thumb_path, alt_text, sort_order, updated_at
              FROM images
              WHERE figurine_id = ?
              ORDER BY sort_order"
@@ -195,9 +458,11 @@ impl<'a> Repository<'a> {
                 figurine_id: row.get(1)?,
                 image_type: ImageType::from_str(&row.get::<_, String>(2)?),
                 file_path: row.get(3)?,
-                alt_text: row.get(4)?,
-                sort_order: row.get(5)?,
-                updated_at: get_iso_date(row, 6)?,
+                original_path: row.get(4)?,
+                thumb_path: row.get(5)?,
+                alt_text: row.get(6)?,
+                sort_order: row.get(7)?,
+                updated_at: get_iso_date(row, 8)?,
             })
         })?;
 
@@ -421,12 +686,58 @@ impl<'a> Repository<'a> {
         Ok(())
     }
 
-    pub fn update_image_blob(&self, id: &str, data: Vec<u8>) -> Result<()> {
+    pub fn figurine_has_ambience_blob(&self, id: &str) -> Result<bool> {
+        self.conn.query_row(
+            "SELECT ambience_data IS NOT NULL FROM figurines WHERE id = ?",
+            params![id],
+            |row| row.get(0),
+        )
+    }
+
+    pub fn figurine_has_video_blob(&self, id: &str) -> Result<bool> {
+        self.conn.query_row(
+            "SELECT video_data IS NOT NULL FROM figurines WHERE id = ?",
+            params![id],
+            |row| row.get(0),
+        )
+    }
+
+    pub fn update_image_blob(
+        &self,
+        id: &str,
+        data: Vec<u8>,
+        original_data: Option<Vec<u8>>,
+        thumb_data: Option<Vec<u8>>,
+    ) -> Result<()> {
         self.conn.execute(
-            "UPDATE images SET data = ?1 WHERE id = ?2",
-            params![data, id],
+            "UPDATE images SET data = ?1, original_data = ?2, thumb_data = ?3 WHERE id = ?4",
+            params![data, original_data, thumb_data, id],
         )?;
         Ok(())
+    }
+
+    pub fn image_has_blob(&self, id: &str) -> Result<bool> {
+        self.conn.query_row(
+            "SELECT data IS NOT NULL FROM images WHERE id = ?",
+            params![id],
+            |row| row.get(0),
+        )
+    }
+
+    pub fn image_has_original_blob(&self, id: &str) -> Result<bool> {
+        self.conn.query_row(
+            "SELECT original_data IS NOT NULL FROM images WHERE id = ?",
+            params![id],
+            |row| row.get(0),
+        )
+    }
+
+    pub fn image_has_thumb_blob(&self, id: &str) -> Result<bool> {
+        self.conn.query_row(
+            "SELECT thumb_data IS NOT NULL FROM images WHERE id = ?",
+            params![id],
+            |row| row.get(0),
+        )
     }
 
     pub fn update_step_blob(&self, id: &str, data: Vec<u8>) -> Result<()> {
@@ -437,12 +748,28 @@ impl<'a> Repository<'a> {
         Ok(())
     }
 
+    pub fn step_has_blob(&self, id: &str) -> Result<bool> {
+        self.conn.query_row(
+            "SELECT image_data IS NOT NULL FROM process_steps WHERE id = ?",
+            params![id],
+            |row| row.get(0),
+        )
+    }
+
     pub fn update_text_blob(&self, id: &str, data: Vec<u8>) -> Result<()> {
         self.conn.execute(
             "UPDATE texts SET image_data = ?1 WHERE id = ?2",
             params![data, id],
         )?;
         Ok(())
+    }
+
+    pub fn text_has_blob(&self, id: &str) -> Result<bool> {
+        self.conn.query_row(
+            "SELECT image_data IS NOT NULL FROM texts WHERE id = ?",
+            params![id],
+            |row| row.get(0),
+        )
     }
 
     // === APP RESOURCES (SYSTEM ASSETS) ===
@@ -475,5 +802,27 @@ impl<'a> Repository<'a> {
             Utc::now().to_rfc3339()
         ])?;
         Ok(())
+    }
+
+    pub fn get_app_resources(&self) -> Result<Vec<(String, String)>> {
+        let mut stmt = self.conn.prepare("SELECT key, file_path FROM app_resources")?;
+        let iter = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        iter.collect()
+    }
+
+    pub fn update_app_resource_blob(&self, key: &str, data: Vec<u8>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE app_resources SET data = ?1, updated_at = ?2 WHERE key = ?3",
+            params![data, Utc::now().to_rfc3339(), key],
+        )?;
+        Ok(())
+    }
+
+    pub fn app_resource_has_blob(&self, key: &str) -> Result<bool> {
+        self.conn.query_row(
+            "SELECT data IS NOT NULL FROM app_resources WHERE key = ?",
+            params![key],
+            |row| row.get(0),
+        )
     }
 }

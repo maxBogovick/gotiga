@@ -86,6 +86,8 @@ pub struct Image {
     pub figurine_id: String,
     pub image_type: ImageType,
     pub file_path: String,
+    pub original_path: Option<String>,
+    pub thumb_path: Option<String>,
     pub alt_text: Option<String>,
     pub sort_order: i32,
     pub created_at: String,
@@ -159,6 +161,8 @@ pub struct ImageDto {
     pub id: String,
     pub image_type: ImageType,
     pub url: String,
+    pub original_url: Option<String>,
+    pub thumb_url: Option<String>,
     pub alt_text: Option<String>,
 }
 
@@ -267,6 +271,8 @@ pub struct SaveImageRequest {
     pub id: String,
     pub image_type: ImageType,
     pub url: String,
+    pub original_url: Option<String>,
+    pub thumb_url: Option<String>,
     pub alt_text: Option<String>,
     pub sort_order: Option<i32>,
 }
@@ -346,4 +352,51 @@ pub struct OrderRequest {
     pub requester_name: String,
     pub requester_email: String,
     pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaUsageDto {
+    pub path: String,
+    pub label: String,
+    pub entity_type: String,
+    pub entity_id: String,
+    pub field: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaFileDto {
+    pub path: String,
+    pub url: String,
+    pub media_type: String,
+    pub variant: Option<String>,
+    pub size_bytes: u64,
+    pub exists: bool,
+    pub usages: Vec<MediaUsageDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaInventoryDto {
+    pub files: Vec<MediaFileDto>,
+    pub orphan_count: usize,
+    pub used_count: usize,
+    pub total_size_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaCleanupReportDto {
+    pub files: Vec<MediaFileDto>,
+    pub total_size_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaReplaceResultDto {
+    pub old_path: String,
+    pub new_path: String,
+    pub updated_references: usize,
+    pub imported_paths: Vec<String>,
 }

@@ -64,7 +64,7 @@
   }
 
   let lightboxImages = $derived(
-    sortedImages.map(img => ({ url: resolveUrl(img.url), alt: img.altText ?? '' }))
+    sortedImages.map(img => ({ url: resolveUrl(img.originalUrl ?? img.url), alt: img.altText ?? '' }))
   );
 
   // Functions
@@ -304,7 +304,7 @@
                     onclick={() => selectImage(i)}
                     aria-label="{$t('figurineShowView')} {i + 1}"
                   >
-                    <img src={resolveUrl(img.url)} alt="" class="w-full h-full object-cover grayscale group-hover/thumb:grayscale-0 transition-all duration-500" />
+                    <img src={resolveUrl(img.thumbUrl ?? img.url)} alt="" class="w-full h-full object-cover grayscale group-hover/thumb:grayscale-0 transition-all duration-500" />
                     {#if selectedImageIndex === i}
                       <div class="absolute inset-0 bg-cabinet-bone/10 pointer-events-none mix-blend-overlay"></div>
                     {/if}

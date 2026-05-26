@@ -58,7 +58,7 @@
                     input.click();
                 });
             }
-            const url = await api.importMedia(fileOrPath, 'images');
+            const { url } = await api.importMediaWithVariants(fileOrPath, 'images');
             (selectedItem as WorkshopItem).imageUrl = url;
         } catch (e) {
             if (String(e) !== 'Error: no file') alert(String(e));

@@ -54,6 +54,8 @@ pub struct Image {
     pub figurine_id: String,
     pub image_type: ImageType,
     pub file_path: String,
+    pub original_path: Option<String>,
+    pub thumb_path: Option<String>,
     pub alt_text: Option<String>,
     pub sort_order: i32,
     pub updated_at: String,
@@ -240,15 +242,20 @@ pub struct ImageDto {
     pub id: String,
     pub image_type: String,
     pub url: String,  // путь для frontend (asset://)
+    pub original_url: Option<String>,
+    pub thumb_url: Option<String>,
     pub alt_text: Option<String>,
 }
 
 impl ImageDto {
     pub fn from_image(image: Image, _base_path: &str) -> Self {
+        let resolve = |path: String| format!("cabinet://localhost/{}", path);
         Self {
             id: image.id,
             image_type: image.image_type.as_str().to_string(),
-            url: format!("cabinet://localhost/{}", image.file_path),
+            url: resolve(image.file_path),
+            original_url: image.original_path.map(resolve),
+            thumb_url: image.thumb_path.map(resolve),
             alt_text: image.alt_text,
         }
     }
@@ -343,4 +350,51 @@ impl From<CabinetZone> for CabinetZoneDto {
             target_route: zone.target_route,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaUsageDto {
+    pub path: String,
+    pub label: String,
+    pub entity_type: String,
+    pub entity_id: String,
+    pub field: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaFileDto {
+    pub path: String,
+    pub url: String,
+    pub media_type: String,
+    pub variant: Option<String>,
+    pub size_bytes: u64,
+    pub exists: bool,
+    pub usages: Vec<MediaUsageDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaInventoryDto {
+    pub files: Vec<MediaFileDto>,
+    pub orphan_count: usize,
+    pub used_count: usize,
+    pub total_size_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaCleanupReportDto {
+    pub files: Vec<MediaFileDto>,
+    pub total_size_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaReplaceResultDto {
+    pub old_path: String,
+    pub new_path: String,
+    pub updated_references: usize,
+    pub imported_paths: Vec<String>,
 }

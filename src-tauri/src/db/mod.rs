@@ -36,6 +36,10 @@ impl Database {
         let conn = self.conn.lock().unwrap();
 
         conn.execute_batch(include_str!("schema.sql"))?;
+        add_column_if_missing(&conn, "images", "original_path", "TEXT")?;
+        add_column_if_missing(&conn, "images", "thumb_path", "TEXT")?;
+        add_column_if_missing(&conn, "images", "original_data", "BLOB")?;
+        add_column_if_missing(&conn, "images", "thumb_data", "BLOB")?;
 
         Ok(())
     }
@@ -56,4 +60,26 @@ impl Database {
 
         Ok(())
     }
+}
+
+fn add_column_if_missing(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    column_type: &str,
+) -> Result<()> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table))?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let existing: String = row.get(1)?;
+        if existing == column {
+            return Ok(());
+        }
+    }
+
+    conn.execute(
+        &format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, column_type),
+        [],
+    )?;
+    Ok(())
 }

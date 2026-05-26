@@ -81,8 +81,9 @@
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label class="block text-[10px] tracking-[0.2em] uppercase text-[#8a7f70] mb-1">{$t('adminProfileName')}</label>
+            <label for="profile-name" class="block text-[10px] tracking-[0.2em] uppercase text-[#8a7f70] mb-1">{$t('adminProfileName')}</label>
             <input
+              id="profile-name"
               bind:value={profile.name}
               type="text"
               placeholder="Ivan Masterov"
@@ -90,8 +91,9 @@
             />
           </div>
           <div>
-            <label class="block text-[10px] tracking-[0.2em] uppercase text-[#8a7f70] mb-1">{$t('adminProfileTagline')}</label>
+            <label for="profile-tagline" class="block text-[10px] tracking-[0.2em] uppercase text-[#8a7f70] mb-1">{$t('adminProfileTagline')}</label>
             <input
+              id="profile-tagline"
               bind:value={profile.tagline}
               type="text"
               placeholder="Gothic miniature sculptor"
@@ -101,8 +103,9 @@
         </div>
 
         <div>
-          <label class="block text-[10px] tracking-[0.2em] uppercase text-[#8a7f70] mb-1">{$t('adminProfileBio')}</label>
+          <label for="profile-bio" class="block text-[10px] tracking-[0.2em] uppercase text-[#8a7f70] mb-1">{$t('adminProfileBio')}</label>
           <textarea
+            id="profile-bio"
             bind:value={profile.bio}
             rows="6"
             placeholder={$t('adminProfileBioPlaceholder')}
@@ -111,8 +114,9 @@
         </div>
 
         <div>
-          <label class="block text-[10px] tracking-[0.2em] uppercase text-[#8a7f70] mb-1">{$t('adminProfilePhoto')}</label>
+          <label for="profile-photo" class="block text-[10px] tracking-[0.2em] uppercase text-[#8a7f70] mb-1">{$t('adminProfilePhoto')}</label>
           <input
+            id="profile-photo"
             bind:value={profile.photoUrl}
             type="text"
             placeholder="https://... or /static/images/photo.jpg"
@@ -129,29 +133,29 @@
           <p class="text-[10px] tracking-[0.3em] uppercase text-[#8a7f70] mb-4">{$t('adminProfileSocials')}</p>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label class="block text-[10px] tracking-widest text-[#8a7f70] mb-1">Instagram</label>
+              <label for="profile-instagram" class="block text-[10px] tracking-widest text-[#8a7f70] mb-1">Instagram</label>
               <div class="flex items-center">
                 <span class="text-[#8a7f70] text-xs mr-1">@</span>
-                <input bind:value={profile.instagram} type="text" placeholder="username" class="admin-input flex-1" />
+                <input id="profile-instagram" bind:value={profile.instagram} type="text" placeholder="username" class="admin-input flex-1" />
               </div>
             </div>
             <div>
-              <label class="block text-[10px] tracking-widest text-[#8a7f70] mb-1">Telegram</label>
+              <label for="profile-telegram" class="block text-[10px] tracking-widest text-[#8a7f70] mb-1">Telegram</label>
               <div class="flex items-center">
                 <span class="text-[#8a7f70] text-xs mr-1">@</span>
-                <input bind:value={profile.telegram} type="text" placeholder="username" class="admin-input flex-1" />
+                <input id="profile-telegram" bind:value={profile.telegram} type="text" placeholder="username" class="admin-input flex-1" />
               </div>
             </div>
             <div>
-              <label class="block text-[10px] tracking-widest text-[#8a7f70] mb-1">VK</label>
+              <label for="profile-vk" class="block text-[10px] tracking-widest text-[#8a7f70] mb-1">VK</label>
               <div class="flex items-center">
                 <span class="text-[#8a7f70] text-xs mr-1">{$t('adminProfileVkPath')}</span>
-                <input bind:value={profile.vk} type="text" placeholder="id or short address" class="admin-input flex-1" />
+                <input id="profile-vk" bind:value={profile.vk} type="text" placeholder="id or short address" class="admin-input flex-1" />
               </div>
             </div>
             <div>
-              <label class="block text-[10px] tracking-widest text-[#8a7f70] mb-1">Email</label>
-              <input bind:value={profile.email} type="email" placeholder="master@gotiga.art" class="admin-input w-full" />
+              <label for="profile-email" class="block text-[10px] tracking-widest text-[#8a7f70] mb-1">Email</label>
+              <input id="profile-email" bind:value={profile.email} type="email" placeholder="master@gotiga.art" class="admin-input w-full" />
             </div>
           </div>
         </div>

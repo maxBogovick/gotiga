@@ -6,6 +6,7 @@ use crate::services::file_service::FileService;
 use crate::services::sync_service::SyncService;
 use crate::services::settings_service::{SettingsService, AppSettings};
 use chrono::Utc;
+use std::collections::{HashMap, HashSet};
 
 // Helper function to resolve paths
 // Возвращаем путь через наш кастомный протокол cabinet://
@@ -16,6 +17,128 @@ fn resolve_path(_base_path: &str, relative_path: &str) -> String {
         // relative_path - это "images/uuid.jpg"
         format!("cabinet://localhost/{}", relative_path)
     }
+}
+
+fn derive_image_variants(file_path: &str) -> (Option<String>, Option<String>) {
+    let Some(file_name) = file_path.strip_prefix("images/preview/") else {
+        return (None, None);
+    };
+    (
+        Some(format!("images/original/{}", file_name)),
+        Some(format!("images/thumb/{}", file_name)),
+    )
+}
+
+fn is_managed_media_path(path: &str) -> bool {
+    path.starts_with("images/") || path.starts_with("videos/") || path.starts_with("audio/")
+}
+
+fn media_type_for_path(path: &str) -> String {
+    if path.starts_with("images/") {
+        "image".to_string()
+    } else if path.starts_with("videos/") {
+        "video".to_string()
+    } else if path.starts_with("audio/") {
+        "audio".to_string()
+    } else {
+        "other".to_string()
+    }
+}
+
+fn variant_for_path(path: &str) -> Option<String> {
+    if path.starts_with("images/original/") {
+        Some("original".to_string())
+    } else if path.starts_with("images/preview/") {
+        Some("preview".to_string())
+    } else if path.starts_with("images/thumb/") {
+        Some("thumb".to_string())
+    } else {
+        None
+    }
+}
+
+fn import_folder_for_existing_path(path: &str) -> Result<&'static str, String> {
+    if path.starts_with("images/") {
+        Ok("images")
+    } else if path.starts_with("videos/") {
+        Ok("videos")
+    } else if path.starts_with("audio/") {
+        Ok("audio")
+    } else {
+        Err(format!("Unsupported managed media path: {}", path))
+    }
+}
+
+fn imported_variant_paths(path: &str) -> Vec<String> {
+    let mut paths = vec![path.to_string()];
+    let (original, thumb) = derive_image_variants(path);
+    if let Some(p) = original {
+        paths.push(p);
+    }
+    if let Some(p) = thumb {
+        paths.push(p);
+    }
+    paths
+}
+
+fn build_media_inventory(repo: &Repository<'_>, fs: &FileService) -> Result<MediaInventoryDto, String> {
+    let base_path = fs.get_base_path_string();
+    let usages = repo.get_media_usages()
+        .map_err(|e| format!("Database error: {}", e))?
+        .into_iter()
+        .filter_map(|mut usage| {
+            let cleaned = fs.clean_path(&usage.path);
+            if !is_managed_media_path(&cleaned) {
+                return None;
+            }
+            usage.path = cleaned;
+            Some(usage)
+        })
+        .collect::<Vec<_>>();
+
+    let mut usage_map: HashMap<String, Vec<MediaUsageDto>> = HashMap::new();
+    for usage in usages {
+        usage_map.entry(usage.path.clone()).or_default().push(usage);
+    }
+
+    let mut known_paths: HashSet<String> = usage_map.keys().cloned().collect();
+    let files_on_disk = fs.list_managed_media_files()?;
+    for (path, _) in &files_on_disk {
+        known_paths.insert(path.clone());
+    }
+
+    let file_size_map: HashMap<String, u64> = files_on_disk.into_iter().collect();
+    let mut files = known_paths.into_iter().map(|path| {
+        let size = file_size_map.get(&path).copied().unwrap_or_else(|| fs.media_file_size(&path).unwrap_or(0));
+        let exists = file_size_map.contains_key(&path) || fs.file_exists(&path);
+        let usages = usage_map.remove(&path).unwrap_or_default();
+        MediaFileDto {
+            url: resolve_path(&base_path, &path),
+            media_type: media_type_for_path(&path),
+            variant: variant_for_path(&path),
+            size_bytes: size,
+            exists,
+            path,
+            usages,
+        }
+    }).collect::<Vec<_>>();
+
+    files.sort_by(|a, b| {
+        b.usages.len()
+            .cmp(&a.usages.len())
+            .then_with(|| a.path.cmp(&b.path))
+    });
+
+    let orphan_count = files.iter().filter(|f| f.usages.is_empty()).count();
+    let used_count = files.len().saturating_sub(orphan_count);
+    let total_size_bytes = files.iter().map(|f| f.size_bytes).sum();
+
+    Ok(MediaInventoryDto {
+        files,
+        orphan_count,
+        used_count,
+        total_size_bytes,
+    })
 }
 
 /// Получить список всех фигур (для витрины)
@@ -39,7 +162,7 @@ pub async fn get_all_figurines(
 
         let face_image = images.iter()
             .find(|img| img.image_type == ImageType::Face)
-            .map(|img| resolve_path(&base_path, &img.file_path));
+            .map(|img| resolve_path(&base_path, img.thumb_path.as_deref().unwrap_or(&img.file_path)));
 
         result.push(FigurineListItemDto {
             id: fig.id,
@@ -84,7 +207,7 @@ pub async fn get_figurine(
                  
                  let r_face_image = r_images.iter()
                     .find(|img| img.image_type == ImageType::Face)
-                    .map(|img| resolve_path(&base_path, &img.file_path));
+                    .map(|img| resolve_path(&base_path, img.thumb_path.as_deref().unwrap_or(&img.file_path)));
                 
                 related_items.push(FigurineListItemDto {
                     id: r_fig.id,
@@ -173,6 +296,104 @@ pub async fn import_media(
 }
 
 #[tauri::command]
+pub async fn delete_figurine(
+    id: String,
+    db: State<'_, Database>
+) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let repo = Repository::new(&conn);
+    repo.delete_figurine(&id).map_err(|e| format!("Database error: {}", e))
+}
+
+#[tauri::command]
+pub async fn cleanup_unused_media(
+    db: State<'_, Database>,
+    fs: State<'_, FileService>
+) -> Result<Vec<String>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let repo = Repository::new(&conn);
+    let referenced = repo.get_all_media_paths()
+        .map_err(|e| format!("Database error: {}", e))?;
+    fs.cleanup_unused_media(&referenced)
+}
+
+#[tauri::command]
+pub async fn get_media_inventory(
+    db: State<'_, Database>,
+    fs: State<'_, FileService>
+) -> Result<MediaInventoryDto, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let repo = Repository::new(&conn);
+    build_media_inventory(&repo, &fs)
+}
+
+#[tauri::command]
+pub async fn get_unused_media_report(
+    db: State<'_, Database>,
+    fs: State<'_, FileService>
+) -> Result<MediaCleanupReportDto, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let repo = Repository::new(&conn);
+    let inventory = build_media_inventory(&repo, &fs)?;
+    let files = inventory.files
+        .into_iter()
+        .filter(|file| file.exists && file.usages.is_empty())
+        .collect::<Vec<_>>();
+    let total_size_bytes = files.iter().map(|file| file.size_bytes).sum();
+    Ok(MediaCleanupReportDto { files, total_size_bytes })
+}
+
+#[tauri::command]
+pub async fn cleanup_reported_unused_media(
+    db: State<'_, Database>,
+    fs: State<'_, FileService>
+) -> Result<Vec<String>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let repo = Repository::new(&conn);
+    let report = build_media_inventory(&repo, &fs)?;
+    let orphan_paths = report.files
+        .into_iter()
+        .filter(|file| file.exists && file.usages.is_empty())
+        .map(|file| file.path)
+        .collect::<Vec<_>>();
+    fs.delete_media_files(&orphan_paths)
+}
+
+#[tauri::command]
+pub async fn replace_media_everywhere(
+    old_path: String,
+    replacement_file_path: String,
+    db: State<'_, Database>,
+    fs: State<'_, FileService>
+) -> Result<MediaReplaceResultDto, String> {
+    let old_path = fs.clean_path(&old_path);
+    if !is_managed_media_path(&old_path) {
+        return Err(format!("Only managed local media can be replaced: {}", old_path));
+    }
+
+    let import_folder = import_folder_for_existing_path(&old_path)?;
+    let new_path = fs.import_file(&replacement_file_path, import_folder)?;
+    let (new_original, new_thumb) = derive_image_variants(&new_path);
+    let imported_paths = imported_variant_paths(&new_path);
+
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let repo = Repository::new(&conn);
+    let updated_references = repo.replace_media_path_everywhere(
+        &old_path,
+        &new_path,
+        new_original.as_deref(),
+        new_thumb.as_deref(),
+    ).map_err(|e| format!("Database error: {}", e))?;
+
+    Ok(MediaReplaceResultDto {
+        old_path,
+        new_path,
+        updated_references,
+        imported_paths,
+    })
+}
+
+#[tauri::command]
 pub async fn save_figurine(
     mut figurine: FigurineDto,
     db: State<'_, Database>,
@@ -213,11 +434,17 @@ pub async fn save_figurine(
 
     // Сохраняем картинки
     let images: Vec<Image> = images_dto.into_iter().map(|img_dto| {
+        let file_path = clean_path(Some(img_dto.url)).unwrap_or_default();
+        let original_path = clean_path(img_dto.original_url);
+        let thumb_path = clean_path(img_dto.thumb_url);
+        let (derived_original, derived_thumb) = derive_image_variants(&file_path);
         Image {
             id: img_dto.id,
             figurine_id: figurine_id.clone(),
             image_type: ImageType::from_str(&img_dto.image_type),
-            file_path: clean_path(Some(img_dto.url)).unwrap_or_default(),
+            file_path,
+            original_path: original_path.or(derived_original),
+            thumb_path: thumb_path.or(derived_thumb),
             alt_text: img_dto.alt_text,
             sort_order: 0,
             updated_at: now.clone(),

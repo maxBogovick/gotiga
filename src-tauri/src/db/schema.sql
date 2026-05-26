@@ -32,7 +32,11 @@ CREATE TABLE IF NOT EXISTS images (
     image_type TEXT NOT NULL
         CHECK (image_type IN ('face', 'detail', 'full')),
     file_path TEXT NOT NULL,
+    original_path TEXT,
+    thumb_path TEXT,
     data BLOB, -- Встроенное изображение
+    original_data BLOB, -- Встроенный оригинал
+    thumb_data BLOB, -- Встроенный thumbnail
     alt_text TEXT,
     sort_order INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

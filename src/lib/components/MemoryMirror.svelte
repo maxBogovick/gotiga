@@ -15,9 +15,9 @@
     onClose: () => void;
   }>();
 
-  let canvas: HTMLCanvasElement;
+  let canvas = $state<HTMLCanvasElement | null>(null);
   let ctx: CanvasRenderingContext2D | null;
-  let container: HTMLDivElement;
+  let container = $state<HTMLDivElement | null>(null);
   
   // Dimensions
   let width = $state(0);
@@ -64,6 +64,7 @@
   function drawFullState(reset = false) {
       if (!ctx || !loadedFinalImage) return;
 
+      if (!canvas) return;
       const cw = canvas.width;
       const ch = canvas.height;
       const iw = loadedFinalImage.width;
@@ -103,6 +104,7 @@
 
   // Input Handling
   function getPos(e: MouseEvent | TouchEvent) {
+      if (!canvas) return { x: 0, y: 0 };
       const rect = canvas.getBoundingClientRect();
       let cx, cy;
       if (e instanceof MouseEvent) {

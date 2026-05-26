@@ -63,11 +63,26 @@
       isSaving = false;
     }
   }
+
+  function handleBackdropKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      onClose();
+    }
+  }
 </script>
 
 {#if isOpen}
   <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-    <div class="absolute inset-0 bg-black/80 backdrop-blur-sm" transition:fade onclick={onClose}></div>
+    <div
+      class="absolute inset-0 bg-black/80 backdrop-blur-sm"
+      transition:fade
+      onclick={onClose}
+      onkeydown={handleBackdropKeydown}
+      role="button"
+      tabindex="0"
+      aria-label={$t('settingsCancel')}
+    ></div>
     
     <div 
       class="relative bg-[#0c0a08] border border-[#d4c5b0]/30 w-full max-w-md p-8 shadow-[0_0_50px_rgba(0,0,0,0.8)] font-cinzel text-[#d4c5b0]"

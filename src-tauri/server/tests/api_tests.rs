@@ -25,6 +25,10 @@ async fn spawn_app(pool: PgPool) -> (String, String, PathBuf) {
         upload_dir: upload_dir.clone(),
         public_url: format!("http://127.0.0.1:{}", port),
         rust_log: "".to_string(),
+        admin_login: "admin".to_string(),
+        admin_password: "123".to_string(),
+        telegram_bot_token: None,
+        telegram_chat_id: None,
     };
 
     let repo = Repository::new(pool);
@@ -59,8 +63,9 @@ async fn create_dummy_content_db() -> (PathBuf, Vec<u8>) {
 
     sqlx::query(
         "CREATE TABLE images (
-            id TEXT PRIMARY KEY, figurine_id TEXT, image_type TEXT, file_path TEXT, alt_text TEXT, sort_order INTEGER, 
-            updated_at TEXT, created_at TEXT, data BLOB
+            id TEXT PRIMARY KEY, figurine_id TEXT, image_type TEXT, file_path TEXT,
+            original_path TEXT, thumb_path TEXT, alt_text TEXT, sort_order INTEGER, 
+            updated_at TEXT, created_at TEXT, data BLOB, original_data BLOB, thumb_data BLOB
         )"
     ).execute(&pool).await.unwrap();
 
@@ -109,6 +114,7 @@ async fn create_dummy_content_db() -> (PathBuf, Vec<u8>) {
 }
 
 #[sqlx::test]
+#[ignore = "requires a reachable PostgreSQL test database"]
 async fn test_full_release_cycle(pool: PgPool) {
     // 1. Setup
     sqlx::migrate!("./migrations/").run(&pool).await.unwrap();

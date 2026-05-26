@@ -1,26 +1,15 @@
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use serde::Deserialize;
 use tauri::AppHandle;
 use crate::db::repository::Repository;
-use crate::models::{Figurine, Image, ProcessStep, FigurineDto, ImageDto, ProcessStepDto, FigurineListItemDto, WorkshopItemDto, TextDto, CabinetZoneDto};
+use crate::models::FigurineDto;
 use crate::services::file_service::FileService;
 use crate::services::settings_service::AppSettings;
 use crate::db::Database;
 use std::path::Path;
 use std::fs;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Manifest {
-    pub version: i64,
-    pub generated_at: String,
-    pub figurines: Vec<Figurine>,
-    pub images: Vec<Image>,
-    pub process_steps: Vec<ProcessStep>,
-}
-
 #[derive(Deserialize)]
 struct UploadResponse {
-    url: String,
     #[serde(rename = "relativePath")]
     relative_path: String,
 }
@@ -52,7 +41,7 @@ impl SyncService {
             match path {
                 Some(p) => {
                     if p.starts_with("http") {
-                        Some(p)
+                        Ok::<Option<String>, String>(Some(p))
                     } else {
                         // It's local. Extract real path.
                         // p might be "cabinet://localhost/images/..." or "images/..."
@@ -64,33 +53,33 @@ impl SyncService {
                         
                         let full_path = self.file_service.get_full_path(&clean);
                         if full_path.exists() {
-                             let remote_path = self.upload_file(&client, base_url, api_key, &full_path).await;
-                             Some(remote_path.unwrap())
+                             let remote_path = self.upload_file(&client, base_url, api_key, &full_path).await?;
+                             Ok::<Option<String>, String>(Some(remote_path))
                         } else {
                              // File missing locally? Keep as is or null?
                              // Keep as is, maybe server has it
-                             Some(clean)
+                             Ok::<Option<String>, String>(Some(clean))
                         }
                     }
                 },
-                None => None
+                None => Ok::<Option<String>, String>(None)
             }
         };
 
         // 1. Upload Assets
-        dto.video_url = upload_helper(dto.video_url).await;
-        dto.ambience_path = upload_helper(dto.ambience_path).await;
+        dto.video_url = upload_helper(dto.video_url).await?;
+        dto.ambience_path = upload_helper(dto.ambience_path).await?;
         
         let mut new_images = Vec::new();
         for mut img in dto.images {
-            img.url = upload_helper(Some(img.url)).await.unwrap_or_default();
+            img.url = upload_helper(Some(img.url)).await?.unwrap_or_default();
             new_images.push(img);
         }
         dto.images = new_images;
 
         let mut new_steps = Vec::new();
         for mut step in dto.process_steps {
-            step.image_url = upload_helper(Some(step.image_url)).await.unwrap_or_default();
+            step.image_url = upload_helper(Some(step.image_url)).await?.unwrap_or_default();
             new_steps.push(step);
         }
         dto.process_steps = new_steps;
@@ -140,7 +129,7 @@ impl SyncService {
     }
 
     // ADMIN: Push Full Release (Portable BLOB Database)
-    pub async fn push_full_release(&self, db: &Database, settings: &AppSettings) -> Result<String, String> {
+    pub async fn push_full_release(&self, _db: &Database, settings: &AppSettings) -> Result<String, String> {
         if settings.server_url.is_empty() {
             return Err("Server URL not configured".to_string());
         }
@@ -174,7 +163,12 @@ impl SyncService {
             let images = repo.get_all_images().map_err(|e| e.to_string())?;
             for img in images {
                 if let Ok(data) = fs::read(self.file_service.get_full_path(&img.file_path)) {
-                    repo.update_image_blob(&img.id, data).map_err(|e| e.to_string())?;
+                    let original_data = img.original_path.as_ref()
+                        .and_then(|p| fs::read(self.file_service.get_full_path(p)).ok());
+                    let thumb_data = img.thumb_path.as_ref()
+                        .and_then(|p| fs::read(self.file_service.get_full_path(p)).ok());
+                    repo.update_image_blob(&img.id, data, original_data, thumb_data)
+                        .map_err(|e| e.to_string())?;
                 }
             }
 
@@ -198,6 +192,25 @@ impl SyncService {
                         repo.update_text_blob(&item.id, data).map_err(|e| e.to_string())?;
                     }
                 }
+            }
+
+            // Д. Общие ресурсы приложения (например, главный фон)
+            for (key, path) in repo.get_app_resources().map_err(|e| e.to_string())? {
+                if is_external_media_path(&path) {
+                    continue;
+                }
+                if let Ok(data) = fs::read(self.file_service.get_full_path(&path)) {
+                    repo.update_app_resource_blob(&key, data).map_err(|e| e.to_string())?;
+                }
+            }
+
+            let missing = self.verify_release_media(&repo).map_err(|e| e.to_string())?;
+            if !missing.is_empty() {
+                return Err(format!(
+                    "Release media verification failed. Missing {} item(s): {}",
+                    missing.len(),
+                    missing.join(", ")
+                ));
             }
         }
 
@@ -226,8 +239,92 @@ impl SyncService {
         Ok("Database release exported successfully".to_string())
     }
 
+    fn verify_release_media(&self, repo: &Repository<'_>) -> Result<Vec<String>, rusqlite::Error> {
+        let mut missing = Vec::new();
+
+        for f in repo.get_all_figurines()? {
+            if let Some(path) = f.ambience_path.as_ref() {
+                if !is_external_media_path(path)
+                    && !self.file_service.file_exists(path)
+                    && !repo.figurine_has_ambience_blob(&f.id)?
+                {
+                    missing.push(format!("figurine:{} ambience {}", f.id, path));
+                }
+            }
+
+            if let Some(path) = f.video_url.as_ref() {
+                if !is_external_media_path(path)
+                    && !self.file_service.file_exists(path)
+                    && !repo.figurine_has_video_blob(&f.id)?
+                {
+                    missing.push(format!("figurine:{} video {}", f.id, path));
+                }
+            }
+        }
+
+        for image in repo.get_all_images()? {
+            if !is_external_media_path(&image.file_path)
+                && !self.file_service.file_exists(&image.file_path)
+                && !repo.image_has_blob(&image.id)?
+            {
+                missing.push(format!("image:{} {}", image.id, image.file_path));
+            }
+
+            if let Some(path) = image.original_path.as_ref() {
+                if !is_external_media_path(path)
+                    && !self.file_service.file_exists(path)
+                    && !repo.image_has_original_blob(&image.id)?
+                {
+                    missing.push(format!("image:{} original {}", image.id, path));
+                }
+            }
+
+            if let Some(path) = image.thumb_path.as_ref() {
+                if !is_external_media_path(path)
+                    && !self.file_service.file_exists(path)
+                    && !repo.image_has_thumb_blob(&image.id)?
+                {
+                    missing.push(format!("image:{} thumb {}", image.id, path));
+                }
+            }
+        }
+
+        for f in repo.get_all_figurines()? {
+            for step in repo.get_process_steps_for_figurine(&f.id)? {
+                if !is_external_media_path(&step.image_path)
+                    && !self.file_service.file_exists(&step.image_path)
+                    && !repo.step_has_blob(&step.id)?
+                {
+                    missing.push(format!("step:{} {}", step.id, step.image_path));
+                }
+            }
+        }
+
+        for item in repo.get_texts_by_category("workshop")? {
+            if let Some(path) = item.image_path.as_ref() {
+                if !is_external_media_path(path)
+                    && !self.file_service.file_exists(path)
+                    && !repo.text_has_blob(&item.id)?
+                {
+                    missing.push(format!("workshop:{} {}", item.id, path));
+                }
+            }
+        }
+
+        for (key, path) in repo.get_app_resources()? {
+            if key == "author_profile" || is_external_media_path(&path) {
+                continue;
+            }
+            if !self.file_service.file_exists(&path) && !repo.app_resource_has_blob(&key)? {
+                missing.push(format!("resource:{} {}", key, path));
+            }
+        }
+
+        Ok(missing)
+    }
+
     /// CLIENT: Pull Full Database from server
-    pub async fn pull_updates(&self, db: &Database, settings: &AppSettings) -> Result<String, String> {
+    pub async fn pull_updates(&self, _db: &Database, settings: &AppSettings) -> Result<String, String> {
         let client = reqwest::Client::new();
         let url = format!("{}/api/v1/sync/db", settings.server_url);
 
@@ -258,32 +355,6 @@ impl SyncService {
         fs::write(&db_path, &bytes).map_err(|e| format!("Failed to overwrite DB: {}. Попробуйте перезапустить приложение.", e))?;
 
         Ok("Archive updated from server. Please restart to see changes.".to_string())
-    }
-
-    async fn upload_if_local(&self, client: &reqwest::Client, base_url: &str, api_key: &str, path: Option<String>) -> Result<Option<String>, String> {
-        match path {
-            Some(p) => {
-                if p.starts_with("http") || p.is_empty() {
-                    Ok(Some(p))
-                } else {
-                    let clean = if p.starts_with("cabinet://") {
-                        p.replace("cabinet://localhost/", "")
-                    } else {
-                        p
-                    };
-                    
-                    let full_path = self.file_service.get_full_path(&clean);
-                    if full_path.exists() {
-                         let remote_path = self.upload_file(client, base_url, api_key, &full_path).await?;
-                         Ok(Some(remote_path))
-                    } else {
-                         // File missing locally? Keep path, maybe server has it
-                         Ok(Some(clean))
-                    }
-                }
-            },
-            None => Ok(None)
-        }
     }
 
     // ADMIN: List Releases
@@ -326,4 +397,8 @@ impl SyncService {
 
         Ok(())
     }
+}
+
+fn is_external_media_path(path: &str) -> bool {
+    path.starts_with("http://") || path.starts_with("https://") || path.starts_with("/static/")
 }

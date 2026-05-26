@@ -8,6 +8,7 @@
     import TextEditor from '$lib/components/admin/TextEditor.svelte';
     import ReleaseManager from '$lib/components/admin/ReleaseManager.svelte';
     import ProfileEditor from '$lib/components/admin/ProfileEditor.svelte';
+    import MediaLibrary from '$lib/components/admin/MediaLibrary.svelte';
     import { t } from '$lib/i18n';
     import LangSwitcher from '$lib/components/LangSwitcher.svelte';
 
@@ -47,7 +48,7 @@
     let isSaving = $state(false);
     let showSettings = $state(false);
     let message = $state({ text: '', type: 'info' });
-    let activeTab = $state<'registry' | 'zones' | 'author' | 'workshop' | 'releases'>('registry');
+    let activeTab = $state<'registry' | 'zones' | 'author' | 'workshop' | 'media' | 'releases'>('registry');
     let activeAuthorSubTab = $state<'profile' | 'texts'>('profile');
     let searchQuery = $state('');
     let isDeleting = $state(false);
@@ -205,7 +206,8 @@
                 fileOrPath = await pickFileWeb(type);
             }
 
-            const localUrl = await api.importMedia(fileOrPath, type === 'videos' ? 'videos' : type === 'audio' ? 'audio' : 'images');
+            const imported = await api.importMediaWithVariants(fileOrPath, type === 'videos' ? 'videos' : type === 'audio' ? 'audio' : 'images');
+            const localUrl = imported.url;
 
             if (type === 'videos') {
                 selectedFigurine.videoUrl = localUrl;
@@ -214,10 +216,13 @@
             } else if (typeof stepIndex === 'number') {
                 selectedFigurine.processSteps[stepIndex].imageUrl = localUrl;
             } else {
+                const variants = deriveImageVariants(localUrl);
                 selectedFigurine.images = [...selectedFigurine.images, {
                     id: crypto.randomUUID(),
                     imageType: 'full',
                     url: localUrl,
+                    originalUrl: imported.originalUrl ?? variants.originalUrl,
+                    thumbUrl: imported.thumbUrl ?? variants.thumbUrl,
                     altText: ''
                 }];
             }
@@ -229,6 +234,18 @@
             if (type === 'videos') uploadingVideo = false;
             if (type === 'audio') uploadingAudio = false;
         }
+    }
+
+    function deriveImageVariants(url: string): { originalUrl: string | null; thumbUrl: string | null } {
+        const marker = 'images/preview/';
+        const idx = url.indexOf(marker);
+        if (idx === -1) return { originalUrl: null, thumbUrl: null };
+        const prefix = url.slice(0, idx);
+        const fileName = url.slice(idx + marker.length);
+        return {
+            originalUrl: `${prefix}images/original/${fileName}`,
+            thumbUrl: `${prefix}images/thumb/${fileName}`
+        };
     }
 
     function moveImage(index: number, direction: -1 | 1) {
@@ -367,6 +384,7 @@
               ['zones',    $t('adminTabZones')],
               ['author',   $t('adminTabAuthor')],
               ['workshop', $t('adminTabWorkshop')],
+              ['media',    'Media'],
               ['releases', $t('adminTabReleases')],
             ] as [tab, label]}
                 <button
@@ -554,7 +572,9 @@
                                             controls
                                             class="w-full max-h-36 bg-black"
                                             preload="metadata"
-                                        ></video>
+                                        >
+                                            <track kind="captions" />
+                                        </video>
                                         <div class="flex gap-2">
                                             <button
                                                 onclick={() => handlePickFile('videos')}
@@ -631,7 +651,7 @@
                                         <div class="flex flex-col gap-1">
                                             <div class="w-28 h-28 border overflow-hidden relative group transition-colors
                                                 {img.imageType === 'face' ? 'border-amber-500' : 'border-[#d4c5b0]/20'}">
-                                                <img src={resolveUrl(img.url)} alt={img.altText ?? ''} class="w-full h-full object-cover" />
+                                                <img src={resolveUrl(img.thumbUrl ?? img.url)} alt={img.altText ?? ''} class="w-full h-full object-cover" />
 
                                                 <!-- Overlay controls -->
                                                 <div class="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1">
@@ -738,6 +758,10 @@
 
         {:else if activeTab === 'zones'}
             <div in:fade class="h-full"><ZoneEditor /></div>
+        {:else if activeTab === 'media'}
+            <div in:fade class="h-full">
+                <MediaLibrary onEditFigurine={(id) => { activeTab = 'registry'; editFigurine(id); }} />
+            </div>
         {:else if activeTab === 'author'}
             <div in:fade class="h-full flex flex-col">
                 <!-- Sub-tabs for author section -->

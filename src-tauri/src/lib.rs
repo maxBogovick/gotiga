@@ -86,6 +86,8 @@ pub fn run() {
 
             enum BlobSource {
                 Image(String),
+                ImageOriginal(String),
+                ImageThumb(String),
                 Step(String),
                 FigurineVideo(String),
                 FigurineAudio(String),
@@ -104,7 +106,22 @@ pub fn run() {
                         |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
                     ) {
                         found = Some((data, BlobSource::Image(id)));
-                    } 
+                    }
+                    // Поиск original/thumbnail вариантов изображений
+                    else if let Ok((id, data)) = conn.query_row(
+                        "SELECT id, original_data FROM images WHERE original_path = ?1",
+                        [&relative_path],
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+                    ) {
+                        found = Some((data, BlobSource::ImageOriginal(id)));
+                    }
+                    else if let Ok((id, data)) = conn.query_row(
+                        "SELECT id, thumb_data FROM images WHERE thumb_path = ?1",
+                        [&relative_path],
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+                    ) {
+                        found = Some((data, BlobSource::ImageThumb(id)));
+                    }
                     // Поиск в process_steps
                     else if let Ok((id, data)) = conn.query_row(
                         "SELECT id, image_data FROM process_steps WHERE image_path = ?1",
@@ -175,6 +192,10 @@ pub fn run() {
                         let res = match source {
                             BlobSource::Image(id) => 
                                 conn.execute("UPDATE images SET file_path = ?1 WHERE id = ?2", [&new_db_path_value, &id]),
+                            BlobSource::ImageOriginal(id) =>
+                                conn.execute("UPDATE images SET original_path = ?1 WHERE id = ?2", [&new_db_path_value, &id]),
+                            BlobSource::ImageThumb(id) =>
+                                conn.execute("UPDATE images SET thumb_path = ?1 WHERE id = ?2", [&new_db_path_value, &id]),
                             BlobSource::Step(id) => 
                                 conn.execute("UPDATE process_steps SET image_path = ?1 WHERE id = ?2", [&new_db_path_value, &id]),
                             BlobSource::FigurineVideo(id) => 
@@ -235,6 +256,12 @@ pub fn run() {
             commands::get_workshop_content,
             commands::get_cabinet_zones,
             commands::import_media,
+            commands::delete_figurine,
+            commands::cleanup_unused_media,
+            commands::get_media_inventory,
+            commands::get_unused_media_report,
+            commands::cleanup_reported_unused_media,
+            commands::replace_media_everywhere,
             commands::save_figurine,
             commands::export_release,
             commands::pull_updates,

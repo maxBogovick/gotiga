@@ -12,6 +12,8 @@ use crate::error::{Result, AppError};
 use uuid::Uuid;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
+use image::codecs::jpeg::JpegEncoder;
+use image::imageops::FilterType;
 
 fn detect_mime(bytes: &[u8], table: &str) -> &'static str {
     if table.contains("video") {
@@ -25,6 +27,130 @@ fn detect_mime(bytes: &[u8], table: &str) -> &'static str {
         Some([0x89, 0x50, 0x4E, 0x47]) => "image/png",
         Some([0x52, 0x49, 0x46, 0x46]) => "image/webp",
         _ => "application/octet-stream",
+    }
+}
+
+fn media_subdir_for_ext(ext: &str) -> Option<&'static str> {
+    match ext {
+        "jpg" | "jpeg" | "png" | "webp" => Some("images"),
+        "mp4" | "webm" | "mov" => Some("videos"),
+        "mp3" | "wav" | "ogg" | "m4a" => Some("audio"),
+        _ => None,
+    }
+}
+
+fn public_static_url(path: &str) -> String {
+    format!("/static/{}", path)
+}
+
+fn clean_static_path(path: &str, public_url: &str) -> String {
+    path.strip_prefix(public_url.trim_end_matches('/'))
+        .unwrap_or(path)
+        .trim_start_matches("/static/")
+        .trim_start_matches('/')
+        .replace('\\', "/")
+}
+
+fn replacement_subdir_for_target(path: &str) -> Option<&'static str> {
+    if path.starts_with("images/") {
+        Some("images")
+    } else if path.starts_with("videos/") {
+        Some("videos")
+    } else if path.starts_with("audio/") {
+        Some("audio")
+    } else if path.starts_with("backgrounds/") {
+        Some("backgrounds")
+    } else {
+        None
+    }
+}
+
+async fn save_image_variants(upload_dir: &str, data: &[u8]) -> Result<serde_json::Value> {
+    let id = Uuid::new_v4().to_string();
+    let original_relative = format!("images/original/{}.jpg", id);
+    let preview_relative = format!("images/preview/{}.jpg", id);
+    let thumb_relative = format!("images/thumb/{}.jpg", id);
+
+    let image = image::load_from_memory(data)
+        .map_err(|e| AppError::BadRequest(format!("Invalid image file: {}", e)))?;
+
+    let original = image.to_rgb8();
+    let preview = image.resize(1800, 1800, FilterType::Lanczos3).to_rgb8();
+    let thumb = image.resize(420, 420, FilterType::Lanczos3).to_rgb8();
+
+    write_jpeg(upload_dir, &original_relative, &original, 95).await?;
+    write_jpeg(upload_dir, &preview_relative, &preview, 86).await?;
+    write_jpeg(upload_dir, &thumb_relative, &thumb, 78).await?;
+
+    Ok(serde_json::json!({
+        "url": public_static_url(&preview_relative),
+        "relativePath": preview_relative,
+        "originalUrl": public_static_url(&original_relative),
+        "originalRelativePath": original_relative,
+        "thumbUrl": public_static_url(&thumb_relative),
+        "thumbRelativePath": thumb_relative
+    }))
+}
+
+async fn write_jpeg(
+    upload_dir: &str,
+    relative_path: &str,
+    image: &image::RgbImage,
+    quality: u8,
+) -> Result<()> {
+    let path = std::path::Path::new(upload_dir).join(relative_path);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).await.map_err(AppError::Io)?;
+    }
+
+    let mut bytes = Vec::new();
+    {
+        let mut encoder = JpegEncoder::new_with_quality(&mut bytes, quality);
+        encoder.encode_image(image)
+            .map_err(|e| AppError::Internal(format!("Failed to encode image: {}", e)))?;
+    }
+
+    let mut file = fs::File::create(&path).await.map_err(AppError::Io)?;
+    file.write_all(&bytes).await.map_err(AppError::Io)?;
+    Ok(())
+}
+
+async fn save_regular_media_file(
+    upload_dir: &str,
+    subdir: &str,
+    ext: &str,
+    data: &[u8],
+) -> Result<String> {
+    let media_dir = format!("{}/{}", upload_dir, subdir);
+    fs::create_dir_all(&media_dir).await.map_err(AppError::Io)?;
+
+    let file_id = Uuid::new_v4();
+    let file_name = format!("{}.{}", file_id, ext);
+    let full_path = format!("{}/{}", media_dir, file_name);
+    let mut file = fs::File::create(&full_path).await.map_err(AppError::Io)?;
+    file.write_all(data).await.map_err(AppError::Io)?;
+    Ok(format!("{}/{}", subdir, file_name))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_supported_extensions_to_media_subdirs() {
+        assert_eq!(media_subdir_for_ext("jpg"), Some("images"));
+        assert_eq!(media_subdir_for_ext("webp"), Some("images"));
+        assert_eq!(media_subdir_for_ext("mp4"), Some("videos"));
+        assert_eq!(media_subdir_for_ext("mp3"), Some("audio"));
+        assert_eq!(media_subdir_for_ext("exe"), None);
+    }
+
+    #[test]
+    fn builds_public_static_urls() {
+        assert_eq!(
+            public_static_url("images/preview/abc.jpg"),
+            "/static/images/preview/abc.jpg"
+        );
     }
 }
 
@@ -61,20 +187,6 @@ pub async fn get_figurine(
 ) -> Result<Json<FigurineDto>> {
     let dto = service.get_figurine_details(id).await?;
     Ok(Json(dto))
-}
-
-pub async fn get_author_texts(
-    State(service): State<AppService>,
-) -> Result<Json<Vec<TextDto>>> {
-    let texts = service.get_author_texts().await?;
-    Ok(Json(texts))
-}
-
-pub async fn get_workshop_items(
-    State(service): State<AppService>,
-) -> Result<Json<Vec<WorkshopItemDto>>> {
-    let items = service.get_workshop_items().await?;
-    Ok(Json(items))
 }
 
 // Combined GET dispatcher: /content/texts/:param (author | workshop)
@@ -171,11 +283,13 @@ pub async fn upload_file(
                 .to_lowercase();
             let data = field.bytes().await.map_err(|e| AppError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
 
-            let subdir = match ext.as_str() {
-                "mp4" | "webm" | "mov" | "avi" => "videos",
-                "mp3" | "wav" | "ogg" | "m4a" | "aac" => "audio",
-                _ => "images",
-            };
+            let subdir = media_subdir_for_ext(ext.as_str())
+                .ok_or_else(|| AppError::BadRequest(format!("Unsupported media extension: {}", ext)))?;
+            if subdir == "images" {
+                let payload = save_image_variants(&config.upload_dir, &data).await?;
+                return Ok(Json(payload));
+            }
+
             let media_dir = format!("{}/{}", config.upload_dir, subdir);
             fs::create_dir_all(&media_dir).await.map_err(AppError::Io)?;
 
@@ -185,11 +299,89 @@ pub async fn upload_file(
             let mut file = fs::File::create(&full_path).await.map_err(AppError::Io)?;
             file.write_all(&data).await.map_err(AppError::Io)?;
 
-            let url = format!("/static/{}/{}", subdir, file_name);
-            return Ok(Json(serde_json::json!({ "url": url })));
+            let relative_path = format!("{}/{}", subdir, file_name);
+            let url = public_static_url(&relative_path);
+            return Ok(Json(serde_json::json!({
+                "url": url,
+                "relativePath": relative_path
+            })));
         }
     }
     Err(AppError::BadRequest("No file field found".to_string()))
+}
+
+pub async fn get_media_inventory(
+    State(service): State<AppService>,
+) -> Result<Json<MediaInventoryDto>> {
+    Ok(Json(service.media_inventory().await?))
+}
+
+pub async fn get_unused_media_report(
+    State(service): State<AppService>,
+) -> Result<Json<MediaCleanupReportDto>> {
+    Ok(Json(service.unused_media_report().await?))
+}
+
+pub async fn cleanup_unused_media(
+    State(service): State<AppService>,
+) -> Result<Json<serde_json::Value>> {
+    let removed = service.cleanup_unused_media().await?;
+    Ok(Json(serde_json::json!({ "removed": removed })))
+}
+
+pub async fn replace_media_everywhere(
+    State(service): State<AppService>,
+    State(config): State<Config>,
+    mut multipart: Multipart,
+) -> Result<Json<MediaReplaceResultDto>> {
+    let mut target_path: Option<String> = None;
+    let mut file_name: Option<String> = None;
+    let mut file_data: Option<Bytes> = None;
+
+    while let Some(field) = multipart.next_field().await.map_err(|e| AppError::BadRequest(e.to_string()))? {
+        let name = field.name().unwrap_or("").to_string();
+        if name == "targetPath" {
+            let value = field.text().await.map_err(|e| AppError::BadRequest(e.to_string()))?;
+            target_path = Some(clean_static_path(&value, &config.public_url));
+        } else if name == "file" {
+            file_name = Some(field.file_name().unwrap_or("file").to_string());
+            file_data = Some(field.bytes().await.map_err(|e| AppError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?);
+        }
+    }
+
+    let target_path = target_path.ok_or_else(|| AppError::BadRequest("Missing targetPath".to_string()))?;
+    let file_name = file_name.ok_or_else(|| AppError::BadRequest("Missing file".to_string()))?;
+    let data = file_data.ok_or_else(|| AppError::BadRequest("Missing file data".to_string()))?;
+    let target_subdir = replacement_subdir_for_target(&target_path)
+        .ok_or_else(|| AppError::BadRequest(format!("Unsupported managed media path: {}", target_path)))?;
+    let ext = std::path::Path::new(&file_name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("bin")
+        .to_lowercase();
+
+    let result = if target_subdir == "images" {
+        if media_subdir_for_ext(ext.as_str()) != Some("images") {
+            return Err(AppError::BadRequest(format!("Replacement must be an image, got {}", ext)));
+        }
+        let payload = save_image_variants(&config.upload_dir, &data).await?;
+        let new_path = payload.get("relativePath")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AppError::Internal("Missing replacement relativePath".to_string()))?;
+        let original_path = payload.get("originalRelativePath").and_then(|v| v.as_str());
+        let thumb_path = payload.get("thumbRelativePath").and_then(|v| v.as_str());
+        service.replace_media_everywhere(&target_path, new_path, original_path, thumb_path).await?
+    } else {
+        let expected_subdir = media_subdir_for_ext(ext.as_str())
+            .ok_or_else(|| AppError::BadRequest(format!("Unsupported replacement extension: {}", ext)))?;
+        if target_subdir != "backgrounds" && target_subdir != expected_subdir {
+            return Err(AppError::BadRequest(format!("Replacement type does not match target {}", target_path)));
+        }
+        let new_path = save_regular_media_file(&config.upload_dir, target_subdir, &ext, &data).await?;
+        service.replace_media_everywhere(&target_path, &new_path, None, None).await?
+    };
+
+    Ok(Json(result))
 }
 
 // === ADMIN ZONE CRUD ===
@@ -257,6 +449,9 @@ pub async fn upload_main_background(
                 .and_then(|e| e.to_str())
                 .unwrap_or("jpg")
                 .to_lowercase();
+            if media_subdir_for_ext(ext.as_str()) != Some("images") {
+                return Err(AppError::BadRequest(format!("Unsupported background extension: {}", ext)));
+            }
             let data = field.bytes().await.map_err(|e| AppError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
 
             let bg_dir = format!("{}/backgrounds", config.upload_dir);

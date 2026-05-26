@@ -56,6 +56,18 @@ pub fn router(service: AppService, config: Config) -> Router {
         .route("/upload",
             post(handlers::upload_file)
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        .route("/admin/media",
+            get(handlers::get_media_inventory)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        .route("/admin/media/cleanup-report",
+            get(handlers::get_unused_media_report)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        .route("/admin/media/cleanup",
+            post(handlers::cleanup_unused_media)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        .route("/admin/media/replace",
+            post(handlers::replace_media_everywhere)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
         .route("/cabinet/zones",
             post(handlers::save_zone)
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))

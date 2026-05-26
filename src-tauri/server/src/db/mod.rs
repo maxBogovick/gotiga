@@ -35,6 +35,10 @@ impl Repository {
         sqlx::query("PRAGMA foreign_keys = ON")
             .execute(&pool)
             .await?;
+        ensure_sqlite_column(&pool, "images", "original_path", "TEXT").await?;
+        ensure_sqlite_column(&pool, "images", "thumb_path", "TEXT").await?;
+        ensure_sqlite_column(&pool, "images", "original_data", "BLOB").await?;
+        ensure_sqlite_column(&pool, "images", "thumb_data", "BLOB").await?;
         self.set_content_pool(pool).await;
         Ok(())
     }
@@ -344,10 +348,11 @@ impl Repository {
                 for (idx, img) in images.iter().enumerate() {
                     let sort = img.sort_order.unwrap_or(idx as i32);
                     sqlx::query(
-                        "INSERT INTO images (id, figurine_id, image_type, file_path, alt_text, sort_order) VALUES (?, ?, ?, ?, ?, ?)"
+                        "INSERT INTO images (id, figurine_id, image_type, file_path, original_path, thumb_path, alt_text, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
                     )
                     .bind(&img.id).bind(figurine_id).bind(&img.image_type)
-                    .bind(&img.url).bind(&img.alt_text).bind(sort)
+                    .bind(&img.url).bind(&img.original_url).bind(&img.thumb_url)
+                    .bind(&img.alt_text).bind(sort)
                     .execute(&pool).await?;
                 }
                 Ok(())
@@ -488,6 +493,8 @@ impl Repository {
                 // Validate table/column to prevent SQL injection (since we format the query string)
                 match (table, column) {
                     ("images", "data") |
+                    ("images", "original_data") |
+                    ("images", "thumb_data") |
                     ("process_steps", "image_data") |
                     ("figurines", "video_data") |
                     ("figurines", "ambience_data") |
@@ -502,4 +509,189 @@ impl Repository {
                     .await?;
                 Ok(row.map(|r| r.0))
             }
+
+            pub async fn get_media_usages(&self) -> Result<Vec<MediaUsageDto>> {
+                let pool = self.content().await?;
+                let mut usages = Vec::new();
+
+                let image_rows: Vec<(String, String, Option<String>, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+                    "SELECT i.id, i.file_path, i.original_path, i.thumb_path, f.id, f.name
+                     FROM images i
+                     LEFT JOIN figurines f ON f.id = i.figurine_id"
+                ).fetch_all(&pool).await?;
+                for (image_id, preview, original, thumb, fig_id, fig_name) in image_rows {
+                    let label = format!("Image for {}", fig_name.unwrap_or_else(|| "Unknown figurine".to_string()));
+                    let entity_id = fig_id.unwrap_or_else(|| image_id.clone());
+                    usages.push(MediaUsageDto {
+                        path: preview,
+                        label: label.clone(),
+                        entity_type: "figurineImage".to_string(),
+                        entity_id: entity_id.clone(),
+                        field: "preview".to_string(),
+                    });
+                    if let Some(path) = original {
+                        usages.push(MediaUsageDto {
+                            path,
+                            label: label.clone(),
+                            entity_type: "figurineImage".to_string(),
+                            entity_id: entity_id.clone(),
+                            field: "original".to_string(),
+                        });
+                    }
+                    if let Some(path) = thumb {
+                        usages.push(MediaUsageDto {
+                            path,
+                            label: label.clone(),
+                            entity_type: "figurineImage".to_string(),
+                            entity_id: entity_id.clone(),
+                            field: "thumb".to_string(),
+                        });
+                    }
+                }
+
+                let step_rows: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
+                    "SELECT ps.id, ps.image_path, f.id, f.name
+                     FROM process_steps ps
+                     LEFT JOIN figurines f ON f.id = ps.figurine_id"
+                ).fetch_all(&pool).await?;
+                for (step_id, path, fig_id, fig_name) in step_rows {
+                    usages.push(MediaUsageDto {
+                        path,
+                        label: format!("Process step for {}", fig_name.unwrap_or_else(|| "Unknown figurine".to_string())),
+                        entity_type: "processStep".to_string(),
+                        entity_id: fig_id.unwrap_or(step_id),
+                        field: "image".to_string(),
+                    });
+                }
+
+                let text_rows: Vec<(String, String, Option<String>, String)> = sqlx::query_as(
+                    "SELECT id, category, caption, image_path FROM texts WHERE image_path IS NOT NULL"
+                ).fetch_all(&pool).await?;
+                for (id, category, caption, path) in text_rows {
+                    usages.push(MediaUsageDto {
+                        path,
+                        label: caption.unwrap_or_else(|| format!("{} text", category)),
+                        entity_type: "text".to_string(),
+                        entity_id: id,
+                        field: "image".to_string(),
+                    });
+                }
+
+                let figurine_rows: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
+                    "SELECT id, name, ambience_path, video_url FROM figurines"
+                ).fetch_all(&pool).await?;
+                for (id, name, ambience, video) in figurine_rows {
+                    if let Some(path) = ambience {
+                        usages.push(MediaUsageDto {
+                            path,
+                            label: format!("Audio for {}", name),
+                            entity_type: "figurine".to_string(),
+                            entity_id: id.clone(),
+                            field: "ambience".to_string(),
+                        });
+                    }
+                    if let Some(path) = video {
+                        usages.push(MediaUsageDto {
+                            path,
+                            label: format!("Video for {}", name),
+                            entity_type: "figurine".to_string(),
+                            entity_id: id.clone(),
+                            field: "video".to_string(),
+                        });
+                    }
+                }
+
+                let resource_rows: Vec<(String, String)> = sqlx::query_as(
+                    "SELECT key, file_path FROM app_resources WHERE key != 'author_profile'"
+                ).fetch_all(&pool).await?;
+                for (key, path) in resource_rows {
+                    usages.push(MediaUsageDto {
+                        path,
+                        label: format!("App resource {}", key),
+                        entity_type: "appResource".to_string(),
+                        entity_id: key,
+                        field: "file".to_string(),
+                    });
+                }
+
+                Ok(usages)
+            }
+
+            pub async fn replace_media_path_everywhere(
+                &self,
+                old_path: &str,
+                new_preview_path: &str,
+                new_original_path: Option<&str>,
+                new_thumb_path: Option<&str>,
+            ) -> Result<usize> {
+                let pool = self.content().await?;
+                let mut updated = 0usize;
+
+                if new_preview_path.starts_with("images/preview/") || new_preview_path.starts_with("/static/images/preview/") {
+                    let result = sqlx::query(
+                        "UPDATE images
+                         SET file_path = ?, original_path = ?, thumb_path = ?
+                         WHERE file_path = ? OR original_path = ? OR thumb_path = ?"
+                    )
+                    .bind(new_preview_path)
+                    .bind(new_original_path)
+                    .bind(new_thumb_path)
+                    .bind(old_path)
+                    .bind(old_path)
+                    .bind(old_path)
+                    .execute(&pool).await?;
+                    updated += result.rows_affected() as usize;
+                } else {
+                    for (table, column) in [
+                        ("images", "file_path"),
+                        ("images", "original_path"),
+                        ("images", "thumb_path"),
+                    ] {
+                        let query = format!("UPDATE {} SET {} = ? WHERE {} = ?", table, column, column);
+                        let result = sqlx::query(&query)
+                            .bind(new_preview_path)
+                            .bind(old_path)
+                            .execute(&pool).await?;
+                        updated += result.rows_affected() as usize;
+                    }
+                }
+
+                for (table, column) in [
+                    ("process_steps", "image_path"),
+                    ("texts", "image_path"),
+                    ("figurines", "ambience_path"),
+                    ("figurines", "video_url"),
+                    ("app_resources", "file_path"),
+                ] {
+                    let extra = if table == "app_resources" { " AND key != 'author_profile'" } else { "" };
+                    let query = format!("UPDATE {} SET {} = ? WHERE {} = ?{}", table, column, column, extra);
+                    let result = sqlx::query(&query)
+                        .bind(new_preview_path)
+                        .bind(old_path)
+                        .execute(&pool).await?;
+                    updated += result.rows_affected() as usize;
+                }
+
+                Ok(updated)
+            }
+}
+
+async fn ensure_sqlite_column(
+    pool: &SqlitePool,
+    table: &str,
+    column: &str,
+    column_type: &str,
+) -> Result<()> {
+    let rows: Vec<(String,)> = sqlx::query_as(&format!("SELECT name FROM pragma_table_info('{}')", table))
+        .fetch_all(pool)
+        .await?;
+
+    if rows.iter().any(|(name,)| name == column) {
+        return Ok(());
+    }
+
+    sqlx::query(&format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, column_type))
+        .execute(pool)
+        .await?;
+    Ok(())
 }

@@ -14,10 +14,14 @@
     onClose: () => void;
   } = $props();
 
-  let current = $state(startIndex);
+  let current = $state(0);
   let isImageLoaded = $state(false);
   let touchStartX = 0;
   let touchStartY = 0;
+
+  $effect(() => {
+    current = startIndex;
+  });
 
   $effect(() => {
     // Reset loaded state when image changes
@@ -41,6 +45,13 @@
 
   function handleBackdropClick(e: MouseEvent) {
     if (e.target === e.currentTarget) onClose();
+  }
+
+  function handleDialogKeydown(e: KeyboardEvent) {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
+      e.preventDefault();
+      onClose();
+    }
   }
 
   function handleTouchStart(e: TouchEvent) {
@@ -69,6 +80,8 @@
   role="dialog"
   aria-modal="true"
   aria-label="Image viewer"
+  tabindex="-1"
+  onkeydown={handleDialogKeydown}
 >
   <!-- Top bar -->
   <div class="absolute top-0 inset-x-0 flex items-center justify-between px-6 py-5 z-10">
