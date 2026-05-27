@@ -160,7 +160,16 @@
 </script>
 
 <svelte:head>
-    <title>Gothic Museum - Cabinet of Curiosities</title>
+    <title>Gotiga — кабинет авторских готических фигурок</title>
+    <meta name="description" content="Авторский кабинет готических фигурок и миниатюр ручной работы. Каждая работа хранит образ, историю, материалы и следы мастерской." />
+    <meta property="og:title" content="Gotiga — кабинет готических фигурок" />
+    <meta property="og:description" content="Исследуйте архив авторских фигурок ручной работы: мрачные миниатюры, истории персонажей и процесс создания." />
+    <meta property="og:image" content="/images/cabinet-room.jpg" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Gotiga — кабинет готических фигурок" />
+    <meta name="twitter:description" content="Архив готических миниатюр ручной работы, созданных как маленькие существа с собственной историей." />
+    <meta name="twitter:image" content="/images/cabinet-room.jpg" />
     <meta name="theme-color" content="#f8f1e7" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">

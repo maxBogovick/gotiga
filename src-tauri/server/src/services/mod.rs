@@ -101,6 +101,9 @@ impl AppService {
                 name: f.name,
                 status: f.status,
                 face_image_url: face_img,
+                year: f.year,
+                sort_order: f.sort_order,
+                series: None,
             });
         }
         Ok(result)
@@ -131,6 +134,9 @@ impl AppService {
                 name: r.name,
                 status: r.status,
                 face_image_url: face,
+                year: r.year,
+                sort_order: r.sort_order,
+                series: None,
             });
         }
 

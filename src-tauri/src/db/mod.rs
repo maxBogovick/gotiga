@@ -48,11 +48,7 @@ impl Database {
         let conn = self.conn.lock().unwrap();
 
         // Проверить, есть ли данные
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM figurines",
-            [],
-            |row| row.get(0)
-        )?;
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM figurines", [], |row| row.get(0))?;
 
         if count == 0 {
             conn.execute_batch(include_str!("seed.sql"))?;
@@ -78,7 +74,10 @@ fn add_column_if_missing(
     }
 
     conn.execute(
-        &format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, column_type),
+        &format!(
+            "ALTER TABLE {} ADD COLUMN {} {}",
+            table, column, column_type
+        ),
         [],
     )?;
     Ok(())

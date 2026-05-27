@@ -203,17 +203,21 @@ pub struct FigurineDto {
 
 impl FigurineDto {
     pub fn from_figurine(
-        figurine: Figurine, 
-        images: Vec<Image>, 
-        steps: Vec<ProcessStep>, 
+        figurine: Figurine,
+        images: Vec<Image>,
+        steps: Vec<ProcessStep>,
         related_items: Vec<FigurineListItemDto>,
-        base_path: &str
+        base_path: &str,
     ) -> Self {
         // Helper to prepend protocol if path exists
         let resolve = |p: String| {
-            if p.starts_with("http") { p } else { format!("cabinet://localhost/{}", p) }
+            if p.starts_with("http") {
+                p
+            } else {
+                format!("cabinet://localhost/{}", p)
+            }
         };
-        
+
         Self {
             id: figurine.id,
             name: figurine.name,
@@ -229,8 +233,14 @@ impl FigurineDto {
             status: figurine.status.as_str().to_string(),
             sort_order: figurine.sort_order,
             is_visible: figurine.is_visible,
-            images: images.into_iter().map(|i| ImageDto::from_image(i, base_path)).collect(),
-            process_steps: steps.into_iter().map(|s| ProcessStepDto::from_step(s, base_path)).collect(),
+            images: images
+                .into_iter()
+                .map(|i| ImageDto::from_image(i, base_path))
+                .collect(),
+            process_steps: steps
+                .into_iter()
+                .map(|s| ProcessStepDto::from_step(s, base_path))
+                .collect(),
             related_items,
         }
     }
@@ -241,7 +251,7 @@ impl FigurineDto {
 pub struct ImageDto {
     pub id: String,
     pub image_type: String,
-    pub url: String,  // путь для frontend (asset://)
+    pub url: String, // путь для frontend (asset://)
     pub original_url: Option<String>,
     pub thumb_url: Option<String>,
     pub alt_text: Option<String>,
@@ -288,6 +298,9 @@ pub struct FigurineListItemDto {
     pub name: String,
     pub status: String,
     pub face_image_url: Option<String>,
+    pub year: Option<i32>,
+    pub sort_order: i32,
+    pub series: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -321,7 +334,9 @@ impl WorkshopItemDto {
             id: text.id,
             content: text.content,
             caption: text.caption,
-            image_url: text.image_path.map(|p| format!("cabinet://localhost/{}", p)),
+            image_url: text
+                .image_path
+                .map(|p| format!("cabinet://localhost/{}", p)),
         }
     }
 }

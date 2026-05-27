@@ -27,7 +27,10 @@ pub struct SettingsService {
 
 impl SettingsService {
     pub fn new(app: &AppHandle) -> Self {
-        let app_data_dir = app.path().app_data_dir().expect("Failed to get app data dir");
+        let app_data_dir = app
+            .path()
+            .app_data_dir()
+            .expect("Failed to get app data dir");
         let config_path = app_data_dir.join("settings.json");
 
         let settings = if config_path.exists() {
@@ -50,7 +53,7 @@ impl SettingsService {
     pub fn save_settings(&self, new_settings: AppSettings) -> Result<(), String> {
         let json = serde_json::to_string_pretty(&new_settings).map_err(|e| e.to_string())?;
         fs::write(&self.config_path, json).map_err(|e| e.to_string())?;
-        
+
         let mut lock = self.settings.lock().unwrap();
         *lock = new_settings;
         Ok(())

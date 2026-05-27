@@ -5,6 +5,9 @@ export interface FigurineListItem {
     name: string;
     status: 'available' | 'sold' | 'reserved';
     faceImageUrl: string | null;
+    year?: number | null;
+    sortOrder?: number;
+    series?: string | null;
 }
 
 export interface FigurineImage {

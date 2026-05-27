@@ -1,20 +1,21 @@
+mod commands;
 mod db;
 mod models;
-mod commands;
 mod services;
 
 use db::Database;
 use services::file_service::FileService;
-use services::sync_service::SyncService;
 use services::settings_service::SettingsService;
-use tauri::Manager;
-use tauri::http::Response;
-use std::fs;
+use services::sync_service::SyncService;
 use std::ffi::OsStr;
+use std::fs;
 use std::path::Path;
+use tauri::http::Response;
+use tauri::Manager;
 
 fn build_response(file_path: &Path, content: Vec<u8>) -> Response<Vec<u8>> {
-    let extension = file_path.extension()
+    let extension = file_path
+        .extension()
         .and_then(|e: &OsStr| e.to_str())
         .unwrap_or("")
         .to_lowercase();
@@ -26,7 +27,7 @@ fn build_response(file_path: &Path, content: Vec<u8>) -> Response<Vec<u8>> {
         "mp4" => "video/mp4",
         "webm" => "video/webm",
         "mp3" => "audio/mpeg",
-        _ => "application/octet-stream"
+        _ => "application/octet-stream",
     };
 
     Response::builder()
@@ -45,16 +46,10 @@ pub fn run() {
         .register_uri_scheme_protocol("cabinet", |ctx, request| {
             println!("Cabinet Protocol Request: {}", request.uri());
             let app_handle = ctx.app_handle();
-            
-            let response_404 = || Response::builder()
-                .status(404)
-                .body(Vec::new())
-                .unwrap();
 
-            let response_500 = || Response::builder()
-                .status(500)
-                .body(Vec::new())
-                .unwrap();
+            let response_404 = || Response::builder().status(404).body(Vec::new()).unwrap();
+
+            let response_500 = || Response::builder().status(500).body(Vec::new()).unwrap();
 
             let app_data = match app_handle.path().app_data_dir() {
                 Ok(path) => path,
@@ -103,7 +98,7 @@ pub fn run() {
                     if let Ok((id, data)) = conn.query_row(
                         "SELECT id, data FROM images WHERE file_path = ?1",
                         [&relative_path],
-                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)),
                     ) {
                         found = Some((data, BlobSource::Image(id)));
                     }
@@ -111,14 +106,13 @@ pub fn run() {
                     else if let Ok((id, data)) = conn.query_row(
                         "SELECT id, original_data FROM images WHERE original_path = ?1",
                         [&relative_path],
-                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)),
                     ) {
                         found = Some((data, BlobSource::ImageOriginal(id)));
-                    }
-                    else if let Ok((id, data)) = conn.query_row(
+                    } else if let Ok((id, data)) = conn.query_row(
                         "SELECT id, thumb_data FROM images WHERE thumb_path = ?1",
                         [&relative_path],
-                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)),
                     ) {
                         found = Some((data, BlobSource::ImageThumb(id)));
                     }
@@ -126,7 +120,7 @@ pub fn run() {
                     else if let Ok((id, data)) = conn.query_row(
                         "SELECT id, image_data FROM process_steps WHERE image_path = ?1",
                         [&relative_path],
-                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)),
                     ) {
                         found = Some((data, BlobSource::Step(id)));
                     }
@@ -134,7 +128,7 @@ pub fn run() {
                     else if let Ok((id, data)) = conn.query_row(
                         "SELECT id, video_data FROM figurines WHERE video_url = ?1",
                         [&relative_path],
-                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)),
                     ) {
                         found = Some((data, BlobSource::FigurineVideo(id)));
                     }
@@ -142,7 +136,7 @@ pub fn run() {
                     else if let Ok((id, data)) = conn.query_row(
                         "SELECT id, ambience_data FROM figurines WHERE ambience_path = ?1",
                         [&relative_path],
-                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)),
                     ) {
                         found = Some((data, BlobSource::FigurineAudio(id)));
                     }
@@ -150,7 +144,7 @@ pub fn run() {
                     else if let Ok((id, data)) = conn.query_row(
                         "SELECT id, image_data FROM texts WHERE image_path = ?1",
                         [&relative_path],
-                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)),
                     ) {
                         found = Some((data, BlobSource::Text(id)));
                     }
@@ -158,14 +152,14 @@ pub fn run() {
                     else if let Ok((key, data)) = conn.query_row(
                         "SELECT key, data FROM app_resources WHERE file_path = ?1",
                         [&relative_path],
-                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)),
                     ) {
                         found = Some((data, BlobSource::AppResource(key)));
                     }
 
                     found
-                },
-                Err(_) => None
+                }
+                Err(_) => None,
             };
 
             if let Some((bytes, source)) = content {
@@ -174,7 +168,7 @@ pub fn run() {
                 let cache_data = bytes.clone();
                 let db_path_clone = db_path.clone();
                 let new_db_path_value = relative_path.replace('\\', "/"); // Нормализуем путь для БД
-                
+
                 std::thread::spawn(move || {
                     // 1. Restore File
                     if let Some(parent) = cache_path.parent() {
@@ -190,24 +184,40 @@ pub fn run() {
                     // 2. Update DB Record (Reliability update)
                     if let Ok(conn) = rusqlite::Connection::open(&db_path_clone) {
                         let res = match source {
-                            BlobSource::Image(id) => 
-                                conn.execute("UPDATE images SET file_path = ?1 WHERE id = ?2", [&new_db_path_value, &id]),
-                            BlobSource::ImageOriginal(id) =>
-                                conn.execute("UPDATE images SET original_path = ?1 WHERE id = ?2", [&new_db_path_value, &id]),
-                            BlobSource::ImageThumb(id) =>
-                                conn.execute("UPDATE images SET thumb_path = ?1 WHERE id = ?2", [&new_db_path_value, &id]),
-                            BlobSource::Step(id) => 
-                                conn.execute("UPDATE process_steps SET image_path = ?1 WHERE id = ?2", [&new_db_path_value, &id]),
-                            BlobSource::FigurineVideo(id) => 
-                                conn.execute("UPDATE figurines SET video_url = ?1 WHERE id = ?2", [&new_db_path_value, &id]),
-                            BlobSource::FigurineAudio(id) => 
-                                conn.execute("UPDATE figurines SET ambience_path = ?1 WHERE id = ?2", [&new_db_path_value, &id]),
-                            BlobSource::Text(id) => 
-                                conn.execute("UPDATE texts SET image_path = ?1 WHERE id = ?2", [&new_db_path_value, &id]),
-                            BlobSource::AppResource(key) => 
-                                conn.execute("UPDATE app_resources SET file_path = ?1 WHERE key = ?2", [&new_db_path_value, &key]),
+                            BlobSource::Image(id) => conn.execute(
+                                "UPDATE images SET file_path = ?1 WHERE id = ?2",
+                                [&new_db_path_value, &id],
+                            ),
+                            BlobSource::ImageOriginal(id) => conn.execute(
+                                "UPDATE images SET original_path = ?1 WHERE id = ?2",
+                                [&new_db_path_value, &id],
+                            ),
+                            BlobSource::ImageThumb(id) => conn.execute(
+                                "UPDATE images SET thumb_path = ?1 WHERE id = ?2",
+                                [&new_db_path_value, &id],
+                            ),
+                            BlobSource::Step(id) => conn.execute(
+                                "UPDATE process_steps SET image_path = ?1 WHERE id = ?2",
+                                [&new_db_path_value, &id],
+                            ),
+                            BlobSource::FigurineVideo(id) => conn.execute(
+                                "UPDATE figurines SET video_url = ?1 WHERE id = ?2",
+                                [&new_db_path_value, &id],
+                            ),
+                            BlobSource::FigurineAudio(id) => conn.execute(
+                                "UPDATE figurines SET ambience_path = ?1 WHERE id = ?2",
+                                [&new_db_path_value, &id],
+                            ),
+                            BlobSource::Text(id) => conn.execute(
+                                "UPDATE texts SET image_path = ?1 WHERE id = ?2",
+                                [&new_db_path_value, &id],
+                            ),
+                            BlobSource::AppResource(key) => conn.execute(
+                                "UPDATE app_resources SET file_path = ?1 WHERE key = ?2",
+                                [&new_db_path_value, &key],
+                            ),
                         };
-                        
+
                         if let Err(e) = res {
                             eprintln!("Failed to update DB path after restore: {}", e);
                         }
@@ -222,7 +232,9 @@ pub fn run() {
         })
         .setup(|app| {
             // Путь к БД в директории данных приложения
-            let app_data_dir = app.path().app_data_dir()
+            let app_data_dir = app
+                .path()
+                .app_data_dir()
                 .expect("Failed to get app data dir");
 
             let db_path = app_data_dir.join("cabinet.db");
@@ -231,18 +243,16 @@ pub fn run() {
             let file_service = FileService::new(app.handle());
             let sync_service = SyncService::new(app.handle());
             let settings_service = SettingsService::new(app.handle());
-            
+
             app.manage(file_service);
             app.manage(sync_service);
             app.manage(settings_service);
 
             // Инициализация БД
-            let db = Database::new(db_path)
-                .expect("Failed to initialize database");
-            
+            let db = Database::new(db_path).expect("Failed to initialize database");
+
             // Заполнение тестовыми данными если БД пуста
-            db.seed_if_empty()
-                .expect("Failed to seed database");
+            db.seed_if_empty().expect("Failed to seed database");
 
             // Сохранить в состоянии приложения
             app.manage(db);

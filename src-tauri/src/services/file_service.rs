@@ -1,8 +1,8 @@
-use std::fs;
-use std::collections::HashSet;
-use std::path::{Component, Path, PathBuf};
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
+use std::collections::HashSet;
+use std::fs;
+use std::path::{Component, Path, PathBuf};
 use tauri::AppHandle;
 use tauri::Manager;
 use uuid::Uuid;
@@ -15,16 +15,18 @@ pub struct FileService {
 impl FileService {
     pub fn new(app: &AppHandle) -> Self {
         // Получаем путь к AppData
-        let base_dir = app.path().app_data_dir()
+        let base_dir = app
+            .path()
+            .app_data_dir()
             .expect("Critical: Failed to resolve app data directory");
-        
+
         // Гарантируем существование директории
         if !base_dir.exists() {
             if let Err(e) = fs::create_dir_all(&base_dir) {
                 eprintln!("Critical: Failed to create app data directory: {}", e);
             }
         }
-        
+
         Self { base_dir }
     }
 
@@ -41,20 +43,25 @@ impl FileService {
     /// Безопасно разрешить относительный путь относительно base_dir
     fn resolve_path(&self, relative_path: &str) -> Result<PathBuf, String> {
         let path = Path::new(relative_path);
-        
+
         // Защита от Path Traversal: проверяем компоненты пути
         for component in path.components() {
             match component {
-                Component::Normal(_) => {},
-                _ => return Err(format!("Invalid path component in '{}': only normal components allowed", relative_path)),
+                Component::Normal(_) => {}
+                _ => {
+                    return Err(format!(
+                        "Invalid path component in '{}': only normal components allowed",
+                        relative_path
+                    ))
+                }
             }
         }
 
         let dest_path = self.base_dir.join(path);
-        
+
         // Дополнительная проверка: путь должен начинаться с base_dir
         if !dest_path.starts_with(&self.base_dir) {
-             return Err("Access denied: Path is outside of app data directory".to_string());
+            return Err("Access denied: Path is outside of app data directory".to_string());
         }
 
         Ok(dest_path)
@@ -68,7 +75,8 @@ impl FileService {
             return Err(format!("Source file not found: {}", source_path));
         }
 
-        let extension = src.extension()
+        let extension = src
+            .extension()
             .unwrap_or_default()
             .to_string_lossy()
             .to_lowercase();
@@ -78,14 +86,14 @@ impl FileService {
         if target_subfolder == "images" {
             return self.import_image_file(src);
         }
-            
+
         // Используем UUID для гарантии уникальности
         let new_filename = if extension.is_empty() {
             Uuid::new_v4().to_string()
         } else {
             format!("{}.{}", Uuid::new_v4(), extension)
         };
-        
+
         // Формируем относительный путь: "videos/uuid.mp4"
         // Используем PathBuf для кросс-платформенного формирования
         let relative_path = Path::new(&target_subfolder)
@@ -110,8 +118,7 @@ impl FileService {
         let preview_path = format!("images/preview/{}.jpg", id);
         let thumb_path = format!("images/thumb/{}.jpg", id);
 
-        let image = image::open(src)
-            .map_err(|e| format!("Failed to decode image: {}", e))?;
+        let image = image::open(src).map_err(|e| format!("Failed to decode image: {}", e))?;
 
         let original = image.to_rgb8();
         self.save_jpeg(&original_path, &original, 95)?;
@@ -125,7 +132,12 @@ impl FileService {
         Ok(preview_path)
     }
 
-    fn save_jpeg(&self, relative_path: &str, image: &image::RgbImage, quality: u8) -> Result<(), String> {
+    fn save_jpeg(
+        &self,
+        relative_path: &str,
+        image: &image::RgbImage,
+        quality: u8,
+    ) -> Result<(), String> {
         let dest_path = self.resolve_path(relative_path)?;
         if let Some(parent) = dest_path.parent() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -137,7 +149,10 @@ impl FileService {
     }
 
     /// Удалить неиспользуемые медиа-файлы из управляемых папок.
-    pub fn cleanup_unused_media(&self, referenced_paths: &HashSet<String>) -> Result<Vec<String>, String> {
+    pub fn cleanup_unused_media(
+        &self,
+        referenced_paths: &HashSet<String>,
+    ) -> Result<Vec<String>, String> {
         let mut removed = Vec::new();
         let preserved = expand_referenced_media_variants(referenced_paths);
         for folder in ["images", "videos", "audio"] {
@@ -221,7 +236,11 @@ impl FileService {
 
             if path.is_dir() {
                 self.cleanup_dir_recursive(&path, preserved_paths, removed)?;
-                if fs::read_dir(&path).map_err(|e| e.to_string())?.next().is_none() {
+                if fs::read_dir(&path)
+                    .map_err(|e| e.to_string())?
+                    .next()
+                    .is_none()
+                {
                     fs::remove_dir(&path).map_err(|e| e.to_string())?;
                 }
                 continue;
@@ -261,9 +280,13 @@ impl FileService {
 
         // 1. Remove protocols
         if path.starts_with("cabinet://") {
-            path = path.replace("cabinet://localhost", "").replace("cabinet://", "");
+            path = path
+                .replace("cabinet://localhost", "")
+                .replace("cabinet://", "");
         } else if path.starts_with("asset://") {
-            path = path.replace("asset://localhost", "").replace("asset://", "");
+            path = path
+                .replace("asset://localhost", "")
+                .replace("asset://", "");
         }
 
         // 2. Remove base dir if present (absolute path case)
@@ -279,7 +302,9 @@ impl FileService {
         }
 
         // 3. Trim leading slashes
-        path.trim_start_matches('/').trim_start_matches('\\').to_string()
+        path.trim_start_matches('/')
+            .trim_start_matches('\\')
+            .to_string()
     }
 }
 
@@ -301,7 +326,10 @@ fn validate_media_extension(folder: &str, extension: &str) -> Result<(), String>
     if is_valid {
         Ok(())
     } else {
-        Err(format!("Unsupported {} file extension: {}", folder, extension))
+        Err(format!(
+            "Unsupported {} file extension: {}",
+            folder, extension
+        ))
     }
 }
 

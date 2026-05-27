@@ -153,6 +153,9 @@ pub struct FigurineListItemDto {
     pub name: String,
     pub status: FigurineStatus,
     pub face_image_url: Option<String>,
+    pub year: Option<i32>,
+    pub sort_order: i32,
+    pub series: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

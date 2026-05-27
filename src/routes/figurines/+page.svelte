@@ -4,18 +4,20 @@
   import { api } from '$lib/api';
   import type { FigurineListItem } from '$lib/types/api';
   import { fade } from 'svelte/transition';
-  import { BackButton, LoadingScreen } from '$lib/components';
   import { t } from '$lib/i18n';
 
   type StatusFilter = 'all' | 'available' | 'reserved' | 'sold';
+  type SortMode = 'curated' | 'available' | 'newest' | 'oldest' | 'name';
 
   // State
   let figurines = $state<FigurineListItem[]>([]);
   let isLoading = $state(true);
   let error = $state<string | null>(null);
-  let prefersReducedMotion = $state(false);
   let searchQuery = $state('');
   let statusFilter = $state<StatusFilter>('all');
+  let sortMode = $state<SortMode>('curated');
+  let yearFilter = $state('all');
+  let seriesFilter = $state('all');
 
   const PAGE_SIZE = 12;
   let displayLimit = $state(PAGE_SIZE);
@@ -23,16 +25,65 @@
   let filtered = $derived(
     figurines
       .filter(f => statusFilter === 'all' || f.status === statusFilter)
-      .filter(f => !searchQuery.trim() || f.name.toLowerCase().includes(searchQuery.toLowerCase()))
+      .filter(f => yearFilter === 'all' || String(f.year ?? '') === yearFilter)
+      .filter(f => seriesFilter === 'all' || f.series === seriesFilter)
+      .filter(f => {
+        const query = searchQuery.trim().toLowerCase();
+        if (!query) return true;
+        return [
+          f.name,
+          f.year ? String(f.year) : '',
+          f.series ?? '',
+        ].some(value => value.toLowerCase().includes(query));
+      })
   );
 
-  let visible = $derived(filtered.slice(0, displayLimit));
-  let hasMore = $derived(filtered.length > displayLimit);
+  let sorted = $derived(
+    filtered.slice().sort((a, b) => {
+      const byCurated = (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+      const byName = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+      const byNewest = (b.year ?? -Infinity) - (a.year ?? -Infinity);
+      const byOldest = (a.year ?? Infinity) - (b.year ?? Infinity);
+      const statusRank = { available: 0, reserved: 1, sold: 2 };
+
+      if (sortMode === 'available') {
+        return statusRank[a.status] - statusRank[b.status] || byCurated || byName;
+      }
+      if (sortMode === 'newest') return byNewest || byCurated || byName;
+      if (sortMode === 'oldest') return byOldest || byCurated || byName;
+      if (sortMode === 'name') return byName || byCurated;
+      return byCurated || byName;
+    })
+  );
+
+  let visible = $derived(sorted.slice(0, displayLimit));
+  let hasMore = $derived(sorted.length > displayLimit);
+
+  let availableYears = $derived(
+    [...new Set(figurines.map(f => f.year).filter((year): year is number => typeof year === 'number'))]
+      .sort((a, b) => b - a)
+  );
+
+  let availableSeries = $derived(
+    [...new Set(figurines.map(f => f.series).filter((series): series is string => Boolean(series?.trim())))]
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  );
+
+  let hasActiveFilters = $derived(
+    searchQuery.trim() !== '' ||
+    statusFilter !== 'all' ||
+    sortMode !== 'curated' ||
+    yearFilter !== 'all' ||
+    seriesFilter !== 'all'
+  );
 
   $effect(() => {
     // Reset pagination whenever the filter/search changes
     void statusFilter;
     void searchQuery;
+    void sortMode;
+    void yearFilter;
+    void seriesFilter;
     displayLimit = PAGE_SIZE;
   });
 
@@ -66,11 +117,16 @@
     return roman;
   }
 
+  function clearFilters() {
+    searchQuery = '';
+    statusFilter = 'all';
+    sortMode = 'curated';
+    yearFilter = 'all';
+    seriesFilter = 'all';
+  }
+
   // Lifecycle
   onMount(async () => {
-    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
-    prefersReducedMotion = mediaQuery.matches;
-
     try {
       figurines = await api.getAllFigurines();
       if (figurines.length < 5) await new Promise(r => setTimeout(r, 500));
@@ -133,16 +189,80 @@
           </div>
         </div>
         <!-- Search + Filters -->
-        <div class="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
-          <div class="relative w-full sm:max-w-xs">
-            <input
-              bind:value={searchQuery}
-              type="text"
-              placeholder={$t('archiveSearchPlaceholder')}
-              class="w-full bg-transparent border border-[#34251c]/15 focus:border-[#34251c]/40 px-4 py-2 text-xs tracking-wide text-[#34251c] placeholder-[#5f4636]/75 outline-none transition-colors font-['Inter'] uppercase"
-            />
-            {#if searchQuery}
-              <button onclick={() => searchQuery = ''} class="absolute right-3 top-1/2 -translate-y-1/2 text-[#5f4636] hover:text-[#34251c] text-xs">✕</button>
+        <div class="flex flex-col gap-4">
+          <div class="flex flex-col lg:flex-row gap-3 lg:items-end">
+            <label class="relative w-full lg:max-w-sm">
+              <span class="sr-only">{$t('archiveSearchPlaceholder')}</span>
+              <input
+                bind:value={searchQuery}
+                type="search"
+                placeholder={$t('archiveSearchPlaceholder')}
+                class="w-full bg-transparent border border-[#34251c]/15 focus:border-[#34251c]/40 px-4 py-2.5 text-xs tracking-wide text-[#34251c] placeholder-[#5f4636]/75 outline-none transition-colors font-['Inter'] uppercase"
+              />
+              {#if searchQuery}
+                <button
+                  type="button"
+                  onclick={() => searchQuery = ''}
+                  class="absolute right-3 top-1/2 -translate-y-1/2 text-[#5f4636] hover:text-[#34251c] text-xs"
+                  aria-label={$t('archiveClearFilters')}
+                >
+                  ✕
+                </button>
+              {/if}
+            </label>
+
+            <label class="w-full sm:w-56">
+              <span class="block mb-1 text-[10px] tracking-[0.12em] uppercase text-[#7c6554]">{$t('archiveSortLabel')}</span>
+              <select
+                bind:value={sortMode}
+                class="w-full bg-[#f8f1e7]/70 border border-[#34251c]/15 focus:border-[#34251c]/40 px-3 py-2.5 text-xs tracking-wide uppercase text-[#34251c] outline-none transition-colors font-['Inter']"
+              >
+                <option value="curated">{$t('archiveSortCurated')}</option>
+                <option value="available">{$t('archiveSortAvailable')}</option>
+                <option value="newest">{$t('archiveSortNewest')}</option>
+                <option value="oldest">{$t('archiveSortOldest')}</option>
+                <option value="name">{$t('archiveSortName')}</option>
+              </select>
+            </label>
+
+            {#if availableYears.length > 0}
+              <label class="w-full sm:w-40">
+                <span class="block mb-1 text-[10px] tracking-[0.12em] uppercase text-[#7c6554]">{$t('archiveYearLabel')}</span>
+                <select
+                  bind:value={yearFilter}
+                  class="w-full bg-[#f8f1e7]/70 border border-[#34251c]/15 focus:border-[#34251c]/40 px-3 py-2.5 text-xs tracking-wide uppercase text-[#34251c] outline-none transition-colors font-['Inter']"
+                >
+                  <option value="all">{$t('archiveYearAll')}</option>
+                  {#each availableYears as year}
+                    <option value={String(year)}>{year}</option>
+                  {/each}
+                </select>
+              </label>
+            {/if}
+
+            {#if availableSeries.length > 0}
+              <label class="w-full sm:w-48">
+                <span class="block mb-1 text-[10px] tracking-[0.12em] uppercase text-[#7c6554]">{$t('archiveSeriesLabel')}</span>
+                <select
+                  bind:value={seriesFilter}
+                  class="w-full bg-[#f8f1e7]/70 border border-[#34251c]/15 focus:border-[#34251c]/40 px-3 py-2.5 text-xs tracking-wide uppercase text-[#34251c] outline-none transition-colors font-['Inter']"
+                >
+                  <option value="all">{$t('archiveSeriesAll')}</option>
+                  {#each availableSeries as series}
+                    <option value={series}>{series}</option>
+                  {/each}
+                </select>
+              </label>
+            {/if}
+
+            {#if hasActiveFilters}
+              <button
+                type="button"
+                onclick={clearFilters}
+                class="w-full sm:w-auto px-4 py-2.5 border border-[#34251c]/10 hover:border-[#34251c]/30 text-[#5f4636] hover:text-[#34251c] font-['Inter'] text-[10px] tracking-[0.08em] uppercase transition-colors"
+              >
+                {$t('archiveClearFilters')}
+              </button>
             {/if}
           </div>
 
@@ -208,13 +328,19 @@
                 </div>
 
                 <div class="pl-2 border-l border-transparent group-hover:border-[#34251c]/40 transition-all duration-500">
-                  <h2 class="font-['Fraunces'] text-xl sm:text-2xl text-[#34251c] mb-1 group-hover:text-[#fff9f0] transition-colors tracking-wide">
+                  <h2 class="font-['Fraunces'] text-xl sm:text-2xl text-[#34251c] mb-1 group-hover:text-[#6f3b24] transition-colors tracking-wide">
                     {figurine.name}
                   </h2>
-                  <div class="flex items-center gap-2">
+                  <div class="flex flex-wrap items-center gap-2">
                     <p class="text-[10px] tracking-[0.06em] uppercase text-[#5f4636] group-hover:text-[#34251c]/70 transition-colors">
-                      {$t('archiveExhibit')}{i + 1}
+                      {$t('archiveExhibit')}{figurine.sortOrder ?? i + 1}
                     </p>
+                    {#if figurine.year}
+                      <span class="text-[#5f4636]/30">·</span>
+                      <span class="text-[10px] tracking-[0.10em] uppercase text-[#7c6554]">
+                        {figurine.year}
+                      </span>
+                    {/if}
                     <span class="text-[#5f4636]/30">·</span>
                     <span class="flex items-center gap-1 text-[10px] tracking-[0.15em] uppercase
                       {figurine.status === 'available' ? 'text-emerald-600/70' : figurine.status === 'reserved' ? 'text-amber-600/70' : 'text-[#7c6554]'}">
