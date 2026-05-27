@@ -69,7 +69,7 @@
     </div>
 
     {#if message}
-      <p class="text-xs tracking-wide {messageType === 'ok' ? 'text-emerald-400' : 'text-red-400'}" in:fade>
+      <p class="text-xs tracking-wide {messageType === 'ok' ? 'text-emerald-700' : 'text-red-700'}" in:fade>
         {message}
       </p>
     {/if}

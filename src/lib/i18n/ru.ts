@@ -19,6 +19,18 @@ export const ru: Record<TranslationKey, string> = {
   zoneCabinetDesc:     'Реликвии забвения',
   zonePortraitDesc:    'Хроники проклятых',
   zoneWindowsDesc:     'Разбитый свет',
+  homeKicker:          'Готические миниатюры ручной работы',
+  homeLead:            'Авторские фигурки со своими лицами, следами мастерской и тихим архивом историй.',
+  homePrimaryCta:      'Смотреть доступные работы',
+  homeSecondaryCta:    'Открыть архив',
+  homeWorkshopCta:     'Мастерская',
+  homeAvailableStat:   'доступно',
+  homeArchiveStat:     'записей в архиве',
+  homeScrollCue:       'Доступные работы',
+  homeFeaturedTitle:   'Доступны сейчас',
+  homeFeaturedText:    'Короткий путь из кабинета к фигуркам, которые можно запросить сейчас.',
+  homeAllWorks:        'Все работы',
+  homeViewFigurine:    'Открыть фигуру',
 
   // === ARCHIVE LIST ===
   archivePageTitle:  'Архивъ Существ',

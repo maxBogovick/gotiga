@@ -117,13 +117,13 @@
         </div>
         <div class="flex gap-4 items-center">
             {#if message}
-                <span class="text-xs transition-opacity duration-500 {messageType === 'error' ? 'text-red-400' : 'text-[#34251c]'}" in:fade>{message}</span>
+                <span class="text-xs transition-opacity duration-500 {messageType === 'error' ? 'text-red-700' : 'text-[#34251c]'}" in:fade>{message}</span>
             {/if}
             {#if isTauri}
-                <button onclick={handleCleanupMedia} class="btn-gothic border-red-900/40 text-red-400">
+                <button onclick={handleCleanupMedia} class="btn-gothic border-red-900/40 text-red-700">
                     Cleanup media
                 </button>
-                <button onclick={handlePull} class="btn-gothic border-blue-900/40 text-blue-400">
+                <button onclick={handlePull} class="btn-gothic border-blue-900/40 text-blue-700">
                     {$t('adminReleaseDownloadActive')}
                 </button>
                 <button onclick={handleExport} class="btn-gothic border-amber-900/40 text-amber-600" disabled={isExporting}>
@@ -162,7 +162,7 @@
                         <div class="col-span-1 text-[#34251c] font-bold">{release.version}</div>
                         <div class="col-span-1">
                             {#if release.isActive}
-                                <span class="text-[9px] bg-green-900/30 text-green-400 border border-green-900/50 px-1 py-0.5 rounded">ACTIVE</span>
+                                <span class="text-[9px] bg-green-50 text-green-800 border border-green-700/30 px-1 py-0.5 rounded">ACTIVE</span>
                             {/if}
                         </div>
                         <div class="col-span-3 text-xs text-[#34251c] truncate pr-2" title={release.id}>

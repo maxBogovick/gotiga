@@ -17,6 +17,18 @@ export const en = {
   zoneCabinetDesc:     'Relics of oblivion',
   zonePortraitDesc:    'Chronicles of the cursed',
   zoneWindowsDesc:     'Broken light',
+  homeKicker:          'Gothic miniatures by hand',
+  homeLead:            'Author-made figures with their own faces, traces of the workshop, and a quiet archive of stories.',
+  homePrimaryCta:      'View available works',
+  homeSecondaryCta:    'Open archive',
+  homeWorkshopCta:     'Workshop',
+  homeAvailableStat:   'available',
+  homeArchiveStat:     'archive entries',
+  homeScrollCue:       'Available works',
+  homeFeaturedTitle:   'Available now',
+  homeFeaturedText:    'A shorter path from the cabinet to the figures that can be requested now.',
+  homeAllWorks:        'All works',
+  homeViewFigurine:    'View figure',
 
   // === ARCHIVE LIST (/figurines) ===
   archivePageTitle:  'Archive of Creatures',

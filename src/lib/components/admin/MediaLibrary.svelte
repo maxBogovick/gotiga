@@ -164,15 +164,15 @@
         <div class="flex items-center gap-2">
             <button onclick={loadInventory} disabled={loading} class="btn-gothic text-[10px] disabled:opacity-70">Refresh</button>
             <button onclick={buildCleanupReport} disabled={loading} class="btn-gothic text-[10px] disabled:opacity-70">Preview cleanup</button>
-            <button onclick={cleanupUnused} disabled={loading || !cleanupReport || cleanupReport.files.length === 0} class="btn-gothic text-[10px] border-red-900/40 text-red-300 disabled:opacity-70">Delete unused</button>
+            <button onclick={cleanupUnused} disabled={loading || !cleanupReport || cleanupReport.files.length === 0} class="btn-gothic text-[10px] border-red-900/40 text-red-700 disabled:opacity-70">Delete unused</button>
         </div>
     </div>
 
     {#if message}
-        <div class="border border-emerald-900/40 bg-emerald-950/20 px-4 py-2 text-xs text-emerald-200">{message}</div>
+        <div class="border border-emerald-700/30 bg-emerald-50 px-4 py-2 text-xs text-emerald-800">{message}</div>
     {/if}
     {#if error}
-        <div class="border border-red-900/40 bg-red-950/20 px-4 py-2 text-xs text-red-200">{error}</div>
+        <div class="border border-red-700/30 bg-red-50 px-4 py-2 text-xs text-red-800">{error}</div>
     {/if}
 
     <div class="flex gap-2 shrink-0">
@@ -231,12 +231,12 @@
                         <div class="min-w-0">
                             <div class="text-xs text-[#34251c] font-mono truncate">{file.path}</div>
                             {#if !file.exists}
-                                <div class="text-[10px] text-red-300 uppercase mt-1">Missing on disk</div>
+                                <div class="text-[10px] text-red-700 uppercase mt-1">Missing on disk</div>
                             {/if}
                         </div>
                         <div class="text-[10px] text-[#5f4636] uppercase">{file.variant ?? file.mediaType}</div>
                         <div class="text-[10px] text-[#5f4636]">{formatSize(file.sizeBytes)}</div>
-                        <div class="text-[10px] {file.usages.length ? 'text-emerald-300' : 'text-amber-300'}">
+                        <div class="text-[10px] {file.usages.length ? 'text-emerald-700' : 'text-amber-700'}">
                             {file.usages.length ? `${file.usages.length} used` : 'orphan'}
                         </div>
                     </button>
@@ -263,7 +263,7 @@
                         <div>Type</div><div class="text-[#34251c]">{selectedFile.mediaType}</div>
                         <div>Variant</div><div class="text-[#34251c]">{selectedFile.variant ?? '-'}</div>
                         <div>Size</div><div class="text-[#34251c]">{formatSize(selectedFile.sizeBytes)}</div>
-                        <div>Status</div><div class={selectedFile.exists ? 'text-emerald-300' : 'text-red-300'}>{selectedFile.exists ? 'Exists' : 'Missing'}</div>
+                        <div>Status</div><div class={selectedFile.exists ? 'text-emerald-700' : 'text-red-700'}>{selectedFile.exists ? 'Exists' : 'Missing'}</div>
                     </div>
 
                     <div>
@@ -285,7 +285,7 @@
                                 {/each}
                             </div>
                         {:else}
-                            <div class="text-xs text-amber-300">Not used anywhere. Cleanup can delete it.</div>
+                            <div class="text-xs text-amber-700">Not used anywhere. Cleanup can delete it.</div>
                         {/if}
                     </div>
 

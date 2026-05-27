@@ -5,7 +5,7 @@
     import { cubicOut, quartOut } from 'svelte/easing';
     import { spring } from 'svelte/motion';
     import { api } from '$lib/api';
-    import type { CabinetZone } from '$lib/types/api';
+    import type { CabinetZone, FigurineListItem } from '$lib/types/api';
     import { t } from '$lib/i18n';
     import LangSwitcher from '$lib/components/LangSwitcher.svelte';
 
@@ -17,6 +17,9 @@
     let isNavigating = $state(false);
     let loadingProgress = $state(0);
     let ambientIntensity = $state(1);
+    let featuredFigurines = $state<FigurineListItem[]>([]);
+    let collectionTotal = $state(0);
+    let availableTotal = $state(0);
 
     // Physics-based cursor and parallax
     const cursorSpring = spring({ x: 50, y: 50 }, { stiffness: 0.06, damping: 0.4 });
@@ -58,6 +61,16 @@
         return ZONE_DATA[zoneType] ?? { label: zoneType.toUpperCase(), description: $t('zoneExplore'), icon: '✦', accent: '#a86124' };
     }
 
+    function sortFeaturedFigurines(items: FigurineListItem[]) {
+        const statusRank = { available: 0, reserved: 1, sold: 2 };
+        return items.slice().sort((a, b) => {
+            const byStatus = statusRank[a.status] - statusRank[b.status];
+            const byYear = (b.year ?? -Infinity) - (a.year ?? -Infinity);
+            const byOrder = (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+            return byStatus || byYear || byOrder || a.name.localeCompare(b.name);
+        });
+    }
+
     // --- Logic ---
     async function init() {
         try {
@@ -67,10 +80,11 @@
                 if (loadingProgress >= 100) clearInterval(progressInterval);
             }, 120);
 
-            // Fetch zones and background image
-            const [dbZones, bgPath] = await Promise.all([
+            // Fetch zones, background image, and a small product feed for the home page
+            const [dbZones, bgPath, figurines] = await Promise.all([
                 api.getCabinetZones().catch(() => DEFAULT_ZONES),
-                api.getMainBackground().catch(() => null)
+                api.getMainBackground().catch(() => null),
+                api.getAllFigurines().catch(() => [] as FigurineListItem[])
             ]);
             
             if (bgPath) {
@@ -80,6 +94,9 @@
             await preloadImage(imageUrl);
 
             zones = dbZones && dbZones.length > 0 ? dbZones : DEFAULT_ZONES;
+            collectionTotal = figurines.length;
+            availableTotal = figurines.filter((item) => item.status === 'available').length;
+            featuredFigurines = sortFeaturedFigurines(figurines).slice(0, 4);
 
             // Wait for loading animation
             await new Promise(resolve => {
@@ -215,7 +232,7 @@
 
                 <!-- Title -->
                 <h1 class="loading-title">
-                    {#each 'GOTHIC MUSEUM'.split('') as char, i}
+                    {#each 'GOTIGA'.split('') as char, i}
                         {#if char === ' '}
                             <span class="letter-space"></span>
                         {:else}
@@ -227,7 +244,7 @@
                 <!-- Subtitle -->
                 <div class="loading-subtitle">
                     <span class="ornament">⚜</span>
-                    <span class="subtitle-text">Cabinet of Curiosities</span>
+                    <span class="subtitle-text">Cabinet of Gothic Miniatures</span>
                     <span class="ornament">⚜</span>
                 </div>
 
@@ -256,47 +273,51 @@
 
     {#if imageLoaded}
         <main class="museum-main" in:fade={{ duration: 2000, delay: 200 }}>
+            <section class="museum-stage" aria-labelledby="home-title">
 
-            <!-- Cinematic bars with ornaments -->
+            <!-- Header -->
             <div class="cinema-bar top-bar">
-                <div class="bar-ornament left">◆ MDCCCXC ◆</div>
-                <div class="bar-title">GOTHIC MUSEUM</div>
-                <div class="bar-ornament right">◆ EST ◆</div>
+                <a href="/" class="bar-brand">Gotiga</a>
+                <div class="bar-title">GOTIGA</div>
+                <nav class="top-nav" aria-label="Primary">
+                    <a href="/figurines">Archive</a>
+                    <a href="/workshop">Workshop</a>
+                    <a href="/author">Author</a>
+                </nav>
                 
                 <div class="absolute right-16 top-1/2 -translate-y-1/2 opacity-70 hover:opacity-100 transition-opacity duration-300">
-                    <LangSwitcher />
+                    <LangSwitcher variant="dark" />
                 </div>
                 <a href="/admin" class="absolute right-8 opacity-10 hover:opacity-80 transition-opacity duration-500 text-xl" aria-label="Admin entrance">
                     🗝
                 </a>
             </div>
 
-            <div class="cinema-bar bottom-bar">
-                {#if hoveredZone && ZONE_DATA[hoveredZone.zoneType]}
-                    <!-- Hovered zone info -->
-                    <div class="bar-zone-info" in:fade={{ duration: 200 }}>
-                        <span class="bar-zone-icon">{ZONE_DATA[hoveredZone.zoneType].icon}</span>
-                        <div class="bar-zone-text">
-                            <span class="bar-zone-name">{ZONE_DATA[hoveredZone.zoneType].label}</span>
-                            <span class="bar-zone-desc">{ZONE_DATA[hoveredZone.zoneType].description}</span>
-                        </div>
+            <div class="hero-layout">
+            <div class="hero-panel" in:fly={{ x: -18, duration: 900, delay: 450, easing: cubicOut }}>
+                <p class="hero-kicker">{$t('homeKicker')}</p>
+                <h1 id="home-title">Gotiga</h1>
+                <p class="hero-lead">{$t('homeLead')}</p>
+
+                <div class="hero-actions">
+                    <a href="#available-works" class="hero-action primary">{$t('homePrimaryCta')}</a>
+                    <a href="/figurines" class="hero-action secondary">{$t('homeSecondaryCta')}</a>
+                    <a href="/workshop" class="hero-link">{$t('homeWorkshopCta')}</a>
+                </div>
+
+                <dl class="hero-stats">
+                    <div>
+                        <dt>{availableTotal}</dt>
+                        <dd>{$t('homeAvailableStat')}</dd>
                     </div>
-                {:else}
-                    <!-- Bottom navigation: unique routes -->
-                    <nav class="bottom-nav" in:fade={{ duration: 300 }}>
-                        {#each [...new Map(zones.map(z => [z.targetRoute, z])).values()] as zone}
-                            {@const zd = ZONE_DATA[zone.zoneType]}
-                            {#if zd}
-                                <a href={zone.targetRoute} class="bottom-nav-item">
-                                    <span class="bottom-nav-icon">{zd.icon}</span>
-                                    <span class="bottom-nav-label">{zd.label}</span>
-                                </a>
-                            {/if}
-                        {/each}
-                    </nav>
-                {/if}
+                    <div>
+                        <dt>{collectionTotal}</dt>
+                        <dd>{$t('homeArchiveStat')}</dd>
+                    </div>
+                </dl>
             </div>
 
+            <div class="visual-panel">
             <!-- Main image container with 3D parallax -->
             <div
                     class="image-container"
@@ -349,6 +370,56 @@
                     </div>
                 {/if}
             </div>
+            </div>
+
+            {#if showHint && !hintDismissed}
+                <a href="#available-works" class="scroll-cue" in:fade={{ duration: 450 }}>
+                    <span>{$t('homeScrollCue')}</span>
+                    <span aria-hidden="true">↓</span>
+                </a>
+            {/if}
+            </div>
+
+            </section>
+
+            {#if featuredFigurines.length > 0}
+                <section id="available-works" class="featured-section" aria-labelledby="featured-title">
+                    <div class="featured-heading">
+                        <div>
+                            <p class="section-kicker">Archive selection</p>
+                            <h2 id="featured-title">{$t('homeFeaturedTitle')}</h2>
+                        </div>
+                        <p>{$t('homeFeaturedText')}</p>
+                        <a href="/figurines" class="featured-all">{$t('homeAllWorks')}</a>
+                    </div>
+
+                    <div class="featured-grid">
+                        {#each featuredFigurines as figurine}
+                            <a href={`/figurines/${figurine.id}`} class="featured-card" aria-label="{$t('homeViewFigurine')}: {figurine.name}">
+                                <div class="featured-image">
+                                    {#if figurine.faceImageUrl}
+                                        <img src={figurine.faceImageUrl} alt="" loading="lazy" />
+                                    {:else}
+                                        <span>?</span>
+                                    {/if}
+                                </div>
+                                <div class="featured-meta">
+                                    <h3>{figurine.name}</h3>
+                                    <div>
+                                        {#if figurine.year}
+                                            <span>{figurine.year}</span>
+                                            <span>·</span>
+                                        {/if}
+                                        <span class:available={figurine.status === 'available'}>
+                                            {figurine.status === 'available' ? $t('archiveStatusAvailableLabel') : figurine.status === 'reserved' ? $t('archiveStatusReservedLabel') : $t('archiveStatusSoldLabel')}
+                                        </span>
+                                    </div>
+                                </div>
+                            </a>
+                        {/each}
+                    </div>
+                </section>
+            {/if}
 
         </main>
     {/if}
@@ -436,9 +507,9 @@
 
     .main-wrapper {
         width: 100vw;
-        height: 100vh;
+        min-height: 100svh;
         background: radial-gradient(ellipse at center, #fff9f0 0%, #f8f1e7 70%);
-        overflow: hidden;
+        overflow-x: hidden;
         cursor: none;
         position: relative;
         font-family: 'Inter', serif;
@@ -784,79 +855,109 @@
     /* === MAIN MUSEUM === */
     .museum-main {
         width: 100%;
-        height: 100%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        min-height: 100svh;
         position: relative;
     }
 
+    .museum-stage {
+        width: 100%;
+        min-height: 100svh;
+        display: block;
+        position: relative;
+        overflow: hidden;
+        padding: 118px clamp(22px, 5vw, 76px) 56px;
+    }
+
     .cinema-bar {
-        position: fixed;
+        position: absolute;
         left: 0;
         width: 100%;
-        height: 100px;
-        background: linear-gradient(to bottom,
-        rgba(111, 59, 36, 0.95) 0%,
-        rgba(111, 59, 36, 0.7) 100%
-        );
-        z-index: 10;
+        height: 78px;
+        background: rgba(248, 241, 231, 0.78);
+        z-index: 60;
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 0 50px;
-        backdrop-filter: blur(10px);
+        padding: 0 clamp(22px, 5vw, 76px);
+        backdrop-filter: blur(18px);
     }
 
     .top-bar {
         top: 0;
-        border-bottom: 1px solid rgba(198, 95, 60, 0.2);
-    }
-
-    .bottom-bar {
-        bottom: 0;
-        height: 64px;
-        border-top: 1px solid rgba(198, 95, 60, 0.18);
-        justify-content: center;
-        padding: 0;
-        background: linear-gradient(to top,
-            rgba(111, 59, 36, 0.98) 0%,
-            rgba(111, 59, 36, 0.82) 100%
-        );
-    }
-
-    .bar-ornament {
-        font-family: 'Inter', serif;
-        font-size: 12px;
-        letter-spacing: 3px;
-        color: rgba(198, 95, 60, 0.5);
-        animation: ornament-glow 3s ease-in-out infinite;
-    }
-
-    @keyframes ornament-glow {
-        0%, 100% {
-            opacity: 0.5;
-        }
-        50% {
-            opacity: 0.9;
-            text-shadow: 0 0 15px rgba(198, 95, 60, 0.6);
-        }
+        border-bottom: 1px solid rgba(52, 37, 28, 0.10);
     }
 
     .bar-title {
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
         font-family: 'Fraunces', cursive;
-        font-size: 28px;
-        letter-spacing: 8px;
+        font-size: 24px;
+        letter-spacing: 0.32em;
         color: #34251c;
-        text-shadow: 0 0 20px rgba(198, 95, 60, 0.5);
+        text-shadow: none;
+    }
+
+    .bar-brand {
+        font-family: 'Fraunces', serif;
+        font-size: 20px;
+        line-height: 1;
+        color: #34251c;
+        text-decoration: none;
+        cursor: pointer;
+    }
+
+    .top-nav {
+        display: flex;
+        align-items: center;
+        gap: 26px;
+        margin-left: auto;
+        margin-right: 120px;
+    }
+
+    .top-nav a {
+        font-family: 'Inter', sans-serif;
+        font-size: 11px;
+        line-height: 1;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: rgba(95, 70, 54, 0.84);
+        text-decoration: none;
+        cursor: pointer;
+        transition: color 0.25s ease;
+    }
+
+    .top-nav a:hover {
+        color: #34251c;
+    }
+
+    .hero-layout {
+        width: 100%;
+        max-width: 1680px;
+        min-height: calc(100svh - 174px);
+        margin: 0 auto;
+        display: grid;
+        grid-template-columns: minmax(320px, 0.78fr) minmax(560px, 1.42fr);
+        gap: clamp(28px, 5vw, 82px);
+        align-items: center;
     }
 
     /* === IMAGE CONTAINER === */
+    .visual-panel {
+        position: relative;
+        min-width: 0;
+        padding: clamp(12px, 1.5vw, 22px);
+        background: linear-gradient(135deg, rgba(255,249,240,0.72), rgba(232,217,196,0.42));
+        border: 1px solid rgba(52, 37, 28, 0.10);
+        box-shadow: 0 24px 80px rgba(60, 25, 10, 0.13);
+    }
+
     .image-container {
         position: relative;
-        width: 92vw;
-        max-width: 1500px;
-        height: 75vh;
+        width: 100%;
+        max-width: none;
+        height: clamp(520px, 68svh, 820px);
+        overflow: hidden;
         transition: transform 0.1s ease, filter 0.2s ease;
         transform-style: preserve-3d;
     }
@@ -864,10 +965,292 @@
     .museum-image {
         width: 100%;
         height: 100%;
-        object-fit: contain;
+        object-fit: cover;
         position: relative;
         z-index: 2;
-        filter: drop-shadow(0 30px 80px rgba(111,59,36,0.18));
+        filter: saturate(0.86) contrast(0.96);
+    }
+
+    /* === EDITORIAL COMMERCE HERO === */
+    .hero-panel {
+        position: relative;
+        z-index: 35;
+        width: 100%;
+        max-width: 520px;
+        padding: 0;
+        color: #34251c;
+        pointer-events: auto;
+    }
+
+    .hero-kicker,
+    .section-kicker {
+        margin: 0 0 14px;
+        font-family: 'Inter', sans-serif;
+        font-size: 11px;
+        line-height: 1.2;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: rgba(111, 59, 36, 0.74);
+    }
+
+    .hero-panel h1 {
+        margin: 0;
+        font-family: 'Fraunces', serif;
+        font-size: clamp(78px, 9vw, 148px);
+        line-height: 0.9;
+        font-weight: 650;
+        color: #2c1710;
+        text-shadow: none;
+    }
+
+    .hero-lead {
+        width: min(460px, 100%);
+        margin: 24px 0 0;
+        font-family: 'Fraunces', serif;
+        font-size: clamp(19px, 2vw, 27px);
+        line-height: 1.38;
+        color: rgba(52, 37, 28, 0.86);
+    }
+
+    .hero-actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 12px;
+        margin-top: 30px;
+    }
+
+    .hero-action,
+    .hero-link,
+    .featured-all {
+        cursor: pointer;
+        font-family: 'Inter', sans-serif;
+        font-size: 11px;
+        line-height: 1;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+    }
+
+    .hero-action {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 42px;
+        padding: 0 18px;
+        border: 1px solid rgba(52, 37, 28, 0.22);
+        transition: color 0.25s ease, background 0.25s ease, border-color 0.25s ease, transform 0.25s ease;
+    }
+
+    .hero-action.primary {
+        color: #fff9f0;
+        background: rgba(111, 59, 36, 0.92);
+        border-color: rgba(111, 59, 36, 0.92);
+    }
+
+    .hero-action.secondary {
+        color: #34251c;
+        background: rgba(255, 249, 240, 0.48);
+        backdrop-filter: blur(10px);
+    }
+
+    .hero-action:hover {
+        transform: translateY(-2px);
+    }
+
+    .hero-action.primary:hover {
+        background: #34251c;
+        border-color: #34251c;
+        color: #fff9f0;
+    }
+
+    .hero-action.secondary:hover {
+        border-color: rgba(52, 37, 28, 0.48);
+        background: rgba(255, 249, 240, 0.78);
+    }
+
+    .hero-link {
+        color: rgba(95, 70, 54, 0.9);
+        padding: 12px 4px;
+    }
+
+    .hero-link:hover,
+    .featured-all:hover {
+        color: #c65f3c;
+    }
+
+    .hero-stats {
+        display: flex;
+        gap: 18px;
+        margin: 28px 0 0;
+    }
+
+    .hero-stats div {
+        min-width: 96px;
+        padding-top: 12px;
+        border-top: 1px solid rgba(52, 37, 28, 0.16);
+    }
+
+    .hero-stats dt {
+        font-family: 'Fraunces', serif;
+        font-size: 28px;
+        line-height: 1;
+        color: #6f3b24;
+    }
+
+    .hero-stats dd {
+        margin: 5px 0 0;
+        font-family: 'Inter', sans-serif;
+        font-size: 10px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: rgba(95, 70, 54, 0.76);
+    }
+
+    .scroll-cue {
+        position: absolute;
+        right: 0;
+        bottom: -34px;
+        z-index: 35;
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        color: rgba(95, 70, 54, 0.84);
+        font-family: 'Inter', sans-serif;
+        font-size: 10px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        cursor: pointer;
+    }
+
+    .scroll-cue:hover {
+        color: #34251c;
+    }
+
+    /* === FEATURED WORKS === */
+    .featured-section {
+        position: relative;
+        z-index: 4;
+        padding: clamp(56px, 9vw, 120px) clamp(22px, 5vw, 76px) clamp(72px, 10vw, 132px);
+        background:
+            linear-gradient(180deg, rgba(248, 241, 231, 0.88), #f8f1e7 24%),
+            radial-gradient(circle at 18% 0%, rgba(198, 95, 60, 0.12), transparent 32%);
+        cursor: default;
+    }
+
+    .featured-heading {
+        max-width: 1320px;
+        margin: 0 auto 34px;
+        display: grid;
+        grid-template-columns: minmax(220px, 0.9fr) minmax(260px, 1fr) auto;
+        gap: 28px;
+        align-items: end;
+    }
+
+    .featured-heading h2 {
+        margin: 0;
+        font-family: 'Fraunces', serif;
+        font-size: clamp(36px, 5vw, 72px);
+        line-height: 0.96;
+        color: #34251c;
+    }
+
+    .featured-heading p:not(.section-kicker) {
+        margin: 0;
+        max-width: 520px;
+        font-family: 'Fraunces', serif;
+        font-size: 20px;
+        line-height: 1.45;
+        color: rgba(95, 70, 54, 0.86);
+    }
+
+    .featured-all {
+        justify-self: end;
+        color: #6f3b24;
+        border-bottom: 1px solid rgba(111, 59, 36, 0.26);
+        padding-bottom: 6px;
+    }
+
+    .featured-grid {
+        max-width: 1320px;
+        margin: 0 auto;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: clamp(16px, 2vw, 28px);
+    }
+
+    .featured-card {
+        display: block;
+        color: #34251c;
+        cursor: pointer;
+    }
+
+    .featured-image {
+        position: relative;
+        aspect-ratio: 3 / 4;
+        overflow: hidden;
+        background: #fff9f0;
+        border: 1px solid rgba(52, 37, 28, 0.12);
+        box-shadow: 0 18px 50px rgba(60, 25, 10, 0.12);
+    }
+
+    .featured-image img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        opacity: 0.82;
+        filter: grayscale(0.45);
+        transition: transform 0.55s ease, opacity 0.55s ease, filter 0.55s ease;
+    }
+
+    .featured-image span {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        font-family: 'Fraunces', serif;
+        font-size: 34px;
+        color: rgba(52, 37, 28, 0.28);
+    }
+
+    .featured-card:hover .featured-image img {
+        opacity: 1;
+        filter: grayscale(0);
+        transform: scale(1.045);
+    }
+
+    .featured-meta {
+        padding-top: 16px;
+        border-left: 1px solid transparent;
+        transition: border-color 0.35s ease, padding-left 0.35s ease;
+    }
+
+    .featured-card:hover .featured-meta {
+        border-left-color: rgba(52, 37, 28, 0.26);
+        padding-left: 12px;
+    }
+
+    .featured-meta h3 {
+        margin: 0 0 8px;
+        font-family: 'Fraunces', serif;
+        font-size: clamp(20px, 2vw, 28px);
+        line-height: 1.08;
+        color: #34251c;
+    }
+
+    .featured-meta div {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        font-family: 'Inter', sans-serif;
+        font-size: 10px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: rgba(95, 70, 54, 0.76);
+    }
+
+    .featured-meta .available {
+        color: rgba(30, 112, 72, 0.86);
     }
 
     /* Cursor light */
@@ -1032,10 +1415,10 @@
         position: absolute;
         inset: -15%;
         background: radial-gradient(ellipse at center,
-        rgba(198, 95, 60, 0.15) 0%,
+        rgba(198, 95, 60, 0.08) 0%,
         transparent 70%
         );
-        opacity: 0.4;
+        opacity: 0.18;
         animation: guide-breathe 4s ease-in-out infinite;
         animation-delay: var(--zone-delay);
         border-radius: 50%;
@@ -1300,7 +1683,7 @@
         flex-direction: column;
         align-items: center;
         gap: 6px;
-        opacity: 0.75;
+        opacity: 0;
         transition: opacity 0.4s ease, transform 0.4s ease;
         pointer-events: none;
         text-align: center;
@@ -1364,94 +1747,129 @@
         transform: translateY(0);
     }
 
-    /* === BOTTOM NAVIGATION (Вариант 3) === */
-    .bottom-nav {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 0;
-        height: 100%;
+    @media (max-width: 1100px) {
+        .museum-stage {
+            padding: 106px 22px 52px;
+        }
+
+        .hero-layout {
+            min-height: auto;
+            grid-template-columns: 1fr;
+            gap: 34px;
+        }
+
+        .hero-panel {
+            max-width: 680px;
+        }
+
+        .visual-panel {
+            order: 2;
+        }
+
+        .image-container {
+            height: min(62svh, 660px);
+        }
+
+        .featured-heading {
+            grid-template-columns: 1fr;
+            gap: 16px;
+        }
+
+        .featured-all {
+            justify-self: start;
+        }
+
+        .featured-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
     }
 
-    .bottom-nav-item {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        padding: 0 36px;
-        height: 100%;
-        text-decoration: none;
-        color: rgba(198, 95, 60, 0.75);
-        font-family: 'Inter', serif;
-        font-size: 11px;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        border-right: 1px solid rgba(198, 95, 60, 0.12);
-        transition: color 0.35s ease, background 0.35s ease;
-        position: relative;
-    }
+    @media (max-width: 720px) {
+        .cinema-bar {
+            height: 68px;
+            padding: 0 18px;
+        }
 
-    .bottom-nav-item:first-child {
-        border-left: 1px solid rgba(198, 95, 60, 0.12);
-    }
+        .bar-title {
+            display: none;
+        }
 
-    .bottom-nav-item::after {
-        content: '';
-        position: absolute;
-        bottom: 0;
-        left: 50%;
-        width: 0;
-        height: 1px;
-        background: rgba(198, 95, 60, 0.6);
-        transition: width 0.35s ease, left 0.35s ease;
-    }
+        .bar-brand {
+            font-size: 19px;
+        }
 
-    .bottom-nav-item:hover {
-        color: #6f3b24;
-        background: rgba(198, 95, 60, 0.05);
-    }
+        .top-nav {
+            display: none;
+        }
 
-    .bottom-nav-item:hover::after {
-        width: 100%;
-        left: 0;
-    }
+        .top-bar :global(.lang-switcher) {
+            transform: scale(0.9);
+            transform-origin: right center;
+        }
 
-    .bottom-nav-icon {
-        font-size: 16px;
-    }
+        .museum-stage {
+            min-height: 100svh;
+            padding: 92px 18px 48px;
+        }
 
-    /* Hovered zone info in bottom bar */
-    .bar-zone-info {
-        display: flex;
-        align-items: center;
-        gap: 18px;
-        height: 100%;
-        padding: 0 24px;
-    }
+        .hero-panel {
+            position: relative;
+            inset: auto;
+            margin-top: 0;
+        }
 
-    .bar-zone-icon {
-        font-size: 22px;
-    }
+        .hero-panel h1 {
+            font-size: clamp(58px, 19vw, 86px);
+        }
 
-    .bar-zone-text {
-        display: flex;
-        flex-direction: column;
-        gap: 3px;
-    }
+        .hero-lead {
+            font-size: 18px;
+            max-width: 330px;
+        }
 
-    .bar-zone-name {
-        font-family: 'Inter', serif;
-        font-size: 12px;
-        letter-spacing: 0.35em;
-        color: #6f3b24;
-        text-transform: uppercase;
-    }
+        .hero-actions {
+            gap: 10px;
+        }
 
-    .bar-zone-desc {
-        font-family: 'Fraunces', serif;
-        font-size: 14px;
-        letter-spacing: 0.08em;
-        color: rgba(198, 95, 60, 0.65);
-        font-style: italic;
+        .hero-action {
+            min-height: 40px;
+            padding: 0 14px;
+        }
+
+        .hero-stats {
+            margin-top: 22px;
+        }
+
+        .visual-panel {
+            padding: 10px;
+        }
+
+        .image-container {
+            position: relative;
+            right: auto;
+            bottom: auto;
+            width: 100%;
+            height: 42svh;
+            min-height: 300px;
+            opacity: 1;
+        }
+
+        .scroll-cue {
+            display: none;
+        }
+
+        .featured-section {
+            padding-inline: 18px;
+        }
+
+        .featured-heading p:not(.section-kicker) {
+            font-size: 17px;
+        }
+
+        .featured-grid {
+            grid-template-columns: 1fr;
+            gap: 26px;
+        }
     }
 
     /* Disable custom cursor on touch-only devices */
@@ -1468,18 +1886,7 @@
 
         /* На тач: лейблы всегда видны ярко */
         .zone-label {
-            opacity: 1;
-        }
-
-        /* Нижняя навигация — на мобиле чуть компактнее */
-        .bottom-nav-item {
-            padding: 0 20px;
-            font-size: 10px;
-            letter-spacing: 0.18em;
-        }
-
-        .bottom-nav-icon {
-            font-size: 18px;
+            opacity: 0;
         }
     }
 </style>

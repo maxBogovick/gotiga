@@ -132,8 +132,8 @@
                     onclick={testConnection}
                     disabled={isTesting}
                     class="flex-1 py-2 border text-xs uppercase tracking-wide transition-all
-                        {testStatus === 'ok' ? 'border-green-700/50 text-green-400 bg-green-900/10' :
-                         testStatus === 'fail' ? 'border-red-700/50 text-red-400 bg-red-900/10' :
+                        {testStatus === 'ok' ? 'border-green-700/40 text-green-800 bg-green-50' :
+                         testStatus === 'fail' ? 'border-red-700/40 text-red-800 bg-red-50' :
                          'border-[#34251c]/20 text-[#5f4636] hover:text-[#34251c] hover:bg-[#34251c]/5'}"
                 >
                     {#if isTesting}{$t('settingsTesting')}
@@ -145,7 +145,7 @@
         </div>
 
         {#if error}
-            <div class="mt-4 p-3 bg-red-950/30 border border-red-900/50 text-red-300 text-xs">
+            <div class="mt-4 p-3 bg-red-50 border border-red-700/30 text-red-800 text-xs">
                 {error}
             </div>
         {/if}

@@ -169,7 +169,7 @@
         <h2 class="text-xl font-gothic text-[#34251c]">{$t('adminZoneHeading')}</h2>
         <div class="flex gap-3 items-center">
             {#if message}
-                <span class="text-green-400 text-xs" in:fade>{message}</span>
+                <span class="text-emerald-700 text-xs" in:fade>{message}</span>
             {/if}
             <button onclick={changeBackground} class="btn-gothic border-amber-900/40 text-amber-600">{$t('adminZoneChangeBg')}</button>
             <button onclick={createNew} class="btn-gothic">{$t('adminZoneNew')}</button>
@@ -238,7 +238,7 @@
                         style="left:{selectedZone.x}%;top:{selectedZone.y}%;width:{selectedZone.width}%;height:{selectedZone.height}%;cursor:grab;z-index:10;"
                         onmousedown={(e) => { if (e.button === 0) startDrag(e, selectedZone!, 'move'); }}
                     >
-                        <span class="text-[10px] bg-[#6f3b24]/30 px-1 text-amber-300 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap">{$t('adminZoneNewLabel')}</span>
+                        <span class="text-[10px] bg-[#fff9f0]/85 px-1 text-[#34251c] border border-amber-700/30 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap">{$t('adminZoneNewLabel')}</span>
                         <!-- Resize corner for ghost -->
                         <div
                             role="button" tabindex="-1"

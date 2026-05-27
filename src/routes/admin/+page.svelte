@@ -353,7 +353,7 @@
             </label>
 
             {#if loginError}
-                <p class="text-red-400 text-xs text-center" in:fade>{loginError}</p>
+                <p class="text-red-700 text-xs text-center" in:fade>{loginError}</p>
             {/if}
 
             <button
@@ -449,7 +449,7 @@
                                 <div class="text-xs font-bold truncate group-hover/row:text-[#6f3b24] transition-colors">
                                     {fig.name}
                                     {#if hasUnsaved && selectedFigurine?.id === fig.id}
-                                        <span class="text-amber-400 ml-1">*</span>
+                                        <span class="text-amber-700 ml-1">*</span>
                                     {/if}
                                 </div>
                                 <div class="text-[9px] uppercase opacity-60 flex gap-2">
@@ -466,10 +466,10 @@
                                     class="flex-1 w-5 border border-[#34251c]/8 hover:bg-[#34251c]/10 text-[#5f4636] hover:text-[#34251c] text-[9px] flex items-center justify-center"
                                     title={$t('adminRegistryTooltipDown')}>▼</button>
                                 <button onclick={() => duplicateFigurine(fig)}
-                                    class="flex-1 w-5 border border-[#34251c]/8 hover:bg-[#34251c]/10 text-[#5f4636] hover:text-amber-400 text-[9px] flex items-center justify-center"
+                                    class="flex-1 w-5 border border-[#34251c]/8 hover:bg-[#34251c]/10 text-[#5f4636] hover:text-amber-700 text-[9px] flex items-center justify-center"
                                     title={$t('adminRegistryDuplicate')}>⎘</button>
                                 <button onclick={() => deleteFigurine(fig)} disabled={isDeleting}
-                                    class="flex-1 w-5 border border-[#34251c]/8 hover:bg-red-950 text-[#5f4636] hover:text-red-400 text-[9px] flex items-center justify-center"
+                                    class="flex-1 w-5 border border-[#34251c]/8 hover:bg-red-50 text-[#5f4636] hover:text-red-700 text-[9px] flex items-center justify-center"
                                     title={$t('adminRegistryDelete')}>✕</button>
                             </div>
                         </div>
@@ -493,8 +493,8 @@
                     <div class="p-8">
                         <!-- Unsaved indicator bar -->
                         {#if hasUnsaved}
-                            <div class="mb-6 px-4 py-2 bg-amber-950/40 border border-amber-900/40 text-amber-400 text-[10px] uppercase tracking-wide flex items-center gap-2" in:fade>
-                                <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+                            <div class="mb-6 px-4 py-2 bg-amber-50 border border-amber-700/30 text-amber-800 text-[10px] uppercase tracking-wide flex items-center gap-2" in:fade>
+                                <span class="w-1.5 h-1.5 rounded-full bg-amber-700 animate-pulse"></span>
                                 {$t('adminRegistryUnsaved')}
                             </div>
                         {/if}
@@ -583,7 +583,7 @@
                                             >{$t('adminMediaReplace')}</button>
                                             <button
                                                 onclick={() => { selectedFigurine!.videoUrl = null; externalVideoUrl = ''; }}
-                                                class="text-[10px] text-red-700 hover:text-red-400 uppercase"
+                                                class="text-[10px] text-red-700 hover:text-red-900 uppercase"
                                             >{$t('adminMediaDeleteFile')}</button>
                                         </div>
                                     {:else}
@@ -627,7 +627,7 @@
                                             >{$t('adminMediaReplace')}</button>
                                             <button
                                                 onclick={() => selectedFigurine!.ambiencePath = null}
-                                                class="text-[10px] text-red-700 hover:text-red-400 uppercase"
+                                                class="text-[10px] text-red-700 hover:text-red-900 uppercase"
                                             >{$t('adminMediaDeleteFile')}</button>
                                         </div>
                                     {:else}
@@ -654,14 +654,14 @@
                                                 <img src={resolveUrl(img.thumbUrl ?? img.url)} alt={img.altText ?? ''} class="w-full h-full object-cover" />
 
                                                 <!-- Overlay controls -->
-                                                <div class="absolute inset-0 bg-[#6f3b24]/25 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1">
+                                                <div class="absolute inset-0 bg-[#6f3b24]/40 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1">
                                                     <button onclick={() => selectedFigurine!.images = selectedFigurine!.images.filter(i => i.id !== img.id)}
-                                                        class="text-[10px] text-red-300 hover:text-red-100 uppercase px-2 py-0.5 border border-red-900/50 hover:bg-red-950">{$t('adminMediaDeleteFile')}</button>
+                                                        class="text-[10px] text-red-800 hover:text-red-950 uppercase px-2 py-0.5 border border-red-800/30 bg-[#fff9f0]/90 hover:bg-red-50">{$t('adminMediaDeleteFile')}</button>
                                                     {#if img.imageType !== 'face'}
                                                         <button onclick={() => setFaceImage(img.id)}
-                                                            class="text-[9px] text-[#34251c] hover:text-amber-300 uppercase px-2 py-0.5 border border-[#34251c]/20">{$t('adminMediaCover')}</button>
+                                                            class="text-[9px] text-[#34251c] hover:text-amber-800 uppercase px-2 py-0.5 border border-[#34251c]/20 bg-[#fff9f0]/90">{$t('adminMediaCover')}</button>
                                                     {:else}
-                                                        <span class="text-[9px] text-amber-400 uppercase">{$t('adminMediaCover')}</span>
+                                                        <span class="text-[9px] text-amber-900 bg-[#fff9f0]/90 px-2 py-0.5 uppercase">{$t('adminMediaCover')}</span>
                                                     {/if}
                                                     <div class="flex gap-1">
                                                         <button onclick={() => moveImage(imgIdx, -1)} disabled={imgIdx === 0}
@@ -737,12 +737,12 @@
                                             showMessage($t('adminFormSentToCloud'), 'success');
                                         } catch(e) { showMessage($t('adminMsgError') + e, 'error'); }
                                     }}
-                                    class="btn-gothic border-blue-900/40 text-blue-300 min-w-[160px]"
+                                    class="btn-gothic border-blue-900/40 text-blue-700 min-w-[160px]"
                                 >{$t('adminFormToCloud')}</button>
                             {/if}
                             <button onclick={save} disabled={isSaving}
                                 class="btn-gothic min-w-[200px] transition-colors
-                                    {hasUnsaved ? 'bg-amber-950/40 border-amber-800/60 text-amber-200 hover:bg-amber-900/40' : 'bg-[#34251c]/10'}">
+                                    {hasUnsaved ? 'bg-amber-50 border-amber-700/40 text-amber-900 hover:bg-amber-100' : 'bg-[#34251c]/10'}">
                                 {isSaving ? $t('adminFormSaving') : hasUnsaved ? $t('adminFormSaveChanges') : $t('adminFormSaved')}
                             </button>
                         </div>
@@ -793,7 +793,7 @@
     {#if message.text}
         <div
             class="fixed bottom-6 right-6 px-5 py-3 border text-sm z-50
-                {message.type === 'error' ? 'bg-red-950 border-red-800 text-red-200' : 'bg-[#fff9f0] border-[#34251c]/30 text-[#34251c]'}"
+                {message.type === 'error' ? 'bg-red-50 border-red-700/30 text-red-800' : 'bg-[#fff9f0] border-[#34251c]/30 text-[#34251c]'}"
             in:slide={{ axis: 'x' }}
         >{message.text}</div>
     {/if}
