@@ -445,6 +445,34 @@ impl Repository {
                 Ok(())
             }
 
+            pub async fn get_home_content(&self) -> Result<Option<crate::models::HomeContent>> {
+                let pool = self.content().await?;
+                let row: Option<(String,)> = sqlx::query_as(
+                    "SELECT file_path FROM app_resources WHERE key = 'home_content'"
+                )
+                .fetch_optional(&pool).await?;
+                match row {
+                    None => Ok(None),
+                    Some((json,)) => {
+                        let content = serde_json::from_str(&json)
+                            .unwrap_or_default();
+                        Ok(Some(content))
+                    }
+                }
+            }
+
+            pub async fn save_home_content(&self, content: &crate::models::HomeContent) -> Result<()> {
+                let pool = self.content().await?;
+                let json = serde_json::to_string(content)
+                    .map_err(|e| AppError::Internal(e.to_string()))?;
+                sqlx::query(
+                    "INSERT INTO app_resources (key, file_path, updated_at) VALUES ('home_content', ?, datetime('now'))
+                     ON CONFLICT(key) DO UPDATE SET file_path=excluded.file_path, updated_at=datetime('now')"
+                )
+                .bind(json).execute(&pool).await?;
+                Ok(())
+            }
+
             pub async fn get_author_profile(&self) -> Result<Option<crate::models::AuthorProfile>> {
                 let pool = self.content().await?;
                 let row: Option<(String,)> = sqlx::query_as(
@@ -602,7 +630,7 @@ impl Repository {
                 }
 
                 let resource_rows: Vec<(String, String)> = sqlx::query_as(
-                    "SELECT key, file_path FROM app_resources WHERE key != 'author_profile'"
+                    "SELECT key, file_path FROM app_resources WHERE key NOT IN ('author_profile', 'home_content')"
                 ).fetch_all(&pool).await?;
                 for (key, path) in resource_rows {
                     usages.push(MediaUsageDto {
@@ -663,7 +691,7 @@ impl Repository {
                     ("figurines", "video_url"),
                     ("app_resources", "file_path"),
                 ] {
-                    let extra = if table == "app_resources" { " AND key != 'author_profile'" } else { "" };
+                    let extra = if table == "app_resources" { " AND key NOT IN ('author_profile', 'home_content')" } else { "" };
                     let query = format!("UPDATE {} SET {} = ? WHERE {} = ?{}", table, column, column, extra);
                     let result = sqlx::query(&query)
                         .bind(new_preview_path)

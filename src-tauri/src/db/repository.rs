@@ -392,7 +392,7 @@ impl<'a> Repository<'a> {
 
         let mut stmt = self
             .conn
-            .prepare("SELECT key, file_path FROM app_resources WHERE key != 'author_profile'")?;
+            .prepare("SELECT key, file_path FROM app_resources WHERE key NOT IN ('author_profile', 'home_content')")?;
         let rows = stmt.query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
@@ -463,7 +463,7 @@ impl<'a> Repository<'a> {
             params![new_preview_path, old_path],
         )?;
         updated += self.conn.execute(
-            "UPDATE app_resources SET file_path = ?1 WHERE file_path = ?2 AND key != 'author_profile'",
+            "UPDATE app_resources SET file_path = ?1 WHERE file_path = ?2 AND key NOT IN ('author_profile', 'home_content')",
             params![new_preview_path, old_path],
         )?;
 

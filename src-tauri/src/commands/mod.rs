@@ -638,6 +638,32 @@ pub async fn set_main_background(
 }
 
 #[tauri::command]
+pub async fn get_home_content(db: State<'_, Database>) -> Result<HomeContent, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let repo = Repository::new(&conn);
+
+    match repo
+        .get_app_resource("home_content")
+        .map_err(|e| e.to_string())?
+    {
+        Some(json) => serde_json::from_str(&json).map_err(|e| e.to_string()),
+        None => Ok(HomeContent::default()),
+    }
+}
+
+#[tauri::command]
+pub async fn save_home_content(
+    content: HomeContent,
+    db: State<'_, Database>,
+) -> Result<(), String> {
+    let json = serde_json::to_string(&content).map_err(|e| e.to_string())?;
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let repo = Repository::new(&conn);
+    repo.upsert_app_resource("home_content", &json, None)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn export_release(
     db: State<'_, Database>,
     sync: State<'_, SyncService>,

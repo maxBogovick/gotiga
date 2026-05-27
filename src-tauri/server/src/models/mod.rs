@@ -336,6 +336,14 @@ pub struct ReleasePayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
+pub struct HomeContent {
+    pub title: Option<String>,
+    pub kicker: Option<String>,
+    pub lead: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct AuthorProfile {
     pub name: String,
     pub tagline: Option<String>,

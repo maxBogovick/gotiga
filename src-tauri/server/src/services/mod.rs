@@ -262,6 +262,14 @@ impl AppService {
         self.repo.set_main_background(&url).await
     }
 
+    pub async fn get_home_content(&self) -> Result<HomeContent> {
+        Ok(self.repo.get_home_content().await?.unwrap_or_default())
+    }
+
+    pub async fn save_home_content(&self, content: HomeContent) -> Result<()> {
+        self.repo.save_home_content(&content).await
+    }
+
     // === AUTHOR PROFILE ===
 
     pub async fn get_author_profile(&self) -> Result<AuthorProfile> {

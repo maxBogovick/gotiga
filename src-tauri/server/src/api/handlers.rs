@@ -471,6 +471,21 @@ pub async fn upload_main_background(
     Err(AppError::BadRequest("No file field found".to_string()))
 }
 
+pub async fn get_home_content(
+    State(service): State<AppService>,
+) -> Result<Json<HomeContent>> {
+    let content = service.get_home_content().await?;
+    Ok(Json(content))
+}
+
+pub async fn save_home_content(
+    State(service): State<AppService>,
+    Json(content): Json<HomeContent>,
+) -> Result<StatusCode> {
+    service.save_home_content(content).await?;
+    Ok(StatusCode::OK)
+}
+
 // === ADMIN / RELEASE MANAGEMENT ===
 
 pub async fn upload_release_db(

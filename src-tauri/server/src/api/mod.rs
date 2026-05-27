@@ -42,6 +42,7 @@ pub fn router(service: AppService, config: Config) -> Router {
         .route("/cabinet/zones",                get(handlers::get_cabinet_zones))
         .route("/assets/:table/:id",            get(handlers::get_asset))
         .route("/main-background",              get(handlers::get_main_background))
+        .route("/home-content",                 get(handlers::get_home_content))
         .route("/author/profile",               get(handlers::get_author_profile))
         .route("/orders",                       post(handlers::create_order))
         // === PUBLIC LOGIN ===
@@ -80,6 +81,9 @@ pub fn router(service: AppService, config: Config) -> Router {
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
         .route("/main-background",
             post(handlers::upload_main_background)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        .route("/home-content",
+            post(handlers::save_home_content)
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
         .route("/author/profile",
             post(handlers::save_author_profile)

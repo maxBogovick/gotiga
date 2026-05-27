@@ -5,7 +5,7 @@
     import { cubicOut } from 'svelte/easing';
     import { spring } from 'svelte/motion';
     import { api } from '$lib/api';
-    import type { CabinetZone, FigurineListItem } from '$lib/types/api';
+    import type { CabinetZone, FigurineListItem, HomeContent } from '$lib/types/api';
     import { t } from '$lib/i18n';
     import FeaturedFigurineCard from '$lib/components/FeaturedFigurineCard.svelte';
 
@@ -18,6 +18,7 @@
     let featuredFigurines = $state<FigurineListItem[]>([]);
     let collectionTotal = $state(0);
     let availableTotal = $state(0);
+    let homeContent = $state<HomeContent>({ title: null, kicker: null, lead: null });
     let mouseX = $state(0.5);
     let mouseY = $state(0.5);
 
@@ -66,12 +67,14 @@
 
     async function init() {
         try {
-            const [dbZones, bgPath, figurines] = await Promise.all([
+            const [dbZones, bgPath, figurines, content] = await Promise.all([
                 api.getCabinetZones().catch(() => DEFAULT_ZONES),
                 api.getMainBackground().catch(() => null),
-                api.getAllFigurines().catch(() => [] as FigurineListItem[])
+                api.getAllFigurines().catch(() => [] as FigurineListItem[]),
+                api.getHomeContent().catch(() => ({ title: null, kicker: null, lead: null } satisfies HomeContent))
             ]);
             if (bgPath) imageUrl = bgPath;
+            homeContent = content;
             await preloadImage(imageUrl);
             zones = dbZones && dbZones.length > 0 ? dbZones : DEFAULT_ZONES;
             collectionTotal = figurines.length;
@@ -157,12 +160,12 @@
             <div class="hero-text" in:fly={{ x: -20, duration: 900, delay: 350, easing: cubicOut }}>
                 <p class="eyebrow">
                     <span class="eyebrow-rule"></span>
-                    {$t('homeKicker')}
+                    {homeContent.kicker?.trim() || $t('homeKicker')}
                 </p>
 
-                <h1 id="home-title" class="hero-title">Gotiga</h1>
+                <h1 id="home-title" class="hero-title">{homeContent.title?.trim() || 'Gotiga'}</h1>
 
-                <p class="hero-lead">{$t('homeLead')}</p>
+                <p class="hero-lead">{homeContent.lead?.trim() || $t('homeLead')}</p>
 
                 <div class="hero-ctas">
                     <a href="#available-works" class="cta-primary">

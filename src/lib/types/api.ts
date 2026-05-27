@@ -81,6 +81,12 @@ export interface AppSettings {
     apiKey: string;
 }
 
+export interface HomeContent {
+    title: string | null;
+    kicker: string | null;
+    lead: string | null;
+}
+
 export interface AuthorProfile {
     name: string;
     tagline: string | null;

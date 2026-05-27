@@ -9,6 +9,7 @@
     import ReleaseManager from '$lib/components/admin/ReleaseManager.svelte';
     import ProfileEditor from '$lib/components/admin/ProfileEditor.svelte';
     import MediaLibrary from '$lib/components/admin/MediaLibrary.svelte';
+    import HomeContentEditor from '$lib/components/admin/HomeContentEditor.svelte';
     import { t } from '$lib/i18n';
     import LangSwitcher from '$lib/components/LangSwitcher.svelte';
 
@@ -48,7 +49,7 @@
     let isSaving = $state(false);
     let showSettings = $state(false);
     let message = $state({ text: '', type: 'info' });
-    let activeTab = $state<'registry' | 'zones' | 'author' | 'workshop' | 'media' | 'releases'>('registry');
+    let activeTab = $state<'registry' | 'home' | 'zones' | 'author' | 'workshop' | 'media' | 'releases'>('registry');
     let activeAuthorSubTab = $state<'profile' | 'texts'>('profile');
     let searchQuery = $state('');
     let isDeleting = $state(false);
@@ -381,6 +382,7 @@
         <nav class="flex gap-1 bg-[#fff9f0] p-1 border border-[#34251c]/20">
             {#each [
               ['registry', $t('adminTabRegistry')],
+              ['home',     'Home'],
               ['zones',    $t('adminTabZones')],
               ['author',   $t('adminTabAuthor')],
               ['workshop', $t('adminTabWorkshop')],
@@ -755,6 +757,9 @@
                 {/if}
             </main>
         </div>
+
+        {:else if activeTab === 'home'}
+            <HomeContentEditor />
 
         {:else if activeTab === 'zones'}
             <div in:fade class="h-full"><ZoneEditor /></div>

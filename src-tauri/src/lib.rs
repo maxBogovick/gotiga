@@ -286,6 +286,8 @@ pub fn run() {
             commands::delete_text,
             commands::get_main_background,
             commands::set_main_background,
+            commands::get_home_content,
+            commands::save_home_content,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

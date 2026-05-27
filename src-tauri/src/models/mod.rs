@@ -1,5 +1,13 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct HomeContent {
+    pub title: Option<String>,
+    pub kicker: Option<String>,
+    pub lead: Option<String>,
+}
+
 // ============================================================
 // ВНУТРЕННИЕ МОДЕЛИ (для работы с БД)
 // ============================================================

@@ -236,6 +236,9 @@ impl SyncService {
 
             // Д. Общие ресурсы приложения (например, главный фон)
             for (key, path) in repo.get_app_resources().map_err(|e| e.to_string())? {
+                if key == "author_profile" || key == "home_content" {
+                    continue;
+                }
                 if is_external_media_path(&path) {
                     continue;
                 }
@@ -356,7 +359,7 @@ impl SyncService {
         }
 
         for (key, path) in repo.get_app_resources()? {
-            if key == "author_profile" || is_external_media_path(&path) {
+            if key == "author_profile" || key == "home_content" || is_external_media_path(&path) {
                 continue;
             }
             if !self.file_service.file_exists(&path) && !repo.app_resource_has_blob(&key)? {

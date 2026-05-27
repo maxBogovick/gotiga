@@ -8,6 +8,7 @@ import type {
     AppSettings,
     ServerRelease,
     AuthorProfile,
+    HomeContent,
     OrderRequest,
     MediaInventory,
     MediaCleanupReport,
@@ -36,6 +37,15 @@ function getWebSettings(): AppSettings {
     return {
         serverUrl: localStorage.getItem('gotiga_server_url') ?? '',
         apiKey: localStorage.getItem('gotiga_api_key') ?? '',
+    };
+}
+
+function getWebHomeContent(): HomeContent {
+    if (typeof localStorage === 'undefined') return { title: null, kicker: null, lead: null };
+    return {
+        title: localStorage.getItem('gotiga_home_title'),
+        kicker: localStorage.getItem('gotiga_home_kicker'),
+        lead: localStorage.getItem('gotiga_home_lead'),
     };
 }
 
@@ -257,6 +267,31 @@ export const api = {
             return data.url;
         } catch {
             return null;
+        }
+    },
+
+    async getHomeContent(): Promise<HomeContent> {
+        if (isTauri) return invoke('get_home_content');
+        try {
+            return await webFetch('/home-content');
+        } catch {
+            return getWebHomeContent();
+        }
+    },
+
+    async saveHomeContent(content: HomeContent): Promise<void> {
+        if (isTauri) return invoke('save_home_content', { content });
+        try {
+            await webFetch('/home-content', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...authHeaders() },
+                body: JSON.stringify(content),
+            });
+        } catch {
+            if (typeof localStorage === 'undefined') return;
+            localStorage.setItem('gotiga_home_title', content.title ?? '');
+            localStorage.setItem('gotiga_home_kicker', content.kicker ?? '');
+            localStorage.setItem('gotiga_home_lead', content.lead ?? '');
         }
     },
 
