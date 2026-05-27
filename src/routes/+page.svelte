@@ -1,8 +1,8 @@
 <script lang="ts">
     import { onMount } from 'svelte';
     import { goto } from '$app/navigation';
-    import { fade, fly, scale } from 'svelte/transition';
-    import { cubicOut, quartOut } from 'svelte/easing';
+    import { fade, fly } from 'svelte/transition';
+    import { cubicOut } from 'svelte/easing';
     import { spring } from 'svelte/motion';
     import { api } from '$lib/api';
     import type { CabinetZone, FigurineListItem } from '$lib/types/api';
@@ -15,14 +15,12 @@
     let imageLoaded = $state(false);
     let hoveredZone = $state<CabinetZone | null>(null);
     let isNavigating = $state(false);
-    let loadingProgress = $state(0);
     let ambientIntensity = $state(1);
     let featuredFigurines = $state<FigurineListItem[]>([]);
     let collectionTotal = $state(0);
     let availableTotal = $state(0);
 
-    // Physics-based cursor and parallax
-    const cursorSpring = spring({ x: 50, y: 50 }, { stiffness: 0.06, damping: 0.4 });
+    // Physics-based parallax
     const parallaxSpring = spring({ x: 0, y: 0 }, { stiffness: 0.04, damping: 0.45 });
 
     let imageUrl = $state('/images/cabinet-room.jpg');
@@ -74,12 +72,6 @@
     // --- Logic ---
     async function init() {
         try {
-            // Simulate progressive loading
-            const progressInterval = setInterval(() => {
-                loadingProgress = Math.min(loadingProgress + Math.random() * 12, 100);
-                if (loadingProgress >= 100) clearInterval(progressInterval);
-            }, 120);
-
             // Fetch zones, background image, and a small product feed for the home page
             const [dbZones, bgPath, figurines] = await Promise.all([
                 api.getCabinetZones().catch(() => DEFAULT_ZONES),
@@ -97,16 +89,6 @@
             collectionTotal = figurines.length;
             availableTotal = figurines.filter((item) => item.status === 'available').length;
             featuredFigurines = sortFeaturedFigurines(figurines).slice(0, 4);
-
-            // Wait for loading animation
-            await new Promise(resolve => {
-                const checkComplete = setInterval(() => {
-                    if (loadingProgress >= 100) {
-                        clearInterval(checkComplete);
-                        setTimeout(resolve, 600);
-                    }
-                }, 50);
-            });
 
             isLoaded = true;
         } catch (e) {
@@ -126,11 +108,6 @@
 
     function handleMouseMove(e: MouseEvent) {
         const { innerWidth, innerHeight } = window;
-        cursorSpring.set({
-            x: (e.clientX / innerWidth) * 100,
-            y: (e.clientY / innerHeight) * 100
-        });
-
         parallaxSpring.set({
             x: (e.clientX / innerWidth - 0.5) * 2,
             y: (e.clientY / innerHeight - 0.5) * 2
@@ -212,86 +189,30 @@
         {/each}
     </div>
 
-    <!-- Loading Screen -->
-    {#if !isLoaded}
-        <div class="loading-screen" out:fade={{ duration: 1400, easing: quartOut }}>
-            <div class="loading-content">
-                <!-- Ornate frame -->
-                <div class="loading-frame">
-                    <div class="frame-corner tl"></div>
-                    <div class="frame-corner tr"></div>
-                    <div class="frame-corner bl"></div>
-                    <div class="frame-corner br"></div>
-                </div>
-
-                <!-- Animated skull -->
-                <div class="skull-wrapper">
-                    <div class="skull-glow"></div>
-                    <div class="skull-icon">☠</div>
-                </div>
-
-                <!-- Title -->
-                <h1 class="loading-title">
-                    {#each 'GOTIGA'.split('') as char, i}
-                        {#if char === ' '}
-                            <span class="letter-space"></span>
-                        {:else}
-                            <span class="letter" style="--index: {i}">{char}</span>
-                        {/if}
-                    {/each}
-                </h1>
-
-                <!-- Subtitle -->
-                <div class="loading-subtitle">
-                    <span class="ornament">⚜</span>
-                    <span class="subtitle-text">Cabinet of Gothic Miniatures</span>
-                    <span class="ornament">⚜</span>
-                </div>
-
-                <!-- Progress bar -->
-                <div class="progress-container">
-                    <div class="progress-bar">
-                        <div class="progress-fill" style="width: {loadingProgress}%"></div>
-                        <div class="progress-glow" style="left: {loadingProgress}%"></div>
-                    </div>
-                    <div class="progress-text">{Math.floor(loadingProgress)}%</div>
-                </div>
-
-                <!-- Mystical eyes -->
-                <div class="mystical-eyes">
-                    {#each Array(6) as _, i}
-                        <div class="eye" style="--eye-delay: {i * 0.7}s; --eye-pos: {i}"></div>
-                    {/each}
-                </div>
-            </div>
-
-            <!-- Atmospheric fog -->
-            <div class="loading-fog fog-1"></div>
-            <div class="loading-fog fog-2"></div>
-        </div>
-    {/if}
-
     {#if imageLoaded}
         <main class="museum-main" in:fade={{ duration: 2000, delay: 200 }}>
             <section class="museum-stage" aria-labelledby="home-title">
 
             <!-- Header -->
-            <div class="cinema-bar top-bar">
-                <a href="/" class="bar-brand">Gotiga</a>
-                <div class="bar-title">GOTIGA</div>
-                <nav class="top-nav" aria-label="Primary">
+            <header class="site-header">
+                <a href="/" class="header-brand" aria-label="Gotiga home">
+                    <span>Gotiga</span>
+                    <small>Cabinet of Gothic Miniatures</small>
+                </a>
+
+                <nav class="header-nav" aria-label="Primary">
                     <a href="/figurines">Archive</a>
                     <a href="/workshop">Workshop</a>
                     <a href="/author">Author</a>
                 </nav>
-                
-                <div class="absolute right-16 top-1/2 -translate-y-1/2 opacity-70 hover:opacity-100 transition-opacity duration-300">
+
+                <div class="header-utility">
                     <LangSwitcher variant="dark" />
+                    <a href="/admin" class="admin-link" aria-label="Admin entrance">
+                        <span aria-hidden="true">Key</span>
+                    </a>
                 </div>
-                <a href="/admin" class="absolute right-8 opacity-10 hover:opacity-80 transition-opacity duration-500 text-xl" aria-label="Admin entrance">
-                    🗝
-                </a>
-            </div>
+            </header>
 
             <div class="hero-layout">
             <div class="hero-panel" in:fly={{ x: -18, duration: 900, delay: 450, easing: cubicOut }}>
@@ -330,16 +251,6 @@
                     filter: brightness({ambientIntensity});
                 "
             >
-                <!-- Dynamic light following cursor -->
-                <div
-                        class="cursor-light"
-                        style="
-                        left: {$cursorSpring.x}%;
-                        top: {$cursorSpring.y}%;
-                        opacity: {ambientIntensity * 0.7};
-                    "
-                ></div>
-
                 <!-- Depth layers -->
                 <div class="depth-layer depth-1"></div>
                 <div class="depth-layer depth-2"></div>
@@ -423,23 +334,6 @@
 
         </main>
     {/if}
-
-    <!-- Enhanced custom cursor -->
-    <div class="cursor-system">
-        <div
-                class="cursor-outer"
-                class:cursor-active={hoveredZone}
-                style="left: {$cursorSpring.x}%; top: {$cursorSpring.y}%;"
-        >
-            <div class="cursor-ring"></div>
-            <div class="cursor-ring-2"></div>
-        </div>
-        <div
-                class="cursor-dot"
-                style="left: {$cursorSpring.x}%; top: {$cursorSpring.y}%;"
-        ></div>
-    </div>
-
 </div>
 
 {#snippet zoneButton(zone: CabinetZone, index: number)}
@@ -510,7 +404,6 @@
         min-height: 100svh;
         background: radial-gradient(ellipse at center, #fff9f0 0%, #f8f1e7 70%);
         overflow-x: hidden;
-        cursor: none;
         position: relative;
         font-family: 'Inter', serif;
         color: #34251c;
@@ -555,303 +448,6 @@
         }
     }
 
-    /* === LOADING SCREEN === */
-    .loading-screen {
-        position: fixed;
-        inset: 0;
-        background: radial-gradient(ellipse at center, #fff9f0 0%, #f8f1e7 70%);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        z-index: 100;
-    }
-
-    .loading-content {
-        position: relative;
-        text-align: center;
-        padding: 60px;
-    }
-
-    .loading-frame {
-        position: absolute;
-        inset: 0;
-        pointer-events: none;
-    }
-
-    .frame-corner {
-        position: absolute;
-        width: 80px;
-        height: 80px;
-        border: 2px solid rgba(198, 95, 60, 0.3);
-    }
-
-    .frame-corner.tl {
-        top: 0;
-        left: 0;
-        border-right: none;
-        border-bottom: none;
-    }
-
-    .frame-corner.tr {
-        top: 0;
-        right: 0;
-        border-left: none;
-        border-bottom: none;
-    }
-
-    .frame-corner.bl {
-        bottom: 0;
-        left: 0;
-        border-right: none;
-        border-top: none;
-    }
-
-    .frame-corner.br {
-        bottom: 0;
-        right: 0;
-        border-left: none;
-        border-top: none;
-    }
-
-    .skull-wrapper {
-        position: relative;
-        display: inline-block;
-        margin-bottom: 40px;
-    }
-
-    .skull-icon {
-        font-size: 100px;
-        position: relative;
-        z-index: 2;
-        animation: skull-levitate 5s ease-in-out infinite;
-        filter: drop-shadow(0 0 40px rgba(198, 95, 60, 0.6));
-    }
-
-    .skull-glow {
-        position: absolute;
-        inset: -30px;
-        background: radial-gradient(circle, rgba(198, 95, 60, 0.3), transparent 70%);
-        animation: glow-breathe 3s ease-in-out infinite;
-        z-index: 1;
-    }
-
-    @keyframes skull-levitate {
-        0%, 100% {
-            transform: translateY(0) rotate(-2deg);
-        }
-        50% {
-            transform: translateY(-30px) rotate(2deg);
-        }
-    }
-
-    @keyframes glow-breathe {
-        0%, 100% {
-            opacity: 0.4;
-            transform: scale(0.9);
-        }
-        50% {
-            opacity: 0.8;
-            transform: scale(1.2);
-        }
-    }
-
-    .loading-title {
-        font-family: 'Fraunces', cursive;
-        font-size: 56px;
-        letter-spacing: 14px;
-        margin-bottom: 20px;
-        display: flex;
-        justify-content: center;
-        flex-wrap: wrap;
-        gap: 4px;
-    }
-
-    .letter {
-        display: inline-block;
-        color: #34251c;
-        text-shadow: 0 0 20px rgba(198, 95, 60, 0.8);
-        animation: letter-emerge 1.5s ease-out forwards;
-        animation-delay: calc(var(--index) * 0.1s);
-        opacity: 0;
-        transform: translateY(20px);
-    }
-
-    .letter-space {
-        width: 20px;
-    }
-
-    @keyframes letter-emerge {
-        to {
-            opacity: 1;
-            transform: translateY(0);
-        }
-    }
-
-    .loading-subtitle {
-        font-family: 'Fraunces', serif;
-        font-size: 20px;
-        font-style: italic;
-        letter-spacing: 4px;
-        margin-bottom: 50px;
-        color: rgba(198, 95, 60, 0.6);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 15px;
-    }
-
-    .ornament {
-        font-size: 24px;
-        animation: ornament-spin 10s linear infinite;
-    }
-
-    @keyframes ornament-spin {
-        to {
-            transform: rotate(360deg);
-        }
-    }
-
-    .subtitle-text {
-        animation: subtitle-fade 2s ease-in-out infinite;
-    }
-
-    @keyframes subtitle-fade {
-        0%, 100% {
-            opacity: 0.6;
-        }
-        50% {
-            opacity: 1;
-        }
-    }
-
-    .progress-container {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 20px;
-        margin-top: 40px;
-    }
-
-    .progress-bar {
-        width: 400px;
-        height: 4px;
-        background: rgba(198, 95, 60, 0.15);
-        border-radius: 2px;
-        position: relative;
-        overflow: hidden;
-        box-shadow: inset 0 0 10px rgba(111,59,36,0.14);
-    }
-
-    .progress-fill {
-        height: 100%;
-        background: linear-gradient(90deg,
-        #a86124 0%,
-        #34251c 50%,
-        #a86124 100%
-        );
-        transition: width 0.3s ease;
-        box-shadow: 0 0 20px rgba(198, 95, 60, 0.6);
-    }
-
-    .progress-glow {
-        position: absolute;
-        top: -15px;
-        width: 50px;
-        height: 34px;
-        background: radial-gradient(circle, rgba(198, 95, 60, 0.8), transparent 70%);
-        margin-left: -25px;
-        filter: blur(10px);
-        transition: left 0.3s ease;
-        pointer-events: none;
-    }
-
-    .progress-text {
-        font-family: 'Inter', serif;
-        font-size: 20px;
-        font-weight: 600;
-        color: #34251c;
-        min-width: 60px;
-        text-align: left;
-    }
-
-    .mystical-eyes {
-        position: absolute;
-        inset: 0;
-        pointer-events: none;
-    }
-
-    .eye {
-        position: absolute;
-        width: 22px;
-        height: 30px;
-        background: radial-gradient(ellipse,
-        rgba(198, 95, 60, 0.8) 20%,
-        rgba(139, 115, 85, 0.6) 40%,
-        transparent 70%
-        );
-        border-radius: 50%;
-        left: calc(10% + var(--eye-pos) * 14%);
-        top: calc(20% + var(--eye-pos) * 12%);
-        animation: eye-watch 6s ease-in-out infinite;
-        animation-delay: var(--eye-delay);
-        opacity: 0.5;
-    }
-
-    @keyframes eye-watch {
-        0%, 90%, 100% {
-            opacity: 0.5;
-            transform: scaleY(1);
-        }
-        94%, 96% {
-            opacity: 0.1;
-            transform: scaleY(0.1);
-        }
-    }
-
-    .loading-fog {
-        position: absolute;
-        inset: 0;
-        pointer-events: none;
-    }
-
-    .fog-1 {
-        background: radial-gradient(ellipse at 25% 50%,
-        rgba(120, 110, 100, 0.08) 0%,
-        transparent 60%
-        );
-        animation: fog-drift-1 20s ease-in-out infinite;
-    }
-
-    .fog-2 {
-        background: radial-gradient(ellipse at 75% 40%,
-        rgba(100, 95, 90, 0.06) 0%,
-        transparent 65%
-        );
-        animation: fog-drift-2 25s ease-in-out infinite;
-    }
-
-    @keyframes fog-drift-1 {
-        0%, 100% {
-            opacity: 0.4;
-            transform: translateX(0) scale(1);
-        }
-        50% {
-            opacity: 0.7;
-            transform: translateX(40px) scale(1.1);
-        }
-    }
-
-    @keyframes fog-drift-2 {
-        0%, 100% {
-            opacity: 0.3;
-            transform: translateX(0) scale(1);
-        }
-        50% {
-            opacity: 0.6;
-            transform: translateX(-30px) scale(1.15);
-        }
-    }
-
     /* === MAIN MUSEUM === */
     .museum-main {
         width: 100%;
@@ -868,54 +464,67 @@
         padding: 118px clamp(22px, 5vw, 76px) 56px;
     }
 
-    .cinema-bar {
+    .site-header {
         position: absolute;
         left: 0;
+        top: 0;
         width: 100%;
-        height: 78px;
-        background: rgba(248, 241, 231, 0.78);
+        min-height: 86px;
+        background:
+            linear-gradient(180deg, rgba(250, 246, 238, 0.92), rgba(250, 246, 238, 0.74));
         z-index: 60;
         display: flex;
         align-items: center;
-        justify-content: space-between;
+        gap: clamp(24px, 4vw, 64px);
         padding: 0 clamp(22px, 5vw, 76px);
         backdrop-filter: blur(18px);
-    }
-
-    .top-bar {
-        top: 0;
         border-bottom: 1px solid rgba(52, 37, 28, 0.10);
+        box-shadow: 0 1px 0 rgba(255, 249, 240, 0.7) inset;
     }
 
-    .bar-title {
-        position: absolute;
-        left: 50%;
-        transform: translateX(-50%);
-        font-family: 'Fraunces', cursive;
-        font-size: 24px;
-        letter-spacing: 0.32em;
-        color: #34251c;
-        text-shadow: none;
-    }
-
-    .bar-brand {
-        font-family: 'Fraunces', serif;
-        font-size: 20px;
-        line-height: 1;
+    .header-brand {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        min-width: 238px;
         color: #34251c;
         text-decoration: none;
         cursor: pointer;
     }
 
-    .top-nav {
-        display: flex;
-        align-items: center;
-        gap: 26px;
-        margin-left: auto;
-        margin-right: 120px;
+    .header-brand span {
+        font-family: 'Fraunces', serif;
+        font-size: 28px;
+        line-height: 0.95;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: #2c1710;
     }
 
-    .top-nav a {
+    .header-brand small {
+        font-family: 'Inter', sans-serif;
+        font-size: 10px;
+        line-height: 1;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: rgba(95, 70, 54, 0.68);
+    }
+
+    .header-nav {
+        display: flex;
+        align-items: center;
+        gap: 0;
+        margin-left: auto;
+        border-left: 1px solid rgba(52, 37, 28, 0.10);
+        border-right: 1px solid rgba(52, 37, 28, 0.10);
+    }
+
+    .header-nav a {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        min-height: 40px;
+        padding: 0 22px;
         font-family: 'Inter', sans-serif;
         font-size: 11px;
         line-height: 1;
@@ -924,11 +533,62 @@
         color: rgba(95, 70, 54, 0.84);
         text-decoration: none;
         cursor: pointer;
+        transition: color 0.25s ease, background 0.25s ease;
+    }
+
+    .header-nav a + a {
+        border-left: 1px solid rgba(52, 37, 28, 0.08);
+    }
+
+    .header-nav a::after {
+        content: '';
+        position: absolute;
+        left: 22px;
+        right: 22px;
+        bottom: 5px;
+        height: 1px;
+        background: rgba(111, 59, 36, 0.45);
+        transform: scaleX(0);
+        transform-origin: left;
+        transition: transform 0.25s ease;
+    }
+
+    .header-nav a:hover {
+        color: #34251c;
+        background: rgba(111, 59, 36, 0.04);
+    }
+
+    .header-nav a:hover::after {
+        transform: scaleX(1);
+    }
+
+    .header-utility {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+    }
+
+    .admin-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 34px;
+        height: 30px;
+        padding: 0 8px;
+        border-left: 1px solid rgba(52, 37, 28, 0.10);
+        font-family: 'Inter', sans-serif;
+        font-size: 9px;
+        line-height: 1;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: rgba(95, 70, 54, 0.28);
+        text-decoration: none;
+        cursor: pointer;
         transition: color 0.25s ease;
     }
 
-    .top-nav a:hover {
-        color: #34251c;
+    .admin-link:hover {
+        color: rgba(95, 70, 54, 0.84);
     }
 
     .hero-layout {
@@ -1253,23 +913,6 @@
         color: rgba(30, 112, 72, 0.86);
     }
 
-    /* Cursor light */
-    .cursor-light {
-        position: absolute;
-        width: 800px;
-        height: 800px;
-        margin: -400px 0 0 -400px;
-        background: radial-gradient(circle,
-        rgba(198, 95, 60, 0.25) 0%,
-        rgba(198, 95, 60, 0.12) 30%,
-        transparent 60%
-        );
-        pointer-events: none;
-        z-index: 3;
-        transition: left 0.2s ease, top 0.2s ease, opacity 0.3s ease;
-        mix-blend-mode: screen;
-    }
-
     /* Depth layers */
     .depth-layer {
         position: absolute;
@@ -1402,7 +1045,7 @@
         position: absolute;
         background: transparent;
         border: none;
-        cursor: none;
+        cursor: pointer;
         transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
         outline: none;
     }
@@ -1604,70 +1247,6 @@
         }
     }
 
-    /* === CURSOR SYSTEM === */
-    .cursor-system {
-        position: fixed;
-        inset: 0;
-        pointer-events: none;
-        z-index: 999;
-    }
-
-    .cursor-outer {
-        position: absolute;
-        transition: left 0.12s ease, top 0.12s ease;
-    }
-
-    .cursor-ring {
-        position: absolute;
-        width: 45px;
-        height: 45px;
-        margin: -22.5px 0 0 -22.5px;
-        border: 2px solid rgba(198, 95, 60, 0.5);
-        border-radius: 50%;
-        transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-
-    .cursor-ring-2 {
-        position: absolute;
-        width: 55px;
-        height: 55px;
-        margin: -27.5px 0 0 -27.5px;
-        border: 1px solid rgba(198, 95, 60, 0.2);
-        border-radius: 50%;
-        transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-
-    .cursor-outer.cursor-active .cursor-ring {
-        width: 70px;
-        height: 70px;
-        margin: -35px 0 0 -35px;
-        border-color: rgba(198, 95, 60, 0.9);
-        box-shadow: 0 0 25px rgba(198, 95, 60, 0.5);
-        transform: rotate(45deg);
-        border-radius: 0;
-    }
-
-    .cursor-outer.cursor-active .cursor-ring-2 {
-        width: 85px;
-        height: 85px;
-        margin: -42.5px 0 0 -42.5px;
-        border-color: rgba(198, 95, 60, 0.4);
-        transform: rotate(-45deg);
-        border-radius: 0;
-    }
-
-    .cursor-dot {
-        position: absolute;
-        width: 6px;
-        height: 6px;
-        margin: -3px 0 0 -3px;
-        background: #34251c;
-        border-radius: 50%;
-        box-shadow: 0 0 15px rgba(198, 95, 60, 0.9);
-        transition: left 0.08s ease, top 0.08s ease;
-        z-index: 1000;
-    }
-
     /* Global styles */
     :global(body) {
         background: #f8f1e7;
@@ -1748,6 +1327,18 @@
     }
 
     @media (max-width: 1100px) {
+        .site-header {
+            gap: 22px;
+        }
+
+        .header-brand {
+            min-width: 210px;
+        }
+
+        .header-nav a {
+            padding: 0 16px;
+        }
+
         .museum-stage {
             padding: 106px 22px 52px;
         }
@@ -1785,26 +1376,41 @@
     }
 
     @media (max-width: 720px) {
-        .cinema-bar {
-            height: 68px;
+        .site-header {
+            min-height: 72px;
             padding: 0 18px;
+            gap: 14px;
         }
 
-        .bar-title {
+        .header-brand {
+            min-width: 0;
+        }
+
+        .header-brand span {
+            font-size: 21px;
+            letter-spacing: 0.12em;
+        }
+
+        .header-brand small {
             display: none;
         }
 
-        .bar-brand {
-            font-size: 19px;
-        }
-
-        .top-nav {
+        .header-nav {
             display: none;
         }
 
-        .top-bar :global(.lang-switcher) {
+        .header-utility {
+            margin-left: auto;
+            gap: 10px;
+        }
+
+        .header-utility :global(.lang-switcher) {
             transform: scale(0.9);
             transform-origin: right center;
+        }
+
+        .admin-link {
+            display: none;
         }
 
         .museum-stage {
@@ -1872,18 +1478,7 @@
         }
     }
 
-    /* Disable custom cursor on touch-only devices */
     @media (hover: none) {
-        .main-wrapper {
-            cursor: default;
-        }
-        .zone-button {
-            cursor: pointer;
-        }
-        .cursor-system {
-            display: none;
-        }
-
         /* На тач: лейблы всегда видны ярко */
         .zone-label {
             opacity: 0;
