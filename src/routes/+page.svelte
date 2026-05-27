@@ -7,7 +7,6 @@
     import { api } from '$lib/api';
     import type { CabinetZone, FigurineListItem } from '$lib/types/api';
     import { t } from '$lib/i18n';
-    import LangSwitcher from '$lib/components/LangSwitcher.svelte';
     import FeaturedFigurineCard from '$lib/components/FeaturedFigurineCard.svelte';
 
     let zones = $state<CabinetZone[]>([]);
@@ -150,31 +149,6 @@
 
     {#if imageLoaded}
     <main in:fade={{ duration: 1600, delay: 100 }}>
-
-        <!-- HEADER -->
-        <header class="header">
-            <a href="/" class="brand" aria-label="Gotiga">
-                <span class="brand-name">Gotiga</span>
-                <span class="brand-sub">Cabinet of Gothic Miniatures</span>
-            </a>
-
-            <nav class="nav" aria-label="Primary">
-                <a href="/figurines" class="nav-link">Archive</a>
-                <a href="/workshop" class="nav-link">Workshop</a>
-                <a href="/author" class="nav-link">Author</a>
-            </nav>
-
-            <div class="header-end">
-                <LangSwitcher variant="dark" />
-                <a href="/admin" class="key-link" aria-label="Admin">
-                    <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
-                        <circle cx="4.5" cy="4.5" r="3" stroke="currentColor" stroke-width="1"/>
-                        <path d="M7 7L11.5 11.5" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
-                        <path d="M9.5 9L11 7.5" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
-                    </svg>
-                </a>
-            </div>
-        </header>
 
         <!-- HERO -->
         <section class="hero" aria-labelledby="home-title">
@@ -413,104 +387,6 @@
         position: relative;
         z-index: 1;
     }
-
-    /* ── HEADER ──────────────────────────────────── */
-    .header {
-        position: fixed;
-        top: 0; left: 0;
-        width: 100%;
-        height: 68px;
-        display: flex;
-        align-items: center;
-        padding: 0 clamp(20px, 4.5vw, 72px);
-        background: rgba(248,241,231,0.85);
-        backdrop-filter: blur(20px) saturate(1.3);
-        -webkit-backdrop-filter: blur(20px) saturate(1.3);
-        border-bottom: 1px solid var(--border);
-        z-index: 200;
-    }
-
-    .brand {
-        display: flex;
-        flex-direction: column;
-        gap: 3px;
-        text-decoration: none;
-        color: inherit;
-        flex-shrink: 0;
-    }
-
-    .brand-name {
-        font-family: 'Cormorant Garamond', serif;
-        font-size: 20px;
-        font-weight: 400;
-        letter-spacing: 0.3em;
-        text-transform: uppercase;
-        color: var(--ink);
-        line-height: 1;
-    }
-
-    .brand-sub {
-        font-size: 8.5px;
-        letter-spacing: 0.22em;
-        text-transform: uppercase;
-        color: var(--muted2);
-        line-height: 1;
-    }
-
-    .nav {
-        display: flex;
-        align-items: center;
-        margin-left: auto;
-    }
-
-    .nav-link {
-        position: relative;
-        display: flex;
-        align-items: center;
-        height: 68px;
-        padding: 0 22px;
-        font-size: 9.5px;
-        letter-spacing: 0.18em;
-        text-transform: uppercase;
-        color: var(--muted);
-        text-decoration: none;
-        transition: color 0.25s;
-        overflow: hidden;
-    }
-
-    .nav-link::after {
-        content: '';
-        position: absolute;
-        bottom: 0; left: 22px; right: 22px;
-        height: 1px;
-        background: var(--copper);
-        transform: scaleX(0);
-        transform-origin: left;
-        transition: transform 0.35s var(--ease);
-    }
-
-    .nav-link:hover { color: var(--ink); }
-    .nav-link:hover::after { transform: scaleX(1); }
-
-    .header-end {
-        display: flex;
-        align-items: center;
-        gap: 14px;
-        margin-left: 20px;
-        padding-left: 20px;
-        border-left: 1px solid var(--border);
-    }
-
-    .key-link {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 28px; height: 28px;
-        color: var(--muted2);
-        text-decoration: none;
-        transition: color 0.25s;
-    }
-    .key-link:hover { color: var(--mid); }
 
     /* ── HERO LAYOUT ─────────────────────────────── */
     .hero {
@@ -1054,12 +930,6 @@
     }
 
     @media (max-width: 680px) {
-        .header { height: 58px; padding: 0 16px; }
-        .brand-name { font-size: 17px; }
-        .brand-sub { display: none; }
-        .nav { display: none; }
-        .header-end { margin-left: auto; }
-
         .hero {
             padding: 70px 16px 36px;
             gap: 24px;

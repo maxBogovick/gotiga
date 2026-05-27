@@ -3,29 +3,24 @@
   import { fade } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import { page } from '$app/state';
-  import LangSwitcher from '$lib/components/LangSwitcher.svelte';
+  import SiteHeader from '$lib/components/SiteHeader.svelte';
 
   let { children } = $props();
 
   let key = $derived(page.url.pathname);
-
-  // hide the global switcher on admin (it has its own space) and home (it has a custom bar)
-  let hideSwitcher = $derived(
-    page.url.pathname === '/' || page.url.pathname.startsWith('/admin')
-  );
+  let showSiteHeader = $derived(!page.url.pathname.startsWith('/admin'));
+  let hasHeaderOffset = $derived(showSiteHeader && page.url.pathname !== '/');
 </script>
 
 <div class="min-h-screen bg-[#f8f1e7]">
-  <!-- Persistent language switcher — top-right, shown on all content pages -->
-  {#if !hideSwitcher}
-    <div class="fixed top-4 right-5 z-50">
-      <LangSwitcher />
-    </div>
+  {#if showSiteHeader}
+    <SiteHeader />
   {/if}
 
   {#key key}
     <main
       class="min-h-screen"
+      class:with-site-header={hasHeaderOffset}
       in:fade={{ duration: 600, delay: 300, easing: cubicOut }}
       out:fade={{ duration: 400, easing: cubicOut }}
     >
@@ -33,3 +28,15 @@
     </main>
   {/key}
 </div>
+
+<style>
+  .with-site-header {
+    padding-top: 68px;
+  }
+
+  @media (max-width: 680px) {
+    .with-site-header {
+      padding-top: 58px;
+    }
+  }
+</style>
