@@ -6,6 +6,7 @@
   import type { WorkshopItem } from '$lib/types/api';
   import { BackButton, LoadingScreen } from '$lib/components';
   import { t } from '$lib/i18n';
+  import AppImage from '$lib/components/AppImage.svelte';
 
   // State (Svelte 5 Runes)
   let items = $state<WorkshopItem[]>([]);
@@ -123,9 +124,8 @@
 
                 {#if item.imageUrl}
                   <div class="relative aspect-square overflow-hidden mb-4 bg-[#2f2117]">
-                    <img
+                    <AppImage
                             src={item.imageUrl}
-                            alt=""
                             class="w-full h-full object-cover opacity-60 grayscale group-hover:grayscale-0 group-hover:opacity-90 transition-all duration-1000"
                             loading="lazy"
                     />
@@ -163,7 +163,7 @@
               <div class="bg-[#fff9f0] p-4 shadow-[10px_10px_30px_rgba(111,59,36,0.14)] border border-[#d8c6b1] group-hover:border-[#34251c]/30 transition-colors duration-500">
                 {#if item.imageUrl}
                   <div class="relative aspect-square overflow-hidden mb-4 bg-[#2f2117]">
-                    <img src={item.imageUrl} alt="" class="w-full h-full object-cover opacity-60 grayscale group-hover:grayscale-0 group-hover:opacity-90 transition-all duration-1000" loading="lazy" />
+                    <AppImage src={item.imageUrl} class="w-full h-full object-cover opacity-60 grayscale group-hover:grayscale-0 group-hover:opacity-90 transition-all duration-1000" loading="lazy" />
                     <div class="absolute inset-0 shadow-[inset_0_0_40px_rgba(111,59,36,0.18)] pointer-events-none"></div>
                   </div>
                 {/if}

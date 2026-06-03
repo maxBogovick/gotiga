@@ -13,6 +13,7 @@ use uuid::Uuid;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use image::codecs::jpeg::JpegEncoder;
+use image::codecs::webp::WebPEncoder;
 use image::imageops::FilterType;
 
 fn detect_mime(bytes: &[u8], table: &str) -> &'static str {
@@ -67,28 +68,34 @@ fn replacement_subdir_for_target(path: &str) -> Option<&'static str> {
 
 async fn save_image_variants(upload_dir: &str, data: &[u8]) -> Result<serde_json::Value> {
     let id = Uuid::new_v4().to_string();
-    let original_relative = format!("images/original/{}.jpg", id);
-    let preview_relative = format!("images/preview/{}.jpg", id);
-    let thumb_relative = format!("images/thumb/{}.jpg", id);
+    let original_relative  = format!("images/original/{}.jpg",  id);
+    let preview_relative   = format!("images/preview/{}.jpg",   id);
+    let thumb_relative     = format!("images/thumb/{}.jpg",     id);
+    let preview_webp       = format!("images/preview/{}.webp",  id);
+    let thumb_webp         = format!("images/thumb/{}.webp",    id);
 
     let image = image::load_from_memory(data)
         .map_err(|e| AppError::BadRequest(format!("Invalid image file: {}", e)))?;
 
     let original = image.to_rgb8();
-    let preview = image.resize(1800, 1800, FilterType::Lanczos3).to_rgb8();
-    let thumb = image.resize(420, 420, FilterType::Lanczos3).to_rgb8();
+    let preview  = image.resize(1800, 1800, FilterType::Lanczos3).to_rgb8();
+    let thumb    = image.resize(420, 420, FilterType::Lanczos3).to_rgb8();
 
     write_jpeg(upload_dir, &original_relative, &original, 95).await?;
-    write_jpeg(upload_dir, &preview_relative, &preview, 86).await?;
-    write_jpeg(upload_dir, &thumb_relative, &thumb, 78).await?;
+    write_jpeg(upload_dir, &preview_relative,  &preview,  86).await?;
+    write_jpeg(upload_dir, &thumb_relative,    &thumb,    78).await?;
+    write_webp(upload_dir, &preview_webp,      &preview).await?;
+    write_webp(upload_dir, &thumb_webp,        &thumb).await?;
 
     Ok(serde_json::json!({
-        "url": public_static_url(&preview_relative),
-        "relativePath": preview_relative,
-        "originalUrl": public_static_url(&original_relative),
+        "url":                  public_static_url(&preview_relative),
+        "relativePath":         preview_relative,
+        "webpUrl":              public_static_url(&preview_webp),
+        "originalUrl":          public_static_url(&original_relative),
         "originalRelativePath": original_relative,
-        "thumbUrl": public_static_url(&thumb_relative),
-        "thumbRelativePath": thumb_relative
+        "thumbUrl":             public_static_url(&thumb_relative),
+        "thumbRelativePath":    thumb_relative,
+        "thumbWebpUrl":         public_static_url(&thumb_webp)
     }))
 }
 
@@ -108,6 +115,32 @@ async fn write_jpeg(
         let mut encoder = JpegEncoder::new_with_quality(&mut bytes, quality);
         encoder.encode_image(image)
             .map_err(|e| AppError::Internal(format!("Failed to encode image: {}", e)))?;
+    }
+
+    let mut file = fs::File::create(&path).await.map_err(AppError::Io)?;
+    file.write_all(&bytes).await.map_err(AppError::Io)?;
+    Ok(())
+}
+
+async fn write_webp(
+    upload_dir: &str,
+    relative_path: &str,
+    image: &image::RgbImage,
+) -> Result<()> {
+    let path = std::path::Path::new(upload_dir).join(relative_path);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).await.map_err(AppError::Io)?;
+    }
+
+    let mut bytes = Vec::new();
+    {
+        let encoder = WebPEncoder::new_lossless(&mut bytes);
+        encoder.encode(
+            image.as_raw(),
+            image.width(),
+            image.height(),
+            image::ExtendedColorType::Rgb8,
+        ).map_err(|e| AppError::Internal(format!("Failed to encode WebP: {}", e)))?;
     }
 
     let mut file = fs::File::create(&path).await.map_err(AppError::Io)?;

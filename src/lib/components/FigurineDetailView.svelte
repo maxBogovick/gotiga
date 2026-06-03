@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { fade } from 'svelte/transition';
   import type { Figurine } from '$lib/types/api';
   import OrderModal from '$lib/components/OrderModal.svelte';
@@ -65,7 +65,47 @@
     }, 100);
   }
 
-  onDestroy(() => { if (audioRef) { audioRef.pause(); audioRef = null; } });
+  // ── Share ────────────────────────────────────────────────────────────────
+  let copied = $state(false);
+  let copiedTimer: ReturnType<typeof setTimeout>;
+
+  async function share() {
+    const url = window.location.href;
+    if (navigator.share) {
+      await navigator.share({ title: figurine.name, text: figurine.shortText ?? figurine.name, url })
+        .catch(() => {});
+    } else {
+      await navigator.clipboard.writeText(url).catch(() => {});
+      copied = true;
+      clearTimeout(copiedTimer);
+      copiedTimer = setTimeout(() => { copied = false; }, 2200);
+    }
+  }
+
+  // ── Keyboard gallery navigation ───────────────────────────────────────────
+  function handleKeydown(e: KeyboardEvent) {
+    if (showLightbox || showOrderModal) return;
+    if (e.key === 'ArrowLeft')  selectImage(Math.max(0, selectedImageIndex - 1));
+    if (e.key === 'ArrowRight') selectImage(Math.min(sortedImages.length - 1, selectedImageIndex + 1));
+  }
+
+  // ── Sticky condensed nav ──────────────────────────────────────────────────
+  let scrollY = $state(0);
+  let scrolled = $derived(scrollY > 80);
+
+  function onScroll() { scrollY = window.scrollY; }
+
+  onMount(() => {
+    window.addEventListener('keydown', handleKeydown);
+    window.addEventListener('scroll', onScroll, { passive: true });
+  });
+
+  onDestroy(() => {
+    window.removeEventListener('keydown', handleKeydown);
+    window.removeEventListener('scroll', onScroll);
+    clearTimeout(copiedTimer);
+    if (audioRef) { audioRef.pause(); audioRef = null; }
+  });
 </script>
 
 {#if figurine.ambiencePath}
@@ -92,34 +132,62 @@
   <div class="page-container">
 
     <!-- ── NAV ── -->
-    <nav class="topnav" in:fade={{ duration: 600 }}>
-      <a href="/figurines" class="nav-link back-link">
+    <nav class="topnav" class:topnav--scrolled={scrolled} in:fade={{ duration: 600 }}>
+
+      <!-- Left: back -->
+      <a href="/figurines" class="nav-link back-link" aria-label={$t('figurineBackToArchive')}>
         <svg class="back-arrow" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
           <path d="M10 3L5 8l5 5"/>
         </svg>
-        {$t('figurineBackToArchive')}
+        <span class="back-label">{$t('figurineBackToArchive')}</span>
       </a>
 
+      <!-- Center: figurine name (visible only when scrolled) -->
+      <span class="topnav-title" aria-hidden="true">{figurine.name}</span>
+
+      <!-- Right: controls -->
       <div class="topnav-controls">
         <button
           onclick={toggleCandle}
           class="control-btn {isCandleLit ? 'control-btn--lit' : ''}"
-          aria-label={$t('figurineCandle')}
+          aria-label={isCandleLit ? $t('figurineExtinguish') : $t('figurineCandle')}
+          title={isCandleLit ? $t('figurineExtinguish') : $t('figurineCandle')}
         >
           <span class="control-icon">{isCandleLit ? '🔥' : '🕯️'}</span>
-          {isCandleLit ? $t('figurineExtinguish') : $t('figurineCandle')}
+          <span class="btn-label">{isCandleLit ? $t('figurineExtinguish') : $t('figurineCandle')}</span>
         </button>
 
         {#if figurine.ambiencePath}
           <button
             onclick={toggleAudio}
             class="control-btn {isAudioPlaying ? 'control-btn--active' : ''}"
-            aria-label={$t('figurineWhisper')}
+            aria-label={isAudioPlaying ? $t('figurineSilence') : $t('figurineWhisper')}
+            title={isAudioPlaying ? $t('figurineSilence') : $t('figurineWhisper')}
           >
             <span class="audio-indicator {isAudioPlaying ? 'audio-indicator--on' : ''}"></span>
-            {isAudioPlaying ? $t('figurineSilence') : $t('figurineWhisper')}
+            <span class="btn-label">{isAudioPlaying ? $t('figurineSilence') : $t('figurineWhisper')}</span>
           </button>
         {/if}
+
+        <button
+          onclick={share}
+          class="control-btn {copied ? 'control-btn--active' : ''}"
+          aria-label={$t('figurineShare')}
+          title={$t('figurineShare')}
+        >
+          {#if copied}
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M2 6l3 3 5-5"/>
+            </svg>
+            <span class="btn-label">{$t('figurineCopied')}</span>
+          {:else}
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M9 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM3 4.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM9 7.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z"/>
+              <path d="M7.5 2.7l-3 1.8M7.5 9.3l-3-1.8"/>
+            </svg>
+            <span class="btn-label">{$t('figurineShare')}</span>
+          {/if}
+        </button>
 
         <span class="ref-tag">ARC-{id.toUpperCase()}</span>
       </div>
@@ -136,7 +204,7 @@
           <span class="corner-bl"></span>
           <span class="corner-br"></span>
 
-          <div class="image-stage">
+          <div class="image-stage" style="view-transition-name: figurine-{id}">
             {#key currentImage?.id}
               <div class="image-layer" in:fade={{ duration: 450 }}>
                 <BrassLens src={currentImage?.url} alt={figurine.name} class="w-full h-full" />
@@ -281,12 +349,30 @@
     <!-- ── GRIMOIRE ── -->
     {#if figurine.processSteps && figurine.processSteps.length > 0}
       <div class="grimoire-section">
-        <button onclick={toggleGrimoire} class="grimoire-trigger">
-          <span class="grimoire-name">
-            {$t('figurineGrimoire')}
-            <span class="grimoire-dot"></span>
+
+        <button onclick={toggleGrimoire} class="grimoire-trigger" aria-expanded={isGrimoireOpen}>
+          <span class="grimoire-icon" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+              <ellipse cx="11" cy="11" rx="9" ry="5.5" stroke="currentColor" stroke-width="1.2"/>
+              <circle cx="11" cy="11" r="2.5" fill="currentColor" opacity="0.7"/>
+              <circle cx="11" cy="11" r="1" fill="currentColor"/>
+            </svg>
           </span>
-          <span class="grimoire-stem"></span>
+
+          <span class="grimoire-body">
+            <span class="grimoire-title">
+              {$t('figurineGrimoire')}
+              <span class="grimoire-dot"></span>
+            </span>
+            <span class="grimoire-sub">{figurine.processSteps.length} этапов · провести пальцем чтобы открыть прошлое</span>
+          </span>
+
+          <span class="grimoire-arrow" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+              style="transform: rotate({isGrimoireOpen ? '90deg' : '0deg'}); transition: transform 0.3s ease">
+              <path d="M3 8h10M9 4l4 4-4 4"/>
+            </svg>
+          </span>
         </button>
 
         <MemoryMirror
@@ -398,14 +484,71 @@
 
   /* ── Top nav ── */
   .topnav {
-    display: flex;
+    position: sticky;
+    top: 68px;          /* высота SiteHeader */
+    z-index: 40;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
     align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
     gap: 0.75rem;
     margin-bottom: 3rem;
+    padding: 0.6rem 0;
+    /* плавный переход всех свойств */
+    transition:
+      background var(--duration-default) var(--ease-atelier),
+      border-color var(--duration-default) var(--ease-atelier),
+      padding var(--duration-default) var(--ease-atelier),
+      box-shadow var(--duration-default) var(--ease-atelier);
   }
 
+  /* condensed state — появляется при прокрутке */
+  .topnav--scrolled {
+    background: rgba(250, 246, 238, 0.90);
+    backdrop-filter: blur(18px) saturate(1.4);
+    -webkit-backdrop-filter: blur(18px) saturate(1.4);
+    border-bottom: 1px solid var(--color-border-subtle);
+    box-shadow: 0 1px 12px rgba(60, 25, 10, 0.06);
+    padding: 0.5rem 1.5rem;
+    /* выезжает за padding page-container чтобы растянуться на всю ширину */
+    margin-left: -1.5rem;
+    margin-right: -1.5rem;
+  }
+  @media (min-width: 1024px) {
+    .topnav--scrolled {
+      margin-left: -3.5rem;
+      margin-right: -3.5rem;
+      padding-left: 3.5rem;
+      padding-right: 3.5rem;
+    }
+  }
+  @media (max-width: 680px) {
+    .topnav { top: 58px; }   /* высота мобильного SiteHeader */
+  }
+
+  /* ── Центральный заголовок ── */
+  .topnav-title {
+    font-family: var(--font-display);
+    font-size: 0.875rem;
+    font-weight: 400;
+    letter-spacing: 0.01em;
+    color: var(--color-ink-primary);
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    opacity: 0;
+    transform: translateY(5px);
+    transition:
+      opacity 0.28s var(--ease-atelier),
+      transform 0.28s var(--ease-atelier);
+    pointer-events: none;
+  }
+  .topnav--scrolled .topnav-title {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  /* ── Back link ── */
   .back-link {
     display: inline-flex;
     align-items: center;
@@ -416,21 +559,39 @@
     letter-spacing: 0.09em;
     text-transform: uppercase;
     color: var(--color-ink-tertiary);
-    transition: color var(--duration-default) var(--ease-atelier), gap var(--duration-default) var(--ease-atelier);
+    transition:
+      color var(--duration-default) var(--ease-atelier),
+      gap var(--duration-default) var(--ease-atelier);
     padding: 0.25rem 0;
+    justify-self: start;
   }
   .back-link:hover { color: var(--color-ink-primary); gap: 0.6rem; }
 
   .back-arrow {
+    flex-shrink: 0;
     transition: transform var(--duration-default) var(--ease-atelier);
   }
   .back-link:hover .back-arrow { transform: translateX(-3px); }
 
+  /* текст "ВЕРНУТЬСЯ В АРХИВ" — скрываем в condensed */
+  .back-label {
+    transition: opacity 0.22s var(--ease-atelier), max-width 0.22s var(--ease-atelier);
+    max-width: 200px;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .topnav--scrolled .back-label {
+    opacity: 0;
+    max-width: 0;
+  }
+
+  /* ── Controls ── */
   .topnav-controls {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
+    gap: 0.4rem;
+    justify-self: end;
+    flex-wrap: nowrap;
   }
 
   .control-btn {
@@ -448,6 +609,7 @@
     border: 1px solid var(--color-border-subtle);
     border-radius: 100px;
     cursor: pointer;
+    white-space: nowrap;
     transition: all var(--duration-default) var(--ease-atelier);
   }
   .control-btn:hover {
@@ -467,7 +629,23 @@
     background: var(--color-ember-subtle);
   }
 
-  .control-icon { font-size: 0.85rem; line-height: 1; }
+  /* текстовые лейблы кнопок — скрываются в condensed */
+  .btn-label {
+    transition: opacity 0.22s var(--ease-atelier), max-width 0.22s var(--ease-atelier);
+    max-width: 120px;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .topnav--scrolled .btn-label {
+    opacity: 0;
+    max-width: 0;
+  }
+  /* в condensed кнопки становятся компактными */
+  .topnav--scrolled .control-btn {
+    padding: 0.3rem 0.5rem;
+  }
+
+  .control-icon { font-size: 0.85rem; line-height: 1; flex-shrink: 0; }
 
   .audio-indicator {
     width: 0.5rem;
@@ -500,6 +678,7 @@
     border: 1px solid var(--color-border-subtle);
     border-radius: 100px;
     padding: 0.28rem 0.75rem;
+    flex-shrink: 0;
   }
 
   /* ── Main 2-col grid ── */
@@ -511,7 +690,8 @@
   }
   @media (min-width: 1024px) {
     .main-grid { grid-template-columns: 7fr 5fr; gap: 4.5rem; }
-    .gallery-col { position: sticky; top: 2rem; }
+    /* 68px SiteHeader + ~46px topnav + 1rem зазор */
+    .gallery-col { position: sticky; top: calc(68px + 46px + 1rem); }
   }
 
   /* ── Image frame ── */
@@ -956,55 +1136,111 @@
 
   /* ── Grimoire ── */
   .grimoire-section {
-    border-top: 1px solid var(--color-border-subtle);
-    padding-top: 3.5rem;
-    margin-bottom: 1.5rem;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
+    margin: 4rem 0 3rem;
   }
 
   .grimoire-trigger {
+    width: 100%;
     display: flex;
-    flex-direction: column;
     align-items: center;
-    gap: 0.75rem;
-    background: none;
-    border: none;
+    gap: 1.25rem;
+    padding: 1.25rem 1.5rem;
+    background: linear-gradient(135deg, var(--color-ember-subtle) 0%, rgba(251,240,212,0.45) 100%);
+    border: 1px solid rgba(192,88,44,0.22);
+    border-radius: 8px;
     cursor: pointer;
-    padding: 0;
+    text-align: left;
+    transition:
+      border-color var(--duration-default) var(--ease-atelier),
+      box-shadow var(--duration-default) var(--ease-atelier),
+      background var(--duration-default) var(--ease-atelier),
+      transform var(--duration-default) var(--ease-atelier);
+    position: relative;
+    overflow: hidden;
   }
 
-  .grimoire-name {
+  /* subtle shimmer sweep on hover */
+  .grimoire-trigger::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(105deg, transparent 40%, rgba(255,255,255,0.18) 50%, transparent 60%);
+    transform: translateX(-100%);
+    transition: transform 0.55s var(--ease-atelier);
+  }
+  .grimoire-trigger:hover::before { transform: translateX(100%); }
+
+  .grimoire-trigger:hover {
+    border-color: rgba(192,88,44,0.44);
+    box-shadow: 0 4px 24px rgba(192,88,44,0.12), 0 1px 0 rgba(255,255,255,0.7) inset;
+    transform: translateY(-1px);
+  }
+
+  .grimoire-trigger:active { transform: translateY(0); }
+
+  .grimoire-icon {
+    flex-shrink: 0;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: rgba(192,88,44,0.10);
+    border: 1px solid rgba(192,88,44,0.20);
+    color: var(--color-ember);
+    transition: background var(--duration-default) var(--ease-atelier);
+  }
+  .grimoire-trigger:hover .grimoire-icon {
+    background: rgba(192,88,44,0.16);
+  }
+
+  .grimoire-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .grimoire-title {
     position: relative;
+    display: inline-block;
     font-family: var(--font-display);
-    font-size: 1.4rem;
-    font-weight: 300;
+    font-size: 1.1rem;
+    font-weight: 400;
     letter-spacing: -0.01em;
     color: var(--color-ink-primary);
-    opacity: 0.65;
+    line-height: 1.2;
+  }
+
+  .grimoire-sub {
+    font-family: var(--font-body);
+    font-size: 0.6875rem;
+    font-weight: 400;
+    letter-spacing: 0.04em;
+    color: var(--color-ink-tertiary);
+    line-height: 1.4;
+  }
+
+  .grimoire-arrow {
+    flex-shrink: 0;
+    color: var(--color-ember);
+    opacity: 0.7;
     transition: opacity var(--duration-default) var(--ease-atelier);
   }
-  .grimoire-trigger:hover .grimoire-name { opacity: 1; }
+  .grimoire-trigger:hover .grimoire-arrow { opacity: 1; }
 
   .grimoire-dot {
     position: absolute;
-    top: -0.15rem;
-    right: -0.6rem;
-    width: 0.4rem;
-    height: 0.4rem;
+    top: -0.1rem;
+    right: -0.55rem;
+    width: 0.35rem;
+    height: 0.35rem;
     border-radius: 50%;
     background: var(--color-ember);
-    animation: audioPing 1.2s cubic-bezier(0,0,.2,1) infinite;
+    animation: audioPing 1.4s cubic-bezier(0,0,.2,1) infinite;
   }
-
-  .grimoire-stem {
-    width: 1px;
-    height: 3.5rem;
-    background: linear-gradient(to bottom, var(--color-border-default), transparent);
-    transition: height var(--duration-slow) var(--ease-atelier);
-  }
-  .grimoire-trigger:hover .grimoire-stem { height: 5rem; }
 
   /* ── Video section ── */
   .video-section { margin-top: 5rem; }

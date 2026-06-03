@@ -75,6 +75,8 @@ export const ru: Record<TranslationKey, string> = {
   figurineWhisper:     'Шёпот',
   figurineSilence:     'Тишина',
   figurineFullscreen:  'Полный экран',
+  figurineShare:       'Поделиться',
+  figurineCopied:      'Ссылка скопирована',
   figurineShowView:    'Показать вид',
   figurineOpenEnlarged:'Открыть увеличенно',
   figurineStatusAvailable: 'В наличии',

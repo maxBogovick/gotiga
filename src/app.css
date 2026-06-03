@@ -1201,6 +1201,42 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   VIEW TRANSITIONS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Root cross-fade: old page slides up + fades, new page slides in from below */
+@keyframes vt-out {
+  to { opacity: 0; transform: translateY(-6px); }
+}
+@keyframes vt-in {
+  from { opacity: 0; transform: translateY(10px); }
+}
+
+::view-transition-old(root) {
+  animation: 260ms var(--ease-atelier) both vt-out;
+}
+
+::view-transition-new(root) {
+  animation: 380ms var(--ease-atelier) 80ms both vt-in;
+}
+
+/*
+  Shared figurine image element.
+  The browser handles the FLIP morph automatically when both pages
+  have an element with the same view-transition-name.
+  We only override timing here; geometry is computed by the browser.
+*/
+::view-transition-image-pair(figurine-hero) {
+  isolation: isolate;
+}
+
+::view-transition-old(figurine-hero),
+::view-transition-new(figurine-hero) {
+  animation-duration: 480ms;
+  animation-timing-function: var(--ease-atelier);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    REDUCED MOTION
    ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -1213,5 +1249,12 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+
+  ::view-transition-old(root),
+  ::view-transition-new(root),
+  ::view-transition-old(figurine-hero),
+  ::view-transition-new(figurine-hero) {
+    animation: none !important;
   }
 }

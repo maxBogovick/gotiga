@@ -1,15 +1,24 @@
 <script lang="ts">
   import '../app.css';
-  import { fade } from 'svelte/transition';
-  import { cubicOut } from 'svelte/easing';
+  import { onNavigate } from '$app/navigation';
   import { page } from '$app/state';
   import SiteHeader from '$lib/components/SiteHeader.svelte';
 
   let { children } = $props();
 
-  let key = $derived(page.url.pathname);
   let showSiteHeader = $derived(!page.url.pathname.startsWith('/admin'));
   let hasHeaderOffset = $derived(showSiteHeader && page.url.pathname !== '/');
+
+  onNavigate((navigation) => {
+    if (!('startViewTransition' in document)) return;
+    return new Promise<void>((resolve) => {
+      (document as Document & { startViewTransition(cb: () => Promise<void>): void })
+        .startViewTransition(async () => {
+          resolve();
+          await navigation.complete;
+        });
+    });
+  });
 </script>
 
 <div class="min-h-screen bg-[#f8f1e7]">
@@ -17,16 +26,9 @@
     <SiteHeader />
   {/if}
 
-  {#key key}
-    <main
-      class="min-h-screen"
-      class:with-site-header={hasHeaderOffset}
-      in:fade={{ duration: 600, delay: 300, easing: cubicOut }}
-      out:fade={{ duration: 400, easing: cubicOut }}
-    >
-      {@render children()}
-    </main>
-  {/key}
+  <main class="min-h-screen" class:with-site-header={hasHeaderOffset}>
+    {@render children()}
+  </main>
 </div>
 
 <style>

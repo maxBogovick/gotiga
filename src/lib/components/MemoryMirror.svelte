@@ -18,236 +18,511 @@
   let canvas = $state<HTMLCanvasElement | null>(null);
   let ctx: CanvasRenderingContext2D | null;
   let container = $state<HTMLDivElement | null>(null);
-  
-  // Dimensions
-  let width = $state(0);
+
+  let width  = $state(0);
   let height = $state(0);
-  
+
   let loadedFinalImage: HTMLImageElement | null = null;
   let currentStepIndex = $state(0);
   let restoreInterval: ReturnType<typeof setInterval>;
   let isDrawing = false;
 
-  // 1. Load Image
+  // ── Image loading ──────────────────────────────────────────────────────────
   $effect(() => {
-      if (isOpen && finalImage) {
-          const img = new Image();
-          img.crossOrigin = "Anonymous";
-          img.src = finalImage;
-          img.onload = () => {
-              loadedFinalImage = img;
-              // Force draw immediately after load
-              drawFullState(true);
-          };
-      }
+    if (isOpen && finalImage) {
+      const img = new Image();
+      img.crossOrigin = 'Anonymous';
+      img.src = finalImage;
+      img.onload = () => { loadedFinalImage = img; drawFullState(true); };
+    }
   });
 
-  // 2. Handle Resize / Init
   $effect(() => {
-      if (isOpen && width > 0 && height > 0 && canvas) {
-          canvas.width = width;
-          canvas.height = height;
-          ctx = canvas.getContext('2d');
-          
-          if (loadedFinalImage) {
-              drawFullState(true);
-          } else {
-              // Placeholder while loading
-              if (ctx) {
-                  ctx.fillStyle = '#fff9f0';
-                  ctx.fillRect(0, 0, width, height);
-              }
-          }
+    if (isOpen && width > 0 && height > 0 && canvas) {
+      canvas.width  = width;
+      canvas.height = height;
+      ctx = canvas.getContext('2d');
+      if (loadedFinalImage) {
+        drawFullState(true);
+      } else if (ctx) {
+        ctx.fillStyle = '#fff9f0';
+        ctx.fillRect(0, 0, width, height);
       }
+    }
   });
 
   function drawFullState(reset = false) {
-      if (!ctx || !loadedFinalImage) return;
-
-      if (!canvas) return;
-      const cw = canvas.width;
-      const ch = canvas.height;
-      const iw = loadedFinalImage.width;
-      const ih = loadedFinalImage.height;
-      const scale = Math.max(cw / iw, ch / ih);
-      const x = (cw - iw * scale) / 2;
-      const y = (ch - ih * scale) / 2;
-      
-      ctx.globalCompositeOperation = 'source-over';
-      
-      if (reset) {
-          // Draw Opaque Final Image (The Mirror Reflection)
-          // We add a slight blur to simulate "The Mirror Surface"
-          ctx.filter = 'blur(2px) contrast(1.1)'; 
-          ctx.globalAlpha = 1.0; 
-          ctx.drawImage(loadedFinalImage, x, y, iw * scale, ih * scale);
-          
-          // Add "Steam" Tint
-          ctx.fillStyle = "rgba(200, 220, 230, 0.1)";
-          ctx.fillRect(0,0, cw, ch);
-          ctx.filter = 'none';
-      } else {
-          // Restoration (Fogging up again)
-          ctx.globalAlpha = 0.03; // Speed of restoration
-          ctx.filter = 'blur(4px)';
-          ctx.drawImage(loadedFinalImage, x, y, iw * scale, ih * scale);
-          ctx.filter = 'none';
-          ctx.globalAlpha = 1.0;
-      }
+    if (!ctx || !loadedFinalImage || !canvas) return;
+    const cw = canvas.width, ch = canvas.height;
+    const iw = loadedFinalImage.width, ih = loadedFinalImage.height;
+    const scale = Math.max(cw / iw, ch / ih);
+    const x = (cw - iw * scale) / 2;
+    const y = (ch - ih * scale) / 2;
+    ctx.globalCompositeOperation = 'source-over';
+    if (reset) {
+      ctx.filter = 'blur(2px) contrast(1.1)';
+      ctx.globalAlpha = 1.0;
+      ctx.drawImage(loadedFinalImage, x, y, iw * scale, ih * scale);
+      ctx.fillStyle = 'rgba(200,220,230,0.08)';
+      ctx.fillRect(0, 0, cw, ch);
+      ctx.filter = 'none';
+    } else {
+      ctx.globalAlpha = 0.03;
+      ctx.filter = 'blur(4px)';
+      ctx.drawImage(loadedFinalImage, x, y, iw * scale, ih * scale);
+      ctx.filter = 'none';
+      ctx.globalAlpha = 1.0;
+    }
   }
 
   function restoreFog() {
-      if (isOpen && !isDrawing) {
-          drawFullState(false);
-      }
+    if (isOpen && !isDrawing) drawFullState(false);
   }
 
-  // Input Handling
+  // ── Pointer handling ───────────────────────────────────────────────────────
   function getPos(e: MouseEvent | TouchEvent) {
-      if (!canvas) return { x: 0, y: 0 };
-      const rect = canvas.getBoundingClientRect();
-      let cx, cy;
-      if (e instanceof MouseEvent) {
-          cx = e.clientX;
-          cy = e.clientY;
-      } else {
-          cx = e.touches[0].clientX;
-          cy = e.touches[0].clientY;
-      }
-      return { x: cx - rect.left, y: cy - rect.top };
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    if (e instanceof MouseEvent) {
+      return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    }
+    return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
   }
 
-  function startDraw(e: MouseEvent | TouchEvent) {
-      isDrawing = true;
-      draw(e);
-  }
-
-  function stopDraw() {
-      isDrawing = false;
-      ctx?.beginPath();
-  }
+  function startDraw(e: MouseEvent | TouchEvent) { isDrawing = true; draw(e); }
+  function stopDraw() { isDrawing = false; ctx?.beginPath(); }
 
   function draw(e: MouseEvent | TouchEvent) {
-      if (!isDrawing || !ctx) return;
-      // Prevent scroll on touch
-      if (window.TouchEvent && e instanceof TouchEvent) e.preventDefault();
+    if (!isDrawing || !ctx) return;
+    if (window.TouchEvent && e instanceof TouchEvent) e.preventDefault();
+    const { x, y } = getPos(e);
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.beginPath();
+    ctx.arc(x, y, 52, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalCompositeOperation = 'source-over';
+  }
 
-      const { x, y } = getPos(e);
-      
-      // Erase Top Layer to reveal Bottom Layer
-      ctx.globalCompositeOperation = 'destination-out';
-      ctx.beginPath();
-      ctx.arc(x, y, 50, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.globalCompositeOperation = 'source-over';
+  // ── Keyboard ───────────────────────────────────────────────────────────────
+  function handleKey(e: KeyboardEvent) {
+    if (!isOpen) return;
+    if (e.key === 'Escape') onClose();
+    if (e.key === 'ArrowRight') currentStepIndex = Math.min(steps.length - 1, currentStepIndex + 1);
+    if (e.key === 'ArrowLeft')  currentStepIndex = Math.max(0, currentStepIndex - 1);
   }
 
   onMount(() => {
-      restoreInterval = setInterval(restoreFog, 80);
+    restoreInterval = setInterval(restoreFog, 80);
+    window.addEventListener('keydown', handleKey);
   });
 
   onDestroy(() => {
-      if (typeof window !== 'undefined') clearInterval(restoreInterval);
+    clearInterval(restoreInterval);
+    window.removeEventListener('keydown', handleKey);
   });
+
+  let currentStep = $derived(steps[currentStepIndex]);
+  let stepLabel = $derived(
+    currentStep?.stepType === 'sketch'    ? $t('figurineStepSketch')    :
+    currentStep?.stepType === 'prototype' ? $t('figurineStepPrototype') :
+    currentStep?.stepType === 'modeling'  ? $t('figurineStepModeling')  :
+    currentStep?.stepType === 'painting'  ? $t('figurineStepPainting')  :
+    $t('figurineStepFinish')
+  );
 </script>
 
 {#if isOpen}
-  <div 
-    class="fixed inset-0 z-[80] bg-[#f8f1e7]/95 backdrop-blur-md flex flex-col items-center justify-center p-4"
-    transition:fade={{ duration: 800 }}
+  <div
+    class="mirror-overlay"
+    transition:fade={{ duration: 600 }}
+    role="dialog"
+    aria-modal="true"
+    aria-label={$t('mirrorTitle')}
   >
-    <div class="absolute top-8 text-center pointer-events-none z-10">
-        <h2 class="font-['Fraunces'] text-4xl text-[#34251c] opacity-80 mb-2">{$t('mirrorTitle')}</h2>
-        <p class="font-['Inter'] text-xs text-[#5f4636] tracking-[0.08em] uppercase">
-            {$t('mirrorHint')}
-        </p>
-    </div>
+    <!-- ── HEADER ──────────────────────────────────────────────────────────── -->
+    <header class="mirror-header">
+      <div class="mirror-header-left">
+        <span class="mirror-eyebrow">{$t('mirrorTitle')}</span>
+        {#if currentStep}
+          <span class="mirror-step-name">{stepLabel}</span>
+        {/if}
+      </div>
 
-    <!-- CONTAINER -->
-    <div 
+      <p class="mirror-hint">{$t('mirrorHint')}</p>
+
+      <button class="mirror-close" onclick={onClose} aria-label={$t('figurineGrimoireClose')}>
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M1 1l12 12M13 1L1 13"/>
+        </svg>
+        <span>{$t('figurineGrimoireClose')}</span>
+      </button>
+    </header>
+
+    <!-- ── CANVAS STAGE ────────────────────────────────────────────────────── -->
+    <div class="mirror-stage">
+      <div
         bind:clientWidth={width}
         bind:clientHeight={height}
         bind:this={container}
-        class="relative w-full max-w-4xl aspect-[4/3] bg-[#fff9f0] shadow-[0_0_100px_rgba(111,59,36,0.18)] border border-[#d8c6b1] rounded-sm overflow-hidden select-none"
-    >
-        <!-- LAYER 1 (BOTTOM): THE PAST (Sketch) -->
-        <!-- This is what appears when you wipe -->
+        class="mirror-canvas-wrap"
+      >
+        <!-- Layer 1: past image (revealed by wiping) -->
         {#key currentStepIndex}
-            <div 
-                class="absolute inset-0 flex items-center justify-center bg-[#F5F1E6]"
-                transition:fade={{ duration: 500 }}
-            >
-                {#if steps[currentStepIndex]}
-                    <img 
-                        src={steps[currentStepIndex].imageUrl} 
-                        alt="Past Step" 
-                        class="w-full h-full object-cover sepia-[0.6] contrast-[0.9] opacity-90"
-                    />
-                    <!-- Overlay Note -->
-                    <div class="absolute bottom-8 left-0 right-0 text-center pointer-events-none">
-                        <span class="bg-[#6f3b24]/25 backdrop-blur-sm px-6 py-2 font-['Georgia'] text-2xl text-[#34251c] italic rounded-full border border-[#34251c]/20">
-                             {steps[currentStepIndex].description}
-                        </span>
-                    </div>
-                {/if}
-                <!-- Texture (subtle grain) -->
-                <div class="absolute inset-0 paper-texture"></div>
-            </div>
+          <div class="mirror-past" transition:fade={{ duration: 400 }}>
+            {#if currentStep}
+              <img
+                src={currentStep.imageUrl}
+                alt=""
+                class="mirror-past-img"
+              />
+              {#if currentStep.description}
+                <div class="mirror-caption">
+                  <span class="mirror-caption-text">{currentStep.description}</span>
+                </div>
+              {/if}
+            {/if}
+            <div class="paper-texture"></div>
+          </div>
         {/key}
 
-        <!-- LAYER 2 (TOP): THE PRESENT (Canvas) -->
-        <!-- This covers the past. We erase it. -->
+        <!-- Layer 2: fog canvas -->
         <canvas
-            bind:this={canvas}
-            class="absolute inset-0 w-full h-full cursor-crosshair touch-none"
-            onmousedown={startDraw}
-            onmouseup={stopDraw}
-            onmouseleave={stopDraw}
-            onmousemove={draw}
-            ontouchstart={startDraw}
-            ontouchend={stopDraw}
-            ontouchmove={draw}
+          bind:this={canvas}
+          class="mirror-canvas"
+          onmousedown={startDraw}
+          onmouseup={stopDraw}
+          onmouseleave={stopDraw}
+          onmousemove={draw}
+          ontouchstart={startDraw}
+          ontouchend={stopDraw}
+          ontouchmove={draw}
         ></canvas>
 
-        <!-- DECORATIONS -->
-        <div class="absolute inset-0 pointer-events-none border-[1px] border-[#34251c]/10 m-4"></div>
-        <div class="absolute inset-0 pointer-events-none shadow-[inset_0_0_150px_rgba(111,59,36,0.20)]"></div>
-
+        <!-- Decorative vignette -->
+        <div class="mirror-vignette" aria-hidden="true"></div>
+        <div class="mirror-border" aria-hidden="true"></div>
+      </div>
     </div>
 
-    <!-- CONTROLS -->
-    <div class="mt-8 flex gap-4 z-50">
+    <!-- ── STEP FILMSTRIP ──────────────────────────────────────────────────── -->
+    {#if steps.length > 1}
+      <nav class="mirror-filmstrip" aria-label="Steps">
         {#each steps as step, i}
-            <button
-                class="group flex flex-col items-center gap-2 transition-all duration-300 {currentStepIndex === i ? 'opacity-100 scale-110' : 'opacity-70 hover:opacity-80'}"
-                onclick={() => currentStepIndex = i}
-            >
-                <div class="w-12 h-12 rounded-full border border-[#5f4636] overflow-hidden relative shadow-lg bg-[#2f2117]">
-                    <img src={step.imageUrl} alt="" class="w-full h-full object-cover grayscale" />
-                    {#if currentStepIndex === i}
-                        <div class="absolute inset-0 border-2 border-[#34251c] rounded-full"></div>
-                    {/if}
-                </div>
-                <span class="font-['Inter'] text-[10px] uppercase tracking-wide text-[#5f4636]">{step.stepType}</span>
-            </button>
+          <button
+            class="film-frame {i === currentStepIndex ? 'film-frame--active' : ''}"
+            onclick={() => currentStepIndex = i}
+            aria-label="Step {i + 1}"
+            aria-current={i === currentStepIndex ? 'step' : undefined}
+          >
+            <div class="film-thumb">
+              <img src={step.imageUrl} alt="" class="film-img" />
+              <div class="film-overlay"></div>
+            </div>
+            <span class="film-label">
+              {step.stepType === 'sketch'    ? $t('figurineStepSketch')    :
+               step.stepType === 'prototype' ? $t('figurineStepPrototype') :
+               step.stepType === 'modeling'  ? $t('figurineStepModeling')  :
+               step.stepType === 'painting'  ? $t('figurineStepPainting')  :
+               $t('figurineStepFinish')}
+            </span>
+            {#if i < steps.length - 1}
+              <span class="film-connector" aria-hidden="true"></span>
+            {/if}
+          </button>
         {/each}
-    </div>
-
-    <!-- Close -->
-    <button 
-        onclick={onClose}
-        class="absolute top-8 right-8 text-[#5f4636] hover:text-[#34251c] transition-colors font-['Fraunces'] text-3xl z-50"
-    >
-        ✕
-    </button>
+      </nav>
+    {/if}
   </div>
 {/if}
 
 <style>
+  /* ── Overlay ── */
+  .mirror-overlay {
+    position: fixed;
+    inset: 0;
+    /* выше SiteHeader (z: 200) */
+    z-index: 220;
+    display: flex;
+    flex-direction: column;
+    background: rgba(248, 241, 231, 0.97);
+    backdrop-filter: blur(12px) saturate(1.2);
+    -webkit-backdrop-filter: blur(12px) saturate(1.2);
+  }
+
+  /* ── Header ── */
+  .mirror-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0 2rem;
+    height: 60px;
+    flex-shrink: 0;
+    border-bottom: 1px solid rgba(180, 140, 100, 0.18);
+    background: rgba(253, 250, 245, 0.80);
+  }
+
+  .mirror-header-left {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    min-width: 0;
+  }
+
+  .mirror-eyebrow {
+    font-family: var(--font-display);
+    font-size: 1rem;
+    font-weight: 400;
+    letter-spacing: -0.01em;
+    color: var(--color-ink-primary);
+    white-space: nowrap;
+  }
+
+  .mirror-step-name {
+    font-family: var(--font-body);
+    font-size: 0.6875rem;
+    font-weight: 500;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--color-ember);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .mirror-hint {
+    font-family: var(--font-body);
+    font-size: 0.6875rem;
+    font-weight: 400;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-ink-muted);
+    flex: 1;
+    text-align: center;
+    display: none;
+  }
+  @media (min-width: 640px) { .mirror-hint { display: block; } }
+
+  /* ── Кнопка закрытия — намеренно крупная и очевидная ── */
+  .mirror-close {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.45rem 1rem;
+    font-family: var(--font-body);
+    font-size: 0.6875rem;
+    font-weight: 500;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--color-ink-secondary);
+    background: transparent;
+    border: 1px solid var(--color-border-default);
+    border-radius: 100px;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: all var(--duration-default) var(--ease-atelier);
+  }
+  .mirror-close:hover {
+    color: var(--color-ink-primary);
+    background: var(--color-canvas-raised);
+    border-color: var(--color-border-strong);
+    box-shadow: 0 2px 8px rgba(60,25,10,0.08);
+  }
+  .mirror-close:focus-visible {
+    outline: 2px solid var(--color-ember);
+    outline-offset: 3px;
+  }
+
+  /* ── Canvas stage ── */
+  .mirror-stage {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem 2rem;
+  }
+
+  .mirror-canvas-wrap {
+    position: relative;
+    width: 100%;
+    max-width: 860px;
+    height: 100%;
+    max-height: 520px;
+    aspect-ratio: 4/3;
+    background: var(--color-canvas-raised);
+    border: 1px solid rgba(180,140,100,0.22);
+    box-shadow:
+      0 0 0 1px rgba(255,249,240,0.6) inset,
+      0 8px 60px rgba(111,59,36,0.14),
+      0 0 120px rgba(111,59,36,0.08);
+    overflow: hidden;
+    select-none: none;
+  }
+
+  .mirror-past {
+    position: absolute;
+    inset: 0;
+    background: #f0ebe0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .mirror-past-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    filter: sepia(0.55) contrast(0.92);
+  }
+
+  .mirror-caption {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 2.5rem 2rem 1.5rem;
+    background: linear-gradient(to top, rgba(44,23,16,0.55) 0%, transparent 100%);
+    display: flex;
+    justify-content: center;
+  }
+
+  .mirror-caption-text {
+    font-family: var(--font-serif);
+    font-size: 1rem;
+    font-style: italic;
+    color: rgba(255, 249, 240, 0.92);
+    letter-spacing: 0.02em;
+    text-shadow: 0 1px 8px rgba(0,0,0,0.3);
+    text-align: center;
+    max-width: 36rem;
+  }
+
+  .mirror-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    cursor: crosshair;
+    touch-action: none;
+  }
+
+  .mirror-vignette {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    box-shadow: inset 0 0 140px rgba(111,59,36,0.22);
+  }
+
+  .mirror-border {
+    position: absolute;
+    inset: 10px;
+    pointer-events: none;
+    border: 1px solid rgba(52,37,28,0.08);
+  }
+
   .paper-texture {
-    opacity: 0.2;
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.18;
     mix-blend-mode: multiply;
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
     background-size: 150px 150px;
+  }
+
+  /* ── Filmstrip navigation ── */
+  .mirror-filmstrip {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    padding: 1rem 2rem 1.25rem;
+    flex-shrink: 0;
+    border-top: 1px solid rgba(180,140,100,0.14);
+    background: rgba(253,250,245,0.7);
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .mirror-filmstrip::-webkit-scrollbar { display: none; }
+
+  .film-frame {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.4rem;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0 0.75rem;
+    transition: transform var(--duration-default) var(--ease-atelier);
+  }
+  .film-frame:hover { transform: translateY(-2px); }
+
+  .film-thumb {
+    position: relative;
+    width: 48px;
+    height: 48px;
+    border-radius: 4px;
+    overflow: hidden;
+    border: 1.5px solid rgba(180,140,100,0.28);
+    transition: border-color var(--duration-default) var(--ease-atelier), box-shadow var(--duration-default) var(--ease-atelier);
+  }
+
+  .film-frame--active .film-thumb {
+    border-color: var(--color-ember);
+    box-shadow: 0 0 0 2px rgba(192,88,44,0.18);
+  }
+
+  .film-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    filter: grayscale(0.4) saturate(0.85);
+    transition: filter var(--duration-default) var(--ease-atelier);
+  }
+  .film-frame--active .film-img,
+  .film-frame:hover .film-img { filter: grayscale(0) saturate(1); }
+
+  .film-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(44,23,16,0.18);
+    transition: opacity var(--duration-default) var(--ease-atelier);
+  }
+  .film-frame--active .film-overlay,
+  .film-frame:hover .film-overlay { opacity: 0; }
+
+  .film-label {
+    font-family: var(--font-body);
+    font-size: 0.5625rem;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--color-ink-muted);
+    white-space: nowrap;
+    transition: color var(--duration-default) var(--ease-atelier);
+  }
+  .film-frame--active .film-label { color: var(--color-ember); }
+
+  /* Соединитель между кадрами */
+  .film-connector {
+    position: absolute;
+    right: -4px;
+    top: 20px;
+    width: 8px;
+    height: 1px;
+    background: rgba(180,140,100,0.28);
+    pointer-events: none;
+  }
+
+  @media (max-width: 480px) {
+    .mirror-header { padding: 0 1rem; }
+    .mirror-stage  { padding: 1rem; }
+    .film-thumb    { width: 38px; height: 38px; }
+    .mirror-close span { display: none; }
+    .mirror-close { padding: 0.45rem 0.6rem; }
   }
 </style>

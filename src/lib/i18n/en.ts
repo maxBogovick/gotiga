@@ -73,6 +73,8 @@ export const en = {
   figurineWhisper:     'Whisper',
   figurineSilence:     'Silence',
   figurineFullscreen:  'Full screen',
+  figurineShare:       'Share',
+  figurineCopied:      'Link copied',
   figurineShowView:    'Show view',
   figurineOpenEnlarged:'Open enlarged',
   figurineStatusAvailable: 'Available',

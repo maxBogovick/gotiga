@@ -1,6 +1,7 @@
 <script lang="ts">
     import type { FigurineListItem } from '$lib/types/api';
     import { t } from '$lib/i18n';
+    import AppImage from '$lib/components/AppImage.svelte';
 
     let {
         fig,
@@ -28,7 +29,7 @@
     style="--i:{index}"
     aria-label="{$t('homeViewFigurine')}: {fig.name}"
 >
-    <div class="card-img-wrap">
+    <div class="card-img-wrap" style="view-transition-name: figurine-{fig.id}">
         <div class="card-register">
             <span>№ {displayIndex}</span>
             <span
@@ -42,7 +43,7 @@
         </div>
 
         {#if fig.faceImageUrl}
-            <img src={fig.faceImageUrl} alt="" loading="lazy" class="card-img" />
+            <AppImage src={fig.faceImageUrl} class="card-img" loading="lazy" />
         {:else}
             <div class="card-ph">?</div>
         {/if}

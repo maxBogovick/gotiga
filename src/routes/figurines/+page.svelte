@@ -1,18 +1,15 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { goto } from '$app/navigation';
-  import { api } from '$lib/api';
-  import type { FigurineListItem } from '$lib/types/api';
+  import { beforeNavigate, afterNavigate } from '$app/navigation';
   import { fade } from 'svelte/transition';
   import { t } from '$lib/i18n';
+  import AppImage from '$lib/components/AppImage.svelte';
 
   type StatusFilter = 'all' | 'available' | 'reserved' | 'sold';
   type SortMode = 'curated' | 'available' | 'newest' | 'oldest' | 'name';
 
-  // State
-  let figurines = $state<FigurineListItem[]>([]);
-  let isLoading = $state(true);
-  let error = $state<string | null>(null);
+  let { data } = $props();
+  let figurines = $derived(data.figurines);
+
   let searchQuery = $state('');
   let statusFilter = $state<StatusFilter>('all');
   let sortMode = $state<SortMode>('curated');
@@ -24,31 +21,25 @@
 
   let filtered = $derived(
     figurines
-      .filter(f => statusFilter === 'all' || f.status === statusFilter)
-      .filter(f => yearFilter === 'all' || String(f.year ?? '') === yearFilter)
-      .filter(f => seriesFilter === 'all' || f.series === seriesFilter)
-      .filter(f => {
+      .filter((f: { status: string }) => statusFilter === 'all' || f.status === statusFilter)
+      .filter((f: { year?: number | null }) => yearFilter === 'all' || String(f.year ?? '') === yearFilter)
+      .filter((f: { series?: string | null }) => seriesFilter === 'all' || f.series === seriesFilter)
+      .filter((f: { name: string; year?: number | null; series?: string | null }) => {
         const query = searchQuery.trim().toLowerCase();
         if (!query) return true;
-        return [
-          f.name,
-          f.year ? String(f.year) : '',
-          f.series ?? '',
-        ].some(value => value.toLowerCase().includes(query));
+        return [f.name, f.year ? String(f.year) : '', f.series ?? '']
+          .some(v => v.toLowerCase().includes(query));
       })
   );
 
   let sorted = $derived(
-    filtered.slice().sort((a, b) => {
+    filtered.slice().sort((a: { sortOrder?: number; name: string; year?: number | null; status: string }, b: { sortOrder?: number; name: string; year?: number | null; status: string }) => {
       const byCurated = (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
       const byName = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
       const byNewest = (b.year ?? -Infinity) - (a.year ?? -Infinity);
       const byOldest = (a.year ?? Infinity) - (b.year ?? Infinity);
-      const statusRank = { available: 0, reserved: 1, sold: 2 };
-
-      if (sortMode === 'available') {
-        return statusRank[a.status] - statusRank[b.status] || byCurated || byName;
-      }
+      const statusRank: Record<string, number> = { available: 0, reserved: 1, sold: 2 };
+      if (sortMode === 'available') return statusRank[a.status] - statusRank[b.status] || byCurated || byName;
       if (sortMode === 'newest') return byNewest || byCurated || byName;
       if (sortMode === 'oldest') return byOldest || byCurated || byName;
       if (sortMode === 'name') return byName || byCurated;
@@ -60,81 +51,68 @@
   let hasMore = $derived(sorted.length > displayLimit);
 
   let availableYears = $derived(
-    [...new Set(figurines.map(f => f.year).filter((year): year is number => typeof year === 'number'))]
-      .sort((a, b) => b - a)
+    [...new Set(figurines.map((f: { year?: number | null }) => f.year).filter((y: unknown): y is number => typeof y === 'number'))]
+      .sort((a: number, b: number) => b - a)
   );
 
   let availableSeries = $derived(
-    [...new Set(figurines.map(f => f.series).filter((series): series is string => Boolean(series?.trim())))]
-      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+    [...new Set(figurines.map((f: { series?: string | null }) => f.series).filter((s: unknown): s is string => Boolean((s as string)?.trim())))]
+      .sort((a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
   );
 
   let hasActiveFilters = $derived(
-    searchQuery.trim() !== '' ||
-    statusFilter !== 'all' ||
-    sortMode !== 'curated' ||
-    yearFilter !== 'all' ||
-    seriesFilter !== 'all'
+    searchQuery.trim() !== '' || statusFilter !== 'all' ||
+    sortMode !== 'curated' || yearFilter !== 'all' || seriesFilter !== 'all'
   );
 
   $effect(() => {
-    // Reset pagination whenever the filter/search changes
-    void statusFilter;
-    void searchQuery;
-    void sortMode;
-    void yearFilter;
-    void seriesFilter;
+    void statusFilter; void searchQuery; void sortMode; void yearFilter; void seriesFilter;
     displayLimit = PAGE_SIZE;
   });
 
   let statusCounts = $derived({
-    all: figurines.length,
-    available: figurines.filter(f => f.status === 'available').length,
-    reserved: figurines.filter(f => f.status === 'reserved').length,
-    sold: figurines.filter(f => f.status === 'sold').length,
+    all:       figurines.length,
+    available: figurines.filter((f: { status: string }) => f.status === 'available').length,
+    reserved:  figurines.filter((f: { status: string }) => f.status === 'reserved').length,
+    sold:      figurines.filter((f: { status: string }) => f.status === 'sold').length,
   });
 
   let countText = $derived(() => {
     const total = figurines.length;
     const shown = filtered.length;
     if (total === 0) return $t('archiveEmpty');
-    if (statusFilter !== 'all' || searchQuery.trim()) {
-      return `${shown} / ${toRoman(total)}`;
-    }
-    return `${toRoman(total)}`;
+    if (statusFilter !== 'all' || searchQuery.trim()) return `${shown} / ${toRoman(total)}`;
+    return toRoman(total);
   });
 
-  // Helper для римских цифр (для атмосферы)
   function toRoman(num: number): string {
     const lookup: Record<string, number> = {M:1000,CM:900,D:500,CD:400,C:100,XC:90,L:50,XL:40,X:10,IX:9,V:5,IV:4,I:1};
     let roman = '', i;
-    for ( i in lookup ) {
-      while ( num >= lookup[i] ) {
-        roman += i;
-        num -= lookup[i];
-      }
-    }
+    for (i in lookup) { while (num >= lookup[i]) { roman += i; num -= lookup[i]; } }
     return roman;
   }
 
   function clearFilters() {
-    searchQuery = '';
-    statusFilter = 'all';
-    sortMode = 'curated';
-    yearFilter = 'all';
-    seriesFilter = 'all';
+    searchQuery = ''; statusFilter = 'all'; sortMode = 'curated';
+    yearFilter = 'all'; seriesFilter = 'all';
   }
 
-  // Lifecycle
-  onMount(async () => {
-    try {
-      figurines = await api.getAllFigurines();
-      if (figurines.length < 5) await new Promise(r => setTimeout(r, 500));
-    } catch (e) {
-      console.error('Failed to load figurines:', e);
-      error = 'archive_damaged';
-    } finally {
-      isLoading = false;
+  // ── Scroll restoration (п.2) ─────────────────────────────────────────────
+  const SCROLL_KEY = 'figurines-scroll';
+
+  beforeNavigate(({ to }) => {
+    if (to?.url.pathname.startsWith('/figurines/')) {
+      sessionStorage.setItem(SCROLL_KEY, String(window.scrollY));
+    }
+  });
+
+  afterNavigate(({ type }) => {
+    if (type === 'popstate') {
+      const saved = sessionStorage.getItem(SCROLL_KEY);
+      if (saved) {
+        requestAnimationFrame(() => window.scrollTo({ top: parseInt(saved), behavior: 'instant' }));
+        sessionStorage.removeItem(SCROLL_KEY);
+      }
     }
   });
 </script>
@@ -151,26 +129,7 @@
 <div class="fixed inset-0 pointer-events-none z-0 bg-noise opacity-[0.07] mix-blend-overlay"></div>
 <div class="fixed inset-0 pointer-events-none z-0 bg-[radial-gradient(circle_at_50%_50%,transparent_0%,#f8f1e7_90%)]"></div>
 
-{#if isLoading}
-  <div class="min-h-screen flex flex-col items-center justify-center z-50 text-[#34251c]" out:fade>
-    <div class="w-16 h-16 border-t-2 border-b-2 border-[#34251c]/30 rounded-full animate-spin mb-4"></div>
-    <span class="font-['Inter'] tracking-[0.08em] text-xs animate-pulse">{$t('archiveStudying')}</span>
-  </div>
-{:else if error}
-  <div class="min-h-screen flex items-center justify-center p-8 z-10 relative">
-    <div class="text-center max-w-md border border-red-900/30 bg-[#6f3b24]/10 p-10 backdrop-blur-sm">
-      <h3 class="font-['Fraunces'] text-3xl text-red-900/60 mb-4">✕</h3>
-      <p class="font-['Inter'] text-[#5f4636] mb-8 text-sm tracking-wide">{$t('archiveDamaged')}</p>
-      <button
-              class="px-8 py-3 border border-[#34251c]/20 text-[#34251c] font-['Inter'] hover:bg-[#34251c]/5 transition-colors uppercase text-xs tracking-wide"
-              onclick={() => window.location.reload()}
-      >
-        {$t('archiveRepeat')}
-      </button>
-    </div>
-  </div>
-{:else}
-  <div class="min-h-screen relative z-10 overflow-hidden font-['Inter'] text-[#34251c]">
+<div class="min-h-screen relative z-10 overflow-hidden font-['Inter'] text-[#34251c]">
 
     <div class="container mx-auto px-6 sm:px-12 py-12">
       <div class="mb-16 sm:mb-24 border-b border-[#34251c]/10 pb-6" in:fade={{ duration: 1000 }}>
@@ -301,17 +260,20 @@
         <ul class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-8 gap-y-16">
           {#each visible as figurine, i (figurine.id)}
             <li class="group perspective-container" in:fade={{ delay: i * 100, duration: 800 }}>
-              <button
-                      class="w-full text-left relative focus:outline-none"
-                      onclick={() => goto(`/figurines/${figurine.id}`)}
-                      aria-label="{figurine.name}"
+              <a
+                href="/figurines/{figurine.id}"
+                class="block w-full text-left relative focus:outline-none"
+                aria-label="{figurine.name}"
+                data-sveltekit-preload-data="hover"
               >
-                <div class="relative aspect-[3/4] mb-6 overflow-hidden bg-[#fff9f0] border border-[#34251c]/10 shadow-2xl transition-all duration-700 group-hover:border-[#34251c]/30 group-hover:shadow-[0_0_30px_-10px_rgba(198, 95, 60,0.15)] group-hover:-translate-y-2">
+                <div
+                  class="relative aspect-[3/4] mb-6 overflow-hidden bg-[#fff9f0] border border-[#34251c]/10 shadow-2xl transition-all duration-700 group-hover:border-[#34251c]/30 group-hover:shadow-[0_0_30px_-10px_rgba(198, 95, 60,0.15)] group-hover:-translate-y-2"
+                  style="view-transition-name: figurine-{figurine.id}"
+                >
 
                   {#if figurine.faceImageUrl}
-                    <img
+                    <AppImage
                             src={figurine.faceImageUrl}
-                            alt=""
                             class="w-full h-full object-cover opacity-70 grayscale transition-all duration-700 ease-out group-hover:opacity-100 group-hover:grayscale-0 group-hover:scale-105"
                             loading="lazy"
                     />
@@ -351,7 +313,7 @@
                     </span>
                   </div>
                 </div>
-              </button>
+              </a>
             </li>
           {/each}
         </ul>
@@ -383,9 +345,12 @@
       <div class="h-32"></div>
     </div>
   </div>
-{/if}
 
 <style>
+  @keyframes shimmer {
+    100% { transform: translateX(200%); }
+  }
+
   /* Noise Texture Utility Class */
   .bg-noise {
     background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
