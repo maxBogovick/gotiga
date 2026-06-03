@@ -3,7 +3,7 @@
     import { goto } from '$app/navigation';
     import { fade, fly } from 'svelte/transition';
     import { cubicOut } from 'svelte/easing';
-    import { spring } from 'svelte/motion';
+    import { spring, tweened } from 'svelte/motion';
     import { api } from '$lib/api';
     import type { CabinetZone, FigurineListItem, HomeContent } from '$lib/types/api';
     import { t } from '$lib/i18n';
@@ -23,6 +23,34 @@
     let mouseY = $state(0.5);
 
     const parallaxSpring = spring({ x: 0, y: 0 }, { stiffness: 0.04, damping: 0.45 });
+
+    // Kinetic title: split into characters, accent the trailing portion
+    let titleText = $derived(homeContent.title?.trim() || 'Gotiga');
+    let titleChars = $derived([...titleText]);
+    let accentFrom = $derived(Math.ceil(titleChars.length * 0.6));
+
+    // Count-up stats
+    const availDisplay = tweened(0, { duration: 1100, easing: cubicOut });
+    const collDisplay = tweened(0, { duration: 1100, easing: cubicOut });
+
+    // Magnetic hover action for CTAs
+    function magnetic(node: HTMLElement, strength = 0.3) {
+        function move(e: MouseEvent) {
+            const r = node.getBoundingClientRect();
+            const x = (e.clientX - r.left - r.width / 2) * strength;
+            const y = (e.clientY - r.top - r.height / 2) * (strength + 0.1);
+            node.style.transform = `translate(${x}px, ${y}px)`;
+        }
+        function leave() { node.style.transform = ''; }
+        node.addEventListener('mousemove', move);
+        node.addEventListener('mouseleave', leave);
+        return {
+            destroy() {
+                node.removeEventListener('mousemove', move);
+                node.removeEventListener('mouseleave', leave);
+            }
+        };
+    }
 
     let imageUrl = $state('/images/cabinet-room.jpg');
 
@@ -80,6 +108,8 @@
             collectionTotal = figurines.length;
             availableTotal = figurines.filter((item) => item.status === 'available').length;
             featuredFigurines = sortFeaturedFigurines(figurines).slice(0, 4);
+            availDisplay.set(availableTotal);
+            collDisplay.set(collectionTotal);
             isLoaded = true;
         } catch (e) {
             zones = DEFAULT_ZONES;
@@ -163,18 +193,27 @@
                     {homeContent.kicker?.trim() || $t('homeKicker')}
                 </p>
 
-                <h1 id="home-title" class="hero-title">{homeContent.title?.trim() || 'Gotiga'}</h1>
+                <h1 id="home-title" class="hero-title" aria-label={titleText}>
+                    {#each titleChars as ch, i}
+                        <span
+                            class="ht-ch"
+                            class:accent={i >= accentFrom}
+                            style="animation-delay:{0.12 + i * 0.05}s"
+                            aria-hidden="true"
+                        >{ch === ' ' ? ' ' : ch}</span>
+                    {/each}
+                </h1>
 
                 <p class="hero-lead">{homeContent.lead?.trim() || $t('homeLead')}</p>
 
                 <div class="hero-ctas">
-                    <a href="#available-works" class="cta-primary">
+                    <a href="#available-works" class="cta-primary" use:magnetic={0.28}>
                         {$t('homePrimaryCta')}
                         <svg class="cta-arrow" width="18" height="9" viewBox="0 0 18 9" fill="none">
                             <path d="M0 4.5H17M17 4.5L12.5 1M17 4.5L12.5 8" stroke="currentColor" stroke-width="1"/>
                         </svg>
                     </a>
-                    <a href="/figurines" class="cta-ghost">{$t('homeSecondaryCta')}</a>
+                    <a href="/figurines" class="cta-ghost" use:magnetic={0.22}>{$t('homeSecondaryCta')}</a>
                 </div>
 
                 <a href="/workshop" class="workshop-link">
@@ -184,12 +223,12 @@
 
                 <dl class="stats">
                     <div class="stat">
-                        <dt class="stat-num">{availableTotal}</dt>
+                        <dt class="stat-num">{Math.round($availDisplay)}</dt>
                         <dd class="stat-label">{$t('homeAvailableStat')}</dd>
                     </div>
                     <div class="stat-sep"></div>
                     <div class="stat">
-                        <dt class="stat-num">{collectionTotal}</dt>
+                        <dt class="stat-num">{Math.round($collDisplay)}</dt>
                         <dd class="stat-label">{$t('homeArchiveStat')}</dd>
                     </div>
                 </dl>
@@ -432,29 +471,42 @@
     /* ── H1: single word, large, on one line ─────── */
     .hero-title {
         font-family: 'Cormorant Garamond', serif;
-        font-size: clamp(80px, 10vw, 152px);
+        font-size: clamp(64px, 8.5vw, 140px);
         font-weight: 300;
         line-height: 0.9;
-        letter-spacing: -0.01em;
+        letter-spacing: -0.015em;
         color: var(--ink);
         margin: 0 0 26px;
-        /* Subtle italic accent on the 'ga' via background-clip text */
-        background: linear-gradient(
-            135deg,
-            var(--ink) 0%,
-            var(--ink) 60%,
-            var(--mid) 100%
-        );
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-        animation: title-in 1.1s var(--ease) both;
-        animation-delay: 0.4s;
+        /* keep the brand word whole — no mid-word breaks */
+        word-break: keep-all;
+        overflow-wrap: normal;
+        hyphens: none;
+        /* per-letter kinetic reveal */
+        display: flex;
+        flex-wrap: wrap;
+        overflow: hidden;
+        padding-bottom: 0.12em;
     }
 
-    @keyframes title-in {
-        from { opacity: 0; transform: translateY(30px); }
-        to   { opacity: 1; transform: none; }
+    .ht-ch {
+        display: inline-block;
+        transform: translateY(112%) rotate(7deg);
+        opacity: 0;
+        will-change: transform, opacity;
+        animation: ht-rise 0.92s var(--ease-spring, cubic-bezier(0.34, 1.4, 0.64, 1)) both;
+    }
+
+    .ht-ch.accent {
+        color: var(--copper);
+        font-style: italic;
+    }
+
+    @keyframes ht-rise {
+        to { transform: none; opacity: 1; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .ht-ch { animation: none; transform: none; opacity: 1; }
     }
 
     .hero-lead {
@@ -489,7 +541,8 @@
         letter-spacing: 0.16em;
         text-transform: uppercase;
         text-decoration: none;
-        transition: background 0.28s, gap 0.28s;
+        transition: background 0.28s, gap 0.28s, transform 0.35s var(--ease);
+        will-change: transform;
         clip-path: polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 7px 100%, 0 calc(100% - 7px));
     }
 
@@ -518,7 +571,8 @@
         letter-spacing: 0.16em;
         text-transform: uppercase;
         text-decoration: none;
-        transition: border-color 0.28s, background 0.28s;
+        transition: border-color 0.28s, background 0.28s, transform 0.35s var(--ease);
+        will-change: transform;
     }
 
     .cta-ghost:hover {
@@ -938,7 +992,7 @@
             gap: 24px;
         }
 
-        .hero-title { font-size: clamp(64px, 20vw, 108px); }
+        .hero-title { font-size: clamp(44px, 16vw, 108px); }
         .hero-lead { font-size: 16px; max-width: 300px; }
 
         .cta-primary, .cta-ghost { height: 40px; padding: 0 16px; font-size: 9px; }
