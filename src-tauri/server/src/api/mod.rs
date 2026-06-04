@@ -1,5 +1,5 @@
 use axum::{
-    routing::{get, post, delete},
+    routing::{get, post, delete, patch},
     Router,
     middleware::{self, Next},
     extract::Request,
@@ -87,6 +87,13 @@ pub fn router(service: AppService, config: Config) -> Router {
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
         .route("/author/profile",
             post(handlers::save_author_profile)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        // === ORDERS (ADMIN) ===
+        .route("/admin/orders",
+            get(handlers::list_orders)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        .route("/admin/orders/:id",
+            patch(handlers::update_order_status)
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
         // === RELEASES ===
         .route("/admin/releases",

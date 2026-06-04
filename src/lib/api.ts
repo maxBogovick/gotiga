@@ -376,4 +376,17 @@ export const api = {
             body: JSON.stringify(order),
         });
     },
+
+    async listOrders(status?: string): Promise<import('./types/api').Order[]> {
+        const qs = status ? `?status=${status}` : '';
+        return webFetch(`/admin/orders${qs}`, { headers: authHeaders() });
+    },
+
+    async updateOrderStatus(id: string, status: 'new' | 'seen' | 'replied'): Promise<void> {
+        await webFetch(`/admin/orders/${id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ status }),
+        });
+    },
 };

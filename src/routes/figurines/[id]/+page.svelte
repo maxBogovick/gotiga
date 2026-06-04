@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { fade } from 'svelte/transition';
   import DustParticles from '$lib/components/DustParticles.svelte';
@@ -7,6 +8,17 @@
 
   let { data } = $props();
   let figurine = $derived(data.figurine);
+
+  onMount(() => {
+    const fid = data.figurine?.id;
+    if (!fid) return;
+    try {
+      const VIEWED_KEY = 'gotiga_viewed';
+      const viewed: string[] = JSON.parse(localStorage.getItem(VIEWED_KEY) ?? '[]');
+      const next = [fid, ...viewed.filter((id) => id !== fid)].slice(0, 50);
+      localStorage.setItem(VIEWED_KEY, JSON.stringify(next));
+    } catch {}
+  });
   let id = $derived(page.params.id ?? '');
 
   // Absolute URL for OG image (relative paths get current-origin prepended)
@@ -119,7 +131,7 @@
     </div>
   </div>
 {:else}
-  <FigurineDetailView {figurine} {id} />
+  <FigurineDetailView {figurine} {id} prev={data.prev ?? null} next={data.next ?? null} />
 {/if}
 
 <style>

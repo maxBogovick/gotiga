@@ -49,6 +49,59 @@ impl Repository {
         lock.clone().ok_or_else(|| AppError::Internal("No active content database loaded".to_string()))
     }
 
+    // === ORDERS (Postgres) ===
+
+    pub async fn save_order(&self, order: &crate::models::OrderRequest) -> Result<crate::models::Order> {
+        let rec = sqlx::query_as::<_, crate::models::Order>(
+            "INSERT INTO orders (figurine_id, figurine_name, requester_name, requester_email, message, mode)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             RETURNING *"
+        )
+        .bind(&order.figurine_id)
+        .bind(&order.figurine_name)
+        .bind(&order.requester_name)
+        .bind(&order.requester_email)
+        .bind(&order.message)
+        .bind(&order.mode)
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(rec)
+    }
+
+    pub async fn get_orders(&self, status_filter: Option<&str>) -> Result<Vec<crate::models::Order>> {
+        let orders = if let Some(status) = status_filter {
+            sqlx::query_as::<_, crate::models::Order>(
+                "SELECT * FROM orders WHERE status = $1::order_status ORDER BY created_at DESC"
+            )
+            .bind(status)
+            .fetch_all(&self.pg_pool)
+            .await?
+        } else {
+            sqlx::query_as::<_, crate::models::Order>(
+                "SELECT * FROM orders ORDER BY created_at DESC"
+            )
+            .fetch_all(&self.pg_pool)
+            .await?
+        };
+        Ok(orders)
+    }
+
+    pub async fn update_order_status(&self, id: uuid::Uuid, status: &crate::models::OrderStatus) -> Result<()> {
+        let affected = sqlx::query(
+            "UPDATE orders SET status = $1 WHERE id = $2"
+        )
+        .bind(status)
+        .bind(id)
+        .execute(&self.pg_pool)
+        .await?
+        .rows_affected();
+
+        if affected == 0 {
+            return Err(AppError::NotFound(format!("Order {} not found", id)));
+        }
+        Ok(())
+    }
+
     // === SYSTEM (Postgres) ===
 
     pub async fn add_release(&self, file_path: &str, description: Option<String>) -> Result<Uuid> {

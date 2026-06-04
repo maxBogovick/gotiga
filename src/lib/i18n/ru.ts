@@ -51,6 +51,12 @@ export const ru: Record<TranslationKey, string> = {
   archiveSeriesLabel:     'Серия',
   archiveSeriesAll:       'Все серии',
   archiveClearFilters:    'Сбросить фильтры',
+  archiveFilterSaved:     'Сохранённые',
+  archiveFilterViewed:    'Просмотренные',
+  archiveTechniqueLabel:  'Техника',
+  archiveTechniqueAll:    'Вся техника',
+  archiveMaterialLabel:   'Материал',
+  archiveMaterialAll:     'Все материалы',
   archiveStatusAll:      'Все',
   archiveStatusAvailable:'В наличии',
   archiveStatusReserved: 'Бронь',
@@ -89,6 +95,13 @@ export const ru: Record<TranslationKey, string> = {
   figurineTechnique:   'Техника',
   figurineCode:        'Код',
   figurineRequest:     'Запросить Артефакт',
+  figurineAskQuestion: 'Задать вопрос',
+  figurineNotify:      'Уведомить меня',
+  figurineNotifyNote:  'Напишем когда появится похожая работа',
+  figurineWishlist:    'Сохранить',
+  figurineWishlisted:  'Сохранено',
+  figurineNavPrev:     'Предыдущая',
+  figurineNavNext:     'Следующая',
   figurineRequestNote: '* Передача только в надёжные руки',
   figurineGrimoire:    'Заглянуть в Зеркало Памяти',
   figurineGrimoireSub: 'этапов · проведите пальцем чтобы открыть прошлое',
@@ -137,6 +150,7 @@ export const ru: Record<TranslationKey, string> = {
   orderCancel:            'Отозвать Прошение',
   orderSuccessTitle:      'Принято',
   orderSuccessText:       'Ваш запрос запечатан. Ворон уже в пути. Ожидайте знака, когда тени станут длиннее.',
+  orderSubmitError:       'Ворон не добрался. Попробуйте ещё раз или напишите напрямую.',
 
   // === SETTINGS MODAL ===
   settingsTitle:         'Настройки Связи',
@@ -149,6 +163,14 @@ export const ru: Record<TranslationKey, string> = {
   settingsTesting:       'Проверка…',
   settingsCancel:        'Отмена',
   settingsApply:         'Применить',
+
+  // === CARD ACTIONS ===
+  cardSave:       'Сохранить',
+  cardSaved:      'Сохранено',
+  cardQuickView:  'Просмотр',
+  cardShare:      'Поделиться',
+  cardRequest:    'Заявка',
+  cardLinkCopied: 'Скопировано!',
 
   // === LIGHTBOX ===
   lightboxClose:    'Закрыть',

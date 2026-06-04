@@ -6,8 +6,10 @@ SERVER_DIR="$ROOT_DIR/src-tauri/server"
 
 DB_HOST="${DB_HOST:-127.0.0.1}"
 DB_PORT="${DB_PORT:-5434}"
-SERVER_HEALTH_URL="${SERVER_HEALTH_URL:-http://127.0.0.1:3000/api/v1/health}"
-FRONTEND_URL="${FRONTEND_URL:-http://127.0.0.1:1420}"
+SERVER_PORT="${SERVER_PORT:-3000}"
+FRONTEND_PORT="${FRONTEND_PORT:-1420}"
+SERVER_HEALTH_URL="${SERVER_HEALTH_URL:-http://127.0.0.1:${SERVER_PORT}/api/v1/health}"
+FRONTEND_URL="${FRONTEND_URL:-http://127.0.0.1:${FRONTEND_PORT}}"
 
 SERVER_PID=""
 FRONTEND_PID=""
@@ -23,6 +25,27 @@ fail() {
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "Required command not found: $1"
+}
+
+# Kill every process listening on a TCP port, wait until the port is free.
+kill_port() {
+  local port="$1"
+  local pids
+  pids=$(lsof -ti tcp:"$port" 2>/dev/null || true)
+  if [[ -n "$pids" ]]; then
+    log "Freeing port ${port} (PIDs: $(echo "$pids" | tr '\n' ' '))..."
+    # SIGTERM first, give 2 s, then SIGKILL
+    echo "$pids" | xargs kill -TERM 2>/dev/null || true
+    local i=0
+    while nc -z 127.0.0.1 "$port" >/dev/null 2>&1 && (( i < 20 )); do
+      sleep 0.1
+      (( i++ )) || true
+    done
+    if nc -z 127.0.0.1 "$port" >/dev/null 2>&1; then
+      echo "$pids" | xargs kill -KILL 2>/dev/null || true
+      sleep 0.5
+    fi
+  fi
 }
 
 cleanup() {
@@ -93,6 +116,7 @@ require_cmd npm
 require_cmd docker
 require_cmd nc
 require_cmd curl
+require_cmd lsof
 
 [[ -d "$SERVER_DIR" ]] || fail "Server directory not found: $SERVER_DIR"
 [[ -f "$SERVER_DIR/.env" ]] || fail "Server .env not found: $SERVER_DIR/.env"
@@ -107,18 +131,24 @@ if [[ ! -d "$ROOT_DIR/node_modules" ]]; then
   (cd "$ROOT_DIR" && npm install)
 fi
 
+log "Clearing port ${SERVER_PORT}..."
+kill_port "$SERVER_PORT"
+
 log "Starting Rust API server..."
 (cd "$SERVER_DIR" && cargo run) &
 SERVER_PID=$!
 wait_for_http "$SERVER_HEALTH_URL" 90
 
+log "Clearing port ${FRONTEND_PORT}..."
+kill_port "$FRONTEND_PORT"
+
 log "Starting Vite frontend..."
 (cd "$ROOT_DIR" && npm run dev) &
 FRONTEND_PID=$!
 
-log "Server: ${SERVER_HEALTH_URL}"
+log "Server:   ${SERVER_HEALTH_URL}"
 log "Frontend: ${FRONTEND_URL}"
-log "Press Ctrl+C to stop app processes."
+log "Press Ctrl+C to stop."
 
 while true; do
   if ! kill -0 "$SERVER_PID" 2>/dev/null; then

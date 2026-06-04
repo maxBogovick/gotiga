@@ -49,6 +49,12 @@ export const en = {
   archiveSeriesLabel:     'Series',
   archiveSeriesAll:       'All series',
   archiveClearFilters:    'Clear filters',
+  archiveFilterSaved:     'Saved',
+  archiveFilterViewed:    'Viewed',
+  archiveTechniqueLabel:  'Technique',
+  archiveTechniqueAll:    'All techniques',
+  archiveMaterialLabel:   'Material',
+  archiveMaterialAll:     'All materials',
   archiveStatusAll:      'All',
   archiveStatusAvailable:'Available',
   archiveStatusReserved: 'Reserved',
@@ -88,6 +94,13 @@ export const en = {
   figurineCode:        'Code',
   figurineRequest:     'Request Artifact',
   figurineRequestNote: '* Transfer only to reliable hands',
+  figurineAskQuestion: 'Ask a question',
+  figurineNotify:      'Notify me',
+  figurineNotifyNote:  'We\'ll reach out when a similar work appears',
+  figurineWishlist:    'Save',
+  figurineWishlisted:  'Saved',
+  figurineNavPrev:     'Previous',
+  figurineNavNext:     'Next',
   figurineGrimoire:    'Gaze into the Memory Mirror',
   figurineGrimoireSub: 'stages · swipe to reveal the creation',
   figurineGrimoireClose: 'Close',
@@ -135,6 +148,7 @@ export const en = {
   orderCancel:            'Withdraw Petition',
   orderSuccessTitle:      'Accepted',
   orderSuccessText:       'Your request is sealed. The raven is on its way. Await a sign when shadows grow longer.',
+  orderSubmitError:       'The raven was lost. Please try again or write directly.',
 
   // === SETTINGS MODAL ===
   settingsTitle:         'Connection Settings',
@@ -147,6 +161,14 @@ export const en = {
   settingsTesting:       'Testing…',
   settingsCancel:        'Cancel',
   settingsApply:         'Apply',
+
+  // === CARD ACTIONS ===
+  cardSave:       'Save',
+  cardSaved:      'Saved',
+  cardQuickView:  'Quick view',
+  cardShare:      'Share',
+  cardRequest:    'Request',
+  cardLinkCopied: 'Copied!',
 
   // === LIGHTBOX ===
   lightboxClose:    'Close',

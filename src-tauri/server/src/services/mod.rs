@@ -104,6 +104,8 @@ impl AppService {
                 year: f.year,
                 sort_order: f.sort_order,
                 series: None,
+                technique: f.technique,
+                material: f.material,
             });
         }
         Ok(result)
@@ -137,6 +139,8 @@ impl AppService {
                 year: r.year,
                 sort_order: r.sort_order,
                 series: None,
+                technique: r.technique,
+                material: r.material,
             });
         }
 
@@ -282,7 +286,21 @@ impl AppService {
 
     // === ORDERS / NOTIFICATIONS ===
 
-    pub async fn send_order_notification(&self, order: &OrderRequest) -> Result<()> {
+    pub async fn create_order(&self, order: &OrderRequest) -> Result<Order> {
+        let saved = self.repo.save_order(order).await?;
+        let _ = self.send_order_notification(&saved).await;
+        Ok(saved)
+    }
+
+    pub async fn list_orders(&self, status_filter: Option<&str>) -> Result<Vec<Order>> {
+        self.repo.get_orders(status_filter).await
+    }
+
+    pub async fn update_order_status(&self, id: uuid::Uuid, status: &OrderStatus) -> Result<()> {
+        self.repo.update_order_status(id, status).await
+    }
+
+    async fn send_order_notification(&self, order: &Order) -> Result<()> {
         let (Some(token), Some(chat_id)) = (
             self.config.telegram_bot_token.as_deref(),
             self.config.telegram_chat_id.as_deref(),
@@ -290,16 +308,30 @@ impl AppService {
             return Ok(());
         };
 
+        let mode_label = match order.mode {
+            OrderMode::Request  => "🛒 Запрос на покупку",
+            OrderMode::Question => "❓ Вопрос",
+            OrderMode::Notify   => "🔔 Уведомить о наличии",
+        };
+
+        let admin_link = format!(
+            "{}/admin#orders",
+            self.config.public_url.trim_end_matches('/')
+        );
+
         let text = format!(
-            "📦 *Новый запрос на артефакт*\n\n\
+            "{}\n\n\
             🏺 Фигурка: {}\n\
             👤 Имя: {}\n\
             📧 Email: {}\n\
-            💬 Сообщение: {}",
+            💬 Сообщение: {}\n\n\
+            🔗 [Открыть в админке]({})",
+            escape_markdown(mode_label),
             escape_markdown(&order.figurine_name),
             escape_markdown(&order.requester_name),
             escape_markdown(&order.requester_email),
             escape_markdown(order.message.as_deref().unwrap_or("—")),
+            admin_link,
         );
 
         let url = format!("https://api.telegram.org/bot{}/sendMessage", token);

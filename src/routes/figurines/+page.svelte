@@ -1,39 +1,51 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { beforeNavigate, afterNavigate } from '$app/navigation';
   import { fade } from 'svelte/transition';
   import { t } from '$lib/i18n';
   import AppImage from '$lib/components/AppImage.svelte';
+  import Lightbox from '$lib/components/Lightbox.svelte';
+  import OrderModal from '$lib/components/OrderModal.svelte';
+  import type { FigurineListItem } from '$lib/types/api';
 
-  type StatusFilter = 'all' | 'available' | 'reserved' | 'sold';
+  type MainFilter = 'all' | 'available' | 'reserved' | 'sold' | 'saved' | 'viewed';
   type SortMode = 'curated' | 'available' | 'newest' | 'oldest' | 'name';
 
   let { data } = $props();
   let figurines = $derived(data.figurines);
 
   let searchQuery = $state('');
-  let statusFilter = $state<StatusFilter>('all');
+  let mainFilter = $state<MainFilter>('all');
   let sortMode = $state<SortMode>('curated');
   let yearFilter = $state('all');
-  let seriesFilter = $state('all');
+  let techniqueFilter = $state('all');
 
   const PAGE_SIZE = 12;
   let displayLimit = $state(PAGE_SIZE);
 
+  // ── Derived filter data ────────────────────────────────────────
+  type FigItem = import('$lib/types/api').FigurineListItem;
+
   let filtered = $derived(
-    figurines
-      .filter((f: { status: string }) => statusFilter === 'all' || f.status === statusFilter)
-      .filter((f: { year?: number | null }) => yearFilter === 'all' || String(f.year ?? '') === yearFilter)
-      .filter((f: { series?: string | null }) => seriesFilter === 'all' || f.series === seriesFilter)
-      .filter((f: { name: string; year?: number | null; series?: string | null }) => {
+    (figurines as FigItem[])
+      .filter((f) => {
+        if (mainFilter === 'saved')    return likedIds.has(f.id);
+        if (mainFilter === 'viewed')   return viewedIds.has(f.id);
+        if (mainFilter !== 'all')      return f.status === mainFilter;
+        return true;
+      })
+      .filter((f) => yearFilter === 'all' || String(f.year ?? '') === yearFilter)
+      .filter((f) => techniqueFilter === 'all' || f.technique === techniqueFilter)
+      .filter((f) => {
         const query = searchQuery.trim().toLowerCase();
         if (!query) return true;
-        return [f.name, f.year ? String(f.year) : '', f.series ?? '']
+        return [f.name, f.year ? String(f.year) : '', f.technique ?? '', f.material ?? '']
           .some(v => v.toLowerCase().includes(query));
       })
   );
 
   let sorted = $derived(
-    filtered.slice().sort((a: { sortOrder?: number; name: string; year?: number | null; status: string }, b: { sortOrder?: number; name: string; year?: number | null; status: string }) => {
+    filtered.slice().sort((a, b) => {
       const byCurated = (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
       const byName = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
       const byNewest = (b.year ?? -Infinity) - (a.year ?? -Infinity);
@@ -51,37 +63,40 @@
   let hasMore = $derived(sorted.length > displayLimit);
 
   let availableYears = $derived(
-    [...new Set(figurines.map((f: { year?: number | null }) => f.year).filter((y: unknown): y is number => typeof y === 'number'))]
-      .sort((a: number, b: number) => b - a)
+    [...new Set((figurines as FigItem[]).map((f) => f.year).filter((y): y is number => typeof y === 'number'))]
+      .sort((a, b) => b - a)
   );
 
-  let availableSeries = $derived(
-    [...new Set(figurines.map((f: { series?: string | null }) => f.series).filter((s: unknown): s is string => Boolean((s as string)?.trim())))]
-      .sort((a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  let availableTechniques = $derived(
+    [...new Set((figurines as FigItem[]).map((f) => f.technique).filter((t): t is string => Boolean(t?.trim())))]
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
   );
+
+  let statusCounts = $derived({
+    all:       (figurines as FigItem[]).length,
+    available: (figurines as FigItem[]).filter((f) => f.status === 'available').length,
+    reserved:  (figurines as FigItem[]).filter((f) => f.status === 'reserved').length,
+    sold:      (figurines as FigItem[]).filter((f) => f.status === 'sold').length,
+  });
+
+  let savedCount  = $derived((figurines as FigItem[]).filter((f) => likedIds.has(f.id)).length);
+  let viewedCount = $derived((figurines as FigItem[]).filter((f) => viewedIds.has(f.id)).length);
 
   let hasActiveFilters = $derived(
-    searchQuery.trim() !== '' || statusFilter !== 'all' ||
-    sortMode !== 'curated' || yearFilter !== 'all' || seriesFilter !== 'all'
+    searchQuery.trim() !== '' || mainFilter !== 'all' ||
+    sortMode !== 'curated' || yearFilter !== 'all' || techniqueFilter !== 'all'
   );
 
   $effect(() => {
-    void statusFilter; void searchQuery; void sortMode; void yearFilter; void seriesFilter;
+    void mainFilter; void searchQuery; void sortMode; void yearFilter; void techniqueFilter;
     displayLimit = PAGE_SIZE;
   });
 
-  let statusCounts = $derived({
-    all:       figurines.length,
-    available: figurines.filter((f: { status: string }) => f.status === 'available').length,
-    reserved:  figurines.filter((f: { status: string }) => f.status === 'reserved').length,
-    sold:      figurines.filter((f: { status: string }) => f.status === 'sold').length,
-  });
-
   let countText = $derived(() => {
-    const total = figurines.length;
+    const total = (figurines as FigItem[]).length;
     const shown = filtered.length;
     if (total === 0) return $t('archiveEmpty');
-    if (statusFilter !== 'all' || searchQuery.trim()) return `${shown} / ${toRoman(total)}`;
+    if (mainFilter !== 'all' || searchQuery.trim()) return `${shown} / ${toRoman(total)}`;
     return toRoman(total);
   });
 
@@ -93,8 +108,64 @@
   }
 
   function clearFilters() {
-    searchQuery = ''; statusFilter = 'all'; sortMode = 'curated';
-    yearFilter = 'all'; seriesFilter = 'all';
+    searchQuery = ''; mainFilter = 'all'; sortMode = 'curated';
+    yearFilter = 'all'; techniqueFilter = 'all';
+  }
+
+  // ── Card actions ─────────────────────────────────────────────────────────
+  const LIKED_KEY = 'gotiga_liked';
+  let likedIds = $state(new Set<string>());
+  let lightboxFig = $state<FigurineListItem | null>(null);
+  let orderFig = $state<FigurineListItem | null>(null);
+  let shareCopiedId = $state('');
+
+  let viewedIds = $state(new Set<string>());
+
+  onMount(() => {
+    try {
+      const ids: string[] = JSON.parse(localStorage.getItem(LIKED_KEY) ?? '[]');
+      likedIds = new Set(ids);
+    } catch {}
+    try {
+      const viewed: string[] = JSON.parse(localStorage.getItem('gotiga_viewed') ?? '[]');
+      viewedIds = new Set(viewed);
+    } catch {}
+  });
+
+  function toggleLike(e: MouseEvent, id: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    const next = new Set(likedIds);
+    next.has(id) ? next.delete(id) : next.add(id);
+    likedIds = next;
+    try { localStorage.setItem(LIKED_KEY, JSON.stringify([...next])); } catch {}
+  }
+
+  function openQuickView(e: MouseEvent, fig: FigurineListItem) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (fig.faceImageUrl) lightboxFig = fig;
+  }
+
+  async function handleShare(e: MouseEvent, fig: FigurineListItem) {
+    e.preventDefault();
+    e.stopPropagation();
+    const url = `${window.location.origin}/figurines/${fig.id}`;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: fig.name, url });
+      } else {
+        await navigator.clipboard.writeText(url);
+        shareCopiedId = fig.id;
+        setTimeout(() => { shareCopiedId = ''; }, 2000);
+      }
+    } catch {}
+  }
+
+  function openOrder(e: MouseEvent, fig: FigurineListItem) {
+    e.preventDefault();
+    e.stopPropagation();
+    orderFig = fig;
   }
 
   // ── Scroll restoration (п.2) ─────────────────────────────────────────────
@@ -132,128 +203,206 @@
 <div class="min-h-screen relative z-10 overflow-hidden font-['Inter'] text-[#34251c]">
 
     <div class="container mx-auto px-6 sm:px-12 py-12">
-      <div class="mb-16 sm:mb-24 border-b border-[#34251c]/10 pb-6" in:fade={{ duration: 1000 }}>
-        <div class="flex justify-between items-end mb-8">
+      <!-- ── FILTER BAR ─────────────────────────────────────────────── -->
+      <div class="filter-bar" in:fade={{ duration: 1000 }}>
+
+        <!-- Row 1: Title + count -->
+        <div class="filter-bar__head">
           <div>
-            <a href="/" class="group flex items-center text-xs tracking-[0.06em] text-[#5f4636] hover:text-[#34251c] transition-colors mb-4 opacity-60 hover:opacity-100">
-              {$t('archiveBackLink')}
-            </a>
-            <h1 class="font-['Fraunces'] text-5xl sm:text-7xl text-[#6f3b24] opacity-90 drop-shadow-2xl tracking-wide">
-              {$t('archivePageTitle')}
-            </h1>
+            <a href="/" class="filter-bar__back">{$t('archiveBackLink')}</a>
+            <h1 class="filter-bar__title">{$t('archivePageTitle')}</h1>
           </div>
-          <div class="hidden sm:block text-right">
-            <p class="text-xs tracking-[0.10em] text-[#5f4636] uppercase mb-1">{$t('archiveStatusCount')}</p>
-            <p class="text-xl text-[#34251c] border-l-2 border-[#34251c]/20 pl-4">{countText()}</p>
+          <div class="filter-bar__count">
+            <p class="filter-bar__count-label">{$t('archiveStatusCount')}</p>
+            <p class="filter-bar__count-value">{countText()}</p>
           </div>
         </div>
-        <!-- Search + Filters -->
-        <div class="flex flex-col gap-4">
-          <div class="flex flex-col lg:flex-row gap-3 lg:items-end">
-            <label class="relative w-full lg:max-w-sm">
-              <span class="sr-only">{$t('archiveSearchPlaceholder')}</span>
-              <input
-                bind:value={searchQuery}
-                type="search"
-                placeholder={$t('archiveSearchPlaceholder')}
-                class="w-full bg-transparent border border-[#34251c]/15 focus:border-[#34251c]/40 px-4 py-2.5 text-xs tracking-wide text-[#34251c] placeholder-[#5f4636]/75 outline-none transition-colors font-['Inter'] uppercase"
-              />
-              {#if searchQuery}
-                <button
-                  type="button"
-                  onclick={() => searchQuery = ''}
-                  class="absolute right-3 top-1/2 -translate-y-1/2 text-[#5f4636] hover:text-[#34251c] text-xs"
-                  aria-label={$t('archiveClearFilters')}
-                >
-                  ✕
-                </button>
-              {/if}
-            </label>
 
-            <label class="w-full sm:w-56">
-              <span class="block mb-1 text-[10px] tracking-[0.12em] uppercase text-[#7c6554]">{$t('archiveSortLabel')}</span>
-              <select
-                bind:value={sortMode}
-                class="w-full bg-[#f8f1e7]/70 border border-[#34251c]/15 focus:border-[#34251c]/40 px-3 py-2.5 text-xs tracking-wide uppercase text-[#34251c] outline-none transition-colors font-['Inter']"
-              >
-                <option value="curated">{$t('archiveSortCurated')}</option>
-                <option value="available">{$t('archiveSortAvailable')}</option>
-                <option value="newest">{$t('archiveSortNewest')}</option>
-                <option value="oldest">{$t('archiveSortOldest')}</option>
-                <option value="name">{$t('archiveSortName')}</option>
-              </select>
-            </label>
-
-            {#if availableYears.length > 0}
-              <label class="w-full sm:w-40">
-                <span class="block mb-1 text-[10px] tracking-[0.12em] uppercase text-[#7c6554]">{$t('archiveYearLabel')}</span>
-                <select
-                  bind:value={yearFilter}
-                  class="w-full bg-[#f8f1e7]/70 border border-[#34251c]/15 focus:border-[#34251c]/40 px-3 py-2.5 text-xs tracking-wide uppercase text-[#34251c] outline-none transition-colors font-['Inter']"
-                >
-                  <option value="all">{$t('archiveYearAll')}</option>
-                  {#each availableYears as year}
-                    <option value={String(year)}>{year}</option>
-                  {/each}
-                </select>
-              </label>
-            {/if}
-
-            {#if availableSeries.length > 0}
-              <label class="w-full sm:w-48">
-                <span class="block mb-1 text-[10px] tracking-[0.12em] uppercase text-[#7c6554]">{$t('archiveSeriesLabel')}</span>
-                <select
-                  bind:value={seriesFilter}
-                  class="w-full bg-[#f8f1e7]/70 border border-[#34251c]/15 focus:border-[#34251c]/40 px-3 py-2.5 text-xs tracking-wide uppercase text-[#34251c] outline-none transition-colors font-['Inter']"
-                >
-                  <option value="all">{$t('archiveSeriesAll')}</option>
-                  {#each availableSeries as series}
-                    <option value={series}>{series}</option>
-                  {/each}
-                </select>
-              </label>
-            {/if}
-
-            {#if hasActiveFilters}
+        <!-- Row 2: Search + Sort -->
+        <div class="filter-bar__search-row">
+          <label class="filter-bar__search-wrap">
+            <svg class="filter-bar__search-icon" width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true">
+              <circle cx="5.5" cy="5.5" r="4" stroke="currentColor" stroke-width="1"/>
+              <path d="M9 9L12 12" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+            </svg>
+            <input
+              bind:value={searchQuery}
+              type="search"
+              placeholder={$t('archiveSearchPlaceholder')}
+              class="filter-bar__search-input"
+              aria-label={$t('archiveSearchPlaceholder')}
+            />
+            {#if searchQuery}
               <button
                 type="button"
-                onclick={clearFilters}
-                class="w-full sm:w-auto px-4 py-2.5 border border-[#34251c]/10 hover:border-[#34251c]/30 text-[#5f4636] hover:text-[#34251c] font-['Inter'] text-[10px] tracking-[0.08em] uppercase transition-colors"
+                onclick={() => searchQuery = ''}
+                class="filter-bar__search-clear"
+                aria-label={$t('archiveClearFilters')}
               >
-                {$t('archiveClearFilters')}
+                <svg width="9" height="9" viewBox="0 0 9 9" fill="none" aria-hidden="true">
+                  <path d="M1 1l7 7M8 1L1 8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+                </svg>
               </button>
             {/if}
-          </div>
+          </label>
 
-          <div class="flex flex-wrap gap-2" role="group" aria-label="Status filter">
-            {#each ([
-              { key: 'all',       labelKey: 'archiveStatusAll',       count: statusCounts.all },
-              { key: 'available', labelKey: 'archiveStatusAvailable', count: statusCounts.available },
-              { key: 'reserved',  labelKey: 'archiveStatusReserved',  count: statusCounts.reserved },
-              { key: 'sold',      labelKey: 'archiveStatusSold',      count: statusCounts.sold },
-            ] as const) as pill}
-              {#if pill.key === 'all' || pill.count > 0}
-                <button
-                  onclick={() => statusFilter = pill.key}
-                  class="flex items-center gap-1.5 px-3 py-1 text-[10px] tracking-wide uppercase border transition-all duration-200 font-['Inter']
-                    {statusFilter === pill.key
-                      ? 'border-[#34251c]/50 text-[#34251c] bg-[#34251c]/8'
-                      : 'border-[#34251c]/10 text-[#5f4636] hover:border-[#34251c]/25 hover:text-[#34251c]/70'}"
-                >
-                  {#if pill.key === 'available'}
-                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-500/70 flex-shrink-0"></span>
-                  {:else if pill.key === 'reserved'}
-                    <span class="w-1.5 h-1.5 rounded-full bg-amber-500/70 flex-shrink-0"></span>
-                  {:else if pill.key === 'sold'}
-                    <span class="w-1.5 h-1.5 rounded-full bg-red-800/70 flex-shrink-0"></span>
-                  {/if}
-                  {$t(pill.labelKey)}
-                  <span class="opacity-70">{pill.count}</span>
-                </button>
-              {/if}
-            {/each}
+          <!-- Sort select -->
+          <div class="filter-bar__sort-wrap">
+            <select bind:value={sortMode} class="filter-bar__sort">
+              <option value="curated">{$t('archiveSortCurated')}</option>
+              <option value="available">{$t('archiveSortAvailable')}</option>
+              <option value="newest">{$t('archiveSortNewest')}</option>
+              <option value="oldest">{$t('archiveSortOldest')}</option>
+              <option value="name">{$t('archiveSortName')}</option>
+            </select>
+            <svg class="filter-bar__sort-arrow" width="8" height="5" viewBox="0 0 8 5" fill="none" aria-hidden="true">
+              <path d="M1 1l3 3 3-3" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+            </svg>
           </div>
         </div>
+
+        <!-- Row 3: Primary filter chips (status + saved + viewed) -->
+        <div class="filter-chips" role="group" aria-label="Primary filter">
+
+          <!-- All -->
+          <button
+            class="fchip {mainFilter === 'all' ? 'fchip--active-default' : 'fchip--off'}"
+            onclick={() => mainFilter = 'all'}
+            aria-pressed={mainFilter === 'all'}
+          >
+            {$t('archiveStatusAll')}
+            <span class="fchip__count">{statusCounts.all}</span>
+          </button>
+
+          <!-- Available -->
+          {#if statusCounts.available > 0}
+          <button
+            class="fchip {mainFilter === 'available' ? 'fchip--active-avail' : 'fchip--off'}"
+            onclick={() => mainFilter = mainFilter === 'available' ? 'all' : 'available'}
+            aria-pressed={mainFilter === 'available'}
+          >
+            <span class="fchip__dot fchip__dot--avail"></span>
+            {$t('archiveStatusAvailable')}
+            <span class="fchip__count">{statusCounts.available}</span>
+          </button>
+          {/if}
+
+          <!-- Reserved -->
+          {#if statusCounts.reserved > 0}
+          <button
+            class="fchip {mainFilter === 'reserved' ? 'fchip--active-res' : 'fchip--off'}"
+            onclick={() => mainFilter = mainFilter === 'reserved' ? 'all' : 'reserved'}
+            aria-pressed={mainFilter === 'reserved'}
+          >
+            <span class="fchip__dot fchip__dot--res"></span>
+            {$t('archiveStatusReserved')}
+            <span class="fchip__count">{statusCounts.reserved}</span>
+          </button>
+          {/if}
+
+          <!-- Sold -->
+          {#if statusCounts.sold > 0}
+          <button
+            class="fchip {mainFilter === 'sold' ? 'fchip--active-sold' : 'fchip--off'}"
+            onclick={() => mainFilter = mainFilter === 'sold' ? 'all' : 'sold'}
+            aria-pressed={mainFilter === 'sold'}
+          >
+            <span class="fchip__dot fchip__dot--sold"></span>
+            {$t('archiveStatusSold')}
+            <span class="fchip__count">{statusCounts.sold}</span>
+          </button>
+          {/if}
+
+          <!-- Divider always before special chips -->
+          <span class="fchip-sep" aria-hidden="true"></span>
+
+          <!-- Saved (♡) — always visible, disabled when empty -->
+          <button
+            class="fchip {mainFilter === 'saved' ? 'fchip--active-saved' : savedCount > 0 ? 'fchip--off' : 'fchip--empty'}"
+            onclick={() => { if (savedCount > 0) mainFilter = mainFilter === 'saved' ? 'all' : 'saved'; }}
+            aria-pressed={mainFilter === 'saved'}
+            aria-disabled={savedCount === 0}
+            title={savedCount === 0 ? 'Press ♡ on any card to save' : undefined}
+          >
+            <svg width="11" height="11" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <path
+                d="M7 12.5C7 12.5 1 8.5 1 4.5C1 2.5 2.5 1 4.5 1C5.5 1 6.5 1.8 7 3C7.5 1.8 8.5 1 9.5 1C11.5 1 13 2.5 13 4.5C13 8.5 7 12.5 7 12.5Z"
+                fill={mainFilter === 'saved' ? 'currentColor' : 'none'}
+                stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"
+              />
+            </svg>
+            {$t('archiveFilterSaved')}
+            <span class="fchip__count">{savedCount}</span>
+          </button>
+
+          <!-- Viewed (👁) — always visible, disabled when empty -->
+          <button
+            class="fchip {mainFilter === 'viewed' ? 'fchip--active-viewed' : viewedCount > 0 ? 'fchip--off' : 'fchip--empty'}"
+            onclick={() => { if (viewedCount > 0) mainFilter = mainFilter === 'viewed' ? 'all' : 'viewed'; }}
+            aria-pressed={mainFilter === 'viewed'}
+            aria-disabled={viewedCount === 0}
+            title={viewedCount === 0 ? 'Open figurines to track viewed' : undefined}
+          >
+            <svg width="12" height="11" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <path d="M1 7C1 7 3.5 3 7 3C10.5 3 13 7 13 7C13 7 10.5 11 7 11C3.5 11 1 7 1 7Z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/>
+              <circle cx="7" cy="7" r="2" stroke="currentColor" stroke-width="1.1"/>
+            </svg>
+            {$t('archiveFilterViewed')}
+            <span class="fchip__count">{viewedCount}</span>
+          </button>
+        </div>
+
+        <!-- Row 4: Secondary filters (year chips + technique select + clear) -->
+        {#if availableYears.length > 0 || availableTechniques.length > 0 || hasActiveFilters}
+        <div class="filter-secondary">
+
+          <!-- Year chips -->
+          {#if availableYears.length > 0}
+          <div class="filter-secondary__years">
+            {#each availableYears as year}
+            <button
+              class="fchip fchip--sm {yearFilter === String(year) ? 'fchip--active-default' : 'fchip--off'}"
+              onclick={() => yearFilter = yearFilter === String(year) ? 'all' : String(year)}
+              aria-pressed={yearFilter === String(year)}
+            >{year}</button>
+            {/each}
+          </div>
+          {/if}
+
+          <!-- Technique select -->
+          {#if availableTechniques.length > 0}
+          {#if availableYears.length > 0}
+            <span class="filter-secondary__sep" aria-hidden="true"></span>
+          {/if}
+          <div class="filter-bar__sort-wrap">
+            <select bind:value={techniqueFilter} class="filter-bar__sort filter-bar__sort--sm">
+              <option value="all">{$t('archiveTechniqueAll')}</option>
+              {#each availableTechniques as tech}
+              <option value={tech}>{tech}</option>
+              {/each}
+            </select>
+            <svg class="filter-bar__sort-arrow" width="8" height="5" viewBox="0 0 8 5" fill="none" aria-hidden="true">
+              <path d="M1 1l3 3 3-3" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+            </svg>
+          </div>
+          {/if}
+
+          <!-- Clear all -->
+          {#if hasActiveFilters}
+          <button
+            type="button"
+            onclick={clearFilters}
+            class="filter-clear"
+          >
+            <svg width="9" height="9" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+              <path d="M1 5h8M5 1v8" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" transform="rotate(45 5 5)"/>
+            </svg>
+            {$t('archiveClearFilters')}
+          </button>
+          {/if}
+        </div>
+        {/if}
+
       </div>
 
       {#if filtered.length > 0}
@@ -267,7 +416,7 @@
                 data-sveltekit-preload-data="hover"
               >
                 <div
-                  class="relative aspect-[3/4] mb-6 overflow-hidden bg-[#fff9f0] border border-[#34251c]/10 shadow-2xl transition-all duration-700 group-hover:border-[#34251c]/30 group-hover:shadow-[0_0_30px_-10px_rgba(198, 95, 60,0.15)] group-hover:-translate-y-2"
+                  class="relative aspect-[3/4] mb-6 overflow-hidden bg-[#fff9f0] border border-[#34251c]/10 shadow-2xl transition-all duration-700 group-hover:border-[#34251c]/30 group-hover:shadow-[0_0_30px_-10px_rgba(198,95,60,0.15)] group-hover:-translate-y-2"
                   style="view-transition-name: figurine-{figurine.id}"
                 >
 
@@ -283,10 +432,109 @@
                     </div>
                   {/if}
 
-                  <div class="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,rgba(111, 59, 36,0.8)_100%)] pointer-events-none transition-opacity duration-500 group-hover:opacity-60"></div>
+                  <div class="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,rgba(111,59,36,0.8)_100%)] pointer-events-none transition-opacity duration-500 group-hover:opacity-60"></div>
 
-                  <div class="absolute top-2 left-2 w-4 h-4 border-t border-l border-[#34251c]/20 group-hover:border-[#34251c]/60 transition-colors"></div>
-                  <div class="absolute bottom-2 right-2 w-4 h-4 border-b border-r border-[#34251c]/20 group-hover:border-[#34251c]/60 transition-colors"></div>
+                  <div class="absolute top-2 left-2 w-4 h-4 border-t border-l border-[#34251c]/20 group-hover:border-[#34251c]/60 transition-colors pointer-events-none"></div>
+                  <div class="absolute bottom-2 right-2 w-4 h-4 border-b border-r border-[#34251c]/20 group-hover:border-[#34251c]/60 transition-colors pointer-events-none"></div>
+
+                  <!-- Heart button — always visible, top-right -->
+                  <button
+                    class="absolute top-3 right-3 z-10 flex items-center justify-center w-[30px] h-[30px] rounded-full backdrop-blur-sm cursor-pointer transition-all duration-250
+                      {likedIds.has(figurine.id)
+                        ? 'bg-[rgba(198,95,60,0.12)] border border-[rgba(198,95,60,0.32)] text-[#c65f3c]'
+                        : 'bg-[rgba(255,249,240,0.65)] border border-[rgba(52,37,28,0.13)] text-[rgba(95,70,54,0.55)] hover:bg-[rgba(255,249,240,0.92)] hover:text-[#c65f3c] hover:border-[rgba(198,95,60,0.25)]'}"
+                    onclick={(e) => toggleLike(e, figurine.id)}
+                    aria-label={likedIds.has(figurine.id) ? $t('cardSaved') : $t('cardSave')}
+                    title={likedIds.has(figurine.id) ? $t('cardSaved') : $t('cardSave')}
+                  >
+                    <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                      <path
+                        d="M7 12.5C7 12.5 1 8.5 1 4.5C1 2.5 2.5 1 4.5 1C5.5 1 6.5 1.8 7 3C7.5 1.8 8.5 1 9.5 1C11.5 1 13 2.5 13 4.5C13 8.5 7 12.5 7 12.5Z"
+                        fill={likedIds.has(figurine.id) ? 'currentColor' : 'none'}
+                        stroke="currentColor"
+                        stroke-width="1.1"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                  </button>
+
+                  <!-- Slide-up action bar — appears on hover -->
+                  <div class="absolute bottom-0 left-0 right-0 z-10 flex items-center justify-between px-3.5 py-2.5
+                              bg-gradient-to-t from-[rgba(44,23,16,0.72)] to-transparent
+                              translate-y-full group-hover:translate-y-0
+                              transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]">
+
+                    <span class="text-[rgba(255,249,240,0.62)] text-[8.5px] tracking-[0.16em] uppercase select-none">
+                      View work
+                    </span>
+
+                    <div class="flex items-center gap-1.5">
+                      <!-- Quick View -->
+                      {#if figurine.faceImageUrl}
+                      <button
+                        class="flex items-center justify-center w-7 h-7 rounded-full
+                               bg-[rgba(255,249,240,0.11)] border border-[rgba(255,249,240,0.20)]
+                               text-[rgba(255,249,240,0.62)] hover:text-white hover:bg-[rgba(255,249,240,0.22)] hover:border-[rgba(255,249,240,0.38)]
+                               cursor-pointer transition-all duration-200
+                               translate-y-1 opacity-0 group-hover:translate-y-0 group-hover:opacity-100
+                               [transition-delay:50ms]"
+                        onclick={(e) => openQuickView(e, figurine)}
+                        title={$t('cardQuickView')}
+                        aria-label={$t('cardQuickView')}
+                      >
+                        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                          <path d="M1 7C1 7 3.5 3 7 3C10.5 3 13 7 13 7C13 7 10.5 11 7 11C3.5 11 1 7 1 7Z" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/>
+                          <circle cx="7" cy="7" r="2" stroke="currentColor" stroke-width="1"/>
+                        </svg>
+                      </button>
+                      {/if}
+
+                      <!-- Share -->
+                      <button
+                        class="flex items-center justify-center w-7 h-7 rounded-full
+                               bg-[rgba(255,249,240,0.11)] border border-[rgba(255,249,240,0.20)]
+                               cursor-pointer transition-all duration-200
+                               translate-y-1 opacity-0 group-hover:translate-y-0 group-hover:opacity-100
+                               [transition-delay:90ms]
+                               {shareCopiedId === figurine.id
+                                 ? 'text-[rgba(130,210,130,0.9)] border-[rgba(100,180,100,0.4)]'
+                                 : 'text-[rgba(255,249,240,0.62)] hover:text-white hover:bg-[rgba(255,249,240,0.22)] hover:border-[rgba(255,249,240,0.38)]'}"
+                        onclick={(e) => handleShare(e, figurine)}
+                        title={shareCopiedId === figurine.id ? $t('cardLinkCopied') : $t('cardShare')}
+                        aria-label={$t('cardShare')}
+                      >
+                        {#if shareCopiedId === figurine.id}
+                        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                          <path d="M2 7L5.5 10.5L12 3.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        {:else}
+                        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                          <path d="M9 2H12V5" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+                          <path d="M12 2L7 7" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+                          <path d="M6 3H3C2.4 3 2 3.4 2 4V11C2 11.6 2.4 12 3 12H10C10.6 12 11 11.6 11 11V8" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+                        </svg>
+                        {/if}
+                      </button>
+
+                      <!-- Artifact Request -->
+                      <button
+                        class="flex items-center justify-center w-7 h-7 rounded-full
+                               bg-[rgba(198,95,60,0.18)] border border-[rgba(198,95,60,0.32)]
+                               text-[rgba(255,200,170,0.88)] hover:bg-[rgba(198,95,60,0.38)] hover:border-[rgba(198,95,60,0.55)] hover:text-[rgba(255,224,208,1)]
+                               cursor-pointer transition-all duration-200
+                               translate-y-1 opacity-0 group-hover:translate-y-0 group-hover:opacity-100
+                               [transition-delay:130ms]"
+                        onclick={(e) => openOrder(e, figurine)}
+                        title={$t('cardRequest')}
+                        aria-label={$t('cardRequest')}
+                      >
+                        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                          <rect x="2" y="4" width="10" height="7" rx="0.5" stroke="currentColor" stroke-width="1"/>
+                          <path d="M2 5L7 8.5L12 5" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
                 <div class="pl-2 border-l border-transparent group-hover:border-[#34251c]/40 transition-all duration-500">
@@ -346,13 +594,337 @@
     </div>
   </div>
 
+{#if lightboxFig?.faceImageUrl}
+  <Lightbox
+    images={[{ url: lightboxFig.faceImageUrl!, alt: lightboxFig.name }]}
+    onClose={() => { lightboxFig = null; }}
+  />
+{/if}
+
+{#if orderFig}
+  <OrderModal
+    isOpen={!!orderFig}
+    figurineName={orderFig.name}
+    figurineId={orderFig.id}
+    mode="request"
+    onClose={() => { orderFig = null; }}
+  />
+{/if}
+
 <style>
   @keyframes shimmer {
     100% { transform: translateX(200%); }
   }
 
-  /* Noise Texture Utility Class */
   .bg-noise {
     background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  }
+
+  /* ── FILTER BAR LAYOUT ─────────────────────────────────────────── */
+  .filter-bar {
+    margin-bottom: clamp(56px, 8vw, 96px);
+    border-bottom: 1px solid rgba(52,37,28,0.10);
+    padding-bottom: 28px;
+  }
+
+  .filter-bar__head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    margin-bottom: 28px;
+  }
+
+  .filter-bar__back {
+    display: inline-flex;
+    align-items: center;
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: rgba(95,70,54,0.60);
+    text-decoration: none;
+    margin-bottom: 14px;
+    transition: color 0.22s, opacity 0.22s;
+    opacity: 0.7;
+  }
+  .filter-bar__back:hover { color: #34251c; opacity: 1; }
+
+  .filter-bar__title {
+    font-family: 'Fraunces', serif;
+    font-size: clamp(38px, 6vw, 72px);
+    color: rgba(111,59,36,0.90);
+    letter-spacing: 0.02em;
+    line-height: 1;
+    margin: 0;
+  }
+
+  .filter-bar__count {
+    display: none;
+    text-align: right;
+  }
+  @media (min-width: 640px) { .filter-bar__count { display: block; } }
+
+  .filter-bar__count-label {
+    font-size: 9px;
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+    color: rgba(95,70,54,0.65);
+    margin-bottom: 4px;
+  }
+
+  .filter-bar__count-value {
+    font-size: 18px;
+    color: #34251c;
+    border-left: 2px solid rgba(52,37,28,0.18);
+    padding-left: 12px;
+  }
+
+  /* ── SEARCH + SORT ROW ─────────────────────────────────────────── */
+  .filter-bar__search-row {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 18px;
+  }
+
+  .filter-bar__search-wrap {
+    position: relative;
+    flex: 1;
+    max-width: 420px;
+  }
+
+  .filter-bar__search-icon {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: rgba(95,70,54,0.45);
+    pointer-events: none;
+  }
+
+  .filter-bar__search-input {
+    width: 100%;
+    background: transparent;
+    border: 1px solid rgba(52,37,28,0.15);
+    border-bottom-color: rgba(52,37,28,0.28);
+    padding: 8px 32px 8px 30px;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #34251c;
+    font-family: 'Inter', sans-serif;
+    outline: none;
+    transition: border-color 0.22s;
+  }
+  .filter-bar__search-input::placeholder { color: rgba(95,70,54,0.50); }
+  .filter-bar__search-input:focus { border-color: rgba(52,37,28,0.45); }
+  .filter-bar__search-input::-webkit-search-cancel-button { display: none; }
+
+  .filter-bar__search-clear {
+    position: absolute;
+    right: 9px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    color: rgba(95,70,54,0.50);
+    background: none;
+    border: none;
+    cursor: pointer;
+    transition: color 0.18s;
+  }
+  .filter-bar__search-clear:hover { color: #34251c; }
+
+  .filter-bar__sort-wrap {
+    position: relative;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+  }
+
+  .filter-bar__sort {
+    appearance: none;
+    background: transparent;
+    border: 1px solid rgba(52,37,28,0.15);
+    padding: 8px 26px 8px 11px;
+    font-size: 9.5px;
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+    color: rgba(52,37,28,0.72);
+    font-family: 'Inter', sans-serif;
+    outline: none;
+    cursor: pointer;
+    transition: border-color 0.2s, color 0.2s;
+    min-width: 130px;
+  }
+  .filter-bar__sort:focus,
+  .filter-bar__sort:hover { border-color: rgba(52,37,28,0.38); color: #34251c; }
+
+  .filter-bar__sort--sm {
+    min-width: 110px;
+    padding: 5px 24px 5px 10px;
+    font-size: 9px;
+  }
+
+  .filter-bar__sort-arrow {
+    position: absolute;
+    right: 9px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: rgba(95,70,54,0.45);
+    pointer-events: none;
+  }
+
+  /* ── PRIMARY FILTER CHIPS ──────────────────────────────────────── */
+  .filter-chips {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    margin-bottom: 14px;
+    scrollbar-width: none;
+  }
+  .filter-chips::-webkit-scrollbar { display: none; }
+
+  .fchip-sep {
+    width: 1px;
+    height: 14px;
+    background: rgba(52,37,28,0.14);
+    flex-shrink: 0;
+    margin: 0 2px;
+  }
+
+  /* ── CHIP BASE ─────────────────────────────────────────────────── */
+  .fchip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 11px;
+    font-size: 9.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    border: 1px solid;
+    white-space: nowrap;
+    user-select: none;
+    flex-shrink: 0;
+    cursor: pointer;
+    background: transparent;
+    font-family: 'Inter', sans-serif;
+    line-height: 1;
+    transition: border-color 0.18s, color 0.18s, background 0.18s;
+  }
+
+  .fchip--sm {
+    padding: 4px 9px;
+    font-size: 9px;
+    letter-spacing: 0.10em;
+  }
+
+  .fchip--off {
+    border-color: rgba(52,37,28,0.13);
+    color: rgba(95,70,54,0.68);
+  }
+  .fchip--off:hover {
+    border-color: rgba(52,37,28,0.30);
+    color: rgba(52,37,28,0.85);
+  }
+
+  /* Empty / not-yet-populated special chips */
+  .fchip--empty {
+    border-color: rgba(52,37,28,0.08);
+    color: rgba(95,70,54,0.30);
+    cursor: default;
+  }
+
+  .fchip--active-default {
+    border-color: rgba(52,37,28,0.52);
+    color: #34251c;
+    background: rgba(52,37,28,0.06);
+  }
+  .fchip--active-avail {
+    border-color: rgba(20,100,55,0.48);
+    color: rgb(18,95,52);
+    background: rgba(20,100,55,0.06);
+  }
+  .fchip--active-res {
+    border-color: rgba(150,100,15,0.48);
+    color: rgb(135,88,10);
+    background: rgba(150,100,15,0.07);
+  }
+  .fchip--active-sold {
+    border-color: rgba(95,70,54,0.42);
+    color: #7c6554;
+    background: rgba(52,37,28,0.04);
+  }
+  .fchip--active-saved {
+    border-color: rgba(198,95,60,0.52);
+    color: #c65f3c;
+    background: rgba(198,95,60,0.08);
+  }
+  .fchip--active-viewed {
+    border-color: rgba(70,95,85,0.48);
+    color: #3e5a52;
+    background: rgba(70,95,85,0.07);
+  }
+
+  .fchip__count {
+    opacity: 0.58;
+    font-weight: 400;
+  }
+
+  .fchip__dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .fchip__dot--avail { background: rgba(20,135,70,0.75); }
+  .fchip__dot--res   { background: rgba(175,120,20,0.75); }
+  .fchip__dot--sold  { background: rgba(120,95,80,0.65); }
+
+  /* ── SECONDARY FILTERS ─────────────────────────────────────────── */
+  .filter-secondary {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .filter-secondary__years {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex-wrap: wrap;
+  }
+
+  .filter-secondary__sep {
+    width: 1px;
+    height: 13px;
+    background: rgba(52,37,28,0.14);
+    flex-shrink: 0;
+  }
+
+  .filter-clear {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-left: auto;
+    padding: 5px 11px;
+    font-size: 9px;
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+    font-family: 'Inter', sans-serif;
+    color: rgba(95,70,54,0.60);
+    border: 1px solid rgba(52,37,28,0.12);
+    background: transparent;
+    cursor: pointer;
+    transition: color 0.18s, border-color 0.18s;
+  }
+  .filter-clear:hover {
+    color: rgba(198,95,60,0.85);
+    border-color: rgba(198,95,60,0.30);
   }
 </style>

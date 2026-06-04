@@ -17,6 +17,24 @@ pub enum FigurineStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+#[sqlx(type_name = "order_status", rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+pub enum OrderStatus {
+    New,
+    Seen,
+    Replied,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+#[sqlx(type_name = "order_mode", rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+pub enum OrderMode {
+    Request,
+    Question,
+    Notify,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 #[sqlx(type_name = "image_type", rename_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 pub enum ImageType {
@@ -156,6 +174,8 @@ pub struct FigurineListItemDto {
     pub year: Option<i32>,
     pub sort_order: i32,
     pub series: Option<String>,
+    pub technique: Option<String>,
+    pub material: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -363,6 +383,30 @@ pub struct OrderRequest {
     pub requester_name: String,
     pub requester_email: String,
     pub message: Option<String>,
+    #[serde(default = "default_order_mode")]
+    pub mode: OrderMode,
+}
+
+fn default_order_mode() -> OrderMode { OrderMode::Request }
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Order {
+    pub id: Uuid,
+    pub figurine_id: String,
+    pub figurine_name: String,
+    pub requester_name: String,
+    pub requester_email: String,
+    pub message: Option<String>,
+    pub mode: OrderMode,
+    pub status: OrderStatus,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateOrderStatusRequest {
+    pub status: OrderStatus,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

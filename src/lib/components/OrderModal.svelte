@@ -4,13 +4,20 @@
   import { api, isTauri } from '$lib/api';
   import { t } from '$lib/i18n';
 
-  let { isOpen = false, figurineName = '', figurineId = '', onClose = () => {} } = $props();
+  let {
+    isOpen = false,
+    figurineName = '',
+    figurineId = '',
+    mode = 'request' as 'request' | 'question' | 'notify',
+    onClose = () => {}
+  } = $props();
 
   let name = $state('');
   let email = $state('');
   let message = $state('');
   let isSubmitting = $state(false);
   let isSealed = $state(false);
+  let submitError = $state('');
 
   function close() {
     if (!isSubmitting) {
@@ -25,45 +32,39 @@
     }
   }
 
+  // Вычисляемые строки для разных режимов
+  let modalTitle  = $derived(mode === 'question' ? $t('figurineAskQuestion') : mode === 'notify' ? $t('figurineNotify') : $t('orderTitle'));
+  let submitLabel = $derived(mode === 'question' ? $t('figurineAskQuestion') : mode === 'notify' ? $t('figurineNotify') : $t('orderSubmit'));
+  let subjectPrefix = $derived(
+    mode === 'question' ? 'Question: '
+    : mode === 'notify'   ? 'Notify me: '
+    : ''
+  );
+
   async function handleSubmit() {
-    if (!name.trim() || !email.trim()) return;
+    if (!email.trim()) return;
+    if (mode === 'request' && !name.trim()) return;
 
     isSubmitting = true;
+    submitError = '';
 
-    const subject = encodeURIComponent(`${$t('orderEmailSubject')}${figurineName}`);
-    const body = encodeURIComponent(
-      `${$t('orderEmailPetitioner')}${name.trim()}\n${$t('orderEmailAddress')}${email.trim()}\n\n${$t('orderEmailMessage')}${message.trim() || '—'}\n\n${$t('orderEmailSentVia')}`
-    );
-    const contactEmail = localStorage.getItem('gotiga_contact_email') || 'info@gotiga.art';
-    const href = `mailto:${contactEmail}?subject=${subject}&body=${body}`;
-
-    // Trigger mailto immediately (before any await to keep user-gesture context)
-    const a = document.createElement('a');
-    a.href = href;
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-
-    // Notify server (Telegram) in parallel — silently ignore failures
-    if (!isTauri) {
-      api.submitOrder({
+    try {
+      await api.submitOrder({
         figurineId: figurineId || 'unknown',
         figurineName,
-        requesterName: name.trim(),
+        requesterName: name.trim() || '—',
         requesterEmail: email.trim(),
         message: message.trim() || null,
-      }).catch(() => {});
+        mode,
+      });
+
+      isSealed = true;
+      setTimeout(() => { close(); }, 3000);
+    } catch {
+      submitError = $t('orderSubmitError');
+    } finally {
+      isSubmitting = false;
     }
-
-    await new Promise(r => setTimeout(r, 800));
-
-    isSubmitting = false;
-    isSealed = true;
-
-    setTimeout(() => {
-      close();
-    }, 3000);
   }
 
   function handleBackdropKeydown(e: KeyboardEvent) {
@@ -77,7 +78,7 @@
 {#if isOpen}
   <!-- Backdrop -->
   <div
-          class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#6f3b24]/35 backdrop-blur-sm"
+          class="fixed inset-0 z-[220] flex items-center justify-center p-4 bg-[#6f3b24]/35 backdrop-blur-sm"
           transition:fade={{ duration: 400 }}
           onclick={close}
           onkeydown={handleBackdropKeydown}
@@ -119,7 +120,7 @@
                 <div out:fade={{ duration: 300 }}>
                   <div class="text-center mb-10 relative">
                     <span class="absolute -top-6 left-1/2 -translate-x-1/2 text-5xl opacity-10 font-['Fraunces']">~</span>
-                    <h3 class="font-['Fraunces'] text-4xl mb-2 text-[#6f3b24] drop-shadow-sm tracking-wide">{$t('orderTitle')}</h3>
+                    <h3 class="font-['Fraunces'] text-4xl mb-2 text-[#6f3b24] drop-shadow-sm tracking-wide">{modalTitle}</h3>
                     <div class="flex items-center justify-center gap-3 text-[#5f4636]">
                         <span class="h-px w-8 bg-[#5f4636]/30"></span>
                         <p class="italic text-lg font-semibold tracking-wide">Ref: {figurineName}</p>
@@ -129,6 +130,7 @@
 
                   <form class="space-y-8" onsubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
 
+                    {#if mode === 'request'}
                     <div class="relative group">
                       <input
                               id="name"
@@ -142,6 +144,7 @@
                           {$t('orderNameLabel')}
                       </label>
                     </div>
+                    {/if}
 
                     <div class="relative group">
                       <input
@@ -184,13 +187,17 @@
                              <span class="w-4 h-4 border-2 border-[#fff9f0]/50 border-t-[#fff9f0] rounded-full animate-spin"></span>
                              <span class="animate-pulse">{$t('orderSubmitting')}</span>
                            {:else}
-                             <span>{$t('orderSubmit')}</span>
+                             <span>{submitLabel}</span>
                              <span class="text-lg opacity-70">✒</span>
                            {/if}
                          </span>
                       </button>
                     </div>
                      
+                    {#if submitError}
+                      <p class="text-center text-sm text-red-700 font-['Inter']">{submitError}</p>
+                    {/if}
+
                     <div class="text-center mt-6">
                         <button onclick={close} type="button" class="text-xs font-['Inter'] text-[#5f4636]/90 hover:text-[#c65f3c] tracking-wide uppercase border-b border-transparent hover:border-[#c65f3c]/30 transition-all">
                             {$t('orderCancel')}

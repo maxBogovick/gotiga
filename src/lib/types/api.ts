@@ -8,6 +8,8 @@ export interface FigurineListItem {
     year?: number | null;
     sortOrder?: number;
     series?: string | null;
+    technique?: string | null;
+    material?: string | null;
 }
 
 export interface FigurineImage {
@@ -104,6 +106,19 @@ export interface OrderRequest {
     requesterName: string;
     requesterEmail: string;
     message: string | null;
+    mode: 'request' | 'question' | 'notify';
+}
+
+export interface Order {
+    id: string;
+    figurineId: string;
+    figurineName: string;
+    requesterName: string;
+    requesterEmail: string;
+    message: string | null;
+    mode: 'request' | 'question' | 'notify';
+    status: 'new' | 'seen' | 'replied';
+    createdAt: string;
 }
 
 export interface MediaUsage {

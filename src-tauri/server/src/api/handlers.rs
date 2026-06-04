@@ -605,7 +605,24 @@ pub async fn create_order(
     State(service): State<AppService>,
     Json(order): Json<crate::models::OrderRequest>,
 ) -> Result<StatusCode> {
-    // Fire-and-forget — never fail the request due to notification errors
-    let _ = service.send_order_notification(&order).await;
+    service.create_order(&order).await?;
+    Ok(StatusCode::CREATED)
+}
+
+pub async fn list_orders(
+    State(service): State<AppService>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<Vec<crate::models::Order>>> {
+    let status = params.get("status").map(|s| s.as_str());
+    let orders = service.list_orders(status).await?;
+    Ok(Json(orders))
+}
+
+pub async fn update_order_status(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<crate::models::UpdateOrderStatusRequest>,
+) -> Result<StatusCode> {
+    service.update_order_status(id, &body.status).await?;
     Ok(StatusCode::OK)
 }

@@ -10,11 +10,24 @@
   import Lightbox from '$lib/components/Lightbox.svelte';
   import { t } from '$lib/i18n';
 
-  let { figurine, id }: { figurine: Figurine; id: string } = $props();
+  import type { FigurineListItem } from '$lib/types/api';
+
+  let {
+    figurine,
+    id,
+    prev = null,
+    next = null,
+  }: {
+    figurine: Figurine;
+    id: string;
+    prev?: FigurineListItem | null;
+    next?: FigurineListItem | null;
+  } = $props();
 
   let selectedImageIndex = $state(0);
   let isGrimoireOpen = $state(false);
   let showOrderModal = $state(false);
+  let orderMode = $state<'request' | 'question' | 'notify'>('request');
   let isAudioPlaying = $state(false);
   let isCandleLit = $state(false);
   let showLightbox = $state(false);
@@ -89,15 +102,50 @@
     if (e.key === 'ArrowRight') selectImage(Math.min(sortedImages.length - 1, selectedImageIndex + 1));
   }
 
-  // ── Sticky condensed nav ──────────────────────────────────────────────────
+  // ── Sticky condensed nav — три фазы ─────────────────────────────────────
   let scrollY = $state(0);
-  let scrolled = $derived(scrollY > 80);
+  let scrolled    = $derived(scrollY > 80);
 
-  function onScroll() { scrollY = window.scrollY; }
+  // DOM-якоря для определения выхода секций из viewport
+  let galleryRef:  HTMLElement | undefined = $state();
+  let grimoireRef: HTMLElement | undefined = $state();
+
+  let galleryExited  = $state(false); // Phase 2: галерея ушла за экран
+  let grimoireExited = $state(false); // Phase 3: grimoire ушёл за экран
+
+  // ── Wishlist ──────────────────────────────────────────────────────────────
+  let isWishlisted = $state(false);
+
+  function toggleWishlist() {
+    const stored = JSON.parse(localStorage.getItem('gotiga_wishlist') ?? '[]') as string[];
+    const set = new Set(stored);
+    isWishlisted ? set.delete(figurine.id) : set.add(figurine.id);
+    localStorage.setItem('gotiga_wishlist', JSON.stringify([...set]));
+    isWishlisted = !isWishlisted;
+  }
+
+  function openModal(m: 'request' | 'question' | 'notify') {
+    orderMode = m;
+    showOrderModal = true;
+  }
+
+  function onScroll() {
+    scrollY = window.scrollY;
+    const threshold = 130; // высота SiteHeader + topnav
+    if (galleryRef) {
+      galleryExited = galleryRef.getBoundingClientRect().bottom < threshold;
+    }
+    if (grimoireRef) {
+      grimoireExited = grimoireRef.getBoundingClientRect().bottom < threshold;
+    }
+  }
 
   onMount(() => {
     window.addEventListener('keydown', handleKeydown);
     window.addEventListener('scroll', onScroll, { passive: true });
+    // Restore wishlist state
+    const wl = JSON.parse(localStorage.getItem('gotiga_wishlist') ?? '[]') as string[];
+    isWishlisted = wl.includes(figurine.id);
   });
 
   onDestroy(() => {
@@ -114,9 +162,10 @@
 
 <CandleReveal isActive={isCandleLit} />
 
-<div class="page-root">
+<div class="page-root" class:page-root--has-cta={figurine.status === 'available'}>
   <OrderModal
     isOpen={showOrderModal}
+    mode={orderMode}
     figurineName={figurine.name}
     figurineId={figurine.id}
     onClose={() => (showOrderModal = false)}
@@ -131,16 +180,106 @@
     <!-- ── NAV ── -->
     <nav class="topnav" class:topnav--scrolled={scrolled} in:fade={{ duration: 600 }}>
 
-      <!-- Left: back -->
-      <a href="/figurines" class="nav-link back-link" aria-label={$t('figurineBackToArchive')}>
-        <svg class="back-arrow" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-          <path d="M10 3L5 8l5 5"/>
-        </svg>
-        <span class="back-label">{$t('figurineBackToArchive')}</span>
-      </a>
+      <!-- Left: back + prev/next -->
+      <div class="topnav-left">
+        <a href="/figurines" class="back-link" aria-label={$t('figurineBackToArchive')}>
+          <svg class="back-arrow" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M9 2.5L4.5 7 9 11.5"/>
+          </svg>
+          <span class="back-label">{$t('figurineBackToArchive')}</span>
+        </a>
 
-      <!-- Center: figurine name (visible only when scrolled) -->
-      <span class="topnav-title" aria-hidden="true">{figurine.name}</span>
+        {#if prev || next}
+          <div class="topnav-fig-nav" role="group" aria-label="Figurine navigation">
+            {#if prev}
+              <a
+                href="/figurines/{prev.id}"
+                class="fig-nav-pill"
+                title={prev.name}
+                aria-label="{$t('figurineNavPrev')}: {prev.name}"
+                data-sveltekit-preload-data="hover"
+              >
+                <svg class="fig-nav-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <path d="M6.5 2L3.5 5 6.5 8"/>
+                </svg>
+                <span class="fig-nav-name">{prev.name}</span>
+              </a>
+            {:else}
+              <span class="fig-nav-pill fig-nav-pill--off" aria-hidden="true">
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <path d="M6.5 2L3.5 5 6.5 8"/>
+                </svg>
+              </span>
+            {/if}
+            {#if next}
+              <a
+                href="/figurines/{next.id}"
+                class="fig-nav-pill fig-nav-pill--next"
+                title={next.name}
+                aria-label="{$t('figurineNavNext')}: {next.name}"
+                data-sveltekit-preload-data="hover"
+              >
+                <span class="fig-nav-name">{next.name}</span>
+                <svg class="fig-nav-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <path d="M3.5 2l3 3L3.5 8"/>
+                </svg>
+              </a>
+            {:else}
+              <span class="fig-nav-pill fig-nav-pill--off fig-nav-pill--next" aria-hidden="true">
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <path d="M3.5 2l3 3L3.5 8"/>
+                </svg>
+              </span>
+            {/if}
+          </div>
+        {/if}
+      </div>
+
+      <!-- Center: прогрессивная идентификация (3 фазы) -->
+      <div class="topnav-center" aria-hidden="true">
+
+        <!-- Phase 1: только имя -->
+        {#if scrolled && !galleryExited}
+          <span class="topnav-p1-name" transition:fade={{ duration: 220 }}>
+            {figurine.name}
+          </span>
+        {/if}
+
+        <!-- Phase 2+: полная идентичность с галереей и годом -->
+        {#if galleryExited}
+          <div class="topnav-identity" transition:fade={{ duration: 280 }}>
+            {#if currentImage?.url}
+              <button
+                class="topnav-mini-img"
+                onclick={() => openLightbox(selectedImageIndex)}
+                tabindex="-1"
+                title="Open in fullscreen"
+              >
+                <img src={resolveUrl(currentImage.url)} alt="" loading="eager" />
+              </button>
+            {/if}
+
+            <span class="topnav-ident-name">{figurine.name}</span>
+
+            {#if sortedImages.length > 1}
+              <div class="topnav-dots" role="group" aria-label="Gallery navigation">
+                {#each sortedImages as _, i}
+                  <button
+                    class="topnav-dot {i === selectedImageIndex ? 'topnav-dot--on' : ''}"
+                    onclick={() => selectImage(i)}
+                    tabindex="-1"
+                    aria-label="Image {i + 1}"
+                  ></button>
+                {/each}
+              </div>
+            {/if}
+
+            {#if figurine.year}
+              <span class="topnav-ident-year">Anno {figurine.year}</span>
+            {/if}
+          </div>
+        {/if}
+      </div>
 
       <!-- Right: controls -->
       <div class="topnav-controls">
@@ -154,6 +293,18 @@
           <span class="btn-label">{isCandleLit ? $t('figurineExtinguish') : $t('figurineCandle')}</span>
         </button>
 
+        <button
+          onclick={toggleWishlist}
+          class="control-btn {isWishlisted ? 'control-btn--lit' : ''}"
+          aria-label={isWishlisted ? $t('figurineWishlisted') : $t('figurineWishlist')}
+          title={isWishlisted ? $t('figurineWishlisted') : $t('figurineWishlist')}
+        >
+          <svg width="13" height="12" viewBox="0 0 13 12" fill={isWishlisted ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="1.4">
+            <path d="M6.5 10.5S1 7 1 3.5A2.5 2.5 0 0 1 6.5 2 2.5 2.5 0 0 1 12 3.5C12 7 6.5 10.5 6.5 10.5z"/>
+          </svg>
+          <span class="btn-label">{isWishlisted ? $t('figurineWishlisted') : $t('figurineWishlist')}</span>
+        </button>
+
         {#if figurine.ambiencePath}
           <button
             onclick={toggleAudio}
@@ -163,6 +314,25 @@
           >
             <span class="audio-indicator {isAudioPlaying ? 'audio-indicator--on' : ''}"></span>
             <span class="btn-label">{isAudioPlaying ? $t('figurineSilence') : $t('figurineWhisper')}</span>
+          </button>
+        {/if}
+
+        <!-- Phase 2+: кнопка Memory Mirror появляется когда галерея ушла -->
+        {#if figurine.processSteps && figurine.processSteps.length > 0 && galleryExited}
+          <button
+            onclick={() => { isGrimoireOpen = true; }}
+            class="control-btn control-btn--eye {isGrimoireOpen ? 'control-btn--active' : ''} {grimoireExited && !isGrimoireOpen ? 'control-btn--eye-pulse' : ''}"
+            aria-label={$t('figurineGrimoire')}
+            title={$t('figurineGrimoire')}
+            transition:fade={{ duration: 200 }}
+          >
+            <svg width="12" height="14" viewBox="0 0 12 14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2.5" y="2" width="7" height="10" rx="1.2"/>
+              <path d="M2.5 2A1.5 1.5 0 0 0 1 3.5v7A1.5 1.5 0 0 0 2.5 12"/>
+              <path d="M9.5 2A1.5 1.5 0 0 1 11 3.5v7A1.5 1.5 0 0 1 9.5 12"/>
+              <path d="M4.5 5h3M4.5 7h3M4.5 9h1.5"/>
+            </svg>
+            <span class="btn-label">{$t('figurineGrimoire')}</span>
           </button>
         {/if}
 
@@ -186,6 +356,22 @@
           {/if}
         </button>
 
+        <!-- Phase 2+: компактная CTA в хидере -->
+        {#if galleryExited && figurine.status === 'available'}
+          <button
+            onclick={() => openModal('request')}
+            class="control-btn"
+            aria-label={$t('figurineRequest')}
+            transition:fade={{ duration: 200 }}
+          >
+            <svg width="11" height="12" viewBox="0 0 14 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4.5 5V3.5a2.5 2.5 0 0 1 5 0V5"/>
+              <rect x="2" y="5" width="10" height="8.5" rx="1.2"/>
+            </svg>
+            <span class="btn-label">{$t('figurineRequest')}</span>
+          </button>
+        {/if}
+
         <span class="ref-tag">ARC-{id.toUpperCase()}</span>
       </div>
     </nav>
@@ -194,7 +380,7 @@
     <div class="main-grid">
 
       <!-- LEFT: Gallery with vertical thumbnail strip -->
-      <div class="gallery-col">
+      <div class="gallery-col" bind:this={galleryRef}>
         <div class="gallery-layout" class:gallery-layout--solo={sortedImages.length <= 1}>
 
           {#if sortedImages.length > 1}
@@ -216,8 +402,13 @@
           <div class="image-frame">
             <div class="image-stage" style="view-transition-name: figurine-{id}">
               {#key currentImage?.id}
-                <div class="image-layer" in:fade={{ duration: 450 }}>
-                  <BrassLens src={currentImage?.url} alt={figurine.name} class="w-full h-full" />
+                <div class="image-layer" in:fade={{ duration: 220 }}>
+                  <BrassLens
+                    src={currentImage?.url}
+                    alt={figurine.name}
+                    class="w-full h-full"
+                    onOpenLightbox={() => openLightbox(selectedImageIndex)}
+                  />
                 </div>
               {/key}
 
@@ -286,64 +477,82 @@
           </div>
         {/if}
 
-        <!-- Attributes as icon grid -->
+        <!-- Attributes — compact spec rows -->
         {#if figurine.dimensions || figurine.material || figurine.technique}
           <div class="d-attrs">
             <header class="d-section-header">
               <span class="sec-label">{$t('figurineAttributes')}</span>
               <div class="sec-rule" aria-hidden="true"></div>
             </header>
-            <div class="attrs-grid">
+            <dl class="attrs-specs">
               {#if figurine.dimensions}
-                <div class="attr-card">
-                  <span class="attr-card-icon" aria-hidden="true">
-                    <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.2">
-                      <rect x="0.75" y="4.25" width="13.5" height="6.5" rx="1"/>
-                      <path d="M3 4.25V7M5.75 4.25V8M8.5 4.25V7M11.25 4.25V8"/>
+                <div class="spec-row">
+                  <span class="spec-icon" aria-hidden="true">
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2">
+                      <rect x="0.7" y="4" width="12.6" height="6" rx="0.8"/>
+                      <path d="M3 4V6.5M5.5 4V7.5M8 4V6.5M10.5 4V7.5"/>
                     </svg>
                   </span>
-                  <span class="attr-card-label">{$t('figurineDimensions')}</span>
-                  <span class="attr-card-value">{figurine.dimensions}</span>
+                  <dt class="spec-label">{$t('figurineDimensions')}</dt>
+                  <dd class="spec-value">{figurine.dimensions}</dd>
                 </div>
               {/if}
               {#if figurine.material}
-                <div class="attr-card">
-                  <span class="attr-card-icon" aria-hidden="true">
-                    <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.2">
-                      <path d="M7.5 1L13 5v5L7.5 14 2 10V5L7.5 1z"/>
-                      <path d="M2 5h11"/>
+                <div class="spec-row">
+                  <span class="spec-icon" aria-hidden="true">
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2">
+                      <path d="M7 1L12.5 4.5v5L7 13 1.5 9.5v-5L7 1z"/>
+                      <path d="M1.5 4.5h11"/>
                     </svg>
                   </span>
-                  <span class="attr-card-label">{$t('figurineMaterial')}</span>
-                  <span class="attr-card-value">{figurine.material}</span>
+                  <dt class="spec-label">{$t('figurineMaterial')}</dt>
+                  <dd class="spec-value">{figurine.material}</dd>
                 </div>
               {/if}
               {#if figurine.technique}
-                <div class="attr-card">
-                  <span class="attr-card-icon" aria-hidden="true">
-                    <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.2">
-                      <path d="M9.5 1.5l4 4L5 14H1v-4L9.5 1.5z"/>
-                      <path d="M8 3l4 4"/>
+                <div class="spec-row">
+                  <span class="spec-icon" aria-hidden="true">
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2">
+                      <path d="M9 1.5l3.5 3.5L4.5 13H1v-3.5L9 1.5z"/>
+                      <path d="M7.5 3l3 3"/>
                     </svg>
                   </span>
-                  <span class="attr-card-label">{$t('figurineTechnique')}</span>
-                  <span class="attr-card-value">{figurine.technique}</span>
+                  <dt class="spec-label">{$t('figurineTechnique')}</dt>
+                  <dd class="spec-value">{figurine.technique}</dd>
                 </div>
               {/if}
-            </div>
+            </dl>
           </div>
         {/if}
 
         <!-- CTA at the bottom — после того как всё прочитано -->
         <div class="d-cta-zone">
           {#if figurine.status === 'available'}
-            <button onclick={() => (showOrderModal = true)} class="cta-btn">
-              <span class="cta-btn-label">{$t('figurineRequest')}</span>
-              <svg class="cta-arrow" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-                <path d="M3 8h10M9 4l4 4-4 4"/>
-              </svg>
-            </button>
-            <p class="cta-note">{$t('figurineRequestNote')}</p>
+            <div class="cta-row">
+              <button onclick={() => openModal('request')} class="cta-btn">
+                <span class="cta-btn-label">{$t('figurineRequest')}</span>
+                <svg class="cta-arrow" width="15" height="16" viewBox="0 0 14 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M4.5 5V3.5a2.5 2.5 0 0 1 5 0V5"/>
+                  <rect x="2" y="5" width="10" height="8.5" rx="1.2"/>
+                </svg>
+              </button>
+              <button
+                onclick={toggleWishlist}
+                class="cta-heart {isWishlisted ? 'cta-heart--saved' : ''}"
+                aria-label={isWishlisted ? $t('figurineWishlisted') : $t('figurineWishlist')}
+                title={isWishlisted ? $t('figurineWishlisted') : $t('figurineWishlist')}
+              >
+                <svg width="18" height="16" viewBox="0 0 18 16" fill={isWishlisted ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="1.5">
+                  <path d="M9 14.5S1.5 9.5 1.5 5A3.5 3.5 0 0 1 9 2.8 3.5 3.5 0 0 1 16.5 5C16.5 9.5 9 14.5 9 14.5z"/>
+                </svg>
+              </button>
+            </div>
+            <div class="cta-secondary-row">
+              <p class="cta-note">{$t('figurineRequestNote')}</p>
+              <button onclick={() => openModal('question')} class="cta-ask">
+                {$t('figurineAskQuestion')}
+              </button>
+            </div>
           {:else if figurine.status === 'reserved'}
             <div class="reserved-notice">
               <svg class="reserved-icon" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.3">
@@ -352,13 +561,27 @@
               </svg>
               <div>
                 <p class="reserved-title">Зарезервирована</p>
-                <p class="reserved-sub">Эта работа нашла временного хранителя. Напишите нам — мы сообщим о появлении похожих.</p>
+                <p class="reserved-sub">{$t('figurineNotifyNote')}</p>
               </div>
             </div>
+            <button onclick={() => openModal('notify')} class="notify-btn">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3">
+                <path d="M7 1a4 4 0 0 1 4 4v3l1.5 2H1.5L3 8V5a4 4 0 0 1 4-4z"/>
+                <path d="M5.5 11.5a1.5 1.5 0 0 0 3 0"/>
+              </svg>
+              {$t('figurineNotify')}
+            </button>
           {:else}
             <div class="sold-notice">
               <p class="sold-text">{$t('figurineStatusSold')} — эта работа обрела своего хранителя.</p>
             </div>
+            <button onclick={() => openModal('notify')} class="notify-btn">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3">
+                <path d="M7 1a4 4 0 0 1 4 4v3l1.5 2H1.5L3 8V5a4 4 0 0 1 4-4z"/>
+                <path d="M5.5 11.5a1.5 1.5 0 0 0 3 0"/>
+              </svg>
+              {$t('figurineNotify')}
+            </button>
           {/if}
         </div>
 
@@ -367,7 +590,7 @@
 
     <!-- ── GRIMOIRE ── -->
     {#if figurine.processSteps && figurine.processSteps.length > 0}
-      <div class="grimoire-section">
+      <div class="grimoire-section" bind:this={grimoireRef}>
         <button onclick={toggleGrimoire} class="grimoire-trigger" aria-expanded={isGrimoireOpen}>
           <span class="grimoire-icon" aria-hidden="true">
             <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
@@ -488,8 +711,9 @@
     </div>
     <button onclick={() => (showOrderModal = true)} class="mobile-cta-btn">
       {$t('figurineRequest')}
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">
-        <path d="M2 7h10M8 3l4 4-4 4"/>
+      <svg width="13" height="14" viewBox="0 0 14 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4.5 5V3.5a2.5 2.5 0 0 1 5 0V5"/>
+        <rect x="2" y="5" width="10" height="8.5" rx="1.2"/>
       </svg>
     </button>
   </div>
@@ -505,6 +729,10 @@
       #f8f1e7;
     color: #2c1710;
     padding-bottom: 8rem;
+  }
+  /* На мобильных: дополнительный отступ под sticky CTA-бар */
+  @media (max-width: 1023px) {
+    .page-root--has-cta { padding-bottom: calc(8rem + 68px); }
   }
 
   .page-container {
@@ -559,64 +787,257 @@
     .topnav { top: 58px; }   /* высота мобильного SiteHeader */
   }
 
-  /* ── Центральный заголовок ── */
-  .topnav-title {
+  /* ── Центральная зона — прогрессивная идентичность ── */
+  .topnav-center {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  /* Phase 1: просто имя */
+  .topnav-p1-name {
     font-family: var(--font-display);
     font-size: 0.875rem;
     font-weight: 400;
     letter-spacing: 0.01em;
     color: var(--color-ink-primary);
-    text-align: center;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    opacity: 0;
-    transform: translateY(5px);
-    transition:
-      opacity 0.28s var(--ease-atelier),
-      transform 0.28s var(--ease-atelier);
     pointer-events: none;
   }
-  .topnav--scrolled .topnav-title {
-    opacity: 1;
-    transform: translateY(0);
+
+  /* Phase 2+: идентити-полоска */
+  .topnav-identity {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    min-width: 0;
+    overflow: hidden;
   }
 
-  /* ── Back link ── */
+  /* Мини-превью изображения */
+  .topnav-mini-img {
+    flex-shrink: 0;
+    width: 22px;
+    height: 28px;
+    overflow: hidden;
+    border-radius: 2px;
+    border: 1px solid var(--color-border-subtle);
+    cursor: pointer;
+    background: var(--color-canvas-sunken);
+    padding: 0;
+    transition:
+      border-color var(--duration-default) var(--ease-atelier),
+      transform var(--duration-default) var(--ease-atelier);
+  }
+  .topnav-mini-img:hover {
+    border-color: var(--color-border-default);
+    transform: scale(1.1);
+  }
+  .topnav-mini-img img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center 20%;
+    display: block;
+  }
+
+  /* Имя в идентити */
+  .topnav-ident-name {
+    font-family: var(--font-display);
+    font-size: 0.875rem;
+    font-weight: 400;
+    letter-spacing: 0.01em;
+    color: var(--color-ink-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+
+  /* Точки-индикаторы галереи */
+  .topnav-dots {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    flex-shrink: 0;
+  }
+
+  .topnav-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(52,37,28,0.18);
+    cursor: pointer;
+    padding: 0;
+    transition:
+      background var(--duration-default) var(--ease-atelier),
+      transform var(--duration-default) var(--ease-atelier);
+  }
+  .topnav-dot:hover { background: rgba(52,37,28,0.38); transform: scale(1.35); }
+  .topnav-dot--on { background: var(--color-ember); transform: scale(1.25); }
+
+  /* Год */
+  .topnav-ident-year {
+    font-family: var(--font-body);
+    font-size: 0.5625rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: rgba(95,70,54,0.45);
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  /* Скрываем год и точки на маленьких экранах */
+  @media (max-width: 560px) {
+    .topnav-ident-year { display: none; }
+    .topnav-dots       { display: none; }
+  }
+
+  /* Eye/grimoire button в controls */
+  .control-btn--eye-pulse {
+    border-color: rgba(192,88,44,0.32);
+    animation: eyePulse 2.6s ease-in-out infinite;
+  }
+  @keyframes eyePulse {
+    0%, 100% { box-shadow: none; border-color: rgba(192,88,44,0.28); }
+    50%       { box-shadow: 0 0 0 3px rgba(192,88,44,0.10); border-color: rgba(192,88,44,0.5); }
+  }
+
+  /* ── Левая зона: back + prev/next ── */
+  .topnav-left {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    min-width: 0;
+    justify-self: start;
+  }
+
   .back-link {
     display: inline-flex;
     align-items: center;
-    gap: 0.4rem;
+    gap: 0.35rem;
     font-family: var(--font-body);
-    font-size: 0.6875rem;
-    font-weight: 500;
-    letter-spacing: 0.09em;
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--color-ink-tertiary);
-    transition:
-      color var(--duration-default) var(--ease-atelier),
-      gap var(--duration-default) var(--ease-atelier);
-    padding: 0.25rem 0;
-    justify-self: start;
+    text-decoration: none;
+    padding: 0.3rem 0.75rem 0.3rem 0;
+    white-space: nowrap;
+    transition: color 0.2s var(--ease-atelier);
   }
-  .back-link:hover { color: var(--color-ink-primary); gap: 0.6rem; }
+  .back-link:hover { color: var(--color-ink-primary); }
 
   .back-arrow {
     flex-shrink: 0;
-    transition: transform var(--duration-default) var(--ease-atelier);
+    transition: transform 0.2s var(--ease-atelier);
   }
-  .back-link:hover .back-arrow { transform: translateX(-3px); }
+  .back-link:hover .back-arrow { transform: translateX(-2px); }
 
-  /* текст "ВЕРНУТЬСЯ В АРХИВ" — скрываем в condensed */
   .back-label {
     transition: opacity 0.22s var(--ease-atelier), max-width 0.22s var(--ease-atelier);
     max-width: 200px;
     overflow: hidden;
-    white-space: nowrap;
   }
-  .topnav--scrolled .back-label {
-    opacity: 0;
+  .topnav--scrolled .back-label { opacity: 0; max-width: 0; }
+
+  /* Prev/Next nav группа — всегда видна */
+  .topnav-fig-nav {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    border-left: 1px solid rgba(52,37,28,0.13);
+    padding-left: 0.75rem;
+    margin-left: 0.5rem;
+  }
+
+  .fig-nav-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.28rem 0.65rem;
+    border: 1px solid rgba(52,37,28,0.13);
+    border-radius: 100px;
+    color: var(--color-ink-tertiary);
+    background: transparent;
+    text-decoration: none;
+    font-family: var(--font-body);
+    font-size: 0.5625rem;
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    overflow: hidden;
+    max-width: 180px;
+    flex-shrink: 0;
+    transition:
+      color 0.2s var(--ease-atelier),
+      border-color 0.2s var(--ease-atelier),
+      background 0.2s var(--ease-atelier),
+      box-shadow 0.2s var(--ease-atelier),
+      transform 0.2s var(--ease-atelier);
+  }
+  .fig-nav-pill:hover {
+    color: var(--color-ink-primary);
+    border-color: rgba(52,37,28,0.28);
+    background: rgba(52,37,28,0.04);
+    box-shadow: 0 1px 4px rgba(52,37,28,0.06);
+  }
+  .fig-nav-pill:not(.fig-nav-pill--off):hover { transform: translateX(-1px); }
+  .fig-nav-pill--next:not(.fig-nav-pill--off):hover { transform: translateX(1px); }
+
+  .fig-nav-pill--off {
+    opacity: 0.28;
+    cursor: default;
+    padding: 0.28rem 0.5rem;
+  }
+
+  /* Имя фигурки внутри пилюли */
+  .fig-nav-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100px;
+    transition:
+      max-width 0.25s var(--ease-atelier),
+      opacity 0.22s var(--ease-atelier);
+  }
+  .topnav--scrolled .fig-nav-name {
     max-width: 0;
+    opacity: 0;
+  }
+
+  .fig-nav-arrow {
+    flex-shrink: 0;
+    transition: transform 0.18s var(--ease-atelier);
+  }
+  .fig-nav-pill:not(.fig-nav-pill--off):hover .fig-nav-arrow { transform: translateX(-2px); }
+  .fig-nav-pill--next:not(.fig-nav-pill--off):hover .fig-nav-arrow { transform: translateX(2px); }
+
+  /* На совсем маленьких — скрываем имена сразу */
+  @media (max-width: 480px) {
+    .fig-nav-name { display: none; }
+    .fig-nav-pill { padding: 0.28rem 0.5rem; max-width: none; }
+  }
+
+  /* CTA в хидере */
+  .control-btn--cta {
+    background: #2c1710;
+    color: #fff9f0 !important;
+    border-color: #2c1710 !important;
+  }
+  .control-btn--cta:hover {
+    background: #6f3b24 !important;
+    border-color: #6f3b24 !important;
+    box-shadow: 0 4px 16px rgba(44,23,16,0.28) !important;
+    transform: none !important;
   }
 
   /* ── Controls ── */
@@ -1071,56 +1492,52 @@
     margin: 0;
   }
 
-  /* ── Attributes as icon grid ── */
+  /* ── Attributes — compact spec rows ── */
   .d-attrs { margin-top: 1.75rem; }
 
-  .attrs-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    gap: 0.625rem;
-  }
-
-  .attr-card {
+  .attrs-specs {
     display: flex;
     flex-direction: column;
-    gap: 0.3rem;
-    padding: 0.875rem 1rem;
-    background: rgba(52,37,28,0.03);
-    border: 1px solid rgba(52,37,28,0.08);
-    border-radius: 8px;
-    transition:
-      border-color var(--duration-default) var(--ease-atelier),
-      background var(--duration-default) var(--ease-atelier),
-      transform var(--duration-default) var(--ease-atelier);
-  }
-  .attr-card:hover {
-    border-color: rgba(192,88,44,0.26);
-    background: rgba(192,88,44,0.042);
-    transform: translateY(-1px);
+    margin: 0;
   }
 
-  .attr-card-icon {
+  .spec-row {
+    display: grid;
+    grid-template-columns: 18px minmax(80px, max-content) 1fr;
+    align-items: baseline;
+    gap: 0 0.75rem;
+    padding: 0.7rem 0;
+    border-bottom: 1px solid rgba(52,37,28,0.07);
+  }
+  .spec-row:last-child { border-bottom: none; }
+
+  .spec-icon {
     color: var(--color-ember);
     display: flex;
-    margin-bottom: 0.2rem;
+    align-items: flex-start;
+    padding-top: 1px;
+    grid-row: 1;
   }
 
-  .attr-card-label {
+  .spec-label {
     font-family: var(--font-body);
     font-size: 0.5625rem;
     font-weight: 700;
-    letter-spacing: 0.14em;
+    letter-spacing: 0.13em;
     text-transform: uppercase;
-    color: rgba(95,70,54,0.55);
-    line-height: 1.2;
+    color: rgba(95,70,54,0.52);
+    white-space: nowrap;
+    padding-top: 2px;
+    margin: 0;
   }
 
-  .attr-card-value {
+  .spec-value {
     font-family: var(--font-body);
     font-size: 0.9375rem;
     font-weight: 500;
     color: var(--color-ink-primary);
-    line-height: 1.3;
+    line-height: 1.45;
+    margin: 0;
   }
 
   /* ── History inside right column ── */
@@ -1168,6 +1585,96 @@
     margin-right: 0.28rem;
     margin-top: 0.07em;
     color: var(--color-ember);
+  }
+
+  /* ── CTA row with heart ── */
+  .cta-row {
+    display: flex;
+    gap: 0.625rem;
+    align-items: stretch;
+  }
+
+  .cta-row .cta-btn { flex: 1; }
+
+  .cta-heart {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    border: 1.5px solid var(--color-border-default);
+    border-radius: 10px;
+    background: transparent;
+    color: var(--color-ink-tertiary);
+    cursor: pointer;
+    transition: all var(--duration-default) var(--ease-atelier);
+  }
+  .cta-heart:hover {
+    border-color: rgba(192,88,44,0.45);
+    color: var(--color-ember);
+    background: var(--color-ember-subtle);
+  }
+  .cta-heart--saved {
+    border-color: rgba(192,88,44,0.5);
+    color: var(--color-ember);
+    background: var(--color-ember-subtle);
+  }
+
+  .cta-secondary-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+  }
+
+  .cta-ask {
+    flex-shrink: 0;
+    font-family: var(--font-body);
+    font-size: 0.6875rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-ink-tertiary);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 0.25rem 0;
+    border-bottom: 1px solid rgba(95,70,54,0.2);
+    transition: color var(--duration-default) var(--ease-atelier), border-color var(--duration-default) var(--ease-atelier);
+    white-space: nowrap;
+  }
+  .cta-ask:hover {
+    color: var(--color-ink-primary);
+    border-color: rgba(95,70,54,0.5);
+  }
+
+  /* Notify button */
+  .notify-btn {
+    margin-top: 0.875rem;
+    width: 100%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1.25rem;
+    font-family: var(--font-body);
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-ochre-ink);
+    background: var(--color-ochre-subtle);
+    border: 1px solid rgba(176,136,32,0.28);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all var(--duration-default) var(--ease-atelier);
+  }
+  .notify-btn:hover {
+    background: var(--color-ochre-light);
+    border-color: rgba(176,136,32,0.5);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgba(176,136,32,0.14);
   }
 
   /* Sold notice */
@@ -1591,4 +2098,5 @@
     height: 1px;
     background: var(--color-border-subtle);
   }
+
 </style>

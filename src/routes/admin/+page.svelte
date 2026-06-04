@@ -10,6 +10,7 @@
     import ProfileEditor from '$lib/components/admin/ProfileEditor.svelte';
     import MediaLibrary from '$lib/components/admin/MediaLibrary.svelte';
     import HomeContentEditor from '$lib/components/admin/HomeContentEditor.svelte';
+    import OrdersPanel from '$lib/components/admin/OrdersPanel.svelte';
     import { t } from '$lib/i18n';
     import LangSwitcher from '$lib/components/LangSwitcher.svelte';
 
@@ -49,7 +50,7 @@
     let isSaving = $state(false);
     let showSettings = $state(false);
     let message = $state({ text: '', type: 'info' });
-    let activeTab = $state<'registry' | 'home' | 'zones' | 'author' | 'workshop' | 'media' | 'releases'>('registry');
+    let activeTab = $state<'registry' | 'home' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders'>('registry');
     let activeAuthorSubTab = $state<'profile' | 'texts'>('profile');
     let searchQuery = $state('');
     let isDeleting = $state(false);
@@ -387,6 +388,7 @@
               ['author',   $t('adminTabAuthor')],
               ['workshop', $t('adminTabWorkshop')],
               ['media',    'Media'],
+              ['orders',   'Orders'],
               ['releases', $t('adminTabReleases')],
             ] as [tab, label]}
                 <button
@@ -790,6 +792,8 @@
             </div>
         {:else if activeTab === 'workshop'}
             <div in:fade class="h-full"><TextEditor category="workshop" /></div>
+        {:else if activeTab === 'orders'}
+            <div in:fade class="h-full"><OrdersPanel /></div>
         {:else if activeTab === 'releases'}
             <div in:fade class="h-full"><ReleaseManager /></div>
         {/if}
