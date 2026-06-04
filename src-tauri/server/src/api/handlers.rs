@@ -612,10 +612,12 @@ pub async fn create_order(
 pub async fn list_orders(
     State(service): State<AppService>,
     Query(params): Query<std::collections::HashMap<String, String>>,
-) -> Result<Json<Vec<crate::models::Order>>> {
+) -> Result<Json<crate::models::OrdersPage>> {
     let status = params.get("status").map(|s| s.as_str());
-    let orders = service.list_orders(status).await?;
-    Ok(Json(orders))
+    let page = params.get("page").and_then(|p| p.parse::<i64>().ok()).unwrap_or(1).max(1);
+    let per_page = params.get("perPage").and_then(|p| p.parse::<i64>().ok()).unwrap_or(20).clamp(1, 100);
+    let page_data = service.list_orders(status, page, per_page).await?;
+    Ok(Json(page_data))
 }
 
 pub async fn update_order_status(

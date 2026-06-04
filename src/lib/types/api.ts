@@ -121,6 +121,14 @@ export interface Order {
     createdAt: string;
 }
 
+export interface OrdersPage {
+    items: Order[];
+    total: number;
+    newCount: number;
+    page: number;
+    perPage: number;
+}
+
 export interface MediaUsage {
     path: string;
     label: string;

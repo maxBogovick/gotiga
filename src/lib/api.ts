@@ -377,8 +377,12 @@ export const api = {
         });
     },
 
-    async listOrders(status?: string): Promise<import('./types/api').Order[]> {
-        const qs = status ? `?status=${status}` : '';
+    async listOrders(opts?: { status?: string; page?: number; perPage?: number }): Promise<import('./types/api').OrdersPage> {
+        const p = new URLSearchParams();
+        if (opts?.status)  p.set('status',  opts.status);
+        if (opts?.page)    p.set('page',    String(opts.page));
+        if (opts?.perPage) p.set('perPage', String(opts.perPage));
+        const qs = p.toString() ? `?${p}` : '';
         return webFetch(`/admin/orders${qs}`, { headers: authHeaders() });
     },
 

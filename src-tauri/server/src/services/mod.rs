@@ -292,8 +292,16 @@ impl AppService {
         Ok(saved)
     }
 
-    pub async fn list_orders(&self, status_filter: Option<&str>) -> Result<Vec<Order>> {
-        self.repo.get_orders(status_filter).await
+    pub async fn list_orders(
+        &self,
+        status_filter: Option<&str>,
+        page: i64,
+        per_page: i64,
+    ) -> Result<OrdersPage> {
+        let offset = (page - 1) * per_page;
+        let (items, total) = self.repo.get_orders_page(status_filter, per_page, offset).await?;
+        let new_count = self.repo.get_new_orders_count().await?;
+        Ok(OrdersPage { items, total, new_count, page, per_page })
     }
 
     pub async fn update_order_status(&self, id: uuid::Uuid, status: &OrderStatus) -> Result<()> {

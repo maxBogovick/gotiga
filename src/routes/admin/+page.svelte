@@ -52,6 +52,7 @@
     let message = $state({ text: '', type: 'info' });
     let activeTab = $state<'registry' | 'home' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders'>('registry');
     let activeAuthorSubTab = $state<'profile' | 'texts'>('profile');
+    let newOrdersCount = $state(0);
     let searchQuery = $state('');
     let isDeleting = $state(false);
     let uploadingVideo = $state(false);
@@ -393,8 +394,15 @@
             ] as [tab, label]}
                 <button
                     onclick={() => activeTab = tab as typeof activeTab}
-                    class="px-4 py-2 text-xs uppercase tracking-wide transition-colors {activeTab === tab ? 'bg-[#c65f3c]/12 text-[#34251c]' : 'text-[#5f4636] hover:text-[#34251c]'}"
-                >{label}</button>
+                    class="relative px-4 py-2 text-xs uppercase tracking-wide transition-colors {activeTab === tab ? 'bg-[#c65f3c]/12 text-[#34251c]' : 'text-[#5f4636] hover:text-[#34251c]'}"
+                >
+                  {label}
+                  {#if tab === 'orders' && newOrdersCount > 0 && activeTab !== 'orders'}
+                    <span class="absolute -top-1 -right-1 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold leading-none">
+                      {newOrdersCount > 99 ? '99+' : newOrdersCount}
+                    </span>
+                  {/if}
+                </button>
             {/each}
         </nav>
 
@@ -793,7 +801,7 @@
         {:else if activeTab === 'workshop'}
             <div in:fade class="h-full"><TextEditor category="workshop" /></div>
         {:else if activeTab === 'orders'}
-            <div in:fade class="h-full"><OrdersPanel /></div>
+            <div in:fade class="h-full"><OrdersPanel onNewCount={(n) => newOrdersCount = n} /></div>
         {:else if activeTab === 'releases'}
             <div in:fade class="h-full"><ReleaseManager /></div>
         {/if}

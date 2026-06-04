@@ -409,6 +409,16 @@ pub struct UpdateOrderStatusRequest {
     pub status: OrderStatus,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrdersPage {
+    pub items: Vec<Order>,
+    pub total: i64,
+    pub new_count: i64,
+    pub page: i64,
+    pub per_page: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MediaUsageDto {

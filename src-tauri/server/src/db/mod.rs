@@ -68,22 +68,48 @@ impl Repository {
         Ok(rec)
     }
 
-    pub async fn get_orders(&self, status_filter: Option<&str>) -> Result<Vec<crate::models::Order>> {
-        let orders = if let Some(status) = status_filter {
-            sqlx::query_as::<_, crate::models::Order>(
-                "SELECT * FROM orders WHERE status = $1::order_status ORDER BY created_at DESC"
+    pub async fn get_orders_page(
+        &self,
+        status_filter: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<crate::models::Order>, i64)> {
+        let (items, total) = if let Some(status) = status_filter {
+            let items = sqlx::query_as::<_, crate::models::Order>(
+                "SELECT * FROM orders WHERE status = $1::order_status ORDER BY created_at DESC LIMIT $2 OFFSET $3"
+            )
+            .bind(status).bind(limit).bind(offset)
+            .fetch_all(&self.pg_pool).await?;
+
+            let (total,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM orders WHERE status = $1::order_status"
             )
             .bind(status)
-            .fetch_all(&self.pg_pool)
-            .await?
+            .fetch_one(&self.pg_pool).await?;
+
+            (items, total)
         } else {
-            sqlx::query_as::<_, crate::models::Order>(
-                "SELECT * FROM orders ORDER BY created_at DESC"
+            let items = sqlx::query_as::<_, crate::models::Order>(
+                "SELECT * FROM orders ORDER BY created_at DESC LIMIT $1 OFFSET $2"
             )
-            .fetch_all(&self.pg_pool)
-            .await?
+            .bind(limit).bind(offset)
+            .fetch_all(&self.pg_pool).await?;
+
+            let (total,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM orders")
+                .fetch_one(&self.pg_pool).await?;
+
+            (items, total)
         };
-        Ok(orders)
+        Ok((items, total))
+    }
+
+    pub async fn get_new_orders_count(&self) -> Result<i64> {
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM orders WHERE status = 'new'"
+        )
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(count)
     }
 
     pub async fn update_order_status(&self, id: uuid::Uuid, status: &crate::models::OrderStatus) -> Result<()> {
