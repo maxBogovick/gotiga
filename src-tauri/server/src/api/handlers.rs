@@ -216,10 +216,17 @@ pub async fn list_figurines(
 
 pub async fn get_figurine(
     State(service): State<AppService>,
-    Path(id): Path<String>, // Changed to String
+    Path(id): Path<String>,
 ) -> Result<Json<FigurineDto>> {
     let dto = service.get_figurine_details(id).await?;
     Ok(Json(dto))
+}
+
+pub async fn list_in_progress_figurines(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<FigurineListItemDto>>> {
+    let list = service.list_in_progress_figurines().await?;
+    Ok(Json(list))
 }
 
 // Combined GET dispatcher: /content/texts/:param (author | workshop)
@@ -521,6 +528,7 @@ pub async fn save_home_content(
 
 // === ADMIN / RELEASE MANAGEMENT ===
 
+// Upload a Tauri-exported DB as a data import into the server's content.db
 pub async fn upload_release_db(
     State(service): State<AppService>,
     State(config): State<crate::config::Config>,
@@ -530,39 +538,39 @@ pub async fn upload_release_db(
         let name = field.name().unwrap_or("").to_string();
         if name == "file" {
             let data = field.bytes().await.map_err(|e| AppError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
-            
+
+            // Save uploaded file to releases/ for history
             let release_id = Uuid::new_v4();
-            let file_name = format!("release_{}.db", release_id);
             let save_dir = format!("{}/releases", config.upload_dir);
             fs::create_dir_all(&save_dir).await.map_err(AppError::Io)?;
-            
-            let full_path = format!("{}/{}", save_dir, file_name);
-            let mut file = fs::File::create(&full_path).await.map_err(AppError::Io)?;
+            let upload_path = format!("{}/release_{}.db", save_dir, release_id);
+            let mut file = fs::File::create(&upload_path).await.map_err(AppError::Io)?;
             file.write_all(&data).await.map_err(AppError::Io)?;
-            
-            // Register and Hot Swap
-            service.register_new_release(&full_path).await?;
-            
+
+            // Import: copy into content.db (server's master DB) and reload
+            service.import_release(&upload_path).await?;
+
             return Ok(StatusCode::OK);
         }
     }
     Err(AppError::BadRequest("No file field found".to_string()))
 }
 
+// Download current content.db (for Tauri to sync from server)
 pub async fn download_release_db(
     State(service): State<AppService>,
 ) -> Result<impl IntoResponse> {
     let path = service.get_active_release_path().await?
-        .ok_or_else(|| AppError::NotFound("No active release".to_string()))?;
+        .ok_or_else(|| AppError::NotFound("No content database".to_string()))?;
 
     if !std::path::Path::new(&path).exists() {
-        return Err(AppError::NotFound("Release file missing on disk".to_string()));
+        return Err(AppError::NotFound("Content database not found on disk".to_string()));
     }
 
     let file = fs::read(&path).await.map_err(AppError::Io)?;
     Ok((
         [(axum::http::header::CONTENT_TYPE, "application/x-sqlite3")],
-        [(axum::http::header::CONTENT_DISPOSITION, "attachment; filename=\"latest.db\"")],
+        [(axum::http::header::CONTENT_DISPOSITION, "attachment; filename=\"content.db\"")],
         file
     ))
 }
@@ -575,10 +583,10 @@ pub async fn list_releases(
 }
 
 pub async fn switch_release(
-    State(service): State<AppService>,
-    Path(id): Path<Uuid>,
+    State(_service): State<AppService>,
+    Path(_id): Path<Uuid>,
 ) -> Result<StatusCode> {
-    service.switch_to_release(id).await?;
+    // No-op in server-primary mode — content.db is always the master
     Ok(StatusCode::OK)
 }
 

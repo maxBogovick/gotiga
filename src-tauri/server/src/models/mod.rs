@@ -8,12 +8,13 @@ use chrono::{DateTime, Utc};
 // ============================================================
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
-#[sqlx(type_name = "figurine_status", rename_all = "lowercase")]
-#[serde(rename_all = "lowercase")]
+#[sqlx(type_name = "figurine_status", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum FigurineStatus {
     Available,
     Sold,
     Reserved,
+    InProgress,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -92,6 +93,7 @@ pub struct Figurine {
     pub video_url: Option<String>,
     pub secret_text: Option<String>,
     pub is_visible: bool,
+    pub is_featured: bool,
     pub status: FigurineStatus,
     pub sort_order: i32,
     pub created_at: String,
@@ -176,6 +178,7 @@ pub struct FigurineListItemDto {
     pub series: Option<String>,
     pub technique: Option<String>,
     pub material: Option<String>,
+    pub is_featured: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -215,6 +218,7 @@ pub struct FigurineDto {
     pub status: FigurineStatus,
     pub sort_order: i32,
     pub is_visible: bool,
+    pub is_featured: bool,
 
     #[serde(default)]
     pub images: Vec<ImageDto>,
@@ -280,6 +284,7 @@ pub struct SaveFigurineRequest {
     pub status: FigurineStatus,
     pub sort_order: i32,
     pub is_visible: bool,
+    pub is_featured: bool,
     #[serde(default)]
     pub images: Vec<SaveImageRequest>,
     #[serde(default)]

@@ -191,6 +191,7 @@ pub async fn get_all_figurines(
             year: fig.year,
             sort_order: fig.sort_order,
             series: None,
+            is_featured: fig.is_featured,
         });
     }
 
@@ -250,6 +251,7 @@ pub async fn get_figurine(
                     year: r_fig.year,
                     sort_order: r_fig.sort_order,
                     series: None,
+                    is_featured: r_fig.is_featured,
                 });
             }
 
@@ -479,6 +481,7 @@ pub async fn save_figurine(
         sort_order: figurine.sort_order,
         updated_at: now.clone(),
         is_visible: figurine.is_visible,
+        is_featured: figurine.is_featured,
     };
 
     repo.upsert_figurine(&model)

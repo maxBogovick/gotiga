@@ -40,6 +40,8 @@ impl Database {
         add_column_if_missing(&conn, "images", "thumb_path", "TEXT")?;
         add_column_if_missing(&conn, "images", "original_data", "BLOB")?;
         add_column_if_missing(&conn, "images", "thumb_data", "BLOB")?;
+        add_column_if_missing(&conn, "figurines", "is_featured", "INTEGER NOT NULL DEFAULT 0")?;
+        migrate_figurines_status_constraint(&conn)?;
 
         Ok(())
     }
@@ -56,6 +58,66 @@ impl Database {
 
         Ok(())
     }
+}
+
+fn migrate_figurines_status_constraint(conn: &Connection) -> Result<()> {
+    let result: rusqlite::Result<String> = conn.query_row(
+        "SELECT COALESCE(sql, '') FROM sqlite_master WHERE type='table' AND name='figurines'",
+        [],
+        |row| row.get(0),
+    );
+
+    let sql = match result {
+        Ok(s) => s,
+        Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(()),
+        Err(e) => return Err(e),
+    };
+
+    if sql.contains("in_progress") {
+        return Ok(());
+    }
+
+    // Drop leftover temp table from any previous failed migration
+    conn.execute_batch("DROP TABLE IF EXISTS figurines_new;")?;
+
+    conn.execute_batch("
+        PRAGMA foreign_keys = OFF;
+        BEGIN;
+        CREATE TABLE figurines_new (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            short_text TEXT,
+            full_description TEXT,
+            dimensions TEXT,
+            material TEXT,
+            technique TEXT,
+            year INTEGER,
+            ambience_path TEXT,
+            video_url TEXT,
+            ambience_data BLOB,
+            video_data BLOB,
+            secret_text TEXT,
+            is_visible BOOLEAN NOT NULL DEFAULT 1,
+            is_featured INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'available'
+                CHECK (status IN ('available', 'sold', 'reserved', 'in_progress')),
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT (datetime('now'))
+        );
+        INSERT INTO figurines_new
+            SELECT id, name, short_text, full_description, dimensions, material, technique,
+                   year, ambience_path, video_url, ambience_data, video_data, secret_text,
+                   is_visible, 0, status, sort_order, created_at, updated_at
+            FROM figurines;
+        DROP TABLE figurines;
+        ALTER TABLE figurines_new RENAME TO figurines;
+        CREATE INDEX IF NOT EXISTS idx_figurines_sort ON figurines(sort_order);
+        COMMIT;
+        PRAGMA foreign_keys = ON;
+    ")?;
+
+    Ok(())
 }
 
 fn add_column_if_missing(

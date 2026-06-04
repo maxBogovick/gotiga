@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS figurines (
     secret_text TEXT,
     is_visible BOOLEAN NOT NULL DEFAULT 1,
     status TEXT NOT NULL DEFAULT 'available'
-        CHECK (status IN ('available', 'sold', 'reserved')),
+        CHECK (status IN ('available', 'sold', 'reserved', 'in_progress')),
     sort_order INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT (datetime('now'))

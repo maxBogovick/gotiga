@@ -27,19 +27,25 @@ impl Repository {
     pub async fn load_content_pool(&self, path: &str) -> Result<()> {
         let opts = sqlx::sqlite::SqliteConnectOptions::new()
             .filename(path)
-            .create_if_missing(false)
+            .create_if_missing(true)
             .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
 
         let pool = SqlitePool::connect_with(opts).await?;
-        // Enable foreign keys
-        sqlx::query("PRAGMA foreign_keys = ON")
-            .execute(&pool)
-            .await?;
-        ensure_sqlite_column(&pool, "images", "original_path", "TEXT").await?;
-        ensure_sqlite_column(&pool, "images", "thumb_path", "TEXT").await?;
-        ensure_sqlite_column(&pool, "images", "original_data", "BLOB").await?;
-        ensure_sqlite_column(&pool, "images", "thumb_data", "BLOB").await?;
+        sqlx::query("PRAGMA foreign_keys = ON").execute(&pool).await?;
+        init_content_schema(&pool).await?;
         self.set_content_pool(pool).await;
+        Ok(())
+    }
+
+    pub async fn ensure_content_pool(&self, upload_dir: &str) -> Result<()> {
+        let has_pool = self.content_pool.read().await.is_some();
+        if !has_pool {
+            let dir = std::path::Path::new(upload_dir);
+            tokio::fs::create_dir_all(dir).await
+                .map_err(|e| AppError::Io(e))?;
+            let db_path = dir.join("content.db");
+            self.load_content_pool(db_path.to_str().unwrap_or("./uploads/content.db")).await?;
+        }
         Ok(())
     }
 
@@ -203,14 +209,15 @@ impl Repository {
     
         
     
-                let figurines = sqlx::query_as::<_, Figurine>(&query)
-    
+                let figurines = match sqlx::query_as::<_, Figurine>(&query)
                     .fetch_all(&pool)
-    
-                    .await?;
-    
-        
-    
+                    .await
+                {
+                    Ok(rows) => rows,
+                    Err(sqlx::Error::Database(e)) if e.message().contains("no such table") => vec![],
+                    Err(e) => return Err(e.into()),
+                };
+
                 Ok(figurines)
     
             }
@@ -396,19 +403,19 @@ impl Repository {
             pub async fn upsert_figurine(&self, f: &crate::models::SaveFigurineRequest) -> Result<()> {
                 let pool = self.content().await?;
                 sqlx::query(
-                    "INSERT INTO figurines (id, name, short_text, full_description, dimensions, material, technique, year, ambience_path, video_url, secret_text, is_visible, status, sort_order, updated_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                    "INSERT INTO figurines (id, name, short_text, full_description, dimensions, material, technique, year, ambience_path, video_url, secret_text, is_visible, is_featured, status, sort_order, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
                      ON CONFLICT(id) DO UPDATE SET
                        name=excluded.name, short_text=excluded.short_text, full_description=excluded.full_description,
                        dimensions=excluded.dimensions, material=excluded.material, technique=excluded.technique,
                        year=excluded.year, ambience_path=excluded.ambience_path, video_url=excluded.video_url,
-                       secret_text=excluded.secret_text, is_visible=excluded.is_visible, status=excluded.status,
-                       sort_order=excluded.sort_order, updated_at=datetime('now')"
+                       secret_text=excluded.secret_text, is_visible=excluded.is_visible, is_featured=excluded.is_featured,
+                       status=excluded.status, sort_order=excluded.sort_order, updated_at=datetime('now')"
                 )
                 .bind(&f.id).bind(&f.name).bind(&f.short_text).bind(&f.full_description)
                 .bind(&f.dimensions).bind(&f.material).bind(&f.technique).bind(f.year)
                 .bind(&f.ambience_path).bind(&f.video_url).bind(&f.secret_text)
-                .bind(f.is_visible).bind(&f.status).bind(f.sort_order)
+                .bind(f.is_visible).bind(f.is_featured).bind(&f.status).bind(f.sort_order)
                 .execute(&pool).await?;
                 Ok(())
             }
@@ -783,6 +790,174 @@ impl Repository {
             }
 }
 
+async fn init_content_schema(pool: &SqlitePool) -> Result<()> {
+    sqlx::query("
+        CREATE TABLE IF NOT EXISTS figurines (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            short_text TEXT,
+            full_description TEXT,
+            dimensions TEXT,
+            material TEXT,
+            technique TEXT,
+            year INTEGER,
+            ambience_path TEXT,
+            video_url TEXT,
+            ambience_data BLOB,
+            video_data BLOB,
+            secret_text TEXT,
+            is_visible BOOLEAN NOT NULL DEFAULT 1,
+            is_featured INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'available'
+                CHECK (status IN ('available', 'sold', 'reserved', 'in_progress')),
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+    ").execute(pool).await?;
+
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_figurines_sort ON figurines(sort_order)").execute(pool).await?;
+
+    sqlx::query("
+        CREATE TABLE IF NOT EXISTS images (
+            id TEXT PRIMARY KEY,
+            figurine_id TEXT NOT NULL REFERENCES figurines(id) ON DELETE CASCADE,
+            image_type TEXT NOT NULL CHECK (image_type IN ('face', 'detail', 'full')),
+            file_path TEXT NOT NULL,
+            original_path TEXT,
+            thumb_path TEXT,
+            original_data BLOB,
+            thumb_data BLOB,
+            alt_text TEXT,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+    ").execute(pool).await?;
+
+    sqlx::query("
+        CREATE TABLE IF NOT EXISTS process_steps (
+            id TEXT PRIMARY KEY,
+            figurine_id TEXT NOT NULL REFERENCES figurines(id) ON DELETE CASCADE,
+            step_type TEXT NOT NULL CHECK (step_type IN ('sketch', 'prototype', 'modeling', 'painting', 'finish')),
+            description TEXT,
+            image_path TEXT NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+    ").execute(pool).await?;
+
+    sqlx::query("
+        CREATE TABLE IF NOT EXISTS texts (
+            id TEXT PRIMARY KEY,
+            category TEXT NOT NULL CHECK (category IN ('author', 'workshop')),
+            content TEXT NOT NULL,
+            caption TEXT,
+            image_path TEXT,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+    ").execute(pool).await?;
+
+    sqlx::query("
+        CREATE TABLE IF NOT EXISTS cabinet_zones (
+            id TEXT PRIMARY KEY,
+            zone_type TEXT NOT NULL,
+            x_percent REAL NOT NULL,
+            y_percent REAL NOT NULL,
+            width_percent REAL NOT NULL,
+            height_percent REAL NOT NULL,
+            target_route TEXT NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0
+        )
+    ").execute(pool).await?;
+
+    sqlx::query("
+        CREATE TABLE IF NOT EXISTS app_resources (
+            key TEXT PRIMARY KEY,
+            file_path TEXT NOT NULL,
+            data BLOB,
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+    ").execute(pool).await?;
+
+    // Column migrations for older DBs
+    ensure_sqlite_column(pool, "images", "original_path", "TEXT").await?;
+    ensure_sqlite_column(pool, "images", "thumb_path", "TEXT").await?;
+    ensure_sqlite_column(pool, "images", "original_data", "BLOB").await?;
+    ensure_sqlite_column(pool, "images", "thumb_data", "BLOB").await?;
+    migrate_figurines_status_constraint(pool).await?;
+    ensure_sqlite_column(pool, "figurines", "is_featured", "INTEGER NOT NULL DEFAULT 0").await?;
+
+    Ok(())
+}
+
+async fn migrate_figurines_status_constraint(pool: &SqlitePool) -> Result<()> {
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT COALESCE(sql, '') FROM sqlite_master WHERE type='table' AND name='figurines'"
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    let sql = match row {
+        Some((s,)) => s,
+        None => return Ok(()), // no figurines table — nothing to migrate
+    };
+
+    if sql.contains("in_progress") {
+        return Ok(()); // already migrated
+    }
+
+    // Drop any leftover temp table from a previous failed migration
+    sqlx::query("DROP TABLE IF EXISTS figurines_new").execute(pool).await?;
+
+    sqlx::query("PRAGMA foreign_keys = OFF").execute(pool).await?;
+
+    sqlx::query("
+        CREATE TABLE figurines_new (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            short_text TEXT,
+            full_description TEXT,
+            dimensions TEXT,
+            material TEXT,
+            technique TEXT,
+            year INTEGER,
+            ambience_path TEXT,
+            video_url TEXT,
+            ambience_data BLOB,
+            video_data BLOB,
+            secret_text TEXT,
+            is_visible BOOLEAN NOT NULL DEFAULT 1,
+            is_featured INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'available'
+                CHECK (status IN ('available', 'sold', 'reserved', 'in_progress')),
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+    ").execute(pool).await?;
+
+    // Use 0 for is_featured — the column doesn't exist yet in the old table
+    sqlx::query("
+        INSERT INTO figurines_new
+            SELECT id, name, short_text, full_description, dimensions, material, technique,
+                   year, ambience_path, video_url, ambience_data, video_data, secret_text,
+                   is_visible, 0, status, sort_order, created_at, updated_at
+            FROM figurines
+    ").execute(pool).await?;
+
+    sqlx::query("DROP TABLE figurines").execute(pool).await?;
+    sqlx::query("ALTER TABLE figurines_new RENAME TO figurines").execute(pool).await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_figurines_sort ON figurines(sort_order)").execute(pool).await?;
+
+    sqlx::query("PRAGMA foreign_keys = ON").execute(pool).await?;
+
+    Ok(())
+}
+
 async fn ensure_sqlite_column(
     pool: &SqlitePool,
     table: &str,
@@ -792,6 +967,11 @@ async fn ensure_sqlite_column(
     let rows: Vec<(String,)> = sqlx::query_as(&format!("SELECT name FROM pragma_table_info('{}')", table))
         .fetch_all(pool)
         .await?;
+
+    // Table doesn't exist (pragma returns empty) — nothing to add
+    if rows.is_empty() {
+        return Ok(());
+    }
 
     if rows.iter().any(|(name,)| name == column) {
         return Ok(());

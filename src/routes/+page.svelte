@@ -105,9 +105,13 @@
             homeContent = content;
             await preloadImage(imageUrl);
             zones = dbZones && dbZones.length > 0 ? dbZones : DEFAULT_ZONES;
-            collectionTotal = figurines.length;
+            const visibleFigurines = figurines.filter(f => f.status !== 'in_progress');
+            collectionTotal = visibleFigurines.length;
             availableTotal = figurines.filter((item) => item.status === 'available').length;
-            featuredFigurines = sortFeaturedFigurines(figurines).slice(0, 4);
+            const pinned = visibleFigurines.filter(f => f.isFeatured);
+            featuredFigurines = pinned.length > 0
+                ? sortFeaturedFigurines(pinned).slice(0, 4)
+                : sortFeaturedFigurines(visibleFigurines).slice(0, 4);
             availDisplay.set(availableTotal);
             collDisplay.set(collectionTotal);
             isLoaded = true;

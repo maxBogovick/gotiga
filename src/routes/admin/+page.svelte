@@ -97,6 +97,7 @@
         status: 'available',
         sortOrder: 0,
         isVisible: true,
+        isFeatured: false,
         images: [],
         processSteps: [],
         relatedItems: []
@@ -525,8 +526,9 @@
                                     <span class="label">{$t('adminFieldStatus')}</span>
                                     <select bind:value={selectedFigurine.status} class="input-gothic">
                                         <option value="available">{$t('adminFieldStatusAvail')}</option>
-                                        <option value="sold">{$t('adminFieldStatusSold')}</option>
                                         <option value="reserved">{$t('adminFieldStatusRes')}</option>
+                                        <option value="in_progress">{$t('adminFieldStatusWip')}</option>
+                                        <option value="sold">{$t('adminFieldStatusSold')}</option>
                                     </select>
                                 </label>
                             </div>
@@ -551,6 +553,10 @@
                                     <label class="flex items-end gap-2 pb-3">
                                         <input type="checkbox" bind:checked={selectedFigurine.isVisible} class="accent-[#34251c] w-4 h-4" />
                                         <span class="text-xs text-[#34251c]">{$t('adminFieldVisible')}</span>
+                                    </label>
+                                    <label class="flex items-end gap-2 pb-3">
+                                        <input type="checkbox" bind:checked={selectedFigurine.isFeatured} class="accent-[#c65f3c] w-4 h-4" />
+                                        <span class="text-xs text-[#34251c]">{$t('adminFieldFeatured')}</span>
                                     </label>
                                 </div>
                             </div>

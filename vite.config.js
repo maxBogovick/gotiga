@@ -17,7 +17,7 @@ const apiProxy = {
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-  plugins: [tailwindcss(), sveltekit()],
+  plugins: [sveltekit(), tailwindcss()],
 
   clearScreen: false,
   server: {

@@ -37,6 +37,7 @@ pub fn router(service: AppService, config: Config) -> Router {
         .route("/health",                       get(handlers::health_check))
         .route("/sync/db",                      get(handlers::download_release_db))
         .route("/figurines",                    get(handlers::list_figurines))
+        .route("/figurines/in-progress",        get(handlers::list_in_progress_figurines))
         .route("/figurines/:id",                get(handlers::get_figurine))
         .route("/content/texts/:param",         get(handlers::get_texts_by_param))
         .route("/cabinet/zones",                get(handlers::get_cabinet_zones))

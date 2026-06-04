@@ -125,6 +125,17 @@ export const en = {
   authorError:       'Words dissolved into silence…',
   authorReturnLink:  'RETURN',
 
+  // === UPCOMING / IN PROGRESS PAGE ===
+  upcomingTitle:       'In Progress',
+  upcomingKicker:      'Currently being made',
+  upcomingSubtitle:    'Works still taking shape. You can reserve them before completion.',
+  upcomingEmpty:       'Nothing is being made right now…',
+  upcomingEmptyHint:   'Check back later or follow for updates.',
+  upcomingBook:        'Reserve',
+  upcomingBack:        '← RETURN TO HALL',
+  upcomingWip:         'In progress',
+  upcomingYear:        'Year',
+
   // === WORKSHOP PAGE ===
   workshopBack:      '← RETURN TO HALL',
   workshopSubtitle:  'Where clay takes name, where shadows take form. Study the blueprints carefully.',
@@ -296,10 +307,12 @@ export const en = {
   // === ADMIN — FIGURINE FORM ===
   adminFieldName:        'Name',
   adminFieldYear:        'Year (Anno)',
-  adminFieldStatus:      'Status',
-  adminFieldStatusAvail: 'Available',
-  adminFieldStatusSold:  'Lost',
-  adminFieldStatusRes:   'Reserved',
+  adminFieldStatus:        'Status',
+  adminFieldStatusAvail:   'Available',
+  adminFieldStatusSold:    'Lost',
+  adminFieldStatusRes:     'Reserved',
+  adminFieldStatusWip:     'In Progress',
+  adminFieldFeatured:      'Show on home page',
   adminFieldDimensions:  'Dimensions',
   adminFieldMaterial:    'Material',
   adminFieldTechnique:   'Technique',

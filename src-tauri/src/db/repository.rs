@@ -28,7 +28,7 @@ impl<'a> Repository<'a> {
 
     pub fn get_all_figurines(&self) -> Result<Vec<Figurine>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, short_text, full_description, dimensions, material, technique, year, ambience_path, video_url, secret_text, status, sort_order, updated_at, is_visible
+            "SELECT id, name, short_text, full_description, dimensions, material, technique, year, ambience_path, video_url, secret_text, status, sort_order, updated_at, is_visible, COALESCE(is_featured, 0)
              FROM figurines
              ORDER BY sort_order"
         )?;
@@ -50,6 +50,7 @@ impl<'a> Repository<'a> {
                 sort_order: row.get(12)?,
                 updated_at: get_iso_date(row, 13)?,
                 is_visible: row.get(14)?,
+                is_featured: row.get::<_, i32>(15).unwrap_or(0) != 0,
             })
         })?;
 
@@ -58,7 +59,7 @@ impl<'a> Repository<'a> {
 
     pub fn get_figurine_by_id(&self, id: &str) -> Result<Option<Figurine>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, short_text, full_description, dimensions, material, technique, year, ambience_path, video_url, secret_text, status, sort_order, updated_at, is_visible
+            "SELECT id, name, short_text, full_description, dimensions, material, technique, year, ambience_path, video_url, secret_text, status, sort_order, updated_at, is_visible, COALESCE(is_featured, 0)
              FROM figurines
              WHERE id = ?"
         )?;
@@ -82,6 +83,7 @@ impl<'a> Repository<'a> {
                 sort_order: row.get(12)?,
                 updated_at: get_iso_date(row, 13)?,
                 is_visible: row.get(14)?,
+                is_featured: row.get::<_, i32>(15).unwrap_or(0) != 0,
             }))
         } else {
             Ok(None)
@@ -93,9 +95,9 @@ impl<'a> Repository<'a> {
     pub fn upsert_figurine(&self, f: &Figurine) -> Result<()> {
         let mut stmt = self.conn.prepare(
             "INSERT INTO figurines (
-                id, name, short_text, full_description, dimensions, material, technique, 
-                year, ambience_path, video_url, secret_text, status, sort_order, is_visible, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+                id, name, short_text, full_description, dimensions, material, technique,
+                year, ambience_path, video_url, secret_text, status, sort_order, is_visible, is_featured, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
             ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name,
                 short_text=excluded.short_text,
@@ -110,6 +112,7 @@ impl<'a> Repository<'a> {
                 status=excluded.status,
                 sort_order=excluded.sort_order,
                 is_visible=excluded.is_visible,
+                is_featured=excluded.is_featured,
                 updated_at=excluded.updated_at"
         )?;
 
@@ -128,7 +131,8 @@ impl<'a> Repository<'a> {
             f.status.as_str(),
             f.sort_order,
             f.is_visible,
-            f.updated_at // This is String now
+            f.is_featured as i32,
+            f.updated_at
         ])?;
 
         Ok(())
@@ -665,7 +669,7 @@ impl<'a> Repository<'a> {
 
     pub fn get_related_figurines(&self, id: &str) -> Result<Vec<Figurine>> {
         let mut stmt = self.conn.prepare(
-            "SELECT DISTINCT f.id, f.name, f.short_text, f.full_description, f.dimensions, f.material, f.technique, f.year, f.ambience_path, f.video_url, f.secret_text, f.status, f.sort_order, f.updated_at, f.is_visible
+            "SELECT DISTINCT f.id, f.name, f.short_text, f.full_description, f.dimensions, f.material, f.technique, f.year, f.ambience_path, f.video_url, f.secret_text, f.status, f.sort_order, f.updated_at, f.is_visible, COALESCE(f.is_featured, 0)
              FROM figurines f
              JOIN figurines current ON current.id = ?1
              WHERE f.id != ?1
@@ -695,6 +699,7 @@ impl<'a> Repository<'a> {
                 sort_order: row.get(12)?,
                 updated_at: get_iso_date(row, 13)?,
                 is_visible: row.get(14)?,
+                is_featured: row.get::<_, i32>(15).unwrap_or(0) != 0,
             })
         })?;
 

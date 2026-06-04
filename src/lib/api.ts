@@ -99,6 +99,12 @@ export const api = {
         return webFetch('/figurines?visible=true');
     },
 
+    async getInProgressFigurines(): Promise<FigurineListItem[]> {
+        if (isTauri) return invoke<FigurineListItem[]>('get_all_figurines')
+            .then(all => all.filter(f => f.status === 'in_progress'));
+        return webFetch('/figurines/in-progress');
+    },
+
     async getAllFigurinesAdmin(): Promise<FigurineListItem[]> {
         if (isTauri) return invoke('get_all_figurines');
         return webFetch('/figurines?visible=false', {

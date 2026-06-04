@@ -1,15 +1,18 @@
 // src/lib/types/api.ts
 
+export type FigurineStatus = 'available' | 'sold' | 'reserved' | 'in_progress';
+
 export interface FigurineListItem {
     id: string;
     name: string;
-    status: 'available' | 'sold' | 'reserved';
+    status: FigurineStatus;
     faceImageUrl: string | null;
     year?: number | null;
     sortOrder?: number;
     series?: string | null;
     technique?: string | null;
     material?: string | null;
+    isFeatured?: boolean;
 }
 
 export interface FigurineImage {
@@ -40,9 +43,10 @@ export interface Figurine {
     ambiencePath: string | null;
     videoUrl: string | null;
     secretText: string | null;
-    status: 'available' | 'sold' | 'reserved';
+    status: FigurineStatus;
     sortOrder: number;
     isVisible: boolean;
+    isFeatured: boolean;
     images: FigurineImage[];
     processSteps: ProcessStep[];
     relatedItems: FigurineListItem[];

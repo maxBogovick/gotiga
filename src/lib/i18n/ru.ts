@@ -127,6 +127,17 @@ export const ru: Record<TranslationKey, string> = {
   authorError:       'Слова растворились в тишине…',
   authorReturnLink:  'ВЕРНУТЬСЯ',
 
+  // === UPCOMING / IN PROGRESS PAGE ===
+  upcomingTitle:       'В работе',
+  upcomingKicker:      'Сейчас создаётся',
+  upcomingSubtitle:    'Работы, которые ещё рождаются. Вы можете забронировать их до завершения.',
+  upcomingEmpty:       'Сейчас ничего не создаётся…',
+  upcomingEmptyHint:   'Загляните позже или следите за обновлениями.',
+  upcomingBook:        'Забронировать',
+  upcomingBack:        '← ВЕРНУТЬСЯ В ЗАЛ',
+  upcomingWip:         'В процессе',
+  upcomingYear:        'Год',
+
   // === WORKSHOP PAGE ===
   workshopBack:      '← ВЕРНУТЬСЯ В ЗАЛ',
   workshopSubtitle:  'Место, где глина обретает имя, а тени — форму. Внимательно изучайте чертежи.',
@@ -298,10 +309,12 @@ export const ru: Record<TranslationKey, string> = {
   // === ADMIN — FIGURINE FORM ===
   adminFieldName:        'Название',
   adminFieldYear:        'Год (Anno)',
-  adminFieldStatus:      'Статус',
-  adminFieldStatusAvail: 'В наличии',
-  adminFieldStatusSold:  'Утрачено',
-  adminFieldStatusRes:   'Бронь',
+  adminFieldStatus:        'Статус',
+  adminFieldStatusAvail:   'В наличии',
+  adminFieldStatusSold:    'Утрачено',
+  adminFieldStatusRes:     'Бронь',
+  adminFieldStatusWip:     'В работе',
+  adminFieldFeatured:      'Показывать на главной',
   adminFieldDimensions:  'Размеры',
   adminFieldMaterial:    'Материал',
   adminFieldTechnique:   'Техника',

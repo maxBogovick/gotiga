@@ -19,25 +19,27 @@ impl AppService {
         Self { repo, config }
     }
 
+    fn content_db_path(&self) -> String {
+        format!("{}/content.db", self.config.upload_dir)
+    }
+
     pub async fn initialize(&self) -> Result<()> {
-        if let Some(path) = self.repo.get_active_release_path().await? {
-            println!("Initializing content pool from: {}", path);
-            if std::path::Path::new(&path).exists() {
-                self.repo.load_content_pool(&path).await?;
-            } else {
-                eprintln!("Warning: Active release file not found at {}", path);
-            }
-        }
+        let path = self.content_db_path();
+        println!("Loading primary content database: {}", path);
+        self.repo.load_content_pool(&path).await?;
         Ok(())
     }
 
-    // === RELEASE MANAGEMENT ===
-
-    pub async fn register_new_release(&self, file_path: &str) -> Result<()> {
-        let id = self.repo.add_release(file_path, None).await?;
-        self.repo.activate_release(id).await?;
-        self.repo.load_content_pool(file_path).await?;
-        println!("Switched to new release: {}", file_path);
+    // === IMPORT (from Tauri export) ===
+    // Uploaded release file is treated as a data import: copied into content.db and reloaded.
+    pub async fn import_release(&self, upload_path: &str) -> Result<()> {
+        let dest = self.content_db_path();
+        tokio::fs::copy(upload_path, &dest).await
+            .map_err(|e| crate::error::AppError::Io(e))?;
+        self.repo.load_content_pool(&dest).await?;
+        // Archive the upload in Postgres for history
+        self.repo.add_release(upload_path, None).await?;
+        println!("Imported data from {} into {}", upload_path, dest);
         Ok(())
     }
 
@@ -45,18 +47,8 @@ impl AppService {
         self.repo.get_releases().await
     }
 
-    pub async fn switch_to_release(&self, id: Uuid) -> Result<()> {
-        let release = self.repo.get_release_by_id(id).await?
-            .ok_or_else(|| crate::error::AppError::NotFound(format!("Release {} not found", id)))?;
-            
-        self.repo.activate_release(id).await?;
-        self.repo.load_content_pool(&release.file_path).await?;
-        println!("Rolled back/Switched to release: {}", release.file_path);
-        Ok(())
-    }
-
     pub async fn get_active_release_path(&self) -> Result<Option<String>> {
-        self.repo.get_active_release_path().await
+        Ok(Some(self.content_db_path()))
     }
 
     // === CONTENT API (READ-ONLY from SQLite) ===
@@ -106,6 +98,36 @@ impl AppService {
                 series: None,
                 technique: f.technique,
                 material: f.material,
+                is_featured: f.is_featured,
+            });
+        }
+        Ok(result)
+    }
+
+    pub async fn list_in_progress_figurines(&self) -> Result<Vec<FigurineListItemDto>> {
+        let all = self.repo.get_all_figurines(true).await?;
+        let mut result = Vec::new();
+        for f in all.into_iter().filter(|f| f.status == crate::models::FigurineStatus::InProgress) {
+            let images = self.repo.get_images_by_figurine(f.id.clone()).await?;
+            let face_img = images.iter()
+                .find(|i| i.image_type == ImageType::Face)
+                .map(|i| {
+                    i.thumb_path
+                        .as_ref()
+                        .map(|p| self.resolve_url(p, "images_thumb", &i.id))
+                        .unwrap_or_else(|| self.resolve_url(&i.file_path, "images", &i.id))
+                });
+            result.push(FigurineListItemDto {
+                id: f.id,
+                name: f.name,
+                status: f.status,
+                face_image_url: face_img,
+                year: f.year,
+                sort_order: f.sort_order,
+                series: None,
+                technique: f.technique,
+                material: f.material,
+                is_featured: f.is_featured,
             });
         }
         Ok(result)
@@ -141,6 +163,7 @@ impl AppService {
                 series: None,
                 technique: r.technique,
                 material: r.material,
+                is_featured: r.is_featured,
             });
         }
 
@@ -179,6 +202,7 @@ impl AppService {
             status: figurine.status,
             sort_order: figurine.sort_order,
             is_visible: figurine.is_visible,
+            is_featured: figurine.is_featured,
             images: image_dtos,
             process_steps: step_dtos,
             related_items,

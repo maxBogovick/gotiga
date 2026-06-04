@@ -29,6 +29,7 @@ pub struct Figurine {
     pub sort_order: i32,
     pub updated_at: String,
     pub is_visible: bool,
+    pub is_featured: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -36,6 +37,7 @@ pub enum FigurineStatus {
     Available,
     Sold,
     Reserved,
+    InProgress,
 }
 
 impl FigurineStatus {
@@ -43,6 +45,7 @@ impl FigurineStatus {
         match s {
             "sold" => Self::Sold,
             "reserved" => Self::Reserved,
+            "in_progress" => Self::InProgress,
             _ => Self::Available,
         }
     }
@@ -52,6 +55,7 @@ impl FigurineStatus {
             Self::Available => "available",
             Self::Sold => "sold",
             Self::Reserved => "reserved",
+            Self::InProgress => "in_progress",
         }
     }
 }
@@ -204,6 +208,7 @@ pub struct FigurineDto {
     pub status: String,
     pub sort_order: i32,
     pub is_visible: bool,
+    pub is_featured: bool,
     pub images: Vec<ImageDto>,
     pub process_steps: Vec<ProcessStepDto>,
     pub related_items: Vec<FigurineListItemDto>,
@@ -241,6 +246,7 @@ impl FigurineDto {
             status: figurine.status.as_str().to_string(),
             sort_order: figurine.sort_order,
             is_visible: figurine.is_visible,
+            is_featured: figurine.is_featured,
             images: images
                 .into_iter()
                 .map(|i| ImageDto::from_image(i, base_path))
@@ -309,6 +315,7 @@ pub struct FigurineListItemDto {
     pub year: Option<i32>,
     pub sort_order: i32,
     pub series: Option<String>,
+    pub is_featured: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
