@@ -275,7 +275,66 @@
           <p class="lore-short">{figurine.shortText}</p>
         {/if}
 
-        <!-- CTA — immediately after lore -->
+        <!-- History FIRST — читаем перед решением -->
+        {#if figurine.fullDescription}
+          <div class="d-history">
+            <header class="d-section-header">
+              <span class="sec-label">{$t('figurineHistory')}</span>
+              <div class="sec-rule" aria-hidden="true"></div>
+            </header>
+            <p class="history-body drop-cap">{figurine.fullDescription}</p>
+          </div>
+        {/if}
+
+        <!-- Attributes as icon grid -->
+        {#if figurine.dimensions || figurine.material || figurine.technique}
+          <div class="d-attrs">
+            <header class="d-section-header">
+              <span class="sec-label">{$t('figurineAttributes')}</span>
+              <div class="sec-rule" aria-hidden="true"></div>
+            </header>
+            <div class="attrs-grid">
+              {#if figurine.dimensions}
+                <div class="attr-card">
+                  <span class="attr-card-icon" aria-hidden="true">
+                    <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.2">
+                      <rect x="0.75" y="4.25" width="13.5" height="6.5" rx="1"/>
+                      <path d="M3 4.25V7M5.75 4.25V8M8.5 4.25V7M11.25 4.25V8"/>
+                    </svg>
+                  </span>
+                  <span class="attr-card-label">{$t('figurineDimensions')}</span>
+                  <span class="attr-card-value">{figurine.dimensions}</span>
+                </div>
+              {/if}
+              {#if figurine.material}
+                <div class="attr-card">
+                  <span class="attr-card-icon" aria-hidden="true">
+                    <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.2">
+                      <path d="M7.5 1L13 5v5L7.5 14 2 10V5L7.5 1z"/>
+                      <path d="M2 5h11"/>
+                    </svg>
+                  </span>
+                  <span class="attr-card-label">{$t('figurineMaterial')}</span>
+                  <span class="attr-card-value">{figurine.material}</span>
+                </div>
+              {/if}
+              {#if figurine.technique}
+                <div class="attr-card">
+                  <span class="attr-card-icon" aria-hidden="true">
+                    <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.2">
+                      <path d="M9.5 1.5l4 4L5 14H1v-4L9.5 1.5z"/>
+                      <path d="M8 3l4 4"/>
+                    </svg>
+                  </span>
+                  <span class="attr-card-label">{$t('figurineTechnique')}</span>
+                  <span class="attr-card-value">{figurine.technique}</span>
+                </div>
+              {/if}
+            </div>
+          </div>
+        {/if}
+
+        <!-- CTA at the bottom — после того как всё прочитано -->
         <div class="d-cta-zone">
           {#if figurine.status === 'available'}
             <button onclick={() => (showOrderModal = true)} class="cta-btn">
@@ -303,43 +362,6 @@
           {/if}
         </div>
 
-        <!-- History (full description) — stays in right column -->
-        {#if figurine.fullDescription}
-          <div class="d-history">
-            <header class="d-section-header">
-              <span class="sec-label">{$t('figurineHistory')}</span>
-              <div class="sec-rule" aria-hidden="true"></div>
-            </header>
-            <p class="history-body drop-cap">{figurine.fullDescription}</p>
-          </div>
-        {/if}
-
-        <!-- Attributes -->
-        {#if figurine.dimensions || figurine.material || figurine.technique}
-          <div class="d-attrs">
-            <dl class="attrs-dl">
-              {#if figurine.dimensions}
-                <div class="attr-row">
-                  <dt class="attr-label">{$t('figurineDimensions')}</dt>
-                  <dd class="attr-value">{figurine.dimensions}</dd>
-                </div>
-              {/if}
-              {#if figurine.material}
-                <div class="attr-row">
-                  <dt class="attr-label">{$t('figurineMaterial')}</dt>
-                  <dd class="attr-value">{figurine.material}</dd>
-                </div>
-              {/if}
-              {#if figurine.technique}
-                <div class="attr-row">
-                  <dt class="attr-label">{$t('figurineTechnique')}</dt>
-                  <dd class="attr-value">{figurine.technique}</dd>
-                </div>
-              {/if}
-            </dl>
-          </div>
-        {/if}
-
       </div>
     </div>
 
@@ -359,7 +381,7 @@
               {$t('figurineGrimoire')}
               <span class="grimoire-dot"></span>
             </span>
-            <span class="grimoire-sub">{figurine.processSteps.length} этапов · провести пальцем чтобы открыть прошлое</span>
+            <span class="grimoire-sub">{figurine.processSteps.length} {$t('figurineGrimoireSub')}</span>
           </span>
           <span class="grimoire-arrow" aria-hidden="true">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
@@ -408,32 +430,45 @@
       </section>
     {/if}
 
-    <!-- ── RELATED ── -->
+    <!-- ── RELATED — горизонтальная кинолента ── -->
     {#if figurine.relatedItems && figurine.relatedItems.length > 0}
       <section class="related-section">
         <header class="section-row">
           <span class="sec-label">{$t('figurineRelated')}</span>
           <div class="sec-rule" aria-hidden="true"></div>
         </header>
-        <div class="related-grid">
+        <div class="related-strip" role="list">
           {#each figurine.relatedItems as item}
-            <a href="/figurines/{item.id}" class="card-product related-card group"
-              data-sveltekit-preload-data="hover">
-              <div class="product-image">
-                <img src={resolveUrl(item.faceImageUrl)} alt={item.name}
-                  class="grayscale-hover zoom-hover" loading="lazy" />
-                <div class="related-img-vignette"></div>
-              </div>
-              <div class="related-card-body">
-                <h4 class="related-name">{item.name}</h4>
-                <span class="badge related-status
-                  {item.status === 'sold' ? 'badge-ember' : item.status === 'reserved' ? 'badge-ochre' : 'badge-sage'}">
+            <a
+              href="/figurines/{item.id}"
+              class="related-card group"
+              role="listitem"
+              data-sveltekit-preload-data="hover"
+            >
+              <div class="related-img-wrap">
+                <img
+                  src={resolveUrl(item.faceImageUrl)}
+                  alt={item.name}
+                  class="related-img"
+                  loading="lazy"
+                />
+                <div class="related-overlay" aria-hidden="true">
+                  <span class="related-cta-hint">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
+                      <path d="M1 6h10M7 2l4 4-4 4"/>
+                    </svg>
+                  </span>
+                </div>
+                <span class="related-status-badge related-status-badge--{item.status}">
                   {item.status === 'sold'
                     ? $t('figurineStatusSold')
                     : item.status === 'reserved'
                       ? $t('figurineStatusReserved')
                       : $t('figurineStatusAvailable')}
                 </span>
+              </div>
+              <div class="related-meta">
+                <h4 class="related-name">{item.name}</h4>
               </div>
             </a>
           {/each}
@@ -443,6 +478,22 @@
 
   </div>
 </div>
+
+<!-- Mobile sticky CTA — появляется при скролле на мобильных -->
+{#if figurine.status === 'available' && scrollY > 300}
+  <div class="mobile-cta" transition:fade={{ duration: 180 }}>
+    <div class="mobile-cta-info">
+      <span class="mobile-cta-name">{figurine.name}</span>
+      <span class="mobile-cta-status">{$t('figurineStatusAvailable')}</span>
+    </div>
+    <button onclick={() => (showOrderModal = true)} class="mobile-cta-btn">
+      {$t('figurineRequest')}
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M2 7h10M8 3l4 4-4 4"/>
+      </svg>
+    </button>
+  </div>
+{/if}
 
 <style>
   /* ── Page shell ── */
@@ -669,7 +720,7 @@
     display: grid;
     gap: 2.5rem;
     align-items: start;
-    margin-bottom: 0;
+    margin-bottom: 5rem;
   }
   @media (min-width: 1024px) {
     .main-grid {
@@ -1020,45 +1071,56 @@
     margin: 0;
   }
 
-  /* Attributes */
-  .d-attrs {
-    border-top: 1px solid rgba(52,37,28,0.08);
-    padding-top: 1.25rem;
+  /* ── Attributes as icon grid ── */
+  .d-attrs { margin-top: 1.75rem; }
+
+  .attrs-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 0.625rem;
   }
 
-  .attrs-dl { margin: 0; display: flex; flex-direction: column; }
-
-  .attr-row {
+  .attr-card {
     display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 1rem;
-    padding: 0.65rem 0.5rem;
-    margin: 0 -0.5rem;
-    border-radius: 6px;
-    transition: background 140ms ease;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.875rem 1rem;
+    background: rgba(52,37,28,0.03);
+    border: 1px solid rgba(52,37,28,0.08);
+    border-radius: 8px;
+    transition:
+      border-color var(--duration-default) var(--ease-atelier),
+      background var(--duration-default) var(--ease-atelier),
+      transform var(--duration-default) var(--ease-atelier);
   }
-  .attr-row + .attr-row { border-top: 1px solid rgba(52,37,28,0.06); }
-  .attr-row:hover { background: rgba(198,95,60,0.042); }
+  .attr-card:hover {
+    border-color: rgba(192,88,44,0.26);
+    background: rgba(192,88,44,0.042);
+    transform: translateY(-1px);
+  }
 
-  .attr-label {
+  .attr-card-icon {
+    color: var(--color-ember);
+    display: flex;
+    margin-bottom: 0.2rem;
+  }
+
+  .attr-card-label {
     font-family: var(--font-body);
-    font-size: 0.6875rem;
-    font-weight: 600;
-    letter-spacing: 0.09em;
+    font-size: 0.5625rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
     text-transform: uppercase;
-    color: rgba(95,70,54,0.65);
-    flex-shrink: 0;
+    color: rgba(95,70,54,0.55);
+    line-height: 1.2;
   }
 
-  .attr-value {
+  .attr-card-value {
     font-family: var(--font-body);
-    font-size: 0.875rem;
+    font-size: 0.9375rem;
     font-weight: 500;
     color: var(--color-ink-primary);
-    text-align: right;
-    margin: 0;
-    max-width: 60%;
+    line-height: 1.3;
   }
 
   /* ── History inside right column ── */
@@ -1134,7 +1196,7 @@
 
   /* ── Grimoire ── */
   .grimoire-section {
-    margin: 4rem 0 3rem;
+    margin: 0 0 3rem;
   }
 
   .grimoire-trigger {
@@ -1306,37 +1368,191 @@
     margin-top: 1rem;
   }
 
-  /* ── Related items ── */
+  /* ── Related — горизонтальная лента ── */
   .related-section { margin-top: 5rem; }
 
-  .related-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 1fr));
+  .related-strip {
+    display: flex;
     gap: 1.25rem;
-    margin-top: 2rem;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 0.5rem;
+    /* negative margin for full-bleed feel on mobile */
+    margin-left: -1.5rem;
+    margin-right: -1.5rem;
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+  }
+  .related-strip::-webkit-scrollbar { display: none; }
+
+  @media (min-width: 1024px) {
+    .related-strip { margin-left: -3.5rem; margin-right: -3.5rem; padding-left: 3.5rem; padding-right: 3.5rem; }
   }
 
   .related-card {
+    flex-shrink: 0;
+    width: 196px;
+    scroll-snap-align: start;
     text-decoration: none;
-    border-radius: 14px;
-    overflow: hidden;
-  }
-
-  .related-img-vignette {
-    position: absolute;
-    inset: 0;
-    box-shadow: inset 0 0 24px rgba(60,25,10,0.1);
-    pointer-events: none;
-    border-radius: inherit;
-  }
-
-  .related-card-body {
-    padding: 0.85rem 1rem;
+    color: inherit;
     display: flex;
     flex-direction: column;
-    gap: 0.4rem;
-    background: var(--color-canvas-raised);
+    gap: 0;
   }
+
+  .related-img-wrap {
+    position: relative;
+    aspect-ratio: 3/4;
+    overflow: hidden;
+    border-radius: 6px;
+    background: var(--color-canvas-sunken);
+    margin-bottom: 0.75rem;
+  }
+
+  .related-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center 30%;
+    filter: grayscale(0.35) saturate(0.88);
+    transition: filter var(--duration-slow) var(--ease-atelier), transform var(--duration-slow) var(--ease-atelier);
+  }
+  .related-card:hover .related-img {
+    filter: grayscale(0) saturate(1);
+    transform: scale(1.03);
+  }
+
+  .related-overlay {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to top, rgba(44,23,16,0.52) 0%, transparent 55%);
+    display: flex;
+    align-items: flex-end;
+    padding: 0.875rem;
+    opacity: 0;
+    transition: opacity var(--duration-default) var(--ease-atelier);
+  }
+  .related-card:hover .related-overlay { opacity: 1; }
+
+  .related-cta-hint {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: rgba(255,249,240,0.18);
+    border: 1px solid rgba(255,249,240,0.35);
+    backdrop-filter: blur(4px);
+    color: #fff9f0;
+    transform: translateX(-4px);
+    transition: transform var(--duration-default) var(--ease-atelier);
+  }
+  .related-card:hover .related-cta-hint { transform: translateX(0); }
+
+  .related-status-badge {
+    position: absolute;
+    top: 0.6rem;
+    right: 0.6rem;
+    font-family: var(--font-body);
+    font-size: 0.5rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 0.2rem 0.5rem;
+    border-radius: 100px;
+  }
+  .related-status-badge--available { background: var(--color-sage-subtle); color: var(--color-sage-ink); }
+  .related-status-badge--sold      { background: var(--color-ember-subtle); color: var(--color-ember-ink); }
+  .related-status-badge--reserved  { background: var(--color-ochre-subtle); color: var(--color-ochre-ink); }
+
+  .related-meta {
+    padding: 0 0.25rem;
+  }
+
+  .related-name {
+    font-family: var(--font-display);
+    font-size: 1.05rem;
+    font-weight: 400;
+    letter-spacing: -0.01em;
+    line-height: 1.2;
+    color: var(--color-ink-primary);
+    margin: 0;
+    transition: color var(--duration-default) var(--ease-atelier);
+  }
+  .related-card:hover .related-name { color: var(--color-ember); }
+
+  /* ── Mobile sticky CTA ── */
+  .mobile-cta {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 110;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.875rem 1.25rem;
+    background: rgba(250,246,238,0.94);
+    backdrop-filter: blur(16px) saturate(1.3);
+    -webkit-backdrop-filter: blur(16px) saturate(1.3);
+    border-top: 1px solid rgba(180,140,100,0.22);
+    box-shadow: 0 -4px 24px rgba(44,23,16,0.08);
+  }
+  /* Скрываем на desktop */
+  @media (min-width: 1024px) {
+    .mobile-cta { display: none; }
+  }
+
+  .mobile-cta-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    min-width: 0;
+  }
+
+  .mobile-cta-name {
+    font-family: var(--font-display);
+    font-size: 0.9375rem;
+    font-weight: 400;
+    color: var(--color-ink-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .mobile-cta-status {
+    font-family: var(--font-body);
+    font-size: 0.5625rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--color-sage);
+  }
+
+  .mobile-cta-btn {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1.25rem;
+    background: #2c1710;
+    color: #fff9f0;
+    border: none;
+    border-radius: 8px;
+    font-family: var(--font-body);
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: background var(--duration-default) var(--ease-atelier);
+  }
+  .mobile-cta-btn:hover { background: #6f3b24; }
 
   .related-name {
     font-family: var(--font-display);

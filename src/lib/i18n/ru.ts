@@ -91,6 +91,7 @@ export const ru: Record<TranslationKey, string> = {
   figurineRequest:     'Запросить Артефакт',
   figurineRequestNote: '* Передача только в надёжные руки',
   figurineGrimoire:    'Заглянуть в Зеркало Памяти',
+  figurineGrimoireSub: 'этапов · проведите пальцем чтобы открыть прошлое',
   figurineGrimoireClose: 'Закрыть',
   figurineVideo:       'Живые Картины',
   figurineVideoFilm:   'Архивная плёнка №',

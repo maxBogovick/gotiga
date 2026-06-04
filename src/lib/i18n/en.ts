@@ -89,6 +89,7 @@ export const en = {
   figurineRequest:     'Request Artifact',
   figurineRequestNote: '* Transfer only to reliable hands',
   figurineGrimoire:    'Gaze into the Memory Mirror',
+  figurineGrimoireSub: 'stages · swipe to reveal the creation',
   figurineGrimoireClose: 'Close',
   figurineVideo:       'Visual Chronicle',
   figurineVideoFilm:   'Archival film №',
