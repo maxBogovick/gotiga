@@ -115,6 +115,7 @@
       claims = claims.filter(c => c.token !== claim.token);
       saveClaims();
       api.getFigurineSchedule(figurine.id).then(s => { figurineSchedule = s; });
+      setTimeout(() => { cancelledTokens = new Set([...cancelledTokens].filter(t => t !== claim.token)); }, 4000);
     } catch {
       claimErrors = { ...claimErrors, [claim.token]: get(t)('claimCancelError') };
     } finally {
