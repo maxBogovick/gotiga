@@ -691,7 +691,8 @@
           <ShowingsTimeline schedule={figurineSchedule} />
         {/if}
 
-        <!-- ── CLAIM TOKEN: user's bookings ── -->
+        <!-- ── CLAIM TOKEN: user's bookings (shown only when figurine is still available) ── -->
+        {#if figurine.status === 'available'}
         {#each claims as c (c.token)}
           {#if c.status === 'confirmed'}
             <div class="claim-block claim-block--confirmed">
@@ -737,20 +738,14 @@
           </div>
         {/if}
 
-        <!-- Manual token entry (for users who lost session) -->
+        <!-- Manual token entry — only while figurine is still available -->
         <div class="claim-lookup">
           {#if !showTokenForm}
             <button onclick={() => showTokenForm = true} class="claim-lookup-link">{$t('claimHaveCode')}</button>
           {:else}
             <div class="claim-lookup-form">
-              <input
-                type="text"
-                bind:value={tokenInput}
-                placeholder="XXXX-XXXX"
-                maxlength="9"
-                class="claim-lookup-input"
-                oninput={() => { tokenLookupInfo = null; tokenLookupErr = ''; }}
-              />
+              <input type="text" bind:value={tokenInput} placeholder="XXXX-XXXX" maxlength="9"
+                class="claim-lookup-input" oninput={() => { tokenLookupInfo = null; tokenLookupErr = ''; }} />
               <button onclick={lookupToken} disabled={tokenLooking} class="claim-lookup-btn">
                 {tokenLooking ? '…' : $t('claimLookupBtn')}
               </button>
@@ -771,6 +766,8 @@
             {/if}
           {/if}
         </div>
+        {/if}
+        <!-- end available-only claim section -->
 
         <!-- CTA at the bottom — после того как всё прочитано -->
         <div class="d-cta-zone">
@@ -877,29 +874,87 @@
             </button>
 
           {:else if figurine.status === 'reserved'}
-            <div class="reserved-notice">
-              <svg class="reserved-icon" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.3">
-                <circle cx="9" cy="9" r="7.5"/>
-                <path d="M9 5.5v3.5l2.5 2"/>
-              </svg>
-              <div>
-                <p class="reserved-title">Зарезервирована</p>
-                <p class="reserved-sub">{$t('figurineNotifyNote')}</p>
-                {#if nextAvailableDate}
-                  <p class="reserved-avail">
-                    {$t('figurineAvailableFrom')}
-                    <strong>{nextAvailableDate.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}</strong>
-                  </p>
+            {#if claims.some(c => c.status === 'confirmed')}
+              <!-- User's confirmed booking — show prominently -->
+              {#each claims.filter(c => c.status === 'confirmed') as c (c.token)}
+                <div class="reserved-notice reserved-notice--confirmed">
+                  <svg class="reserved-icon" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <path d="M3 9l4.5 4.5 8-8"/>
+                  </svg>
+                  <div>
+                    <p class="reserved-title reserved-title--confirmed">{$t('claimConfirmed')}</p>
+                    <p class="reserved-sub">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</p>
+                    <p class="claim-code-small" style="margin-top:0.25rem">{c.token}</p>
+                  </div>
+                </div>
+              {/each}
+            {:else if claims.some(c => !c.status || c.status === 'pending')}
+              <!-- User has a pending booking for this figurine -->
+              {#each claims.filter(c => !c.status || c.status === 'pending') as c (c.token)}
+                <div class="reserved-notice">
+                  <svg class="reserved-icon" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.3">
+                    <circle cx="9" cy="9" r="7.5"/>
+                    <path d="M9 5.5v3.5l2.5 2"/>
+                  </svg>
+                  <div>
+                    <p class="reserved-title">{$t('claimPendingBooking')}</p>
+                    <p class="reserved-sub">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</p>
+                    <button onclick={() => cancelClaim(c)} disabled={cancellingToken === c.token}
+                      class="claim-cancel-btn" style="margin-top:0.5rem">
+                      {cancellingToken === c.token ? $t('claimCancelling') : $t('claimCancelBtn')}
+                    </button>
+                    {#if claimErrors[c.token]}<p class="claim-err">{claimErrors[c.token]}</p>{/if}
+                  </div>
+                </div>
+              {/each}
+            {:else}
+              <!-- No token in this browser — generic reserved + lookup offer -->
+              <div class="reserved-notice">
+                <svg class="reserved-icon" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.3">
+                  <circle cx="9" cy="9" r="7.5"/>
+                  <path d="M9 5.5v3.5l2.5 2"/>
+                </svg>
+                <div>
+                  <p class="reserved-title">Зарезервирована</p>
+                  <p class="reserved-sub">{$t('figurineNotifyNote')}</p>
+                  {#if nextAvailableDate}
+                    <p class="reserved-avail">
+                      {$t('figurineAvailableFrom')}
+                      <strong>{nextAvailableDate.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}</strong>
+                    </p>
+                  {/if}
+                </div>
+              </div>
+              <!-- Token lookup in reserved state -->
+              <div class="claim-lookup" style="margin-bottom:0.75rem">
+                {#if !showTokenForm}
+                  <button onclick={() => showTokenForm = true} class="claim-lookup-link">{$t('claimHaveCode')}</button>
+                {:else}
+                  <div class="claim-lookup-form">
+                    <input type="text" bind:value={tokenInput} placeholder="XXXX-XXXX" maxlength="9"
+                      class="claim-lookup-input" oninput={() => { tokenLookupInfo = null; tokenLookupErr = ''; }} />
+                    <button onclick={lookupToken} disabled={tokenLooking} class="claim-lookup-btn">
+                      {tokenLooking ? '…' : $t('claimLookupBtn')}
+                    </button>
+                    <button onclick={() => { showTokenForm = false; tokenInput = ''; tokenLookupInfo = null; }} class="claim-lookup-close">✕</button>
+                  </div>
+                  {#if tokenLookupErr}<p class="claim-err">{tokenLookupErr}</p>{/if}
+                  {#if tokenLookupInfo}
+                    <div class="claim-lookup-result">
+                      <p class="claim-dates">{fmtDate(tokenLookupInfo.startsAt)} — {fmtDate(tokenLookupInfo.endsAt)}</p>
+                      <p class="claim-status">{$t('claimStatus')}: <strong>{tokenLookupInfo.status}</strong></p>
+                    </div>
+                  {/if}
                 {/if}
               </div>
-            </div>
-            <button onclick={() => openModal('notify')} class="notify-btn">
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3">
-                <path d="M7 1a4 4 0 0 1 4 4v3l1.5 2H1.5L3 8V5a4 4 0 0 1 4-4z"/>
-                <path d="M5.5 11.5a1.5 1.5 0 0 0 3 0"/>
-              </svg>
-              {$t('figurineNotify')}
-            </button>
+              <button onclick={() => openModal('notify')} class="notify-btn">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3">
+                  <path d="M7 1a4 4 0 0 1 4 4v3l1.5 2H1.5L3 8V5a4 4 0 0 1 4-4z"/>
+                  <path d="M5.5 11.5a1.5 1.5 0 0 0 3 0"/>
+                </svg>
+                {$t('figurineNotify')}
+              </button>
+            {/if}
           {:else}
             <div class="sold-notice">
               <p class="sold-text">{$t('figurineStatusSold')} — эта работа обрела своего хранителя.</p>
@@ -1813,6 +1868,12 @@
     color: var(--color-ochre-ink);
     margin: 0 0 0.3rem;
   }
+  .reserved-notice--confirmed {
+    background: rgba(6,95,70,0.06);
+    border-color: rgba(6,95,70,0.22);
+    border-left: 3px solid #059669;
+  }
+  .reserved-title--confirmed { color: #065f46 !important; }
   .reserved-sub {
     font-family: var(--font-body);
     font-size: 0.8125rem;
