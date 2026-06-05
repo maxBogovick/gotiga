@@ -214,10 +214,14 @@ export const en = {
   bookingErrorGeneric:      'Could not submit. Please try again.',
   bookingShowingsWarning:   'This artifact will participate in showings:',
   bookingClaimLabel:        'Your claim code',
+  bookingClaimCopy:         'Copy',
+  bookingClaimCopied:       'Copied!',
+  bookingClaimSave:         'Save file',
   bookingClaimHint:         'Save this code — you can use it to cancel your request if plans change.',
 
   // === CLAIM TOKEN (self-cancel) ===
   claimPendingBooking:      'You have a pending reservation request',
+  claimPendingBookings:     'Your pending reservation requests',
   claimCancelBtn:           'Revoke request',
   claimCancelling:          'Revoking…',
   claimCancelDone:          'Request revoked. The dates are now open again.',

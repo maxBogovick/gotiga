@@ -198,10 +198,14 @@ export const ru: Record<TranslationKey, string> = {
   bookingErrorGeneric:      'Не удалось отправить. Попробуйте ещё раз.',
   bookingShowingsWarning:   'Этот артефакт будет участвовать в показах:',
   bookingClaimLabel:        'Код отзыва',
+  bookingClaimCopy:         'Копировать',
+  bookingClaimCopied:       'Скопировано!',
+  bookingClaimSave:         'Сохранить файл',
   bookingClaimHint:         'Сохраните этот код — он позволит отозвать заявку если планы изменятся.',
 
   // === CLAIM TOKEN (самоотмена) ===
   claimPendingBooking:      'У вас есть активная заявка на бронирование',
+  claimPendingBookings:     'Ваши активные заявки на бронирование',
   claimCancelBtn:           'Отозвать заявку',
   claimCancelling:          'Отзыв…',
   claimCancelDone:          'Заявка отозвана. Даты снова свободны.',

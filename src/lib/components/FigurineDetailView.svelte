@@ -64,10 +64,13 @@
 
   // === CLAIM TOKEN (self-cancellation) ===
   type ClaimData = { token: string; figurineName: string; startsAt: string; endsAt: string; submittedAt: string };
-  let claim = $state<ClaimData | null>(null);
-  let claimCancelling = $state(false);
-  let claimCancelled  = $state(false);
-  let claimError      = $state('');
+
+  const CLAIMS_KEY = () => `gotiga_claims_${figurine.id}`;
+
+  let claims          = $state<ClaimData[]>([]);
+  let cancellingToken = $state<string | null>(null);
+  let claimErrors     = $state<Record<string, string>>({});
+  let cancelledTokens = $state<Set<string>>(new Set());
 
   // Manual token lookup form
   let showTokenForm   = $state(false);
@@ -75,27 +78,47 @@
   let tokenLookupInfo = $state<{ figurineName: string; startsAt: string; endsAt: string; status: string } | null>(null);
   let tokenLookupErr  = $state('');
   let tokenLooking    = $state(false);
+  let lookupCancelling = $state(false);
 
-  function loadClaim() {
+  function loadClaims() {
     try {
-      const raw = localStorage.getItem(`gotiga_claim_${figurine.id}`);
-      if (raw) claim = JSON.parse(raw);
+      const raw = localStorage.getItem(CLAIMS_KEY());
+      if (raw) claims = JSON.parse(raw);
+      // Migrate old single-item format
+      const old = localStorage.getItem(`gotiga_claim_${figurine.id}`);
+      if (old) {
+        const parsed = JSON.parse(old) as ClaimData;
+        if (!claims.some(c => c.token === parsed.token)) claims = [parsed, ...claims];
+        localStorage.removeItem(`gotiga_claim_${figurine.id}`);
+        saveClaims();
+      }
     } catch { /* ignore */ }
   }
 
-  async function cancelClaim() {
-    if (!claim) return;
-    claimCancelling = true;
-    claimError = '';
+  function saveClaims() {
+    try { localStorage.setItem(CLAIMS_KEY(), JSON.stringify(claims)); } catch { /* ignore */ }
+  }
+
+  // Called by BookingModal immediately after submission — no reload needed
+  function onBookingCreated(claim: ClaimData) {
+    claims = [claim, ...claims];
+    saveClaims();
+    api.getFigurineSchedule(figurine.id).then(s => { figurineSchedule = s; });
+  }
+
+  async function cancelClaim(claim: ClaimData) {
+    cancellingToken = claim.token;
+    claimErrors = { ...claimErrors, [claim.token]: '' };
     try {
       await api.cancelBookingByToken(claim.token);
-      claimCancelled = true;
-      localStorage.removeItem(`gotiga_claim_${figurine.id}`);
+      cancelledTokens = new Set([...cancelledTokens, claim.token]);
+      claims = claims.filter(c => c.token !== claim.token);
+      saveClaims();
       api.getFigurineSchedule(figurine.id).then(s => { figurineSchedule = s; });
     } catch {
-      claimError = get(t)('claimCancelError');
+      claimErrors = { ...claimErrors, [claim.token]: get(t)('claimCancelError') };
     } finally {
-      claimCancelling = false;
+      cancellingToken = null;
     }
   }
 
@@ -117,8 +140,7 @@
 
   async function cancelFromLookup() {
     if (!tokenLookupInfo) return;
-    claimCancelling = true;
-    claimError = '';
+    lookupCancelling = true;
     try {
       await api.cancelBookingByToken(tokenInput.trim().toUpperCase());
       tokenLookupInfo = { ...tokenLookupInfo, status: 'cancelled' };
@@ -126,7 +148,7 @@
     } catch {
       tokenLookupErr = get(t)('claimCancelError');
     } finally {
-      claimCancelling = false;
+      lookupCancelling = false;
     }
   }
 
@@ -245,7 +267,7 @@
     const wl = JSON.parse(localStorage.getItem('gotiga_wishlist') ?? '[]') as string[];
     isWishlisted = wl.includes(figurine.id);
     api.getFigurineSchedule(figurine.id).then(s => { figurineSchedule = s; });
-    loadClaim();
+    loadClaims();
   });
 
   onDestroy(() => {
@@ -274,6 +296,7 @@
 
   <BookingModal
     isOpen={showBookingModal}
+    {onBookingCreated}
     figurineName={figurine.name}
     figurineId={figurine.id}
     schedule={figurineSchedule}
@@ -640,22 +663,33 @@
         {/if}
 
         <!-- ── CLAIM TOKEN: pending booking self-cancel ── -->
-        {#if claim && !claimCancelled}
+        {#if claims.length > 0}
           <div class="claim-block">
             <div class="claim-head">
               <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.3">
                 <rect x="0.5" y="1.5" width="12" height="11" rx="0.8"/>
                 <path d="M3.5 1.5V0.5M9.5 1.5V0.5M0.5 5h12"/>
               </svg>
-              <span>{$t('claimPendingBooking')}</span>
+              <span>{$t(claims.length === 1 ? 'claimPendingBooking' : 'claimPendingBookings')}</span>
             </div>
-            <p class="claim-dates">{fmtDate(claim.startsAt)} — {fmtDate(claim.endsAt)}</p>
-            {#if claimError}<p class="claim-err">{claimError}</p>{/if}
-            <button onclick={cancelClaim} disabled={claimCancelling} class="claim-cancel-btn">
-              {claimCancelling ? $t('claimCancelling') : $t('claimCancelBtn')}
-            </button>
+            {#each claims as c (c.token)}
+              <div class="claim-row">
+                <span class="claim-dates">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</span>
+                <span class="claim-code-small">{c.token}</span>
+                {#if claimErrors[c.token]}
+                  <p class="claim-err">{claimErrors[c.token]}</p>
+                {/if}
+                <button
+                  onclick={() => cancelClaim(c)}
+                  disabled={cancellingToken === c.token}
+                  class="claim-cancel-btn"
+                >{cancellingToken === c.token ? $t('claimCancelling') : $t('claimCancelBtn')}</button>
+              </div>
+            {/each}
           </div>
-        {:else if claimCancelled}
+        {/if}
+
+        {#if cancelledTokens.size > 0 && claims.length === 0}
           <div class="claim-block claim-block--done">
             <p class="claim-done">{$t('claimCancelDone')}</p>
           </div>
@@ -685,8 +719,8 @@
               <div class="claim-lookup-result">
                 <p class="claim-dates">{fmtDate(tokenLookupInfo.startsAt)} — {fmtDate(tokenLookupInfo.endsAt)}</p>
                 {#if tokenLookupInfo.status === 'pending'}
-                  <button onclick={cancelFromLookup} disabled={claimCancelling} class="claim-cancel-btn">
-                    {claimCancelling ? $t('claimCancelling') : $t('claimCancelBtn')}
+                  <button onclick={cancelFromLookup} disabled={lookupCancelling} class="claim-cancel-btn">
+                    {lookupCancelling ? $t('claimCancelling') : $t('claimCancelBtn')}
                   </button>
                 {:else}
                   <p class="claim-status">{$t('claimStatus')}: {tokenLookupInfo.status}</p>
@@ -2468,6 +2502,22 @@
     margin-bottom: 0.75rem;
   }
   .claim-block--done { background: rgba(6,95,70,0.04); border-color: rgba(6,95,70,0.15); }
+  .claim-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0.4rem 0;
+    border-top: 1px solid rgba(52,37,28,0.07);
+  }
+  .claim-row:first-of-type { border-top: none; }
+  .claim-code-small {
+    font-family: 'Fraunces', serif;
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+    color: rgba(95,70,54,0.5);
+    margin-left: auto;
+  }
   .claim-head {
     display: flex;
     align-items: center;

@@ -6,12 +6,15 @@
   import type { FigurineSchedule } from '$lib/types/api';
   import DateRangePicker from '$lib/components/DateRangePicker.svelte';
 
+  type ClaimData = { token: string; figurineName: string; startsAt: string; endsAt: string; submittedAt: string };
+
   let {
-    isOpen       = false,
-    figurineName = '',
-    figurineId   = '',
-    schedule     = { entries: [] } as FigurineSchedule,
-    onClose      = () => {}
+    isOpen          = false,
+    figurineName    = '',
+    figurineId      = '',
+    schedule        = { entries: [] } as FigurineSchedule,
+    onClose         = () => {},
+    onBookingCreated = (_c: ClaimData) => {},
   } = $props();
 
   const today = new Date().toISOString().split('T')[0];
@@ -30,9 +33,11 @@
   let endsAt      = $state(addDays(today, 1));
   let dateError   = $state('');
   let submitError = $state('');
-  let isSubmitting = $state(false);
-  let isSealed    = $state(false);
-  let cancelToken = $state('');
+  let isSubmitting  = $state(false);
+  let isSealed      = $state(false);
+  let cancelToken   = $state('');
+  let copied        = $state(false);
+  let savedDates    = $state({ startsAt: '', endsAt: '' });
 
   // ── Handlers ──────────────────────────────────────────────────────────────
   function close() {
@@ -48,6 +53,8 @@
       dateError    = '';
       submitError  = '';
       cancelToken  = '';
+      copied       = false;
+      savedDates   = { startsAt: '', endsAt: '' };
     }, 500);
   }
 
@@ -78,15 +85,20 @@
         endsAt,
       });
       cancelToken = res.cancelToken;
-      // Persist claim in localStorage so FigurineDetailView can show cancel option
+      savedDates  = { startsAt, endsAt };
+      const claim: ClaimData = {
+        token: res.cancelToken, figurineName, startsAt, endsAt,
+        submittedAt: new Date().toISOString(),
+      };
+      // Persist as array so multiple bookings accumulate
       try {
-        localStorage.setItem(`gotiga_claim_${figurineId}`, JSON.stringify({
-          token: res.cancelToken, figurineName, startsAt, endsAt,
-          submittedAt: new Date().toISOString(),
-        }));
+        const key  = `gotiga_claims_${figurineId}`;
+        const prev: ClaimData[] = JSON.parse(localStorage.getItem(key) ?? '[]');
+        localStorage.setItem(key, JSON.stringify([...prev, claim]));
       } catch { /* storage unavailable */ }
+      // Notify parent immediately — no page reload needed
+      onBookingCreated(claim);
       isSealed = true;
-      setTimeout(() => close(), 8000);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '';
       submitError = msg.includes('409') || msg.toLowerCase().includes('conflict')
@@ -95,6 +107,39 @@
     } finally {
       isSubmitting = false;
     }
+  }
+
+  let copyTimer: ReturnType<typeof setTimeout>;
+  function copyToken() {
+    navigator.clipboard.writeText(cancelToken).then(() => {
+      copied = true;
+      clearTimeout(copyTimer);
+      copyTimer = setTimeout(() => { copied = false; }, 2000);
+    });
+  }
+
+  function saveTokenFile() {
+    const fmt = (ds: string) => new Date(ds + 'T00:00:00').toLocaleDateString(undefined, {
+      day: 'numeric', month: 'long', year: 'numeric'
+    });
+    const content = [
+      'GOTIGA — Booking Claim',
+      '======================',
+      `Code:     ${cancelToken}`,
+      `Artifact: ${figurineName}`,
+      `Dates:    ${fmt(savedDates.startsAt)} — ${fmt(savedDates.endsAt)}`,
+      `Created:  ${new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}`,
+      '',
+      'Keep this code to manage your booking request.',
+      'Enter it on the artifact page to revoke if plans change.',
+    ].join('\n');
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `gotiga-claim-${cancelToken}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 </script>
 
@@ -268,6 +313,29 @@
                   <div class="claim-token-block">
                     <p class="claim-token-label">{$t('bookingClaimLabel')}</p>
                     <p class="claim-token-code">{cancelToken}</p>
+                    <div class="claim-token-actions">
+                      <button type="button" onclick={copyToken} class="claim-action-btn">
+                        {#if copied}
+                          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M1.5 6l3 3 6-6"/>
+                          </svg>
+                          {$t('bookingClaimCopied')}
+                        {:else}
+                          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3">
+                            <rect x="4" y="4" width="7" height="7" rx="1"/>
+                            <path d="M2 8V2a1 1 0 0 1 1-1h6"/>
+                          </svg>
+                          {$t('bookingClaimCopy')}
+                        {/if}
+                      </button>
+                      <button type="button" onclick={saveTokenFile} class="claim-action-btn">
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3">
+                          <path d="M6 1v7M3.5 5.5L6 8l2.5-2.5"/>
+                          <path d="M1 9v1.5A0.5 0.5 0 0 0 1.5 11h9a0.5 0.5 0 0 0 0.5-0.5V9"/>
+                        </svg>
+                        {$t('bookingClaimSave')}
+                      </button>
+                    </div>
                     <p class="claim-token-hint">{$t('bookingClaimHint')}</p>
                   </div>
                 {/if}
@@ -326,6 +394,30 @@
     margin: 0 0 0.5rem;
     font-weight: 600;
   }
+  .claim-token-actions {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: center;
+    margin: 0.625rem 0 0.5rem;
+  }
+  .claim-action-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-family: 'Inter', sans-serif;
+    font-size: 0.6rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: #5f4636;
+    background: rgba(52,37,28,0.06);
+    border: 1px solid rgba(52,37,28,0.18);
+    border-radius: 3px;
+    padding: 0.3rem 0.7rem;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .claim-action-btn:hover { background: rgba(52,37,28,0.11); border-color: rgba(52,37,28,0.3); }
   .claim-token-hint {
     font-family: 'Inter', sans-serif;
     font-size: 0.65rem;
