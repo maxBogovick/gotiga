@@ -197,6 +197,19 @@ export const ru: Record<TranslationKey, string> = {
   bookingErrorConflict:     'Даты пересекаются с существующим показом или бронью.',
   bookingErrorGeneric:      'Не удалось отправить. Попробуйте ещё раз.',
   bookingShowingsWarning:   'Этот артефакт будет участвовать в показах:',
+  bookingClaimLabel:        'Код отзыва',
+  bookingClaimHint:         'Сохраните этот код — он позволит отозвать заявку если планы изменятся.',
+
+  // === CLAIM TOKEN (самоотмена) ===
+  claimPendingBooking:      'У вас есть активная заявка на бронирование',
+  claimCancelBtn:           'Отозвать заявку',
+  claimCancelling:          'Отзыв…',
+  claimCancelDone:          'Заявка отозвана. Даты снова свободны.',
+  claimCancelError:         'Не удалось отозвать. Возможно, заявка уже подтверждена.',
+  claimHaveCode:            'Есть код отзыва?',
+  claimLookupBtn:           'Проверить',
+  claimTokenNotFound:       'Код не найден или заявка уже закрыта.',
+  claimStatus:              'Статус',
 
   // === ORDER MODAL ===
   orderEmailSubject:      'Запрос артефакта: ',

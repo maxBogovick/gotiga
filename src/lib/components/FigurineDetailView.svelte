@@ -9,6 +9,7 @@
   import MemoryMirror from '$lib/components/MemoryMirror.svelte';
   import SecretText from '$lib/components/SecretText.svelte';
   import Lightbox from '$lib/components/Lightbox.svelte';
+  import { get } from 'svelte/store';
   import { api } from '$lib/api';
   import { t } from '$lib/i18n';
   import ShowingsTimeline from '$lib/components/ShowingsTimeline.svelte';
@@ -60,6 +61,78 @@
 
   // Confirmed bookings visible in schedule (entryType === 'booking')
   let upcomingBookings = $derived(figurineSchedule.entries.filter(e => e.entryType === 'booking'));
+
+  // === CLAIM TOKEN (self-cancellation) ===
+  type ClaimData = { token: string; figurineName: string; startsAt: string; endsAt: string; submittedAt: string };
+  let claim = $state<ClaimData | null>(null);
+  let claimCancelling = $state(false);
+  let claimCancelled  = $state(false);
+  let claimError      = $state('');
+
+  // Manual token lookup form
+  let showTokenForm   = $state(false);
+  let tokenInput      = $state('');
+  let tokenLookupInfo = $state<{ figurineName: string; startsAt: string; endsAt: string; status: string } | null>(null);
+  let tokenLookupErr  = $state('');
+  let tokenLooking    = $state(false);
+
+  function loadClaim() {
+    try {
+      const raw = localStorage.getItem(`gotiga_claim_${figurine.id}`);
+      if (raw) claim = JSON.parse(raw);
+    } catch { /* ignore */ }
+  }
+
+  async function cancelClaim() {
+    if (!claim) return;
+    claimCancelling = true;
+    claimError = '';
+    try {
+      await api.cancelBookingByToken(claim.token);
+      claimCancelled = true;
+      localStorage.removeItem(`gotiga_claim_${figurine.id}`);
+      api.getFigurineSchedule(figurine.id).then(s => { figurineSchedule = s; });
+    } catch {
+      claimError = get(t)('claimCancelError');
+    } finally {
+      claimCancelling = false;
+    }
+  }
+
+  async function lookupToken() {
+    const tok = tokenInput.trim().toUpperCase();
+    if (!tok) return;
+    tokenLooking = true;
+    tokenLookupErr = '';
+    tokenLookupInfo = null;
+    try {
+      const info = await api.getBookingByToken(tok);
+      tokenLookupInfo = info;
+    } catch {
+      tokenLookupErr = get(t)('claimTokenNotFound');
+    } finally {
+      tokenLooking = false;
+    }
+  }
+
+  async function cancelFromLookup() {
+    if (!tokenLookupInfo) return;
+    claimCancelling = true;
+    claimError = '';
+    try {
+      await api.cancelBookingByToken(tokenInput.trim().toUpperCase());
+      tokenLookupInfo = { ...tokenLookupInfo, status: 'cancelled' };
+      api.getFigurineSchedule(figurine.id).then(s => { figurineSchedule = s; });
+    } catch {
+      tokenLookupErr = get(t)('claimCancelError');
+    } finally {
+      claimCancelling = false;
+    }
+  }
+
+  function fmtDate(ds: string) {
+    return new Date(ds + 'T00:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
+  }
 
   let sortedImages = $derived(
     figurine.images.slice().sort((a, b) => {
@@ -172,6 +245,7 @@
     const wl = JSON.parse(localStorage.getItem('gotiga_wishlist') ?? '[]') as string[];
     isWishlisted = wl.includes(figurine.id);
     api.getFigurineSchedule(figurine.id).then(s => { figurineSchedule = s; });
+    loadClaim();
   });
 
   onDestroy(() => {
@@ -564,6 +638,63 @@
         {#if figurineSchedule.entries.length > 0}
           <ShowingsTimeline schedule={figurineSchedule} />
         {/if}
+
+        <!-- ── CLAIM TOKEN: pending booking self-cancel ── -->
+        {#if claim && !claimCancelled}
+          <div class="claim-block">
+            <div class="claim-head">
+              <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.3">
+                <rect x="0.5" y="1.5" width="12" height="11" rx="0.8"/>
+                <path d="M3.5 1.5V0.5M9.5 1.5V0.5M0.5 5h12"/>
+              </svg>
+              <span>{$t('claimPendingBooking')}</span>
+            </div>
+            <p class="claim-dates">{fmtDate(claim.startsAt)} — {fmtDate(claim.endsAt)}</p>
+            {#if claimError}<p class="claim-err">{claimError}</p>{/if}
+            <button onclick={cancelClaim} disabled={claimCancelling} class="claim-cancel-btn">
+              {claimCancelling ? $t('claimCancelling') : $t('claimCancelBtn')}
+            </button>
+          </div>
+        {:else if claimCancelled}
+          <div class="claim-block claim-block--done">
+            <p class="claim-done">{$t('claimCancelDone')}</p>
+          </div>
+        {/if}
+
+        <!-- Manual token entry (for users who lost session) -->
+        <div class="claim-lookup">
+          {#if !showTokenForm}
+            <button onclick={() => showTokenForm = true} class="claim-lookup-link">{$t('claimHaveCode')}</button>
+          {:else}
+            <div class="claim-lookup-form">
+              <input
+                type="text"
+                bind:value={tokenInput}
+                placeholder="XXXX-XXXX"
+                maxlength="9"
+                class="claim-lookup-input"
+                oninput={() => { tokenLookupInfo = null; tokenLookupErr = ''; }}
+              />
+              <button onclick={lookupToken} disabled={tokenLooking} class="claim-lookup-btn">
+                {tokenLooking ? '…' : $t('claimLookupBtn')}
+              </button>
+              <button onclick={() => { showTokenForm = false; tokenInput = ''; tokenLookupInfo = null; }} class="claim-lookup-close">✕</button>
+            </div>
+            {#if tokenLookupErr}<p class="claim-err">{tokenLookupErr}</p>{/if}
+            {#if tokenLookupInfo}
+              <div class="claim-lookup-result">
+                <p class="claim-dates">{fmtDate(tokenLookupInfo.startsAt)} — {fmtDate(tokenLookupInfo.endsAt)}</p>
+                {#if tokenLookupInfo.status === 'pending'}
+                  <button onclick={cancelFromLookup} disabled={claimCancelling} class="claim-cancel-btn">
+                    {claimCancelling ? $t('claimCancelling') : $t('claimCancelBtn')}
+                  </button>
+                {:else}
+                  <p class="claim-status">{$t('claimStatus')}: {tokenLookupInfo.status}</p>
+                {/if}
+              </div>
+            {/if}
+          {/if}
+        </div>
 
         <!-- CTA at the bottom — после того как всё прочитано -->
         <div class="d-cta-zone">
@@ -2327,5 +2458,122 @@
     height: 1px;
     background: var(--color-border-subtle);
   }
+
+  /* ── Claim token / self-cancel ── */
+  .claim-block {
+    padding: 0.75rem 1rem;
+    background: rgba(52,37,28,0.04);
+    border: 1px solid rgba(52,37,28,0.12);
+    border-radius: 4px;
+    margin-bottom: 0.75rem;
+  }
+  .claim-block--done { background: rgba(6,95,70,0.04); border-color: rgba(6,95,70,0.15); }
+  .claim-head {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.625rem;
+    font-family: var(--font-sans);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: rgba(95,70,54,0.7);
+    margin-bottom: 0.35rem;
+  }
+  .claim-dates {
+    font-size: 0.8rem;
+    font-family: var(--font-sans);
+    color: #34251c;
+    margin: 0 0 0.5rem;
+  }
+  .claim-done {
+    font-size: 0.78rem;
+    font-family: var(--font-sans);
+    color: #065f46;
+    margin: 0;
+  }
+  .claim-err {
+    font-size: 0.7rem;
+    color: #991b1b;
+    font-family: var(--font-sans);
+    margin: 0 0 0.4rem;
+  }
+  .claim-status {
+    font-size: 0.7rem;
+    font-family: var(--font-sans);
+    color: rgba(95,70,54,0.7);
+    margin: 0.25rem 0 0;
+    text-transform: capitalize;
+  }
+  .claim-cancel-btn {
+    font-family: var(--font-sans);
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #9e452d;
+    background: transparent;
+    border: 1px solid rgba(158,69,45,0.3);
+    border-radius: 3px;
+    padding: 0.3rem 0.75rem;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .claim-cancel-btn:hover:not(:disabled) { border-color: #9e452d; background: rgba(158,69,45,0.05); }
+  .claim-cancel-btn:disabled { opacity: 0.5; cursor: default; }
+
+  /* Manual lookup */
+  .claim-lookup { margin-bottom: 0.5rem; }
+  .claim-lookup-link {
+    font-family: var(--font-sans);
+    font-size: 0.65rem;
+    color: rgba(95,70,54,0.5);
+    background: none;
+    border: none;
+    cursor: pointer;
+    text-decoration: underline dotted;
+    padding: 0;
+  }
+  .claim-lookup-link:hover { color: rgba(95,70,54,0.8); }
+  .claim-lookup-form {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+    margin-bottom: 0.35rem;
+  }
+  .claim-lookup-input {
+    font-family: 'Fraunces', serif;
+    font-size: 0.95rem;
+    letter-spacing: 0.08em;
+    width: 7rem;
+    border: 1px solid rgba(52,37,28,0.2);
+    border-radius: 3px;
+    padding: 0.25rem 0.5rem;
+    background: #fff9f0;
+    color: #34251c;
+    text-transform: uppercase;
+  }
+  .claim-lookup-input:focus { outline: none; border-color: rgba(52,37,28,0.4); }
+  .claim-lookup-btn {
+    font-family: var(--font-sans);
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    background: rgba(52,37,28,0.08);
+    border: 1px solid rgba(52,37,28,0.15);
+    border-radius: 3px;
+    padding: 0.28rem 0.6rem;
+    color: #34251c;
+    cursor: pointer;
+  }
+  .claim-lookup-close {
+    font-size: 0.7rem;
+    color: rgba(95,70,54,0.4);
+    background: none;
+    border: none;
+    cursor: pointer;
+  }
+  .claim-lookup-result { margin-top: 0.4rem; }
 
 </style>

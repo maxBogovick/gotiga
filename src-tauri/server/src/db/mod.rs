@@ -643,14 +643,40 @@ impl Repository {
         let ends_at = chrono::NaiveDate::parse_from_str(&req.ends_at, "%Y-%m-%d")
             .map_err(|_| AppError::BadRequest("Invalid ends_at".to_string()))?;
 
+        let cancel_token = Self::generate_cancel_token();
+
         let rec = sqlx::query_as::<_, Booking>(
-            "INSERT INTO figurine_bookings (figurine_id, figurine_name, requester_name, requester_email, purpose, starts_at, ends_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *"
+            "INSERT INTO figurine_bookings (figurine_id, figurine_name, requester_name, requester_email, purpose, starts_at, ends_at, cancel_token)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *"
         )
         .bind(figurine_id).bind(&req.figurine_name).bind(&req.requester_name)
         .bind(&req.requester_email).bind(&req.purpose).bind(starts_at).bind(ends_at)
+        .bind(&cancel_token)
         .fetch_one(&self.pg_pool).await?;
         Ok(rec)
+    }
+
+    fn generate_cancel_token() -> String {
+        let raw = Uuid::new_v4().to_string().replace('-', "").to_uppercase();
+        format!("{}-{}", &raw[..4], &raw[4..8])
+    }
+
+    pub async fn get_booking_by_cancel_token(&self, token: &str) -> Result<Option<Booking>> {
+        Ok(sqlx::query_as::<_, Booking>(
+            "SELECT * FROM figurine_bookings WHERE cancel_token = $1"
+        )
+        .bind(token)
+        .fetch_optional(&self.pg_pool).await?)
+    }
+
+    pub async fn cancel_booking_by_token(&self, token: &str) -> Result<Option<Booking>> {
+        Ok(sqlx::query_as::<_, Booking>(
+            "UPDATE figurine_bookings SET status = 'cancelled', updated_at = NOW()
+             WHERE cancel_token = $1 AND status = 'pending'
+             RETURNING *"
+        )
+        .bind(token)
+        .fetch_optional(&self.pg_pool).await?)
     }
 
     pub async fn get_bookings_page(

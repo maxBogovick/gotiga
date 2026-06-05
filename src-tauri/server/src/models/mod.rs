@@ -520,7 +520,26 @@ pub struct Booking {
     pub ends_at: chrono::NaiveDate,
     pub status: BookingStatus,
     pub admin_notes: Option<String>,
+    pub cancel_token: String,
     pub created_at: DateTime<Utc>,
+}
+
+/// Returned to the user after booking creation — includes the cancel token.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BookingCreatedResponse {
+    pub cancel_token: String,
+}
+
+/// Returned by the public token-lookup endpoint — minimal info, no PII.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BookingCancelInfo {
+    pub figurine_name: String,
+    pub figurine_id: String,
+    pub starts_at: String,
+    pub ends_at: String,
+    pub status: BookingStatus,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

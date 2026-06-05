@@ -432,6 +432,27 @@ impl AppService {
         Ok(FigurineScheduleDto { entries })
     }
 
+    pub async fn get_booking_by_token(&self, token: &str) -> Result<Option<crate::models::BookingCancelInfo>> {
+        Ok(self.repo.get_booking_by_cancel_token(token).await?.map(|b| crate::models::BookingCancelInfo {
+            figurine_name: b.figurine_name,
+            figurine_id: b.figurine_id.to_string(),
+            starts_at: b.starts_at.to_string(),
+            ends_at: b.ends_at.to_string(),
+            status: b.status,
+        }))
+    }
+
+    pub async fn cancel_booking_by_token(&self, token: &str) -> Result<()> {
+        let booking = self.repo.cancel_booking_by_token(token).await?;
+        if let Some(b) = booking {
+            // If this was the only confirmed booking, revert figurine to available.
+            // (token cancellation only works on 'pending' rows, so figurine status stays unchanged here.)
+            let _ = b; // booking was pending — no status revert needed
+        }
+        // If None → booking not found or already not pending — treat as no-op (idempotent)
+        Ok(())
+    }
+
     pub async fn create_booking(&self, req: CreateBookingRequest) -> Result<Booking> {
         let figurine_id = Self::parse_uuid(&req.figurine_id)?;
         let starts_at = chrono::NaiveDate::parse_from_str(&req.starts_at, "%Y-%m-%d")

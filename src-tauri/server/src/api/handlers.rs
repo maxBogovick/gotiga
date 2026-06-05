@@ -624,9 +624,26 @@ pub async fn create_booking(
     State(service): State<AppService>,
     Path(_id): Path<String>,
     Json(req): Json<crate::models::CreateBookingRequest>,
+) -> Result<Json<crate::models::BookingCreatedResponse>> {
+    let booking = service.create_booking(req).await?;
+    Ok(Json(crate::models::BookingCreatedResponse { cancel_token: booking.cancel_token }))
+}
+
+pub async fn get_booking_by_token(
+    State(service): State<AppService>,
+    Path(token): Path<String>,
+) -> Result<Json<crate::models::BookingCancelInfo>> {
+    service.get_booking_by_token(&token).await?
+        .map(Json)
+        .ok_or_else(|| crate::error::AppError::NotFound("Booking not found".to_string()))
+}
+
+pub async fn cancel_booking_by_token(
+    State(service): State<AppService>,
+    Path(token): Path<String>,
 ) -> Result<StatusCode> {
-    service.create_booking(req).await?;
-    Ok(StatusCode::CREATED)
+    service.cancel_booking_by_token(&token).await?;
+    Ok(StatusCode::OK)
 }
 
 // === SHOWINGS (ADMIN) ===

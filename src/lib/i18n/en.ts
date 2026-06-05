@@ -213,6 +213,19 @@ export const en = {
   bookingErrorConflict:     'These dates conflict with an existing showing or booking.',
   bookingErrorGeneric:      'Could not submit. Please try again.',
   bookingShowingsWarning:   'This artifact will participate in showings:',
+  bookingClaimLabel:        'Your claim code',
+  bookingClaimHint:         'Save this code — you can use it to cancel your request if plans change.',
+
+  // === CLAIM TOKEN (self-cancel) ===
+  claimPendingBooking:      'You have a pending reservation request',
+  claimCancelBtn:           'Revoke request',
+  claimCancelling:          'Revoking…',
+  claimCancelDone:          'Request revoked. The dates are now open again.',
+  claimCancelError:         'Could not revoke. The request may already be confirmed.',
+  claimHaveCode:            'Have a claim code?',
+  claimLookupBtn:           'Check',
+  claimTokenNotFound:       'Code not found or request already resolved.',
+  claimStatus:              'Status',
 
   // === SETTINGS MODAL ===
   settingsTitle:         'Connection Settings',

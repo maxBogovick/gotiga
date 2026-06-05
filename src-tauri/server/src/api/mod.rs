@@ -48,6 +48,8 @@ pub fn router(service: AppService, config: Config) -> Router {
         .route("/orders",                       post(handlers::create_order))
         .route("/figurines/:id/schedule",       get(handlers::get_figurine_schedule))
         .route("/figurines/:id/book",           post(handlers::create_booking))
+        .route("/bookings/cancel/:token",       get(handlers::get_booking_by_token)
+                                                .post(handlers::cancel_booking_by_token))
         // === PUBLIC LOGIN ===
         .route("/admin/login",                  post(handlers::admin_login))
         // === PROTECTED WRITE — use route_layer so auth only runs on matched routes ===

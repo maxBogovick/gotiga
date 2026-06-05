@@ -223,6 +223,18 @@ export interface BookingsPage {
     perPage: number;
 }
 
+export interface BookingCreatedResponse {
+    cancelToken: string;
+}
+
+export interface BookingCancelInfo {
+    figurineName: string;
+    figurineId: string;
+    startsAt: string;
+    endsAt: string;
+    status: BookingStatus;
+}
+
 export interface CreateBookingRequest {
     figurineId: string;
     figurineName: string;

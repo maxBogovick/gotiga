@@ -415,12 +415,20 @@ export const api = {
         }
     },
 
-    async submitBooking(req: CreateBookingRequest): Promise<void> {
-        await webFetch(`/figurines/${req.figurineId}/book`, {
+    async submitBooking(req: CreateBookingRequest): Promise<import('./types/api').BookingCreatedResponse> {
+        return webFetch(`/figurines/${req.figurineId}/book`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(req),
         });
+    },
+
+    async getBookingByToken(token: string): Promise<import('./types/api').BookingCancelInfo> {
+        return webFetch(`/bookings/cancel/${encodeURIComponent(token)}`);
+    },
+
+    async cancelBookingByToken(token: string): Promise<void> {
+        await webFetch(`/bookings/cancel/${encodeURIComponent(token)}`, { method: 'POST' });
     },
 
     // === SHOWINGS (ADMIN) ===

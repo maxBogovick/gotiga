@@ -32,6 +32,7 @@
   let submitError = $state('');
   let isSubmitting = $state(false);
   let isSealed    = $state(false);
+  let cancelToken = $state('');
 
   // ── Handlers ──────────────────────────────────────────────────────────────
   function close() {
@@ -46,6 +47,7 @@
       endsAt       = addDays(today, 1);
       dateError    = '';
       submitError  = '';
+      cancelToken  = '';
     }, 500);
   }
 
@@ -66,7 +68,7 @@
     isSubmitting = true;
     submitError  = '';
     try {
-      await api.submitBooking({
+      const res = await api.submitBooking({
         figurineId,
         figurineName,
         requesterName:  name.trim(),
@@ -75,8 +77,16 @@
         startsAt,
         endsAt,
       });
+      cancelToken = res.cancelToken;
+      // Persist claim in localStorage so FigurineDetailView can show cancel option
+      try {
+        localStorage.setItem(`gotiga_claim_${figurineId}`, JSON.stringify({
+          token: res.cancelToken, figurineName, startsAt, endsAt,
+          submittedAt: new Date().toISOString(),
+        }));
+      } catch { /* storage unavailable */ }
       isSealed = true;
-      setTimeout(() => close(), 3500);
+      setTimeout(() => close(), 8000);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '';
       submitError = msg.includes('409') || msg.toLowerCase().includes('conflict')
@@ -253,6 +263,14 @@
                   <p class="font-['Inter'] text-[#5f4636] text-sm leading-relaxed font-semibold">{$t('bookingSuccessText')}</p>
                   <span class="absolute -right-2 bottom-0 text-4xl text-[#6f3b24]/15 font-serif rotate-180">"</span>
                 </div>
+
+                {#if cancelToken}
+                  <div class="claim-token-block">
+                    <p class="claim-token-label">{$t('bookingClaimLabel')}</p>
+                    <p class="claim-token-code">{cancelToken}</p>
+                    <p class="claim-token-hint">{$t('bookingClaimHint')}</p>
+                  </div>
+                {/if}
               </div>
             {/if}
 
@@ -280,4 +298,39 @@
     100% { transform: scale(1) rotate(12deg); opacity: 1; }
   }
   .animate-seal-press { animation: sealPress 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
+
+  /* Claim token shown after successful booking */
+  .claim-token-block {
+    margin-top: 1.5rem;
+    padding: 0.875rem 1.25rem;
+    background: rgba(52,37,28,0.04);
+    border: 1px solid rgba(52,37,28,0.12);
+    border-radius: 4px;
+    text-align: center;
+    max-width: 18rem;
+  }
+  .claim-token-label {
+    font-family: 'Inter', sans-serif;
+    font-size: 0.6rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: rgba(95,70,54,0.6);
+    margin: 0 0 0.5rem;
+    font-weight: 700;
+  }
+  .claim-token-code {
+    font-family: 'Fraunces', serif;
+    font-size: 1.75rem;
+    letter-spacing: 0.12em;
+    color: #34251c;
+    margin: 0 0 0.5rem;
+    font-weight: 600;
+  }
+  .claim-token-hint {
+    font-family: 'Inter', sans-serif;
+    font-size: 0.65rem;
+    color: rgba(95,70,54,0.55);
+    margin: 0;
+    line-height: 1.5;
+  }
 </style>
