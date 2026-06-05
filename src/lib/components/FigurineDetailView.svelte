@@ -874,41 +874,41 @@
             </button>
 
           {:else if figurine.status === 'reserved'}
-            {#if claims.some(c => c.status === 'confirmed')}
-              <!-- User's confirmed booking — show prominently -->
-              {#each claims.filter(c => c.status === 'confirmed') as c (c.token)}
-                <div class="reserved-notice reserved-notice--confirmed">
-                  <svg class="reserved-icon" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8">
-                    <path d="M3 9l4.5 4.5 8-8"/>
-                  </svg>
-                  <div>
-                    <p class="reserved-title reserved-title--confirmed">{$t('claimConfirmed')}</p>
-                    <p class="reserved-sub">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</p>
-                    <p class="claim-code-small" style="margin-top:0.25rem">{c.token}</p>
-                  </div>
+            <!-- All confirmed claims -->
+            {#each claims.filter(c => c.status === 'confirmed') as c (c.token)}
+              <div class="reserved-notice reserved-notice--confirmed">
+                <svg class="reserved-icon" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="M3 9l4.5 4.5 8-8"/>
+                </svg>
+                <div>
+                  <p class="reserved-title reserved-title--confirmed">{$t('claimConfirmed')}</p>
+                  <p class="reserved-sub">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</p>
+                  <p class="claim-code-small" style="margin-top:0.25rem">{c.token}</p>
                 </div>
-              {/each}
-            {:else if claims.some(c => !c.status || c.status === 'pending')}
-              <!-- User has a pending booking for this figurine -->
-              {#each claims.filter(c => !c.status || c.status === 'pending') as c (c.token)}
-                <div class="reserved-notice">
-                  <svg class="reserved-icon" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.3">
-                    <circle cx="9" cy="9" r="7.5"/>
-                    <path d="M9 5.5v3.5l2.5 2"/>
-                  </svg>
-                  <div>
-                    <p class="reserved-title">{$t('claimPendingBooking')}</p>
-                    <p class="reserved-sub">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</p>
-                    <button onclick={() => cancelClaim(c)} disabled={cancellingToken === c.token}
-                      class="claim-cancel-btn" style="margin-top:0.5rem">
-                      {cancellingToken === c.token ? $t('claimCancelling') : $t('claimCancelBtn')}
-                    </button>
-                    {#if claimErrors[c.token]}<p class="claim-err">{claimErrors[c.token]}</p>{/if}
-                  </div>
+              </div>
+            {/each}
+
+            <!-- All pending claims -->
+            {#each claims.filter(c => !c.status || c.status === 'pending') as c (c.token)}
+              <div class="reserved-notice">
+                <svg class="reserved-icon" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.3">
+                  <circle cx="9" cy="9" r="7.5"/>
+                  <path d="M9 5.5v3.5l2.5 2"/>
+                </svg>
+                <div>
+                  <p class="reserved-title">{$t('claimPendingBooking')}</p>
+                  <p class="reserved-sub">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</p>
+                  <button onclick={() => cancelClaim(c)} disabled={cancellingToken === c.token}
+                    class="claim-cancel-btn" style="margin-top:0.5rem">
+                    {cancellingToken === c.token ? $t('claimCancelling') : $t('claimCancelBtn')}
+                  </button>
+                  {#if claimErrors[c.token]}<p class="claim-err">{claimErrors[c.token]}</p>{/if}
                 </div>
-              {/each}
-            {:else}
-              <!-- No token in this browser — generic reserved + lookup offer -->
+              </div>
+            {/each}
+
+            <!-- No claims in this browser — generic reserved + lookup -->
+            {#if claims.length === 0}
               <div class="reserved-notice">
                 <svg class="reserved-icon" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.3">
                   <circle cx="9" cy="9" r="7.5"/>
@@ -925,7 +925,6 @@
                   {/if}
                 </div>
               </div>
-              <!-- Token lookup in reserved state -->
               <div class="claim-lookup" style="margin-bottom:0.75rem">
                 {#if !showTokenForm}
                   <button onclick={() => showTokenForm = true} class="claim-lookup-link">{$t('claimHaveCode')}</button>
