@@ -99,6 +99,20 @@
     try { localStorage.setItem(CLAIMS_KEY(), JSON.stringify(claims)); } catch { /* ignore */ }
   }
 
+  // Drop any claims that are no longer pending on the server (confirmed/cancelled/rejected by admin)
+  async function verifyClaims() {
+    if (claims.length === 0) return;
+    const results = await Promise.allSettled(claims.map(c => api.getBookingByToken(c.token)));
+    const stillPending = claims.filter((_, i) => {
+      const r = results[i];
+      return r.status === 'fulfilled' && r.value.status === 'pending';
+    });
+    if (stillPending.length !== claims.length) {
+      claims = stillPending;
+      saveClaims();
+    }
+  }
+
   // Called by BookingModal immediately after submission — no reload needed
   function onBookingCreated(claim: ClaimData) {
     claims = [claim, ...claims];
@@ -269,6 +283,7 @@
     isWishlisted = wl.includes(figurine.id);
     api.getFigurineSchedule(figurine.id).then(s => { figurineSchedule = s; });
     loadClaims();
+    verifyClaims();
   });
 
   onDestroy(() => {
