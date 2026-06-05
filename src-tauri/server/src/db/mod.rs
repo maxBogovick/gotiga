@@ -671,7 +671,7 @@ impl Repository {
 
     pub async fn cancel_booking_by_token(&self, token: &str) -> Result<Option<Booking>> {
         Ok(sqlx::query_as::<_, Booking>(
-            "UPDATE figurine_bookings SET status = 'cancelled', updated_at = NOW()
+            "UPDATE figurine_bookings SET status = 'cancelled'
              WHERE cancel_token = $1 AND status = 'pending'
              RETURNING *"
         )
