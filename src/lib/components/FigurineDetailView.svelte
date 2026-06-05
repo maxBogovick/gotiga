@@ -955,6 +955,16 @@
                 {$t('figurineNotify')}
               </button>
             {/if}
+
+            <!-- Book button always available — calendar handles date conflicts -->
+            <button onclick={() => (showBookingModal = true)} class="book-btn">
+              <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.3">
+                <rect x="0.5" y="1.5" width="12" height="11" rx="0.8"/>
+                <path d="M3.5 1.5V0.5M9.5 1.5V0.5M0.5 5h12"/>
+              </svg>
+              {$t('figurineBook')}
+            </button>
+
           {:else}
             <div class="sold-notice">
               <p class="sold-text">{$t('figurineStatusSold')} — эта работа обрела своего хранителя.</p>
