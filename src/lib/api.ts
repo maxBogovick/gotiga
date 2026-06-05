@@ -447,11 +447,12 @@ export const api = {
 
     // === BOOKINGS (ADMIN) ===
 
-    async listBookings(opts?: { status?: string; page?: number; perPage?: number }): Promise<BookingsPage> {
+    async listBookings(opts?: { status?: string; figurineId?: string; page?: number; perPage?: number }): Promise<BookingsPage> {
         const p = new URLSearchParams();
-        if (opts?.status)  p.set('status',  opts.status);
-        if (opts?.page)    p.set('page',    String(opts.page));
-        if (opts?.perPage) p.set('perPage', String(opts.perPage));
+        if (opts?.status)     p.set('status',     opts.status);
+        if (opts?.figurineId) p.set('figurineId', opts.figurineId);
+        if (opts?.page)       p.set('page',       String(opts.page));
+        if (opts?.perPage)    p.set('perPage',     String(opts.perPage));
         const qs = p.toString() ? `?${p}` : '';
         return webFetch(`/admin/bookings${qs}`, { headers: authHeaders() });
     },

@@ -96,6 +96,8 @@ export const en = {
   figurineRequestNote: '* Transfer only to reliable hands',
   figurineBook:        'Reserve Dates',
   figurineBookNote:    'Book a viewing period',
+  figurineAvailableFrom: 'Available for transfer from',
+  figurineShowingsBlock:  'Transfer is restricted — the artifact will participate in:',
   figurineAskQuestion: 'Ask a question',
   figurineNotify:      'Notify me',
   figurineNotifyNote:  'We\'ll reach out when a similar work appears',
@@ -163,7 +165,31 @@ export const en = {
   orderSuccessText:       'Your request is sealed. The raven is on its way. Await a sign when shadows grow longer.',
   orderSubmitError:       'The raven was lost. Please try again or write directly.',
 
+  // === CALENDAR (DateRangePicker) ===
+  calLegendBlocked:         'Unavailable',
+  calLegendSelected:        'Selected',
+  calLegendRange:           'Period',
+  calLegendPending:         'Requested',
+  calHintPickStart:         'Click a start date',
+  calHintPickEnd:           'Now click an end date',
+  calTooltipBooked:         'Reserved',
+  calTooltipPending:        'Requested — dates still available',
+  calConflictOverlapShowing:'Period overlaps with showing',
+  calConflictOverlapBooking:'Period overlaps with an existing booking',
+  calConflictSuffix:        '— choose other dates',
+  calBlockedShowing:        'Showing:',
+
+  // === TIMELINE (ShowingsTimeline) ===
+  tlSchedule:           'Schedule',
+  tlConfirmedBooking:   'Confirmed booking',
+  tlPendingBooking:     'Booking request',
+  tlLegendReserved:     'Reserved',
+  tlLegendPending:      'Requested',
+  tlToday:              'today',
+
   // === BOOKING MODAL ===
+  bookingFillFields:        'Please fill in your name and email',
+  bookingSelectPeriod:      'Please select a booking period',
   bookingTitle:             'Reserve the Artifact',
   bookingScheduleTitle:     'Availability Schedule',
   bookingScheduleEmpty:     'The artifact is free — any dates are available',

@@ -97,6 +97,8 @@ export const ru: Record<TranslationKey, string> = {
   figurineRequest:     'Запросить Артефакт',
   figurineBook:        'Забронировать даты',
   figurineBookNote:    'Выбрать период для просмотра',
+  figurineAvailableFrom: 'Передача возможна с',
+  figurineShowingsBlock:  'Передача ограничена — артефакт будет участвовать в:',
   figurineAskQuestion: 'Задать вопрос',
   figurineNotify:      'Уведомить меня',
   figurineNotifyNote:  'Напишем когда появится похожая работа',
@@ -147,7 +149,31 @@ export const ru: Record<TranslationKey, string> = {
   workshopRetry:     'Попробовать снова',
   workshopError:     'Чертежи утеряны в тенях…',
 
+  // === CALENDAR (DateRangePicker) ===
+  calLegendBlocked:         'Занято',
+  calLegendSelected:        'Выбрано',
+  calLegendRange:           'Период',
+  calLegendPending:         'Запрошено',
+  calHintPickStart:         'Нажмите на дату начала',
+  calHintPickEnd:           'Теперь выберите дату окончания',
+  calTooltipBooked:         'Забронировано',
+  calTooltipPending:        'Есть запрос — даты доступны',
+  calConflictOverlapShowing:'Период пересекается с показом',
+  calConflictOverlapBooking:'Период пересекается с существующей бронью',
+  calConflictSuffix:        '— выберите другие даты',
+  calBlockedShowing:        'Показ:',
+
+  // === TIMELINE (ShowingsTimeline) ===
+  tlSchedule:           'Расписание',
+  tlConfirmedBooking:   'Подтверждённая бронь',
+  tlPendingBooking:     'Запрос на бронирование',
+  tlLegendReserved:     'Забронировано',
+  tlLegendPending:      'Запрошено',
+  tlToday:              'сег',
+
   // === BOOKING MODAL ===
+  bookingFillFields:        'Заполните имя и email',
+  bookingSelectPeriod:      'Выберите период бронирования',
   bookingTitle:             'Забронировать Артефакт',
   bookingScheduleTitle:     'Расписание показов',
   bookingScheduleEmpty:     'Артефакт свободен — любые даты доступны',

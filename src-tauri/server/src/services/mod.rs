@@ -391,7 +391,7 @@ impl AppService {
 
     pub async fn get_figurine_schedule(&self, figurine_id: String) -> Result<FigurineScheduleDto> {
         let uuid = Self::parse_uuid(&figurine_id)?;
-        let (showings, bookings) = self.repo.get_figurine_schedule(uuid).await?;
+        let (showings, confirmed, pending) = self.repo.get_figurine_schedule(uuid).await?;
 
         let mut entries: Vec<ScheduleEntryDto> = Vec::new();
 
@@ -406,9 +406,20 @@ impl AppService {
             });
         }
 
-        for b in bookings {
+        for b in confirmed {
             entries.push(ScheduleEntryDto {
                 entry_type: "booking".to_string(),
+                title: None,
+                showing_type: None,
+                venue: None,
+                starts_at: b.starts_at.to_string(),
+                ends_at: b.ends_at.to_string(),
+            });
+        }
+
+        for b in pending {
+            entries.push(ScheduleEntryDto {
+                entry_type: "pending".to_string(),
                 title: None,
                 showing_type: None,
                 venue: None,
@@ -520,9 +531,9 @@ impl AppService {
 
     // === BOOKINGS (ADMIN) ===
 
-    pub async fn list_bookings(&self, status_filter: Option<&str>, page: i64, per_page: i64) -> Result<BookingsPage> {
+    pub async fn list_bookings(&self, status_filter: Option<&str>, figurine_id: Option<uuid::Uuid>, page: i64, per_page: i64) -> Result<BookingsPage> {
         let offset = (page - 1) * per_page;
-        let (items, total) = self.repo.get_bookings_page(status_filter, per_page, offset).await?;
+        let (items, total) = self.repo.get_bookings_page(status_filter, figurine_id, per_page, offset).await?;
         let pending_count = self.repo.get_pending_bookings_count().await?;
         let dtos = items.into_iter().map(|b| BookingDto {
             id: b.id.to_string(),
@@ -541,16 +552,35 @@ impl AppService {
     }
 
     pub async fn update_booking_status(&self, id: uuid::Uuid, status: BookingStatus, admin_notes: Option<String>) -> Result<()> {
-        if status == BookingStatus::Confirmed {
-            let booking = self.repo.get_booking_by_id(id).await?
-                .ok_or_else(|| crate::error::AppError::NotFound(format!("Booking {} not found", id)))?;
+        let booking = self.repo.get_booking_by_id(id).await?
+            .ok_or_else(|| crate::error::AppError::NotFound(format!("Booking {} not found", id)))?;
 
+        if status == BookingStatus::Confirmed {
+            // Conflict check
             if let Some(reason) = self.repo.check_admin_confirm_conflicts(
                 id, booking.figurine_id, booking.starts_at, booking.ends_at
             ).await? {
                 return Err(crate::error::AppError::Conflict(reason));
             }
+            // Update booking status
+            self.repo.update_booking_status(id, &status, admin_notes.as_deref()).await?;
+            // Auto-set figurine to Reserved
+            self.repo.update_figurine_status(booking.figurine_id, &FigurineStatus::Reserved).await?;
+            return Ok(());
         }
+
+        // If cancelling/rejecting a previously-confirmed booking → maybe revert figurine to Available
+        if (status == BookingStatus::Cancelled || status == BookingStatus::Rejected)
+            && booking.status == BookingStatus::Confirmed
+        {
+            self.repo.update_booking_status(id, &status, admin_notes.as_deref()).await?;
+            let has_others = self.repo.has_future_confirmed_bookings(booking.figurine_id, id).await?;
+            if !has_others {
+                self.repo.update_figurine_status(booking.figurine_id, &FigurineStatus::Available).await?;
+            }
+            return Ok(());
+        }
+
         self.repo.update_booking_status(id, &status, admin_notes.as_deref()).await
     }
 

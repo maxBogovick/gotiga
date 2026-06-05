@@ -659,9 +659,11 @@ pub async fn list_bookings(
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<crate::models::BookingsPage>> {
     let status = params.get("status").map(|s| s.as_str());
+    let figurine_id = params.get("figurineId")
+        .and_then(|s| Uuid::parse_str(s).ok());
     let page = params.get("page").and_then(|p| p.parse::<i64>().ok()).unwrap_or(1).max(1);
     let per_page = params.get("perPage").and_then(|p| p.parse::<i64>().ok()).unwrap_or(20).clamp(1, 100);
-    Ok(Json(service.list_bookings(status, page, per_page).await?))
+    Ok(Json(service.list_bookings(status, figurine_id, page, per_page).await?))
 }
 
 pub async fn update_booking_status(

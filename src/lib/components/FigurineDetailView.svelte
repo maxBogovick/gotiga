@@ -11,6 +11,7 @@
   import Lightbox from '$lib/components/Lightbox.svelte';
   import { api } from '$lib/api';
   import { t } from '$lib/i18n';
+  import ShowingsTimeline from '$lib/components/ShowingsTimeline.svelte';
 
   import type { FigurineListItem } from '$lib/types/api';
 
@@ -40,6 +41,18 @@
   let videoRef = $state<HTMLVideoElement | null>(null);
 
   let upcomingShowings = $derived(figurineSchedule.entries.filter(e => e.entryType === 'showing'));
+
+  // Nearest date when figurine is fully free (after all showings + confirmed bookings)
+  let nextAvailableDate = $derived.by(() => {
+    const today = new Date().toISOString().split('T')[0];
+    const blocking = figurineSchedule.entries.filter(e => e.entryType === 'showing' || e.entryType === 'booking');
+    if (blocking.length === 0) return null;
+    const latestEnd = blocking.reduce((max, e) => e.endsAt > max ? e.endsAt : max, today);
+    if (latestEnd < today) return null;
+    const d = new Date(latestEnd + 'T00:00:00');
+    d.setDate(d.getDate() + 1);
+    return d;
+  });
 
   let sortedImages = $derived(
     figurine.images.slice().sort((a, b) => {
@@ -539,27 +552,38 @@
           </div>
         {/if}
 
+        <!-- Timeline показов -->
+        {#if figurineSchedule.entries.length > 0}
+          <ShowingsTimeline schedule={figurineSchedule} />
+        {/if}
+
         <!-- CTA at the bottom — после того как всё прочитано -->
         <div class="d-cta-zone">
           {#if figurine.status === 'available'}
-            <!-- Showings warning -->
+            <!-- Showings block: replaces vague warning with clear transfer restriction -->
             {#if upcomingShowings.length > 0}
-              <div class="showing-warning">
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" class="flex-shrink-0 mt-0.5">
-                  <rect x="1" y="2" width="12" height="11" rx="1"/>
-                  <path d="M4 2V0.5M10 2V0.5M1 5.5h12"/>
-                </svg>
-                <div>
-                  <p class="showing-warning-title">{$t('bookingShowingsWarning')}</p>
-                  {#each upcomingShowings as s}
-                    <p class="showing-warning-entry">
-                      {s.showingType === 'exhibition' ? $t('bookingShowingExhibition') : $t('bookingShowingPrivate')}
-                      {#if s.title}: {s.title}{/if}
-                      — {new Date(s.startsAt + 'T00:00:00').toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' })}
-                      – {new Date(s.endsAt + 'T00:00:00').toLocaleDateString('ru-RU', { day: '2-digit', month: 'short', year: 'numeric' })}
-                    </p>
-                  {/each}
+              <div class="showing-block">
+                <div class="showing-block-head">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" class="flex-shrink-0">
+                    <rect x="1" y="2" width="12" height="11" rx="1"/>
+                    <path d="M4 2V0.5M10 2V0.5M1 5.5h12"/>
+                  </svg>
+                  <span>{$t('figurineShowingsBlock')}</span>
                 </div>
+                {#each upcomingShowings as s}
+                  <p class="showing-block-entry">
+                    <span class="showing-block-type">{s.showingType === 'exhibition' ? $t('bookingShowingExhibition') : $t('bookingShowingPrivate')}</span>
+                    {#if s.title}«{s.title}»{/if}
+                    — {new Date(s.startsAt + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: 'short' })}
+                    – {new Date(s.endsAt + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' })}
+                  </p>
+                {/each}
+                {#if nextAvailableDate}
+                  <p class="showing-block-avail">
+                    {$t('figurineAvailableFrom')}
+                    <strong>{nextAvailableDate.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}</strong>
+                  </p>
+                {/if}
               </div>
             {/if}
 
@@ -1722,33 +1746,45 @@
     box-shadow: 0 4px 16px rgba(176,136,32,0.14);
   }
 
-  /* Showings warning */
-  .showing-warning {
-    display: flex;
-    gap: 0.625rem;
-    align-items: flex-start;
-    padding: 0.75rem 1rem;
-    background: rgba(251,191,36,0.08);
-    border: 1px solid rgba(217,119,6,0.2);
-    border-radius: 6px;
+  /* Showings block — clear transfer restriction notice */
+  .showing-block {
+    padding: 0.875rem 1rem;
+    background: rgba(217,119,6,0.07);
+    border: 1px solid rgba(217,119,6,0.25);
+    border-left: 3px solid #d97706;
+    border-radius: 4px;
     margin-bottom: 1rem;
-    color: var(--color-warm-dark);
   }
-  .showing-warning-title {
-    font-size: 0.7rem;
+  .showing-block-head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.68rem;
     font-family: var(--font-sans);
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: #92400e;
-    margin: 0 0 0.25rem;
+    margin-bottom: 0.5rem;
   }
-  .showing-warning-entry {
+  .showing-block-entry {
     font-size: 0.75rem;
     font-family: var(--font-sans);
     color: #78350f;
-    margin: 0.1rem 0 0;
-    line-height: 1.45;
+    margin: 0.2rem 0 0;
+    line-height: 1.4;
+  }
+  .showing-block-type {
+    font-weight: 600;
+    margin-right: 0.25rem;
+  }
+  .showing-block-avail {
+    margin-top: 0.625rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid rgba(217,119,6,0.2);
+    font-size: 0.75rem;
+    font-family: var(--font-sans);
+    color: #34251c;
   }
 
   /* Book button */

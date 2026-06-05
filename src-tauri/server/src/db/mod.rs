@@ -592,7 +592,7 @@ impl Repository {
         Ok(())
     }
 
-    pub async fn get_figurine_schedule(&self, figurine_id: Uuid) -> Result<(Vec<Showing>, Vec<Booking>)> {
+    pub async fn get_figurine_schedule(&self, figurine_id: Uuid) -> Result<(Vec<Showing>, Vec<Booking>, Vec<Booking>)> {
         let today = chrono::Utc::now().date_naive();
         let showings = sqlx::query_as::<_, Showing>(
             "SELECT * FROM figurine_showings WHERE figurine_id = $1 AND ends_at >= $2 ORDER BY starts_at"
@@ -600,13 +600,19 @@ impl Repository {
         .bind(figurine_id).bind(today)
         .fetch_all(&self.pg_pool).await?;
 
-        let bookings = sqlx::query_as::<_, Booking>(
+        let confirmed = sqlx::query_as::<_, Booking>(
             "SELECT * FROM figurine_bookings WHERE figurine_id = $1 AND status = 'confirmed' AND ends_at >= $2 ORDER BY starts_at"
         )
         .bind(figurine_id).bind(today)
         .fetch_all(&self.pg_pool).await?;
 
-        Ok((showings, bookings))
+        let pending = sqlx::query_as::<_, Booking>(
+            "SELECT * FROM figurine_bookings WHERE figurine_id = $1 AND status = 'pending' AND ends_at >= $2 ORDER BY starts_at"
+        )
+        .bind(figurine_id).bind(today)
+        .fetch_all(&self.pg_pool).await?;
+
+        Ok((showings, confirmed, pending))
     }
 
     pub async fn check_booking_conflicts(&self, figurine_id: Uuid, starts_at: chrono::NaiveDate, ends_at: chrono::NaiveDate) -> Result<bool> {
@@ -647,31 +653,56 @@ impl Repository {
         Ok(rec)
     }
 
-    pub async fn get_bookings_page(&self, status_filter: Option<&str>, limit: i64, offset: i64) -> Result<(Vec<Booking>, i64)> {
-        let (items, total) = if let Some(status) = status_filter {
-            let items = sqlx::query_as::<_, Booking>(
-                "SELECT * FROM figurine_bookings WHERE status = $1::booking_status ORDER BY created_at DESC LIMIT $2 OFFSET $3"
-            )
-            .bind(status).bind(limit).bind(offset)
-            .fetch_all(&self.pg_pool).await?;
+    pub async fn get_bookings_page(
+        &self,
+        status_filter: Option<&str>,
+        figurine_id_filter: Option<Uuid>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<Booking>, i64)> {
+        // Build WHERE clauses dynamically
+        let mut conditions: Vec<String> = Vec::new();
+        if status_filter.is_some()    { conditions.push(format!("status = ${}::booking_status", conditions.len() + 1)); }
+        if figurine_id_filter.is_some() { conditions.push(format!("figurine_id = ${}", conditions.len() + 1)); }
+        let where_clause = if conditions.is_empty() { String::new() } else { format!("WHERE {}", conditions.join(" AND ")) };
 
-            let (total,): (i64,) = sqlx::query_as(
-                "SELECT COUNT(*) FROM figurine_bookings WHERE status = $1::booking_status"
-            )
-            .bind(status).fetch_one(&self.pg_pool).await?;
-            (items, total)
-        } else {
-            let items = sqlx::query_as::<_, Booking>(
-                "SELECT * FROM figurine_bookings ORDER BY created_at DESC LIMIT $1 OFFSET $2"
-            )
+        let items_sql = format!("SELECT * FROM figurine_bookings {} ORDER BY created_at DESC LIMIT ${} OFFSET ${}", where_clause, conditions.len() + 1, conditions.len() + 2);
+        let count_sql = format!("SELECT COUNT(*) FROM figurine_bookings {}", where_clause);
+
+        macro_rules! bind_filters {
+            ($q:expr) => {{
+                let mut q = $q;
+                if let Some(s) = status_filter      { q = q.bind(s); }
+                if let Some(f) = figurine_id_filter  { q = q.bind(f); }
+                q
+            }};
+        }
+
+        let items = bind_filters!(sqlx::query_as::<_, Booking>(&items_sql))
             .bind(limit).bind(offset)
             .fetch_all(&self.pg_pool).await?;
 
-            let (total,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM figurine_bookings")
-                .fetch_one(&self.pg_pool).await?;
-            (items, total)
-        };
+        let (total,): (i64,) = bind_filters!(sqlx::query_as::<_, (i64,)>(&count_sql))
+            .fetch_one(&self.pg_pool).await?;
+
         Ok((items, total))
+    }
+
+    pub async fn update_figurine_status(&self, figurine_id: Uuid, status: &crate::models::FigurineStatus) -> Result<()> {
+        sqlx::query("UPDATE figurines SET status = $1, updated_at = NOW() WHERE id = $2")
+            .bind(status).bind(figurine_id)
+            .execute(&self.pg_pool).await?;
+        Ok(())
+    }
+
+    pub async fn has_future_confirmed_bookings(&self, figurine_id: Uuid, exclude_id: Uuid) -> Result<bool> {
+        let today = chrono::Utc::now().date_naive();
+        let (exists,): (bool,) = sqlx::query_as(
+            "SELECT EXISTS(SELECT 1 FROM figurine_bookings WHERE id != $1 AND figurine_id = $2 AND status = 'confirmed' AND ends_at >= $3)"
+        )
+        .bind(exclude_id).bind(figurine_id).bind(today)
+        .fetch_one(&self.pg_pool).await?;
+        Ok(exists)
     }
 
     pub async fn get_booking_by_id(&self, id: Uuid) -> Result<Option<Booking>> {

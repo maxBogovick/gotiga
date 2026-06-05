@@ -52,11 +52,11 @@
   async function handleSubmit(e: Event) {
     e.preventDefault();
     if (!name.trim() || !email.trim()) {
-      submitError = 'Заполните имя и email';
+      submitError = $t('bookingFillFields');
       return;
     }
     if (!startsAt || !endsAt) {
-      submitError = 'Выберите период бронирования';
+      submitError = $t('bookingSelectPeriod');
       return;
     }
     if (dateError) {
@@ -101,15 +101,17 @@
       in:fly={{ y: 50, duration: 800, easing: cubicOut }}
     >
       <div class="relative bg-[#fff9f0] shadow-[0_20px_60px_rgba(111,59,36,0.18)] p-1 overflow-hidden transform rotate-1 transition-transform duration-500 hover:rotate-0 border border-[#d8c6b1] rounded-sm">
-        <div class="border-[3px] border-double border-[#c9a875]/35 p-7 md:p-9 relative bg-[#fff9f0] max-h-[90vh] overflow-y-auto">
+        <!-- Декор: вне scroll-контейнера, всегда покрывает весь фрейм -->
+        <div class="border-[3px] border-double border-[#c9a875]/35 relative bg-[#fff9f0] max-h-[90vh] overflow-hidden">
 
-          <div class="absolute inset-0 pointer-events-none opacity-20 mix-blend-multiply bg-noise"></div>
-          <div class="absolute inset-0 pointer-events-none shadow-[inset_0_0_120px_rgba(46,43,40,0.15)]"></div>
-          <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 border-4 border-[#c9a875]/10 rounded-full flex items-center justify-center pointer-events-none">
+          <div class="absolute inset-0 pointer-events-none opacity-20 mix-blend-multiply bg-noise z-0"></div>
+          <div class="absolute inset-0 pointer-events-none shadow-[inset_0_0_120px_rgba(46,43,40,0.15)] z-0"></div>
+          <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 border-4 border-[#c9a875]/10 rounded-full flex items-center justify-center pointer-events-none z-0">
             <div class="w-48 h-48 border border-[#c9a875]/10 rotate-45"></div>
           </div>
 
-          <div class="relative z-10 font-['Georgia'] text-[#34251c]">
+          <!-- Скроллится только контент, декор остаётся на месте -->
+          <div class="relative z-10 overflow-y-auto max-h-[90vh] p-7 md:p-9 font-['Georgia'] text-[#34251c]">
 
             {#if !isSealed}
               <div out:fade={{ duration: 300 }}>
@@ -188,7 +190,7 @@
                       id="b-purpose"
                       bind:value={purpose}
                       rows="2"
-                      class="w-full bg-[#f8f1e7] border-b border-[#d8c6b1] p-2 text-base italic text-[#34251c] focus:outline-none focus:border-[#c65f3c]/70 transition-colors placeholder-[#5f4636]/40 resize-none"
+                      class="w-full bg-[#f8f1e7] border-0 border-b border-[#d8c6b1] rounded-none p-2 text-base italic text-[#34251c] focus:outline-none focus:ring-0 focus:border-[#c65f3c]/70 transition-colors placeholder-[#5f4636]/40 resize-none"
                       placeholder={$t('bookingPurposePlaceholder')}
                     ></textarea>
                   </div>

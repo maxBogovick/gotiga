@@ -178,7 +178,7 @@ export type ShowingType = 'exhibition' | 'private';
 export type BookingStatus = 'pending' | 'confirmed' | 'rejected' | 'cancelled';
 
 export interface ScheduleEntry {
-    entryType: 'showing' | 'booking';
+    entryType: 'showing' | 'booking' | 'pending';
     title: string | null;
     showingType: ShowingType | null;
     venue: string | null;
