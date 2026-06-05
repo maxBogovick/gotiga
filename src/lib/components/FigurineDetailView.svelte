@@ -54,6 +54,13 @@
     return d;
   });
 
+  // Showing that is happening TODAY (started but not yet ended)
+  let todayStr = new Date().toISOString().split('T')[0];
+  let hasActiveShowing = $derived(upcomingShowings.some(s => s.startsAt <= todayStr));
+
+  // Confirmed bookings visible in schedule (entryType === 'booking')
+  let upcomingBookings = $derived(figurineSchedule.entries.filter(e => e.entryType === 'booking'));
+
   let sortedImages = $derived(
     figurine.images.slice().sort((a, b) => {
       if (a.imageType === 'face') return -1;
@@ -561,7 +568,7 @@
         <!-- CTA at the bottom — после того как всё прочитано -->
         <div class="d-cta-zone">
           {#if figurine.status === 'available'}
-            <!-- Showings block: replaces vague warning with clear transfer restriction -->
+            <!-- Showings block: shows when there are showings OR when there are bookings with no showings -->
             {#if upcomingShowings.length > 0}
               <div class="showing-block">
                 <div class="showing-block-head">
@@ -569,7 +576,7 @@
                     <rect x="1" y="2" width="12" height="11" rx="1"/>
                     <path d="M4 2V0.5M10 2V0.5M1 5.5h12"/>
                   </svg>
-                  <span>{$t('figurineShowingsBlock')}</span>
+                  <span>{hasActiveShowing ? $t('figurineActiveShowing') : $t('figurineShowingsBlock')}</span>
                 </div>
                 {#each upcomingShowings as s}
                   <p class="showing-block-entry">
@@ -586,35 +593,74 @@
                   </p>
                 {/if}
               </div>
+            {:else if upcomingBookings.length > 0 && nextAvailableDate}
+              <!-- Only bookings, no showings — show a compact availability note -->
+              <div class="avail-note">
+                <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.3" class="flex-shrink-0">
+                  <rect x="0.5" y="1.5" width="12" height="11" rx="0.8"/>
+                  <path d="M3.5 1.5V0.5M9.5 1.5V0.5M0.5 5h12"/>
+                </svg>
+                <span>
+                  {$t('figurineAvailableFrom')}
+                  <strong>{nextAvailableDate.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}</strong>
+                </span>
+              </div>
             {/if}
 
-            <div class="cta-row">
-              <button onclick={() => openModal('request')} class="cta-btn">
-                <span class="cta-btn-label">{$t('figurineRequest')}</span>
-                <svg class="cta-arrow" width="15" height="16" viewBox="0 0 14 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M4.5 5V3.5a2.5 2.5 0 0 1 5 0V5"/>
-                  <rect x="2" y="5" width="10" height="8.5" rx="1.2"/>
-                </svg>
-              </button>
-              <button
-                onclick={toggleWishlist}
-                class="cta-heart {isWishlisted ? 'cta-heart--saved' : ''}"
-                aria-label={isWishlisted ? $t('figurineWishlisted') : $t('figurineWishlist')}
-                title={isWishlisted ? $t('figurineWishlisted') : $t('figurineWishlist')}
-              >
-                <svg width="18" height="16" viewBox="0 0 18 16" fill={isWishlisted ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="1.5">
-                  <path d="M9 14.5S1.5 9.5 1.5 5A3.5 3.5 0 0 1 9 2.8 3.5 3.5 0 0 1 16.5 5C16.5 9.5 9 14.5 9 14.5z"/>
-                </svg>
-              </button>
-            </div>
-            <div class="cta-secondary-row">
-              <p class="cta-note">{$t('figurineRequestNote')}</p>
-              <button onclick={() => openModal('question')} class="cta-ask">
-                {$t('figurineAskQuestion')}
-              </button>
-            </div>
+            <!-- Request button: blocked during active showings -->
+            {#if hasActiveShowing}
+              <div class="cta-row">
+                <div class="cta-exhibition-block">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3">
+                    <rect x="1" y="2" width="12" height="11" rx="1"/>
+                    <path d="M4 2V0.5M10 2V0.5M1 5.5h12"/>
+                  </svg>
+                  <span>{$t('figurineTransferBlocked')}</span>
+                </div>
+                <button
+                  onclick={toggleWishlist}
+                  class="cta-heart {isWishlisted ? 'cta-heart--saved' : ''}"
+                  aria-label={isWishlisted ? $t('figurineWishlisted') : $t('figurineWishlist')}
+                  title={isWishlisted ? $t('figurineWishlisted') : $t('figurineWishlist')}
+                >
+                  <svg width="18" height="16" viewBox="0 0 18 16" fill={isWishlisted ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="1.5">
+                    <path d="M9 14.5S1.5 9.5 1.5 5A3.5 3.5 0 0 1 9 2.8 3.5 3.5 0 0 1 16.5 5C16.5 9.5 9 14.5 9 14.5z"/>
+                  </svg>
+                </button>
+              </div>
+              <div class="cta-secondary-row">
+                <button onclick={() => openModal('question')} class="cta-ask">{$t('figurineAskQuestion')}</button>
+                <button onclick={() => openModal('notify')} class="cta-ask">{$t('figurineNotify')}</button>
+              </div>
+            {:else}
+              <div class="cta-row">
+                <button onclick={() => openModal('request')} class="cta-btn">
+                  <span class="cta-btn-label">{$t('figurineRequest')}</span>
+                  <svg class="cta-arrow" width="15" height="16" viewBox="0 0 14 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M4.5 5V3.5a2.5 2.5 0 0 1 5 0V5"/>
+                    <rect x="2" y="5" width="10" height="8.5" rx="1.2"/>
+                  </svg>
+                </button>
+                <button
+                  onclick={toggleWishlist}
+                  class="cta-heart {isWishlisted ? 'cta-heart--saved' : ''}"
+                  aria-label={isWishlisted ? $t('figurineWishlisted') : $t('figurineWishlist')}
+                  title={isWishlisted ? $t('figurineWishlisted') : $t('figurineWishlist')}
+                >
+                  <svg width="18" height="16" viewBox="0 0 18 16" fill={isWishlisted ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="1.5">
+                    <path d="M9 14.5S1.5 9.5 1.5 5A3.5 3.5 0 0 1 9 2.8 3.5 3.5 0 0 1 16.5 5C16.5 9.5 9 14.5 9 14.5z"/>
+                  </svg>
+                </button>
+              </div>
+              <div class="cta-secondary-row">
+                <p class="cta-note">{$t('figurineRequestNote')}</p>
+                <button onclick={() => openModal('question')} class="cta-ask">
+                  {$t('figurineAskQuestion')}
+                </button>
+              </div>
+            {/if}
 
-            <!-- Book button -->
+            <!-- Book button: always available when status is available -->
             <button onclick={() => (showBookingModal = true)} class="book-btn">
               <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.3">
                 <rect x="0.5" y="1.5" width="12" height="11" rx="0.8"/>
@@ -632,6 +678,12 @@
               <div>
                 <p class="reserved-title">Зарезервирована</p>
                 <p class="reserved-sub">{$t('figurineNotifyNote')}</p>
+                {#if nextAvailableDate}
+                  <p class="reserved-avail">
+                    {$t('figurineAvailableFrom')}
+                    <strong>{nextAvailableDate.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}</strong>
+                  </p>
+                {/if}
               </div>
             </div>
             <button onclick={() => openModal('notify')} class="notify-btn">
@@ -1786,6 +1838,47 @@
     font-size: 0.75rem;
     font-family: var(--font-sans);
     color: #34251c;
+  }
+
+  /* Availability note — compact version for bookings-only case */
+  .avail-note {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: rgba(52,37,28,0.04);
+    border: 1px solid rgba(52,37,28,0.1);
+    border-radius: 4px;
+    margin-bottom: 1rem;
+    font-size: 0.75rem;
+    font-family: var(--font-sans);
+    color: #34251c;
+  }
+  .avail-note svg { flex-shrink: 0; color: rgba(95,70,54,0.6); }
+
+  /* Exhibition block — replaces request button when figurine is on active showing */
+  .cta-exhibition-block {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.625rem 1rem;
+    background: rgba(217,119,6,0.06);
+    border: 1px solid rgba(217,119,6,0.2);
+    border-radius: 4px;
+    color: #92400e;
+    font-family: var(--font-sans);
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+  }
+
+  /* reserved-avail: date under reserved notice */
+  .reserved-avail {
+    margin-top: 0.5rem;
+    font-family: var(--font-sans);
+    font-size: 0.75rem;
+    color: rgba(90,52,16,0.8);
   }
 
   /* Book button */
