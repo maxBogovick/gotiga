@@ -109,6 +109,10 @@
     }
   }
 
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') close();
+  }
+
   let copyTimer: ReturnType<typeof setTimeout>;
   function copyToken() {
     navigator.clipboard.writeText(cancelToken).then(() => {
@@ -142,6 +146,8 @@
     URL.revokeObjectURL(url);
   }
 </script>
+
+<svelte:window onkeydown={handleKeydown} />
 
 {#if isOpen}
   <div
@@ -293,7 +299,17 @@
 
             {:else}
               <!-- Success -->
-              <div class="flex flex-col items-center justify-center py-12" in:scale={{ duration: 700, start: 0.95, easing: elasticOut }}>
+              <div class="flex flex-col items-center justify-center py-12 relative" in:scale={{ duration: 700, start: 0.95, easing: elasticOut }}>
+                <button
+                  type="button"
+                  onclick={close}
+                  aria-label="Close"
+                  class="absolute top-0 right-0 w-7 h-7 flex items-center justify-center text-[#5f4636]/40 hover:text-[#34251c] transition-colors"
+                >
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M1 1l12 12M13 1L1 13"/>
+                  </svg>
+                </button>
                 <div class="relative w-40 h-40 mb-8 filter drop-shadow-2xl">
                   <div class="absolute inset-0 bg-gradient-to-br from-[#c65f3c] via-[#a86124] to-[#9e452d] rounded-full transform rotate-12 flex items-center justify-center border-4 border-[#6f3b24]/20 wax-seal-shape animate-seal-press">
                     <div class="w-28 h-28 border-2 border-[#6f3b24]/20 rounded-full flex items-center justify-center shadow-inner">
