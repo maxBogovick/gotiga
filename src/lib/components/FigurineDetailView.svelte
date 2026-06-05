@@ -283,9 +283,14 @@
     }
   }
 
+  function handleVisibility() {
+    if (document.visibilityState === 'visible') verifyClaims();
+  }
+
   onMount(() => {
     window.addEventListener('keydown', handleKeydown);
     window.addEventListener('scroll', onScroll, { passive: true });
+    document.addEventListener('visibilitychange', handleVisibility);
     const wl = JSON.parse(localStorage.getItem('gotiga_wishlist') ?? '[]') as string[];
     isWishlisted = wl.includes(figurine.id);
     api.getFigurineSchedule(figurine.id).then(s => { figurineSchedule = s; });
@@ -296,6 +301,7 @@
   onDestroy(() => {
     window.removeEventListener('keydown', handleKeydown);
     window.removeEventListener('scroll', onScroll);
+    document.removeEventListener('visibilitychange', handleVisibility);
     clearTimeout(copiedTimer);
     if (audioRef) { audioRef.pause(); audioRef = null; }
   });
@@ -2538,7 +2544,11 @@
     margin-bottom: 0.75rem;
   }
   .claim-block--done      { background: rgba(6,95,70,0.04); border-color: rgba(6,95,70,0.15); }
-  .claim-block--confirmed { background: rgba(6,95,70,0.05); border-color: rgba(6,95,70,0.22); border-left-color: #059669; }
+  .claim-block--confirmed {
+    background: rgba(6,95,70,0.05);
+    border-color: rgba(6,95,70,0.2);
+    border-left: 3px solid #059669;
+  }
   .claim-block--confirmed .claim-head { color: #065f46; }
   .claim-row {
     display: flex;
