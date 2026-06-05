@@ -63,7 +63,8 @@
   let upcomingBookings = $derived(figurineSchedule.entries.filter(e => e.entryType === 'booking'));
 
   // === CLAIM TOKEN (self-cancellation) ===
-  type ClaimData = { token: string; figurineName: string; startsAt: string; endsAt: string; submittedAt: string };
+  type ClaimStatus = 'pending' | 'confirmed' | 'rejected' | 'cancelled';
+  type ClaimData = { token: string; figurineName: string; startsAt: string; endsAt: string; submittedAt: string; status?: ClaimStatus };
 
   const CLAIMS_KEY = () => `gotiga_claims_${figurine.id}`;
 
@@ -99,16 +100,22 @@
     try { localStorage.setItem(CLAIMS_KEY(), JSON.stringify(claims)); } catch { /* ignore */ }
   }
 
-  // Drop any claims that are no longer pending on the server (confirmed/cancelled/rejected by admin)
+  // Sync claim statuses with server — show confirmed, drop cancelled/rejected
   async function verifyClaims() {
     if (claims.length === 0) return;
     const results = await Promise.allSettled(claims.map(c => api.getBookingByToken(c.token)));
-    const stillPending = claims.filter((_, i) => {
-      const r = results[i];
-      return r.status === 'fulfilled' && r.value.status === 'pending';
-    });
-    if (stillPending.length !== claims.length) {
-      claims = stillPending;
+    let changed = false;
+    const updated = claims
+      .map((c, i) => {
+        const r = results[i];
+        if (r.status !== 'fulfilled') return c;
+        const serverStatus = r.value.status as ClaimStatus;
+        if (serverStatus !== c.status) { changed = true; return { ...c, status: serverStatus }; }
+        return c;
+      })
+      .filter(c => c.status !== 'cancelled' && c.status !== 'rejected');
+    if (changed || updated.length !== claims.length) {
+      claims = updated;
       saveClaims();
     }
   }
@@ -678,17 +685,30 @@
           <ShowingsTimeline schedule={figurineSchedule} />
         {/if}
 
-        <!-- ── CLAIM TOKEN: pending booking self-cancel ── -->
-        {#if claims.length > 0}
-          <div class="claim-block">
-            <div class="claim-head">
-              <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.3">
-                <rect x="0.5" y="1.5" width="12" height="11" rx="0.8"/>
-                <path d="M3.5 1.5V0.5M9.5 1.5V0.5M0.5 5h12"/>
-              </svg>
-              <span>{$t(claims.length === 1 ? 'claimPendingBooking' : 'claimPendingBookings')}</span>
+        <!-- ── CLAIM TOKEN: user's bookings ── -->
+        {#each claims as c (c.token)}
+          {#if c.status === 'confirmed'}
+            <div class="claim-block claim-block--confirmed">
+              <div class="claim-head">
+                <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M1.5 6.5l3.5 3.5 6.5-7"/>
+                </svg>
+                <span>{$t('claimConfirmed')}</span>
+              </div>
+              <div class="claim-row">
+                <span class="claim-dates">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</span>
+                <span class="claim-code-small">{c.token}</span>
+              </div>
             </div>
-            {#each claims as c (c.token)}
+          {:else}
+            <div class="claim-block">
+              <div class="claim-head">
+                <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.3">
+                  <rect x="0.5" y="1.5" width="12" height="11" rx="0.8"/>
+                  <path d="M3.5 1.5V0.5M9.5 1.5V0.5M0.5 5h12"/>
+                </svg>
+                <span>{$t('claimPendingBooking')}</span>
+              </div>
               <div class="claim-row">
                 <span class="claim-dates">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</span>
                 <span class="claim-code-small">{c.token}</span>
@@ -701,9 +721,9 @@
                   class="claim-cancel-btn"
                 >{cancellingToken === c.token ? $t('claimCancelling') : $t('claimCancelBtn')}</button>
               </div>
-            {/each}
-          </div>
-        {/if}
+            </div>
+          {/if}
+        {/each}
 
         {#if cancelledTokens.size > 0 && claims.length === 0}
           <div class="claim-block claim-block--done">
@@ -2517,7 +2537,9 @@
     border-radius: 4px;
     margin-bottom: 0.75rem;
   }
-  .claim-block--done { background: rgba(6,95,70,0.04); border-color: rgba(6,95,70,0.15); }
+  .claim-block--done      { background: rgba(6,95,70,0.04); border-color: rgba(6,95,70,0.15); }
+  .claim-block--confirmed { background: rgba(6,95,70,0.05); border-color: rgba(6,95,70,0.22); border-left-color: #059669; }
+  .claim-block--confirmed .claim-head { color: #065f46; }
   .claim-row {
     display: flex;
     align-items: center;

@@ -222,6 +222,7 @@ export const en = {
   // === CLAIM TOKEN (self-cancel) ===
   claimPendingBooking:      'You have a pending reservation request',
   claimPendingBookings:     'Your pending reservation requests',
+  claimConfirmed:           'Your reservation is confirmed',
   claimCancelBtn:           'Revoke request',
   claimCancelling:          'Revoking…',
   claimCancelDone:          'Request revoked. The dates are now open again.',

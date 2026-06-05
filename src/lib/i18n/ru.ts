@@ -206,6 +206,7 @@ export const ru: Record<TranslationKey, string> = {
   // === CLAIM TOKEN (самоотмена) ===
   claimPendingBooking:      'У вас есть активная заявка на бронирование',
   claimPendingBookings:     'Ваши активные заявки на бронирование',
+  claimConfirmed:           'Ваше бронирование подтверждено',
   claimCancelBtn:           'Отозвать заявку',
   claimCancelling:          'Отзыв…',
   claimCancelDone:          'Заявка отозвана. Даты снова свободны.',
