@@ -955,6 +955,17 @@
               </button>
             {/if}
 
+            <!-- Notify always shown in reserved state -->
+            {#if claims.length > 0}
+              <button onclick={() => openModal('notify')} class="notify-btn">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3">
+                  <path d="M7 1a4 4 0 0 1 4 4v3l1.5 2H1.5L3 8V5a4 4 0 0 1 4-4z"/>
+                  <path d="M5.5 11.5a1.5 1.5 0 0 0 3 0"/>
+                </svg>
+                {$t('figurineNotify')}
+              </button>
+            {/if}
+
             <!-- Book button always available — calendar handles date conflicts -->
             <button onclick={() => (showBookingModal = true)} class="book-btn">
               <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.3">
