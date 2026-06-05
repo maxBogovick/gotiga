@@ -220,10 +220,16 @@
                     <a href="/figurines" class="cta-ghost" use:magnetic={0.22}>{$t('homeSecondaryCta')}</a>
                 </div>
 
-                <a href="/workshop" class="workshop-link">
-                    Workshop
-                    <span class="wl-arrow">↗</span>
-                </a>
+                <div class="side-links">
+                    <a href="/upcoming" class="workshop-link">
+                        {$t('upcomingTitle')}
+                        <span class="wl-arrow">↗</span>
+                    </a>
+                    <a href="/workshop" class="workshop-link">
+                        Workshop
+                        <span class="wl-arrow">↗</span>
+                    </a>
+                </div>
 
                 <dl class="stats">
                     <div class="stat">
@@ -582,6 +588,12 @@
     .cta-ghost:hover {
         border-color: rgba(198,95,60,0.5);
         background: rgba(198,95,60,0.04);
+    }
+
+    .side-links {
+        display: flex;
+        gap: 20px;
+        flex-wrap: wrap;
     }
 
     .workshop-link {

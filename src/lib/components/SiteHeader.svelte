@@ -4,6 +4,7 @@
 
   const links = [
     { href: '/figurines', label: 'Archive' },
+    { href: '/upcoming', label: 'In Progress' },
     { href: '/workshop', label: 'Workshop' },
     { href: '/author', label: 'Author' },
   ];

@@ -63,6 +63,10 @@ pub enum ZoneType {
     Desk,
     Shelf,
     Note,
+    Curator,
+    Cabinet,
+    Portrait,
+    Windows,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -73,15 +77,31 @@ pub enum TextCategory {
     Workshop,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+#[sqlx(type_name = "showing_type", rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+pub enum ShowingType {
+    Exhibition,
+    Private,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+#[sqlx(type_name = "booking_status", rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+pub enum BookingStatus {
+    Pending,
+    Confirmed,
+    Rejected,
+    Cancelled,
+}
+
 // ============================================================
 // ENTITIES (DB MAPPING)
-// SQLite stores timestamps as TEXT ("YYYY-MM-DD HH:MM:SS"),
-// so we use String instead of DateTime<Utc> for SQLite entities.
 // ============================================================
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
 pub struct Figurine {
-    pub id: String,
+    pub id: Uuid,
     pub name: String,
     pub short_text: Option<String>,
     pub full_description: Option<String>,
@@ -96,51 +116,51 @@ pub struct Figurine {
     pub is_featured: bool,
     pub status: FigurineStatus,
     pub sort_order: i32,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
 pub struct Image {
-    pub id: String,
-    pub figurine_id: String,
+    pub id: Uuid,
+    pub figurine_id: Uuid,
     pub image_type: ImageType,
     pub file_path: String,
     pub original_path: Option<String>,
     pub thumb_path: Option<String>,
     pub alt_text: Option<String>,
     pub sort_order: i32,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
 pub struct ProcessStep {
-    pub id: String,
-    pub figurine_id: String,
+    pub id: Uuid,
+    pub figurine_id: Uuid,
     pub step_type: StepType,
     pub description: Option<String>,
     pub image_path: String,
     pub sort_order: i32,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
 pub struct Text {
-    pub id: String,
+    pub id: Uuid,
     pub category: TextCategory,
     pub content: String,
     pub caption: Option<String>,
     pub image_path: Option<String>,
     pub sort_order: i32,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
 pub struct CabinetZone {
-    pub id: String,
+    pub id: Uuid,
     pub zone_type: ZoneType,
     pub x_percent: f64,
     pub y_percent: f64,
@@ -469,4 +489,127 @@ pub struct MediaReplaceResultDto {
     pub new_path: String,
     pub updated_references: usize,
     pub imported_paths: Vec<String>,
+}
+
+// ============================================================
+// SHOWINGS & BOOKINGS
+// ============================================================
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
+pub struct Showing {
+    pub id: Uuid,
+    pub figurine_id: Uuid,
+    pub title: String,
+    pub showing_type: ShowingType,
+    pub starts_at: chrono::NaiveDate,
+    pub ends_at: chrono::NaiveDate,
+    pub venue: Option<String>,
+    pub notes: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
+pub struct Booking {
+    pub id: Uuid,
+    pub figurine_id: Uuid,
+    pub figurine_name: String,
+    pub requester_name: String,
+    pub requester_email: String,
+    pub purpose: Option<String>,
+    pub starts_at: chrono::NaiveDate,
+    pub ends_at: chrono::NaiveDate,
+    pub status: BookingStatus,
+    pub admin_notes: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShowingDto {
+    pub id: String,
+    pub figurine_id: String,
+    pub title: String,
+    pub showing_type: ShowingType,
+    pub starts_at: String,
+    pub ends_at: String,
+    pub venue: Option<String>,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BookingDto {
+    pub id: String,
+    pub figurine_id: String,
+    pub figurine_name: String,
+    pub requester_name: String,
+    pub requester_email: String,
+    pub purpose: Option<String>,
+    pub starts_at: String,
+    pub ends_at: String,
+    pub status: BookingStatus,
+    pub admin_notes: Option<String>,
+    pub created_at: String,
+}
+
+// Public schedule entry — no requester names for privacy
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScheduleEntryDto {
+    pub entry_type: String,
+    pub title: Option<String>,
+    pub showing_type: Option<ShowingType>,
+    pub venue: Option<String>,
+    pub starts_at: String,
+    pub ends_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FigurineScheduleDto {
+    pub entries: Vec<ScheduleEntryDto>,
+}
+
+// Admin request DTOs
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveShowingRequest {
+    pub id: Option<String>,
+    pub figurine_id: String,
+    pub title: String,
+    pub showing_type: ShowingType,
+    pub starts_at: String,
+    pub ends_at: String,
+    pub venue: Option<String>,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateBookingRequest {
+    pub figurine_id: String,
+    pub figurine_name: String,
+    pub requester_name: String,
+    pub requester_email: String,
+    pub purpose: Option<String>,
+    pub starts_at: String,
+    pub ends_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateBookingStatusRequest {
+    pub status: BookingStatus,
+    pub admin_notes: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BookingsPage {
+    pub items: Vec<BookingDto>,
+    pub total: i64,
+    pub pending_count: i64,
+    pub page: i64,
+    pub per_page: i64,
 }

@@ -1,58 +1,16 @@
-use sqlx::{PgPool, SqlitePool};
+use sqlx::PgPool;
 use uuid::Uuid;
 use crate::error::{Result, AppError};
 use crate::models::*;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 
 #[derive(Clone)]
 pub struct Repository {
     pg_pool: PgPool,
-    content_pool: Arc<RwLock<Option<SqlitePool>>>,
 }
 
 impl Repository {
     pub fn new(pg_pool: PgPool) -> Self {
-        Self {
-            pg_pool,
-            content_pool: Arc::new(RwLock::new(None)),
-        }
-    }
-
-    pub async fn set_content_pool(&self, pool: SqlitePool) {
-        let mut lock = self.content_pool.write().await;
-        *lock = Some(pool);
-    }
-
-    pub async fn load_content_pool(&self, path: &str) -> Result<()> {
-        let opts = sqlx::sqlite::SqliteConnectOptions::new()
-            .filename(path)
-            .create_if_missing(true)
-            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
-
-        let pool = SqlitePool::connect_with(opts).await?;
-        sqlx::query("PRAGMA foreign_keys = ON").execute(&pool).await?;
-        init_content_schema(&pool).await?;
-        self.set_content_pool(pool).await;
-        Ok(())
-    }
-
-    pub async fn ensure_content_pool(&self, upload_dir: &str) -> Result<()> {
-        let has_pool = self.content_pool.read().await.is_some();
-        if !has_pool {
-            let dir = std::path::Path::new(upload_dir);
-            tokio::fs::create_dir_all(dir).await
-                .map_err(|e| AppError::Io(e))?;
-            let db_path = dir.join("content.db");
-            self.load_content_pool(db_path.to_str().unwrap_or("./uploads/content.db")).await?;
-        }
-        Ok(())
-    }
-
-    // Helper to get content pool or error
-    async fn content(&self) -> Result<SqlitePool> {
-        let lock = self.content_pool.read().await;
-        lock.clone().ok_or_else(|| AppError::Internal("No active content database loaded".to_string()))
+        Self { pg_pool }
     }
 
     // === ORDERS (Postgres) ===
@@ -169,816 +127,670 @@ impl Repository {
         .await?;
         Ok(row.map(|r| r.0))
     }
-    
-        pub async fn get_releases(&self) -> Result<Vec<Release>> {
-            let releases = sqlx::query_as::<_, Release>(
-                "SELECT * FROM releases ORDER BY created_at DESC"
+
+    pub async fn get_releases(&self) -> Result<Vec<Release>> {
+        let releases = sqlx::query_as::<_, Release>(
+            "SELECT * FROM releases ORDER BY created_at DESC"
+        )
+        .fetch_all(&self.pg_pool)
+        .await?;
+        Ok(releases)
+    }
+
+    pub async fn get_release_by_id(&self, id: Uuid) -> Result<Option<Release>> {
+        let release = sqlx::query_as::<_, Release>(
+            "SELECT * FROM releases WHERE id = $1"
+        )
+        .bind(id)
+        .fetch_optional(&self.pg_pool)
+        .await?;
+        Ok(release)
+    }
+
+    // === CONTENT (Postgres) ===
+
+    pub async fn get_all_figurines(&self, visible_only: bool) -> Result<Vec<Figurine>> {
+        let figurines = if visible_only {
+            sqlx::query_as::<_, Figurine>(
+                "SELECT * FROM figurines WHERE is_visible = true ORDER BY sort_order"
             )
             .fetch_all(&self.pg_pool)
-            .await?;
-            Ok(releases)
-        }
-    
-        pub async fn get_release_by_id(&self, id: Uuid) -> Result<Option<Release>> {
-            let release = sqlx::query_as::<_, Release>(
-                "SELECT * FROM releases WHERE id = $1"
+            .await?
+        } else {
+            sqlx::query_as::<_, Figurine>(
+                "SELECT * FROM figurines ORDER BY sort_order"
             )
+            .fetch_all(&self.pg_pool)
+            .await?
+        };
+        Ok(figurines)
+    }
+
+    pub async fn get_figurine_by_id(&self, id: Uuid) -> Result<Option<Figurine>> {
+        let figurine = sqlx::query_as::<_, Figurine>("SELECT * FROM figurines WHERE id = $1")
             .bind(id)
             .fetch_optional(&self.pg_pool)
             .await?;
-            Ok(release)
+        Ok(figurine)
+    }
+
+    pub async fn get_images_by_figurine(&self, figurine_id: Uuid) -> Result<Vec<Image>> {
+        let images = sqlx::query_as::<_, Image>(
+            "SELECT * FROM images WHERE figurine_id = $1 ORDER BY sort_order"
+        )
+        .bind(figurine_id)
+        .fetch_all(&self.pg_pool)
+        .await?;
+        Ok(images)
+    }
+
+    pub async fn get_steps_by_figurine(&self, figurine_id: Uuid) -> Result<Vec<ProcessStep>> {
+        let steps = sqlx::query_as::<_, ProcessStep>(
+            "SELECT * FROM process_steps WHERE figurine_id = $1 ORDER BY sort_order"
+        )
+        .bind(figurine_id)
+        .fetch_all(&self.pg_pool)
+        .await?;
+        Ok(steps)
+    }
+
+    pub async fn get_related_figurines(&self, current_id: Uuid) -> Result<Vec<Figurine>> {
+        let current = match self.get_figurine_by_id(current_id).await? {
+            Some(c) => c,
+            None => return Ok(vec![]),
+        };
+
+        let material_hint = current.material.as_deref().map(|m| {
+            if m.len() >= 4 { &m[0..4] } else { m }
+        }).unwrap_or("").to_string();
+
+        let related = sqlx::query_as::<_, Figurine>(
+            "SELECT * FROM figurines
+             WHERE id != $1
+             AND is_visible = true
+             AND (
+                 year = $2
+                 OR ($3 != '' AND material LIKE '%' || $4 || '%')
+             )
+             ORDER BY RANDOM()
+             LIMIT 3"
+        )
+        .bind(current_id)
+        .bind(current.year)
+        .bind(&material_hint)
+        .bind(&material_hint)
+        .fetch_all(&self.pg_pool)
+        .await?;
+
+        Ok(related)
+    }
+
+    pub async fn get_texts_by_category(&self, category: TextCategory) -> Result<Vec<Text>> {
+        let texts = sqlx::query_as::<_, Text>(
+            "SELECT * FROM texts WHERE category = $1 ORDER BY sort_order"
+        )
+        .bind(category)
+        .fetch_all(&self.pg_pool)
+        .await?;
+        Ok(texts)
+    }
+
+    pub async fn get_zones(&self) -> Result<Vec<CabinetZone>> {
+        let zones = sqlx::query_as::<_, CabinetZone>(
+            "SELECT * FROM cabinet_zones ORDER BY sort_order"
+        )
+        .fetch_all(&self.pg_pool)
+        .await?;
+        Ok(zones)
+    }
+
+    // === ADMIN WRITE OPERATIONS ===
+
+    pub async fn upsert_figurine(&self, f: &crate::models::SaveFigurineRequest) -> Result<()> {
+        let id = Uuid::parse_str(&f.id)
+            .map_err(|_| AppError::BadRequest("Invalid figurine ID".to_string()))?;
+        sqlx::query(
+            "INSERT INTO figurines (id, name, short_text, full_description, dimensions, material, technique, year, ambience_path, video_url, secret_text, is_visible, is_featured, status, sort_order, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW())
+             ON CONFLICT (id) DO UPDATE SET
+               name=EXCLUDED.name, short_text=EXCLUDED.short_text, full_description=EXCLUDED.full_description,
+               dimensions=EXCLUDED.dimensions, material=EXCLUDED.material, technique=EXCLUDED.technique,
+               year=EXCLUDED.year, ambience_path=EXCLUDED.ambience_path, video_url=EXCLUDED.video_url,
+               secret_text=EXCLUDED.secret_text, is_visible=EXCLUDED.is_visible, is_featured=EXCLUDED.is_featured,
+               status=EXCLUDED.status, sort_order=EXCLUDED.sort_order, updated_at=NOW()"
+        )
+        .bind(id).bind(&f.name).bind(&f.short_text).bind(&f.full_description)
+        .bind(&f.dimensions).bind(&f.material).bind(&f.technique).bind(f.year)
+        .bind(&f.ambience_path).bind(&f.video_url).bind(&f.secret_text)
+        .bind(f.is_visible).bind(f.is_featured).bind(&f.status).bind(f.sort_order)
+        .execute(&self.pg_pool).await?;
+        Ok(())
+    }
+
+    pub async fn delete_figurine(&self, id: Uuid) -> Result<()> {
+        sqlx::query("DELETE FROM figurines WHERE id = $1")
+            .bind(id).execute(&self.pg_pool).await?;
+        Ok(())
+    }
+
+    pub async fn replace_images(&self, figurine_id: Uuid, images: &[crate::models::SaveImageRequest]) -> Result<()> {
+        sqlx::query("DELETE FROM images WHERE figurine_id = $1")
+            .bind(figurine_id).execute(&self.pg_pool).await?;
+        for (idx, img) in images.iter().enumerate() {
+            let img_id = Uuid::parse_str(&img.id)
+                .map_err(|_| AppError::BadRequest("Invalid image ID".to_string()))?;
+            let sort = img.sort_order.unwrap_or(idx as i32);
+            sqlx::query(
+                "INSERT INTO images (id, figurine_id, image_type, file_path, original_path, thumb_path, alt_text, sort_order) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
+            )
+            .bind(img_id).bind(figurine_id).bind(&img.image_type)
+            .bind(&img.url).bind(&img.original_url).bind(&img.thumb_url)
+            .bind(&img.alt_text).bind(sort)
+            .execute(&self.pg_pool).await?;
         }
-    
-            // === CONTENT (SQLite) ===
-    
-        
-    
-            pub async fn get_all_figurines(&self, visible_only: bool) -> Result<Vec<Figurine>> {
-    
-                let pool = self.content().await?;
-    
-                let mut query = "SELECT * FROM figurines".to_string();
-    
-                if visible_only {
-    
-                    query.push_str(" WHERE is_visible = 1");
-    
-                }
-    
-                query.push_str(" ORDER BY sort_order");
-    
-        
-    
-                let figurines = match sqlx::query_as::<_, Figurine>(&query)
-                    .fetch_all(&pool)
-                    .await
-                {
-                    Ok(rows) => rows,
-                    Err(sqlx::Error::Database(e)) if e.message().contains("no such table") => vec![],
-                    Err(e) => return Err(e.into()),
-                };
+        Ok(())
+    }
 
-                Ok(figurines)
-    
+    pub async fn replace_steps(&self, figurine_id: Uuid, steps: &[crate::models::SaveStepRequest]) -> Result<()> {
+        sqlx::query("DELETE FROM process_steps WHERE figurine_id = $1")
+            .bind(figurine_id).execute(&self.pg_pool).await?;
+        for (idx, step) in steps.iter().enumerate() {
+            let step_id = Uuid::parse_str(&step.id)
+                .map_err(|_| AppError::BadRequest("Invalid step ID".to_string()))?;
+            let sort = step.sort_order.unwrap_or(idx as i32);
+            sqlx::query(
+                "INSERT INTO process_steps (id, figurine_id, step_type, description, image_path, sort_order) VALUES ($1, $2, $3, $4, $5, $6)"
+            )
+            .bind(step_id).bind(figurine_id).bind(&step.step_type)
+            .bind(&step.description).bind(&step.image_url).bind(sort)
+            .execute(&self.pg_pool).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn upsert_zone(&self, z: &crate::models::SaveZoneRequest, sort_order: i32) -> Result<()> {
+        let id = Uuid::parse_str(&z.id)
+            .map_err(|_| AppError::BadRequest("Invalid zone ID".to_string()))?;
+        sqlx::query(
+            "INSERT INTO cabinet_zones (id, zone_type, x_percent, y_percent, width_percent, height_percent, target_route, sort_order)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT (id) DO UPDATE SET
+               zone_type=EXCLUDED.zone_type, x_percent=EXCLUDED.x_percent, y_percent=EXCLUDED.y_percent,
+               width_percent=EXCLUDED.width_percent, height_percent=EXCLUDED.height_percent,
+               target_route=EXCLUDED.target_route, sort_order=EXCLUDED.sort_order"
+        )
+        .bind(id).bind(&z.zone_type).bind(z.x).bind(z.y)
+        .bind(z.width).bind(z.height).bind(&z.target_route).bind(sort_order)
+        .execute(&self.pg_pool).await?;
+        Ok(())
+    }
+
+    pub async fn delete_zone(&self, id: Uuid) -> Result<()> {
+        sqlx::query("DELETE FROM cabinet_zones WHERE id = $1")
+            .bind(id).execute(&self.pg_pool).await?;
+        Ok(())
+    }
+
+    pub async fn get_zone_count(&self) -> Result<i32> {
+        let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM cabinet_zones")
+            .fetch_one(&self.pg_pool).await?;
+        Ok(row.0 as i32)
+    }
+
+    pub async fn upsert_text(&self, t: &crate::models::SaveTextRequest, category: &crate::models::TextCategory) -> Result<()> {
+        let id = Uuid::parse_str(&t.id)
+            .map_err(|_| AppError::BadRequest("Invalid text ID".to_string()))?;
+        sqlx::query(
+            "INSERT INTO texts (id, category, content, caption, image_path, sort_order, updated_at)
+             VALUES ($1, $2, $3, $4, $5, COALESCE((SELECT sort_order FROM texts WHERE id = $6), (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM texts WHERE category = $7)), NOW())
+             ON CONFLICT (id) DO UPDATE SET
+               content=EXCLUDED.content, caption=EXCLUDED.caption,
+               image_path=EXCLUDED.image_path, updated_at=NOW()"
+        )
+        .bind(id).bind(category).bind(&t.content).bind(&t.caption)
+        .bind(&t.image_url).bind(id).bind(category)
+        .execute(&self.pg_pool).await?;
+        Ok(())
+    }
+
+    pub async fn delete_text(&self, id: Uuid) -> Result<()> {
+        sqlx::query("DELETE FROM texts WHERE id = $1")
+            .bind(id).execute(&self.pg_pool).await?;
+        Ok(())
+    }
+
+    pub async fn get_main_background(&self) -> Result<Option<String>> {
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT file_path FROM app_resources WHERE key = 'main_background'"
+        )
+        .fetch_optional(&self.pg_pool).await?;
+        Ok(row.map(|r| r.0))
+    }
+
+    pub async fn set_main_background(&self, url: &str) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO app_resources (key, file_path, updated_at) VALUES ('main_background', $1, NOW())
+             ON CONFLICT (key) DO UPDATE SET file_path=EXCLUDED.file_path, updated_at=NOW()"
+        )
+        .bind(url).execute(&self.pg_pool).await?;
+        Ok(())
+    }
+
+    pub async fn get_home_content(&self) -> Result<Option<crate::models::HomeContent>> {
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT file_path FROM app_resources WHERE key = 'home_content'"
+        )
+        .fetch_optional(&self.pg_pool).await?;
+        match row {
+            None => Ok(None),
+            Some((json,)) => {
+                let content = serde_json::from_str(&json)
+                    .unwrap_or_default();
+                Ok(Some(content))
             }
-    
-        
-    
-            pub async fn get_figurine_by_id(&self, id: String) -> Result<Option<Figurine>> {
-    
-                let pool = self.content().await?;
-    
-                let figurine = sqlx::query_as::<_, Figurine>("SELECT * FROM figurines WHERE id = ?")
-    
-                    .bind(id)
-    
-                    .fetch_optional(&pool)
-    
-                    .await?;
-    
-                Ok(figurine)
-    
+        }
+    }
+
+    pub async fn save_home_content(&self, content: &crate::models::HomeContent) -> Result<()> {
+        let json = serde_json::to_string(content)
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        sqlx::query(
+            "INSERT INTO app_resources (key, file_path, updated_at) VALUES ('home_content', $1, NOW())
+             ON CONFLICT (key) DO UPDATE SET file_path=EXCLUDED.file_path, updated_at=NOW()"
+        )
+        .bind(json).execute(&self.pg_pool).await?;
+        Ok(())
+    }
+
+    pub async fn get_author_profile(&self) -> Result<Option<crate::models::AuthorProfile>> {
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT file_path FROM app_resources WHERE key = 'author_profile'"
+        )
+        .fetch_optional(&self.pg_pool).await?;
+        match row {
+            None => Ok(None),
+            Some((json,)) => {
+                let profile = serde_json::from_str(&json)
+                    .unwrap_or_default();
+                Ok(Some(profile))
             }
-    
-        
-    
-            pub async fn get_images_by_figurine(&self, figurine_id: String) -> Result<Vec<Image>> {
-    
-                let pool = self.content().await?;
-    
-                let images = sqlx::query_as::<_, Image>(
-    
-                    "SELECT * FROM images WHERE figurine_id = ? ORDER BY sort_order"
-    
-                )
-    
-                .bind(figurine_id)
-    
-                .fetch_all(&pool)
-    
-                .await?;
-    
-                Ok(images)
-    
+        }
+    }
+
+    pub async fn save_author_profile(&self, profile: &crate::models::AuthorProfile) -> Result<()> {
+        let json = serde_json::to_string(profile)
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        sqlx::query(
+            "INSERT INTO app_resources (key, file_path, updated_at) VALUES ('author_profile', $1, NOW())
+             ON CONFLICT (key) DO UPDATE SET file_path=EXCLUDED.file_path, updated_at=NOW()"
+        )
+        .bind(json).execute(&self.pg_pool).await?;
+        Ok(())
+    }
+
+    // === MEDIA ===
+
+    // No blobs in Postgres — files are served from disk via /static/
+    pub async fn get_blob(&self, _table: &str, _column: &str, _id: String) -> Result<Option<Vec<u8>>> {
+        Ok(None)
+    }
+
+    pub async fn get_media_usages(&self) -> Result<Vec<MediaUsageDto>> {
+        let mut usages = Vec::new();
+
+        let image_rows: Vec<(String, String, Option<String>, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT i.id::text, i.file_path, i.original_path, i.thumb_path, f.id::text, f.name
+             FROM images i
+             LEFT JOIN figurines f ON f.id = i.figurine_id"
+        ).fetch_all(&self.pg_pool).await?;
+        for (image_id, preview, original, thumb, fig_id, fig_name) in image_rows {
+            let label = format!("Image for {}", fig_name.unwrap_or_else(|| "Unknown figurine".to_string()));
+            let entity_id = fig_id.unwrap_or_else(|| image_id.clone());
+            usages.push(MediaUsageDto {
+                path: preview,
+                label: label.clone(),
+                entity_type: "figurineImage".to_string(),
+                entity_id: entity_id.clone(),
+                field: "preview".to_string(),
+            });
+            if let Some(path) = original {
+                usages.push(MediaUsageDto {
+                    path,
+                    label: label.clone(),
+                    entity_type: "figurineImage".to_string(),
+                    entity_id: entity_id.clone(),
+                    field: "original".to_string(),
+                });
             }
-    
-        
-    
-            pub async fn get_steps_by_figurine(&self, figurine_id: String) -> Result<Vec<ProcessStep>> {
-    
-                let pool = self.content().await?;
-    
-                let steps = sqlx::query_as::<_, ProcessStep>(
-    
-                    "SELECT * FROM process_steps WHERE figurine_id = ? ORDER BY sort_order"
-    
-                )
-    
-                .bind(figurine_id)
-    
-                .fetch_all(&pool)
-    
-                .await?;
-    
-                Ok(steps)
-    
+            if let Some(path) = thumb {
+                usages.push(MediaUsageDto {
+                    path,
+                    label: label.clone(),
+                    entity_type: "figurineImage".to_string(),
+                    entity_id: entity_id.clone(),
+                    field: "thumb".to_string(),
+                });
             }
-    
-        
-    
-            pub async fn get_related_figurines(&self, current_id: String) -> Result<Vec<Figurine>> {
-    
-                let pool = self.content().await?;
-    
-                let current = match self.get_figurine_by_id(current_id.clone()).await? {
-    
-                    Some(c) => c,
-    
-                    None => return Ok(vec![]),
-    
-                };
-    
-        
-    
-                let material_hint = current.material.as_deref().map(|m| {
-    
-                     if m.len() >= 4 { &m[0..4] } else { m }
-    
-                }).unwrap_or("");
-    
-        
-    
-                // SQLite random is RANDOM()
-    
-                let query = r#"
-    
-                    SELECT * FROM figurines
-    
-                    WHERE id != ?
-    
-                    AND is_visible = 1
-    
-                    AND (
-    
-                        year = ?
-    
-                        OR (? != '' AND material LIKE '%' || ? || '%')
-    
-                    )
-    
-                    ORDER BY RANDOM()
-    
-                    LIMIT 3
-    
-                "#;
-    
-        
-    
-                let related = sqlx::query_as::<_, Figurine>(query)
-    
-                    .bind(current_id)
-    
-                    .bind(current.year)
-    
-                    .bind(material_hint)
-    
-                    .bind(material_hint)
-    
-                    .fetch_all(&pool)
-    
-                    .await?;
-    
-        
-    
-                Ok(related)
-    
+        }
+
+        let step_rows: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT ps.id::text, ps.image_path, f.id::text, f.name
+             FROM process_steps ps
+             LEFT JOIN figurines f ON f.id = ps.figurine_id"
+        ).fetch_all(&self.pg_pool).await?;
+        for (step_id, path, fig_id, fig_name) in step_rows {
+            usages.push(MediaUsageDto {
+                path,
+                label: format!("Process step for {}", fig_name.unwrap_or_else(|| "Unknown figurine".to_string())),
+                entity_type: "processStep".to_string(),
+                entity_id: fig_id.unwrap_or(step_id),
+                field: "image".to_string(),
+            });
+        }
+
+        let text_rows: Vec<(String, String, Option<String>, String)> = sqlx::query_as(
+            "SELECT id::text, category::text, caption, image_path FROM texts WHERE image_path IS NOT NULL"
+        ).fetch_all(&self.pg_pool).await?;
+        for (id, category, caption, path) in text_rows {
+            usages.push(MediaUsageDto {
+                path,
+                label: caption.unwrap_or_else(|| format!("{} text", category)),
+                entity_type: "text".to_string(),
+                entity_id: id,
+                field: "image".to_string(),
+            });
+        }
+
+        let figurine_rows: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT id::text, name, ambience_path, video_url FROM figurines"
+        ).fetch_all(&self.pg_pool).await?;
+        for (id, name, ambience, video) in figurine_rows {
+            if let Some(path) = ambience {
+                usages.push(MediaUsageDto {
+                    path,
+                    label: format!("Audio for {}", name),
+                    entity_type: "figurine".to_string(),
+                    entity_id: id.clone(),
+                    field: "ambience".to_string(),
+                });
             }
-    
-        
-    
-            pub async fn get_texts_by_category(&self, category: TextCategory) -> Result<Vec<Text>> {
-    
-                let pool = self.content().await?;
-    
-                let texts = sqlx::query_as::<_, Text>(
-    
-                    "SELECT * FROM texts WHERE category = ? ORDER BY sort_order"
-    
-                )
-    
-                .bind(category)
-    
-                .fetch_all(&pool)
-    
-                .await?;
-    
-                Ok(texts)
-    
+            if let Some(path) = video {
+                usages.push(MediaUsageDto {
+                    path,
+                    label: format!("Video for {}", name),
+                    entity_type: "figurine".to_string(),
+                    entity_id: id.clone(),
+                    field: "video".to_string(),
+                });
             }
-    
-        
-    
-            pub async fn get_zones(&self) -> Result<Vec<CabinetZone>> {
-    
-                let pool = self.content().await?;
-    
-                let zones = sqlx::query_as::<_, CabinetZone>(
-    
-                    "SELECT * FROM cabinet_zones ORDER BY sort_order"
-    
-                )
-    
-                .fetch_all(&pool)
-    
-                .await?;
-    
-                Ok(zones)
-    
-            }
-    
-        
-    
-            // === ADMIN WRITE OPERATIONS ===
+        }
 
-            pub async fn upsert_figurine(&self, f: &crate::models::SaveFigurineRequest) -> Result<()> {
-                let pool = self.content().await?;
-                sqlx::query(
-                    "INSERT INTO figurines (id, name, short_text, full_description, dimensions, material, technique, year, ambience_path, video_url, secret_text, is_visible, is_featured, status, sort_order, updated_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-                     ON CONFLICT(id) DO UPDATE SET
-                       name=excluded.name, short_text=excluded.short_text, full_description=excluded.full_description,
-                       dimensions=excluded.dimensions, material=excluded.material, technique=excluded.technique,
-                       year=excluded.year, ambience_path=excluded.ambience_path, video_url=excluded.video_url,
-                       secret_text=excluded.secret_text, is_visible=excluded.is_visible, is_featured=excluded.is_featured,
-                       status=excluded.status, sort_order=excluded.sort_order, updated_at=datetime('now')"
-                )
-                .bind(&f.id).bind(&f.name).bind(&f.short_text).bind(&f.full_description)
-                .bind(&f.dimensions).bind(&f.material).bind(&f.technique).bind(f.year)
-                .bind(&f.ambience_path).bind(&f.video_url).bind(&f.secret_text)
-                .bind(f.is_visible).bind(f.is_featured).bind(&f.status).bind(f.sort_order)
-                .execute(&pool).await?;
-                Ok(())
-            }
+        let resource_rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT key, file_path FROM app_resources WHERE key NOT IN ('author_profile', 'home_content')"
+        ).fetch_all(&self.pg_pool).await?;
+        for (key, path) in resource_rows {
+            usages.push(MediaUsageDto {
+                path,
+                label: format!("App resource {}", key),
+                entity_type: "appResource".to_string(),
+                entity_id: key,
+                field: "file".to_string(),
+            });
+        }
 
-            pub async fn delete_figurine(&self, id: &str) -> Result<()> {
-                let pool = self.content().await?;
-                sqlx::query("DELETE FROM figurines WHERE id = ?")
-                    .bind(id).execute(&pool).await?;
-                Ok(())
-            }
+        Ok(usages)
+    }
 
-            pub async fn replace_images(&self, figurine_id: &str, images: &[crate::models::SaveImageRequest]) -> Result<()> {
-                let pool = self.content().await?;
-                sqlx::query("DELETE FROM images WHERE figurine_id = ?")
-                    .bind(figurine_id).execute(&pool).await?;
-                for (idx, img) in images.iter().enumerate() {
-                    let sort = img.sort_order.unwrap_or(idx as i32);
-                    sqlx::query(
-                        "INSERT INTO images (id, figurine_id, image_type, file_path, original_path, thumb_path, alt_text, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-                    )
-                    .bind(&img.id).bind(figurine_id).bind(&img.image_type)
-                    .bind(&img.url).bind(&img.original_url).bind(&img.thumb_url)
-                    .bind(&img.alt_text).bind(sort)
-                    .execute(&pool).await?;
-                }
-                Ok(())
-            }
+    // === SHOWINGS ===
 
-            pub async fn replace_steps(&self, figurine_id: &str, steps: &[crate::models::SaveStepRequest]) -> Result<()> {
-                let pool = self.content().await?;
-                sqlx::query("DELETE FROM process_steps WHERE figurine_id = ?")
-                    .bind(figurine_id).execute(&pool).await?;
-                for (idx, step) in steps.iter().enumerate() {
-                    let sort = step.sort_order.unwrap_or(idx as i32);
-                    sqlx::query(
-                        "INSERT INTO process_steps (id, figurine_id, step_type, description, image_path, sort_order) VALUES (?, ?, ?, ?, ?, ?)"
-                    )
-                    .bind(&step.id).bind(figurine_id).bind(&step.step_type)
-                    .bind(&step.description).bind(&step.image_url).bind(sort)
-                    .execute(&pool).await?;
-                }
-                Ok(())
-            }
+    pub async fn get_showings_by_figurine(&self, figurine_id: Uuid) -> Result<Vec<Showing>> {
+        let rows = sqlx::query_as::<_, Showing>(
+            "SELECT * FROM figurine_showings WHERE figurine_id = $1 ORDER BY starts_at"
+        )
+        .bind(figurine_id)
+        .fetch_all(&self.pg_pool).await?;
+        Ok(rows)
+    }
 
-            pub async fn upsert_zone(&self, z: &crate::models::SaveZoneRequest, sort_order: i32) -> Result<()> {
-                let pool = self.content().await?;
-                sqlx::query(
-                    "INSERT INTO cabinet_zones (id, zone_type, x_percent, y_percent, width_percent, height_percent, target_route, sort_order)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                     ON CONFLICT(id) DO UPDATE SET
-                       zone_type=excluded.zone_type, x_percent=excluded.x_percent, y_percent=excluded.y_percent,
-                       width_percent=excluded.width_percent, height_percent=excluded.height_percent,
-                       target_route=excluded.target_route, sort_order=excluded.sort_order"
-                )
-                .bind(&z.id).bind(&z.zone_type).bind(z.x).bind(z.y)
-                .bind(z.width).bind(z.height).bind(&z.target_route).bind(sort_order)
-                .execute(&pool).await?;
-                Ok(())
-            }
+    pub async fn get_all_showings(&self) -> Result<Vec<Showing>> {
+        let rows = sqlx::query_as::<_, Showing>(
+            "SELECT * FROM figurine_showings ORDER BY starts_at DESC"
+        )
+        .fetch_all(&self.pg_pool).await?;
+        Ok(rows)
+    }
 
-            pub async fn delete_zone(&self, id: &str) -> Result<()> {
-                let pool = self.content().await?;
-                sqlx::query("DELETE FROM cabinet_zones WHERE id = ?")
-                    .bind(id).execute(&pool).await?;
-                Ok(())
-            }
+    pub async fn upsert_showing(&self, req: &crate::models::SaveShowingRequest) -> Result<Uuid> {
+        let id = match &req.id {
+            Some(s) => Uuid::parse_str(s).map_err(|_| AppError::BadRequest("Invalid showing ID".to_string()))?,
+            None => Uuid::new_v4(),
+        };
+        let figurine_id = Uuid::parse_str(&req.figurine_id)
+            .map_err(|_| AppError::BadRequest("Invalid figurine ID".to_string()))?;
+        let starts_at = chrono::NaiveDate::parse_from_str(&req.starts_at, "%Y-%m-%d")
+            .map_err(|_| AppError::BadRequest("Invalid starts_at date".to_string()))?;
+        let ends_at = chrono::NaiveDate::parse_from_str(&req.ends_at, "%Y-%m-%d")
+            .map_err(|_| AppError::BadRequest("Invalid ends_at date".to_string()))?;
 
-            pub async fn get_zone_count(&self) -> Result<i32> {
-                let pool = self.content().await?;
-                let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM cabinet_zones")
-                    .fetch_one(&pool).await?;
-                Ok(row.0 as i32)
-            }
+        sqlx::query(
+            "INSERT INTO figurine_showings (id, figurine_id, title, showing_type, starts_at, ends_at, venue, notes)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT (id) DO UPDATE SET
+               figurine_id=EXCLUDED.figurine_id, title=EXCLUDED.title,
+               showing_type=EXCLUDED.showing_type, starts_at=EXCLUDED.starts_at,
+               ends_at=EXCLUDED.ends_at, venue=EXCLUDED.venue, notes=EXCLUDED.notes"
+        )
+        .bind(id).bind(figurine_id).bind(&req.title).bind(&req.showing_type)
+        .bind(starts_at).bind(ends_at).bind(&req.venue).bind(&req.notes)
+        .execute(&self.pg_pool).await?;
+        Ok(id)
+    }
 
-            pub async fn upsert_text(&self, t: &crate::models::SaveTextRequest, category: &crate::models::TextCategory) -> Result<()> {
-                let pool = self.content().await?;
-                sqlx::query(
-                    "INSERT INTO texts (id, category, content, caption, image_path, sort_order, updated_at)
-                     VALUES (?, ?, ?, ?, ?, COALESCE((SELECT sort_order FROM texts WHERE id = ?), (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM texts WHERE category = ?)), datetime('now'))
-                     ON CONFLICT(id) DO UPDATE SET
-                       content=excluded.content, caption=excluded.caption,
-                       image_path=excluded.image_path, updated_at=datetime('now')"
-                )
-                .bind(&t.id).bind(category).bind(&t.content).bind(&t.caption)
-                .bind(&t.image_url).bind(&t.id).bind(category)
-                .execute(&pool).await?;
-                Ok(())
-            }
+    pub async fn delete_showing(&self, id: Uuid) -> Result<()> {
+        sqlx::query("DELETE FROM figurine_showings WHERE id = $1")
+            .bind(id).execute(&self.pg_pool).await?;
+        Ok(())
+    }
 
-            pub async fn delete_text(&self, id: &str) -> Result<()> {
-                let pool = self.content().await?;
-                sqlx::query("DELETE FROM texts WHERE id = ?")
-                    .bind(id).execute(&pool).await?;
-                Ok(())
-            }
+    pub async fn get_figurine_schedule(&self, figurine_id: Uuid) -> Result<(Vec<Showing>, Vec<Booking>)> {
+        let today = chrono::Utc::now().date_naive();
+        let showings = sqlx::query_as::<_, Showing>(
+            "SELECT * FROM figurine_showings WHERE figurine_id = $1 AND ends_at >= $2 ORDER BY starts_at"
+        )
+        .bind(figurine_id).bind(today)
+        .fetch_all(&self.pg_pool).await?;
 
-            pub async fn get_main_background(&self) -> Result<Option<String>> {
-                let pool = self.content().await?;
-                let row: Option<(String,)> = sqlx::query_as(
-                    "SELECT file_path FROM app_resources WHERE key = 'main_background'"
-                )
-                .fetch_optional(&pool).await?;
-                Ok(row.map(|r| r.0))
-            }
+        let bookings = sqlx::query_as::<_, Booking>(
+            "SELECT * FROM figurine_bookings WHERE figurine_id = $1 AND status = 'confirmed' AND ends_at >= $2 ORDER BY starts_at"
+        )
+        .bind(figurine_id).bind(today)
+        .fetch_all(&self.pg_pool).await?;
 
-            pub async fn set_main_background(&self, url: &str) -> Result<()> {
-                let pool = self.content().await?;
-                sqlx::query(
-                    "INSERT INTO app_resources (key, file_path, updated_at) VALUES ('main_background', ?, datetime('now'))
-                     ON CONFLICT(key) DO UPDATE SET file_path=excluded.file_path, updated_at=datetime('now')"
-                )
-                .bind(url).execute(&pool).await?;
-                Ok(())
-            }
+        Ok((showings, bookings))
+    }
 
-            pub async fn get_home_content(&self) -> Result<Option<crate::models::HomeContent>> {
-                let pool = self.content().await?;
-                let row: Option<(String,)> = sqlx::query_as(
-                    "SELECT file_path FROM app_resources WHERE key = 'home_content'"
-                )
-                .fetch_optional(&pool).await?;
-                match row {
-                    None => Ok(None),
-                    Some((json,)) => {
-                        let content = serde_json::from_str(&json)
-                            .unwrap_or_default();
-                        Ok(Some(content))
-                    }
-                }
-            }
+    pub async fn check_booking_conflicts(&self, figurine_id: Uuid, starts_at: chrono::NaiveDate, ends_at: chrono::NaiveDate) -> Result<bool> {
+        let (showing_conflict,): (bool,) = sqlx::query_as(
+            "SELECT EXISTS(SELECT 1 FROM figurine_showings WHERE figurine_id = $1 AND starts_at <= $3 AND ends_at >= $2)"
+        )
+        .bind(figurine_id).bind(starts_at).bind(ends_at)
+        .fetch_one(&self.pg_pool).await?;
 
-            pub async fn save_home_content(&self, content: &crate::models::HomeContent) -> Result<()> {
-                let pool = self.content().await?;
-                let json = serde_json::to_string(content)
-                    .map_err(|e| AppError::Internal(e.to_string()))?;
-                sqlx::query(
-                    "INSERT INTO app_resources (key, file_path, updated_at) VALUES ('home_content', ?, datetime('now'))
-                     ON CONFLICT(key) DO UPDATE SET file_path=excluded.file_path, updated_at=datetime('now')"
-                )
-                .bind(json).execute(&pool).await?;
-                Ok(())
-            }
+        if showing_conflict { return Ok(true); }
 
-            pub async fn get_author_profile(&self) -> Result<Option<crate::models::AuthorProfile>> {
-                let pool = self.content().await?;
-                let row: Option<(String,)> = sqlx::query_as(
-                    "SELECT file_path FROM app_resources WHERE key = 'author_profile'"
-                )
-                .fetch_optional(&pool).await?;
-                match row {
-                    None => Ok(None),
-                    Some((json,)) => {
-                        let profile = serde_json::from_str(&json)
-                            .unwrap_or_default();
-                        Ok(Some(profile))
-                    }
-                }
-            }
+        let (booking_conflict,): (bool,) = sqlx::query_as(
+            "SELECT EXISTS(SELECT 1 FROM figurine_bookings WHERE figurine_id = $1 AND status = 'confirmed' AND starts_at <= $3 AND ends_at >= $2)"
+        )
+        .bind(figurine_id).bind(starts_at).bind(ends_at)
+        .fetch_one(&self.pg_pool).await?;
 
-            pub async fn save_author_profile(&self, profile: &crate::models::AuthorProfile) -> Result<()> {
-                let pool = self.content().await?;
-                let json = serde_json::to_string(profile)
-                    .map_err(|e| AppError::Internal(e.to_string()))?;
-                sqlx::query(
-                    "INSERT INTO app_resources (key, file_path, updated_at) VALUES ('author_profile', ?, datetime('now'))
-                     ON CONFLICT(key) DO UPDATE SET file_path=excluded.file_path, updated_at=datetime('now')"
-                )
-                .bind(json).execute(&pool).await?;
-                Ok(())
-            }
+        Ok(booking_conflict)
+    }
 
-            // === MEDIA STREAMING ===
-    
-            
-    
-            // Generic blob fetcher
-    
-            pub async fn get_blob(&self, table: &str, column: &str, id: String) -> Result<Option<Vec<u8>>> {
-                let pool = self.content().await?;
+    // === BOOKINGS ===
 
-                // app_resources uses `key` not `id` — handle separately
-                if table == "app_resources" && column == "data" {
-                    let row: Option<(Vec<u8>,)> = sqlx::query_as(
-                        "SELECT data FROM app_resources WHERE key = ?"
-                    ).bind(&id).fetch_optional(&pool).await?;
-                    return Ok(row.map(|r| r.0));
-                }
+    pub async fn save_booking(&self, req: &crate::models::CreateBookingRequest) -> Result<Booking> {
+        let figurine_id = Uuid::parse_str(&req.figurine_id)
+            .map_err(|_| AppError::BadRequest("Invalid figurine ID".to_string()))?;
+        let starts_at = chrono::NaiveDate::parse_from_str(&req.starts_at, "%Y-%m-%d")
+            .map_err(|_| AppError::BadRequest("Invalid starts_at".to_string()))?;
+        let ends_at = chrono::NaiveDate::parse_from_str(&req.ends_at, "%Y-%m-%d")
+            .map_err(|_| AppError::BadRequest("Invalid ends_at".to_string()))?;
 
-                // Validate table/column to prevent SQL injection (since we format the query string)
-                match (table, column) {
-                    ("images", "data") |
-                    ("images", "original_data") |
-                    ("images", "thumb_data") |
-                    ("process_steps", "image_data") |
-                    ("figurines", "video_data") |
-                    ("figurines", "ambience_data") |
-                    ("texts", "image_data") => {},
-                    _ => return Err(AppError::BadRequest("Invalid media target".to_string())),
-                }
+        let rec = sqlx::query_as::<_, Booking>(
+            "INSERT INTO figurine_bookings (figurine_id, figurine_name, requester_name, requester_email, purpose, starts_at, ends_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *"
+        )
+        .bind(figurine_id).bind(&req.figurine_name).bind(&req.requester_name)
+        .bind(&req.requester_email).bind(&req.purpose).bind(starts_at).bind(ends_at)
+        .fetch_one(&self.pg_pool).await?;
+        Ok(rec)
+    }
 
-                let query = format!("SELECT {} FROM {} WHERE id = ?", column, table);
-                let row: Option<(Vec<u8>,)> = sqlx::query_as(&query)
-                    .bind(id)
-                    .fetch_optional(&pool)
-                    .await?;
-                Ok(row.map(|r| r.0))
-            }
+    pub async fn get_bookings_page(&self, status_filter: Option<&str>, limit: i64, offset: i64) -> Result<(Vec<Booking>, i64)> {
+        let (items, total) = if let Some(status) = status_filter {
+            let items = sqlx::query_as::<_, Booking>(
+                "SELECT * FROM figurine_bookings WHERE status = $1::booking_status ORDER BY created_at DESC LIMIT $2 OFFSET $3"
+            )
+            .bind(status).bind(limit).bind(offset)
+            .fetch_all(&self.pg_pool).await?;
 
-            pub async fn get_media_usages(&self) -> Result<Vec<MediaUsageDto>> {
-                let pool = self.content().await?;
-                let mut usages = Vec::new();
+            let (total,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM figurine_bookings WHERE status = $1::booking_status"
+            )
+            .bind(status).fetch_one(&self.pg_pool).await?;
+            (items, total)
+        } else {
+            let items = sqlx::query_as::<_, Booking>(
+                "SELECT * FROM figurine_bookings ORDER BY created_at DESC LIMIT $1 OFFSET $2"
+            )
+            .bind(limit).bind(offset)
+            .fetch_all(&self.pg_pool).await?;
 
-                let image_rows: Vec<(String, String, Option<String>, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
-                    "SELECT i.id, i.file_path, i.original_path, i.thumb_path, f.id, f.name
-                     FROM images i
-                     LEFT JOIN figurines f ON f.id = i.figurine_id"
-                ).fetch_all(&pool).await?;
-                for (image_id, preview, original, thumb, fig_id, fig_name) in image_rows {
-                    let label = format!("Image for {}", fig_name.unwrap_or_else(|| "Unknown figurine".to_string()));
-                    let entity_id = fig_id.unwrap_or_else(|| image_id.clone());
-                    usages.push(MediaUsageDto {
-                        path: preview,
-                        label: label.clone(),
-                        entity_type: "figurineImage".to_string(),
-                        entity_id: entity_id.clone(),
-                        field: "preview".to_string(),
-                    });
-                    if let Some(path) = original {
-                        usages.push(MediaUsageDto {
-                            path,
-                            label: label.clone(),
-                            entity_type: "figurineImage".to_string(),
-                            entity_id: entity_id.clone(),
-                            field: "original".to_string(),
-                        });
-                    }
-                    if let Some(path) = thumb {
-                        usages.push(MediaUsageDto {
-                            path,
-                            label: label.clone(),
-                            entity_type: "figurineImage".to_string(),
-                            entity_id: entity_id.clone(),
-                            field: "thumb".to_string(),
-                        });
-                    }
-                }
+            let (total,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM figurine_bookings")
+                .fetch_one(&self.pg_pool).await?;
+            (items, total)
+        };
+        Ok((items, total))
+    }
 
-                let step_rows: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
-                    "SELECT ps.id, ps.image_path, f.id, f.name
-                     FROM process_steps ps
-                     LEFT JOIN figurines f ON f.id = ps.figurine_id"
-                ).fetch_all(&pool).await?;
-                for (step_id, path, fig_id, fig_name) in step_rows {
-                    usages.push(MediaUsageDto {
-                        path,
-                        label: format!("Process step for {}", fig_name.unwrap_or_else(|| "Unknown figurine".to_string())),
-                        entity_type: "processStep".to_string(),
-                        entity_id: fig_id.unwrap_or(step_id),
-                        field: "image".to_string(),
-                    });
-                }
+    pub async fn get_booking_by_id(&self, id: Uuid) -> Result<Option<Booking>> {
+        Ok(sqlx::query_as::<_, Booking>(
+            "SELECT * FROM figurine_bookings WHERE id = $1"
+        )
+        .bind(id)
+        .fetch_optional(&self.pg_pool).await?)
+    }
 
-                let text_rows: Vec<(String, String, Option<String>, String)> = sqlx::query_as(
-                    "SELECT id, category, caption, image_path FROM texts WHERE image_path IS NOT NULL"
-                ).fetch_all(&pool).await?;
-                for (id, category, caption, path) in text_rows {
-                    usages.push(MediaUsageDto {
-                        path,
-                        label: caption.unwrap_or_else(|| format!("{} text", category)),
-                        entity_type: "text".to_string(),
-                        entity_id: id,
-                        field: "image".to_string(),
-                    });
-                }
+    // Check conflicts for admin confirmation: showings + other confirmed bookings (excluding the booking being confirmed)
+    pub async fn check_admin_confirm_conflicts(
+        &self,
+        booking_id: Uuid,
+        figurine_id: Uuid,
+        starts_at: chrono::NaiveDate,
+        ends_at: chrono::NaiveDate,
+    ) -> Result<Option<String>> {
+        let (showing_conflict,): (bool,) = sqlx::query_as(
+            "SELECT EXISTS(SELECT 1 FROM figurine_showings WHERE figurine_id = $1 AND starts_at <= $3 AND ends_at >= $2)"
+        )
+        .bind(figurine_id).bind(starts_at).bind(ends_at)
+        .fetch_one(&self.pg_pool).await?;
 
-                let figurine_rows: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
-                    "SELECT id, name, ambience_path, video_url FROM figurines"
-                ).fetch_all(&pool).await?;
-                for (id, name, ambience, video) in figurine_rows {
-                    if let Some(path) = ambience {
-                        usages.push(MediaUsageDto {
-                            path,
-                            label: format!("Audio for {}", name),
-                            entity_type: "figurine".to_string(),
-                            entity_id: id.clone(),
-                            field: "ambience".to_string(),
-                        });
-                    }
-                    if let Some(path) = video {
-                        usages.push(MediaUsageDto {
-                            path,
-                            label: format!("Video for {}", name),
-                            entity_type: "figurine".to_string(),
-                            entity_id: id.clone(),
-                            field: "video".to_string(),
-                        });
-                    }
-                }
+        if showing_conflict {
+            return Ok(Some("Даты пересекаются с показом фигурки".to_string()));
+        }
 
-                let resource_rows: Vec<(String, String)> = sqlx::query_as(
-                    "SELECT key, file_path FROM app_resources WHERE key NOT IN ('author_profile', 'home_content')"
-                ).fetch_all(&pool).await?;
-                for (key, path) in resource_rows {
-                    usages.push(MediaUsageDto {
-                        path,
-                        label: format!("App resource {}", key),
-                        entity_type: "appResource".to_string(),
-                        entity_id: key,
-                        field: "file".to_string(),
-                    });
-                }
+        let (booking_conflict,): (bool,) = sqlx::query_as(
+            "SELECT EXISTS(SELECT 1 FROM figurine_bookings WHERE id != $1 AND figurine_id = $2 AND status = 'confirmed' AND starts_at <= $4 AND ends_at >= $3)"
+        )
+        .bind(booking_id).bind(figurine_id).bind(starts_at).bind(ends_at)
+        .fetch_one(&self.pg_pool).await?;
 
-                Ok(usages)
-            }
+        if booking_conflict {
+            return Ok(Some("На эти даты уже есть подтверждённая бронь".to_string()));
+        }
 
-            pub async fn replace_media_path_everywhere(
-                &self,
-                old_path: &str,
-                new_preview_path: &str,
-                new_original_path: Option<&str>,
-                new_thumb_path: Option<&str>,
-            ) -> Result<usize> {
-                let pool = self.content().await?;
-                let mut updated = 0usize;
+        Ok(None)
+    }
 
-                if new_preview_path.starts_with("images/preview/") || new_preview_path.starts_with("/static/images/preview/") {
-                    let result = sqlx::query(
-                        "UPDATE images
-                         SET file_path = ?, original_path = ?, thumb_path = ?
-                         WHERE file_path = ? OR original_path = ? OR thumb_path = ?"
-                    )
+    pub async fn get_pending_bookings_count(&self) -> Result<i64> {
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM figurine_bookings WHERE status = 'pending'"
+        )
+        .fetch_one(&self.pg_pool).await?;
+        Ok(count)
+    }
+
+    pub async fn update_booking_status(&self, id: Uuid, status: &crate::models::BookingStatus, admin_notes: Option<&str>) -> Result<()> {
+        let affected = sqlx::query(
+            "UPDATE figurine_bookings SET status = $1, admin_notes = COALESCE($2, admin_notes) WHERE id = $3"
+        )
+        .bind(status).bind(admin_notes).bind(id)
+        .execute(&self.pg_pool).await?.rows_affected();
+
+        if affected == 0 {
+            return Err(AppError::NotFound(format!("Booking {} not found", id)));
+        }
+        Ok(())
+    }
+
+    pub async fn replace_media_path_everywhere(
+        &self,
+        old_path: &str,
+        new_preview_path: &str,
+        new_original_path: Option<&str>,
+        new_thumb_path: Option<&str>,
+    ) -> Result<usize> {
+        let mut updated = 0usize;
+
+        if new_preview_path.starts_with("images/preview/") || new_preview_path.starts_with("/static/images/preview/") {
+            let result = sqlx::query(
+                "UPDATE images
+                 SET file_path = $1, original_path = $2, thumb_path = $3
+                 WHERE file_path = $4 OR original_path = $5 OR thumb_path = $6"
+            )
+            .bind(new_preview_path)
+            .bind(new_original_path)
+            .bind(new_thumb_path)
+            .bind(old_path)
+            .bind(old_path)
+            .bind(old_path)
+            .execute(&self.pg_pool).await?;
+            updated += result.rows_affected() as usize;
+        } else {
+            for column in ["file_path", "original_path", "thumb_path"] {
+                let query = format!("UPDATE images SET {} = $1 WHERE {} = $2", column, column);
+                let result = sqlx::query(&query)
                     .bind(new_preview_path)
-                    .bind(new_original_path)
-                    .bind(new_thumb_path)
                     .bind(old_path)
-                    .bind(old_path)
-                    .bind(old_path)
-                    .execute(&pool).await?;
-                    updated += result.rows_affected() as usize;
-                } else {
-                    for (table, column) in [
-                        ("images", "file_path"),
-                        ("images", "original_path"),
-                        ("images", "thumb_path"),
-                    ] {
-                        let query = format!("UPDATE {} SET {} = ? WHERE {} = ?", table, column, column);
-                        let result = sqlx::query(&query)
-                            .bind(new_preview_path)
-                            .bind(old_path)
-                            .execute(&pool).await?;
-                        updated += result.rows_affected() as usize;
-                    }
-                }
-
-                for (table, column) in [
-                    ("process_steps", "image_path"),
-                    ("texts", "image_path"),
-                    ("figurines", "ambience_path"),
-                    ("figurines", "video_url"),
-                    ("app_resources", "file_path"),
-                ] {
-                    let extra = if table == "app_resources" { " AND key NOT IN ('author_profile', 'home_content')" } else { "" };
-                    let query = format!("UPDATE {} SET {} = ? WHERE {} = ?{}", table, column, column, extra);
-                    let result = sqlx::query(&query)
-                        .bind(new_preview_path)
-                        .bind(old_path)
-                        .execute(&pool).await?;
-                    updated += result.rows_affected() as usize;
-                }
-
-                Ok(updated)
+                    .execute(&self.pg_pool).await?;
+                updated += result.rows_affected() as usize;
             }
-}
+        }
 
-async fn init_content_schema(pool: &SqlitePool) -> Result<()> {
-    sqlx::query("
-        CREATE TABLE IF NOT EXISTS figurines (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            short_text TEXT,
-            full_description TEXT,
-            dimensions TEXT,
-            material TEXT,
-            technique TEXT,
-            year INTEGER,
-            ambience_path TEXT,
-            video_url TEXT,
-            ambience_data BLOB,
-            video_data BLOB,
-            secret_text TEXT,
-            is_visible BOOLEAN NOT NULL DEFAULT 1,
-            is_featured INTEGER NOT NULL DEFAULT 0,
-            status TEXT NOT NULL DEFAULT 'available'
-                CHECK (status IN ('available', 'sold', 'reserved', 'in_progress')),
-            sort_order INTEGER NOT NULL DEFAULT 0,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT DEFAULT (datetime('now'))
+        for (table, column) in [
+            ("process_steps", "image_path"),
+            ("texts", "image_path"),
+            ("figurines", "ambience_path"),
+            ("figurines", "video_url"),
+        ] {
+            let query = format!("UPDATE {} SET {} = $1 WHERE {} = $2", table, column, column);
+            let result = sqlx::query(&query)
+                .bind(new_preview_path)
+                .bind(old_path)
+                .execute(&self.pg_pool).await?;
+            updated += result.rows_affected() as usize;
+        }
+
+        // app_resources — skip JSON-stored keys
+        let result = sqlx::query(
+            "UPDATE app_resources SET file_path = $1 WHERE file_path = $2 AND key NOT IN ('author_profile', 'home_content')"
         )
-    ").execute(pool).await?;
+        .bind(new_preview_path)
+        .bind(old_path)
+        .execute(&self.pg_pool).await?;
+        updated += result.rows_affected() as usize;
 
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_figurines_sort ON figurines(sort_order)").execute(pool).await?;
-
-    sqlx::query("
-        CREATE TABLE IF NOT EXISTS images (
-            id TEXT PRIMARY KEY,
-            figurine_id TEXT NOT NULL REFERENCES figurines(id) ON DELETE CASCADE,
-            image_type TEXT NOT NULL CHECK (image_type IN ('face', 'detail', 'full')),
-            file_path TEXT NOT NULL,
-            original_path TEXT,
-            thumb_path TEXT,
-            original_data BLOB,
-            thumb_data BLOB,
-            alt_text TEXT,
-            sort_order INTEGER NOT NULL DEFAULT 0,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT DEFAULT (datetime('now'))
-        )
-    ").execute(pool).await?;
-
-    sqlx::query("
-        CREATE TABLE IF NOT EXISTS process_steps (
-            id TEXT PRIMARY KEY,
-            figurine_id TEXT NOT NULL REFERENCES figurines(id) ON DELETE CASCADE,
-            step_type TEXT NOT NULL CHECK (step_type IN ('sketch', 'prototype', 'modeling', 'painting', 'finish')),
-            description TEXT,
-            image_path TEXT NOT NULL,
-            sort_order INTEGER NOT NULL DEFAULT 0,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT DEFAULT (datetime('now'))
-        )
-    ").execute(pool).await?;
-
-    sqlx::query("
-        CREATE TABLE IF NOT EXISTS texts (
-            id TEXT PRIMARY KEY,
-            category TEXT NOT NULL CHECK (category IN ('author', 'workshop')),
-            content TEXT NOT NULL,
-            caption TEXT,
-            image_path TEXT,
-            sort_order INTEGER NOT NULL DEFAULT 0,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT DEFAULT (datetime('now'))
-        )
-    ").execute(pool).await?;
-
-    sqlx::query("
-        CREATE TABLE IF NOT EXISTS cabinet_zones (
-            id TEXT PRIMARY KEY,
-            zone_type TEXT NOT NULL,
-            x_percent REAL NOT NULL,
-            y_percent REAL NOT NULL,
-            width_percent REAL NOT NULL,
-            height_percent REAL NOT NULL,
-            target_route TEXT NOT NULL,
-            sort_order INTEGER NOT NULL DEFAULT 0
-        )
-    ").execute(pool).await?;
-
-    sqlx::query("
-        CREATE TABLE IF NOT EXISTS app_resources (
-            key TEXT PRIMARY KEY,
-            file_path TEXT NOT NULL,
-            data BLOB,
-            updated_at TEXT DEFAULT (datetime('now'))
-        )
-    ").execute(pool).await?;
-
-    // Column migrations for older DBs
-    ensure_sqlite_column(pool, "images", "original_path", "TEXT").await?;
-    ensure_sqlite_column(pool, "images", "thumb_path", "TEXT").await?;
-    ensure_sqlite_column(pool, "images", "original_data", "BLOB").await?;
-    ensure_sqlite_column(pool, "images", "thumb_data", "BLOB").await?;
-    migrate_figurines_status_constraint(pool).await?;
-    ensure_sqlite_column(pool, "figurines", "is_featured", "INTEGER NOT NULL DEFAULT 0").await?;
-
-    Ok(())
-}
-
-async fn migrate_figurines_status_constraint(pool: &SqlitePool) -> Result<()> {
-    let row: Option<(String,)> = sqlx::query_as(
-        "SELECT COALESCE(sql, '') FROM sqlite_master WHERE type='table' AND name='figurines'"
-    )
-    .fetch_optional(pool)
-    .await?;
-
-    let sql = match row {
-        Some((s,)) => s,
-        None => return Ok(()), // no figurines table — nothing to migrate
-    };
-
-    if sql.contains("in_progress") {
-        return Ok(()); // already migrated
+        Ok(updated)
     }
-
-    // Drop any leftover temp table from a previous failed migration
-    sqlx::query("DROP TABLE IF EXISTS figurines_new").execute(pool).await?;
-
-    sqlx::query("PRAGMA foreign_keys = OFF").execute(pool).await?;
-
-    sqlx::query("
-        CREATE TABLE figurines_new (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            short_text TEXT,
-            full_description TEXT,
-            dimensions TEXT,
-            material TEXT,
-            technique TEXT,
-            year INTEGER,
-            ambience_path TEXT,
-            video_url TEXT,
-            ambience_data BLOB,
-            video_data BLOB,
-            secret_text TEXT,
-            is_visible BOOLEAN NOT NULL DEFAULT 1,
-            is_featured INTEGER NOT NULL DEFAULT 0,
-            status TEXT NOT NULL DEFAULT 'available'
-                CHECK (status IN ('available', 'sold', 'reserved', 'in_progress')),
-            sort_order INTEGER NOT NULL DEFAULT 0,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT DEFAULT (datetime('now'))
-        )
-    ").execute(pool).await?;
-
-    // Use 0 for is_featured — the column doesn't exist yet in the old table
-    sqlx::query("
-        INSERT INTO figurines_new
-            SELECT id, name, short_text, full_description, dimensions, material, technique,
-                   year, ambience_path, video_url, ambience_data, video_data, secret_text,
-                   is_visible, 0, status, sort_order, created_at, updated_at
-            FROM figurines
-    ").execute(pool).await?;
-
-    sqlx::query("DROP TABLE figurines").execute(pool).await?;
-    sqlx::query("ALTER TABLE figurines_new RENAME TO figurines").execute(pool).await?;
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_figurines_sort ON figurines(sort_order)").execute(pool).await?;
-
-    sqlx::query("PRAGMA foreign_keys = ON").execute(pool).await?;
-
-    Ok(())
-}
-
-async fn ensure_sqlite_column(
-    pool: &SqlitePool,
-    table: &str,
-    column: &str,
-    column_type: &str,
-) -> Result<()> {
-    let rows: Vec<(String,)> = sqlx::query_as(&format!("SELECT name FROM pragma_table_info('{}')", table))
-        .fetch_all(pool)
-        .await?;
-
-    // Table doesn't exist (pragma returns empty) — nothing to add
-    if rows.is_empty() {
-        return Ok(());
-    }
-
-    if rows.iter().any(|(name,)| name == column) {
-        return Ok(());
-    }
-
-    sqlx::query(&format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, column_type))
-        .execute(pool)
-        .await?;
-    Ok(())
 }

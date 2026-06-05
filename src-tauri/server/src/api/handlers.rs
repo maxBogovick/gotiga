@@ -528,50 +528,23 @@ pub async fn save_home_content(
 
 // === ADMIN / RELEASE MANAGEMENT ===
 
-// Upload a Tauri-exported DB as a data import into the server's content.db
+// Content is now managed directly in PostgreSQL via the admin UI.
+// This endpoint is kept for compatibility but no longer imports SQLite data.
 pub async fn upload_release_db(
-    State(service): State<AppService>,
-    State(config): State<crate::config::Config>,
+    State(_service): State<AppService>,
     mut multipart: Multipart,
 ) -> Result<StatusCode> {
-    while let Some(field) = multipart.next_field().await.map_err(|e| AppError::BadRequest(e.to_string()))? {
-        let name = field.name().unwrap_or("").to_string();
-        if name == "file" {
-            let data = field.bytes().await.map_err(|e| AppError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
-
-            // Save uploaded file to releases/ for history
-            let release_id = Uuid::new_v4();
-            let save_dir = format!("{}/releases", config.upload_dir);
-            fs::create_dir_all(&save_dir).await.map_err(AppError::Io)?;
-            let upload_path = format!("{}/release_{}.db", save_dir, release_id);
-            let mut file = fs::File::create(&upload_path).await.map_err(AppError::Io)?;
-            file.write_all(&data).await.map_err(AppError::Io)?;
-
-            // Import: copy into content.db (server's master DB) and reload
-            service.import_release(&upload_path).await?;
-
-            return Ok(StatusCode::OK);
-        }
-    }
-    Err(AppError::BadRequest("No file field found".to_string()))
+    // Drain the multipart to avoid connection errors
+    while let Some(_field) = multipart.next_field().await.map_err(|e| AppError::BadRequest(e.to_string()))? {}
+    Ok(StatusCode::OK)
 }
 
-// Download current content.db (for Tauri to sync from server)
+// Content is now stored in PostgreSQL — no SQLite file to download.
 pub async fn download_release_db(
-    State(service): State<AppService>,
+    State(_service): State<AppService>,
 ) -> Result<impl IntoResponse> {
-    let path = service.get_active_release_path().await?
-        .ok_or_else(|| AppError::NotFound("No content database".to_string()))?;
-
-    if !std::path::Path::new(&path).exists() {
-        return Err(AppError::NotFound("Content database not found on disk".to_string()));
-    }
-
-    let file = fs::read(&path).await.map_err(AppError::Io)?;
-    Ok((
-        [(axum::http::header::CONTENT_TYPE, "application/x-sqlite3")],
-        [(axum::http::header::CONTENT_DISPOSITION, "attachment; filename=\"content.db\"")],
-        file
+    Err::<axum::response::Response, _>(AppError::NotFound(
+        "Content is now managed in PostgreSQL; SQLite export is no longer available".to_string()
     ))
 }
 
@@ -634,5 +607,68 @@ pub async fn update_order_status(
     Json(body): Json<crate::models::UpdateOrderStatusRequest>,
 ) -> Result<StatusCode> {
     service.update_order_status(id, &body.status).await?;
+    Ok(StatusCode::OK)
+}
+
+// === SCHEDULE & BOOKINGS (PUBLIC) ===
+
+pub async fn get_figurine_schedule(
+    State(service): State<AppService>,
+    Path(id): Path<String>,
+) -> Result<Json<crate::models::FigurineScheduleDto>> {
+    let schedule = service.get_figurine_schedule(id).await?;
+    Ok(Json(schedule))
+}
+
+pub async fn create_booking(
+    State(service): State<AppService>,
+    Path(_id): Path<String>,
+    Json(req): Json<crate::models::CreateBookingRequest>,
+) -> Result<StatusCode> {
+    service.create_booking(req).await?;
+    Ok(StatusCode::CREATED)
+}
+
+// === SHOWINGS (ADMIN) ===
+
+pub async fn list_showings(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<crate::models::ShowingDto>>> {
+    Ok(Json(service.list_showings().await?))
+}
+
+pub async fn save_showing(
+    State(service): State<AppService>,
+    Json(req): Json<crate::models::SaveShowingRequest>,
+) -> Result<Json<crate::models::ShowingDto>> {
+    Ok(Json(service.save_showing(req).await?))
+}
+
+pub async fn delete_showing(
+    State(service): State<AppService>,
+    Path(id): Path<String>,
+) -> Result<StatusCode> {
+    service.delete_showing(id).await?;
+    Ok(StatusCode::OK)
+}
+
+// === BOOKINGS (ADMIN) ===
+
+pub async fn list_bookings(
+    State(service): State<AppService>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<crate::models::BookingsPage>> {
+    let status = params.get("status").map(|s| s.as_str());
+    let page = params.get("page").and_then(|p| p.parse::<i64>().ok()).unwrap_or(1).max(1);
+    let per_page = params.get("perPage").and_then(|p| p.parse::<i64>().ok()).unwrap_or(20).clamp(1, 100);
+    Ok(Json(service.list_bookings(status, page, per_page).await?))
+}
+
+pub async fn update_booking_status(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<crate::models::UpdateBookingStatusRequest>,
+) -> Result<StatusCode> {
+    service.update_booking_status(id, body.status, body.admin_notes).await?;
     Ok(StatusCode::OK)
 }

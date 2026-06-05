@@ -80,7 +80,7 @@
   <div
           class="fixed inset-0 z-[220] flex items-center justify-center p-4 bg-[#6f3b24]/35 backdrop-blur-sm"
           transition:fade={{ duration: 400 }}
-          onclick={close}
+          onclick={(e) => { if (e.target === e.currentTarget) close(); }}
           onkeydown={handleBackdropKeydown}
           role="button"
           tabindex="0"
@@ -89,8 +89,6 @@
     <!-- The Letter/Scroll Container -->
     <div
             class="relative w-full max-w-lg perspective-1000"
-            onclick={(e) => e.stopPropagation()}
-            onkeydown={(e) => e.stopPropagation()}
             role="dialog"
             aria-modal="true"
             tabindex="-1"

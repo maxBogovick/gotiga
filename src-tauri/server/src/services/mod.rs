@@ -2,11 +2,11 @@ use crate::config::Config;
 use crate::db::Repository;
 use crate::error::Result;
 use crate::models::*;
-use uuid::Uuid;
 use reqwest::Client;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct AppService {
@@ -19,28 +19,8 @@ impl AppService {
         Self { repo, config }
     }
 
-    fn content_db_path(&self) -> String {
-        format!("{}/content.db", self.config.upload_dir)
-    }
-
     pub async fn initialize(&self) -> Result<()> {
-        let path = self.content_db_path();
-        println!("Loading primary content database: {}", path);
-        self.repo.load_content_pool(&path).await?;
-        Ok(())
-    }
-
-    // === IMPORT (from Tauri export) ===
-    // Uploaded release file is treated as a data import: copied into content.db and reloaded.
-    pub async fn import_release(&self, upload_path: &str) -> Result<()> {
-        let dest = self.content_db_path();
-        tokio::fs::copy(upload_path, &dest).await
-            .map_err(|e| crate::error::AppError::Io(e))?;
-        self.repo.load_content_pool(&dest).await?;
-        // Archive the upload in Postgres for history
-        self.repo.add_release(upload_path, None).await?;
-        println!("Imported data from {} into {}", upload_path, dest);
-        Ok(())
+        Ok(()) // Postgres is always ready, no pool to load
     }
 
     pub async fn list_releases(&self) -> Result<Vec<Release>> {
@@ -48,10 +28,10 @@ impl AppService {
     }
 
     pub async fn get_active_release_path(&self) -> Result<Option<String>> {
-        Ok(Some(self.content_db_path()))
+        Ok(None) // No SQLite content DB concept anymore
     }
 
-    // === CONTENT API (READ-ONLY from SQLite) ===
+    // === CONTENT API ===
 
     fn asset_url(&self, table: &str, id: &str) -> String {
         let base = self.config.public_url.trim_end_matches('/');
@@ -73,23 +53,30 @@ impl AppService {
         }
     }
 
+    fn parse_uuid(s: &str) -> Result<Uuid> {
+        Uuid::parse_str(s)
+            .map_err(|_| crate::error::AppError::BadRequest(format!("Invalid ID: {}", s)))
+    }
+
     pub async fn list_figurines(&self, visible_only: bool) -> Result<Vec<FigurineListItemDto>> {
         let figurines = self.repo.get_all_figurines(visible_only).await?;
         let mut result = Vec::new();
 
         for f in figurines {
-            let images = self.repo.get_images_by_figurine(f.id.clone()).await?;
+            let images = self.repo.get_images_by_figurine(f.id).await?;
+            let id_str = f.id.to_string();
             let face_img = images.iter()
                 .find(|i| i.image_type == ImageType::Face)
                 .map(|i| {
+                    let i_id_str = i.id.to_string();
                     i.thumb_path
                         .as_ref()
-                        .map(|p| self.resolve_url(p, "images_thumb", &i.id))
-                        .unwrap_or_else(|| self.resolve_url(&i.file_path, "images", &i.id))
+                        .map(|p| self.resolve_url(p, "images_thumb", &i_id_str))
+                        .unwrap_or_else(|| self.resolve_url(&i.file_path, "images", &i_id_str))
                 });
 
             result.push(FigurineListItemDto {
-                id: f.id,
+                id: id_str,
                 name: f.name,
                 status: f.status,
                 face_image_url: face_img,
@@ -108,17 +95,19 @@ impl AppService {
         let all = self.repo.get_all_figurines(true).await?;
         let mut result = Vec::new();
         for f in all.into_iter().filter(|f| f.status == crate::models::FigurineStatus::InProgress) {
-            let images = self.repo.get_images_by_figurine(f.id.clone()).await?;
+            let images = self.repo.get_images_by_figurine(f.id).await?;
+            let id_str = f.id.to_string();
             let face_img = images.iter()
                 .find(|i| i.image_type == ImageType::Face)
                 .map(|i| {
+                    let i_id_str = i.id.to_string();
                     i.thumb_path
                         .as_ref()
-                        .map(|p| self.resolve_url(p, "images_thumb", &i.id))
-                        .unwrap_or_else(|| self.resolve_url(&i.file_path, "images", &i.id))
+                        .map(|p| self.resolve_url(p, "images_thumb", &i_id_str))
+                        .unwrap_or_else(|| self.resolve_url(&i.file_path, "images", &i_id_str))
                 });
             result.push(FigurineListItemDto {
-                id: f.id,
+                id: id_str,
                 name: f.name,
                 status: f.status,
                 face_image_url: face_img,
@@ -134,27 +123,32 @@ impl AppService {
     }
 
     pub async fn get_figurine_details(&self, id: String) -> Result<FigurineDto> {
-        let figurine = self.repo.get_figurine_by_id(id.clone()).await?
+        let uuid = Self::parse_uuid(&id)?;
+        let figurine = self.repo.get_figurine_by_id(uuid).await?
             .ok_or_else(|| crate::error::AppError::NotFound(format!("Figurine {} not found", id)))?;
 
-        let images = self.repo.get_images_by_figurine(id.clone()).await?;
-        let steps = self.repo.get_steps_by_figurine(id.clone()).await?;
-        let related_entities = self.repo.get_related_figurines(id.clone()).await?;
+        let images = self.repo.get_images_by_figurine(uuid).await?;
+        let steps = self.repo.get_steps_by_figurine(uuid).await?;
+        let related_entities = self.repo.get_related_figurines(uuid).await?;
+
+        let fig_id_str = figurine.id.to_string();
 
         let mut related_items = Vec::new();
         for r in related_entities {
-            let r_imgs = self.repo.get_images_by_figurine(r.id.clone()).await?;
+            let r_id_str = r.id.to_string();
+            let r_imgs = self.repo.get_images_by_figurine(r.id).await?;
             let face = r_imgs.iter()
                 .find(|i| i.image_type == ImageType::Face)
                 .map(|i| {
+                    let i_id_str = i.id.to_string();
                     i.thumb_path
                         .as_ref()
-                        .map(|p| self.resolve_url(p, "images_thumb", &i.id))
-                        .unwrap_or_else(|| self.resolve_url(&i.file_path, "images", &i.id))
+                        .map(|p| self.resolve_url(p, "images_thumb", &i_id_str))
+                        .unwrap_or_else(|| self.resolve_url(&i.file_path, "images", &i_id_str))
                 });
 
             related_items.push(FigurineListItemDto {
-                id: r.id,
+                id: r_id_str,
                 name: r.name,
                 status: r.status,
                 face_image_url: face,
@@ -167,26 +161,32 @@ impl AppService {
             });
         }
 
-        let image_dtos = images.into_iter().map(|i| ImageDto {
-            id: i.id.clone(),
-            image_type: i.image_type,
-            url: self.resolve_url(&i.file_path, "images", &i.id),
-            original_url: i.original_path.as_ref()
-                .map(|p| self.resolve_url(p, "images_original", &i.id)),
-            thumb_url: i.thumb_path.as_ref()
-                .map(|p| self.resolve_url(p, "images_thumb", &i.id)),
-            alt_text: i.alt_text,
+        let image_dtos = images.into_iter().map(|i| {
+            let i_id_str = i.id.to_string();
+            ImageDto {
+                id: i_id_str.clone(),
+                image_type: i.image_type,
+                url: self.resolve_url(&i.file_path, "images", &i_id_str),
+                original_url: i.original_path.as_ref()
+                    .map(|p| self.resolve_url(p, "images_original", &i_id_str)),
+                thumb_url: i.thumb_path.as_ref()
+                    .map(|p| self.resolve_url(p, "images_thumb", &i_id_str)),
+                alt_text: i.alt_text,
+            }
         }).collect();
 
-        let step_dtos = steps.into_iter().map(|s| ProcessStepDto {
-            id: s.id.clone(),
-            step_type: s.step_type,
-            description: s.description,
-            image_url: self.resolve_url(&s.image_path, "process_steps", &s.id),
+        let step_dtos = steps.into_iter().map(|s| {
+            let s_id_str = s.id.to_string();
+            ProcessStepDto {
+                id: s_id_str.clone(),
+                step_type: s.step_type,
+                description: s.description,
+                image_url: self.resolve_url(&s.image_path, "process_steps", &s_id_str),
+            }
         }).collect();
 
         Ok(FigurineDto {
-            id: figurine.id.clone(),
+            id: fig_id_str.clone(),
             name: figurine.name,
             short_text: figurine.short_text,
             full_description: figurine.full_description,
@@ -195,9 +195,9 @@ impl AppService {
             technique: figurine.technique,
             year: figurine.year,
             ambience_path: figurine.ambience_path.as_ref()
-                .map(|p| self.resolve_url(p, "figurines_audio", &figurine.id)),
+                .map(|p| self.resolve_url(p, "figurines_audio", &fig_id_str)),
             video_url: figurine.video_url.as_ref()
-                .map(|p| self.resolve_url(p, "figurines_video", &figurine.id)),
+                .map(|p| self.resolve_url(p, "figurines_video", &fig_id_str)),
             secret_text: figurine.secret_text,
             status: figurine.status,
             sort_order: figurine.sort_order,
@@ -212,25 +212,28 @@ impl AppService {
     pub async fn get_author_texts(&self) -> Result<Vec<TextDto>> {
         let texts = self.repo.get_texts_by_category(TextCategory::Author).await?;
         Ok(texts.into_iter().map(|t| TextDto {
-            id: t.id,
+            id: t.id.to_string(),
             content: t.content
         }).collect())
     }
 
     pub async fn get_workshop_items(&self) -> Result<Vec<WorkshopItemDto>> {
         let texts = self.repo.get_texts_by_category(TextCategory::Workshop).await?;
-        Ok(texts.into_iter().map(|t| WorkshopItemDto {
-            id: t.id.clone(),
-            content: t.content,
-            caption: t.caption,
-            image_url: t.image_path.as_ref().map(|p| self.resolve_url(p, "texts", &t.id)),
+        Ok(texts.into_iter().map(|t| {
+            let t_id_str = t.id.to_string();
+            WorkshopItemDto {
+                id: t_id_str.clone(),
+                content: t.content,
+                caption: t.caption,
+                image_url: t.image_path.as_ref().map(|p| self.resolve_url(p, "texts", &t_id_str)),
+            }
         }).collect())
     }
 
     pub async fn get_cabinet_zones(&self) -> Result<Vec<CabinetZoneDto>> {
         let zones = self.repo.get_zones().await?;
         Ok(zones.into_iter().map(|z| CabinetZoneDto {
-            id: z.id,
+            id: z.id.to_string(),
             zone_type: z.zone_type,
             x: z.x_percent,
             y: z.y_percent,
@@ -243,14 +246,16 @@ impl AppService {
     // === ADMIN WRITE ===
 
     pub async fn save_figurine(&self, req: crate::models::SaveFigurineRequest) -> Result<()> {
+        let figurine_id = Self::parse_uuid(&req.id)?;
         self.repo.upsert_figurine(&req).await?;
-        self.repo.replace_images(&req.id, &req.images).await?;
-        self.repo.replace_steps(&req.id, &req.process_steps).await?;
+        self.repo.replace_images(figurine_id, &req.images).await?;
+        self.repo.replace_steps(figurine_id, &req.process_steps).await?;
         Ok(())
     }
 
     pub async fn delete_figurine(&self, id: String) -> Result<()> {
-        self.repo.delete_figurine(&id).await
+        let uuid = Self::parse_uuid(&id)?;
+        self.repo.delete_figurine(uuid).await
     }
 
     pub async fn save_zone(&self, req: crate::models::SaveZoneRequest) -> Result<()> {
@@ -259,7 +264,8 @@ impl AppService {
     }
 
     pub async fn delete_zone(&self, id: String) -> Result<()> {
-        self.repo.delete_zone(&id).await
+        let uuid = Self::parse_uuid(&id)?;
+        self.repo.delete_zone(uuid).await
     }
 
     pub async fn save_text(&self, category: crate::models::TextCategory, req: crate::models::SaveTextRequest) -> Result<()> {
@@ -267,7 +273,8 @@ impl AppService {
     }
 
     pub async fn delete_text_item(&self, id: String) -> Result<()> {
-        self.repo.delete_text(&id).await
+        let uuid = Self::parse_uuid(&id)?;
+        self.repo.delete_text(uuid).await
     }
 
     pub async fn get_background(&self) -> Result<Option<String>> {
@@ -378,6 +385,173 @@ impl AppService {
             .await;
 
         Ok(())
+    }
+
+    // === SHOWINGS & BOOKINGS (PUBLIC) ===
+
+    pub async fn get_figurine_schedule(&self, figurine_id: String) -> Result<FigurineScheduleDto> {
+        let uuid = Self::parse_uuid(&figurine_id)?;
+        let (showings, bookings) = self.repo.get_figurine_schedule(uuid).await?;
+
+        let mut entries: Vec<ScheduleEntryDto> = Vec::new();
+
+        for s in showings {
+            entries.push(ScheduleEntryDto {
+                entry_type: "showing".to_string(),
+                title: Some(s.title),
+                showing_type: Some(s.showing_type),
+                venue: s.venue,
+                starts_at: s.starts_at.to_string(),
+                ends_at: s.ends_at.to_string(),
+            });
+        }
+
+        for b in bookings {
+            entries.push(ScheduleEntryDto {
+                entry_type: "booking".to_string(),
+                title: None,
+                showing_type: None,
+                venue: None,
+                starts_at: b.starts_at.to_string(),
+                ends_at: b.ends_at.to_string(),
+            });
+        }
+
+        entries.sort_by(|a, b| a.starts_at.cmp(&b.starts_at));
+        Ok(FigurineScheduleDto { entries })
+    }
+
+    pub async fn create_booking(&self, req: CreateBookingRequest) -> Result<Booking> {
+        let figurine_id = Self::parse_uuid(&req.figurine_id)?;
+        let starts_at = chrono::NaiveDate::parse_from_str(&req.starts_at, "%Y-%m-%d")
+            .map_err(|_| crate::error::AppError::BadRequest("Invalid starts_at date".to_string()))?;
+        let ends_at = chrono::NaiveDate::parse_from_str(&req.ends_at, "%Y-%m-%d")
+            .map_err(|_| crate::error::AppError::BadRequest("Invalid ends_at date".to_string()))?;
+
+        if starts_at > ends_at {
+            return Err(crate::error::AppError::BadRequest("starts_at must be before or equal to ends_at".to_string()));
+        }
+
+        if self.repo.check_booking_conflicts(figurine_id, starts_at, ends_at).await? {
+            return Err(crate::error::AppError::Conflict(
+                "These dates conflict with existing showings or confirmed bookings".to_string()
+            ));
+        }
+
+        let booking = self.repo.save_booking(&req).await?;
+        let _ = self.send_booking_notification(&booking).await;
+        Ok(booking)
+    }
+
+    async fn send_booking_notification(&self, booking: &Booking) -> Result<()> {
+        let (Some(token), Some(chat_id)) = (
+            self.config.telegram_bot_token.as_deref(),
+            self.config.telegram_chat_id.as_deref(),
+        ) else {
+            return Ok(());
+        };
+
+        let admin_link = format!("{}/admin#bookings", self.config.public_url.trim_end_matches('/'));
+
+        let text = format!(
+            "📅 Запрос на бронирование\n\n\
+            🏺 Фигурка: {}\n\
+            📅 Период: {} — {}\n\
+            👤 Имя: {}\n\
+            📧 Email: {}\n\
+            💬 Цель: {}\n\n\
+            🔗 [Открыть в админке]({})",
+            escape_markdown(&booking.figurine_name),
+            escape_markdown(&booking.starts_at.to_string()),
+            escape_markdown(&booking.ends_at.to_string()),
+            escape_markdown(&booking.requester_name),
+            escape_markdown(&booking.requester_email),
+            escape_markdown(booking.purpose.as_deref().unwrap_or("—")),
+            admin_link,
+        );
+
+        let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+        let client = Client::new();
+        let _ = client.post(&url)
+            .json(&serde_json::json!({
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": "MarkdownV2"
+            }))
+            .send()
+            .await;
+        Ok(())
+    }
+
+    // === SHOWINGS (ADMIN) ===
+
+    pub async fn list_showings(&self) -> Result<Vec<ShowingDto>> {
+        let showings = self.repo.get_all_showings().await?;
+        Ok(showings.into_iter().map(|s| ShowingDto {
+            id: s.id.to_string(),
+            figurine_id: s.figurine_id.to_string(),
+            title: s.title,
+            showing_type: s.showing_type,
+            starts_at: s.starts_at.to_string(),
+            ends_at: s.ends_at.to_string(),
+            venue: s.venue,
+            notes: s.notes,
+        }).collect())
+    }
+
+    pub async fn save_showing(&self, req: SaveShowingRequest) -> Result<ShowingDto> {
+        let id = self.repo.upsert_showing(&req).await?;
+        Ok(ShowingDto {
+            id: id.to_string(),
+            figurine_id: req.figurine_id,
+            title: req.title,
+            showing_type: req.showing_type,
+            starts_at: req.starts_at,
+            ends_at: req.ends_at,
+            venue: req.venue,
+            notes: req.notes,
+        })
+    }
+
+    pub async fn delete_showing(&self, id: String) -> Result<()> {
+        let uuid = Self::parse_uuid(&id)?;
+        self.repo.delete_showing(uuid).await
+    }
+
+    // === BOOKINGS (ADMIN) ===
+
+    pub async fn list_bookings(&self, status_filter: Option<&str>, page: i64, per_page: i64) -> Result<BookingsPage> {
+        let offset = (page - 1) * per_page;
+        let (items, total) = self.repo.get_bookings_page(status_filter, per_page, offset).await?;
+        let pending_count = self.repo.get_pending_bookings_count().await?;
+        let dtos = items.into_iter().map(|b| BookingDto {
+            id: b.id.to_string(),
+            figurine_id: b.figurine_id.to_string(),
+            figurine_name: b.figurine_name,
+            requester_name: b.requester_name,
+            requester_email: b.requester_email,
+            purpose: b.purpose,
+            starts_at: b.starts_at.to_string(),
+            ends_at: b.ends_at.to_string(),
+            status: b.status,
+            admin_notes: b.admin_notes,
+            created_at: b.created_at.to_rfc3339(),
+        }).collect();
+        Ok(BookingsPage { items: dtos, total, pending_count, page, per_page })
+    }
+
+    pub async fn update_booking_status(&self, id: uuid::Uuid, status: BookingStatus, admin_notes: Option<String>) -> Result<()> {
+        if status == BookingStatus::Confirmed {
+            let booking = self.repo.get_booking_by_id(id).await?
+                .ok_or_else(|| crate::error::AppError::NotFound(format!("Booking {} not found", id)))?;
+
+            if let Some(reason) = self.repo.check_admin_confirm_conflicts(
+                id, booking.figurine_id, booking.starts_at, booking.ends_at
+            ).await? {
+                return Err(crate::error::AppError::Conflict(reason));
+            }
+        }
+        self.repo.update_booking_status(id, &status, admin_notes.as_deref()).await
     }
 
     pub async fn get_asset(&self, table: &str, id: String) -> Result<Option<Vec<u8>>> {

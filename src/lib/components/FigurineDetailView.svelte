@@ -1,13 +1,15 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { fade } from 'svelte/transition';
-  import type { Figurine } from '$lib/types/api';
+  import type { Figurine, FigurineSchedule } from '$lib/types/api';
   import OrderModal from '$lib/components/OrderModal.svelte';
+  import BookingModal from '$lib/components/BookingModal.svelte';
   import BrassLens from '$lib/components/BrassLens.svelte';
   import CandleReveal from '$lib/components/CandleReveal.svelte';
   import MemoryMirror from '$lib/components/MemoryMirror.svelte';
   import SecretText from '$lib/components/SecretText.svelte';
   import Lightbox from '$lib/components/Lightbox.svelte';
+  import { api } from '$lib/api';
   import { t } from '$lib/i18n';
 
   import type { FigurineListItem } from '$lib/types/api';
@@ -27,13 +29,17 @@
   let selectedImageIndex = $state(0);
   let isGrimoireOpen = $state(false);
   let showOrderModal = $state(false);
+  let showBookingModal = $state(false);
   let orderMode = $state<'request' | 'question' | 'notify'>('request');
+  let figurineSchedule = $state<FigurineSchedule>({ entries: [] });
   let isAudioPlaying = $state(false);
   let isCandleLit = $state(false);
   let showLightbox = $state(false);
   let lightboxStartIndex = $state(0);
   let audioRef = $state<HTMLAudioElement | null>(null);
   let videoRef = $state<HTMLVideoElement | null>(null);
+
+  let upcomingShowings = $derived(figurineSchedule.entries.filter(e => e.entryType === 'showing'));
 
   let sortedImages = $derived(
     figurine.images.slice().sort((a, b) => {
@@ -143,9 +149,9 @@
   onMount(() => {
     window.addEventListener('keydown', handleKeydown);
     window.addEventListener('scroll', onScroll, { passive: true });
-    // Restore wishlist state
     const wl = JSON.parse(localStorage.getItem('gotiga_wishlist') ?? '[]') as string[];
     isWishlisted = wl.includes(figurine.id);
+    api.getFigurineSchedule(figurine.id).then(s => { figurineSchedule = s; });
   });
 
   onDestroy(() => {
@@ -169,6 +175,14 @@
     figurineName={figurine.name}
     figurineId={figurine.id}
     onClose={() => (showOrderModal = false)}
+  />
+
+  <BookingModal
+    isOpen={showBookingModal}
+    figurineName={figurine.name}
+    figurineId={figurine.id}
+    schedule={figurineSchedule}
+    onClose={() => (showBookingModal = false)}
   />
 
   {#if showLightbox}
@@ -528,6 +542,27 @@
         <!-- CTA at the bottom — после того как всё прочитано -->
         <div class="d-cta-zone">
           {#if figurine.status === 'available'}
+            <!-- Showings warning -->
+            {#if upcomingShowings.length > 0}
+              <div class="showing-warning">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" class="flex-shrink-0 mt-0.5">
+                  <rect x="1" y="2" width="12" height="11" rx="1"/>
+                  <path d="M4 2V0.5M10 2V0.5M1 5.5h12"/>
+                </svg>
+                <div>
+                  <p class="showing-warning-title">{$t('bookingShowingsWarning')}</p>
+                  {#each upcomingShowings as s}
+                    <p class="showing-warning-entry">
+                      {s.showingType === 'exhibition' ? $t('bookingShowingExhibition') : $t('bookingShowingPrivate')}
+                      {#if s.title}: {s.title}{/if}
+                      — {new Date(s.startsAt + 'T00:00:00').toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' })}
+                      – {new Date(s.endsAt + 'T00:00:00').toLocaleDateString('ru-RU', { day: '2-digit', month: 'short', year: 'numeric' })}
+                    </p>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+
             <div class="cta-row">
               <button onclick={() => openModal('request')} class="cta-btn">
                 <span class="cta-btn-label">{$t('figurineRequest')}</span>
@@ -553,6 +588,16 @@
                 {$t('figurineAskQuestion')}
               </button>
             </div>
+
+            <!-- Book button -->
+            <button onclick={() => (showBookingModal = true)} class="book-btn">
+              <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.3">
+                <rect x="0.5" y="1.5" width="12" height="11" rx="0.8"/>
+                <path d="M3.5 1.5V0.5M9.5 1.5V0.5M0.5 5h12"/>
+              </svg>
+              {$t('figurineBook')}
+            </button>
+
           {:else if figurine.status === 'reserved'}
             <div class="reserved-notice">
               <svg class="reserved-icon" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.3">
@@ -1675,6 +1720,60 @@
     border-color: rgba(176,136,32,0.5);
     transform: translateY(-1px);
     box-shadow: 0 4px 16px rgba(176,136,32,0.14);
+  }
+
+  /* Showings warning */
+  .showing-warning {
+    display: flex;
+    gap: 0.625rem;
+    align-items: flex-start;
+    padding: 0.75rem 1rem;
+    background: rgba(251,191,36,0.08);
+    border: 1px solid rgba(217,119,6,0.2);
+    border-radius: 6px;
+    margin-bottom: 1rem;
+    color: var(--color-warm-dark);
+  }
+  .showing-warning-title {
+    font-size: 0.7rem;
+    font-family: var(--font-sans);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #92400e;
+    margin: 0 0 0.25rem;
+  }
+  .showing-warning-entry {
+    font-size: 0.75rem;
+    font-family: var(--font-sans);
+    color: #78350f;
+    margin: 0.1rem 0 0;
+    line-height: 1.45;
+  }
+
+  /* Book button */
+  .book-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+    padding: 0.5rem 1rem;
+    border: 1px solid rgba(95,70,54,0.25);
+    background: transparent;
+    color: var(--color-warm-medium);
+    font-family: var(--font-sans);
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+    transition: border-color 0.2s, color 0.2s, background 0.2s;
+    border-radius: 2px;
+  }
+  .book-btn:hover {
+    border-color: rgba(95,70,54,0.5);
+    color: var(--color-warm-dark);
+    background: rgba(95,70,54,0.04);
   }
 
   /* Sold notice */

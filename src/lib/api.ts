@@ -13,6 +13,11 @@ import type {
     MediaInventory,
     MediaCleanupReport,
     MediaReplaceResult,
+    FigurineSchedule,
+    CreateBookingRequest,
+    BookingsPage,
+    ShowingDto,
+    SaveShowingRequest,
 } from './types/api';
 
 export type { AppSettings };
@@ -397,6 +402,65 @@ export const api = {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify({ status }),
+        });
+    },
+
+    // === SCHEDULE & BOOKINGS (PUBLIC) ===
+
+    async getFigurineSchedule(figurineId: string): Promise<FigurineSchedule> {
+        try {
+            return await webFetch(`/figurines/${figurineId}/schedule`);
+        } catch {
+            return { entries: [] };
+        }
+    },
+
+    async submitBooking(req: CreateBookingRequest): Promise<void> {
+        await webFetch(`/figurines/${req.figurineId}/book`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(req),
+        });
+    },
+
+    // === SHOWINGS (ADMIN) ===
+
+    async listShowings(): Promise<ShowingDto[]> {
+        return webFetch('/admin/showings', { headers: authHeaders() });
+    },
+
+    async saveShowing(req: SaveShowingRequest): Promise<ShowingDto> {
+        return webFetch('/admin/showings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(req),
+        });
+    },
+
+    async deleteShowing(id: string): Promise<void> {
+        const res = await fetch(`${webApiBase()}/admin/showings/${id}`, {
+            method: 'DELETE',
+            headers: authHeaders(),
+        });
+        if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+    },
+
+    // === BOOKINGS (ADMIN) ===
+
+    async listBookings(opts?: { status?: string; page?: number; perPage?: number }): Promise<BookingsPage> {
+        const p = new URLSearchParams();
+        if (opts?.status)  p.set('status',  opts.status);
+        if (opts?.page)    p.set('page',    String(opts.page));
+        if (opts?.perPage) p.set('perPage', String(opts.perPage));
+        const qs = p.toString() ? `?${p}` : '';
+        return webFetch(`/admin/bookings${qs}`, { headers: authHeaders() });
+    },
+
+    async updateBookingStatus(id: string, status: string, adminNotes?: string): Promise<void> {
+        await webFetch(`/admin/bookings/${id}/status`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ status, adminNotes: adminNotes ?? null }),
         });
     },
 };

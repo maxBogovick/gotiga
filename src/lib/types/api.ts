@@ -169,3 +169,77 @@ export interface MediaReplaceResult {
     updatedReferences: number;
     importedPaths: string[];
 }
+
+// ============================================================
+// SHOWINGS & BOOKINGS
+// ============================================================
+
+export type ShowingType = 'exhibition' | 'private';
+export type BookingStatus = 'pending' | 'confirmed' | 'rejected' | 'cancelled';
+
+export interface ScheduleEntry {
+    entryType: 'showing' | 'booking';
+    title: string | null;
+    showingType: ShowingType | null;
+    venue: string | null;
+    startsAt: string; // ISO date YYYY-MM-DD
+    endsAt: string;
+}
+
+export interface FigurineSchedule {
+    entries: ScheduleEntry[];
+}
+
+export interface ShowingDto {
+    id: string;
+    figurineId: string;
+    title: string;
+    showingType: ShowingType;
+    startsAt: string;
+    endsAt: string;
+    venue: string | null;
+    notes: string | null;
+}
+
+export interface BookingDto {
+    id: string;
+    figurineId: string;
+    figurineName: string;
+    requesterName: string;
+    requesterEmail: string;
+    purpose: string | null;
+    startsAt: string;
+    endsAt: string;
+    status: BookingStatus;
+    adminNotes: string | null;
+    createdAt: string;
+}
+
+export interface BookingsPage {
+    items: BookingDto[];
+    total: number;
+    pendingCount: number;
+    page: number;
+    perPage: number;
+}
+
+export interface CreateBookingRequest {
+    figurineId: string;
+    figurineName: string;
+    requesterName: string;
+    requesterEmail: string;
+    purpose: string | null;
+    startsAt: string;
+    endsAt: string;
+}
+
+export interface SaveShowingRequest {
+    id?: string;
+    figurineId: string;
+    title: string;
+    showingType: ShowingType;
+    startsAt: string;
+    endsAt: string;
+    venue: string | null;
+    notes: string | null;
+}

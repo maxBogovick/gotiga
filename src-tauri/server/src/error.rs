@@ -24,6 +24,8 @@ pub enum AppError {
     BadRequest(String),
     #[error("Internal Error: {0}")]
     Internal(String),
+    #[error("Conflict: {0}")]
+    Conflict(String),
 }
 
 impl IntoResponse for AppError {
@@ -41,6 +43,7 @@ impl IntoResponse for AppError {
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized".to_string()),
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
             AppError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+            AppError::Conflict(msg) => (StatusCode::CONFLICT, msg),
         };
 
         let body = Json(json!({

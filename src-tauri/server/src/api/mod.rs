@@ -1,5 +1,5 @@
 use axum::{
-    routing::{get, post, delete, patch},
+    routing::{get, post, delete, patch, put},
     Router,
     middleware::{self, Next},
     extract::Request,
@@ -46,6 +46,8 @@ pub fn router(service: AppService, config: Config) -> Router {
         .route("/home-content",                 get(handlers::get_home_content))
         .route("/author/profile",               get(handlers::get_author_profile))
         .route("/orders",                       post(handlers::create_order))
+        .route("/figurines/:id/schedule",       get(handlers::get_figurine_schedule))
+        .route("/figurines/:id/book",           post(handlers::create_booking))
         // === PUBLIC LOGIN ===
         .route("/admin/login",                  post(handlers::admin_login))
         // === PROTECTED WRITE — use route_layer so auth only runs on matched routes ===
@@ -95,6 +97,21 @@ pub fn router(service: AppService, config: Config) -> Router {
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
         .route("/admin/orders/:id",
             patch(handlers::update_order_status)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        // === SHOWINGS (ADMIN) ===
+        .route("/admin/showings",
+            get(handlers::list_showings)
+            .post(handlers::save_showing)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        .route("/admin/showings/:id",
+            delete(handlers::delete_showing)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        // === BOOKINGS (ADMIN) ===
+        .route("/admin/bookings",
+            get(handlers::list_bookings)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        .route("/admin/bookings/:id/status",
+            put(handlers::update_booking_status)
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
         // === RELEASES ===
         .route("/admin/releases",

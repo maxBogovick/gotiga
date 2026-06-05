@@ -11,6 +11,8 @@
     import MediaLibrary from '$lib/components/admin/MediaLibrary.svelte';
     import HomeContentEditor from '$lib/components/admin/HomeContentEditor.svelte';
     import OrdersPanel from '$lib/components/admin/OrdersPanel.svelte';
+    import ShowingsPanel from '$lib/components/admin/ShowingsPanel.svelte';
+    import BookingsPanel from '$lib/components/admin/BookingsPanel.svelte';
     import { t } from '$lib/i18n';
     import LangSwitcher from '$lib/components/LangSwitcher.svelte';
 
@@ -50,9 +52,10 @@
     let isSaving = $state(false);
     let showSettings = $state(false);
     let message = $state({ text: '', type: 'info' });
-    let activeTab = $state<'registry' | 'home' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders'>('registry');
+    let activeTab = $state<'registry' | 'home' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'showings' | 'bookings'>('registry');
     let activeAuthorSubTab = $state<'profile' | 'texts'>('profile');
     let newOrdersCount = $state(0);
+    let newBookingsCount = $state(0);
     let searchQuery = $state('');
     let isDeleting = $state(false);
     let uploadingVideo = $state(false);
@@ -316,6 +319,12 @@
             isAuthenticated = true;
             loadFigurines();
         }
+        // Hash-based tab routing (e.g. Telegram notification links)
+        const hash = window.location.hash.replace('#', '');
+        const validTabs = ['registry','home','zones','author','workshop','media','releases','orders','showings','bookings'];
+        if (validTabs.includes(hash)) {
+            activeTab = hash as typeof activeTab;
+        }
     });
 </script>
 
@@ -382,7 +391,7 @@
             <p class="text-[10px] tracking-[0.08em] text-[#5f4636] uppercase">{$t('adminSubtitle')}</p>
         </div>
 
-        <nav class="flex gap-1 bg-[#fff9f0] p-1 border border-[#34251c]/20">
+        <nav class="flex gap-1 bg-[#fff9f0] p-1 border border-[#34251c]/20 flex-wrap">
             {#each [
               ['registry', $t('adminTabRegistry')],
               ['home',     'Home'],
@@ -391,6 +400,8 @@
               ['workshop', $t('adminTabWorkshop')],
               ['media',    'Media'],
               ['orders',   'Orders'],
+              ['showings', $t('adminTabShowings')],
+              ['bookings', $t('adminTabBookings')],
               ['releases', $t('adminTabReleases')],
             ] as [tab, label]}
                 <button
@@ -401,6 +412,11 @@
                   {#if tab === 'orders' && newOrdersCount > 0 && activeTab !== 'orders'}
                     <span class="absolute -top-1 -right-1 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold leading-none">
                       {newOrdersCount > 99 ? '99+' : newOrdersCount}
+                    </span>
+                  {/if}
+                  {#if tab === 'bookings' && newBookingsCount > 0 && activeTab !== 'bookings'}
+                    <span class="absolute -top-1 -right-1 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-amber-500 text-white text-[9px] font-bold leading-none">
+                      {newBookingsCount > 99 ? '99+' : newBookingsCount}
                     </span>
                   {/if}
                 </button>
@@ -808,6 +824,10 @@
             <div in:fade class="h-full"><TextEditor category="workshop" /></div>
         {:else if activeTab === 'orders'}
             <div in:fade class="h-full"><OrdersPanel onNewCount={(n) => newOrdersCount = n} /></div>
+        {:else if activeTab === 'showings'}
+            <div in:fade class="h-full"><ShowingsPanel /></div>
+        {:else if activeTab === 'bookings'}
+            <div in:fade class="h-full"><BookingsPanel onPendingCount={(n) => newBookingsCount = n} /></div>
         {:else if activeTab === 'releases'}
             <div in:fade class="h-full"><ReleaseManager /></div>
         {/if}
