@@ -187,6 +187,7 @@
     mode={orderMode}
     figurineName={figurine.name}
     figurineId={figurine.id}
+    schedule={figurineSchedule}
     onClose={() => (showOrderModal = false)}
   />
 

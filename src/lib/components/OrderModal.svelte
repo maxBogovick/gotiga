@@ -3,14 +3,22 @@
   import { cubicOut, elasticOut } from 'svelte/easing';
   import { api, isTauri } from '$lib/api';
   import { t } from '$lib/i18n';
+  import type { FigurineSchedule } from '$lib/types/api';
 
   let {
     isOpen = false,
     figurineName = '',
     figurineId = '',
     mode = 'request' as 'request' | 'question' | 'notify',
+    schedule = null as FigurineSchedule | null,
     onClose = () => {}
   } = $props();
+
+  let upcomingShowings = $derived(
+    mode === 'request' && schedule
+      ? schedule.entries.filter(e => e.entryType === 'showing')
+      : []
+  );
 
   let name = $state('');
   let email = $state('');
@@ -127,6 +135,26 @@
                   </div>
 
                   <form class="space-y-8" onsubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
+
+                    {#if upcomingShowings.length > 0}
+                      <div class="showing-notice">
+                        <div class="showing-notice-head">
+                          <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3">
+                            <rect x="1" y="2" width="12" height="11" rx="1"/>
+                            <path d="M4 2V0.5M10 2V0.5M1 5.5h12"/>
+                          </svg>
+                          <span>{$t('figurineShowingsBlock')}</span>
+                        </div>
+                        {#each upcomingShowings as s}
+                          <p class="showing-notice-entry">
+                            <span class="showing-notice-type">{s.showingType === 'exhibition' ? $t('bookingShowingExhibition') : $t('bookingShowingPrivate')}</span>
+                            {#if s.title}«{s.title}»{/if}
+                            — {new Date(s.startsAt + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: 'short' })}
+                            – {new Date(s.endsAt + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' })}
+                          </p>
+                        {/each}
+                      </div>
+                    {/if}
 
                     {#if mode === 'request'}
                     <div class="relative group">
@@ -278,5 +306,37 @@
   
   .animate-seal-press {
       animation: sealPress 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+  }
+
+  /* Showings notice in request mode */
+  .showing-notice {
+    padding: 0.75rem 1rem;
+    background: rgba(217,119,6,0.07);
+    border: 1px solid rgba(217,119,6,0.25);
+    border-left: 3px solid #d97706;
+    border-radius: 4px;
+  }
+  .showing-notice-head {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.625rem;
+    font-family: 'Inter', sans-serif;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #92400e;
+    margin-bottom: 0.4rem;
+  }
+  .showing-notice-entry {
+    font-size: 0.7rem;
+    font-family: 'Inter', sans-serif;
+    color: #78350f;
+    margin: 0.15rem 0 0;
+    line-height: 1.4;
+  }
+  .showing-notice-type {
+    font-weight: 600;
+    margin-right: 0.2rem;
   }
 </style>

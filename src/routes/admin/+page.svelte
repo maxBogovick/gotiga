@@ -13,6 +13,7 @@
     import OrdersPanel from '$lib/components/admin/OrdersPanel.svelte';
     import ShowingsPanel from '$lib/components/admin/ShowingsPanel.svelte';
     import BookingsPanel from '$lib/components/admin/BookingsPanel.svelte';
+    import FigurineShowingsEditor from '$lib/components/admin/FigurineShowingsEditor.svelte';
     import { t } from '$lib/i18n';
     import LangSwitcher from '$lib/components/LangSwitcher.svelte';
 
@@ -757,6 +758,11 @@
                                 {/if}
                             </div>
                         </div>
+
+                        <!-- Showings for this figurine -->
+                        {#if selectedFigurine.id}
+                          <FigurineShowingsEditor figurineId={selectedFigurine.id} />
+                        {/if}
 
                         <!-- Action bar -->
                         <div class="flex justify-end gap-3 pb-10">

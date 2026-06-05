@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
-  import type { BookingDto } from '$lib/types/api';
+  import type { BookingDto, FigurineListItem } from '$lib/types/api';
 
   let { onPendingCount = (_n: number) => {} } = $props();
 
@@ -14,6 +14,8 @@
   let loading = $state(true);
   let error = $state('');
   let statusFilter = $state('');
+  let figurineFilter = $state('');
+  let figurines = $state<FigurineListItem[]>([]);
   let updatingId    = $state<string | null>(null);
   let notesMap      = $state<Record<string, string>>({});
   let conflictErrors = $state<Record<string, string>>({});
@@ -27,6 +29,7 @@
     try {
       const res = await api.listBookings({
         status: statusFilter || undefined,
+        figurineId: figurineFilter || undefined,
         page,
         perPage: PER_PAGE,
       });
@@ -64,7 +67,10 @@
     }
   }
 
-  onMount(() => load());
+  onMount(async () => {
+    figurines = await api.getAllFigurinesAdmin().catch(() => []);
+    load();
+  });
 
   const statusLabel: Record<string, string> = {
     pending: 'Новая', confirmed: 'Подтверждена', rejected: 'Отклонена', cancelled: 'Отменена',
@@ -111,7 +117,21 @@
       {/if}
     </h2>
 
-    <div class="flex gap-1 ml-auto flex-wrap">
+    <!-- Figurine filter -->
+    {#if figurines.length > 0}
+      <select
+        value={figurineFilter}
+        onchange={(e) => { figurineFilter = (e.target as HTMLSelectElement).value; load(true); }}
+        class="ml-auto text-[10px] border border-[#34251c]/20 text-[#5f4636] bg-[#fff9f0] px-2 py-1 focus:outline-none focus:border-[#34251c]/50 max-w-[180px] truncate"
+      >
+        <option value="">Все фигурки</option>
+        {#each figurines as f}
+          <option value={f.id}>{f.name}</option>
+        {/each}
+      </select>
+    {/if}
+
+    <div class="flex gap-1 flex-wrap">
       {#each [['', 'Все'], ['pending', 'Новые'], ['confirmed', 'Подтверждённые'], ['rejected', 'Отклонённые'], ['cancelled', 'Отменённые']] as [val, label]}
         <button
           onclick={() => { statusFilter = val; load(true); }}
