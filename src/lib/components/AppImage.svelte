@@ -1,6 +1,7 @@
 <script lang="ts">
   type Props = {
     src: string | undefined | null;
+    thumbUrl?: string | null;
     alt?: string;
     class?: string;
     loading?: 'lazy' | 'eager';
@@ -11,6 +12,7 @@
 
   let {
     src,
+    thumbUrl = null,
     alt = '',
     class: cls = '',
     loading = 'lazy',
@@ -19,10 +21,6 @@
     ...rest
   }: Props = $props();
 
-  // Derive a sibling .webp URL for paths the server produces:
-  //   /static/images/preview/{uuid}.jpg  →  /static/images/preview/{uuid}.webp
-  //   /static/images/thumb/{uuid}.jpg    →  /static/images/thumb/{uuid}.webp
-  // External URLs (http/https) or already-webp src are passed through unchanged.
   function deriveWebp(url: string): string | null {
     if (!url || url.startsWith('http') || url.endsWith('.webp')) return null;
     const derived = url.replace(/\.(jpe?g|png)(\?.*)?$/i, '.webp$2');
@@ -30,21 +28,73 @@
   }
 
   let webpSrc = $derived(src ? deriveWebp(src) : null);
+  let loaded  = $state(false);
+
+  // Reset on src change
+  $effect(() => { void src; loaded = false; });
+
+  function onLoad() { loaded = true; }
 </script>
 
 {#if src}
-  <picture>
-    {#if webpSrc}
-      <source srcset={webpSrc} type="image/webp" />
+  <div class="app-image-wrap {cls}" {...rest}>
+    {#if thumbUrl && !loaded}
+      <img
+        src={thumbUrl}
+        {alt}
+        aria-hidden="true"
+        class="app-image-thumb"
+        loading="eager"
+        decoding="async"
+      />
     {/if}
-    <img
-      {src}
-      {alt}
-      class={cls}
-      {loading}
-      {decoding}
-      fetchpriority={fetchpriority}
-      {...rest}
-    />
-  </picture>
+
+    <picture class="app-image-picture" class:app-image-picture--loaded={loaded}>
+      {#if webpSrc}
+        <source srcset={webpSrc} type="image/webp" />
+      {/if}
+      <img
+        {src}
+        {alt}
+        {loading}
+        {decoding}
+        fetchpriority={fetchpriority}
+        class="app-image-main"
+        onload={onLoad}
+      />
+    </picture>
+  </div>
 {/if}
+
+<style>
+  .app-image-wrap {
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* Blurred thumb sits underneath, fills the space */
+  .app-image-thumb {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    filter: blur(12px);
+    transform: scale(1.05); /* hide blur edges */
+    transition: opacity 0.3s ease;
+  }
+
+  /* Main image: invisible until loaded, then fade in */
+  .app-image-picture {
+    display: contents;
+  }
+
+  .app-image-main {
+    opacity: 0;
+    transition: opacity 0.4s ease;
+  }
+
+  .app-image-picture--loaded .app-image-main {
+    opacity: 1;
+  }
+</style>

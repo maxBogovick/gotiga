@@ -95,6 +95,14 @@ export const en = {
   figurineCode:        'Code',
   figurineRequest:     'Request Artifact',
   figurineRequestNote: '* Transfer only to reliable hands',
+  figurinePriceOnRequest: 'Price on request',
+  figurineStoryShare:     'Share to Story',
+  figurineStorySaving:    'Preparing…',
+  figurineStorySaved:     'Saved — share from gallery',
+  storyShare:             'Share',
+  storyDownload:          'Save to device',
+  storyHint:              'Open Instagram → New Story → select from gallery',
+  orderNotifyRelated:     'Available now',
   figurineBook:        'Reserve Dates',
   figurineBookNote:    'Book a viewing period',
   figurineAvailableFrom:   'Available for transfer from',
@@ -265,6 +273,8 @@ export const en = {
   cancelAlreadyConfirmed:   'Your reservation is confirmed — contact the curator to cancel.',
   cancelGoToFigurine:       'View figurine',
   cancelBackHome:           'Return to hall',
+  cancelPrint:              'Print confirmation',
+  bookingsPrint:            'Print',
   cancelError:              'Could not cancel. Please try again.',
 
   // === SETTINGS MODAL ===

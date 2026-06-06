@@ -13,6 +13,7 @@
     import OrdersPanel from '$lib/components/admin/OrdersPanel.svelte';
     import ShowingsPanel from '$lib/components/admin/ShowingsPanel.svelte';
     import BookingsPanel from '$lib/components/admin/BookingsPanel.svelte';
+    import AnalyticsPanel from '$lib/components/admin/AnalyticsPanel.svelte';
     import FigurineShowingsEditor from '$lib/components/admin/FigurineShowingsEditor.svelte';
     import { t } from '$lib/i18n';
     import LangSwitcher from '$lib/components/LangSwitcher.svelte';
@@ -58,7 +59,7 @@
     let isSaving = $state(false);
     let showSettings = $state(false);
     let message = $state({ text: '', type: 'info' });
-    let activeTab = $state<'registry' | 'home' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'showings' | 'bookings'>('registry');
+    let activeTab = $state<'registry' | 'home' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'showings' | 'bookings' | 'analytics'>('registry');
     let activeAuthorSubTab = $state<'profile' | 'texts'>('profile');
     let newOrdersCount = $state(0);
     let newBookingsCount = $state(0);
@@ -329,7 +330,7 @@
         }
         // Hash-based tab routing (e.g. Telegram notification links)
         const hash = window.location.hash.replace('#', '');
-        const validTabs = ['registry','home','zones','author','workshop','media','releases','orders','showings','bookings'];
+        const validTabs = ['registry','home','zones','author','workshop','media','releases','orders','showings','bookings','analytics'];
         if (validTabs.includes(hash)) {
             activeTab = hash as typeof activeTab;
         }
@@ -406,6 +407,7 @@
 
         <nav class="flex gap-1 bg-[#fff9f0] p-1 border border-[#34251c]/20 flex-wrap">
             {#each [
+              ['analytics', '📊 Аналитика'],
               ['registry', $t('adminTabRegistry')],
               ['home',     'Home'],
               ['zones',    $t('adminTabZones')],
@@ -852,6 +854,8 @@
             <div in:fade class="h-full"><BookingsPanel onPendingCount={(n) => newBookingsCount = n} /></div>
         {:else if activeTab === 'releases'}
             <div in:fade class="h-full"><ReleaseManager /></div>
+        {:else if activeTab === 'analytics'}
+            <div in:fade class="h-full overflow-hidden"><AnalyticsPanel /></div>
         {/if}
     </div>
 

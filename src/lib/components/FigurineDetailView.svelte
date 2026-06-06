@@ -73,6 +73,131 @@
     return new Date(ds + 'T00:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
   }
 
+  // ── Instagram Story share ────────────────────────────────────────────────
+  let storySaving    = $state(false);
+  let storyBlob      = $state<Blob | null>(null);
+  let storyObjectUrl = $state('');
+  let showStoryModal = $state(false);
+  let canNativeShare = $state(false);
+
+  async function openStoryModal() {
+    if (storySaving) return;
+    storySaving = true;
+    try {
+      const faceImg = figurine.images.find(i => i.imageType === 'face') ?? figurine.images[0];
+      const imgSrc  = faceImg?.originalUrl ?? faceImg?.url ?? '';
+      const W = 1080, H = 1920;
+
+      async function buildCanvas(withImage: boolean): Promise<HTMLCanvasElement> {
+        const cv = document.createElement('canvas');
+        cv.width = W; cv.height = H;
+        const ctx = cv.getContext('2d')!;
+        ctx.fillStyle = '#f8f1e7';
+        ctx.fillRect(0, 0, W, H);
+        if (withImage && imgSrc) {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          await new Promise<void>(res => { img.onload = () => res(); img.onerror = () => res(); img.src = imgSrc; });
+          if (img.naturalWidth > 0) {
+            const zone = H * 0.75;
+            const scale = Math.max(W / img.naturalWidth, zone / img.naturalHeight);
+            const iw = img.naturalWidth * scale, ih = img.naturalHeight * scale;
+            ctx.save();
+            ctx.beginPath(); ctx.rect(0, 0, W, zone); ctx.clip();
+            ctx.drawImage(img, (W - iw) / 2, (zone - ih) / 2, iw, ih);
+            ctx.restore();
+          }
+        }
+        const grad = ctx.createLinearGradient(0, H * 0.45, 0, H);
+        grad.addColorStop(0, 'rgba(34,15,10,0)');
+        grad.addColorStop(0.55, 'rgba(34,15,10,0.75)');
+        grad.addColorStop(1, 'rgba(34,15,10,0.94)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, H * 0.45, W, H * 0.55);
+        ctx.strokeStyle = 'rgba(248,241,231,0.15)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(40, 40, W - 80, H - 80);
+        ctx.fillStyle = '#f8f1e7';
+        ctx.textAlign = 'center';
+        ctx.font = `500 ${Math.round(W * 0.072)}px Georgia, serif`;
+        ctx.fillText(figurine.name, W / 2, Math.round(H * 0.825), W - 140);
+        ctx.strokeStyle = 'rgba(248,241,231,0.22)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(W * 0.31, H * 0.875); ctx.lineTo(W * 0.69, H * 0.875);
+        ctx.stroke();
+        ctx.font = `400 ${Math.round(W * 0.048)}px Georgia, serif`;
+        ctx.fillStyle = 'rgba(248,241,231,0.55)';
+        ctx.fillText('G O T I G A', W / 2, Math.round(H * 0.916), W - 160);
+        return cv;
+      }
+
+      let blob: Blob | null = null;
+      try {
+        const cv = await buildCanvas(true);
+        blob = await new Promise<Blob | null>(res => cv.toBlob(res, 'image/jpeg', 0.92));
+      } catch {
+        const cv = await buildCanvas(false);
+        blob = await new Promise<Blob | null>(res => cv.toBlob(res, 'image/jpeg', 0.92));
+      }
+
+      if (!blob) return;
+
+      storyBlob      = blob;
+      storyObjectUrl = URL.createObjectURL(blob);
+      const testFile = new File([blob], 'story.jpg', { type: 'image/jpeg' });
+      canNativeShare = !!navigator.canShare?.({ files: [testFile] });
+      showStoryModal = true;
+    } finally {
+      storySaving = false;
+    }
+  }
+
+  function downloadStory() {
+    if (!storyObjectUrl) return;
+    const a = document.createElement('a');
+    a.href = storyObjectUrl;
+    a.download = `gotiga-${figurine.name.replace(/\s+/g, '-').toLowerCase()}-story.jpg`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  }
+
+  async function nativeShareStory() {
+    if (!storyBlob) return;
+    const file = new File([storyBlob], 'gotiga-story.jpg', { type: 'image/jpeg' });
+    try { await navigator.share({ files: [file], title: figurine.name }); } catch { /* user cancelled */ }
+  }
+
+  function closeStoryModal() {
+    showStoryModal = false;
+    if (storyObjectUrl) { URL.revokeObjectURL(storyObjectUrl); storyObjectUrl = ''; }
+    storyBlob = null;
+  }
+
+  // ── Ink reveal ───────────────────────────────────────────────────────────
+  let historyRef = $state<HTMLElement | null>(null);
+  let inkReady   = $state(false);
+
+  $effect(() => {
+    if (!historyRef || inkReady) return;
+    if (typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      inkReady = true; return;
+    }
+    const io = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting) { inkReady = true; io.disconnect(); }
+    }, { threshold: 0.05 });
+    io.observe(historyRef);
+    return () => io.disconnect();
+  });
+
+  function buildInkHtml(text: string): string {
+    const words = text.split(' ');
+    return words.map((word, i) => {
+      const esc = word.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      const delay = Math.min(i, 80) * 25;
+      return `<span class="ink-word" style="animation-delay:${delay}ms">${esc}</span>`;
+    }).join(' ');
+  }
+
   let sortedImages = $derived(
     figurine.images.slice().sort((a, b) => {
       if (a.imageType === 'face') return -1;
@@ -217,6 +342,7 @@
     figurineName={figurine.name}
     figurineId={figurine.id}
     schedule={figurineSchedule}
+    relatedAvailable={figurine.relatedItems.filter(r => r.status === 'available').slice(0, 3)}
     onClose={() => (showOrderModal = false)}
   />
 
@@ -228,6 +354,50 @@
     schedule={figurineSchedule}
     onClose={() => (showBookingModal = false)}
   />
+
+  <!-- ── Story share modal ──────────────────────────────────────────────── -->
+  {#if showStoryModal}
+    <div class="story-backdrop" transition:fade={{ duration: 200 }}
+         onclick={closeStoryModal} onkeydown={(e) => e.key === 'Escape' && closeStoryModal()}
+         role="presentation">
+      <div class="story-modal" onclick={(e) => e.stopPropagation()} transition:fade={{ duration: 150 }}
+           role="dialog" aria-modal="true" tabindex="-1">
+        <button class="story-close" onclick={closeStoryModal} aria-label="Закрыть">✕</button>
+
+        <p class="story-modal-title">{$t('figurineStoryShare')}</p>
+
+        <!-- 9:16 preview -->
+        {#if storyObjectUrl}
+          <div class="story-preview-wrap">
+            <img src={storyObjectUrl} alt="Story preview" class="story-preview-img" />
+          </div>
+        {/if}
+
+        <div class="story-actions">
+          {#if canNativeShare}
+            <button class="story-btn story-btn--primary" onclick={nativeShareStory}>
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3">
+                <circle cx="11" cy="3" r="1.5"/><circle cx="3" cy="7" r="1.5"/><circle cx="11" cy="11" r="1.5"/>
+                <path d="M4.4 6.1l5.2-2.6M4.4 7.9l5.2 2.6"/>
+              </svg>
+              {$t('storyShare')}
+            </button>
+          {/if}
+          <button class="story-btn {canNativeShare ? 'story-btn--secondary' : 'story-btn--primary'}" onclick={downloadStory}>
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.3">
+              <path d="M6.5 1v7.5M4 6l2.5 2.5L9 6" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M1 10v1.5A0.5 0.5 0 0 0 1.5 12h10a0.5 0.5 0 0 0 0.5-0.5V10"/>
+            </svg>
+            {$t('storyDownload')}
+          </button>
+        </div>
+
+        {#if !canNativeShare}
+          <p class="story-hint">{$t('storyHint')}</p>
+        {/if}
+      </div>
+    </div>
+  {/if}
 
   {#if showLightbox}
     <Lightbox images={lightboxImages} startIndex={lightboxStartIndex} onClose={() => (showLightbox = false)} />
@@ -414,6 +584,26 @@
           {/if}
         </button>
 
+        <button
+          onclick={openStoryModal}
+          class="control-btn"
+          aria-label={$t('figurineStoryShare')}
+          title={$t('figurineStoryShare')}
+          disabled={storySaving}
+        >
+          {#if storySaving}
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" style="animation:spin 1s linear infinite">
+              <path d="M6 1.5A4.5 4.5 0 1 1 1.5 6" stroke-linecap="round"/>
+            </svg>
+          {:else}
+            <svg width="12" height="14" viewBox="0 0 12 14" fill="none" stroke="currentColor" stroke-width="1.3">
+              <rect x="1" y="1" width="10" height="12" rx="1"/>
+              <path d="M3.5 5h5M3.5 7.5h5M3.5 10h3"/>
+            </svg>
+          {/if}
+          <span class="btn-label">{storySaving ? $t('figurineStorySaving') : $t('figurineStoryShare')}</span>
+        </button>
+
         <!-- Phase 2+: компактная CTA в хидере -->
         {#if galleryExited && figurine.status === 'available'}
           <button
@@ -531,7 +721,13 @@
               <span class="sec-label">{$t('figurineHistory')}</span>
               <div class="sec-rule" aria-hidden="true"></div>
             </header>
-            <p class="history-body drop-cap">{figurine.fullDescription}</p>
+            <p bind:this={historyRef} class="history-body drop-cap">
+              {#if inkReady}
+                {@html buildInkHtml(figurine.fullDescription ?? '')}
+              {:else}
+                {figurine.fullDescription}
+              {/if}
+            </p>
           </div>
         {/if}
 
@@ -759,6 +955,7 @@
                   {$t('figurineAskQuestion')}
                 </button>
               </div>
+              <p class="price-on-request">{$t('figurinePriceOnRequest')}</p>
             {/if}
 
             <!-- Book button: always available when status is available -->

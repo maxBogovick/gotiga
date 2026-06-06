@@ -6,6 +6,11 @@
 
   let x = $state(-100);
   let y = $state(-100);
+  let reduced = $state(false);
+
+  onMount(() => {
+    reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  });
 
   function handleMouseMove(e: MouseEvent) {
     if (!isActive) return;
@@ -32,7 +37,7 @@
   });
 </script>
 
-{#if isActive}
+{#if isActive && !reduced}
   <div class="fixed inset-0 pointer-events-none z-[100] overflow-hidden" transition:fade={{ duration: 1000 }}>
     <!-- Darkening layer to make the room feel dimmer -->
     <div class="absolute inset-0 bg-[#6f3b24]/10"></div>

@@ -128,6 +128,13 @@
             </button>
           {/if}
           <a href="/figurines/{info.figurineId}" class="action-link">{$t('cancelGoToFigurine')}</a>
+          <button class="print-btn" onclick={() => window.print()}>
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">
+              <path d="M3 1h6v3H3zM1 4h10v5H1zM3 9v2h6V9"/>
+              <rect x="3" y="5.5" width="1.2" height="1.2" fill="currentColor" stroke="none"/>
+            </svg>
+            {$t('cancelPrint')}
+          </button>
         </div>
       </div>
     {/if}
@@ -272,5 +279,32 @@
       padding: 2rem 1.25rem;
       transform: none;
     }
+  }
+
+  .print-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: none;
+    border: 1px solid #d8c6b1;
+    color: rgba(95,70,54,0.55);
+    font-family: 'Instrument Sans', system-ui, sans-serif;
+    font-size: 8px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    padding: 5px 12px;
+    cursor: pointer;
+    transition: color 0.2s, border-color 0.2s;
+    margin-top: 0.25rem;
+  }
+  .print-btn:hover { color: #34251c; border-color: #b0a090; }
+
+  @media print {
+    .cancel-wrap { min-height: unset; padding: 0; background: white; }
+    .cancel-frame { outline: none; border: 1px solid #aaa; transform: none; box-shadow: none; background: white; }
+    .action-link, .cancel-btn, .seal-icon, .wax-seal, .print-btn { display: none; }
+    .info-list { font-size: 11pt; }
+    dd, dt { color: black !important; }
+    .cancel-heading { font-size: 16pt; }
   }
 </style>

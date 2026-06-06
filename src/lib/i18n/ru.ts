@@ -96,6 +96,14 @@ export const ru: Record<TranslationKey, string> = {
   figurineTechnique:   'Техника',
   figurineCode:        'Код',
   figurineRequest:     'Запросить Артефакт',
+  figurinePriceOnRequest: 'Цена по запросу',
+  figurineStoryShare:     'История для Instagram',
+  figurineStorySaving:    'Подготовка…',
+  figurineStorySaved:     'Сохранено — поделитесь из галереи',
+  storyShare:             'Поделиться',
+  storyDownload:          'Сохранить на устройство',
+  storyHint:              'Откройте Instagram → Новая история → выберите из галереи',
+  orderNotifyRelated:     'Доступно сейчас',
   figurineBook:        'Забронировать даты',
   figurineBookNote:    'Выбрать период для просмотра',
   figurineAvailableFrom:   'Передача возможна с',
@@ -249,6 +257,8 @@ export const ru: Record<TranslationKey, string> = {
   cancelAlreadyConfirmed:   'Ваша бронь подтверждена — для отмены свяжитесь с куратором.',
   cancelGoToFigurine:       'Перейти к фигурке',
   cancelBackHome:           'Вернуться в зал',
+  cancelPrint:              'Распечатать подтверждение',
+  bookingsPrint:            'Печать',
   cancelError:              'Не удалось отменить. Попробуйте ещё раз.',
 
   // === ORDER MODAL ===

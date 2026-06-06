@@ -32,7 +32,18 @@
 </svelte:head>
 
 <div class="bookings-page">
-  <a href="/" class="back-link">{$t('bookingsBack')}</a>
+  <div class="page-top">
+    <a href="/" class="back-link">{$t('bookingsBack')}</a>
+    {#if allClaims.claims.length > 0}
+      <button class="print-btn" onclick={() => window.print()}>
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">
+          <path d="M3 1h6v3H3zM1 4h10v5H1zM3 9v2h6V9"/>
+          <rect x="3" y="5.5" width="1.2" height="1.2" fill="currentColor" stroke="none"/>
+        </svg>
+        {$t('bookingsPrint')}
+      </button>
+    {/if}
+  </div>
 
   <h1 class="page-title">{$t('bookingsPageTitle')}</h1>
 
@@ -103,6 +114,13 @@
     color: #34251c;
   }
 
+  .page-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 2rem;
+  }
+
   .back-link {
     display: inline-block;
     font-family: 'Instrument Sans', system-ui, sans-serif;
@@ -111,10 +129,26 @@
     text-transform: uppercase;
     color: rgba(95,70,54,0.55);
     text-decoration: none;
-    margin-bottom: 2rem;
     transition: color 0.2s;
   }
   .back-link:hover { color: #c65f3c; }
+
+  .print-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: none;
+    border: 1px solid #d8c6b1;
+    color: rgba(95,70,54,0.55);
+    font-family: 'Instrument Sans', system-ui, sans-serif;
+    font-size: 8px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    padding: 5px 12px;
+    cursor: pointer;
+    transition: color 0.2s, border-color 0.2s;
+  }
+  .print-btn:hover { color: #34251c; border-color: #b0a090; }
 
   .page-title {
     font-family: 'Fraunces', Georgia, serif;
@@ -297,5 +331,19 @@
   @media (max-width: 520px) {
     .claim-card-inner { padding: 1rem 1.1rem; }
     .claim-top { flex-direction: column; gap: 6px; }
+  }
+
+  @media print {
+    .bookings-page { padding: 1cm; max-width: none; }
+    .page-top { display: none; }
+    .page-title { font-size: 18pt; margin-bottom: 1cm; }
+    .claim-card { break-inside: avoid; border: 1px solid #aaa; background: white; }
+    .claim-card-inner { padding: 0.5cm; }
+    .claim-name { color: black !important; text-decoration: none; }
+    .claim-name::after { content: ' (/figurines/' attr(href) ')'; font-size: 8pt; color: #555; }
+    .action-cancel, .action-secondary { display: none; }
+    .claim-status { border: 1px solid #aaa !important; background: white !important; color: black !important; }
+    .claim-token { background: #eee; }
+    .claims-list { gap: 0.5cm; }
   }
 </style>

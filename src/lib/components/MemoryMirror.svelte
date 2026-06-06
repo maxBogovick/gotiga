@@ -111,8 +111,11 @@
     if (e.key === 'ArrowLeft')  currentStepIndex = Math.max(0, currentStepIndex - 1);
   }
 
+  let reduced = $state(false);
+
   onMount(() => {
-    restoreInterval = setInterval(restoreFog, 80);
+    reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!reduced) restoreInterval = setInterval(restoreFog, 80);
     window.addEventListener('keydown', handleKey);
   });
 
@@ -168,7 +171,7 @@
       >
         <!-- Layer 1: past image (revealed by wiping) -->
         {#key currentStepIndex}
-          <div class="mirror-past" transition:fade={{ duration: 400 }}>
+          <div class="mirror-past" transition:fade={{ duration: reduced ? 0 : 400 }}>
             {#if currentStep}
               <img
                 src={currentStep.imageUrl}
@@ -185,7 +188,8 @@
           </div>
         {/key}
 
-        <!-- Layer 2: fog canvas -->
+        <!-- Layer 2: fog canvas (hidden when reduced-motion) -->
+        {#if !reduced}
         <canvas
           bind:this={canvas}
           class="mirror-canvas"
@@ -197,6 +201,7 @@
           ontouchend={stopDraw}
           ontouchmove={draw}
         ></canvas>
+        {/if}
 
         <!-- Decorative vignette -->
         <div class="mirror-vignette" aria-hidden="true"></div>

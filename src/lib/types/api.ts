@@ -14,6 +14,7 @@ export interface FigurineListItem {
     material?: string | null;
     isFeatured?: boolean;
     createdAt?: string | null;
+    thumbUrl?: string | null;
 }
 
 export interface FigurineImage {

@@ -148,6 +148,22 @@
     try { localStorage.setItem(LIKED_KEY, JSON.stringify([...next])); } catch {}
   }
 
+  // ── 3D tilt ────────────────────────────────────────────────────
+  function onTiltMove(e: MouseEvent) {
+    const el = e.currentTarget as HTMLElement;
+    const r  = el.getBoundingClientRect();
+    const x  = (e.clientX - r.left)  / r.width  - 0.5;
+    const y  = (e.clientY - r.top)   / r.height - 0.5;
+    el.style.transition = 'none';
+    el.style.transform  = `perspective(900px) rotateX(${-y * 7}deg) rotateY(${x * 7}deg) translateZ(4px)`;
+  }
+
+  function onTiltLeave(e: MouseEvent) {
+    const el = e.currentTarget as HTMLElement;
+    el.style.transition = 'transform 0.55s cubic-bezier(0.16,1,0.3,1)';
+    el.style.transform  = '';
+  }
+
   function openQuickView(e: MouseEvent, fig: FigurineListItem) {
     e.preventDefault();
     e.stopPropagation();
@@ -415,7 +431,8 @@
       {#if filtered.length > 0}
         <ul class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-8 gap-y-16">
           {#each visible as figurine, i (figurine.id)}
-            <li class="group perspective-container" in:fade={{ delay: Math.max(0, i - batchOffset) * 40, duration: 600 }}>
+            <li class="group perspective-container" in:fade={{ delay: Math.max(0, i - batchOffset) * 40, duration: 600 }}
+                onmousemove={onTiltMove} onmouseleave={onTiltLeave}>
               <a
                 href="/figurines/{figurine.id}"
                 class="block w-full text-left relative focus:outline-none"
@@ -430,6 +447,7 @@
                   {#if figurine.faceImageUrl}
                     <AppImage
                             src={figurine.faceImageUrl}
+                            thumbUrl={figurine.thumbUrl}
                             class="w-full h-full object-cover opacity-70 grayscale transition-all duration-700 ease-out group-hover:opacity-100 group-hover:grayscale-0 group-hover:scale-105"
                             loading="lazy"
                     />

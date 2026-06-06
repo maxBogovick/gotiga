@@ -5,12 +5,15 @@
   import { t } from '$lib/i18n';
   import type { FigurineSchedule } from '$lib/types/api';
 
+  import type { FigurineListItem } from '$lib/types/api';
+
   let {
     isOpen = false,
     figurineName = '',
     figurineId = '',
     mode = 'request' as 'request' | 'question' | 'notify',
     schedule = null as FigurineSchedule | null,
+    relatedAvailable = [] as FigurineListItem[],
     onClose = () => {}
   } = $props();
 
@@ -259,6 +262,25 @@
                        </p>
                        <span class="absolute -right-2 bottom-0 text-4xl text-[#6f3b24]/15 font-serif rotate-180">"</span>
                    </div>
+
+                   <!-- Related available works shown only after notify -->
+                   {#if mode === 'notify' && relatedAvailable.length > 0}
+                     <div class="notify-related" in:fade={{ duration: 400, delay: 600 }}>
+                       <p class="notify-related-label">{$t('orderNotifyRelated')}</p>
+                       <div class="notify-related-grid">
+                         {#each relatedAvailable.slice(0, 3) as item (item.id)}
+                           <a href="/figurines/{item.id}" onclick={close} class="notify-related-card">
+                             {#if item.faceImageUrl}
+                               <img src={item.faceImageUrl} alt={item.name} class="notify-related-img" loading="lazy" />
+                             {:else}
+                               <div class="notify-related-placeholder">?</div>
+                             {/if}
+                             <span class="notify-related-name">{item.name}</span>
+                           </a>
+                         {/each}
+                       </div>
+                     </div>
+                   {/if}
                 </div>
               {/if}
 
@@ -338,5 +360,63 @@
   .showing-notice-type {
     font-weight: 600;
     margin-right: 0.2rem;
+  }
+
+  /* ── Related works after notify ── */
+  .notify-related {
+    margin-top: 2rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid rgba(52,37,28,0.1);
+    width: 100%;
+    max-width: 340px;
+  }
+  .notify-related-label {
+    font-family: 'Instrument Sans', system-ui, sans-serif;
+    font-size: 0.65rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: rgba(95,70,54,0.5);
+    text-align: center;
+    margin: 0 0 1rem;
+  }
+  .notify-related-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.75rem;
+  }
+  .notify-related-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.4rem;
+    text-decoration: none;
+    color: #34251c;
+    transition: opacity 0.2s;
+  }
+  .notify-related-card:hover { opacity: 0.75; }
+  .notify-related-img {
+    width: 100%;
+    aspect-ratio: 3/4;
+    object-fit: cover;
+    border: 1px solid rgba(52,37,28,0.1);
+    display: block;
+  }
+  .notify-related-placeholder {
+    width: 100%;
+    aspect-ratio: 3/4;
+    background: #f0e8d8;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1rem;
+    color: rgba(95,70,54,0.3);
+    border: 1px solid rgba(52,37,28,0.1);
+  }
+  .notify-related-name {
+    font-family: 'Fraunces', Georgia, serif;
+    font-size: 0.7rem;
+    text-align: center;
+    line-height: 1.3;
+    color: rgba(52,37,28,0.8);
   }
 </style>

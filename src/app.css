@@ -1201,6 +1201,12 @@
   }
 }
 
+/* ─── Archive card 3D tilt ─────────────────────────────────────────────── */
+.perspective-container {
+  will-change: transform;
+  transform-style: preserve-3d;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    VIEW TRANSITIONS
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -1222,20 +1228,11 @@
 }
 
 /*
-  Shared figurine image element.
-  The browser handles the FLIP morph automatically when both pages
-  have an element with the same view-transition-name.
-  We only override timing here; geometry is computed by the browser.
+  Shared figurine image: view-transition-name is "figurine-{id}" (dynamic).
+  CSS selectors can't wildcard ::view-transition-*() so timing for the image
+  pair uses browser default FLIP morph. The root transition has custom timing above.
+  Dynamic per-page CSS is injected via <svelte:head> in the figurine detail route.
 */
-::view-transition-image-pair(figurine-hero) {
-  isolation: isolate;
-}
-
-::view-transition-old(figurine-hero),
-::view-transition-new(figurine-hero) {
-  animation-duration: 480ms;
-  animation-timing-function: var(--ease-atelier);
-}
 
 /* ═══════════════════════════════════════════════════════════════════════════
    REDUCED MOTION
@@ -1253,9 +1250,7 @@
   }
 
   ::view-transition-old(root),
-  ::view-transition-new(root),
-  ::view-transition-old(figurine-hero),
-  ::view-transition-new(figurine-hero) {
+  ::view-transition-new(root) {
     animation: none !important;
   }
 }

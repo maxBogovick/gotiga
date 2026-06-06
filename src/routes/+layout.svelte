@@ -4,6 +4,8 @@
   import { page } from '$app/state';
   import SiteHeader from '$lib/components/SiteHeader.svelte';
 
+  let canonicalUrl = $derived(`${page.url.origin}${page.url.pathname}`);
+
   let { children } = $props();
 
   let showSiteHeader = $derived(!page.url.pathname.startsWith('/admin'));
@@ -20,6 +22,10 @@
     });
   });
 </script>
+
+<svelte:head>
+  <link rel="canonical" href={canonicalUrl} />
+</svelte:head>
 
 <div class="min-h-screen bg-[#f8f1e7]">
   {#if showSiteHeader}

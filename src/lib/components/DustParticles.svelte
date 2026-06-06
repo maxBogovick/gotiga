@@ -132,6 +132,8 @@
   }
 
   onMount(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
     ctx = canvas.getContext('2d');
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;

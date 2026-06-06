@@ -30,6 +30,20 @@
     return `${page.url.origin}${img}`;
   });
 
+  // Inject per-figurine view-transition timing via DOM (can't use {@html} with </style> in svelte:head)
+  $effect(() => {
+    const s = document.createElement('style');
+    s.dataset.vtId = id;
+    s.textContent =
+      `::view-transition-image-pair(figurine-${id}){isolation:isolate}` +
+      `::view-transition-old(figurine-${id}),::view-transition-new(figurine-${id})` +
+      `{animation-duration:500ms;animation-timing-function:cubic-bezier(0.16,1,0.3,1)}` +
+      `@media(prefers-reduced-motion:reduce){::view-transition-old(figurine-${id}),` +
+      `::view-transition-new(figurine-${id}){animation:none!important}}`;
+    document.head.appendChild(s);
+    return () => s.remove();
+  });
+
   let statusAvailability = $derived(
     figurine?.status === 'available'
       ? 'https://schema.org/InStock'
@@ -75,6 +89,8 @@
   {#if ogImage()}
     <meta name="twitter:image" content={ogImage()} />
   {/if}
+
+  <!-- view-transition timing injected via $effect in script -->
 
   <!-- JSON-LD (п.7) -->
   {#if figurine}
