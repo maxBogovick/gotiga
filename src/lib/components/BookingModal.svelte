@@ -353,6 +353,9 @@
                       </button>
                     </div>
                     <p class="claim-token-hint">{$t('bookingClaimHint')}</p>
+                    <a href="/cancel/{cancelToken}" target="_blank" rel="noopener" class="claim-page-link">
+                      {$t('bookingClaimPageLink')} →
+                    </a>
                   </div>
                 {/if}
               </div>
@@ -441,4 +444,15 @@
     margin: 0;
     line-height: 1.5;
   }
+  .claim-page-link {
+    display: inline-block;
+    margin-top: 0.5rem;
+    font-family: 'Inter', sans-serif;
+    font-size: 0.65rem;
+    color: #c65f3c;
+    text-decoration: none;
+    border-bottom: 1px solid rgba(198,95,60,0.35);
+    transition: border-color 0.15s;
+  }
+  .claim-page-link:hover { border-color: #c65f3c; }
 </style>

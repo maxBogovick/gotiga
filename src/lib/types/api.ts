@@ -47,6 +47,7 @@ export interface Figurine {
     sortOrder: number;
     isVisible: boolean;
     isFeatured: boolean;
+    series?: string | null;
     images: FigurineImage[];
     processSteps: ProcessStep[];
     relatedItems: FigurineListItem[];

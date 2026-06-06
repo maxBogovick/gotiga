@@ -218,6 +218,7 @@ export const en = {
   bookingClaimCopied:       'Copied!',
   bookingClaimSave:         'Save file',
   bookingClaimHint:         'Save this code — you can use it to cancel your request if plans change.',
+  bookingClaimPageLink:     'Or bookmark this cancel link',
 
   // === CLAIM TOKEN (self-cancel) ===
   claimPendingBooking:      'You have a pending reservation request',
@@ -231,6 +232,39 @@ export const en = {
   claimLookupBtn:           'Check',
   claimTokenNotFound:       'Code not found or request already resolved.',
   claimStatus:              'Status',
+
+  // === BOOKINGS PAGE & HEADER PANEL ===
+  bookingsPageTitle:        'My Reservations',
+  bookingsBack:             '← Return to hall',
+  bookingsEmpty:            'No reservations yet',
+  bookingsEmptyHint:        'Your booking requests will appear here once you reserve a figurine.',
+  bookingsHeaderTitle:      'Reservations',
+  bookingsViewAll:          'View all reservations',
+  bookingsPending:          'Awaiting confirmation',
+  bookingsConfirmed:        'Confirmed',
+  bookingsViewFigurine:     'View figurine',
+  bookingsCancelDone:       'Cancelled',
+
+  // === CANCEL PAGE (/cancel/[token]) ===
+  cancelPageTitle:          'Cancel Reservation',
+  cancelLoading:            'Retrieving reservation…',
+  cancelNotFound:           'Reservation not found',
+  cancelNotFoundHint:       'The code may be invalid or the request already resolved.',
+  cancelArtifact:           'Artifact',
+  cancelPeriod:             'Period',
+  cancelStatusLabel:        'Status',
+  cancelStatusPending:      'Pending confirmation',
+  cancelStatusConfirmed:    'Confirmed',
+  cancelStatusRejected:     'Rejected',
+  cancelStatusCancelled:    'Cancelled',
+  cancelBtn:                'Cancel reservation',
+  cancelCancelling:         'Cancelling…',
+  cancelDone:               'Reservation cancelled. The dates are open again.',
+  cancelAlreadyCancelled:   'This reservation has already been cancelled.',
+  cancelAlreadyConfirmed:   'Your reservation is confirmed — contact the curator to cancel.',
+  cancelGoToFigurine:       'View figurine',
+  cancelBackHome:           'Return to hall',
+  cancelError:              'Could not cancel. Please try again.',
 
   // === SETTINGS MODAL ===
   settingsTitle:         'Connection Settings',
@@ -408,6 +442,7 @@ export const en = {
   // === ADMIN — FIGURINE FORM ===
   adminFieldName:        'Name',
   adminFieldYear:        'Year (Anno)',
+  adminFieldSeries:      'Series',
   adminFieldStatus:        'Status',
   adminFieldStatusAvail:   'Available',
   adminFieldStatusSold:    'Lost',

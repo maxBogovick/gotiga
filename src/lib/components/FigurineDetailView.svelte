@@ -191,6 +191,7 @@
     api.getFigurineSchedule(figurine.id).then(s => { figurineSchedule = s; });
     cs.load();
     cs.verify();
+    cs.startPolling();
   });
 
   onDestroy(() => {
@@ -199,6 +200,7 @@
     document.removeEventListener('visibilitychange', handleVisibility);
     clearTimeout(copiedTimer);
     if (audioRef) { audioRef.pause(); audioRef = null; }
+    cs.stopPolling();
   });
 </script>
 

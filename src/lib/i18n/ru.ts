@@ -202,6 +202,7 @@ export const ru: Record<TranslationKey, string> = {
   bookingClaimCopied:       'Скопировано!',
   bookingClaimSave:         'Сохранить файл',
   bookingClaimHint:         'Сохраните этот код — он позволит отозвать заявку если планы изменятся.',
+  bookingClaimPageLink:     'Или сохраните ссылку для отмены',
 
   // === CLAIM TOKEN (самоотмена) ===
   claimPendingBooking:      'У вас есть активная заявка на бронирование',
@@ -215,6 +216,39 @@ export const ru: Record<TranslationKey, string> = {
   claimLookupBtn:           'Проверить',
   claimTokenNotFound:       'Код не найден или заявка уже закрыта.',
   claimStatus:              'Статус',
+
+  // === BOOKINGS PAGE & HEADER PANEL ===
+  bookingsPageTitle:        'Мои брони',
+  bookingsBack:             '← Вернуться в зал',
+  bookingsEmpty:            'Броней пока нет',
+  bookingsEmptyHint:        'Ваши заявки на бронирование появятся здесь после оформления.',
+  bookingsHeaderTitle:      'Брони',
+  bookingsViewAll:          'Все брони',
+  bookingsPending:          'Ожидает подтверждения',
+  bookingsConfirmed:        'Подтверждено',
+  bookingsViewFigurine:     'Перейти к фигурке',
+  bookingsCancelDone:       'Отменено',
+
+  // === CANCEL PAGE (/cancel/[token]) ===
+  cancelPageTitle:          'Отмена брони',
+  cancelLoading:            'Извлечение брони…',
+  cancelNotFound:           'Бронь не найдена',
+  cancelNotFoundHint:       'Код может быть недействителен или заявка уже закрыта.',
+  cancelArtifact:           'Артефакт',
+  cancelPeriod:             'Период',
+  cancelStatusLabel:        'Статус',
+  cancelStatusPending:      'Ожидает подтверждения',
+  cancelStatusConfirmed:    'Подтверждено',
+  cancelStatusRejected:     'Отклонено',
+  cancelStatusCancelled:    'Отменено',
+  cancelBtn:                'Отменить бронь',
+  cancelCancelling:         'Отмена…',
+  cancelDone:               'Бронь отменена. Даты снова свободны.',
+  cancelAlreadyCancelled:   'Эта бронь уже отменена.',
+  cancelAlreadyConfirmed:   'Ваша бронь подтверждена — для отмены свяжитесь с куратором.',
+  cancelGoToFigurine:       'Перейти к фигурке',
+  cancelBackHome:           'Вернуться в зал',
+  cancelError:              'Не удалось отменить. Попробуйте ещё раз.',
 
   // === ORDER MODAL ===
   orderEmailSubject:      'Запрос артефакта: ',
@@ -410,6 +444,7 @@ export const ru: Record<TranslationKey, string> = {
   // === ADMIN — FIGURINE FORM ===
   adminFieldName:        'Название',
   adminFieldYear:        'Год (Anno)',
+  adminFieldSeries:      'Серия',
   adminFieldStatus:        'Статус',
   adminFieldStatusAvail:   'В наличии',
   adminFieldStatusSold:    'Утрачено',

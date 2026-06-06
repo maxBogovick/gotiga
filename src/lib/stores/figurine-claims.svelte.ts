@@ -14,6 +14,8 @@ export type ClaimData = {
 
 type TokenLookupInfo = { figurineName: string; startsAt: string; endsAt: string; status: string };
 
+const POLL_INTERVAL_MS = 30_000;
+
 export class FigurineClaimsStore {
   claims = $state<ClaimData[]>([]);
   cancellingToken = $state<string | null>(null);
@@ -28,6 +30,7 @@ export class FigurineClaimsStore {
 
   #figurineId: string;
   #refreshSchedule: () => void;
+  #pollTimer: ReturnType<typeof setInterval> | null = null;
 
   get #key() { return `gotiga_claims_${this.#figurineId}`; }
 
@@ -71,6 +74,33 @@ export class FigurineClaimsStore {
     if (changed || updated.length !== this.claims.length) {
       this.claims = updated;
       this.#save();
+      if (changed) this.#refreshSchedule();
+    }
+    this.#syncPollTimer();
+  }
+
+  #hasPendingClaims() {
+    return this.claims.some(c => c.status === 'pending' || c.status == null);
+  }
+
+  #syncPollTimer() {
+    if (this.#hasPendingClaims()) {
+      if (!this.#pollTimer) {
+        this.#pollTimer = setInterval(() => this.verify(), POLL_INTERVAL_MS);
+      }
+    } else {
+      this.stopPolling();
+    }
+  }
+
+  startPolling() {
+    this.#syncPollTimer();
+  }
+
+  stopPolling() {
+    if (this.#pollTimer) {
+      clearInterval(this.#pollTimer);
+      this.#pollTimer = null;
     }
   }
 
@@ -78,6 +108,7 @@ export class FigurineClaimsStore {
     this.claims = [claim, ...this.claims];
     this.#save();
     this.#refreshSchedule();
+    this.#syncPollTimer();
   }
 
   async cancel(claim: ClaimData) {
@@ -89,6 +120,7 @@ export class FigurineClaimsStore {
       this.claims = this.claims.filter(c => c.token !== claim.token);
       this.#save();
       this.#refreshSchedule();
+      this.#syncPollTimer();
       setTimeout(() => {
         this.cancelledTokens = new Set([...this.cancelledTokens].filter(tok => tok !== claim.token));
       }, 4000);

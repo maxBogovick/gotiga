@@ -102,6 +102,7 @@
         sortOrder: 0,
         isVisible: true,
         isFeatured: false,
+        series: null,
         images: [],
         processSteps: [],
         relatedItems: []
@@ -538,6 +539,10 @@
                                 <label class="block">
                                     <span class="label">{$t('adminFieldYear')}</span>
                                     <input type="number" bind:value={selectedFigurine.year} class="input-gothic" />
+                                </label>
+                                <label class="block">
+                                    <span class="label">{$t('adminFieldSeries')}</span>
+                                    <input bind:value={selectedFigurine.series} class="input-gothic" placeholder="—" />
                                 </label>
                                 <label class="block">
                                     <span class="label">{$t('adminFieldStatus')}</span>
