@@ -13,6 +13,7 @@ export interface FigurineListItem {
     technique?: string | null;
     material?: string | null;
     isFeatured?: boolean;
+    createdAt?: string | null;
 }
 
 export interface FigurineImage {

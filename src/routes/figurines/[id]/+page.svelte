@@ -27,7 +27,7 @@
       ?? figurine?.images?.[0]?.url ?? '';
     if (!img) return '';
     if (img.startsWith('http')) return img;
-    return typeof window !== 'undefined' ? `${window.location.origin}${img}` : img;
+    return `${page.url.origin}${img}`;
   });
 
   let statusAvailability = $derived(
@@ -66,7 +66,7 @@
     <meta property="og:image:width"  content="1800" />
     <meta property="og:image:height" content="1800" />
   {/if}
-  <meta property="og:url" content={typeof window !== 'undefined' ? window.location.href : ''} />
+  <meta property="og:url" content={page.url.href} />
 
   <!-- Twitter / X -->
   <meta name="twitter:card"        content="summary_large_image" />

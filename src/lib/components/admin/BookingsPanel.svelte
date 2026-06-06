@@ -20,6 +20,75 @@
   let notesMap      = $state<Record<string, string>>({});
   let conflictErrors = $state<Record<string, string>>({});
 
+  // ── Calendar view ──────────────────────────────────────────────
+  let calMode = $state(false);
+  let calAllBookings = $state<BookingDto[]>([]);
+  let calLoading = $state(false);
+  let calYear = $state(new Date().getFullYear());
+  let calMonth = $state(new Date().getMonth()); // 0-indexed
+  let calSelected = $state<string | null>(null); // 'YYYY-MM-DD'
+
+  async function loadCalendar() {
+    calLoading = true;
+    try {
+      const res = await api.listBookings({ page: 1, perPage: 500 });
+      calAllBookings = res.items;
+    } catch { /* ignore */ } finally {
+      calLoading = false;
+    }
+  }
+
+  async function toggleCalMode() {
+    calMode = !calMode;
+    if (calMode && calAllBookings.length === 0) await loadCalendar();
+  }
+
+  // Map: 'YYYY-MM-DD' → BookingDto[]
+  let calByDay = $derived.by(() => {
+    const map = new Map<string, BookingDto[]>();
+    for (const b of calAllBookings) {
+      if (b.status === 'cancelled' || b.status === 'rejected') continue;
+      const start = new Date(b.startsAt + 'T00:00:00');
+      const end   = new Date(b.endsAt   + 'T00:00:00');
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        const key = d.toISOString().slice(0, 10);
+        const arr = map.get(key) ?? [];
+        arr.push(b);
+        map.set(key, arr);
+      }
+    }
+    return map;
+  });
+
+  let calDays = $derived.by(() => {
+    const first = new Date(calYear, calMonth, 1);
+    let startDow = first.getDay();
+    startDow = startDow === 0 ? 6 : startDow - 1; // Mon=0 … Sun=6
+    const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+    const cells: Array<{ date: Date | null; key: string | null }> = [];
+    for (let i = 0; i < startDow; i++) cells.push({ date: null, key: null });
+    for (let d = 1; d <= daysInMonth; d++) {
+      const date = new Date(calYear, calMonth, d);
+      cells.push({ date, key: date.toISOString().slice(0, 10) });
+    }
+    while (cells.length % 7 !== 0) cells.push({ date: null, key: null });
+    return cells;
+  });
+
+  function calPrev() {
+    if (calMonth === 0) { calMonth = 11; calYear--; } else calMonth--;
+    calSelected = null;
+  }
+  function calNext() {
+    if (calMonth === 11) { calMonth = 0; calYear++; } else calMonth++;
+    calSelected = null;
+  }
+
+  const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const DOW = ['Mo','Tu','We','Th','Fr','Sa','Su'];
+  let calSelectedBookings = $derived(calSelected ? (calByDay.get(calSelected) ?? []) : []);
+  const todayKey = new Date().toISOString().slice(0, 10);
+
   let totalPages = $derived(Math.max(1, Math.ceil(total / PER_PAGE)));
 
   async function load(resetPage = false) {
@@ -144,8 +213,113 @@
     </div>
 
     <button onclick={() => load()} class="text-xs text-[#5f4636] hover:text-[#34251c] border border-[#34251c]/20 px-2 py-1 transition-colors" title="Обновить">↺</button>
+
+    <button
+      onclick={toggleCalMode}
+      class="ml-auto text-[10px] uppercase tracking-wide border px-3 py-1 transition-colors
+        {calMode ? 'bg-[#34251c] text-[#fff9f0] border-[#34251c]' : 'border-[#34251c]/20 text-[#5f4636] hover:border-[#34251c]/50'}"
+      title={calMode ? 'Список' : 'Календарь'}
+    >
+      {calMode ? '≡ Список' : '⊞ Календарь'}
+    </button>
   </div>
 
+  <!-- Calendar view -->
+  {#if calMode}
+  <div class="flex-1 overflow-y-auto px-6 py-4 flex gap-6">
+    <!-- Month grid -->
+    <div class="flex-shrink-0" style="min-width:280px">
+      <div class="flex items-center justify-between mb-3">
+        <button onclick={calPrev} class="w-7 h-7 border border-[#34251c]/20 text-[#5f4636] hover:border-[#34251c]/50 text-xs transition-colors">←</button>
+        <span class="text-sm font-['Fraunces'] text-[#34251c]">{MONTH_NAMES[calMonth]} {calYear}</span>
+        <button onclick={calNext} class="w-7 h-7 border border-[#34251c]/20 text-[#5f4636] hover:border-[#34251c]/50 text-xs transition-colors">→</button>
+      </div>
+
+      {#if calLoading}
+        <div class="text-center text-xs text-[#5f4636]/60 py-8">Загрузка…</div>
+      {:else}
+        <!-- Day-of-week header -->
+        <div class="grid grid-cols-7 mb-1">
+          {#each DOW as d}
+            <div class="text-center text-[9px] uppercase tracking-wide text-[#5f4636]/50 py-1">{d}</div>
+          {/each}
+        </div>
+        <!-- Days grid -->
+        <div class="grid grid-cols-7 gap-0.5">
+          {#each calDays as cell}
+            {#if cell.key}
+              {@const dayBookings = calByDay.get(cell.key) ?? []}
+              {@const hasPending   = dayBookings.some(b => b.status === 'pending')}
+              {@const hasConfirmed = dayBookings.some(b => b.status === 'confirmed')}
+              {@const isToday = cell.key === todayKey}
+              {@const isSelected = cell.key === calSelected}
+              <button
+                onclick={() => calSelected = calSelected === cell.key ? null : cell.key}
+                class="relative flex flex-col items-center pt-1 pb-1.5 min-h-[36px] border transition-colors
+                  {isSelected   ? 'bg-[#34251c] border-[#34251c]'      :
+                   isToday      ? 'border-[#c65f3c]/50 bg-[#fff9f0]'   :
+                   dayBookings.length > 0 ? 'border-[#34251c]/15 bg-white hover:border-[#34251c]/40 cursor-pointer' :
+                                  'border-transparent hover:border-[#34251c]/10 cursor-default'}"
+              >
+                <span class="text-[11px] leading-none {isSelected ? 'text-[#f8f1e7]' : isToday ? 'text-[#c65f3c] font-semibold' : 'text-[#34251c]'}">
+                  {cell.date!.getDate()}
+                </span>
+                {#if dayBookings.length > 0}
+                  <div class="flex gap-0.5 mt-1">
+                    {#if hasPending}
+                      <span class="w-1.5 h-1.5 rounded-full bg-amber-500 {isSelected ? 'opacity-90' : ''}"></span>
+                    {/if}
+                    {#if hasConfirmed}
+                      <span class="w-1.5 h-1.5 rounded-full bg-green-600 {isSelected ? 'opacity-90' : ''}"></span>
+                    {/if}
+                  </div>
+                {/if}
+              </button>
+            {:else}
+              <div class="min-h-[36px]"></div>
+            {/if}
+          {/each}
+        </div>
+
+        <!-- Legend -->
+        <div class="flex gap-4 mt-3 text-[9px] text-[#5f4636]/60 uppercase tracking-wide">
+          <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-amber-500 inline-block"></span>Ожидает</span>
+          <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-green-600 inline-block"></span>Подтверждена</span>
+        </div>
+      {/if}
+    </div>
+
+    <!-- Selected day panel -->
+    <div class="flex-1 min-w-0">
+      {#if calSelected && calSelectedBookings.length > 0}
+        <p class="text-[10px] uppercase tracking-wide text-[#5f4636]/60 mb-3">
+          {new Date(calSelected + 'T00:00:00').toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })}
+        </p>
+        <div class="space-y-2">
+          {#each calSelectedBookings as b (b.id)}
+            <div class="border border-[#34251c]/10 bg-white p-3 {b.status === 'pending' ? 'border-l-4 border-l-amber-400' : ''}">
+              <div class="flex items-start justify-between gap-2">
+                <a href="/figurines/{b.figurineId}" target="_blank" rel="noopener"
+                   class="font-['Fraunces'] text-sm text-[#34251c] hover:text-[#c65f3c] hover:underline transition-colors">
+                  {b.figurineName} ↗
+                </a>
+                <span class="text-[9px] px-1.5 py-0.5 border rounded flex-shrink-0 {statusColor[b.status]}">{statusLabel[b.status]}</span>
+              </div>
+              <p class="text-xs text-[#5f4636] mt-0.5">{b.requesterName} · <a href="mailto:{b.requesterEmail}" class="text-[#c65f3c] hover:underline">{b.requesterEmail}</a></p>
+              <p class="text-[10px] text-[#5f4636]/60 mt-0.5">{formatDate(b.startsAt)} — {formatDate(b.endsAt)}</p>
+            </div>
+          {/each}
+        </div>
+      {:else if calSelected}
+        <p class="text-sm text-[#5f4636]/50 font-['Fraunces'] italic mt-6">Броней нет</p>
+      {:else}
+        <p class="text-sm text-[#5f4636]/40 font-['Fraunces'] italic mt-6">Выберите день</p>
+      {/if}
+    </div>
+  </div>
+
+  <!-- List view -->
+  {:else}
   <!-- Content -->
   <div class="flex-1 overflow-y-auto px-6 py-4">
     {#if loading}
@@ -249,9 +423,10 @@
       </div>
     {/if}
   </div>
+  {/if}
 
-  <!-- Pagination -->
-  {#if totalPages > 1 || total > 0}
+  <!-- Pagination (list mode only) -->
+  {#if !calMode && (totalPages > 1 || total > 0)}
     <div class="flex items-center justify-between px-6 py-3 border-t border-[#34251c]/10 flex-shrink-0 bg-[#fff9f0]">
       <span class="text-[11px] text-[#5f4636]/70">
         {#if total > 0}{(page - 1) * PER_PAGE + 1}–{Math.min(page * PER_PAGE, total)} из {total}{/if}

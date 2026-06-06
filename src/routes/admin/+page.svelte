@@ -22,15 +22,19 @@
     let loginForm = $state({ login: '', password: '' });
     let loginError = $state('');
     let loginLoading = $state(false);
+    let rememberMe = $state(false);
 
     async function handleLogin() {
         loginLoading = true;
         loginError = '';
         try {
             const token = await api.adminLogin(loginForm.login, loginForm.password);
-            // Save token so subsequent admin API calls use it
             localStorage.setItem('gotiga_api_key', token);
-            sessionStorage.setItem('gotiga_admin', '1');
+            if (rememberMe) {
+                localStorage.setItem('gotiga_admin_persist', '1');
+            } else {
+                sessionStorage.setItem('gotiga_admin', '1');
+            }
             isAuthenticated = true;
             await loadFigurines();
         } catch {
@@ -42,6 +46,7 @@
 
     function handleLogout() {
         sessionStorage.removeItem('gotiga_admin');
+        localStorage.removeItem('gotiga_admin_persist');
         isAuthenticated = false;
         selectedFigurine = null;
     }
@@ -314,10 +319,11 @@
     onMount(() => {
         // Check session
         const session = sessionStorage.getItem('gotiga_admin');
+        const persisted = localStorage.getItem('gotiga_admin_persist');
         if (isTauri) {
             isAuthenticated = true;
             loadFigurines();
-        } else if (session === '1' && localStorage.getItem('gotiga_api_key')) {
+        } else if ((session === '1' || persisted === '1') && localStorage.getItem('gotiga_api_key')) {
             isAuthenticated = true;
             loadFigurines();
         }
@@ -365,6 +371,11 @@
                     autocomplete="current-password"
                     class="w-full bg-[#fff9f0] border border-[#34251c]/20 p-3 text-sm text-[#34251c] focus:border-[#34251c]/60 outline-none transition-colors"
                 />
+            </label>
+
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+                <input type="checkbox" bind:checked={rememberMe} class="accent-[#34251c] w-3.5 h-3.5" />
+                <span class="text-[10px] uppercase tracking-wide text-[#5f4636]">{$t('adminLoginRemember')}</span>
             </label>
 
             {#if loginError}

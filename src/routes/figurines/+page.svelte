@@ -22,6 +22,7 @@
 
   const PAGE_SIZE = 12;
   let displayLimit = $state(PAGE_SIZE);
+  let batchOffset  = $state(0);
 
   // ── Derived filter data ────────────────────────────────────────
   type FigItem = import('$lib/types/api').FigurineListItem;
@@ -90,7 +91,13 @@
   $effect(() => {
     void mainFilter; void searchQuery; void sortMode; void yearFilter; void techniqueFilter;
     displayLimit = PAGE_SIZE;
+    batchOffset  = 0;
   });
+
+  function loadMore() {
+    batchOffset  = displayLimit;
+    displayLimit += PAGE_SIZE;
+  }
 
   let countText = $derived(() => {
     const total = (figurines as FigItem[]).length;
@@ -408,7 +415,7 @@
       {#if filtered.length > 0}
         <ul class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-8 gap-y-16">
           {#each visible as figurine, i (figurine.id)}
-            <li class="group perspective-container" in:fade={{ delay: i * 100, duration: 800 }}>
+            <li class="group perspective-container" in:fade={{ delay: Math.max(0, i - batchOffset) * 40, duration: 600 }}>
               <a
                 href="/figurines/{figurine.id}"
                 class="block w-full text-left relative focus:outline-none"
@@ -436,6 +443,13 @@
 
                   <div class="absolute top-2 left-2 w-4 h-4 border-t border-l border-[#34251c]/20 group-hover:border-[#34251c]/60 transition-colors pointer-events-none"></div>
                   <div class="absolute bottom-2 right-2 w-4 h-4 border-b border-r border-[#34251c]/20 group-hover:border-[#34251c]/60 transition-colors pointer-events-none"></div>
+
+                  <!-- New arrival badge — top-left, only if created within 21 days -->
+                  {#if figurine.createdAt && (Date.now() - new Date(figurine.createdAt).getTime()) < 21 * 86400_000}
+                    <span class="absolute top-3 left-3 z-10 px-1.5 py-0.5 bg-[#c65f3c] text-[#f8f1e7] font-['Instrument_Sans',system-ui,sans-serif] text-[7px] uppercase tracking-[0.14em] pointer-events-none select-none">
+                      {$t('archiveCardNew')}
+                    </span>
+                  {/if}
 
                   <!-- Heart button — always visible, top-right -->
                   <button
@@ -569,7 +583,7 @@
         {#if hasMore}
           <div class="mt-20 flex justify-center" in:fade>
             <button
-              onclick={() => displayLimit += PAGE_SIZE}
+              onclick={loadMore}
               class="group flex items-center gap-4 px-10 py-4 border border-[#34251c]/20 hover:border-[#34251c]/50 text-[#5f4636] hover:text-[#34251c] font-['Inter'] text-xs tracking-[0.08em] uppercase transition-all duration-500"
             >
               <span>{$t('archiveLoadMore')}</span>

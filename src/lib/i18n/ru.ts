@@ -67,6 +67,7 @@ export const ru: Record<TranslationKey, string> = {
   archiveNoEntry:        'Архив не содержит записи',
   archiveExhibit:        'Экспонат №',
   archiveLoadMore:       'Открыть следующих',
+  archiveCardNew:        'Новинка',
   archiveStatusAvailableLabel: 'В наличии',
   archiveStatusReservedLabel:  'Бронь',
   archiveStatusSoldLabel:      'Утрачено',
@@ -424,6 +425,7 @@ export const ru: Record<TranslationKey, string> = {
   adminLoginCheck:    'Проверка…',
   adminLoginEnter:    'Войти',
   adminLoginError:    'Неверный логин или пароль',
+  adminLoginRemember: 'Запомнить меня',
 
   // === ADMIN — REGISTRY (FIGURINES) ===
   adminRegistryHeading:    'Архив',

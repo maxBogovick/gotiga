@@ -65,6 +65,7 @@ export const en = {
   archiveNoEntry:        'Archive contains no record',
   archiveExhibit:        'Exhibit №',
   archiveLoadMore:       'Open next',
+  archiveCardNew:        'New',
   archiveStatusAvailableLabel: 'Available',
   archiveStatusReservedLabel:  'Reserved',
   archiveStatusSoldLabel:      'Lost',
@@ -422,6 +423,7 @@ export const en = {
   adminLoginCheck:    'Checking…',
   adminLoginEnter:    'Enter',
   adminLoginError:    'Invalid credentials',
+  adminLoginRemember: 'Remember me',
 
   // === ADMIN — REGISTRY (FIGURINES) ===
   adminRegistryHeading:    'Archive',
