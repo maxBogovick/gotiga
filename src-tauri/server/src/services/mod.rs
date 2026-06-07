@@ -562,6 +562,7 @@ impl AppService {
             figurine_name: b.figurine_name,
             requester_name: b.requester_name,
             requester_email: b.requester_email,
+            requester_phone: b.requester_phone,
             purpose: b.purpose,
             starts_at: b.starts_at.to_string(),
             ends_at: b.ends_at.to_string(),

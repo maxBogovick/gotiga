@@ -164,10 +164,18 @@
     el.style.transform  = '';
   }
 
+  function markViewed(id: string) {
+    if (viewedIds.has(id)) return;
+    const next = new Set(viewedIds);
+    next.add(id);
+    viewedIds = next;
+    try { localStorage.setItem('gotiga_viewed', JSON.stringify([...next])); } catch {}
+  }
+
   function openQuickView(e: MouseEvent, fig: FigurineListItem) {
     e.preventDefault();
     e.stopPropagation();
-    if (fig.faceImageUrl) lightboxFig = fig;
+    if (fig.faceImageUrl) { lightboxFig = fig; markViewed(fig.id); }
   }
 
   async function handleShare(e: MouseEvent, fig: FigurineListItem) {
@@ -438,6 +446,7 @@
                 class="block w-full text-left relative focus:outline-none"
                 aria-label="{figurine.name}"
                 data-sveltekit-preload-data="hover"
+                onclick={() => markViewed(figurine.id)}
               >
                 <div
                   class="relative aspect-[3/4] mb-6 overflow-hidden bg-[#fff9f0] border border-[#34251c]/10 shadow-2xl transition-all duration-700 group-hover:border-[#34251c]/30 group-hover:shadow-[0_0_30px_-10px_rgba(198,95,60,0.15)] group-hover:-translate-y-2"

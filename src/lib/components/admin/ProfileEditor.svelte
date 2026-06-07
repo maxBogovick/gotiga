@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api } from '$lib/api';
+  import { api, isTauri } from '$lib/api';
   import type { AuthorProfile } from '$lib/types/api';
   import { fade } from 'svelte/transition';
   import { t } from '$lib/i18n';
@@ -14,10 +14,15 @@
     telegram: null,
     vk: null,
     email: null,
+    website: null,
+    artstation: null,
+    pinterest: null,
+    youtube: null,
   });
 
   let isLoading = $state(true);
   let isSaving = $state(false);
+  let isUploadingPhoto = $state(false);
   let message = $state('');
   let messageType = $state<'ok' | 'err'>('ok');
 
@@ -33,6 +38,33 @@
       isLoading = false;
     }
   });
+
+  async function uploadPhoto() {
+    isUploadingPhoto = true;
+    try {
+      let fileOrPath: string | File;
+      if (isTauri) {
+        const { open } = await import('@tauri-apps/plugin-dialog');
+        const selected = await open({ multiple: false, filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp'] }] });
+        if (!selected || typeof selected !== 'string') return;
+        fileOrPath = selected;
+      } else {
+        fileOrPath = await new Promise<File>((resolve, reject) => {
+          const input = document.createElement('input');
+          input.type = 'file';
+          input.accept = 'image/jpeg,image/png,image/webp';
+          input.onchange = () => { const f = input.files?.[0]; f ? resolve(f) : reject(); };
+          input.click();
+        });
+      }
+      const imported = await api.importMediaWithVariants(fileOrPath, 'images');
+      profile.photoUrl = imported.url;
+    } catch {
+      // user cancelled or upload failed
+    } finally {
+      isUploadingPhoto = false;
+    }
+  }
 
   async function save() {
     isSaving = true;
@@ -114,19 +146,32 @@
         </div>
 
         <div>
-          <label for="profile-photo" class="block text-[10px] tracking-[0.06em] uppercase text-[#5f4636] mb-1">{$t('adminProfilePhoto')}</label>
-          <input
-            id="profile-photo"
-            bind:value={profile.photoUrl}
-            type="text"
-            placeholder="https://... or /static/images/photo.jpg"
-            class="admin-input w-full"
-          />
-          {#if profile.photoUrl}
-            <div class="mt-2 w-20 h-24 overflow-hidden border border-[#34251c]/10">
-              <img src={profile.photoUrl} alt="preview" class="w-full h-full object-cover opacity-70 grayscale" />
+          <label for="profile-photo-upload" class="block text-[10px] tracking-[0.06em] uppercase text-[#5f4636] mb-1">{$t('adminProfilePhoto')}</label>
+          <div class="flex items-start gap-3">
+            {#if profile.photoUrl}
+              <div class="w-20 h-24 overflow-hidden border border-[#34251c]/10 flex-shrink-0">
+                <img src={profile.photoUrl} alt="preview" class="w-full h-full object-cover opacity-70 grayscale" />
+              </div>
+            {/if}
+            <div class="flex flex-col gap-2 flex-1">
+              <button
+                type="button"
+                onclick={uploadPhoto}
+                id="profile-photo-upload"
+                disabled={isUploadingPhoto}
+                class="btn-gothic text-[10px] px-3 py-1.5 self-start disabled:opacity-60"
+              >
+                {isUploadingPhoto ? '…' : profile.photoUrl ? $t('adminChangePhoto') : $t('adminUploadPhoto')}
+              </button>
+              <input
+                id="profile-photo"
+                bind:value={profile.photoUrl}
+                type="text"
+                placeholder="или вставьте URL вручную"
+                class="admin-input w-full text-[10px] opacity-60"
+              />
             </div>
-          {/if}
+          </div>
         </div>
 
         <div class="border-t border-[#34251c]/10 pt-5">
@@ -156,6 +201,31 @@
             <div>
               <label for="profile-email" class="block text-[10px] tracking-wide text-[#5f4636] mb-1">Email</label>
               <input id="profile-email" bind:value={profile.email} type="email" placeholder="master@gotiga.art" class="admin-input w-full" />
+            </div>
+            <div>
+              <label for="profile-website" class="block text-[10px] tracking-wide text-[#5f4636] mb-1">Website</label>
+              <input id="profile-website" bind:value={profile.website} type="url" placeholder="https://..." class="admin-input w-full" />
+            </div>
+            <div>
+              <label for="profile-artstation" class="block text-[10px] tracking-wide text-[#5f4636] mb-1">ArtStation</label>
+              <div class="flex items-center">
+                <span class="text-[#5f4636] text-[10px] mr-1">artstation.com/</span>
+                <input id="profile-artstation" bind:value={profile.artstation} type="text" placeholder="username" class="admin-input flex-1" />
+              </div>
+            </div>
+            <div>
+              <label for="profile-pinterest" class="block text-[10px] tracking-wide text-[#5f4636] mb-1">Pinterest</label>
+              <div class="flex items-center">
+                <span class="text-[#5f4636] text-xs mr-1">@</span>
+                <input id="profile-pinterest" bind:value={profile.pinterest} type="text" placeholder="username" class="admin-input flex-1" />
+              </div>
+            </div>
+            <div>
+              <label for="profile-youtube" class="block text-[10px] tracking-wide text-[#5f4636] mb-1">YouTube</label>
+              <div class="flex items-center">
+                <span class="text-[#5f4636] text-[10px] mr-1">@</span>
+                <input id="profile-youtube" bind:value={profile.youtube} type="text" placeholder="channel" class="admin-input flex-1" />
+              </div>
             </div>
           </div>
         </div>

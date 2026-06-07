@@ -407,6 +407,7 @@ pub struct OrderRequest {
     pub figurine_name: String,
     pub requester_name: String,
     pub requester_email: String,
+    pub requester_phone: Option<String>,
     pub message: Option<String>,
     #[serde(default = "default_order_mode")]
     pub mode: OrderMode,
@@ -422,9 +423,11 @@ pub struct Order {
     pub figurine_name: String,
     pub requester_name: String,
     pub requester_email: String,
+    pub requester_phone: Option<String>,
     pub message: Option<String>,
     pub mode: OrderMode,
     pub status: OrderStatus,
+    pub admin_notes: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -515,6 +518,7 @@ pub struct Booking {
     pub figurine_name: String,
     pub requester_name: String,
     pub requester_email: String,
+    pub requester_phone: Option<String>,
     pub purpose: Option<String>,
     pub starts_at: chrono::NaiveDate,
     pub ends_at: chrono::NaiveDate,
@@ -563,6 +567,7 @@ pub struct BookingDto {
     pub figurine_name: String,
     pub requester_name: String,
     pub requester_email: String,
+    pub requester_phone: Option<String>,
     pub purpose: Option<String>,
     pub starts_at: String,
     pub ends_at: String,
@@ -611,6 +616,7 @@ pub struct CreateBookingRequest {
     pub figurine_name: String,
     pub requester_name: String,
     pub requester_email: String,
+    pub requester_phone: Option<String>,
     pub purpose: Option<String>,
     pub starts_at: String,
     pub ends_at: String,

@@ -25,6 +25,7 @@
 
   let name = $state('');
   let email = $state('');
+  let phone = $state('');
   let message = $state('');
   let isSubmitting = $state(false);
   let isSealed = $state(false);
@@ -38,6 +39,7 @@
         isSealed = false;
         name = '';
         email = '';
+        phone = '';
         message = '';
       }, 500);
     }
@@ -65,12 +67,15 @@
         figurineName,
         requesterName: name.trim() || '—',
         requesterEmail: email.trim(),
+        requesterPhone: phone.trim() || null,
         message: message.trim() || null,
         mode,
       });
 
       isSealed = true;
-      setTimeout(() => { close(); }, 3000);
+      if (mode !== 'notify' || relatedAvailable.length === 0) {
+        setTimeout(() => { close(); }, 3000);
+      }
     } catch {
       submitError = $t('orderSubmitError');
     } finally {
@@ -159,21 +164,19 @@
                       </div>
                     {/if}
 
-                    {#if mode === 'request'}
-                    <div class="relative group">
+                                    <div class="relative group">
                       <input
                               id="name"
                               type="text"
                               bind:value={name}
-                              required
+                              required={mode === 'request'}
                               class="peer w-full bg-transparent border-b-2 border-[#d8c6b1] py-2 text-2xl text-[#34251c] font-['Fraunces'] focus:outline-none focus:border-[#c65f3c] transition-colors placeholder-transparent"
                               placeholder={$t('orderNameLabel')}
                       />
                       <label for="name" class="absolute left-0 -top-4 text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase transition-all peer-placeholder-shown:text-base peer-placeholder-shown:top-2 peer-placeholder-shown:text-[#5f4636]/90 peer-focus:-top-4 peer-focus:text-xs peer-focus:text-[#c65f3c]">
-                          {$t('orderNameLabel')}
+                          {$t('orderNameLabel')}{mode !== 'request' ? ' (необязательно)' : ''}
                       </label>
                     </div>
-                    {/if}
 
                     <div class="relative group">
                       <input
@@ -186,6 +189,19 @@
                       />
                        <label for="email" class="absolute left-0 -top-4 text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase transition-all peer-placeholder-shown:text-base peer-placeholder-shown:top-2 peer-placeholder-shown:text-[#5f4636]/90 peer-focus:-top-4 peer-focus:text-xs peer-focus:text-[#c65f3c]">
                           {$t('orderEmailLabel')}
+                      </label>
+                    </div>
+
+                    <div class="relative group">
+                      <input
+                              id="phone"
+                              type="tel"
+                              bind:value={phone}
+                              class="peer w-full bg-transparent border-b-2 border-[#d8c6b1] py-2 text-xl italic font-serif text-[#34251c] focus:outline-none focus:border-[#c65f3c] transition-colors placeholder-transparent"
+                              placeholder={$t('orderPhonePlaceholder')}
+                      />
+                      <label for="phone" class="absolute left-0 -top-4 text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase transition-all peer-placeholder-shown:text-base peer-placeholder-shown:top-2 peer-placeholder-shown:text-[#5f4636]/90 peer-focus:-top-4 peer-focus:text-xs peer-focus:text-[#c65f3c]">
+                          {$t('orderPhoneLabel')}
                       </label>
                     </div>
 

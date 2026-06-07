@@ -28,6 +28,7 @@
   // ── Form state ────────────────────────────────────────────────────────────
   let name        = $state('');
   let email       = $state('');
+  let phone       = $state('');
   let purpose     = $state('');
   let startsAt    = $state(today);
   let endsAt      = $state(addDays(today, 1));
@@ -47,6 +48,7 @@
       isSealed     = false;
       name         = '';
       email        = '';
+      phone        = '';
       purpose      = '';
       startsAt     = today;
       endsAt       = addDays(today, 1);
@@ -80,6 +82,7 @@
         figurineName,
         requesterName:  name.trim(),
         requesterEmail: email.trim(),
+        requesterPhone: phone.trim() || null,
         purpose:        purpose.trim() || null,
         startsAt,
         endsAt,
@@ -241,6 +244,20 @@
                       required
                       class="w-full bg-transparent border-0 border-b-2 border-[#d8c6b1] rounded-none py-2 text-xl italic font-serif text-[#34251c] focus:outline-none focus:ring-0 focus:border-[#c65f3c] transition-colors"
                       placeholder=""
+                    />
+                  </div>
+
+                  <!-- Phone / Telegram -->
+                  <div class="space-y-1.5">
+                    <label for="b-phone" class="block text-[10px] font-['Inter'] font-bold tracking-[0.08em] text-[#5f4636] uppercase">
+                      {$t('orderPhoneLabel')}
+                    </label>
+                    <input
+                      id="b-phone"
+                      type="tel"
+                      bind:value={phone}
+                      class="w-full bg-transparent border-0 border-b-2 border-[#d8c6b1] rounded-none py-2 text-xl italic font-serif text-[#34251c] focus:outline-none focus:ring-0 focus:border-[#c65f3c] transition-colors"
+                      placeholder={$t('orderPhonePlaceholder')}
                     />
                   </div>
 

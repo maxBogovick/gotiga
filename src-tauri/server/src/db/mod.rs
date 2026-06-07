@@ -17,14 +17,15 @@ impl Repository {
 
     pub async fn save_order(&self, order: &crate::models::OrderRequest) -> Result<crate::models::Order> {
         let rec = sqlx::query_as::<_, crate::models::Order>(
-            "INSERT INTO orders (figurine_id, figurine_name, requester_name, requester_email, message, mode)
-             VALUES ($1, $2, $3, $4, $5, $6)
+            "INSERT INTO orders (figurine_id, figurine_name, requester_name, requester_email, requester_phone, message, mode)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
              RETURNING *"
         )
         .bind(&order.figurine_id)
         .bind(&order.figurine_name)
         .bind(&order.requester_name)
         .bind(&order.requester_email)
+        .bind(&order.requester_phone)
         .bind(&order.message)
         .bind(&order.mode)
         .fetch_one(&self.pg_pool)
@@ -646,12 +647,12 @@ impl Repository {
         let cancel_token = Self::generate_cancel_token();
 
         let rec = sqlx::query_as::<_, Booking>(
-            "INSERT INTO figurine_bookings (figurine_id, figurine_name, requester_name, requester_email, purpose, starts_at, ends_at, cancel_token)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *"
+            "INSERT INTO figurine_bookings (figurine_id, figurine_name, requester_name, requester_email, requester_phone, purpose, starts_at, ends_at, cancel_token)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *"
         )
         .bind(figurine_id).bind(&req.figurine_name).bind(&req.requester_name)
-        .bind(&req.requester_email).bind(&req.purpose).bind(starts_at).bind(ends_at)
-        .bind(&cancel_token)
+        .bind(&req.requester_email).bind(&req.requester_phone).bind(&req.purpose)
+        .bind(starts_at).bind(ends_at).bind(&cancel_token)
         .fetch_one(&self.pg_pool).await?;
         Ok(rec)
     }

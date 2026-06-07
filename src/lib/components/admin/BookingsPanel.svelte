@@ -305,7 +305,7 @@
                 </a>
                 <span class="text-[9px] px-1.5 py-0.5 border rounded flex-shrink-0 {statusColor[b.status]}">{statusLabel[b.status]}</span>
               </div>
-              <p class="text-xs text-[#5f4636] mt-0.5">{b.requesterName} · <a href="mailto:{b.requesterEmail}" class="text-[#c65f3c] hover:underline">{b.requesterEmail}</a></p>
+              <p class="text-xs text-[#5f4636] mt-0.5">{b.requesterName} · <a href="mailto:{b.requesterEmail}" class="text-[#c65f3c] hover:underline">{b.requesterEmail}</a>{#if b.requesterPhone} · {b.requesterPhone}{/if}</p>
               <p class="text-[10px] text-[#5f4636]/60 mt-0.5">{formatDate(b.startsAt)} — {formatDate(b.endsAt)}</p>
             </div>
           {/each}
@@ -337,11 +337,14 @@
               <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2 flex-wrap">
                   <a
-                    href="/figurines/{booking.figurineId}"
-                    target="_blank"
-                    rel="noopener"
-                    class="font-['Fraunces'] text-[#34251c] font-semibold hover:text-[#c65f3c] hover:underline transition-colors"
-                  >{booking.figurineName} ↗</a>
+  href="/figurines/{booking.figurineId}"
+  target="_blank"
+  rel="noopener noreferrer"
+  onclick={(e) => e.stopPropagation()}
+  class="font-['Fraunces'] text-[#34251c] font-semibold hover:text-[#c65f3c] hover:underline transition-colors"
+>
+  {booking.figurineName}
+</a>
                 </div>
                 <div class="flex items-center gap-2 mt-1">
                   <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="#5f4636" stroke-width="1.3">
@@ -363,6 +366,9 @@
             <div class="text-sm text-[#34251c] mb-1">
               <span class="font-medium">{booking.requesterName}</span> ·
               <a href="mailto:{booking.requesterEmail}" class="text-[#c65f3c] hover:underline">{booking.requesterEmail}</a>
+              {#if booking.requesterPhone}
+                · <span class="text-[#5f4636]">{booking.requesterPhone}</span>
+              {/if}
             </div>
 
             <!-- Purpose -->

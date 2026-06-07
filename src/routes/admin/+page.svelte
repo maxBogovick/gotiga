@@ -405,36 +405,61 @@
             <p class="text-[10px] tracking-[0.08em] text-[#5f4636] uppercase">{$t('adminSubtitle')}</p>
         </div>
 
-        <nav class="flex gap-1 bg-[#fff9f0] p-1 border border-[#34251c]/20 flex-wrap">
+        <nav class="flex gap-3 bg-[#fff9f0] p-1 border border-[#34251c]/20 items-stretch">
             {#each [
-              ['analytics', '📊 Аналитика'],
-              ['registry', $t('adminTabRegistry')],
-              ['home',     'Home'],
-              ['zones',    $t('adminTabZones')],
-              ['author',   $t('adminTabAuthor')],
-              ['workshop', $t('adminTabWorkshop')],
-              ['media',    'Media'],
-              ['orders',   'Orders'],
-              ['showings', $t('adminTabShowings')],
-              ['bookings', $t('adminTabBookings')],
-              ['releases', $t('adminTabReleases')],
-            ] as [tab, label]}
-                <button
-                    onclick={() => activeTab = tab as typeof activeTab}
-                    class="relative px-4 py-2 text-xs uppercase tracking-wide transition-colors {activeTab === tab ? 'bg-[#c65f3c]/12 text-[#34251c]' : 'text-[#5f4636] hover:text-[#34251c]'}"
-                >
-                  {label}
-                  {#if tab === 'orders' && newOrdersCount > 0 && activeTab !== 'orders'}
-                    <span class="absolute -top-1 -right-1 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold leading-none">
-                      {newOrdersCount > 99 ? '99+' : newOrdersCount}
-                    </span>
-                  {/if}
-                  {#if tab === 'bookings' && newBookingsCount > 0 && activeTab !== 'bookings'}
-                    <span class="absolute -top-1 -right-1 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-amber-500 text-white text-[9px] font-bold leading-none">
-                      {newBookingsCount > 99 ? '99+' : newBookingsCount}
-                    </span>
-                  {/if}
-                </button>
+              {
+                label: $t('adminGroupFigurines'),
+                tabs: [
+                  ['registry', $t('adminTabRegistry')],
+                  ['zones',    $t('adminTabZones')],
+                  ['releases', $t('adminTabReleases')],
+                ]
+              },
+              {
+                label: $t('adminGroupShowcase'),
+                tabs: [
+                  ['home',     'Home'],
+                  ['author',   $t('adminTabAuthor')],
+                  ['workshop', $t('adminTabWorkshop')],
+                  ['media',    'Media'],
+                ]
+              },
+              {
+                label: $t('adminGroupActivity'),
+                tabs: [
+                  ['orders',   'Orders'],
+                  ['showings', $t('adminTabShowings')],
+                  ['bookings', $t('adminTabBookings')],
+                  ['analytics', $t('adminTabAnalytics')],
+                ]
+              },
+            ] as group, gi}
+              {#if gi > 0}
+                <div class="w-px bg-[#34251c]/15 self-stretch my-1"></div>
+              {/if}
+              <div class="flex flex-col gap-0.5">
+                <span class="px-2 text-[8px] uppercase tracking-[0.12em] text-[#5f4636]/50 font-medium">{group.label}</span>
+                <div class="flex gap-0.5">
+                  {#each group.tabs as [tab, label]}
+                    <button
+                        onclick={() => activeTab = tab as typeof activeTab}
+                        class="relative px-2 py-1.5 text-xs uppercase tracking-wide transition-colors {activeTab === tab ? 'bg-[#c65f3c]/12 text-[#34251c]' : 'text-[#5f4636] hover:text-[#34251c]'}"
+                    >
+                      {label}
+                      {#if tab === 'orders' && newOrdersCount > 0 && activeTab !== 'orders'}
+                        <span class="absolute -top-1 -right-1 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold leading-none">
+                          {newOrdersCount > 99 ? '99+' : newOrdersCount}
+                        </span>
+                      {/if}
+                      {#if tab === 'bookings' && newBookingsCount > 0 && activeTab !== 'bookings'}
+                        <span class="absolute -top-1 -right-1 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-amber-500 text-white text-[9px] font-bold leading-none">
+                          {newBookingsCount > 99 ? '99+' : newBookingsCount}
+                        </span>
+                      {/if}
+                    </button>
+                  {/each}
+                </div>
+              </div>
             {/each}
         </nav>
 

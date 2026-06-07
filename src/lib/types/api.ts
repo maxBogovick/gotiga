@@ -105,6 +105,10 @@ export interface AuthorProfile {
     telegram: string | null;
     vk: string | null;
     email: string | null;
+    website: string | null;
+    artstation: string | null;
+    pinterest: string | null;
+    youtube: string | null;
 }
 
 export interface OrderRequest {
@@ -112,6 +116,7 @@ export interface OrderRequest {
     figurineName: string;
     requesterName: string;
     requesterEmail: string;
+    requesterPhone: string | null;
     message: string | null;
     mode: 'request' | 'question' | 'notify';
 }
@@ -122,9 +127,11 @@ export interface Order {
     figurineName: string;
     requesterName: string;
     requesterEmail: string;
+    requesterPhone: string | null;
     message: string | null;
     mode: 'request' | 'question' | 'notify';
     status: 'new' | 'seen' | 'replied';
+    adminNotes: string | null;
     createdAt: string;
 }
 
@@ -210,6 +217,7 @@ export interface BookingDto {
     figurineName: string;
     requesterName: string;
     requesterEmail: string;
+    requesterPhone: string | null;
     purpose: string | null;
     startsAt: string;
     endsAt: string;
@@ -243,6 +251,7 @@ export interface CreateBookingRequest {
     figurineName: string;
     requesterName: string;
     requesterEmail: string;
+    requesterPhone: string | null;
     purpose: string | null;
     startsAt: string;
     endsAt: string;

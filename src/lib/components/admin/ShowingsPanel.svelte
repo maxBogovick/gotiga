@@ -167,8 +167,9 @@
 
           <!-- Figurine -->
           <div>
-            <label class="block text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">Фигурка *</label>
+            <label for="sp-figurine" class="block text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">Фигурка *</label>
             <select
+              id="sp-figurine"
               bind:value={form.figurineId}
               required
               class="w-full border border-[#d8c6b1] bg-[#fff9f0] text-sm text-[#34251c] px-3 py-2 focus:outline-none focus:border-[#c65f3c]/50"
@@ -182,7 +183,7 @@
 
           <!-- Type -->
           <div>
-            <label class="block text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">Тип *</label>
+            <span class="block text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">Тип *</span>
             <div class="flex gap-3">
               {#each [['exhibition', 'Выставка'], ['private', 'Частный показ']] as [val, lbl]}
                 <label class="flex items-center gap-2 cursor-pointer">

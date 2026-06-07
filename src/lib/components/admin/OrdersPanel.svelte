@@ -166,6 +166,9 @@
                 <span class="font-medium">{order.requesterName}</span> ·
               {/if}
               <a href="mailto:{order.requesterEmail}" class="text-[#c65f3c] hover:underline">{order.requesterEmail}</a>
+              {#if order.requesterPhone}
+                · <span class="text-[#5f4636]">{order.requesterPhone}</span>
+              {/if}
             </div>
 
             <!-- Message -->

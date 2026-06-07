@@ -397,11 +397,11 @@ export const api = {
         return webFetch(`/admin/orders${qs}`, { headers: authHeaders() });
     },
 
-    async updateOrderStatus(id: string, status: 'new' | 'seen' | 'replied'): Promise<void> {
+    async updateOrderStatus(id: string, status: 'new' | 'seen' | 'replied', adminNotes?: string): Promise<void> {
         await webFetch(`/admin/orders/${id}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
-            body: JSON.stringify({ status }),
+            body: JSON.stringify({ status, adminNotes }),
         });
     },
 
