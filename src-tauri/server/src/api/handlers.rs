@@ -1,7 +1,7 @@
 use axum::{
     extract::{Path, State, Multipart, Query},
     Json,
-    http::StatusCode,
+    http::{StatusCode, HeaderMap},
     response::IntoResponse,
     body::Bytes,
 };
@@ -10,6 +10,12 @@ use crate::config::Config;
 use crate::models::*;
 use crate::error::{Result, AppError};
 use uuid::Uuid;
+
+fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    headers.get("Authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+}
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use image::codecs::jpeg::JpegEncoder;
@@ -689,5 +695,155 @@ pub async fn update_booking_status(
     Json(body): Json<crate::models::UpdateBookingStatusRequest>,
 ) -> Result<StatusCode> {
     service.update_booking_status(id, body.status, body.admin_notes).await?;
+    Ok(StatusCode::OK)
+}
+
+// ============================================================
+// USER AUTH HANDLERS
+// ============================================================
+
+pub async fn user_register(
+    State(service): State<AppService>,
+    Json(body): Json<RegisterRequest>,
+) -> Result<Json<serde_json::Value>> {
+    let user = service.register_user(&body).await?;
+    Ok(Json(serde_json::json!({ "user": user })))
+}
+
+pub async fn user_login_challenge(
+    State(service): State<AppService>,
+    Json(body): Json<LoginChallengeRequest>,
+) -> Result<Json<LoginChallengeResponse>> {
+    let response = service.login_challenge(&body.email).await?;
+    Ok(Json(response))
+}
+
+pub async fn user_login_verify(
+    State(service): State<AppService>,
+    Json(body): Json<LoginVerifyRequest>,
+) -> Result<Json<LoginVerifyResponse>> {
+    let response = service.login_verify(&body).await?;
+    Ok(Json(response))
+}
+
+pub async fn user_logout(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<StatusCode> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    service.logout(token).await?;
+    Ok(StatusCode::OK)
+}
+
+pub async fn user_me(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<Json<UserDto>> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
+    Ok(Json(UserDto::from(&user)))
+}
+
+pub async fn user_link_bookings(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(body): Json<LinkBookingsRequest>,
+) -> Result<Json<serde_json::Value>> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
+    let linked = service.link_bookings(user.id, &body.cancel_tokens).await?;
+    Ok(Json(serde_json::json!({ "linked": linked })))
+}
+
+pub async fn user_profile_bookings(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<UserBookingDto>>> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
+    let bookings = service.get_user_bookings(user.id).await?;
+    Ok(Json(bookings))
+}
+
+pub async fn user_profile_orders(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<UserOrderDto>>> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
+    let orders = service.get_user_orders(user.id).await?;
+    Ok(Json(orders))
+}
+
+// ============================================================
+// ADMIN USER MANAGEMENT HANDLERS
+// ============================================================
+
+pub async fn admin_list_users(
+    State(service): State<AppService>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>> {
+    let search = params.get("search").map(|s| s.as_str());
+    let page = params.get("page").and_then(|p| p.parse::<i64>().ok()).unwrap_or(1).max(1);
+    let per_page = params.get("perPage").and_then(|p| p.parse::<i64>().ok()).unwrap_or(20).clamp(1, 100);
+    let (items, total) = service.admin_list_users(search, page, per_page).await?;
+    Ok(Json(serde_json::json!({ "items": items, "total": total, "page": page, "perPage": per_page })))
+}
+
+pub async fn admin_get_user(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<AdminUserDetail>> {
+    let detail = service.admin_get_user_detail(id).await?;
+    Ok(Json(detail))
+}
+
+pub async fn admin_revoke_user_sessions(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>> {
+    let revoked = service.admin_revoke_user_sessions(id).await?;
+    Ok(Json(serde_json::json!({ "revoked": revoked })))
+}
+
+pub async fn admin_update_user_notes(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<UpdateUserAdminNotesRequest>,
+) -> Result<StatusCode> {
+    service.admin_update_user_notes(id, body.admin_notes.as_deref()).await?;
+    Ok(StatusCode::OK)
+}
+
+pub async fn admin_set_user_blocked(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<SetUserBlockedRequest>,
+) -> Result<StatusCode> {
+    service.admin_set_user_blocked(id, body.blocked).await?;
+    Ok(StatusCode::OK)
+}
+
+pub async fn admin_generate_reset_token(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<ResetTokenResponse>> {
+    let resp = service.admin_generate_reset_token(id).await?;
+    Ok(Json(resp))
+}
+
+pub async fn validate_reset_token(
+    State(service): State<AppService>,
+    Path(token): Path<String>,
+) -> Result<Json<UserDto>> {
+    let user = service.validate_reset_token(&token).await?;
+    Ok(Json(user))
+}
+
+pub async fn apply_password_reset(
+    State(service): State<AppService>,
+    Json(body): Json<ApplyPasswordResetRequest>,
+) -> Result<StatusCode> {
+    service.apply_password_reset(&body).await?;
     Ok(StatusCode::OK)
 }

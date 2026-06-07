@@ -267,3 +267,96 @@ export interface SaveShowingRequest {
     venue: string | null;
     notes: string | null;
 }
+
+// ── User auth ────────────────────────────────────────────────
+
+export interface UserDto {
+    id: string;
+    email: string;
+    displayName: string;
+}
+
+export interface ChallengeIconDto {
+    token: string;
+    iconId: string;
+}
+
+export interface ChallengeStepDto {
+    category: string;
+    icons: ChallengeIconDto[];
+}
+
+export interface LoginChallengeResponse {
+    challengeId: string;
+    steps: ChallengeStepDto[];
+}
+
+export interface LoginVerifyResponse {
+    sessionToken: string;
+    user: UserDto;
+}
+
+export interface UserBookingDto {
+    id: string;
+    figurineId: string;
+    figurineName: string;
+    startsAt: string;
+    endsAt: string;
+    status: BookingStatus;
+    createdAt: string;
+}
+
+export interface UserOrderDto {
+    id: string;
+    figurineId: string;
+    figurineName: string;
+    mode: 'request' | 'question' | 'notify';
+    status: 'new' | 'seen' | 'replied';
+    createdAt: string;
+}
+
+// ── Admin user management ────────────────────────────────────
+
+export interface AdminUserListItem {
+    id: string;
+    email: string;
+    displayName: string;
+    adminNotes: string | null;
+    isBlocked: boolean;
+    createdAt: string;
+    bookingCount: number;
+    orderCount: number;
+}
+
+export interface AdminSessionDto {
+    id: string;
+    createdAt: string;
+    expiresAt: string;
+    isActive: boolean;
+}
+
+export interface AdminUserDetail {
+    id: string;
+    email: string;
+    displayName: string;
+    adminNotes: string | null;
+    isBlocked: boolean;
+    createdAt: string;
+    bookings: UserBookingDto[];
+    orders: UserOrderDto[];
+    sessions: AdminSessionDto[];
+    recentFailures: number;
+}
+
+export interface ResetTokenResponse {
+    token: string;
+    expiresAt: string;
+}
+
+export interface AdminUsersPage {
+    items: AdminUserListItem[];
+    total: number;
+    page: number;
+    perPage: number;
+}
+

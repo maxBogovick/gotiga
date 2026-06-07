@@ -1,12 +1,14 @@
 use crate::config::Config;
 use crate::db::Repository;
-use crate::error::Result;
+use crate::error::{Result, AppError};
 use crate::models::*;
 use reqwest::Client;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use uuid::Uuid;
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
+use argon2::password_hash::{SaltString, rand_core::OsRng};
 
 #[derive(Clone)]
 pub struct AppService {
@@ -812,4 +814,313 @@ fn escape_markdown(s: &str) -> String {
         acc.push(c);
         acc
     })
+}
+
+// ============================================================
+// AUTH CONSTANTS
+// ============================================================
+
+const CATEGORIES: [&str; 4] = ["animals", "dishes", "seasons", "colors"];
+
+const ICONS: &[(&str, &[&str])] = &[
+    ("animals", &["wolf", "raven", "fox", "owl", "snake", "deer", "bat", "cat"]),
+    ("dishes",  &["mushroom", "apple", "bread", "cup", "fish", "berry", "honey", "herb"]),
+    ("seasons", &["snowflake", "bare_tree", "sprout", "rain", "sun", "wheat", "leaf", "acorn"]),
+    ("colors",  &["red", "blue", "green", "amber", "violet", "copper", "black", "ivory"]),
+];
+
+fn valid_icon_ids(category: &str) -> Option<&'static [&'static str]> {
+    ICONS.iter().find(|(c, _)| *c == category).map(|(_, ids)| *ids)
+}
+
+fn build_hash_input(selections: &[String; 4]) -> String {
+    selections.iter().enumerate()
+        .map(|(i, id)| format!("{}:{}", CATEGORIES[i], id))
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+fn hash_password(input: &str) -> std::result::Result<String, argon2::password_hash::Error> {
+    let salt = SaltString::generate(&mut OsRng);
+    let argon2 = Argon2::default();
+    let hash = argon2.hash_password(input.as_bytes(), &salt)?;
+    Ok(hash.to_string())
+}
+
+fn verify_password(input: &str, hash: &str) -> bool {
+    let parsed = match PasswordHash::new(hash) {
+        Ok(h) => h,
+        Err(_) => return false,
+    };
+    Argon2::default().verify_password(input.as_bytes(), &parsed).is_ok()
+}
+
+// ============================================================
+// AppService — AUTH METHODS
+// ============================================================
+
+impl AppService {
+    pub async fn register_user(&self, req: &RegisterRequest) -> Result<UserDto> {
+        if !req.email.contains('@') {
+            return Err(AppError::BadRequest("Invalid email".into()));
+        }
+        if req.display_name.trim().is_empty() {
+            return Err(AppError::BadRequest("Display name required".into()));
+        }
+
+        for (i, sel) in req.selections.iter().enumerate() {
+            let valid = valid_icon_ids(CATEGORIES[i])
+                .ok_or_else(|| AppError::Internal("Unknown category".into()))?;
+            if !valid.contains(&sel.as_str()) {
+                return Err(AppError::BadRequest(format!("Invalid selection for {}", CATEGORIES[i])));
+            }
+        }
+
+        let hash_input = build_hash_input(&req.selections);
+        let hash = hash_password(&hash_input)
+            .map_err(|e| AppError::Internal(format!("Hash error: {e}")))?;
+
+        let user = self.repo.create_user(&req.email.to_lowercase(), &req.display_name, &hash).await?;
+        Ok(UserDto::from(&user))
+    }
+
+    pub async fn login_challenge(&self, email: &str) -> Result<LoginChallengeResponse> {
+        use rand::seq::SliceRandom;
+        let email_lower = email.to_lowercase();
+
+        // Fail fast: unknown email → no challenge issued, no DB row wasted.
+        // Returns the same Unauthorized as a wrong password to prevent enumeration
+        // at the HTTP level (both cases → challenge never appears).
+        match self.repo.find_user_by_email(&email_lower).await? {
+            None => return Err(AppError::Unauthorized),
+            Some(u) if u.is_blocked => return Err(AppError::BadRequest("Account is blocked.".into())),
+            _ => {}
+        }
+
+        // Check lockout before issuing challenge
+        let failures = self.repo.count_recent_failures(&email_lower, 15).await?;
+        if failures >= 5 {
+            return Err(AppError::BadRequest("Too many failed attempts. Try again in 15 minutes.".into()));
+        }
+
+        // Build tokens synchronously in a block so ThreadRng (!Send) is dropped before any .await
+        let (all_tokens, steps) = {
+            let mut rng = rand::thread_rng();
+            let mut all_tokens: Vec<ChallengeToken> = Vec::new();
+            let mut steps: Vec<ChallengeStepDto> = Vec::new();
+
+            for (category, icon_ids) in ICONS {
+                let mut icons_shuffled: Vec<&&str> = icon_ids.iter().collect();
+                icons_shuffled.shuffle(&mut rng);
+
+                let mut step_icons: Vec<ChallengeIconDto> = Vec::new();
+                for icon_id in icons_shuffled {
+                    let token = Uuid::new_v4().to_string();
+                    all_tokens.push(ChallengeToken {
+                        token: token.clone(),
+                        category: category.to_string(),
+                        icon_id: icon_id.to_string(),
+                    });
+                    step_icons.push(ChallengeIconDto {
+                        token,
+                        icon_id: icon_id.to_string(),
+                    });
+                }
+                steps.push(ChallengeStepDto {
+                    category: category.to_string(),
+                    icons: step_icons,
+                });
+            }
+            (all_tokens, steps)
+        }; // rng dropped here, before any .await
+
+        let tokens_json = serde_json::to_value(&all_tokens)
+            .map_err(|e| AppError::Internal(format!("Serialize error: {e}")))?;
+
+        let challenge_id = self.repo.save_challenge(&email_lower, &tokens_json).await?;
+
+        Ok(LoginChallengeResponse {
+            challenge_id: challenge_id.to_string(),
+            steps,
+        })
+    }
+
+    pub async fn login_verify(&self, req: &LoginVerifyRequest) -> Result<LoginVerifyResponse> {
+        let challenge_id = Uuid::parse_str(&req.challenge_id)
+            .map_err(|_| AppError::BadRequest("Invalid challenge ID".into()))?;
+
+        let (email, tokens_json) = self.repo.get_challenge(challenge_id).await?
+            .ok_or_else(|| AppError::BadRequest("Challenge expired or not found".into()))?;
+
+        // Check lockout
+        let failures = self.repo.count_recent_failures(&email, 15).await?;
+        if failures >= 5 {
+            return Err(AppError::BadRequest("Too many failed attempts. Try again in 15 minutes.".into()));
+        }
+
+        let token_map: Vec<ChallengeToken> = serde_json::from_value(tokens_json)
+            .map_err(|e| AppError::Internal(format!("Deserialize error: {e}")))?;
+
+        // Resolve each submitted token to icon_id, in category order
+        let mut resolved_selections: [String; 4] = Default::default();
+        for (i, submitted_token) in req.tokens.iter().enumerate() {
+            let expected_category = CATEGORIES[i];
+            let entry = token_map.iter()
+                .find(|t| &t.token == submitted_token && t.category == expected_category)
+                .ok_or_else(|| AppError::BadRequest("Invalid selection".into()))?;
+            resolved_selections[i] = entry.icon_id.clone();
+        }
+
+        // Mark challenge as used before verifying (prevent replay regardless of outcome)
+        self.repo.mark_challenge_used(challenge_id).await?;
+
+        let user = match self.repo.find_user_by_email(&email).await? {
+            Some(u) => u,
+            None => {
+                self.repo.record_attempt(&email, false).await?;
+                return Err(AppError::Unauthorized);
+            }
+        };
+
+        let hash_input = build_hash_input(&resolved_selections);
+        if !verify_password(&hash_input, &user.visual_password_hash) {
+            self.repo.record_attempt(&email, false).await?;
+            return Err(AppError::Unauthorized);
+        }
+
+        // record_attempt failure must not abort a successful login — use .ok()
+        self.repo.record_attempt(&email, true).await.ok();
+
+        // Create 30-day session; prune expired sessions for this user at the same time
+        let session_token = Uuid::new_v4().to_string();
+        let expires_at = chrono::Utc::now() + chrono::Duration::days(30);
+        self.repo.create_session(user.id, &session_token, expires_at).await?;
+        self.repo.prune_expired_sessions(user.id).await.ok();
+
+        Ok(LoginVerifyResponse {
+            session_token,
+            user: UserDto::from(&user),
+        })
+    }
+
+    pub async fn get_user_from_session(&self, token: &str) -> Result<User> {
+        self.repo.get_session_user(token).await?
+            .ok_or(AppError::Unauthorized)
+    }
+
+    pub async fn logout(&self, token: &str) -> Result<()> {
+        self.repo.delete_session(token).await
+    }
+
+    pub async fn link_bookings(&self, user_id: Uuid, cancel_tokens: &[String]) -> Result<usize> {
+        self.repo.link_bookings_to_user(user_id, cancel_tokens).await
+    }
+
+    pub async fn get_user_bookings(&self, user_id: Uuid) -> Result<Vec<UserBookingDto>> {
+        let bookings = self.repo.get_user_bookings(user_id).await?;
+        Ok(bookings.into_iter().map(|b| UserBookingDto {
+            id: b.id.to_string(),
+            figurine_id: b.figurine_id.to_string(),
+            figurine_name: b.figurine_name,
+            starts_at: b.starts_at.to_string(),
+            ends_at: b.ends_at.to_string(),
+            status: b.status,
+            created_at: b.created_at.to_rfc3339(),
+        }).collect())
+    }
+
+    pub async fn get_user_orders(&self, user_id: Uuid) -> Result<Vec<UserOrderDto>> {
+        let orders = self.repo.get_user_orders(user_id).await?;
+        Ok(orders.into_iter().map(|o| UserOrderDto {
+            id: o.id.to_string(),
+            figurine_id: o.figurine_id,
+            figurine_name: o.figurine_name,
+            mode: o.mode,
+            status: o.status,
+            created_at: o.created_at.to_rfc3339(),
+        }).collect())
+    }
+
+    // === ADMIN USER MANAGEMENT ===
+
+    pub async fn admin_list_users(&self, search: Option<&str>, page: i64, per_page: i64) -> Result<(Vec<AdminUserListItem>, i64)> {
+        let offset = (page - 1) * per_page;
+        self.repo.admin_list_users(search, per_page, offset).await
+    }
+
+    pub async fn admin_get_user_detail(&self, user_id: Uuid) -> Result<AdminUserDetail> {
+        let user = self.repo.find_user_by_id(user_id).await?
+            .ok_or_else(|| AppError::NotFound(format!("User {} not found", user_id)))?;
+
+        let bookings = self.get_user_bookings(user_id).await?;
+        let orders = self.get_user_orders(user_id).await?;
+        let sessions = self.repo.admin_get_user_sessions(user_id).await?;
+        let recent_failures = self.repo.count_recent_failures(&user.email, 24 * 60).await?;
+
+        Ok(AdminUserDetail {
+            id: user.id.to_string(),
+            email: user.email,
+            display_name: user.display_name,
+            admin_notes: user.admin_notes,
+            created_at: user.created_at.to_rfc3339(),
+            bookings,
+            orders,
+            sessions,
+            recent_failures,
+        })
+    }
+
+    pub async fn admin_revoke_user_sessions(&self, user_id: Uuid) -> Result<u64> {
+        self.repo.admin_revoke_all_sessions(user_id).await
+    }
+
+    pub async fn admin_update_user_notes(&self, user_id: Uuid, notes: Option<&str>) -> Result<()> {
+        self.repo.admin_update_user_notes(user_id, notes).await
+    }
+
+    pub async fn admin_set_user_blocked(&self, user_id: Uuid, blocked: bool) -> Result<()> {
+        // Revoke all active sessions when blocking so the user is immediately logged out
+        if blocked {
+            self.repo.admin_revoke_all_sessions(user_id).await?;
+        }
+        self.repo.admin_set_user_blocked(user_id, blocked).await
+    }
+
+    pub async fn admin_generate_reset_token(&self, user_id: Uuid) -> Result<ResetTokenResponse> {
+        // Verify user exists
+        self.repo.find_user_by_id(user_id).await?
+            .ok_or_else(|| AppError::NotFound(format!("User {} not found", user_id)))?;
+
+        let token = Uuid::new_v4().to_string();
+        let expires_at = chrono::Utc::now() + chrono::Duration::hours(48);
+        self.repo.admin_create_reset_token(user_id, &token, expires_at).await?;
+        Ok(ResetTokenResponse { token, expires_at: expires_at.to_rfc3339() })
+    }
+
+    pub async fn validate_reset_token(&self, token: &str) -> Result<UserDto> {
+        let user = self.repo.find_user_by_reset_token(token).await?
+            .ok_or_else(|| AppError::BadRequest("Reset link is invalid or has expired.".into()))?;
+        Ok(UserDto::from(&user))
+    }
+
+    pub async fn apply_password_reset(&self, req: &ApplyPasswordResetRequest) -> Result<()> {
+        let user = self.repo.find_user_by_reset_token(&req.token).await?
+            .ok_or_else(|| AppError::BadRequest("Reset link is invalid or has expired.".into()))?;
+
+        for (i, sel) in req.selections.iter().enumerate() {
+            let valid = valid_icon_ids(CATEGORIES[i])
+                .ok_or_else(|| AppError::Internal("Unknown category".into()))?;
+            if !valid.contains(&sel.as_str()) {
+                return Err(AppError::BadRequest(format!("Invalid selection for {}", CATEGORIES[i])));
+            }
+        }
+
+        let hash_input = build_hash_input(&req.selections);
+        let new_hash = hash_password(&hash_input)
+            .map_err(|e| AppError::Internal(format!("Hash error: {e}")))?;
+
+        // Invalidate all existing sessions so old password can't be used
+        self.repo.admin_revoke_all_sessions(user.id).await?;
+        self.repo.apply_password_reset(user.id, &new_hash).await
+    }
 }

@@ -30,8 +30,10 @@ async fn main() -> anyhow::Result<()> {
         .await
         .expect("Failed to connect to Postgres");
 
-    // 4. Run Migrations
-    sqlx::migrate!("./migrations/")
+    // 4. Run Migrations (runtime path — picks up new .sql files without recompilation)
+    sqlx::migrate::Migrator::new(std::path::Path::new("./migrations"))
+        .await
+        .expect("Failed to load migrations")
         .run(&pool)
         .await
         .expect("Failed to run migrations");

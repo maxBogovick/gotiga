@@ -18,6 +18,14 @@ import type {
     BookingsPage,
     ShowingDto,
     SaveShowingRequest,
+    LoginChallengeResponse,
+    LoginVerifyResponse,
+    UserDto,
+    UserBookingDto,
+    UserOrderDto,
+    AdminUsersPage,
+    AdminUserDetail,
+    ResetTokenResponse,
 } from './types/api';
 
 export type { AppSettings };
@@ -470,6 +478,122 @@ export const api = {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify({ status, adminNotes: adminNotes ?? null }),
+        });
+    },
+
+    // === USER AUTH ===
+
+    async userRegister(email: string, displayName: string, selections: [string, string, string, string]): Promise<{ user: UserDto }> {
+        return webFetch('/auth/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, displayName, selections }),
+        });
+    },
+
+    async userLoginChallenge(email: string): Promise<LoginChallengeResponse> {
+        return webFetch('/auth/login/challenge', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email }),
+        });
+    },
+
+    async userLoginVerify(challengeId: string, tokens: [string, string, string, string]): Promise<LoginVerifyResponse> {
+        return webFetch('/auth/login/verify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ challengeId, tokens }),
+        });
+    },
+
+    async userLogout(sessionToken: string): Promise<void> {
+        await webFetch('/auth/logout', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    async userMe(sessionToken: string): Promise<UserDto> {
+        return webFetch('/auth/me', {
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    async userLinkBookings(sessionToken: string, cancelTokens: string[]): Promise<{ linked: number }> {
+        return webFetch('/auth/link-bookings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
+            body: JSON.stringify({ cancelTokens }),
+        });
+    },
+
+    async userProfileBookings(sessionToken: string): Promise<UserBookingDto[]> {
+        return webFetch('/profile/bookings', {
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    async userProfileOrders(sessionToken: string): Promise<UserOrderDto[]> {
+        return webFetch('/profile/orders', {
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    // === ADMIN USER MANAGEMENT ===
+
+    async adminListUsers(opts?: { search?: string; page?: number; perPage?: number }): Promise<AdminUsersPage> {
+        const p = new URLSearchParams();
+        if (opts?.search)   p.set('search',   opts.search);
+        if (opts?.page)     p.set('page',     String(opts.page));
+        if (opts?.perPage)  p.set('perPage',  String(opts.perPage));
+        const qs = p.toString() ? `?${p}` : '';
+        return webFetch(`/admin/users${qs}`, { headers: authHeaders() });
+    },
+
+    async adminGetUser(id: string): Promise<AdminUserDetail> {
+        return webFetch(`/admin/users/${id}`, { headers: authHeaders() });
+    },
+
+    async adminRevokeUserSessions(id: string): Promise<{ revoked: number }> {
+        return webFetch(`/admin/users/${id}/sessions`, {
+            method: 'DELETE',
+            headers: authHeaders(),
+        });
+    },
+
+    async adminUpdateUserNotes(id: string, adminNotes: string | null): Promise<void> {
+        await webFetch(`/admin/users/${id}/notes`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ adminNotes }),
+        });
+    },
+
+    async adminSetUserBlocked(id: string, blocked: boolean): Promise<void> {
+        await webFetch(`/admin/users/${id}/block`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ blocked }),
+        });
+    },
+
+    async adminGenerateResetToken(id: string): Promise<ResetTokenResponse> {
+        return webFetch(`/admin/users/${id}/reset-token`, {
+            method: 'POST',
+            headers: authHeaders(),
+        });
+    },
+
+    async validateResetToken(token: string): Promise<{ id: string; email: string; displayName: string }> {
+        return webFetch(`/auth/reset-token/${token}`);
+    },
+
+    async applyPasswordReset(token: string, selections: [string, string, string, string]): Promise<void> {
+        await webFetch('/auth/reset-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token, selections }),
         });
     },
 };

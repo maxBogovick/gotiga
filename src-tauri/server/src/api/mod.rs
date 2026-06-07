@@ -115,6 +115,37 @@ pub fn router(service: AppService, config: Config) -> Router {
         .route("/admin/bookings/:id/status",
             put(handlers::update_booking_status)
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        // === USER AUTH ===
+        .route("/auth/register",          post(handlers::user_register))
+        .route("/auth/login/challenge",   post(handlers::user_login_challenge))
+        .route("/auth/login/verify",      post(handlers::user_login_verify))
+        .route("/auth/logout",            post(handlers::user_logout))
+        .route("/auth/me",                get(handlers::user_me))
+        .route("/auth/link-bookings",     post(handlers::user_link_bookings))
+        .route("/profile/bookings",       get(handlers::user_profile_bookings))
+        .route("/profile/orders",         get(handlers::user_profile_orders))
+        // === ADMIN USER MANAGEMENT ===
+        .route("/admin/users",
+            get(handlers::admin_list_users)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        .route("/admin/users/:id",
+            get(handlers::admin_get_user)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        .route("/admin/users/:id/sessions",
+            delete(handlers::admin_revoke_user_sessions)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        .route("/admin/users/:id/notes",
+            patch(handlers::admin_update_user_notes)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        .route("/admin/users/:id/block",
+            patch(handlers::admin_set_user_blocked)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        .route("/admin/users/:id/reset-token",
+            post(handlers::admin_generate_reset_token)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        // === PASSWORD RESET (PUBLIC) ===
+        .route("/auth/reset-token/:token",  get(handlers::validate_reset_token))
+        .route("/auth/reset-password",      post(handlers::apply_password_reset))
         // === RELEASES ===
         .route("/admin/releases",
             get(handlers::list_releases)

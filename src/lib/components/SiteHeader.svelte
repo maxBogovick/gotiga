@@ -1,10 +1,13 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/state';
+  import { goto } from '$app/navigation';
   import LangSwitcher from '$lib/components/LangSwitcher.svelte';
   import { allClaims } from '$lib/stores/all-claims.svelte';
+  import { authStore } from '$lib/stores/auth.svelte';
   import { t } from '$lib/i18n';
   import { fade } from 'svelte/transition';
+  import { api } from '$lib/api';
 
   const links = [
     { href: '/figurines', label: 'Archive' },
@@ -34,19 +37,53 @@
     }
   }
 
-  onMount(() => {
+  let count = $derived(allClaims.activeCount);
+
+  // User dropdown
+  let userMenuOpen = $state(false);
+  let userMenuRef = $state<HTMLElement | null>(null);
+
+  function toggleUserMenu() { userMenuOpen = !userMenuOpen; }
+
+  function handleUserOutside(e: MouseEvent) {
+    if (userMenuOpen && userMenuRef && !userMenuRef.contains(e.target as Node)) {
+      userMenuOpen = false;
+    }
+  }
+
+  async function handleLogout() {
+    userMenuOpen = false;
+    const token = authStore.token;
+    if (token) {
+      try { await api.userLogout(token); } catch { /* ok */ }
+    }
+    authStore.clearSession();
+    goto('/');
+  }
+
+  onMount(async () => {
     allClaims.load();
     allClaims.verify();
     allClaims.startPolling();
     document.addEventListener('click', handleOutside, { capture: true });
+    document.addEventListener('click', handleUserOutside, { capture: true });
+
+    // Restore user session from stored token
+    if (!authStore.isLoggedIn && authStore.token) {
+      try {
+        const user = await api.userMe(authStore.token);
+        authStore.user = user;
+      } catch {
+        authStore.clearSession();
+      }
+    }
   });
 
   onDestroy(() => {
     allClaims.stopPolling();
     document.removeEventListener('click', handleOutside, { capture: true });
+    document.removeEventListener('click', handleUserOutside, { capture: true });
   });
-
-  let count = $derived(allClaims.activeCount);
 </script>
 
 <header class="site-header">
@@ -139,6 +176,42 @@
               {$t('bookingsViewAll')} →
             </a>
           </div>
+        </div>
+      {/if}
+    </div>
+
+    <!-- User button -->
+    <div class="user-anchor" bind:this={userMenuRef}>
+      <button
+        class="user-btn"
+        class:logged-in={authStore.isLoggedIn}
+        class:is-open={userMenuOpen}
+        onclick={authStore.isLoggedIn ? toggleUserMenu : () => goto('/login')}
+        aria-label={authStore.isLoggedIn ? authStore.user?.displayName : $t('authLogin')}
+        title={authStore.isLoggedIn ? authStore.user?.displayName : $t('authLogin')}
+      >
+        {#if authStore.isLoggedIn}
+          <span class="user-initial">{(authStore.user?.displayName ?? '?')[0].toUpperCase()}</span>
+        {:else}
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+            <circle cx="7" cy="4.5" r="2.5" stroke="currentColor" stroke-width="1"/>
+            <path d="M1.5 13c0-3 2.5-4.5 5.5-4.5S12 10 12 13" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+          </svg>
+        {/if}
+      </button>
+
+      {#if userMenuOpen && authStore.isLoggedIn}
+        <div class="user-panel" transition:fade={{ duration: 150 }}>
+          <div class="user-panel-head">
+            <span class="user-panel-name">{authStore.user?.displayName}</span>
+            <span class="user-panel-email">{authStore.user?.email}</span>
+          </div>
+          <a href="/profile" class="user-panel-link" onclick={() => userMenuOpen = false}>
+            {$t('profileTitle')} →
+          </a>
+          <button class="user-panel-logout" onclick={handleLogout}>
+            {$t('profileLogout')}
+          </button>
         </div>
       {/if}
     </div>
@@ -450,6 +523,107 @@
     transition: color 0.2s;
   }
   .panel-view-all:hover { color: #c65f3c; }
+
+  /* ── User button ── */
+  .user-anchor { position: relative; }
+
+  .user-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 50%;
+    padding: 0;
+    cursor: pointer;
+    color: var(--muted2);
+    transition: color 0.25s, border-color 0.25s;
+  }
+  .user-btn:hover, .user-btn.is-open { color: var(--mid); }
+  .user-btn.logged-in {
+    border-color: var(--border);
+    color: var(--mid);
+  }
+  .user-btn.logged-in:hover, .user-btn.logged-in.is-open {
+    border-color: var(--copper);
+    color: var(--copper);
+  }
+
+  .user-initial {
+    font-family: 'Fraunces', Georgia, serif;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1;
+  }
+
+  .user-panel {
+    position: absolute;
+    top: calc(100% + 10px);
+    right: 0;
+    width: 220px;
+    background: #f2e8d9;
+    border: 1px solid #d8c6b1;
+    box-shadow: 0 8px 32px rgba(52,37,28,0.12);
+    z-index: 300;
+    font-family: Georgia, serif;
+    color: #34251c;
+  }
+
+  .user-panel-head {
+    padding: 12px 14px 10px;
+    border-bottom: 1px solid rgba(52,37,28,0.08);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .user-panel-name {
+    font-family: 'Fraunces', Georgia, serif;
+    font-size: 0.85rem;
+    color: #34251c;
+  }
+
+  .user-panel-email {
+    font-family: Inter, sans-serif;
+    font-size: 0.7rem;
+    color: rgba(95,70,54,0.55);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .user-panel-link {
+    display: block;
+    padding: 10px 14px;
+    font-family: Inter, sans-serif;
+    font-size: 0.78rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: rgba(95,70,54,0.7);
+    text-decoration: none;
+    border-bottom: 1px solid rgba(52,37,28,0.06);
+    transition: color 0.2s;
+  }
+  .user-panel-link:hover { color: #c65f3c; }
+
+  .user-panel-logout {
+    display: block;
+    width: 100%;
+    padding: 10px 14px;
+    background: none;
+    border: none;
+    text-align: left;
+    font-family: Inter, sans-serif;
+    font-size: 0.78rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: rgba(95,70,54,0.5);
+    cursor: pointer;
+    transition: color 0.2s;
+  }
+  .user-panel-logout:hover { color: #c65f3c; }
 
   /* ── Admin key ── */
   .key-link {

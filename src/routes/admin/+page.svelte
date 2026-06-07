@@ -14,6 +14,7 @@
     import ShowingsPanel from '$lib/components/admin/ShowingsPanel.svelte';
     import BookingsPanel from '$lib/components/admin/BookingsPanel.svelte';
     import AnalyticsPanel from '$lib/components/admin/AnalyticsPanel.svelte';
+    import UsersPanel from '$lib/components/admin/UsersPanel.svelte';
     import FigurineShowingsEditor from '$lib/components/admin/FigurineShowingsEditor.svelte';
     import { t } from '$lib/i18n';
     import LangSwitcher from '$lib/components/LangSwitcher.svelte';
@@ -59,7 +60,7 @@
     let isSaving = $state(false);
     let showSettings = $state(false);
     let message = $state({ text: '', type: 'info' });
-    let activeTab = $state<'registry' | 'home' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'showings' | 'bookings' | 'analytics'>('registry');
+    let activeTab = $state<'registry' | 'home' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'showings' | 'bookings' | 'analytics' | 'users'>('registry');
     let activeAuthorSubTab = $state<'profile' | 'texts'>('profile');
     let newOrdersCount = $state(0);
     let newBookingsCount = $state(0);
@@ -330,7 +331,7 @@
         }
         // Hash-based tab routing (e.g. Telegram notification links)
         const hash = window.location.hash.replace('#', '');
-        const validTabs = ['registry','home','zones','author','workshop','media','releases','orders','showings','bookings','analytics'];
+        const validTabs = ['registry','home','zones','author','workshop','media','releases','orders','showings','bookings','analytics','users'];
         if (validTabs.includes(hash)) {
             activeTab = hash as typeof activeTab;
         }
@@ -431,6 +432,7 @@
                   ['showings', $t('adminTabShowings')],
                   ['bookings', $t('adminTabBookings')],
                   ['analytics', $t('adminTabAnalytics')],
+                  ['users',    $t('adminUsersTab')],
                 ]
               },
             ] as group, gi}
@@ -881,6 +883,8 @@
             <div in:fade class="h-full"><ReleaseManager /></div>
         {:else if activeTab === 'analytics'}
             <div in:fade class="h-full overflow-hidden"><AnalyticsPanel /></div>
+        {:else if activeTab === 'users'}
+            <div in:fade class="h-full overflow-y-auto"><UsersPanel /></div>
         {/if}
     </div>
 

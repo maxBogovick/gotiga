@@ -638,3 +638,204 @@ pub struct BookingsPage {
     pub page: i64,
     pub per_page: i64,
 }
+
+// ============================================================
+// USER ACCOUNTS & AUTH
+// ============================================================
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct User {
+    pub id: Uuid,
+    pub email: String,
+    pub display_name: String,
+    pub visual_password_hash: String,
+    pub admin_notes: Option<String>,
+    pub is_blocked: bool,
+    pub password_reset_token: Option<String>,
+    pub password_reset_expires_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct UserSession {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub token: String,
+    pub expires_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// One token entry inside the challenge JSONB array
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChallengeToken {
+    pub token: String,
+    pub category: String,
+    pub icon_id: String,
+}
+
+// ── Request DTOs ──────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegisterRequest {
+    pub email: String,
+    pub display_name: String,
+    /// icon_id per category in fixed order: animals, dishes, seasons, colors
+    pub selections: [String; 4],
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoginChallengeRequest {
+    pub email: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoginVerifyRequest {
+    pub challenge_id: String,
+    /// one-time tokens in category order: animals, dishes, seasons, colors
+    pub tokens: [String; 4],
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkBookingsRequest {
+    /// cancel_tokens from localStorage gotiga_claims_*
+    pub cancel_tokens: Vec<String>,
+}
+
+// ── Response DTOs ─────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserDto {
+    pub id: String,
+    pub email: String,
+    pub display_name: String,
+}
+
+impl From<&User> for UserDto {
+    fn from(u: &User) -> Self {
+        UserDto { id: u.id.to_string(), email: u.email.clone(), display_name: u.display_name.clone() }
+    }
+}
+
+/// One icon in a challenge grid step — token replaces real ID
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChallengeIconDto {
+    pub token: String,
+    pub icon_id: String, // for frontend SVG lookup — safe to send (no ordering info)
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChallengeStepDto {
+    pub category: String,
+    pub icons: Vec<ChallengeIconDto>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoginChallengeResponse {
+    pub challenge_id: String,
+    pub steps: Vec<ChallengeStepDto>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoginVerifyResponse {
+    pub session_token: String,
+    pub user: UserDto,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserBookingDto {
+    pub id: String,
+    pub figurine_id: String,
+    pub figurine_name: String,
+    pub starts_at: String,
+    pub ends_at: String,
+    pub status: BookingStatus,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserOrderDto {
+    pub id: String,
+    pub figurine_id: String,
+    pub figurine_name: String,
+    pub mode: OrderMode,
+    pub status: OrderStatus,
+    pub created_at: String,
+}
+
+// ============================================================
+// ADMIN USER MANAGEMENT
+// ============================================================
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminUserListItem {
+    pub id: String,
+    pub email: String,
+    pub display_name: String,
+    pub admin_notes: Option<String>,
+    pub created_at: String,
+    pub booking_count: i64,
+    pub order_count: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminSessionDto {
+    pub id: String,
+    pub created_at: String,
+    pub expires_at: String,
+    pub is_active: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminUserDetail {
+    pub id: String,
+    pub email: String,
+    pub display_name: String,
+    pub admin_notes: Option<String>,
+    pub created_at: String,
+    pub bookings: Vec<UserBookingDto>,
+    pub orders: Vec<UserOrderDto>,
+    pub sessions: Vec<AdminSessionDto>,
+    pub recent_failures: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateUserAdminNotesRequest {
+    pub admin_notes: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetUserBlockedRequest {
+    pub blocked: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetTokenResponse {
+    pub token: String,
+    pub expires_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyPasswordResetRequest {
+    pub token: String,
+    /// icon_id per category in fixed order: animals, dishes, seasons, colors
+    pub selections: [String; 4],
+}

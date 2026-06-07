@@ -851,4 +851,313 @@ impl Repository {
 
         Ok(updated)
     }
+
+    // ============================================================
+    // USER ACCOUNTS
+    // ============================================================
+
+    pub async fn create_user(&self, email: &str, display_name: &str, hash: &str) -> Result<crate::models::User> {
+        let user = sqlx::query_as::<_, crate::models::User>(
+            "INSERT INTO users (email, display_name, visual_password_hash)
+             VALUES ($1, $2, $3) RETURNING *"
+        )
+        .bind(email)
+        .bind(display_name)
+        .bind(hash)
+        .fetch_one(&self.pg_pool)
+        .await
+        .map_err(|e| {
+            if let sqlx::Error::Database(ref dbe) = e {
+                if dbe.constraint() == Some("users_email_key") || dbe.constraint() == Some("idx_users_email") {
+                    return AppError::Conflict("Email already registered".into());
+                }
+            }
+            AppError::Database(e)
+        })?;
+        Ok(user)
+    }
+
+    pub async fn find_user_by_email(&self, email: &str) -> Result<Option<crate::models::User>> {
+        let user = sqlx::query_as::<_, crate::models::User>(
+            "SELECT * FROM users WHERE email = $1"
+        )
+        .bind(email)
+        .fetch_optional(&self.pg_pool)
+        .await?;
+        Ok(user)
+    }
+
+    pub async fn find_user_by_id(&self, id: Uuid) -> Result<Option<crate::models::User>> {
+        let user = sqlx::query_as::<_, crate::models::User>(
+            "SELECT * FROM users WHERE id = $1"
+        )
+        .bind(id)
+        .fetch_optional(&self.pg_pool)
+        .await?;
+        Ok(user)
+    }
+
+    // ── Sessions ─────────────────────────────────────────────
+
+    pub async fn create_session(&self, user_id: Uuid, token: &str, expires_at: chrono::DateTime<chrono::Utc>) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO user_sessions (user_id, token, expires_at) VALUES ($1, $2, $3)"
+        )
+        .bind(user_id)
+        .bind(token)
+        .bind(expires_at)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn get_session_user(&self, token: &str) -> Result<Option<crate::models::User>> {
+        let user = sqlx::query_as::<_, crate::models::User>(
+            "SELECT u.* FROM users u
+             JOIN user_sessions s ON s.user_id = u.id
+             WHERE s.token = $1 AND s.expires_at > NOW()"
+        )
+        .bind(token)
+        .fetch_optional(&self.pg_pool)
+        .await?;
+        Ok(user)
+    }
+
+    pub async fn delete_session(&self, token: &str) -> Result<()> {
+        sqlx::query("DELETE FROM user_sessions WHERE token = $1")
+            .bind(token)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
+    // ── Challenges ───────────────────────────────────────────
+
+    pub async fn save_challenge(&self, email: &str, tokens_json: &serde_json::Value) -> Result<Uuid> {
+        let rec: (Uuid,) = sqlx::query_as(
+            "INSERT INTO login_challenges (email, tokens_json)
+             VALUES ($1, $2) RETURNING id"
+        )
+        .bind(email)
+        .bind(tokens_json)
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(rec.0)
+    }
+
+    pub async fn get_challenge(&self, id: Uuid) -> Result<Option<(String, serde_json::Value)>> {
+        let row: Option<(String, serde_json::Value)> = sqlx::query_as(
+            "SELECT email, tokens_json FROM login_challenges
+             WHERE id = $1 AND expires_at > NOW() AND used_at IS NULL"
+        )
+        .bind(id)
+        .fetch_optional(&self.pg_pool)
+        .await?;
+        Ok(row)
+    }
+
+    pub async fn mark_challenge_used(&self, id: Uuid) -> Result<()> {
+        sqlx::query("UPDATE login_challenges SET used_at = NOW() WHERE id = $1")
+            .bind(id)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
+    // ── Lockout ──────────────────────────────────────────────
+
+    pub async fn record_attempt(&self, email: &str, success: bool) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO login_attempts (email, success) VALUES ($1, $2)"
+        )
+        .bind(email)
+        .bind(success)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn count_recent_failures(&self, email: &str, window_minutes: i64) -> Result<i64> {
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM login_attempts
+             WHERE email = $1
+               AND success = false
+               AND attempted_at > NOW() - ($2 || ' minutes')::interval"
+        )
+        .bind(email)
+        .bind(window_minutes)
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(count)
+    }
+
+    // ── Profile data ─────────────────────────────────────────
+
+    pub async fn link_bookings_to_user(&self, user_id: Uuid, cancel_tokens: &[String]) -> Result<usize> {
+        if cancel_tokens.is_empty() { return Ok(0); }
+        let result = sqlx::query(
+            "UPDATE figurine_bookings SET user_id = $1 WHERE cancel_token = ANY($2) AND user_id IS NULL"
+        )
+        .bind(user_id)
+        .bind(cancel_tokens)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(result.rows_affected() as usize)
+    }
+
+    pub async fn prune_expired_sessions(&self, user_id: Uuid) -> Result<()> {
+        sqlx::query("DELETE FROM user_sessions WHERE user_id = $1 AND expires_at < NOW()")
+            .bind(user_id)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn get_user_bookings(&self, user_id: Uuid) -> Result<Vec<crate::models::Booking>> {
+        let bookings = sqlx::query_as::<_, crate::models::Booking>(
+            "SELECT * FROM figurine_bookings WHERE user_id = $1 ORDER BY created_at DESC"
+        )
+        .bind(user_id)
+        .fetch_all(&self.pg_pool)
+        .await?;
+        Ok(bookings)
+    }
+
+    pub async fn get_user_orders(&self, user_id: Uuid) -> Result<Vec<crate::models::Order>> {
+        let orders = sqlx::query_as::<_, crate::models::Order>(
+            "SELECT * FROM orders WHERE user_id = $1 ORDER BY created_at DESC"
+        )
+        .bind(user_id)
+        .fetch_all(&self.pg_pool)
+        .await?;
+        Ok(orders)
+    }
+
+    // ── Admin user management ────────────────────────────────
+
+    pub async fn admin_list_users(&self, search: Option<&str>, limit: i64, offset: i64) -> Result<(Vec<crate::models::AdminUserListItem>, i64)> {
+        let pattern = search.map(|s| format!("%{}%", s.to_lowercase()));
+        let items = if let Some(ref p) = pattern {
+            sqlx::query_as::<_, crate::models::AdminUserListItem>(
+                "SELECT u.id::text, u.email, u.display_name, u.admin_notes,
+                        u.created_at::text,
+                        COUNT(DISTINCT b.id) AS booking_count,
+                        COUNT(DISTINCT o.id) AS order_count
+                 FROM users u
+                 LEFT JOIN figurine_bookings b ON b.user_id = u.id
+                 LEFT JOIN orders o ON o.user_id = u.id
+                 WHERE LOWER(u.email) LIKE $1 OR LOWER(u.display_name) LIKE $1
+                 GROUP BY u.id
+                 ORDER BY u.created_at DESC
+                 LIMIT $2 OFFSET $3"
+            )
+            .bind(p).bind(limit).bind(offset)
+            .fetch_all(&self.pg_pool).await?
+        } else {
+            sqlx::query_as::<_, crate::models::AdminUserListItem>(
+                "SELECT u.id::text, u.email, u.display_name, u.admin_notes,
+                        u.created_at::text,
+                        COUNT(DISTINCT b.id) AS booking_count,
+                        COUNT(DISTINCT o.id) AS order_count
+                 FROM users u
+                 LEFT JOIN figurine_bookings b ON b.user_id = u.id
+                 LEFT JOIN orders o ON o.user_id = u.id
+                 GROUP BY u.id
+                 ORDER BY u.created_at DESC
+                 LIMIT $1 OFFSET $2"
+            )
+            .bind(limit).bind(offset)
+            .fetch_all(&self.pg_pool).await?
+        };
+
+        let (total,): (i64,) = if let Some(ref p) = pattern {
+            sqlx::query_as(
+                "SELECT COUNT(*) FROM users WHERE LOWER(email) LIKE $1 OR LOWER(display_name) LIKE $1"
+            ).bind(p).fetch_one(&self.pg_pool).await?
+        } else {
+            sqlx::query_as("SELECT COUNT(*) FROM users")
+                .fetch_one(&self.pg_pool).await?
+        };
+
+        Ok((items, total))
+    }
+
+    pub async fn admin_get_user_sessions(&self, user_id: Uuid) -> Result<Vec<crate::models::AdminSessionDto>> {
+        let rows: Vec<(Uuid, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)> =
+            sqlx::query_as(
+                "SELECT id, created_at, expires_at FROM user_sessions
+                 WHERE user_id = $1 ORDER BY created_at DESC"
+            )
+            .bind(user_id)
+            .fetch_all(&self.pg_pool)
+            .await?;
+
+        let now = chrono::Utc::now();
+        Ok(rows.into_iter().map(|(id, created_at, expires_at)| crate::models::AdminSessionDto {
+            id: id.to_string(),
+            created_at: created_at.to_rfc3339(),
+            expires_at: expires_at.to_rfc3339(),
+            is_active: expires_at > now,
+        }).collect())
+    }
+
+    pub async fn admin_revoke_all_sessions(&self, user_id: Uuid) -> Result<u64> {
+        let result = sqlx::query("DELETE FROM user_sessions WHERE user_id = $1")
+            .bind(user_id)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
+    pub async fn admin_update_user_notes(&self, user_id: Uuid, notes: Option<&str>) -> Result<()> {
+        sqlx::query("UPDATE users SET admin_notes = $1 WHERE id = $2")
+            .bind(notes)
+            .bind(user_id)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn admin_set_user_blocked(&self, user_id: Uuid, blocked: bool) -> Result<()> {
+        sqlx::query("UPDATE users SET is_blocked = $1 WHERE id = $2")
+            .bind(blocked)
+            .bind(user_id)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn admin_create_reset_token(&self, user_id: Uuid, token: &str, expires_at: chrono::DateTime<chrono::Utc>) -> Result<()> {
+        sqlx::query(
+            "UPDATE users SET password_reset_token = $1, password_reset_expires_at = $2 WHERE id = $3"
+        )
+        .bind(token)
+        .bind(expires_at)
+        .bind(user_id)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Returns the user if token is valid and not yet expired.
+    pub async fn find_user_by_reset_token(&self, token: &str) -> Result<Option<crate::models::User>> {
+        let user = sqlx::query_as::<_, crate::models::User>(
+            "SELECT * FROM users WHERE password_reset_token = $1 AND password_reset_expires_at > NOW()"
+        )
+        .bind(token)
+        .fetch_optional(&self.pg_pool)
+        .await?;
+        Ok(user)
+    }
+
+    pub async fn apply_password_reset(&self, user_id: Uuid, new_hash: &str) -> Result<()> {
+        sqlx::query(
+            "UPDATE users SET visual_password_hash = $1, password_reset_token = NULL, password_reset_expires_at = NULL WHERE id = $2"
+        )
+        .bind(new_hash)
+        .bind(user_id)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
 }
