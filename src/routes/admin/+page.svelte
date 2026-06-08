@@ -15,6 +15,7 @@
     import BookingsPanel from '$lib/components/admin/BookingsPanel.svelte';
     import AnalyticsPanel from '$lib/components/admin/AnalyticsPanel.svelte';
     import UsersPanel from '$lib/components/admin/UsersPanel.svelte';
+    import CommentsPanel from '$lib/components/admin/CommentsPanel.svelte';
     import FigurineShowingsEditor from '$lib/components/admin/FigurineShowingsEditor.svelte';
     import { t } from '$lib/i18n';
     import LangSwitcher from '$lib/components/LangSwitcher.svelte';
@@ -60,10 +61,11 @@
     let isSaving = $state(false);
     let showSettings = $state(false);
     let message = $state({ text: '', type: 'info' });
-    let activeTab = $state<'registry' | 'home' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'showings' | 'bookings' | 'analytics' | 'users'>('registry');
+    let activeTab = $state<'registry' | 'home' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'showings' | 'bookings' | 'analytics' | 'users' | 'comments'>('registry');
     let activeAuthorSubTab = $state<'profile' | 'texts'>('profile');
     let newOrdersCount = $state(0);
     let newBookingsCount = $state(0);
+    let pendingCommentsCount = $state(0);
     let searchQuery = $state('');
     let isDeleting = $state(false);
     let uploadingVideo = $state(false);
@@ -331,7 +333,7 @@
         }
         // Hash-based tab routing (e.g. Telegram notification links)
         const hash = window.location.hash.replace('#', '');
-        const validTabs = ['registry','home','zones','author','workshop','media','releases','orders','showings','bookings','analytics','users'];
+        const validTabs = ['registry','home','zones','author','workshop','media','releases','orders','showings','bookings','analytics','users','comments'];
         if (validTabs.includes(hash)) {
             activeTab = hash as typeof activeTab;
         }
@@ -431,6 +433,7 @@
                   ['orders',   'Orders'],
                   ['showings', $t('adminTabShowings')],
                   ['bookings', $t('adminTabBookings')],
+                  ['comments', $t('adminTabComments')],
                   ['analytics', $t('adminTabAnalytics')],
                   ['users',    $t('adminUsersTab')],
                 ]
@@ -456,6 +459,11 @@
                       {#if tab === 'bookings' && newBookingsCount > 0 && activeTab !== 'bookings'}
                         <span class="absolute -top-1 -right-1 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-amber-500 text-white text-[9px] font-bold leading-none">
                           {newBookingsCount > 99 ? '99+' : newBookingsCount}
+                        </span>
+                      {/if}
+                      {#if tab === 'comments' && pendingCommentsCount > 0 && activeTab !== 'comments'}
+                        <span class="absolute -top-1 -right-1 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-orange-600 text-white text-[9px] font-bold leading-none">
+                          {pendingCommentsCount > 99 ? '99+' : pendingCommentsCount}
                         </span>
                       {/if}
                     </button>
@@ -885,6 +893,8 @@
             <div in:fade class="h-full overflow-hidden"><AnalyticsPanel /></div>
         {:else if activeTab === 'users'}
             <div in:fade class="h-full overflow-y-auto"><UsersPanel /></div>
+        {:else if activeTab === 'comments'}
+            <div in:fade class="h-full overflow-y-auto"><CommentsPanel onPendingCount={(n) => pendingCommentsCount = n} /></div>
         {/if}
     </div>
 

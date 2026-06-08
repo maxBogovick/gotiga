@@ -13,6 +13,11 @@ pub struct Config {
     pub admin_password: String,
     pub telegram_bot_token: Option<String>,
     pub telegram_chat_id: Option<String>,
+    pub smtp_host: Option<String>,
+    pub smtp_port: Option<u16>,
+    pub smtp_user: Option<String>,
+    pub smtp_pass: Option<String>,
+    pub smtp_from: Option<String>,
 }
 
 impl Config {
@@ -32,6 +37,11 @@ impl Config {
             admin_password: dotenvy::var("ADMIN_PASSWORD").unwrap_or_else(|_| "123".to_string()),
             telegram_bot_token: dotenvy::var("TELEGRAM_BOT_TOKEN").ok(),
             telegram_chat_id: dotenvy::var("TELEGRAM_CHAT_ID").ok(),
+            smtp_host: dotenvy::var("SMTP_HOST").ok(),
+            smtp_port: dotenvy::var("SMTP_PORT").ok().and_then(|v| v.parse().ok()),
+            smtp_user: dotenvy::var("SMTP_USER").ok(),
+            smtp_pass: dotenvy::var("SMTP_PASS").ok(),
+            smtp_from: dotenvy::var("SMTP_FROM").ok(),
         }
     }
 }

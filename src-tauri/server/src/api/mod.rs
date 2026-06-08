@@ -47,6 +47,8 @@ pub fn router(service: AppService, config: Config) -> Router {
         .route("/author/profile",               get(handlers::get_author_profile))
         .route("/orders",                       post(handlers::create_order))
         .route("/figurines/:id/schedule",       get(handlers::get_figurine_schedule))
+        .route("/figurines/:id/comments",       get(handlers::get_figurine_comments)
+                                                .post(handlers::submit_comment))
         .route("/figurines/:id/book",           post(handlers::create_booking))
         .route("/bookings/cancel/:token",       get(handlers::get_booking_by_token)
                                                 .post(handlers::cancel_booking_by_token))
@@ -92,6 +94,14 @@ pub fn router(service: AppService, config: Config) -> Router {
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
         .route("/author/profile",
             post(handlers::save_author_profile)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        // === COMMENTS (ADMIN) ===
+        .route("/admin/comments",
+            get(handlers::admin_list_comments)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        .route("/admin/comments/:id",
+            patch(handlers::admin_moderate_comment)
+            .delete(handlers::admin_delete_comment)
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
         // === ORDERS (ADMIN) ===
         .route("/admin/orders",

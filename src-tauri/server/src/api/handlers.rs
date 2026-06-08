@@ -847,3 +847,72 @@ pub async fn apply_password_reset(
     service.apply_password_reset(&body).await?;
     Ok(StatusCode::OK)
 }
+
+// ============================================================
+// COMMENTS
+// ============================================================
+
+fn extract_ip(headers: &HeaderMap) -> String {
+    headers.get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+pub async fn get_figurine_comments(
+    State(service): State<AppService>,
+    Path(figurine_id): Path<Uuid>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<Vec<CommentDto>>> {
+    let newest_first = params.get("sort").map(|v| v == "newest").unwrap_or(false);
+    let comments = service.get_figurine_comments(figurine_id, newest_first).await?;
+    Ok(Json(comments))
+}
+
+pub async fn submit_comment(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(figurine_id): Path<Uuid>,
+    Json(body): Json<SubmitCommentRequest>,
+) -> Result<StatusCode> {
+    let user = if let Some(token) = bearer_token(&headers) {
+        service.get_user_from_session(token).await.ok()
+    } else {
+        None
+    };
+    let ip = extract_ip(&headers);
+    service.submit_comment(figurine_id, user.as_ref(), &body, &ip).await?;
+    Ok(StatusCode::CREATED)
+}
+
+pub async fn admin_list_comments(
+    State(service): State<AppService>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<AdminCommentsPage>> {
+    let only_pending = params.get("pending").map(|v| v == "true").unwrap_or(false);
+    let newest_first = params.get("sort").map(|v| v == "newest").unwrap_or(true);
+    let figurine_filter = params.get("figurineId")
+        .and_then(|v| Uuid::parse_str(v).ok());
+    let page = params.get("page").and_then(|p| p.parse::<i64>().ok()).unwrap_or(1).max(1);
+    let per_page = params.get("perPage").and_then(|p| p.parse::<i64>().ok()).unwrap_or(20).clamp(1, 100);
+    let page_data = service.admin_list_comments(only_pending, figurine_filter, newest_first, page, per_page).await?;
+    Ok(Json(page_data))
+}
+
+pub async fn admin_moderate_comment(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<ModerateCommentRequest>,
+) -> Result<Json<AdminCommentDto>> {
+    let comment = service.admin_moderate_comment(id, body.is_approved, body.admin_reply.as_deref()).await?;
+    Ok(Json(comment))
+}
+
+pub async fn admin_delete_comment(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    service.admin_delete_comment(id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}

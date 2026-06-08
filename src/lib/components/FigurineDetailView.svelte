@@ -12,6 +12,7 @@
   import { api } from '$lib/api';
   import { t } from '$lib/i18n';
   import ShowingsTimeline from '$lib/components/ShowingsTimeline.svelte';
+  import FigurineComments from '$lib/components/FigurineComments.svelte';
   import { FigurineClaimsStore, type ClaimData } from '$lib/stores/figurine-claims.svelte';
   import '$lib/styles/figurine-detail.css';
 
@@ -1196,6 +1197,8 @@
         </div>
       </section>
     {/if}
+
+    <FigurineComments figurineId={id} />
 
   </div>
 </div>

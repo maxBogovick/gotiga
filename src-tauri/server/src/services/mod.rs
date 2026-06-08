@@ -6,19 +6,25 @@ use reqwest::Client;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::Mutex;
 use uuid::Uuid;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use argon2::password_hash::{SaltString, rand_core::OsRng};
+
+type RateLimiter = Arc<Mutex<HashMap<String, Vec<Instant>>>>;
 
 #[derive(Clone)]
 pub struct AppService {
     repo: Repository,
     config: Config,
+    comment_rate_limiter: RateLimiter,
 }
 
 impl AppService {
     pub fn new(repo: Repository, config: Config) -> Self {
-        Self { repo, config }
+        Self { repo, config, comment_rate_limiter: Arc::new(Mutex::new(HashMap::new())) }
     }
 
     pub async fn initialize(&self) -> Result<()> {
@@ -1122,5 +1128,225 @@ impl AppService {
         // Invalidate all existing sessions so old password can't be used
         self.repo.admin_revoke_all_sessions(user.id).await?;
         self.repo.apply_password_reset(user.id, &new_hash).await
+    }
+
+    // === COMMENTS ===
+
+    async fn check_comment_rate_limit(&self, ip: &str) -> Result<()> {
+        const MAX_PER_HOUR: usize = 5;
+        let now = Instant::now();
+        let cutoff_secs = Duration::from_secs(3600);
+        let mut map = self.comment_rate_limiter.lock().await;
+        let entry = map.entry(ip.to_string()).or_default();
+        entry.retain(|t: &Instant| now.duration_since(*t) < cutoff_secs);
+        if entry.len() >= MAX_PER_HOUR {
+            return Err(AppError::BadRequest(
+                "Too many comments from this address. Please wait before submitting again.".into()
+            ));
+        }
+        entry.push(now);
+        Ok(())
+    }
+
+    async fn send_reply_email(
+        &self,
+        to: &str,
+        figurine_name: &str,
+        figurine_id: &str,
+        comment_body: &str,
+        reply: &str,
+    ) -> Result<()> {
+        use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
+        use lettre::transport::smtp::authentication::Credentials;
+        use lettre::message::header::ContentType;
+
+        let (Some(host), Some(user), Some(pass), Some(from)) = (
+            self.config.smtp_host.as_deref(),
+            self.config.smtp_user.as_deref(),
+            self.config.smtp_pass.as_deref(),
+            self.config.smtp_from.as_deref(),
+        ) else {
+            return Ok(());
+        };
+
+        let figurine_url = format!(
+            "{}/figurines/{}",
+            self.config.public_url.trim_end_matches('/'),
+            figurine_id
+        );
+        let body_text = format!(
+            "Your impression of «{figurine_name}»:\n\n\
+            {comment_body}\n\n\
+            — — —\n\n\
+            Author's reply:\n\n\
+            {reply}\n\n\
+            View the figurine: {figurine_url}",
+        );
+
+        let email = Message::builder()
+            .from(from.parse().map_err(|_| AppError::Internal("Invalid SMTP from address".into()))?)
+            .to(to.parse().map_err(|_| AppError::Internal("Invalid recipient address".into()))?)
+            .subject(format!("Re: Your impression of «{figurine_name}»"))
+            .header(ContentType::TEXT_PLAIN)
+            .body(body_text)
+            .map_err(|e| AppError::Internal(format!("Email build error: {e}")))?;
+
+        let port = self.config.smtp_port.unwrap_or(587);
+        let creds = Credentials::new(user.to_string(), pass.to_string());
+        let mailer = AsyncSmtpTransport::<Tokio1Executor>::relay(host)
+            .map_err(|e| AppError::Internal(format!("SMTP relay error: {e}")))?
+            .port(port)
+            .credentials(creds)
+            .build();
+
+        let _ = mailer.send(email).await;
+        Ok(())
+    }
+
+    async fn send_comment_telegram_notification(&self, figurine_name: &str, author_name: &str, body: &str) {
+        let (Some(token), Some(chat_id)) = (
+            self.config.telegram_bot_token.as_deref(),
+            self.config.telegram_chat_id.as_deref(),
+        ) else { return; };
+
+        let admin_link = format!("{}/admin#comments", self.config.public_url.trim_end_matches('/'));
+        let text = format!(
+            "💬 Новый комментарий\n\n\
+            🏺 {}\n\
+            👤 {}\n\
+            📝 {}\n\n\
+            🔗 [Открыть в админке]({})",
+            escape_markdown(figurine_name),
+            escape_markdown(author_name),
+            escape_markdown(&body.chars().take(200).collect::<String>()),
+            admin_link,
+        );
+        let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+        let _ = Client::new().post(&url)
+            .json(&serde_json::json!({ "chat_id": chat_id, "text": text, "parse_mode": "MarkdownV2" }))
+            .send().await;
+    }
+
+    pub async fn submit_comment(
+        &self,
+        figurine_id: Uuid,
+        user: Option<&User>,
+        req: &SubmitCommentRequest,
+        ip: &str,
+    ) -> Result<()> {
+        if user.is_none() {
+            self.check_comment_rate_limit(ip).await?;
+        }
+
+        let body = req.body.trim();
+        if body.is_empty() {
+            return Err(AppError::BadRequest("Comment body cannot be empty".into()));
+        }
+        if body.chars().count() > 1000 {
+            return Err(AppError::BadRequest("Comment is too long (max 1000 characters)".into()));
+        }
+
+        let (author_name, author_email, user_id) = if let Some(u) = user {
+            (u.display_name.clone(), None::<String>, Some(u.id))
+        } else {
+            let name = req.author_name.as_deref()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| AppError::BadRequest("Author name is required for anonymous comments".into()))?;
+            if name.chars().count() > 100 {
+                return Err(AppError::BadRequest("Name is too long (max 100 characters)".into()));
+            }
+            (name, req.author_email.clone(), None)
+        };
+
+        self.repo.insert_comment(figurine_id, user_id, &author_name, author_email.as_deref(), body).await?;
+
+        let figurine_name = self.repo.get_figurine_by_id(figurine_id).await?
+            .map(|f| f.name).unwrap_or_default();
+        self.send_comment_telegram_notification(&figurine_name, &author_name, body).await;
+
+        Ok(())
+    }
+
+    pub async fn get_figurine_comments(&self, figurine_id: Uuid, newest_first: bool) -> Result<Vec<CommentDto>> {
+        let comments = self.repo.get_approved_comments(figurine_id, newest_first).await?;
+        Ok(comments.into_iter().map(|c| CommentDto {
+            id: c.id.to_string(),
+            author_name: c.author_name,
+            body: c.body,
+            admin_reply: c.admin_reply,
+            created_at: c.created_at.to_rfc3339(),
+        }).collect())
+    }
+
+    pub async fn admin_list_comments(
+        &self,
+        only_pending: bool,
+        figurine_filter: Option<Uuid>,
+        newest_first: bool,
+        page: i64,
+        per_page: i64,
+    ) -> Result<AdminCommentsPage> {
+        let offset = (page - 1) * per_page;
+        let (rows, total) = self.repo.get_comments_admin_page(only_pending, figurine_filter, newest_first, per_page, offset).await?;
+        let pending_count = self.repo.get_pending_comments_count().await?;
+
+        let items = rows.into_iter().map(|(c, figurine_name)| AdminCommentDto {
+            id: c.id.to_string(),
+            figurine_id: c.figurine_id.to_string(),
+            figurine_name,
+            author_name: c.author_name,
+            author_email: c.author_email,
+            body: c.body,
+            is_approved: c.is_approved,
+            admin_reply: c.admin_reply,
+            created_at: c.created_at.to_rfc3339(),
+            user_id: c.user_id.map(|id| id.to_string()),
+        }).collect();
+
+        Ok(AdminCommentsPage { items, total, pending_count, page, per_page })
+    }
+
+    pub async fn admin_moderate_comment(
+        &self,
+        id: Uuid,
+        is_approved: bool,
+        admin_reply: Option<&str>,
+    ) -> Result<AdminCommentDto> {
+        let prev = self.repo.moderate_comment(id, is_approved, admin_reply).await?;
+        let figurine = self.repo.get_figurine_by_id(prev.figurine_id).await?;
+        let figurine_name = figurine.as_ref().map(|f| f.name.clone()).unwrap_or_default();
+
+        // Send email to commenter if reply was just set and they have an email
+        let reply_is_new = admin_reply.map(|r| !r.trim().is_empty()).unwrap_or(false);
+        if reply_is_new {
+            if let Some(email) = prev.author_email.as_deref() {
+                let fid = prev.figurine_id.to_string();
+                let _ = self.send_reply_email(
+                    email,
+                    &figurine_name,
+                    &fid,
+                    &prev.body,
+                    admin_reply.unwrap_or(""),
+                ).await;
+            }
+        }
+
+        Ok(AdminCommentDto {
+            id: prev.id.to_string(),
+            figurine_id: prev.figurine_id.to_string(),
+            figurine_name,
+            author_name: prev.author_name,
+            author_email: prev.author_email,
+            body: prev.body,
+            is_approved: prev.is_approved,
+            admin_reply: prev.admin_reply,
+            created_at: prev.created_at.to_rfc3339(),
+            user_id: prev.user_id.map(|id| id.to_string()),
+        })
+    }
+
+    pub async fn admin_delete_comment(&self, id: Uuid) -> Result<()> {
+        self.repo.delete_comment(id).await
     }
 }

@@ -26,6 +26,11 @@ import type {
     AdminUsersPage,
     AdminUserDetail,
     ResetTokenResponse,
+    CommentDto,
+    AdminCommentsPage,
+    SubmitCommentRequest,
+    ModerateCommentRequest,
+    AdminCommentDto,
 } from './types/api';
 
 export type { AppSettings };
@@ -595,5 +600,53 @@ export const api = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ token, selections }),
         });
+    },
+
+    // === COMMENTS ===
+
+    async getComments(figurineId: string, newestFirst = false): Promise<CommentDto[]> {
+        try {
+            const qs = newestFirst ? '?sort=newest' : '';
+            return await webFetch(`/figurines/${figurineId}/comments${qs}`);
+        } catch {
+            return [];
+        }
+    },
+
+    async submitComment(figurineId: string, req: SubmitCommentRequest, sessionToken?: string | null): Promise<void> {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (sessionToken) headers['Authorization'] = `Bearer ${sessionToken}`;
+        await webFetch(`/figurines/${figurineId}/comments`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(req),
+        });
+    },
+
+    async adminListComments(opts?: { pending?: boolean; figurineId?: string; sort?: 'newest' | 'oldest'; page?: number; perPage?: number }): Promise<AdminCommentsPage> {
+        const p = new URLSearchParams();
+        if (opts?.pending)     p.set('pending',    'true');
+        if (opts?.figurineId)  p.set('figurineId', opts.figurineId);
+        if (opts?.sort)        p.set('sort',        opts.sort);
+        if (opts?.page)        p.set('page',        String(opts.page));
+        if (opts?.perPage)     p.set('perPage',     String(opts.perPage));
+        const qs = p.toString() ? `?${p}` : '';
+        return webFetch(`/admin/comments${qs}`, { headers: authHeaders() });
+    },
+
+    async adminModerateComment(id: string, req: ModerateCommentRequest): Promise<AdminCommentDto> {
+        return webFetch(`/admin/comments/${id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(req),
+        });
+    },
+
+    async adminDeleteComment(id: string): Promise<void> {
+        const res = await fetch(`${webApiBase()}/admin/comments/${id}`, {
+            method: 'DELETE',
+            headers: authHeaders(),
+        });
+        if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
     },
 };

@@ -839,3 +839,70 @@ pub struct ApplyPasswordResetRequest {
     /// icon_id per category in fixed order: animals, dishes, seasons, colors
     pub selections: [String; 4],
 }
+
+// ============================================================
+// FIGURINE COMMENTS
+// ============================================================
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
+pub struct Comment {
+    pub id: Uuid,
+    pub figurine_id: Uuid,
+    pub user_id: Option<Uuid>,
+    pub author_name: String,
+    pub author_email: Option<String>,
+    pub body: String,
+    pub is_approved: bool,
+    pub admin_reply: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommentDto {
+    pub id: String,
+    pub author_name: String,
+    pub body: String,
+    pub admin_reply: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminCommentDto {
+    pub id: String,
+    pub figurine_id: String,
+    pub figurine_name: String,
+    pub author_name: String,
+    pub author_email: Option<String>,
+    pub body: String,
+    pub is_approved: bool,
+    pub admin_reply: Option<String>,
+    pub created_at: String,
+    pub user_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminCommentsPage {
+    pub items: Vec<AdminCommentDto>,
+    pub total: i64,
+    pub pending_count: i64,
+    pub page: i64,
+    pub per_page: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubmitCommentRequest {
+    pub author_name: Option<String>,
+    pub author_email: Option<String>,
+    pub body: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModerateCommentRequest {
+    pub is_approved: bool,
+    pub admin_reply: Option<String>,
+}

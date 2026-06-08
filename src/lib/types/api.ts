@@ -360,3 +360,45 @@ export interface AdminUsersPage {
     perPage: number;
 }
 
+// ── Comments ─────────────────────────────────────────────────
+
+export interface CommentDto {
+    id: string;
+    authorName: string;
+    body: string;
+    adminReply: string | null;
+    createdAt: string;
+}
+
+export interface AdminCommentDto {
+    id: string;
+    figurineId: string;
+    figurineName: string;
+    authorName: string;
+    authorEmail: string | null;
+    body: string;
+    isApproved: boolean;
+    adminReply: string | null;
+    createdAt: string;
+    userId: string | null;
+}
+
+export interface AdminCommentsPage {
+    items: AdminCommentDto[];
+    total: number;
+    pendingCount: number;
+    page: number;
+    perPage: number;
+}
+
+export interface SubmitCommentRequest {
+    authorName?: string;
+    authorEmail?: string;
+    body: string;
+}
+
+export interface ModerateCommentRequest {
+    isApproved: boolean;
+    adminReply: string | null;
+}
+

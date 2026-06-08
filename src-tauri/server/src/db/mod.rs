@@ -1160,4 +1160,141 @@ impl Repository {
         .await?;
         Ok(())
     }
+
+    // === COMMENTS ===
+
+    pub async fn insert_comment(
+        &self,
+        figurine_id: Uuid,
+        user_id: Option<Uuid>,
+        author_name: &str,
+        author_email: Option<&str>,
+        body: &str,
+    ) -> Result<crate::models::Comment> {
+        let rec = sqlx::query_as::<_, crate::models::Comment>(
+            "INSERT INTO figurine_comments (figurine_id, user_id, author_name, author_email, body)
+             VALUES ($1, $2, $3, $4, $5)
+             RETURNING *"
+        )
+        .bind(figurine_id)
+        .bind(user_id)
+        .bind(author_name)
+        .bind(author_email)
+        .bind(body)
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(rec)
+    }
+
+    pub async fn get_approved_comments(&self, figurine_id: Uuid, newest_first: bool) -> Result<Vec<crate::models::Comment>> {
+        let order = if newest_first { "DESC" } else { "ASC" };
+        let rows = sqlx::query_as::<_, crate::models::Comment>(
+            &format!("SELECT * FROM figurine_comments WHERE figurine_id = $1 AND is_approved = true ORDER BY created_at {order}")
+        )
+        .bind(figurine_id)
+        .fetch_all(&self.pg_pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn get_pending_comments_count(&self) -> Result<i64> {
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM figurine_comments WHERE is_approved = false"
+        )
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(count)
+    }
+
+    pub async fn get_comments_admin_page(
+        &self,
+        only_pending: bool,
+        figurine_filter: Option<Uuid>,
+        newest_first: bool,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<(crate::models::Comment, String)>, i64)> {
+        let mut conditions = Vec::new();
+        if only_pending { conditions.push("c.is_approved = false"); }
+        let figurine_cond;
+        if figurine_filter.is_some() {
+            figurine_cond = "c.figurine_id = $3".to_string();
+            conditions.push(&figurine_cond);
+        }
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+        let order = if newest_first { "DESC" } else { "ASC" };
+
+        let items: Vec<(crate::models::Comment, String)> = {
+            let query_str = format!(
+                "SELECT c.*, f.name AS figurine_name
+                 FROM figurine_comments c
+                 JOIN figurines f ON f.id = c.figurine_id
+                 {where_clause}
+                 ORDER BY c.created_at {order}
+                 LIMIT $1 OFFSET $2"
+            );
+            let mut q = sqlx::query(&query_str).bind(limit).bind(offset);
+            if let Some(fid) = figurine_filter { q = q.bind(fid); }
+
+            let rows = q.fetch_all(&self.pg_pool).await?;
+
+            use sqlx::Row;
+            rows.into_iter().map(|row| {
+                let c = crate::models::Comment {
+                    id:           row.get("id"),
+                    figurine_id:  row.get("figurine_id"),
+                    user_id:      row.get("user_id"),
+                    author_name:  row.get("author_name"),
+                    author_email: row.get("author_email"),
+                    body:         row.get("body"),
+                    is_approved:  row.get("is_approved"),
+                    admin_reply:  row.get("admin_reply"),
+                    created_at:   row.get("created_at"),
+                };
+                let name: String = row.get("figurine_name");
+                (c, name)
+            }).collect()
+        };
+
+        let count_str = format!("SELECT COUNT(*) FROM figurine_comments c JOIN figurines f ON f.id = c.figurine_id {where_clause}");
+        let mut count_q = sqlx::query_as::<_, (i64,)>(&count_str);
+        if let Some(fid) = figurine_filter { count_q = count_q.bind(fid); }
+        let (total,) = count_q.fetch_one(&self.pg_pool).await?;
+
+        Ok((items, total))
+    }
+
+    pub async fn moderate_comment(
+        &self,
+        id: Uuid,
+        is_approved: bool,
+        admin_reply: Option<&str>,
+    ) -> Result<crate::models::Comment> {
+        let rec = sqlx::query_as::<_, crate::models::Comment>(
+            "UPDATE figurine_comments SET is_approved = $1, admin_reply = $2 WHERE id = $3 RETURNING *"
+        )
+        .bind(is_approved)
+        .bind(admin_reply)
+        .bind(id)
+        .fetch_optional(&self.pg_pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Comment {} not found", id)))?;
+        Ok(rec)
+    }
+
+    pub async fn delete_comment(&self, id: Uuid) -> Result<()> {
+        let affected = sqlx::query("DELETE FROM figurine_comments WHERE id = $1")
+            .bind(id)
+            .execute(&self.pg_pool)
+            .await?
+            .rows_affected();
+        if affected == 0 {
+            return Err(AppError::NotFound(format!("Comment {} not found", id)));
+        }
+        Ok(())
+    }
 }
