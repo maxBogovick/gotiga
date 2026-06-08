@@ -655,6 +655,7 @@ pub struct User {
     pub password_reset_token: Option<String>,
     pub password_reset_expires_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+    pub avatar_url: Option<String>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -714,12 +715,26 @@ pub struct UserDto {
     pub id: String,
     pub email: String,
     pub display_name: String,
+    pub avatar_url: Option<String>,
+    pub created_at: String,
 }
 
 impl From<&User> for UserDto {
     fn from(u: &User) -> Self {
-        UserDto { id: u.id.to_string(), email: u.email.clone(), display_name: u.display_name.clone() }
+        UserDto {
+            id: u.id.to_string(),
+            email: u.email.clone(),
+            display_name: u.display_name.clone(),
+            avatar_url: u.avatar_url.clone(),
+            created_at: u.created_at.to_rfc3339(),
+        }
     }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateProfileRequest {
+    pub display_name: String,
 }
 
 /// One icon in a challenge grid step — token replaces real ID

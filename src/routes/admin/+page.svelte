@@ -400,16 +400,19 @@
 
 <!-- ===== ADMIN UI ===== -->
 {:else}
-<div class="h-screen bg-[#f8f1e7] text-[#34251c] font-cinzel flex flex-col overflow-hidden">
+<div class="h-screen bg-[#f8f1e7] text-[#34251c] font-cinzel flex flex-row overflow-hidden">
 
-    <!-- Header -->
-    <header class="flex justify-between items-center px-6 py-4 border-b border-[#34251c]/20 bg-[#f8f1e7] z-10 shrink-0">
-        <div>
-            <h1 class="text-2xl font-gothic mb-0.5">{$t('adminTitle')}</h1>
-            <p class="text-[10px] tracking-[0.08em] text-[#5f4636] uppercase">{$t('adminSubtitle')}</p>
+    <!-- Sidebar -->
+    <aside class="w-52 shrink-0 flex flex-col border-r border-[#34251c]/20 bg-[#f2e8da] overflow-y-auto">
+
+        <!-- Branding -->
+        <div class="px-4 pt-5 pb-4 border-b border-[#34251c]/15">
+            <h1 class="text-lg font-gothic leading-tight">{$t('adminTitle')}</h1>
+            <p class="text-[9px] tracking-[0.1em] text-[#5f4636] uppercase mt-1">{$t('adminSubtitle')}</p>
         </div>
 
-        <nav class="flex gap-3 bg-[#fff9f0] p-1 border border-[#34251c]/20 items-stretch">
+        <!-- Nav -->
+        <nav class="flex-1 px-3 py-4 flex flex-col gap-5">
             {#each [
               {
                 label: $t('adminGroupFigurines'),
@@ -431,12 +434,12 @@
               {
                 label: $t('adminGroupActivity'),
                 tabs: [
-                  ['orders',   'Orders'],
-                  ['showings', $t('adminTabShowings')],
-                  ['bookings', $t('adminTabBookings')],
-                  ['comments', $t('adminTabComments')],
+                  ['orders',    'Orders'],
+                  ['showings',  $t('adminTabShowings')],
+                  ['bookings',  $t('adminTabBookings')],
+                  ['comments',  $t('adminTabComments')],
                   ['analytics', $t('adminTabAnalytics')],
-                  ['users',    $t('adminUsersTab')],
+                  ['users',     $t('adminUsersTab')],
                 ]
               },
               {
@@ -445,50 +448,49 @@
                   ['server', $t('adminTabServer')],
                 ]
               },
-            ] as group, gi}
-              {#if gi > 0}
-                <div class="w-px bg-[#34251c]/15 self-stretch my-1"></div>
-              {/if}
-              <div class="flex flex-col gap-0.5">
-                <span class="px-2 text-[8px] uppercase tracking-[0.12em] text-[#5f4636]/50 font-medium">{group.label}</span>
-                <div class="flex gap-0.5">
-                  {#each group.tabs as [tab, label]}
-                    <button
-                        onclick={() => activeTab = tab as typeof activeTab}
-                        class="relative px-2 py-1.5 text-xs uppercase tracking-wide transition-colors {activeTab === tab ? 'bg-[#c65f3c]/12 text-[#34251c]' : 'text-[#5f4636] hover:text-[#34251c]'}"
-                    >
-                      {label}
-                      {#if tab === 'orders' && newOrdersCount > 0 && activeTab !== 'orders'}
-                        <span class="absolute -top-1 -right-1 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold leading-none">
-                          {newOrdersCount > 99 ? '99+' : newOrdersCount}
-                        </span>
-                      {/if}
-                      {#if tab === 'bookings' && newBookingsCount > 0 && activeTab !== 'bookings'}
-                        <span class="absolute -top-1 -right-1 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-amber-500 text-white text-[9px] font-bold leading-none">
-                          {newBookingsCount > 99 ? '99+' : newBookingsCount}
-                        </span>
-                      {/if}
-                      {#if tab === 'comments' && pendingCommentsCount > 0 && activeTab !== 'comments'}
-                        <span class="absolute -top-1 -right-1 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-orange-600 text-white text-[9px] font-bold leading-none">
-                          {pendingCommentsCount > 99 ? '99+' : pendingCommentsCount}
-                        </span>
-                      {/if}
-                    </button>
-                  {/each}
-                </div>
+            ] as group}
+              <div>
+                <span class="block px-2 mb-1 text-[8px] uppercase tracking-[0.12em] text-[#5f4636]/50 font-medium">{group.label}</span>
+                {#each group.tabs as [tab, label]}
+                  <button
+                    onclick={() => activeTab = tab as typeof activeTab}
+                    class="w-full text-left flex items-center justify-between px-2 py-1.5 text-xs uppercase tracking-wide transition-colors
+                           {activeTab === tab
+                             ? 'border-l-2 border-[#c65f3c] bg-[#c65f3c]/10 text-[#34251c] pl-[6px]'
+                             : 'border-l-2 border-transparent text-[#5f4636] hover:text-[#34251c] hover:bg-[#34251c]/5 pl-[6px]'}"
+                  >
+                    <span>{label}</span>
+                    {#if tab === 'orders' && newOrdersCount > 0 && activeTab !== 'orders'}
+                      <span class="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold leading-none">
+                        {newOrdersCount > 99 ? '99+' : newOrdersCount}
+                      </span>
+                    {/if}
+                    {#if tab === 'bookings' && newBookingsCount > 0 && activeTab !== 'bookings'}
+                      <span class="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-amber-500 text-white text-[9px] font-bold leading-none">
+                        {newBookingsCount > 99 ? '99+' : newBookingsCount}
+                      </span>
+                    {/if}
+                    {#if tab === 'comments' && pendingCommentsCount > 0 && activeTab !== 'comments'}
+                      <span class="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-orange-600 text-white text-[9px] font-bold leading-none">
+                        {pendingCommentsCount > 99 ? '99+' : pendingCommentsCount}
+                      </span>
+                    {/if}
+                  </button>
+                {/each}
               </div>
             {/each}
         </nav>
 
-        <div class="flex gap-2 items-center">
+        <!-- Bottom actions -->
+        <div class="px-3 py-4 border-t border-[#34251c]/15 flex flex-col gap-2">
             <LangSwitcher />
-            <button onclick={() => showSettings = true} class="btn-gothic text-lg px-3" title={$t('adminSettings')}>⚙</button>
+            <button onclick={() => showSettings = true} class="btn-gothic text-[10px] w-full text-left opacity-75 hover:opacity-100" title={$t('adminSettings')}>⚙ {$t('adminSettings')}</button>
             {#if !isTauri}
-                <button onclick={handleLogout} class="btn-gothic text-[10px] opacity-75 hover:opacity-100">{$t('adminLogout')}</button>
+                <button onclick={handleLogout} class="btn-gothic text-[10px] w-full text-left opacity-75 hover:opacity-100">{$t('adminLogout')}</button>
             {/if}
-            <a href="/" class="btn-gothic opacity-60">{$t('adminToMuseum')}</a>
+            <a href="/" class="btn-gothic text-[10px] opacity-60 hover:opacity-100">{$t('adminToMuseum')}</a>
         </div>
-    </header>
+    </aside>
 
     <SettingsModal isOpen={showSettings} onClose={() => showSettings = false} />
 

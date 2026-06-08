@@ -546,6 +546,31 @@ export const api = {
         });
     },
 
+    async updateProfile(sessionToken: string, displayName: string): Promise<UserDto> {
+        return webFetch('/profile/me', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
+            body: JSON.stringify({ displayName }),
+        });
+    },
+
+    async uploadAvatar(sessionToken: string, file: File): Promise<UserDto> {
+        const form = new FormData();
+        form.append('file', file);
+        return webFetch('/profile/avatar', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+            body: form,
+        });
+    },
+
+    async deleteAccount(sessionToken: string): Promise<void> {
+        await webFetch('/profile/me', {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
     // === ADMIN USER MANAGEMENT ===
 
     async adminListUsers(opts?: { search?: string; page?: number; perPage?: number }): Promise<AdminUsersPage> {

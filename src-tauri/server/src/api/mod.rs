@@ -139,6 +139,8 @@ pub fn router(service: AppService, config: Config) -> Router {
         .route("/auth/link-bookings",     post(handlers::user_link_bookings))
         .route("/profile/bookings",       get(handlers::user_profile_bookings))
         .route("/profile/orders",         get(handlers::user_profile_orders))
+        .route("/profile/me",             patch(handlers::user_update_profile).delete(handlers::user_delete_account))
+        .route("/profile/avatar",         post(handlers::user_upload_avatar))
         // === ADMIN USER MANAGEMENT ===
         .route("/admin/users",
             get(handlers::admin_list_users)

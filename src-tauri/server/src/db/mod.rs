@@ -1319,4 +1319,34 @@ impl Repository {
         .await?;
         Ok(())
     }
+
+    pub async fn update_user_display_name(&self, user_id: Uuid, display_name: &str) -> Result<crate::models::User> {
+        let user = sqlx::query_as::<_, crate::models::User>(
+            "UPDATE users SET display_name = $1 WHERE id = $2 RETURNING *"
+        )
+        .bind(display_name)
+        .bind(user_id)
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(user)
+    }
+
+    pub async fn update_user_avatar(&self, user_id: Uuid, avatar_url: &str) -> Result<crate::models::User> {
+        let user = sqlx::query_as::<_, crate::models::User>(
+            "UPDATE users SET avatar_url = $1 WHERE id = $2 RETURNING *"
+        )
+        .bind(avatar_url)
+        .bind(user_id)
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(user)
+    }
+
+    pub async fn delete_user(&self, user_id: Uuid) -> Result<()> {
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(user_id)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
 }

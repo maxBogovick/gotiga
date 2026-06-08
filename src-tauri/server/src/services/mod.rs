@@ -1364,4 +1364,21 @@ impl AppService {
     pub async fn admin_delete_comment(&self, id: Uuid) -> Result<()> {
         self.repo.delete_comment(id).await
     }
+
+    pub async fn update_profile(&self, user_id: Uuid, display_name: &str) -> Result<UserDto> {
+        if display_name.trim().is_empty() {
+            return Err(AppError::BadRequest("Display name required".into()));
+        }
+        let user = self.repo.update_user_display_name(user_id, display_name).await?;
+        Ok(UserDto::from(&user))
+    }
+
+    pub async fn set_user_avatar(&self, user_id: Uuid, avatar_url: &str) -> Result<UserDto> {
+        let user = self.repo.update_user_avatar(user_id, avatar_url).await?;
+        Ok(UserDto::from(&user))
+    }
+
+    pub async fn delete_account(&self, user_id: Uuid) -> Result<()> {
+        self.repo.delete_user(user_id).await
+    }
 }

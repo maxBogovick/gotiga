@@ -61,6 +61,18 @@
     goto('/');
   }
 
+  function resolveAvatarUrl(url: string | null | undefined): string | null {
+    if (!url) return null;
+    if (url.startsWith('http')) return url;
+    if (url.startsWith('/static/') && typeof localStorage !== 'undefined') {
+      const serverUrl = localStorage.getItem('gotiga_server_url') ?? '';
+      return serverUrl ? `${serverUrl}${url}` : url;
+    }
+    return url;
+  }
+
+  let avatarUrl = $derived(resolveAvatarUrl(authStore.user?.avatarUrl));
+
   onMount(async () => {
     allClaims.load();
     allClaims.verify();
@@ -191,7 +203,11 @@
         title={authStore.isLoggedIn ? authStore.user?.displayName : $t('authLogin')}
       >
         {#if authStore.isLoggedIn}
-          <span class="user-initial">{(authStore.user?.displayName ?? '?')[0].toUpperCase()}</span>
+          {#if avatarUrl}
+            <img src={avatarUrl} alt="" class="user-avatar" />
+          {:else}
+            <span class="user-initial">{(authStore.user?.displayName ?? '?')[0].toUpperCase()}</span>
+          {/if}
         {:else}
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
             <circle cx="7" cy="4.5" r="2.5" stroke="currentColor" stroke-width="1"/>
@@ -203,8 +219,15 @@
       {#if userMenuOpen && authStore.isLoggedIn}
         <div class="user-panel" transition:fade={{ duration: 150 }}>
           <div class="user-panel-head">
-            <span class="user-panel-name">{authStore.user?.displayName}</span>
-            <span class="user-panel-email">{authStore.user?.email}</span>
+            {#if avatarUrl}
+              <img src={avatarUrl} alt="" class="user-panel-avatar" />
+            {:else}
+              <span class="user-panel-initial">{(authStore.user?.displayName ?? '?')[0].toUpperCase()}</span>
+            {/if}
+            <div class="user-panel-info">
+              <span class="user-panel-name">{authStore.user?.displayName}</span>
+              <span class="user-panel-email">{authStore.user?.email}</span>
+            </div>
           </div>
           <a href="/profile" class="user-panel-link" onclick={() => userMenuOpen = false}>
             {$t('profileTitle')} →
@@ -551,6 +574,14 @@
     color: var(--copper);
   }
 
+  .user-avatar {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 50%;
+    display: block;
+  }
+
   .user-initial {
     font-family: 'Fraunces', Georgia, serif;
     font-size: 12px;
@@ -575,14 +606,46 @@
     padding: 12px 14px 10px;
     border-bottom: 1px solid rgba(52,37,28,0.08);
     display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .user-panel-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+    border: 1px solid rgba(52,37,28,0.10);
+  }
+
+  .user-panel-initial {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: #efe6d6;
+    border: 1px solid rgba(52,37,28,0.10);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Fraunces', Georgia, serif;
+    font-size: 1rem;
+    color: #9a7c5c;
+  }
+
+  .user-panel-info {
+    display: flex;
     flex-direction: column;
     gap: 2px;
+    min-width: 0;
   }
 
   .user-panel-name {
     font-family: 'Fraunces', Georgia, serif;
     font-size: 0.85rem;
     color: #34251c;
+    line-height: 1.2;
   }
 
   .user-panel-email {

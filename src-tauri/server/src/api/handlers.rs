@@ -931,3 +931,63 @@ pub async fn admin_save_smtp_settings(
     service.save_smtp_settings(body.clone()).await?;
     Ok(Json(body))
 }
+
+pub async fn user_update_profile(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(body): Json<UpdateProfileRequest>,
+) -> Result<Json<UserDto>> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
+    let updated = service.update_profile(user.id, &body.display_name).await?;
+    Ok(Json(updated))
+}
+
+pub async fn user_upload_avatar(
+    State(service): State<AppService>,
+    State(config): State<Config>,
+    headers: HeaderMap,
+    mut multipart: Multipart,
+) -> Result<Json<UserDto>> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
+
+    while let Some(field) = multipart.next_field().await.map_err(|e| AppError::BadRequest(e.to_string()))? {
+        if field.name().unwrap_or("") == "file" {
+            let data = field.bytes().await
+                .map_err(|e| AppError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+
+            let img = image::load_from_memory(&data)
+                .map_err(|e| AppError::BadRequest(format!("Invalid image: {}", e)))?;
+            let thumb = img.resize_to_fill(200, 200, FilterType::Lanczos3).to_rgb8();
+
+            let id = Uuid::new_v4();
+            let avatar_dir = format!("{}/avatars", config.upload_dir);
+            fs::create_dir_all(&avatar_dir).await.map_err(AppError::Io)?;
+
+            let file_path = format!("{}/{}.jpg", avatar_dir, id);
+            let mut buf = Vec::new();
+            {
+                let mut encoder = JpegEncoder::new_with_quality(&mut buf, 88);
+                encoder.encode_image(&thumb)
+                    .map_err(|e| AppError::Internal(format!("Encode error: {}", e)))?;
+            }
+            fs::write(&file_path, &buf).await.map_err(AppError::Io)?;
+
+            let url = format!("/static/avatars/{}.jpg", id);
+            let updated = service.set_user_avatar(user.id, &url).await?;
+            return Ok(Json(updated));
+        }
+    }
+    Err(AppError::BadRequest("No file field found".to_string()))
+}
+
+pub async fn user_delete_account(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<StatusCode> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
+    service.delete_account(user.id).await?;
+    Ok(StatusCode::OK)
+}
