@@ -16,6 +16,7 @@
     import AnalyticsPanel from '$lib/components/admin/AnalyticsPanel.svelte';
     import UsersPanel from '$lib/components/admin/UsersPanel.svelte';
     import CommentsPanel from '$lib/components/admin/CommentsPanel.svelte';
+    import SmtpSettingsPanel from '$lib/components/admin/SmtpSettingsPanel.svelte';
     import FigurineShowingsEditor from '$lib/components/admin/FigurineShowingsEditor.svelte';
     import { t } from '$lib/i18n';
     import LangSwitcher from '$lib/components/LangSwitcher.svelte';
@@ -61,7 +62,7 @@
     let isSaving = $state(false);
     let showSettings = $state(false);
     let message = $state({ text: '', type: 'info' });
-    let activeTab = $state<'registry' | 'home' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'showings' | 'bookings' | 'analytics' | 'users' | 'comments'>('registry');
+    let activeTab = $state<'registry' | 'home' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'showings' | 'bookings' | 'analytics' | 'users' | 'comments' | 'server'>('registry');
     let activeAuthorSubTab = $state<'profile' | 'texts'>('profile');
     let newOrdersCount = $state(0);
     let newBookingsCount = $state(0);
@@ -333,7 +334,7 @@
         }
         // Hash-based tab routing (e.g. Telegram notification links)
         const hash = window.location.hash.replace('#', '');
-        const validTabs = ['registry','home','zones','author','workshop','media','releases','orders','showings','bookings','analytics','users','comments'];
+        const validTabs = ['registry','home','zones','author','workshop','media','releases','orders','showings','bookings','analytics','users','comments','server'];
         if (validTabs.includes(hash)) {
             activeTab = hash as typeof activeTab;
         }
@@ -436,6 +437,12 @@
                   ['comments', $t('adminTabComments')],
                   ['analytics', $t('adminTabAnalytics')],
                   ['users',    $t('adminUsersTab')],
+                ]
+              },
+              {
+                label: $t('adminGroupSystem'),
+                tabs: [
+                  ['server', $t('adminTabServer')],
                 ]
               },
             ] as group, gi}
@@ -895,6 +902,8 @@
             <div in:fade class="h-full overflow-y-auto"><UsersPanel /></div>
         {:else if activeTab === 'comments'}
             <div in:fade class="h-full overflow-y-auto"><CommentsPanel onPendingCount={(n) => pendingCommentsCount = n} /></div>
+        {:else if activeTab === 'server'}
+            <div in:fade class="h-full overflow-y-auto"><SmtpSettingsPanel /></div>
         {/if}
     </div>
 

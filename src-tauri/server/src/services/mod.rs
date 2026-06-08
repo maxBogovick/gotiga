@@ -1148,6 +1148,19 @@ impl AppService {
         Ok(())
     }
 
+    pub async fn get_smtp_settings(&self) -> Result<SmtpSettings> {
+        match self.repo.get_setting("smtp").await? {
+            Some(json) => Ok(serde_json::from_str(&json).unwrap_or_default()),
+            None => Ok(SmtpSettings::default()),
+        }
+    }
+
+    pub async fn save_smtp_settings(&self, s: SmtpSettings) -> Result<()> {
+        let json = serde_json::to_string(&s)
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        self.repo.upsert_setting("smtp", &json).await
+    }
+
     async fn send_reply_email(
         &self,
         to: &str,
@@ -1160,12 +1173,15 @@ impl AppService {
         use lettre::transport::smtp::authentication::Credentials;
         use lettre::message::header::ContentType;
 
-        let (Some(host), Some(user), Some(pass), Some(from)) = (
-            self.config.smtp_host.as_deref(),
-            self.config.smtp_user.as_deref(),
-            self.config.smtp_pass.as_deref(),
-            self.config.smtp_from.as_deref(),
-        ) else {
+        // DB settings take precedence over env config
+        let db = self.get_smtp_settings().await.unwrap_or_default();
+        let host = db.host.as_deref().or(self.config.smtp_host.as_deref());
+        let user = db.user.as_deref().or(self.config.smtp_user.as_deref());
+        let pass = db.pass.as_deref().or(self.config.smtp_pass.as_deref());
+        let from = db.from.as_deref().or(self.config.smtp_from.as_deref());
+        let port = db.port.or(self.config.smtp_port).unwrap_or(587);
+
+        let (Some(host), Some(user), Some(pass), Some(from)) = (host, user, pass, from) else {
             return Ok(());
         };
 
@@ -1191,7 +1207,6 @@ impl AppService {
             .body(body_text)
             .map_err(|e| AppError::Internal(format!("Email build error: {e}")))?;
 
-        let port = self.config.smtp_port.unwrap_or(587);
         let creds = Credentials::new(user.to_string(), pass.to_string());
         let mailer = AsyncSmtpTransport::<Tokio1Executor>::relay(host)
             .map_err(|e| AppError::Internal(format!("SMTP relay error: {e}")))?

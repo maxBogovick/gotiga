@@ -906,3 +906,13 @@ pub struct ModerateCommentRequest {
     pub is_approved: bool,
     pub admin_reply: Option<String>,
 }
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SmtpSettings {
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub user: Option<String>,
+    pub pass: Option<String>,
+    pub from: Option<String>,
+}

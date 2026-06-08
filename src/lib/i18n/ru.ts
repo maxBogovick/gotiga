@@ -642,4 +642,21 @@ export const ru: Record<TranslationKey, string> = {
   adminCommentsSortOldest: 'Сначала старые',
   commentsSortNewest:      'Сначала новые',
   commentsSortOldest:      'Сначала старые',
+
+  // === SMTP SETTINGS ===
+  adminGroupSystem:        'Система',
+  adminTabServer:          'Сервер',
+  adminSmtpTitle:          'Электронная почта (SMTP)',
+  adminSmtpHint:           'Оставьте пустым, чтобы отключить уведомления по email.',
+  adminSmtpHost:           'Хост',
+  adminSmtpPort:           'Порт',
+  adminSmtpUser:           'Пользователь',
+  adminSmtpPass:           'Пароль',
+  adminSmtpFrom:           'Адрес отправителя',
+  adminSmtpSave:           'Сохранить',
+  adminSmtpSaved:          'Сохранено',
+  adminSmtpError:          'Ошибка сохранения',
+
+  // === LOGGED-IN USER HINT IN FORMS ===
+  formLoggedInAs:          'Вы вошли как',
 };

@@ -95,6 +95,11 @@ pub fn router(service: AppService, config: Config) -> Router {
         .route("/author/profile",
             post(handlers::save_author_profile)
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        // === SERVER SETTINGS (ADMIN) ===
+        .route("/admin/settings/smtp",
+            get(handlers::admin_get_smtp_settings)
+            .put(handlers::admin_save_smtp_settings)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
         // === COMMENTS (ADMIN) ===
         .route("/admin/comments",
             get(handlers::admin_list_comments)

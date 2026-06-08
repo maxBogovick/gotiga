@@ -640,6 +640,23 @@ export const en = {
   adminCommentsSortOldest: 'Oldest first',
   commentsSortNewest:      'Newest first',
   commentsSortOldest:      'Oldest first',
+
+  // === SMTP SETTINGS ===
+  adminGroupSystem:        'System',
+  adminTabServer:          'Server',
+  adminSmtpTitle:          'Email (SMTP)',
+  adminSmtpHint:           'Leave blank to disable email notifications for comment replies.',
+  adminSmtpHost:           'Host',
+  adminSmtpPort:           'Port',
+  adminSmtpUser:           'Username',
+  adminSmtpPass:           'Password',
+  adminSmtpFrom:           'From address',
+  adminSmtpSave:           'Save',
+  adminSmtpSaved:          'Saved',
+  adminSmtpError:          'Save failed',
+
+  // === LOGGED-IN USER HINT IN FORMS ===
+  formLoggedInAs:          'Logged in as',
 } as const;
 
 export type TranslationKey = keyof typeof en;

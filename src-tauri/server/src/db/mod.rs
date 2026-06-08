@@ -1297,4 +1297,26 @@ impl Repository {
         }
         Ok(())
     }
+
+    // === SETTINGS ===
+
+    pub async fn get_setting(&self, key: &str) -> Result<Option<String>> {
+        let row: Option<(String,)> = sqlx::query_as("SELECT value FROM settings WHERE key = $1")
+            .bind(key)
+            .fetch_optional(&self.pg_pool)
+            .await?;
+        Ok(row.map(|(v,)| v))
+    }
+
+    pub async fn upsert_setting(&self, key: &str, value: &str) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO settings (key, value) VALUES ($1, $2)
+             ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"
+        )
+        .bind(key)
+        .bind(value)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
 }

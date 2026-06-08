@@ -402,3 +402,11 @@ export interface ModerateCommentRequest {
     adminReply: string | null;
 }
 
+export interface SmtpSettings {
+    host: string | null;
+    port: number | null;
+    user: string | null;
+    pass: string | null;
+    from: string | null;
+}
+

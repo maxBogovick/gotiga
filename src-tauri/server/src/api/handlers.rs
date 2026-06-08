@@ -916,3 +916,18 @@ pub async fn admin_delete_comment(
     service.admin_delete_comment(id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
+
+pub async fn admin_get_smtp_settings(
+    State(service): State<AppService>,
+) -> Result<Json<SmtpSettings>> {
+    let settings = service.get_smtp_settings().await?;
+    Ok(Json(settings))
+}
+
+pub async fn admin_save_smtp_settings(
+    State(service): State<AppService>,
+    Json(body): Json<SmtpSettings>,
+) -> Result<Json<SmtpSettings>> {
+    service.save_smtp_settings(body.clone()).await?;
+    Ok(Json(body))
+}

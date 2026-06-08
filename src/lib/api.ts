@@ -31,6 +31,7 @@ import type {
     SubmitCommentRequest,
     ModerateCommentRequest,
     AdminCommentDto,
+    SmtpSettings,
 } from './types/api';
 
 export type { AppSettings };
@@ -648,5 +649,19 @@ export const api = {
             headers: authHeaders(),
         });
         if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+    },
+
+    // === SMTP SETTINGS ===
+
+    async getSmtpSettings(): Promise<SmtpSettings> {
+        return webFetch('/admin/settings/smtp', { headers: authHeaders() });
+    },
+
+    async saveSmtpSettings(s: SmtpSettings): Promise<SmtpSettings> {
+        return webFetch('/admin/settings/smtp', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(s),
+        });
     },
 };

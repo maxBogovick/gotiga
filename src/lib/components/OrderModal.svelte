@@ -3,6 +3,7 @@
   import { cubicOut, elasticOut } from 'svelte/easing';
   import { api, isTauri } from '$lib/api';
   import { t } from '$lib/i18n';
+  import { authStore } from '$lib/stores/auth.svelte';
   import type { FigurineSchedule } from '$lib/types/api';
 
   import type { FigurineListItem } from '$lib/types/api';
@@ -55,8 +56,11 @@
   );
 
   async function handleSubmit() {
-    if (!email.trim()) return;
-    if (mode === 'request' && !name.trim()) return;
+    const effectiveName = authStore.isLoggedIn ? (authStore.user?.displayName ?? '') : name.trim();
+    const effectiveEmail = authStore.isLoggedIn ? (authStore.user?.email ?? '') : email.trim();
+
+    if (!effectiveEmail) return;
+    if (mode === 'request' && !effectiveName) return;
 
     isSubmitting = true;
     submitError = '';
@@ -65,8 +69,8 @@
       await api.submitOrder({
         figurineId: figurineId || 'unknown',
         figurineName,
-        requesterName: name.trim() || '—',
-        requesterEmail: email.trim(),
+        requesterName: effectiveName || '—',
+        requesterEmail: effectiveEmail,
         requesterPhone: phone.trim() || null,
         message: message.trim() || null,
         mode,
@@ -164,7 +168,12 @@
                       </div>
                     {/if}
 
-                                    <div class="relative group">
+                    {#if authStore.isLoggedIn}
+                      <p class="text-sm text-[#5f4636] italic border-b border-[#d8c6b1] pb-2">
+                        {$t('formLoggedInAs')} <strong class="text-[#34251c] not-italic">{authStore.user?.displayName}</strong>
+                      </p>
+                    {:else}
+                    <div class="relative group">
                       <input
                               id="name"
                               type="text"
@@ -191,6 +200,7 @@
                           {$t('orderEmailLabel')}
                       </label>
                     </div>
+                    {/if}
 
                     <div class="relative group">
                       <input

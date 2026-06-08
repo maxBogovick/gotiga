@@ -3,6 +3,7 @@
   import { cubicOut, elasticOut } from 'svelte/easing';
   import { api } from '$lib/api';
   import { t } from '$lib/i18n';
+  import { authStore } from '$lib/stores/auth.svelte';
   import type { FigurineSchedule } from '$lib/types/api';
   import DateRangePicker from '$lib/components/DateRangePicker.svelte';
 
@@ -62,7 +63,10 @@
 
   async function handleSubmit(e: Event) {
     e.preventDefault();
-    if (!name.trim() || !email.trim()) {
+    const effectiveName = authStore.isLoggedIn ? (authStore.user?.displayName ?? '') : name.trim();
+    const effectiveEmail = authStore.isLoggedIn ? (authStore.user?.email ?? '') : email.trim();
+
+    if (!effectiveName || !effectiveEmail) {
       submitError = $t('bookingFillFields');
       return;
     }
@@ -80,8 +84,8 @@
       const res = await api.submitBooking({
         figurineId,
         figurineName,
-        requesterName:  name.trim(),
-        requesterEmail: email.trim(),
+        requesterName:  effectiveName,
+        requesterEmail: effectiveEmail,
         requesterPhone: phone.trim() || null,
         purpose:        purpose.trim() || null,
         startsAt,
@@ -217,6 +221,12 @@
                     {/if}
                   </div>
 
+                  {#if authStore.isLoggedIn}
+                  <!-- Logged-in user: show name, hide inputs -->
+                  <p class="text-sm text-[#5f4636] italic border-b border-[#d8c6b1] pb-2">
+                    {$t('formLoggedInAs')} <strong class="text-[#34251c] not-italic">{authStore.user?.displayName}</strong>
+                  </p>
+                  {:else}
                   <!-- Name -->
                   <div class="space-y-1.5">
                     <label for="b-name" class="block text-[10px] font-['Inter'] font-bold tracking-[0.08em] text-[#5f4636] uppercase">
@@ -246,6 +256,7 @@
                       placeholder=""
                     />
                   </div>
+                  {/if}
 
                   <!-- Phone / Telegram -->
                   <div class="space-y-1.5">
