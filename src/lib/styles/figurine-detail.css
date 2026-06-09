@@ -1790,3 +1790,139 @@
   margin: 0;
   font-style: italic;
 }
+
+/* ── Claims panel — compact register replacing N individual claim/reserved cards ── */
+.claims-panel {
+  border: 1px solid rgba(52,37,28,0.12);
+  border-left: 2px solid rgba(52,37,28,0.18);
+  background: rgba(52,37,28,0.015);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 0.75rem;
+}
+.claims-panel--has-confirmed {
+  border-left: 2px solid rgba(5,150,105,0.45);
+}
+.claims-panel-header {
+  padding: 0.3rem 0.875rem;
+  border-bottom: 1px solid rgba(52,37,28,0.07);
+  font-family: var(--font-sans);
+  font-size: 0.565rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.11em;
+  color: rgba(95,70,54,0.4);
+}
+.claims-panel--has-confirmed .claims-panel-header {
+  color: rgba(5,150,105,0.55);
+  background: rgba(6,95,70,0.02);
+  border-bottom-color: rgba(6,95,70,0.07);
+}
+.cp-row {
+  display: flex;
+  flex-direction: column;
+  padding: 0.5rem 0.875rem;
+  border-top: 1px solid rgba(52,37,28,0.055);
+}
+.cp-row:first-of-type { border-top: none; }
+.cp-row--confirmed { background: rgba(6,95,70,0.03); }
+.cp-row--done { padding: 0.6rem 0.875rem; }
+.cp-row-main {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.cp-icon {
+  flex-shrink: 0;
+  color: rgba(95,70,54,0.38);
+}
+.cp-icon--ok { color: #059669; }
+.cp-dates {
+  font-family: var(--font-sans);
+  font-size: 0.78rem;
+  color: #34251c;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.cp-token {
+  font-family: 'Fraunces', serif;
+  font-size: 0.63rem;
+  letter-spacing: 0.04em;
+  color: rgba(95,70,54,0.35);
+  white-space: nowrap;
+}
+.cp-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.cp-link {
+  font-family: var(--font-sans);
+  font-size: 0.58rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #059669;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(5,150,105,0.28);
+  padding-bottom: 1px;
+  white-space: nowrap;
+  transition: border-color 0.18s;
+}
+.cp-link:hover { border-color: #059669; }
+.cp-revoke {
+  font-family: var(--font-sans);
+  font-size: 0.58rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(158,69,45,0.65);
+  background: transparent;
+  border: 1px solid rgba(158,69,45,0.18);
+  border-radius: 2px;
+  padding: 0.18rem 0.5rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s, color 0.15s;
+}
+.cp-revoke:hover:not(:disabled) { border-color: rgba(158,69,45,0.45); color: #9e452d; }
+.cp-revoke:disabled { opacity: 0.42; cursor: default; }
+.cp-note {
+  font-size: 0.67rem;
+  font-family: var(--font-sans);
+  font-style: italic;
+  color: rgba(6,95,70,0.6);
+  margin: 0.22rem 0 0 1.35rem;
+  line-height: 1.4;
+}
+.cp-done {
+  font-size: 0.75rem;
+  font-family: var(--font-sans);
+  color: #065f46;
+  margin: 0;
+}
+.cp-err {
+  font-size: 0.64rem;
+  color: #991b1b;
+  font-family: var(--font-sans);
+  margin: 0.18rem 0 0 1.35rem;
+}
+
+/* Inline secondary actions row: notify · waitlist · book */
+.cp-secondary-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+.cp-secondary-actions--solo { margin-top: 0.5rem; }
+.cp-secondary-actions .cta-ask {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}

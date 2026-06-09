@@ -233,6 +233,8 @@ export const en = {
   bookingClaimPageLink:     'Or bookmark this cancel link',
 
   // === CLAIM TOKEN (self-cancel) ===
+  claimsYours:              'Your reservations',
+  claimsPending:            'Pending requests',
   claimPendingBooking:      'You have a pending reservation request',
   claimPendingBookings:     'Your pending reservation requests',
   claimConfirmed:           'Your reservation is confirmed',

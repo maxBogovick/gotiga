@@ -807,56 +807,48 @@
 
         <!-- ── CLAIM TOKEN: user's bookings (shown only when figurine is still available) ── -->
         {#if figurine.status === 'available'}
-        {#each cs.claims as c (c.token)}
-          {#if c.status === 'confirmed'}
-            <div class="claim-block claim-block--confirmed">
-              <div class="claim-head">
-                <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.5">
-                  <path d="M1.5 6.5l3.5 3.5 6.5-7"/>
-                </svg>
-                <span>{$t('claimConfirmed')}</span>
-              </div>
-              <div class="claim-row">
-                <span class="claim-dates">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</span>
-                <span class="claim-code-small">{c.token}</span>
-              </div>
-              <p class="claim-next">{$t('claimConfirmedNext')}</p>
-              <div class="claim-confirmed-actions">
-                <a href="/cancel/{c.token}" target="_blank" rel="noopener" class="claim-manage-link">{$t('claimManageLink')}</a>
-                <button onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="claim-cancel-btn">
-                  {cs.cancellingToken === c.token ? $t('claimCancelling') : $t('claimCancelBtn')}
-                </button>
-              </div>
-              {#if cs.claimErrors[c.token]}<p class="claim-err">{cs.claimErrors[c.token]}</p>{/if}
+        {#if cs.claims.length > 0 || (cs.cancelledTokens.size > 0 && cs.claims.length === 0)}
+          <div class="claims-panel {cs.claims.some(c => c.status === 'confirmed') ? 'claims-panel--has-confirmed' : ''}">
+            <div class="claims-panel-header">
+              {cs.claims.some(c => c.status === 'confirmed') ? $t('claimsYours') : $t('claimsPending')}
             </div>
-          {:else}
-            <div class="claim-block">
-              <div class="claim-head">
-                <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.3">
-                  <rect x="0.5" y="1.5" width="12" height="11" rx="0.8"/>
-                  <path d="M3.5 1.5V0.5M9.5 1.5V0.5M0.5 5h12"/>
-                </svg>
-                <span>{$t('claimPendingBooking')}</span>
+            {#if cs.cancelledTokens.size > 0 && cs.claims.length === 0}
+              <div class="cp-row cp-row--done">
+                <p class="cp-done">{$t('claimCancelDone')}</p>
               </div>
-              <div class="claim-row">
-                <span class="claim-dates">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</span>
-                <span class="claim-code-small">{c.token}</span>
-                {#if cs.claimErrors[c.token]}
-                  <p class="claim-err">{cs.claimErrors[c.token]}</p>
-                {/if}
-                <button
-                  onclick={() => cs.cancel(c)}
-                  disabled={cs.cancellingToken === c.token}
-                  class="claim-cancel-btn"
-                >{cs.cancellingToken === c.token ? $t('claimCancelling') : $t('claimCancelBtn')}</button>
-              </div>
-            </div>
-          {/if}
-        {/each}
-
-        {#if cs.cancelledTokens.size > 0 && cs.claims.length === 0}
-          <div class="claim-block claim-block--done">
-            <p class="claim-done">{$t('claimCancelDone')}</p>
+            {/if}
+            {#each cs.claims as c (c.token)}
+              {#if c.status === 'confirmed'}
+                <div class="cp-row cp-row--confirmed">
+                  <div class="cp-row-main">
+                    <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.6" class="cp-icon cp-icon--ok" aria-hidden="true"><path d="M1 5.5l3 3 6-6"/></svg>
+                    <span class="cp-dates">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</span>
+                    <span class="cp-token">{c.token}</span>
+                    <div class="cp-actions">
+                      <a href="/cancel/{c.token}" target="_blank" rel="noopener" class="cp-link">{$t('claimManageLink')}</a>
+                      <button onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="cp-revoke">
+                        {cs.cancellingToken === c.token ? '…' : $t('claimCancelBtn')}
+                      </button>
+                    </div>
+                  </div>
+                  <p class="cp-note">{$t('claimConfirmedNext')}</p>
+                  {#if cs.claimErrors[c.token]}<p class="cp-err">{cs.claimErrors[c.token]}</p>{/if}
+                </div>
+              {:else}
+                <div class="cp-row">
+                  <div class="cp-row-main">
+                    <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.3" class="cp-icon" aria-hidden="true"><circle cx="5.5" cy="5.5" r="4.5"/><path d="M5.5 3.5v2.2l1.5 1.3"/></svg>
+                    <span class="cp-dates">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</span>
+                    <div class="cp-actions">
+                      <button onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="cp-revoke">
+                        {cs.cancellingToken === c.token ? $t('claimCancelling') : $t('claimCancelBtn')}
+                      </button>
+                    </div>
+                  </div>
+                  {#if cs.claimErrors[c.token]}<p class="cp-err">{cs.claimErrors[c.token]}</p>{/if}
+                </div>
+              {/if}
+            {/each}
           </div>
         {/if}
 
@@ -997,49 +989,70 @@
             </button>
 
           {:else if figurine.status === 'reserved'}
-            <!-- All confirmed claims -->
-            {#each cs.claims.filter(c => c.status === 'confirmed') as c (c.token)}
-              <div class="reserved-notice reserved-notice--confirmed">
-                <svg class="reserved-icon" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8">
-                  <path d="M3 9l4.5 4.5 8-8"/>
-                </svg>
-                <div>
-                  <p class="reserved-title reserved-title--confirmed">{$t('claimConfirmed')}</p>
-                  <p class="reserved-sub">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</p>
-                  <p class="claim-code-small" style="margin-top:0.25rem">{c.token}</p>
-                  <p class="claim-next" style="margin-top:0.6rem">{$t('claimConfirmedNext')}</p>
-                  <div class="claim-confirmed-actions" style="margin-top:0.6rem">
-                    <a href="/cancel/{c.token}" target="_blank" rel="noopener" class="claim-manage-link">{$t('claimManageLink')}</a>
-                    <button onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="claim-cancel-btn">
-                      {cs.cancellingToken === c.token ? $t('claimCancelling') : $t('claimCancelBtn')}
-                    </button>
-                  </div>
-                  {#if cs.claimErrors[c.token]}<p class="claim-err" style="margin-top:0.4rem">{cs.claimErrors[c.token]}</p>{/if}
+            {#if cs.claims.length > 0}
+              <!-- Claims panel — all confirmed + pending in one compact register -->
+              <div class="claims-panel {cs.claims.some(c => c.status === 'confirmed') ? 'claims-panel--has-confirmed' : ''}">
+                <div class="claims-panel-header">
+                  {cs.claims.some(c => c.status === 'confirmed') ? $t('claimsYours') : $t('claimsPending')}
                 </div>
+                {#each cs.claims as c (c.token)}
+                  {#if c.status === 'confirmed'}
+                    <div class="cp-row cp-row--confirmed">
+                      <div class="cp-row-main">
+                        <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.6" class="cp-icon cp-icon--ok" aria-hidden="true"><path d="M1 5.5l3 3 6-6"/></svg>
+                        <span class="cp-dates">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</span>
+                        <span class="cp-token">{c.token}</span>
+                        <div class="cp-actions">
+                          <a href="/cancel/{c.token}" target="_blank" rel="noopener" class="cp-link">{$t('claimManageLink')}</a>
+                          <button onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="cp-revoke">
+                            {cs.cancellingToken === c.token ? '…' : $t('claimCancelBtn')}
+                          </button>
+                        </div>
+                      </div>
+                      <p class="cp-note">{$t('claimConfirmedNext')}</p>
+                      {#if cs.claimErrors[c.token]}<p class="cp-err">{cs.claimErrors[c.token]}</p>{/if}
+                    </div>
+                  {:else}
+                    <div class="cp-row">
+                      <div class="cp-row-main">
+                        <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.3" class="cp-icon" aria-hidden="true"><circle cx="5.5" cy="5.5" r="4.5"/><path d="M5.5 3.5v2.2l1.5 1.3"/></svg>
+                        <span class="cp-dates">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</span>
+                        <div class="cp-actions">
+                          <button onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="cp-revoke">
+                            {cs.cancellingToken === c.token ? $t('claimCancelling') : $t('claimCancelBtn')}
+                          </button>
+                        </div>
+                      </div>
+                      {#if cs.claimErrors[c.token]}<p class="cp-err">{cs.claimErrors[c.token]}</p>{/if}
+                    </div>
+                  {/if}
+                {/each}
               </div>
-            {/each}
-
-            <!-- All pending claims -->
-            {#each cs.claims.filter(c => !c.status || c.status === 'pending') as c (c.token)}
-              <div class="reserved-notice">
-                <svg class="reserved-icon" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.3">
-                  <circle cx="9" cy="9" r="7.5"/>
-                  <path d="M9 5.5v3.5l2.5 2"/>
-                </svg>
-                <div>
-                  <p class="reserved-title">{$t('claimPendingBooking')}</p>
-                  <p class="reserved-sub">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</p>
-                  <button onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token}
-                    class="claim-cancel-btn" style="margin-top:0.5rem">
-                    {cs.cancellingToken === c.token ? $t('claimCancelling') : $t('claimCancelBtn')}
-                  </button>
-                  {#if cs.claimErrors[c.token]}<p class="claim-err">{cs.claimErrors[c.token]}</p>{/if}
-                </div>
+              <!-- Secondary actions: notify · waitlist · reserve — one quiet row -->
+              <div class="cp-secondary-actions">
+                <button onclick={() => openModal('notify')} class="cta-ask">
+                  <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true">
+                    <path d="M7 1a4 4 0 0 1 4 4v3l1.5 2H1.5L3 8V5a4 4 0 0 1 4-4z"/>
+                    <path d="M5.5 11.5a1.5 1.5 0 0 0 3 0"/>
+                  </svg>
+                  {$t('figurineNotify')}
+                </button>
+                <button onclick={() => (showWaitlistModal = true)} class="cta-ask">
+                  <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true">
+                    <path d="M2 7h10M2 4h10M2 10h6"/>
+                  </svg>
+                  {$t('waitlistJoinBtn')}
+                </button>
+                <button onclick={() => (showBookingModal = true)} class="cta-ask">
+                  <svg width="12" height="12" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true">
+                    <rect x="0.5" y="1.5" width="12" height="11" rx="0.8"/>
+                    <path d="M3.5 1.5V0.5M9.5 1.5V0.5M0.5 5h12"/>
+                  </svg>
+                  {$t('figurineBook')}
+                </button>
               </div>
-            {/each}
-
-            <!-- No claims in this browser — generic reserved + lookup -->
-            {#if cs.claims.length === 0}
+            {:else}
+              <!-- No claims — generic reserved state -->
               <div class="reserved-notice">
                 <svg class="reserved-icon" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.3">
                   <circle cx="9" cy="9" r="7.5"/>
@@ -1090,39 +1103,17 @@
                 </svg>
                 {$t('figurineNotify')}
               </button>
-              <button onclick={() => (showWaitlistModal = true)} class="notify-btn">
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3">
-                  <path d="M2 7h10M2 4h10M2 10h6"/>
-                </svg>
-                {$t('waitlistJoinBtn')}
-              </button>
+              <div class="cp-secondary-actions cp-secondary-actions--solo">
+                <button onclick={() => (showWaitlistModal = true)} class="cta-ask">
+                  <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M2 7h10M2 4h10M2 10h6"/></svg>
+                  {$t('waitlistJoinBtn')}
+                </button>
+                <button onclick={() => (showBookingModal = true)} class="cta-ask">
+                  <svg width="12" height="12" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><rect x="0.5" y="1.5" width="12" height="11" rx="0.8"/><path d="M3.5 1.5V0.5M9.5 1.5V0.5M0.5 5h12"/></svg>
+                  {$t('figurineBook')}
+                </button>
+              </div>
             {/if}
-
-            <!-- Notify always shown in reserved state -->
-            {#if cs.claims.length > 0}
-              <button onclick={() => openModal('notify')} class="notify-btn">
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3">
-                  <path d="M7 1a4 4 0 0 1 4 4v3l1.5 2H1.5L3 8V5a4 4 0 0 1 4-4z"/>
-                  <path d="M5.5 11.5a1.5 1.5 0 0 0 3 0"/>
-                </svg>
-                {$t('figurineNotify')}
-              </button>
-              <button onclick={() => (showWaitlistModal = true)} class="notify-btn">
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3">
-                  <path d="M2 7h10M2 4h10M2 10h6"/>
-                </svg>
-                {$t('waitlistJoinBtn')}
-              </button>
-            {/if}
-
-            <!-- Book button always available — calendar handles date conflicts -->
-            <button onclick={() => (showBookingModal = true)} class="book-btn">
-              <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.3">
-                <rect x="0.5" y="1.5" width="12" height="11" rx="0.8"/>
-                <path d="M3.5 1.5V0.5M9.5 1.5V0.5M0.5 5h12"/>
-              </svg>
-              {$t('figurineBook')}
-            </button>
 
           {:else}
             <div class="sold-notice">

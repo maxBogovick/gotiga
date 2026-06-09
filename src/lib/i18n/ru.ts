@@ -215,6 +215,8 @@ export const ru: Record<TranslationKey, string> = {
   bookingClaimPageLink:     'Или сохраните ссылку для отмены',
 
   // === CLAIM TOKEN (самоотмена) ===
+  claimsYours:              'Ваши резервирования',
+  claimsPending:            'Заявки на рассмотрении',
   claimPendingBooking:      'У вас есть активная заявка на бронирование',
   claimPendingBookings:     'Ваши активные заявки на бронирование',
   claimConfirmed:           'Ваше бронирование подтверждено',
