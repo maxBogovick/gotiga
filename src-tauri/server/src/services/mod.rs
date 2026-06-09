@@ -447,6 +447,7 @@ impl AppService {
             starts_at: b.starts_at.to_string(),
             ends_at: b.ends_at.to_string(),
             status: b.status,
+            admin_notes: b.admin_notes,
         }))
     }
 

@@ -545,6 +545,7 @@ pub struct BookingCancelInfo {
     pub starts_at: String,
     pub ends_at: String,
     pub status: BookingStatus,
+    pub admin_notes: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -74,6 +74,17 @@
     return new Date(ds + 'T00:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
   }
 
+  function lookupStatusLabel(s: string): string {
+    switch (s) {
+      case 'pending':   return $t('cancelStatusPending');
+      case 'confirmed': return $t('cancelStatusConfirmed');
+      case 'rejected':  return $t('cancelStatusRejected');
+      case 'cancelled': return $t('cancelStatusCancelled');
+      case 'completed': return $t('cancelStatusCompleted');
+      default:          return s;
+    }
+  }
+
   // ── Instagram Story share ────────────────────────────────────────────────
   let storySaving    = $state(false);
   let storyBlob      = $state<Blob | null>(null);
@@ -800,6 +811,14 @@
                 <span class="claim-dates">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</span>
                 <span class="claim-code-small">{c.token}</span>
               </div>
+              <p class="claim-next">{$t('claimConfirmedNext')}</p>
+              <div class="claim-confirmed-actions">
+                <a href="/cancel/{c.token}" target="_blank" rel="noopener" class="claim-manage-link">{$t('claimManageLink')}</a>
+                <button onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="claim-cancel-btn">
+                  {cs.cancellingToken === c.token ? $t('claimCancelling') : $t('claimCancelBtn')}
+                </button>
+              </div>
+              {#if cs.claimErrors[c.token]}<p class="claim-err">{cs.claimErrors[c.token]}</p>{/if}
             </div>
           {:else}
             <div class="claim-block">
@@ -854,7 +873,7 @@
                     {cs.lookupCancelling ? $t('claimCancelling') : $t('claimCancelBtn')}
                   </button>
                 {:else}
-                  <p class="claim-status">{$t('claimStatus')}: {cs.tokenLookupInfo.status}</p>
+                  <p class="claim-status">{$t('claimStatus')}: {lookupStatusLabel(cs.tokenLookupInfo.status)}</p>
                 {/if}
               </div>
             {/if}
@@ -979,6 +998,14 @@
                   <p class="reserved-title reserved-title--confirmed">{$t('claimConfirmed')}</p>
                   <p class="reserved-sub">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</p>
                   <p class="claim-code-small" style="margin-top:0.25rem">{c.token}</p>
+                  <p class="claim-next" style="margin-top:0.6rem">{$t('claimConfirmedNext')}</p>
+                  <div class="claim-confirmed-actions" style="margin-top:0.6rem">
+                    <a href="/cancel/{c.token}" target="_blank" rel="noopener" class="claim-manage-link">{$t('claimManageLink')}</a>
+                    <button onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="claim-cancel-btn">
+                      {cs.cancellingToken === c.token ? $t('claimCancelling') : $t('claimCancelBtn')}
+                    </button>
+                  </div>
+                  {#if cs.claimErrors[c.token]}<p class="claim-err" style="margin-top:0.4rem">{cs.claimErrors[c.token]}</p>{/if}
                 </div>
               </div>
             {/each}
@@ -1010,7 +1037,7 @@
                   <path d="M9 5.5v3.5l2.5 2"/>
                 </svg>
                 <div>
-                  <p class="reserved-title">Зарезервирована</p>
+                  <p class="reserved-title">{$t('figurineReserved')}</p>
                   <p class="reserved-sub">{$t('figurineNotifyNote')}</p>
                   {#if nextAvailableDate}
                     <p class="reserved-avail">
@@ -1036,7 +1063,13 @@
                   {#if cs.tokenLookupInfo}
                     <div class="claim-lookup-result">
                       <p class="claim-dates">{fmtDate(cs.tokenLookupInfo.startsAt)} — {fmtDate(cs.tokenLookupInfo.endsAt)}</p>
-                      <p class="claim-status">{$t('claimStatus')}: <strong>{cs.tokenLookupInfo.status}</strong></p>
+                      {#if cs.tokenLookupInfo.status === 'pending'}
+                        <button onclick={() => cs.cancelFromLookup()} disabled={cs.lookupCancelling} class="claim-cancel-btn">
+                          {cs.lookupCancelling ? $t('claimCancelling') : $t('claimCancelBtn')}
+                        </button>
+                      {:else}
+                        <p class="claim-status">{$t('claimStatus')}: {lookupStatusLabel(cs.tokenLookupInfo.status)}</p>
+                      {/if}
                     </div>
                   {/if}
                 {/if}

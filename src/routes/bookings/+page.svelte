@@ -13,7 +13,9 @@
   function statusLabel(s?: string) {
     switch (s) {
       case 'confirmed': return $t('bookingsConfirmed');
+      case 'rejected':  return $t('bookingsRejected');
       case 'cancelled': return $t('bookingsCancelDone');
+      case 'completed': return $t('bookingsCompleted');
       default:          return $t('bookingsPending');
     }
   }
@@ -255,6 +257,7 @@
   .claim-status--confirmed { background: #d4e8c8; color: #3a6020; }
   .claim-status--cancelled { background: #e8e0d4; color: #6a5040; }
   .claim-status--rejected  { background: #f0d0c8; color: #8a3020; }
+  .claim-status--completed { background: #dce8e0; color: #2a5040; }
 
   .claim-period {
     margin: 0 0 0.5rem;

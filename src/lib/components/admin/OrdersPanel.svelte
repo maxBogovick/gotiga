@@ -85,6 +85,25 @@
     });
   }
 
+  function makeMailtoLink(order: Order): string {
+    const name = order.requesterName && order.requesterName !== '—' ? order.requesterName : '';
+    const greeting = name ? `Здравствуйте, ${name}!\n\n` : 'Здравствуйте!\n\n';
+    let body: string;
+    if (order.mode === 'request') {
+      body = `${greeting}Ваш запрос на работу «${order.figurineName}» получен. `;
+      body += order.message ? `Ваше сообщение:\n«${order.message}»\n\n` : '\n\n';
+      body += 'С уважением,\nGotiga';
+    } else if (order.mode === 'question') {
+      body = `${greeting}По вашему вопросу о работе «${order.figurineName}»:\n\n`;
+      body += order.message ? `> ${order.message}\n\n` : '';
+      body += 'С уважением,\nGotiga';
+    } else {
+      body = `${greeting}Уведомление о работе «${order.figurineName}»:\n\nС уважением,\nGotiga`;
+    }
+    const subject = encodeURIComponent(`Re: ${order.figurineName}`);
+    return `mailto:${order.requesterEmail}?subject=${subject}&body=${encodeURIComponent(body)}`;
+  }
+
   // Page number list with ellipsis
   function pageList(cur: number, max: number): (number | '…')[] {
     if (max <= 7) return Array.from({ length: max }, (_, i) => i + 1);
@@ -189,7 +208,7 @@
                 >{lbl}</button>
               {/each}
               <a
-                href="mailto:{order.requesterEmail}?subject=Re: {order.figurineName}"
+                href={makeMailtoLink(order)}
                 class="ml-auto text-[10px] px-2 py-1 border border-[#c65f3c]/30 text-[#c65f3c] hover:bg-[#c65f3c]/5 transition-colors"
               >✉ Ответить</a>
             </div>

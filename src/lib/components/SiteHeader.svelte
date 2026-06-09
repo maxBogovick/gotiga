@@ -6,7 +6,7 @@
   import { allClaims } from '$lib/stores/all-claims.svelte';
   import { authStore } from '$lib/stores/auth.svelte';
   import { t } from '$lib/i18n';
-  import { fade } from 'svelte/transition';
+  import { fade, fly } from 'svelte/transition';
   import { api } from '$lib/api';
 
   const links = [
@@ -37,7 +37,7 @@
     }
   }
 
-  let count = $derived(allClaims.activeCount);
+  let count = $derived(allClaims.pendingCount);
 
   // User dropdown
   let userMenuOpen = $state(false);
@@ -162,7 +162,10 @@
                       onclick={closePanel}
                     >{c.figurineName}</a>
                     <span class="panel-status panel-status--{c.status ?? 'pending'}">
-                      {c.status === 'confirmed' ? $t('bookingsConfirmed') : $t('bookingsPending')}
+                      {c.status === 'confirmed' ? $t('bookingsConfirmed')
+                      : c.status === 'rejected'  ? $t('bookingsRejected')
+                      : c.status === 'completed' ? $t('bookingsCompleted')
+                      : $t('bookingsPending')}
                     </span>
                   </div>
                   <p class="panel-dates">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</p>
@@ -248,6 +251,36 @@
     </a>
   </div>
 </header>
+
+<!-- Status change notifications -->
+<div class="notif-stack" aria-live="polite">
+  {#each allClaims.notifications as notif (notif.id)}
+    <div
+      class="notif notif--{notif.newStatus}"
+      role="status"
+      in:fly={{ x: 60, duration: 350 }}
+      out:fly={{ x: 60, duration: 250 }}
+    >
+      <div class="notif-body">
+        <span class="notif-name">{notif.figurineName}</span>
+        <span class="notif-text">
+          {notif.newStatus === 'confirmed' ? $t('notifConfirmed')
+          : notif.newStatus === 'rejected'  ? $t('notifRejected')
+          : notif.newStatus === 'cancelled' ? $t('notifCancelled')
+          : $t('notifCompleted')}
+        </span>
+      </div>
+      <div class="notif-actions">
+        {#if notif.newStatus === 'rejected'}
+          <a href="/figurines/{notif.figurineId}" class="notif-link">{$t('notifTryAgain')}</a>
+        {:else if notif.newStatus === 'completed'}
+          <a href="/figurines/{notif.figurineId}" class="notif-link">{$t('notifViewFigurine')}</a>
+        {/if}
+        <button class="notif-dismiss" onclick={() => allClaims.dismissNotification(notif.id)} aria-label="Dismiss">✕</button>
+      </div>
+    </div>
+  {/each}
+</div>
 
 <style>
   .site-header {
@@ -723,5 +756,99 @@
       width: calc(100vw - 32px);
       max-width: 300px;
     }
+  }
+
+  /* ── Status-change toasts ── */
+  .notif-stack {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    z-index: 500;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;
+  }
+
+  .notif {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    width: 280px;
+    padding: 12px 14px;
+    background: #f2e8d9;
+    border: 1px solid #d8c6b1;
+    border-left-width: 3px;
+    box-shadow: 0 4px 18px rgba(52,37,28,0.13);
+    font-family: Georgia, serif;
+    color: #34251c;
+    pointer-events: all;
+  }
+
+  .notif--confirmed { border-left-color: #3a7a40; }
+  .notif--rejected  { border-left-color: #c65f3c; }
+  .notif--cancelled { border-left-color: #9a8070; }
+  .notif--completed { border-left-color: #3a7060; }
+
+  .notif-body {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .notif-name {
+    display: block;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: #34251c;
+    margin-bottom: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .notif-text {
+    display: block;
+    font-family: 'Instrument Sans', system-ui, sans-serif;
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: rgba(95,70,54,0.7);
+  }
+
+  .notif-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  .notif-link {
+    font-family: 'Instrument Sans', system-ui, sans-serif;
+    font-size: 0.62rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #c65f3c;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: opacity 0.15s;
+  }
+  .notif-link:hover { opacity: 0.75; }
+
+  .notif-dismiss {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 10px;
+    color: rgba(95,70,54,0.35);
+    padding: 0;
+    line-height: 1;
+    transition: color 0.15s;
+  }
+  .notif-dismiss:hover { color: #c65f3c; }
+
+  @media (max-width: 680px) {
+    .notif-stack { right: 12px; bottom: 12px; }
+    .notif { width: calc(100vw - 24px); max-width: 280px; }
   }
 </style>

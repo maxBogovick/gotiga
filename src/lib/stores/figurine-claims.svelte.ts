@@ -2,7 +2,7 @@ import { api } from '$lib/api';
 import { get } from 'svelte/store';
 import { t } from '$lib/i18n';
 
-type ClaimStatus = 'pending' | 'confirmed' | 'rejected' | 'cancelled';
+type ClaimStatus = 'pending' | 'confirmed' | 'rejected' | 'cancelled' | 'completed';
 export type ClaimData = {
   token: string;
   figurineName: string;
@@ -70,7 +70,7 @@ export class FigurineClaimsStore {
         if (serverStatus !== c.status) { changed = true; return { ...c, status: serverStatus }; }
         return c;
       })
-      .filter(c => c.status !== 'cancelled' && c.status !== 'rejected');
+      .filter(c => c.status !== 'cancelled' && c.status !== 'rejected' && c.status !== 'completed');
     if (changed || updated.length !== this.claims.length) {
       this.claims = updated;
       this.#save();

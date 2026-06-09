@@ -125,6 +125,14 @@
             <p class="hint">{$t('cancelAlreadyCompleted')}</p>
           {:else if info.status === 'confirmed'}
             <p class="hint">{$t('cancelAlreadyConfirmed')}</p>
+          {:else if info.status === 'rejected'}
+            {#if info.adminNotes}
+              <div class="admin-notes">
+                <span class="admin-notes-label">{$t('cancelAdminNotes')}</span>
+                <p class="admin-notes-text">{info.adminNotes}</p>
+              </div>
+            {/if}
+            <a href="/figurines/{info.figurineId}" class="action-link try-again">{$t('cancelTryAgain')}</a>
           {:else if info.status === 'pending'}
             <button class="cancel-btn" onclick={handleCancel} disabled={cancelling}>
               {cancelling ? $t('cancelCancelling') : $t('cancelBtn')}
@@ -230,6 +238,39 @@
   .status-rejected  { background: #f0d0c8; color: #8a3020; }
   .status-cancelled { background: #e8e0d4; color: #6a5040; }
   .status-completed { background: #dce8e0; color: #2a5040; }
+
+  .admin-notes {
+    margin: 0 0 1rem;
+    padding: 0.75rem 1rem;
+    background: rgba(52,37,28,0.04);
+    border: 1px solid #d8c6b1;
+    text-align: left;
+  }
+
+  .admin-notes-label {
+    display: block;
+    font-family: 'Instrument Sans', system-ui, sans-serif;
+    font-size: 0.6rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: rgba(95,70,54,0.55);
+    margin-bottom: 0.35rem;
+    font-weight: 700;
+  }
+
+  .admin-notes-text {
+    margin: 0;
+    font-size: 0.85rem;
+    color: #34251c;
+    font-style: italic;
+    line-height: 1.5;
+  }
+
+  .try-again {
+    color: #c65f3c;
+    border-bottom-color: rgba(198,95,60,0.35);
+  }
+  .try-again:hover { color: #9e452d; border-bottom-color: #9e452d; }
 
   .actions {
     display: flex;

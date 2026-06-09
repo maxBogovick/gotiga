@@ -89,6 +89,10 @@
   let calSelectedBookings = $derived(calSelected ? (calByDay.get(calSelected) ?? []) : []);
   const todayKey = new Date().toISOString().slice(0, 10);
 
+  function isStale(b: BookingDto): boolean {
+    return b.status === 'pending' && b.endsAt < todayKey;
+  }
+
   let totalPages = $derived(Math.max(1, Math.ceil(total / PER_PAGE)));
 
   async function load(resetPage = false) {
@@ -347,7 +351,7 @@
     {:else}
       <div class="space-y-3">
         {#each items as booking (booking.id)}
-          <div class="border border-[#34251c]/10 bg-white p-4 {booking.status === 'pending' ? 'border-l-4 border-l-amber-400' : ''}">
+          <div class="border border-[#34251c]/10 bg-white p-4 {booking.status === 'pending' ? (isStale(booking) ? 'border-l-4 border-l-orange-600 opacity-70' : 'border-l-4 border-l-amber-400') : ''}">
             <!-- Header -->
             <div class="flex items-start gap-3 mb-2">
               <div class="flex-1 min-w-0">
@@ -370,6 +374,9 @@
                   <span class="text-xs font-['Inter'] font-semibold text-[#34251c]">
                     {formatDate(booking.startsAt)} — {formatDate(booking.endsAt)}
                   </span>
+                  {#if isStale(booking)}
+                    <span class="text-[9px] px-1.5 py-0.5 bg-orange-100 text-orange-700 border border-orange-300 rounded font-['Inter'] uppercase tracking-wide">просрочена</span>
+                  {/if}
                 </div>
                 <div class="text-xs text-[#5f4636]/60 mt-0.5">{formatTs(booking.createdAt)}</div>
               </div>
@@ -393,12 +400,12 @@
             {/if}
 
             <!-- Admin notes input -->
-            {#if booking.status === 'pending'}
+            {#if booking.status === 'pending' || booking.status === 'confirmed'}
               <div class="mt-3">
                 <input
                   type="text"
                   placeholder="Примечание (необязательно)…"
-                  value={notesMap[booking.id] ?? ''}
+                  value={notesMap[booking.id] ?? booking.adminNotes ?? ''}
                   oninput={(e) => { notesMap[booking.id] = (e.target as HTMLInputElement).value; notesMap = {...notesMap}; }}
                   class="w-full border-b border-[#d8c6b1] bg-transparent text-xs py-1 text-[#34251c] font-['Inter'] focus:outline-none focus:border-[#c65f3c] placeholder-[#5f4636]/40"
                 />

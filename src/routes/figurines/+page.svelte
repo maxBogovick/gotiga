@@ -19,6 +19,8 @@
   let sortMode = $state<SortMode>('curated');
   let yearFilter = $state('all');
   let techniqueFilter = $state('all');
+  let seriesFilter = $state('all');
+  let materialFilter = $state('all');
 
   const PAGE_SIZE = 12;
   let displayLimit = $state(PAGE_SIZE);
@@ -37,10 +39,12 @@
       })
       .filter((f) => yearFilter === 'all' || String(f.year ?? '') === yearFilter)
       .filter((f) => techniqueFilter === 'all' || f.technique === techniqueFilter)
+      .filter((f) => seriesFilter === 'all' || f.series === seriesFilter)
+      .filter((f) => materialFilter === 'all' || f.material === materialFilter)
       .filter((f) => {
         const query = searchQuery.trim().toLowerCase();
         if (!query) return true;
-        return [f.name, f.year ? String(f.year) : '', f.technique ?? '', f.material ?? '']
+        return [f.name, f.year ? String(f.year) : '', f.technique ?? '', f.material ?? '', f.series ?? '']
           .some(v => v.toLowerCase().includes(query));
       })
   );
@@ -73,6 +77,16 @@
       .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
   );
 
+  let availableSeries = $derived(
+    [...new Set((figurines as FigItem[]).map((f) => f.series).filter((s): s is string => Boolean(s?.trim())))]
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  );
+
+  let availableMaterials = $derived(
+    [...new Set((figurines as FigItem[]).map((f) => f.material).filter((m): m is string => Boolean(m?.trim())))]
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  );
+
   let statusCounts = $derived({
     all:       (figurines as FigItem[]).length,
     available: (figurines as FigItem[]).filter((f) => f.status === 'available').length,
@@ -85,11 +99,13 @@
 
   let hasActiveFilters = $derived(
     searchQuery.trim() !== '' || mainFilter !== 'all' ||
-    sortMode !== 'curated' || yearFilter !== 'all' || techniqueFilter !== 'all'
+    sortMode !== 'curated' || yearFilter !== 'all' || techniqueFilter !== 'all' ||
+    seriesFilter !== 'all' || materialFilter !== 'all'
   );
 
   $effect(() => {
     void mainFilter; void searchQuery; void sortMode; void yearFilter; void techniqueFilter;
+    void seriesFilter; void materialFilter;
     displayLimit = PAGE_SIZE;
     batchOffset  = 0;
   });
@@ -116,7 +132,7 @@
 
   function clearFilters() {
     searchQuery = ''; mainFilter = 'all'; sortMode = 'curated';
-    yearFilter = 'all'; techniqueFilter = 'all';
+    yearFilter = 'all'; techniqueFilter = 'all'; seriesFilter = 'all'; materialFilter = 'all';
   }
 
   // ── Card actions ─────────────────────────────────────────────────────────
@@ -199,22 +215,43 @@
     orderFig = fig;
   }
 
-  // ── Scroll restoration (п.2) ─────────────────────────────────────────────
-  const SCROLL_KEY = 'figurines-scroll';
+  // ── Scroll + filter state restoration ────────────────────────────────────
+  const SCROLL_KEY  = 'figurines-scroll';
+  const FILTER_KEY  = 'figurines-filters';
 
   beforeNavigate(({ to }) => {
     if (to?.url.pathname.startsWith('/figurines/')) {
       sessionStorage.setItem(SCROLL_KEY, String(window.scrollY));
+      sessionStorage.setItem(FILTER_KEY, JSON.stringify({
+        searchQuery, mainFilter, sortMode,
+        yearFilter, techniqueFilter, seriesFilter, materialFilter,
+        displayLimit,
+      }));
     }
   });
 
   afterNavigate(({ type }) => {
     if (type === 'popstate') {
-      const saved = sessionStorage.getItem(SCROLL_KEY);
-      if (saved) {
-        requestAnimationFrame(() => window.scrollTo({ top: parseInt(saved), behavior: 'instant' }));
+      const savedScroll = sessionStorage.getItem(SCROLL_KEY);
+      if (savedScroll) {
+        requestAnimationFrame(() => window.scrollTo({ top: parseInt(savedScroll), behavior: 'instant' }));
         sessionStorage.removeItem(SCROLL_KEY);
       }
+      try {
+        const raw = sessionStorage.getItem(FILTER_KEY);
+        if (raw) {
+          const f = JSON.parse(raw);
+          searchQuery    = f.searchQuery    ?? '';
+          mainFilter     = f.mainFilter     ?? 'all';
+          sortMode       = f.sortMode       ?? 'curated';
+          yearFilter     = f.yearFilter     ?? 'all';
+          techniqueFilter= f.techniqueFilter?? 'all';
+          seriesFilter   = f.seriesFilter   ?? 'all';
+          materialFilter = f.materialFilter ?? 'all';
+          displayLimit   = f.displayLimit   ?? PAGE_SIZE;
+          sessionStorage.removeItem(FILTER_KEY);
+        }
+      } catch { /* ignore */ }
     }
   });
 </script>
@@ -383,8 +420,8 @@
           </button>
         </div>
 
-        <!-- Row 4: Secondary filters (year chips + technique select + clear) -->
-        {#if availableYears.length > 0 || availableTechniques.length > 0 || hasActiveFilters}
+        <!-- Row 4: Secondary filters (year chips + selects + clear) -->
+        {#if availableYears.length > 0 || availableTechniques.length > 0 || availableSeries.length > 0 || availableMaterials.length > 0 || hasActiveFilters}
         <div class="filter-secondary">
 
           <!-- Year chips -->
@@ -410,6 +447,36 @@
               <option value="all">{$t('archiveTechniqueAll')}</option>
               {#each availableTechniques as tech}
               <option value={tech}>{tech}</option>
+              {/each}
+            </select>
+            <svg class="filter-bar__sort-arrow" width="8" height="5" viewBox="0 0 8 5" fill="none" aria-hidden="true">
+              <path d="M1 1l3 3 3-3" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+            </svg>
+          </div>
+          {/if}
+
+          <!-- Series select -->
+          {#if availableSeries.length > 0}
+          <div class="filter-bar__sort-wrap">
+            <select bind:value={seriesFilter} class="filter-bar__sort filter-bar__sort--sm {seriesFilter !== 'all' ? 'filter-bar__sort--active' : ''}">
+              <option value="all">{$t('archiveSeriesAll')}</option>
+              {#each availableSeries as s}
+              <option value={s}>{s}</option>
+              {/each}
+            </select>
+            <svg class="filter-bar__sort-arrow" width="8" height="5" viewBox="0 0 8 5" fill="none" aria-hidden="true">
+              <path d="M1 1l3 3 3-3" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+            </svg>
+          </div>
+          {/if}
+
+          <!-- Material select -->
+          {#if availableMaterials.length > 0}
+          <div class="filter-bar__sort-wrap">
+            <select bind:value={materialFilter} class="filter-bar__sort filter-bar__sort--sm {materialFilter !== 'all' ? 'filter-bar__sort--active' : ''}">
+              <option value="all">{$t('archiveMaterialAll')}</option>
+              {#each availableMaterials as m}
+              <option value={m}>{m}</option>
               {/each}
             </select>
             <svg class="filter-bar__sort-arrow" width="8" height="5" viewBox="0 0 8 5" fill="none" aria-hidden="true">
@@ -807,6 +874,12 @@
     min-width: 110px;
     padding: 5px 24px 5px 10px;
     font-size: 9px;
+  }
+
+  .filter-bar__sort--active {
+    border-color: rgba(52,37,28,0.45);
+    color: #34251c;
+    background: rgba(52,37,28,0.04);
   }
 
   .filter-bar__sort-arrow {

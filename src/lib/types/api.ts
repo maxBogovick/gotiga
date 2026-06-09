@@ -244,6 +244,7 @@ export interface BookingCancelInfo {
     startsAt: string;
     endsAt: string;
     status: BookingStatus;
+    adminNotes: string | null;
 }
 
 export interface CreateBookingRequest {

@@ -2,7 +2,7 @@ import { api } from '$lib/api';
 import { get } from 'svelte/store';
 import { t } from '$lib/i18n';
 
-type ClaimStatus = 'pending' | 'confirmed' | 'rejected' | 'cancelled';
+type ClaimStatus = 'pending' | 'confirmed' | 'rejected' | 'cancelled' | 'completed';
 
 export type GlobalClaimData = {
   token: string;
@@ -14,6 +14,14 @@ export type GlobalClaimData = {
   status?: ClaimStatus;
 };
 
+export type StatusNotification = {
+  id: string;
+  token: string;
+  figurineName: string;
+  figurineId: string;
+  newStatus: ClaimStatus;
+};
+
 const POLL_MS = 30_000;
 const PREFIX = 'gotiga_claims_';
 
@@ -21,8 +29,10 @@ class AllClaimsStore {
   claims = $state<GlobalClaimData[]>([]);
   cancellingToken = $state<string | null>(null);
   errors = $state<Record<string, string>>({});
+  notifications = $state<StatusNotification[]>([]);
 
   #pollTimer: ReturnType<typeof setInterval> | null = null;
+  #pollRefs = 0;
   #loaded = false;
 
   get activeCount() {
@@ -56,16 +66,26 @@ class AllClaimsStore {
     const results = await Promise.allSettled(
       this.claims.map(c => api.getBookingByToken(c.token))
     );
+    // Snapshot status before any changes to detect transitions
+    const before = new Map(this.claims.map(c => [c.token, c.status]));
     let changed = false;
-    const updated = this.claims
-      .map((c, i) => {
-        const r = results[i];
-        if (r.status !== 'fulfilled') return c;
-        const s = r.value.status as ClaimStatus;
-        if (s !== c.status) { changed = true; return { ...c, status: s }; }
-        return c;
-      })
-      .filter(c => c.status !== 'cancelled' && c.status !== 'rejected');
+    const mapped = this.claims.map((c, i) => {
+      const r = results[i];
+      if (r.status !== 'fulfilled') return c;
+      const s = r.value.status as ClaimStatus;
+      if (s !== c.status) { changed = true; return { ...c, status: s }; }
+      return c;
+    });
+    // Emit notifications for every status transition
+    for (const c of mapped) {
+      const oldStatus = before.get(c.token);
+      if (c.status && c.status !== oldStatus) {
+        this.#pushNotification(c as GlobalClaimData & { status: ClaimStatus });
+      }
+    }
+    const updated = mapped.filter(
+      c => c.status !== 'cancelled' && c.status !== 'rejected' && c.status !== 'completed'
+    );
     if (changed || updated.length !== this.claims.length) {
       this.claims = updated;
       this.#persistAll();
@@ -88,10 +108,17 @@ class AllClaimsStore {
     }
   }
 
-  startPolling() { this.#syncTimer(); }
+  startPolling() {
+    this.#pollRefs++;
+    this.#syncTimer();
+  }
 
   stopPolling() {
-    if (this.#pollTimer) { clearInterval(this.#pollTimer); this.#pollTimer = null; }
+    this.#pollRefs = Math.max(0, this.#pollRefs - 1);
+    if (this.#pollRefs === 0 && this.#pollTimer) {
+      clearInterval(this.#pollTimer);
+      this.#pollTimer = null;
+    }
   }
 
   reload() {
@@ -100,15 +127,38 @@ class AllClaimsStore {
     this.load();
   }
 
-  #hasPending() {
-    return this.claims.some(c => c.status === 'pending' || c.status == null);
+  dismissNotification(id: string) {
+    this.notifications = this.notifications.filter(n => n.id !== id);
+  }
+
+  #pushNotification(claim: GlobalClaimData & { status: ClaimStatus }) {
+    const id = `${claim.token}-${Date.now()}`;
+    this.notifications = [...this.notifications, {
+      id,
+      token: claim.token,
+      figurineName: claim.figurineName,
+      figurineId: claim.figurineId,
+      newStatus: claim.status,
+    }];
+    setTimeout(() => { this.dismissNotification(id); }, 6000);
+  }
+
+  // Poll while: (a) future pending claims exist, OR (b) any confirmed claim exists.
+  // Past-date pending claims are excluded — they can never change via admin action in time.
+  #hasPollable() {
+    const today = new Date().toISOString().split('T')[0];
+    return this.claims.some(c =>
+      ((c.status === 'pending' || c.status == null) && c.endsAt >= today) ||
+      c.status === 'confirmed'
+    );
   }
 
   #syncTimer() {
-    if (this.#hasPending()) {
+    if (this.#hasPollable() && this.#pollRefs > 0) {
       if (!this.#pollTimer) this.#pollTimer = setInterval(() => this.verify(), POLL_MS);
-    } else {
-      this.stopPolling();
+    } else if (!this.#hasPollable() && this.#pollTimer) {
+      clearInterval(this.#pollTimer);
+      this.#pollTimer = null;
     }
   }
 
