@@ -356,7 +356,7 @@ impl AppService {
                         ),
                         _ => format!("Ваш запрос по «{}» получил ответ.", order.figurine_name),
                     };
-                    let _ = self.repo.insert_user_message(user_id, true, &subject, &body).await;
+                    let _ = self.repo.create_thread(user_id, "order", Some(order.id), &subject, &body, true).await;
                 }
             }
         }
@@ -678,7 +678,7 @@ impl AppService {
             ),
             _ => return,
         };
-        let _ = self.repo.insert_user_message(user_id, true, &subject, &body).await;
+        let _ = self.repo.create_thread(user_id, "booking", Some(booking.id), &subject, &body, true).await;
     }
 
     pub async fn get_asset(&self, table: &str, id: String) -> Result<Option<Vec<u8>>> {
@@ -1129,7 +1129,7 @@ impl AppService {
         let orders = self.get_user_orders(user_id).await?;
         let sessions = self.repo.admin_get_user_sessions(user_id).await?;
         let recent_failures = self.repo.count_recent_failures(&user.email, 24 * 60).await?;
-        let messages = self.get_user_messages(user_id).await?;
+        let messages = self.admin_get_user_threads(user_id).await?;
 
         Ok(AdminUserDetail {
             id: user.id.to_string(),
@@ -1331,7 +1331,7 @@ impl AppService {
         let mut notified = 0u64;
         for entry in &entries {
             if let Some(uid) = entry.user_id {
-                let _ = self.repo.insert_user_message(uid, true, &subject, &body).await;
+                let _ = self.repo.create_thread(uid, "waitlist", None, &subject, &body, true).await;
                 notified += 1;
             }
         }
@@ -1615,38 +1615,123 @@ impl AppService {
         self.repo.delete_user(user_id).await
     }
 
-    // ── User messages ──────────────────────────────────────────
+    // ── Message threads ─────────────────────────────────────────
 
-    pub async fn get_user_messages(&self, user_id: Uuid) -> Result<Vec<UserMessageDto>> {
-        let msgs = self.repo.get_user_messages(user_id).await?;
-        Ok(msgs.iter().map(UserMessageDto::from).collect())
+    fn thread_dto(thread: &MessageThread, unread: i64, preview: Option<String>) -> MessageThreadDto {
+        MessageThreadDto {
+            id: thread.id.to_string(),
+            category: thread.category.clone(),
+            reference_id: thread.reference_id.map(|id| id.to_string()),
+            subject: thread.subject.clone(),
+            status: thread.status.clone(),
+            unread,
+            last_message_at: thread.last_message_at.to_rfc3339(),
+            created_at: thread.created_at.to_rfc3339(),
+            preview: preview.map(|p| if p.chars().count() > 80 { format!("{}…", &p.chars().take(80).collect::<String>()) } else { p }),
+        }
     }
 
-    pub async fn mark_message_read(&self, message_id: Uuid, user_id: Uuid) -> Result<()> {
-        self.repo.mark_message_read(message_id, user_id).await
+    pub async fn get_user_threads(&self, user_id: Uuid) -> Result<Vec<MessageThreadDto>> {
+        let rows = self.repo.get_user_threads(user_id).await?;
+        Ok(rows.iter().map(|(t, unread, preview)| Self::thread_dto(t, *unread, preview.clone())).collect())
     }
 
-    pub async fn count_unread_messages(&self, user_id: Uuid) -> Result<i64> {
-        self.repo.count_unread_messages(user_id).await
+    pub async fn count_unread_threads(&self, user_id: Uuid) -> Result<i64> {
+        self.repo.count_unread_threads(user_id).await
     }
 
-    pub async fn admin_send_message(
+    pub async fn get_thread_detail(&self, thread_id: Uuid, user_id: Uuid) -> Result<ThreadDetailDto> {
+        let (thread, messages) = self.repo.get_thread_messages(thread_id, Some(user_id)).await?;
+        self.repo.mark_thread_read(thread_id, user_id).await?;
+        let preview = messages.last().map(|m| m.body.clone());
+        Ok(ThreadDetailDto {
+            thread: Self::thread_dto(&thread, 0, preview),
+            messages: messages.iter().map(ThreadMessageDto::from).collect(),
+            user: None,
+        })
+    }
+
+    pub async fn user_create_thread(&self, user_id: Uuid, subject: String, body: String, category: Option<String>) -> Result<ThreadDetailDto> {
+        let category = category.unwrap_or_else(|| "general".to_string());
+        let (thread, msg) = self.repo.create_thread(user_id, &category, None, &subject, &body, false).await?;
+        Ok(ThreadDetailDto {
+            thread: Self::thread_dto(&thread, 0, Some(msg.body.clone())),
+            messages: vec![ThreadMessageDto::from(&msg)],
+            user: None,
+        })
+    }
+
+    pub async fn user_reply_to_thread(&self, thread_id: Uuid, user_id: Uuid, body: String) -> Result<ThreadMessageDto> {
+        let (thread, _) = self.repo.get_thread_messages(thread_id, Some(user_id)).await?;
+        if thread.status == "resolved" {
+            self.repo.reopen_thread(thread_id).await?;
+        }
+        let msg = self.repo.add_thread_reply(thread_id, user_id, false, &body).await?;
+        Ok(ThreadMessageDto::from(&msg))
+    }
+
+    pub async fn admin_create_thread(
         &self,
         user_id: Uuid,
-        subject: &str,
-        body: &str,
-    ) -> Result<UserMessageDto> {
-        let msg = self.repo.insert_user_message(user_id, true, subject, body).await?;
-        Ok(UserMessageDto::from(&msg))
+        subject: String,
+        body: String,
+        category: Option<String>,
+        reference_id: Option<Uuid>,
+    ) -> Result<ThreadDetailDto> {
+        let category = category.unwrap_or_else(|| "general".to_string());
+        let (thread, msg) = self.repo.create_thread(user_id, &category, reference_id, &subject, &body, true).await?;
+        let user = self.repo.find_user_by_id(user_id).await?;
+        Ok(ThreadDetailDto {
+            thread: Self::thread_dto(&thread, 0, Some(msg.body.clone())),
+            messages: vec![ThreadMessageDto::from(&msg)],
+            user: user.map(|u| ThreadUserDto { id: u.id.to_string(), display_name: u.display_name, email: u.email }),
+        })
     }
 
-    pub async fn user_send_message(
-        &self,
-        user_id: Uuid,
-        subject: &str,
-        body: &str,
-    ) -> Result<UserMessageDto> {
-        let msg = self.repo.insert_user_message(user_id, false, subject, body).await?;
-        Ok(UserMessageDto::from(&msg))
+    pub async fn admin_reply_to_thread(&self, thread_id: Uuid, body: String) -> Result<ThreadMessageDto> {
+        let msg = self.repo.add_thread_reply(thread_id, uuid::Uuid::nil(), true, &body).await?;
+        Ok(ThreadMessageDto::from(&msg))
+    }
+
+    pub async fn admin_get_thread_detail(&self, thread_id: Uuid) -> Result<ThreadDetailDto> {
+        let (thread, messages) = self.repo.get_thread_messages(thread_id, None).await?;
+        self.repo.mark_thread_read_admin(thread_id).await?;
+        let user = self.repo.find_user_by_id(thread.user_id).await?;
+        let preview = messages.last().map(|m| m.body.clone());
+        Ok(ThreadDetailDto {
+            thread: Self::thread_dto(&thread, 0, preview),
+            messages: messages.iter().map(ThreadMessageDto::from).collect(),
+            user: user.map(|u| ThreadUserDto { id: u.id.to_string(), display_name: u.display_name, email: u.email }),
+        })
+    }
+
+    pub async fn admin_list_threads(&self, category: Option<String>, status: Option<String>, page: i64, per_page: i64) -> Result<serde_json::Value> {
+        let (rows, total) = self.repo.admin_get_threads(
+            category.as_deref(),
+            status.as_deref(),
+            page,
+            per_page,
+        ).await?;
+        let items: Vec<serde_json::Value> = rows.iter().map(|(thread, user, unread, preview)| {
+            let dto = Self::thread_dto(thread, *unread, preview.clone());
+            serde_json::json!({
+                "thread": dto,
+                "user": { "id": user.id.to_string(), "displayName": user.display_name, "email": user.email }
+            })
+        }).collect();
+        Ok(serde_json::json!({ "items": items, "total": total, "page": page, "perPage": per_page }))
+    }
+
+    pub async fn admin_resolve_thread(&self, thread_id: Uuid) -> Result<()> {
+        self.repo.resolve_thread(thread_id).await
+    }
+
+    pub async fn admin_reopen_thread(&self, thread_id: Uuid) -> Result<()> {
+        self.repo.reopen_thread(thread_id).await
+    }
+
+    pub async fn admin_get_user_threads(&self, user_id: Uuid) -> Result<Vec<MessageThreadDto>> {
+        let rows = self.repo.get_user_threads_for_admin(user_id).await?;
+        Ok(rows.iter().map(|(t, unread, preview)| Self::thread_dto(t, *unread, preview.clone())).collect())
     }
 }

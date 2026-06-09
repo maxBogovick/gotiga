@@ -36,7 +36,9 @@ import type {
     RescheduleBookingRequest,
     CreateWaitlistRequest,
     WaitlistEntryDto,
-    UserMessageDto,
+    MessageThreadDto,
+    ThreadMessageDto,
+    ThreadDetailDto,
 } from './types/api';
 
 export type { AppSettings };
@@ -669,33 +671,66 @@ export const api = {
         });
     },
 
-    async adminSendMessage(userId: string, subject: string, body: string): Promise<UserMessageDto> {
-        return webFetch(`/admin/users/${userId}/messages`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...authHeaders() },
-            body: JSON.stringify({ subject, body }),
-        });
+    async getUserThreads(sessionToken: string): Promise<{ threads: MessageThreadDto[]; unread: number }> {
+        return webFetch('/profile/threads', { headers: { Authorization: `Bearer ${sessionToken}` } });
     },
 
-    async getUserMessages(sessionToken: string): Promise<{ messages: UserMessageDto[]; unread: number }> {
-        return webFetch('/profile/messages', {
-            headers: { Authorization: `Bearer ${sessionToken}` },
-        });
+    async getThread(sessionToken: string, threadId: string): Promise<ThreadDetailDto> {
+        return webFetch(`/profile/threads/${threadId}`, { headers: { Authorization: `Bearer ${sessionToken}` } });
     },
 
-    async markMessageRead(sessionToken: string, messageId: string): Promise<void> {
-        await webFetch(`/profile/messages/${messageId}/read`, {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${sessionToken}` },
-        });
-    },
-
-    async userSendMessage(sessionToken: string, subject: string, body: string): Promise<UserMessageDto> {
-        return webFetch('/profile/messages', {
+    async createThread(sessionToken: string, subject: string, body: string, category?: string): Promise<ThreadDetailDto> {
+        return webFetch('/profile/threads', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
-            body: JSON.stringify({ subject, body }),
+            body: JSON.stringify({ subject, body, category }),
         });
+    },
+
+    async replyToThread(sessionToken: string, threadId: string, body: string): Promise<ThreadMessageDto> {
+        return webFetch(`/profile/threads/${threadId}/reply`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
+            body: JSON.stringify({ body }),
+        });
+    },
+
+    async adminListThreads(opts?: { category?: string; status?: string; page?: number; perPage?: number }): Promise<{ items: Array<{ thread: MessageThreadDto; user: { id: string; displayName: string; email: string } }>; total: number; page: number; perPage: number }> {
+        const p = new URLSearchParams();
+        if (opts?.category) p.set('category', opts.category);
+        if (opts?.status)   p.set('status',   opts.status);
+        if (opts?.page)     p.set('page',     String(opts.page));
+        if (opts?.perPage)  p.set('perPage',  String(opts.perPage));
+        const qs = p.toString() ? `?${p}` : '';
+        return webFetch(`/admin/threads${qs}`, { headers: authHeaders() });
+    },
+
+    async adminGetThread(threadId: string): Promise<ThreadDetailDto> {
+        return webFetch(`/admin/threads/${threadId}`, { headers: authHeaders() });
+    },
+
+    async adminCreateThreadForUser(userId: string, subject: string, body: string, category?: string): Promise<ThreadDetailDto> {
+        return webFetch(`/admin/users/${userId}/threads`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ subject, body, category }),
+        });
+    },
+
+    async adminReplyToThread(threadId: string, body: string): Promise<ThreadMessageDto> {
+        return webFetch(`/admin/threads/${threadId}/reply`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ body }),
+        });
+    },
+
+    async adminResolveThread(threadId: string): Promise<void> {
+        await webFetch(`/admin/threads/${threadId}/resolve`, { method: 'POST', headers: authHeaders() });
+    },
+
+    async adminReopenThread(threadId: string): Promise<void> {
+        await webFetch(`/admin/threads/${threadId}/reopen`, { method: 'POST', headers: authHeaders() });
     },
 
     async validateResetToken(token: string): Promise<{ id: string; email: string; displayName: string }> {

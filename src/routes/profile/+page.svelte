@@ -4,7 +4,7 @@
   import { t } from '$lib/i18n';
   import { api } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
-  import type { UserBookingDto, UserOrderDto, UserMessageDto } from '$lib/types/api';
+  import type { UserBookingDto, UserOrderDto, MessageThreadDto, ThreadDetailDto } from '$lib/types/api';
 
   type Tab = 'bookings' | 'orders' | 'wishlist' | 'messages';
   let activeTab = $state<Tab>('bookings');
@@ -13,16 +13,29 @@
   let orders = $state<UserOrderDto[]>([]);
   let wishlistIds = $state<string[]>([]);
   let wishlistItems = $state<Map<string, { name: string; status: string } | null>>(new Map());
-  let messages = $state<UserMessageDto[]>([]);
+  let threads = $state<MessageThreadDto[]>([]);
   let unreadCount = $state(0);
   let loading = $state(true);
   let error = $state('');
 
-  // Write message to admin
-  let writeSubject = $state('');
-  let writeBody = $state('');
-  let writeSending = $state(false);
-  let writeSent = $state(false);
+  // Thread view
+  type MsgFilter = 'all' | 'booking' | 'order' | 'waitlist' | 'general';
+  let msgFilter = $state<MsgFilter>('all');
+  let openThread = $state<ThreadDetailDto | null>(null);
+  let threadLoading = $state(false);
+
+  // Reply
+  let replyBody = $state('');
+  let replySending = $state(false);
+  let replySent = $state(false);
+
+  // Compose new thread
+  let showCompose = $state(false);
+  let composeSubject = $state('');
+  let composeBody = $state('');
+  let composeSending = $state(false);
+  let composeSent = $state(false);
+
 
   // Account editing
   let editingName = $state(false);
@@ -61,15 +74,15 @@
     error = '';
     try {
       const token = authStore.token!;
-      const [b, o, m] = await Promise.all([
+      const [b, o, th] = await Promise.all([
         api.userProfileBookings(token),
         api.userProfileOrders(token),
-        api.getUserMessages(token),
+        api.getUserThreads(token),
       ]);
       bookings = b;
       orders = o;
-      messages = m.messages;
-      unreadCount = m.unread;
+      threads = th.threads;
+      unreadCount = th.unread;
 
       if (typeof localStorage !== 'undefined') {
         wishlistIds = JSON.parse(localStorage.getItem('gotiga_wishlist') ?? '[]');
@@ -165,28 +178,69 @@
     }
   }
 
-  async function markRead(id: string) {
-    const msg = messages.find(m => m.id === id);
-    if (!msg || msg.readAt) return;
-    await api.markMessageRead(authStore.token!, id).catch(() => {});
-    messages = messages.map(m => m.id === id ? { ...m, readAt: new Date().toISOString() } : m);
-    unreadCount = Math.max(0, unreadCount - 1);
-  }
-
-  async function sendMessage() {
-    if (!writeSubject.trim() || !writeBody.trim() || writeSending) return;
-    writeSending = true;
+  async function openThreadDetail(id: string) {
+    threadLoading = true;
+    openThread = null;
+    replyBody = '';
+    replySent = false;
     try {
-      const msg = await api.userSendMessage(authStore.token!, writeSubject.trim(), writeBody.trim());
-      messages = [msg, ...messages];
-      writeSubject = '';
-      writeBody = '';
-      writeSent = true;
-      setTimeout(() => { writeSent = false; }, 2500);
+      const detail = await api.getThread(authStore.token!, id);
+      openThread = detail;
+      // Decrement unread count
+      const prev = threads.find(t => t.id === id);
+      if (prev && prev.unread > 0) {
+        unreadCount = Math.max(0, unreadCount - prev.unread);
+        threads = threads.map(t => t.id === id ? { ...t, unread: 0 } : t);
+      }
     } catch { /* silent */ } finally {
-      writeSending = false;
+      threadLoading = false;
     }
   }
+
+  function closeThread() {
+    openThread = null;
+    replyBody = '';
+    replySent = false;
+  }
+
+  async function sendReply() {
+    if (!replyBody.trim() || replySending || !openThread) return;
+    replySending = true;
+    try {
+      const msg = await api.replyToThread(authStore.token!, openThread.thread.id, replyBody.trim());
+      openThread = {
+        ...openThread,
+        messages: [...openThread.messages, msg],
+      };
+      replyBody = '';
+      replySent = true;
+      setTimeout(() => { replySent = false; }, 2000);
+    } catch { /* silent */ } finally {
+      replySending = false;
+    }
+  }
+
+  async function sendCompose() {
+    if (!composeSubject.trim() || !composeBody.trim() || composeSending) return;
+    composeSending = true;
+    try {
+      const detail = await api.createThread(authStore.token!, composeSubject.trim(), composeBody.trim(), 'general');
+      threads = [detail.thread, ...threads];
+      composeSubject = '';
+      composeBody = '';
+      composeSent = true;
+      setTimeout(() => {
+        composeSent = false;
+        showCompose = false;
+      }, 1800);
+    } catch { /* silent */ } finally {
+      composeSending = false;
+    }
+  }
+
+  let filteredThreads = $derived(
+    msgFilter === 'all' ? threads : threads.filter(t => t.category === msgFilter)
+  );
 
   function bookingStatusLabel(status: string): string {
     const map: Record<string, string> = {
@@ -331,7 +385,7 @@
           <span class="badge">{wishlistIds.length}</span>
         {/if}
       </button>
-      <button class="tab" class:active={activeTab === 'messages'} onclick={() => activeTab = 'messages'}>
+      <button class="tab" class:active={activeTab === 'messages'} onclick={() => { activeTab = 'messages'; closeThread(); }}>
         {$t('profileMessages')}
         {#if unreadCount > 0}
           <span class="badge badge--unread">{unreadCount}</span>
@@ -405,48 +459,124 @@
         {/if}
 
       {:else if activeTab === 'messages'}
-        <!-- Write to admin -->
-        <div class="msg-compose">
-          <input
-            class="msg-subject"
-            bind:value={writeSubject}
-            placeholder={$t('profileMessageWriteSubject')}
-          />
-          <textarea
-            class="msg-body"
-            bind:value={writeBody}
-            rows="3"
-            placeholder={$t('profileMessageWriteBody')}
-          ></textarea>
-          <button
-            class="msg-send-btn"
-            onclick={sendMessage}
-            disabled={writeSending || !writeSubject.trim() || !writeBody.trim()}
-          >
-            {writeSending ? $t('profileMessageWriteSending') : writeSent ? $t('profileMessageWriteSent') : $t('profileMessageWriteSend')}
-          </button>
-        </div>
+        {#if openThread}
+          <!-- ── Thread detail ── -->
+          <div class="thread-detail">
+            <div class="thread-detail-header">
+              <button class="thread-back" onclick={closeThread}>{$t('profileMessagesBack')}</button>
+              <span class="thread-detail-subject">{openThread.thread.subject}</span>
+              {#if openThread.thread.status === 'resolved'}
+                <span class="thread-resolved-badge">{$t('profileMessagesResolved')}</span>
+              {/if}
+            </div>
 
-        {#if messages.length === 0}
-          <p class="empty">{$t('profileMessagesEmpty')}</p>
+            <div class="thread-messages">
+              {#if threadLoading}
+                <p class="empty">…</p>
+              {:else}
+                {#each openThread.messages as msg}
+                  <div class="thread-msg" class:thread-msg--admin={msg.fromAdmin} class:thread-msg--user={!msg.fromAdmin}>
+                    <p class="thread-msg-from">
+                      {msg.fromAdmin ? $t('profileMessagesFromAdmin') : $t('profileMessagesFromYou')}
+                    </p>
+                    <p class="thread-msg-body">{msg.body}</p>
+                    <p class="thread-msg-date">{formatDate(msg.createdAt)}</p>
+                  </div>
+                {/each}
+              {/if}
+            </div>
+
+            {#if openThread.thread.status !== 'resolved'}
+              <div class="thread-reply">
+                <textarea
+                  class="thread-reply-input"
+                  bind:value={replyBody}
+                  rows="3"
+                  placeholder={$t('profileMessageWriteBody')}
+                ></textarea>
+                <button
+                  class="thread-reply-btn"
+                  onclick={sendReply}
+                  disabled={replySending || !replyBody.trim()}
+                >
+                  {replySending ? $t('profileMessagesReplying') : replySent ? $t('profileMessageWriteSent') : $t('profileMessagesReply')}
+                </button>
+              </div>
+            {/if}
+          </div>
+
         {:else}
-          <ul class="list">
-            {#each messages as msg}
-              <li class="item msg-item" class:msg-unread={!msg.readAt} onclick={() => markRead(msg.id)}>
-                <div class="item-main">
-                  <span class="msg-from">{msg.fromAdmin ? $t('profileMessagesFrom') : $t('profileMessagesFromUser')}</span>
-                  {#if !msg.readAt}
-                    <span class="msg-new-badge">{$t('profileMessageNew')}</span>
+          <!-- ── Thread list ── -->
+          <div class="threads-header">
+            <div class="thread-filters">
+              {#each (['all', 'booking', 'order', 'waitlist', 'general'] as MsgFilter[]) as f}
+                <button
+                  class="thread-filter-btn"
+                  class:active={msgFilter === f}
+                  onclick={() => msgFilter = f}
+                >
+                  {#if f === 'all'}{$t('profileMessagesAll')}
+                  {:else if f === 'booking'}{$t('profileMessagesBooking')}
+                  {:else if f === 'order'}{$t('profileMessagesOrder')}
+                  {:else if f === 'waitlist'}{$t('profileMessagesWaitlist')}
+                  {:else}{$t('profileMessagesGeneral')}
                   {/if}
-                </div>
-                {#if msg.subject}
-                  <p class="msg-subject-line">{msg.subject}</p>
-                {/if}
-                <p class="msg-body-preview">{msg.body}</p>
-                <p class="item-date">{formatDate(msg.createdAt)}</p>
-              </li>
-            {/each}
-          </ul>
+                </button>
+              {/each}
+            </div>
+            <button class="compose-toggle-btn" onclick={() => showCompose = !showCompose}>
+              {$t('profileMessagesCompose')}
+            </button>
+          </div>
+
+          {#if showCompose}
+            <div class="msg-compose">
+              <input
+                class="msg-subject"
+                bind:value={composeSubject}
+                placeholder={$t('profileMessageWriteSubject')}
+              />
+              <textarea
+                class="msg-body"
+                bind:value={composeBody}
+                rows="3"
+                placeholder={$t('profileMessageWriteBody')}
+              ></textarea>
+              <button
+                class="msg-send-btn"
+                onclick={sendCompose}
+                disabled={composeSending || !composeSubject.trim() || !composeBody.trim()}
+              >
+                {composeSending ? $t('profileMessagesSending') : composeSent ? $t('profileMessagesSent') : $t('profileMessagesSend')}
+              </button>
+            </div>
+          {/if}
+
+          {#if filteredThreads.length === 0}
+            <p class="empty">{$t('profileMessagesEmpty')}</p>
+          {:else}
+            <ul class="list">
+              {#each filteredThreads as thread}
+                <li class="item msg-item" class:msg-unread={thread.unread > 0} onclick={() => openThreadDetail(thread.id)}>
+                  <div class="item-main">
+                    <span class="thread-subject">{thread.subject}</span>
+                    <div class="thread-meta-right">
+                      {#if thread.unread > 0}
+                        <span class="msg-new-badge">{thread.unread}</span>
+                      {/if}
+                      {#if thread.status === 'resolved'}
+                        <span class="thread-resolved-small">{$t('profileMessagesResolved')}</span>
+                      {/if}
+                    </div>
+                  </div>
+                  {#if thread.preview}
+                    <p class="msg-body-preview">{thread.preview}</p>
+                  {/if}
+                  <p class="item-date">{formatDate(thread.lastMessageAt)}</p>
+                </li>
+              {/each}
+            </ul>
+          {/if}
         {/if}
       {/if}
     </div>
@@ -931,13 +1061,60 @@
     color: #fff;
   }
 
+  .threads-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .thread-filters {
+    display: flex;
+    gap: 0.3rem;
+    flex-wrap: wrap;
+  }
+
+  .thread-filter-btn {
+    background: transparent;
+    border: 1px solid #d8c6b1;
+    color: #9a7c5c;
+    font-family: Inter, sans-serif;
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 0.2rem 0.55rem;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .thread-filter-btn:hover { border-color: #9a7c5c; color: #34251c; }
+  .thread-filter-btn.active { border-color: #c65f3c; color: #c65f3c; background: rgba(198,95,60,0.06); }
+
+  .compose-toggle-btn {
+    background: transparent;
+    border: 1px solid #c65f3c;
+    color: #c65f3c;
+    font-family: Inter, sans-serif;
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 0.2rem 0.65rem;
+    cursor: pointer;
+    transition: background 0.15s;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .compose-toggle-btn:hover { background: rgba(198,95,60,0.08); }
+
   .msg-compose {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-    margin-bottom: 1.5rem;
-    padding-bottom: 1.25rem;
-    border-bottom: 1px solid #eee3d6;
+    margin-bottom: 1.25rem;
+    padding: 0.85rem;
+    border: 1px solid #d8c6b1;
+    background: rgba(248,241,231,0.5);
   }
 
   .msg-subject {
@@ -986,12 +1163,20 @@
   .msg-item:hover { background: rgba(216,198,177,0.15); }
   .msg-unread { border-left: 2px solid #c65f3c; padding-left: 0.6rem; }
 
-  .msg-from {
-    font-family: Inter, sans-serif;
-    font-size: 0.7rem;
-    letter-spacing: 0.07em;
-    text-transform: uppercase;
-    color: #9a7c5c;
+  .thread-subject {
+    font-family: Georgia, serif;
+    font-size: 0.92rem;
+    color: #34251c;
+    line-height: 1.3;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .thread-meta-right {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    flex-shrink: 0;
   }
 
   .msg-new-badge {
@@ -1002,22 +1187,164 @@
     background: #c65f3c;
     color: #fff;
     padding: 1px 5px;
-    border-radius: 2px;
   }
 
-  .msg-subject-line {
-    font-family: Georgia, serif;
-    font-size: 0.9rem;
-    color: #34251c;
-    margin: 0.2rem 0 0.1rem;
+  .thread-resolved-small {
+    font-family: Inter, sans-serif;
+    font-size: 0.6rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #b5a090;
+    font-style: italic;
   }
 
   .msg-body-preview {
     font-family: Inter, sans-serif;
     font-size: 0.82rem;
     color: #6f4e37;
-    margin: 0 0 0.15rem;
+    margin: 0.15rem 0 0;
     line-height: 1.5;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* ── Thread detail ── */
+
+  .thread-detail {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .thread-detail-header {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding-bottom: 0.9rem;
+    border-bottom: 1px solid #d8c6b1;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .thread-back {
+    background: transparent;
+    border: none;
+    color: #9a7c5c;
+    font-family: Inter, sans-serif;
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+    padding: 0;
+    flex-shrink: 0;
+    transition: color 0.15s;
+  }
+  .thread-back:hover { color: #c65f3c; }
+
+  .thread-detail-subject {
+    font-family: Georgia, serif;
+    font-size: 0.95rem;
+    color: #34251c;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .thread-resolved-badge {
+    font-family: Inter, sans-serif;
+    font-size: 0.62rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #9a7c5c;
+    border: 1px solid #d8c6b1;
+    padding: 1px 6px;
+    flex-shrink: 0;
+  }
+
+  .thread-messages {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin-bottom: 1.25rem;
+    max-height: 340px;
+    overflow-y: auto;
+    padding-right: 2px;
+  }
+
+  .thread-msg {
+    padding: 0.65rem 0.8rem;
+    border: 1px solid #eee3d6;
+  }
+
+  .thread-msg--admin {
+    background: rgba(248,241,231,0.6);
+    border-color: #d8c6b1;
+  }
+
+  .thread-msg--user {
+    background: transparent;
+    margin-left: 1.5rem;
+  }
+
+  .thread-msg-from {
+    font-family: Inter, sans-serif;
+    font-size: 0.65rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #9a7c5c;
+    margin: 0 0 0.3rem;
+  }
+
+  .thread-msg-body {
+    font-family: Inter, sans-serif;
+    font-size: 0.85rem;
+    color: #34251c;
+    margin: 0 0 0.3rem;
+    line-height: 1.6;
     white-space: pre-wrap;
   }
+
+  .thread-msg-date {
+    font-family: Inter, sans-serif;
+    font-size: 0.68rem;
+    color: #b5a090;
+    margin: 0;
+  }
+
+  .thread-reply {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid #eee3d6;
+  }
+
+  .thread-reply-input {
+    font-family: Inter, sans-serif;
+    font-size: 0.82rem;
+    background: transparent;
+    border: 1px solid #d8c6b1;
+    color: #34251c;
+    padding: 0.5rem;
+    outline: none;
+    resize: vertical;
+    line-height: 1.5;
+  }
+  .thread-reply-input::placeholder { color: #b5a090; }
+  .thread-reply-input:focus { border-color: #c65f3c; }
+
+  .thread-reply-btn {
+    align-self: flex-end;
+    background: transparent;
+    border: 1px solid #c65f3c;
+    color: #c65f3c;
+    font-family: Inter, sans-serif;
+    font-size: 0.72rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    padding: 0.35rem 0.85rem;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .thread-reply-btn:hover:not(:disabled) { background: rgba(198,95,60,0.08); }
+  .thread-reply-btn:disabled { opacity: 0.45; cursor: default; }
 </style>

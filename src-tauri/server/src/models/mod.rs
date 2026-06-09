@@ -830,7 +830,7 @@ pub struct AdminUserDetail {
     pub orders: Vec<UserOrderDto>,
     pub sessions: Vec<AdminSessionDto>,
     pub recent_failures: i64,
-    pub messages: Vec<UserMessageDto>,
+    pub messages: Vec<MessageThreadDto>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1012,15 +1012,26 @@ pub struct WaitlistEntryDto {
 }
 
 // ============================================================
-// USER MESSAGES
+// MESSAGING THREADS
 // ============================================================
 
-#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
-pub struct UserMessage {
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct MessageThread {
     pub id: Uuid,
     pub user_id: Uuid,
-    pub from_admin: bool,
+    pub category: String,
+    pub reference_id: Option<Uuid>,
     pub subject: String,
+    pub status: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub last_message_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ThreadMessage {
+    pub id: Uuid,
+    pub thread_id: Uuid,
+    pub from_admin: bool,
     pub body: String,
     pub read_at: Option<chrono::DateTime<chrono::Utc>>,
     pub created_at: chrono::DateTime<chrono::Utc>,
@@ -1028,21 +1039,35 @@ pub struct UserMessage {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct UserMessageDto {
+pub struct MessageThreadDto {
     pub id: String,
-    pub from_admin: bool,
+    pub category: String,
+    pub reference_id: Option<String>,
     pub subject: String,
+    pub status: String,
+    pub unread: i64,
+    pub last_message_at: String,
+    pub created_at: String,
+    pub preview: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadMessageDto {
+    pub id: String,
+    pub thread_id: String,
+    pub from_admin: bool,
     pub body: String,
     pub read_at: Option<String>,
     pub created_at: String,
 }
 
-impl From<&UserMessage> for UserMessageDto {
-    fn from(m: &UserMessage) -> Self {
-        UserMessageDto {
+impl From<&ThreadMessage> for ThreadMessageDto {
+    fn from(m: &ThreadMessage) -> Self {
+        ThreadMessageDto {
             id: m.id.to_string(),
+            thread_id: m.thread_id.to_string(),
             from_admin: m.from_admin,
-            subject: m.subject.clone(),
             body: m.body.clone(),
             read_at: m.read_at.map(|t| t.to_rfc3339()),
             created_at: m.created_at.to_rfc3339(),
@@ -1050,17 +1075,33 @@ impl From<&UserMessage> for UserMessageDto {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AdminSendMessageRequest {
-    pub subject: String,
-    pub body: String,
+pub struct ThreadDetailDto {
+    pub thread: MessageThreadDto,
+    pub messages: Vec<ThreadMessageDto>,
+    pub user: Option<ThreadUserDto>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadUserDto {
+    pub id: String,
+    pub display_name: String,
+    pub email: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct UserSendMessageRequest {
+pub struct CreateThreadRequest {
     pub subject: String,
+    pub body: String,
+    pub category: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplyToThreadRequest {
     pub body: String,
 }
 

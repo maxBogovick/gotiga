@@ -338,13 +338,31 @@ export interface AdminSessionDto {
     isActive: boolean;
 }
 
-export interface UserMessageDto {
+export interface MessageThreadDto {
     id: string;
-    fromAdmin: boolean;
+    category: 'booking' | 'waitlist' | 'order' | 'general' | 'system';
+    referenceId: string | null;
     subject: string;
+    status: 'open' | 'resolved';
+    unread: number;
+    lastMessageAt: string;
+    createdAt: string;
+    preview: string | null;
+}
+
+export interface ThreadMessageDto {
+    id: string;
+    threadId: string;
+    fromAdmin: boolean;
     body: string;
     readAt: string | null;
     createdAt: string;
+}
+
+export interface ThreadDetailDto {
+    thread: MessageThreadDto;
+    messages: ThreadMessageDto[];
+    user: { id: string; displayName: string; email: string } | null;
 }
 
 export interface AdminUserDetail {
@@ -358,7 +376,7 @@ export interface AdminUserDetail {
     orders: UserOrderDto[];
     sessions: AdminSessionDto[];
     recentFailures: number;
-    messages: UserMessageDto[];
+    messages: MessageThreadDto[];
 }
 
 export interface ResetTokenResponse {

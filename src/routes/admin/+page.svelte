@@ -19,6 +19,7 @@
     import SmtpSettingsPanel from '$lib/components/admin/SmtpSettingsPanel.svelte';
     import WaitlistPanel from '$lib/components/admin/WaitlistPanel.svelte';
     import BookingRulesPanel from '$lib/components/admin/BookingRulesPanel.svelte';
+    import MessagesPanel from '$lib/components/admin/MessagesPanel.svelte';
     import FigurineShowingsEditor from '$lib/components/admin/FigurineShowingsEditor.svelte';
     import { t } from '$lib/i18n';
     import LangSwitcher from '$lib/components/LangSwitcher.svelte';
@@ -64,7 +65,7 @@
     let isSaving = $state(false);
     let showSettings = $state(false);
     let message = $state({ text: '', type: 'info' });
-    let activeTab = $state<'registry' | 'home' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'showings' | 'bookings' | 'waitlist' | 'analytics' | 'users' | 'comments' | 'server' | 'booking-rules'>('registry');
+    let activeTab = $state<'registry' | 'home' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'showings' | 'bookings' | 'waitlist' | 'analytics' | 'users' | 'comments' | 'messages' | 'server' | 'booking-rules'>('registry');
     let activeAuthorSubTab = $state<'profile' | 'texts'>('profile');
     let newOrdersCount = $state(0);
     let newBookingsCount = $state(0);
@@ -441,6 +442,7 @@
                   ['bookings',      $t('adminTabBookings')],
                   ['waitlist',      $t('adminTabWaitlist')],
                   ['comments',      $t('adminTabComments')],
+                  ['messages',      $t('adminTabMessages')],
                   ['analytics',     $t('adminTabAnalytics')],
                   ['users',         $t('adminUsersTab')],
                 ]
@@ -912,6 +914,8 @@
             <div in:fade class="h-full overflow-y-auto"><SmtpSettingsPanel /></div>
         {:else if activeTab === 'waitlist'}
             <div in:fade class="h-full"><WaitlistPanel /></div>
+        {:else if activeTab === 'messages'}
+            <div in:fade class="h-full overflow-y-auto"><MessagesPanel /></div>
         {:else if activeTab === 'booking-rules'}
             <div in:fade class="h-full overflow-y-auto"><BookingRulesPanel /></div>
         {/if}

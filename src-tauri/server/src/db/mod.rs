@@ -1482,51 +1482,251 @@ impl Repository {
         .rows_affected())
     }
 
-    // ── User messages ──────────────────────────────────────────
+    // ── Message threads ────────────────────────────────────────
 
-    pub async fn insert_user_message(
+    pub async fn create_thread(
         &self,
         user_id: Uuid,
-        from_admin: bool,
+        category: &str,
+        reference_id: Option<Uuid>,
         subject: &str,
         body: &str,
-    ) -> Result<crate::models::UserMessage> {
-        Ok(sqlx::query_as::<_, crate::models::UserMessage>(
-            "INSERT INTO user_messages (user_id, from_admin, subject, body)
+        from_admin: bool,
+    ) -> Result<(crate::models::MessageThread, crate::models::ThreadMessage)> {
+        let thread = sqlx::query_as::<_, crate::models::MessageThread>(
+            "INSERT INTO message_threads (user_id, category, reference_id, subject)
              VALUES ($1, $2, $3, $4) RETURNING *"
         )
-        .bind(user_id)
-        .bind(from_admin)
-        .bind(subject)
-        .bind(body)
-        .fetch_one(&self.pg_pool).await?)
-    }
+        .bind(user_id).bind(category).bind(reference_id).bind(subject)
+        .fetch_one(&self.pg_pool).await?;
 
-    pub async fn get_user_messages(&self, user_id: Uuid) -> Result<Vec<crate::models::UserMessage>> {
-        Ok(sqlx::query_as::<_, crate::models::UserMessage>(
-            "SELECT * FROM user_messages WHERE user_id = $1 ORDER BY created_at DESC"
+        let msg = sqlx::query_as::<_, crate::models::ThreadMessage>(
+            "INSERT INTO thread_messages (thread_id, from_admin, body)
+             VALUES ($1, $2, $3) RETURNING *"
         )
-        .bind(user_id)
-        .fetch_all(&self.pg_pool).await?)
+        .bind(thread.id).bind(from_admin).bind(body)
+        .fetch_one(&self.pg_pool).await?;
+
+        Ok((thread, msg))
     }
 
-    pub async fn mark_message_read(&self, message_id: Uuid, user_id: Uuid) -> Result<()> {
+    pub async fn add_thread_reply(
+        &self,
+        thread_id: Uuid,
+        _user_id: Uuid,
+        from_admin: bool,
+        body: &str,
+    ) -> Result<crate::models::ThreadMessage> {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM message_threads WHERE id = $1)"
+        )
+        .bind(thread_id)
+        .fetch_one(&self.pg_pool).await?;
+
+        if !exists {
+            return Err(crate::error::AppError::NotFound(format!("Thread {} not found", thread_id)));
+        }
+
+        let msg = sqlx::query_as::<_, crate::models::ThreadMessage>(
+            "INSERT INTO thread_messages (thread_id, from_admin, body)
+             VALUES ($1, $2, $3) RETURNING *"
+        )
+        .bind(thread_id).bind(from_admin).bind(body)
+        .fetch_one(&self.pg_pool).await?;
+
         sqlx::query(
-            "UPDATE user_messages SET read_at = NOW()
-             WHERE id = $1 AND user_id = $2 AND read_at IS NULL"
+            "UPDATE message_threads SET last_message_at = NOW(), status = 'open' WHERE id = $1"
         )
-        .bind(message_id)
+        .bind(thread_id)
+        .execute(&self.pg_pool).await?;
+
+        Ok(msg)
+    }
+
+    pub async fn get_user_threads(&self, user_id: Uuid) -> Result<Vec<(crate::models::MessageThread, i64, Option<String>)>> {
+        let rows: Vec<(Uuid, Uuid, String, Option<Uuid>, String, String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, i64, Option<String>)> = sqlx::query_as(
+            r#"SELECT
+                t.id, t.user_id, t.category, t.reference_id, t.subject,
+                t.status, t.created_at, t.last_message_at,
+                COUNT(m.id) FILTER (WHERE m.read_at IS NULL AND m.from_admin = true)::bigint AS unread,
+                (SELECT body FROM thread_messages WHERE thread_id = t.id ORDER BY created_at DESC LIMIT 1) AS preview
+            FROM message_threads t
+            LEFT JOIN thread_messages m ON m.thread_id = t.id
+            WHERE t.user_id = $1
+            GROUP BY t.id
+            ORDER BY t.last_message_at DESC"#
+        )
         .bind(user_id)
+        .fetch_all(&self.pg_pool).await?;
+
+        Ok(rows.into_iter().map(|(id, user_id, category, reference_id, subject, status, created_at, last_message_at, unread, preview)| {
+            let thread = crate::models::MessageThread { id, user_id, category, reference_id, subject, status, created_at, last_message_at };
+            (thread, unread, preview)
+        }).collect())
+    }
+
+    pub async fn get_thread_messages(&self, thread_id: Uuid, user_id: Option<Uuid>) -> Result<(crate::models::MessageThread, Vec<crate::models::ThreadMessage>)> {
+        let thread = sqlx::query_as::<_, crate::models::MessageThread>(
+            "SELECT * FROM message_threads WHERE id = $1"
+        )
+        .bind(thread_id)
+        .fetch_optional(&self.pg_pool).await?
+        .ok_or_else(|| crate::error::AppError::NotFound(format!("Thread {} not found", thread_id)))?;
+
+        if let Some(uid) = user_id {
+            if thread.user_id != uid {
+                return Err(crate::error::AppError::Unauthorized);
+            }
+        }
+
+        let messages = sqlx::query_as::<_, crate::models::ThreadMessage>(
+            "SELECT * FROM thread_messages WHERE thread_id = $1 ORDER BY created_at ASC"
+        )
+        .bind(thread_id)
+        .fetch_all(&self.pg_pool).await?;
+
+        Ok((thread, messages))
+    }
+
+    pub async fn mark_thread_read(&self, thread_id: Uuid, user_id: Uuid) -> Result<()> {
+        sqlx::query(
+            "UPDATE thread_messages SET read_at = NOW()
+             WHERE thread_id = $1 AND from_admin = true AND read_at IS NULL
+             AND EXISTS (SELECT 1 FROM message_threads WHERE id = $1 AND user_id = $2)"
+        )
+        .bind(thread_id).bind(user_id)
         .execute(&self.pg_pool).await?;
         Ok(())
     }
 
-    pub async fn count_unread_messages(&self, user_id: Uuid) -> Result<i64> {
+    pub async fn mark_thread_read_admin(&self, thread_id: Uuid) -> Result<()> {
+        sqlx::query(
+            "UPDATE thread_messages SET read_at = NOW()
+             WHERE thread_id = $1 AND from_admin = false AND read_at IS NULL"
+        )
+        .bind(thread_id)
+        .execute(&self.pg_pool).await?;
+        Ok(())
+    }
+
+    pub async fn resolve_thread(&self, thread_id: Uuid) -> Result<()> {
+        sqlx::query("UPDATE message_threads SET status = 'resolved' WHERE id = $1")
+            .bind(thread_id)
+            .execute(&self.pg_pool).await?;
+        Ok(())
+    }
+
+    pub async fn reopen_thread(&self, thread_id: Uuid) -> Result<()> {
+        sqlx::query("UPDATE message_threads SET status = 'open' WHERE id = $1")
+            .bind(thread_id)
+            .execute(&self.pg_pool).await?;
+        Ok(())
+    }
+
+    pub async fn count_unread_threads(&self, user_id: Uuid) -> Result<i64> {
         let row: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM user_messages WHERE user_id = $1 AND read_at IS NULL"
+            r#"SELECT COUNT(DISTINCT t.id)
+               FROM message_threads t
+               JOIN thread_messages m ON m.thread_id = t.id
+               WHERE t.user_id = $1 AND m.from_admin = true AND m.read_at IS NULL"#
         )
         .bind(user_id)
         .fetch_one(&self.pg_pool).await?;
         Ok(row.0)
+    }
+
+    pub async fn admin_get_threads(
+        &self,
+        category: Option<&str>,
+        status: Option<&str>,
+        page: i64,
+        per_page: i64,
+    ) -> Result<(Vec<(crate::models::MessageThread, crate::models::User, i64, Option<String>)>, i64)> {
+        let offset = (page - 1) * per_page;
+
+        let mut where_parts: Vec<String> = Vec::new();
+        if let Some(c) = category { where_parts.push(format!("t.category = '{}'", c.replace('\'', "''"))); }
+        if let Some(s) = status   { where_parts.push(format!("t.status = '{}'", s.replace('\'', "''"))); }
+        let where_clause = if where_parts.is_empty() { String::new() } else { format!("WHERE {}", where_parts.join(" AND ")) };
+
+        let (total,): (i64,) = sqlx::query_as(&format!(
+            "SELECT COUNT(DISTINCT t.id) FROM message_threads t {}",
+            where_clause
+        ))
+        .fetch_one(&self.pg_pool).await?;
+
+        let rows = sqlx::query(&format!(
+            r#"SELECT
+                t.id as thread_id, t.user_id, t.category, t.reference_id, t.subject,
+                t.status, t.created_at as thread_created_at, t.last_message_at,
+                u.id as u_id, u.email, u.display_name, u.visual_password_hash,
+                u.admin_notes, u.is_blocked, u.password_reset_token, u.password_reset_expires_at,
+                u.created_at as u_created_at, u.avatar_url,
+                COUNT(m.id) FILTER (WHERE m.read_at IS NULL AND m.from_admin = false)::bigint AS unread,
+                (SELECT body FROM thread_messages WHERE thread_id = t.id ORDER BY created_at DESC LIMIT 1) AS preview
+            FROM message_threads t
+            JOIN users u ON u.id = t.user_id
+            LEFT JOIN thread_messages m ON m.thread_id = t.id
+            {}
+            GROUP BY t.id, u.id
+            ORDER BY t.last_message_at DESC
+            LIMIT $1 OFFSET $2"#,
+            where_clause
+        ))
+        .bind(per_page).bind(offset)
+        .fetch_all(&self.pg_pool).await?;
+
+        use sqlx::Row;
+        let items = rows.into_iter().map(|r| {
+            let thread = crate::models::MessageThread {
+                id: r.get("thread_id"),
+                user_id: r.get("user_id"),
+                category: r.get("category"),
+                reference_id: r.get("reference_id"),
+                subject: r.get("subject"),
+                status: r.get("status"),
+                created_at: r.get("thread_created_at"),
+                last_message_at: r.get("last_message_at"),
+            };
+            let user = crate::models::User {
+                id: r.get("u_id"),
+                email: r.get("email"),
+                display_name: r.get("display_name"),
+                visual_password_hash: r.get("visual_password_hash"),
+                admin_notes: r.get("admin_notes"),
+                is_blocked: r.get("is_blocked"),
+                password_reset_token: r.get("password_reset_token"),
+                password_reset_expires_at: r.get("password_reset_expires_at"),
+                created_at: r.get("u_created_at"),
+                avatar_url: r.get("avatar_url"),
+            };
+            let unread: i64 = r.get("unread");
+            let preview: Option<String> = r.get("preview");
+            (thread, user, unread, preview)
+        }).collect();
+
+        Ok((items, total))
+    }
+
+    pub async fn get_user_threads_for_admin(&self, user_id: Uuid) -> Result<Vec<(crate::models::MessageThread, i64, Option<String>)>> {
+        let rows: Vec<(Uuid, Uuid, String, Option<Uuid>, String, String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, i64, Option<String>)> = sqlx::query_as(
+            r#"SELECT
+                t.id, t.user_id, t.category, t.reference_id, t.subject,
+                t.status, t.created_at, t.last_message_at,
+                COUNT(m.id) FILTER (WHERE m.read_at IS NULL AND m.from_admin = false)::bigint AS unread,
+                (SELECT body FROM thread_messages WHERE thread_id = t.id ORDER BY created_at DESC LIMIT 1) AS preview
+            FROM message_threads t
+            LEFT JOIN thread_messages m ON m.thread_id = t.id
+            WHERE t.user_id = $1
+            GROUP BY t.id
+            ORDER BY t.last_message_at DESC"#
+        )
+        .bind(user_id)
+        .fetch_all(&self.pg_pool).await?;
+
+        Ok(rows.into_iter().map(|(id, user_id, category, reference_id, subject, status, created_at, last_message_at, unread, preview)| {
+            let thread = crate::models::MessageThread { id, user_id, category, reference_id, subject, status, created_at, last_message_at };
+            (thread, unread, preview)
+        }).collect())
     }
 }

@@ -992,46 +992,98 @@ pub async fn user_delete_account(
     Ok(StatusCode::OK)
 }
 
-pub async fn user_get_messages(
+// === MESSAGING THREADS ===
+
+pub async fn user_get_threads(
     State(service): State<AppService>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>> {
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
     let user = service.get_user_from_session(token).await?;
-    let messages = service.get_user_messages(user.id).await?;
-    let unread = service.count_unread_messages(user.id).await?;
-    Ok(Json(serde_json::json!({ "messages": messages, "unread": unread })))
+    let threads = service.get_user_threads(user.id).await?;
+    let unread = service.count_unread_threads(user.id).await?;
+    Ok(Json(serde_json::json!({ "threads": threads, "unread": unread })))
 }
 
-pub async fn user_mark_message_read(
+pub async fn user_get_thread(
     State(service): State<AppService>,
     headers: HeaderMap,
     Path(id): Path<Uuid>,
-) -> Result<StatusCode> {
+) -> Result<Json<ThreadDetailDto>> {
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
     let user = service.get_user_from_session(token).await?;
-    service.mark_message_read(id, user.id).await?;
+    Ok(Json(service.get_thread_detail(id, user.id).await?))
+}
+
+pub async fn user_create_thread(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(body): Json<CreateThreadRequest>,
+) -> Result<Json<ThreadDetailDto>> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
+    Ok(Json(service.user_create_thread(user.id, body.subject, body.body, body.category).await?))
+}
+
+pub async fn user_reply_to_thread(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(body): Json<ReplyToThreadRequest>,
+) -> Result<Json<ThreadMessageDto>> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
+    Ok(Json(service.user_reply_to_thread(id, user.id, body.body).await?))
+}
+
+pub async fn admin_list_threads(
+    State(service): State<AppService>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>> {
+    let category = params.get("category").cloned();
+    let status = params.get("status").cloned();
+    let page = params.get("page").and_then(|p| p.parse::<i64>().ok()).unwrap_or(1).max(1);
+    let per_page = params.get("perPage").and_then(|p| p.parse::<i64>().ok()).unwrap_or(25).clamp(1, 100);
+    Ok(Json(service.admin_list_threads(category, status, page, per_page).await?))
+}
+
+pub async fn admin_get_thread(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<ThreadDetailDto>> {
+    Ok(Json(service.admin_get_thread_detail(id).await?))
+}
+
+pub async fn admin_create_thread_for_user(
+    State(service): State<AppService>,
+    Path(user_id): Path<Uuid>,
+    Json(body): Json<CreateThreadRequest>,
+) -> Result<Json<ThreadDetailDto>> {
+    Ok(Json(service.admin_create_thread(user_id, body.subject, body.body, body.category, None).await?))
+}
+
+pub async fn admin_reply_to_thread(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<ReplyToThreadRequest>,
+) -> Result<Json<ThreadMessageDto>> {
+    Ok(Json(service.admin_reply_to_thread(id, body.body).await?))
+}
+
+pub async fn admin_resolve_thread(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    service.admin_resolve_thread(id).await?;
     Ok(StatusCode::OK)
 }
 
-pub async fn user_send_message(
+pub async fn admin_reopen_thread(
     State(service): State<AppService>,
-    headers: HeaderMap,
-    Json(body): Json<UserSendMessageRequest>,
-) -> Result<Json<UserMessageDto>> {
-    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
-    let user = service.get_user_from_session(token).await?;
-    let msg = service.user_send_message(user.id, &body.subject, &body.body).await?;
-    Ok(Json(msg))
-}
-
-pub async fn admin_send_message_to_user(
-    State(service): State<AppService>,
-    Path(user_id): Path<Uuid>,
-    Json(body): Json<AdminSendMessageRequest>,
-) -> Result<Json<UserMessageDto>> {
-    let msg = service.admin_send_message(user_id, &body.subject, &body.body).await?;
-    Ok(Json(msg))
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    service.admin_reopen_thread(id).await?;
+    Ok(StatusCode::OK)
 }
 
 // === BOOKING RULES ===
