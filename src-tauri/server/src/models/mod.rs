@@ -93,6 +93,7 @@ pub enum BookingStatus {
     Confirmed,
     Rejected,
     Cancelled,
+    Completed,
 }
 
 // ============================================================
@@ -872,11 +873,26 @@ pub struct Comment {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct CommentWithAvatar {
+    pub id: Uuid,
+    pub figurine_id: Uuid,
+    pub user_id: Option<Uuid>,
+    pub author_name: String,
+    pub author_email: Option<String>,
+    pub body: String,
+    pub is_approved: bool,
+    pub admin_reply: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub avatar_url: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommentDto {
     pub id: String,
     pub author_name: String,
+    pub author_avatar_url: Option<String>,
     pub body: String,
     pub admin_reply: Option<String>,
     pub created_at: String,

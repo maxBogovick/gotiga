@@ -185,7 +185,7 @@ export interface MediaReplaceResult {
 // ============================================================
 
 export type ShowingType = 'exhibition' | 'private';
-export type BookingStatus = 'pending' | 'confirmed' | 'rejected' | 'cancelled';
+export type BookingStatus = 'pending' | 'confirmed' | 'rejected' | 'cancelled' | 'completed';
 
 export interface ScheduleEntry {
     entryType: 'showing' | 'booking' | 'pending';
@@ -367,6 +367,7 @@ export interface AdminUsersPage {
 export interface CommentDto {
     id: string;
     authorName: string;
+    authorAvatarUrl?: string | null;
     body: string;
     adminReply: string | null;
     createdAt: string;

@@ -599,8 +599,8 @@ impl AppService {
             return Ok(());
         }
 
-        // If cancelling/rejecting a previously-confirmed booking → maybe revert figurine to Available
-        if (status == BookingStatus::Cancelled || status == BookingStatus::Rejected)
+        // Completing or cancelling/rejecting a previously-confirmed booking → maybe revert figurine to Available
+        if (status == BookingStatus::Completed || status == BookingStatus::Cancelled || status == BookingStatus::Rejected)
             && booking.status == BookingStatus::Confirmed
         {
             self.repo.update_booking_status(id, &status, admin_notes.as_deref()).await?;
@@ -1284,10 +1284,11 @@ impl AppService {
     }
 
     pub async fn get_figurine_comments(&self, figurine_id: Uuid, newest_first: bool) -> Result<Vec<CommentDto>> {
-        let comments = self.repo.get_approved_comments(figurine_id, newest_first).await?;
-        Ok(comments.into_iter().map(|c| CommentDto {
+        let rows = self.repo.get_approved_comments(figurine_id, newest_first).await?;
+        Ok(rows.into_iter().map(|c| CommentDto {
             id: c.id.to_string(),
             author_name: c.author_name,
+            author_avatar_url: c.avatar_url,
             body: c.body,
             admin_reply: c.admin_reply,
             created_at: c.created_at.to_rfc3339(),

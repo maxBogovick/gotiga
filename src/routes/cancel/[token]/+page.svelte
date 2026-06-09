@@ -26,6 +26,7 @@
       case 'confirmed': return $t('cancelStatusConfirmed');
       case 'rejected':  return $t('cancelStatusRejected');
       case 'cancelled': return $t('cancelStatusCancelled');
+      case 'completed': return $t('cancelStatusCompleted');
       default:          return s;
     }
   }
@@ -120,6 +121,8 @@
         <div class="actions">
           {#if info.status === 'cancelled'}
             <p class="hint">{$t('cancelAlreadyCancelled')}</p>
+          {:else if info.status === 'completed'}
+            <p class="hint">{$t('cancelAlreadyCompleted')}</p>
           {:else if info.status === 'confirmed'}
             <p class="hint">{$t('cancelAlreadyConfirmed')}</p>
           {:else if info.status === 'pending'}
@@ -226,6 +229,7 @@
   .status-confirmed { background: #d4e8c8; color: #3a6020; }
   .status-rejected  { background: #f0d0c8; color: #8a3020; }
   .status-cancelled { background: #e8e0d4; color: #6a5040; }
+  .status-completed { background: #dce8e0; color: #2a5040; }
 
   .actions {
     display: flex;

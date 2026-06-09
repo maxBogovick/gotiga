@@ -5,6 +5,18 @@
   import { t } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
   import type { FigurineSchedule } from '$lib/types/api';
+
+  function resolveAvatarUrl(url: string | null | undefined): string | null {
+    if (!url) return null;
+    if (url.startsWith('http')) return url;
+    if (url.startsWith('/static/') && typeof localStorage !== 'undefined') {
+      const serverUrl = localStorage.getItem('gotiga_server_url') ?? '';
+      return serverUrl ? `${serverUrl}${url}` : url;
+    }
+    return url;
+  }
+
+  let avatarUrl = $derived(resolveAvatarUrl(authStore.user?.avatarUrl));
   import DateRangePicker from '$lib/components/DateRangePicker.svelte';
 
   type ClaimData = { token: string; figurineName: string; startsAt: string; endsAt: string; submittedAt: string };
@@ -222,10 +234,19 @@
                   </div>
 
                   {#if authStore.isLoggedIn}
-                  <!-- Logged-in user: show name, hide inputs -->
-                  <p class="text-sm text-[#5f4636] italic border-b border-[#d8c6b1] pb-2">
-                    {$t('formLoggedInAs')} <strong class="text-[#34251c] not-italic">{authStore.user?.displayName}</strong>
-                  </p>
+                  <!-- Logged-in user: show avatar + name, hide inputs -->
+                  <div class="flex items-center gap-2.5 border-b border-[#d8c6b1] pb-2">
+                    {#if avatarUrl}
+                      <img src={avatarUrl} alt="" class="w-7 h-7 rounded-full object-cover border border-[#d8c6b1] flex-shrink-0" />
+                    {:else}
+                      <span class="w-7 h-7 rounded-full bg-[#efe6d6] border border-[#d8c6b1] flex-shrink-0 flex items-center justify-center font-['Fraunces'] text-sm text-[#9a7c5c]">
+                        {(authStore.user?.displayName ?? '?')[0].toUpperCase()}
+                      </span>
+                    {/if}
+                    <p class="text-sm text-[#5f4636] italic">
+                      {$t('formLoggedInAs')} <strong class="text-[#34251c] not-italic">{authStore.user?.displayName}</strong>
+                    </p>
+                  </div>
                   {:else}
                   <!-- Name -->
                   <div class="space-y-1.5">

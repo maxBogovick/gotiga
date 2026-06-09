@@ -1186,10 +1186,18 @@ impl Repository {
         Ok(rec)
     }
 
-    pub async fn get_approved_comments(&self, figurine_id: Uuid, newest_first: bool) -> Result<Vec<crate::models::Comment>> {
+    pub async fn get_approved_comments(&self, figurine_id: Uuid, newest_first: bool) -> Result<Vec<crate::models::CommentWithAvatar>> {
         let order = if newest_first { "DESC" } else { "ASC" };
-        let rows = sqlx::query_as::<_, crate::models::Comment>(
-            &format!("SELECT * FROM figurine_comments WHERE figurine_id = $1 AND is_approved = true ORDER BY created_at {order}")
+        let rows = sqlx::query_as::<_, crate::models::CommentWithAvatar>(
+            &format!(
+                "SELECT c.id, c.figurine_id, c.user_id, c.author_name, c.author_email, \
+                        c.body, c.is_approved, c.admin_reply, c.created_at, \
+                        u.avatar_url \
+                 FROM figurine_comments c \
+                 LEFT JOIN users u ON u.id = c.user_id \
+                 WHERE c.figurine_id = $1 AND c.is_approved = true \
+                 ORDER BY c.created_at {order}"
+            )
         )
         .bind(figurine_id)
         .fetch_all(&self.pg_pool)

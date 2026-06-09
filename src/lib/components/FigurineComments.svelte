@@ -5,6 +5,18 @@
   import { authStore } from '$lib/stores/auth.svelte';
   import type { CommentDto } from '$lib/types/api';
 
+  function resolveAvatarUrl(url: string | null | undefined): string | null {
+    if (!url) return null;
+    if (url.startsWith('http')) return url;
+    if (url.startsWith('/static/') && typeof localStorage !== 'undefined') {
+      const serverUrl = localStorage.getItem('gotiga_server_url') ?? '';
+      return serverUrl ? `${serverUrl}${url}` : url;
+    }
+    return url;
+  }
+
+  let avatarUrl = $derived(resolveAvatarUrl(authStore.user?.avatarUrl));
+
   let { figurineId }: { figurineId: string } = $props();
 
   let comments = $state<CommentDto[]>([]);
@@ -88,8 +100,14 @@
   {:else}
     <ol class="comments-list">
       {#each comments as c (c.id)}
+        {@const commentAvatar = resolveAvatarUrl(c.authorAvatarUrl)}
         <li class="comment-item">
           <div class="comment-header">
+            {#if commentAvatar}
+              <img src={commentAvatar} alt="" class="comment-author-avatar" />
+            {:else}
+              <span class="comment-author-initial">{(c.authorName ?? '?')[0].toUpperCase()}</span>
+            {/if}
             <span class="comment-author">{c.authorName}</span>
             <time class="comment-date" datetime={c.createdAt}>{formatDate(c.createdAt)}</time>
           </div>
@@ -143,7 +161,14 @@
             <a href="/login" class="comment-login-link">{$t('commentsLoginHint')}</a>
           </p>
         {:else}
-          <p class="comment-authed-name">{authStore.user?.displayName}</p>
+          <div class="comment-authed">
+            {#if avatarUrl}
+              <img src={avatarUrl} alt="" class="comment-authed-avatar" />
+            {:else}
+              <span class="comment-authed-initial">{(authStore.user?.displayName ?? '?')[0].toUpperCase()}</span>
+            {/if}
+            <span class="comment-authed-name">{authStore.user?.displayName}</span>
+          </div>
         {/if}
 
         <div class="form-field">
@@ -267,9 +292,37 @@
 
   .comment-header {
     display: flex;
-    align-items: baseline;
-    gap: 1rem;
+    align-items: center;
+    gap: 0.55rem;
     margin-bottom: 0.5rem;
+  }
+
+  .comment-author-avatar {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 1px solid #d8c6b1;
+    flex-shrink: 0;
+  }
+
+  .comment-author-initial {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: #efe6d6;
+    border: 1px solid #d8c6b1;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Fraunces', Georgia, serif;
+    font-size: 0.65rem;
+    color: #9a7c5c;
+  }
+
+  .comment-date {
+    margin-left: auto;
   }
 
   .comment-author {
@@ -409,11 +462,41 @@
     text-underline-offset: 3px;
   }
 
+  .comment-authed {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.4rem 0;
+  }
+
+  .comment-authed-avatar {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 1px solid #d8c6b1;
+    flex-shrink: 0;
+  }
+
+  .comment-authed-initial {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: #efe6d6;
+    border: 1px solid #d8c6b1;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Fraunces', Georgia, serif;
+    font-size: 0.75rem;
+    color: #9a7c5c;
+  }
+
   .comment-authed-name {
     font-size: 0.85rem;
     color: #34251c;
     font-style: italic;
-    padding: 0.4rem 0;
   }
 
   .comment-submit {

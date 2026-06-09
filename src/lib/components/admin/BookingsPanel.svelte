@@ -47,7 +47,7 @@
   let calByDay = $derived.by(() => {
     const map = new Map<string, BookingDto[]>();
     for (const b of calAllBookings) {
-      if (b.status === 'cancelled' || b.status === 'rejected') continue;
+      if (b.status === 'cancelled' || b.status === 'rejected' || b.status === 'completed') continue;
       const start = new Date(b.startsAt + 'T00:00:00');
       const end   = new Date(b.endsAt   + 'T00:00:00');
       for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
@@ -142,14 +142,30 @@
   });
 
   const statusLabel: Record<string, string> = {
-    pending: 'Новая', confirmed: 'Подтверждена', rejected: 'Отклонена', cancelled: 'Отменена',
+    pending: 'Новая', confirmed: 'Подтверждена', rejected: 'Отклонена', cancelled: 'Отменена', completed: 'Возвращена',
   };
   const statusColor: Record<string, string> = {
     pending:   'bg-amber-100 text-amber-800 border-amber-200',
     confirmed: 'bg-green-100 text-green-800 border-green-200',
     rejected:  'bg-red-100 text-red-800 border-red-200',
     cancelled: 'bg-gray-100 text-gray-600 border-gray-200',
+    completed: 'bg-teal-50 text-teal-800 border-teal-200',
   };
+
+  function makeMailtoLink(booking: BookingDto, type: 'confirm' | 'reject'): string {
+    const subject = encodeURIComponent(
+      type === 'confirm'
+        ? `Ваша заявка на показ подтверждена: ${booking.figurineName}`
+        : `Ваша заявка на показ: ${booking.figurineName}`
+    );
+    const period = `${formatDate(booking.startsAt)} — ${formatDate(booking.endsAt)}`;
+    const body = encodeURIComponent(
+      type === 'confirm'
+        ? `Здравствуйте, ${booking.requesterName}!\n\nВаша заявка на показ фигурки «${booking.figurineName}» (${period}) подтверждена.${booking.adminNotes ? `\n\nПримечание: ${booking.adminNotes}` : ''}\n\nС уважением,\nGotiga`
+        : `Здравствуйте, ${booking.requesterName}!\n\nК сожалению, заявка на показ фигурки «${booking.figurineName}» (${period}) не может быть принята.${booking.adminNotes ? `\n\nПричина: ${booking.adminNotes}` : ''}\n\nС уважением,\nGotiga`
+    );
+    return `mailto:${booking.requesterEmail}?subject=${subject}&body=${body}`;
+  }
 
   function formatDate(iso: string) {
     return new Date(iso + 'T00:00:00').toLocaleDateString('ru-RU', {
@@ -201,7 +217,7 @@
     {/if}
 
     <div class="flex gap-1 flex-wrap">
-      {#each [['', 'Все'], ['pending', 'Новые'], ['confirmed', 'Подтверждённые'], ['rejected', 'Отклонённые'], ['cancelled', 'Отменённые']] as [val, label]}
+      {#each [['', 'Все'], ['pending', 'Новые'], ['confirmed', 'Подтверждённые'], ['rejected', 'Отклонённые'], ['cancelled', 'Отменённые'], ['completed', 'Возвращённые']] as [val, label]}
         <button
           onclick={() => { statusFilter = val; load(true); }}
           class="px-3 py-1 text-[10px] uppercase tracking-wide border transition-colors
@@ -400,7 +416,7 @@
             {/if}
 
             <!-- Actions -->
-            <div class="flex gap-1 mt-3 pt-2 border-t border-[#34251c]/5">
+            <div class="flex gap-1 mt-3 pt-2 border-t border-[#34251c]/5 flex-wrap">
               {#if booking.status === 'pending'}
                 <button
                   onclick={() => setStatus(booking, 'confirmed')}
@@ -414,15 +430,36 @@
                 >✕ Отклонить</button>
               {:else if booking.status === 'confirmed'}
                 <button
+                  onclick={() => setStatus(booking, 'completed')}
+                  disabled={updatingId === booking.id}
+                  class="text-[10px] px-3 py-1 bg-teal-700 text-white border border-teal-700 hover:bg-teal-800 transition-colors disabled:opacity-40 font-['Inter'] uppercase tracking-wide"
+                >↩ Возвращена</button>
+                <button
                   onclick={() => setStatus(booking, 'cancelled')}
                   disabled={updatingId === booking.id}
                   class="text-[10px] px-3 py-1 border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-40 font-['Inter'] uppercase tracking-wide"
                 >Отменить</button>
               {/if}
-              <a
-                href="mailto:{booking.requesterEmail}?subject=Re: бронирование {booking.figurineName}"
-                class="ml-auto text-[10px] px-2 py-1 border border-[#c65f3c]/30 text-[#c65f3c] hover:bg-[#c65f3c]/5 transition-colors"
-              >✉ Написать</a>
+              <div class="ml-auto flex gap-1">
+                {#if booking.status === 'confirmed'}
+                  <a
+                    href={makeMailtoLink(booking, 'confirm')}
+                    class="text-[10px] px-2 py-1 border border-green-600/40 text-green-700 hover:bg-green-50 transition-colors"
+                    title="Написать об подтверждении"
+                  >✉ Подтверждено</a>
+                {:else if booking.status === 'rejected'}
+                  <a
+                    href={makeMailtoLink(booking, 'reject')}
+                    class="text-[10px] px-2 py-1 border border-red-300/60 text-red-700 hover:bg-red-50 transition-colors"
+                    title="Написать об отказе"
+                  >✉ Отказ</a>
+                {:else}
+                  <a
+                    href="mailto:{booking.requesterEmail}?subject=Re: заявка на показ {booking.figurineName}"
+                    class="text-[10px] px-2 py-1 border border-[#c65f3c]/30 text-[#c65f3c] hover:bg-[#c65f3c]/5 transition-colors"
+                  >✉ Написать</a>
+                {/if}
+              </div>
             </div>
           </div>
         {/each}
