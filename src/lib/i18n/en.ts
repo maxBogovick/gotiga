@@ -689,6 +689,37 @@ export const en = {
 
   // === LOGGED-IN USER HINT IN FORMS ===
   formLoggedInAs:          'Logged in as',
+
+  // === RESCHEDULE ===
+  rescheduleBtn:           'Reschedule',
+  rescheduleTitle:         'New dates',
+  rescheduleConfirm:       'Confirm new dates',
+  rescheduleAbort:         'Back',
+  rescheduling:            'Saving…',
+  rescheduleSuccess:       'Dates updated.',
+  rescheduleError:         'Could not reschedule. Please try again.',
+  rescheduleConflict:      'These dates conflict with an existing reservation or showing.',
+
+  // === BOOKING RULES (DateRangePicker errors) ===
+  calRuleMinDays:          'Minimum duration is {n} day(s).',
+  calRuleMaxDays:          'Maximum duration is {n} day(s).',
+
+  // === WAITLIST ===
+  waitlistJoinBtn:         'Join waitlist',
+  waitlistTitle:           'Waitlist',
+  waitlistHint:            'Leave your contact details and we will let you know when this figure becomes available.',
+  waitlistNoteLabel:       'Note (optional)',
+  waitlistNotePlaceholder: 'Preferred dates, details…',
+  waitlistSubmit:          'Join waitlist',
+  waitlistSubmitting:      'Sending…',
+  waitlistSuccessTitle:    'Noted',
+  waitlistSuccessText:     'We will reach out when the figure becomes available for viewing.',
+  waitlistFillFields:      'Please fill in your name and email.',
+  waitlistError:           'Could not add to waitlist. Please try again.',
+
+  // === ADMIN TABS ===
+  adminTabWaitlist:        'Waitlist',
+  adminTabBookingRules:    'Booking rules',
 } as const;
 
 export type TranslationKey = keyof typeof en;

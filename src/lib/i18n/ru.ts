@@ -691,4 +691,35 @@ export const ru: Record<TranslationKey, string> = {
 
   // === LOGGED-IN USER HINT IN FORMS ===
   formLoggedInAs:          'Вы вошли как',
+
+  // === RESCHEDULE ===
+  rescheduleBtn:           'Перенести',
+  rescheduleTitle:         'Новые даты',
+  rescheduleConfirm:       'Подтвердить перенос',
+  rescheduleAbort:         'Назад',
+  rescheduling:            'Сохранение…',
+  rescheduleSuccess:       'Даты обновлены.',
+  rescheduleError:         'Не удалось перенести. Попробуйте снова.',
+  rescheduleConflict:      'Эти даты пересекаются с существующим показом или бронью.',
+
+  // === BOOKING RULES (DateRangePicker errors) ===
+  calRuleMinDays:          'Минимальная длительность — {n} дн.',
+  calRuleMaxDays:          'Максимальная длительность — {n} дн.',
+
+  // === WAITLIST ===
+  waitlistJoinBtn:         'В лист ожидания',
+  waitlistTitle:           'Лист ожидания',
+  waitlistHint:            'Оставьте контакты — мы напишем, когда фигурка станет доступна для показа.',
+  waitlistNoteLabel:       'Примечание (необязательно)',
+  waitlistNotePlaceholder: 'Желаемые даты, пожелания…',
+  waitlistSubmit:          'Записаться',
+  waitlistSubmitting:      'Отправка…',
+  waitlistSuccessTitle:    'Записано',
+  waitlistSuccessText:     'Мы свяжемся с вами, когда фигурка будет готова к показу.',
+  waitlistFillFields:      'Заполните имя и email.',
+  waitlistError:           'Не удалось записаться. Попробуйте снова.',
+
+  // === ADMIN TABS ===
+  adminTabWaitlist:        'Ожидание',
+  adminTabBookingRules:    'Правила броней',
 };

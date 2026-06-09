@@ -948,3 +948,70 @@ pub struct SmtpSettings {
     pub pass: Option<String>,
     pub from: Option<String>,
 }
+
+// ============================================================
+// BOOKING RULES
+// ============================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BookingRules {
+    /// Minimum booking duration in days (inclusive)
+    pub min_days: i64,
+    /// Maximum booking duration in days (inclusive)
+    pub max_days: i64,
+    /// How many days in advance the booking must start (0 = today allowed)
+    pub advance_days: i64,
+}
+
+impl Default for BookingRules {
+    fn default() -> Self {
+        Self { min_days: 1, max_days: 30, advance_days: 0 }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RescheduleBookingRequest {
+    pub starts_at: String,
+    pub ends_at: String,
+}
+
+// ============================================================
+// WAITLIST
+// ============================================================
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct WaitlistEntry {
+    pub id: Uuid,
+    pub figurine_id: Uuid,
+    pub figurine_name: String,
+    pub requester_name: String,
+    pub requester_email: String,
+    pub requester_phone: Option<String>,
+    pub note: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WaitlistEntryDto {
+    pub id: String,
+    pub figurine_id: String,
+    pub figurine_name: String,
+    pub requester_name: String,
+    pub requester_email: String,
+    pub requester_phone: Option<String>,
+    pub note: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateWaitlistRequest {
+    pub figurine_name: String,
+    pub requester_name: String,
+    pub requester_email: String,
+    pub requester_phone: Option<String>,
+    pub note: Option<String>,
+}

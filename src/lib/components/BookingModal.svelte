@@ -1,10 +1,11 @@
 <script lang="ts">
   import { fade, scale, fly } from 'svelte/transition';
   import { cubicOut, elasticOut } from 'svelte/easing';
+  import { onMount } from 'svelte';
   import { api } from '$lib/api';
   import { t } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
-  import type { FigurineSchedule } from '$lib/types/api';
+  import type { FigurineSchedule, BookingRules } from '$lib/types/api';
 
   function resolveAvatarUrl(url: string | null | undefined): string | null {
     if (!url) return null;
@@ -30,7 +31,20 @@
     onBookingCreated = (_c: ClaimData) => {},
   } = $props();
 
-  const today = new Date().toISOString().split('T')[0];
+  let bookingRules = $state<BookingRules | null>(null);
+
+  onMount(async () => {
+    bookingRules = await api.getBookingRules().catch(() => null);
+  });
+
+  let today = $derived.by(() => {
+    if (!bookingRules || bookingRules.advanceDays <= 0) {
+      return new Date().toISOString().split('T')[0];
+    }
+    const d = new Date();
+    d.setDate(d.getDate() + bookingRules.advanceDays);
+    return d.toISOString().split('T')[0];
+  });
 
   function addDays(ds: string, n: number) {
     const d = new Date(ds + 'T00:00:00');
@@ -219,6 +233,7 @@
                         bind:startsAt
                         bind:endsAt
                         minDate={today}
+                        {bookingRules}
                         onError={(msg) => { dateError = msg; }}
                       />
                     </div>

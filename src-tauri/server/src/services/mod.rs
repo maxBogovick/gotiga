@@ -1162,6 +1162,144 @@ impl AppService {
         self.repo.upsert_setting("smtp", &json).await
     }
 
+    // === BOOKING RULES ===
+
+    pub async fn get_booking_rules(&self) -> Result<BookingRules> {
+        match self.repo.get_setting("booking_rules").await? {
+            Some(json) => Ok(serde_json::from_str(&json).unwrap_or_default()),
+            None => Ok(BookingRules::default()),
+        }
+    }
+
+    pub async fn save_booking_rules(&self, rules: BookingRules) -> Result<()> {
+        let json = serde_json::to_string(&rules)
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        self.repo.upsert_setting("booking_rules", &json).await
+    }
+
+    // === RESCHEDULE ===
+
+    pub async fn reschedule_booking_by_token(&self, token: &str, req: RescheduleBookingRequest) -> Result<BookingCancelInfo> {
+        let rules = self.get_booking_rules().await?;
+
+        let starts_at = chrono::NaiveDate::parse_from_str(&req.starts_at, "%Y-%m-%d")
+            .map_err(|_| AppError::BadRequest("Invalid starts_at date".to_string()))?;
+        let ends_at = chrono::NaiveDate::parse_from_str(&req.ends_at, "%Y-%m-%d")
+            .map_err(|_| AppError::BadRequest("Invalid ends_at date".to_string()))?;
+
+        if starts_at > ends_at {
+            return Err(AppError::BadRequest("starts_at must be ≤ ends_at".to_string()));
+        }
+
+        let duration = (ends_at - starts_at).num_days() + 1;
+        if duration < rules.min_days {
+            return Err(AppError::BadRequest(format!("Minimum booking duration is {} day(s)", rules.min_days)));
+        }
+        if duration > rules.max_days {
+            return Err(AppError::BadRequest(format!("Maximum booking duration is {} day(s)", rules.max_days)));
+        }
+
+        let today = chrono::Utc::now().date_naive();
+        if rules.advance_days > 0 {
+            let earliest = today + chrono::Duration::days(rules.advance_days);
+            if starts_at < earliest {
+                return Err(AppError::BadRequest(format!("Booking must start at least {} day(s) in advance", rules.advance_days)));
+            }
+        }
+
+        // Fetch the current booking to get figurine_id for conflict check
+        let current = self.repo.get_booking_by_cancel_token(token).await?
+            .ok_or_else(|| AppError::NotFound("Booking not found".to_string()))?;
+
+        if current.status != BookingStatus::Pending {
+            return Err(AppError::BadRequest("Only pending bookings can be rescheduled".to_string()));
+        }
+
+        // Check for conflicts, excluding this booking itself
+        if self.repo.check_booking_conflicts_excluding(current.figurine_id, current.id, starts_at, ends_at).await? {
+            return Err(AppError::Conflict("These dates conflict with an existing showing or confirmed booking".to_string()));
+        }
+
+        let updated = self.repo.reschedule_booking_by_token(token, starts_at, ends_at).await?
+            .ok_or_else(|| AppError::NotFound("Booking not found or already processed".to_string()))?;
+
+        Ok(BookingCancelInfo {
+            figurine_name: updated.figurine_name,
+            figurine_id: updated.figurine_id.to_string(),
+            starts_at: updated.starts_at.to_string(),
+            ends_at: updated.ends_at.to_string(),
+            status: updated.status,
+            admin_notes: updated.admin_notes,
+        })
+    }
+
+    // === WAITLIST ===
+
+    pub async fn join_waitlist(&self, figurine_id: String, req: CreateWaitlistRequest) -> Result<()> {
+        let uuid = Self::parse_uuid(&figurine_id)?;
+        if req.requester_name.trim().is_empty() {
+            return Err(AppError::BadRequest("Name is required".to_string()));
+        }
+        if !req.requester_email.contains('@') {
+            return Err(AppError::BadRequest("Valid email is required".to_string()));
+        }
+        let entry = self.repo.add_to_waitlist(uuid, &req).await?;
+        let _ = self.send_waitlist_notification(&entry).await;
+        Ok(())
+    }
+
+    pub async fn list_waitlist_admin(&self, figurine_id: Option<String>) -> Result<Vec<WaitlistEntryDto>> {
+        let fid = match figurine_id {
+            Some(s) => Some(Self::parse_uuid(&s)?),
+            None => None,
+        };
+        let entries = self.repo.get_waitlist_admin(fid).await?;
+        Ok(entries.into_iter().map(|e| WaitlistEntryDto {
+            id: e.id.to_string(),
+            figurine_id: e.figurine_id.to_string(),
+            figurine_name: e.figurine_name,
+            requester_name: e.requester_name,
+            requester_email: e.requester_email,
+            requester_phone: e.requester_phone,
+            note: e.note,
+            created_at: e.created_at.to_rfc3339(),
+        }).collect())
+    }
+
+    pub async fn remove_waitlist_entry(&self, id: uuid::Uuid) -> Result<()> {
+        self.repo.remove_from_waitlist(id).await
+    }
+
+    async fn send_waitlist_notification(&self, entry: &WaitlistEntry) -> Result<()> {
+        let (Some(token), Some(chat_id)) = (
+            self.config.telegram_bot_token.as_deref(),
+            self.config.telegram_chat_id.as_deref(),
+        ) else {
+            return Ok(());
+        };
+
+        let admin_link = format!("{}/admin#waitlist", self.config.public_url.trim_end_matches('/'));
+        let text = format!(
+            "👁 Лист ожидания\n\n\
+            🏺 {}\n\
+            👤 {}\n\
+            📧 {}\n\
+            📝 {}\n\n\
+            🔗 [Открыть в админке]({})",
+            escape_markdown(&entry.figurine_name),
+            escape_markdown(&entry.requester_name),
+            escape_markdown(&entry.requester_email),
+            escape_markdown(entry.note.as_deref().unwrap_or("—")),
+            admin_link,
+        );
+
+        let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+        let _ = Client::new().post(&url)
+            .json(&serde_json::json!({ "chat_id": chat_id, "text": text, "parse_mode": "MarkdownV2" }))
+            .send().await;
+        Ok(())
+    }
+
     async fn send_reply_email(
         &self,
         to: &str,

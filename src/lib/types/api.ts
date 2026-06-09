@@ -414,3 +414,36 @@ export interface SmtpSettings {
     from: string | null;
 }
 
+export interface BookingRules {
+    /** Minimum booking duration in days (inclusive). Default: 1 */
+    minDays: number;
+    /** Maximum booking duration in days (inclusive). Default: 30 */
+    maxDays: number;
+    /** How many days in advance booking must start (0 = today ok). Default: 0 */
+    advanceDays: number;
+}
+
+export interface RescheduleBookingRequest {
+    startsAt: string;
+    endsAt: string;
+}
+
+export interface CreateWaitlistRequest {
+    figurineName: string;
+    requesterName: string;
+    requesterEmail: string;
+    requesterPhone: string | null;
+    note: string | null;
+}
+
+export interface WaitlistEntryDto {
+    id: string;
+    figurineId: string;
+    figurineName: string;
+    requesterName: string;
+    requesterEmail: string;
+    requesterPhone: string | null;
+    note: string | null;
+    createdAt: string;
+}
+

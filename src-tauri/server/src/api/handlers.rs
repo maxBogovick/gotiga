@@ -991,3 +991,56 @@ pub async fn user_delete_account(
     service.delete_account(user.id).await?;
     Ok(StatusCode::OK)
 }
+
+// === BOOKING RULES ===
+
+pub async fn get_booking_rules(
+    State(service): State<AppService>,
+) -> Result<Json<BookingRules>> {
+    Ok(Json(service.get_booking_rules().await?))
+}
+
+pub async fn save_booking_rules(
+    State(service): State<AppService>,
+    Json(body): Json<BookingRules>,
+) -> Result<StatusCode> {
+    service.save_booking_rules(body).await?;
+    Ok(StatusCode::OK)
+}
+
+// === RESCHEDULE BOOKING ===
+
+pub async fn reschedule_booking_by_token(
+    State(service): State<AppService>,
+    Path(token): Path<String>,
+    Json(body): Json<RescheduleBookingRequest>,
+) -> Result<Json<BookingCancelInfo>> {
+    Ok(Json(service.reschedule_booking_by_token(&token, body).await?))
+}
+
+// === WAITLIST ===
+
+pub async fn join_waitlist(
+    State(service): State<AppService>,
+    Path(id): Path<String>,
+    Json(body): Json<CreateWaitlistRequest>,
+) -> Result<StatusCode> {
+    service.join_waitlist(id, body).await?;
+    Ok(StatusCode::OK)
+}
+
+pub async fn admin_list_waitlist(
+    State(service): State<AppService>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<Vec<WaitlistEntryDto>>> {
+    let figurine_id = params.get("figurineId").cloned();
+    Ok(Json(service.list_waitlist_admin(figurine_id).await?))
+}
+
+pub async fn admin_remove_from_waitlist(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    service.remove_waitlist_entry(id).await?;
+    Ok(StatusCode::OK)
+}

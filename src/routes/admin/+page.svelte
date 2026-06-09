@@ -17,6 +17,8 @@
     import UsersPanel from '$lib/components/admin/UsersPanel.svelte';
     import CommentsPanel from '$lib/components/admin/CommentsPanel.svelte';
     import SmtpSettingsPanel from '$lib/components/admin/SmtpSettingsPanel.svelte';
+    import WaitlistPanel from '$lib/components/admin/WaitlistPanel.svelte';
+    import BookingRulesPanel from '$lib/components/admin/BookingRulesPanel.svelte';
     import FigurineShowingsEditor from '$lib/components/admin/FigurineShowingsEditor.svelte';
     import { t } from '$lib/i18n';
     import LangSwitcher from '$lib/components/LangSwitcher.svelte';
@@ -62,7 +64,7 @@
     let isSaving = $state(false);
     let showSettings = $state(false);
     let message = $state({ text: '', type: 'info' });
-    let activeTab = $state<'registry' | 'home' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'showings' | 'bookings' | 'analytics' | 'users' | 'comments' | 'server'>('registry');
+    let activeTab = $state<'registry' | 'home' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'showings' | 'bookings' | 'waitlist' | 'analytics' | 'users' | 'comments' | 'server' | 'booking-rules'>('registry');
     let activeAuthorSubTab = $state<'profile' | 'texts'>('profile');
     let newOrdersCount = $state(0);
     let newBookingsCount = $state(0);
@@ -436,16 +438,18 @@
                 tabs: [
                   ['orders',    'Orders'],
                   ['showings',  $t('adminTabShowings')],
-                  ['bookings',  $t('adminTabBookings')],
-                  ['comments',  $t('adminTabComments')],
-                  ['analytics', $t('adminTabAnalytics')],
-                  ['users',     $t('adminUsersTab')],
+                  ['bookings',      $t('adminTabBookings')],
+                  ['waitlist',      $t('adminTabWaitlist')],
+                  ['comments',      $t('adminTabComments')],
+                  ['analytics',     $t('adminTabAnalytics')],
+                  ['users',         $t('adminUsersTab')],
                 ]
               },
               {
                 label: $t('adminGroupSystem'),
                 tabs: [
-                  ['server', $t('adminTabServer')],
+                  ['server',        $t('adminTabServer')],
+                  ['booking-rules', $t('adminTabBookingRules')],
                 ]
               },
             ] as group}
@@ -906,6 +910,10 @@
             <div in:fade class="h-full overflow-y-auto"><CommentsPanel onPendingCount={(n) => pendingCommentsCount = n} /></div>
         {:else if activeTab === 'server'}
             <div in:fade class="h-full overflow-y-auto"><SmtpSettingsPanel /></div>
+        {:else if activeTab === 'waitlist'}
+            <div in:fade class="h-full"><WaitlistPanel /></div>
+        {:else if activeTab === 'booking-rules'}
+            <div in:fade class="h-full overflow-y-auto"><BookingRulesPanel /></div>
         {/if}
     </div>
 

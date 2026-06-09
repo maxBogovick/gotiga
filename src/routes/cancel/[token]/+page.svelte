@@ -4,7 +4,8 @@
   import { fade } from 'svelte/transition';
   import { t } from '$lib/i18n';
   import { api } from '$lib/api';
-  import type { BookingCancelInfo } from '$lib/types/api';
+  import DateRangePicker from '$lib/components/DateRangePicker.svelte';
+  import type { BookingCancelInfo, FigurineSchedule, BookingRules } from '$lib/types/api';
 
   let token = $derived(page.params.token ?? '');
 
@@ -13,6 +14,25 @@
   let phase = $state<Phase>('loading');
   let info  = $state<BookingCancelInfo | null>(null);
   let cancelling = $state(false);
+
+  // Reschedule state
+  let showReschedule = $state(false);
+  let rescheduleStartsAt = $state('');
+  let rescheduleEndsAt   = $state('');
+  let rescheduling       = $state(false);
+  let rescheduleError    = $state('');
+  let rescheduleSuccess  = $state(false);
+  let dateError          = $state('');
+  let figurineSchedule   = $state<FigurineSchedule>({ entries: [] });
+  let bookingRules       = $state<BookingRules | null>(null);
+
+  let todayStr = new Date().toISOString().split('T')[0];
+  let rescheduleMinDate = $derived.by(() => {
+    if (!bookingRules || bookingRules.advanceDays <= 0) return todayStr;
+    const d = new Date();
+    d.setDate(d.getDate() + bookingRules.advanceDays);
+    return d.toISOString().split('T')[0];
+  });
 
   function formatDate(iso: string): string {
     return new Date(iso).toLocaleDateString(undefined, {
@@ -48,10 +68,42 @@
     }
   }
 
+  async function handleReschedule() {
+    if (!rescheduleStartsAt || !rescheduleEndsAt || dateError) return;
+    rescheduling = true;
+    rescheduleError = '';
+    try {
+      const updated = await api.rescheduleBookingByToken(token, {
+        startsAt: rescheduleStartsAt,
+        endsAt: rescheduleEndsAt,
+      });
+      info = updated;
+      rescheduleSuccess = true;
+      showReschedule = false;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '';
+      if (msg.includes('409') || msg.toLowerCase().includes('conflict')) {
+        rescheduleError = $t('rescheduleConflict');
+      } else if (msg.includes('400')) {
+        const match = msg.match(/API \d+: (.+)$/s);
+        try { rescheduleError = match ? (JSON.parse(match[1]).error ?? $t('rescheduleError')) : $t('rescheduleError'); }
+        catch { rescheduleError = $t('rescheduleError'); }
+      } else {
+        rescheduleError = $t('rescheduleError');
+      }
+    } finally {
+      rescheduling = false;
+    }
+  }
+
   onMount(async () => {
     await fetchInfo();
     if (info?.status === 'pending') {
       pollTimer = setInterval(fetchInfo, 30_000);
+    }
+    bookingRules = await api.getBookingRules().catch(() => null);
+    if (info?.figurineId) {
+      figurineSchedule = await api.getFigurineSchedule(info.figurineId).catch(() => ({ entries: [] }));
     }
   });
 
@@ -134,9 +186,41 @@
             {/if}
             <a href="/figurines/{info.figurineId}" class="action-link try-again">{$t('cancelTryAgain')}</a>
           {:else if info.status === 'pending'}
-            <button class="cancel-btn" onclick={handleCancel} disabled={cancelling}>
-              {cancelling ? $t('cancelCancelling') : $t('cancelBtn')}
-            </button>
+            {#if !showReschedule}
+              <button class="cancel-btn cancel-btn--secondary" onclick={() => { showReschedule = true; rescheduleSuccess = false; rescheduleError = ''; }}>{$t('rescheduleBtn')}</button>
+              <button class="cancel-btn" onclick={handleCancel} disabled={cancelling}>
+                {cancelling ? $t('cancelCancelling') : $t('cancelBtn')}
+              </button>
+            {:else}
+              <div class="reschedule-block" transition:fade={{ duration: 200 }}>
+                <p class="reschedule-title">{$t('rescheduleTitle')}</p>
+                <div class="reschedule-picker">
+                  <DateRangePicker
+                    schedule={figurineSchedule}
+                    bind:startsAt={rescheduleStartsAt}
+                    bind:endsAt={rescheduleEndsAt}
+                    minDate={rescheduleMinDate}
+                    {bookingRules}
+                    onError={(msg) => { dateError = msg; }}
+                  />
+                </div>
+                {#if dateError}
+                  <p class="reschedule-err">{dateError}</p>
+                {/if}
+                {#if rescheduleError}
+                  <p class="reschedule-err">{rescheduleError}</p>
+                {/if}
+                <div class="reschedule-actions">
+                  <button class="cancel-btn" onclick={handleReschedule} disabled={rescheduling || !rescheduleStartsAt || !rescheduleEndsAt || !!dateError}>
+                    {rescheduling ? $t('rescheduling') : $t('rescheduleConfirm')}
+                  </button>
+                  <button class="action-link" onclick={() => { showReschedule = false; rescheduleError = ''; dateError = ''; }}>{$t('rescheduleAbort')}</button>
+                </div>
+              </div>
+            {/if}
+          {/if}
+          {#if rescheduleSuccess}
+            <p class="reschedule-ok" transition:fade={{ duration: 300 }}>{$t('rescheduleSuccess')}</p>
           {/if}
           <a href="/figurines/{info.figurineId}" class="action-link">{$t('cancelGoToFigurine')}</a>
           <button class="print-btn" onclick={() => window.print()}>
@@ -324,6 +408,52 @@
       padding: 2rem 1.25rem;
       transform: none;
     }
+  }
+
+  .cancel-btn--secondary {
+    background: transparent;
+    color: #6f3b24;
+    border-color: rgba(111,59,36,0.35);
+  }
+  .cancel-btn--secondary:hover:not(:disabled) { background: rgba(111,59,36,0.06); }
+
+  .reschedule-block {
+    width: 100%;
+    max-width: 340px;
+    text-align: left;
+  }
+  .reschedule-title {
+    font-family: 'Fraunces', Georgia, serif;
+    font-size: 1rem;
+    color: #34251c;
+    margin: 0 0 0.75rem;
+    text-align: center;
+  }
+  .reschedule-picker {
+    border: 1px solid #d8c6b1;
+    padding: 0.75rem;
+    background: #fdf8f2;
+    margin-bottom: 0.5rem;
+  }
+  .reschedule-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.75rem;
+  }
+  .reschedule-err {
+    font-size: 0.78rem;
+    color: #a03020;
+    text-align: center;
+    margin: 0.25rem 0 0;
+    font-style: italic;
+  }
+  .reschedule-ok {
+    font-size: 0.82rem;
+    color: #3a6020;
+    margin: 0;
+    font-style: italic;
   }
 
   .print-btn {

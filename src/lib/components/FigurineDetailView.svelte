@@ -4,6 +4,7 @@
   import type { Figurine, FigurineSchedule } from '$lib/types/api';
   import OrderModal from '$lib/components/OrderModal.svelte';
   import BookingModal from '$lib/components/BookingModal.svelte';
+  import WaitlistModal from '$lib/components/WaitlistModal.svelte';
   import BrassLens from '$lib/components/BrassLens.svelte';
   import CandleReveal from '$lib/components/CandleReveal.svelte';
   import MemoryMirror from '$lib/components/MemoryMirror.svelte';
@@ -34,6 +35,7 @@
   let isGrimoireOpen = $state(false);
   let showOrderModal = $state(false);
   let showBookingModal = $state(false);
+  let showWaitlistModal = $state(false);
   let orderMode = $state<'request' | 'question' | 'notify'>('request');
   let figurineSchedule = $state<FigurineSchedule>({ entries: [] });
   let isAudioPlaying = $state(false);
@@ -356,6 +358,13 @@
     schedule={figurineSchedule}
     relatedAvailable={figurine.relatedItems.filter(r => r.status === 'available').slice(0, 3)}
     onClose={() => (showOrderModal = false)}
+  />
+
+  <WaitlistModal
+    isOpen={showWaitlistModal}
+    figurineId={id}
+    figurineName={figurine.name}
+    onClose={() => (showWaitlistModal = false)}
   />
 
   <BookingModal
@@ -1081,6 +1090,12 @@
                 </svg>
                 {$t('figurineNotify')}
               </button>
+              <button onclick={() => (showWaitlistModal = true)} class="notify-btn">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3">
+                  <path d="M2 7h10M2 4h10M2 10h6"/>
+                </svg>
+                {$t('waitlistJoinBtn')}
+              </button>
             {/if}
 
             <!-- Notify always shown in reserved state -->
@@ -1091,6 +1106,12 @@
                   <path d="M5.5 11.5a1.5 1.5 0 0 0 3 0"/>
                 </svg>
                 {$t('figurineNotify')}
+              </button>
+              <button onclick={() => (showWaitlistModal = true)} class="notify-btn">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3">
+                  <path d="M2 7h10M2 4h10M2 10h6"/>
+                </svg>
+                {$t('waitlistJoinBtn')}
               </button>
             {/if}
 

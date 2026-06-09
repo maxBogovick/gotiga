@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { FigurineSchedule } from '$lib/types/api';
+  import type { FigurineSchedule, BookingRules } from '$lib/types/api';
   import { t, lang } from '$lib/i18n';
 
   let {
@@ -7,12 +7,14 @@
     startsAt = $bindable(''),
     endsAt   = $bindable(''),
     minDate  = new Date().toISOString().split('T')[0],
+    bookingRules = null as BookingRules | null,
     onError  = (_msg: string) => {},
   }: {
     schedule?: FigurineSchedule;
     startsAt?: string;
     endsAt?: string;
     minDate?: string;
+    bookingRules?: BookingRules | null;
     onError?: (msg: string) => void;
   } = $props();
 
@@ -94,6 +96,11 @@
     if (viewMonth === 11) { viewYear++; viewMonth = 0; } else viewMonth++;
   }
 
+  function durationDays(from: string, to: string): number {
+    const ms = new Date(to + 'T00:00:00').getTime() - new Date(from + 'T00:00:00').getTime();
+    return Math.round(ms / 86400000) + 1;
+  }
+
   function click(ds: string) {
     if (isDisabled(ds)) return;
     if (!startsAt || (startsAt && endsAt)) {
@@ -110,6 +117,17 @@
         : $t('calConflictOverlapBooking');
       onError(`${base} ${$t('calConflictSuffix')}`);
       startsAt = ds; endsAt = ''; return;
+    }
+    if (bookingRules) {
+      const days = durationDays(from, to);
+      if (days < bookingRules.minDays) {
+        onError($t('calRuleMinDays').replace('{n}', String(bookingRules.minDays)));
+        startsAt = ds; endsAt = ''; return;
+      }
+      if (days > bookingRules.maxDays) {
+        onError($t('calRuleMaxDays').replace('{n}', String(bookingRules.maxDays)));
+        startsAt = ds; endsAt = ''; return;
+      }
     }
     startsAt = from; endsAt = to; onError('');
   }

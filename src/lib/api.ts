@@ -32,6 +32,10 @@ import type {
     ModerateCommentRequest,
     AdminCommentDto,
     SmtpSettings,
+    BookingRules,
+    RescheduleBookingRequest,
+    CreateWaitlistRequest,
+    WaitlistEntryDto,
 } from './types/api';
 
 export type { AppSettings };
@@ -443,6 +447,47 @@ export const api = {
 
     async cancelBookingByToken(token: string): Promise<void> {
         await webFetch(`/bookings/cancel/${encodeURIComponent(token)}`, { method: 'POST' });
+    },
+
+    async rescheduleBookingByToken(token: string, req: RescheduleBookingRequest): Promise<import('./types/api').BookingCancelInfo> {
+        return webFetch(`/bookings/cancel/${encodeURIComponent(token)}/reschedule`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(req),
+        });
+    },
+
+    async getBookingRules(): Promise<BookingRules> {
+        return webFetch('/booking-rules');
+    },
+
+    async saveBookingRules(rules: BookingRules): Promise<void> {
+        await webFetch('/admin/booking-rules', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(rules),
+        });
+    },
+
+    async joinWaitlist(figurineId: string, req: CreateWaitlistRequest): Promise<void> {
+        await webFetch(`/figurines/${figurineId}/waitlist`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(req),
+        });
+    },
+
+    async adminListWaitlist(figurineId?: string): Promise<WaitlistEntryDto[]> {
+        const qs = figurineId ? `?figurineId=${encodeURIComponent(figurineId)}` : '';
+        return webFetch(`/admin/waitlist${qs}`, { headers: authHeaders() });
+    },
+
+    async adminRemoveFromWaitlist(id: string): Promise<void> {
+        const res = await fetch(`${webApiBase()}/admin/waitlist/${id}`, {
+            method: 'DELETE',
+            headers: authHeaders(),
+        });
+        if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
     },
 
     // === SHOWINGS (ADMIN) ===

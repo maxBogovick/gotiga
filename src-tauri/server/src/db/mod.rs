@@ -13,6 +13,10 @@ impl Repository {
         Self { pg_pool }
     }
 
+    pub fn pg_pool(&self) -> &PgPool {
+        &self.pg_pool
+    }
+
     // === ORDERS (Postgres) ===
 
     pub async fn save_order(&self, order: &crate::models::OrderRequest) -> Result<crate::models::Order> {
@@ -1356,5 +1360,106 @@ impl Repository {
             .execute(&self.pg_pool)
             .await?;
         Ok(())
+    }
+
+    // === CONFLICT CHECK EXCLUDING ONE BOOKING ===
+
+    /// Same as check_booking_conflicts but excludes a specific booking ID (for reschedule).
+    pub async fn check_booking_conflicts_excluding(
+        &self,
+        figurine_id: Uuid,
+        exclude_booking_id: Uuid,
+        starts_at: chrono::NaiveDate,
+        ends_at: chrono::NaiveDate,
+    ) -> Result<bool> {
+        let (showing_conflict,): (bool,) = sqlx::query_as(
+            "SELECT EXISTS(SELECT 1 FROM figurine_showings WHERE figurine_id = $1 AND starts_at <= $3 AND ends_at >= $2)"
+        )
+        .bind(figurine_id).bind(starts_at).bind(ends_at)
+        .fetch_one(&self.pg_pool).await?;
+
+        if showing_conflict { return Ok(true); }
+
+        let (booking_conflict,): (bool,) = sqlx::query_as(
+            "SELECT EXISTS(SELECT 1 FROM figurine_bookings WHERE figurine_id = $1 AND id != $2 AND status = 'confirmed' AND starts_at <= $4 AND ends_at >= $3)"
+        )
+        .bind(figurine_id).bind(exclude_booking_id).bind(starts_at).bind(ends_at)
+        .fetch_one(&self.pg_pool).await?;
+
+        Ok(booking_conflict)
+    }
+
+    // === RESCHEDULE BOOKING BY TOKEN ===
+
+    /// Updates starts_at/ends_at for a pending booking identified by cancel token.
+    /// Returns the updated booking, or None if not found / not pending.
+    pub async fn reschedule_booking_by_token(
+        &self,
+        token: &str,
+        starts_at: chrono::NaiveDate,
+        ends_at: chrono::NaiveDate,
+    ) -> Result<Option<crate::models::Booking>> {
+        Ok(sqlx::query_as::<_, crate::models::Booking>(
+            "UPDATE figurine_bookings SET starts_at = $1, ends_at = $2
+             WHERE cancel_token = $3 AND status = 'pending'
+             RETURNING *"
+        )
+        .bind(starts_at).bind(ends_at).bind(token)
+        .fetch_optional(&self.pg_pool).await?)
+    }
+
+    // === WAITLIST ===
+
+    pub async fn add_to_waitlist(
+        &self,
+        figurine_id: Uuid,
+        req: &crate::models::CreateWaitlistRequest,
+    ) -> Result<crate::models::WaitlistEntry> {
+        let rec = sqlx::query_as::<_, crate::models::WaitlistEntry>(
+            "INSERT INTO figurine_waitlist (figurine_id, figurine_name, requester_name, requester_email, requester_phone, note)
+             VALUES ($1, $2, $3, $4, $5, $6) RETURNING *"
+        )
+        .bind(figurine_id)
+        .bind(&req.figurine_name)
+        .bind(&req.requester_name)
+        .bind(&req.requester_email)
+        .bind(&req.requester_phone)
+        .bind(&req.note)
+        .fetch_one(&self.pg_pool).await?;
+        Ok(rec)
+    }
+
+    pub async fn get_waitlist_admin(
+        &self,
+        figurine_id: Option<Uuid>,
+    ) -> Result<Vec<crate::models::WaitlistEntry>> {
+        if let Some(fid) = figurine_id {
+            Ok(sqlx::query_as::<_, crate::models::WaitlistEntry>(
+                "SELECT * FROM figurine_waitlist WHERE figurine_id = $1 ORDER BY created_at ASC"
+            )
+            .bind(fid)
+            .fetch_all(&self.pg_pool).await?)
+        } else {
+            Ok(sqlx::query_as::<_, crate::models::WaitlistEntry>(
+                "SELECT * FROM figurine_waitlist ORDER BY created_at ASC"
+            )
+            .fetch_all(&self.pg_pool).await?)
+        }
+    }
+
+    pub async fn remove_from_waitlist(&self, id: Uuid) -> Result<()> {
+        sqlx::query("DELETE FROM figurine_waitlist WHERE id = $1")
+            .bind(id)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn get_waitlist_for_figurine(&self, figurine_id: Uuid) -> Result<Vec<crate::models::WaitlistEntry>> {
+        Ok(sqlx::query_as::<_, crate::models::WaitlistEntry>(
+            "SELECT * FROM figurine_waitlist WHERE figurine_id = $1 ORDER BY created_at ASC"
+        )
+        .bind(figurine_id)
+        .fetch_all(&self.pg_pool).await?)
     }
 }

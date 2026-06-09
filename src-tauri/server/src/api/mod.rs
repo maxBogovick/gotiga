@@ -50,8 +50,11 @@ pub fn router(service: AppService, config: Config) -> Router {
         .route("/figurines/:id/comments",       get(handlers::get_figurine_comments)
                                                 .post(handlers::submit_comment))
         .route("/figurines/:id/book",           post(handlers::create_booking))
+        .route("/figurines/:id/waitlist",       post(handlers::join_waitlist))
+        .route("/booking-rules",                get(handlers::get_booking_rules))
         .route("/bookings/cancel/:token",       get(handlers::get_booking_by_token)
                                                 .post(handlers::cancel_booking_by_token))
+        .route("/bookings/cancel/:token/reschedule", patch(handlers::reschedule_booking_by_token))
         // === PUBLIC LOGIN ===
         .route("/admin/login",                  post(handlers::admin_login))
         // === PROTECTED WRITE — use route_layer so auth only runs on matched routes ===
@@ -129,6 +132,17 @@ pub fn router(service: AppService, config: Config) -> Router {
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
         .route("/admin/bookings/:id/status",
             put(handlers::update_booking_status)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        // === BOOKING RULES (ADMIN) ===
+        .route("/admin/booking-rules",
+            put(handlers::save_booking_rules)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        // === WAITLIST (ADMIN) ===
+        .route("/admin/waitlist",
+            get(handlers::admin_list_waitlist)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        .route("/admin/waitlist/:id",
+            delete(handlers::admin_remove_from_waitlist)
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
         // === USER AUTH ===
         .route("/auth/register",          post(handlers::user_register))
