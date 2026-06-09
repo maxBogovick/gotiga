@@ -106,6 +106,18 @@ export const ru: Record<TranslationKey, string> = {
   orderNotifyRelated:     'Доступно сейчас',
   figurineBook:        'Забронировать даты',
   figurineBookNote:    'Выбрать период для просмотра',
+
+  ctaRescheduleLink:   'Перенести →',
+  claimPendingNote:    'Ждёт подтверждения автора',
+
+  // Карточки действий (micro-copy)
+  ctaNotifyTitle:      'Уведомить меня',
+  ctaNotifySub:        'Напишем, когда работа освободится',
+  ctaNotifySoldSub:    'Сообщим, если появится похожая работа',
+  ctaWaitlistTitle:    'Встать в очередь',
+  ctaWaitlistSub:      'Автор свяжется с вами в первую очередь',
+  ctaBookTitle:        'Проверить даты в календаре',
+  ctaBookSub:          'Возможно, есть свободные окна',
   figurineAvailableFrom:   'Передача возможна с',
   figurineShowingsBlock:   'Передача ограничена — артефакт будет участвовать в:',
   figurineActiveShowing:   'Артефакт сейчас на выставке — передача недоступна',

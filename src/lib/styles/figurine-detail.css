@@ -1874,6 +1874,14 @@
   transition: border-color 0.18s;
 }
 .cp-link:hover { border-color: #059669; }
+.cp-link--reschedule {
+  color: var(--color-ember);
+  border-bottom-color: rgba(198,95,60,0.3);
+}
+.cp-link--reschedule:hover { border-bottom-color: var(--color-ember); }
+.cp-note--pending {
+  color: rgba(95,70,54,0.45);
+}
 .cp-revoke {
   font-family: var(--font-sans);
   font-size: 0.58rem;
@@ -1925,4 +1933,92 @@
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
+}
+
+/* ── Action cards — Variant A: карточки с micro-copy ── */
+.action-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  margin-top: 0.875rem;
+}
+.action-card {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.7rem 0.875rem;
+  background: rgba(248,241,231,0.5);
+  border: 1px solid rgba(216,198,177,0.65);
+  border-left: 2px solid rgba(52,37,28,0.14);
+  border-radius: 3px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 180ms ease, border-left-color 180ms ease,
+              background 180ms ease, transform 140ms ease,
+              box-shadow 180ms ease;
+}
+.action-card:hover {
+  border-color: rgba(198,95,60,0.35);
+  border-left-color: #c65f3c;
+  background: rgba(198,95,60,0.04);
+  transform: translateX(2px);
+  box-shadow: 0 2px 14px rgba(52,37,28,0.07);
+}
+.action-card:active {
+  transform: translateX(1px);
+  box-shadow: none;
+}
+.action-card-icon {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(52,37,28,0.05);
+  border: 1px solid rgba(52,37,28,0.08);
+  border-radius: 2px;
+  color: rgba(95,70,54,0.5);
+  transition: background 180ms ease, border-color 180ms ease, color 180ms ease;
+}
+.action-card:hover .action-card-icon {
+  background: rgba(198,95,60,0.09);
+  border-color: rgba(198,95,60,0.22);
+  color: #c65f3c;
+}
+.action-card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+}
+.action-card-title {
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #34251c;
+  line-height: 1.2;
+}
+.action-card-sub {
+  font-family: var(--font-serif);
+  font-size: 0.67rem;
+  font-style: italic;
+  color: rgba(95,70,54,0.58);
+  line-height: 1.35;
+}
+.action-card-arrow {
+  flex-shrink: 0;
+  font-family: Georgia, serif;
+  font-size: 1.05rem;
+  line-height: 1;
+  color: rgba(95,70,54,0.25);
+  transition: color 180ms ease, transform 140ms ease;
+  padding-left: 0.25rem;
+}
+.action-card:hover .action-card-arrow {
+  color: #c65f3c;
+  transform: translateX(3px);
 }

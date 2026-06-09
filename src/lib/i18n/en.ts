@@ -105,6 +105,18 @@ export const en = {
   orderNotifyRelated:     'Available now',
   figurineBook:        'Reserve Dates',
   figurineBookNote:    'Book a viewing period',
+
+  ctaRescheduleLink:   'Reschedule →',
+  claimPendingNote:    'Awaiting author\'s confirmation',
+
+  // Action cards (micro-copy)
+  ctaNotifyTitle:      'Notify me',
+  ctaNotifySub:        'We\'ll write when the work becomes available',
+  ctaNotifySoldSub:    'We\'ll let you know if a similar work appears',
+  ctaWaitlistTitle:    'Join the waitlist',
+  ctaWaitlistSub:      'The author will reach out to you first',
+  ctaBookTitle:        'Check dates in the calendar',
+  ctaBookSub:          'There may be available windows',
   figurineAvailableFrom:   'Available for transfer from',
   figurineShowingsBlock:   'Transfer is restricted — the artifact will participate in:',
   figurineActiveShowing:   'Artifact is currently on exhibition — transfer not available',

@@ -840,11 +840,13 @@
                     <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.3" class="cp-icon" aria-hidden="true"><circle cx="5.5" cy="5.5" r="4.5"/><path d="M5.5 3.5v2.2l1.5 1.3"/></svg>
                     <span class="cp-dates">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</span>
                     <div class="cp-actions">
+                      <a href="/cancel/{c.token}" target="_blank" rel="noopener" class="cp-link cp-link--reschedule">{$t('ctaRescheduleLink')}</a>
                       <button onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="cp-revoke">
                         {cs.cancellingToken === c.token ? $t('claimCancelling') : $t('claimCancelBtn')}
                       </button>
                     </div>
                   </div>
+                  <p class="cp-note cp-note--pending">{$t('claimPendingNote')}</p>
                   {#if cs.claimErrors[c.token]}<p class="cp-err">{cs.claimErrors[c.token]}</p>{/if}
                 </div>
               {/if}
@@ -1018,37 +1020,59 @@
                         <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.3" class="cp-icon" aria-hidden="true"><circle cx="5.5" cy="5.5" r="4.5"/><path d="M5.5 3.5v2.2l1.5 1.3"/></svg>
                         <span class="cp-dates">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</span>
                         <div class="cp-actions">
+                          <a href="/cancel/{c.token}" target="_blank" rel="noopener" class="cp-link cp-link--reschedule">{$t('ctaRescheduleLink')}</a>
                           <button onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="cp-revoke">
                             {cs.cancellingToken === c.token ? $t('claimCancelling') : $t('claimCancelBtn')}
                           </button>
                         </div>
                       </div>
+                      <p class="cp-note cp-note--pending">{$t('claimPendingNote')}</p>
                       {#if cs.claimErrors[c.token]}<p class="cp-err">{cs.claimErrors[c.token]}</p>{/if}
                     </div>
                   {/if}
                 {/each}
               </div>
-              <!-- Secondary actions: notify · waitlist · reserve — one quiet row -->
-              <div class="cp-secondary-actions">
-                <button onclick={() => openModal('notify')} class="cta-ask">
-                  <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true">
-                    <path d="M7 1a4 4 0 0 1 4 4v3l1.5 2H1.5L3 8V5a4 4 0 0 1 4-4z"/>
-                    <path d="M5.5 11.5a1.5 1.5 0 0 0 3 0"/>
-                  </svg>
-                  {$t('figurineNotify')}
+              <!-- Action cards: 3 равнозначных карточки с micro-copy -->
+              <div class="action-cards">
+                <button onclick={() => openModal('notify')} class="action-card">
+                  <span class="action-card-icon" aria-hidden="true">
+                    <svg width="16" height="16" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.35">
+                      <path d="M7 1a4 4 0 0 1 4 4v3l1.5 2H1.5L3 8V5a4 4 0 0 1 4-4z"/>
+                      <path d="M5.5 11.5a1.5 1.5 0 0 0 3 0"/>
+                    </svg>
+                  </span>
+                  <span class="action-card-body">
+                    <span class="action-card-title">{$t('ctaNotifyTitle')}</span>
+                    <span class="action-card-sub">{$t('ctaNotifySub')}</span>
+                  </span>
+                  <span class="action-card-arrow" aria-hidden="true">›</span>
                 </button>
-                <button onclick={() => (showWaitlistModal = true)} class="cta-ask">
-                  <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true">
-                    <path d="M2 7h10M2 4h10M2 10h6"/>
-                  </svg>
-                  {$t('waitlistJoinBtn')}
+                <button onclick={() => (showWaitlistModal = true)} class="action-card">
+                  <span class="action-card-icon" aria-hidden="true">
+                    <svg width="16" height="16" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.35">
+                      <path d="M2 3.5h10M2 7h10M2 10.5h6"/>
+                      <circle cx="11.5" cy="10.5" r="2" fill="currentColor" opacity="0.25" stroke="none"/>
+                      <path d="M10 10.5l1 1 2-1.5"/>
+                    </svg>
+                  </span>
+                  <span class="action-card-body">
+                    <span class="action-card-title">{$t('ctaWaitlistTitle')}</span>
+                    <span class="action-card-sub">{$t('ctaWaitlistSub')}</span>
+                  </span>
+                  <span class="action-card-arrow" aria-hidden="true">›</span>
                 </button>
-                <button onclick={() => (showBookingModal = true)} class="cta-ask">
-                  <svg width="12" height="12" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true">
-                    <rect x="0.5" y="1.5" width="12" height="11" rx="0.8"/>
-                    <path d="M3.5 1.5V0.5M9.5 1.5V0.5M0.5 5h12"/>
-                  </svg>
-                  {$t('figurineBook')}
+                <button onclick={() => (showBookingModal = true)} class="action-card">
+                  <span class="action-card-icon" aria-hidden="true">
+                    <svg width="16" height="16" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.35">
+                      <rect x="0.5" y="1.5" width="12" height="11" rx="0.8"/>
+                      <path d="M3.5 1.5V0.5M9.5 1.5V0.5M0.5 5h12"/>
+                    </svg>
+                  </span>
+                  <span class="action-card-body">
+                    <span class="action-card-title">{$t('ctaBookTitle')}</span>
+                    <span class="action-card-sub">{$t('ctaBookSub')}</span>
+                  </span>
+                  <span class="action-card-arrow" aria-hidden="true">›</span>
                 </button>
               </div>
             {:else}
@@ -1096,21 +1120,46 @@
                   {/if}
                 {/if}
               </div>
-              <button onclick={() => openModal('notify')} class="notify-btn">
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3">
-                  <path d="M7 1a4 4 0 0 1 4 4v3l1.5 2H1.5L3 8V5a4 4 0 0 1 4-4z"/>
-                  <path d="M5.5 11.5a1.5 1.5 0 0 0 3 0"/>
-                </svg>
-                {$t('figurineNotify')}
-              </button>
-              <div class="cp-secondary-actions cp-secondary-actions--solo">
-                <button onclick={() => (showWaitlistModal = true)} class="cta-ask">
-                  <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M2 7h10M2 4h10M2 10h6"/></svg>
-                  {$t('waitlistJoinBtn')}
+              <div class="action-cards">
+                <button onclick={() => openModal('notify')} class="action-card">
+                  <span class="action-card-icon" aria-hidden="true">
+                    <svg width="16" height="16" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.35">
+                      <path d="M7 1a4 4 0 0 1 4 4v3l1.5 2H1.5L3 8V5a4 4 0 0 1 4-4z"/>
+                      <path d="M5.5 11.5a1.5 1.5 0 0 0 3 0"/>
+                    </svg>
+                  </span>
+                  <span class="action-card-body">
+                    <span class="action-card-title">{$t('ctaNotifyTitle')}</span>
+                    <span class="action-card-sub">{$t('ctaNotifySub')}</span>
+                  </span>
+                  <span class="action-card-arrow" aria-hidden="true">›</span>
                 </button>
-                <button onclick={() => (showBookingModal = true)} class="cta-ask">
-                  <svg width="12" height="12" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><rect x="0.5" y="1.5" width="12" height="11" rx="0.8"/><path d="M3.5 1.5V0.5M9.5 1.5V0.5M0.5 5h12"/></svg>
-                  {$t('figurineBook')}
+                <button onclick={() => (showWaitlistModal = true)} class="action-card">
+                  <span class="action-card-icon" aria-hidden="true">
+                    <svg width="16" height="16" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.35">
+                      <path d="M2 3.5h10M2 7h10M2 10.5h6"/>
+                      <circle cx="11.5" cy="10.5" r="2" fill="currentColor" opacity="0.25" stroke="none"/>
+                      <path d="M10 10.5l1 1 2-1.5"/>
+                    </svg>
+                  </span>
+                  <span class="action-card-body">
+                    <span class="action-card-title">{$t('ctaWaitlistTitle')}</span>
+                    <span class="action-card-sub">{$t('ctaWaitlistSub')}</span>
+                  </span>
+                  <span class="action-card-arrow" aria-hidden="true">›</span>
+                </button>
+                <button onclick={() => (showBookingModal = true)} class="action-card">
+                  <span class="action-card-icon" aria-hidden="true">
+                    <svg width="16" height="16" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.35">
+                      <rect x="0.5" y="1.5" width="12" height="11" rx="0.8"/>
+                      <path d="M3.5 1.5V0.5M9.5 1.5V0.5M0.5 5h12"/>
+                    </svg>
+                  </span>
+                  <span class="action-card-body">
+                    <span class="action-card-title">{$t('ctaBookTitle')}</span>
+                    <span class="action-card-sub">{$t('ctaBookSub')}</span>
+                  </span>
+                  <span class="action-card-arrow" aria-hidden="true">›</span>
                 </button>
               </div>
             {/if}
@@ -1119,13 +1168,21 @@
             <div class="sold-notice">
               <p class="sold-text">{$t('figurineStatusSold')} — эта работа обрела своего хранителя.</p>
             </div>
-            <button onclick={() => openModal('notify')} class="notify-btn">
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3">
-                <path d="M7 1a4 4 0 0 1 4 4v3l1.5 2H1.5L3 8V5a4 4 0 0 1 4-4z"/>
-                <path d="M5.5 11.5a1.5 1.5 0 0 0 3 0"/>
-              </svg>
-              {$t('figurineNotify')}
-            </button>
+            <div class="action-cards">
+              <button onclick={() => openModal('notify')} class="action-card">
+                <span class="action-card-icon" aria-hidden="true">
+                  <svg width="16" height="16" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.35">
+                    <path d="M7 1a4 4 0 0 1 4 4v3l1.5 2H1.5L3 8V5a4 4 0 0 1 4-4z"/>
+                    <path d="M5.5 11.5a1.5 1.5 0 0 0 3 0"/>
+                  </svg>
+                </span>
+                <span class="action-card-body">
+                  <span class="action-card-title">{$t('ctaNotifyTitle')}</span>
+                  <span class="action-card-sub">{$t('ctaNotifySoldSub')}</span>
+                </span>
+                <span class="action-card-arrow" aria-hidden="true">›</span>
+              </button>
+            </div>
           {/if}
         </div>
 

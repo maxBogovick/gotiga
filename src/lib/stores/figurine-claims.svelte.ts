@@ -66,8 +66,13 @@ export class FigurineClaimsStore {
       .map((c, i) => {
         const r = results[i];
         if (r.status !== 'fulfilled') return c;
-        const serverStatus = r.value.status as ClaimStatus;
-        if (serverStatus !== c.status) { changed = true; return { ...c, status: serverStatus }; }
+        const fresh = r.value;
+        const serverStatus = fresh.status as ClaimStatus;
+        const datesChanged = fresh.startsAt !== c.startsAt || fresh.endsAt !== c.endsAt;
+        if (serverStatus !== c.status || datesChanged) {
+          changed = true;
+          return { ...c, status: serverStatus, startsAt: fresh.startsAt, endsAt: fresh.endsAt };
+        }
         return c;
       })
       .filter(c => c.status !== 'cancelled' && c.status !== 'rejected' && c.status !== 'completed');

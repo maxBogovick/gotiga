@@ -187,8 +187,8 @@
             <a href="/figurines/{info.figurineId}" class="action-link try-again">{$t('cancelTryAgain')}</a>
           {:else if info.status === 'pending'}
             {#if !showReschedule}
-              <button class="cancel-btn cancel-btn--secondary" onclick={() => { showReschedule = true; rescheduleSuccess = false; rescheduleError = ''; }}>{$t('rescheduleBtn')}</button>
-              <button class="cancel-btn" onclick={handleCancel} disabled={cancelling}>
+              <button class="cancel-btn" onclick={() => { showReschedule = true; rescheduleSuccess = false; rescheduleError = ''; }}>{$t('rescheduleBtn')}</button>
+              <button class="cancel-btn cancel-btn--destructive" onclick={handleCancel} disabled={cancelling}>
                 {cancelling ? $t('cancelCancelling') : $t('cancelBtn')}
               </button>
             {:else}
@@ -410,12 +410,19 @@
     }
   }
 
-  .cancel-btn--secondary {
+  .cancel-btn--destructive {
     background: transparent;
-    color: #6f3b24;
-    border-color: rgba(111,59,36,0.35);
+    color: rgba(160,72,48,0.6);
+    border: 1px solid rgba(160,72,48,0.22);
+    font-size: 0.72rem;
+    letter-spacing: 0.07em;
+    padding: 0.5rem 1.5rem;
   }
-  .cancel-btn--secondary:hover:not(:disabled) { background: rgba(111,59,36,0.06); }
+  .cancel-btn--destructive:hover:not(:disabled) {
+    background: rgba(160,72,48,0.05);
+    color: #a04830;
+    border-color: rgba(160,72,48,0.38);
+  }
 
   .reschedule-block {
     width: 100%;
