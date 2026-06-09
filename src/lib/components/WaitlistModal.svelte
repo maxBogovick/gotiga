@@ -124,7 +124,7 @@
                     <label for="wl-note" class="block text-[10px] font-['Inter'] font-bold tracking-[0.08em] text-[#5f4636] uppercase">{$t('waitlistNoteLabel')}</label>
                     <textarea id="wl-note" bind:value={note} rows="2"
                       placeholder={$t('waitlistNotePlaceholder')}
-                      class="w-full bg-[#f8f1e7] border-0 border-b border-[#d8c6b1] p-2 text-base italic text-[#34251c] focus:outline-none focus:border-[#c65f3c]/70 transition-colors placeholder-[#5f4636]/40 resize-none" />
+                      class="w-full bg-[#f8f1e7] border-0 border-b border-[#d8c6b1] p-2 text-base italic text-[#34251c] focus:outline-none focus:border-[#c65f3c]/70 transition-colors placeholder-[#5f4636]/40 resize-none"></textarea>
                   </div>
 
                   <div class="pt-3 flex justify-center">

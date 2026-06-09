@@ -7,7 +7,7 @@
   import { authStore } from '$lib/stores/auth.svelte';
   import { t } from '$lib/i18n';
   import { fade, fly } from 'svelte/transition';
-  import { api } from '$lib/api';
+  import { api, resolveMediaUrl } from '$lib/api';
 
   const links = [
     { href: '/figurines', label: 'Archive' },
@@ -61,17 +61,7 @@
     goto('/');
   }
 
-  function resolveAvatarUrl(url: string | null | undefined): string | null {
-    if (!url) return null;
-    if (url.startsWith('http')) return url;
-    if (url.startsWith('/static/') && typeof localStorage !== 'undefined') {
-      const serverUrl = localStorage.getItem('gotiga_server_url') ?? '';
-      return serverUrl ? `${serverUrl}${url}` : url;
-    }
-    return url;
-  }
-
-  let avatarUrl = $derived(resolveAvatarUrl(authStore.user?.avatarUrl));
+  let avatarUrl = $derived(resolveMediaUrl(authStore.user?.avatarUrl));
 
   onMount(async () => {
     allClaims.load();

@@ -68,6 +68,7 @@
 
   // === CLAIM TOKEN (self-cancellation) ===
   // figurine.id captured once — component is never remounted with a different figurine
+  // svelte-ignore state_referenced_locally
   const cs = new FigurineClaimsStore(id, () => {
     api.getFigurineSchedule(id).then(s => { figurineSchedule = s; });
   });
@@ -379,9 +380,10 @@
   <!-- ── Story share modal ──────────────────────────────────────────────── -->
   {#if showStoryModal}
     <div class="story-backdrop" transition:fade={{ duration: 200 }}
-         onclick={closeStoryModal} onkeydown={(e) => e.key === 'Escape' && closeStoryModal()}
+         onclick={(e) => { if (e.target === e.currentTarget) closeStoryModal(); }}
+         onkeydown={(e) => e.key === 'Escape' && closeStoryModal()}
          role="presentation">
-      <div class="story-modal" onclick={(e) => e.stopPropagation()} transition:fade={{ duration: 150 }}
+      <div class="story-modal" transition:fade={{ duration: 150 }}
            role="dialog" aria-modal="true" tabindex="-1">
         <button class="story-close" onclick={closeStoryModal} aria-label="Закрыть">✕</button>
 
@@ -1261,12 +1263,11 @@
           <span class="sec-label">{$t('figurineRelated')}</span>
           <div class="sec-rule" aria-hidden="true"></div>
         </header>
-        <div class="related-strip" role="list">
+        <div class="related-strip">
           {#each figurine.relatedItems as item}
             <a
               href="/figurines/{item.id}"
               class="related-card group"
-              role="listitem"
               data-sveltekit-preload-data="hover"
             >
               <div class="related-img-wrap">

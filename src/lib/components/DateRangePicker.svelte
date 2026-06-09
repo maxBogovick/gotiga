@@ -37,6 +37,18 @@
   let viewMonth = $state(now.getMonth());
   let hoverDate = $state('');
 
+  // Open on the month of the earliest selectable day. minDate can arrive/shift
+  // asynchronously (e.g. advanceDays loads after mount) and may push the minimum into a
+  // future month — when the whole shown month is before it, advance to the first usable one.
+  $effect(() => {
+    const lastOfView = iso(viewYear, viewMonth, daysIn(viewYear, viewMonth));
+    if (lastOfView < minDate) {
+      const d = new Date(`${minDate}T00:00:00`);
+      viewYear  = d.getFullYear();
+      viewMonth = d.getMonth();
+    }
+  });
+
   // ── Helpers ───────────────────────────────────────────────────────────────
   function pad2(n: number) { return String(n).padStart(2, '0'); }
   function iso(y: number, m: number, d: number) { return `${y}-${pad2(m+1)}-${pad2(d)}`; }

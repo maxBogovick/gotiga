@@ -85,6 +85,21 @@ function webApiBase(): string {
     return serverUrl ? `${serverUrl}/api/v1` : '/api/v1';
 }
 
+/**
+ * Resolve a media path (avatar, image, …) to a loadable URL.
+ * Relative `/static/` paths are prefixed with the configured server origin in web mode.
+ * Shared helper — previously duplicated across SiteHeader/OrderModal/BookingModal/etc.
+ */
+export function resolveMediaUrl(url: string | null | undefined): string | null {
+    if (!url) return null;
+    if (url.startsWith('http')) return url;
+    if (url.startsWith('/static/') && typeof localStorage !== 'undefined') {
+        const serverUrl = localStorage.getItem('gotiga_server_url') ?? '';
+        return serverUrl ? `${serverUrl}${url}` : url;
+    }
+    return url;
+}
+
 function webPublicUrl(url: unknown): string | null {
     if (typeof url !== 'string' || !url) return null;
     if (url.startsWith('http')) return url;

@@ -41,30 +41,30 @@
     <div class="space-y-5">
 
       <div>
-        <label class="block text-[10px] font-['Inter'] font-bold tracking-[0.08em] text-[#5f4636] uppercase mb-1">
+        <label for="br-min-days" class="block text-[10px] font-['Inter'] font-bold tracking-[0.08em] text-[#5f4636] uppercase mb-1">
           Минимальная длительность (дней)
         </label>
-        <input type="number" min="1" max="365"
+        <input id="br-min-days" type="number" min="1" max="365"
           bind:value={rules.minDays}
           class="w-full border border-[#d8c6b1] bg-[#fff9f0] px-3 py-2 text-sm text-[#34251c] focus:outline-none focus:border-[#34251c]/50 transition-colors" />
         <p class="text-[10px] text-[#5f4636]/50 mt-1">Минимум 1. Пользователь не сможет выбрать диапазон короче.</p>
       </div>
 
       <div>
-        <label class="block text-[10px] font-['Inter'] font-bold tracking-[0.08em] text-[#5f4636] uppercase mb-1">
+        <label for="br-max-days" class="block text-[10px] font-['Inter'] font-bold tracking-[0.08em] text-[#5f4636] uppercase mb-1">
           Максимальная длительность (дней)
         </label>
-        <input type="number" min="1" max="365"
+        <input id="br-max-days" type="number" min="1" max="365"
           bind:value={rules.maxDays}
           class="w-full border border-[#d8c6b1] bg-[#fff9f0] px-3 py-2 text-sm text-[#34251c] focus:outline-none focus:border-[#34251c]/50 transition-colors" />
         <p class="text-[10px] text-[#5f4636]/50 mt-1">Пользователь не сможет выбрать диапазон длиннее.</p>
       </div>
 
       <div>
-        <label class="block text-[10px] font-['Inter'] font-bold tracking-[0.08em] text-[#5f4636] uppercase mb-1">
+        <label for="br-advance-days" class="block text-[10px] font-['Inter'] font-bold tracking-[0.08em] text-[#5f4636] uppercase mb-1">
           За сколько дней вперёд (минимум)
         </label>
-        <input type="number" min="0" max="90"
+        <input id="br-advance-days" type="number" min="0" max="90"
           bind:value={rules.advanceDays}
           class="w-full border border-[#d8c6b1] bg-[#fff9f0] px-3 py-2 text-sm text-[#34251c] focus:outline-none focus:border-[#34251c]/50 transition-colors" />
         <p class="text-[10px] text-[#5f4636]/50 mt-1">0 = начать можно сегодня. 1 = минимум завтра. 3 = не раньше чем через 3 дня.</p>

@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
-  import { t } from '$lib/i18n';
-  import { api } from '$lib/api';
+  import { t, lang } from '$lib/i18n';
+  import { api, resolveMediaUrl } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
   import type { UserBookingDto, UserOrderDto, MessageThreadDto, ThreadDetailDto } from '$lib/types/api';
 
@@ -23,7 +23,12 @@
   let msgFilter = $state<MsgFilter>('all');
   let openThread = $state<ThreadDetailDto | null>(null);
   let threadLoading = $state(false);
-  let messagesEl: HTMLElement;
+  let messagesEl = $state<HTMLElement | null>(null);
+
+  // Focus action — replaces the autofocus attribute (better a11y, same UX)
+  function focusOnMount(node: HTMLElement) {
+    node.focus();
+  }
 
   // Reply
   let replyBody = $state('');
@@ -249,16 +254,20 @@
 
   function bookingStatusLabel(status: string): string {
     const map: Record<string, string> = {
-      pending: 'Ожидает',
-      confirmed: 'Подтверждено',
-      rejected: 'Отклонено',
-      cancelled: 'Отменено',
+      pending:   $t('profileBookingPending'),
+      confirmed: $t('profileBookingConfirmed'),
+      rejected:  $t('profileBookingRejected'),
+      cancelled: $t('profileBookingCancelled'),
     };
     return map[status] ?? status;
   }
 
   function orderModeLabel(mode: string): string {
-    const map: Record<string, string> = { request: 'Запрос', question: 'Вопрос', notify: 'Уведомление' };
+    const map: Record<string, string> = {
+      request:  $t('profileOrderModeRequest'),
+      question: $t('profileOrderModeQuestion'),
+      notify:   $t('profileOrderModeNotify'),
+    };
     return map[mode] ?? mode;
   }
 
@@ -269,36 +278,24 @@
   }
 
   function formatDate(iso: string): string {
-    return new Date(iso).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
+    return new Date(iso).toLocaleDateString($lang, { day: 'numeric', month: 'long', year: 'numeric' });
   }
 
   function formatDateRange(start: string, end: string): string {
     const s = new Date(start);
     const e = new Date(end);
     const opts: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short' };
-    return `${s.toLocaleDateString('ru-RU', opts)} — ${e.toLocaleDateString('ru-RU', opts)}`;
+    return `${s.toLocaleDateString($lang, opts)} — ${e.toLocaleDateString($lang, opts)}`;
   }
 
   function wishlistStatusLabel(status: string): string {
     const map: Record<string, string> = {
-      available: 'доступна',
-      sold: 'продана',
-      reserved: 'зарезервирована',
-      in_progress: 'в работе',
+      available:   $t('profileWishAvailable'),
+      sold:        $t('profileWishSold'),
+      reserved:    $t('profileWishReserved'),
+      in_progress: $t('profileWishInProgress'),
     };
     return map[status] ?? status;
-  }
-
-  function resolveAvatarUrl(url: string | null | undefined): string | null {
-    if (!url) return null;
-    if (url.startsWith('http')) return url;
-    if (url.startsWith('/static/')) {
-      if (typeof localStorage !== 'undefined') {
-        const serverUrl = localStorage.getItem('gotiga_server_url') ?? '';
-        return serverUrl ? `${serverUrl}${url}` : url;
-      }
-    }
-    return url;
   }
 </script>
 
@@ -322,8 +319,8 @@
               title={$t('profileUploadPhoto')}
               disabled={uploadingAvatar}
             >
-              {#if resolveAvatarUrl(authStore.user?.avatarUrl)}
-                <img src={resolveAvatarUrl(authStore.user?.avatarUrl)} alt="" class="hero-avatar-img" />
+              {#if resolveMediaUrl(authStore.user?.avatarUrl)}
+                <img src={resolveMediaUrl(authStore.user?.avatarUrl)} alt="" class="hero-avatar-img" />
               {:else}
                 <span class="hero-avatar-initials">{(authStore.user?.displayName ?? '?')[0].toUpperCase()}</span>
               {/if}
@@ -345,7 +342,7 @@
                   class="hero-name-input"
                   bind:value={editNameValue}
                   onkeydown={(e) => { if (e.key === 'Enter') saveName(); if (e.key === 'Escape') cancelEditName(); }}
-                  autofocus
+                  use:focusOnMount
                 />
                 <button class="hero-name-save" onclick={saveName} disabled={savingName}>
                   {savingName ? '…' : $t('profileSaveName')}
@@ -578,7 +575,8 @@
               {:else}
                 <ul class="list">
                   {#each filteredThreads as thread}
-                    <li class="item msg-item" class:msg-unread={thread.unread > 0} onclick={() => openThreadDetail(thread.id)}>
+                    <li class="item msg-item" class:msg-unread={thread.unread > 0}>
+                      <button class="item-hit" onclick={() => openThreadDetail(thread.id)} aria-label={thread.subject}></button>
                       <div class="item-main">
                         <span class="thread-subject">{thread.subject}</span>
                         <div class="thread-meta-right">
@@ -1244,8 +1242,19 @@
   .msg-send-btn:hover:not(:disabled) { background: rgba(198,95,60,0.08); }
   .msg-send-btn:disabled { opacity: 0.45; cursor: default; }
 
-  .msg-item { cursor: pointer; transition: background 0.12s; }
+  .msg-item { cursor: pointer; transition: background 0.12s; position: relative; }
   .msg-item:hover { background: rgba(216,198,177,0.15); }
+  /* Invisible full-area button: keyboard-accessible row without a role on the <li> */
+  .item-hit {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    cursor: pointer;
+  }
   .msg-unread { border-left: 2px solid #c65f3c; padding-left: 0.6rem; }
 
   .thread-subject {

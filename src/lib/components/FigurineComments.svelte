@@ -1,21 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api } from '$lib/api';
+  import { api, resolveMediaUrl } from '$lib/api';
   import { t } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
   import type { CommentDto } from '$lib/types/api';
 
-  function resolveAvatarUrl(url: string | null | undefined): string | null {
-    if (!url) return null;
-    if (url.startsWith('http')) return url;
-    if (url.startsWith('/static/') && typeof localStorage !== 'undefined') {
-      const serverUrl = localStorage.getItem('gotiga_server_url') ?? '';
-      return serverUrl ? `${serverUrl}${url}` : url;
-    }
-    return url;
-  }
-
-  let avatarUrl = $derived(resolveAvatarUrl(authStore.user?.avatarUrl));
+  let avatarUrl = $derived(resolveMediaUrl(authStore.user?.avatarUrl));
 
   let { figurineId }: { figurineId: string } = $props();
 
@@ -49,7 +39,7 @@
     const bodyTrimmed = body.trim();
     if (!bodyTrimmed) return;
     if (!authStore.isLoggedIn && !authorName.trim()) {
-      error = $t('commentsNameLabel');
+      error = $t('commentsNameError');
       return;
     }
     submitting = true;
@@ -100,7 +90,7 @@
   {:else}
     <ol class="comments-list">
       {#each comments as c (c.id)}
-        {@const commentAvatar = resolveAvatarUrl(c.authorAvatarUrl)}
+        {@const commentAvatar = resolveMediaUrl(c.authorAvatarUrl)}
         <li class="comment-item">
           <div class="comment-header">
             {#if commentAvatar}

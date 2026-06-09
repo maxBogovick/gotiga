@@ -2,22 +2,12 @@
   import { fade, scale, fly } from 'svelte/transition';
   import { cubicOut, elasticOut } from 'svelte/easing';
   import { onMount } from 'svelte';
-  import { api } from '$lib/api';
+  import { api, resolveMediaUrl } from '$lib/api';
   import { t } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
   import type { FigurineSchedule, BookingRules } from '$lib/types/api';
 
-  function resolveAvatarUrl(url: string | null | undefined): string | null {
-    if (!url) return null;
-    if (url.startsWith('http')) return url;
-    if (url.startsWith('/static/') && typeof localStorage !== 'undefined') {
-      const serverUrl = localStorage.getItem('gotiga_server_url') ?? '';
-      return serverUrl ? `${serverUrl}${url}` : url;
-    }
-    return url;
-  }
-
-  let avatarUrl = $derived(resolveAvatarUrl(authStore.user?.avatarUrl));
+  let avatarUrl = $derived(resolveMediaUrl(authStore.user?.avatarUrl));
   import DateRangePicker from '$lib/components/DateRangePicker.svelte';
 
   type ClaimData = { token: string; figurineName: string; startsAt: string; endsAt: string; submittedAt: string };

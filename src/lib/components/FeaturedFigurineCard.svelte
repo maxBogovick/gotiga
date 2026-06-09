@@ -352,7 +352,9 @@
     }
 
     /* ── Image & overlay ──────────────────────────── */
-    .card-img {
+    /* .card-img is applied to the AppImage wrapper (a child component), so it must be
+       reached with :global while keeping the .card-img-wrap ancestor scoped. */
+    .card-img-wrap :global(.card-img) {
         width: 100%;
         height: 100%;
         object-fit: cover;
@@ -362,7 +364,7 @@
         transition: transform 0.65s var(--ease), filter 0.65s;
     }
 
-    .card:hover .card-img {
+    .card:hover :global(.card-img) {
         transform: scale(1.035);
         filter: grayscale(0) saturate(1.02) contrast(1);
     }
@@ -556,7 +558,7 @@
         background: rgba(95,70,54,0.22);
     }
 
-    .card.is-sold .card-img {
+    .card.is-sold :global(.card-img) {
         filter: grayscale(0.58) saturate(0.74);
     }
 

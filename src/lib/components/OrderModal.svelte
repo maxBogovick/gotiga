@@ -1,22 +1,12 @@
 <script lang="ts">
   import { fade, scale, fly } from 'svelte/transition';
   import { cubicOut, elasticOut } from 'svelte/easing';
-  import { api, isTauri } from '$lib/api';
+  import { api, resolveMediaUrl } from '$lib/api';
   import { t } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
   import type { FigurineSchedule } from '$lib/types/api';
 
-  function resolveAvatarUrl(url: string | null | undefined): string | null {
-    if (!url) return null;
-    if (url.startsWith('http')) return url;
-    if (url.startsWith('/static/') && typeof localStorage !== 'undefined') {
-      const serverUrl = localStorage.getItem('gotiga_server_url') ?? '';
-      return serverUrl ? `${serverUrl}${url}` : url;
-    }
-    return url;
-  }
-
-  let avatarUrl = $derived(resolveAvatarUrl(authStore.user?.avatarUrl));
+  let avatarUrl = $derived(resolveMediaUrl(authStore.user?.avatarUrl));
 
   import type { FigurineListItem } from '$lib/types/api';
 
@@ -204,7 +194,7 @@
                               placeholder={$t('orderNameLabel')}
                       />
                       <label for="name" class="absolute left-0 -top-4 text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase transition-all peer-placeholder-shown:text-base peer-placeholder-shown:top-2 peer-placeholder-shown:text-[#5f4636]/90 peer-focus:-top-4 peer-focus:text-xs peer-focus:text-[#c65f3c]">
-                          {$t('orderNameLabel')}{mode !== 'request' ? ' (необязательно)' : ''}
+                          {$t('orderNameLabel')}{mode !== 'request' ? ` ${$t('formOptional')}` : ''}
                       </label>
                     </div>
 

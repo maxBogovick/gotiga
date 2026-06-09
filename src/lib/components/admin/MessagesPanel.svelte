@@ -155,8 +155,12 @@
             class="thread-item"
             class:selected={isSelected}
             class:has-unread={item.thread.unread > 0}
-            onclick={() => selectThread(item.thread.id)}
           >
+            <button
+              class="thread-item-hit"
+              onclick={() => selectThread(item.thread.id)}
+              aria-label={item.thread.subject}
+            ></button>
             <div class="thread-item-top">
               <span class="thread-item-user">{item.user.displayName}</span>
               <span class="thread-item-cat">{categoryLabel(item.thread.category)}</span>
@@ -317,6 +321,18 @@
     cursor: pointer;
     transition: background 0.12s;
     position: relative;
+  }
+  /* Invisible full-area button keeps the row keyboard-accessible without an
+     interactive role on the <li>. Content above is non-interactive. */
+  .thread-item-hit {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    cursor: pointer;
   }
   .thread-item:hover { background: rgba(216,198,177,0.2); }
   .thread-item.selected { background: rgba(198,95,60,0.08); border-left: 2px solid #c65f3c; }

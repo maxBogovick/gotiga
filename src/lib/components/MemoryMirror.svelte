@@ -363,7 +363,7 @@
       0 8px 60px rgba(111,59,36,0.14),
       0 0 120px rgba(111,59,36,0.08);
     overflow: hidden;
-    select-none: none;
+    user-select: none;
   }
 
   .mirror-past {
