@@ -430,6 +430,7 @@ pub struct Order {
     pub status: OrderStatus,
     pub admin_notes: Option<String>,
     pub created_at: DateTime<Utc>,
+    pub user_id: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -527,6 +528,7 @@ pub struct Booking {
     pub admin_notes: Option<String>,
     pub cancel_token: String,
     pub created_at: DateTime<Utc>,
+    pub user_id: Option<Uuid>,
 }
 
 /// Returned to the user after booking creation — includes the cancel token.
@@ -828,6 +830,7 @@ pub struct AdminUserDetail {
     pub orders: Vec<UserOrderDto>,
     pub sessions: Vec<AdminSessionDto>,
     pub recent_failures: i64,
+    pub messages: Vec<UserMessageDto>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -991,6 +994,7 @@ pub struct WaitlistEntry {
     pub requester_phone: Option<String>,
     pub note: Option<String>,
     pub created_at: DateTime<Utc>,
+    pub user_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1004,7 +1008,63 @@ pub struct WaitlistEntryDto {
     pub requester_phone: Option<String>,
     pub note: Option<String>,
     pub created_at: String,
+    pub user_id: Option<String>,
 }
+
+// ============================================================
+// USER MESSAGES
+// ============================================================
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct UserMessage {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub from_admin: bool,
+    pub subject: String,
+    pub body: String,
+    pub read_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserMessageDto {
+    pub id: String,
+    pub from_admin: bool,
+    pub subject: String,
+    pub body: String,
+    pub read_at: Option<String>,
+    pub created_at: String,
+}
+
+impl From<&UserMessage> for UserMessageDto {
+    fn from(m: &UserMessage) -> Self {
+        UserMessageDto {
+            id: m.id.to_string(),
+            from_admin: m.from_admin,
+            subject: m.subject.clone(),
+            body: m.body.clone(),
+            read_at: m.read_at.map(|t| t.to_rfc3339()),
+            created_at: m.created_at.to_rfc3339(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminSendMessageRequest {
+    pub subject: String,
+    pub body: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserSendMessageRequest {
+    pub subject: String,
+    pub body: String,
+}
+
+// ============================================================
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]

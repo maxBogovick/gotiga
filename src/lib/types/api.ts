@@ -338,6 +338,15 @@ export interface AdminSessionDto {
     isActive: boolean;
 }
 
+export interface UserMessageDto {
+    id: string;
+    fromAdmin: boolean;
+    subject: string;
+    body: string;
+    readAt: string | null;
+    createdAt: string;
+}
+
 export interface AdminUserDetail {
     id: string;
     email: string;
@@ -349,6 +358,7 @@ export interface AdminUserDetail {
     orders: UserOrderDto[];
     sessions: AdminSessionDto[];
     recentFailures: number;
+    messages: UserMessageDto[];
 }
 
 export interface ResetTokenResponse {
@@ -445,5 +455,6 @@ export interface WaitlistEntryDto {
     requesterPhone: string | null;
     note: string | null;
     createdAt: string;
+    userId: string | null;
 }
 

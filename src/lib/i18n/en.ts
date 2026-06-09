@@ -605,6 +605,19 @@ export const en = {
   profileDeleteCancel:   'Cancel',
   profileDeleting:       'Deleting…',
 
+  profileMessages:          'Messages',
+  profileMessagesEmpty:     'No messages yet',
+  profileMessagesFrom:      'From archive keeper',
+  profileMessagesFromUser:  'From you',
+  profileMessagesSubject:   'Subject',
+  profileMessagesMark:      'Mark as read',
+  profileMessageNew:        'new',
+  profileMessageWriteSubject: 'Subject',
+  profileMessageWriteBody:    'Message',
+  profileMessageWriteSend:    'Send',
+  profileMessageWriteSending: 'Sending…',
+  profileMessageWriteSent:    'Sent',
+
   // === ADMIN USERS ===
   adminUsersTab:           'Users',
   adminUsersSearch:        'Search by email or name…',
@@ -640,6 +653,15 @@ export const en = {
   adminUsersResetCopied:   'Link copied',
   adminUsersResetExpiry:   'Valid 48 h. Copy and send to the user.',
   adminUsersResetConfirm:  'Generate a new password reset link? The previous one will be invalidated.',
+
+  adminUsersMessagesTitle:   'Messages',
+  adminUsersMessagesSend:    'Send message',
+  adminUsersMessagesSubject: 'Subject',
+  adminUsersMessagesBody:    'Message text',
+  adminUsersMessagesSending: 'Sending…',
+  adminUsersMessagesSent:    'Sent ✓',
+  adminUsersMessagesEmpty:   'No messages yet',
+  adminUsersMessagesFromUser: 'From user',
 
   // === SET PASSWORD PAGE ===
   setPasswordTitle:        'New access code',

@@ -29,6 +29,12 @@
   let resetCopied    = $state(false);
   let resetGenerating = $state(false);
 
+  // Message compose state
+  let msgSubject  = $state('');
+  let msgBody     = $state('');
+  let msgSending  = $state(false);
+  let msgSent     = $state(false);
+
   async function load() {
     loading = true;
     error = '';
@@ -53,6 +59,9 @@
     detail = null;
     resetLink = '';
     resetExpiry = '';
+    msgSubject = '';
+    msgBody = '';
+    msgSent = false;
     try {
       detail = await api.adminGetUser(id);
       notesText = detail.adminNotes ?? '';
@@ -135,6 +144,21 @@
     await navigator.clipboard.writeText(resetLink);
     resetCopied = true;
     setTimeout(() => { resetCopied = false; }, 2500);
+  }
+
+  async function sendMessage() {
+    if (!detail || !msgSubject.trim() || !msgBody.trim() || msgSending) return;
+    msgSending = true;
+    try {
+      const msg = await api.adminSendMessage(detail.id, msgSubject.trim(), msgBody.trim());
+      detail = { ...detail, messages: [msg, ...detail.messages] };
+      msgSubject = '';
+      msgBody = '';
+      msgSent = true;
+      setTimeout(() => { msgSent = false; }, 2500);
+    } catch { /* ignore */ } finally {
+      msgSending = false;
+    }
   }
 
   let totalPages    = $derived(Math.max(1, Math.ceil(total / PER_PAGE)));
@@ -270,6 +294,54 @@
           </ul>
         {:else}
           <p class="empty-text">{$t('adminUsersEmpty')}</p>
+        {/if}
+      </section>
+
+      <!-- Messages -->
+      <section class="detail-section">
+        <h3 class="section-title">{$t('adminUsersMessagesTitle')}</h3>
+
+        <div class="msg-compose">
+          <input
+            class="msg-input"
+            bind:value={msgSubject}
+            placeholder={$t('adminUsersMessagesSubject')}
+          />
+          <textarea
+            class="msg-textarea"
+            bind:value={msgBody}
+            rows="3"
+            placeholder={$t('adminUsersMessagesBody')}
+          ></textarea>
+          <button
+            class="msg-send-btn"
+            onclick={sendMessage}
+            disabled={msgSending || !msgSubject.trim() || !msgBody.trim()}
+          >
+            {msgSending ? $t('adminUsersMessagesSending') : msgSent ? $t('adminUsersMessagesSent') : $t('adminUsersMessagesSend')}
+          </button>
+        </div>
+
+        {#if detail.messages.length === 0}
+          <p class="empty-text">{$t('adminUsersMessagesEmpty')}</p>
+        {:else}
+          <ul class="msg-list">
+            {#each detail.messages as msg}
+              <li class="msg-item" class:msg-unread={!msg.readAt}>
+                <div class="msg-meta">
+                  <span class="msg-from">{msg.fromAdmin ? '→ пользователю' : $t('adminUsersMessagesFromUser')}</span>
+                  {#if !msg.readAt && !msg.fromAdmin}
+                    <span class="msg-badge">new</span>
+                  {/if}
+                  <span class="msg-date">{new Date(msg.createdAt).toLocaleDateString()}</span>
+                </div>
+                {#if msg.subject}
+                  <p class="msg-subject">{msg.subject}</p>
+                {/if}
+                <p class="msg-body">{msg.body}</p>
+              </li>
+            {/each}
+          </ul>
         {/if}
       </section>
     {/if}
@@ -642,4 +714,95 @@
     padding: .5rem 0;
   }
   .error-text { color: #c65f3c; }
+
+  /* Messages */
+  .msg-compose {
+    display: flex;
+    flex-direction: column;
+    gap: .4rem;
+    margin-bottom: .75rem;
+  }
+  .msg-input, .msg-textarea {
+    font-family: inherit;
+    font-size: .82rem;
+    background: #fdf8f2;
+    border: 1px solid #d8c6b1;
+    color: #34251c;
+    padding: .35rem .5rem;
+    outline: none;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .msg-textarea { resize: vertical; line-height: 1.45; }
+  .msg-input:focus, .msg-textarea:focus { border-color: #c65f3c; }
+  .msg-send-btn {
+    align-self: flex-end;
+    background: transparent;
+    border: 1px solid #c65f3c;
+    color: #c65f3c;
+    font-family: Inter, sans-serif;
+    font-size: .7rem;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    padding: .3rem .75rem;
+    cursor: pointer;
+  }
+  .msg-send-btn:hover:not(:disabled) { background: rgba(198,95,60,.08); }
+  .msg-send-btn:disabled { opacity: .45; cursor: default; }
+  .msg-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: .5rem;
+  }
+  .msg-item {
+    border: 1px solid #e8ddd0;
+    padding: .5rem .65rem;
+    background: #fdf8f2;
+  }
+  .msg-unread { border-left: 2px solid #c65f3c; }
+  .msg-meta {
+    display: flex;
+    align-items: center;
+    gap: .4rem;
+    margin-bottom: .2rem;
+  }
+  .msg-from {
+    font-size: .68rem;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: #9a7c5c;
+    font-family: Inter, sans-serif;
+  }
+  .msg-badge {
+    font-size: .6rem;
+    background: #c65f3c;
+    color: #fff;
+    padding: 1px 4px;
+    border-radius: 2px;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+  }
+  .msg-date {
+    font-size: .68rem;
+    color: #b5a090;
+    font-family: Inter, sans-serif;
+    margin-left: auto;
+  }
+  .msg-subject {
+    font-family: Georgia, serif;
+    font-size: .88rem;
+    color: #34251c;
+    margin: 0 0 .15rem;
+  }
+  .msg-body {
+    font-family: Inter, sans-serif;
+    font-size: .8rem;
+    color: #6f4e37;
+    margin: 0;
+    white-space: pre-wrap;
+    line-height: 1.45;
+  }
 </style>

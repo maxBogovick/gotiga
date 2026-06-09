@@ -1,0 +1,2 @@
+ALTER TABLE figurine_waitlist
+    ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE SET NULL;

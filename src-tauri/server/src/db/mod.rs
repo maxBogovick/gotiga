@@ -81,6 +81,14 @@ impl Repository {
         Ok(count)
     }
 
+    pub async fn get_order_by_id(&self, id: uuid::Uuid) -> Result<Option<crate::models::Order>> {
+        Ok(sqlx::query_as::<_, crate::models::Order>(
+            "SELECT * FROM orders WHERE id = $1"
+        )
+        .bind(id)
+        .fetch_optional(&self.pg_pool).await?)
+    }
+
     pub async fn update_order_status(&self, id: uuid::Uuid, status: &crate::models::OrderStatus) -> Result<()> {
         let affected = sqlx::query(
             "UPDATE orders SET status = $1 WHERE id = $2"
@@ -1414,10 +1422,11 @@ impl Repository {
         &self,
         figurine_id: Uuid,
         req: &crate::models::CreateWaitlistRequest,
+        user_id: Option<Uuid>,
     ) -> Result<crate::models::WaitlistEntry> {
         let rec = sqlx::query_as::<_, crate::models::WaitlistEntry>(
-            "INSERT INTO figurine_waitlist (figurine_id, figurine_name, requester_name, requester_email, requester_phone, note)
-             VALUES ($1, $2, $3, $4, $5, $6) RETURNING *"
+            "INSERT INTO figurine_waitlist (figurine_id, figurine_name, requester_name, requester_email, requester_phone, note, user_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *"
         )
         .bind(figurine_id)
         .bind(&req.figurine_name)
@@ -1425,6 +1434,7 @@ impl Repository {
         .bind(&req.requester_email)
         .bind(&req.requester_phone)
         .bind(&req.note)
+        .bind(user_id)
         .fetch_one(&self.pg_pool).await?;
         Ok(rec)
     }
@@ -1461,5 +1471,62 @@ impl Repository {
         )
         .bind(figurine_id)
         .fetch_all(&self.pg_pool).await?)
+    }
+
+    pub async fn mark_waitlist_notified(&self, figurine_id: Uuid) -> Result<u64> {
+        Ok(sqlx::query(
+            "DELETE FROM figurine_waitlist WHERE figurine_id = $1"
+        )
+        .bind(figurine_id)
+        .execute(&self.pg_pool).await?
+        .rows_affected())
+    }
+
+    // ── User messages ──────────────────────────────────────────
+
+    pub async fn insert_user_message(
+        &self,
+        user_id: Uuid,
+        from_admin: bool,
+        subject: &str,
+        body: &str,
+    ) -> Result<crate::models::UserMessage> {
+        Ok(sqlx::query_as::<_, crate::models::UserMessage>(
+            "INSERT INTO user_messages (user_id, from_admin, subject, body)
+             VALUES ($1, $2, $3, $4) RETURNING *"
+        )
+        .bind(user_id)
+        .bind(from_admin)
+        .bind(subject)
+        .bind(body)
+        .fetch_one(&self.pg_pool).await?)
+    }
+
+    pub async fn get_user_messages(&self, user_id: Uuid) -> Result<Vec<crate::models::UserMessage>> {
+        Ok(sqlx::query_as::<_, crate::models::UserMessage>(
+            "SELECT * FROM user_messages WHERE user_id = $1 ORDER BY created_at DESC"
+        )
+        .bind(user_id)
+        .fetch_all(&self.pg_pool).await?)
+    }
+
+    pub async fn mark_message_read(&self, message_id: Uuid, user_id: Uuid) -> Result<()> {
+        sqlx::query(
+            "UPDATE user_messages SET read_at = NOW()
+             WHERE id = $1 AND user_id = $2 AND read_at IS NULL"
+        )
+        .bind(message_id)
+        .bind(user_id)
+        .execute(&self.pg_pool).await?;
+        Ok(())
+    }
+
+    pub async fn count_unread_messages(&self, user_id: Uuid) -> Result<i64> {
+        let row: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM user_messages WHERE user_id = $1 AND read_at IS NULL"
+        )
+        .bind(user_id)
+        .fetch_one(&self.pg_pool).await?;
+        Ok(row.0)
     }
 }

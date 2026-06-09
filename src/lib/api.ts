@@ -36,6 +36,7 @@ import type {
     RescheduleBookingRequest,
     CreateWaitlistRequest,
     WaitlistEntryDto,
+    UserMessageDto,
 } from './types/api';
 
 export type { AppSettings };
@@ -490,6 +491,13 @@ export const api = {
         if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
     },
 
+    async adminNotifyWaitlist(figurineId: string): Promise<{ notified: number; total: number }> {
+        return webFetch(`/admin/waitlist/${figurineId}/notify`, {
+            method: 'POST',
+            headers: authHeaders(),
+        });
+    },
+
     // === SHOWINGS (ADMIN) ===
 
     async listShowings(): Promise<ShowingDto[]> {
@@ -658,6 +666,35 @@ export const api = {
         return webFetch(`/admin/users/${id}/reset-token`, {
             method: 'POST',
             headers: authHeaders(),
+        });
+    },
+
+    async adminSendMessage(userId: string, subject: string, body: string): Promise<UserMessageDto> {
+        return webFetch(`/admin/users/${userId}/messages`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ subject, body }),
+        });
+    },
+
+    async getUserMessages(sessionToken: string): Promise<{ messages: UserMessageDto[]; unread: number }> {
+        return webFetch('/profile/messages', {
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    async markMessageRead(sessionToken: string, messageId: string): Promise<void> {
+        await webFetch(`/profile/messages/${messageId}/read`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    async userSendMessage(sessionToken: string, subject: string, body: string): Promise<UserMessageDto> {
+        return webFetch('/profile/messages', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
+            body: JSON.stringify({ subject, body }),
         });
     },
 

@@ -992,6 +992,48 @@ pub async fn user_delete_account(
     Ok(StatusCode::OK)
 }
 
+pub async fn user_get_messages(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
+    let messages = service.get_user_messages(user.id).await?;
+    let unread = service.count_unread_messages(user.id).await?;
+    Ok(Json(serde_json::json!({ "messages": messages, "unread": unread })))
+}
+
+pub async fn user_mark_message_read(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
+    service.mark_message_read(id, user.id).await?;
+    Ok(StatusCode::OK)
+}
+
+pub async fn user_send_message(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(body): Json<UserSendMessageRequest>,
+) -> Result<Json<UserMessageDto>> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
+    let msg = service.user_send_message(user.id, &body.subject, &body.body).await?;
+    Ok(Json(msg))
+}
+
+pub async fn admin_send_message_to_user(
+    State(service): State<AppService>,
+    Path(user_id): Path<Uuid>,
+    Json(body): Json<AdminSendMessageRequest>,
+) -> Result<Json<UserMessageDto>> {
+    let msg = service.admin_send_message(user_id, &body.subject, &body.body).await?;
+    Ok(Json(msg))
+}
+
 // === BOOKING RULES ===
 
 pub async fn get_booking_rules(
@@ -1022,11 +1064,24 @@ pub async fn reschedule_booking_by_token(
 
 pub async fn join_waitlist(
     State(service): State<AppService>,
+    headers: HeaderMap,
     Path(id): Path<String>,
     Json(body): Json<CreateWaitlistRequest>,
 ) -> Result<StatusCode> {
-    service.join_waitlist(id, body).await?;
+    let user_id = if let Some(token) = bearer_token(&headers) {
+        service.get_user_from_session(token).await.ok().map(|u| u.id)
+    } else {
+        None
+    };
+    service.join_waitlist(id, body, user_id).await?;
     Ok(StatusCode::OK)
+}
+
+pub async fn admin_notify_waitlist(
+    State(service): State<AppService>,
+    Path(figurine_id): Path<String>,
+) -> Result<Json<serde_json::Value>> {
+    Ok(Json(service.admin_notify_waitlist(figurine_id).await?))
 }
 
 pub async fn admin_list_waitlist(

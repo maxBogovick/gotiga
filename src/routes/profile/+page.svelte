@@ -4,17 +4,25 @@
   import { t } from '$lib/i18n';
   import { api } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
-  import type { UserBookingDto, UserOrderDto, FigurineListItem } from '$lib/types/api';
+  import type { UserBookingDto, UserOrderDto, UserMessageDto } from '$lib/types/api';
 
-  type Tab = 'bookings' | 'orders' | 'wishlist';
+  type Tab = 'bookings' | 'orders' | 'wishlist' | 'messages';
   let activeTab = $state<Tab>('bookings');
 
   let bookings = $state<UserBookingDto[]>([]);
   let orders = $state<UserOrderDto[]>([]);
   let wishlistIds = $state<string[]>([]);
   let wishlistItems = $state<Map<string, { name: string; status: string } | null>>(new Map());
+  let messages = $state<UserMessageDto[]>([]);
+  let unreadCount = $state(0);
   let loading = $state(true);
   let error = $state('');
+
+  // Write message to admin
+  let writeSubject = $state('');
+  let writeBody = $state('');
+  let writeSending = $state(false);
+  let writeSent = $state(false);
 
   // Account editing
   let editingName = $state(false);
@@ -53,12 +61,15 @@
     error = '';
     try {
       const token = authStore.token!;
-      const [b, o] = await Promise.all([
+      const [b, o, m] = await Promise.all([
         api.userProfileBookings(token),
         api.userProfileOrders(token),
+        api.getUserMessages(token),
       ]);
       bookings = b;
       orders = o;
+      messages = m.messages;
+      unreadCount = m.unread;
 
       if (typeof localStorage !== 'undefined') {
         wishlistIds = JSON.parse(localStorage.getItem('gotiga_wishlist') ?? '[]');
@@ -151,6 +162,29 @@
     } catch {
       deleting = false;
       showDeleteConfirm = false;
+    }
+  }
+
+  async function markRead(id: string) {
+    const msg = messages.find(m => m.id === id);
+    if (!msg || msg.readAt) return;
+    await api.markMessageRead(authStore.token!, id).catch(() => {});
+    messages = messages.map(m => m.id === id ? { ...m, readAt: new Date().toISOString() } : m);
+    unreadCount = Math.max(0, unreadCount - 1);
+  }
+
+  async function sendMessage() {
+    if (!writeSubject.trim() || !writeBody.trim() || writeSending) return;
+    writeSending = true;
+    try {
+      const msg = await api.userSendMessage(authStore.token!, writeSubject.trim(), writeBody.trim());
+      messages = [msg, ...messages];
+      writeSubject = '';
+      writeBody = '';
+      writeSent = true;
+      setTimeout(() => { writeSent = false; }, 2500);
+    } catch { /* silent */ } finally {
+      writeSending = false;
     }
   }
 
@@ -297,6 +331,12 @@
           <span class="badge">{wishlistIds.length}</span>
         {/if}
       </button>
+      <button class="tab" class:active={activeTab === 'messages'} onclick={() => activeTab = 'messages'}>
+        {$t('profileMessages')}
+        {#if unreadCount > 0}
+          <span class="badge badge--unread">{unreadCount}</span>
+        {/if}
+      </button>
     </div>
 
     <!-- ── Tab content ── -->
@@ -359,6 +399,51 @@
                     <a href="/figurines/{id}" class="item-name item-name--missing">{id}</a>
                   {/if}
                 </div>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+
+      {:else if activeTab === 'messages'}
+        <!-- Write to admin -->
+        <div class="msg-compose">
+          <input
+            class="msg-subject"
+            bind:value={writeSubject}
+            placeholder={$t('profileMessageWriteSubject')}
+          />
+          <textarea
+            class="msg-body"
+            bind:value={writeBody}
+            rows="3"
+            placeholder={$t('profileMessageWriteBody')}
+          ></textarea>
+          <button
+            class="msg-send-btn"
+            onclick={sendMessage}
+            disabled={writeSending || !writeSubject.trim() || !writeBody.trim()}
+          >
+            {writeSending ? $t('profileMessageWriteSending') : writeSent ? $t('profileMessageWriteSent') : $t('profileMessageWriteSend')}
+          </button>
+        </div>
+
+        {#if messages.length === 0}
+          <p class="empty">{$t('profileMessagesEmpty')}</p>
+        {:else}
+          <ul class="list">
+            {#each messages as msg}
+              <li class="item msg-item" class:msg-unread={!msg.readAt} onclick={() => markRead(msg.id)}>
+                <div class="item-main">
+                  <span class="msg-from">{msg.fromAdmin ? $t('profileMessagesFrom') : $t('profileMessagesFromUser')}</span>
+                  {#if !msg.readAt}
+                    <span class="msg-new-badge">{$t('profileMessageNew')}</span>
+                  {/if}
+                </div>
+                {#if msg.subject}
+                  <p class="msg-subject-line">{msg.subject}</p>
+                {/if}
+                <p class="msg-body-preview">{msg.body}</p>
+                <p class="item-date">{formatDate(msg.createdAt)}</p>
               </li>
             {/each}
           </ul>
@@ -838,4 +923,101 @@
     transition: all 0.15s;
   }
   .delete-cancel-btn:hover { border-color: #9a7c5c; color: #34251c; }
+
+  /* ── Messages ── */
+
+  .badge--unread {
+    background: #c65f3c;
+    color: #fff;
+  }
+
+  .msg-compose {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1.25rem;
+    border-bottom: 1px solid #eee3d6;
+  }
+
+  .msg-subject {
+    font-family: Georgia, serif;
+    font-size: 0.88rem;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid #d8c6b1;
+    color: #34251c;
+    padding: 4px 0;
+    outline: none;
+  }
+  .msg-subject::placeholder { color: #b5a090; }
+
+  .msg-body {
+    font-family: Inter, sans-serif;
+    font-size: 0.82rem;
+    background: transparent;
+    border: 1px solid #d8c6b1;
+    color: #34251c;
+    padding: 0.5rem;
+    outline: none;
+    resize: vertical;
+    line-height: 1.5;
+  }
+  .msg-body::placeholder { color: #b5a090; }
+  .msg-body:focus { border-color: #c65f3c; }
+
+  .msg-send-btn {
+    align-self: flex-end;
+    background: transparent;
+    border: 1px solid #c65f3c;
+    color: #c65f3c;
+    font-family: Inter, sans-serif;
+    font-size: 0.72rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    padding: 0.35rem 0.85rem;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .msg-send-btn:hover:not(:disabled) { background: rgba(198,95,60,0.08); }
+  .msg-send-btn:disabled { opacity: 0.45; cursor: default; }
+
+  .msg-item { cursor: pointer; transition: background 0.12s; }
+  .msg-item:hover { background: rgba(216,198,177,0.15); }
+  .msg-unread { border-left: 2px solid #c65f3c; padding-left: 0.6rem; }
+
+  .msg-from {
+    font-family: Inter, sans-serif;
+    font-size: 0.7rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: #9a7c5c;
+  }
+
+  .msg-new-badge {
+    font-family: Inter, sans-serif;
+    font-size: 0.6rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    background: #c65f3c;
+    color: #fff;
+    padding: 1px 5px;
+    border-radius: 2px;
+  }
+
+  .msg-subject-line {
+    font-family: Georgia, serif;
+    font-size: 0.9rem;
+    color: #34251c;
+    margin: 0.2rem 0 0.1rem;
+  }
+
+  .msg-body-preview {
+    font-family: Inter, sans-serif;
+    font-size: 0.82rem;
+    color: #6f4e37;
+    margin: 0 0 0.15rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+  }
 </style>

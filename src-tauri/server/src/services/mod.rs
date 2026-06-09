@@ -344,7 +344,23 @@ impl AppService {
     }
 
     pub async fn update_order_status(&self, id: uuid::Uuid, status: &OrderStatus) -> Result<()> {
-        self.repo.update_order_status(id, status).await
+        self.repo.update_order_status(id, status).await?;
+        if *status == OrderStatus::Replied {
+            if let Ok(Some(order)) = self.repo.get_order_by_id(id).await {
+                if let Some(user_id) = order.user_id {
+                    let subject = format!("Ответ на ваш запрос — {}", order.figurine_name);
+                    let body = match order.admin_notes.as_deref() {
+                        Some(n) if !n.is_empty() => format!(
+                            "Ваш запрос по «{}» получил ответ.\n\n{}",
+                            order.figurine_name, n
+                        ),
+                        _ => format!("Ваш запрос по «{}» получил ответ.", order.figurine_name),
+                    };
+                    let _ = self.repo.insert_user_message(user_id, true, &subject, &body).await;
+                }
+            }
+        }
+        Ok(())
     }
 
     async fn send_order_notification(&self, order: &Order) -> Result<()> {
@@ -587,20 +603,17 @@ impl AppService {
             .ok_or_else(|| crate::error::AppError::NotFound(format!("Booking {} not found", id)))?;
 
         if status == BookingStatus::Confirmed {
-            // Conflict check
             if let Some(reason) = self.repo.check_admin_confirm_conflicts(
                 id, booking.figurine_id, booking.starts_at, booking.ends_at
             ).await? {
                 return Err(crate::error::AppError::Conflict(reason));
             }
-            // Update booking status
             self.repo.update_booking_status(id, &status, admin_notes.as_deref()).await?;
-            // Auto-set figurine to Reserved
             self.repo.update_figurine_status(booking.figurine_id, &FigurineStatus::Reserved).await?;
+            self.send_booking_status_message(&booking, &status, admin_notes.as_deref()).await;
             return Ok(());
         }
 
-        // Completing or cancelling/rejecting a previously-confirmed booking → maybe revert figurine to Available
         if (status == BookingStatus::Completed || status == BookingStatus::Cancelled || status == BookingStatus::Rejected)
             && booking.status == BookingStatus::Confirmed
         {
@@ -609,10 +622,63 @@ impl AppService {
             if !has_others {
                 self.repo.update_figurine_status(booking.figurine_id, &FigurineStatus::Available).await?;
             }
+            self.send_booking_status_message(&booking, &status, admin_notes.as_deref()).await;
             return Ok(());
         }
 
-        self.repo.update_booking_status(id, &status, admin_notes.as_deref()).await
+        self.repo.update_booking_status(id, &status, admin_notes.as_deref()).await?;
+        self.send_booking_status_message(&booking, &status, admin_notes.as_deref()).await;
+        Ok(())
+    }
+
+    async fn send_booking_status_message(&self, booking: &Booking, status: &BookingStatus, admin_notes: Option<&str>) {
+        let Some(user_id) = booking.user_id else { return };
+        let (subject, body) = match status {
+            BookingStatus::Confirmed => (
+                format!("Бронирование подтверждено — {}", booking.figurine_name),
+                format!(
+                    "Ваш запрос на бронирование «{}» ({} — {}) подтверждён.",
+                    booking.figurine_name,
+                    booking.starts_at,
+                    booking.ends_at,
+                ),
+            ),
+            BookingStatus::Rejected => (
+                format!("Бронирование отклонено — {}", booking.figurine_name),
+                {
+                    let base = format!(
+                        "Ваш запрос на бронирование «{}» ({} — {}) отклонён.",
+                        booking.figurine_name,
+                        booking.starts_at,
+                        booking.ends_at,
+                    );
+                    match admin_notes {
+                        Some(n) if !n.is_empty() => format!("{}\n\nПримечание: {}", base, n),
+                        _ => base,
+                    }
+                },
+            ),
+            BookingStatus::Cancelled => (
+                format!("Бронирование отменено — {}", booking.figurine_name),
+                format!(
+                    "Бронирование «{}» ({} — {}) отменено.",
+                    booking.figurine_name,
+                    booking.starts_at,
+                    booking.ends_at,
+                ),
+            ),
+            BookingStatus::Completed => (
+                format!("Бронирование завершено — {}", booking.figurine_name),
+                format!(
+                    "Бронирование «{}» ({} — {}) завершено. Спасибо!",
+                    booking.figurine_name,
+                    booking.starts_at,
+                    booking.ends_at,
+                ),
+            ),
+            _ => return,
+        };
+        let _ = self.repo.insert_user_message(user_id, true, &subject, &body).await;
     }
 
     pub async fn get_asset(&self, table: &str, id: String) -> Result<Option<Vec<u8>>> {
@@ -1063,6 +1129,7 @@ impl AppService {
         let orders = self.get_user_orders(user_id).await?;
         let sessions = self.repo.admin_get_user_sessions(user_id).await?;
         let recent_failures = self.repo.count_recent_failures(&user.email, 24 * 60).await?;
+        let messages = self.get_user_messages(user_id).await?;
 
         Ok(AdminUserDetail {
             id: user.id.to_string(),
@@ -1074,6 +1141,7 @@ impl AppService {
             orders,
             sessions,
             recent_failures,
+            messages,
         })
     }
 
@@ -1235,7 +1303,7 @@ impl AppService {
 
     // === WAITLIST ===
 
-    pub async fn join_waitlist(&self, figurine_id: String, req: CreateWaitlistRequest) -> Result<()> {
+    pub async fn join_waitlist(&self, figurine_id: String, req: CreateWaitlistRequest, user_id: Option<Uuid>) -> Result<()> {
         let uuid = Self::parse_uuid(&figurine_id)?;
         if req.requester_name.trim().is_empty() {
             return Err(AppError::BadRequest("Name is required".to_string()));
@@ -1243,9 +1311,33 @@ impl AppService {
         if !req.requester_email.contains('@') {
             return Err(AppError::BadRequest("Valid email is required".to_string()));
         }
-        let entry = self.repo.add_to_waitlist(uuid, &req).await?;
+        let entry = self.repo.add_to_waitlist(uuid, &req, user_id).await?;
         let _ = self.send_waitlist_notification(&entry).await;
         Ok(())
+    }
+
+    pub async fn admin_notify_waitlist(&self, figurine_id: String) -> Result<serde_json::Value> {
+        let uuid = Self::parse_uuid(&figurine_id)?;
+        let entries = self.repo.get_waitlist_for_figurine(uuid).await?;
+        if entries.is_empty() {
+            return Ok(serde_json::json!({ "notified": 0 }));
+        }
+        let figurine_name = entries[0].figurine_name.clone();
+        let subject = format!("Фигурина «{}» снова доступна", figurine_name);
+        let body = format!(
+            "Хорошие новости — фигурина «{}», которую вы ждали, снова доступна.\n\nПосетите архив, чтобы узнать подробности.",
+            figurine_name
+        );
+        let mut notified = 0u64;
+        for entry in &entries {
+            if let Some(uid) = entry.user_id {
+                let _ = self.repo.insert_user_message(uid, true, &subject, &body).await;
+                notified += 1;
+            }
+        }
+        // Remove all entries for this figurine after notification
+        self.repo.mark_waitlist_notified(uuid).await?;
+        Ok(serde_json::json!({ "notified": notified, "total": entries.len() }))
     }
 
     pub async fn list_waitlist_admin(&self, figurine_id: Option<String>) -> Result<Vec<WaitlistEntryDto>> {
@@ -1263,6 +1355,7 @@ impl AppService {
             requester_phone: e.requester_phone,
             note: e.note,
             created_at: e.created_at.to_rfc3339(),
+            user_id: e.user_id.map(|id| id.to_string()),
         }).collect())
     }
 
@@ -1520,5 +1613,40 @@ impl AppService {
 
     pub async fn delete_account(&self, user_id: Uuid) -> Result<()> {
         self.repo.delete_user(user_id).await
+    }
+
+    // ── User messages ──────────────────────────────────────────
+
+    pub async fn get_user_messages(&self, user_id: Uuid) -> Result<Vec<UserMessageDto>> {
+        let msgs = self.repo.get_user_messages(user_id).await?;
+        Ok(msgs.iter().map(UserMessageDto::from).collect())
+    }
+
+    pub async fn mark_message_read(&self, message_id: Uuid, user_id: Uuid) -> Result<()> {
+        self.repo.mark_message_read(message_id, user_id).await
+    }
+
+    pub async fn count_unread_messages(&self, user_id: Uuid) -> Result<i64> {
+        self.repo.count_unread_messages(user_id).await
+    }
+
+    pub async fn admin_send_message(
+        &self,
+        user_id: Uuid,
+        subject: &str,
+        body: &str,
+    ) -> Result<UserMessageDto> {
+        let msg = self.repo.insert_user_message(user_id, true, subject, body).await?;
+        Ok(UserMessageDto::from(&msg))
+    }
+
+    pub async fn user_send_message(
+        &self,
+        user_id: Uuid,
+        subject: &str,
+        body: &str,
+    ) -> Result<UserMessageDto> {
+        let msg = self.repo.insert_user_message(user_id, false, subject, body).await?;
+        Ok(UserMessageDto::from(&msg))
     }
 }

@@ -144,6 +144,9 @@ pub fn router(service: AppService, config: Config) -> Router {
         .route("/admin/waitlist/:id",
             delete(handlers::admin_remove_from_waitlist)
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        .route("/admin/waitlist/:figurine_id/notify",
+            post(handlers::admin_notify_waitlist)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
         // === USER AUTH ===
         .route("/auth/register",          post(handlers::user_register))
         .route("/auth/login/challenge",   post(handlers::user_login_challenge))
@@ -155,6 +158,8 @@ pub fn router(service: AppService, config: Config) -> Router {
         .route("/profile/orders",         get(handlers::user_profile_orders))
         .route("/profile/me",             patch(handlers::user_update_profile).delete(handlers::user_delete_account))
         .route("/profile/avatar",         post(handlers::user_upload_avatar))
+        .route("/profile/messages",       get(handlers::user_get_messages).post(handlers::user_send_message))
+        .route("/profile/messages/:id/read", post(handlers::user_mark_message_read))
         // === ADMIN USER MANAGEMENT ===
         .route("/admin/users",
             get(handlers::admin_list_users)
@@ -173,6 +178,9 @@ pub fn router(service: AppService, config: Config) -> Router {
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
         .route("/admin/users/:id/reset-token",
             post(handlers::admin_generate_reset_token)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        .route("/admin/users/:id/messages",
+            post(handlers::admin_send_message_to_user)
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
         // === PASSWORD RESET (PUBLIC) ===
         .route("/auth/reset-token/:token",  get(handlers::validate_reset_token))

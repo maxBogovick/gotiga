@@ -7,7 +7,9 @@
   let loading    = $state(true);
   let error      = $state('');
   let figurineFilter = $state('');
-  let removingId = $state<string | null>(null);
+  let removingId  = $state<string | null>(null);
+  let notifyingId = $state<string | null>(null);  // figurine_id being notified
+  let notifyResult = $state<Record<string, { notified: number; total: number } | null>>({});
 
   async function load() {
     loading = true; error = '';
@@ -22,6 +24,17 @@
     try { await api.adminRemoveFromWaitlist(id); items = items.filter(i => i.id !== id); }
     catch { /* ignore */ }
     finally { removingId = null; }
+  }
+
+  async function notifyAll(figurineId: string) {
+    notifyingId = figurineId;
+    try {
+      const res = await api.adminNotifyWaitlist(figurineId);
+      notifyResult = { ...notifyResult, [figurineId]: res };
+      // Remove notified entries from local state
+      items = items.filter(i => i.figurineId !== figurineId);
+    } catch { /* ignore */ }
+    finally { notifyingId = null; }
   }
 
   onMount(load);
@@ -63,6 +76,7 @@
     {:else}
       <div class="space-y-6">
         {#each grouped as group}
+          {@const registered = group.entries.filter(e => e.userId).length}
           <div>
             <div class="flex items-center gap-2 mb-2">
               <a href="/figurines/{group.figurineId}" target="_blank" rel="noopener"
@@ -70,12 +84,33 @@
                 {group.figurineName} ↗
               </a>
               <span class="text-[10px] text-[#5f4636]/50 uppercase tracking-wide">{group.entries.length} чел.</span>
+              {#if registered > 0}
+                <span class="text-[10px] text-[#6a9e5a] uppercase tracking-wide">· {registered} с акк.</span>
+              {/if}
+              <button
+                onclick={() => notifyAll(group.figurineId)}
+                disabled={notifyingId === group.figurineId}
+                class="ml-auto text-[10px] px-2 py-1 border border-[#6a9e5a]/50 text-[#6a9e5a] hover:bg-[#6a9e5a]/8 transition-colors disabled:opacity-40"
+                title="Отправить сообщение всем зарегистрированным пользователям в листе ожидания"
+              >
+                {notifyingId === group.figurineId ? '…' : '✉ Уведомить всех'}
+              </button>
+              {#if notifyResult[group.figurineId]}
+                <span class="text-[10px] text-[#6a9e5a]">
+                  ✓ {notifyResult[group.figurineId]!.notified}/{notifyResult[group.figurineId]!.total}
+                </span>
+              {/if}
             </div>
             <div class="space-y-2">
               {#each group.entries as entry (entry.id)}
                 <div class="border border-[#34251c]/10 bg-white p-3 flex items-start gap-3">
                   <div class="flex-1 min-w-0">
-                    <p class="text-sm font-medium text-[#34251c]">{entry.requesterName}</p>
+                    <div class="flex items-center gap-1.5">
+                      <p class="text-sm font-medium text-[#34251c]">{entry.requesterName}</p>
+                      {#if entry.userId}
+                        <span class="text-[9px] bg-[#e8f4e8] text-[#2d6a3f] px-1.5 py-0.5 rounded" title="Зарегистрированный пользователь">акк</span>
+                      {/if}
+                    </div>
                     <p class="text-xs text-[#5f4636]">
                       <a href="mailto:{entry.requesterEmail}" class="text-[#c65f3c] hover:underline">{entry.requesterEmail}</a>
                       {#if entry.requesterPhone} · {entry.requesterPhone}{/if}
@@ -86,10 +121,6 @@
                     <p class="text-[10px] text-[#5f4636]/40 mt-1">{formatTs(entry.createdAt)}</p>
                   </div>
                   <div class="flex gap-1 flex-shrink-0">
-                    <a href="mailto:{entry.requesterEmail}?subject=Re: {encodeURIComponent(group.figurineName)}"
-                      class="text-[10px] px-2 py-1 border border-[#c65f3c]/30 text-[#c65f3c] hover:bg-[#c65f3c]/5 transition-colors">
-                      ✉ Написать
-                    </a>
                     <button
                       onclick={() => remove(entry.id)}
                       disabled={removingId === entry.id}

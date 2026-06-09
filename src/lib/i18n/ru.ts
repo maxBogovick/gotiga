@@ -607,6 +607,19 @@ export const ru: Record<TranslationKey, string> = {
   profileDeleteCancel:   'Отмена',
   profileDeleting:       'Удаление…',
 
+  profileMessages:          'Сообщения',
+  profileMessagesEmpty:     'Сообщений пока нет',
+  profileMessagesFrom:      'От мастера архива',
+  profileMessagesFromUser:  'От вас',
+  profileMessagesSubject:   'Тема',
+  profileMessagesMark:      'Отметить прочитанным',
+  profileMessageNew:        'новое',
+  profileMessageWriteSubject: 'Тема',
+  profileMessageWriteBody:    'Сообщение',
+  profileMessageWriteSend:    'Отправить',
+  profileMessageWriteSending: 'Отправка…',
+  profileMessageWriteSent:    'Отправлено',
+
   // === ADMIN USERS ===
   adminUsersTab:           'Пользователи',
   adminUsersSearch:        'Поиск по email или имени…',
@@ -642,6 +655,15 @@ export const ru: Record<TranslationKey, string> = {
   adminUsersResetCopied:   'Ссылка скопирована',
   adminUsersResetExpiry:   'Действительна 48 ч. Скопируйте и отправьте пользователю.',
   adminUsersResetConfirm:  'Создать новую ссылку? Предыдущая будет аннулирована.',
+
+  adminUsersMessagesTitle:   'Сообщения',
+  adminUsersMessagesSend:    'Отправить сообщение',
+  adminUsersMessagesSubject: 'Тема',
+  adminUsersMessagesBody:    'Текст сообщения',
+  adminUsersMessagesSending: 'Отправка…',
+  adminUsersMessagesSent:    'Отправлено ✓',
+  adminUsersMessagesEmpty:   'Сообщений пока нет',
+  adminUsersMessagesFromUser: 'От пользователя',
 
   // === SET PASSWORD PAGE ===
   setPasswordTitle:        'Новый код доступа',
