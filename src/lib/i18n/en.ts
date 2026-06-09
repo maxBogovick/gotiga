@@ -207,6 +207,13 @@ export const en = {
 
   // === TIMELINE (ShowingsTimeline) ===
   tlSchedule:           'Schedule',
+  tlMon:                'Mo',
+  tlTue:                'Tu',
+  tlWed:                'We',
+  tlThu:                'Th',
+  tlFri:                'Fr',
+  tlSat:                'Sa',
+  tlSun:                'Su',
   tlConfirmedBooking:   'Confirmed booking',
   tlPendingBooking:     'Booking request',
   tlLegendReserved:     'Reserved',
@@ -678,6 +685,7 @@ export const en = {
   adminUsersMessagesSent:    'Sent ✓',
   adminUsersMessagesEmpty:   'No messages yet',
   adminUsersMessagesFromUser: 'From user',
+  adminUsersMessagesError:   'Failed to send the message',
   adminTabMessages:          'Messages',
   adminMessagesEmpty:        'No conversations',
   adminMessagesSelectPrompt: 'Select a conversation',

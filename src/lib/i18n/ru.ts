@@ -189,6 +189,13 @@ export const ru: Record<TranslationKey, string> = {
 
   // === TIMELINE (ShowingsTimeline) ===
   tlSchedule:           'Расписание',
+  tlMon:                'Пн',
+  tlTue:                'Вт',
+  tlWed:                'Ср',
+  tlThu:                'Чт',
+  tlFri:                'Пт',
+  tlSat:                'Сб',
+  tlSun:                'Вс',
   tlConfirmedBooking:   'Подтверждённая бронь',
   tlPendingBooking:     'Запрос на бронирование',
   tlLegendReserved:     'Забронировано',
@@ -681,6 +688,7 @@ export const ru: Record<TranslationKey, string> = {
   adminUsersMessagesSent:    'Отправлено ✓',
   adminUsersMessagesEmpty:   'Сообщений пока нет',
   adminUsersMessagesFromUser: 'От пользователя',
+  adminUsersMessagesError:   'Не удалось отправить сообщение',
 
   adminTabMessages:          'Сообщения',
   adminMessagesEmpty:        'Нет переписок',

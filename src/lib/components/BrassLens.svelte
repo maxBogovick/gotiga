@@ -170,7 +170,7 @@
       class="absolute bottom-2 left-2 z-20 text-[10px] font-medium tracking-wide uppercase
              text-[rgba(255,249,240,0.75)] bg-[rgba(44,23,16,0.45)] backdrop-blur-sm
              px-2 py-1 rounded-full border border-[rgba(255,249,240,0.2)]"
-      onclick={resetZoom}
+      onclick={() => resetZoom()}
       aria-label="Reset zoom"
       transition:fade={{ duration: 150 }}
     >

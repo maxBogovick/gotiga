@@ -84,7 +84,8 @@
     );
 
     function sortFeaturedFigurines(items: FigurineListItem[]) {
-        const statusRank = { available: 0, reserved: 1, sold: 2 };
+        const statusRank: Record<import('$lib/types/api').FigurineStatus, number> =
+            { available: 0, reserved: 1, sold: 2, in_progress: 3 };
         return items.slice().sort((a, b) => {
             const byStatus = statusRank[a.status] - statusRank[b.status];
             const byYear = (b.year ?? -Infinity) - (a.year ?? -Infinity);

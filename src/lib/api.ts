@@ -60,9 +60,14 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
 // --- Web helpers ---
 function getWebSettings(): AppSettings {
     if (typeof localStorage === 'undefined') return { serverUrl: '', apiKey: '' };
+    // Admin token may live in sessionStorage when "remember me" is off — it must not
+    // outlive the tab. Fall back to it so API calls stay authorized either way.
+    const sessionKey = typeof sessionStorage !== 'undefined'
+        ? sessionStorage.getItem('gotiga_api_key')
+        : null;
     return {
         serverUrl: localStorage.getItem('gotiga_server_url') ?? '',
-        apiKey: localStorage.getItem('gotiga_api_key') ?? '',
+        apiKey: localStorage.getItem('gotiga_api_key') ?? sessionKey ?? '',
     };
 }
 

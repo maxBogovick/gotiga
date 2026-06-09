@@ -57,8 +57,11 @@
   let email       = $state('');
   let phone       = $state('');
   let purpose     = $state('');
-  let startsAt    = $state(today);
-  let endsAt      = $state(addDays(today, 1));
+  // Initialised from the raw current date; the $effect below snaps these forward once
+  // bookingRules load and advanceDays shifts the minimum allowed start date.
+  const initialToday = new Date().toISOString().split('T')[0];
+  let startsAt    = $state(initialToday);
+  let endsAt      = $state(addDays(initialToday, 1));
   let dateError   = $state('');
   let submitError = $state('');
   let isSubmitting  = $state(false);
@@ -66,6 +69,16 @@
   let cancelToken   = $state('');
   let copied        = $state(false);
   let savedDates    = $state({ startsAt: '', endsAt: '' });
+
+  // bookingRules load asynchronously after the initial dates are set. Once advanceDays
+  // pushes the minimum start date forward, the prefilled defaults can fall before it.
+  // Snap them forward — but never clobber a valid future selection the user already made.
+  $effect(() => {
+    if (startsAt && startsAt < today) {
+      startsAt = today;
+      if (!endsAt || endsAt < today) endsAt = addDays(today, 1);
+    }
+  });
 
   // ── Handlers ──────────────────────────────────────────────────────────────
   function close() {

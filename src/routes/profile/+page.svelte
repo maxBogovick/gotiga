@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { t } from '$lib/i18n';
   import { api } from '$lib/api';
@@ -23,6 +23,7 @@
   let msgFilter = $state<MsgFilter>('all');
   let openThread = $state<ThreadDetailDto | null>(null);
   let threadLoading = $state(false);
+  let messagesEl: HTMLElement;
 
   // Reply
   let replyBody = $state('');
@@ -178,6 +179,10 @@
     }
   }
 
+  function scrollToBottom() {
+    if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
   async function openThreadDetail(id: string) {
     threadLoading = true;
     openThread = null;
@@ -186,12 +191,13 @@
     try {
       const detail = await api.getThread(authStore.token!, id);
       openThread = detail;
-      // Decrement unread count
       const prev = threads.find(t => t.id === id);
       if (prev && prev.unread > 0) {
         unreadCount = Math.max(0, unreadCount - prev.unread);
         threads = threads.map(t => t.id === id ? { ...t, unread: 0 } : t);
       }
+      await tick();
+      scrollToBottom();
     } catch { /* silent */ } finally {
       threadLoading = false;
     }
@@ -208,13 +214,12 @@
     replySending = true;
     try {
       const msg = await api.replyToThread(authStore.token!, openThread.thread.id, replyBody.trim());
-      openThread = {
-        ...openThread,
-        messages: [...openThread.messages, msg],
-      };
+      openThread = { ...openThread, messages: [...openThread.messages, msg] };
       replyBody = '';
       replySent = true;
       setTimeout(() => { replySent = false; }, 2000);
+      await tick();
+      scrollToBottom();
     } catch { /* silent */ } finally {
       replySending = false;
     }
@@ -303,352 +308,339 @@
 
 <div class="page">
   <div class="frame">
+    <div class="body">
 
-    <!-- ── Account panel ── -->
-    <div class="account">
-      <div class="avatar-wrap">
-        <button
-          class="avatar-btn"
-          onclick={() => avatarInput?.click()}
-          title={$t('profileUploadPhoto')}
-          disabled={uploadingAvatar}
-        >
-          {#if resolveAvatarUrl(authStore.user?.avatarUrl)}
-            <img src={resolveAvatarUrl(authStore.user?.avatarUrl)} alt="" class="avatar-img" />
-          {:else}
-            <span class="avatar-initials">{(authStore.user?.displayName ?? '?')[0].toUpperCase()}</span>
-          {/if}
-          <span class="avatar-overlay">{uploadingAvatar ? $t('profileUploadingPhoto') : $t('profileUploadPhoto')}</span>
-        </button>
-        <input
-          bind:this={avatarInput}
-          type="file"
-          accept="image/jpeg,image/png,image/webp"
-          class="avatar-file-input"
-          onchange={handleAvatarChange}
-        />
-      </div>
+      <!-- ── Sidebar ── -->
+      <aside class="sidebar">
 
-      <div class="account-info">
-        {#if editingName}
-          <div class="name-edit">
-            <input
-              class="name-input"
-              bind:value={editNameValue}
-              onkeydown={(e) => { if (e.key === 'Enter') saveName(); if (e.key === 'Escape') cancelEditName(); }}
-              autofocus
-            />
-            <button class="name-save" onclick={saveName} disabled={savingName}>
-              {savingName ? '…' : $t('profileSaveName')}
-            </button>
-            <button class="name-cancel" onclick={cancelEditName}>✕</button>
-          </div>
-        {:else}
-          <div class="name-row">
-            <span class="display-name">{authStore.user?.displayName ?? ''}</span>
-            <button class="edit-btn" onclick={startEditName} title={$t('profileEditName')}>
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true">
-                <path d="M8.5 1.5L10.5 3.5L4 10H2V8L8.5 1.5Z"/>
-              </svg>
-            </button>
-            {#if nameSaved}
-              <span class="name-saved">{$t('profileNameSaved')}</span>
-            {/if}
-          </div>
-        {/if}
-        <p class="account-email">{authStore.user?.email ?? ''}</p>
-        {#if authStore.user?.createdAt}
-          <p class="account-since">{$t('profileMemberSince')} {formatDate(authStore.user.createdAt)}</p>
-        {/if}
-      </div>
-
-      <button class="logout" onclick={logout}>{$t('profileLogout')}</button>
-    </div>
-
-    <!-- ── Tabs ── -->
-    <div class="tabs">
-      <button class="tab" class:active={activeTab === 'bookings'} onclick={() => activeTab = 'bookings'}>
-        {$t('profileBookings')}
-        {#if bookings.length > 0}
-          <span class="badge">{bookings.length}</span>
-        {/if}
-      </button>
-      <button class="tab" class:active={activeTab === 'orders'} onclick={() => activeTab = 'orders'}>
-        {$t('profileOrders')}
-        {#if orders.length > 0}
-          <span class="badge">{orders.length}</span>
-        {/if}
-      </button>
-      <button class="tab" class:active={activeTab === 'wishlist'} onclick={() => activeTab = 'wishlist'}>
-        {$t('profileWishlist')}
-        {#if wishlistIds.length > 0}
-          <span class="badge">{wishlistIds.length}</span>
-        {/if}
-      </button>
-      <button class="tab" class:active={activeTab === 'messages'} onclick={() => { activeTab = 'messages'; closeThread(); }}>
-        {$t('profileMessages')}
-        {#if unreadCount > 0}
-          <span class="badge badge--unread">{unreadCount}</span>
-        {/if}
-      </button>
-    </div>
-
-    <!-- ── Tab content ── -->
-    <div class="content">
-      {#if loading}
-        <p class="empty">…</p>
-      {:else if error}
-        <p class="error-msg">{error}</p>
-      {:else if activeTab === 'bookings'}
-        {#if bookings.length === 0}
-          <p class="empty">{$t('profileEmpty')}</p>
-        {:else}
-          <ul class="list">
-            {#each bookings as b}
-              <li class="item">
-                <div class="item-main">
-                  <a href="/figurines/{b.figurineId}" class="item-name">{b.figurineName}</a>
-                  <span class="status status--{b.status}">{bookingStatusLabel(b.status)}</span>
-                </div>
-                <p class="item-meta">{formatDateRange(b.startsAt, b.endsAt)}</p>
-                <p class="item-date">{formatDate(b.createdAt)}</p>
-              </li>
-            {/each}
-          </ul>
-        {/if}
-      {:else if activeTab === 'orders'}
-        {#if orders.length === 0}
-          <p class="empty">{$t('profileEmpty')}</p>
-        {:else}
-          <ul class="list">
-            {#each orders as o}
-              <li class="item">
-                <div class="item-main">
-                  <a href="/figurines/{o.figurineId}" class="item-name">{o.figurineName}</a>
-                  <div class="order-badges">
-                    <span class="mode">{orderModeLabel(o.mode)}</span>
-                    <span class="order-status order-status--{o.status}">{orderStatusLabel(o.status)}</span>
-                  </div>
-                </div>
-                <p class="item-date">{formatDate(o.createdAt)}</p>
-              </li>
-            {/each}
-          </ul>
-        {/if}
-      {:else if activeTab === 'wishlist'}
-        {#if wishlistIds.length === 0}
-          <p class="empty">{$t('profileEmpty')}</p>
-        {:else}
-          <ul class="list">
-            {#each wishlistIds as id}
-              {@const item = wishlistItems.get(id)}
-              <li class="item">
-                <div class="item-main">
-                  {#if item}
-                    <a href="/figurines/{id}" class="item-name">{item.name}</a>
-                    <span class="wishlist-status wishlist-status--{item.status}">{wishlistStatusLabel(item.status)}</span>
-                  {:else if item === undefined}
-                    <span class="item-name item-name--loading">…</span>
-                  {:else}
-                    <a href="/figurines/{id}" class="item-name item-name--missing">{id}</a>
-                  {/if}
-                </div>
-              </li>
-            {/each}
-          </ul>
-        {/if}
-
-      {:else if activeTab === 'messages'}
-        {#if openThread}
-          <!-- ── Thread detail ── -->
-          <div class="thread-detail">
-            <div class="thread-detail-header">
-              <button class="thread-back" onclick={closeThread}>{$t('profileMessagesBack')}</button>
-              <span class="thread-detail-subject">{openThread.thread.subject}</span>
-              {#if openThread.thread.status === 'resolved'}
-                <span class="thread-resolved-badge">{$t('profileMessagesResolved')}</span>
-              {/if}
-            </div>
-
-            <div class="thread-messages">
-              {#if threadLoading}
-                <p class="empty">…</p>
+        <!-- Profile (hero) -->
+        <div class="sidebar-profile">
+          <div class="hero-avatar-zone">
+            <button
+              class="hero-avatar-btn"
+              onclick={() => avatarInput?.click()}
+              title={$t('profileUploadPhoto')}
+              disabled={uploadingAvatar}
+            >
+              {#if resolveAvatarUrl(authStore.user?.avatarUrl)}
+                <img src={resolveAvatarUrl(authStore.user?.avatarUrl)} alt="" class="hero-avatar-img" />
               {:else}
-                {#each openThread.messages as msg}
-                  <div class="thread-msg" class:thread-msg--admin={msg.fromAdmin} class:thread-msg--user={!msg.fromAdmin}>
-                    <p class="thread-msg-from">
-                      {msg.fromAdmin ? $t('profileMessagesFromAdmin') : $t('profileMessagesFromYou')}
-                    </p>
-                    <p class="thread-msg-body">{msg.body}</p>
-                    <p class="thread-msg-date">{formatDate(msg.createdAt)}</p>
-                  </div>
-                {/each}
+                <span class="hero-avatar-initials">{(authStore.user?.displayName ?? '?')[0].toUpperCase()}</span>
               {/if}
-            </div>
+              <span class="hero-avatar-overlay">{uploadingAvatar ? $t('profileUploadingPhoto') : $t('profileUploadPhoto')}</span>
+            </button>
+            <input
+              bind:this={avatarInput}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              class="sr-only"
+              onchange={handleAvatarChange}
+            />
+          </div>
 
-            {#if openThread.thread.status !== 'resolved'}
-              <div class="thread-reply">
-                <textarea
-                  class="thread-reply-input"
-                  bind:value={replyBody}
-                  rows="3"
-                  placeholder={$t('profileMessageWriteBody')}
-                ></textarea>
-                <button
-                  class="thread-reply-btn"
-                  onclick={sendReply}
-                  disabled={replySending || !replyBody.trim()}
-                >
-                  {replySending ? $t('profileMessagesReplying') : replySent ? $t('profileMessageWriteSent') : $t('profileMessagesReply')}
+          <div class="hero-identity">
+            {#if editingName}
+              <div class="hero-name-edit">
+                <input
+                  class="hero-name-input"
+                  bind:value={editNameValue}
+                  onkeydown={(e) => { if (e.key === 'Enter') saveName(); if (e.key === 'Escape') cancelEditName(); }}
+                  autofocus
+                />
+                <button class="hero-name-save" onclick={saveName} disabled={savingName}>
+                  {savingName ? '…' : $t('profileSaveName')}
+                </button>
+                <button class="hero-name-cancel" onclick={cancelEditName}>✕</button>
+              </div>
+            {:else}
+              <div class="hero-name-row">
+                <h1 class="hero-name">{authStore.user?.displayName ?? ''}</h1>
+                <button class="hero-edit-btn" onclick={startEditName} title={$t('profileEditName')}>
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true">
+                    <path d="M8.5 1.5L10.5 3.5L4 10H2V8L8.5 1.5Z"/>
+                  </svg>
                 </button>
               </div>
+              {#if nameSaved}<span class="hero-name-saved">{$t('profileNameSaved')}</span>{/if}
+            {/if}
+            <p class="hero-email">{authStore.user?.email ?? ''}</p>
+            {#if authStore.user?.createdAt}
+              <p class="hero-since">{$t('profileMemberSince')} {formatDate(authStore.user.createdAt)}</p>
             {/if}
           </div>
+        </div>
+        <nav class="sidebar-nav">
+          <button class="nav-item" class:active={activeTab === 'bookings'} onclick={() => activeTab = 'bookings'}>
+            <span>{$t('profileBookings')}</span>
+            {#if bookings.length > 0}<span class="nav-badge">{bookings.length}</span>{/if}
+          </button>
+          <button class="nav-item" class:active={activeTab === 'orders'} onclick={() => activeTab = 'orders'}>
+            <span>{$t('profileOrders')}</span>
+            {#if orders.length > 0}<span class="nav-badge">{orders.length}</span>{/if}
+          </button>
+          <button class="nav-item" class:active={activeTab === 'wishlist'} onclick={() => activeTab = 'wishlist'}>
+            <span>{$t('profileWishlist')}</span>
+            {#if wishlistIds.length > 0}<span class="nav-badge">{wishlistIds.length}</span>{/if}
+          </button>
+          <button class="nav-item" class:active={activeTab === 'messages'} onclick={() => { activeTab = 'messages'; closeThread(); }}>
+            <span>{$t('profileMessages')}</span>
+            {#if unreadCount > 0}<span class="nav-badge nav-badge--unread">{unreadCount}</span>{/if}
+          </button>
+        </nav>
 
-        {:else}
-          <!-- ── Thread list ── -->
-          <div class="threads-header">
-            <div class="thread-filters">
-              {#each (['all', 'booking', 'order', 'waitlist', 'general'] as MsgFilter[]) as f}
-                <button
-                  class="thread-filter-btn"
-                  class:active={msgFilter === f}
-                  onclick={() => msgFilter = f}
-                >
-                  {#if f === 'all'}{$t('profileMessagesAll')}
-                  {:else if f === 'booking'}{$t('profileMessagesBooking')}
-                  {:else if f === 'order'}{$t('profileMessagesOrder')}
-                  {:else if f === 'waitlist'}{$t('profileMessagesWaitlist')}
-                  {:else}{$t('profileMessagesGeneral')}
-                  {/if}
+        <div class="sidebar-footer">
+          <button class="sidebar-logout" onclick={logout}>{$t('profileLogout')}</button>
+          {#if !showDeleteConfirm}
+            <button class="sidebar-delete-btn" onclick={() => showDeleteConfirm = true}>{$t('profileDeleteAccount')}</button>
+          {:else}
+            <div class="sidebar-delete-confirm">
+              <p class="sidebar-delete-warning">{$t('profileDeleteWarning')}</p>
+              <div class="sidebar-delete-actions">
+                <button class="sidebar-delete-yes" onclick={deleteAccount} disabled={deleting}>
+                  {deleting ? $t('profileDeleting') : $t('profileDeleteConfirm')}
                 </button>
-              {/each}
-            </div>
-            <button class="compose-toggle-btn" onclick={() => showCompose = !showCompose}>
-              {$t('profileMessagesCompose')}
-            </button>
-          </div>
-
-          {#if showCompose}
-            <div class="msg-compose">
-              <input
-                class="msg-subject"
-                bind:value={composeSubject}
-                placeholder={$t('profileMessageWriteSubject')}
-              />
-              <textarea
-                class="msg-body"
-                bind:value={composeBody}
-                rows="3"
-                placeholder={$t('profileMessageWriteBody')}
-              ></textarea>
-              <button
-                class="msg-send-btn"
-                onclick={sendCompose}
-                disabled={composeSending || !composeSubject.trim() || !composeBody.trim()}
-              >
-                {composeSending ? $t('profileMessagesSending') : composeSent ? $t('profileMessagesSent') : $t('profileMessagesSend')}
-              </button>
+                <button class="sidebar-delete-cancel" onclick={() => showDeleteConfirm = false}>
+                  {$t('profileDeleteCancel')}
+                </button>
+              </div>
             </div>
           {/if}
+        </div>
+      </aside>
 
-          {#if filteredThreads.length === 0}
-            <p class="empty">{$t('profileMessagesEmpty')}</p>
+      <!-- Content -->
+      <div class="content">
+        {#if loading}
+          <p class="empty">…</p>
+        {:else if error}
+          <p class="error-msg">{error}</p>
+        {:else if activeTab === 'bookings'}
+          {#if bookings.length === 0}
+            <p class="empty">{$t('profileEmpty')}</p>
           {:else}
-            <ul class="list">
-              {#each filteredThreads as thread}
-                <li class="item msg-item" class:msg-unread={thread.unread > 0} onclick={() => openThreadDetail(thread.id)}>
-                  <div class="item-main">
-                    <span class="thread-subject">{thread.subject}</span>
-                    <div class="thread-meta-right">
-                      {#if thread.unread > 0}
-                        <span class="msg-new-badge">{thread.unread}</span>
-                      {/if}
-                      {#if thread.status === 'resolved'}
-                        <span class="thread-resolved-small">{$t('profileMessagesResolved')}</span>
-                      {/if}
+            <div class="cards-grid">
+              {#each bookings as b}
+                <a href="/figurines/{b.figurineId}" class="card">
+                  <div class="card-head">
+                    <span class="card-name">{b.figurineName}</span>
+                    <span class="status status--{b.status}">{bookingStatusLabel(b.status)}</span>
+                  </div>
+                  <p class="card-range">{formatDateRange(b.startsAt, b.endsAt)}</p>
+                  <p class="card-date">{formatDate(b.createdAt)}</p>
+                </a>
+              {/each}
+            </div>
+          {/if}
+        {:else if activeTab === 'orders'}
+          {#if orders.length === 0}
+            <p class="empty">{$t('profileEmpty')}</p>
+          {:else}
+            <div class="cards-grid">
+              {#each orders as o}
+                <a href="/figurines/{o.figurineId}" class="card">
+                  <div class="card-head">
+                    <span class="card-name">{o.figurineName}</span>
+                    <div class="order-badges">
+                      <span class="mode">{orderModeLabel(o.mode)}</span>
+                      <span class="order-status order-status--{o.status}">{orderStatusLabel(o.status)}</span>
                     </div>
                   </div>
-                  {#if thread.preview}
-                    <p class="msg-body-preview">{thread.preview}</p>
-                  {/if}
-                  <p class="item-date">{formatDate(thread.lastMessageAt)}</p>
-                </li>
+                  <p class="card-date">{formatDate(o.createdAt)}</p>
+                </a>
               {/each}
-            </ul>
+            </div>
           {/if}
-        {/if}
-      {/if}
-    </div>
+        {:else if activeTab === 'wishlist'}
+          {#if wishlistIds.length === 0}
+            <p class="empty">{$t('profileEmpty')}</p>
+          {:else}
+            <div class="cards-grid">
+              {#each wishlistIds as id}
+                {@const item = wishlistItems.get(id)}
+                <div class="card">
+                  <div class="card-head">
+                    {#if item}
+                      <a href="/figurines/{id}" class="card-name card-name--link">{item.name}</a>
+                      <span class="wishlist-status wishlist-status--{item.status}">{wishlistStatusLabel(item.status)}</span>
+                    {:else if item === undefined}
+                      <span class="card-name card-name--loading">…</span>
+                    {:else}
+                      <a href="/figurines/{id}" class="card-name card-name--missing">{id}</a>
+                    {/if}
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        {:else if activeTab === 'messages'}
+          <div class="messages-wrap">
+            {#if openThread}
+              <!-- ── Thread detail ── -->
+              <div class="thread-detail">
+                <div class="thread-detail-header">
+                  <button class="thread-back" onclick={closeThread}>← {$t('profileMessagesBack')}</button>
+                  <span class="thread-detail-subject">{openThread.thread.subject}</span>
+                  {#if openThread.thread.status === 'resolved'}
+                    <span class="thread-resolved-badge">{$t('profileMessagesResolved')}</span>
+                  {/if}
+                </div>
 
-    <!-- ── Delete account ── -->
-    <div class="danger-zone">
-      {#if !showDeleteConfirm}
-        <button class="delete-btn" onclick={() => showDeleteConfirm = true}>
-          {$t('profileDeleteAccount')}
-        </button>
-      {:else}
-        <div class="delete-confirm">
-          <p class="delete-warning">{$t('profileDeleteWarning')}</p>
-          <div class="delete-actions">
-            <button class="delete-confirm-btn" onclick={deleteAccount} disabled={deleting}>
-              {deleting ? $t('profileDeleting') : $t('profileDeleteConfirm')}
-            </button>
-            <button class="delete-cancel-btn" onclick={() => showDeleteConfirm = false}>
-              {$t('profileDeleteCancel')}
-            </button>
+                <div class="chat-messages" bind:this={messagesEl}>
+                  {#if threadLoading}
+                    <p class="empty">…</p>
+                  {:else}
+                    {#each openThread.messages as msg}
+                      <div class="chat-row" class:chat-row--user={!msg.fromAdmin} class:chat-row--admin={msg.fromAdmin}>
+                        <div class="chat-bubble" class:chat-bubble--user={!msg.fromAdmin} class:chat-bubble--admin={msg.fromAdmin}>
+                          <p class="chat-sender">{msg.fromAdmin ? $t('profileMessagesFromAdmin') : $t('profileMessagesFromYou')}</p>
+                          <p class="chat-body">{msg.body}</p>
+                        </div>
+                        <p class="chat-time">{formatDate(msg.createdAt)}</p>
+                      </div>
+                    {/each}
+                  {/if}
+                </div>
+
+                {#if openThread.thread.status !== 'resolved'}
+                  <div class="chat-reply">
+                    <textarea
+                      class="chat-reply-input"
+                      bind:value={replyBody}
+                      rows="2"
+                      placeholder={$t('profileMessageWriteBody')}
+                      onkeydown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) sendReply(); }}
+                    ></textarea>
+                    <div class="chat-reply-footer">
+                      <span class="chat-reply-hint">Ctrl+Enter</span>
+                      <button
+                        class="chat-reply-btn"
+                        onclick={sendReply}
+                        disabled={replySending || !replyBody.trim()}
+                      >
+                        {replySending ? $t('profileMessagesReplying') : replySent ? $t('profileMessageWriteSent') : $t('profileMessagesReply')} →
+                      </button>
+                    </div>
+                  </div>
+                {:else}
+                  <p class="chat-resolved-note">{$t('profileMessagesResolved')}</p>
+                {/if}
+              </div>
+
+            {:else}
+              <!-- ── Thread list ── -->
+              <div class="threads-header">
+                <div class="thread-filters">
+                  {#each (['all', 'booking', 'order', 'waitlist', 'general'] as MsgFilter[]) as f}
+                    <button
+                      class="thread-filter-btn"
+                      class:active={msgFilter === f}
+                      onclick={() => msgFilter = f}
+                    >
+                      {#if f === 'all'}{$t('profileMessagesAll')}
+                      {:else if f === 'booking'}{$t('profileMessagesBooking')}
+                      {:else if f === 'order'}{$t('profileMessagesOrder')}
+                      {:else if f === 'waitlist'}{$t('profileMessagesWaitlist')}
+                      {:else}{$t('profileMessagesGeneral')}
+                      {/if}
+                    </button>
+                  {/each}
+                </div>
+                <button class="compose-toggle-btn" onclick={() => showCompose = !showCompose}>
+                  {$t('profileMessagesCompose')}
+                </button>
+              </div>
+
+              {#if showCompose}
+                <div class="msg-compose">
+                  <input
+                    class="msg-subject"
+                    bind:value={composeSubject}
+                    placeholder={$t('profileMessageWriteSubject')}
+                  />
+                  <textarea
+                    class="msg-body"
+                    bind:value={composeBody}
+                    rows="3"
+                    placeholder={$t('profileMessageWriteBody')}
+                  ></textarea>
+                  <button
+                    class="msg-send-btn"
+                    onclick={sendCompose}
+                    disabled={composeSending || !composeSubject.trim() || !composeBody.trim()}
+                  >
+                    {composeSending ? $t('profileMessagesSending') : composeSent ? $t('profileMessagesSent') : $t('profileMessagesSend')}
+                  </button>
+                </div>
+              {/if}
+
+              {#if filteredThreads.length === 0}
+                <p class="empty">{$t('profileMessagesEmpty')}</p>
+              {:else}
+                <ul class="list">
+                  {#each filteredThreads as thread}
+                    <li class="item msg-item" class:msg-unread={thread.unread > 0} onclick={() => openThreadDetail(thread.id)}>
+                      <div class="item-main">
+                        <span class="thread-subject">{thread.subject}</span>
+                        <div class="thread-meta-right">
+                          {#if thread.unread > 0}
+                            <span class="msg-new-badge">{thread.unread}</span>
+                          {/if}
+                          {#if thread.status === 'resolved'}
+                            <span class="thread-resolved-small">{$t('profileMessagesResolved')}</span>
+                          {/if}
+                        </div>
+                      </div>
+                      {#if thread.preview}
+                        <p class="msg-body-preview">{thread.preview}</p>
+                      {/if}
+                      <p class="item-date">{formatDate(thread.lastMessageAt)}</p>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
+            {/if}
           </div>
-        </div>
-      {/if}
-    </div>
+        {/if}
+      </div>
 
+    </div>
   </div>
 </div>
 
 <style>
+  /* ── Page shell ── */
+
   .page {
     min-height: 100vh;
     background: #f8f1e7;
-    display: flex;
-    align-items: flex-start;
-    justify-content: center;
-    padding: 4rem 1rem 3rem;
-  }
-
-  .frame {
-    width: 100%;
-    max-width: 580px;
-    background: #fdf8f2;
-    border: 1px solid #d8c6b1;
-    outline: 3px solid #f8f1e7;
-    outline-offset: -6px;
-    padding: 2rem;
     font-family: Georgia, serif;
     color: #34251c;
   }
 
-  /* ── Account panel ── */
+  .frame { display: contents; }
 
-  .account {
+  /* ── Body layout ── */
+
+  /* ── Sidebar profile (hero) ── */
+
+  .sidebar-profile {
+    background: #2a1a10;
+    padding: 1.75rem 1.25rem 1.5rem;
     display: flex;
-    align-items: flex-start;
-    gap: 1.1rem;
-    margin-bottom: 1.75rem;
-    padding-bottom: 1.5rem;
-    border-bottom: 1px solid #d8c6b1;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.6rem;
+    text-align: center;
   }
 
-  .avatar-wrap {
-    flex-shrink: 0;
-    position: relative;
-  }
+  .hero-avatar-zone { position: relative; }
 
-  .avatar-btn {
-    width: 56px;
-    height: 56px;
+  .hero-avatar-btn {
+    width: 70px;
+    height: 70px;
     border-radius: 50%;
-    border: 1.5px solid #d8c6b1;
-    background: #efe6d6;
+    border: 2px solid rgba(248,241,231,0.2);
+    background: rgba(248,241,231,0.06);
     cursor: pointer;
     overflow: hidden;
     position: relative;
@@ -658,31 +650,27 @@
     justify-content: center;
     transition: border-color 0.2s;
   }
-  .avatar-btn:hover { border-color: #c65f3c; }
-  .avatar-btn:disabled { cursor: default; opacity: 0.7; }
+  .hero-avatar-btn:hover { border-color: rgba(198,95,60,0.6); }
+  .hero-avatar-btn:disabled { cursor: default; opacity: 0.7; }
 
-  .avatar-img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
+  .hero-avatar-img { width: 100%; height: 100%; object-fit: cover; }
 
-  .avatar-initials {
+  .hero-avatar-initials {
     font-family: 'Fraunces', Georgia, serif;
-    font-size: 1.3rem;
-    color: #9a7c5c;
+    font-size: 1.6rem;
+    color: rgba(248,241,231,0.55);
     line-height: 1;
     pointer-events: none;
   }
 
-  .avatar-overlay {
+  .hero-avatar-overlay {
     position: absolute;
     inset: 0;
-    background: rgba(52, 37, 28, 0.55);
+    background: rgba(42,26,16,0.72);
     color: #f8f1e7;
     font-family: Inter, sans-serif;
-    font-size: 0.58rem;
-    letter-spacing: 0.05em;
+    font-size: 0.55rem;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
     display: flex;
     align-items: center;
@@ -693,10 +681,10 @@
     transition: opacity 0.18s;
     pointer-events: none;
   }
-  .avatar-btn:hover .avatar-overlay { opacity: 1; }
-  .avatar-btn:disabled .avatar-overlay { opacity: 1; }
+  .hero-avatar-btn:hover .hero-avatar-overlay { opacity: 1; }
+  .hero-avatar-btn:disabled .hero-avatar-overlay { opacity: 1; }
 
-  .avatar-file-input {
+  .sr-only {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -704,29 +692,29 @@
     pointer-events: none;
   }
 
-  .account-info {
-    flex: 1;
-    min-width: 0;
-  }
+  .hero-identity { text-align: center; }
 
-  .name-row {
+  .hero-name-row {
     display: flex;
     align-items: center;
-    gap: 0.45rem;
-    margin-bottom: 0.2rem;
+    justify-content: center;
+    gap: 0.4rem;
+    margin-bottom: 0.25rem;
   }
 
-  .display-name {
+  .hero-name {
     font-family: 'Fraunces', Georgia, serif;
-    font-size: 1.1rem;
-    color: #34251c;
-    line-height: 1.3;
+    font-size: 1.35rem;
+    font-weight: 400;
+    color: #f8f1e7;
+    margin: 0;
+    line-height: 1.2;
   }
 
-  .edit-btn {
+  .hero-edit-btn {
     background: transparent;
     border: none;
-    color: #b5a090;
+    color: rgba(248,241,231,0.3);
     cursor: pointer;
     padding: 2px;
     display: flex;
@@ -734,56 +722,60 @@
     transition: color 0.15s;
     flex-shrink: 0;
   }
-  .edit-btn:hover { color: #c65f3c; }
+  .hero-edit-btn:hover { color: #c65f3c; }
 
-  .name-saved {
+  .hero-name-saved {
+    display: block;
     font-family: Inter, sans-serif;
-    font-size: 0.7rem;
+    font-size: 0.62rem;
     color: #6a9e5a;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.07em;
     text-transform: uppercase;
-  }
-
-  .name-edit {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
+    text-align: center;
     margin-bottom: 0.2rem;
   }
 
-  .name-input {
-    font-family: Georgia, serif;
-    font-size: 1rem;
-    background: transparent;
-    border: none;
-    border-bottom: 1.5px solid #c65f3c;
-    color: #34251c;
-    padding: 2px 0;
-    outline: none;
-    min-width: 0;
-    flex: 1;
+  .hero-name-edit {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    margin-bottom: 0.25rem;
   }
 
-  .name-save {
+  .hero-name-input {
+    font-family: 'Fraunces', Georgia, serif;
+    font-size: 1.1rem;
     background: transparent;
-    border: 1px solid #c65f3c;
-    color: #c65f3c;
+    border: none;
+    border-bottom: 1.5px solid rgba(198,95,60,0.65);
+    color: #f8f1e7;
+    padding: 2px 0;
+    outline: none;
+    text-align: center;
+    width: 180px;
+  }
+
+  .hero-name-save {
+    background: transparent;
+    border: 1px solid rgba(198,95,60,0.55);
+    color: rgba(198,95,60,0.9);
     font-family: Inter, sans-serif;
-    font-size: 0.7rem;
+    font-size: 0.67rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     padding: 2px 8px;
     cursor: pointer;
-    transition: background 0.15s;
     flex-shrink: 0;
+    transition: background 0.15s;
   }
-  .name-save:hover:not(:disabled) { background: rgba(198,95,60,0.08); }
-  .name-save:disabled { opacity: 0.5; }
+  .hero-name-save:hover:not(:disabled) { background: rgba(198,95,60,0.12); }
+  .hero-name-save:disabled { opacity: 0.5; }
 
-  .name-cancel {
+  .hero-name-cancel {
     background: transparent;
     border: none;
-    color: #b5a090;
+    color: rgba(248,241,231,0.35);
     cursor: pointer;
     font-size: 0.85rem;
     padding: 2px 4px;
@@ -791,88 +783,212 @@
     flex-shrink: 0;
     transition: color 0.15s;
   }
-  .name-cancel:hover { color: #34251c; }
+  .hero-name-cancel:hover { color: #f8f1e7; }
 
-  .account-email {
+  .hero-email {
     font-family: Inter, sans-serif;
-    font-size: 0.8rem;
-    color: #9a7c5c;
-    margin: 0 0 0.15rem;
+    font-size: 0.79rem;
+    color: rgba(200,168,130,0.75);
+    margin: 0 0 0.12rem;
   }
 
-  .account-since {
+  .hero-since {
     font-family: Inter, sans-serif;
-    font-size: 0.72rem;
-    color: #b5a090;
+    font-size: 0.67rem;
+    color: rgba(200,168,130,0.45);
     margin: 0;
     letter-spacing: 0.02em;
   }
 
-  .logout {
+  /* ── Body layout ── */
+
+  .body {
+    display: flex;
+    align-items: flex-start;
+    min-height: calc(100vh - 68px);
+  }
+
+  /* ── Sidebar ── */
+
+  .sidebar {
+    position: fixed;
+    left: 0;
+    top: 68px;
+    height: calc(100vh - 68px);
+    width: 220px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    border-right: 1px solid rgba(52,37,28,0.12);
+    z-index: 5;
+  }
+
+  @media (max-width: 680px) {
+    .sidebar {
+      position: static;
+      width: 100%;
+      height: auto;
+      z-index: auto;
+    }
+    .body {
+      flex-direction: column;
+      height: auto;
+      min-height: calc(100vh - 58px);
+    }
+    .content {
+      margin-left: 0;
+    }
+  }
+
+  .sidebar-nav {
+    flex: 1;
+    padding: 0.85rem 0;
+    display: flex;
+    flex-direction: column;
+    background: #f0e6d6;
+  }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 0.6rem 1.25rem;
+    background: transparent;
+    border: none;
+    border-left: 2px solid transparent;
+    text-align: left;
+    font-family: Inter, sans-serif;
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #9a7c5c;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .nav-item:hover { background: rgba(52,37,28,0.05); color: #34251c; }
+  .nav-item.active { color: #c65f3c; background: rgba(198,95,60,0.07); border-left-color: #c65f3c; }
+
+  .nav-badge {
+    background: #d8c6b1;
+    color: #6f3b24;
+    font-family: Inter, sans-serif;
+    font-size: 0.6rem;
+    border-radius: 10px;
+    padding: 1px 6px;
+    min-width: 18px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+  .nav-badge--unread { background: #c65f3c; color: #fff; }
+
+  .sidebar-footer {
+    padding: 1rem 1.25rem;
+    border-top: 1px solid rgba(52,37,28,0.1);
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    background: #f0e6d6;
+  }
+
+  .sidebar-logout {
+    background: transparent;
+    border: none;
+    color: #9a7c5c;
+    font-family: Inter, sans-serif;
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    cursor: pointer;
+    padding: 0.25rem 0;
+    text-align: left;
+    transition: color 0.15s;
+  }
+  .sidebar-logout:hover { color: #34251c; }
+
+  .sidebar-delete-btn {
+    background: transparent;
+    border: none;
+    color: #c8b89a;
+    font-family: Inter, sans-serif;
+    font-size: 0.68rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    cursor: pointer;
+    padding: 0;
+    text-align: left;
+    transition: color 0.15s;
+  }
+  .sidebar-delete-btn:hover { color: #c65f3c; }
+
+  .sidebar-delete-confirm {
+    padding: 0.65rem 0.75rem;
+    background: #fdf3f3;
+    border: 1px solid #f0d0c8;
+  }
+
+  .sidebar-delete-warning {
+    font-family: Inter, sans-serif;
+    font-size: 0.72rem;
+    color: #7a3020;
+    margin: 0 0 0.6rem;
+    line-height: 1.45;
+  }
+
+  .sidebar-delete-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .sidebar-delete-yes {
+    background: #9b2020;
+    border: none;
+    color: #fff;
+    font-family: Inter, sans-serif;
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 0.35rem 0.75rem;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .sidebar-delete-yes:hover:not(:disabled) { background: #7a1818; }
+  .sidebar-delete-yes:disabled { opacity: 0.6; cursor: not-allowed; }
+
+  .sidebar-delete-cancel {
     background: transparent;
     border: 1px solid #d8c6b1;
     color: #9a7c5c;
-    padding: 0.35rem 0.75rem;
-    font-size: 0.73rem;
     font-family: Inter, sans-serif;
-    cursor: pointer;
+    font-size: 0.68rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    transition: all 0.2s;
-    white-space: nowrap;
-    flex-shrink: 0;
-  }
-  .logout:hover { border-color: #c65f3c; color: #c65f3c; }
-
-  /* ── Tabs ── */
-
-  .tabs {
-    display: flex;
-    gap: 0;
-    border-bottom: 1px solid #d8c6b1;
-    margin-bottom: 1.5rem;
-  }
-
-  .tab {
-    background: transparent;
-    border: none;
-    border-bottom: 2px solid transparent;
-    padding: 0.6rem 1rem;
-    font-family: Inter, sans-serif;
-    font-size: 0.78rem;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: #9a7c5c;
+    padding: 0.3rem 0.75rem;
     cursor: pointer;
-    transition: all 0.2s;
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    margin-bottom: -1px;
-  }
-  .tab:hover { color: #6f3b24; }
-  .tab.active { color: #34251c; border-bottom-color: #c65f3c; }
-
-  .badge {
-    background: #d8c6b1;
-    color: #6f3b24;
-    font-size: 0.62rem;
-    border-radius: 10px;
-    padding: 0 5px;
-    min-width: 16px;
+    transition: all 0.15s;
     text-align: center;
   }
+  .sidebar-delete-cancel:hover { border-color: #9a7c5c; color: #34251c; }
 
   /* ── Content ── */
 
-  .content { min-height: 180px; }
+  .content {
+    flex: 1;
+    margin-left: 220px;
+    background: #f8f1e7;
+    padding: 2rem 2.5rem;
+    min-height: 400px;
+  }
 
   .empty {
     color: #9a7c5c;
     font-style: italic;
     font-size: 0.9rem;
-    padding: 2rem 0;
+    padding: 2.5rem 0;
     text-align: center;
+    font-family: Georgia, serif;
   }
 
   .error-msg {
@@ -882,44 +998,72 @@
     padding: 1rem 0;
   }
 
-  .list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    display: flex;
-    flex-direction: column;
+  /* ── Cards grid ── */
+
+  .cards-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 0.85rem;
+    max-width: 1100px;
   }
 
-  .item {
-    padding: 0.85rem 0;
-    border-bottom: 1px solid #eee3d6;
+  .card {
+    display: block;
+    background: #fff;
+    border: 1px solid #e4d8c8;
+    padding: 1rem 1.1rem;
+    text-decoration: none;
+    color: #34251c;
+    transition: border-color 0.18s, box-shadow 0.18s, transform 0.15s;
   }
-  .item:last-child { border-bottom: none; }
+  .card:hover {
+    border-color: #c65f3c;
+    box-shadow: 0 2px 10px rgba(198,95,60,0.1);
+    transform: translateY(-1px);
+  }
 
-  .item-main {
+  .card-head {
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    gap: 0.5rem;
-    margin-bottom: 0.2rem;
+    gap: 0.4rem;
+    margin-bottom: 0.4rem;
   }
 
-  .item-name {
+  .card-name {
     font-family: Georgia, serif;
-    font-size: 0.95rem;
+    font-size: 0.93rem;
     color: #34251c;
+    line-height: 1.35;
+    flex: 1;
+    min-width: 0;
     text-decoration: none;
   }
-  .item-name:hover { color: #c65f3c; }
-  .item-name--loading { color: #b5a090; font-style: italic; }
-  .item-name--missing { color: #b5a090; font-size: 0.78rem; font-family: 'Courier New', monospace; }
+  .card-name--link:hover { color: #c65f3c; }
+  .card-name--loading { color: #b5a090; font-style: italic; }
+  .card-name--missing { color: #b5a090; font-size: 0.78rem; font-family: 'Courier New', monospace; }
+
+  .card-range {
+    font-size: 0.77rem;
+    color: #9a7c5c;
+    margin: 0 0 0.2rem;
+    font-family: Inter, sans-serif;
+    font-style: italic;
+  }
+
+  .card-date {
+    font-size: 0.68rem;
+    color: #b5a090;
+    margin: 0;
+    font-family: Inter, sans-serif;
+  }
 
   .status {
-    font-size: 0.68rem;
+    font-size: 0.62rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     font-family: Inter, sans-serif;
-    padding: 2px 7px;
+    padding: 2px 6px;
     border-radius: 2px;
     flex-shrink: 0;
     white-space: nowrap;
@@ -932,12 +1076,12 @@
   .order-badges {
     display: flex;
     align-items: center;
-    gap: 0.35rem;
+    gap: 0.3rem;
     flex-shrink: 0;
   }
 
   .mode {
-    font-size: 0.68rem;
+    font-size: 0.62rem;
     color: #9a7c5c;
     font-family: Inter, sans-serif;
     letter-spacing: 0.06em;
@@ -945,11 +1089,11 @@
   }
 
   .order-status {
-    font-size: 0.63rem;
+    font-size: 0.6rem;
     letter-spacing: 0.07em;
     text-transform: uppercase;
     font-family: Inter, sans-serif;
-    padding: 2px 6px;
+    padding: 2px 5px;
     border-radius: 2px;
     white-space: nowrap;
   }
@@ -958,103 +1102,29 @@
   .order-status--replied { background: #e8f4e8; color: #2d6a3f; }
 
   .wishlist-status {
-    font-size: 0.68rem;
+    font-size: 0.67rem;
     letter-spacing: 0.05em;
     font-family: Inter, sans-serif;
     color: #9a7c5c;
     font-style: italic;
     flex-shrink: 0;
   }
-  .wishlist-status--sold     { color: #b5a090; }
+  .wishlist-status--sold      { color: #b5a090; }
   .wishlist-status--available { color: #4a7a3a; }
 
-  .item-meta {
-    font-size: 0.78rem;
-    color: #9a7c5c;
-    margin: 0;
-    font-family: Inter, sans-serif;
-    font-style: italic;
-  }
-
   .item-date {
-    font-size: 0.72rem;
+    font-size: 0.7rem;
     color: #b5a090;
     margin: 0.1rem 0 0;
     font-family: Inter, sans-serif;
   }
 
-  /* ── Danger zone ── */
-
-  .danger-zone {
-    margin-top: 2rem;
-    padding-top: 1.25rem;
-    border-top: 1px solid #eee3d6;
-  }
-
-  .delete-btn {
-    background: transparent;
-    border: none;
-    color: #b5a090;
-    font-family: Inter, sans-serif;
-    font-size: 0.72rem;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    cursor: pointer;
-    padding: 0;
-    transition: color 0.2s;
-  }
-  .delete-btn:hover { color: #c65f3c; }
-
-  .delete-confirm {
-    background: #fdf3f3;
-    border: 1px solid #f0d0c8;
-    padding: 1rem 1.1rem;
-  }
-
-  .delete-warning {
-    font-family: Inter, sans-serif;
-    font-size: 0.8rem;
-    color: #7a3020;
-    margin: 0 0 0.85rem;
-    line-height: 1.5;
-  }
-
-  .delete-actions {
-    display: flex;
-    gap: 0.6rem;
-    align-items: center;
-  }
-
-  .delete-confirm-btn {
-    background: #9b2020;
-    border: none;
-    color: #fff;
-    font-family: Inter, sans-serif;
-    font-size: 0.72rem;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    padding: 0.4rem 0.9rem;
-    cursor: pointer;
-    transition: background 0.15s;
-  }
-  .delete-confirm-btn:hover:not(:disabled) { background: #7a1818; }
-  .delete-confirm-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-
-  .delete-cancel-btn {
-    background: transparent;
-    border: 1px solid #d8c6b1;
-    color: #9a7c5c;
-    font-family: Inter, sans-serif;
-    font-size: 0.72rem;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    padding: 0.4rem 0.9rem;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-  .delete-cancel-btn:hover { border-color: #9a7c5c; color: #34251c; }
 
   /* ── Messages ── */
+
+  .messages-wrap {
+    max-width: 720px;
+  }
 
   .badge--unread {
     background: #c65f3c;
@@ -1062,12 +1132,27 @@
   }
 
   .threads-header {
+    position: sticky;
+    top: 68px;
+    z-index: 2;
+    background: #f8f1e7;
+    padding-top: 0.75rem;
+    padding-bottom: 0.85rem;
+    margin-bottom: 0;
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
-    margin-bottom: 1rem;
     flex-wrap: wrap;
+    border-bottom: 1px solid rgba(216,198,177,0.5);
+    margin-left: -2.5rem;
+    margin-right: -2.5rem;
+    padding-left: 2.5rem;
+    padding-right: 2.5rem;
+  }
+
+  @media (max-width: 680px) {
+    .threads-header { top: 58px; }
   }
 
   .thread-filters {
@@ -1214,16 +1299,15 @@
   .thread-detail {
     display: flex;
     flex-direction: column;
-    gap: 0;
   }
 
   .thread-detail-header {
     display: flex;
     align-items: center;
     gap: 0.6rem;
-    padding-bottom: 0.9rem;
+    padding-bottom: 0.75rem;
     border-bottom: 1px solid #d8c6b1;
-    margin-bottom: 1rem;
+    margin-bottom: 0.85rem;
     flex-wrap: wrap;
   }
 
@@ -1232,8 +1316,8 @@
     border: none;
     color: #9a7c5c;
     font-family: Inter, sans-serif;
-    font-size: 0.72rem;
-    letter-spacing: 0.06em;
+    font-size: 0.75rem;
+    letter-spacing: 0.04em;
     cursor: pointer;
     padding: 0;
     flex-shrink: 0;
@@ -1260,91 +1344,133 @@
     flex-shrink: 0;
   }
 
-  .thread-messages {
+  /* ── Chat bubbles ── */
+
+  .chat-messages {
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
-    margin-bottom: 1.25rem;
-    max-height: 340px;
+    gap: 0.55rem;
+    max-height: 360px;
     overflow-y: auto;
-    padding-right: 2px;
+    padding: 0.25rem 0 0.75rem;
+    scroll-behavior: smooth;
   }
 
-  .thread-msg {
-    padding: 0.65rem 0.8rem;
-    border: 1px solid #eee3d6;
+  .chat-row {
+    display: flex;
+    flex-direction: column;
+    max-width: 82%;
+  }
+  .chat-row--user {
+    align-self: flex-end;
+    align-items: flex-end;
+  }
+  .chat-row--admin {
+    align-self: flex-start;
+    align-items: flex-start;
   }
 
-  .thread-msg--admin {
-    background: rgba(248,241,231,0.6);
-    border-color: #d8c6b1;
+  .chat-bubble {
+    padding: 0.55rem 0.8rem;
+    line-height: 1.55;
+  }
+  .chat-bubble--user {
+    background: #f4ead8;
+    border: 1px solid #d8c6b1;
+  }
+  .chat-bubble--admin {
+    background: #ece0ce;
+    border: 1px solid #c8b89a;
   }
 
-  .thread-msg--user {
-    background: transparent;
-    margin-left: 1.5rem;
-  }
-
-  .thread-msg-from {
+  .chat-sender {
     font-family: Inter, sans-serif;
-    font-size: 0.65rem;
-    letter-spacing: 0.08em;
+    font-size: 0.6rem;
+    letter-spacing: 0.1em;
     text-transform: uppercase;
     color: #9a7c5c;
-    margin: 0 0 0.3rem;
+    margin: 0 0 0.2rem;
   }
 
-  .thread-msg-body {
+  .chat-body {
     font-family: Inter, sans-serif;
     font-size: 0.85rem;
     color: #34251c;
-    margin: 0 0 0.3rem;
-    line-height: 1.6;
-    white-space: pre-wrap;
-  }
-
-  .thread-msg-date {
-    font-family: Inter, sans-serif;
-    font-size: 0.68rem;
-    color: #b5a090;
     margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
   }
 
-  .thread-reply {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    padding-top: 1rem;
-    border-top: 1px solid #eee3d6;
-  }
-
-  .thread-reply-input {
+  .chat-time {
     font-family: Inter, sans-serif;
-    font-size: 0.82rem;
+    font-size: 0.63rem;
+    color: #b5a090;
+    margin: 0.2rem 0 0;
+  }
+
+  /* ── Chat reply ── */
+
+  .chat-reply {
+    padding-top: 0.85rem;
+    border-top: 1px solid #eee3d6;
+    margin-top: 0.25rem;
+  }
+
+  .chat-reply-input {
+    width: 100%;
+    box-sizing: border-box;
+    font-family: Inter, sans-serif;
+    font-size: 0.85rem;
     background: transparent;
     border: 1px solid #d8c6b1;
     color: #34251c;
-    padding: 0.5rem;
+    padding: 0.6rem 0.75rem;
     outline: none;
-    resize: vertical;
-    line-height: 1.5;
+    resize: none;
+    line-height: 1.55;
+    min-height: 72px;
+    transition: border-color 0.15s;
   }
-  .thread-reply-input::placeholder { color: #b5a090; }
-  .thread-reply-input:focus { border-color: #c65f3c; }
+  .chat-reply-input::placeholder { color: #b5a090; }
+  .chat-reply-input:focus { border-color: #c65f3c; }
 
-  .thread-reply-btn {
-    align-self: flex-end;
-    background: transparent;
-    border: 1px solid #c65f3c;
-    color: #c65f3c;
+  .chat-reply-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 0.5rem;
+  }
+
+  .chat-reply-hint {
     font-family: Inter, sans-serif;
-    font-size: 0.72rem;
-    letter-spacing: 0.07em;
+    font-size: 0.63rem;
+    color: #c8b89a;
+    letter-spacing: 0.03em;
+  }
+
+  .chat-reply-btn {
+    background: #c65f3c;
+    border: none;
+    color: #fff;
+    font-family: Inter, sans-serif;
+    font-size: 0.73rem;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
-    padding: 0.35rem 0.85rem;
+    padding: 0.4rem 1rem;
     cursor: pointer;
     transition: background 0.15s;
   }
-  .thread-reply-btn:hover:not(:disabled) { background: rgba(198,95,60,0.08); }
-  .thread-reply-btn:disabled { opacity: 0.45; cursor: default; }
+  .chat-reply-btn:hover:not(:disabled) { background: #a84e30; }
+  .chat-reply-btn:disabled { opacity: 0.45; cursor: default; }
+
+  .chat-resolved-note {
+    font-family: Inter, sans-serif;
+    font-size: 0.72rem;
+    color: #b5a090;
+    font-style: italic;
+    text-align: center;
+    padding: 0.75rem 0 0;
+    border-top: 1px solid #eee3d6;
+    margin-top: 0.25rem;
+  }
 </style>

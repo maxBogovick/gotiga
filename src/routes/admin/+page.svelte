@@ -36,10 +36,13 @@
         loginError = '';
         try {
             const token = await api.adminLogin(loginForm.login, loginForm.password);
-            localStorage.setItem('gotiga_api_key', token);
             if (rememberMe) {
+                // Persist across tabs/restarts only when explicitly requested.
+                localStorage.setItem('gotiga_api_key', token);
                 localStorage.setItem('gotiga_admin_persist', '1');
             } else {
+                // Session-only: token dies with the tab (read via sessionStorage fallback).
+                sessionStorage.setItem('gotiga_api_key', token);
                 sessionStorage.setItem('gotiga_admin', '1');
             }
             isAuthenticated = true;
@@ -53,7 +56,9 @@
 
     function handleLogout() {
         sessionStorage.removeItem('gotiga_admin');
+        sessionStorage.removeItem('gotiga_api_key');
         localStorage.removeItem('gotiga_admin_persist');
+        localStorage.removeItem('gotiga_api_key');
         isAuthenticated = false;
         selectedFigurine = null;
     }
@@ -328,10 +333,11 @@
         // Check session
         const session = sessionStorage.getItem('gotiga_admin');
         const persisted = localStorage.getItem('gotiga_admin_persist');
+        const hasKey = localStorage.getItem('gotiga_api_key') || sessionStorage.getItem('gotiga_api_key');
         if (isTauri) {
             isAuthenticated = true;
             loadFigurines();
-        } else if ((session === '1' || persisted === '1') && localStorage.getItem('gotiga_api_key')) {
+        } else if ((session === '1' || persisted === '1') && hasKey) {
             isAuthenticated = true;
             loadFigurines();
         }
@@ -897,11 +903,11 @@
         {:else if activeTab === 'workshop'}
             <div in:fade class="h-full"><TextEditor category="workshop" /></div>
         {:else if activeTab === 'orders'}
-            <div in:fade class="h-full"><OrdersPanel onNewCount={(n) => newOrdersCount = n} /></div>
+            <div in:fade class="h-full"><OrdersPanel onNewCount={(n: number) => newOrdersCount = n} /></div>
         {:else if activeTab === 'showings'}
             <div in:fade class="h-full"><ShowingsPanel /></div>
         {:else if activeTab === 'bookings'}
-            <div in:fade class="h-full"><BookingsPanel onPendingCount={(n) => newBookingsCount = n} /></div>
+            <div in:fade class="h-full"><BookingsPanel onPendingCount={(n: number) => newBookingsCount = n} /></div>
         {:else if activeTab === 'releases'}
             <div in:fade class="h-full"><ReleaseManager /></div>
         {:else if activeTab === 'analytics'}

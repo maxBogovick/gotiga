@@ -34,6 +34,7 @@
   let msgBody     = $state('');
   let msgSending  = $state(false);
   let msgSent     = $state(false);
+  let msgError    = $state('');
 
   async function load() {
     loading = true;
@@ -62,6 +63,7 @@
     msgSubject = '';
     msgBody = '';
     msgSent = false;
+    msgError = '';
     try {
       detail = await api.adminGetUser(id);
       notesText = detail.adminNotes ?? '';
@@ -149,14 +151,17 @@
   async function sendMessage() {
     if (!detail || !msgSubject.trim() || !msgBody.trim() || msgSending) return;
     msgSending = true;
+    msgError = '';
     try {
-      const msg = await api.adminSendMessage(detail.id, msgSubject.trim(), msgBody.trim());
-      detail = { ...detail, messages: [msg, ...detail.messages] };
+      const created = await api.adminCreateThreadForUser(detail.id, msgSubject.trim(), msgBody.trim());
+      detail = { ...detail, messages: [created.thread, ...detail.messages] };
       msgSubject = '';
       msgBody = '';
       msgSent = true;
       setTimeout(() => { msgSent = false; }, 2500);
-    } catch { /* ignore */ } finally {
+    } catch (e: unknown) {
+      msgError = e instanceof Error ? e.message : $t('adminUsersMessagesError');
+    } finally {
       msgSending = false;
     }
   }
@@ -320,25 +325,30 @@
           >
             {msgSending ? $t('adminUsersMessagesSending') : msgSent ? $t('adminUsersMessagesSent') : $t('adminUsersMessagesSend')}
           </button>
+          {#if msgError}
+            <p class="msg-error">{msgError}</p>
+          {/if}
         </div>
 
         {#if detail.messages.length === 0}
           <p class="empty-text">{$t('adminUsersMessagesEmpty')}</p>
         {:else}
           <ul class="msg-list">
-            {#each detail.messages as msg}
-              <li class="msg-item" class:msg-unread={!msg.readAt}>
+            {#each detail.messages as thread (thread.id)}
+              <li class="msg-item" class:msg-unread={thread.unread > 0}>
                 <div class="msg-meta">
-                  <span class="msg-from">{msg.fromAdmin ? '→ пользователю' : $t('adminUsersMessagesFromUser')}</span>
-                  {#if !msg.readAt && !msg.fromAdmin}
-                    <span class="msg-badge">new</span>
+                  {#if thread.unread > 0}
+                    <span class="msg-badge">{thread.unread}</span>
                   {/if}
-                  <span class="msg-date">{new Date(msg.createdAt).toLocaleDateString()}</span>
+                  {#if thread.status === 'resolved'}
+                    <span class="msg-from">{$t('profileMessagesResolved')}</span>
+                  {/if}
+                  <span class="msg-date">{new Date(thread.lastMessageAt).toLocaleDateString()}</span>
                 </div>
-                {#if msg.subject}
-                  <p class="msg-subject">{msg.subject}</p>
+                <p class="msg-subject">{thread.subject}</p>
+                {#if thread.preview}
+                  <p class="msg-body">{thread.preview}</p>
                 {/if}
-                <p class="msg-body">{msg.body}</p>
               </li>
             {/each}
           </ul>
@@ -749,6 +759,12 @@
   }
   .msg-send-btn:hover:not(:disabled) { background: rgba(198,95,60,.08); }
   .msg-send-btn:disabled { opacity: .45; cursor: default; }
+  .msg-error {
+    margin: .5rem 0 0;
+    font-size: .75rem;
+    color: #a03020;
+    font-style: italic;
+  }
   .msg-list {
     list-style: none;
     padding: 0;
