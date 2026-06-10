@@ -452,6 +452,12 @@ export interface SmtpSettings {
     from: string | null;
 }
 
+export interface ContactSettings {
+    email: string | null;
+    telegram: string | null;
+    phone: string | null;
+}
+
 export interface BookingRules {
     /** Minimum booking duration in days (inclusive). Default: 1 */
     minDays: number;

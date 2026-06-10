@@ -32,6 +32,7 @@ import type {
     ModerateCommentRequest,
     AdminCommentDto,
     SmtpSettings,
+    ContactSettings,
     BookingRules,
     RescheduleBookingRequest,
     CreateWaitlistRequest,
@@ -827,6 +828,20 @@ export const api = {
 
     async saveSmtpSettings(s: SmtpSettings): Promise<SmtpSettings> {
         return webFetch('/admin/settings/smtp', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(s),
+        });
+    },
+
+    // === CONTACT SETTINGS ===
+
+    async getContactSettings(): Promise<ContactSettings> {
+        return webFetch('/settings/contact');
+    },
+
+    async saveContactSettings(s: ContactSettings): Promise<ContactSettings> {
+        return webFetch('/admin/settings/contact', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify(s),

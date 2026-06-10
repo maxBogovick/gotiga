@@ -9,12 +9,12 @@
   import { fade, fly } from 'svelte/transition';
   import { api, resolveMediaUrl } from '$lib/api';
 
-  const links = [
-    { href: '/figurines', label: 'Archive' },
-    { href: '/upcoming', label: 'In Progress' },
-    { href: '/workshop', label: 'Workshop' },
-    { href: '/author', label: 'Author' },
-  ];
+  let links = $derived([
+    { href: '/figurines', label: $t('navArchive') },
+    { href: '/upcoming', label: $t('navUpcoming') },
+    { href: '/workshop', label: $t('navWorkshop') },
+    { href: '/author',   label: $t('navAuthor') },
+  ]);
 
   let pathname = $derived(page.url.pathname);
   let panelOpen = $state(false);

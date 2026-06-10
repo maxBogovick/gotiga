@@ -158,13 +158,16 @@ export const ru: Record<TranslationKey, string> = {
   // === UPCOMING / IN PROGRESS PAGE ===
   upcomingTitle:       'В работе',
   upcomingKicker:      'Сейчас создаётся',
-  upcomingSubtitle:    'Работы, которые ещё рождаются. Вы можете забронировать их до завершения.',
+  upcomingSubtitle:    'Работы, которые ещё рождаются. Вы можете оставить заявку до завершения.',
   upcomingEmpty:       'Сейчас ничего не создаётся…',
   upcomingEmptyHint:   'Загляните позже или следите за обновлениями.',
-  upcomingBook:        'Забронировать',
+  upcomingBook:        'Оставить заявку',
+  upcomingBookHint:    'Свяжемся, чтобы обсудить условия',
   upcomingBack:        '← ВЕРНУТЬСЯ В ЗАЛ',
   upcomingWip:         'В процессе',
   upcomingYear:        'Год',
+  upcomingTechnique:   'Техника',
+  upcomingMaterial:    'Материал',
 
   // === WORKSHOP PAGE ===
   workshopBack:      '← ВЕРНУТЬСЯ В ЗАЛ',
@@ -617,6 +620,17 @@ export const ru: Record<TranslationKey, string> = {
   authErrorLockout:      'Слишком много попыток. Повторите через 15 минут.',
   authErrorConflict:     'Этот email уже зарегистрирован.',
   authErrorWrong:        'Неверная комбинация. Попробуйте снова.',
+  authForgotLink:        'Забыли символы?',
+  authForgotNote:        'Напишите куратору — он восстановит доступ.',
+  authForgotEmail:       'Почта',
+  authForgotTelegram:    'Telegram',
+  authForgotPhone:       'Телефон',
+
+  // === NAV ===
+  navArchive:  'Архив',
+  navUpcoming: 'В работе',
+  navWorkshop: 'Мастерская',
+  navAuthor:   'Автор',
 
   // === PROFILE ===
   profileTitle:          'Ваш архив',
@@ -842,4 +856,13 @@ export const ru: Record<TranslationKey, string> = {
   // === ADMIN TABS ===
   adminTabWaitlist:        'Ожидание',
   adminTabBookingRules:    'Правила броней',
+  adminTabContact:         'Контакты',
+  adminContactTitle:       'Контактные данные',
+  adminContactHint:        'Отображаются пользователям на странице входа при восстановлении доступа.',
+  adminContactEmail:       'Email',
+  adminContactTelegram:    'Telegram (ссылка или @никнейм)',
+  adminContactPhone:       'Телефон',
+  adminContactSave:        'Сохранить',
+  adminContactSaved:       'Сохранено',
+  adminContactError:       'Ошибка сохранения',
 };

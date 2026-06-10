@@ -17,6 +17,7 @@
     import UsersPanel from '$lib/components/admin/UsersPanel.svelte';
     import CommentsPanel from '$lib/components/admin/CommentsPanel.svelte';
     import SmtpSettingsPanel from '$lib/components/admin/SmtpSettingsPanel.svelte';
+    import ContactSettingsPanel from '$lib/components/admin/ContactSettingsPanel.svelte';
     import WaitlistPanel from '$lib/components/admin/WaitlistPanel.svelte';
     import BookingRulesPanel from '$lib/components/admin/BookingRulesPanel.svelte';
     import MessagesPanel from '$lib/components/admin/MessagesPanel.svelte';
@@ -70,7 +71,7 @@
     let isSaving = $state(false);
     let showSettings = $state(false);
     let message = $state({ text: '', type: 'info' });
-    let activeTab = $state<'registry' | 'home' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'showings' | 'bookings' | 'waitlist' | 'analytics' | 'users' | 'comments' | 'messages' | 'server' | 'booking-rules'>('registry');
+    let activeTab = $state<'registry' | 'home' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'showings' | 'bookings' | 'waitlist' | 'analytics' | 'users' | 'comments' | 'messages' | 'server' | 'booking-rules' | 'contact'>('registry');
     let activeAuthorSubTab = $state<'profile' | 'texts'>('profile');
     let newOrdersCount = $state(0);
     let newBookingsCount = $state(0);
@@ -343,7 +344,7 @@
         }
         // Hash-based tab routing (e.g. Telegram notification links)
         const hash = window.location.hash.replace('#', '');
-        const validTabs = ['registry','home','zones','author','workshop','media','releases','orders','showings','bookings','waitlist','analytics','users','comments','messages','server','booking-rules'];
+        const validTabs = ['registry','home','zones','author','workshop','media','releases','orders','showings','bookings','waitlist','analytics','users','comments','messages','server','booking-rules','contact'];
         if (validTabs.includes(hash)) {
             activeTab = hash as typeof activeTab;
         }
@@ -458,6 +459,7 @@
                 tabs: [
                   ['server',        $t('adminTabServer')],
                   ['booking-rules', $t('adminTabBookingRules')],
+                  ['contact',       $t('adminTabContact')],
                 ]
               },
             ] as group}
@@ -924,6 +926,8 @@
             <div in:fade class="h-full overflow-y-auto"><MessagesPanel /></div>
         {:else if activeTab === 'booking-rules'}
             <div in:fade class="h-full overflow-y-auto"><BookingRulesPanel /></div>
+        {:else if activeTab === 'contact'}
+            <div in:fade class="h-full overflow-y-auto"><ContactSettingsPanel /></div>
         {/if}
     </div>
 

@@ -973,6 +973,14 @@ pub struct SmtpSettings {
     pub from: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactSettings {
+    pub email: Option<String>,
+    pub telegram: Option<String>,
+    pub phone: Option<String>,
+}
+
 // ============================================================
 // BOOKING RULES
 // ============================================================

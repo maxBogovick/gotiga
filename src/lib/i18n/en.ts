@@ -156,13 +156,16 @@ export const en = {
   // === UPCOMING / IN PROGRESS PAGE ===
   upcomingTitle:       'In Progress',
   upcomingKicker:      'Currently being made',
-  upcomingSubtitle:    'Works still taking shape. You can reserve them before completion.',
+  upcomingSubtitle:    'Works still taking shape. You can leave a request before completion.',
   upcomingEmpty:       'Nothing is being made right now…',
   upcomingEmptyHint:   'Check back later or follow for updates.',
-  upcomingBook:        'Reserve',
+  upcomingBook:        'Leave a request',
+  upcomingBookHint:    'We will get in touch to discuss the details',
   upcomingBack:        '← RETURN TO HALL',
   upcomingWip:         'In progress',
   upcomingYear:        'Year',
+  upcomingTechnique:   'Technique',
+  upcomingMaterial:    'Material',
 
   // === WORKSHOP PAGE ===
   workshopBack:      '← RETURN TO HALL',
@@ -615,6 +618,17 @@ export const en = {
   authErrorLockout:      'Too many attempts. Try again in 15 minutes.',
   authErrorConflict:     'This email is already registered.',
   authErrorWrong:        'Wrong combination. Try again.',
+  authForgotLink:        'Forgot your symbols?',
+  authForgotNote:        'Write to the curator — they will restore your access.',
+  authForgotEmail:       'Email',
+  authForgotTelegram:    'Telegram',
+  authForgotPhone:       'Phone',
+
+  // === NAV ===
+  navArchive:  'Archive',
+  navUpcoming: 'In Progress',
+  navWorkshop: 'Workshop',
+  navAuthor:   'Author',
 
   // === PROFILE ===
   profileTitle:          'Your archive',
@@ -838,6 +852,15 @@ export const en = {
   // === ADMIN TABS ===
   adminTabWaitlist:        'Waitlist',
   adminTabBookingRules:    'Booking rules',
+  adminTabContact:         'Contact',
+  adminContactTitle:       'Contact details',
+  adminContactHint:        'Shown to users on the login page when they need to recover access.',
+  adminContactEmail:       'Email',
+  adminContactTelegram:    'Telegram (link or @handle)',
+  adminContactPhone:       'Phone',
+  adminContactSave:        'Save',
+  adminContactSaved:       'Saved',
+  adminContactError:       'Save failed',
 } as const;
 
 export type TranslationKey = keyof typeof en;

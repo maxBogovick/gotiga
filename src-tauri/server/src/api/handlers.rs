@@ -985,6 +985,20 @@ pub async fn admin_save_smtp_settings(
     Ok(Json(body))
 }
 
+pub async fn get_contact_settings(
+    State(service): State<AppService>,
+) -> Result<Json<ContactSettings>> {
+    Ok(Json(service.get_contact_settings().await?))
+}
+
+pub async fn admin_save_contact_settings(
+    State(service): State<AppService>,
+    Json(body): Json<ContactSettings>,
+) -> Result<Json<ContactSettings>> {
+    service.save_contact_settings(body.clone()).await?;
+    Ok(Json(body))
+}
+
 pub async fn user_update_profile(
     State(service): State<AppService>,
     headers: HeaderMap,

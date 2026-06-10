@@ -1264,6 +1264,19 @@ impl AppService {
         self.repo.upsert_setting("smtp", &json).await
     }
 
+    pub async fn get_contact_settings(&self) -> Result<ContactSettings> {
+        match self.repo.get_setting("contact").await? {
+            Some(json) => Ok(serde_json::from_str(&json).unwrap_or_default()),
+            None => Ok(ContactSettings::default()),
+        }
+    }
+
+    pub async fn save_contact_settings(&self, s: ContactSettings) -> Result<()> {
+        let json = serde_json::to_string(&s)
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        self.repo.upsert_setting("contact", &json).await
+    }
+
     // === BOOKING RULES ===
 
     pub async fn get_booking_rules(&self) -> Result<BookingRules> {

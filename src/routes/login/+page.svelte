@@ -1,6 +1,6 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { t } from '$lib/i18n';
   import { api } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
@@ -8,7 +8,8 @@
   import { getIconById, iconLabel, type IconCategory } from '$lib/data/visualIcons';
   import { lang } from '$lib/i18n';
   import AuthFrame from '$lib/components/auth/AuthFrame.svelte';
-  import type { ChallengeStepDto } from '$lib/types/api';
+  import type { ChallengeStepDto, ContactSettings } from '$lib/types/api';
+  import { onMount } from 'svelte';
 
   const TOTAL_STEPS = 6;
   const CATEGORY_IDS: IconCategory[] = ['animals', 'dishes', 'seasons', 'colors'];
@@ -17,6 +18,12 @@
   let email = $state('');
   let error = $state('');
   let loading = $state(false);
+  let forgotOpen = $state(false);
+  let contacts = $state<ContactSettings>({ email: null, telegram: null, phone: null });
+
+  onMount(async () => {
+    try { contacts = await api.getContactSettings(); } catch { /* non-critical */ }
+  });
 
   let challengeId = $state('');
   let challengeSteps = $state<ChallengeStepDto[]>([]);
@@ -102,7 +109,7 @@
         }
       } catch { /* non-critical */ }
 
-      const redirectTo = $page.url.searchParams.get('from') ?? '/';
+      const redirectTo = page.url.searchParams.get('from') ?? '/';
       goto(redirectTo);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : '';
@@ -187,5 +194,89 @@
       {$t('authNoAccount')}
       <button class="auth-link" onclick={() => goto('/register')}>{$t('authRegister')}</button>
     </p>
+    <p class="auth-forgot">
+      <button class="auth-forgot-toggle" onclick={() => forgotOpen = !forgotOpen}>{$t('authForgotLink')}</button>
+      {#if forgotOpen}
+        <span class="auth-forgot-note">{$t('authForgotNote')}</span>
+        {#if contacts.email || contacts.telegram || contacts.phone}
+          <span class="auth-forgot-contacts">
+            {#if contacts.email}
+              <a href="mailto:{contacts.email}" class="auth-forgot-link">
+                <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true"><rect x="1" y="2.5" width="11" height="8" rx="1" stroke="currentColor" stroke-width="1"/><path d="M1 3.5L6.5 7.5L12 3.5" stroke="currentColor" stroke-width="1"/></svg>
+                {contacts.email}
+              </a>
+            {/if}
+            {#if contacts.telegram}
+              <a href={contacts.telegram.startsWith('http') ? contacts.telegram : `https://t.me/${contacts.telegram.replace(/^@/, '')}`} target="_blank" rel="noopener" class="auth-forgot-link">
+                <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true"><circle cx="6.5" cy="6.5" r="5.5" stroke="currentColor" stroke-width="1"/><path d="M3.5 6.5L5.5 8.5L9.5 4.5" stroke="currentColor" stroke-width="1" stroke-linecap="round"/></svg>
+                {contacts.telegram.replace(/^https?:\/\/t\.me\//, '@').replace(/^@+/, '@')}
+              </a>
+            {/if}
+            {#if contacts.phone}
+              <a href="tel:{contacts.phone.replace(/\s/g, '')}" class="auth-forgot-link">
+                <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true"><path d="M3 2C3 2 2 3 2 4.5C2 8.09 4.91 11 8.5 11C10 11 11 10 11 10L9 8L7.5 9C6.5 8.5 4.5 6.5 4 5.5L5 4L3 2Z" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/></svg>
+                {contacts.phone}
+              </a>
+            {/if}
+          </span>
+        {/if}
+      {/if}
+    </p>
   {/if}
 </AuthFrame>
+
+<style>
+  .auth-forgot {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .auth-forgot-toggle {
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: 13px;
+    font-style: italic;
+    color: rgba(95, 70, 54, 0.55);
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    text-underline-offset: 3px;
+    transition: color 0.2s;
+  }
+  .auth-forgot-toggle:hover { color: #6f3b24; }
+
+  .auth-forgot-note {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: 12px;
+    font-style: italic;
+    color: rgba(95, 70, 54, 0.45);
+    text-align: center;
+    line-height: 1.45;
+  }
+
+  .auth-forgot-contacts {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    margin-top: 4px;
+  }
+
+  .auth-forgot-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: 13px;
+    color: #6f3b24;
+    text-decoration: none;
+    opacity: 0.75;
+    transition: opacity 0.2s;
+  }
+  .auth-forgot-link:hover { opacity: 1; }
+</style>

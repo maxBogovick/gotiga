@@ -52,6 +52,7 @@ pub fn router(service: AppService, config: Config) -> Router {
         .route("/figurines/:id/book",           post(handlers::create_booking))
         .route("/figurines/:id/waitlist",       post(handlers::join_waitlist))
         .route("/booking-rules",                get(handlers::get_booking_rules))
+        .route("/settings/contact",             get(handlers::get_contact_settings))
         .route("/bookings/by-tokens",           post(handlers::get_bookings_by_tokens))
         .route("/bookings/cancel/:token",       get(handlers::get_booking_by_token)
                                                 .post(handlers::cancel_booking_by_token))
@@ -103,6 +104,9 @@ pub fn router(service: AppService, config: Config) -> Router {
         .route("/admin/settings/smtp",
             get(handlers::admin_get_smtp_settings)
             .put(handlers::admin_save_smtp_settings)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        .route("/admin/settings/contact",
+            put(handlers::admin_save_contact_settings)
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
         // === COMMENTS (ADMIN) ===
         .route("/admin/comments",

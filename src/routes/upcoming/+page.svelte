@@ -80,6 +80,7 @@
                             {#if fig.faceImageUrl}
                                 <AppImage
                                     src={fig.faceImageUrl}
+                                    thumbUrl={fig.thumbUrl}
                                     alt={fig.name}
                                     class="card-img"
                                     loading="lazy"
@@ -97,13 +98,13 @@
                             <dl class="card-meta">
                                 {#if fig.technique}
                                     <div class="meta-row">
-                                        <dt class="meta-key">Техника</dt>
+                                        <dt class="meta-key">{$t('upcomingTechnique')}</dt>
                                         <dd class="meta-val">{fig.technique}</dd>
                                     </div>
                                 {/if}
                                 {#if fig.material}
                                     <div class="meta-row">
-                                        <dt class="meta-key">Материал</dt>
+                                        <dt class="meta-key">{$t('upcomingMaterial')}</dt>
                                         <dd class="meta-val">{fig.material}</dd>
                                     </div>
                                 {/if}
@@ -121,6 +122,7 @@
                                     <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
                                 </svg>
                             </button>
+                            <p class="book-hint">{$t('upcomingBookHint')}</p>
                         </div>
                     </article>
                 {/each}
@@ -432,6 +434,15 @@
         transition: transform 0.25s;
     }
     .book-btn:hover .btn-arrow { transform: translateX(3px); }
+
+    .book-hint {
+        font-family: 'Cormorant Garamond', serif;
+        font-size: 12px;
+        font-style: italic;
+        color: var(--muted2);
+        margin: 0;
+        line-height: 1.4;
+    }
 
     /* Responsive */
     @media (max-width: 640px) {

@@ -1,12 +1,14 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
 
+  let { opacity = 0.6 }: { opacity?: number } = $props();
+
   let canvas: HTMLCanvasElement;
   let ctx: CanvasRenderingContext2D | null;
   let animationFrameId: number;
   let particles: Particle[] = [];
   let mouse = { x: -1000, y: -1000 };
-  
+
   const PARTICLE_COUNT = 80;
   const CONNECTION_DISTANCE = 100;
   const MOUSE_RADIUS = 150;
@@ -160,5 +162,6 @@
 
 <canvas
   bind:this={canvas}
-  class="fixed inset-0 pointer-events-none z-50 mix-blend-screen opacity-60"
+  class="fixed inset-0 pointer-events-none z-50 mix-blend-screen"
+  style="opacity: {opacity}"
 ></canvas>
