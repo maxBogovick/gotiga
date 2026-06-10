@@ -5,6 +5,8 @@
   import { api, resolveMediaUrl } from '$lib/api';
   import { t } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
+  import { isValidEmail } from '$lib/validation';
+  import { focusTrap } from '$lib/actions/focusTrap';
   import type { FigurineSchedule, BookingRules } from '$lib/types/api';
 
   let avatarUrl = $derived(resolveMediaUrl(authStore.user?.avatarUrl));
@@ -42,11 +44,30 @@
     return d.toISOString().split('T')[0];
   }
 
+  // ── Derived context ───────────────────────────────────────────────────────
+  let upcomingShowings = $derived(
+    schedule.entries.filter(
+      e => e.entryType === 'showing' && e.endsAt >= new Date().toISOString().split('T')[0]
+    )
+  );
+
+  let rulesHintParts = $derived.by(() => {
+    if (!bookingRules) return [] as string[];
+    const parts: string[] = [];
+    if (bookingRules.minDays > 1)
+      parts.push(`${$t('bookingRulesMin')} ${bookingRules.minDays} ${$t('bookingRulesDays')}`);
+    if (bookingRules.advanceDays > 0)
+      parts.push(`${$t('bookingRulesAdvance')} ${bookingRules.advanceDays} ${$t('bookingRulesAhead')}`);
+    return parts;
+  });
+
   // ── Form state ────────────────────────────────────────────────────────────
-  let name        = $state('');
-  let email       = $state('');
-  let phone       = $state('');
-  let purpose     = $state('');
+  let name         = $state('');
+  let email        = $state('');
+  let phone        = $state('');
+  let displayType  = $state('');   // 'private' | 'exhibition' | 'photo'
+  let venue        = $state('');
+  let requirements = $state('');   // maps to `purpose` on the API (client notes)
   // Initialised from the raw current date; the $effect below snaps these forward once
   // bookingRules load and advanceDays shifts the minimum allowed start date.
   const initialToday = new Date().toISOString().split('T')[0];
@@ -59,6 +80,8 @@
   let cancelToken   = $state('');
   let copied        = $state(false);
   let savedDates    = $state({ startsAt: '', endsAt: '' });
+
+  let venueRequired = $derived(displayType === 'exhibition' || displayType === 'photo');
 
   // bookingRules load asynchronously after the initial dates are set. Once advanceDays
   // pushes the minimum start date forward, the prefilled defaults can fall before it.
@@ -79,7 +102,9 @@
       name         = '';
       email        = '';
       phone        = '';
-      purpose      = '';
+      displayType  = '';
+      venue        = '';
+      requirements = '';
       startsAt     = today;
       endsAt       = addDays(today, 1);
       dateError    = '';
@@ -99,12 +124,24 @@
       submitError = $t('bookingFillFields');
       return;
     }
+    if (!authStore.isLoggedIn && !isValidEmail(effectiveEmail)) {
+      submitError = $t('formInvalidEmail');
+      return;
+    }
     if (!startsAt || !endsAt) {
       submitError = $t('bookingSelectPeriod');
       return;
     }
     if (dateError) {
       submitError = dateError;
+      return;
+    }
+    if (!displayType) {
+      submitError = $t('bookingSelectDisplayType');
+      return;
+    }
+    if (venueRequired && !venue.trim()) {
+      submitError = $t('bookingFillVenue');
       return;
     }
     isSubmitting = true;
@@ -116,7 +153,9 @@
         requesterName:  effectiveName,
         requesterEmail: effectiveEmail,
         requesterPhone: phone.trim() || null,
-        purpose:        purpose.trim() || null,
+        purpose:        requirements.trim() || null,
+        displayType:    displayType || null,
+        venue:          venue.trim() || null,
         startsAt,
         endsAt,
       });
@@ -132,6 +171,11 @@
         const prev: ClaimData[] = JSON.parse(localStorage.getItem(key) ?? '[]');
         localStorage.setItem(key, JSON.stringify([...prev, claim]));
       } catch { /* storage unavailable */ }
+      // If logged in, link the new token to the user account immediately
+      // so it appears in /profile without requiring a re-login.
+      if (authStore.isLoggedIn && authStore.token) {
+        api.userLinkBookings(authStore.token, [res.cancelToken]).catch(() => {});
+      }
       // Notify parent immediately — no page reload needed
       onBookingCreated(claim);
       isSealed = true;
@@ -194,8 +238,11 @@
     <div
       role="dialog"
       aria-modal="true"
+      aria-labelledby="booking-modal-title"
+      tabindex="-1"
       class="relative w-full max-w-xl perspective-1000"
       in:fly={{ y: 50, duration: 800, easing: cubicOut }}
+      use:focusTrap
     >
       <div class="relative bg-[#fff9f0] shadow-[0_20px_60px_rgba(111,59,36,0.18)] p-1 overflow-hidden transform rotate-1 transition-transform duration-500 hover:rotate-0 border border-[#d8c6b1] rounded-sm">
         <!-- Декор: вне scroll-контейнера, всегда покрывает весь фрейм -->
@@ -216,12 +263,13 @@
                 <!-- Header -->
                 <div class="text-center mb-6 relative">
                   <span class="absolute -top-6 left-1/2 -translate-x-1/2 text-5xl opacity-10 font-['Fraunces']">~</span>
-                  <h3 class="font-['Fraunces'] text-3xl mb-2 text-[#6f3b24] tracking-wide">{$t('bookingTitle')}</h3>
+                  <h3 id="booking-modal-title" class="font-['Fraunces'] text-3xl mb-2 text-[#6f3b24] tracking-wide">{$t('bookingTitle')}</h3>
                   <div class="flex items-center justify-center gap-3 text-[#5f4636]">
                     <span class="h-px w-8 bg-[#5f4636]/30"></span>
                     <p class="italic text-base font-semibold tracking-wide">{figurineName}</p>
                     <span class="h-px w-8 bg-[#5f4636]/30"></span>
                   </div>
+                  <p class="booking-context-sub">{$t('bookingContextSubtitle')}</p>
                 </div>
 
                 <!-- Form -->
@@ -230,6 +278,9 @@
                   <!-- Calendar -->
                   <div>
                     <p class="text-[10px] font-['Inter'] font-bold tracking-[0.08em] text-[#5f4636] uppercase mb-3">{$t('bookingDatesLabel')}</p>
+                    {#if upcomingShowings.length > 0}
+                      <p class="booking-showings-hint">◈ {$t('bookingShowingsHint')}</p>
+                    {/if}
                     <div class="border border-[#d8c6b1] p-3 bg-[#fdf8f2]">
                       <DateRangePicker
                         {schedule}
@@ -240,6 +291,9 @@
                         onError={(msg) => { dateError = msg; }}
                       />
                     </div>
+                    {#if rulesHintParts.length > 0}
+                      <p class="booking-rules-hint">{rulesHintParts.join(' · ')}</p>
+                    {/if}
                     {#if dateError}
                       <div class="mt-2 flex items-start gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-sm">
                         <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="#991b1b" stroke-width="1.5" class="flex-shrink-0 mt-0.5">
@@ -311,19 +365,58 @@
                     />
                   </div>
 
-                  <!-- Purpose -->
-                  <div class="space-y-1.5">
-                    <label for="b-purpose" class="block text-[10px] font-['Inter'] font-bold tracking-[0.08em] text-[#5f4636] uppercase">{$t('bookingPurposeLabel')}</label>
-                    <textarea
-                      id="b-purpose"
-                      bind:value={purpose}
-                      rows="2"
-                      class="w-full bg-[#f8f1e7] border-0 border-b border-[#d8c6b1] rounded-none p-2 text-base italic text-[#34251c] focus:outline-none focus:ring-0 focus:border-[#c65f3c]/70 transition-colors placeholder-[#5f4636]/40 resize-none"
-                      placeholder={$t('bookingPurposePlaceholder')}
-                    ></textarea>
+                  <!-- Display type (progressive disclosure trigger) -->
+                  <div class="space-y-2">
+                    <p class="block text-[10px] font-['Inter'] font-bold tracking-[0.08em] text-[#5f4636] uppercase">{$t('bookingDisplayTypeLabel')}</p>
+                    <div class="booking-type-options">
+                      {#each [
+                        { value: 'private',    label: $t('bookingDisplayPrivate') },
+                        { value: 'exhibition', label: $t('bookingDisplayExhibition') },
+                        { value: 'photo',      label: $t('bookingDisplayPhoto') },
+                      ] as opt (opt.value)}
+                        <label class="booking-type-option" class:booking-type-option--active={displayType === opt.value}>
+                          <input type="radio" name="displayType" value={opt.value} bind:group={displayType} class="sr-only" />
+                          {opt.label}
+                        </label>
+                      {/each}
+                    </div>
                   </div>
 
+                  <!-- Venue — shown only when required -->
+                  {#if venueRequired}
+                    <div class="space-y-1.5" transition:fly={{ y: -6, duration: 200 }}>
+                      <label for="b-venue" class="block text-[10px] font-['Inter'] font-bold tracking-[0.08em] text-[#5f4636] uppercase">
+                        {$t('bookingVenueLabel')}
+                      </label>
+                      <p class="booking-purpose-note">{$t('bookingVenueHint')}</p>
+                      <input
+                        id="b-venue"
+                        type="text"
+                        bind:value={venue}
+                        required
+                        class="w-full bg-transparent border-0 border-b-2 border-[#d8c6b1] rounded-none py-2 text-base italic font-serif text-[#34251c] focus:outline-none focus:ring-0 focus:border-[#c65f3c] transition-colors"
+                        placeholder={$t('bookingVenuePlaceholder')}
+                      />
+                    </div>
+                  {/if}
+
+                  <!-- Requirements / notes (optional, always shown after type chosen) -->
+                  {#if displayType}
+                    <div class="space-y-1.5" transition:fly={{ y: -6, duration: 200 }}>
+                      <label for="b-requirements" class="block text-[10px] font-['Inter'] font-bold tracking-[0.08em] text-[#5f4636] uppercase">{$t('bookingRequirementsLabel')}</label>
+                      <p class="booking-purpose-note">{$t('bookingPurposeNote')}</p>
+                      <textarea
+                        id="b-requirements"
+                        bind:value={requirements}
+                        rows="2"
+                        class="w-full bg-[#f8f1e7] border-0 border-b border-[#d8c6b1] rounded-none p-2 text-base italic text-[#34251c] focus:outline-none focus:ring-0 focus:border-[#c65f3c]/70 transition-colors placeholder-[#5f4636]/40 resize-none"
+                        placeholder={$t('bookingRequirementsPlaceholder')}
+                      ></textarea>
+                    </div>
+                  {/if}
+
                   <!-- Submit -->
+                  <p class="booking-process-note">{$t('bookingProcessNote')}</p>
                   <div class="pt-4 flex justify-center">
                     <button
                       type="submit"
@@ -522,4 +615,88 @@
     transition: border-color 0.15s;
   }
   .claim-page-link:hover { border-color: #c65f3c; }
+
+  /* ── Context additions ── */
+
+  .booking-context-sub {
+    font-family: 'Inter', sans-serif;
+    font-size: 0.72rem;
+    color: rgba(95,70,54,0.55);
+    font-style: italic;
+    margin: 0.55rem 0 0;
+    letter-spacing: 0.01em;
+    line-height: 1.5;
+  }
+
+  .booking-showings-hint {
+    font-family: 'Inter', sans-serif;
+    font-size: 0.68rem;
+    color: #7a5520;
+    background: rgba(198,150,60,0.08);
+    border-left: 2px solid rgba(198,150,60,0.4);
+    padding: 0.3rem 0.6rem;
+    margin-bottom: 0.6rem;
+    letter-spacing: 0.01em;
+    line-height: 1.4;
+  }
+
+  .booking-rules-hint {
+    font-family: 'Inter', sans-serif;
+    font-size: 0.66rem;
+    color: rgba(95,70,54,0.5);
+    letter-spacing: 0.04em;
+    margin-top: 0.45rem;
+    text-align: right;
+  }
+
+  .booking-purpose-note {
+    font-family: 'Inter', sans-serif;
+    font-size: 0.65rem;
+    color: rgba(95,70,54,0.45);
+    font-style: italic;
+    margin: 0 0 0.25rem;
+    line-height: 1.4;
+  }
+
+  .booking-process-note {
+    font-family: 'Inter', sans-serif;
+    font-size: 0.72rem;
+    color: rgba(95,70,54,0.5);
+    font-style: italic;
+    text-align: center;
+    margin: 0.25rem 0 0;
+    line-height: 1.5;
+    letter-spacing: 0.01em;
+  }
+
+  .booking-type-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .booking-type-option {
+    display: inline-flex;
+    align-items: center;
+    font-family: 'Inter', sans-serif;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: #5f4636;
+    border: 1px solid #d8c6b1;
+    background: transparent;
+    padding: 0.35rem 0.85rem;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    user-select: none;
+  }
+  .booking-type-option:hover {
+    background: rgba(198,95,60,0.06);
+    border-color: rgba(198,95,60,0.4);
+  }
+  .booking-type-option--active {
+    background: rgba(198,95,60,0.1);
+    border-color: #c65f3c;
+    color: #9e452d;
+  }
 </style>

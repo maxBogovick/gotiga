@@ -644,6 +644,59 @@ pub async fn get_booking_by_token(
         .ok_or_else(|| crate::error::AppError::NotFound("Booking not found".to_string()))
 }
 
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('\'', "&apos;")
+        .replace('"', "&quot;")
+}
+
+/// Public sitemap. Absolute URLs are built from the forwarded Host/proto headers so the
+/// same binary works across environments without a hard-coded domain.
+pub async fn sitemap_xml(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse> {
+    let host = headers.get("host").and_then(|h| h.to_str().ok()).unwrap_or("localhost");
+    let proto = headers.get("x-forwarded-proto").and_then(|h| h.to_str().ok()).unwrap_or("https");
+    let base = format!("{proto}://{host}");
+
+    let figurines = service.list_figurines(true).await?;
+
+    let mut urls = String::new();
+    for path in ["/", "/figurines", "/author", "/workshop", "/upcoming"] {
+        urls.push_str(&format!("  <url><loc>{base}{path}</loc></url>\n"));
+    }
+    for f in &figurines {
+        urls.push_str(&format!(
+            "  <url><loc>{base}/figurines/{}</loc></url>\n",
+            xml_escape(&f.id)
+        ));
+    }
+
+    let body = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n{urls}</urlset>\n"
+    );
+    Ok((
+        [(axum::http::header::CONTENT_TYPE, "application/xml; charset=utf-8")],
+        body,
+    ))
+}
+
+pub async fn get_bookings_by_tokens(
+    State(service): State<AppService>,
+    Json(req): Json<crate::models::BookingsByTokensRequest>,
+) -> Result<Json<std::collections::HashMap<String, crate::models::BookingCancelInfo>>> {
+    // Cap the batch to bound the query and guard against abuse.
+    let tokens: Vec<String> = req.tokens.into_iter().take(100).collect();
+    if tokens.is_empty() {
+        return Ok(Json(std::collections::HashMap::new()));
+    }
+    Ok(Json(service.get_bookings_by_tokens(&tokens).await?))
+}
+
 pub async fn cancel_booking_by_token(
     State(service): State<AppService>,
     Path(token): Path<String>,
@@ -694,7 +747,7 @@ pub async fn update_booking_status(
     Path(id): Path<Uuid>,
     Json(body): Json<crate::models::UpdateBookingStatusRequest>,
 ) -> Result<StatusCode> {
-    service.update_booking_status(id, body.status, body.admin_notes).await?;
+    service.update_booking_status(id, body.status, body.admin_notes, body.curator_conditions).await?;
     Ok(StatusCode::OK)
 }
 

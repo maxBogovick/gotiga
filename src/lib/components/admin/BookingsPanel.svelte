@@ -18,6 +18,7 @@
   let figurines = $state<FigurineListItem[]>([]);
   let updatingId    = $state<string | null>(null);
   let notesMap      = $state<Record<string, string>>({});
+  let curatorMap    = $state<Record<string, string>>({});
   let conflictErrors = $state<Record<string, string>>({});
 
   // ── Calendar view ──────────────────────────────────────────────
@@ -124,7 +125,8 @@
     conflictErrors = { ...conflictErrors, [booking.id]: '' };
     try {
       const notes = notesMap[booking.id] ?? undefined;
-      await api.updateBookingStatus(booking.id, status, notes);
+      const curator = curatorMap[booking.id] ?? undefined;
+      await api.updateBookingStatus(booking.id, status, notes, curator);
       await load();
     } catch (err) {
       const raw = err instanceof Error ? err.message : '';
@@ -394,24 +396,48 @@
               {/if}
             </div>
 
-            <!-- Purpose -->
+            <!-- Display type / venue / requirements -->
+            {#if booking.displayType || booking.venue || booking.purpose}
+              <div class="mt-2 flex flex-wrap gap-2 text-[10px] font-['Inter']">
+                {#if booking.displayType}
+                  <span class="px-1.5 py-0.5 bg-[#f8f1e7] border border-[#d8c6b1] text-[#5f4636]">
+                    {booking.displayType === 'private' ? 'Частный' : booking.displayType === 'exhibition' ? 'Выставка' : 'Фото/видео'}
+                  </span>
+                {/if}
+                {#if booking.venue}
+                  <span class="text-[#5f4636]/70">📍 {booking.venue}</span>
+                {/if}
+              </div>
+            {/if}
             {#if booking.purpose}
-              <p class="text-sm text-[#5f4636] italic border-l-2 border-[#d8c6b1] pl-2 mt-1.5">{booking.purpose}</p>
+              <p class="text-xs text-[#5f4636] italic border-l-2 border-[#d8c6b1] pl-2 mt-1.5">{booking.purpose}</p>
             {/if}
 
-            <!-- Admin notes input -->
+            <!-- Admin notes (rejection reason) + curator conditions inputs -->
             {#if booking.status === 'pending' || booking.status === 'confirmed'}
-              <div class="mt-3">
+              <div class="mt-3 space-y-2">
                 <input
                   type="text"
-                  placeholder="Примечание (необязательно)…"
+                  placeholder="Примечание (причина отказа, необязательно)…"
                   value={notesMap[booking.id] ?? booking.adminNotes ?? ''}
                   oninput={(e) => { notesMap[booking.id] = (e.target as HTMLInputElement).value; notesMap = {...notesMap}; }}
                   class="w-full border-b border-[#d8c6b1] bg-transparent text-xs py-1 text-[#34251c] font-['Inter'] focus:outline-none focus:border-[#c65f3c] placeholder-[#5f4636]/40"
                 />
+                <input
+                  type="text"
+                  placeholder="Условия куратора (видны клиенту при подтверждении)…"
+                  value={curatorMap[booking.id] ?? booking.curatorConditions ?? ''}
+                  oninput={(e) => { curatorMap[booking.id] = (e.target as HTMLInputElement).value; curatorMap = {...curatorMap}; }}
+                  class="w-full border-b border-[#d8c6b1] bg-transparent text-xs py-1 text-[#34251c] font-['Inter'] focus:outline-none focus:border-[#c65f3c] placeholder-[#5f4636]/40"
+                />
               </div>
-            {:else if booking.adminNotes}
-              <p class="text-xs text-[#5f4636]/70 font-['Inter'] mt-2 italic">Примечание: {booking.adminNotes}</p>
+            {:else}
+              {#if booking.adminNotes}
+                <p class="text-xs text-[#5f4636]/70 font-['Inter'] mt-2 italic">Примечание: {booking.adminNotes}</p>
+              {/if}
+              {#if booking.curatorConditions}
+                <p class="text-xs text-[#34251c] font-['Inter'] mt-1.5 border-l-2 border-green-500/50 pl-2">Условия куратора: {booking.curatorConditions}</p>
+              {/if}
             {/if}
 
             <!-- Conflict error -->

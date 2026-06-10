@@ -12,9 +12,11 @@
   import Lightbox from '$lib/components/Lightbox.svelte';
   import { api } from '$lib/api';
   import { t } from '$lib/i18n';
+  import { authStore } from '$lib/stores/auth.svelte';
   import ShowingsTimeline from '$lib/components/ShowingsTimeline.svelte';
   import FigurineComments from '$lib/components/FigurineComments.svelte';
   import { FigurineClaimsStore, type ClaimData } from '$lib/stores/figurine-claims.svelte';
+  import { focusTrap } from '$lib/actions/focusTrap';
   import '$lib/styles/figurine-detail.css';
 
   import type { FigurineListItem } from '$lib/types/api';
@@ -384,10 +386,10 @@
          onkeydown={(e) => e.key === 'Escape' && closeStoryModal()}
          role="presentation">
       <div class="story-modal" transition:fade={{ duration: 150 }}
-           role="dialog" aria-modal="true" tabindex="-1">
-        <button class="story-close" onclick={closeStoryModal} aria-label="Закрыть">✕</button>
+           role="dialog" aria-modal="true" aria-labelledby="story-modal-title" tabindex="-1" use:focusTrap>
+        <button class="story-close" onclick={closeStoryModal} aria-label={$t('lightboxClose')}>✕</button>
 
-        <p class="story-modal-title">{$t('figurineStoryShare')}</p>
+        <p id="story-modal-title" class="story-modal-title">{$t('figurineStoryShare')}</p>
 
         <!-- 9:16 preview -->
         {#if storyObjectUrl}
@@ -827,7 +829,7 @@
                     <span class="cp-dates">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</span>
                     <span class="cp-token">{c.token}</span>
                     <div class="cp-actions">
-                      <a href="/cancel/{c.token}" target="_blank" rel="noopener" class="cp-link">{$t('claimManageLink')}</a>
+                      <a href={authStore.isLoggedIn ? '/profile' : `/cancel/${c.token}`} class="cp-link">{$t('claimManageLink')}</a>
                       <button onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="cp-revoke">
                         {cs.cancellingToken === c.token ? '…' : $t('claimCancelBtn')}
                       </button>
@@ -842,7 +844,7 @@
                     <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.3" class="cp-icon" aria-hidden="true"><circle cx="5.5" cy="5.5" r="4.5"/><path d="M5.5 3.5v2.2l1.5 1.3"/></svg>
                     <span class="cp-dates">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</span>
                     <div class="cp-actions">
-                      <a href="/cancel/{c.token}" target="_blank" rel="noopener" class="cp-link cp-link--reschedule">{$t('ctaRescheduleLink')}</a>
+                      <a href={authStore.isLoggedIn ? '/profile' : `/cancel/${c.token}`} class="cp-link cp-link--reschedule">{$t('ctaRescheduleLink')}</a>
                       <button onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="cp-revoke">
                         {cs.cancellingToken === c.token ? $t('claimCancelling') : $t('claimCancelBtn')}
                       </button>
@@ -1007,7 +1009,7 @@
                         <span class="cp-dates">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</span>
                         <span class="cp-token">{c.token}</span>
                         <div class="cp-actions">
-                          <a href="/cancel/{c.token}" target="_blank" rel="noopener" class="cp-link">{$t('claimManageLink')}</a>
+                          <a href={authStore.isLoggedIn ? '/profile' : `/cancel/${c.token}`} class="cp-link">{$t('claimManageLink')}</a>
                           <button onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="cp-revoke">
                             {cs.cancellingToken === c.token ? '…' : $t('claimCancelBtn')}
                           </button>
@@ -1022,7 +1024,7 @@
                         <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.3" class="cp-icon" aria-hidden="true"><circle cx="5.5" cy="5.5" r="4.5"/><path d="M5.5 3.5v2.2l1.5 1.3"/></svg>
                         <span class="cp-dates">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</span>
                         <div class="cp-actions">
-                          <a href="/cancel/{c.token}" target="_blank" rel="noopener" class="cp-link cp-link--reschedule">{$t('ctaRescheduleLink')}</a>
+                          <a href={authStore.isLoggedIn ? '/profile' : `/cancel/${c.token}`} class="cp-link cp-link--reschedule">{$t('ctaRescheduleLink')}</a>
                           <button onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="cp-revoke">
                             {cs.cancellingToken === c.token ? $t('claimCancelling') : $t('claimCancelBtn')}
                           </button>

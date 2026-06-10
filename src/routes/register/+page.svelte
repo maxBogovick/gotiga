@@ -2,6 +2,7 @@
   import { goto } from '$app/navigation';
   import { t } from '$lib/i18n';
   import { api } from '$lib/api';
+  import { isValidEmail } from '$lib/validation';
   import { VISUAL_CATEGORIES, iconLabel } from '$lib/data/visualIcons';
   import { lang } from '$lib/i18n';
   import AuthFrame from '$lib/components/auth/AuthFrame.svelte';
@@ -23,7 +24,7 @@
   function currentCategory()   { return VISUAL_CATEGORIES[categoryStepIndex()]; }
 
   function validateStep1(): string {
-    if (!email.includes('@')) return $t('authErrorEmail');
+    if (!isValidEmail(email)) return $t('authErrorEmail');
     if (!displayName.trim())  return $t('authErrorName');
     return '';
   }

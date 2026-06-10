@@ -44,26 +44,16 @@
     return () => s.remove();
   });
 
-  let statusAvailability = $derived(
-    figurine?.status === 'available'
-      ? 'https://schema.org/InStock'
-      : figurine?.status === 'reserved'
-        ? 'https://schema.org/LimitedAvailability'
-        : 'https://schema.org/SoldOut'
-  );
-
+  // VisualArtwork (not Product/Offer) — this is a showcase, not a shop.
   let jsonLd = $derived(() => JSON.stringify({
     '@context': 'https://schema.org',
-    '@type': 'Product',
+    '@type': 'VisualArtwork',
     name: figurine?.name ?? '',
     description: figurine?.shortText ?? figurine?.fullDescription ?? '',
     image: ogImage(),
-    offers: {
-      '@type': 'Offer',
-      availability: statusAvailability,
-      priceCurrency: 'RUB',
-    },
-    ...(figurine?.material ? { material: figurine.material } : {}),
+    ...(figurine?.material ? { artMedium: figurine.material } : {}),
+    ...(figurine?.technique ? { artform: figurine.technique } : {}),
+    ...(figurine?.year ? { dateCreated: String(figurine.year) } : {}),
   }));
 </script>
 
@@ -72,7 +62,7 @@
   <meta name="description" content={figurine?.shortText ?? figurine?.fullDescription ?? 'Gothic handcrafted miniature'} />
 
   <!-- Open Graph -->
-  <meta property="og:type"        content="product" />
+  <meta property="og:type"        content="article" />
   <meta property="og:title"       content="{figurine?.name ?? 'Gothic Miniature'} — Gotiga" />
   <meta property="og:description" content={figurine?.shortText ?? figurine?.fullDescription ?? ''} />
   {#if ogImage()}

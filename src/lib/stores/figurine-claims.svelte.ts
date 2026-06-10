@@ -60,18 +60,23 @@ export class FigurineClaimsStore {
 
   async verify() {
     if (this.claims.length === 0) return;
-    const results = await Promise.allSettled(this.claims.map(c => api.getBookingByToken(c.token)));
+    // Single batched request for all of this figurine's tokens.
+    let fresh: Record<string, { status: string; startsAt: string; endsAt: string }>;
+    try {
+      fresh = await api.getBookingsByTokens(this.claims.map(c => c.token));
+    } catch {
+      return;
+    }
     let changed = false;
     const updated = this.claims
-      .map((c, i) => {
-        const r = results[i];
-        if (r.status !== 'fulfilled') return c;
-        const fresh = r.value;
-        const serverStatus = fresh.status as ClaimStatus;
-        const datesChanged = fresh.startsAt !== c.startsAt || fresh.endsAt !== c.endsAt;
+      .map((c) => {
+        const r = fresh[c.token];
+        if (!r) return c;
+        const serverStatus = r.status as ClaimStatus;
+        const datesChanged = r.startsAt !== c.startsAt || r.endsAt !== c.endsAt;
         if (serverStatus !== c.status || datesChanged) {
           changed = true;
-          return { ...c, status: serverStatus, startsAt: fresh.startsAt, endsAt: fresh.endsAt };
+          return { ...c, status: serverStatus, startsAt: r.startsAt, endsAt: r.endsAt };
         }
         return c;
       })

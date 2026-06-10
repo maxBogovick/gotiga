@@ -522,10 +522,13 @@ pub struct Booking {
     pub requester_email: String,
     pub requester_phone: Option<String>,
     pub purpose: Option<String>,
+    pub display_type: Option<String>,
+    pub venue: Option<String>,
     pub starts_at: chrono::NaiveDate,
     pub ends_at: chrono::NaiveDate,
     pub status: BookingStatus,
     pub admin_notes: Option<String>,
+    pub curator_conditions: Option<String>,
     pub cancel_token: String,
     pub created_at: DateTime<Utc>,
     pub user_id: Option<Uuid>,
@@ -548,6 +551,14 @@ pub struct BookingCancelInfo {
     pub ends_at: String,
     pub status: BookingStatus,
     pub admin_notes: Option<String>,
+    pub curator_conditions: Option<String>,
+}
+
+/// Batch token lookup — clients poll several claim tokens at once.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BookingsByTokensRequest {
+    pub tokens: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -573,10 +584,13 @@ pub struct BookingDto {
     pub requester_email: String,
     pub requester_phone: Option<String>,
     pub purpose: Option<String>,
+    pub display_type: Option<String>,
+    pub venue: Option<String>,
     pub starts_at: String,
     pub ends_at: String,
     pub status: BookingStatus,
     pub admin_notes: Option<String>,
+    pub curator_conditions: Option<String>,
     pub created_at: String,
 }
 
@@ -622,6 +636,8 @@ pub struct CreateBookingRequest {
     pub requester_email: String,
     pub requester_phone: Option<String>,
     pub purpose: Option<String>,
+    pub display_type: Option<String>,
+    pub venue: Option<String>,
     pub starts_at: String,
     pub ends_at: String,
 }
@@ -631,6 +647,7 @@ pub struct CreateBookingRequest {
 pub struct UpdateBookingStatusRequest {
     pub status: BookingStatus,
     pub admin_notes: Option<String>,
+    pub curator_conditions: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -776,10 +793,14 @@ pub struct UserBookingDto {
     pub id: String,
     pub figurine_id: String,
     pub figurine_name: String,
+    pub display_type: Option<String>,
+    pub venue: Option<String>,
     pub starts_at: String,
     pub ends_at: String,
     pub status: BookingStatus,
     pub created_at: String,
+    pub cancel_token: String,
+    pub curator_conditions: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

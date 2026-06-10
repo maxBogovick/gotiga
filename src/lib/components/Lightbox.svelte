@@ -1,6 +1,7 @@
 <script lang="ts">
   import { fade } from 'svelte/transition';
   import { t } from '$lib/i18n';
+  import { focusTrap } from '$lib/actions/focusTrap';
 
   type LightboxImage = { url: string; alt?: string };
 
@@ -60,6 +61,7 @@
   aria-modal="true"
   aria-label="Image viewer"
   tabindex="-1"
+  use:focusTrap
   ontouchstart={handleTouchStart}
   ontouchend={handleTouchEnd}
 >

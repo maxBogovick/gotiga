@@ -41,7 +41,13 @@
   let composeBody = $state('');
   let composeSending = $state(false);
   let composeSent = $state(false);
+  let composeError = $state('');
 
+  // Per-action error feedback (previously these failures were swallowed silently)
+  let replyError = $state('');
+  let nameError = $state('');
+  let avatarError = $state('');
+  let deleteError = $state('');
 
   // Account editing
   let editingName = $state(false);
@@ -139,6 +145,7 @@
   async function saveName() {
     if (!editNameValue.trim() || savingName) return;
     savingName = true;
+    nameError = '';
     try {
       const updated = await api.updateProfile(authStore.token!, editNameValue.trim());
       authStore.user = updated;
@@ -146,7 +153,7 @@
       nameSaved = true;
       setTimeout(() => nameSaved = false, 2000);
     } catch {
-      // keep editing open
+      nameError = $t('profileActionError'); // keep editing open
     } finally {
       savingName = false;
     }
@@ -160,11 +167,12 @@
     const file = (e.target as HTMLInputElement).files?.[0];
     if (!file) return;
     uploadingAvatar = true;
+    avatarError = '';
     try {
       const updated = await api.uploadAvatar(authStore.token!, file);
       authStore.user = updated;
     } catch {
-      // silent
+      avatarError = $t('profileAvatarError');
     } finally {
       uploadingAvatar = false;
       if (avatarInput) avatarInput.value = '';
@@ -174,13 +182,14 @@
   async function deleteAccount() {
     if (deleting) return;
     deleting = true;
+    deleteError = '';
     try {
       await api.deleteAccount(authStore.token!);
       authStore.clearSession();
       goto('/');
     } catch {
+      deleteError = $t('profileActionError');
       deleting = false;
-      showDeleteConfirm = false;
     }
   }
 
@@ -193,6 +202,7 @@
     openThread = null;
     replyBody = '';
     replySent = false;
+    replyError = '';
     try {
       const detail = await api.getThread(authStore.token!, id);
       openThread = detail;
@@ -217,6 +227,7 @@
   async function sendReply() {
     if (!replyBody.trim() || replySending || !openThread) return;
     replySending = true;
+    replyError = '';
     try {
       const msg = await api.replyToThread(authStore.token!, openThread.thread.id, replyBody.trim());
       openThread = { ...openThread, messages: [...openThread.messages, msg] };
@@ -225,7 +236,9 @@
       setTimeout(() => { replySent = false; }, 2000);
       await tick();
       scrollToBottom();
-    } catch { /* silent */ } finally {
+    } catch {
+      replyError = $t('profileActionError');
+    } finally {
       replySending = false;
     }
   }
@@ -233,6 +246,7 @@
   async function sendCompose() {
     if (!composeSubject.trim() || !composeBody.trim() || composeSending) return;
     composeSending = true;
+    composeError = '';
     try {
       const detail = await api.createThread(authStore.token!, composeSubject.trim(), composeBody.trim(), 'general');
       threads = [detail.thread, ...threads];
@@ -243,7 +257,9 @@
         composeSent = false;
         showCompose = false;
       }, 1800);
-    } catch { /* silent */ } finally {
+    } catch {
+      composeError = $t('profileActionError');
+    } finally {
       composeSending = false;
     }
   }
@@ -333,6 +349,7 @@
               class="sr-only"
               onchange={handleAvatarChange}
             />
+            {#if avatarError}<p class="field-error" role="alert">{avatarError}</p>{/if}
           </div>
 
           <div class="hero-identity">
@@ -349,6 +366,7 @@
                 </button>
                 <button class="hero-name-cancel" onclick={cancelEditName}>✕</button>
               </div>
+              {#if nameError}<span class="field-error" role="alert">{nameError}</span>{/if}
             {:else}
               <div class="hero-name-row">
                 <h1 class="hero-name">{authStore.user?.displayName ?? ''}</h1>
@@ -400,6 +418,7 @@
                   {$t('profileDeleteCancel')}
                 </button>
               </div>
+              {#if deleteError}<p class="field-error" role="alert">{deleteError}</p>{/if}
             </div>
           {/if}
         </div>
@@ -417,14 +436,23 @@
           {:else}
             <div class="cards-grid">
               {#each bookings as b}
-                <a href="/figurines/{b.figurineId}" class="card">
+                <div class="card">
                   <div class="card-head">
-                    <span class="card-name">{b.figurineName}</span>
+                    <a href="/figurines/{b.figurineId}" class="card-name card-name--link">{b.figurineName}</a>
                     <span class="status status--{b.status}">{bookingStatusLabel(b.status)}</span>
                   </div>
                   <p class="card-range">{formatDateRange(b.startsAt, b.endsAt)}</p>
-                  <p class="card-date">{formatDate(b.createdAt)}</p>
-                </a>
+                  {#if b.curatorConditions}
+                    <div class="card-curator">
+                      <span class="card-curator-label">{$t('profileBookingCuratorConditions')}</span>
+                      <p class="card-curator-text">{b.curatorConditions}</p>
+                    </div>
+                  {/if}
+                  <div class="card-footer">
+                    <p class="card-date">{formatDate(b.createdAt)}</p>
+                    <a href="/cancel/{b.cancelToken}" class="card-manage">{$t('profileBookingManage')}</a>
+                  </div>
+                </div>
               {/each}
             </div>
           {/if}
@@ -517,6 +545,7 @@
                         {replySending ? $t('profileMessagesReplying') : replySent ? $t('profileMessageWriteSent') : $t('profileMessagesReply')} →
                       </button>
                     </div>
+                    {#if replyError}<p class="field-error" role="alert">{replyError}</p>{/if}
                   </div>
                 {:else}
                   <p class="chat-resolved-note">{$t('profileMessagesResolved')}</p>
@@ -567,6 +596,7 @@
                   >
                     {composeSending ? $t('profileMessagesSending') : composeSent ? $t('profileMessagesSent') : $t('profileMessagesSend')}
                   </button>
+                  {#if composeError}<p class="field-error" role="alert">{composeError}</p>{/if}
                 </div>
               {/if}
 
@@ -1049,11 +1079,56 @@
     font-style: italic;
   }
 
+  .card-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-top: 0.2rem;
+  }
+
   .card-date {
     font-size: 0.68rem;
     color: #b5a090;
     margin: 0;
     font-family: Inter, sans-serif;
+  }
+
+  .card-manage {
+    font-family: Inter, sans-serif;
+    font-size: 0.66rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: #c65f3c;
+    text-decoration: none;
+    opacity: 0.75;
+    flex-shrink: 0;
+    transition: opacity 0.15s;
+  }
+  .card-manage:hover { opacity: 1; }
+
+  .card-curator {
+    margin: 0.4rem 0 0.25rem;
+    padding: 0.4rem 0.65rem;
+    background: rgba(34,139,34,0.05);
+    border-left: 2px solid rgba(34,139,34,0.3);
+  }
+  .card-curator-label {
+    display: block;
+    font-family: Inter, sans-serif;
+    font-size: 0.58rem;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    color: rgba(95,70,54,0.5);
+    font-weight: 700;
+    margin-bottom: 0.2rem;
+  }
+  .card-curator-text {
+    margin: 0;
+    font-size: 0.8rem;
+    color: #34251c;
+    font-style: italic;
+    line-height: 1.4;
   }
 
   .status {
@@ -1241,6 +1316,13 @@
   }
   .msg-send-btn:hover:not(:disabled) { background: rgba(198,95,60,0.08); }
   .msg-send-btn:disabled { opacity: 0.45; cursor: default; }
+
+  .field-error {
+    margin: 0.4rem 0 0;
+    font-size: 0.75rem;
+    color: #a03020;
+    font-style: italic;
+  }
 
   .msg-item { cursor: pointer; transition: background 0.12s; position: relative; }
   .msg-item:hover { background: rgba(216,198,177,0.15); }

@@ -101,13 +101,8 @@ export function resolveMediaUrl(url: string | null | undefined): string | null {
 }
 
 function webPublicUrl(url: unknown): string | null {
-    if (typeof url !== 'string' || !url) return null;
-    if (url.startsWith('http')) return url;
-    if (url.startsWith('/static/')) {
-        const { serverUrl } = getWebSettings();
-        return serverUrl ? `${serverUrl}${url}` : url;
-    }
-    return url;
+    if (typeof url !== 'string') return null;
+    return resolveMediaUrl(url);
 }
 
 async function webFetch<T>(path: string, options?: RequestInit): Promise<T> {
@@ -468,6 +463,17 @@ export const api = {
         return webFetch(`/bookings/cancel/${encodeURIComponent(token)}`);
     },
 
+    // Batch token lookup — one request for many claim tokens. Tokens not found are
+    // simply absent from the returned map (same semantics as a 404 on the single GET).
+    async getBookingsByTokens(tokens: string[]): Promise<Record<string, import('./types/api').BookingCancelInfo>> {
+        if (tokens.length === 0) return {};
+        return webFetch('/bookings/by-tokens', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tokens }),
+        });
+    },
+
     async cancelBookingByToken(token: string): Promise<void> {
         await webFetch(`/bookings/cancel/${encodeURIComponent(token)}`, { method: 'POST' });
     },
@@ -554,11 +560,11 @@ export const api = {
         return webFetch(`/admin/bookings${qs}`, { headers: authHeaders() });
     },
 
-    async updateBookingStatus(id: string, status: string, adminNotes?: string): Promise<void> {
+    async updateBookingStatus(id: string, status: string, adminNotes?: string, curatorConditions?: string): Promise<void> {
         await webFetch(`/admin/bookings/${id}/status`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
-            body: JSON.stringify({ status, adminNotes: adminNotes ?? null }),
+            body: JSON.stringify({ status, adminNotes: adminNotes ?? null, curatorConditions: curatorConditions ?? null }),
         });
     },
 

@@ -4,6 +4,7 @@
   import { t } from '$lib/i18n';
   import { api } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
+  import { isValidEmail } from '$lib/validation';
   import { getIconById, iconLabel, type IconCategory } from '$lib/data/visualIcons';
   import { lang } from '$lib/i18n';
   import AuthFrame from '$lib/components/auth/AuthFrame.svelte';
@@ -29,7 +30,7 @@
   async function advance() {
     error = '';
     if (step === 1) {
-      if (!email.includes('@')) { error = $t('authErrorEmail'); return; }
+      if (!isValidEmail(email)) { error = $t('authErrorEmail'); return; }
       await fetchChallenge();
       return;
     }

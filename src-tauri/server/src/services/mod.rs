@@ -464,7 +464,28 @@ impl AppService {
             ends_at: b.ends_at.to_string(),
             status: b.status,
             admin_notes: b.admin_notes,
+            curator_conditions: b.curator_conditions,
         }))
+    }
+
+    /// Batch variant — returns a map keyed by cancel token. Missing/invalid tokens are
+    /// simply absent from the result (same "not found = omitted" semantics as the single GET).
+    pub async fn get_bookings_by_tokens(
+        &self,
+        tokens: &[String],
+    ) -> Result<std::collections::HashMap<String, crate::models::BookingCancelInfo>> {
+        let bookings = self.repo.get_bookings_by_cancel_tokens(tokens).await?;
+        Ok(bookings.into_iter().map(|b| {
+            (b.cancel_token.clone(), crate::models::BookingCancelInfo {
+                figurine_name: b.figurine_name,
+                figurine_id: b.figurine_id.to_string(),
+                starts_at: b.starts_at.to_string(),
+                ends_at: b.ends_at.to_string(),
+                status: b.status,
+                admin_notes: b.admin_notes,
+                curator_conditions: b.curator_conditions,
+            })
+        }).collect())
     }
 
     pub async fn cancel_booking_by_token(&self, token: &str) -> Result<()> {
@@ -589,6 +610,9 @@ impl AppService {
             requester_email: b.requester_email,
             requester_phone: b.requester_phone,
             purpose: b.purpose,
+            display_type: b.display_type,
+            venue: b.venue,
+            curator_conditions: b.curator_conditions,
             starts_at: b.starts_at.to_string(),
             ends_at: b.ends_at.to_string(),
             status: b.status,
@@ -598,7 +622,7 @@ impl AppService {
         Ok(BookingsPage { items: dtos, total, pending_count, page, per_page })
     }
 
-    pub async fn update_booking_status(&self, id: uuid::Uuid, status: BookingStatus, admin_notes: Option<String>) -> Result<()> {
+    pub async fn update_booking_status(&self, id: uuid::Uuid, status: BookingStatus, admin_notes: Option<String>, curator_conditions: Option<String>) -> Result<()> {
         let booking = self.repo.get_booking_by_id(id).await?
             .ok_or_else(|| crate::error::AppError::NotFound(format!("Booking {} not found", id)))?;
 
@@ -608,40 +632,46 @@ impl AppService {
             ).await? {
                 return Err(crate::error::AppError::Conflict(reason));
             }
-            self.repo.update_booking_status(id, &status, admin_notes.as_deref()).await?;
+            self.repo.update_booking_status(id, &status, admin_notes.as_deref(), curator_conditions.as_deref()).await?;
             self.repo.update_figurine_status(booking.figurine_id, &FigurineStatus::Reserved).await?;
-            self.send_booking_status_message(&booking, &status, admin_notes.as_deref()).await;
+            self.send_booking_status_message(&booking, &status, admin_notes.as_deref(), curator_conditions.as_deref()).await;
             return Ok(());
         }
 
         if (status == BookingStatus::Completed || status == BookingStatus::Cancelled || status == BookingStatus::Rejected)
             && booking.status == BookingStatus::Confirmed
         {
-            self.repo.update_booking_status(id, &status, admin_notes.as_deref()).await?;
+            self.repo.update_booking_status(id, &status, admin_notes.as_deref(), curator_conditions.as_deref()).await?;
             let has_others = self.repo.has_future_confirmed_bookings(booking.figurine_id, id).await?;
             if !has_others {
                 self.repo.update_figurine_status(booking.figurine_id, &FigurineStatus::Available).await?;
             }
-            self.send_booking_status_message(&booking, &status, admin_notes.as_deref()).await;
+            self.send_booking_status_message(&booking, &status, admin_notes.as_deref(), curator_conditions.as_deref()).await;
             return Ok(());
         }
 
-        self.repo.update_booking_status(id, &status, admin_notes.as_deref()).await?;
-        self.send_booking_status_message(&booking, &status, admin_notes.as_deref()).await;
+        self.repo.update_booking_status(id, &status, admin_notes.as_deref(), curator_conditions.as_deref()).await?;
+        self.send_booking_status_message(&booking, &status, admin_notes.as_deref(), curator_conditions.as_deref()).await;
         Ok(())
     }
 
-    async fn send_booking_status_message(&self, booking: &Booking, status: &BookingStatus, admin_notes: Option<&str>) {
+    async fn send_booking_status_message(&self, booking: &Booking, status: &BookingStatus, admin_notes: Option<&str>, curator_conditions: Option<&str>) {
         let Some(user_id) = booking.user_id else { return };
         let (subject, body) = match status {
             BookingStatus::Confirmed => (
                 format!("Бронирование подтверждено — {}", booking.figurine_name),
-                format!(
-                    "Ваш запрос на бронирование «{}» ({} — {}) подтверждён.",
-                    booking.figurine_name,
-                    booking.starts_at,
-                    booking.ends_at,
-                ),
+                {
+                    let base = format!(
+                        "Ваш запрос на бронирование «{}» ({} — {}) подтверждён.",
+                        booking.figurine_name,
+                        booking.starts_at,
+                        booking.ends_at,
+                    );
+                    match curator_conditions {
+                        Some(c) if !c.is_empty() => format!("{}\n\nУсловия куратора: {}", base, c),
+                        _ => base,
+                    }
+                },
             ),
             BookingStatus::Rejected => (
                 format!("Бронирование отклонено — {}", booking.figurine_name),
@@ -1099,6 +1129,10 @@ impl AppService {
             ends_at: b.ends_at.to_string(),
             status: b.status,
             created_at: b.created_at.to_rfc3339(),
+            cancel_token: b.cancel_token,
+            display_type: b.display_type,
+            venue: b.venue,
+            curator_conditions: b.curator_conditions,
         }).collect())
     }
 
@@ -1298,6 +1332,7 @@ impl AppService {
             ends_at: updated.ends_at.to_string(),
             status: updated.status,
             admin_notes: updated.admin_notes,
+            curator_conditions: updated.curator_conditions,
         })
     }
 

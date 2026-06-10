@@ -63,16 +63,22 @@ class AllClaimsStore {
 
   async verify() {
     if (this.claims.length === 0) { this.#syncTimer(); return; }
-    const results = await Promise.allSettled(
-      this.claims.map(c => api.getBookingByToken(c.token))
-    );
+    // Single batched request for all tokens. Tokens absent from the map are treated
+    // as "not found / unchanged" — same semantics as a rejected single-token lookup.
+    let fresh: Record<string, { status: string }>;
+    try {
+      fresh = await api.getBookingsByTokens(this.claims.map(c => c.token));
+    } catch {
+      this.#syncTimer();
+      return;
+    }
     // Snapshot status before any changes to detect transitions
     const before = new Map(this.claims.map(c => [c.token, c.status]));
     let changed = false;
-    const mapped = this.claims.map((c, i) => {
-      const r = results[i];
-      if (r.status !== 'fulfilled') return c;
-      const s = r.value.status as ClaimStatus;
+    const mapped = this.claims.map((c) => {
+      const r = fresh[c.token];
+      if (!r) return c;
+      const s = r.status as ClaimStatus;
       if (s !== c.status) { changed = true; return { ...c, status: s }; }
       return c;
     });

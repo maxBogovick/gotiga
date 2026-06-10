@@ -219,6 +219,9 @@ export interface BookingDto {
     requesterEmail: string;
     requesterPhone: string | null;
     purpose: string | null;
+    displayType: string | null;
+    venue: string | null;
+    curatorConditions: string | null;
     startsAt: string;
     endsAt: string;
     status: BookingStatus;
@@ -245,6 +248,7 @@ export interface BookingCancelInfo {
     endsAt: string;
     status: BookingStatus;
     adminNotes: string | null;
+    curatorConditions: string | null;
 }
 
 export interface CreateBookingRequest {
@@ -254,6 +258,8 @@ export interface CreateBookingRequest {
     requesterEmail: string;
     requesterPhone: string | null;
     purpose: string | null;
+    displayType: string | null;
+    venue: string | null;
     startsAt: string;
     endsAt: string;
 }
@@ -307,6 +313,10 @@ export interface UserBookingDto {
     endsAt: string;
     status: BookingStatus;
     createdAt: string;
+    cancelToken: string;
+    displayType: string | null;
+    venue: string | null;
+    curatorConditions: string | null;
 }
 
 export interface UserOrderDto {

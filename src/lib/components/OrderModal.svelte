@@ -4,6 +4,8 @@
   import { api, resolveMediaUrl } from '$lib/api';
   import { t } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
+  import { isValidEmail } from '$lib/validation';
+  import { focusTrap } from '$lib/actions/focusTrap';
   import type { FigurineSchedule } from '$lib/types/api';
 
   let avatarUrl = $derived(resolveMediaUrl(authStore.user?.avatarUrl));
@@ -61,11 +63,12 @@
     const effectiveName = authStore.isLoggedIn ? (authStore.user?.displayName ?? '') : name.trim();
     const effectiveEmail = authStore.isLoggedIn ? (authStore.user?.email ?? '') : email.trim();
 
-    if (!effectiveEmail) return;
-    if (mode === 'request' && !effectiveName) return;
+    submitError = '';
+    if (mode === 'request' && !effectiveName) { submitError = $t('formFillFields'); return; }
+    if (!effectiveEmail) { submitError = $t('formFillFields'); return; }
+    if (!authStore.isLoggedIn && !isValidEmail(effectiveEmail)) { submitError = $t('formInvalidEmail'); return; }
 
     isSubmitting = true;
-    submitError = '';
 
     try {
       await api.submitOrder({
@@ -97,6 +100,8 @@
   }
 </script>
 
+<svelte:window onkeydown={(e) => { if (isOpen && e.key === 'Escape') close(); }} />
+
 {#if isOpen}
   <!-- Backdrop -->
   <div
@@ -113,8 +118,10 @@
             class="relative w-full max-w-lg perspective-1000"
             role="dialog"
             aria-modal="true"
+            aria-labelledby="order-modal-title"
             tabindex="-1"
             in:fly={{ y: 50, duration: 800, easing: cubicOut }}
+            use:focusTrap
     >
 
       <!-- Paper Texture Background -->
@@ -140,7 +147,7 @@
                 <div out:fade={{ duration: 300 }}>
                   <div class="text-center mb-10 relative">
                     <span class="absolute -top-6 left-1/2 -translate-x-1/2 text-5xl opacity-10 font-['Fraunces']">~</span>
-                    <h3 class="font-['Fraunces'] text-4xl mb-2 text-[#6f3b24] drop-shadow-sm tracking-wide">{modalTitle}</h3>
+                    <h3 id="order-modal-title" class="font-['Fraunces'] text-4xl mb-2 text-[#6f3b24] drop-shadow-sm tracking-wide">{modalTitle}</h3>
                     <div class="flex items-center justify-center gap-3 text-[#5f4636]">
                         <span class="h-px w-8 bg-[#5f4636]/30"></span>
                         <p class="italic text-lg font-semibold tracking-wide">Ref: {figurineName}</p>

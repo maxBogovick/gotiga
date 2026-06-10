@@ -177,7 +177,7 @@
           {/if}
 
           <div class="panel-footer">
-            <a href="/bookings" class="panel-view-all" onclick={closePanel}>
+            <a href={authStore.isLoggedIn ? '/profile' : '/bookings'} class="panel-view-all" onclick={closePanel}>
               {$t('bookingsViewAll')} →
             </a>
           </div>

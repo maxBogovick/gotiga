@@ -4,6 +4,8 @@
   import { api } from '$lib/api';
   import { t } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
+  import { isValidEmail } from '$lib/validation';
+  import { focusTrap } from '$lib/actions/focusTrap';
 
   let {
     isOpen        = false,
@@ -39,6 +41,7 @@
     const effectiveName  = authStore.isLoggedIn ? (authStore.user?.displayName ?? '') : name.trim();
     const effectiveEmail = authStore.isLoggedIn ? (authStore.user?.email ?? '') : email.trim();
     if (!effectiveName || !effectiveEmail) { submitError = $t('waitlistFillFields'); return; }
+    if (!authStore.isLoggedIn && !isValidEmail(effectiveEmail)) { submitError = $t('formInvalidEmail'); return; }
     submitting = true; submitError = '';
     try {
       await api.joinWaitlist(figurineId, {
@@ -72,8 +75,11 @@
     <div
       role="dialog"
       aria-modal="true"
+      aria-labelledby="waitlist-modal-title"
+      tabindex="-1"
       class="relative w-full max-w-md perspective-1000"
       in:fly={{ y: 40, duration: 600, easing: cubicOut }}
+      use:focusTrap
     >
       <div class="relative bg-[#fff9f0] shadow-[0_20px_60px_rgba(111,59,36,0.18)] p-1 overflow-hidden transform rotate-1 transition-transform duration-500 hover:rotate-0 border border-[#d8c6b1]">
         <div class="border-[3px] border-double border-[#c9a875]/35 relative bg-[#fff9f0] max-h-[90vh] overflow-hidden">
@@ -84,7 +90,7 @@
               <div out:fade={{ duration: 250 }}>
                 <div class="text-center mb-5">
                   <span class="text-3xl opacity-20 font-['Fraunces'] block mb-1">~</span>
-                  <h3 class="font-['Fraunces'] text-2xl text-[#6f3b24] tracking-wide mb-1">{$t('waitlistTitle')}</h3>
+                  <h3 id="waitlist-modal-title" class="font-['Fraunces'] text-2xl text-[#6f3b24] tracking-wide mb-1">{$t('waitlistTitle')}</h3>
                   <p class="text-sm italic text-[#5f4636] font-semibold">{figurineName}</p>
                   <p class="text-xs text-[#5f4636]/70 mt-2 leading-relaxed">{$t('waitlistHint')}</p>
                 </div>

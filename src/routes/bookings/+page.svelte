@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { fade } from 'svelte/transition';
+  import { goto } from '$app/navigation';
   import { t } from '$lib/i18n';
   import { allClaims } from '$lib/stores/all-claims.svelte';
+  import { authStore } from '$lib/stores/auth.svelte';
 
   function fmtDate(iso: string) {
     return new Date(iso).toLocaleDateString(undefined, {
@@ -21,6 +23,10 @@
   }
 
   onMount(() => {
+    if (authStore.isLoggedIn) {
+      goto('/profile');
+      return;
+    }
     allClaims.reload();
     allClaims.verify();
     allClaims.startPolling();

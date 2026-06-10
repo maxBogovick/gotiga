@@ -4,6 +4,7 @@
   import { fade } from 'svelte/transition';
   import { t } from '$lib/i18n';
   import { api } from '$lib/api';
+  import { authStore } from '$lib/stores/auth.svelte';
   import DateRangePicker from '$lib/components/DateRangePicker.svelte';
   import type { BookingCancelInfo, FigurineSchedule, BookingRules } from '$lib/types/api';
 
@@ -133,6 +134,10 @@
 <div class="cancel-wrap">
   <div class="cancel-frame">
 
+    {#if authStore.isLoggedIn}
+      <a href="/profile" class="back-to-profile">{$t('cancelBackToProfile')}</a>
+    {/if}
+
     {#if phase === 'loading'}
       <p class="status-text" transition:fade={{ duration: 200 }}>{$t('cancelLoading')}</p>
 
@@ -177,6 +182,12 @@
             <p class="hint">{$t('cancelAlreadyCompleted')}</p>
           {:else if info.status === 'confirmed'}
             <p class="hint">{$t('cancelAlreadyConfirmed')}</p>
+            {#if info.curatorConditions}
+              <div class="admin-notes admin-notes--curator">
+                <span class="admin-notes-label">{$t('cancelCuratorConditions')}</span>
+                <p class="admin-notes-text">{info.curatorConditions}</p>
+              </div>
+            {/if}
           {:else if info.status === 'rejected'}
             {#if info.adminNotes}
               <div class="admin-notes">
@@ -246,6 +257,20 @@
     padding: 2rem 1rem;
     background: #f8f1e7;
   }
+
+  .back-to-profile {
+    display: block;
+    font-family: Inter, sans-serif;
+    font-size: 0.68rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: rgba(95,70,54,0.5);
+    text-decoration: none;
+    text-align: left;
+    margin-bottom: 1.5rem;
+    transition: color 0.15s;
+  }
+  .back-to-profile:hover { color: #c65f3c; }
 
   .cancel-frame {
     width: 100%;
@@ -348,6 +373,11 @@
     color: #34251c;
     font-style: italic;
     line-height: 1.5;
+  }
+
+  .admin-notes--curator {
+    border-color: rgba(34,139,34,0.25);
+    background: rgba(34,139,34,0.04);
   }
 
   .try-again {

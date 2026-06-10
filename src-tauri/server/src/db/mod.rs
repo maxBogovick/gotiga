@@ -659,11 +659,12 @@ impl Repository {
         let cancel_token = Self::generate_cancel_token();
 
         let rec = sqlx::query_as::<_, Booking>(
-            "INSERT INTO figurine_bookings (figurine_id, figurine_name, requester_name, requester_email, requester_phone, purpose, starts_at, ends_at, cancel_token)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *"
+            "INSERT INTO figurine_bookings (figurine_id, figurine_name, requester_name, requester_email, requester_phone, purpose, display_type, venue, starts_at, ends_at, cancel_token)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *"
         )
         .bind(figurine_id).bind(&req.figurine_name).bind(&req.requester_name)
         .bind(&req.requester_email).bind(&req.requester_phone).bind(&req.purpose)
+        .bind(&req.display_type).bind(&req.venue)
         .bind(starts_at).bind(ends_at).bind(&cancel_token)
         .fetch_one(&self.pg_pool).await?;
         Ok(rec)
@@ -680,6 +681,14 @@ impl Repository {
         )
         .bind(token)
         .fetch_optional(&self.pg_pool).await?)
+    }
+
+    pub async fn get_bookings_by_cancel_tokens(&self, tokens: &[String]) -> Result<Vec<Booking>> {
+        Ok(sqlx::query_as::<_, Booking>(
+            "SELECT * FROM figurine_bookings WHERE cancel_token = ANY($1)"
+        )
+        .bind(tokens)
+        .fetch_all(&self.pg_pool).await?)
     }
 
     pub async fn cancel_booking_by_token(&self, token: &str) -> Result<Option<Booking>> {
@@ -791,11 +800,11 @@ impl Repository {
         Ok(count)
     }
 
-    pub async fn update_booking_status(&self, id: Uuid, status: &crate::models::BookingStatus, admin_notes: Option<&str>) -> Result<()> {
+    pub async fn update_booking_status(&self, id: Uuid, status: &crate::models::BookingStatus, admin_notes: Option<&str>, curator_conditions: Option<&str>) -> Result<()> {
         let affected = sqlx::query(
-            "UPDATE figurine_bookings SET status = $1, admin_notes = COALESCE($2, admin_notes) WHERE id = $3"
+            "UPDATE figurine_bookings SET status = $1, admin_notes = COALESCE($2, admin_notes), curator_conditions = COALESCE($3, curator_conditions) WHERE id = $4"
         )
-        .bind(status).bind(admin_notes).bind(id)
+        .bind(status).bind(admin_notes).bind(curator_conditions).bind(id)
         .execute(&self.pg_pool).await?.rows_affected();
 
         if affected == 0 {

@@ -343,7 +343,7 @@
         }
         // Hash-based tab routing (e.g. Telegram notification links)
         const hash = window.location.hash.replace('#', '');
-        const validTabs = ['registry','home','zones','author','workshop','media','releases','orders','showings','bookings','analytics','users','comments','server'];
+        const validTabs = ['registry','home','zones','author','workshop','media','releases','orders','showings','bookings','waitlist','analytics','users','comments','messages','server','booking-rules'];
         if (validTabs.includes(hash)) {
             activeTab = hash as typeof activeTab;
         }

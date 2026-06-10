@@ -52,6 +52,7 @@ pub fn router(service: AppService, config: Config) -> Router {
         .route("/figurines/:id/book",           post(handlers::create_booking))
         .route("/figurines/:id/waitlist",       post(handlers::join_waitlist))
         .route("/booking-rules",                get(handlers::get_booking_rules))
+        .route("/bookings/by-tokens",           post(handlers::get_bookings_by_tokens))
         .route("/bookings/cancel/:token",       get(handlers::get_booking_by_token)
                                                 .post(handlers::cancel_booking_by_token))
         .route("/bookings/cancel/:token/reschedule", patch(handlers::reschedule_booking_by_token))
@@ -223,6 +224,7 @@ pub fn router(service: AppService, config: Config) -> Router {
 
     Router::new()
         .nest("/api/v1", api)
+        .route("/sitemap.xml", get(handlers::sitemap_xml))
         .nest_service("/static", ServeDir::new(&config.upload_dir))
         .layer(CorsLayer::permissive())
         .with_state(state)
