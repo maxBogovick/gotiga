@@ -42,6 +42,12 @@ import type {
     ThreadDetailDto,
     ThemeConfig,
     CopyOverrides,
+    CommissionRequest,
+    CommissionDto,
+    CommissionCreatedResponse,
+    CommissionsPage,
+    EditCommissionRequest,
+    AttachmentInput,
 } from './types/api';
 
 export type { AppSettings };
@@ -708,20 +714,37 @@ export const api = {
         return webFetch(`/profile/threads/${threadId}`, { headers: { Authorization: `Bearer ${sessionToken}` } });
     },
 
-    async createThread(sessionToken: string, subject: string, body: string, category?: string): Promise<ThreadDetailDto> {
+    async createThread(sessionToken: string, subject: string, body: string, category?: string, attachmentUrls?: AttachmentInput[]): Promise<ThreadDetailDto> {
         return webFetch('/profile/threads', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
-            body: JSON.stringify({ subject, body, category }),
+            body: JSON.stringify({ subject, body, category, attachmentUrls }),
         });
     },
 
-    async replyToThread(sessionToken: string, threadId: string, body: string): Promise<ThreadMessageDto> {
+    async replyToThread(sessionToken: string, threadId: string, body: string, attachmentUrls?: AttachmentInput[]): Promise<ThreadMessageDto> {
         return webFetch(`/profile/threads/${threadId}/reply`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
-            body: JSON.stringify({ body }),
+            body: JSON.stringify({ body, attachmentUrls }),
         });
+    },
+
+    /** Upload an image as a logged-in user (commission refs, chat attachments). */
+    async uploadUserMedia(sessionToken: string, file: File): Promise<AttachmentInput> {
+        const form = new FormData();
+        form.append('file', file);
+        const res = await fetch(`${webApiBase()}/profile/uploads`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+            body: form,
+        });
+        if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+        const data = await res.json();
+        return {
+            url: webPublicUrl(data.url) ?? '',
+            thumbUrl: webPublicUrl(data.thumbUrl),
+        };
     },
 
     async adminListThreads(opts?: { category?: string; status?: string; page?: number; perPage?: number }): Promise<{ items: Array<{ thread: MessageThreadDto; user: { id: string; displayName: string; email: string } }>; total: number; page: number; perPage: number }> {
@@ -738,19 +761,96 @@ export const api = {
         return webFetch(`/admin/threads/${threadId}`, { headers: authHeaders() });
     },
 
-    async adminCreateThreadForUser(userId: string, subject: string, body: string, category?: string): Promise<ThreadDetailDto> {
+    async adminCreateThreadForUser(userId: string, subject: string, body: string, category?: string, attachmentUrls?: AttachmentInput[]): Promise<ThreadDetailDto> {
         return webFetch(`/admin/users/${userId}/threads`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
-            body: JSON.stringify({ subject, body, category }),
+            body: JSON.stringify({ subject, body, category, attachmentUrls }),
         });
     },
 
-    async adminReplyToThread(threadId: string, body: string): Promise<ThreadMessageDto> {
+    async adminReplyToThread(threadId: string, body: string, attachmentUrls?: AttachmentInput[]): Promise<ThreadMessageDto> {
         return webFetch(`/admin/threads/${threadId}/reply`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
-            body: JSON.stringify({ body }),
+            body: JSON.stringify({ body, attachmentUrls }),
+        });
+    },
+
+    // === COMMISSIONS ===
+    async submitCommission(req: CommissionRequest, sessionToken?: string): Promise<CommissionCreatedResponse> {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
+        return webFetch('/commissions', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(req),
+        });
+    },
+
+    async getCommissionByToken(token: string): Promise<CommissionDto> {
+        return webFetch(`/commissions/${token}`);
+    },
+
+    async claimCommission(sessionToken: string, claimToken: string): Promise<CommissionDto> {
+        return webFetch('/profile/commissions/claim', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
+            body: JSON.stringify({ claimToken }),
+        });
+    },
+
+    async getUserCommissions(sessionToken: string): Promise<CommissionDto[]> {
+        const data = await webFetch<{ commissions: CommissionDto[] }>('/profile/commissions', {
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+        return data.commissions;
+    },
+
+    async editCommission(sessionToken: string, id: string, req: EditCommissionRequest): Promise<CommissionDto> {
+        return webFetch(`/profile/commissions/${id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
+            body: JSON.stringify(req),
+        });
+    },
+
+    async deleteCommission(sessionToken: string, id: string): Promise<void> {
+        await webFetch(`/profile/commissions/${id}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    async adminEditCommission(id: string, req: EditCommissionRequest): Promise<CommissionDto> {
+        return webFetch(`/admin/commissions/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(req),
+        });
+    },
+
+    async adminDeleteCommission(id: string): Promise<void> {
+        await webFetch(`/admin/commissions/${id}`, {
+            method: 'DELETE',
+            headers: authHeaders(),
+        });
+    },
+
+    async adminListCommissions(opts?: { status?: string; page?: number; perPage?: number }): Promise<CommissionsPage> {
+        const p = new URLSearchParams();
+        if (opts?.status)  p.set('status',  opts.status);
+        if (opts?.page)    p.set('page',    String(opts.page));
+        if (opts?.perPage) p.set('perPage', String(opts.perPage));
+        const qs = p.toString() ? `?${p}` : '';
+        return webFetch(`/admin/commissions${qs}`, { headers: authHeaders() });
+    },
+
+    async updateCommissionStatus(id: string, status: CommissionDto['status'], opts?: { adminNotes?: string; figurineId?: string }): Promise<CommissionDto> {
+        return webFetch(`/admin/commissions/${id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ status, adminNotes: opts?.adminNotes, figurineId: opts?.figurineId }),
         });
     },
 

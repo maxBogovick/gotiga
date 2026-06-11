@@ -1089,6 +1089,8 @@ pub struct ThreadMessageDto {
     pub body: String,
     pub read_at: Option<String>,
     pub created_at: String,
+    #[serde(default)]
+    pub attachments: Vec<AttachmentDto>,
 }
 
 impl From<&ThreadMessage> for ThreadMessageDto {
@@ -1100,7 +1102,16 @@ impl From<&ThreadMessage> for ThreadMessageDto {
             body: m.body.clone(),
             read_at: m.read_at.map(|t| t.to_rfc3339()),
             created_at: m.created_at.to_rfc3339(),
+            attachments: Vec::new(),
         }
+    }
+}
+
+impl ThreadMessageDto {
+    pub fn from_with_attachments(m: &ThreadMessage, attachments: Vec<AttachmentDto>) -> Self {
+        let mut dto = ThreadMessageDto::from(m);
+        dto.attachments = attachments;
+        dto
     }
 }
 
@@ -1126,12 +1137,184 @@ pub struct CreateThreadRequest {
     pub subject: String,
     pub body: String,
     pub category: Option<String>,
+    #[serde(default)]
+    pub attachment_urls: Vec<AttachmentInput>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReplyToThreadRequest {
     pub body: String,
+    #[serde(default)]
+    pub attachment_urls: Vec<AttachmentInput>,
+}
+
+// ============================================================
+// COMMISSIONS — petition to the master to create a NEW figurine
+// ============================================================
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+#[sqlx(type_name = "commission_status", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum CommissionStatus {
+    New,
+    Reviewing,
+    Accepted,
+    InProgress,
+    Completed,
+    Declined,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct Commission {
+    pub id: Uuid,
+    pub user_id: Option<Uuid>,
+    pub claim_token: String,
+    pub requester_name: String,
+    pub requester_email: String,
+    pub requester_phone: Option<String>,
+    pub title: String,
+    pub description: String,
+    pub size_note: Option<String>,
+    pub mood: Option<String>,
+    pub deadline: Option<chrono::NaiveDate>,
+    pub budget_note: Option<String>,
+    pub occasion: Option<String>,
+    pub figurine_id: Option<String>,
+    pub status: CommissionStatus,
+    pub admin_notes: Option<String>,
+    pub lang: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl CommissionStatus {
+    /// Work has begun — the petition may no longer be deleted or edited.
+    pub fn is_started(&self) -> bool {
+        matches!(self, CommissionStatus::Accepted | CommissionStatus::InProgress | CommissionStatus::Completed)
+    }
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct Attachment {
+    pub id: Uuid,
+    pub url: String,
+    pub thumb_url: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachmentDto {
+    pub id: String,
+    pub url: String,
+    pub thumb_url: Option<String>,
+}
+
+impl From<&Attachment> for AttachmentDto {
+    fn from(a: &Attachment) -> Self {
+        AttachmentDto { id: a.id.to_string(), url: a.url.clone(), thumb_url: a.thumb_url.clone() }
+    }
+}
+
+/// One uploaded reference, as echoed back by the client after an upload.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachmentInput {
+    pub url: String,
+    pub thumb_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommissionRequest {
+    pub requester_name: Option<String>,
+    pub requester_email: String,
+    pub requester_phone: Option<String>,
+    pub title: Option<String>,
+    pub description: String,
+    pub size_note: Option<String>,
+    pub mood: Option<String>,
+    pub deadline: Option<String>,
+    pub budget_note: Option<String>,
+    pub occasion: Option<String>,
+    #[serde(default)]
+    pub attachment_urls: Vec<AttachmentInput>,
+    /// Honeypot — real users never fill this. Non-empty ⇒ silently dropped.
+    #[serde(default)]
+    pub website: Option<String>,
+    /// UI language at submission time ('ru' | 'en'), for later system messages.
+    pub lang: Option<String>,
+}
+
+/// Edit of a petition's content (by its owner or the master) — only while work
+/// has not yet started.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EditCommissionRequest {
+    pub title: Option<String>,
+    pub description: String,
+    pub size_note: Option<String>,
+    pub mood: Option<String>,
+    pub deadline: Option<String>,
+    pub budget_note: Option<String>,
+    pub occasion: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommissionDto {
+    pub id: String,
+    pub claim_token: String,
+    pub requester_name: String,
+    pub requester_email: String,
+    pub requester_phone: Option<String>,
+    pub title: String,
+    pub description: String,
+    pub size_note: Option<String>,
+    pub mood: Option<String>,
+    pub deadline: Option<String>,
+    pub budget_note: Option<String>,
+    pub occasion: Option<String>,
+    pub figurine_id: Option<String>,
+    pub status: CommissionStatus,
+    pub admin_notes: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub attachments: Vec<AttachmentDto>,
+    pub thread_id: Option<String>,
+    /// Whether work has begun (petition can no longer be deleted or edited).
+    pub started: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommissionCreatedResponse {
+    pub id: String,
+    pub claim_token: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommissionsPage {
+    pub items: Vec<CommissionDto>,
+    pub total: i64,
+    pub new_count: i64,
+    pub page: i64,
+    pub per_page: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCommissionStatusRequest {
+    pub status: CommissionStatus,
+    pub admin_notes: Option<String>,
+    pub figurine_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaimCommissionRequest {
+    pub claim_token: String,
 }
 
 // ============================================================

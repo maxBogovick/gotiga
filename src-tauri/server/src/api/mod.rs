@@ -46,6 +46,8 @@ pub fn router(service: AppService, config: Config) -> Router {
         .route("/home-content",                 get(handlers::get_home_content))
         .route("/author/profile",               get(handlers::get_author_profile))
         .route("/orders",                       post(handlers::create_order))
+        .route("/commissions",                  post(handlers::create_commission))
+        .route("/commissions/:token",           get(handlers::get_commission_by_token))
         .route("/figurines/:id/schedule",       get(handlers::get_figurine_schedule))
         .route("/figurines/:id/comments",       get(handlers::get_figurine_comments)
                                                 .post(handlers::submit_comment))
@@ -135,6 +137,15 @@ pub fn router(service: AppService, config: Config) -> Router {
         .route("/admin/orders/:id",
             patch(handlers::update_order_status)
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        // === COMMISSIONS (ADMIN) ===
+        .route("/admin/commissions",
+            get(handlers::admin_list_commissions)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        .route("/admin/commissions/:id",
+            patch(handlers::admin_update_commission)
+            .put(handlers::admin_edit_commission)
+            .delete(handlers::admin_delete_commission)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
         // === SHOWINGS (ADMIN) ===
         .route("/admin/showings",
             get(handlers::list_showings)
@@ -175,6 +186,10 @@ pub fn router(service: AppService, config: Config) -> Router {
         .route("/profile/orders",         get(handlers::user_profile_orders))
         .route("/profile/me",             patch(handlers::user_update_profile).delete(handlers::user_delete_account))
         .route("/profile/avatar",         post(handlers::user_upload_avatar))
+        .route("/profile/uploads",        post(handlers::user_upload_file))
+        .route("/profile/commissions",        get(handlers::user_list_commissions))
+        .route("/profile/commissions/claim",  post(handlers::user_claim_commission))
+        .route("/profile/commissions/:id",    patch(handlers::user_edit_commission).delete(handlers::user_delete_commission))
         .route("/profile/threads",            get(handlers::user_get_threads).post(handlers::user_create_thread))
         .route("/profile/threads/:id",        get(handlers::user_get_thread))
         .route("/profile/threads/:id/reply",  post(handlers::user_reply_to_thread))

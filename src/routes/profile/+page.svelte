@@ -4,19 +4,89 @@
   import { t, lang } from '$lib/i18n';
   import { api, resolveMediaUrl } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
-  import type { UserBookingDto, UserOrderDto, MessageThreadDto, ThreadDetailDto } from '$lib/types/api';
+  import type { UserBookingDto, UserOrderDto, MessageThreadDto, ThreadDetailDto, CommissionDto, AttachmentInput } from '$lib/types/api';
+  import MessageAttachments from '$lib/components/MessageAttachments.svelte';
 
-  type Tab = 'bookings' | 'orders' | 'wishlist' | 'messages';
+  type Tab = 'bookings' | 'orders' | 'commissions' | 'wishlist' | 'messages';
   let activeTab = $state<Tab>('bookings');
 
   let bookings = $state<UserBookingDto[]>([]);
   let orders = $state<UserOrderDto[]>([]);
+  let commissions = $state<CommissionDto[]>([]);
   let wishlistIds = $state<string[]>([]);
   let wishlistItems = $state<Map<string, { name: string; status: string } | null>>(new Map());
   let threads = $state<MessageThreadDto[]>([]);
   let unreadCount = $state(0);
   let loading = $state(true);
   let error = $state('');
+
+  const COMMISSION_STATUS_LABEL: Record<string, string> = {
+    new: 'Новое', reviewing: 'На рассмотрении', accepted: 'Принято',
+    in_progress: 'В работе', completed: 'Завершено', declined: 'Отклонено',
+  };
+
+  // Petition edit / delete
+  let editingId = $state<string | null>(null);
+  let editTitle = $state('');
+  let editDescription = $state('');
+  let editSize = $state('');
+  let editMood = $state('');
+  let editDeadline = $state('');
+  let editBudget = $state('');
+  let editOccasion = $state('');
+  let editSaving = $state(false);
+  let editError = $state('');
+  let deletingId = $state<string | null>(null);
+  let confirmDeleteId = $state<string | null>(null);
+
+  function startEditCommission(c: CommissionDto) {
+    editingId = c.id;
+    editError = '';
+    editTitle = c.title;
+    editDescription = c.description;
+    editSize = c.sizeNote ?? '';
+    editMood = c.mood ?? '';
+    editDeadline = c.deadline ?? '';
+    editBudget = c.budgetNote ?? '';
+    editOccasion = c.occasion ?? '';
+  }
+  function cancelEditCommission() { editingId = null; editError = ''; }
+
+  async function saveEditCommission(c: CommissionDto) {
+    if (!editDescription.trim()) { editError = $t('commissionNeedIdea'); return; }
+    editSaving = true;
+    editError = '';
+    try {
+      const updated = await api.editCommission(authStore.token!, c.id, {
+        title: editTitle.trim() || null,
+        description: editDescription.trim(),
+        sizeNote: editSize.trim() || null,
+        mood: editMood.trim() || null,
+        deadline: editDeadline || null,
+        budgetNote: editBudget.trim() || null,
+        occasion: editOccasion.trim() || null,
+      });
+      commissions = commissions.map((x) => (x.id === c.id ? updated : x));
+      editingId = null;
+    } catch {
+      editError = $t('profileActionError');
+    } finally {
+      editSaving = false;
+    }
+  }
+
+  async function removeCommission(c: CommissionDto) {
+    deletingId = c.id;
+    try {
+      await api.deleteCommission(authStore.token!, c.id);
+      commissions = commissions.filter((x) => x.id !== c.id);
+      confirmDeleteId = null;
+    } catch {
+      // ignore
+    } finally {
+      deletingId = null;
+    }
+  }
 
   // Thread view
   type MsgFilter = 'all' | 'booking' | 'order' | 'waitlist' | 'general';
@@ -34,6 +104,24 @@
   let replyBody = $state('');
   let replySending = $state(false);
   let replySent = $state(false);
+  let replyAttachments = $state<AttachmentInput[]>([]);
+  let replyUploading = $state(false);
+
+  async function handleReplyFiles(e: Event) {
+    const input = e.target as HTMLInputElement;
+    if (!input.files || !authStore.token) return;
+    for (const file of Array.from(input.files)) {
+      if (replyAttachments.length >= 5) break;
+      if (file.size > 8 * 1024 * 1024) continue;
+      replyUploading = true;
+      try {
+        const att = await api.uploadUserMedia(authStore.token, file);
+        replyAttachments = [...replyAttachments, att];
+      } catch { /* ignore */ }
+      finally { replyUploading = false; }
+    }
+    input.value = '';
+  }
 
   // Compose new thread
   let showCompose = $state(false);
@@ -78,6 +166,14 @@
         return;
       }
     }
+    // Auto-claim a commission submitted earlier as a guest.
+    if (authStore.token && typeof localStorage !== 'undefined') {
+      const pending = localStorage.getItem('gotiga_pending_claim');
+      if (pending) {
+        try { await api.claimCommission(authStore.token, pending); } catch { /* ignore */ }
+        localStorage.removeItem('gotiga_pending_claim');
+      }
+    }
     await loadData();
   });
 
@@ -86,13 +182,15 @@
     error = '';
     try {
       const token = authStore.token!;
-      const [b, o, th] = await Promise.all([
+      const [b, o, th, com] = await Promise.all([
         api.userProfileBookings(token),
         api.userProfileOrders(token),
         api.getUserThreads(token),
+        api.getUserCommissions(token),
       ]);
       bookings = b;
       orders = o;
+      commissions = com;
       threads = th.threads;
       unreadCount = th.unread;
 
@@ -201,6 +299,7 @@
     threadLoading = true;
     openThread = null;
     replyBody = '';
+    replyAttachments = [];
     replySent = false;
     replyError = '';
     try {
@@ -221,17 +320,19 @@
   function closeThread() {
     openThread = null;
     replyBody = '';
+    replyAttachments = [];
     replySent = false;
   }
 
   async function sendReply() {
-    if (!replyBody.trim() || replySending || !openThread) return;
+    if ((!replyBody.trim() && replyAttachments.length === 0) || replySending || !openThread) return;
     replySending = true;
     replyError = '';
     try {
-      const msg = await api.replyToThread(authStore.token!, openThread.thread.id, replyBody.trim());
+      const msg = await api.replyToThread(authStore.token!, openThread.thread.id, replyBody.trim(), replyAttachments);
       openThread = { ...openThread, messages: [...openThread.messages, msg] };
       replyBody = '';
+      replyAttachments = [];
       replySent = true;
       setTimeout(() => { replySent = false; }, 2000);
       await tick();
@@ -393,6 +494,10 @@
             <span>{$t('profileOrders')}</span>
             {#if orders.length > 0}<span class="nav-badge">{orders.length}</span>{/if}
           </button>
+          <button class="nav-item" class:active={activeTab === 'commissions'} onclick={() => activeTab = 'commissions'}>
+            <span>{$t('profileCommissions')}</span>
+            {#if commissions.length > 0}<span class="nav-badge">{commissions.length}</span>{/if}
+          </button>
           <button class="nav-item" class:active={activeTab === 'wishlist'} onclick={() => activeTab = 'wishlist'}>
             <span>{$t('profileWishlist')}</span>
             {#if wishlistIds.length > 0}<span class="nav-badge">{wishlistIds.length}</span>{/if}
@@ -475,6 +580,73 @@
               {/each}
             </div>
           {/if}
+        {:else if activeTab === 'commissions'}
+          {#if commissions.length === 0}
+            <div class="empty-with-cta">
+              <p class="empty">{$t('profileCommissionsEmpty')}</p>
+              <a href="/commission" class="commission-cta">{$t('profileCommissionsNew')}</a>
+            </div>
+          {:else}
+            <div class="cards-grid">
+              {#each commissions as c}
+                <div class="card commission-card">
+                  {#if editingId === c.id}
+                    <!-- Inline edit -->
+                    <div class="commission-edit">
+                      <input class="edit-input" type="text" bind:value={editTitle} placeholder={$t('commissionFieldTitle')} maxlength="120" />
+                      <textarea class="edit-input edit-area" bind:value={editDescription} rows="4" placeholder={$t('commissionFieldIdea')} maxlength="5000"></textarea>
+                      <div class="edit-row">
+                        <input class="edit-input" type="text" bind:value={editSize} placeholder={$t('commissionFieldSize')} />
+                        <input class="edit-input" type="text" bind:value={editMood} placeholder={$t('commissionFieldMood')} />
+                      </div>
+                      <div class="edit-row">
+                        <input class="edit-input" type="date" bind:value={editDeadline} />
+                        <input class="edit-input" type="text" bind:value={editOccasion} placeholder={$t('commissionFieldOccasion')} />
+                      </div>
+                      <input class="edit-input" type="text" bind:value={editBudget} placeholder={$t('commissionFieldBudget')} />
+                      {#if editError}<p class="field-error">{editError}</p>{/if}
+                      <div class="edit-actions">
+                        <button class="commission-btn ghost" onclick={cancelEditCommission} disabled={editSaving}>{$t('commissionBack')}</button>
+                        <button class="commission-btn" onclick={() => saveEditCommission(c)} disabled={editSaving}>{editSaving ? $t('commissionSending') : $t('profileCommissionsSave')}</button>
+                      </div>
+                    </div>
+                  {:else}
+                    <div class="card-head">
+                      <span class="card-name">{c.title || $t('commissionUntitled')}</span>
+                      <span class="order-status order-status--{c.status === 'declined' ? 'rejected' : c.status === 'completed' ? 'confirmed' : 'pending'}">{COMMISSION_STATUS_LABEL[c.status] ?? c.status}</span>
+                    </div>
+                    <p class="card-desc">{c.description}</p>
+                    {#if c.attachments.length > 0}
+                      <div class="commission-thumbs">
+                        {#each c.attachments as att (att.id)}
+                          <img src={resolveMediaUrl(att.thumbUrl ?? att.url)} alt="" />
+                        {/each}
+                      </div>
+                    {/if}
+                    <div class="card-foot">
+                      <span class="card-date">{formatDate(c.createdAt)}</span>
+                      {#if c.threadId}
+                        <button class="commission-open" onclick={() => { activeTab = 'messages'; openThreadDetail(c.threadId!); }}>{$t('profileCommissionsOpenChat')} →</button>
+                      {/if}
+                    </div>
+                    <div class="commission-manage">
+                      {#if c.started}
+                        <span class="commission-locked">{$t('profileCommissionsLocked')}</span>
+                      {:else if confirmDeleteId === c.id}
+                        <span class="commission-confirm">{$t('profileCommissionsDeleteConfirm')}</span>
+                        <button class="commission-link danger" onclick={() => removeCommission(c)} disabled={deletingId === c.id}>{deletingId === c.id ? '…' : $t('profileCommissionsDeleteYes')}</button>
+                        <button class="commission-link" onclick={() => confirmDeleteId = null}>{$t('commissionBack')}</button>
+                      {:else}
+                        <button class="commission-link" onclick={() => startEditCommission(c)}>{$t('profileCommissionsEdit')}</button>
+                        <button class="commission-link danger" onclick={() => confirmDeleteId = c.id}>{$t('profileCommissionsDelete')}</button>
+                      {/if}
+                    </div>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+            <a href="/commission" class="commission-cta commission-cta--inline">{$t('profileCommissionsNew')}</a>
+          {/if}
         {:else if activeTab === 'wishlist'}
           {#if wishlistIds.length === 0}
             <p class="empty">{$t('profileEmpty')}</p>
@@ -518,7 +690,10 @@
                       <div class="chat-row" class:chat-row--user={!msg.fromAdmin} class:chat-row--admin={msg.fromAdmin}>
                         <div class="chat-bubble" class:chat-bubble--user={!msg.fromAdmin} class:chat-bubble--admin={msg.fromAdmin}>
                           <p class="chat-sender">{msg.fromAdmin ? $t('profileMessagesFromAdmin') : $t('profileMessagesFromYou')}</p>
-                          <p class="chat-body">{msg.body}</p>
+                          {#if msg.body}<p class="chat-body">{msg.body}</p>{/if}
+                          {#if msg.attachments && msg.attachments.length > 0}
+                            <MessageAttachments attachments={msg.attachments} />
+                          {/if}
                         </div>
                         <p class="chat-time">{formatDate(msg.createdAt)}</p>
                       </div>
@@ -535,12 +710,26 @@
                       placeholder={$t('profileMessageWriteBody')}
                       onkeydown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) sendReply(); }}
                     ></textarea>
+                    {#if replyAttachments.length > 0}
+                      <div class="reply-atts">
+                        {#each replyAttachments as att, i (att.url)}
+                          <div class="reply-att">
+                            <img src={resolveMediaUrl(att.thumbUrl ?? att.url)} alt="" />
+                            <button type="button" onclick={() => replyAttachments = replyAttachments.filter((_, idx) => idx !== i)} aria-label="×">×</button>
+                          </div>
+                        {/each}
+                      </div>
+                    {/if}
                     <div class="chat-reply-footer">
                       <span class="chat-reply-hint">Ctrl+Enter</span>
+                      <label class="chat-attach-btn" title={$t('profileAttachImage')}>
+                        <input type="file" accept="image/*" multiple hidden onchange={handleReplyFiles} />
+                        {replyUploading ? '…' : '📎'}
+                      </label>
                       <button
                         class="chat-reply-btn"
                         onclick={sendReply}
-                        disabled={replySending || !replyBody.trim()}
+                        disabled={replySending || (!replyBody.trim() && replyAttachments.length === 0)}
                       >
                         {replySending ? $t('profileMessagesReplying') : replySent ? $t('profileMessageWriteSent') : $t('profileMessagesReply')} →
                       </button>
@@ -1194,6 +1383,42 @@
 
 
   /* ── Messages ── */
+
+  /* Commission attachments in reply + petitions tab */
+  .reply-atts { display: flex; flex-wrap: wrap; gap: 0.4rem; padding: 0.4rem 0; }
+  .reply-att { position: relative; width: 48px; height: 48px; border: 1px solid #d8c6b1; overflow: hidden; }
+  .reply-att img { width: 100%; height: 100%; object-fit: cover; }
+  .reply-att button { position: absolute; top: 0; right: 0; width: 16px; height: 16px; background: rgba(52,37,28,0.8); color: #fff; border: none; cursor: pointer; line-height: 1; font-size: 0.7rem; }
+  .chat-attach-btn { display: inline-grid; place-items: center; width: 2rem; height: 2rem; border: 1px solid #d8c6b1; cursor: pointer; font-size: 0.9rem; margin-right: auto; }
+  .chat-attach-btn:hover { border-color: #c65f3c; }
+  .empty-with-cta { text-align: center; }
+  .commission-cta { display: inline-block; margin-top: 1rem; background: #6f3b24; color: #f8f1e7; padding: 0.6rem 1.4rem; text-decoration: none; font-size: 0.8rem; letter-spacing: 0.06em; text-transform: uppercase; transition: background 0.2s; }
+  .commission-cta:hover { background: #c65f3c; }
+  .commission-cta--inline { margin-top: 1.5rem; }
+  .commission-card { display: flex; flex-direction: column; gap: 0.5rem; }
+  .card-desc { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 1rem; color: #5f4636; display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .commission-thumbs { display: flex; gap: 0.3rem; flex-wrap: wrap; }
+  .commission-thumbs img { width: 40px; height: 40px; object-fit: cover; border: 1px solid #d8c6b1; }
+  .card-foot { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-top: auto; }
+  .commission-open { background: none; border: none; color: #c65f3c; cursor: pointer; font-size: 0.78rem; letter-spacing: 0.04em; padding: 0; }
+  .commission-open:hover { text-decoration: underline; }
+  .commission-manage { display: flex; align-items: center; gap: 0.75rem; margin-top: 0.6rem; padding-top: 0.6rem; border-top: 1px solid #e8dcc9; flex-wrap: wrap; }
+  .commission-link { background: none; border: none; padding: 0; cursor: pointer; font-size: 0.75rem; letter-spacing: 0.04em; color: #6f3b24; }
+  .commission-link:hover { text-decoration: underline; }
+  .commission-link.danger { color: #a3361d; }
+  .commission-locked { font-size: 0.72rem; font-style: italic; color: #8a7a6a; }
+  .commission-confirm { font-size: 0.75rem; color: #a3361d; }
+  .commission-edit { display: flex; flex-direction: column; gap: 0.6rem; }
+  .edit-input { width: 100%; background: #f8f1e7; border: 1px solid #d8c6b1; padding: 0.5rem 0.6rem; font-family: inherit; font-size: 0.9rem; color: #34251c; }
+  .edit-input:focus { outline: none; border-color: #c65f3c; }
+  .edit-area { resize: vertical; font-family: 'Cormorant Garamond', Georgia, serif; font-size: 1rem; }
+  .edit-row { display: flex; gap: 0.6rem; }
+  .edit-row .edit-input { flex: 1; }
+  .edit-actions { display: flex; gap: 0.6rem; justify-content: flex-end; }
+  .commission-btn { background: #6f3b24; color: #f8f1e7; border: none; padding: 0.5rem 1.2rem; font-family: inherit; font-size: 0.78rem; letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer; }
+  .commission-btn:hover:not(:disabled) { background: #c65f3c; }
+  .commission-btn:disabled { opacity: 0.5; cursor: default; }
+  .commission-btn.ghost { background: transparent; color: #6f3b24; border: 1px solid #d8c6b1; }
 
   .messages-wrap {
     max-width: 720px;

@@ -68,6 +68,7 @@
             <div class="empty" in:fade={{ duration: 700, delay: 200 }}>
                 <p class="empty-title">{$t('upcomingEmpty')}</p>
                 <p class="empty-hint">{$t('upcomingEmptyHint')}</p>
+                <a href="/commission" class="petition-link">{$t('commissionInvite')}</a>
             </div>
         {:else}
             <div class="grid" in:fade={{ duration: 600, delay: 150 }}>
@@ -126,6 +127,12 @@
                         </div>
                     </article>
                 {/each}
+            </div>
+
+            <div class="invitation" in:fade={{ duration: 700, delay: 300 }}>
+                <span class="invitation-rule" aria-hidden="true"></span>
+                <p class="invitation-text">{$t('commissionInviteHint')}</p>
+                <a href="/commission" class="petition-link">{$t('commissionInvite')}</a>
             </div>
         {/if}
     </div>
@@ -296,6 +303,43 @@
         letter-spacing: 0.12em;
         text-transform: uppercase;
         color: var(--muted2);
+    }
+
+    /* Petition invitation */
+    .petition-link {
+        display: inline-block;
+        margin-top: 1.5rem;
+        font-family: 'Cormorant Garamond', Georgia, serif;
+        font-style: italic;
+        font-size: 1.15rem;
+        color: #c65f3c;
+        text-decoration: none;
+        border-bottom: 1px solid rgba(198, 95, 60, 0.4);
+        padding-bottom: 2px;
+        transition: color 0.2s, border-color 0.2s;
+    }
+    .petition-link:hover {
+        color: #6f3b24;
+        border-color: #6f3b24;
+    }
+    .invitation {
+        text-align: center;
+        margin-top: clamp(48px, 7vw, 96px);
+    }
+    .invitation-rule {
+        display: block;
+        width: 40px;
+        height: 1px;
+        background: #c65f3c;
+        margin: 0 auto 1.5rem;
+    }
+    .invitation-text {
+        font-family: 'Cormorant Garamond', Georgia, serif;
+        font-style: italic;
+        font-size: 1.1rem;
+        color: #6f3b24;
+        max-width: 38ch;
+        margin: 0 auto;
     }
 
     /* Grid */

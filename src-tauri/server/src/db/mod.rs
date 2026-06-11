@@ -1738,4 +1738,237 @@ impl Repository {
             (thread, unread, preview)
         }).collect())
     }
+
+    // === MESSAGE ATTACHMENTS ===
+
+    pub async fn insert_message_attachments(
+        &self,
+        message_id: Uuid,
+        attachments: &[crate::models::AttachmentInput],
+    ) -> Result<()> {
+        for att in attachments {
+            sqlx::query(
+                "INSERT INTO thread_message_attachments (message_id, url, thumb_url) VALUES ($1, $2, $3)"
+            )
+            .bind(message_id).bind(&att.url).bind(&att.thumb_url)
+            .execute(&self.pg_pool).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn get_message_attachments(&self, message_id: Uuid) -> Result<Vec<crate::models::Attachment>> {
+        Ok(sqlx::query_as::<_, crate::models::Attachment>(
+            "SELECT id, url, thumb_url FROM thread_message_attachments WHERE message_id = $1 ORDER BY created_at ASC"
+        )
+        .bind(message_id)
+        .fetch_all(&self.pg_pool).await?)
+    }
+
+    // === COMMISSIONS ===
+
+    fn generate_claim_token() -> String {
+        let a = Uuid::new_v4().to_string().replace('-', "");
+        let b = Uuid::new_v4().to_string().replace('-', "");
+        format!("{}{}", a, b)
+    }
+
+    pub async fn create_commission(
+        &self,
+        req: &crate::models::CommissionRequest,
+    ) -> Result<crate::models::Commission> {
+        let deadline = req.deadline.as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+        let claim_token = Self::generate_claim_token();
+
+        let mut tx = self.pg_pool.begin().await?;
+
+        let lang = match req.lang.as_deref() {
+            Some("en") => "en",
+            _ => "ru",
+        };
+        let commission = sqlx::query_as::<_, crate::models::Commission>(
+            r#"INSERT INTO commissions
+               (claim_token, requester_name, requester_email, requester_phone,
+                title, description, size_note, mood, deadline, budget_note, occasion, lang)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+               RETURNING *"#
+        )
+        .bind(&claim_token)
+        .bind(req.requester_name.clone().unwrap_or_default())
+        .bind(&req.requester_email)
+        .bind(&req.requester_phone)
+        .bind(req.title.clone().unwrap_or_default())
+        .bind(&req.description)
+        .bind(&req.size_note)
+        .bind(&req.mood)
+        .bind(deadline)
+        .bind(&req.budget_note)
+        .bind(&req.occasion)
+        .bind(lang)
+        .fetch_one(&mut *tx).await?;
+
+        for att in &req.attachment_urls {
+            sqlx::query(
+                "INSERT INTO commission_attachments (commission_id, url, thumb_url) VALUES ($1, $2, $3)"
+            )
+            .bind(commission.id).bind(&att.url).bind(&att.thumb_url)
+            .execute(&mut *tx).await?;
+        }
+
+        tx.commit().await?;
+        Ok(commission)
+    }
+
+    pub async fn get_commission_attachments(&self, commission_id: Uuid) -> Result<Vec<crate::models::Attachment>> {
+        Ok(sqlx::query_as::<_, crate::models::Attachment>(
+            "SELECT id, url, thumb_url FROM commission_attachments WHERE commission_id = $1 ORDER BY created_at ASC"
+        )
+        .bind(commission_id)
+        .fetch_all(&self.pg_pool).await?)
+    }
+
+    pub async fn get_commission_by_token(&self, token: &str) -> Result<Option<crate::models::Commission>> {
+        Ok(sqlx::query_as::<_, crate::models::Commission>(
+            "SELECT * FROM commissions WHERE claim_token = $1"
+        )
+        .bind(token)
+        .fetch_optional(&self.pg_pool).await?)
+    }
+
+    pub async fn get_commission_by_id(&self, id: Uuid) -> Result<Option<crate::models::Commission>> {
+        Ok(sqlx::query_as::<_, crate::models::Commission>(
+            "SELECT * FROM commissions WHERE id = $1"
+        )
+        .bind(id)
+        .fetch_optional(&self.pg_pool).await?)
+    }
+
+    pub async fn get_commissions_page(
+        &self,
+        status_filter: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<crate::models::Commission>, i64)> {
+        let (items, total) = if let Some(status) = status_filter {
+            let items = sqlx::query_as::<_, crate::models::Commission>(
+                "SELECT * FROM commissions WHERE status = $1::commission_status ORDER BY created_at DESC LIMIT $2 OFFSET $3"
+            )
+            .bind(status).bind(limit).bind(offset)
+            .fetch_all(&self.pg_pool).await?;
+            let (total,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM commissions WHERE status = $1::commission_status"
+            )
+            .bind(status)
+            .fetch_one(&self.pg_pool).await?;
+            (items, total)
+        } else {
+            let items = sqlx::query_as::<_, crate::models::Commission>(
+                "SELECT * FROM commissions ORDER BY created_at DESC LIMIT $1 OFFSET $2"
+            )
+            .bind(limit).bind(offset)
+            .fetch_all(&self.pg_pool).await?;
+            let (total,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM commissions")
+                .fetch_one(&self.pg_pool).await?;
+            (items, total)
+        };
+        Ok((items, total))
+    }
+
+    pub async fn get_new_commissions_count(&self) -> Result<i64> {
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM commissions WHERE status = 'new'"
+        )
+        .fetch_one(&self.pg_pool).await?;
+        Ok(count)
+    }
+
+    pub async fn update_commission(
+        &self,
+        id: Uuid,
+        status: &crate::models::CommissionStatus,
+        admin_notes: Option<&str>,
+        figurine_id: Option<&str>,
+    ) -> Result<Option<crate::models::Commission>> {
+        Ok(sqlx::query_as::<_, crate::models::Commission>(
+            r#"UPDATE commissions
+               SET status = $1,
+                   admin_notes = COALESCE($2, admin_notes),
+                   figurine_id = COALESCE($3, figurine_id),
+                   updated_at = NOW()
+               WHERE id = $4
+               RETURNING *"#
+        )
+        .bind(status).bind(admin_notes).bind(figurine_id).bind(id)
+        .fetch_optional(&self.pg_pool).await?)
+    }
+
+    pub async fn update_commission_content(
+        &self,
+        id: Uuid,
+        req: &crate::models::EditCommissionRequest,
+    ) -> Result<Option<crate::models::Commission>> {
+        let deadline = req.deadline.as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+        Ok(sqlx::query_as::<_, crate::models::Commission>(
+            r#"UPDATE commissions
+               SET title = $1, description = $2, size_note = $3, mood = $4,
+                   deadline = $5, budget_note = $6, occasion = $7, updated_at = NOW()
+               WHERE id = $8
+               RETURNING *"#
+        )
+        .bind(req.title.clone().unwrap_or_default())
+        .bind(&req.description)
+        .bind(&req.size_note)
+        .bind(&req.mood)
+        .bind(deadline)
+        .bind(&req.budget_note)
+        .bind(&req.occasion)
+        .bind(id)
+        .fetch_optional(&self.pg_pool).await?)
+    }
+
+    pub async fn delete_commission(&self, id: Uuid) -> Result<()> {
+        let mut tx = self.pg_pool.begin().await?;
+        // Remove the linked conversation (messages + attachments cascade via FK).
+        sqlx::query("DELETE FROM message_threads WHERE reference_id = $1 AND category = 'commission'")
+            .bind(id)
+            .execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM commissions WHERE id = $1")
+            .bind(id)
+            .execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Attach a guest commission to a user account. Returns the commission if the
+    /// token matched and it was previously unclaimed (or already owned by this user).
+    pub async fn claim_commission(&self, token: &str, user_id: Uuid) -> Result<Option<crate::models::Commission>> {
+        Ok(sqlx::query_as::<_, crate::models::Commission>(
+            r#"UPDATE commissions
+               SET user_id = $1, updated_at = NOW()
+               WHERE claim_token = $2 AND (user_id IS NULL OR user_id = $1)
+               RETURNING *"#
+        )
+        .bind(user_id).bind(token)
+        .fetch_optional(&self.pg_pool).await?)
+    }
+
+    pub async fn get_user_commissions(&self, user_id: Uuid) -> Result<Vec<crate::models::Commission>> {
+        Ok(sqlx::query_as::<_, crate::models::Commission>(
+            "SELECT * FROM commissions WHERE user_id = $1 ORDER BY created_at DESC"
+        )
+        .bind(user_id)
+        .fetch_all(&self.pg_pool).await?)
+    }
+
+    /// Find an existing thread linked to a commission (category 'commission').
+    pub async fn find_thread_by_reference(&self, reference_id: Uuid, category: &str) -> Result<Option<crate::models::MessageThread>> {
+        Ok(sqlx::query_as::<_, crate::models::MessageThread>(
+            "SELECT * FROM message_threads WHERE reference_id = $1 AND category = $2 ORDER BY created_at ASC LIMIT 1"
+        )
+        .bind(reference_id).bind(category)
+        .fetch_optional(&self.pg_pool).await?)
+    }
 }

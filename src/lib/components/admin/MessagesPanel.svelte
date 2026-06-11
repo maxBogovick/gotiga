@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api } from '$lib/api';
+  import { api, resolveMediaUrl } from '$lib/api';
   import { t } from '$lib/i18n';
-  import type { MessageThreadDto, ThreadDetailDto } from '$lib/types/api';
+  import type { MessageThreadDto, ThreadDetailDto, AttachmentInput } from '$lib/types/api';
+  import MessageAttachments from '$lib/components/MessageAttachments.svelte';
 
   type StatusFilter = 'all' | 'open' | 'resolved';
-  type CategoryFilter = 'all' | 'booking' | 'waitlist' | 'order' | 'general' | 'system';
+  type CategoryFilter = 'all' | 'booking' | 'waitlist' | 'order' | 'commission' | 'general' | 'system';
 
   let statusFilter = $state<StatusFilter>('open');
   let categoryFilter = $state<CategoryFilter>('all');
@@ -22,6 +23,23 @@
   let replyBody = $state('');
   let replySending = $state(false);
   let replySent = $state(false);
+  let replyAttachments = $state<AttachmentInput[]>([]);
+  let replyUploading = $state(false);
+
+  async function handleAdminFiles(e: Event) {
+    const input = e.target as HTMLInputElement;
+    if (!input.files) return;
+    for (const file of Array.from(input.files)) {
+      if (replyAttachments.length >= 5) break;
+      replyUploading = true;
+      try {
+        const media = await api.importMediaWithVariants(file, 'images');
+        replyAttachments = [...replyAttachments, { url: media.url, thumbUrl: media.thumbUrl ?? null }];
+      } catch { /* ignore */ }
+      finally { replyUploading = false; }
+    }
+    input.value = '';
+  }
 
   async function load() {
     loading = true;
@@ -46,6 +64,7 @@
     detailLoading = true;
     selectedDetail = null;
     replyBody = '';
+    replyAttachments = [];
     replySent = false;
     try {
       selectedDetail = await api.adminGetThread(id);
@@ -55,10 +74,10 @@
   }
 
   async function sendReply() {
-    if (!replyBody.trim() || replySending || !selectedDetail) return;
+    if ((!replyBody.trim() && replyAttachments.length === 0) || replySending || !selectedDetail) return;
     replySending = true;
     try {
-      const msg = await api.adminReplyToThread(selectedDetail.thread.id, replyBody.trim());
+      const msg = await api.adminReplyToThread(selectedDetail.thread.id, replyBody.trim(), replyAttachments);
       selectedDetail = {
         ...selectedDetail,
         messages: [...selectedDetail.messages, msg],
@@ -70,6 +89,7 @@
           : it
       );
       replyBody = '';
+      replyAttachments = [];
       replySent = true;
       setTimeout(() => { replySent = false; }, 2000);
     } finally {
@@ -107,6 +127,7 @@
     const map: Record<string, string> = {
       booking: $t('adminMessagesBooking'),
       order: $t('adminMessagesOrder'),
+      commission: 'Commissions',
       waitlist: $t('adminMessagesWaitlist'),
       general: $t('adminMessagesGeneral'),
       system: $t('adminMessagesSystem'),
@@ -131,7 +152,7 @@
         {/each}
       </div>
       <div class="filter-row">
-        {#each (['all', 'booking', 'order', 'waitlist', 'general', 'system'] as CategoryFilter[]) as c}
+        {#each (['all', 'booking', 'order', 'commission', 'waitlist', 'general', 'system'] as CategoryFilter[]) as c}
           <button
             class="filter-btn filter-btn--sm"
             class:active={categoryFilter === c}
@@ -219,7 +240,10 @@
             <p class="msg-bubble-from">
               {msg.fromAdmin ? $t('adminMessagesReply') : (selectedDetail.user?.displayName ?? 'User')}
             </p>
-            <p class="msg-bubble-body">{msg.body}</p>
+            {#if msg.body}<p class="msg-bubble-body">{msg.body}</p>{/if}
+            {#if msg.attachments && msg.attachments.length > 0}
+              <MessageAttachments attachments={msg.attachments} />
+            {/if}
             <p class="msg-bubble-date">{formatDate(msg.createdAt)}</p>
           </div>
         {/each}
@@ -233,13 +257,29 @@
             rows="4"
             placeholder={$t('adminMessagesReply') + '…'}
           ></textarea>
-          <button
-            class="reply-btn"
-            onclick={sendReply}
-            disabled={replySending || !replyBody.trim()}
-          >
-            {replySending ? $t('adminMessagesReplying') : replySent ? '✓' : $t('adminMessagesReply')}
-          </button>
+          {#if replyAttachments.length > 0}
+            <div class="reply-atts">
+              {#each replyAttachments as att, i (att.url)}
+                <div class="reply-att">
+                  <img src={resolveMediaUrl(att.thumbUrl ?? att.url)} alt="" />
+                  <button type="button" onclick={() => replyAttachments = replyAttachments.filter((_, idx) => idx !== i)} aria-label="×">×</button>
+                </div>
+              {/each}
+            </div>
+          {/if}
+          <div class="reply-controls">
+            <label class="reply-attach" title="Прикрепить изображение">
+              <input type="file" accept="image/*" multiple hidden onchange={handleAdminFiles} />
+              {replyUploading ? '…' : '📎'}
+            </label>
+            <button
+              class="reply-btn"
+              onclick={sendReply}
+              disabled={replySending || (!replyBody.trim() && replyAttachments.length === 0)}
+            >
+              {replySending ? $t('adminMessagesReplying') : replySent ? '✓' : $t('adminMessagesReply')}
+            </button>
+          </div>
         </div>
       {/if}
     {/if}
@@ -592,4 +632,11 @@
   }
   .reply-btn:hover:not(:disabled) { background: #a84e30; }
   .reply-btn:disabled { opacity: 0.45; cursor: default; }
+  .reply-controls { display: flex; align-items: center; gap: 0.5rem; }
+  .reply-attach { display: inline-grid; place-items: center; width: 2.2rem; height: 2.2rem; border: 1px solid #d8c6b1; cursor: pointer; font-size: 0.95rem; }
+  .reply-attach:hover { border-color: #c65f3c; }
+  .reply-atts { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.4rem 0; }
+  .reply-att { position: relative; width: 52px; height: 52px; border: 1px solid #d8c6b1; overflow: hidden; }
+  .reply-att img { width: 100%; height: 100%; object-fit: cover; }
+  .reply-att button { position: absolute; top: 0; right: 0; width: 16px; height: 16px; background: rgba(52,37,28,0.8); color: #fff; border: none; cursor: pointer; line-height: 1; font-size: 0.7rem; }
 </style>

@@ -20,11 +20,33 @@ pub struct AppService {
     repo: Repository,
     config: Config,
     comment_rate_limiter: RateLimiter,
+    commission_rate_limiter: RateLimiter,
 }
 
 impl AppService {
     pub fn new(repo: Repository, config: Config) -> Self {
-        Self { repo, config, comment_rate_limiter: Arc::new(Mutex::new(HashMap::new())) }
+        Self {
+            repo,
+            config,
+            comment_rate_limiter: Arc::new(Mutex::new(HashMap::new())),
+            commission_rate_limiter: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    pub async fn check_commission_rate_limit(&self, ip: &str) -> Result<()> {
+        const MAX_PER_HOUR: usize = 6;
+        let now = Instant::now();
+        let cutoff_secs = Duration::from_secs(3600);
+        let mut map = self.commission_rate_limiter.lock().await;
+        let entry = map.entry(ip.to_string()).or_default();
+        entry.retain(|t: &Instant| now.duration_since(*t) < cutoff_secs);
+        if entry.len() >= MAX_PER_HOUR {
+            return Err(AppError::BadRequest(
+                "Too many requests from this address. Please wait before submitting again.".into()
+            ));
+        }
+        entry.push(now);
+        Ok(())
     }
 
     pub async fn initialize(&self) -> Result<()> {
@@ -408,6 +430,216 @@ impl AppService {
             .send()
             .await;
 
+        Ok(())
+    }
+
+    // === COMMISSIONS ===
+
+    async fn commission_to_dto(&self, c: &Commission) -> Result<CommissionDto> {
+        let attachments = self.repo.get_commission_attachments(c.id).await?;
+        let thread = self.repo.find_thread_by_reference(c.id, "commission").await?;
+        Ok(CommissionDto {
+            id: c.id.to_string(),
+            claim_token: c.claim_token.clone(),
+            requester_name: c.requester_name.clone(),
+            requester_email: c.requester_email.clone(),
+            requester_phone: c.requester_phone.clone(),
+            title: c.title.clone(),
+            description: c.description.clone(),
+            size_note: c.size_note.clone(),
+            mood: c.mood.clone(),
+            deadline: c.deadline.map(|d| d.to_string()),
+            budget_note: c.budget_note.clone(),
+            occasion: c.occasion.clone(),
+            figurine_id: c.figurine_id.clone(),
+            status: c.status.clone(),
+            admin_notes: c.admin_notes.clone(),
+            created_at: c.created_at.to_rfc3339(),
+            updated_at: c.updated_at.to_rfc3339(),
+            attachments: attachments.iter().map(AttachmentDto::from).collect(),
+            thread_id: thread.map(|t| t.id.to_string()),
+            started: c.status.is_started(),
+        })
+    }
+
+    pub async fn create_commission(&self, req: &CommissionRequest) -> Result<CommissionCreatedResponse> {
+        let saved = self.repo.create_commission(req).await?;
+        let _ = self.send_commission_notification(&saved).await;
+        Ok(CommissionCreatedResponse {
+            id: saved.id.to_string(),
+            claim_token: saved.claim_token,
+        })
+    }
+
+    pub async fn get_commission_by_token(&self, token: &str) -> Result<Option<CommissionDto>> {
+        match self.repo.get_commission_by_token(token).await? {
+            Some(c) => Ok(Some(self.commission_to_dto(&c).await?)),
+            None => Ok(None),
+        }
+    }
+
+    pub async fn claim_commission(&self, token: &str, user_id: Uuid) -> Result<CommissionDto> {
+        let commission = self.repo.claim_commission(token, user_id).await?
+            .ok_or_else(|| crate::error::AppError::NotFound("Commission not found".to_string()))?;
+
+        // Seed a conversation thread with the original request, once.
+        if self.repo.find_thread_by_reference(commission.id, "commission").await?.is_none() {
+            let subject = if !commission.title.trim().is_empty() {
+                commission.title.clone()
+            } else if commission.lang == "en" {
+                "A petition for a new figurine".to_string()
+            } else {
+                "Прошение о новой фигурке".to_string()
+            };
+            let _ = self.repo.create_thread(
+                user_id, "commission", Some(commission.id), &subject, &commission.description, false,
+            ).await;
+        }
+
+        self.commission_to_dto(&commission).await
+    }
+
+    /// Edit a petition's content. `owner` limits the action to the petition's
+    /// author (None ⇒ admin). Refused once work has started.
+    pub async fn edit_commission(
+        &self,
+        id: Uuid,
+        owner: Option<Uuid>,
+        req: &EditCommissionRequest,
+    ) -> Result<CommissionDto> {
+        let existing = self.repo.get_commission_by_id(id).await?
+            .ok_or_else(|| crate::error::AppError::NotFound("Commission not found".to_string()))?;
+        if let Some(uid) = owner {
+            if existing.user_id != Some(uid) {
+                return Err(crate::error::AppError::Unauthorized);
+            }
+        }
+        if existing.status.is_started() {
+            return Err(crate::error::AppError::BadRequest(
+                "Work has already begun on this petition — it can no longer be edited.".into()
+            ));
+        }
+        let updated = self.repo.update_commission_content(id, req).await?
+            .ok_or_else(|| crate::error::AppError::NotFound("Commission not found".to_string()))?;
+        self.commission_to_dto(&updated).await
+    }
+
+    /// Delete a petition. `owner` limits the action to its author (None ⇒ admin).
+    /// Refused once work has started.
+    pub async fn delete_commission(&self, id: Uuid, owner: Option<Uuid>) -> Result<()> {
+        let existing = self.repo.get_commission_by_id(id).await?
+            .ok_or_else(|| crate::error::AppError::NotFound("Commission not found".to_string()))?;
+        if let Some(uid) = owner {
+            if existing.user_id != Some(uid) {
+                return Err(crate::error::AppError::Unauthorized);
+            }
+        }
+        if existing.status.is_started() {
+            return Err(crate::error::AppError::BadRequest(
+                "Work has already begun on this petition — it can no longer be deleted.".into()
+            ));
+        }
+        self.repo.delete_commission(id).await
+    }
+
+    pub async fn list_commissions(
+        &self,
+        status_filter: Option<&str>,
+        page: i64,
+        per_page: i64,
+    ) -> Result<CommissionsPage> {
+        let offset = (page - 1) * per_page;
+        let (items, total) = self.repo.get_commissions_page(status_filter, per_page, offset).await?;
+        let new_count = self.repo.get_new_commissions_count().await?;
+        let mut dtos = Vec::with_capacity(items.len());
+        for c in &items {
+            dtos.push(self.commission_to_dto(c).await?);
+        }
+        Ok(CommissionsPage { items: dtos, total, new_count, page, per_page })
+    }
+
+    pub async fn get_user_commissions(&self, user_id: Uuid) -> Result<Vec<CommissionDto>> {
+        let items = self.repo.get_user_commissions(user_id).await?;
+        let mut dtos = Vec::with_capacity(items.len());
+        for c in &items {
+            dtos.push(self.commission_to_dto(c).await?);
+        }
+        Ok(dtos)
+    }
+
+    pub async fn update_commission(
+        &self,
+        id: Uuid,
+        status: &CommissionStatus,
+        admin_notes: Option<&str>,
+        figurine_id: Option<&str>,
+    ) -> Result<Option<CommissionDto>> {
+        let updated = self.repo.update_commission(id, status, admin_notes, figurine_id).await?;
+        if let Some(ref c) = updated {
+            // If the petitioner has an account, drop a note into their conversation,
+            // in the language they wrote the petition in.
+            if let Some(user_id) = c.user_id {
+                let en = c.lang == "en";
+                let label = match status {
+                    CommissionStatus::Accepted   => Some(if en { "Your petition is accepted — the master takes up the work." } else { "Ваше прошение принято — мастер берётся за работу." }),
+                    CommissionStatus::InProgress => Some(if en { "The master has begun your figurine." } else { "Мастер приступил к вашей фигурке." }),
+                    CommissionStatus::Completed  => Some(if en { "Your figurine is finished." } else { "Ваша фигурка завершена." }),
+                    CommissionStatus::Declined   => Some(if en { "Regrettably, the master will not take up this petition." } else { "К сожалению, мастер не возьмётся за это прошение." }),
+                    _ => None,
+                };
+                if let Some(text) = label {
+                    let body = match admin_notes {
+                        Some(n) if !n.trim().is_empty() => format!("{}\n\n{}", text, n),
+                        _ => text.to_string(),
+                    };
+                    if let Some(thread) = self.repo.find_thread_by_reference(c.id, "commission").await? {
+                        let _ = self.repo.add_thread_reply(thread.id, uuid::Uuid::nil(), true, &body).await;
+                    } else {
+                        let subject = if !c.title.trim().is_empty() { c.title.clone() } else if en { "Your petition".to_string() } else { "Ваше прошение".to_string() };
+                        let _ = self.repo.create_thread(user_id, "commission", Some(c.id), &subject, &body, true).await;
+                    }
+                }
+            }
+            Ok(Some(self.commission_to_dto(c).await?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn send_commission_notification(&self, c: &Commission) -> Result<()> {
+        let (Some(token), Some(chat_id)) = (
+            self.config.telegram_bot_token.as_deref(),
+            self.config.telegram_chat_id.as_deref(),
+        ) else {
+            return Ok(());
+        };
+
+        let admin_link = format!("{}/admin#commissions", self.config.public_url.trim_end_matches('/'));
+        let title = if c.title.trim().is_empty() { "—" } else { c.title.as_str() };
+        let text = format!(
+            "🗝 Новое прошение о фигурке\n\n\
+            ✒️ Идея: {}\n\
+            📝 Описание: {}\n\
+            👤 Имя: {}\n\
+            📧 Email: {}\n\n\
+            🔗 [Открыть в админке]({})",
+            escape_markdown(title),
+            escape_markdown(&c.description),
+            escape_markdown(&c.requester_name),
+            escape_markdown(&c.requester_email),
+            admin_link,
+        );
+
+        let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+        let client = Client::new();
+        let _ = client.post(&url)
+            .json(&serde_json::json!({
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": "MarkdownV2",
+            }))
+            .send()
+            .await;
         Ok(())
     }
 
@@ -1718,34 +1950,51 @@ impl AppService {
         self.repo.count_unread_threads(user_id).await
     }
 
+    /// Build message DTOs, loading per-message attachments.
+    async fn messages_with_attachments(&self, messages: &[ThreadMessage]) -> Result<Vec<ThreadMessageDto>> {
+        let mut out = Vec::with_capacity(messages.len());
+        for m in messages {
+            let atts = self.repo.get_message_attachments(m.id).await?;
+            out.push(ThreadMessageDto::from_with_attachments(m, atts.iter().map(AttachmentDto::from).collect()));
+        }
+        Ok(out)
+    }
+
+    async fn message_dto_with_attachments(&self, msg: &ThreadMessage) -> Result<ThreadMessageDto> {
+        let atts = self.repo.get_message_attachments(msg.id).await?;
+        Ok(ThreadMessageDto::from_with_attachments(msg, atts.iter().map(AttachmentDto::from).collect()))
+    }
+
     pub async fn get_thread_detail(&self, thread_id: Uuid, user_id: Uuid) -> Result<ThreadDetailDto> {
         let (thread, messages) = self.repo.get_thread_messages(thread_id, Some(user_id)).await?;
         self.repo.mark_thread_read(thread_id, user_id).await?;
         let preview = messages.last().map(|m| m.body.clone());
         Ok(ThreadDetailDto {
             thread: Self::thread_dto(&thread, 0, preview),
-            messages: messages.iter().map(ThreadMessageDto::from).collect(),
+            messages: self.messages_with_attachments(&messages).await?,
             user: None,
         })
     }
 
-    pub async fn user_create_thread(&self, user_id: Uuid, subject: String, body: String, category: Option<String>) -> Result<ThreadDetailDto> {
+    pub async fn user_create_thread(&self, user_id: Uuid, subject: String, body: String, category: Option<String>, attachments: Vec<AttachmentInput>) -> Result<ThreadDetailDto> {
         let category = category.unwrap_or_else(|| "general".to_string());
         let (thread, msg) = self.repo.create_thread(user_id, &category, None, &subject, &body, false).await?;
+        self.repo.insert_message_attachments(msg.id, &attachments).await?;
         Ok(ThreadDetailDto {
             thread: Self::thread_dto(&thread, 0, Some(msg.body.clone())),
-            messages: vec![ThreadMessageDto::from(&msg)],
+            messages: vec![self.message_dto_with_attachments(&msg).await?],
             user: None,
         })
     }
 
-    pub async fn user_reply_to_thread(&self, thread_id: Uuid, user_id: Uuid, body: String) -> Result<ThreadMessageDto> {
+    pub async fn user_reply_to_thread(&self, thread_id: Uuid, user_id: Uuid, body: String, attachments: Vec<AttachmentInput>) -> Result<ThreadMessageDto> {
         let (thread, _) = self.repo.get_thread_messages(thread_id, Some(user_id)).await?;
         if thread.status == "resolved" {
             self.repo.reopen_thread(thread_id).await?;
         }
         let msg = self.repo.add_thread_reply(thread_id, user_id, false, &body).await?;
-        Ok(ThreadMessageDto::from(&msg))
+        self.repo.insert_message_attachments(msg.id, &attachments).await?;
+        self.message_dto_with_attachments(&msg).await
     }
 
     pub async fn admin_create_thread(
@@ -1755,20 +2004,23 @@ impl AppService {
         body: String,
         category: Option<String>,
         reference_id: Option<Uuid>,
+        attachments: Vec<AttachmentInput>,
     ) -> Result<ThreadDetailDto> {
         let category = category.unwrap_or_else(|| "general".to_string());
         let (thread, msg) = self.repo.create_thread(user_id, &category, reference_id, &subject, &body, true).await?;
+        self.repo.insert_message_attachments(msg.id, &attachments).await?;
         let user = self.repo.find_user_by_id(user_id).await?;
         Ok(ThreadDetailDto {
             thread: Self::thread_dto(&thread, 0, Some(msg.body.clone())),
-            messages: vec![ThreadMessageDto::from(&msg)],
+            messages: vec![self.message_dto_with_attachments(&msg).await?],
             user: user.map(|u| ThreadUserDto { id: u.id.to_string(), display_name: u.display_name, email: u.email }),
         })
     }
 
-    pub async fn admin_reply_to_thread(&self, thread_id: Uuid, body: String) -> Result<ThreadMessageDto> {
+    pub async fn admin_reply_to_thread(&self, thread_id: Uuid, body: String, attachments: Vec<AttachmentInput>) -> Result<ThreadMessageDto> {
         let msg = self.repo.add_thread_reply(thread_id, uuid::Uuid::nil(), true, &body).await?;
-        Ok(ThreadMessageDto::from(&msg))
+        self.repo.insert_message_attachments(msg.id, &attachments).await?;
+        self.message_dto_with_attachments(&msg).await
     }
 
     pub async fn admin_get_thread_detail(&self, thread_id: Uuid) -> Result<ThreadDetailDto> {
@@ -1778,7 +2030,7 @@ impl AppService {
         let preview = messages.last().map(|m| m.body.clone());
         Ok(ThreadDetailDto {
             thread: Self::thread_dto(&thread, 0, preview),
-            messages: messages.iter().map(ThreadMessageDto::from).collect(),
+            messages: self.messages_with_attachments(&messages).await?,
             user: user.map(|u| ThreadUserDto { id: u.id.to_string(), display_name: u.display_name, email: u.email }),
         })
     }

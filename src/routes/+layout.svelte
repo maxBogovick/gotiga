@@ -20,6 +20,19 @@
   let stopPreviewListener: (() => void) | null = null;
   let removeMessageListener: (() => void) | null = null;
 
+  function applyThemeHighlight(css: string | null) {
+    const id = 'gotiga-theme-highlight';
+    const existing = document.getElementById(id);
+    if (!css) {
+      existing?.remove();
+      return;
+    }
+    const style = existing instanceof HTMLStyleElement ? existing : document.createElement('style');
+    style.id = id;
+    style.textContent = css;
+    if (!style.parentNode) document.head.appendChild(style);
+  }
+
   onMount(() => {
     // Load theme and copy overrides
     Promise.all([
@@ -45,6 +58,10 @@
             link.href = e.data.href;
             document.head.appendChild(link);
           }
+        } else if (e.data?.type === 'gotiga-highlight' && typeof e.data.css === 'string') {
+          applyThemeHighlight(e.data.css);
+        } else if (e.data?.type === 'gotiga-highlight-clear') {
+          applyThemeHighlight(null);
         }
       }
       window.addEventListener('message', onParentMessage);
@@ -55,6 +72,7 @@
   onDestroy(() => {
     stopPreviewListener?.();
     removeMessageListener?.();
+    if (typeof document !== 'undefined') applyThemeHighlight(null);
   });
 
   onNavigate((navigation) => {

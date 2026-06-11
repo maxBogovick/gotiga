@@ -616,6 +616,179 @@ pub async fn update_order_status(
     Ok(StatusCode::OK)
 }
 
+// === COMMISSIONS ===
+
+fn looks_like_email(s: &str) -> bool {
+    let s = s.trim();
+    match s.split_once('@') {
+        Some((local, domain)) => !local.is_empty() && domain.contains('.') && !domain.starts_with('.') && !domain.ends_with('.'),
+        None => false,
+    }
+}
+
+pub async fn create_commission(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(req): Json<crate::models::CommissionRequest>,
+) -> Result<Json<crate::models::CommissionCreatedResponse>> {
+    // Honeypot: real users never fill `website`. Pretend success, save nothing.
+    if req.website.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false) {
+        return Ok(Json(crate::models::CommissionCreatedResponse {
+            id: Uuid::new_v4().to_string(),
+            claim_token: Uuid::new_v4().to_string().replace('-', ""),
+        }));
+    }
+
+    let ip = extract_ip(&headers);
+    service.check_commission_rate_limit(&ip).await?;
+
+    if !looks_like_email(&req.requester_email) {
+        return Err(AppError::BadRequest("A valid email is required.".into()));
+    }
+    if req.description.trim().is_empty() {
+        return Err(AppError::BadRequest("Description is required.".into()));
+    }
+    if req.description.chars().count() > 5000 {
+        return Err(AppError::BadRequest("Description is too long.".into()));
+    }
+    if req.attachment_urls.len() > 5 {
+        return Err(AppError::BadRequest("Too many attachments.".into()));
+    }
+
+    // If the requester is logged in, attach their account immediately.
+    let user = if let Some(token) = bearer_token(&headers) {
+        service.get_user_from_session(token).await.ok()
+    } else {
+        None
+    };
+
+    let created = service.create_commission(&req).await?;
+    if let Some(u) = user {
+        let _ = service.claim_commission(&created.claim_token, u.id).await;
+    }
+    Ok(Json(created))
+}
+
+pub async fn get_commission_by_token(
+    State(service): State<AppService>,
+    Path(token): Path<String>,
+) -> Result<Json<crate::models::CommissionDto>> {
+    service.get_commission_by_token(&token).await?
+        .map(Json)
+        .ok_or_else(|| AppError::NotFound("Commission not found".to_string()))
+}
+
+pub async fn user_claim_commission(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(body): Json<crate::models::ClaimCommissionRequest>,
+) -> Result<Json<crate::models::CommissionDto>> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
+    Ok(Json(service.claim_commission(&body.claim_token, user.id).await?))
+}
+
+pub async fn user_list_commissions(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
+    let commissions = service.get_user_commissions(user.id).await?;
+    Ok(Json(serde_json::json!({ "commissions": commissions })))
+}
+
+pub async fn user_edit_commission(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(body): Json<crate::models::EditCommissionRequest>,
+) -> Result<Json<crate::models::CommissionDto>> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
+    Ok(Json(service.edit_commission(id, Some(user.id), &body).await?))
+}
+
+pub async fn user_delete_commission(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
+    service.delete_commission(id, Some(user.id)).await?;
+    Ok(StatusCode::OK)
+}
+
+/// Authenticated media upload for ordinary users (commission references, chat
+/// attachments). Mirrors the admin /upload but gated on a user session and
+/// restricted to images.
+pub async fn user_upload_file(
+    State(service): State<AppService>,
+    State(config): State<Config>,
+    headers: HeaderMap,
+    mut multipart: Multipart,
+) -> Result<Json<serde_json::Value>> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let _user = service.get_user_from_session(token).await?;
+
+    while let Some(field) = multipart.next_field().await.map_err(|e| AppError::BadRequest(e.to_string()))? {
+        if field.name().unwrap_or("") == "file" {
+            let filename = field.file_name().unwrap_or("file").to_string();
+            let ext = std::path::Path::new(&filename)
+                .extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+            let data = field.bytes().await
+                .map_err(|e| AppError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+
+            if data.len() > 8 * 1024 * 1024 {
+                return Err(AppError::BadRequest("Image is too large (max 8MB).".into()));
+            }
+            if media_subdir_for_ext(&ext) != Some("images") {
+                return Err(AppError::BadRequest("Only image uploads are allowed.".into()));
+            }
+            let payload = save_image_variants(&config.upload_dir, &data).await?;
+            return Ok(Json(payload));
+        }
+    }
+    Err(AppError::BadRequest("No file field found".to_string()))
+}
+
+pub async fn admin_list_commissions(
+    State(service): State<AppService>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<crate::models::CommissionsPage>> {
+    let status = params.get("status").map(|s| s.as_str());
+    let page = params.get("page").and_then(|p| p.parse::<i64>().ok()).unwrap_or(1).max(1);
+    let per_page = params.get("perPage").and_then(|p| p.parse::<i64>().ok()).unwrap_or(20).clamp(1, 100);
+    Ok(Json(service.list_commissions(status, page, per_page).await?))
+}
+
+pub async fn admin_update_commission(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<crate::models::UpdateCommissionStatusRequest>,
+) -> Result<Json<crate::models::CommissionDto>> {
+    service.update_commission(id, &body.status, body.admin_notes.as_deref(), body.figurine_id.as_deref()).await?
+        .map(Json)
+        .ok_or_else(|| AppError::NotFound("Commission not found".to_string()))
+}
+
+pub async fn admin_edit_commission(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<crate::models::EditCommissionRequest>,
+) -> Result<Json<crate::models::CommissionDto>> {
+    Ok(Json(service.edit_commission(id, None, &body).await?))
+}
+
+pub async fn admin_delete_commission(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    service.delete_commission(id, None).await?;
+    Ok(StatusCode::OK)
+}
+
 // === SCHEDULE & BOOKINGS (PUBLIC) ===
 
 pub async fn get_figurine_schedule(
@@ -1121,7 +1294,7 @@ pub async fn user_create_thread(
 ) -> Result<Json<ThreadDetailDto>> {
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
     let user = service.get_user_from_session(token).await?;
-    Ok(Json(service.user_create_thread(user.id, body.subject, body.body, body.category).await?))
+    Ok(Json(service.user_create_thread(user.id, body.subject, body.body, body.category, body.attachment_urls).await?))
 }
 
 pub async fn user_reply_to_thread(
@@ -1132,7 +1305,7 @@ pub async fn user_reply_to_thread(
 ) -> Result<Json<ThreadMessageDto>> {
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
     let user = service.get_user_from_session(token).await?;
-    Ok(Json(service.user_reply_to_thread(id, user.id, body.body).await?))
+    Ok(Json(service.user_reply_to_thread(id, user.id, body.body, body.attachment_urls).await?))
 }
 
 pub async fn admin_list_threads(
@@ -1158,7 +1331,7 @@ pub async fn admin_create_thread_for_user(
     Path(user_id): Path<Uuid>,
     Json(body): Json<CreateThreadRequest>,
 ) -> Result<Json<ThreadDetailDto>> {
-    Ok(Json(service.admin_create_thread(user_id, body.subject, body.body, body.category, None).await?))
+    Ok(Json(service.admin_create_thread(user_id, body.subject, body.body, body.category, None, body.attachment_urls).await?))
 }
 
 pub async fn admin_reply_to_thread(
@@ -1166,7 +1339,7 @@ pub async fn admin_reply_to_thread(
     Path(id): Path<Uuid>,
     Json(body): Json<ReplyToThreadRequest>,
 ) -> Result<Json<ThreadMessageDto>> {
-    Ok(Json(service.admin_reply_to_thread(id, body.body).await?))
+    Ok(Json(service.admin_reply_to_thread(id, body.body, body.attachment_urls).await?))
 }
 
 pub async fn admin_resolve_thread(

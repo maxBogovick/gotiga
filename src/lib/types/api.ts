@@ -143,6 +143,75 @@ export interface OrdersPage {
     perPage: number;
 }
 
+// ── Commissions: a petition to the master to create a NEW figurine ──
+export type CommissionStatus =
+    | 'new' | 'reviewing' | 'accepted' | 'in_progress' | 'completed' | 'declined';
+
+export interface CommissionRequest {
+    requesterName?: string | null;
+    requesterEmail: string;
+    requesterPhone?: string | null;
+    title?: string | null;
+    description: string;
+    sizeNote?: string | null;
+    mood?: string | null;
+    deadline?: string | null;
+    budgetNote?: string | null;
+    occasion?: string | null;
+    attachmentUrls?: AttachmentInput[];
+    /** Honeypot — leave empty. */
+    website?: string | null;
+    /** UI language at submission ('ru' | 'en'). */
+    lang?: string | null;
+}
+
+export interface EditCommissionRequest {
+    title?: string | null;
+    description: string;
+    sizeNote?: string | null;
+    mood?: string | null;
+    deadline?: string | null;
+    budgetNote?: string | null;
+    occasion?: string | null;
+}
+
+export interface CommissionDto {
+    id: string;
+    claimToken: string;
+    requesterName: string;
+    requesterEmail: string;
+    requesterPhone: string | null;
+    title: string;
+    description: string;
+    sizeNote: string | null;
+    mood: string | null;
+    deadline: string | null;
+    budgetNote: string | null;
+    occasion: string | null;
+    figurineId: string | null;
+    status: CommissionStatus;
+    adminNotes: string | null;
+    createdAt: string;
+    updatedAt: string;
+    attachments: AttachmentDto[];
+    threadId: string | null;
+    /** Work has begun — petition can no longer be edited or deleted. */
+    started: boolean;
+}
+
+export interface CommissionCreatedResponse {
+    id: string;
+    claimToken: string;
+}
+
+export interface CommissionsPage {
+    items: CommissionDto[];
+    total: number;
+    newCount: number;
+    page: number;
+    perPage: number;
+}
+
 export interface MediaUsage {
     path: string;
     label: string;
@@ -350,7 +419,7 @@ export interface AdminSessionDto {
 
 export interface MessageThreadDto {
     id: string;
-    category: 'booking' | 'waitlist' | 'order' | 'general' | 'system';
+    category: 'booking' | 'waitlist' | 'order' | 'commission' | 'general' | 'system';
     referenceId: string | null;
     subject: string;
     status: 'open' | 'resolved';
@@ -360,6 +429,18 @@ export interface MessageThreadDto {
     preview: string | null;
 }
 
+export interface AttachmentDto {
+    id: string;
+    url: string;
+    thumbUrl: string | null;
+}
+
+/** One uploaded reference, echoed back to the server after an upload. */
+export interface AttachmentInput {
+    url: string;
+    thumbUrl?: string | null;
+}
+
 export interface ThreadMessageDto {
     id: string;
     threadId: string;
@@ -367,6 +448,7 @@ export interface ThreadMessageDto {
     body: string;
     readAt: string | null;
     createdAt: string;
+    attachments?: AttachmentDto[];
 }
 
 export interface ThreadDetailDto {

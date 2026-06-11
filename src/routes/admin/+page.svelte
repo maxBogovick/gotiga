@@ -11,6 +11,7 @@
     import MediaLibrary from '$lib/components/admin/MediaLibrary.svelte';
     import HomeContentEditor from '$lib/components/admin/HomeContentEditor.svelte';
     import OrdersPanel from '$lib/components/admin/OrdersPanel.svelte';
+    import CommissionsPanel from '$lib/components/admin/CommissionsPanel.svelte';
     import ShowingsPanel from '$lib/components/admin/ShowingsPanel.svelte';
     import BookingsPanel from '$lib/components/admin/BookingsPanel.svelte';
     import AnalyticsPanel from '$lib/components/admin/AnalyticsPanel.svelte';
@@ -73,9 +74,10 @@
     let isSaving = $state(false);
     let showSettings = $state(false);
     let message = $state({ text: '', type: 'info' });
-    let activeTab = $state<'registry' | 'home' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'showings' | 'bookings' | 'waitlist' | 'analytics' | 'users' | 'comments' | 'messages' | 'server' | 'booking-rules' | 'contact' | 'design' | 'copy'>('registry');
+    let activeTab = $state<'registry' | 'home' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'commissions' | 'showings' | 'bookings' | 'waitlist' | 'analytics' | 'users' | 'comments' | 'messages' | 'server' | 'booking-rules' | 'contact' | 'design' | 'copy'>('registry');
     let activeAuthorSubTab = $state<'profile' | 'texts'>('profile');
     let newOrdersCount = $state(0);
+    let newCommissionsCount = $state(0);
     let newBookingsCount = $state(0);
     let pendingCommentsCount = $state(0);
     let searchQuery = $state('');
@@ -346,7 +348,7 @@
         }
         // Hash-based tab routing (e.g. Telegram notification links)
         const hash = window.location.hash.replace('#', '');
-        const validTabs = ['registry','home','zones','author','workshop','media','releases','orders','showings','bookings','waitlist','analytics','users','comments','messages','server','booking-rules','contact'];
+        const validTabs = ['registry','home','zones','author','workshop','media','releases','orders','commissions','showings','bookings','waitlist','analytics','users','comments','messages','server','booking-rules','contact'];
         if (validTabs.includes(hash)) {
             activeTab = hash as typeof activeTab;
         }
@@ -447,6 +449,7 @@
                 label: $t('adminGroupActivity'),
                 tabs: [
                   ['orders',    'Orders'],
+                  ['commissions', 'Commissions'],
                   ['showings',  $t('adminTabShowings')],
                   ['bookings',      $t('adminTabBookings')],
                   ['waitlist',      $t('adminTabWaitlist')],
@@ -486,6 +489,11 @@
                     {#if tab === 'orders' && newOrdersCount > 0 && activeTab !== 'orders'}
                       <span class="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold leading-none">
                         {newOrdersCount > 99 ? '99+' : newOrdersCount}
+                      </span>
+                    {/if}
+                    {#if tab === 'commissions' && newCommissionsCount > 0 && activeTab !== 'commissions'}
+                      <span class="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold leading-none">
+                        {newCommissionsCount > 99 ? '99+' : newCommissionsCount}
                       </span>
                     {/if}
                     {#if tab === 'bookings' && newBookingsCount > 0 && activeTab !== 'bookings'}
@@ -915,6 +923,8 @@
             <div in:fade class="h-full"><TextEditor category="workshop" /></div>
         {:else if activeTab === 'orders'}
             <div in:fade class="h-full"><OrdersPanel onNewCount={(n: number) => newOrdersCount = n} /></div>
+        {:else if activeTab === 'commissions'}
+            <div in:fade class="h-full"><CommissionsPanel onNewCount={(n: number) => newCommissionsCount = n} /></div>
         {:else if activeTab === 'showings'}
             <div in:fade class="h-full"><ShowingsPanel /></div>
         {:else if activeTab === 'bookings'}
