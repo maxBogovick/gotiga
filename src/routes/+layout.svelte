@@ -5,7 +5,7 @@
   import { page } from '$app/state';
   import SiteHeader from '$lib/components/SiteHeader.svelte';
   import DustParticles from '$lib/components/DustParticles.svelte';
-  import { themeConfig, themeCSS, startListeningForPreview } from '$lib/stores/theme.svelte';
+  import { themeConfig, themeCSS, startListeningForPreview, applyPreviewPayload } from '$lib/stores/theme.svelte';
   import { setCopyOverrides } from '$lib/i18n';
   import { api } from '$lib/api';
   import type { Lang } from '$lib/i18n';
@@ -18,6 +18,7 @@
   let showDust = $derived(showSiteHeader && !page.url.pathname.startsWith('/figurines/'));
 
   let stopPreviewListener: (() => void) | null = null;
+  let removeMessageListener: (() => void) | null = null;
 
   onMount(() => {
     // Load theme and copy overrides
@@ -28,13 +29,33 @@
       if (themeData) themeConfig.set(themeData);
       if (copyData) setCopyOverrides(copyData as Record<Lang, Record<string, string>>);
     });
-    // Listen for live preview broadcasts on all non-admin pages
+
     if (!page.url.pathname.startsWith('/admin')) {
+      // BroadcastChannel — receives updates from other tabs AND from the parent admin frame
       stopPreviewListener = startListeningForPreview();
+
+      // postMessage — parent frame sends the initial draft when this iframe first loads
+      function onParentMessage(e: MessageEvent) {
+        if (e.data?.type === 'gotiga-preview' && e.data.config) {
+          applyPreviewPayload(e.data.config, e.data.bridgeCSS);
+        } else if (e.data?.type === 'gotiga-font' && e.data.href) {
+          if (!document.querySelector(`link[href="${e.data.href}"]`)) {
+            const link = document.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = e.data.href;
+            document.head.appendChild(link);
+          }
+        }
+      }
+      window.addEventListener('message', onParentMessage);
+      removeMessageListener = () => window.removeEventListener('message', onParentMessage);
     }
   });
 
-  onDestroy(() => stopPreviewListener?.());
+  onDestroy(() => {
+    stopPreviewListener?.();
+    removeMessageListener?.();
+  });
 
   onNavigate((navigation) => {
     if (!('startViewTransition' in document)) return;

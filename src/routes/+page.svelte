@@ -362,18 +362,18 @@
 <style>
     /* ── TOKENS ──────────────────────────────────── */
     :root {
-        --cream:   #f8f1e7;
-        --cream2:  #fff9f0;
-        --ink:     #2c1710;
-        --brown:   #34251c;
-        --mid:     #6f3b24;
-        --tan:     #a86124;
-        --copper:  #c65f3c;
-        --gold:    #c9a875;
-        --muted:   rgba(95,70,54,0.68);
-        --muted2:  rgba(95,70,54,0.40);
-        --border:  rgba(52,37,28,0.10);
-        --border2: rgba(52,37,28,0.18);
+        --cream:   var(--color-canvas-base);
+        --cream2:  var(--color-canvas-raised);
+        --ink:     var(--color-ink-primary);
+        --brown:   var(--color-ink-primary);
+        --mid:     var(--color-ember-deep);
+        --tan:     var(--color-ember-ink);
+        --copper:  var(--color-ember);
+        --gold:    var(--color-ochre);
+        --muted:   color-mix(in srgb, var(--color-ink-secondary) 68%, transparent);
+        --muted2:  color-mix(in srgb, var(--color-ink-secondary) 40%, transparent);
+        --border:  color-mix(in srgb, var(--color-ink-primary) 10%, transparent);
+        --border2: color-mix(in srgb, var(--color-ink-primary) 18%, transparent);
         --ease:    cubic-bezier(0.16,1,0.3,1);
     }
 

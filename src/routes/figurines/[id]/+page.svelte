@@ -147,8 +147,8 @@
 
   .detail-backdrop {
     background:
-      radial-gradient(ellipse 70% 55% at 72% 38%, rgba(198,95,60,0.07) 0%, transparent 65%),
-      radial-gradient(ellipse 50% 70% at 18% 72%, rgba(201,168,117,0.06) 0%, transparent 60%),
-      #f8f1e7;
+      radial-gradient(ellipse 70% 55% at 72% 38%, color-mix(in srgb, var(--color-ember) 7%, transparent) 0%, transparent 65%),
+      radial-gradient(ellipse 50% 70% at 18% 72%, color-mix(in srgb, var(--color-ochre) 6%, transparent) 0%, transparent 60%),
+      var(--color-canvas-base);
   }
 </style>

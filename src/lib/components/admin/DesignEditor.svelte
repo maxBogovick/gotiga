@@ -11,7 +11,8 @@
         makeDefaultConfig,
         applyLivePreview,
         clearLivePreview,
-        applyConfigToElement,
+        generateHexBridgeCSS,
+        toPlainThemeConfig,
     } from '$lib/stores/theme.svelte';
     import type { ThemeConfig } from '$lib/types/api';
 
@@ -136,15 +137,26 @@
 
     // ── Preview iframe ──────────────────────────────────────────────────────
 
-    function onIframeLoad() {
-        previewLoading = false;
-        applyThemeToIframe();
+    let hexBridgeCSS: string | null = null;
+
+    function getBridgeCSS(): string {
+        if (!hexBridgeCSS) hexBridgeCSS = generateHexBridgeCSS();
+        return hexBridgeCSS;
     }
 
-    function applyThemeToIframe() {
-        const doc = iframeEl?.contentDocument;
-        if (!doc) return;
-        applyConfigToElement(draft, doc.documentElement);
+    // Send theme to the iframe via postMessage (works regardless of hydration timing)
+    function postThemeToIframe(config: ThemeConfig) {
+        const plain = toPlainThemeConfig(config);
+        iframeEl?.contentWindow?.postMessage(
+            { type: 'gotiga-preview', config: plain, bridgeCSS: getBridgeCSS() },
+            '*'
+        );
+    }
+
+    function onIframeLoad() {
+        previewLoading = false;
+        // Wait for SvelteKit to hydrate inside the iframe before sending the initial state
+        setTimeout(() => postThemeToIframe(draft), 350);
     }
 
     function navigatePreview(path: string) {
@@ -177,17 +189,24 @@
     }
 
     function applyAll(config: ThemeConfig) {
-        applyLivePreview(config);
-        applyThemeToIframe();
+        const plain = toPlainThemeConfig(config);
+        applyLivePreview(plain);        // BroadcastChannel → iframe + other tabs (bridge injected by listener)
+        postThemeToIframe(plain);       // postMessage → iframe directly (guarantees delivery)
     }
 
     function setColor(token: string, value: string) {
-        draft.colors[token] = value;
+        draft = {
+            ...draft,
+            colors: { ...draft.colors, [token]: value },
+        };
         applyAll(draft);
     }
 
     function resetColor(token: string) {
-        draft.colors[token] = DEFAULT_COLORS[token];
+        draft = {
+            ...draft,
+            colors: { ...draft.colors, [token]: DEFAULT_COLORS[token] },
+        };
         applyAll(draft);
     }
 
@@ -211,14 +230,8 @@
         link.rel = 'stylesheet';
         link.href = url;
         document.head.appendChild(link);
-        // Also inject into iframe
-        const iframeDoc = iframeEl?.contentDocument;
-        if (iframeDoc) {
-            const iLink = iframeDoc.createElement('link');
-            iLink.rel = 'stylesheet';
-            iLink.href = url;
-            iframeDoc.head.appendChild(iLink);
-        }
+        // Also inject into iframe via postMessage so font loads inside it
+        iframeEl?.contentWindow?.postMessage({ type: 'gotiga-font', href: url }, '*');
     }
 
     function loadAllCatalogFonts() {
@@ -233,7 +246,10 @@
             fontCustomValues[role] = draft.fonts[role] ?? '';
         } else {
             fontCustomMode[role] = false;
-            draft.fonts[role] = value;
+            draft = {
+                ...draft,
+                fonts: { ...draft.fonts, [role]: value },
+            };
             loadGoogleFont(value, role);
             applyAll(draft);
         }
@@ -241,7 +257,10 @@
 
     function onCustomFontInput(role: keyof ThemeConfig['fonts'], value: string) {
         fontCustomValues[role] = value;
-        draft.fonts[role] = value;
+        draft = {
+            ...draft,
+            fonts: { ...draft.fonts, [role]: value },
+        };
         if (value.length > 2) loadGoogleFont(value, role);
         applyAll(draft);
     }
@@ -251,7 +270,10 @@
     }
 
     function setMotion(key: keyof ThemeConfig['motion'], ms: number) {
-        draft.motion[key] = `${ms}ms`;
+        draft = {
+            ...draft,
+            motion: { ...draft.motion, [key]: `${ms}ms` },
+        };
         applyAll(draft);
     }
 
@@ -446,7 +468,10 @@
                                     default: {DEFAULT_FONTS[role]}
                                     <button
                                         onclick={() => {
-                                            draft.fonts[role] = DEFAULT_FONTS[role];
+                                            draft = {
+                                                ...draft,
+                                                fonts: { ...draft.fonts, [role]: DEFAULT_FONTS[role] },
+                                            };
                                             fontCustomMode[role] = false;
                                             applyAll(draft);
                                         }}

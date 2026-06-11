@@ -113,6 +113,21 @@
   --duration-glacial: 1000ms;
 }
 
+:root {
+  --cream: var(--color-canvas-base);
+  --cream2: var(--color-canvas-raised);
+  --ink: var(--color-ink-primary);
+  --brown: var(--color-ink-primary);
+  --mid: var(--color-ember-deep);
+  --tan: var(--color-ember-ink);
+  --copper: var(--color-ember);
+  --gold: var(--color-ochre);
+  --muted: color-mix(in srgb, var(--color-ink-secondary) 68%, transparent);
+  --muted2: color-mix(in srgb, var(--color-ink-secondary) 40%, transparent);
+  --border: color-mix(in srgb, var(--color-ink-primary) 10%, transparent);
+  --border2: color-mix(in srgb, var(--color-ink-primary) 18%, transparent);
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    BASE LAYER
    ═══════════════════════════════════════════════════════════════════════════ */

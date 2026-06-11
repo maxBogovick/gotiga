@@ -90,6 +90,23 @@
     }
   }
 
+  function themeColor(name: string, fallback: string): string {
+    if (typeof document === 'undefined') return fallback;
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+  }
+
+  function withAlpha(color: string, alpha: number, fallback: string): string {
+    const hex = color.trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if (!hex) return fallback;
+    const value = hex[1].length === 3
+      ? hex[1].split('').map(ch => ch + ch).join('')
+      : hex[1];
+    const r = parseInt(value.slice(0, 2), 16);
+    const g = parseInt(value.slice(2, 4), 16);
+    const b = parseInt(value.slice(4, 6), 16);
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+
   // ── Instagram Story share ────────────────────────────────────────────────
   let storySaving    = $state(false);
   let storyBlob      = $state<Blob | null>(null);
@@ -104,12 +121,14 @@
       const faceImg = figurine.images.find(i => i.imageType === 'face') ?? figurine.images[0];
       const imgSrc  = faceImg?.originalUrl ?? faceImg?.url ?? '';
       const W = 1080, H = 1920;
+      const storyBase = themeColor('--color-canvas-base', '#f8f1e7');
+      const storyInk = themeColor('--color-ink-primary', '#34251c');
 
       async function buildCanvas(withImage: boolean): Promise<HTMLCanvasElement> {
         const cv = document.createElement('canvas');
         cv.width = W; cv.height = H;
         const ctx = cv.getContext('2d')!;
-        ctx.fillStyle = '#f8f1e7';
+        ctx.fillStyle = storyBase;
         ctx.fillRect(0, 0, W, H);
         if (withImage && imgSrc) {
           const img = new Image();
@@ -126,25 +145,25 @@
           }
         }
         const grad = ctx.createLinearGradient(0, H * 0.45, 0, H);
-        grad.addColorStop(0, 'rgba(34,15,10,0)');
-        grad.addColorStop(0.55, 'rgba(34,15,10,0.75)');
-        grad.addColorStop(1, 'rgba(34,15,10,0.94)');
+        grad.addColorStop(0, withAlpha(storyInk, 0, 'rgba(34,15,10,0)'));
+        grad.addColorStop(0.55, withAlpha(storyInk, 0.75, 'rgba(34,15,10,0.75)'));
+        grad.addColorStop(1, withAlpha(storyInk, 0.94, 'rgba(34,15,10,0.94)'));
         ctx.fillStyle = grad;
         ctx.fillRect(0, H * 0.45, W, H * 0.55);
-        ctx.strokeStyle = 'rgba(248,241,231,0.15)';
+        ctx.strokeStyle = withAlpha(storyBase, 0.15, 'rgba(248,241,231,0.15)');
         ctx.lineWidth = 2;
         ctx.strokeRect(40, 40, W - 80, H - 80);
-        ctx.fillStyle = '#f8f1e7';
+        ctx.fillStyle = storyBase;
         ctx.textAlign = 'center';
         ctx.font = `500 ${Math.round(W * 0.072)}px Georgia, serif`;
         ctx.fillText(figurine.name, W / 2, Math.round(H * 0.825), W - 140);
-        ctx.strokeStyle = 'rgba(248,241,231,0.22)';
+        ctx.strokeStyle = withAlpha(storyBase, 0.22, 'rgba(248,241,231,0.22)');
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(W * 0.31, H * 0.875); ctx.lineTo(W * 0.69, H * 0.875);
         ctx.stroke();
         ctx.font = `400 ${Math.round(W * 0.048)}px Georgia, serif`;
-        ctx.fillStyle = 'rgba(248,241,231,0.55)';
+        ctx.fillStyle = withAlpha(storyBase, 0.55, 'rgba(248,241,231,0.55)');
         ctx.fillText('G O T I G A', W / 2, Math.round(H * 0.916), W - 160);
         return cv;
       }
@@ -1324,4 +1343,3 @@
     </button>
   </div>
 {/if}
-

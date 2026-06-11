@@ -56,6 +56,14 @@ export function makeDefaultConfig(): ThemeConfig {
     };
 }
 
+export function toPlainThemeConfig(config: ThemeConfig): ThemeConfig {
+    return {
+        colors: { ...(config.colors ?? {}) },
+        fonts: { ...(config.fonts ?? {}) } as ThemeConfig['fonts'],
+        motion: { ...(config.motion ?? {}) } as ThemeConfig['motion'],
+    };
+}
+
 export function generateThemeCSS(config: ThemeConfig): string {
     if (!config) return '';
     const lines: string[] = [':root {'];
@@ -64,6 +72,23 @@ export function generateThemeCSS(config: ThemeConfig): string {
         if (value && value !== DEFAULT_COLORS[name]) {
             lines.push(`  --color-${name}: ${value};`);
         }
+    }
+
+    // Legacy aliases used by older page/component CSS. Keep them tied to the
+    // editable design tokens so preview changes affect the real interface.
+    if (Object.entries(config.colors ?? {}).some(([name, value]) => value && value !== DEFAULT_COLORS[name])) {
+        lines.push('  --cream: var(--color-canvas-base);');
+        lines.push('  --cream2: var(--color-canvas-raised);');
+        lines.push('  --ink: var(--color-ink-primary);');
+        lines.push('  --brown: var(--color-ink-primary);');
+        lines.push('  --mid: var(--color-ember-deep);');
+        lines.push('  --tan: var(--color-ember-ink);');
+        lines.push('  --copper: var(--color-ember);');
+        lines.push('  --gold: var(--color-ochre);');
+        lines.push('  --muted: color-mix(in srgb, var(--color-ink-secondary) 68%, transparent);');
+        lines.push('  --muted2: color-mix(in srgb, var(--color-ink-secondary) 40%, transparent);');
+        lines.push('  --border: color-mix(in srgb, var(--color-ink-primary) 10%, transparent);');
+        lines.push('  --border2: color-mix(in srgb, var(--color-ink-primary) 18%, transparent);');
     }
 
     const fonts = config.fonts ?? {};
@@ -96,12 +121,76 @@ export function generateThemeCSS(config: ThemeConfig): string {
 export const themeConfig = writable<ThemeConfig>(makeDefaultConfig());
 export const themeCSS = derived(themeConfig, ($config) => generateThemeCSS($config));
 
+// ── Hex bridge: maps hard-coded Tailwind arbitrary classes → CSS vars ────────
+// Components use bg-[#f8f1e7] / text-[#34251c] etc. (554 places).
+// This bridge injects a <style> block that redirects them all to CSS variables,
+// so live preview works without migrating every component.
+
+const COLOR_HEX_ALIASES: Array<{ varName: string; hexes: string[] }> = [
+    { varName: '--color-canvas-base',    hexes: ['#f8f1e7', '#faf6ee'] },
+    { varName: '--color-canvas-raised',  hexes: ['#fff9f0', '#fdfaf5'] },
+    { varName: '--color-canvas-sunken',  hexes: ['#f0e9da'] },
+    { varName: '--color-canvas-deep',    hexes: ['#e8d9c4'] },
+    { varName: '--color-ink-primary',    hexes: ['#34251c', '#2c1710'] },
+    { varName: '--color-ink-secondary',  hexes: ['#5f4636', '#5a3420'] },
+    { varName: '--color-ink-tertiary',   hexes: ['#7a5035'] },
+    { varName: '--color-ink-muted',      hexes: ['#a0745a'] },
+    { varName: '--color-ink-disabled',   hexes: ['#c4a088'] },
+    { varName: '--color-ember',          hexes: ['#c65f3c', '#c0582c'] },
+    { varName: '--color-ember-deep',     hexes: ['#9a4120', '#6f3b24', '#72300e'] },
+    { varName: '--color-ember-mid',      hexes: ['#d97b52'] },
+    { varName: '--color-ember-light',    hexes: ['#f5c5ad'] },
+    { varName: '--color-ember-subtle',   hexes: ['#fce8df'] },
+    { varName: '--color-ochre',          hexes: ['#b08820'] },
+    { varName: '--color-ochre-deep',     hexes: ['#856615'] },
+    { varName: '--color-ochre-light',    hexes: ['#f5d98a'] },
+    { varName: '--color-ochre-subtle',   hexes: ['#fbf0d4'] },
+    { varName: '--color-sage',           hexes: ['#6b8a56'] },
+    { varName: '--color-sage-ink',       hexes: ['#344529'] },
+    { varName: '--color-cabinet-wood',   hexes: ['#ceaf86', '#d8c6b1'] },
+];
+
+export function generateHexBridgeCSS(): string {
+    const lines: string[] = ['/* gotiga-theme-bridge: auto-generated, do not edit */'];
+    for (const { varName, hexes } of COLOR_HEX_ALIASES) {
+        for (const hex of hexes) {
+            const esc = `\\[${hex.replace('#', '\\#')}\\]`;
+            lines.push(`.bg-${esc}{background-color:var(${varName})!important}`);
+            lines.push(`.text-${esc}{color:var(${varName})!important}`);
+            lines.push(`.border-${esc}{border-color:var(${varName})!important}`);
+            lines.push(`.ring-${esc}{--tw-ring-color:var(${varName})!important}`);
+            lines.push(`.fill-${esc}{fill:var(${varName})!important}`);
+            lines.push(`.stroke-${esc}{stroke:var(${varName})!important}`);
+            lines.push(`.from-${esc}{--tw-gradient-from:var(${varName})!important}`);
+            lines.push(`.to-${esc}{--tw-gradient-to:var(${varName})!important}`);
+            // Slash-opacity variants e.g. bg-[#34251c]/10 → class `.bg-\[#34251c\]\/10`
+            for (const op of ['5','8','10','12','15','20','25','30','35','40','50','60','70','75','80','85','90']) {
+                lines.push(`.bg-${esc}\\/${op}{background-color:color-mix(in srgb,var(${varName}) ${op}%,transparent)!important}`);
+            }
+        }
+    }
+    return lines.join('\n');
+}
+
 // ── CSS root manipulation ────────────────────────────────────────────────────
 
 export function applyConfigToElement(config: ThemeConfig, root: HTMLElement): void {
     for (const [name, value] of Object.entries(config.colors ?? {})) {
         if (value) root.style.setProperty(`--color-${name}`, value);
     }
+    root.style.setProperty('--cream', 'var(--color-canvas-base)');
+    root.style.setProperty('--cream2', 'var(--color-canvas-raised)');
+    root.style.setProperty('--ink', 'var(--color-ink-primary)');
+    root.style.setProperty('--brown', 'var(--color-ink-primary)');
+    root.style.setProperty('--mid', 'var(--color-ember-deep)');
+    root.style.setProperty('--tan', 'var(--color-ember-ink)');
+    root.style.setProperty('--copper', 'var(--color-ember)');
+    root.style.setProperty('--gold', 'var(--color-ochre)');
+    root.style.setProperty('--muted', 'color-mix(in srgb, var(--color-ink-secondary) 68%, transparent)');
+    root.style.setProperty('--muted2', 'color-mix(in srgb, var(--color-ink-secondary) 40%, transparent)');
+    root.style.setProperty('--border', 'color-mix(in srgb, var(--color-ink-primary) 10%, transparent)');
+    root.style.setProperty('--border2', 'color-mix(in srgb, var(--color-ink-primary) 18%, transparent)');
+
     const fonts = config.fonts ?? {};
     for (const role of ['display', 'body', 'serif', 'mono'] as const) {
         const family = fonts[role];
@@ -127,6 +216,9 @@ function clearRootInlineStyles(): void {
     if (typeof document === 'undefined') return;
     const root = document.documentElement;
     for (const name of Object.keys(DEFAULT_COLORS)) root.style.removeProperty(`--color-${name}`);
+    for (const name of ['cream', 'cream2', 'ink', 'brown', 'mid', 'tan', 'copper', 'gold', 'muted', 'muted2', 'border', 'border2']) {
+        root.style.removeProperty(`--${name}`);
+    }
     for (const role of ['display', 'body', 'serif', 'mono']) root.style.removeProperty(`--font-${role}`);
     for (const n of ['duration-fast', 'duration-default', 'duration-slow', 'duration-glacial']) {
         root.style.removeProperty(`--${n}`);
@@ -147,8 +239,14 @@ function getSenderChannel(): BroadcastChannel | null {
 }
 
 export function applyLivePreview(config: ThemeConfig): void {
-    applyConfigToRoot(config);
-    getSenderChannel()?.postMessage({ type: 'apply', config } satisfies PreviewMessage);
+    const plain = toPlainThemeConfig(config);
+    applyConfigToRoot(plain);
+    try {
+        getSenderChannel()?.postMessage({ type: 'apply', config: plain } satisfies PreviewMessage);
+    } catch {
+        // Some callers pass Svelte state proxies; keep local preview working even
+        // if cross-context delivery fails in an older browser/runtime.
+    }
 }
 
 export function clearLivePreview(): void {
@@ -156,11 +254,25 @@ export function clearLivePreview(): void {
     getSenderChannel()?.postMessage({ type: 'clear' } satisfies PreviewMessage);
 }
 
+// Apply a preview payload: inject the hex bridge (once) then set CSS variables.
+// Called from both BroadcastChannel and window.postMessage paths.
+export function applyPreviewPayload(config: ThemeConfig, bridgeCSSOverride?: string): void {
+    if (typeof document === 'undefined') return;
+    const plain = toPlainThemeConfig(config);
+    if (!document.getElementById('gotiga-theme-bridge')) {
+        const style = document.createElement('style');
+        style.id = 'gotiga-theme-bridge';
+        style.textContent = bridgeCSSOverride ?? generateHexBridgeCSS();
+        document.head.appendChild(style);
+    }
+    applyConfigToRoot(plain);
+}
+
 export function startListeningForPreview(): () => void {
     if (typeof BroadcastChannel === 'undefined') return () => {};
     const ch = new BroadcastChannel(CHANNEL_NAME);
     ch.onmessage = (e: MessageEvent<PreviewMessage>) => {
-        if (e.data.type === 'apply') applyConfigToRoot(e.data.config);
+        if (e.data.type === 'apply') applyPreviewPayload(e.data.config);
         else if (e.data.type === 'clear') clearRootInlineStyles();
     };
     return () => ch.close();

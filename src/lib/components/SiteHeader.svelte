@@ -274,13 +274,13 @@
 
 <style>
   .site-header {
-    --cream: #f8f1e7;
-    --ink: #2c1710;
-    --mid: #6f3b24;
-    --copper: #c65f3c;
-    --muted: rgba(95,70,54,0.68);
-    --muted2: rgba(95,70,54,0.40);
-    --border: rgba(52,37,28,0.10);
+    --cream: var(--color-canvas-base);
+    --ink: var(--color-ink-primary);
+    --mid: var(--color-ember-deep);
+    --copper: var(--color-ember);
+    --muted: color-mix(in srgb, var(--color-ink-secondary) 68%, transparent);
+    --muted2: color-mix(in srgb, var(--color-ink-secondary) 40%, transparent);
+    --border: color-mix(in srgb, var(--color-ink-primary) 10%, transparent);
     --ease: cubic-bezier(0.16,1,0.3,1);
 
     position: fixed;
