@@ -6,6 +6,7 @@
   import { authStore } from '$lib/stores/auth.svelte';
   import type { UserBookingDto, UserOrderDto, MessageThreadDto, ThreadDetailDto, CommissionDto, AttachmentInput } from '$lib/types/api';
   import MessageAttachments from '$lib/components/MessageAttachments.svelte';
+  import CommissionEditModal from '$lib/components/CommissionEditModal.svelte';
 
   type Tab = 'bookings' | 'orders' | 'commissions' | 'wishlist' | 'messages';
   let activeTab = $state<Tab>('bookings');
@@ -26,53 +27,13 @@
   };
 
   // Petition edit / delete
-  let editingId = $state<string | null>(null);
-  let editTitle = $state('');
-  let editDescription = $state('');
-  let editSize = $state('');
-  let editMood = $state('');
-  let editDeadline = $state('');
-  let editBudget = $state('');
-  let editOccasion = $state('');
-  let editSaving = $state(false);
-  let editError = $state('');
+  let editingCommission = $state<CommissionDto | null>(null);
   let deletingId = $state<string | null>(null);
   let confirmDeleteId = $state<string | null>(null);
 
-  function startEditCommission(c: CommissionDto) {
-    editingId = c.id;
-    editError = '';
-    editTitle = c.title;
-    editDescription = c.description;
-    editSize = c.sizeNote ?? '';
-    editMood = c.mood ?? '';
-    editDeadline = c.deadline ?? '';
-    editBudget = c.budgetNote ?? '';
-    editOccasion = c.occasion ?? '';
-  }
-  function cancelEditCommission() { editingId = null; editError = ''; }
-
-  async function saveEditCommission(c: CommissionDto) {
-    if (!editDescription.trim()) { editError = $t('commissionNeedIdea'); return; }
-    editSaving = true;
-    editError = '';
-    try {
-      const updated = await api.editCommission(authStore.token!, c.id, {
-        title: editTitle.trim() || null,
-        description: editDescription.trim(),
-        sizeNote: editSize.trim() || null,
-        mood: editMood.trim() || null,
-        deadline: editDeadline || null,
-        budgetNote: editBudget.trim() || null,
-        occasion: editOccasion.trim() || null,
-      });
-      commissions = commissions.map((x) => (x.id === c.id ? updated : x));
-      editingId = null;
-    } catch {
-      editError = $t('profileActionError');
-    } finally {
-      editSaving = false;
-    }
+  function onCommissionSaved(updated: CommissionDto) {
+    commissions = commissions.map((x) => (x.id === updated.id ? updated : x));
+    editingCommission = null;
   }
 
   async function removeCommission(c: CommissionDto) {
@@ -590,58 +551,36 @@
             <div class="cards-grid">
               {#each commissions as c}
                 <div class="card commission-card">
-                  {#if editingId === c.id}
-                    <!-- Inline edit -->
-                    <div class="commission-edit">
-                      <input class="edit-input" type="text" bind:value={editTitle} placeholder={$t('commissionFieldTitle')} maxlength="120" />
-                      <textarea class="edit-input edit-area" bind:value={editDescription} rows="4" placeholder={$t('commissionFieldIdea')} maxlength="5000"></textarea>
-                      <div class="edit-row">
-                        <input class="edit-input" type="text" bind:value={editSize} placeholder={$t('commissionFieldSize')} />
-                        <input class="edit-input" type="text" bind:value={editMood} placeholder={$t('commissionFieldMood')} />
-                      </div>
-                      <div class="edit-row">
-                        <input class="edit-input" type="date" bind:value={editDeadline} />
-                        <input class="edit-input" type="text" bind:value={editOccasion} placeholder={$t('commissionFieldOccasion')} />
-                      </div>
-                      <input class="edit-input" type="text" bind:value={editBudget} placeholder={$t('commissionFieldBudget')} />
-                      {#if editError}<p class="field-error">{editError}</p>{/if}
-                      <div class="edit-actions">
-                        <button class="commission-btn ghost" onclick={cancelEditCommission} disabled={editSaving}>{$t('commissionBack')}</button>
-                        <button class="commission-btn" onclick={() => saveEditCommission(c)} disabled={editSaving}>{editSaving ? $t('commissionSending') : $t('profileCommissionsSave')}</button>
-                      </div>
-                    </div>
-                  {:else}
-                    <div class="card-head">
-                      <span class="card-name">{c.title || $t('commissionUntitled')}</span>
-                      <span class="order-status order-status--{c.status === 'declined' ? 'rejected' : c.status === 'completed' ? 'confirmed' : 'pending'}">{COMMISSION_STATUS_LABEL[c.status] ?? c.status}</span>
-                    </div>
-                    <p class="card-desc">{c.description}</p>
-                    {#if c.attachments.length > 0}
-                      <div class="commission-thumbs">
-                        {#each c.attachments as att (att.id)}
-                          <img src={resolveMediaUrl(att.thumbUrl ?? att.url)} alt="" />
-                        {/each}
-                      </div>
-                    {/if}
-                    <div class="card-foot">
-                      <span class="card-date">{formatDate(c.createdAt)}</span>
-                      {#if c.threadId}
-                        <button class="commission-open" onclick={() => { activeTab = 'messages'; openThreadDetail(c.threadId!); }}>{$t('profileCommissionsOpenChat')} →</button>
-                      {/if}
-                    </div>
-                    <div class="commission-manage">
-                      {#if c.started}
-                        <span class="commission-locked">{$t('profileCommissionsLocked')}</span>
-                      {:else if confirmDeleteId === c.id}
-                        <span class="commission-confirm">{$t('profileCommissionsDeleteConfirm')}</span>
-                        <button class="commission-link danger" onclick={() => removeCommission(c)} disabled={deletingId === c.id}>{deletingId === c.id ? '…' : $t('profileCommissionsDeleteYes')}</button>
-                        <button class="commission-link" onclick={() => confirmDeleteId = null}>{$t('commissionBack')}</button>
-                      {:else}
-                        <button class="commission-link" onclick={() => startEditCommission(c)}>{$t('profileCommissionsEdit')}</button>
-                        <button class="commission-link danger" onclick={() => confirmDeleteId = c.id}>{$t('profileCommissionsDelete')}</button>
-                      {/if}
+                  <div class="card-head">
+                    <span class="card-name">{c.title || $t('commissionUntitled')}</span>
+                    <span class="order-status order-status--{c.status === 'declined' ? 'rejected' : c.status === 'completed' ? 'confirmed' : 'pending'}">{COMMISSION_STATUS_LABEL[c.status] ?? c.status}</span>
+                  </div>
+                  <p class="card-desc">{c.description}</p>
+                  {#if c.attachments.length > 0}
+                    <div class="commission-thumbs">
+                      {#each c.attachments as att (att.id)}
+                        <img src={resolveMediaUrl(att.thumbUrl ?? att.url)} alt="" />
+                      {/each}
                     </div>
                   {/if}
+                  <div class="card-foot">
+                    <span class="card-date">{formatDate(c.createdAt)}</span>
+                    {#if c.threadId}
+                      <button class="commission-open" onclick={() => { activeTab = 'messages'; openThreadDetail(c.threadId!); }}>{$t('profileCommissionsOpenChat')} →</button>
+                    {/if}
+                  </div>
+                  <div class="commission-manage">
+                    {#if c.started}
+                      <span class="commission-locked">{$t('profileCommissionsLocked')}</span>
+                    {:else if confirmDeleteId === c.id}
+                      <span class="commission-confirm">{$t('profileCommissionsDeleteConfirm')}</span>
+                      <button class="commission-link danger" onclick={() => removeCommission(c)} disabled={deletingId === c.id}>{deletingId === c.id ? '…' : $t('profileCommissionsDeleteYes')}</button>
+                      <button class="commission-link" onclick={() => confirmDeleteId = null}>{$t('commissionBack')}</button>
+                    {:else}
+                      <button class="commission-link" onclick={() => editingCommission = c}>{$t('profileCommissionsEdit')}</button>
+                      <button class="commission-link danger" onclick={() => confirmDeleteId = c.id}>{$t('profileCommissionsDelete')}</button>
+                    {/if}
+                  </div>
                 </div>
               {/each}
             </div>
@@ -823,6 +762,14 @@
     </div>
   </div>
 </div>
+
+{#if editingCommission}
+  <CommissionEditModal
+    commission={editingCommission}
+    onClose={() => (editingCommission = null)}
+    onSaved={onCommissionSaved}
+  />
+{/if}
 
 <style>
   /* ── Page shell ── */
@@ -1408,17 +1355,6 @@
   .commission-link.danger { color: #a3361d; }
   .commission-locked { font-size: 0.72rem; font-style: italic; color: #8a7a6a; }
   .commission-confirm { font-size: 0.75rem; color: #a3361d; }
-  .commission-edit { display: flex; flex-direction: column; gap: 0.6rem; }
-  .edit-input { width: 100%; background: #f8f1e7; border: 1px solid #d8c6b1; padding: 0.5rem 0.6rem; font-family: inherit; font-size: 0.9rem; color: #34251c; }
-  .edit-input:focus { outline: none; border-color: #c65f3c; }
-  .edit-area { resize: vertical; font-family: 'Cormorant Garamond', Georgia, serif; font-size: 1rem; }
-  .edit-row { display: flex; gap: 0.6rem; }
-  .edit-row .edit-input { flex: 1; }
-  .edit-actions { display: flex; gap: 0.6rem; justify-content: flex-end; }
-  .commission-btn { background: #6f3b24; color: #f8f1e7; border: none; padding: 0.5rem 1.2rem; font-family: inherit; font-size: 0.78rem; letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer; }
-  .commission-btn:hover:not(:disabled) { background: #c65f3c; }
-  .commission-btn:disabled { opacity: 0.5; cursor: default; }
-  .commission-btn.ghost { background: transparent; color: #6f3b24; border: 1px solid #d8c6b1; }
 
   .messages-wrap {
     max-width: 720px;

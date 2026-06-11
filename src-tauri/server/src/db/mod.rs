@@ -1911,7 +1911,10 @@ impl Repository {
         let deadline = req.deadline.as_deref()
             .filter(|s| !s.trim().is_empty())
             .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
-        Ok(sqlx::query_as::<_, crate::models::Commission>(
+
+        let mut tx = self.pg_pool.begin().await?;
+
+        let updated = sqlx::query_as::<_, crate::models::Commission>(
             r#"UPDATE commissions
                SET title = $1, description = $2, size_note = $3, mood = $4,
                    deadline = $5, budget_note = $6, occasion = $7, updated_at = NOW()
@@ -1926,7 +1929,26 @@ impl Repository {
         .bind(&req.budget_note)
         .bind(&req.occasion)
         .bind(id)
-        .fetch_optional(&self.pg_pool).await?)
+        .fetch_optional(&mut *tx).await?;
+
+        // Replace the reference set only when the client sent one.
+        if updated.is_some() {
+            if let Some(attachments) = &req.attachment_urls {
+                sqlx::query("DELETE FROM commission_attachments WHERE commission_id = $1")
+                    .bind(id)
+                    .execute(&mut *tx).await?;
+                for att in attachments {
+                    sqlx::query(
+                        "INSERT INTO commission_attachments (commission_id, url, thumb_url) VALUES ($1, $2, $3)"
+                    )
+                    .bind(id).bind(&att.url).bind(&att.thumb_url)
+                    .execute(&mut *tx).await?;
+                }
+            }
+        }
+
+        tx.commit().await?;
+        Ok(updated)
     }
 
     pub async fn delete_commission(&self, id: Uuid) -> Result<()> {

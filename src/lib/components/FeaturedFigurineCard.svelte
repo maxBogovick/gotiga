@@ -132,7 +132,7 @@
         <div class="card-ov">
             <div class="card-ov-bar">
                 <span class="card-ov-cta">
-                    View work
+                    {$t('cardViewWork')}
                     <svg width="14" height="7" viewBox="0 0 14 7" fill="none" aria-hidden="true">
                         <path d="M0 3.5H13M13 3.5L9.5 1M13 3.5L9.5 6" stroke="currentColor" stroke-width="1"/>
                     </svg>
@@ -199,7 +199,7 @@
                 <span class="card-year">{fig.year}</span>
             {/if}
         </div>
-        <span class="card-kind">Archive specimen</span>
+        <span class="card-kind">{$t('cardArchiveSpecimen')}</span>
     </div>
 </a>
 

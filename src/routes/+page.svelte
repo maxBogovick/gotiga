@@ -16,18 +16,48 @@
     let isNavigating = $state(false);
     let ambientIntensity = $state(1);
     let featuredFigurines = $state<FigurineListItem[]>([]);
+    let heroFigurine = $state<FigurineListItem | null>(null);
     let collectionTotal = $state(0);
     let availableTotal = $state(0);
-    let homeContent = $state<HomeContent>({ title: null, kicker: null, lead: null });
+    let homeContent = $state<HomeContent>({
+        title: null,
+        kicker: null,
+        lead: null,
+        heroFigurineId: null,
+        heroCaptionTitle: null,
+        heroCaptionMeta: null,
+        heroCaptionCta: null,
+        heroMode: null,
+    });
     let mouseX = $state(0.5);
     let mouseY = $state(0.5);
 
     const parallaxSpring = spring({ x: 0, y: 0 }, { stiffness: 0.04, damping: 0.45 });
 
-    // Kinetic title: split into characters, accent the trailing portion
-    let titleText = $derived(homeContent.title?.trim() || 'Gotiga');
-    let titleChars = $derived([...titleText]);
-    let accentFrom = $derived(Math.ceil(titleChars.length * 0.6));
+    type HeroMode = 'showcase' | 'release';
+
+    let configuredHeroMode = $derived(homeContent.heroMode ?? 'auto');
+    let activeHeroMode = $derived<HeroMode>(
+        configuredHeroMode === 'release' || (configuredHeroMode === 'auto' && availableTotal === 0)
+            ? 'release'
+            : 'showcase'
+    );
+    let isReleaseMode = $derived(activeHeroMode === 'release');
+
+    // Kinetic title: keep the homepage promise stable; custom title is used as artwork caption.
+    let titleText = $derived(isReleaseMode ? $t('homeReleaseTitle') : $t('homeTitle'));
+    let leadText = $derived(homeContent.lead?.trim() || (isReleaseMode ? $t('homeReleaseLead') : $t('homeLead')));
+    let primaryCtaHref = $derived(isReleaseMode ? '/figurines' : '#available-works');
+    let primaryCtaText = $derived(isReleaseMode ? $t('homeReleasePrimaryCta') : $t('homePrimaryCta'));
+    let secondaryCtaHref = $derived(isReleaseMode ? '/upcoming' : '#request-path');
+    let secondaryCtaText = $derived(isReleaseMode ? $t('homeReleaseSecondaryCta') : $t('homeOrderCta'));
+    let heroObjectName = $derived(homeContent.heroCaptionTitle?.trim() || heroFigurine?.name || homeContent.title?.trim() || '');
+    let heroObjectMeta = $derived(homeContent.heroCaptionMeta?.trim() || $t('homeHeroObjectMeta'));
+    let heroObjectCta = $derived(homeContent.heroCaptionCta?.trim() || (heroFigurine ? $t('homeHeroObjectOpen') : $t('homeSecondaryCta')));
+    let titleWords = $derived(titleText.split(/\s+/).filter(Boolean));
+    let showStats = $derived(availableTotal > 0 || collectionTotal >= 3);
+    let heroObjectHref = $derived(heroFigurine ? `/figurines/${heroFigurine.id}` : '/figurines');
+    let showHeroCaption = $derived(Boolean(heroObjectName));
 
     // Count-up stats
     const availDisplay = tweened(0, { duration: 1100, easing: cubicOut });
@@ -100,7 +130,16 @@
                 api.getCabinetZones().catch(() => DEFAULT_ZONES),
                 api.getMainBackground().catch(() => null),
                 api.getAllFigurines().catch(() => [] as FigurineListItem[]),
-                api.getHomeContent().catch(() => ({ title: null, kicker: null, lead: null } satisfies HomeContent))
+                api.getHomeContent().catch(() => ({
+                    title: null,
+                    kicker: null,
+                    lead: null,
+                    heroFigurineId: null,
+                    heroCaptionTitle: null,
+                    heroCaptionMeta: null,
+                    heroCaptionCta: null,
+                    heroMode: null,
+                } satisfies HomeContent))
             ]);
             if (bgPath) imageUrl = bgPath;
             homeContent = content;
@@ -109,6 +148,9 @@
             const visibleFigurines = figurines.filter(f => f.status !== 'in_progress');
             collectionTotal = visibleFigurines.length;
             availableTotal = figurines.filter((item) => item.status === 'available').length;
+            heroFigurine = content.heroFigurineId
+                ? visibleFigurines.find((item) => item.id === content.heroFigurineId) ?? null
+                : null;
             const pinned = visibleFigurines.filter(f => f.isFeatured);
             featuredFigurines = pinned.length > 0
                 ? sortFeaturedFigurines(pinned).slice(0, 4)
@@ -199,57 +241,56 @@
                 </p>
 
                 <h1 id="home-title" class="hero-title" aria-label={titleText}>
-                    {#each titleChars as ch, i}
+                    {#each titleWords as word, i}
                         <span
-                            class="ht-ch"
-                            class:accent={i >= accentFrom}
-                            style="animation-delay:{0.12 + i * 0.05}s"
+                            class="title-word"
+                            class:accent={i === titleWords.length - 1}
+                            style="animation-delay:{0.12 + i * 0.08}s"
                             aria-hidden="true"
-                        >{ch === ' ' ? ' ' : ch}</span>
+                        >{word}</span>
                     {/each}
                 </h1>
 
-                <p class="hero-lead">{homeContent.lead?.trim() || $t('homeLead')}</p>
+                <p class="hero-lead">{leadText}</p>
 
                 <div class="hero-ctas">
-                    <a href="#available-works" class="cta-primary" use:magnetic={0.28}>
-                        {$t('homePrimaryCta')}
+                    <a href={primaryCtaHref} class="cta-primary" use:magnetic={0.28}>
+                        {primaryCtaText}
                         <svg class="cta-arrow" width="18" height="9" viewBox="0 0 18 9" fill="none">
                             <path d="M0 4.5H17M17 4.5L12.5 1M17 4.5L12.5 8" stroke="currentColor" stroke-width="1"/>
                         </svg>
                     </a>
-                    <a href="/figurines" class="cta-ghost" use:magnetic={0.22}>{$t('homeSecondaryCta')}</a>
+                    <a href={secondaryCtaHref} class="cta-ghost" use:magnetic={0.22}>{secondaryCtaText}</a>
                 </div>
 
-                <div class="side-links">
-                    <a href="/upcoming" class="workshop-link">
-                        {$t('upcomingTitle')}
-                        <span class="wl-arrow">↗</span>
-                    </a>
-                    <a href="/workshop" class="workshop-link">
-                        Workshop
-                        <span class="wl-arrow">↗</span>
-                    </a>
+                <div class="trust-line" aria-label="Gotiga">
+                    <span>{$t('homeTrustUnique')}</span>
+                    <span>{$t('homeTrustHandmade')}</span>
+                    <span>{$t('homeTrustAuthorReply')}</span>
                 </div>
 
-                <dl class="stats">
-                    <div class="stat">
-                        <dt class="stat-num">{Math.round($availDisplay)}</dt>
-                        <dd class="stat-label">{$t('homeAvailableStat')}</dd>
-                    </div>
-                    <div class="stat-sep"></div>
-                    <div class="stat">
-                        <dt class="stat-num">{Math.round($collDisplay)}</dt>
-                        <dd class="stat-label">{$t('homeArchiveStat')}</dd>
-                    </div>
-                </dl>
+                {#if showStats}
+                    <dl class="stats">
+                        <div class="stat">
+                            <dt class="stat-num">{Math.round($availDisplay)}</dt>
+                            <dd class="stat-label">{$t('homeAvailableStat')}</dd>
+                        </div>
+                        <div class="stat-sep"></div>
+                        <div class="stat">
+                            <dt class="stat-num">{Math.round($collDisplay)}</dt>
+                            <dd class="stat-label">{$t('homeArchiveStat')}</dd>
+                        </div>
+                    </dl>
+                {:else}
+                    <p class="release-note">{$t('homeReleaseNote')}</p>
+                {/if}
             </div>
 
             <!-- Right: image -->
             <div class="hero-visual">
                 <div class="img-meta">
                     <span>№ 001</span>
-                    <span>Cabinet View</span>
+                    <span>{$t('homeHeroObjectLabel')}</span>
                 </div>
 
                 <div
@@ -277,6 +318,15 @@
                             {/each}
                         </div>
                     {/if}
+
+                    {#if showHeroCaption}
+                    <a class="art-caption" href={heroObjectHref} aria-label="{heroObjectCta}: {heroObjectName}">
+                        <span class="art-caption-kicker">{$t('homeHeroObjectLabel')}</span>
+                        <span class="art-caption-name">{heroObjectName}</span>
+                        <span class="art-caption-meta">{heroObjectMeta}</span>
+                        <span class="art-caption-open">{heroObjectCta} →</span>
+                    </a>
+                    {/if}
                 </div>
 
                 <!-- Decorative frame corners -->
@@ -291,9 +341,29 @@
                         <span>{$t('homeScrollCue')}</span>
                     </a>
                 {/if}
+
             </div>
 
         </section>
+
+        <nav class="route-strip" aria-label={$t('homePathTitle')}>
+            <a href="#available-works">
+                <span>{$t('homePathAvailable')}</span>
+                <small>{$t('homePathAvailableDesc')}</small>
+            </a>
+            <a href="/upcoming">
+                <span>{$t('homePathUpcoming')}</span>
+                <small>{$t('homePathUpcomingDesc')}</small>
+            </a>
+            <a href="/figurines">
+                <span>{$t('homePathArchive')}</span>
+                <small>{$t('homePathArchiveDesc')}</small>
+            </a>
+            <a href="/author">
+                <span>{$t('homePathAuthor')}</span>
+                <small>{$t('homePathAuthorDesc')}</small>
+            </a>
+        </nav>
 
         <!-- FEATURED -->
         {#if featuredFigurines.length > 0}
@@ -302,7 +372,7 @@
         <div class="featured-hd-left">
             <p class="eyebrow">
                 <span class="eyebrow-rule"></span>
-                Archive selection
+                {$t('homeFeaturedEyebrow')}
             </p>
             <h2 id="featured-title" class="featured-title">{$t('homeFeaturedTitle')}</h2>
         </div>
@@ -324,6 +394,35 @@
     </div>
 </section>
 {/if}
+
+        <section id="request-path" class="request-path" aria-labelledby="request-path-title">
+            <div class="request-copy">
+                <p class="eyebrow">
+                    <span class="eyebrow-rule"></span>
+                    {$t('homeHowEyebrow')}
+                </p>
+                <h2 id="request-path-title" class="request-title">{$t('homeHowTitle')}</h2>
+                <p class="request-desc">{$t('homeHowText')}</p>
+            </div>
+
+            <div class="request-steps">
+                <article class="request-step">
+                    <span class="step-num">01</span>
+                    <h3>{$t('homeHowStep1Title')}</h3>
+                    <p>{$t('homeHowStep1Text')}</p>
+                </article>
+                <article class="request-step">
+                    <span class="step-num">02</span>
+                    <h3>{$t('homeHowStep2Title')}</h3>
+                    <p>{$t('homeHowStep2Text')}</p>
+                </article>
+                <article class="request-step">
+                    <span class="step-num">03</span>
+                    <h3>{$t('homeHowStep3Title')}</h3>
+                    <p>{$t('homeHowStep3Text')}</p>
+                </article>
+            </div>
+        </section>
 
     </main>
     {/if}
@@ -444,11 +543,11 @@
     /* ── HERO LAYOUT ─────────────────────────────── */
     .hero {
         display: grid;
-        grid-template-columns: minmax(280px, 0.68fr) minmax(480px, 1.42fr);
-        gap: clamp(32px, 5vw, 88px);
+        grid-template-columns: minmax(320px, 0.62fr) minmax(560px, 1.38fr);
+        gap: clamp(44px, 5.8vw, 104px);
         align-items: center;
         min-height: 100svh;
-        padding: 68px clamp(20px, 4.5vw, 72px) 40px;
+        padding: 76px clamp(20px, 4.5vw, 72px) 54px;
         max-width: 1680px;
         margin: 0 auto;
     }
@@ -479,27 +578,31 @@
         flex-shrink: 0;
     }
 
-    /* ── H1: single word, large, on one line ─────── */
+    /* ── H1: word-based reveal, so Russian titles wrap like typography ─────── */
     .hero-title {
         font-family: 'Cormorant Garamond', serif;
-        font-size: clamp(64px, 8.5vw, 140px);
+        font-size: clamp(54px, 5.8vw, 104px);
         font-weight: 300;
-        line-height: 0.9;
-        letter-spacing: -0.015em;
+        line-height: 0.94;
+        letter-spacing: 0;
         color: var(--ink);
         margin: 0 0 26px;
-        /* keep the brand word whole — no mid-word breaks */
         word-break: keep-all;
         overflow-wrap: normal;
         hyphens: none;
-        /* per-letter kinetic reveal */
         display: flex;
         flex-wrap: wrap;
+        column-gap: 0.18em;
+        row-gap: 0.04em;
         overflow: hidden;
         padding-bottom: 0.12em;
     }
 
-    .ht-ch {
+    .hero-title:lang(ru) {
+        font-size: clamp(48px, 5.35vw, 96px);
+    }
+
+    .title-word {
         display: inline-block;
         transform: translateY(112%) rotate(7deg);
         opacity: 0;
@@ -507,7 +610,7 @@
         animation: ht-rise 0.92s var(--ease-spring, cubic-bezier(0.34, 1.4, 0.64, 1)) both;
     }
 
-    .ht-ch.accent {
+    .title-word.accent {
         color: var(--copper);
         font-style: italic;
     }
@@ -517,7 +620,7 @@
     }
 
     @media (prefers-reduced-motion: reduce) {
-        .ht-ch { animation: none; transform: none; opacity: 1; }
+        .title-word { animation: none; transform: none; opacity: 1; }
     }
 
     .hero-lead {
@@ -527,7 +630,7 @@
         font-style: italic;
         line-height: 1.52;
         color: rgba(52,37,28,0.76);
-        max-width: 360px;
+        max-width: 430px;
         margin-bottom: 34px;
     }
 
@@ -574,58 +677,67 @@
     .cta-ghost {
         display: inline-flex;
         align-items: center;
-        height: 44px;
-        padding: 0 22px;
-        border: 1px solid var(--border2);
-        color: var(--brown);
+        min-height: 44px;
+        padding: 0 4px;
+        color: color-mix(in srgb, var(--brown) 72%, transparent);
         font-size: 9.5px;
         letter-spacing: 0.16em;
         text-transform: uppercase;
         text-decoration: none;
-        transition: border-color 0.28s, background 0.28s, transform 0.35s var(--ease);
+        border-bottom: 1px solid color-mix(in srgb, var(--color-ink-primary) 18%, transparent);
+        transition: color 0.28s, border-color 0.28s, transform 0.35s var(--ease);
         will-change: transform;
     }
 
     .cta-ghost:hover {
+        color: var(--copper);
         border-color: rgba(198,95,60,0.5);
-        background: rgba(198,95,60,0.04);
     }
 
-    .side-links {
-        display: flex;
-        gap: 20px;
-        flex-wrap: wrap;
-    }
-
-    .workshop-link {
-        display: inline-flex;
-        align-items: center;
-        gap: 5px;
+    .trust-line {
+        display: grid;
+        gap: 7px;
+        max-width: 420px;
+        color: rgba(52,37,28,0.60);
         font-size: 9.5px;
-        letter-spacing: 0.16em;
+        letter-spacing: 0.14em;
+        line-height: 1.45;
         text-transform: uppercase;
-        color: var(--muted2);
-        text-decoration: none;
-        padding: 10px 0;
-        transition: color 0.25s;
-        margin-bottom: 34px;
     }
 
-    .workshop-link:hover { color: var(--copper); }
-
-    .wl-arrow {
-        display: inline-block;
-        transition: transform 0.25s;
+    .trust-line span {
+        position: relative;
+        padding-left: 16px;
     }
 
-    .workshop-link:hover .wl-arrow {
-        transform: translate(2px, -2px);
+    .trust-line span::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 0.62em;
+        width: 7px;
+        height: 1px;
+        background: rgba(198,95,60,0.58);
+    }
+
+    .release-note {
+        max-width: 360px;
+        margin-top: 34px;
+        padding-left: 18px;
+        border-left: 1px solid rgba(198,95,60,0.36);
+        font-family: 'Cormorant Garamond', serif;
+        font-size: 17px;
+        font-style: italic;
+        font-weight: 300;
+        line-height: 1.42;
+        color: rgba(52,37,28,0.58);
     }
 
     /* ── STATS ───────────────────────────────────── */
     .stats {
         display: flex;
         align-items: stretch;
+        margin-top: 34px;
     }
 
     .stat {
@@ -674,7 +786,7 @@
     .img-frame {
         position: relative;
         width: 100%;
-        height: clamp(480px, 69svh, 850px);
+        height: clamp(520px, 70svh, 860px);
         overflow: hidden;
         transform-style: preserve-3d;
         transition: filter 0.3s;
@@ -685,6 +797,7 @@
         width: 100%;
         height: 100%;
         object-fit: cover;
+        object-position: 58% 45%;
         display: block;
         position: relative;
         z-index: 1;
@@ -782,6 +895,107 @@
     @keyframes sc-pulse {
         0%,100% { width: 22px; }
         50% { width: 38px; }
+    }
+
+    .art-caption {
+        position: absolute;
+        left: clamp(18px, 2.3vw, 34px);
+        bottom: clamp(18px, 2.3vw, 34px);
+        z-index: 28;
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        max-width: min(330px, calc(100% - 36px));
+        padding: 0 0 0 14px;
+        color: rgba(255,240,218,0.88);
+        text-decoration: none;
+        border-left: 1px solid rgba(198,95,60,0.62);
+        filter: drop-shadow(0 10px 22px rgba(25,12,7,0.34));
+        transition: color 0.25s, border-color 0.25s, transform 0.25s var(--ease);
+    }
+
+    .art-caption:hover {
+        color: var(--cream2);
+        border-color: rgba(255,240,218,0.78);
+        transform: translateX(3px);
+    }
+
+    .art-caption-kicker {
+        font-size: 8px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: rgba(255,240,218,0.58);
+    }
+
+    .art-caption-name {
+        font-family: 'Cormorant Garamond', serif;
+        font-size: 26px;
+        font-style: italic;
+        line-height: 1;
+    }
+
+    .art-caption-meta,
+    .art-caption-open {
+        font-size: 8px;
+        letter-spacing: 0.12em;
+        line-height: 1.3;
+        text-transform: uppercase;
+        color: rgba(255,240,218,0.68);
+    }
+
+    .art-caption-open {
+        margin-top: 2px;
+        color: rgba(255,240,218,0.88);
+    }
+
+    /* ── ROUTE STRIP ─────────────────────────────── */
+    .route-strip {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0;
+        max-width: 1680px;
+        margin: -12px auto 0;
+        padding: 0 clamp(20px, 4.5vw, 72px);
+    }
+
+    .route-strip a {
+        display: flex;
+        min-height: 102px;
+        flex-direction: column;
+        justify-content: center;
+        gap: 8px;
+        padding: 22px clamp(16px, 2vw, 28px);
+        border-top: 1px solid var(--border);
+        border-bottom: 1px solid var(--border);
+        color: var(--brown);
+        text-decoration: none;
+        transition: background 0.25s, border-color 0.25s;
+    }
+
+    .route-strip a + a {
+        border-left: 1px solid var(--border);
+    }
+
+    .route-strip a:hover {
+        background: rgba(198,95,60,0.035);
+        border-color: color-mix(in srgb, var(--color-ember) 28%, transparent);
+    }
+
+    .route-strip span {
+        font-size: 9px;
+        letter-spacing: 0.17em;
+        text-transform: uppercase;
+        color: var(--ink);
+    }
+
+    .route-strip small {
+        max-width: 220px;
+        font-family: 'Cormorant Garamond', serif;
+        font-size: 15px;
+        font-style: italic;
+        font-weight: 300;
+        line-height: 1.28;
+        color: var(--muted);
     }
 
     /* ── ZONES ───────────────────────────────────── */
@@ -984,6 +1198,75 @@
         gap: clamp(20px, 2.4vw, 34px);
     }
 
+    /* ── REQUEST PATH ───────────────────────────── */
+    .request-path {
+        display: grid;
+        grid-template-columns: minmax(280px, 0.76fr) minmax(420px, 1.24fr);
+        gap: clamp(28px, 5vw, 82px);
+        align-items: start;
+        max-width: 1680px;
+        margin: 0 auto;
+        padding: 0 clamp(20px, 4.5vw, 72px) clamp(88px, 10vw, 148px);
+    }
+
+    .request-title {
+        margin: 10px 0 18px;
+        font-family: 'Cormorant Garamond', serif;
+        font-size: clamp(34px, 4.8vw, 72px);
+        font-weight: 300;
+        line-height: 0.96;
+        color: var(--ink);
+    }
+
+    .request-desc {
+        max-width: 460px;
+        font-family: 'Cormorant Garamond', serif;
+        font-size: 18px;
+        font-style: italic;
+        font-weight: 300;
+        line-height: 1.5;
+        color: var(--muted);
+    }
+
+    .request-steps {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+    }
+
+    .request-step {
+        min-height: 220px;
+        padding: 22px 20px;
+        border: 1px solid var(--border);
+        background: color-mix(in srgb, var(--color-canvas-raised) 72%, transparent);
+    }
+
+    .step-num {
+        display: block;
+        margin-bottom: 42px;
+        font-family: 'Cormorant Garamond', serif;
+        font-size: 34px;
+        line-height: 1;
+        color: color-mix(in srgb, var(--color-ember) 74%, transparent);
+    }
+
+    .request-step h3 {
+        margin-bottom: 10px;
+        font-size: 10px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--ink);
+    }
+
+    .request-step p {
+        font-family: 'Cormorant Garamond', serif;
+        font-size: 16px;
+        font-style: italic;
+        font-weight: 300;
+        line-height: 1.42;
+        color: var(--muted);
+    }
+
     /* ── RESPONSIVE ──────────────────────────────── */
     @media (max-width: 1080px) {
         .hero {
@@ -998,9 +1281,23 @@
 
         .img-frame { height: min(58svh, 620px); }
 
+        .route-strip {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            margin-top: 0;
+        }
+
+        .route-strip a:nth-child(odd) {
+            border-left: 0;
+        }
+
         .featured-hd { grid-template-columns: 1fr; }
 
         .cards { grid-template-columns: repeat(2, 1fr); }
+
+        .request-path {
+            grid-template-columns: 1fr;
+            padding-top: 16px;
+        }
     }
 
     @media (max-width: 680px) {
@@ -1009,14 +1306,68 @@
             gap: 24px;
         }
 
-        .hero-title { font-size: clamp(44px, 16vw, 108px); }
-        .hero-lead { font-size: 16px; max-width: 300px; }
+        .hero-title,
+        .hero-title:lang(ru) {
+            font-size: clamp(42px, 13.2vw, 68px);
+            line-height: 0.98;
+        }
 
-        .cta-primary, .cta-ghost { height: 40px; padding: 0 16px; font-size: 9px; }
+        .hero-lead { font-size: 16px; max-width: 330px; }
 
-        .img-frame { height: 42svh; min-height: 260px; }
+        .cta-primary { height: 40px; padding: 0 16px; font-size: 9px; }
+
+        .cta-ghost {
+            min-height: 40px;
+            padding: 0 2px;
+            font-size: 9px;
+        }
+
+        .trust-line {
+            font-size: 8.5px;
+            line-height: 1.45;
+        }
+
+        .release-note {
+            margin-top: 26px;
+            font-size: 16px;
+        }
+
+        .img-frame { height: 42svh; min-height: 300px; }
 
         .scroll-cue { display: none; }
+
+        .art-caption {
+            left: 14px;
+            bottom: 14px;
+            max-width: calc(100% - 28px);
+            padding-left: 12px;
+        }
+
+        .art-caption-name {
+            font-size: 22px;
+        }
+
+        .art-caption-meta {
+            display: none;
+        }
+
+        .route-strip {
+            grid-template-columns: 1fr;
+            padding: 0 16px 18px;
+        }
+
+        .route-strip a,
+        .route-strip a + a,
+        .route-strip a:nth-child(odd) {
+            min-height: 78px;
+            border-left: 0;
+            border-top: 1px solid var(--border);
+            border-bottom: 0;
+        }
+
+        .route-strip a:last-child {
+            border-bottom: 1px solid var(--border);
+        }
 
         .featured {
             padding-inline: 16px;
@@ -1026,6 +1377,22 @@
         .featured-desc { font-size: 16px; }
 
         .cards { grid-template-columns: 1fr; gap: 22px; }
+
+        .request-path {
+            padding: 0 16px 88px;
+        }
+
+        .request-steps {
+            grid-template-columns: 1fr;
+        }
+
+        .request-step {
+            min-height: 0;
+        }
+
+        .step-num {
+            margin-bottom: 24px;
+        }
     }
 
     @media (hover: none) {

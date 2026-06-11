@@ -386,6 +386,11 @@ pub struct HomeContent {
     pub title: Option<String>,
     pub kicker: Option<String>,
     pub lead: Option<String>,
+    pub hero_figurine_id: Option<String>,
+    pub hero_caption_title: Option<String>,
+    pub hero_caption_meta: Option<String>,
+    pub hero_caption_cta: Option<String>,
+    pub hero_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1258,6 +1263,9 @@ pub struct EditCommissionRequest {
     pub deadline: Option<String>,
     pub budget_note: Option<String>,
     pub occasion: Option<String>,
+    /// Full replacement set of reference images. When omitted, attachments are
+    /// left untouched.
+    pub attachment_urls: Option<Vec<AttachmentInput>>,
 }
 
 #[derive(Debug, Serialize)]

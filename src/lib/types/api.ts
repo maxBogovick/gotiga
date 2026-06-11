@@ -94,6 +94,11 @@ export interface HomeContent {
     title: string | null;
     kicker: string | null;
     lead: string | null;
+    heroFigurineId: string | null;
+    heroCaptionTitle: string | null;
+    heroCaptionMeta: string | null;
+    heroCaptionCta: string | null;
+    heroMode: 'auto' | 'showcase' | 'release' | null;
 }
 
 export interface AuthorProfile {
@@ -173,6 +178,8 @@ export interface EditCommissionRequest {
     deadline?: string | null;
     budgetNote?: string | null;
     occasion?: string | null;
+    /** Full replacement set of references. Omit to leave attachments untouched. */
+    attachmentUrls?: AttachmentInput[];
 }
 
 export interface CommissionDto {

@@ -81,11 +81,27 @@ function getWebSettings(): AppSettings {
 }
 
 function getWebHomeContent(): HomeContent {
-    if (typeof localStorage === 'undefined') return { title: null, kicker: null, lead: null };
+    if (typeof localStorage === 'undefined') {
+        return {
+            title: null,
+            kicker: null,
+            lead: null,
+            heroFigurineId: null,
+            heroCaptionTitle: null,
+            heroCaptionMeta: null,
+            heroCaptionCta: null,
+            heroMode: null,
+        };
+    }
     return {
         title: localStorage.getItem('gotiga_home_title'),
         kicker: localStorage.getItem('gotiga_home_kicker'),
         lead: localStorage.getItem('gotiga_home_lead'),
+        heroFigurineId: localStorage.getItem('gotiga_home_hero_figurine_id'),
+        heroCaptionTitle: localStorage.getItem('gotiga_home_hero_caption_title'),
+        heroCaptionMeta: localStorage.getItem('gotiga_home_hero_caption_meta'),
+        heroCaptionCta: localStorage.getItem('gotiga_home_hero_caption_cta'),
+        heroMode: (localStorage.getItem('gotiga_home_hero_mode') as HomeContent['heroMode']) || null,
     };
 }
 
@@ -348,6 +364,11 @@ export const api = {
             localStorage.setItem('gotiga_home_title', content.title ?? '');
             localStorage.setItem('gotiga_home_kicker', content.kicker ?? '');
             localStorage.setItem('gotiga_home_lead', content.lead ?? '');
+            localStorage.setItem('gotiga_home_hero_figurine_id', content.heroFigurineId ?? '');
+            localStorage.setItem('gotiga_home_hero_caption_title', content.heroCaptionTitle ?? '');
+            localStorage.setItem('gotiga_home_hero_caption_meta', content.heroCaptionMeta ?? '');
+            localStorage.setItem('gotiga_home_hero_caption_cta', content.heroCaptionCta ?? '');
+            localStorage.setItem('gotiga_home_hero_mode', content.heroMode ?? '');
         }
     },
 

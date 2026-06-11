@@ -6,6 +6,11 @@ pub struct HomeContent {
     pub title: Option<String>,
     pub kicker: Option<String>,
     pub lead: Option<String>,
+    pub hero_figurine_id: Option<String>,
+    pub hero_caption_title: Option<String>,
+    pub hero_caption_meta: Option<String>,
+    pub hero_caption_cta: Option<String>,
+    pub hero_mode: Option<String>,
 }
 
 // ============================================================

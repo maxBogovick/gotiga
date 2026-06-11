@@ -3,6 +3,7 @@
   import { api, resolveMediaUrl } from '$lib/api';
   import type { CommissionDto, CommissionStatus, ThreadDetailDto, AttachmentInput } from '$lib/types/api';
   import MessageAttachments from '$lib/components/MessageAttachments.svelte';
+  import CommissionEditModal from '$lib/components/CommissionEditModal.svelte';
 
   let { onNewCount = (_n: number) => {} } = $props();
 
@@ -143,40 +144,13 @@
   }
 
   // Edit / delete petition (refused once work has started)
-  let editingId = $state<string | null>(null);
-  let editFields = $state({ title: '', description: '', sizeNote: '', mood: '', deadline: '', budgetNote: '', occasion: '' });
-  let editSaving = $state(false);
+  let editingCommission = $state<CommissionDto | null>(null);
   let confirmDeleteId = $state<string | null>(null);
   let deletingId = $state<string | null>(null);
 
-  function startEdit(c: CommissionDto) {
-    editingId = c.id;
-    editFields = {
-      title: c.title, description: c.description,
-      sizeNote: c.sizeNote ?? '', mood: c.mood ?? '', deadline: c.deadline ?? '',
-      budgetNote: c.budgetNote ?? '', occasion: c.occasion ?? '',
-    };
-  }
-  async function saveEdit(c: CommissionDto) {
-    if (!editFields.description.trim()) return;
-    editSaving = true;
-    try {
-      const updated = await api.adminEditCommission(c.id, {
-        title: editFields.title.trim() || null,
-        description: editFields.description.trim(),
-        sizeNote: editFields.sizeNote.trim() || null,
-        mood: editFields.mood.trim() || null,
-        deadline: editFields.deadline || null,
-        budgetNote: editFields.budgetNote.trim() || null,
-        occasion: editFields.occasion.trim() || null,
-      });
-      applyUpdate(updated);
-      editingId = null;
-    } catch {
-      // ignore
-    } finally {
-      editSaving = false;
-    }
+  function onCommissionSaved(updated: CommissionDto) {
+    applyUpdate(updated);
+    editingCommission = null;
   }
   async function removeCommission(c: CommissionDto) {
     deletingId = c.id;
@@ -280,23 +254,6 @@
 
             <!-- Admin controls -->
             <div class="mt-3 pt-2 border-t border-[#34251c]/5 space-y-2">
-              {#if editingId === c.id}
-                <div class="space-y-2 border border-[#c65f3c]/30 bg-[#fffaf2] p-2">
-                  <input type="text" bind:value={editFields.title} placeholder="Название" class="w-full text-sm border border-[#34251c]/15 px-2 py-1 bg-white" />
-                  <textarea bind:value={editFields.description} rows="3" placeholder="Описание" class="w-full text-sm border border-[#34251c]/15 px-2 py-1 bg-white resize-y"></textarea>
-                  <div class="flex flex-wrap gap-2">
-                    <input type="text" bind:value={editFields.sizeNote} placeholder="Размер" class="flex-1 min-w-[120px] text-xs border border-[#34251c]/15 px-2 py-1 bg-white" />
-                    <input type="text" bind:value={editFields.mood} placeholder="Настроение" class="flex-1 min-w-[120px] text-xs border border-[#34251c]/15 px-2 py-1 bg-white" />
-                    <input type="date" bind:value={editFields.deadline} class="text-xs border border-[#34251c]/15 px-2 py-1 bg-white" />
-                    <input type="text" bind:value={editFields.budgetNote} placeholder="Бюджет" class="flex-1 min-w-[120px] text-xs border border-[#34251c]/15 px-2 py-1 bg-white" />
-                    <input type="text" bind:value={editFields.occasion} placeholder="Повод" class="flex-1 min-w-[120px] text-xs border border-[#34251c]/15 px-2 py-1 bg-white" />
-                  </div>
-                  <div class="flex gap-2 justify-end">
-                    <button onclick={() => editingId = null} class="text-[10px] px-3 py-1 border border-[#34251c]/20 text-[#5f4636]">Отмена</button>
-                    <button onclick={() => saveEdit(c)} disabled={editSaving} class="text-[10px] px-3 py-1 border border-[#6f3b24] bg-[#6f3b24] text-[#fff9f0] disabled:opacity-50">{editSaving ? '…' : 'Сохранить правки'}</button>
-                  </div>
-                </div>
-              {/if}
               <div class="flex flex-wrap gap-1">
                 {#each STATUSES as s}
                   <button
@@ -339,7 +296,7 @@
                   <button onclick={() => removeCommission(c)} disabled={deletingId === c.id} class="text-[10px] text-[#a3361d] underline disabled:opacity-50">{deletingId === c.id ? '…' : 'Да, удалить'}</button>
                   <button onclick={() => confirmDeleteId = null} class="text-[10px] text-[#5f4636] underline">Отмена</button>
                 {:else}
-                  <button onclick={() => startEdit(c)} class="text-[10px] text-[#6f3b24] underline">Редактировать</button>
+                  <button onclick={() => editingCommission = c} class="text-[10px] text-[#6f3b24] underline">Редактировать</button>
                   <button onclick={() => confirmDeleteId = c.id} class="text-[10px] text-[#a3361d] underline">Удалить</button>
                 {/if}
               </div>
@@ -424,3 +381,12 @@
     </div>
   {/if}
 </div>
+
+{#if editingCommission}
+  <CommissionEditModal
+    commission={editingCommission}
+    isAdmin={true}
+    onClose={() => (editingCommission = null)}
+    onSaved={onCommissionSaved}
+  />
+{/if}
