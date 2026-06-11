@@ -492,3 +492,27 @@ export interface WaitlistEntryDto {
     userId: string | null;
 }
 
+export interface ThemeFonts {
+    display: string | null;
+    body: string | null;
+    serif: string | null;
+    mono: string | null;
+}
+
+export interface ThemeMotion {
+    durationFast: string | null;
+    durationDefault: string | null;
+    durationSlow: string | null;
+    durationGlacial: string | null;
+}
+
+export interface ThemeConfig {
+    colors: Record<string, string>;
+    fonts: ThemeFonts;
+    motion: ThemeMotion;
+}
+
+export interface CopyOverrides {
+    en: Record<string, string>;
+    ru: Record<string, string>;
+}

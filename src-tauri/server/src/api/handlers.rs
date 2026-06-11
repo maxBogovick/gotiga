@@ -999,6 +999,38 @@ pub async fn admin_save_contact_settings(
     Ok(Json(body))
 }
 
+// === THEME CONFIG ===
+
+pub async fn get_theme_config(
+    State(service): State<AppService>,
+) -> Result<Json<ThemeConfig>> {
+    Ok(Json(service.get_theme_config().await?))
+}
+
+pub async fn save_theme_config(
+    State(service): State<AppService>,
+    Json(body): Json<ThemeConfig>,
+) -> Result<Json<ThemeConfig>> {
+    service.save_theme_config(body.clone()).await?;
+    Ok(Json(body))
+}
+
+// === COPY OVERRIDES ===
+
+pub async fn get_copy_overrides(
+    State(service): State<AppService>,
+) -> Result<Json<CopyOverrides>> {
+    Ok(Json(service.get_copy_overrides().await?))
+}
+
+pub async fn save_copy_overrides(
+    State(service): State<AppService>,
+    Json(body): Json<CopyOverrides>,
+) -> Result<Json<CopyOverrides>> {
+    service.save_copy_overrides(body.clone()).await?;
+    Ok(Json(body))
+}
+
 pub async fn user_update_profile(
     State(service): State<AppService>,
     headers: HeaderMap,

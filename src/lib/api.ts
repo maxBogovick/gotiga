@@ -40,6 +40,8 @@ import type {
     MessageThreadDto,
     ThreadMessageDto,
     ThreadDetailDto,
+    ThemeConfig,
+    CopyOverrides,
 } from './types/api';
 
 export type { AppSettings };
@@ -845,6 +847,34 @@ export const api = {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify(s),
+        });
+    },
+
+    // === THEME CONFIG ===
+
+    async getThemeConfig(): Promise<ThemeConfig> {
+        return webFetch('/settings/theme');
+    },
+
+    async saveThemeConfig(config: ThemeConfig): Promise<ThemeConfig> {
+        return webFetch('/admin/settings/theme', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(config),
+        });
+    },
+
+    // === COPY OVERRIDES ===
+
+    async getCopyOverrides(): Promise<CopyOverrides> {
+        return webFetch('/settings/copy');
+    },
+
+    async saveCopyOverrides(overrides: CopyOverrides): Promise<CopyOverrides> {
+        return webFetch('/admin/settings/copy', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(overrides),
         });
     },
 };

@@ -1145,3 +1145,49 @@ pub struct CreateWaitlistRequest {
     pub requester_phone: Option<String>,
     pub note: Option<String>,
 }
+
+// ============================================================
+// THEME CONFIG
+// ============================================================
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThemeConfig {
+    /// Flat map: CSS variable suffix → value. E.g. "ink-primary" → "#2C1710"
+    #[serde(default)]
+    pub colors: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub fonts: ThemeFonts,
+    #[serde(default)]
+    pub motion: ThemeMotion,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThemeFonts {
+    pub display: Option<String>,
+    pub body: Option<String>,
+    pub serif: Option<String>,
+    pub mono: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThemeMotion {
+    pub duration_fast: Option<String>,
+    pub duration_default: Option<String>,
+    pub duration_slow: Option<String>,
+    pub duration_glacial: Option<String>,
+}
+
+// ============================================================
+// COPY OVERRIDES
+// ============================================================
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CopyOverrides {
+    #[serde(default)]
+    pub en: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub ru: std::collections::HashMap<String, String>,
+}

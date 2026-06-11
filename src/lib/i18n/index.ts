@@ -19,11 +19,19 @@ lang.subscribe((l) => {
   if (typeof window !== 'undefined') localStorage.setItem('gotiga_lang', l);
 });
 
-export const t = derived(lang, ($lang) => {
+export const copyOverrides = writable<Record<Lang, Record<string, string>>>({ en: {}, ru: {} });
+
+export const t = derived([lang, copyOverrides], ([$lang, $overrides]) => {
   const d = dicts[$lang];
-  return (key: TranslationKey): string => d[key] ?? en[key];
+  const overridesForLang = $overrides[$lang] ?? {};
+  return (key: TranslationKey): string =>
+    overridesForLang[key] ?? d[key] ?? en[key];
 });
 
 export function setLang(l: Lang): void {
   lang.set(l);
+}
+
+export function setCopyOverrides(overrides: Record<Lang, Record<string, string>>): void {
+  copyOverrides.set(overrides);
 }

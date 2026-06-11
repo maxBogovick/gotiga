@@ -108,6 +108,18 @@ pub fn router(service: AppService, config: Config) -> Router {
         .route("/admin/settings/contact",
             put(handlers::admin_save_contact_settings)
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        // === THEME CONFIG ===
+        .route("/settings/theme",
+            get(handlers::get_theme_config))
+        .route("/admin/settings/theme",
+            put(handlers::save_theme_config)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        // === COPY OVERRIDES ===
+        .route("/settings/copy",
+            get(handlers::get_copy_overrides))
+        .route("/admin/settings/copy",
+            put(handlers::save_copy_overrides)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
         // === COMMENTS (ADMIN) ===
         .route("/admin/comments",
             get(handlers::admin_list_comments)

@@ -1292,6 +1292,36 @@ impl AppService {
         self.repo.upsert_setting("booking_rules", &json).await
     }
 
+    // === THEME CONFIG ===
+
+    pub async fn get_theme_config(&self) -> Result<ThemeConfig> {
+        match self.repo.get_setting("theme_config").await? {
+            Some(json) => Ok(serde_json::from_str(&json).unwrap_or_default()),
+            None => Ok(ThemeConfig::default()),
+        }
+    }
+
+    pub async fn save_theme_config(&self, config: ThemeConfig) -> Result<()> {
+        let json = serde_json::to_string(&config)
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        self.repo.upsert_setting("theme_config", &json).await
+    }
+
+    // === COPY OVERRIDES ===
+
+    pub async fn get_copy_overrides(&self) -> Result<CopyOverrides> {
+        match self.repo.get_setting("copy_overrides").await? {
+            Some(json) => Ok(serde_json::from_str(&json).unwrap_or_default()),
+            None => Ok(CopyOverrides::default()),
+        }
+    }
+
+    pub async fn save_copy_overrides(&self, overrides: CopyOverrides) -> Result<()> {
+        let json = serde_json::to_string(&overrides)
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        self.repo.upsert_setting("copy_overrides", &json).await
+    }
+
     // === RESCHEDULE ===
 
     pub async fn reschedule_booking_by_token(&self, token: &str, req: RescheduleBookingRequest) -> Result<BookingCancelInfo> {

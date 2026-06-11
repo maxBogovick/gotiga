@@ -22,6 +22,8 @@
     import BookingRulesPanel from '$lib/components/admin/BookingRulesPanel.svelte';
     import MessagesPanel from '$lib/components/admin/MessagesPanel.svelte';
     import FigurineShowingsEditor from '$lib/components/admin/FigurineShowingsEditor.svelte';
+    import DesignEditor from '$lib/components/admin/DesignEditor.svelte';
+    import CopyEditor from '$lib/components/admin/CopyEditor.svelte';
     import { t } from '$lib/i18n';
     import LangSwitcher from '$lib/components/LangSwitcher.svelte';
 
@@ -71,7 +73,7 @@
     let isSaving = $state(false);
     let showSettings = $state(false);
     let message = $state({ text: '', type: 'info' });
-    let activeTab = $state<'registry' | 'home' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'showings' | 'bookings' | 'waitlist' | 'analytics' | 'users' | 'comments' | 'messages' | 'server' | 'booking-rules' | 'contact'>('registry');
+    let activeTab = $state<'registry' | 'home' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'showings' | 'bookings' | 'waitlist' | 'analytics' | 'users' | 'comments' | 'messages' | 'server' | 'booking-rules' | 'contact' | 'design' | 'copy'>('registry');
     let activeAuthorSubTab = $state<'profile' | 'texts'>('profile');
     let newOrdersCount = $state(0);
     let newBookingsCount = $state(0);
@@ -460,6 +462,13 @@
                   ['server',        $t('adminTabServer')],
                   ['booking-rules', $t('adminTabBookingRules')],
                   ['contact',       $t('adminTabContact')],
+                ]
+              },
+              {
+                label: $t('adminGroupDesign'),
+                tabs: [
+                  ['design', $t('adminTabDesign')],
+                  ['copy',   $t('adminTabCopy')],
                 ]
               },
             ] as group}
@@ -928,6 +937,10 @@
             <div in:fade class="h-full overflow-y-auto"><BookingRulesPanel /></div>
         {:else if activeTab === 'contact'}
             <div in:fade class="h-full overflow-y-auto"><ContactSettingsPanel /></div>
+        {:else if activeTab === 'design'}
+            <div in:fade class="h-full overflow-hidden"><DesignEditor /></div>
+        {:else if activeTab === 'copy'}
+            <div in:fade class="h-full"><CopyEditor /></div>
         {/if}
     </div>
 
