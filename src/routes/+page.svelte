@@ -61,7 +61,7 @@
     let activeWorkFilter = $state<WorkFilter>('available');
     let heroObjectName = $derived(homeContent.heroCaptionTitle?.trim() || heroFigurine?.name || homeContent.title?.trim() || '');
     let heroObjectMeta = $derived(homeContent.heroCaptionMeta?.trim() || $t('homeHeroObjectMeta'));
-    let heroObjectCta = $derived(heroFigurine ? $t('homeHeroObjectOpen') : (homeContent.heroCaptionCta?.trim() || $t('homeSecondaryCta')));
+    let heroObjectCta = $derived(heroObjectName ? $t('homeHeroObjectOpen') : $t('homeSecondaryCta'));
     let titleWords = $derived(titleText.split(/\s+/).filter(Boolean));
     let titleLines = $derived((() => {
         if (titleWords.length <= 2) return [{ words: titleWords, offset: 0 }];
@@ -1013,50 +1013,64 @@
         left: clamp(18px, 2.3vw, 34px);
         bottom: clamp(18px, 2.3vw, 34px);
         z-index: 28;
-        display: flex;
-        flex-direction: column;
-        gap: 5px;
-        max-width: min(330px, calc(100% - 36px));
-        padding: 0 0 0 14px;
-        color: rgba(255,240,218,0.88);
+        display: grid;
+        gap: 6px;
+        max-width: min(360px, calc(100% - 36px));
+        padding: 13px 15px 12px 16px;
+        color: #fff7ea;
         text-decoration: none;
-        border-left: 1px solid rgba(198,95,60,0.62);
-        filter: drop-shadow(0 10px 22px rgba(25,12,7,0.34));
-        transition: color 0.25s, border-color 0.25s, transform 0.25s var(--ease);
+        border: 1px solid rgba(255,247,234,0.16);
+        border-left: 2px solid rgba(198,95,60,0.72);
+        background:
+            linear-gradient(90deg, rgba(28,16,10,0.78), rgba(28,16,10,0.58) 72%, rgba(28,16,10,0.18));
+        box-shadow: 0 14px 34px rgba(20,10,6,0.34);
+        backdrop-filter: blur(10px) saturate(0.9);
+        text-shadow: 0 1px 2px rgba(0,0,0,0.55);
+        transition: border-color 0.22s ease, background 0.22s ease, transform 0.18s ease;
     }
 
     .art-caption:hover {
-        color: var(--cream2);
-        border-color: rgba(255,240,218,0.78);
-        transform: translateX(3px);
+        border-color: rgba(255,247,234,0.28);
+        background:
+            linear-gradient(90deg, rgba(28,16,10,0.84), rgba(28,16,10,0.64) 72%, rgba(28,16,10,0.22));
+        transform: translateY(-1px);
     }
 
     .art-caption-kicker {
-        font-size: 10px;
-        letter-spacing: 0.12em;
+        font-size: 8px;
+        letter-spacing: 0.18em;
+        line-height: 1;
         text-transform: uppercase;
-        color: rgba(255,240,218,0.78);
+        color: rgba(255,247,234,0.68);
     }
 
     .art-caption-name {
         font-family: 'Cormorant Garamond', serif;
-        font-size: 26px;
+        font-size: clamp(25px, 2.2vw, 34px);
         font-style: italic;
-        line-height: 1;
+        line-height: 0.95;
+        color: #fff7ea;
     }
 
-    .art-caption-meta,
-    .art-caption-open {
-        font-size: 10px;
-        letter-spacing: 0.10em;
-        line-height: 1.3;
+    .art-caption-meta {
+        max-width: 30ch;
+        font-size: 9px;
+        letter-spacing: 0.08em;
+        line-height: 1.35;
         text-transform: uppercase;
-        color: rgba(255,240,218,0.78);
+        color: rgba(255,247,234,0.72);
     }
 
     .art-caption-open {
+        width: fit-content;
         margin-top: 2px;
-        color: rgba(255,240,218,0.88);
+        padding-top: 6px;
+        border-top: 1px solid rgba(255,247,234,0.18);
+        font-size: 9px;
+        letter-spacing: 0.14em;
+        line-height: 1;
+        text-transform: uppercase;
+        color: #fff7ea;
     }
 
     /* ── ZONES ───────────────────────────────────── */
@@ -1509,11 +1523,11 @@
             left: 14px;
             bottom: 14px;
             max-width: calc(100% - 28px);
-            padding-left: 12px;
+            padding: 11px 12px 10px 13px;
         }
 
         .art-caption-name {
-            font-size: 22px;
+            font-size: 24px;
         }
 
         .art-caption-meta {
