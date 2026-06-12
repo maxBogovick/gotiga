@@ -843,14 +843,6 @@ export const api = {
         });
     },
 
-    async adminEditCommission(id: string, req: EditCommissionRequest): Promise<CommissionDto> {
-        return webFetch(`/admin/commissions/${id}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json', ...authHeaders() },
-            body: JSON.stringify(req),
-        });
-    },
-
     async adminDeleteCommission(id: string): Promise<void> {
         await webFetch(`/admin/commissions/${id}`, {
             method: 'DELETE',

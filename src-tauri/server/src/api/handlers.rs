@@ -773,14 +773,6 @@ pub async fn admin_update_commission(
         .ok_or_else(|| AppError::NotFound("Commission not found".to_string()))
 }
 
-pub async fn admin_edit_commission(
-    State(service): State<AppService>,
-    Path(id): Path<Uuid>,
-    Json(body): Json<crate::models::EditCommissionRequest>,
-) -> Result<Json<crate::models::CommissionDto>> {
-    Ok(Json(service.edit_commission(id, None, &body).await?))
-}
-
 pub async fn admin_delete_commission(
     State(service): State<AppService>,
     Path(id): Path<Uuid>,

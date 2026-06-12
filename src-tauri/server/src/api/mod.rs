@@ -143,7 +143,6 @@ pub fn router(service: AppService, config: Config) -> Router {
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
         .route("/admin/commissions/:id",
             patch(handlers::admin_update_commission)
-            .put(handlers::admin_edit_commission)
             .delete(handlers::admin_delete_commission)
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
         // === SHOWINGS (ADMIN) ===

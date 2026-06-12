@@ -6,6 +6,7 @@
   import AppImage from '$lib/components/AppImage.svelte';
   import Lightbox from '$lib/components/Lightbox.svelte';
   import OrderModal from '$lib/components/OrderModal.svelte';
+  import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
   import type { FigurineListItem } from '$lib/types/api';
 
   type MainFilter = 'all' | 'available' | 'reserved' | 'sold' | 'saved' | 'viewed';
@@ -32,7 +33,7 @@
   let filtered = $derived(
     (figurines as FigItem[])
       .filter((f) => {
-        if (mainFilter === 'saved')    return likedIds.has(f.id);
+        if (mainFilter === 'saved')    return savedFigurines.has(f.id);
         if (mainFilter === 'viewed')   return viewedIds.has(f.id);
         if (mainFilter !== 'all')      return f.status === mainFilter;
         return true;
@@ -94,7 +95,7 @@
     sold:      (figurines as FigItem[]).filter((f) => f.status === 'sold').length,
   });
 
-  let savedCount  = $derived((figurines as FigItem[]).filter((f) => likedIds.has(f.id)).length);
+  let savedCount  = $derived((figurines as FigItem[]).filter((f) => savedFigurines.has(f.id)).length);
   let viewedCount = $derived((figurines as FigItem[]).filter((f) => viewedIds.has(f.id)).length);
 
   let hasActiveFilters = $derived(
@@ -136,8 +137,6 @@
   }
 
   // ── Card actions ─────────────────────────────────────────────────────────
-  const LIKED_KEY = 'gotiga_liked';
-  let likedIds = $state(new Set<string>());
   let lightboxFig = $state<FigurineListItem | null>(null);
   let orderFig = $state<FigurineListItem | null>(null);
   let shareCopiedId = $state('');
@@ -145,10 +144,7 @@
   let viewedIds = $state(new Set<string>());
 
   onMount(() => {
-    try {
-      const ids: string[] = JSON.parse(localStorage.getItem(LIKED_KEY) ?? '[]');
-      likedIds = new Set(ids);
-    } catch {}
+    savedFigurines.load();
     try {
       const viewed: string[] = JSON.parse(localStorage.getItem('gotiga_viewed') ?? '[]');
       viewedIds = new Set(viewed);
@@ -158,10 +154,7 @@
   function toggleLike(e: MouseEvent, id: string) {
     e.preventDefault();
     e.stopPropagation();
-    const next = new Set(likedIds);
-    next.has(id) ? next.delete(id) : next.add(id);
-    likedIds = next;
-    try { localStorage.setItem(LIKED_KEY, JSON.stringify([...next])); } catch {}
+    savedFigurines.toggle(id);
   }
 
   // ── 3D tilt ────────────────────────────────────────────────────
@@ -548,17 +541,17 @@
                   <!-- Heart button — always visible, top-right -->
                   <button
                     class="absolute top-3 right-3 z-10 flex items-center justify-center w-[30px] h-[30px] rounded-full backdrop-blur-sm cursor-pointer transition-all duration-250
-                      {likedIds.has(figurine.id)
+                      {savedFigurines.has(figurine.id)
                         ? 'bg-[rgba(198,95,60,0.12)] border border-[rgba(198,95,60,0.32)] text-[#c65f3c]'
                         : 'bg-[rgba(255,249,240,0.65)] border border-[rgba(52,37,28,0.13)] text-[rgba(95,70,54,0.55)] hover:bg-[rgba(255,249,240,0.92)] hover:text-[#c65f3c] hover:border-[rgba(198,95,60,0.25)]'}"
                     onclick={(e) => toggleLike(e, figurine.id)}
-                    aria-label={likedIds.has(figurine.id) ? $t('cardSaved') : $t('cardSave')}
-                    title={likedIds.has(figurine.id) ? $t('cardSaved') : $t('cardSave')}
+                    aria-label={savedFigurines.has(figurine.id) ? $t('cardSaved') : $t('cardSave')}
+                    title={savedFigurines.has(figurine.id) ? $t('cardSaved') : $t('cardSave')}
                   >
                     <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true">
                       <path
                         d="M7 12.5C7 12.5 1 8.5 1 4.5C1 2.5 2.5 1 4.5 1C5.5 1 6.5 1.8 7 3C7.5 1.8 8.5 1 9.5 1C11.5 1 13 2.5 13 4.5C13 8.5 7 12.5 7 12.5Z"
-                        fill={likedIds.has(figurine.id) ? 'currentColor' : 'none'}
+                        fill={savedFigurines.has(figurine.id) ? 'currentColor' : 'none'}
                         stroke="currentColor"
                         stroke-width="1.1"
                         stroke-linejoin="round"

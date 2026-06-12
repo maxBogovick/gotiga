@@ -5,6 +5,7 @@
     import AppImage from '$lib/components/AppImage.svelte';
     import Lightbox from '$lib/components/Lightbox.svelte';
     import OrderModal from '$lib/components/OrderModal.svelte';
+    import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
 
     let {
         fig,
@@ -25,34 +26,19 @@
     let displayIndex = $derived(String(index + 1).padStart(2, '0'));
 
     // ── Action state ────────────────────────────────────────────────
-    let liked = $state(false);
     let showLightbox = $state(false);
     let showOrder = $state(false);
     let shareCopied = $state(false);
-
-    const LIKED_KEY = 'gotiga_liked';
+    let liked = $derived(savedFigurines.has(fig.id));
 
     onMount(() => {
-        try {
-            const ids: string[] = JSON.parse(localStorage.getItem(LIKED_KEY) ?? '[]');
-            liked = ids.includes(fig.id);
-        } catch {}
+        savedFigurines.load();
     });
-
-    function saveLiked(val: boolean) {
-        try {
-            const ids: string[] = JSON.parse(localStorage.getItem(LIKED_KEY) ?? '[]');
-            if (val) { if (!ids.includes(fig.id)) ids.push(fig.id); }
-            else      { const i = ids.indexOf(fig.id); if (i !== -1) ids.splice(i, 1); }
-            localStorage.setItem(LIKED_KEY, JSON.stringify(ids));
-        } catch {}
-    }
 
     function toggleLike(e: MouseEvent) {
         e.preventDefault();
         e.stopPropagation();
-        liked = !liked;
-        saveLiked(liked);
+        savedFigurines.toggle(fig.id);
     }
 
     function openQuickView(e: MouseEvent) {
@@ -123,7 +109,7 @@
         </button>
 
         {#if fig.faceImageUrl}
-            <AppImage src={fig.faceImageUrl} class="card-img" loading="lazy" />
+            <AppImage src={fig.faceImageUrl} thumbUrl={fig.thumbUrl} class="card-img" loading="lazy" />
         {:else}
             <div class="card-ph">?</div>
         {/if}
@@ -357,14 +343,24 @@
     .card-img-wrap :global(.card-img) {
         width: 100%;
         height: 100%;
+        display: block;
+    }
+
+    .card-img-wrap :global(.card-img .app-image-thumb),
+    .card-img-wrap :global(.card-img .app-image-main) {
+        width: 100%;
+        height: 100%;
         object-fit: cover;
         object-position: center 42%;
         display: block;
+    }
+
+    .card-img-wrap :global(.card-img .app-image-main) {
         filter: grayscale(0.08) saturate(0.96) contrast(0.98);
         transition: transform 0.65s var(--ease), filter 0.65s;
     }
 
-    .card:hover :global(.card-img) {
+    .card:hover :global(.card-img .app-image-main) {
         transform: scale(1.035);
         filter: grayscale(0) saturate(1.02) contrast(1);
     }
@@ -558,7 +554,7 @@
         background: rgba(95,70,54,0.22);
     }
 
-    .card.is-sold :global(.card-img) {
+    .card.is-sold :global(.card-img .app-image-main) {
         filter: grayscale(0.58) saturate(0.74);
     }
 

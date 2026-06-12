@@ -174,6 +174,15 @@
                     {/each}
                   </div>
                 {/if}
+
+                <!-- Quiet petition invitation — the most intimate place to ask the master -->
+                <div class="mt-10 pt-6 border-t border-[#34251c]/10">
+                  <p class="font-['Georgia'] italic text-[#4b3326] text-base mb-2">{$t('authorCommissionLead')}</p>
+                  <a
+                    href="/commission"
+                    class="inline-block font-['Georgia'] italic text-[#c65f3c] hover:text-[#34251c] border-b border-[#c65f3c]/40 hover:border-[#34251c] transition-colors pb-0.5"
+                  >{$t('commissionInvite')}</a>
+                </div>
               </div>
             </div>
           </div>

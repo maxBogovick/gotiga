@@ -539,6 +539,30 @@ impl AppService {
                 "Work has already begun on this petition — it can no longer be deleted.".into()
             ));
         }
+
+        // When the master removes a claimed petition, the petitioner must be told.
+        // The commission's own conversation is cascade-deleted with it, so the
+        // notice goes into a separate, persistent system thread (owner = None ⇒ admin).
+        if owner.is_none() {
+            if let Some(user_id) = existing.user_id {
+                let en = existing.lang == "en";
+                let titled = !existing.title.trim().is_empty();
+                let subject = if en { "Petition removed" } else { "Прошение снято" };
+                let body = if en {
+                    if titled {
+                        format!("Your petition “{}” has been removed by the archive keeper. You are welcome to send a new one.", existing.title)
+                    } else {
+                        "Your petition has been removed by the archive keeper. You are welcome to send a new one.".to_string()
+                    }
+                } else if titled {
+                    format!("Ваше прошение «{}» снято хранителем архива. Вы можете отправить новое.", existing.title)
+                } else {
+                    "Ваше прошение снято хранителем архива. Вы можете отправить новое.".to_string()
+                };
+                let _ = self.repo.create_thread(user_id, "system", None, subject, &body, true).await;
+            }
+        }
+
         self.repo.delete_commission(id).await
     }
 

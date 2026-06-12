@@ -7,7 +7,9 @@
     import { api } from '$lib/api';
     import type { CabinetZone, FigurineListItem, HomeContent } from '$lib/types/api';
     import { t } from '$lib/i18n';
+    import AppImage from '$lib/components/AppImage.svelte';
     import FeaturedFigurineCard from '$lib/components/FeaturedFigurineCard.svelte';
+    import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
 
     let zones = $state<CabinetZone[]>([]);
     let isLoaded = $state(false);
@@ -15,7 +17,10 @@
     let hoveredZone = $state<CabinetZone | null>(null);
     let isNavigating = $state(false);
     let ambientIntensity = $state(1);
-    let featuredFigurines = $state<FigurineListItem[]>([]);
+    let availableFigurines = $state<FigurineListItem[]>([]);
+    let inProgressFigurines = $state<FigurineListItem[]>([]);
+    let archivePreviewFigurines = $state<FigurineListItem[]>([]);
+    let collectionFigurines = $state<FigurineListItem[]>([]);
     let heroFigurine = $state<FigurineListItem | null>(null);
     let collectionTotal = $state(0);
     let availableTotal = $state(0);
@@ -51,6 +56,13 @@
     let primaryCtaText = $derived(isReleaseMode ? $t('homeReleasePrimaryCta') : $t('homePrimaryCta'));
     let secondaryCtaHref = $derived(isReleaseMode ? '/upcoming' : '#request-path');
     let secondaryCtaText = $derived(isReleaseMode ? $t('homeReleaseSecondaryCta') : $t('homeOrderCta'));
+    let nextBlockMode = $derived<'available' | 'upcoming' | 'archive'>(
+        !isReleaseMode && availableFigurines.length > 0
+            ? 'available'
+            : inProgressFigurines.length > 0
+                ? 'upcoming'
+                : 'archive'
+    );
     let heroObjectName = $derived(homeContent.heroCaptionTitle?.trim() || heroFigurine?.name || homeContent.title?.trim() || '');
     let heroObjectMeta = $derived(homeContent.heroCaptionMeta?.trim() || $t('homeHeroObjectMeta'));
     let heroObjectCta = $derived(homeContent.heroCaptionCta?.trim() || (heroFigurine ? $t('homeHeroObjectOpen') : $t('homeSecondaryCta')));
@@ -58,6 +70,12 @@
     let showStats = $derived(availableTotal > 0 || collectionTotal >= 3);
     let heroObjectHref = $derived(heroFigurine ? `/figurines/${heroFigurine.id}` : '/figurines');
     let showHeroCaption = $derived(Boolean(heroObjectName));
+    let savedPreviewFigurines = $derived(
+        savedFigurines.ids
+            .map((id) => collectionFigurines.find((item) => item.id === id))
+            .filter((item): item is FigurineListItem => Boolean(item))
+            .slice(0, 4)
+    );
 
     // Count-up stats
     const availDisplay = tweened(0, { duration: 1100, easing: cubicOut });
@@ -126,10 +144,11 @@
 
     async function init() {
         try {
-            const [dbZones, bgPath, figurines, content] = await Promise.all([
+            const [dbZones, bgPath, figurines, inProgress, content] = await Promise.all([
                 api.getCabinetZones().catch(() => DEFAULT_ZONES),
                 api.getMainBackground().catch(() => null),
                 api.getAllFigurines().catch(() => [] as FigurineListItem[]),
+                api.getInProgressFigurines().catch(() => [] as FigurineListItem[]),
                 api.getHomeContent().catch(() => ({
                     title: null,
                     kicker: null,
@@ -146,15 +165,15 @@
             await preloadImage(imageUrl);
             zones = dbZones && dbZones.length > 0 ? dbZones : DEFAULT_ZONES;
             const visibleFigurines = figurines.filter(f => f.status !== 'in_progress');
+            collectionFigurines = sortFeaturedFigurines(visibleFigurines);
             collectionTotal = visibleFigurines.length;
             availableTotal = figurines.filter((item) => item.status === 'available').length;
+            availableFigurines = sortFeaturedFigurines(visibleFigurines.filter((item) => item.status === 'available')).slice(0, 4);
+            inProgressFigurines = sortFeaturedFigurines(inProgress).slice(0, 3);
+            archivePreviewFigurines = sortFeaturedFigurines(visibleFigurines).slice(0, 4);
             heroFigurine = content.heroFigurineId
                 ? visibleFigurines.find((item) => item.id === content.heroFigurineId) ?? null
                 : null;
-            const pinned = visibleFigurines.filter(f => f.isFeatured);
-            featuredFigurines = pinned.length > 0
-                ? sortFeaturedFigurines(pinned).slice(0, 4)
-                : sortFeaturedFigurines(visibleFigurines).slice(0, 4);
             availDisplay.set(availableTotal);
             collDisplay.set(collectionTotal);
             isLoaded = true;
@@ -200,6 +219,7 @@
     let hintDismissed = $state(false);
 
     onMount(() => {
+        savedFigurines.load();
         init();
         const hintTimer = setTimeout(() => { if (!hoveredZone) showHint = true; }, 3000);
         const flickerInterval = setInterval(() => {
@@ -346,54 +366,131 @@
 
         </section>
 
-        <nav class="route-strip" aria-label={$t('homePathTitle')}>
-            <a href="#available-works">
-                <span>{$t('homePathAvailable')}</span>
-                <small>{$t('homePathAvailableDesc')}</small>
-            </a>
-            <a href="/upcoming">
-                <span>{$t('homePathUpcoming')}</span>
-                <small>{$t('homePathUpcomingDesc')}</small>
-            </a>
-            <a href="/figurines">
-                <span>{$t('homePathArchive')}</span>
-                <small>{$t('homePathArchiveDesc')}</small>
-            </a>
-            <a href="/author">
-                <span>{$t('homePathAuthor')}</span>
-                <small>{$t('homePathAuthorDesc')}</small>
-            </a>
-        </nav>
+        <section id="available-works" class="context-section" aria-labelledby="context-title">
+            {#if savedPreviewFigurines.length > 0}
+                <div class="context-hd saved-context-hd">
+                    <div>
+                        <p class="eyebrow">
+                            <span class="eyebrow-rule"></span>
+                            {$t('homeSavedEyebrow')}
+                        </p>
+                        <h2 class="context-title">{$t('homeSavedTitle')}</h2>
+                    </div>
+                    <div class="context-side">
+                        <p class="context-desc">{$t('homeSavedText')}</p>
+                        <a href="/profile" class="all-link">
+                            {$t('homeSavedProfile')}
+                            <svg width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
+                                <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
+                            </svg>
+                        </a>
+                    </div>
+                </div>
 
-        <!-- FEATURED -->
-        {#if featuredFigurines.length > 0}
-<section id="available-works" class="featured" aria-labelledby="featured-title">
-    <div class="featured-hd">
-        <div class="featured-hd-left">
-            <p class="eyebrow">
-                <span class="eyebrow-rule"></span>
-                {$t('homeFeaturedEyebrow')}
-            </p>
-            <h2 id="featured-title" class="featured-title">{$t('homeFeaturedTitle')}</h2>
-        </div>
-        <div class="featured-hd-right">
-            <p class="featured-desc">{$t('homeFeaturedText')}</p>
-            <a href="/figurines" class="all-link">
-                {$t('homeAllWorks')}
-                <svg width="16" height="8" viewBox="0 0 16 8" fill="none">
-                    <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
-                </svg>
-            </a>
-        </div>
-    </div>
+                <div class="cards saved-cards">
+                    {#each savedPreviewFigurines as fig, i}
+                        <FeaturedFigurineCard {fig} index={i} />
+                    {/each}
+                </div>
 
-    <div class="cards">
-        {#each featuredFigurines as fig, i}
-            <FeaturedFigurineCard {fig} index={i} />
-        {/each}
-    </div>
-</section>
-{/if}
+                <div class="context-divider" aria-hidden="true"></div>
+            {/if}
+
+            {#if nextBlockMode === 'available'}
+                <div class="context-hd">
+                    <div>
+                        <p class="eyebrow">
+                            <span class="eyebrow-rule"></span>
+                            {$t('homeContextAvailableEyebrow')}
+                        </p>
+                        <h2 id="context-title" class="context-title">{$t('homeContextAvailableTitle')}</h2>
+                    </div>
+                    <div class="context-side">
+                        <p class="context-desc">{$t('homeContextAvailableText')}</p>
+                        <a href="/figurines" class="all-link">
+                            {$t('homeAllWorks')}
+                            <svg width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
+                                <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
+                            </svg>
+                        </a>
+                    </div>
+                </div>
+
+                <div class="cards">
+                    {#each availableFigurines as fig, i}
+                        <FeaturedFigurineCard {fig} index={i} />
+                    {/each}
+                </div>
+            {:else if nextBlockMode === 'upcoming'}
+                <div class="context-hd">
+                    <div>
+                        <p class="eyebrow">
+                            <span class="eyebrow-rule"></span>
+                            {$t('homeContextUpcomingEyebrow')}
+                        </p>
+                        <h2 id="context-title" class="context-title">{$t('homeContextUpcomingTitle')}</h2>
+                    </div>
+                    <div class="context-side">
+                        <p class="context-desc">{$t('homeContextUpcomingText')}</p>
+                        <div class="context-actions">
+                            <a href="/upcoming" class="all-link">
+                                {$t('homeViewUpcoming')}
+                                <svg width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
+                                    <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
+                                </svg>
+                            </a>
+                            <a href="/figurines" class="context-link">{$t('homeOpenArchive')}</a>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="upcoming-preview-grid">
+                    {#each inProgressFigurines as fig}
+                        <a class="upcoming-preview-card" href="/upcoming" aria-label="{$t('homeViewUpcoming')}: {fig.name}">
+                            <div class="upcoming-preview-img">
+                                {#if fig.faceImageUrl}
+                                    <AppImage src={fig.faceImageUrl} thumbUrl={fig.thumbUrl} alt={fig.name} class="upcoming-img" loading="lazy" />
+                                {:else}
+                                    <div class="upcoming-placeholder">?</div>
+                                {/if}
+                                <span class="upcoming-badge">{$t('upcomingWip')}</span>
+                            </div>
+                            <div class="upcoming-preview-meta">
+                                <h3>{fig.name}</h3>
+                                <p>{fig.technique || fig.material || $t('homeHeroObjectMeta')}</p>
+                            </div>
+                        </a>
+                    {/each}
+                </div>
+            {:else}
+                <div class="context-hd">
+                    <div>
+                        <p class="eyebrow">
+                            <span class="eyebrow-rule"></span>
+                            {$t('homeContextArchiveEyebrow')}
+                        </p>
+                        <h2 id="context-title" class="context-title">{$t('homeContextArchiveTitle')}</h2>
+                    </div>
+                    <div class="context-side">
+                        <p class="context-desc">{$t('homeContextArchiveText')}</p>
+                        <a href="/figurines" class="all-link">
+                            {$t('homeOpenArchive')}
+                            <svg width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
+                                <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
+                            </svg>
+                        </a>
+                    </div>
+                </div>
+
+                {#if archivePreviewFigurines.length > 0}
+                    <div class="cards">
+                        {#each archivePreviewFigurines as fig, i}
+                            <FeaturedFigurineCard {fig} index={i} />
+                        {/each}
+                    </div>
+                {/if}
+            {/if}
+        </section>
 
         <section id="request-path" class="request-path" aria-labelledby="request-path-title">
             <div class="request-copy">
@@ -422,6 +519,11 @@
                     <p>{$t('homeHowStep3Text')}</p>
                 </article>
             </div>
+
+            <p class="request-invite">
+                <span class="request-invite-lead">{$t('homeCommissionLead')}</span>
+                <a href="/commission" class="request-invite-link">{$t('commissionInvite')}</a>
+            </p>
         </section>
 
     </main>
@@ -948,56 +1050,6 @@
         color: rgba(255,240,218,0.88);
     }
 
-    /* ── ROUTE STRIP ─────────────────────────────── */
-    .route-strip {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 0;
-        max-width: 1680px;
-        margin: -12px auto 0;
-        padding: 0 clamp(20px, 4.5vw, 72px);
-    }
-
-    .route-strip a {
-        display: flex;
-        min-height: 102px;
-        flex-direction: column;
-        justify-content: center;
-        gap: 8px;
-        padding: 22px clamp(16px, 2vw, 28px);
-        border-top: 1px solid var(--border);
-        border-bottom: 1px solid var(--border);
-        color: var(--brown);
-        text-decoration: none;
-        transition: background 0.25s, border-color 0.25s;
-    }
-
-    .route-strip a + a {
-        border-left: 1px solid var(--border);
-    }
-
-    .route-strip a:hover {
-        background: rgba(198,95,60,0.035);
-        border-color: color-mix(in srgb, var(--color-ember) 28%, transparent);
-    }
-
-    .route-strip span {
-        font-size: 9px;
-        letter-spacing: 0.17em;
-        text-transform: uppercase;
-        color: var(--ink);
-    }
-
-    .route-strip small {
-        max-width: 220px;
-        font-family: 'Cormorant Garamond', serif;
-        font-size: 15px;
-        font-style: italic;
-        font-weight: 300;
-        line-height: 1.28;
-        color: var(--muted);
-    }
-
     /* ── ZONES ───────────────────────────────────── */
     .zones-layer {
         position: absolute;
@@ -1131,14 +1183,14 @@
         transform: translateY(0);
     }
 
-    /* ── FEATURED ────────────────────────────────── */
-    .featured {
+    /* ── CONTEXT SECTION ─────────────────────────── */
+    .context-section {
         padding: clamp(72px, 9vw, 128px) clamp(20px, 4.5vw, 72px) clamp(80px, 10vw, 144px);
         max-width: 1680px;
         margin: 0 auto;
     }
 
-    .featured-hd {
+    .context-hd {
         display: grid;
         grid-template-columns: 1fr 1fr;
         gap: clamp(24px, 4vw, 64px);
@@ -1148,7 +1200,7 @@
         border-bottom: 1px solid var(--border);
     }
 
-    .featured-title {
+    .context-title {
         font-family: 'Cormorant Garamond', serif;
         font-size: clamp(36px, 5.5vw, 76px);
         font-weight: 300;
@@ -1157,7 +1209,7 @@
         margin-top: 10px;
     }
 
-    .featured-hd-right {
+    .context-side {
         display: flex;
         flex-direction: column;
         align-items: flex-start;
@@ -1165,7 +1217,7 @@
         padding-bottom: 4px;
     }
 
-    .featured-desc {
+    .context-desc {
         font-family: 'Cormorant Garamond', serif;
         font-size: 18px;
         font-weight: 300;
@@ -1173,6 +1225,13 @@
         line-height: 1.5;
         color: var(--muted);
         max-width: 440px;
+    }
+
+    .context-actions {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 16px 22px;
     }
 
     .all-link {
@@ -1191,11 +1250,127 @@
 
     .all-link:hover { color: var(--copper); gap: 16px; }
 
+    .context-link {
+        display: inline-flex;
+        align-items: center;
+        min-height: 28px;
+        color: color-mix(in srgb, var(--brown) 64%, transparent);
+        font-size: 9.5px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        text-decoration: none;
+        border-bottom: 1px solid color-mix(in srgb, var(--color-ink-primary) 14%, transparent);
+        transition: color 0.25s, border-color 0.25s;
+    }
+
+    .context-link:hover {
+        color: var(--copper);
+        border-color: rgba(198,95,60,0.42);
+    }
+
+    .upcoming-preview-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: clamp(20px, 2.6vw, 38px);
+    }
+
+    .upcoming-preview-card {
+        display: grid;
+        grid-template-rows: auto 1fr;
+        color: var(--brown);
+        text-decoration: none;
+        border-top: 1px solid var(--border);
+    }
+
+    .upcoming-preview-img {
+        position: relative;
+        aspect-ratio: 4 / 5;
+        margin-top: 14px;
+        overflow: hidden;
+        background:
+            linear-gradient(135deg, rgba(52,37,28,0.08), rgba(198,95,60,0.06)),
+            var(--cream2);
+    }
+
+    .upcoming-preview-img :global(.upcoming-img),
+    .upcoming-preview-img :global(.app-image-main) {
+        width: 100%;
+        height: 100%;
+    }
+
+    .upcoming-preview-img :global(.app-image-main) {
+        object-fit: cover;
+        filter: saturate(0.78) contrast(1.04);
+        transition: transform 0.45s var(--ease), filter 0.45s;
+    }
+
+    .upcoming-preview-card:hover .upcoming-preview-img :global(.app-image-main) {
+        transform: scale(1.035);
+        filter: saturate(0.9) contrast(1.08);
+    }
+
+    .upcoming-placeholder {
+        display: grid;
+        width: 100%;
+        height: 100%;
+        place-items: center;
+        font-family: 'Cormorant Garamond', serif;
+        font-size: 56px;
+        color: var(--muted2);
+    }
+
+    .upcoming-badge {
+        position: absolute;
+        left: 14px;
+        top: 14px;
+        z-index: 2;
+        padding: 7px 10px;
+        background: rgba(44,23,16,0.72);
+        color: var(--cream2);
+        font-size: 8px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        backdrop-filter: blur(10px);
+    }
+
+    .upcoming-preview-meta {
+        display: grid;
+        gap: 8px;
+        padding-top: 18px;
+    }
+
+    .upcoming-preview-meta h3 {
+        font-family: 'Cormorant Garamond', serif;
+        font-size: clamp(28px, 3vw, 42px);
+        font-style: italic;
+        font-weight: 300;
+        line-height: 0.95;
+        color: var(--ink);
+    }
+
+    .upcoming-preview-meta p {
+        font-size: 9px;
+        letter-spacing: 0.14em;
+        line-height: 1.4;
+        text-transform: uppercase;
+        color: var(--muted2);
+    }
+
     /* ── CARDS ───────────────────────────────────── */
     .cards {
         display: grid;
         grid-template-columns: repeat(4, 1fr);
         gap: clamp(20px, 2.4vw, 34px);
+    }
+
+    .saved-cards {
+        margin-bottom: clamp(34px, 5vw, 64px);
+    }
+
+    .context-divider {
+        height: 1px;
+        margin: 0 0 clamp(42px, 6vw, 76px);
+        background: linear-gradient(90deg, transparent, rgba(52,37,28,0.14), transparent);
     }
 
     /* ── REQUEST PATH ───────────────────────────── */
@@ -1267,6 +1442,34 @@
         color: var(--muted);
     }
 
+    .request-invite {
+        margin-top: clamp(28px, 4vw, 48px);
+        text-align: center;
+        font-family: 'Cormorant Garamond', serif;
+    }
+    .request-invite-lead {
+        display: block;
+        font-size: 17px;
+        font-style: italic;
+        font-weight: 300;
+        color: var(--muted);
+        margin-bottom: 0.6rem;
+    }
+    .request-invite-link {
+        font-family: 'Cormorant Garamond', serif;
+        font-style: italic;
+        font-size: 19px;
+        color: var(--accent, #c65f3c);
+        text-decoration: none;
+        border-bottom: 1px solid color-mix(in srgb, var(--accent, #c65f3c) 40%, transparent);
+        padding-bottom: 2px;
+        transition: color 0.2s, border-color 0.2s;
+    }
+    .request-invite-link:hover {
+        color: var(--ink);
+        border-color: var(--ink);
+    }
+
     /* ── RESPONSIVE ──────────────────────────────── */
     @media (max-width: 1080px) {
         .hero {
@@ -1281,18 +1484,11 @@
 
         .img-frame { height: min(58svh, 620px); }
 
-        .route-strip {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            margin-top: 0;
-        }
-
-        .route-strip a:nth-child(odd) {
-            border-left: 0;
-        }
-
-        .featured-hd { grid-template-columns: 1fr; }
+        .context-hd { grid-template-columns: 1fr; }
 
         .cards { grid-template-columns: repeat(2, 1fr); }
+
+        .upcoming-preview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
         .request-path {
             grid-template-columns: 1fr;
@@ -1351,32 +1547,15 @@
             display: none;
         }
 
-        .route-strip {
-            grid-template-columns: 1fr;
-            padding: 0 16px 18px;
-        }
-
-        .route-strip a,
-        .route-strip a + a,
-        .route-strip a:nth-child(odd) {
-            min-height: 78px;
-            border-left: 0;
-            border-top: 1px solid var(--border);
-            border-bottom: 0;
-        }
-
-        .route-strip a:last-child {
-            border-bottom: 1px solid var(--border);
-        }
-
-        .featured {
+        .context-section {
             padding-inline: 16px;
         }
 
-        .featured-title { font-size: clamp(32px, 9vw, 52px); }
-        .featured-desc { font-size: 16px; }
+        .context-title { font-size: clamp(32px, 9vw, 52px); }
+        .context-desc { font-size: 16px; }
 
         .cards { grid-template-columns: 1fr; gap: 22px; }
+        .upcoming-preview-grid { grid-template-columns: 1fr; gap: 28px; }
 
         .request-path {
             padding: 0 16px 88px;

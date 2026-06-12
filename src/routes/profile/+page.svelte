@@ -4,7 +4,9 @@
   import { t, lang } from '$lib/i18n';
   import { api, resolveMediaUrl } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
-  import type { UserBookingDto, UserOrderDto, MessageThreadDto, ThreadDetailDto, CommissionDto, AttachmentInput } from '$lib/types/api';
+  import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
+  import type { UserBookingDto, UserOrderDto, MessageThreadDto, ThreadDetailDto, CommissionDto, AttachmentInput, FigurineListItem } from '$lib/types/api';
+  import AppImage from '$lib/components/AppImage.svelte';
   import MessageAttachments from '$lib/components/MessageAttachments.svelte';
   import CommissionEditModal from '$lib/components/CommissionEditModal.svelte';
 
@@ -15,7 +17,7 @@
   let orders = $state<UserOrderDto[]>([]);
   let commissions = $state<CommissionDto[]>([]);
   let wishlistIds = $state<string[]>([]);
-  let wishlistItems = $state<Map<string, { name: string; status: string } | null>>(new Map());
+  let wishlistItems = $state<Map<string, FigurineListItem | null>>(new Map());
   let threads = $state<MessageThreadDto[]>([]);
   let unreadCount = $state(0);
   let loading = $state(true);
@@ -155,9 +157,8 @@
       threads = th.threads;
       unreadCount = th.unread;
 
-      if (typeof localStorage !== 'undefined') {
-        wishlistIds = JSON.parse(localStorage.getItem('gotiga_wishlist') ?? '[]');
-      }
+      savedFigurines.load();
+      wishlistIds = [...savedFigurines.ids];
 
       if (wishlistIds.length > 0) {
         loadWishlistDetails();
@@ -176,14 +177,23 @@
   }
 
   async function loadWishlistDetails() {
-    const results = await Promise.all(
-      wishlistIds.map(id => api.getFigurine(id).catch(() => null))
-    );
-    const map = new Map<string, { name: string; status: string } | null>();
-    results.forEach((fig, i) => {
-      map.set(wishlistIds[i], fig ? { name: fig.name, status: fig.status } : null);
+    const ids = [...savedFigurines.ids];
+    wishlistIds = ids;
+    const all = await api.getAllFigurines().catch(() => [] as FigurineListItem[]);
+    const byId = new Map(all.map((fig) => [fig.id, fig]));
+    const map = new Map<string, FigurineListItem | null>();
+    ids.forEach((id) => {
+      map.set(id, byId.get(id) ?? null);
     });
     wishlistItems = map;
+  }
+
+  function removeSavedFigurine(id: string) {
+    savedFigurines.remove(id);
+    wishlistIds = [...savedFigurines.ids];
+    const next = new Map(wishlistItems);
+    next.delete(id);
+    wishlistItems = next;
   }
 
   async function logout() {
@@ -593,16 +603,36 @@
             <div class="cards-grid">
               {#each wishlistIds as id}
                 {@const item = wishlistItems.get(id)}
-                <div class="card">
-                  <div class="card-head">
+                <div class="card wishlist-card">
+                  {#if item?.faceImageUrl}
+                    <a href="/figurines/{id}" class="wishlist-thumb" aria-label="{item.name}">
+                      <AppImage src={item.faceImageUrl} thumbUrl={item.thumbUrl} alt={item.name} class="wishlist-img" loading="lazy" />
+                    </a>
+                  {:else}
+                    <a href="/figurines/{id}" class="wishlist-thumb wishlist-thumb--empty" aria-label="{item?.name ?? id}">
+                      <span>?</span>
+                    </a>
+                  {/if}
+
+                  <div class="card-head wishlist-head">
                     {#if item}
-                      <a href="/figurines/{id}" class="card-name card-name--link">{item.name}</a>
-                      <span class="wishlist-status wishlist-status--{item.status}">{wishlistStatusLabel(item.status)}</span>
+                      <div class="wishlist-title">
+                        <a href="/figurines/{id}" class="card-name card-name--link">{item.name}</a>
+                        <div class="wishlist-meta">
+                          {#if item.year}
+                            <span>{item.year}</span>
+                          {/if}
+                          <span class="wishlist-status wishlist-status--{item.status}">{wishlistStatusLabel(item.status)}</span>
+                        </div>
+                      </div>
                     {:else if item === undefined}
                       <span class="card-name card-name--loading">…</span>
                     {:else}
                       <a href="/figurines/{id}" class="card-name card-name--missing">{id}</a>
                     {/if}
+                    <button class="wishlist-remove" onclick={() => removeSavedFigurine(id)} aria-label={$t('profileWishRemove')} title={$t('profileWishRemove')}>
+                      ×
+                    </button>
                   </div>
                 </div>
               {/each}
@@ -1206,6 +1236,90 @@
   .card-name--link:hover { color: #c65f3c; }
   .card-name--loading { color: #b5a090; font-style: italic; }
   .card-name--missing { color: #b5a090; font-size: 0.78rem; font-family: 'Courier New', monospace; }
+
+  .wishlist-card {
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .wishlist-thumb {
+    display: block;
+    aspect-ratio: 4 / 3;
+    overflow: hidden;
+    background: #f4ead8;
+    border-bottom: 1px solid #e4d8c8;
+    text-decoration: none;
+  }
+
+  .wishlist-thumb :global(.wishlist-img),
+  .wishlist-thumb :global(.wishlist-img .app-image-main),
+  .wishlist-thumb :global(.wishlist-img .app-image-thumb) {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: cover;
+    object-position: center 42%;
+  }
+
+  .wishlist-thumb :global(.wishlist-img .app-image-main) {
+    filter: grayscale(0.08) saturate(0.96);
+    transition: transform 0.45s ease, filter 0.45s ease;
+  }
+
+  .wishlist-card:hover .wishlist-thumb :global(.wishlist-img .app-image-main) {
+    transform: scale(1.035);
+    filter: grayscale(0) saturate(1.02);
+  }
+
+  .wishlist-thumb--empty {
+    display: grid;
+    place-items: center;
+    font-family: Georgia, serif;
+    font-size: 1.4rem;
+    color: #b5a090;
+  }
+
+  .wishlist-head {
+    align-items: flex-start;
+    margin: 0;
+    padding: 0.9rem 1rem 1rem;
+  }
+
+  .wishlist-title {
+    min-width: 0;
+  }
+
+  .wishlist-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-top: 0.28rem;
+    font-size: 0.67rem;
+    color: #b5a090;
+    font-family: Inter, sans-serif;
+  }
+
+  .wishlist-remove {
+    width: 1.55rem;
+    height: 1.55rem;
+    display: inline-grid;
+    place-items: center;
+    flex-shrink: 0;
+    border: 1px solid #e4d8c8;
+    border-radius: 999px;
+    background: #fffaf4;
+    color: #9a7c5c;
+    cursor: pointer;
+    line-height: 1;
+    transition: color 0.18s, border-color 0.18s, background 0.18s;
+  }
+
+  .wishlist-remove:hover {
+    color: #c65f3c;
+    border-color: rgba(198,95,60,0.35);
+    background: #fff3ec;
+  }
 
   .card-range {
     font-size: 0.77rem;

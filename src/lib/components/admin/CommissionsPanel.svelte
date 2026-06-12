@@ -3,7 +3,6 @@
   import { api, resolveMediaUrl } from '$lib/api';
   import type { CommissionDto, CommissionStatus, ThreadDetailDto, AttachmentInput } from '$lib/types/api';
   import MessageAttachments from '$lib/components/MessageAttachments.svelte';
-  import CommissionEditModal from '$lib/components/CommissionEditModal.svelte';
 
   let { onNewCount = (_n: number) => {} } = $props();
 
@@ -143,15 +142,11 @@
     return new Date(iso).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
   }
 
-  // Edit / delete petition (refused once work has started)
-  let editingCommission = $state<CommissionDto | null>(null);
+  // Delete petition as moderation (refused once work has started).
+  // The petition's content belongs to its author; the master manages it through
+  // status, notes, the figurine link and the conversation — never by rewriting it.
   let confirmDeleteId = $state<string | null>(null);
   let deletingId = $state<string | null>(null);
-
-  function onCommissionSaved(updated: CommissionDto) {
-    applyUpdate(updated);
-    editingCommission = null;
-  }
   async function removeCommission(c: CommissionDto) {
     deletingId = c.id;
     try {
@@ -292,11 +287,10 @@
                 {#if c.started}
                   <span class="text-[10px] italic text-[#8a7a6a]">Работа начата — редактировать и удалять нельзя</span>
                 {:else if confirmDeleteId === c.id}
-                  <span class="text-[10px] text-[#a3361d]">Удалить это прошение?</span>
+                  <span class="text-[10px] text-[#a3361d]">Удалить это прошение? Автор получит уведомление.</span>
                   <button onclick={() => removeCommission(c)} disabled={deletingId === c.id} class="text-[10px] text-[#a3361d] underline disabled:opacity-50">{deletingId === c.id ? '…' : 'Да, удалить'}</button>
                   <button onclick={() => confirmDeleteId = null} class="text-[10px] text-[#5f4636] underline">Отмена</button>
                 {:else}
-                  <button onclick={() => editingCommission = c} class="text-[10px] text-[#6f3b24] underline">Редактировать</button>
                   <button onclick={() => confirmDeleteId = c.id} class="text-[10px] text-[#a3361d] underline">Удалить</button>
                 {/if}
               </div>
@@ -381,12 +375,3 @@
     </div>
   {/if}
 </div>
-
-{#if editingCommission}
-  <CommissionEditModal
-    commission={editingCommission}
-    isAdmin={true}
-    onClose={() => (editingCommission = null)}
-    onSaved={onCommissionSaved}
-  />
-{/if}

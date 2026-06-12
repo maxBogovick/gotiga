@@ -13,6 +13,7 @@
   import { api } from '$lib/api';
   import { t } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
+  import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
   import ShowingsTimeline from '$lib/components/ShowingsTimeline.svelte';
   import FigurineComments from '$lib/components/FigurineComments.svelte';
   import { FigurineClaimsStore, type ClaimData } from '$lib/stores/figurine-claims.svelte';
@@ -313,14 +314,10 @@
   let grimoireExited = $state(false); // Phase 3: grimoire ушёл за экран
 
   // ── Wishlist ──────────────────────────────────────────────────────────────
-  let isWishlisted = $state(false);
+  let isWishlisted = $derived(savedFigurines.has(figurine.id));
 
   function toggleWishlist() {
-    const stored = JSON.parse(localStorage.getItem('gotiga_wishlist') ?? '[]') as string[];
-    const set = new Set(stored);
-    isWishlisted ? set.delete(figurine.id) : set.add(figurine.id);
-    localStorage.setItem('gotiga_wishlist', JSON.stringify([...set]));
-    isWishlisted = !isWishlisted;
+    savedFigurines.toggle(figurine.id);
   }
 
   function openModal(m: 'request' | 'question' | 'notify') {
@@ -347,8 +344,7 @@
     window.addEventListener('keydown', handleKeydown);
     window.addEventListener('scroll', onScroll, { passive: true });
     document.addEventListener('visibilitychange', handleVisibility);
-    const wl = JSON.parse(localStorage.getItem('gotiga_wishlist') ?? '[]') as string[];
-    isWishlisted = wl.includes(figurine.id);
+    savedFigurines.load();
     api.getFigurineSchedule(figurine.id).then(s => { figurineSchedule = s; });
     cs.load();
     cs.verify();

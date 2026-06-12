@@ -11,12 +11,10 @@
 
   let {
     commission,
-    isAdmin = false,
     onClose = () => {},
     onSaved = (_c: CommissionDto) => {},
   }: {
     commission: CommissionDto;
-    isAdmin?: boolean;
     onClose?: () => void;
     onSaved?: (c: CommissionDto) => void;
   } = $props();
@@ -69,10 +67,7 @@
       if (file.size > 8 * 1024 * 1024) { uploadError = $t('commissionFileTooLarge'); continue; }
       uploading = true;
       try {
-        if (isAdmin) {
-          const m = await api.importMediaWithVariants(file, 'images');
-          attachments = [...attachments, { url: m.url, thumbUrl: m.thumbUrl ?? null }];
-        } else if (authStore.sessionToken) {
+        if (authStore.sessionToken) {
           const att = await api.uploadUserMedia(authStore.sessionToken, file);
           attachments = [...attachments, att];
         }
@@ -104,9 +99,7 @@
       attachmentUrls: attachments,
     };
     try {
-      const updated = isAdmin
-        ? await api.adminEditCommission(commission.id, payload)
-        : await api.editCommission(authStore.token!, commission.id, payload);
+      const updated = await api.editCommission(authStore.token!, commission.id, payload);
       onSaved(updated);
     } catch {
       error = $t('profileActionError');
