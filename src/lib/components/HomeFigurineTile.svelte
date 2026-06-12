@@ -20,13 +20,33 @@
 
     let saved = $derived(savedFigurines.has(fig.id));
     let showOrder = $state(false);
+    let copied = $state(false);
+    let justSaved = $state(false);
+    let copyTimer: ReturnType<typeof setTimeout> | undefined;
+    let pulseTimer: ReturnType<typeof setTimeout> | undefined;
+
+    let href = $derived(`/figurines/${fig.id}`);
     let archiveNumber = $derived(`No ${String(index + 1).padStart(3, '0')}`);
-    let primaryFact = $derived(fig.material || fig.technique || fig.series || $t('homeTrustHandmade'));
+
+    // Recently catalogued — surfaced as a quiet wax mark, not a sales badge.
+    let isNew = $derived.by(() => {
+        if (!fig.createdAt) return false;
+        const ts = new Date(fig.createdAt).getTime();
+        if (Number.isNaN(ts)) return false;
+        return Date.now() - ts < 21 * 24 * 60 * 60 * 1000;
+    });
+
+    // Two distinct facts for the card so the meta line reads like a catalogue entry.
+    let primaryFact = $derived(fig.material || fig.technique || $t('homeTrustHandmade'));
+    let secondaryFact = $derived(
+        fig.series && fig.series !== primaryFact ? fig.series : null
+    );
     let specimenMeta = $derived(
         fig.status === 'available'
             ? `${primaryFact} · ${$t('homeCardTransferByRequest')}`
             : primaryFact
     );
+
     let statusLabel = $derived(
         fig.status === 'available'
             ? $t('archiveStatusAvailableLabel')
@@ -37,14 +57,52 @@
                     : $t('archiveStatusSoldLabel')
     );
 
+    // The footer action adapts to where the work actually is in its life.
+    let action = $derived.by(() => {
+        if (fig.status === 'available') {
+            return { kind: 'request' as const, label: $t('homeCardRequestThisWork') };
+        }
+        if (fig.status === 'in_progress') {
+            return { kind: 'link' as const, label: $t('homeViewUpcoming'), to: '/upcoming' };
+        }
+        return { kind: 'link' as const, label: $t('homeCardOpenFile'), to: href };
+    });
+
     onMount(() => {
         savedFigurines.load();
+        return () => {
+            clearTimeout(copyTimer);
+            clearTimeout(pulseTimer);
+        };
     });
 
     function toggleSaved(e: MouseEvent) {
         e.preventDefault();
         e.stopPropagation();
         savedFigurines.toggle(fig.id);
+        if (savedFigurines.has(fig.id)) {
+            justSaved = true;
+            clearTimeout(pulseTimer);
+            pulseTimer = setTimeout(() => { justSaved = false; }, 650);
+        }
+    }
+
+    async function shareWork(e: MouseEvent) {
+        e.preventDefault();
+        e.stopPropagation();
+        const url = typeof location !== 'undefined' ? `${location.origin}${href}` : href;
+        try {
+            if (typeof navigator !== 'undefined' && navigator.share) {
+                await navigator.share({ title: fig.name, url });
+                return;
+            }
+            await navigator.clipboard.writeText(url);
+            copied = true;
+            clearTimeout(copyTimer);
+            copyTimer = setTimeout(() => { copied = false; }, 1800);
+        } catch {
+            /* user dismissed the share sheet — nothing to do */
+        }
     }
 
     function openOrder(e: MouseEvent) {
@@ -54,26 +112,26 @@
     }
 </script>
 
-    <article
-        class="tile"
-        class:tile-compact={compact}
-        class:is-selected={selected}
-        style="--i:{index}"
-    >
+<article
+    class="tile"
+    class:tile-compact={compact}
+    class:is-selected={selected}
+    style="--i:{index}"
+>
     <div class="tile-archive-bar">
-        <span>{archiveNumber}</span>
+        <span class="tile-index">{archiveNumber}</span>
         <span class="tile-status">
             <i class="tile-dot status-{fig.status}"></i>
             {statusLabel}
         </span>
         {#if fig.year}
-            <span>{fig.year}</span>
+            <span class="tile-year">{fig.year}</span>
         {/if}
     </div>
 
     <div class="tile-media-wrap">
         <a
-            href={`/figurines/${fig.id}`}
+            {href}
             class="tile-media"
             aria-label="{$t('homeViewFigurine')}: {fig.name}"
         >
@@ -86,49 +144,97 @@
             <span class="corner corner-tr"></span>
             <span class="corner corner-bl"></span>
             <span class="corner corner-br"></span>
+
+            <span class="tile-veil" aria-hidden="true">
+                <span class="tile-veil-cta">{$t('cardQuickView')}</span>
+            </span>
         </a>
+
+        {#if isNew}
+            <span class="tile-seal" title={$t('archiveCardNew')}>{$t('archiveCardNew')}</span>
+        {/if}
 
         {#if selected}
             <span class="tile-selected">{$t('homeHeroObjectLabel')}</span>
         {/if}
 
-        <button
-            class="tile-save"
-            class:is-saved={saved}
-            onclick={toggleSaved}
-            aria-label={saved ? $t('cardSaved') : $t('cardSave')}
-            title={saved ? $t('cardSaved') : $t('cardSave')}
-        >
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-                <path
-                    d="M7 12.5C7 12.5 1 8.5 1 4.5C1 2.5 2.5 1 4.5 1C5.5 1 6.5 1.8 7 3C7.5 1.8 8.5 1 9.5 1C11.5 1 13 2.5 13 4.5C13 8.5 7 12.5 7 12.5Z"
-                    fill={saved ? 'currentColor' : 'none'}
-                    stroke="currentColor"
-                    stroke-width="1.1"
-                    stroke-linejoin="round"
-                />
-            </svg>
-        </button>
+        <div class="tile-tools">
+            <button
+                class="tile-tool tile-save"
+                class:is-saved={saved}
+                class:just-saved={justSaved}
+                onclick={toggleSaved}
+                aria-pressed={saved}
+                aria-label={saved ? $t('cardSaved') : $t('cardSave')}
+                title={saved ? $t('cardSaved') : $t('cardSave')}
+            >
+                <svg width="15" height="15" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                    <path
+                        d="M7 12.5C7 12.5 1 8.5 1 4.5C1 2.5 2.5 1 4.5 1C5.5 1 6.5 1.8 7 3C7.5 1.8 8.5 1 9.5 1C11.5 1 13 2.5 13 4.5C13 8.5 7 12.5 7 12.5Z"
+                        fill={saved ? 'currentColor' : 'none'}
+                        stroke="currentColor"
+                        stroke-width="1.1"
+                        stroke-linejoin="round"
+                    />
+                </svg>
+            </button>
+
+            <button
+                class="tile-tool tile-share"
+                class:is-copied={copied}
+                onclick={shareWork}
+                aria-label={$t('cardShare')}
+                title={$t('cardShare')}
+            >
+                {#if copied}
+                    <svg width="15" height="15" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                        <path d="M2.5 7.5L5.5 10.5L11.5 3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                {:else}
+                    <svg width="15" height="15" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                        <circle cx="3" cy="7" r="1.6" stroke="currentColor" stroke-width="1.1"/>
+                        <circle cx="11" cy="3" r="1.6" stroke="currentColor" stroke-width="1.1"/>
+                        <circle cx="11" cy="11" r="1.6" stroke="currentColor" stroke-width="1.1"/>
+                        <path d="M4.4 6.2L9.6 3.6M4.4 7.8L9.6 10.4" stroke="currentColor" stroke-width="1.1"/>
+                    </svg>
+                {/if}
+            </button>
+        </div>
+
+        <span class="tile-copied" class:show={copied} role="status" aria-live="polite">
+            {copied ? $t('cardLinkCopied') : ''}
+        </span>
     </div>
 
     <div class="tile-body">
         <div class="tile-head">
             <h3>
-                <a href={`/figurines/${fig.id}`}>{fig.name}</a>
+                <a {href}>{fig.name}</a>
             </h3>
         </div>
 
         <p class="tile-meta">{specimenMeta}</p>
 
-        <div class="tile-actions" class:single-action={fig.status !== 'available'}>
+        {#if secondaryFact}
+            <p class="tile-subfact">{secondaryFact}</p>
+        {/if}
+
+        <div class="tile-actions">
             <span class="tile-file-hint">{archiveNumber}</span>
-            {#if fig.status === 'available'}
-                <button class="tile-request" type="button" onclick={openOrder}>
-                    {$t('homeCardRequestThisWork')}
+            {#if action.kind === 'request'}
+                <button class="tile-cta tile-cta-primary" type="button" onclick={openOrder}>
+                    {action.label}
                     <svg width="14" height="7" viewBox="0 0 14 7" fill="none" aria-hidden="true">
                         <path d="M0 3.5H13M13 3.5L9.5 1M13 3.5L9.5 6" stroke="currentColor" stroke-width="1"/>
                     </svg>
                 </button>
+            {:else}
+                <a class="tile-cta tile-cta-ghost" href={action.to}>
+                    {action.label}
+                    <svg width="14" height="7" viewBox="0 0 14 7" fill="none" aria-hidden="true">
+                        <path d="M0 3.5H13M13 3.5L9.5 1M13 3.5L9.5 6" stroke="currentColor" stroke-width="1"/>
+                    </svg>
+                </a>
             {/if}
         </div>
     </div>
@@ -203,9 +309,7 @@
             0 30px 70px rgba(68,37,20,0.16);
     }
 
-    .tile:hover::before {
-        opacity: 1;
-    }
+    .tile:hover::before { opacity: 1; }
 
     .tile:hover::after {
         opacity: 1;
@@ -218,6 +322,11 @@
             0 1px 0 rgba(255,255,255,0.75) inset,
             0 0 0 1px rgba(198,95,60,0.12),
             0 14px 32px rgba(68,37,20,0.11);
+    }
+
+    /* keyboard focus on any inner control lifts the whole card */
+    .tile:focus-within {
+        border-color: rgba(198,95,60,0.42);
     }
 
     .tile-archive-bar {
@@ -236,6 +345,9 @@
         line-height: 1.2;
         text-transform: uppercase;
     }
+
+    .tile-index { font-variant-numeric: tabular-nums; }
+    .tile-year { font-variant-numeric: tabular-nums; }
 
     .tile-status {
         justify-self: center;
@@ -268,7 +380,10 @@
     .tile-media {
         position: absolute;
         inset: 0;
+        display: block;
         overflow: hidden;
+        color: inherit;
+        text-decoration: none;
         border-radius: inherit;
     }
 
@@ -297,9 +412,7 @@
         pointer-events: none;
     }
 
-    .tile:hover .tile-media::before {
-        opacity: 0.32;
-    }
+    .tile:hover .tile-media::before { opacity: 0.32; }
 
     .tile:hover .tile-media::after {
         inset: 8px;
@@ -307,15 +420,7 @@
         box-shadow: inset 0 0 0 1px rgba(198,95,60,0.18);
     }
 
-    .tile-media {
-        display: block;
-        color: inherit;
-        text-decoration: none;
-    }
-
-    .tile-compact .tile-media {
-        aspect-ratio: 1 / 1;
-    }
+    .tile-compact .tile-media { aspect-ratio: 1 / 1; }
 
     .tile-media :global(.tile-img),
     .tile-media :global(.tile-img .app-image-thumb),
@@ -337,6 +442,42 @@
         filter: grayscale(0) saturate(1.04) contrast(1.04);
     }
 
+    /* hover veil with a quiet "quick view" cue, surfacing from the bottom */
+    .tile-veil {
+        position: absolute;
+        inset: auto 0 0 0;
+        z-index: 3;
+        display: flex;
+        justify-content: center;
+        padding: 18px 0 12px;
+        background: linear-gradient(0deg, rgba(28,18,12,0.62), transparent);
+        opacity: 0;
+        transform: translateY(8px);
+        transition: opacity 0.28s ease, transform 0.28s ease;
+        pointer-events: none;
+    }
+
+    .tile-veil-cta {
+        padding: 6px 13px;
+        border: 1px solid rgba(255,249,240,0.55);
+        border-radius: 999px;
+        background: rgba(255,249,240,0.14);
+        color: #fff7ea;
+        font-family: 'Instrument Sans', system-ui, sans-serif;
+        font-size: 9px;
+        font-weight: 600;
+        letter-spacing: 0.16em;
+        line-height: 1;
+        text-transform: uppercase;
+        backdrop-filter: blur(4px);
+    }
+
+    .tile:hover .tile-veil,
+    .tile-media:focus-visible .tile-veil {
+        opacity: 1;
+        transform: none;
+    }
+
     .corner {
         position: absolute;
         z-index: 2;
@@ -348,33 +489,10 @@
         pointer-events: none;
     }
 
-    .corner-tl {
-        left: 10px;
-        top: 10px;
-        border-left: 1px solid;
-        border-top: 1px solid;
-    }
-
-    .corner-tr {
-        right: 10px;
-        top: 10px;
-        border-right: 1px solid;
-        border-top: 1px solid;
-    }
-
-    .corner-bl {
-        left: 10px;
-        bottom: 10px;
-        border-left: 1px solid;
-        border-bottom: 1px solid;
-    }
-
-    .corner-br {
-        right: 10px;
-        bottom: 10px;
-        border-right: 1px solid;
-        border-bottom: 1px solid;
-    }
+    .corner-tl { left: 10px; top: 10px; border-left: 1px solid; border-top: 1px solid; }
+    .corner-tr { right: 10px; top: 10px; border-right: 1px solid; border-top: 1px solid; }
+    .corner-bl { left: 10px; bottom: 10px; border-left: 1px solid; border-bottom: 1px solid; }
+    .corner-br { right: 10px; bottom: 10px; border-right: 1px solid; border-bottom: 1px solid; }
 
     .tile:hover .corner {
         width: 24px;
@@ -392,29 +510,119 @@
         color: var(--color-ink-tertiary);
     }
 
-    .tile-save {
+    /* wax-stamp "new" mark, top-left */
+    .tile-seal {
+        position: absolute;
+        left: 10px;
+        top: 10px;
+        z-index: 3;
+        padding: 5px 9px;
+        border-radius: 4px;
+        background: linear-gradient(150deg, rgba(198,95,60,0.94), rgba(111,59,36,0.94));
+        color: #fff7ea;
+        font-family: 'Instrument Sans', system-ui, sans-serif;
+        font-size: 8px;
+        font-weight: 700;
+        letter-spacing: 0.16em;
+        line-height: 1;
+        text-transform: uppercase;
+        box-shadow: 0 4px 12px rgba(111,59,36,0.34);
+        transform: rotate(-2deg);
+    }
+
+    /* action cluster, top-right */
+    .tile-tools {
         position: absolute;
         right: 10px;
         top: 10px;
-        z-index: 2;
+        z-index: 4;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .tile-tool {
         width: 34px;
         height: 34px;
         display: grid;
         place-items: center;
         border: 1px solid rgba(52,37,28,0.16);
         border-radius: 999px;
-        background: rgba(255,249,240,0.70);
+        background: rgba(255,249,240,0.72);
         color: var(--color-ink-tertiary);
         backdrop-filter: blur(8px);
         cursor: pointer;
-        transition: color 0.2s, background 0.2s, border-color 0.2s, transform 0.2s;
+        opacity: 0;
+        transform: translateY(-4px);
+        transition: color 0.2s, background 0.2s, border-color 0.2s, transform 0.2s, opacity 0.2s;
+    }
+
+    /* tools fade in on hover/focus, but a saved heart stays visible as a marker */
+    .tile:hover .tile-tool,
+    .tile:focus-within .tile-tool,
+    .tile-tool.is-saved {
+        opacity: 1;
+        transform: none;
+    }
+
+    .tile-save:hover,
+    .tile-save.is-saved {
+        color: var(--copper, #c65f3c);
+        border-color: rgba(198,95,60,0.34);
+        background: rgba(255,246,239,0.92);
+    }
+
+    .tile-save.just-saved {
+        animation: heart-pop 0.62s cubic-bezier(0.34,1.56,0.64,1);
+    }
+
+    .tile-share:hover {
+        color: var(--copper, #c65f3c);
+        border-color: rgba(198,95,60,0.34);
+        background: rgba(255,246,239,0.92);
+        transform: translateY(-1px);
+    }
+
+    .tile-share.is-copied {
+        color: #2f7d4a;
+        border-color: rgba(47,125,74,0.4);
+        background: rgba(238,248,240,0.95);
+        opacity: 1;
+        transform: none;
+    }
+
+    .tile-copied {
+        position: absolute;
+        right: 52px;
+        top: 18px;
+        z-index: 4;
+        padding: 5px 9px;
+        border-radius: 999px;
+        background: rgba(28,18,12,0.86);
+        color: #fff7ea;
+        font-family: 'Instrument Sans', system-ui, sans-serif;
+        font-size: 8px;
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        line-height: 1;
+        text-transform: uppercase;
+        white-space: nowrap;
+        opacity: 0;
+        transform: translateX(6px);
+        pointer-events: none;
+        transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+
+    .tile-copied.show {
+        opacity: 1;
+        transform: none;
     }
 
     .tile-selected {
         position: absolute;
         left: 10px;
         bottom: 10px;
-        z-index: 2;
+        z-index: 3;
         max-width: calc(100% - 20px);
         padding: 7px 9px;
         background: rgba(43,27,19,0.78);
@@ -430,20 +638,9 @@
         white-space: nowrap;
     }
 
-    .tile-save:hover,
-    .tile-save.is-saved {
-        color: var(--copper, #c65f3c);
-        border-color: rgba(198,95,60,0.34);
-        background: rgba(255,246,239,0.92);
-    }
-
-    .tile-save:hover {
-        transform: translateY(-1px);
-    }
-
     .tile-body {
         display: grid;
-        gap: 9px;
+        gap: 7px;
         padding: 16px 16px 15px;
         min-width: 0;
     }
@@ -473,8 +670,34 @@
         text-decoration: none;
     }
 
-    .tile-head h3 a:hover {
-        color: var(--copper, #c65f3c);
+    .tile-head h3 a:hover { color: var(--copper, #c65f3c); }
+
+    .tile-meta {
+        display: block;
+        margin: 0;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--color-ink-secondary);
+        font-family: 'Cormorant Garamond', Georgia, serif;
+        font-size: 16px;
+        font-style: italic;
+        line-height: 1.25;
+    }
+
+    .tile-subfact {
+        margin: -2px 0 0;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--color-ink-tertiary);
+        font-family: 'Instrument Sans', system-ui, sans-serif;
+        font-size: 9px;
+        font-weight: 600;
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
     }
 
     .tile-actions {
@@ -487,12 +710,8 @@
         border-top: 1px solid rgba(52,37,28,0.09);
     }
 
-    .tile-actions.single-action {
-        justify-content: flex-start;
-    }
-
     .tile-file-hint,
-    .tile-request {
+    .tile-cta {
         min-height: 30px;
         display: inline-flex;
         align-items: center;
@@ -509,48 +728,55 @@
 
     .tile-file-hint {
         color: var(--color-ink-tertiary);
+        font-variant-numeric: tabular-nums;
     }
 
-    .tile-request {
+    .tile-cta {
         flex-shrink: 0;
         min-height: 34px;
-        padding: 0 11px;
-        border: 1px solid rgba(198,95,60,0.24);
+        padding: 0 13px;
         border-radius: 999px;
-        background: rgba(255,246,239,0.66);
-        color: var(--copper, #c65f3c);
         cursor: pointer;
         transition: color 0.2s, gap 0.2s, background 0.2s, border-color 0.2s, transform 0.2s;
     }
 
-    .tile-request:hover {
-        gap: 12px;
+    .tile-cta svg { transition: transform 0.2s ease; }
+    .tile-cta:hover svg { transform: translateX(2px); }
+
+    .tile-cta-primary {
+        border: 1px solid rgba(198,95,60,0.32);
+        background:
+            linear-gradient(180deg, rgba(255,246,239,0.92), rgba(255,238,228,0.78));
+        color: var(--copper, #c65f3c);
+    }
+
+    .tile-cta-primary:hover {
         transform: translateY(-1px);
-        border-color: rgba(198,95,60,0.48);
-        background: rgba(255,246,239,0.94);
+        border-color: rgba(198,95,60,0.55);
+        background: linear-gradient(180deg, rgba(198,95,60,0.96), rgba(111,59,36,0.96));
+        color: #fff7ea;
+        box-shadow: 0 6px 16px rgba(111,59,36,0.22);
+    }
+
+    .tile-cta-ghost {
+        border: 1px solid rgba(52,37,28,0.16);
+        background: rgba(255,252,246,0.5);
+        color: var(--color-ink-secondary);
+    }
+
+    .tile-cta-ghost:hover {
+        transform: translateY(-1px);
+        border-color: rgba(52,37,28,0.3);
         color: var(--color-ink-primary);
+        background: rgba(255,252,246,0.85);
     }
 
     .tile-media:focus-visible,
     .tile-head h3 a:focus-visible,
-    .tile-save:focus-visible,
-    .tile-request:focus-visible {
+    .tile-tool:focus-visible,
+    .tile-cta:focus-visible {
         outline: 2px solid rgba(198,95,60,0.52);
         outline-offset: 3px;
-    }
-
-    .tile-meta {
-        display: block;
-        margin: 0;
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        color: var(--color-ink-secondary);
-        font-family: 'Cormorant Garamond', Georgia, serif;
-        font-size: 16px;
-        font-style: italic;
-        line-height: 1.25;
     }
 
     .tile-dot {
@@ -566,18 +792,41 @@
     .tile-dot.status-in_progress { background: rgba(198,95,60,0.72); }
 
     @media (max-width: 680px) {
+        /* on touch, tools and CTA should always be reachable */
+        .tile-tool { opacity: 1; transform: none; }
+
         .tile-actions {
             align-items: stretch;
             flex-direction: column;
         }
 
-        .tile-request {
-            width: 100%;
-        }
+        .tile-cta { width: 100%; }
     }
 
     @keyframes tile-in {
         from { opacity: 0; transform: translateY(10px); }
         to { opacity: 1; transform: none; }
+    }
+
+    @keyframes heart-pop {
+        0% { transform: scale(1); }
+        35% { transform: scale(1.32); }
+        60% { transform: scale(0.92); }
+        100% { transform: scale(1); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .tile,
+        .tile::after,
+        .tile-tool,
+        .tile-veil,
+        .tile-cta,
+        .tile-cta svg,
+        .tile-media :global(.tile-img .app-image-main) {
+            animation: none !important;
+            transition: opacity 0.2s ease, color 0.2s ease, background 0.2s ease, border-color 0.2s ease !important;
+        }
+        .tile:hover { transform: none; }
+        .tile:hover .tile-media :global(.tile-img .app-image-main) { transform: none; }
     }
 </style>
