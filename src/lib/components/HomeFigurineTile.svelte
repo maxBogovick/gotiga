@@ -20,7 +20,13 @@
 
     let saved = $derived(savedFigurines.has(fig.id));
     let showOrder = $state(false);
-    let hasFacts = $derived(Boolean(fig.series || fig.material || fig.technique || fig.status === 'available'));
+    let archiveNumber = $derived(`No ${String(index + 1).padStart(3, '0')}`);
+    let primaryFact = $derived(fig.material || fig.technique || fig.series || $t('homeTrustHandmade'));
+    let specimenMeta = $derived(
+        fig.status === 'available'
+            ? `${primaryFact} · ${$t('homeCardTransferByRequest')}`
+            : primaryFact
+    );
     let statusLabel = $derived(
         fig.status === 'available'
             ? $t('archiveStatusAvailableLabel')
@@ -54,6 +60,17 @@
         class:is-selected={selected}
         style="--i:{index}"
     >
+    <div class="tile-archive-bar">
+        <span>{archiveNumber}</span>
+        <span class="tile-status">
+            <i class="tile-dot status-{fig.status}"></i>
+            {statusLabel}
+        </span>
+        {#if fig.year}
+            <span>{fig.year}</span>
+        {/if}
+    </div>
+
     <div class="tile-media-wrap">
         <a
             href={`/figurines/${fig.id}`}
@@ -65,6 +82,10 @@
             {:else}
                 <div class="tile-placeholder">?</div>
             {/if}
+            <span class="corner corner-tl"></span>
+            <span class="corner corner-tr"></span>
+            <span class="corner corner-bl"></span>
+            <span class="corner corner-br"></span>
         </a>
 
         {#if selected}
@@ -95,54 +116,18 @@
             <h3>
                 <a href={`/figurines/${fig.id}`}>{fig.name}</a>
             </h3>
-            {#if fig.year}
-                <span class="tile-year">{fig.year}</span>
-            {/if}
         </div>
 
-        <p class="tile-meta">
-            <span class="tile-dot status-{fig.status}"></span>
-            {statusLabel}
-        </p>
+        <p class="tile-meta">{specimenMeta}</p>
 
-        {#if hasFacts}
-            <dl class="tile-facts" aria-label="{fig.name} details">
-                {#if fig.series}
-                    <div>
-                        <dt>{$t('archiveSeriesLabel')}</dt>
-                        <dd>{fig.series}</dd>
-                    </div>
-                {/if}
-                {#if fig.material}
-                    <div>
-                        <dt>{$t('archiveMaterialLabel')}</dt>
-                        <dd>{fig.material}</dd>
-                    </div>
-                {:else if fig.technique}
-                    <div>
-                        <dt>{$t('archiveTechniqueLabel')}</dt>
-                        <dd>{fig.technique}</dd>
-                    </div>
-                {/if}
-                {#if fig.status === 'available'}
-                    <div>
-                        <dt>{$t('homeWorkPriceLabel')}</dt>
-                        <dd>{$t('figurinePriceOnRequest')}</dd>
-                    </div>
-                {/if}
-            </dl>
-        {/if}
-
-        <div class="tile-actions">
-            <a href={`/figurines/${fig.id}`} class="tile-open">
-                {$t('cardViewWork')}
-                <svg width="14" height="7" viewBox="0 0 14 7" fill="none" aria-hidden="true">
-                    <path d="M0 3.5H13M13 3.5L9.5 1M13 3.5L9.5 6" stroke="currentColor" stroke-width="1"/>
-                </svg>
-            </a>
+        <div class="tile-actions" class:single-action={fig.status !== 'available'}>
+            <span class="tile-file-hint">{archiveNumber}</span>
             {#if fig.status === 'available'}
                 <button class="tile-request" type="button" onclick={openOrder}>
-                    {$t('cardRequest')}
+                    {$t('homeCardRequestThisWork')}
+                    <svg width="14" height="7" viewBox="0 0 14 7" fill="none" aria-hidden="true">
+                        <path d="M0 3.5H13M13 3.5L9.5 1M13 3.5L9.5 6" stroke="currentColor" stroke-width="1"/>
+                    </svg>
                 </button>
             {/if}
         </div>
@@ -162,23 +147,69 @@
 <style>
     .tile {
         --tile-radius: 8px;
+        position: relative;
+        isolation: isolate;
         display: grid;
-        grid-template-rows: auto 1fr;
+        grid-template-rows: auto auto 1fr;
         min-width: 0;
+        overflow: hidden;
         color: var(--ink, #34251c);
         text-decoration: none;
-        border: 1px solid rgba(52,37,28,0.12);
-        background: rgba(255,252,246,0.82);
-        box-shadow: 0 1px 0 rgba(255,255,255,0.75) inset;
+        border: 1px solid rgba(52,37,28,0.11);
+        border-radius: var(--tile-radius);
+        background:
+            linear-gradient(150deg, rgba(255,252,246,0.94), rgba(255,247,238,0.74) 54%, rgba(246,232,213,0.50)),
+            radial-gradient(circle at 16% 0%, rgba(198,95,60,0.12), transparent 34%);
+        box-shadow:
+            0 1px 0 rgba(255,255,255,0.82) inset,
+            0 22px 54px rgba(52,37,28,0.08);
         animation: tile-in 0.5s var(--ease, cubic-bezier(0.16,1,0.3,1)) both;
         animation-delay: calc(var(--i) * 0.04s);
-        transition: transform 0.24s ease, border-color 0.24s ease, box-shadow 0.24s ease;
+        transition: transform 0.26s ease, border-color 0.26s ease, box-shadow 0.26s ease, background 0.26s ease;
+    }
+
+    .tile::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        z-index: -1;
+        background:
+            linear-gradient(90deg, rgba(198,95,60,0.42), transparent 34%, rgba(89,99,61,0.16) 72%, transparent);
+        opacity: 0;
+        transition: opacity 0.26s ease;
+        pointer-events: none;
+    }
+
+    .tile::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        z-index: 3;
+        background: linear-gradient(115deg, transparent 0 38%, rgba(255,255,255,0.30) 48%, transparent 58% 100%);
+        opacity: 0;
+        transform: translateX(-42%);
+        transition: opacity 0.28s ease, transform 0.58s ease;
+        pointer-events: none;
     }
 
     .tile:hover {
-        transform: translateY(-2px);
-        border-color: rgba(198,95,60,0.32);
-        box-shadow: 0 12px 28px rgba(68,37,20,0.10);
+        transform: translateY(-5px);
+        border-color: rgba(198,95,60,0.42);
+        background:
+            linear-gradient(150deg, rgba(255,252,246,0.98), rgba(255,247,238,0.88) 54%, rgba(246,232,213,0.58)),
+            radial-gradient(circle at 16% 0%, rgba(198,95,60,0.15), transparent 36%);
+        box-shadow:
+            0 1px 0 rgba(255,255,255,0.86) inset,
+            0 30px 70px rgba(68,37,20,0.16);
+    }
+
+    .tile:hover::before {
+        opacity: 1;
+    }
+
+    .tile:hover::after {
+        opacity: 1;
+        transform: translateX(48%);
     }
 
     .tile.is-selected {
@@ -189,12 +220,91 @@
             0 14px 32px rgba(68,37,20,0.11);
     }
 
-    .tile-media-wrap,
-    .tile-media {
+    .tile-archive-bar {
+        min-height: 44px;
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 10px;
+        padding: 0 14px;
+        border-bottom: 1px solid rgba(52,37,28,0.09);
+        background: rgba(255,252,246,0.44);
+        color: var(--color-ink-tertiary);
+        font-size: 9px;
+        font-weight: 600;
+        letter-spacing: 0.13em;
+        line-height: 1.2;
+        text-transform: uppercase;
+    }
+
+    .tile-status {
+        justify-self: center;
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        min-width: 0;
+        padding: 6px 9px;
+        border: 1px solid rgba(52,37,28,0.08);
+        border-radius: 999px;
+        background: rgba(255,249,240,0.58);
+        color: var(--color-ink-secondary);
+    }
+
+    .tile-media-wrap {
         position: relative;
+        margin: 10px 10px 0;
         aspect-ratio: 4 / 3;
         overflow: hidden;
-        background: rgba(201,168,117,0.10);
+        border: 1px solid rgba(52,37,28,0.10);
+        border-radius: 7px;
+        background:
+            radial-gradient(circle at 50% 42%, rgba(255,249,240,0.44), transparent 58%),
+            rgba(201,168,117,0.10);
+        box-shadow:
+            0 1px 0 rgba(255,255,255,0.58) inset,
+            0 10px 24px rgba(52,37,28,0.07);
+    }
+
+    .tile-media {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+        border-radius: inherit;
+    }
+
+    .tile-media::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        background:
+            linear-gradient(180deg, rgba(255,249,240,0.12), transparent 34%, rgba(43,27,19,0.08)),
+            radial-gradient(circle at 50% 42%, transparent 0 48%, rgba(43,27,19,0.10) 100%);
+        opacity: 0.62;
+        transition: opacity 0.28s ease;
+        pointer-events: none;
+    }
+
+    .tile-media::after {
+        content: '';
+        position: absolute;
+        inset: 10px;
+        z-index: 2;
+        border: 1px solid rgba(255,249,240,0);
+        border-radius: 5px;
+        box-shadow: inset 0 0 0 1px rgba(52,37,28,0);
+        transition: inset 0.28s ease, border-color 0.28s ease, box-shadow 0.28s ease;
+        pointer-events: none;
+    }
+
+    .tile:hover .tile-media::before {
+        opacity: 0.32;
+    }
+
+    .tile:hover .tile-media::after {
+        inset: 8px;
+        border-color: rgba(255,249,240,0.34);
+        box-shadow: inset 0 0 0 1px rgba(198,95,60,0.18);
     }
 
     .tile-media {
@@ -218,13 +328,58 @@
     }
 
     .tile-media :global(.tile-img .app-image-main) {
-        filter: grayscale(0.08) saturate(0.96);
-        transition: transform 0.38s ease, filter 0.38s ease;
+        filter: grayscale(0.08) saturate(0.94) contrast(1.02);
+        transition: transform 0.48s ease, filter 0.48s ease;
     }
 
     .tile:hover .tile-media :global(.tile-img .app-image-main) {
-        transform: scale(1.035);
-        filter: grayscale(0) saturate(1.02);
+        transform: scale(1.055);
+        filter: grayscale(0) saturate(1.04) contrast(1.04);
+    }
+
+    .corner {
+        position: absolute;
+        z-index: 2;
+        width: 18px;
+        height: 18px;
+        border-color: rgba(198,95,60,0.42);
+        opacity: 0.78;
+        transition: width 0.24s ease, height 0.24s ease, opacity 0.24s ease;
+        pointer-events: none;
+    }
+
+    .corner-tl {
+        left: 10px;
+        top: 10px;
+        border-left: 1px solid;
+        border-top: 1px solid;
+    }
+
+    .corner-tr {
+        right: 10px;
+        top: 10px;
+        border-right: 1px solid;
+        border-top: 1px solid;
+    }
+
+    .corner-bl {
+        left: 10px;
+        bottom: 10px;
+        border-left: 1px solid;
+        border-bottom: 1px solid;
+    }
+
+    .corner-br {
+        right: 10px;
+        bottom: 10px;
+        border-right: 1px solid;
+        border-bottom: 1px solid;
+    }
+
+    .tile:hover .corner {
+        width: 24px;
+        height: 24px;
+        opacity: 1;
     }
 
     .tile-placeholder {
@@ -239,16 +394,16 @@
 
     .tile-save {
         position: absolute;
-        right: 9px;
-        top: 9px;
+        right: 10px;
+        top: 10px;
         z-index: 2;
-        width: 30px;
-        height: 30px;
+        width: 34px;
+        height: 34px;
         display: grid;
         place-items: center;
-        border: 1px solid rgba(52,37,28,0.14);
+        border: 1px solid rgba(52,37,28,0.16);
         border-radius: 999px;
-        background: rgba(255,249,240,0.76);
+        background: rgba(255,249,240,0.70);
         color: var(--color-ink-tertiary);
         backdrop-filter: blur(8px);
         cursor: pointer;
@@ -257,10 +412,10 @@
 
     .tile-selected {
         position: absolute;
-        left: 9px;
-        top: 9px;
+        left: 10px;
+        bottom: 10px;
         z-index: 2;
-        max-width: calc(100% - 56px);
+        max-width: calc(100% - 20px);
         padding: 7px 9px;
         background: rgba(43,27,19,0.78);
         color: #fff7ea;
@@ -283,21 +438,18 @@
     }
 
     .tile-save:hover {
-        transform: scale(1.08);
+        transform: translateY(-1px);
     }
 
     .tile-body {
         display: grid;
-        gap: 8px;
-        padding: 12px 13px 13px;
+        gap: 9px;
+        padding: 16px 16px 15px;
         min-width: 0;
     }
 
     .tile-head {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 10px;
+        display: block;
         min-width: 0;
     }
 
@@ -305,9 +457,9 @@
         margin: 0;
         min-width: 0;
         font-family: 'Cormorant Garamond', Georgia, serif;
-        font-size: clamp(19px, 1.45vw, 25px);
+        font-size: clamp(23px, 1.7vw, 31px);
         font-weight: 400;
-        line-height: 1;
+        line-height: 0.96;
         color: inherit;
         display: -webkit-box;
         line-clamp: 2;
@@ -325,58 +477,21 @@
         color: var(--copper, #c65f3c);
     }
 
-    .tile-year {
-        flex-shrink: 0;
-        padding-top: 3px;
-        font-size: 10px;
-        letter-spacing: 0.08em;
-        color: var(--color-ink-tertiary);
-    }
-
-    .tile-facts {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 7px 10px;
-        margin: 2px 0 0;
-        padding: 9px 0 0;
-        border-top: 1px solid rgba(52,37,28,0.08);
-    }
-
-    .tile-facts div {
-        min-width: 0;
-    }
-
-    .tile-facts dt {
-        margin: 0 0 3px;
-        font-size: 8px;
-        font-weight: 600;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        color: var(--color-ink-tertiary);
-    }
-
-    .tile-facts dd {
-        margin: 0;
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        font-family: 'Cormorant Garamond', Georgia, serif;
-        font-size: 14px;
-        font-style: italic;
-        line-height: 1.15;
-        color: var(--color-ink-secondary);
-    }
-
     .tile-actions {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 10px;
-        margin-top: 3px;
+        margin-top: 7px;
+        padding-top: 13px;
+        border-top: 1px solid rgba(52,37,28,0.09);
     }
 
-    .tile-open,
+    .tile-actions.single-action {
+        justify-content: flex-start;
+    }
+
+    .tile-file-hint,
     .tile-request {
         min-height: 30px;
         display: inline-flex;
@@ -392,50 +507,50 @@
         text-decoration: none;
     }
 
-    .tile-open {
-        color: var(--color-ink-secondary);
-        transition: color 0.2s, gap 0.2s;
-    }
-
-    .tile-open:hover {
-        gap: 12px;
-        color: var(--copper, #c65f3c);
+    .tile-file-hint {
+        color: var(--color-ink-tertiary);
     }
 
     .tile-request {
         flex-shrink: 0;
-        padding: 0 10px;
-        border: 1px solid rgba(198,95,60,0.28);
-        background: rgba(255,246,239,0.72);
+        min-height: 34px;
+        padding: 0 11px;
+        border: 1px solid rgba(198,95,60,0.24);
+        border-radius: 999px;
+        background: rgba(255,246,239,0.66);
         color: var(--copper, #c65f3c);
         cursor: pointer;
-        transition: background 0.2s, border-color 0.2s, color 0.2s;
+        transition: color 0.2s, gap 0.2s, background 0.2s, border-color 0.2s, transform 0.2s;
     }
 
     .tile-request:hover {
-        border-color: rgba(198,95,60,0.52);
-        background: rgba(255,246,239,0.98);
+        gap: 12px;
+        transform: translateY(-1px);
+        border-color: rgba(198,95,60,0.48);
+        background: rgba(255,246,239,0.94);
         color: var(--color-ink-primary);
     }
 
     .tile-media:focus-visible,
     .tile-head h3 a:focus-visible,
     .tile-save:focus-visible,
-    .tile-open:focus-visible,
     .tile-request:focus-visible {
         outline: 2px solid rgba(198,95,60,0.52);
         outline-offset: 3px;
     }
 
     .tile-meta {
-        display: flex;
-        align-items: center;
-        gap: 7px;
+        display: block;
         margin: 0;
-        font-size: 11px;
-        letter-spacing: 0.09em;
-        text-transform: uppercase;
-        color: var(--color-ink-tertiary);
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--color-ink-secondary);
+        font-family: 'Cormorant Garamond', Georgia, serif;
+        font-size: 16px;
+        font-style: italic;
+        line-height: 1.25;
     }
 
     .tile-dot {
@@ -451,16 +566,11 @@
     .tile-dot.status-in_progress { background: rgba(198,95,60,0.72); }
 
     @media (max-width: 680px) {
-        .tile-facts {
-            grid-template-columns: 1fr;
-        }
-
         .tile-actions {
             align-items: stretch;
             flex-direction: column;
         }
 
-        .tile-open,
         .tile-request {
             width: 100%;
         }
