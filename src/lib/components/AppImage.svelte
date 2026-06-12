@@ -89,7 +89,14 @@
     display: contents;
   }
 
+  /* Fills the wrapper and covers it by default, so consumers only need to size the
+     wrapper (named class or Tailwind w-full/h-full). Named consumers can still override
+     object-fit/object-position via more specific :global rules. */
   .app-image-main {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
     opacity: 0;
     transition: opacity 0.4s ease;
   }

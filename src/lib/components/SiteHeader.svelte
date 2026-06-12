@@ -108,7 +108,7 @@
   </nav>
 
   <div class="header-end">
-    <LangSwitcher variant="dark" />
+    <LangSwitcher variant="light" />
 
     <!-- Bookings indicator -->
     <div class="bookings-anchor" bind:this={panelRef}>
@@ -290,8 +290,8 @@
     height: 68px;
     display: flex;
     align-items: center;
-    padding: 0 clamp(20px, 4.5vw, 72px);
-    background: rgba(248,241,231,0.85);
+    padding: 0 clamp(20px, 4.5vw, 64px);
+    background: rgba(248,241,231,0.92);
     backdrop-filter: blur(20px) saturate(1.3);
     -webkit-backdrop-filter: blur(20px) saturate(1.3);
     border-bottom: 1px solid var(--border);
@@ -322,7 +322,7 @@
     font-size: 8.5px;
     letter-spacing: 0.22em;
     text-transform: uppercase;
-    color: var(--muted2);
+    color: color-mix(in srgb, var(--color-ink-secondary) 62%, transparent);
     line-height: 1;
   }
 
@@ -337,12 +337,12 @@
     display: flex;
     align-items: center;
     height: 68px;
-    padding: 0 22px;
+    padding: 0 18px;
     font-family: 'Instrument Sans', var(--font-body), system-ui, sans-serif;
     font-size: 9.5px;
     letter-spacing: 0.18em;
     text-transform: uppercase;
-    color: var(--muted);
+    color: color-mix(in srgb, var(--color-ink-secondary) 78%, transparent);
     text-decoration: none;
     transition: color 0.25s;
     overflow: hidden;
@@ -374,10 +374,10 @@
   .header-end {
     display: flex;
     align-items: center;
-    gap: 14px;
-    margin-left: 20px;
-    padding-left: 20px;
-    border-left: 1px solid var(--border);
+    gap: 12px;
+    margin-left: 18px;
+    padding-left: 16px;
+    border-left: 1px solid color-mix(in srgb, var(--color-ink-primary) 14%, transparent);
   }
 
   /* ── Bookings button ── */
@@ -396,7 +396,7 @@
     border: none;
     padding: 0;
     cursor: pointer;
-    color: var(--muted2);
+    color: color-mix(in srgb, var(--color-ink-secondary) 64%, transparent);
     transition: color 0.25s;
   }
 

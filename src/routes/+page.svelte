@@ -1,6 +1,7 @@
 <script lang="ts">
     import { onMount } from 'svelte';
     import { goto } from '$app/navigation';
+    import { page } from '$app/state';
     import { fade, fly } from 'svelte/transition';
     import { cubicOut } from 'svelte/easing';
     import { spring, tweened } from 'svelte/motion';
@@ -41,6 +42,7 @@
 
     type HeroMode = 'showcase' | 'release';
     type WorkFilter = 'available' | 'saved' | 'upcoming' | 'archive';
+    const WORK_FILTERS: WorkFilter[] = ['available', 'saved', 'upcoming', 'archive'];
 
     let configuredHeroMode = $derived(homeContent.heroMode ?? 'auto');
     let activeHeroMode = $derived<HeroMode>(
@@ -75,6 +77,12 @@
         savedFigurines.ids
             .map((id) => collectionFigurines.find((item) => item.id === id))
             .filter((item): item is FigurineListItem => Boolean(item))
+    );
+    let heroQuickFigurines = $derived(
+        (availableFigurines.length > 0 ? availableFigurines : archivePreviewFigurines).slice(0, 3)
+    );
+    let heroQuickTitle = $derived(
+        availableFigurines.length > 0 ? $t('homeHeroQuickAvailable') : $t('homeHeroQuickArchive')
     );
     let activeWorkFigurines = $derived(
         activeWorkFilter === 'saved'
@@ -111,6 +119,17 @@
                     ? $t('homeContextArchiveText')
                     : $t('homeContextAvailableText')
     );
+    let activeWorkEmptyText = $derived(
+        activeWorkFilter === 'saved'
+            ? $t('homeWorksEmptySaved')
+            : activeWorkFilter === 'available'
+                ? $t('homeWorksEmptyAvailable')
+                : activeWorkFilter === 'upcoming'
+                    ? $t('homeWorksEmptyUpcoming')
+                    : $t('homeWorksEmptyArchive')
+    );
+    let activeWorkEmptyHref = $derived(activeWorkFilter === 'saved' ? '/figurines' : '/commission');
+    let activeWorkEmptyCta = $derived(activeWorkFilter === 'saved' ? $t('homeOpenArchive') : $t('commissionInvite'));
 
     // Count-up stats
     const availDisplay = tweened(0, { duration: 1100, easing: cubicOut });
@@ -118,6 +137,13 @@
 
     // Magnetic hover action for CTAs
     function magnetic(node: HTMLElement, strength = 0.3) {
+        if (
+            typeof window !== 'undefined' &&
+            (window.matchMedia('(hover: none)').matches || window.matchMedia('(prefers-reduced-motion: reduce)').matches)
+        ) {
+            return { destroy() {} };
+        }
+
         function move(e: MouseEvent) {
             const r = node.getBoundingClientRect();
             const x = (e.clientX - r.left - r.width / 2) * strength;
@@ -177,6 +203,29 @@
         });
     }
 
+    function parseWorkFilter(value: string | null): WorkFilter | null {
+        return WORK_FILTERS.includes(value as WorkFilter) ? value as WorkFilter : null;
+    }
+
+    function setWorkFilter(filter: WorkFilter) {
+        activeWorkFilter = filter;
+        const params = new URLSearchParams(page.url.searchParams);
+        params.set('view', filter);
+        const query = params.toString();
+        goto(`${page.url.pathname}${query ? `?${query}` : ''}#available-works`, {
+            replaceState: true,
+            noScroll: true,
+            keepFocus: true,
+        });
+    }
+
+    $effect(() => {
+        const urlFilter = parseWorkFilter(page.url.searchParams.get('view'));
+        if (urlFilter && urlFilter !== activeWorkFilter) {
+            activeWorkFilter = urlFilter;
+        }
+    });
+
     async function init() {
         try {
             const [dbZones, bgPath, figurines, inProgress, content] = await Promise.all([
@@ -209,11 +258,11 @@
             heroFigurine = content.heroFigurineId
                 ? visibleFigurines.find((item) => item.id === content.heroFigurineId) ?? null
                 : null;
-            activeWorkFilter = !isReleaseMode && availableFigurines.length > 0
+            activeWorkFilter = parseWorkFilter(page.url.searchParams.get('view')) ?? (!isReleaseMode && availableFigurines.length > 0
                 ? 'available'
                 : inProgressFigurines.length > 0
                     ? 'upcoming'
-                    : 'archive';
+                    : 'archive');
             availDisplay.set(availableTotal);
             collDisplay.set(collectionTotal);
             isLoaded = true;
@@ -323,24 +372,36 @@
                     <a href={secondaryCtaHref} class="cta-ghost" use:magnetic={0.22}>{secondaryCtaText}</a>
                 </div>
 
-                <div class="trust-line" aria-label="Gotiga">
+                <div class="hero-proof" aria-label="Gotiga">
                     <span>{$t('homeTrustUnique')}</span>
                     <span>{$t('homeTrustHandmade')}</span>
                     <span>{$t('homeTrustAuthorReply')}</span>
                 </div>
 
-                {#if showStats}
-                    <dl class="stats">
-                        <div class="stat">
-                            <dt class="stat-num">{Math.round($availDisplay)}</dt>
-                            <dd class="stat-label">{$t('homeAvailableStat')}</dd>
+                {#if heroQuickFigurines.length > 0}
+                    <div class="hero-work-strip" aria-label={heroQuickTitle}>
+                        <div class="hero-work-strip-head">
+                            <span>{heroQuickTitle}</span>
+                            {#if showStats}
+                                <em>{Math.round($availDisplay)} {$t('homeAvailableStat')} · {Math.round($collDisplay)} {$t('homeArchiveStat')}</em>
+                            {/if}
                         </div>
-                        <div class="stat-sep"></div>
-                        <div class="stat">
-                            <dt class="stat-num">{Math.round($collDisplay)}</dt>
-                            <dd class="stat-label">{$t('homeArchiveStat')}</dd>
+                        <div class="hero-work-links">
+                            {#each heroQuickFigurines as fig}
+                                <a href="/figurines/{fig.id}" class="hero-work-link" aria-label="{$t('homeViewFigurine')}: {fig.name}">
+                                    {#if fig.faceImageUrl}
+                                        <AppImage src={fig.faceImageUrl} thumbUrl={fig.thumbUrl} alt={fig.name} class="hero-work-img" loading="lazy" />
+                                    {:else}
+                                        <span class="hero-work-placeholder">?</span>
+                                    {/if}
+                                    <span>
+                                        <strong>{fig.name}</strong>
+                                        <em>{fig.year ?? $t('homeHeroQuickOpen')}</em>
+                                    </span>
+                                </a>
+                            {/each}
                         </div>
-                    </dl>
+                    </div>
                 {:else}
                     <p class="release-note">{$t('homeReleaseNote')}</p>
                 {/if}
@@ -350,11 +411,13 @@
             <div class="hero-visual">
                 <div class="img-meta">
                     <span>№ 001</span>
-                    <span>{$t('homeHeroObjectLabel')}</span>
+                    <span>{$t('homeHeroMapLabel')}</span>
                 </div>
 
                 <div
                     class="img-frame"
+                    role="group"
+                    aria-label={$t('homeHeroMapLabel')}
                     style="
                         transform:
                             perspective(2200px)
@@ -406,34 +469,6 @@
 
         </section>
 
-        <nav class="quick-nav" aria-label={$t('homeQuickNavLabel')}>
-            <a href="#available-works">{$t('homeWorksTitle')}</a>
-            <a href="#request-path">{$t('homeHowEyebrow')}</a>
-            <a href="/commission">{$t('commissionInvite')}</a>
-            <a href="/figurines">{$t('homeOpenArchive')}</a>
-        </nav>
-
-        {#if savedPreviewFigurines.length > 0}
-            <aside class="personal-shelf" aria-label={$t('homeSavedTitle')}>
-                <div class="shelf-copy">
-                    <span>{$t('homeSavedEyebrow')}</span>
-                    <strong>{$t('homeSavedTitle')} · {savedWorkFigurines.length}</strong>
-                </div>
-                <div class="shelf-items">
-                    {#each savedPreviewFigurines as fig}
-                        <a class="shelf-thumb" href="/figurines/{fig.id}" aria-label="{$t('homeViewFigurine')}: {fig.name}">
-                            {#if fig.faceImageUrl}
-                                <AppImage src={fig.faceImageUrl} thumbUrl={fig.thumbUrl} alt={fig.name} class="shelf-img" loading="lazy" />
-                            {:else}
-                                <span>?</span>
-                            {/if}
-                        </a>
-                    {/each}
-                </div>
-                <a href="/profile" class="shelf-link">{$t('homeSavedProfile')}</a>
-            </aside>
-        {/if}
-
         <section id="available-works" class="context-section work-hub" aria-labelledby="context-title">
             <div class="context-hd work-hd">
                 <div>
@@ -454,11 +489,33 @@
                 </div>
             </div>
 
-            <div class="work-tabs" role="tablist" aria-label={$t('homeWorksTitle')}>
+            {#if savedPreviewFigurines.length > 0}
+                <aside class="saved-rail" aria-label={$t('homeSavedTitle')}>
+                    <div class="saved-rail-copy">
+                        <span>{$t('homeSavedEyebrow')}</span>
+                        <strong>{$t('homeSavedTitle')} · {savedWorkFigurines.length}</strong>
+                    </div>
+                    <div class="saved-rail-items">
+                        {#each savedPreviewFigurines as fig}
+                            <a class="saved-rail-item" href="/figurines/{fig.id}" aria-label="{$t('homeViewFigurine')}: {fig.name}">
+                                {#if fig.faceImageUrl}
+                                    <AppImage src={fig.faceImageUrl} thumbUrl={fig.thumbUrl} alt={fig.name} class="saved-rail-img" loading="lazy" />
+                                {:else}
+                                    <span>?</span>
+                                {/if}
+                                <span>{fig.name}</span>
+                            </a>
+                        {/each}
+                    </div>
+                    <a href="/profile" class="saved-rail-link">{$t('homeSavedProfile')}</a>
+                </aside>
+            {/if}
+
+            <div class="work-tabs" role="group" aria-label={$t('homeWorksTitle')}>
                 <button
                     class:active={activeWorkFilter === 'available'}
-                    onclick={() => activeWorkFilter = 'available'}
-                    disabled={availableFigurines.length === 0}
+                    onclick={() => setWorkFilter('available')}
+                    aria-pressed={activeWorkFilter === 'available'}
                     type="button"
                 >
                     {$t('homeWorksAvailableTab')}
@@ -466,8 +523,8 @@
                 </button>
                 <button
                     class:active={activeWorkFilter === 'saved'}
-                    onclick={() => activeWorkFilter = 'saved'}
-                    disabled={savedWorkFigurines.length === 0}
+                    onclick={() => setWorkFilter('saved')}
+                    aria-pressed={activeWorkFilter === 'saved'}
                     type="button"
                 >
                     {$t('homeWorksSavedTab')}
@@ -475,8 +532,8 @@
                 </button>
                 <button
                     class:active={activeWorkFilter === 'upcoming'}
-                    onclick={() => activeWorkFilter = 'upcoming'}
-                    disabled={inProgressFigurines.length === 0}
+                    onclick={() => setWorkFilter('upcoming')}
+                    aria-pressed={activeWorkFilter === 'upcoming'}
                     type="button"
                 >
                     {$t('homeWorksUpcomingTab')}
@@ -484,8 +541,8 @@
                 </button>
                 <button
                     class:active={activeWorkFilter === 'archive'}
-                    onclick={() => activeWorkFilter = 'archive'}
-                    disabled={archivePreviewFigurines.length === 0}
+                    onclick={() => setWorkFilter('archive')}
+                    aria-pressed={activeWorkFilter === 'archive'}
                     type="button"
                 >
                     {$t('homeWorksArchiveTab')}
@@ -500,7 +557,15 @@
                     {/each}
                 </div>
             {:else}
-                <p class="work-empty">{$t('homeWorksEmpty')}</p>
+                <div class="work-empty">
+                    <p>{activeWorkEmptyText}</p>
+                    <a href={activeWorkEmptyHref} class="all-link">
+                        {activeWorkEmptyCta}
+                        <svg width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
+                            <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
+                        </svg>
+                    </a>
+                </div>
             {/if}
 
             {#if activeWorkFigurines.length > visibleWorkFigurines.length}
@@ -525,21 +590,12 @@
             </div>
 
             <div class="request-flow">
-                <span><b>01</b>{$t('homeHowStep1Title')}</span>
-                <span><b>02</b>{$t('homeHowStep2Title')}</span>
-                <span><b>03</b>{$t('homeHowStep3Title')}</span>
+                <span><b>01</b><strong>{$t('homeHowStep1Title')}</strong><em>{$t('homeHowStep1Text')}</em></span>
+                <span><b>02</b><strong>{$t('homeHowStep2Title')}</strong><em>{$t('homeHowStep2Text')}</em></span>
+                <span><b>03</b><strong>{$t('homeHowStep3Title')}</strong><em>{$t('homeHowStep3Text')}</em></span>
                 <a href="/commission">{$t('commissionInvite')}</a>
             </div>
         </section>
-
-        {#if savedWorkFigurines.length > 0}
-            <a href="/profile" class="saved-dock" aria-label="{$t('homeSavedTitle')}: {savedWorkFigurines.length}">
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true">
-                    <path d="M7 12.5C7 12.5 1 8.5 1 4.5C1 2.5 2.5 1 4.5 1C5.5 1 6.5 1.8 7 3C7.5 1.8 8.5 1 9.5 1C11.5 1 13 2.5 13 4.5C13 8.5 7 12.5 7 12.5Z"/>
-                </svg>
-                <span>{savedWorkFigurines.length}</span>
-            </a>
-        {/if}
 
     </main>
     {/if}
@@ -591,6 +647,7 @@
         --border:  color-mix(in srgb, var(--color-ink-primary) 10%, transparent);
         --border2: color-mix(in srgb, var(--color-ink-primary) 18%, transparent);
         --ease:    cubic-bezier(0.16,1,0.3,1);
+        --site-header-height: 68px;
     }
 
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -660,12 +717,12 @@
     /* ── HERO LAYOUT ─────────────────────────────── */
     .hero {
         display: grid;
-        grid-template-columns: minmax(320px, 0.62fr) minmax(560px, 1.38fr);
-        gap: clamp(44px, 5.8vw, 104px);
+        grid-template-columns: minmax(360px, 0.84fr) minmax(520px, 1.16fr);
+        gap: clamp(30px, 4.2vw, 72px);
         align-items: center;
-        min-height: min(820px, 82svh);
-        padding: 70px clamp(20px, 4.5vw, 72px) 34px;
-        max-width: 1680px;
+        min-height: min(600px, calc(100svh - var(--site-header-height, 68px)));
+        padding: clamp(28px, 4.2vw, 52px) clamp(20px, 4.5vw, 64px) clamp(18px, 2.5vw, 32px);
+        max-width: 1520px;
         margin: 0 auto;
     }
 
@@ -698,29 +755,33 @@
     /* ── H1: word-based reveal, so Russian titles wrap like typography ─────── */
     .hero-title {
         font-family: 'Cormorant Garamond', serif;
-        font-size: clamp(54px, 5.8vw, 104px);
+        font-size: clamp(48px, 4.65vw, 78px);
         font-weight: 300;
-        line-height: 0.94;
+        line-height: 0.96;
         letter-spacing: 0;
         color: var(--ink);
-        margin: 0 0 26px;
+        max-width: 10.8ch;
+        margin: 0 0 18px;
         word-break: keep-all;
-        overflow-wrap: normal;
+        overflow-wrap: anywhere;
         hyphens: none;
         display: flex;
         flex-wrap: wrap;
         column-gap: 0.18em;
         row-gap: 0.04em;
-        overflow: hidden;
+        overflow: visible;
         padding-bottom: 0.12em;
     }
 
     .hero-title:lang(ru) {
-        font-size: clamp(48px, 5.35vw, 96px);
+        font-size: clamp(44px, 4.3vw, 72px);
     }
 
     .title-word {
         display: inline-block;
+        max-width: 100%;
+        overflow-wrap: anywhere;
+        white-space: normal;
         transform: translateY(112%) rotate(7deg);
         opacity: 0;
         will-change: transform, opacity;
@@ -737,18 +798,31 @@
     }
 
     @media (prefers-reduced-motion: reduce) {
-        .title-word { animation: none; transform: none; opacity: 1; }
+        .title-word,
+        .fog-a,
+        .fog-b,
+        .grain,
+        .sc-line,
+        .zone-pulse {
+            animation: none;
+            transform: none;
+            opacity: 1;
+        }
+
+        .cursor-glow {
+            display: none;
+        }
     }
 
     .hero-lead {
         font-family: 'Cormorant Garamond', serif;
-        font-size: clamp(17px, 2vw, 22px);
+        font-size: clamp(16px, 1.55vw, 20px);
         font-weight: 300;
         font-style: italic;
-        line-height: 1.52;
+        line-height: 1.46;
         color: rgba(52,37,28,0.76);
-        max-width: 430px;
-        margin-bottom: 24px;
+        max-width: 390px;
+        margin-bottom: 18px;
     }
 
     /* ── CTAs ────────────────────────────────────── */
@@ -757,7 +831,7 @@
         align-items: center;
         gap: 14px;
         flex-wrap: wrap;
-        margin-bottom: 18px;
+        margin-bottom: 14px;
     }
 
     .cta-primary {
@@ -811,30 +885,128 @@
         border-color: rgba(198,95,60,0.5);
     }
 
-    .trust-line {
-        display: grid;
-        gap: 7px;
-        max-width: 420px;
+    .hero-proof {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px 14px;
+        max-width: 520px;
         color: rgba(52,37,28,0.60);
-        font-size: 9.5px;
+        font-size: 8.5px;
         letter-spacing: 0.14em;
         line-height: 1.45;
         text-transform: uppercase;
     }
 
-    .trust-line span {
+    .hero-proof span {
         position: relative;
-        padding-left: 16px;
+        padding-left: 13px;
     }
 
-    .trust-line span::before {
+    .hero-proof span::before {
         content: "";
         position: absolute;
         left: 0;
         top: 0.62em;
-        width: 7px;
+        width: 6px;
         height: 1px;
         background: rgba(198,95,60,0.58);
+    }
+
+    .hero-work-strip {
+        max-width: 540px;
+        margin-top: 16px;
+        padding-top: 14px;
+        border-top: 1px solid rgba(52,37,28,0.10);
+    }
+
+    .hero-work-strip-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        margin-bottom: 10px;
+        font-size: 8.5px;
+        letter-spacing: 0.16em;
+        line-height: 1.3;
+        text-transform: uppercase;
+        color: rgba(95,70,54,0.64);
+    }
+
+    .hero-work-strip-head em {
+        font-style: normal;
+        color: rgba(95,70,54,0.42);
+        text-align: right;
+    }
+
+    .hero-work-links {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+    }
+
+    .hero-work-link {
+        min-width: 0;
+        display: grid;
+        grid-template-columns: 42px minmax(0, 1fr);
+        align-items: center;
+        gap: 9px;
+        min-height: 54px;
+        padding: 5px;
+        border: 1px solid rgba(52,37,28,0.12);
+        background: rgba(255,249,240,0.58);
+        color: rgba(52,37,28,0.78);
+        text-decoration: none;
+        transition: border-color 0.2s, background 0.2s, transform 0.2s;
+    }
+
+    .hero-work-link:hover {
+        border-color: rgba(198,95,60,0.34);
+        background: rgba(255,249,240,0.88);
+        transform: translateY(-1px);
+    }
+
+    .hero-work-link :global(.hero-work-img),
+    .hero-work-link :global(.hero-work-img .app-image-main),
+    .hero-work-link :global(.hero-work-img .app-image-thumb),
+    .hero-work-placeholder {
+        width: 42px;
+        height: 42px;
+        display: block;
+        object-fit: cover;
+        object-position: center 42%;
+        background: rgba(201,168,117,0.12);
+    }
+
+    .hero-work-placeholder {
+        display: grid;
+        place-items: center;
+        font-family: 'Cormorant Garamond', serif;
+        color: rgba(95,70,54,0.42);
+    }
+
+    .hero-work-link span:last-child {
+        min-width: 0;
+        display: grid;
+        gap: 3px;
+    }
+
+    .hero-work-link strong {
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        font-family: 'Cormorant Garamond', serif;
+        font-size: 18px;
+        font-weight: 400;
+        line-height: 1;
+    }
+
+    .hero-work-link em {
+        font-size: 8px;
+        font-style: normal;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: rgba(95,70,54,0.46);
     }
 
     .release-note {
@@ -848,40 +1020,6 @@
         font-weight: 300;
         line-height: 1.42;
         color: rgba(52,37,28,0.58);
-    }
-
-    /* ── STATS ───────────────────────────────────── */
-    .stats {
-        display: flex;
-        align-items: stretch;
-        margin-top: 22px;
-    }
-
-    .stat {
-        padding-right: 24px;
-    }
-
-    .stat-sep {
-        width: 1px;
-        background: var(--border2);
-        margin: 6px 24px 6px 0;
-        flex-shrink: 0;
-    }
-
-    .stat-num {
-        font-family: 'Cormorant Garamond', serif;
-        font-size: 38px;
-        font-weight: 300;
-        line-height: 1;
-        color: var(--mid);
-    }
-
-    .stat-label {
-        margin-top: 5px;
-        font-size: 8.5px;
-        letter-spacing: 0.18em;
-        text-transform: uppercase;
-        color: var(--muted2);
     }
 
     /* ── HERO VISUAL ─────────────────────────────── */
@@ -903,7 +1041,7 @@
     .img-frame {
         position: relative;
         width: 100%;
-        height: clamp(420px, 58svh, 720px);
+        height: clamp(300px, 38svh, 460px);
         overflow: hidden;
         transform-style: preserve-3d;
         transition: filter 0.3s;
@@ -924,14 +1062,14 @@
     .img-vignette {
         position: absolute;
         inset: 0; z-index: 2;
-        background: radial-gradient(ellipse at center, transparent 25%, rgba(44,23,16,0.52) 100%);
+        background: radial-gradient(ellipse at center, transparent 32%, rgba(44,23,16,0.38) 100%);
         pointer-events: none;
     }
 
     .img-grade {
         position: absolute;
         inset: 0; z-index: 3;
-        background: linear-gradient(180deg, rgba(198,95,60,0.05) 0%, transparent 45%, rgba(44,23,16,0.14) 100%);
+        background: linear-gradient(180deg, rgba(198,95,60,0.04) 0%, transparent 46%, rgba(44,23,16,0.12) 100%);
         mix-blend-mode: multiply;
         pointer-events: none;
     }
@@ -1198,79 +1336,49 @@
         transform: translateY(0);
     }
 
-    /* ── QUICK NAV / PERSONAL SHELF ───────────────── */
-    .quick-nav {
-        position: sticky;
-        top: 0;
-        z-index: 40;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 6px;
-        max-width: 1680px;
-        margin: 0 auto;
-        padding: 8px clamp(16px, 4vw, 72px);
-        background: color-mix(in srgb, var(--cream) 86%, transparent);
-        border-top: 1px solid rgba(52,37,28,0.08);
-        border-bottom: 1px solid rgba(52,37,28,0.08);
-        backdrop-filter: blur(14px);
+    /* ── WORK HUB / SAVED RAIL ───────────────────── */
+    .hero-work-link:focus-visible,
+    .saved-rail-link:focus-visible,
+    .all-link:focus-visible,
+    .request-flow a:focus-visible {
+        outline: 2px solid rgba(198,95,60,0.56);
+        outline-offset: 3px;
     }
 
-    .quick-nav a {
-        min-height: 30px;
-        display: inline-flex;
-        align-items: center;
-        padding: 0 11px;
-        color: rgba(95,70,54,0.62);
-        border: 1px solid transparent;
-        font-size: 8.5px;
-        letter-spacing: 0.15em;
-        line-height: 1;
-        text-transform: uppercase;
-        text-decoration: none;
-        white-space: nowrap;
-        transition: color 0.2s, border-color 0.2s, background 0.2s;
-    }
-
-    .quick-nav a:hover {
-        color: var(--mid);
-        border-color: rgba(198,95,60,0.20);
-        background: rgba(255,249,240,0.62);
-    }
-
-    .personal-shelf {
+    .saved-rail {
         display: grid;
         grid-template-columns: auto minmax(0, 1fr) auto;
         align-items: center;
-        gap: clamp(14px, 2.2vw, 28px);
-        max-width: 1680px;
-        margin: clamp(22px, 3.8vw, 44px) auto 0;
-        padding: 0 clamp(20px, 4.5vw, 72px);
+        gap: clamp(14px, 2vw, 24px);
+        margin: 0 0 clamp(16px, 2vw, 24px);
+        padding: 10px 12px;
+        border: 1px solid rgba(52,37,28,0.10);
+        background: rgba(255,249,240,0.42);
     }
 
-    .shelf-copy {
+    .saved-rail-copy {
         display: grid;
         gap: 4px;
-        min-width: 150px;
+        min-width: 142px;
     }
 
-    .shelf-copy span,
-    .shelf-link {
+    .saved-rail-copy span,
+    .saved-rail-link {
         font-size: 8.5px;
         letter-spacing: 0.16em;
         text-transform: uppercase;
         color: var(--muted2);
     }
 
-    .shelf-copy strong {
+    .saved-rail-copy strong {
         font-family: 'Cormorant Garamond', serif;
-        font-size: clamp(22px, 2.2vw, 34px);
+        font-size: clamp(20px, 1.8vw, 28px);
         font-weight: 300;
         line-height: 1;
         color: var(--ink);
     }
 
-    .shelf-items {
+    .saved-rail-items {
         display: flex;
         align-items: center;
         gap: 8px;
@@ -1279,15 +1387,19 @@
         scrollbar-width: none;
     }
 
-    .shelf-items::-webkit-scrollbar {
+    .saved-rail-items::-webkit-scrollbar {
         display: none;
     }
 
-    .shelf-thumb {
-        width: clamp(48px, 5.8vw, 72px);
-        aspect-ratio: 1 / 1;
+    .saved-rail-item {
+        position: relative;
+        width: clamp(112px, 11vw, 154px);
+        min-height: 54px;
         display: grid;
-        place-items: center;
+        grid-template-columns: 42px minmax(0, 1fr);
+        align-items: center;
+        gap: 9px;
+        padding: 5px;
         flex: 0 0 auto;
         overflow: hidden;
         border: 1px solid rgba(52,37,28,0.14);
@@ -1297,22 +1409,38 @@
         transition: transform 0.22s, border-color 0.22s;
     }
 
-    .shelf-thumb:hover {
+    .saved-rail-item:hover {
         transform: translateY(-2px);
         border-color: rgba(198,95,60,0.34);
     }
 
-    .shelf-thumb :global(.shelf-img),
-    .shelf-thumb :global(.shelf-img .app-image-main),
-    .shelf-thumb :global(.shelf-img .app-image-thumb) {
-        width: 100%;
-        height: 100%;
+    .saved-rail-item:focus-visible {
+        outline: 2px solid rgba(198,95,60,0.56);
+        outline-offset: 3px;
+    }
+
+    .saved-rail-item :global(.saved-rail-img),
+    .saved-rail-item :global(.saved-rail-img .app-image-main),
+    .saved-rail-item :global(.saved-rail-img .app-image-thumb) {
+        width: 42px;
+        height: 42px;
         object-fit: cover;
         object-position: center 42%;
         display: block;
     }
 
-    .shelf-link {
+    .saved-rail-item > span {
+        min-width: 0;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        font-family: 'Cormorant Garamond', serif;
+        font-size: 17px;
+        line-height: 1;
+        color: rgba(52,37,28,0.74);
+    }
+
+    .saved-rail-link {
         color: var(--mid);
         text-decoration: none;
         border-bottom: 1px solid rgba(111,59,36,0.22);
@@ -1320,30 +1448,30 @@
         white-space: nowrap;
     }
 
-    .shelf-link:hover {
+    .saved-rail-link:hover {
         color: var(--copper);
     }
 
     /* ── CONTEXT SECTION ─────────────────────────── */
     .context-section {
-        padding: clamp(40px, 5.2vw, 78px) clamp(20px, 4.5vw, 72px) clamp(54px, 7vw, 96px);
-        max-width: 1680px;
+        padding: clamp(22px, 3.2vw, 44px) clamp(20px, 4.5vw, 64px) clamp(46px, 6vw, 82px);
+        max-width: 1520px;
         margin: 0 auto;
     }
 
     .context-hd {
         display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: clamp(24px, 4vw, 64px);
+        grid-template-columns: minmax(280px, 0.82fr) minmax(320px, 1.18fr);
+        gap: clamp(20px, 3vw, 48px);
         align-items: end;
-        margin-bottom: clamp(22px, 3vw, 36px);
-        padding-bottom: clamp(18px, 2.4vw, 28px);
+        margin-bottom: clamp(16px, 2vw, 24px);
+        padding-bottom: clamp(14px, 2vw, 22px);
         border-bottom: 1px solid var(--border);
     }
 
     .context-title {
         font-family: 'Cormorant Garamond', serif;
-        font-size: clamp(34px, 4.2vw, 62px);
+        font-size: clamp(32px, 3.4vw, 52px);
         font-weight: 300;
         line-height: 0.92;
         color: var(--ink);
@@ -1360,7 +1488,7 @@
 
     .context-desc {
         font-family: 'Cormorant Garamond', serif;
-        font-size: 18px;
+        font-size: 17px;
         font-weight: 300;
         font-style: italic;
         line-height: 1.5;
@@ -1407,14 +1535,26 @@
         cursor: not-allowed;
     }
 
+    .work-tabs button:focus-visible {
+        outline: 2px solid rgba(198,95,60,0.52);
+        outline-offset: 2px;
+    }
+
     .work-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-        gap: clamp(12px, 1.5vw, 20px);
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: clamp(10px, 1.2vw, 16px);
     }
 
     .work-empty {
+        display: grid;
+        justify-items: start;
+        gap: 14px;
         padding: 30px 0;
+    }
+
+    .work-empty p {
+        margin: 0;
         font-family: 'Cormorant Garamond', serif;
         font-size: 19px;
         font-style: italic;
@@ -1476,7 +1616,7 @@
 
     .request-flow span,
     .request-flow a {
-        min-height: 52px;
+        min-height: 64px;
         display: flex;
         align-items: center;
         gap: 10px;
@@ -1491,12 +1631,40 @@
         text-decoration: none;
     }
 
+    .request-flow span {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        align-items: start;
+        column-gap: 10px;
+        row-gap: 3px;
+    }
+
     .request-flow b {
+        grid-row: span 2;
         font-family: 'Cormorant Garamond', serif;
         font-size: 20px;
         font-weight: 300;
         line-height: 1;
         color: rgba(198,95,60,0.78);
+    }
+
+    .request-flow strong {
+        font-weight: 500;
+        color: rgba(52,37,28,0.78);
+    }
+
+    .request-flow em {
+        display: block;
+        max-width: 26ch;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        font-family: 'Cormorant Garamond', serif;
+        font-size: 13px;
+        font-style: italic;
+        letter-spacing: 0;
+        text-transform: none;
+        color: var(--muted);
     }
 
     .request-flow a {
@@ -1511,49 +1679,32 @@
         background: rgba(255,246,239,0.86);
     }
 
-    .saved-dock {
-        position: fixed;
-        right: clamp(14px, 2vw, 28px);
-        bottom: clamp(14px, 2vw, 28px);
-        z-index: 80;
-        min-width: 46px;
-        height: 42px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        gap: 7px;
-        padding: 0 13px;
-        border: 1px solid rgba(198,95,60,0.28);
-        border-radius: 999px;
-        background: rgba(255,249,240,0.86);
-        color: var(--copper);
-        text-decoration: none;
-        box-shadow: 0 14px 34px rgba(68,37,20,0.14);
-        backdrop-filter: blur(14px);
-    }
-
-    .saved-dock span {
-        font-size: 10px;
-        letter-spacing: 0.08em;
-    }
-
     /* ── RESPONSIVE ──────────────────────────────── */
     @media (max-width: 1080px) {
         .hero {
             grid-template-columns: 1fr;
             min-height: auto;
-            padding-top: 82px;
-            gap: 32px;
+            padding-top: 50px;
+            gap: 28px;
         }
 
         .hero-visual { order: 2; }
         .hero-text { order: 1; max-width: 580px; }
 
-        .img-frame { height: min(50svh, 560px); }
+        .img-frame { height: min(42svh, 430px); }
 
         .context-hd { grid-template-columns: 1fr; }
 
-        .work-grid { grid-template-columns: repeat(2, 1fr); }
+        .saved-rail {
+            grid-template-columns: 1fr auto;
+        }
+
+        .saved-rail-items {
+            grid-column: 1 / -1;
+            order: 3;
+        }
+
+        .work-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 
         .request-path {
             grid-template-columns: 1fr;
@@ -1566,14 +1717,18 @@
     }
 
     @media (max-width: 680px) {
+        :root {
+            --site-header-height: 58px;
+        }
+
         .hero {
-            padding: 62px 16px 26px;
+            padding: 38px 16px 22px;
             gap: 24px;
         }
 
         .hero-title,
         .hero-title:lang(ru) {
-            font-size: clamp(42px, 13.2vw, 68px);
+            font-size: clamp(40px, 12vw, 60px);
             line-height: 0.98;
         }
 
@@ -1587,9 +1742,34 @@
             font-size: 9px;
         }
 
-        .trust-line {
+        .hero-proof {
             font-size: 8.5px;
             line-height: 1.45;
+        }
+
+        .hero-work-strip-head {
+            align-items: flex-start;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .hero-work-strip-head em {
+            text-align: left;
+        }
+
+        .hero-work-links {
+            display: flex;
+            overflow-x: auto;
+            scrollbar-width: none;
+        }
+
+        .hero-work-links::-webkit-scrollbar {
+            display: none;
+        }
+
+        .hero-work-link {
+            width: 190px;
+            flex: 0 0 auto;
         }
 
         .release-note {
@@ -1616,34 +1796,22 @@
             display: none;
         }
 
-        .quick-nav {
-            justify-content: flex-start;
-            overflow-x: auto;
-            padding-inline: 12px;
-            scrollbar-width: none;
-        }
-
-        .quick-nav::-webkit-scrollbar {
-            display: none;
-        }
-
-        .personal-shelf {
+        .saved-rail {
             grid-template-columns: 1fr;
             gap: 12px;
-            padding-inline: 16px;
         }
 
-        .shelf-copy {
+        .saved-rail-copy {
             min-width: 0;
         }
 
-        .shelf-link {
+        .saved-rail-link {
             justify-self: start;
         }
 
         .context-section {
             padding-inline: 16px;
-            padding-top: 36px;
+            padding-top: 28px;
             padding-bottom: 54px;
         }
 
@@ -1674,14 +1842,20 @@
             grid-template-columns: 1fr;
         }
 
-        .saved-dock {
-            right: 12px;
-            bottom: 12px;
-            height: 40px;
-        }
     }
 
     @media (hover: none) {
         .zone-tip { display: none; }
+        .cursor-glow { display: none; }
+        .cta-primary,
+        .cta-ghost {
+            transform: none !important;
+        }
+    }
+
+    @media (max-width: 460px) {
+        .work-grid {
+            grid-template-columns: 1fr;
+        }
     }
 </style>
