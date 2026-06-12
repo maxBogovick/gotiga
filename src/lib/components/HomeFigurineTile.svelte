@@ -3,19 +3,24 @@
     import type { FigurineListItem } from '$lib/types/api';
     import { t } from '$lib/i18n';
     import AppImage from '$lib/components/AppImage.svelte';
+    import OrderModal from '$lib/components/OrderModal.svelte';
     import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
 
     let {
         fig,
         index = 0,
         compact = false,
+        selected = false,
     }: {
         fig: FigurineListItem;
         index?: number;
         compact?: boolean;
+        selected?: boolean;
     } = $props();
 
     let saved = $derived(savedFigurines.has(fig.id));
+    let showOrder = $state(false);
+    let hasFacts = $derived(Boolean(fig.series || fig.material || fig.technique || fig.status === 'available'));
     let statusLabel = $derived(
         fig.status === 'available'
             ? $t('archiveStatusAvailableLabel')
@@ -35,20 +40,35 @@
         e.stopPropagation();
         savedFigurines.toggle(fig.id);
     }
+
+    function openOrder(e: MouseEvent) {
+        e.preventDefault();
+        e.stopPropagation();
+        showOrder = true;
+    }
 </script>
 
-<a
-    href={`/figurines/${fig.id}`}
-    class="tile"
-    class:tile-compact={compact}
-    style="--i:{index}"
-    aria-label="{$t('homeViewFigurine')}: {fig.name}"
->
-    <div class="tile-media">
-        {#if fig.faceImageUrl}
-            <AppImage src={fig.faceImageUrl} thumbUrl={fig.thumbUrl} alt={fig.name} class="tile-img" loading="lazy" />
-        {:else}
-            <div class="tile-placeholder">?</div>
+    <article
+        class="tile"
+        class:tile-compact={compact}
+        class:is-selected={selected}
+        style="--i:{index}"
+    >
+    <div class="tile-media-wrap">
+        <a
+            href={`/figurines/${fig.id}`}
+            class="tile-media"
+            aria-label="{$t('homeViewFigurine')}: {fig.name}"
+        >
+            {#if fig.faceImageUrl}
+                <AppImage src={fig.faceImageUrl} thumbUrl={fig.thumbUrl} alt={fig.name} class="tile-img" loading="lazy" />
+            {:else}
+                <div class="tile-placeholder">?</div>
+            {/if}
+        </a>
+
+        {#if selected}
+            <span class="tile-selected">{$t('homeHeroObjectLabel')}</span>
         {/if}
 
         <button
@@ -72,17 +92,72 @@
 
     <div class="tile-body">
         <div class="tile-head">
-            <h3>{fig.name}</h3>
+            <h3>
+                <a href={`/figurines/${fig.id}`}>{fig.name}</a>
+            </h3>
             {#if fig.year}
-                <span>{fig.year}</span>
+                <span class="tile-year">{fig.year}</span>
             {/if}
         </div>
+
         <p class="tile-meta">
             <span class="tile-dot status-{fig.status}"></span>
             {statusLabel}
         </p>
+
+        {#if hasFacts}
+            <dl class="tile-facts" aria-label="{fig.name} details">
+                {#if fig.series}
+                    <div>
+                        <dt>{$t('archiveSeriesLabel')}</dt>
+                        <dd>{fig.series}</dd>
+                    </div>
+                {/if}
+                {#if fig.material}
+                    <div>
+                        <dt>{$t('archiveMaterialLabel')}</dt>
+                        <dd>{fig.material}</dd>
+                    </div>
+                {:else if fig.technique}
+                    <div>
+                        <dt>{$t('archiveTechniqueLabel')}</dt>
+                        <dd>{fig.technique}</dd>
+                    </div>
+                {/if}
+                {#if fig.status === 'available'}
+                    <div>
+                        <dt>{$t('homeWorkPriceLabel')}</dt>
+                        <dd>{$t('figurinePriceOnRequest')}</dd>
+                    </div>
+                {/if}
+            </dl>
+        {/if}
+
+        <div class="tile-actions">
+            <a href={`/figurines/${fig.id}`} class="tile-open">
+                {$t('cardViewWork')}
+                <svg width="14" height="7" viewBox="0 0 14 7" fill="none" aria-hidden="true">
+                    <path d="M0 3.5H13M13 3.5L9.5 1M13 3.5L9.5 6" stroke="currentColor" stroke-width="1"/>
+                </svg>
+            </a>
+            {#if fig.status === 'available'}
+                <button class="tile-request" type="button" onclick={openOrder}>
+                    {$t('cardRequest')}
+                </button>
+            {/if}
+        </div>
     </div>
-</a>
+</article>
+
+{#if showOrder}
+    <OrderModal
+        isOpen={showOrder}
+        figurineName={fig.name}
+        figurineId={fig.id}
+        mode="request"
+        onClose={() => { showOrder = false; }}
+    />
+{/if}
 
 <style>
     .tile {
@@ -106,11 +181,26 @@
         box-shadow: 0 12px 28px rgba(68,37,20,0.10);
     }
 
+    .tile.is-selected {
+        border-color: rgba(198,95,60,0.42);
+        box-shadow:
+            0 1px 0 rgba(255,255,255,0.75) inset,
+            0 0 0 1px rgba(198,95,60,0.12),
+            0 14px 32px rgba(68,37,20,0.11);
+    }
+
+    .tile-media-wrap,
     .tile-media {
         position: relative;
         aspect-ratio: 4 / 3;
         overflow: hidden;
         background: rgba(201,168,117,0.10);
+    }
+
+    .tile-media {
+        display: block;
+        color: inherit;
+        text-decoration: none;
     }
 
     .tile-compact .tile-media {
@@ -123,8 +213,8 @@
         width: 100%;
         height: 100%;
         display: block;
-        object-fit: cover;
-        object-position: center 42%;
+        object-fit: contain;
+        object-position: center;
     }
 
     .tile-media :global(.tile-img .app-image-main) {
@@ -163,6 +253,26 @@
         backdrop-filter: blur(8px);
         cursor: pointer;
         transition: color 0.2s, background 0.2s, border-color 0.2s, transform 0.2s;
+    }
+
+    .tile-selected {
+        position: absolute;
+        left: 9px;
+        top: 9px;
+        z-index: 2;
+        max-width: calc(100% - 56px);
+        padding: 7px 9px;
+        background: rgba(43,27,19,0.78);
+        color: #fff7ea;
+        font-size: 8px;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        line-height: 1;
+        text-transform: uppercase;
+        backdrop-filter: blur(8px);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
 
     .tile-save:hover,
@@ -206,12 +316,115 @@
         overflow: hidden;
     }
 
-    .tile-head span {
+    .tile-head h3 a {
+        color: inherit;
+        text-decoration: none;
+    }
+
+    .tile-head h3 a:hover {
+        color: var(--copper, #c65f3c);
+    }
+
+    .tile-year {
         flex-shrink: 0;
         padding-top: 3px;
         font-size: 10px;
         letter-spacing: 0.08em;
         color: var(--color-ink-tertiary);
+    }
+
+    .tile-facts {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 7px 10px;
+        margin: 2px 0 0;
+        padding: 9px 0 0;
+        border-top: 1px solid rgba(52,37,28,0.08);
+    }
+
+    .tile-facts div {
+        min-width: 0;
+    }
+
+    .tile-facts dt {
+        margin: 0 0 3px;
+        font-size: 8px;
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--color-ink-tertiary);
+    }
+
+    .tile-facts dd {
+        margin: 0;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-family: 'Cormorant Garamond', Georgia, serif;
+        font-size: 14px;
+        font-style: italic;
+        line-height: 1.15;
+        color: var(--color-ink-secondary);
+    }
+
+    .tile-actions {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-top: 3px;
+    }
+
+    .tile-open,
+    .tile-request {
+        min-height: 30px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        font-family: 'Instrument Sans', system-ui, sans-serif;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.1em;
+        line-height: 1;
+        text-transform: uppercase;
+        text-decoration: none;
+    }
+
+    .tile-open {
+        color: var(--color-ink-secondary);
+        transition: color 0.2s, gap 0.2s;
+    }
+
+    .tile-open:hover {
+        gap: 12px;
+        color: var(--copper, #c65f3c);
+    }
+
+    .tile-request {
+        flex-shrink: 0;
+        padding: 0 10px;
+        border: 1px solid rgba(198,95,60,0.28);
+        background: rgba(255,246,239,0.72);
+        color: var(--copper, #c65f3c);
+        cursor: pointer;
+        transition: background 0.2s, border-color 0.2s, color 0.2s;
+    }
+
+    .tile-request:hover {
+        border-color: rgba(198,95,60,0.52);
+        background: rgba(255,246,239,0.98);
+        color: var(--color-ink-primary);
+    }
+
+    .tile-media:focus-visible,
+    .tile-head h3 a:focus-visible,
+    .tile-save:focus-visible,
+    .tile-open:focus-visible,
+    .tile-request:focus-visible {
+        outline: 2px solid rgba(198,95,60,0.52);
+        outline-offset: 3px;
     }
 
     .tile-meta {
@@ -236,6 +449,22 @@
     .tile-dot.status-available { background: rgba(30,135,75,0.72); }
     .tile-dot.status-reserved { background: rgba(175,120,20,0.74); }
     .tile-dot.status-in_progress { background: rgba(198,95,60,0.72); }
+
+    @media (max-width: 680px) {
+        .tile-facts {
+            grid-template-columns: 1fr;
+        }
+
+        .tile-actions {
+            align-items: stretch;
+            flex-direction: column;
+        }
+
+        .tile-open,
+        .tile-request {
+            width: 100%;
+        }
+    }
 
     @keyframes tile-in {
         from { opacity: 0; transform: translateY(10px); }

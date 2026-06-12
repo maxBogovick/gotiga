@@ -323,7 +323,7 @@
         </div>
 
         <!-- Row 3: Primary filter chips (status + saved + viewed) -->
-        <div class="filter-chips" role="group" aria-label="Primary filter">
+        <div class="filter-chips" role="group" aria-label={$t('archivePrimaryFilters')}>
 
           <!-- All -->
           <button
@@ -566,7 +566,7 @@
                               transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]">
 
                     <span class="text-[rgba(255,249,240,0.62)] text-[8.5px] tracking-[0.16em] uppercase select-none">
-                      View work
+                      {$t('cardActions')}
                     </span>
 
                     <div class="flex items-center gap-1.5">
@@ -617,23 +617,25 @@
                         {/if}
                       </button>
 
-                      <!-- Artifact Request -->
-                      <button
-                        class="flex items-center justify-center w-7 h-7 rounded-full
-                               bg-[rgba(198,95,60,0.18)] border border-[rgba(198,95,60,0.32)]
-                               text-[rgba(255,200,170,0.88)] hover:bg-[rgba(198,95,60,0.38)] hover:border-[rgba(198,95,60,0.55)] hover:text-[rgba(255,224,208,1)]
-                               cursor-pointer transition-all duration-200
-                               translate-y-1 opacity-0 group-hover:translate-y-0 group-hover:opacity-100
-                               [transition-delay:130ms]"
-                        onclick={(e) => openOrder(e, figurine)}
-                        title={$t('cardRequest')}
-                        aria-label={$t('cardRequest')}
-                      >
-                        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-                          <rect x="2" y="4" width="10" height="7" rx="0.5" stroke="currentColor" stroke-width="1"/>
-                          <path d="M2 5L7 8.5L12 5" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
-                        </svg>
-                      </button>
+                      {#if figurine.status === 'available'}
+                        <!-- Artifact Request -->
+                        <button
+                          class="flex items-center justify-center w-7 h-7 rounded-full
+                                 bg-[rgba(198,95,60,0.18)] border border-[rgba(198,95,60,0.32)]
+                                 text-[rgba(255,200,170,0.88)] hover:bg-[rgba(198,95,60,0.38)] hover:border-[rgba(198,95,60,0.55)] hover:text-[rgba(255,224,208,1)]
+                                 cursor-pointer transition-all duration-200
+                                 translate-y-1 opacity-0 group-hover:translate-y-0 group-hover:opacity-100
+                                 [transition-delay:130ms]"
+                          onclick={(e) => openOrder(e, figurine)}
+                          title={$t('cardRequest')}
+                          aria-label={$t('cardRequest')}
+                        >
+                          <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                            <rect x="2" y="4" width="10" height="7" rx="0.5" stroke="currentColor" stroke-width="1"/>
+                            <path d="M2 5L7 8.5L12 5" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+                          </svg>
+                        </button>
+                      {/if}
                     </div>
                   </div>
                 </div>

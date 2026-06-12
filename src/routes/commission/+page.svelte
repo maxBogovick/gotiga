@@ -140,7 +140,7 @@
 
   <div class="page">
     <nav class="back-nav" in:fade={{ duration: 600 }}>
-      <a href="/" class="back-link">← {$t('upcomingBack')}</a>
+      <a href="/" class="back-link">{$t('commissionBackHome')}</a>
     </nav>
 
     {#if isSealed}

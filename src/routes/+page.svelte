@@ -476,34 +476,35 @@
                 {/if}
             </div>
 
-            {#if visibleWorkFigurines.length > 0}
-                <div class="work-grid">
-                    {#each visibleWorkFigurines as fig, i (`${activeWorkFilter}:${fig.id}`)}
-                        <HomeFigurineTile {fig} index={i} />
-                    {/each}
-                </div>
-            {:else}
-                <div class="work-empty">
-                    <p>{activeWorkEmptyText}</p>
-                    <a href={activeWorkEmptyHref} class="all-link">
-                        {activeWorkEmptyCta}
-                        <svg width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
-                            <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
-                        </svg>
-                    </a>
-                </div>
-            {/if}
+            <div class="work-content">
+                {#if visibleWorkFigurines.length > 0}
+                    <div class="work-grid" class:work-grid-short={visibleWorkFigurines.length <= 3}>
+                        {#each visibleWorkFigurines as fig, i (`${activeWorkFilter}:${fig.id}`)}
+                            <HomeFigurineTile {fig} index={i} selected={heroFigurine?.id === fig.id} />
+                        {/each}
+                    </div>
+                {:else}
+                    <div class="work-empty">
+                        <p>{activeWorkEmptyText}</p>
+                        <a href={activeWorkEmptyHref} class="all-link">
+                            {activeWorkEmptyCta}
+                            <svg width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
+                                <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
+                            </svg>
+                        </a>
+                    </div>
+                {/if}
 
-            {#if activeWorkFigurines.length > visibleWorkFigurines.length}
-                <div class="work-more">
-                    <a href={activeWorkHref} class="all-link">
-                        {$t('homeWorksShowAll')}
-                        <svg width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
-                            <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
-                        </svg>
-                    </a>
-                </div>
-            {/if}
+                <aside class="work-guide" aria-labelledby="work-guide-title">
+                    <p class="work-guide-kicker">{$t('homeHowEyebrow')}</p>
+                    <h3 id="work-guide-title">{$t('homeWorksGuideTitle')}</h3>
+                    <p>{$t('homeWorksGuideText')}</p>
+                    <div class="work-guide-actions">
+                        <a href="/commission" class="guide-primary">{$t('commissionInvite')}</a>
+                    </div>
+                </aside>
+            </div>
+
         </section>
 
         <section id="request-path" class="request-path compact-request" aria-labelledby="request-path-title">
@@ -515,11 +516,18 @@
                 <h2 id="request-path-title" class="request-title">{$t('homeHowTitle')}</h2>
             </div>
 
-            <div class="request-flow">
-                <span><b>01</b><strong>{$t('homeHowStep1Title')}</strong><em>{$t('homeHowStep1Text')}</em></span>
-                <span><b>02</b><strong>{$t('homeHowStep2Title')}</strong><em>{$t('homeHowStep2Text')}</em></span>
-                <span><b>03</b><strong>{$t('homeHowStep3Title')}</strong><em>{$t('homeHowStep3Text')}</em></span>
-                <a href="/commission">{$t('commissionInvite')}</a>
+            <div class="request-flow" aria-label={$t('homeHowTitle')}>
+                <div class="request-steps">
+                    <span><b>01</b><strong>{$t('homeHowStep1Title')}</strong><em>{$t('homeHowStep1Text')}</em></span>
+                    <span><b>02</b><strong>{$t('homeHowStep2Title')}</strong><em>{$t('homeHowStep2Text')}</em></span>
+                    <span><b>03</b><strong>{$t('homeHowStep3Title')}</strong><em>{$t('homeHowStep3Text')}</em></span>
+                </div>
+
+                <aside class="request-custom">
+                    <p>{$t('homeCustomRequestTitle')}</p>
+                    <span>{$t('homeCustomRequestText')}</span>
+                    <a href="/commission">{$t('commissionInvite')}</a>
+                </aside>
             </div>
         </section>
 
@@ -1308,10 +1316,94 @@
         outline-offset: 2px;
     }
 
+    .work-content {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+        gap: clamp(16px, 2vw, 28px);
+        align-items: start;
+    }
+
     .work-grid {
         display: grid;
-        grid-template-columns: repeat(5, minmax(0, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
         gap: clamp(10px, 1.2vw, 16px);
+    }
+
+    .work-grid-short {
+        grid-template-columns: repeat(auto-fit, minmax(250px, 320px));
+    }
+
+    .work-guide {
+        display: grid;
+        gap: 12px;
+        padding: 18px;
+        border: 1px solid rgba(198,95,60,0.20);
+        background:
+            linear-gradient(180deg, rgba(255,249,240,0.78), rgba(255,252,246,0.52));
+        box-shadow: 0 1px 0 rgba(255,255,255,0.78) inset;
+    }
+
+    .work-guide-kicker {
+        margin: 0;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        line-height: 1.2;
+        text-transform: uppercase;
+        color: var(--copper);
+    }
+
+    .work-guide h3 {
+        margin: 0;
+        font-family: 'Cormorant Garamond', Georgia, serif;
+        font-size: clamp(25px, 2vw, 33px);
+        font-weight: 300;
+        line-height: 1;
+        color: var(--ink);
+    }
+
+    .work-guide p:not(.work-guide-kicker) {
+        margin: 0;
+        font-family: 'Cormorant Garamond', Georgia, serif;
+        font-size: 16px;
+        font-style: italic;
+        line-height: 1.38;
+        color: var(--color-ink-secondary);
+    }
+
+    .work-guide-actions {
+        display: grid;
+        gap: 9px;
+        margin-top: 2px;
+    }
+
+    .guide-primary {
+        min-height: 36px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0 12px;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.1em;
+        line-height: 1.2;
+        text-align: center;
+        text-transform: uppercase;
+        text-decoration: none;
+    }
+
+    .guide-primary {
+        background: var(--ink);
+        color: var(--cream2);
+    }
+
+    .guide-primary:hover {
+        background: var(--mid);
+    }
+
+    .guide-primary:focus-visible {
+        outline: 2px solid rgba(198,95,60,0.52);
+        outline-offset: 3px;
     }
 
     .work-empty {
@@ -1327,12 +1419,6 @@
         font-size: 19px;
         font-style: italic;
         color: var(--muted);
-    }
-
-    .work-more {
-        display: flex;
-        justify-content: center;
-        margin-top: clamp(22px, 3vw, 38px);
     }
 
     .all-link {
@@ -1379,19 +1465,25 @@
 
     .request-flow {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 10px;
+        grid-template-columns: minmax(0, 1fr) minmax(240px, 300px);
+        gap: 14px;
     }
 
-    .request-flow span,
-    .request-flow a {
-        min-height: 64px;
+    .request-steps {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+    }
+
+    .request-steps span,
+    .request-custom {
+        min-height: 96px;
         display: flex;
-        align-items: center;
-        gap: 10px;
-        padding: 10px 12px;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 14px 15px;
         border: 1px solid rgba(52,37,28,0.12);
-        background: rgba(255,249,240,0.46);
+        background: rgba(255,249,240,0.58);
         color: var(--color-ink-secondary);
         font-size: 11px;
         letter-spacing: 0.09em;
@@ -1400,15 +1492,15 @@
         text-decoration: none;
     }
 
-    .request-flow span {
+    .request-steps span {
         display: grid;
         grid-template-columns: auto 1fr;
         align-items: start;
-        column-gap: 10px;
-        row-gap: 3px;
+        column-gap: 12px;
+        row-gap: 6px;
     }
 
-    .request-flow b {
+    .request-steps b {
         grid-row: span 2;
         font-family: 'Cormorant Garamond', serif;
         font-size: 20px;
@@ -1417,35 +1509,68 @@
         color: var(--copper);
     }
 
-    .request-flow strong {
+    .request-steps strong {
         font-weight: 600;
         color: var(--ink);
     }
 
-    .request-flow em {
+    .request-steps em {
         display: block;
-        max-width: 26ch;
-        overflow: hidden;
-        white-space: nowrap;
-        text-overflow: ellipsis;
+        max-width: 30ch;
         font-family: 'Cormorant Garamond', serif;
         font-size: 13px;
         font-style: italic;
         letter-spacing: 0;
+        line-height: 1.3;
         text-transform: none;
         color: var(--muted);
     }
 
-    .request-flow a {
-        justify-content: center;
-        color: var(--mid);
+    .request-custom {
+        display: grid;
+        align-content: start;
+        gap: 8px;
         border-color: rgba(198,95,60,0.24);
+        background: rgba(255,246,239,0.68);
+        color: var(--color-ink-secondary);
     }
 
-    .request-flow a:hover {
+    .request-custom p {
+        margin: 0;
+        color: var(--ink);
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.09em;
+        line-height: 1.25;
+        text-transform: uppercase;
+    }
+
+    .request-custom span {
+        font-family: 'Cormorant Garamond', serif;
+        font-size: 14px;
+        font-style: italic;
+        letter-spacing: 0;
+        line-height: 1.3;
+        text-transform: none;
+        color: var(--muted);
+    }
+
+    .request-custom a {
+        width: fit-content;
+        margin-top: 3px;
+        color: var(--mid);
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.1em;
+        line-height: 1.1;
+        text-transform: uppercase;
+        text-decoration: none;
+        border-bottom: 1px solid rgba(198,95,60,0.26);
+    }
+
+    .request-custom a:hover {
         color: var(--copper);
-        border-color: rgba(198,95,60,0.44);
-        background: rgba(255,246,239,0.86);
+        border-color: rgba(198,95,60,0.48);
     }
 
     /* ── RESPONSIVE ──────────────────────────────── */
@@ -1467,7 +1592,13 @@
             grid-template-columns: 1fr;
         }
 
-        .work-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        .work-content {
+            grid-template-columns: 1fr;
+        }
+
+        .work-guide {
+            order: -1;
+        }
 
         .request-path {
             grid-template-columns: 1fr;
@@ -1475,7 +1606,11 @@
         }
 
         .request-flow {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
+            grid-template-columns: 1fr;
+        }
+
+        .request-steps {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
         }
     }
 
@@ -1557,13 +1692,21 @@
             flex: 0 0 auto;
         }
 
-        .work-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+        .work-grid,
+        .work-grid-short {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+        }
 
         .request-path {
             padding: 24px 16px 70px;
         }
 
         .request-flow {
+            grid-template-columns: 1fr;
+        }
+
+        .request-steps {
             grid-template-columns: 1fr;
         }
 
@@ -1580,6 +1723,10 @@
 
     @media (max-width: 460px) {
         .work-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .work-grid-short {
             grid-template-columns: 1fr;
         }
     }

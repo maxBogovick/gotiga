@@ -19,11 +19,14 @@
   let pathname = $derived(page.url.pathname);
   let panelOpen = $state(false);
   let panelRef = $state<HTMLElement | null>(null);
+  let mobileNavOpen = $state(false);
 
   function isActive(href: string) {
     return pathname === href || pathname.startsWith(`${href}/`);
   }
 
+  function toggleMobileNav() { mobileNavOpen = !mobileNavOpen; }
+  function closeMobileNav() { mobileNavOpen = false; }
   function togglePanel() { panelOpen = !panelOpen; }
   function closePanel()  { panelOpen = false; }
 
@@ -86,6 +89,11 @@
     document.removeEventListener('click', handleOutside, { capture: true });
     document.removeEventListener('click', handleUserOutside, { capture: true });
   });
+
+  $effect(() => {
+    void pathname;
+    mobileNavOpen = false;
+  });
 </script>
 
 <header class="site-header">
@@ -94,13 +102,28 @@
     <span class="brand-sub">Cabinet of Gothic Miniatures</span>
   </a>
 
-  <nav class="nav" aria-label="Primary">
+  <button
+    class="mobile-menu-btn"
+    class:is-open={mobileNavOpen}
+    type="button"
+    onclick={toggleMobileNav}
+    aria-label={$t('navMenu')}
+    aria-expanded={mobileNavOpen}
+    aria-controls="site-primary-nav"
+  >
+    <span></span>
+    <span></span>
+    <span></span>
+  </button>
+
+  <nav id="site-primary-nav" class="nav" class:is-open={mobileNavOpen} aria-label="Primary">
     {#each links as link}
       <a
         href={link.href}
         class="nav-link"
         class:is-active={isActive(link.href)}
         aria-current={isActive(link.href) ? 'page' : undefined}
+        onclick={closeMobileNav}
       >
         {link.label}
       </a>
@@ -232,11 +255,12 @@
       {/if}
     </div>
 
-    <a href="/admin" class="key-link" aria-label="Admin">
+    <a href="/admin" class="key-link" aria-label={$t('navAdmin')} title={$t('navAdmin')}>
       <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true">
-        <circle cx="4.5" cy="4.5" r="3" stroke="currentColor" stroke-width="1"/>
-        <path d="M7 7L11.5 11.5" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
-        <path d="M9.5 9L11 7.5" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+        <circle cx="4.5" cy="4.5" r="2.7" stroke="currentColor" stroke-width="1"/>
+        <path d="M6.6 6.6L11.5 11.5" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+        <path d="M9.1 9.1L10.6 7.6" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+        <path d="M10.6 10.6L12 9.2" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
       </svg>
     </a>
   </div>
@@ -330,6 +354,46 @@
     display: flex;
     align-items: center;
     margin-left: auto;
+  }
+
+  .mobile-menu-btn {
+    display: none;
+    width: 34px;
+    height: 34px;
+    margin-left: auto;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 4px;
+    border: 1px solid color-mix(in srgb, var(--color-ink-primary) 12%, transparent);
+    background: rgba(255,249,240,0.58);
+    color: var(--color-ink-secondary);
+    cursor: pointer;
+  }
+
+  .mobile-menu-btn span {
+    width: 15px;
+    height: 1px;
+    background: currentColor;
+    transform-origin: center;
+    transition: transform 0.2s ease, opacity 0.2s ease;
+  }
+
+  .mobile-menu-btn.is-open span:nth-child(1) {
+    transform: translateY(5px) rotate(45deg);
+  }
+
+  .mobile-menu-btn.is-open span:nth-child(2) {
+    opacity: 0;
+  }
+
+  .mobile-menu-btn.is-open span:nth-child(3) {
+    transform: translateY(-5px) rotate(-45deg);
+  }
+
+  .mobile-menu-btn:focus-visible {
+    outline: 2px solid rgba(198,95,60,0.52);
+    outline-offset: 3px;
   }
 
   .nav-link {
@@ -733,11 +797,49 @@
 
     .brand-name { font-size: 17px; }
 
-    .brand-sub,
-    .nav { display: none; }
+    .brand-sub { display: none; }
+
+    .mobile-menu-btn {
+      display: flex;
+    }
+
+    .nav {
+      position: fixed;
+      left: 0;
+      right: 0;
+      top: 58px;
+      display: grid;
+      margin-left: 0;
+      padding: 8px 16px 14px;
+      background: rgba(248,241,231,0.98);
+      border-bottom: 1px solid var(--border);
+      box-shadow: 0 18px 34px rgba(52,37,28,0.10);
+      transform: translateY(-8px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+
+    .nav.is-open {
+      transform: translateY(0);
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .nav-link {
+      height: 42px;
+      padding: 0;
+      border-bottom: 1px solid color-mix(in srgb, var(--color-ink-primary) 8%, transparent);
+    }
+
+    .nav-link::after {
+      left: 0;
+      right: auto;
+      width: 38px;
+    }
 
     .header-end {
-      margin-left: auto;
+      margin-left: 12px;
       padding-left: 14px;
       gap: 10px;
     }

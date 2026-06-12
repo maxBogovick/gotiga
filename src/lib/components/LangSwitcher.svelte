@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { lang, setLang, type Lang } from '$lib/i18n';
+  import { lang, setLang, t, type Lang } from '$lib/i18n';
 
   // optional: a variant for the dark top-bar vs a light page context
   let { variant = 'light' }: { variant?: 'dark' | 'light' } = $props();
@@ -10,7 +10,7 @@
   const sepClass = $derived(variant === 'dark' ? 'text-[#fff9f0]/40' : 'text-[#7c6554]/48');
 </script>
 
-<div class="flex items-center gap-0" role="group" aria-label="Language">
+<div class="flex items-center gap-0" role="group" aria-label={$t('navLanguage')}>
   {#each (['en', 'ru'] as Lang[]) as l, i}
     {#if i > 0}
       <span class="{sepClass} select-none text-[10px]">/</span>
