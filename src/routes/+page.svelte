@@ -62,8 +62,15 @@
     let activeWorkFilter = $state<WorkFilter>('available');
     let heroObjectName = $derived(homeContent.heroCaptionTitle?.trim() || heroFigurine?.name || homeContent.title?.trim() || '');
     let heroObjectMeta = $derived(homeContent.heroCaptionMeta?.trim() || $t('homeHeroObjectMeta'));
-    let heroObjectCta = $derived(homeContent.heroCaptionCta?.trim() || (heroFigurine ? $t('homeHeroObjectOpen') : $t('homeSecondaryCta')));
+    let heroObjectCta = $derived(heroFigurine ? $t('homeHeroObjectOpen') : (homeContent.heroCaptionCta?.trim() || $t('homeSecondaryCta')));
     let titleWords = $derived(titleText.split(/\s+/).filter(Boolean));
+    let titleLines = $derived((() => {
+        if (titleWords.length <= 2) return [{ words: titleWords, offset: 0 }];
+        return [
+            { words: titleWords.slice(0, 1), offset: 0 },
+            { words: titleWords.slice(1), offset: 1 },
+        ];
+    })());
     let showStats = $derived(availableTotal > 0 || collectionTotal >= 3);
     let heroObjectHref = $derived(heroFigurine ? `/figurines/${heroFigurine.id}` : '/figurines');
     let showHeroCaption = $derived(Boolean(heroObjectName));
@@ -134,32 +141,6 @@
     // Count-up stats
     const availDisplay = tweened(0, { duration: 1100, easing: cubicOut });
     const collDisplay = tweened(0, { duration: 1100, easing: cubicOut });
-
-    // Magnetic hover action for CTAs
-    function magnetic(node: HTMLElement, strength = 0.3) {
-        if (
-            typeof window !== 'undefined' &&
-            (window.matchMedia('(hover: none)').matches || window.matchMedia('(prefers-reduced-motion: reduce)').matches)
-        ) {
-            return { destroy() {} };
-        }
-
-        function move(e: MouseEvent) {
-            const r = node.getBoundingClientRect();
-            const x = (e.clientX - r.left - r.width / 2) * strength;
-            const y = (e.clientY - r.top - r.height / 2) * (strength + 0.1);
-            node.style.transform = `translate(${x}px, ${y}px)`;
-        }
-        function leave() { node.style.transform = ''; }
-        node.addEventListener('mousemove', move);
-        node.addEventListener('mouseleave', leave);
-        return {
-            destroy() {
-                node.removeEventListener('mousemove', move);
-                node.removeEventListener('mouseleave', leave);
-            }
-        };
-    }
 
     let imageUrl = $state('/images/cabinet-room.jpg');
 
@@ -350,26 +331,29 @@
                 </p>
 
                 <h1 id="home-title" class="hero-title" aria-label={titleText}>
-                    {#each titleWords as word, i}
-                        <span
-                            class="title-word"
-                            class:accent={i === titleWords.length - 1}
-                            style="animation-delay:{0.12 + i * 0.08}s"
-                            aria-hidden="true"
-                        >{word}</span>
+                    {#each titleLines as line}
+                        <span class="title-line" aria-hidden="true">
+                            {#each line.words as word, i}
+                                <span
+                                    class="title-word"
+                                    class:accent={line.offset + i === titleWords.length - 1}
+                                    style="animation-delay:{0.12 + (line.offset + i) * 0.08}s"
+                                >{word}</span>
+                            {/each}
+                        </span>
                     {/each}
                 </h1>
 
                 <p class="hero-lead">{leadText}</p>
 
                 <div class="hero-ctas">
-                    <a href={primaryCtaHref} class="cta-primary" use:magnetic={0.28}>
+                    <a href={primaryCtaHref} class="cta-primary">
                         {primaryCtaText}
                         <svg class="cta-arrow" width="18" height="9" viewBox="0 0 18 9" fill="none">
                             <path d="M0 4.5H17M17 4.5L12.5 1M17 4.5L12.5 8" stroke="currentColor" stroke-width="1"/>
                         </svg>
                     </a>
-                    <a href={secondaryCtaHref} class="cta-ghost" use:magnetic={0.22}>{secondaryCtaText}</a>
+                    <a href={secondaryCtaHref} class="cta-ghost">{secondaryCtaText}</a>
                 </div>
 
                 <div class="hero-proof" aria-label="Gotiga">
@@ -552,7 +536,7 @@
 
             {#if visibleWorkFigurines.length > 0}
                 <div class="work-grid">
-                    {#each visibleWorkFigurines as fig, i}
+                    {#each visibleWorkFigurines as fig, i (`${activeWorkFilter}:${fig.id}`)}
                         <HomeFigurineTile {fig} index={i} />
                     {/each}
                 </div>
@@ -717,11 +701,11 @@
     /* ── HERO LAYOUT ─────────────────────────────── */
     .hero {
         display: grid;
-        grid-template-columns: minmax(360px, 0.84fr) minmax(520px, 1.16fr);
-        gap: clamp(30px, 4.2vw, 72px);
+        grid-template-columns: minmax(420px, 0.72fr) minmax(520px, 1.28fr);
+        gap: clamp(28px, 3.8vw, 62px);
         align-items: center;
-        min-height: min(600px, calc(100svh - var(--site-header-height, 68px)));
-        padding: clamp(28px, 4.2vw, 52px) clamp(20px, 4.5vw, 64px) clamp(18px, 2.5vw, 32px);
+        min-height: auto;
+        padding: clamp(22px, 3.2vw, 40px) clamp(20px, 4.5vw, 64px) clamp(10px, 1.5vw, 20px);
         max-width: 1520px;
         margin: 0 auto;
     }
@@ -740,7 +724,7 @@
         letter-spacing: 0.22em;
         text-transform: uppercase;
         color: var(--muted2);
-        margin-bottom: 18px;
+        margin-bottom: 12px;
     }
 
     .eyebrow-rule {
@@ -755,33 +739,38 @@
     /* ── H1: word-based reveal, so Russian titles wrap like typography ─────── */
     .hero-title {
         font-family: 'Cormorant Garamond', serif;
-        font-size: clamp(48px, 4.65vw, 78px);
+        font-size: clamp(42px, 3.8vw, 64px);
         font-weight: 300;
-        line-height: 0.96;
+        line-height: 0.94;
         letter-spacing: 0;
         color: var(--ink);
-        max-width: 10.8ch;
-        margin: 0 0 18px;
+        max-width: min(620px, 100%);
+        margin: 0 0 14px;
         word-break: keep-all;
-        overflow-wrap: anywhere;
+        overflow-wrap: normal;
         hyphens: none;
-        display: flex;
-        flex-wrap: wrap;
-        column-gap: 0.18em;
-        row-gap: 0.04em;
+        display: grid;
+        gap: 0.02em;
         overflow: visible;
         padding-bottom: 0.12em;
     }
 
     .hero-title:lang(ru) {
-        font-size: clamp(44px, 4.3vw, 72px);
+        font-size: clamp(40px, 3.6vw, 60px);
+    }
+
+    .title-line {
+        display: flex;
+        flex-wrap: wrap;
+        column-gap: 0.18em;
+        row-gap: 0.02em;
     }
 
     .title-word {
         display: inline-block;
-        max-width: 100%;
-        overflow-wrap: anywhere;
-        white-space: normal;
+        max-width: none;
+        overflow-wrap: normal;
+        white-space: nowrap;
         transform: translateY(112%) rotate(7deg);
         opacity: 0;
         will-change: transform, opacity;
@@ -816,13 +805,13 @@
 
     .hero-lead {
         font-family: 'Cormorant Garamond', serif;
-        font-size: clamp(16px, 1.55vw, 20px);
+        font-size: clamp(15px, 1.35vw, 18px);
         font-weight: 300;
         font-style: italic;
-        line-height: 1.46;
+        line-height: 1.42;
         color: rgba(52,37,28,0.76);
         max-width: 390px;
-        margin-bottom: 18px;
+        margin-bottom: 14px;
     }
 
     /* ── CTAs ────────────────────────────────────── */
@@ -831,44 +820,50 @@
         align-items: center;
         gap: 14px;
         flex-wrap: wrap;
-        margin-bottom: 14px;
+        margin-bottom: 12px;
     }
 
     .cta-primary {
         display: inline-flex;
         align-items: center;
         gap: 12px;
-        height: 44px;
-        padding: 0 22px;
+        height: 40px;
+        padding: 0 19px;
         background: var(--ink);
         color: var(--cream2);
         font-size: 9.5px;
         letter-spacing: 0.16em;
         text-transform: uppercase;
         text-decoration: none;
-        transition: background 0.28s, gap 0.28s, transform 0.35s var(--ease);
-        will-change: transform;
+        transition:
+            background 0.22s ease,
+            box-shadow 0.22s ease,
+            transform 0.12s ease;
         clip-path: polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 7px 100%, 0 calc(100% - 7px));
     }
 
     .cta-arrow {
         flex-shrink: 0;
-        transition: transform 0.28s;
+        transition: transform 0.22s ease;
     }
 
     .cta-primary:hover {
         background: var(--mid);
-        gap: 18px;
+        box-shadow: 0 10px 24px rgba(68,37,20,0.14);
     }
 
     .cta-primary:hover .cta-arrow {
-        transform: translateX(3px);
+        transform: translateX(4px);
+    }
+
+    .cta-primary:active {
+        transform: translateY(1px);
     }
 
     .cta-ghost {
         display: inline-flex;
         align-items: center;
-        min-height: 44px;
+        min-height: 40px;
         padding: 0 4px;
         color: color-mix(in srgb, var(--brown) 72%, transparent);
         font-size: 9.5px;
@@ -876,8 +871,10 @@
         text-transform: uppercase;
         text-decoration: none;
         border-bottom: 1px solid color-mix(in srgb, var(--color-ink-primary) 18%, transparent);
-        transition: color 0.28s, border-color 0.28s, transform 0.35s var(--ease);
-        will-change: transform;
+        transition:
+            color 0.22s ease,
+            border-color 0.22s ease,
+            transform 0.12s ease;
     }
 
     .cta-ghost:hover {
@@ -885,14 +882,18 @@
         border-color: rgba(198,95,60,0.5);
     }
 
+    .cta-ghost:active {
+        transform: translateY(1px);
+    }
+
     .hero-proof {
         display: flex;
         align-items: center;
         flex-wrap: wrap;
-        gap: 8px 14px;
+        gap: 6px 12px;
         max-width: 520px;
         color: rgba(52,37,28,0.60);
-        font-size: 8.5px;
+        font-size: 8px;
         letter-spacing: 0.14em;
         line-height: 1.45;
         text-transform: uppercase;
@@ -915,8 +916,8 @@
 
     .hero-work-strip {
         max-width: 540px;
-        margin-top: 16px;
-        padding-top: 14px;
+        margin-top: 12px;
+        padding-top: 10px;
         border-top: 1px solid rgba(52,37,28,0.10);
     }
 
@@ -925,7 +926,7 @@
         align-items: center;
         justify-content: space-between;
         gap: 14px;
-        margin-bottom: 10px;
+        margin-bottom: 8px;
         font-size: 8.5px;
         letter-spacing: 0.16em;
         line-height: 1.3;
@@ -948,13 +949,13 @@
     .hero-work-link {
         min-width: 0;
         display: grid;
-        grid-template-columns: 42px minmax(0, 1fr);
+        grid-template-columns: 50px minmax(0, 1fr);
         align-items: center;
-        gap: 9px;
-        min-height: 54px;
-        padding: 5px;
+        gap: 10px;
+        min-height: 62px;
+        padding: 6px;
         border: 1px solid rgba(52,37,28,0.12);
-        background: rgba(255,249,240,0.58);
+        background: rgba(255,249,240,0.70);
         color: rgba(52,37,28,0.78);
         text-decoration: none;
         transition: border-color 0.2s, background 0.2s, transform 0.2s;
@@ -970,8 +971,8 @@
     .hero-work-link :global(.hero-work-img .app-image-main),
     .hero-work-link :global(.hero-work-img .app-image-thumb),
     .hero-work-placeholder {
-        width: 42px;
-        height: 42px;
+        width: 50px;
+        height: 50px;
         display: block;
         object-fit: cover;
         object-position: center 42%;
@@ -996,7 +997,7 @@
         white-space: nowrap;
         text-overflow: ellipsis;
         font-family: 'Cormorant Garamond', serif;
-        font-size: 18px;
+        font-size: 19px;
         font-weight: 400;
         line-height: 1;
     }
@@ -1034,14 +1035,14 @@
         letter-spacing: 0.18em;
         text-transform: uppercase;
         color: var(--muted2);
-        padding-bottom: 10px;
+        padding-bottom: 8px;
         pointer-events: none;
     }
 
     .img-frame {
         position: relative;
         width: 100%;
-        height: clamp(300px, 38svh, 460px);
+        height: clamp(260px, 31svh, 360px);
         overflow: hidden;
         transform-style: preserve-3d;
         transition: filter 0.3s;
@@ -1114,11 +1115,11 @@
         width: 16px; height: 16px;
         pointer-events: none;
         z-index: 10;
-        opacity: 0.45;
+        opacity: 0.24;
     }
 
-    .fc-tl { top: 32px; left: 0; border-top: 1px solid var(--copper); border-left: 1px solid var(--copper); }
-    .fc-tr { top: 32px; right: 0; border-top: 1px solid var(--copper); border-right: 1px solid var(--copper); }
+    .fc-tl { top: 30px; left: 0; border-top: 1px solid var(--copper); border-left: 1px solid var(--copper); }
+    .fc-tr { top: 30px; right: 0; border-top: 1px solid var(--copper); border-right: 1px solid var(--copper); }
     .fc-bl { bottom: 0; left: 0; border-bottom: 1px solid var(--copper); border-left: 1px solid var(--copper); }
     .fc-br { bottom: 0; right: 0; border-bottom: 1px solid var(--copper); border-right: 1px solid var(--copper); }
 
@@ -1208,6 +1209,12 @@
         position: absolute;
         inset: 0;
         z-index: 20;
+        opacity: 0.58;
+        transition: opacity 0.25s;
+    }
+
+    .img-frame:hover .zones-layer {
+        opacity: 0.92;
     }
 
     .zone {
@@ -1225,7 +1232,7 @@
         background: radial-gradient(ellipse at center, rgba(198,95,60,0.09) 0%, transparent 70%);
         animation: pulse 3.8s ease-in-out infinite;
         animation-delay: var(--di);
-        opacity: 0.45;
+        opacity: 0.22;
         pointer-events: none;
     }
 
@@ -1243,10 +1250,10 @@
         pointer-events: none;
     }
 
-    .zc-tl { top: 0; left: 0; border-top: 1.5px solid rgba(198,95,60,0.45); border-left: 1.5px solid rgba(198,95,60,0.45); }
-    .zc-tr { top: 0; right: 0; border-top: 1.5px solid rgba(198,95,60,0.45); border-right: 1.5px solid rgba(198,95,60,0.45); }
-    .zc-bl { bottom: 0; left: 0; border-bottom: 1.5px solid rgba(198,95,60,0.45); border-left: 1.5px solid rgba(198,95,60,0.45); }
-    .zc-br { bottom: 0; right: 0; border-bottom: 1.5px solid rgba(198,95,60,0.45); border-right: 1.5px solid rgba(198,95,60,0.45); }
+    .zc-tl { top: 0; left: 0; border-top: 1px solid rgba(198,95,60,0.30); border-left: 1px solid rgba(198,95,60,0.30); }
+    .zc-tr { top: 0; right: 0; border-top: 1px solid rgba(198,95,60,0.30); border-right: 1px solid rgba(198,95,60,0.30); }
+    .zc-bl { bottom: 0; left: 0; border-bottom: 1px solid rgba(198,95,60,0.30); border-left: 1px solid rgba(198,95,60,0.30); }
+    .zc-br { bottom: 0; right: 0; border-bottom: 1px solid rgba(198,95,60,0.30); border-right: 1px solid rgba(198,95,60,0.30); }
 
     .zone:hover .zc {
         width: 22px; height: 22px;
@@ -1454,46 +1461,46 @@
 
     /* ── CONTEXT SECTION ─────────────────────────── */
     .context-section {
-        padding: clamp(22px, 3.2vw, 44px) clamp(20px, 4.5vw, 64px) clamp(46px, 6vw, 82px);
+        padding: clamp(14px, 2vw, 26px) clamp(20px, 4.5vw, 64px) clamp(42px, 5.5vw, 72px);
         max-width: 1520px;
         margin: 0 auto;
     }
 
     .context-hd {
         display: grid;
-        grid-template-columns: minmax(280px, 0.82fr) minmax(320px, 1.18fr);
-        gap: clamp(20px, 3vw, 48px);
-        align-items: end;
-        margin-bottom: clamp(16px, 2vw, 24px);
-        padding-bottom: clamp(14px, 2vw, 22px);
+        grid-template-columns: minmax(220px, 0.42fr) minmax(420px, 0.58fr);
+        gap: clamp(18px, 2.4vw, 36px);
+        align-items: center;
+        margin-bottom: 12px;
+        padding-bottom: 12px;
         border-bottom: 1px solid var(--border);
     }
 
     .context-title {
         font-family: 'Cormorant Garamond', serif;
-        font-size: clamp(32px, 3.4vw, 52px);
+        font-size: clamp(30px, 2.8vw, 42px);
         font-weight: 300;
-        line-height: 0.92;
+        line-height: 0.96;
         color: var(--ink);
-        margin-top: 10px;
+        margin-top: 6px;
     }
 
     .context-side {
-        display: flex;
-        flex-direction: column;
-        align-items: flex-start;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: end;
         gap: 18px;
-        padding-bottom: 4px;
+        padding-bottom: 0;
     }
 
     .context-desc {
         font-family: 'Cormorant Garamond', serif;
-        font-size: 17px;
+        font-size: 16px;
         font-weight: 300;
         font-style: italic;
-        line-height: 1.5;
+        line-height: 1.42;
         color: var(--muted);
-        max-width: 440px;
+        max-width: 520px;
     }
 
     .work-tabs {
@@ -1501,7 +1508,7 @@
         align-items: center;
         flex-wrap: wrap;
         gap: 8px;
-        margin-bottom: clamp(18px, 2.4vw, 30px);
+        margin-bottom: 12px;
     }
 
     .work-tabs button {
@@ -1684,16 +1691,19 @@
         .hero {
             grid-template-columns: 1fr;
             min-height: auto;
-            padding-top: 50px;
-            gap: 28px;
+            padding-top: 36px;
+            gap: 22px;
         }
 
         .hero-visual { order: 2; }
         .hero-text { order: 1; max-width: 580px; }
 
-        .img-frame { height: min(42svh, 430px); }
+        .img-frame { height: min(34svh, 360px); }
 
-        .context-hd { grid-template-columns: 1fr; }
+        .context-hd,
+        .context-side {
+            grid-template-columns: 1fr;
+        }
 
         .saved-rail {
             grid-template-columns: 1fr auto;
@@ -1722,13 +1732,13 @@
         }
 
         .hero {
-            padding: 38px 16px 22px;
-            gap: 24px;
+            padding: 28px 16px 18px;
+            gap: 18px;
         }
 
         .hero-title,
         .hero-title:lang(ru) {
-            font-size: clamp(40px, 12vw, 60px);
+            font-size: clamp(38px, 11vw, 56px);
             line-height: 0.98;
         }
 
@@ -1777,7 +1787,7 @@
             font-size: 16px;
         }
 
-        .img-frame { height: 34svh; min-height: 260px; }
+        .img-frame { height: 30svh; min-height: 230px; }
 
         .scroll-cue { display: none; }
 
@@ -1811,11 +1821,11 @@
 
         .context-section {
             padding-inline: 16px;
-            padding-top: 28px;
+            padding-top: 20px;
             padding-bottom: 54px;
         }
 
-        .context-title { font-size: clamp(32px, 9vw, 52px); }
+        .context-title { font-size: clamp(30px, 8vw, 44px); }
         .context-desc { font-size: 16px; }
 
         .work-tabs {

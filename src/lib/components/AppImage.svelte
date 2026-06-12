@@ -21,19 +21,18 @@
     ...rest
   }: Props = $props();
 
-  function deriveWebp(url: string): string | null {
-    if (!url || url.startsWith('http') || url.endsWith('.webp')) return null;
-    const derived = url.replace(/\.(jpe?g|png)(\?.*)?$/i, '.webp$2');
-    return derived !== url ? derived : null;
-  }
-
-  let webpSrc = $derived(src ? deriveWebp(src) : null);
   let loaded  = $state(false);
+  let failed  = $state(false);
 
   // Reset on src change
-  $effect(() => { void src; loaded = false; });
+  $effect(() => {
+    void src;
+    loaded = false;
+    failed = false;
+  });
 
   function onLoad() { loaded = true; }
+  function onError() { failed = true; }
 </script>
 
 {#if src}
@@ -49,10 +48,7 @@
       />
     {/if}
 
-    <picture class="app-image-picture" class:app-image-picture--loaded={loaded}>
-      {#if webpSrc}
-        <source srcset={webpSrc} type="image/webp" />
-      {/if}
+    <picture class="app-image-picture" class:app-image-picture--loaded={loaded || failed}>
       <img
         {src}
         {alt}
@@ -61,6 +57,7 @@
         fetchpriority={fetchpriority}
         class="app-image-main"
         onload={onLoad}
+        onerror={onError}
       />
     </picture>
   </div>

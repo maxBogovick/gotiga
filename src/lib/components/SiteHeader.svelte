@@ -374,9 +374,9 @@
   .header-end {
     display: flex;
     align-items: center;
-    gap: 12px;
-    margin-left: 18px;
-    padding-left: 16px;
+    gap: 10px;
+    margin-left: 16px;
+    padding-left: 14px;
     border-left: 1px solid color-mix(in srgb, var(--color-ink-primary) 14%, transparent);
   }
 
@@ -411,15 +411,15 @@
 
   .badge {
     position: absolute;
-    top: 0;
-    right: 0;
-    min-width: 14px;
-    height: 14px;
+    top: -2px;
+    right: -2px;
+    min-width: 13px;
+    height: 13px;
     padding: 0 3px;
     background: var(--copper);
     color: #f8f1e7;
     font-family: 'Instrument Sans', system-ui, sans-serif;
-    font-size: 8px;
+    font-size: 7.5px;
     font-weight: 600;
     letter-spacing: 0;
     border-radius: 7px;

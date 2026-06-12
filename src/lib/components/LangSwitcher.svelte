@@ -4,10 +4,10 @@
   // optional: a variant for the dark top-bar vs a light page context
   let { variant = 'light' }: { variant?: 'dark' | 'light' } = $props();
 
-  const baseClass = 'text-[10px] tracking-[0.15em] font-[\'Inter\'] uppercase transition-colors duration-200 px-1.5 py-0.5';
+  const baseClass = 'text-[10px] tracking-[0.15em] uppercase transition-colors duration-200 px-1.5 py-0.5';
   const activeClass = $derived(variant === 'dark' ? 'text-[#fff9f0]' : 'text-[#34251c]');
-  const inactiveClass = $derived(variant === 'dark' ? 'text-[#fff9f0]/55 hover:text-[#fff9f0]/85' : 'text-[#7c6554]/55 hover:text-[#5f4636]');
-  const sepClass = $derived(variant === 'dark' ? 'text-[#fff9f0]/30' : 'text-[#7c6554]/30');
+  const inactiveClass = $derived(variant === 'dark' ? 'text-[#fff9f0]/65 hover:text-[#fff9f0]/90' : 'text-[#7c6554]/72 hover:text-[#5f4636]');
+  const sepClass = $derived(variant === 'dark' ? 'text-[#fff9f0]/40' : 'text-[#7c6554]/48');
 </script>
 
 <div class="flex items-center gap-0" role="group" aria-label="Language">
