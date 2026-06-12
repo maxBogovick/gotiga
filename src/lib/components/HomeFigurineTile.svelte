@@ -144,7 +144,7 @@
         place-items: center;
         font-family: 'Cormorant Garamond', Georgia, serif;
         font-size: 30px;
-        color: rgba(95,70,54,0.36);
+        color: var(--color-ink-tertiary);
     }
 
     .tile-save {
@@ -159,7 +159,7 @@
         border: 1px solid rgba(52,37,28,0.14);
         border-radius: 999px;
         background: rgba(255,249,240,0.76);
-        color: rgba(95,70,54,0.58);
+        color: var(--color-ink-tertiary);
         backdrop-filter: blur(8px);
         cursor: pointer;
         transition: color 0.2s, background 0.2s, border-color 0.2s, transform 0.2s;
@@ -209,9 +209,9 @@
     .tile-head span {
         flex-shrink: 0;
         padding-top: 3px;
-        font-size: 9px;
-        letter-spacing: 0.16em;
-        color: rgba(95,70,54,0.42);
+        font-size: 10px;
+        letter-spacing: 0.08em;
+        color: var(--color-ink-tertiary);
     }
 
     .tile-meta {
@@ -219,10 +219,10 @@
         align-items: center;
         gap: 7px;
         margin: 0;
-        font-size: 8.5px;
-        letter-spacing: 0.15em;
+        font-size: 11px;
+        letter-spacing: 0.09em;
         text-transform: uppercase;
-        color: rgba(95,70,54,0.52);
+        color: var(--color-ink-tertiary);
     }
 
     .tile-dot {

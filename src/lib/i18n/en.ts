@@ -66,7 +66,7 @@ export const en = {
   homeAllWorks:        'All works',
   homeContextAvailableEyebrow: 'Available selection',
   homeContextAvailableTitle:   'Available now',
-  homeContextAvailableText:    'Works that can be requested now, without extra steps or searching through the archive.',
+  homeContextAvailableText:    'Pieces you can request right now — open one and send a note to the author.',
   homeContextUpcomingEyebrow:  'Next release',
   homeContextUpcomingTitle:    'The next release is taking shape',
   homeContextUpcomingText:     'There are no available works right now, so the main path is to follow the process and choose what to watch early.',

@@ -278,8 +278,8 @@
     --ink: var(--color-ink-primary);
     --mid: var(--color-ember-deep);
     --copper: var(--color-ember);
-    --muted: color-mix(in srgb, var(--color-ink-secondary) 68%, transparent);
-    --muted2: color-mix(in srgb, var(--color-ink-secondary) 40%, transparent);
+    --muted: var(--color-ink-tertiary);
+    --muted2: var(--color-ink-tertiary);
     --border: color-mix(in srgb, var(--color-ink-primary) 10%, transparent);
     --ease: cubic-bezier(0.16,1,0.3,1);
 
@@ -319,10 +319,10 @@
 
   .brand-sub {
     font-family: 'Instrument Sans', var(--font-body), system-ui, sans-serif;
-    font-size: 8.5px;
-    letter-spacing: 0.22em;
+    font-size: 11px;
+    letter-spacing: 0.14em;
     text-transform: uppercase;
-    color: color-mix(in srgb, var(--color-ink-secondary) 62%, transparent);
+    color: var(--color-ink-tertiary);
     line-height: 1;
   }
 
@@ -339,10 +339,11 @@
     height: 68px;
     padding: 0 18px;
     font-family: 'Instrument Sans', var(--font-body), system-ui, sans-serif;
-    font-size: 9.5px;
-    letter-spacing: 0.18em;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.10em;
     text-transform: uppercase;
-    color: color-mix(in srgb, var(--color-ink-secondary) 78%, transparent);
+    color: var(--color-ink-secondary);
     text-decoration: none;
     transition: color 0.25s;
     overflow: hidden;
@@ -396,7 +397,7 @@
     border: none;
     padding: 0;
     cursor: pointer;
-    color: color-mix(in srgb, var(--color-ink-secondary) 64%, transparent);
+    color: var(--color-ink-tertiary);
     transition: color 0.25s;
   }
 

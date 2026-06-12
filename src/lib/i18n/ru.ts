@@ -68,7 +68,7 @@ export const ru: Record<TranslationKey, string> = {
   homeAllWorks:        'Все работы',
   homeContextAvailableEyebrow: 'Выбор из витрины',
   homeContextAvailableTitle:   'Доступны сейчас',
-  homeContextAvailableText:    'Работы, которые можно запросить сейчас, без лишних шагов и поиска по архиву.',
+  homeContextAvailableText:    'Работы, которые можно запросить прямо сейчас — откройте и напишите автору.',
   homeContextUpcomingEyebrow:  'Следующий выпуск',
   homeContextUpcomingTitle:    'Следующий выпуск готовится',
   homeContextUpcomingText:     'Новых доступных работ сейчас нет, поэтому главный путь — посмотреть процесс и заранее выбрать то, за чем хочется следить.',

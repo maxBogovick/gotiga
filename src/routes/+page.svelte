@@ -4,7 +4,7 @@
     import { page } from '$app/state';
     import { fade, fly } from 'svelte/transition';
     import { cubicOut } from 'svelte/easing';
-    import { spring, tweened } from 'svelte/motion';
+    import { spring } from 'svelte/motion';
     import { api } from '$lib/api';
     import type { CabinetZone, FigurineListItem, HomeContent } from '$lib/types/api';
     import { t } from '$lib/i18n';
@@ -17,7 +17,6 @@
     let imageLoaded = $state(false);
     let hoveredZone = $state<CabinetZone | null>(null);
     let isNavigating = $state(false);
-    let ambientIntensity = $state(1);
     let availableFigurines = $state<FigurineListItem[]>([]);
     let inProgressFigurines = $state<FigurineListItem[]>([]);
     let archivePreviewFigurines = $state<FigurineListItem[]>([]);
@@ -71,25 +70,12 @@
             { words: titleWords.slice(1), offset: 1 },
         ];
     })());
-    let showStats = $derived(availableTotal > 0 || collectionTotal >= 3);
     let heroObjectHref = $derived(heroFigurine ? `/figurines/${heroFigurine.id}` : '/figurines');
     let showHeroCaption = $derived(Boolean(heroObjectName));
-    let savedPreviewFigurines = $derived(
-        savedFigurines.ids
-            .map((id) => collectionFigurines.find((item) => item.id === id))
-            .filter((item): item is FigurineListItem => Boolean(item))
-            .slice(0, 5)
-    );
     let savedWorkFigurines = $derived(
         savedFigurines.ids
             .map((id) => collectionFigurines.find((item) => item.id === id))
             .filter((item): item is FigurineListItem => Boolean(item))
-    );
-    let heroQuickFigurines = $derived(
-        (availableFigurines.length > 0 ? availableFigurines : archivePreviewFigurines).slice(0, 3)
-    );
-    let heroQuickTitle = $derived(
-        availableFigurines.length > 0 ? $t('homeHeroQuickAvailable') : $t('homeHeroQuickArchive')
     );
     let activeWorkFigurines = $derived(
         activeWorkFilter === 'saved'
@@ -137,10 +123,6 @@
     );
     let activeWorkEmptyHref = $derived(activeWorkFilter === 'saved' ? '/figurines' : '/commission');
     let activeWorkEmptyCta = $derived(activeWorkFilter === 'saved' ? $t('homeOpenArchive') : $t('commissionInvite'));
-
-    // Count-up stats
-    const availDisplay = tweened(0, { duration: 1100, easing: cubicOut });
-    const collDisplay = tweened(0, { duration: 1100, easing: cubicOut });
 
     let imageUrl = $state('/images/cabinet-room.jpg');
 
@@ -244,8 +226,6 @@
                 : inProgressFigurines.length > 0
                     ? 'upcoming'
                     : 'archive');
-            availDisplay.set(availableTotal);
-            collDisplay.set(collectionTotal);
             isLoaded = true;
         } catch (e) {
             zones = DEFAULT_ZONES;
@@ -292,10 +272,7 @@
         savedFigurines.load();
         init();
         const hintTimer = setTimeout(() => { if (!hoveredZone) showHint = true; }, 3000);
-        const flickerInterval = setInterval(() => {
-            ambientIntensity = 0.94 + Math.random() * 0.06;
-        }, 200);
-        return () => { clearInterval(flickerInterval); clearTimeout(hintTimer); };
+        return () => { clearTimeout(hintTimer); };
     });
 </script>
 
@@ -362,31 +339,8 @@
                     <span>{$t('homeTrustAuthorReply')}</span>
                 </div>
 
-                {#if heroQuickFigurines.length > 0}
-                    <div class="hero-work-strip" aria-label={heroQuickTitle}>
-                        <div class="hero-work-strip-head">
-                            <span>{heroQuickTitle}</span>
-                            {#if showStats}
-                                <em>{Math.round($availDisplay)} {$t('homeAvailableStat')} · {Math.round($collDisplay)} {$t('homeArchiveStat')}</em>
-                            {/if}
-                        </div>
-                        <div class="hero-work-links">
-                            {#each heroQuickFigurines as fig}
-                                <a href="/figurines/{fig.id}" class="hero-work-link" aria-label="{$t('homeViewFigurine')}: {fig.name}">
-                                    {#if fig.faceImageUrl}
-                                        <AppImage src={fig.faceImageUrl} thumbUrl={fig.thumbUrl} alt={fig.name} class="hero-work-img" loading="lazy" />
-                                    {:else}
-                                        <span class="hero-work-placeholder">?</span>
-                                    {/if}
-                                    <span>
-                                        <strong>{fig.name}</strong>
-                                        <em>{fig.year ?? $t('homeHeroQuickOpen')}</em>
-                                    </span>
-                                </a>
-                            {/each}
-                        </div>
-                    </div>
-                {:else}
+                <!-- Быстрая полоска available убрана: дублировала грид «Works» ниже. -->
+                {#if availableFigurines.length === 0}
                     <p class="release-note">{$t('homeReleaseNote')}</p>
                 {/if}
             </div>
@@ -408,7 +362,6 @@
                             rotateY({$parallaxSpring.x * -1.2}deg)
                             rotateX({$parallaxSpring.y * 1.2}deg)
                             scale(1.02);
-                        filter: brightness({ambientIntensity});
                     "
                 >
                     <img src={imageUrl} alt="Gothic Cabinet Interior" class="hero-img" draggable="false" />
@@ -473,65 +426,54 @@
                 </div>
             </div>
 
-            {#if savedPreviewFigurines.length > 0}
-                <aside class="saved-rail" aria-label={$t('homeSavedTitle')}>
-                    <div class="saved-rail-copy">
-                        <span>{$t('homeSavedEyebrow')}</span>
-                        <strong>{$t('homeSavedTitle')} · {savedWorkFigurines.length}</strong>
-                    </div>
-                    <div class="saved-rail-items">
-                        {#each savedPreviewFigurines as fig}
-                            <a class="saved-rail-item" href="/figurines/{fig.id}" aria-label="{$t('homeViewFigurine')}: {fig.name}">
-                                {#if fig.faceImageUrl}
-                                    <AppImage src={fig.faceImageUrl} thumbUrl={fig.thumbUrl} alt={fig.name} class="saved-rail-img" loading="lazy" />
-                                {:else}
-                                    <span>?</span>
-                                {/if}
-                                <span>{fig.name}</span>
-                            </a>
-                        {/each}
-                    </div>
-                    <a href="/profile" class="saved-rail-link">{$t('homeSavedProfile')}</a>
-                </aside>
-            {/if}
+            <!-- Saved-rail убран: дублировал таб SAVED и показывал «битое» имя сохранённой работы. -->
 
+            <!-- Пустые табы (count 0) скрыты; активный таб показываем всегда. -->
             <div class="work-tabs" role="group" aria-label={$t('homeWorksTitle')}>
-                <button
-                    class:active={activeWorkFilter === 'available'}
-                    onclick={() => setWorkFilter('available')}
-                    aria-pressed={activeWorkFilter === 'available'}
-                    type="button"
-                >
-                    {$t('homeWorksAvailableTab')}
-                    <span>{availableFigurines.length}</span>
-                </button>
-                <button
-                    class:active={activeWorkFilter === 'saved'}
-                    onclick={() => setWorkFilter('saved')}
-                    aria-pressed={activeWorkFilter === 'saved'}
-                    type="button"
-                >
-                    {$t('homeWorksSavedTab')}
-                    <span>{savedWorkFigurines.length}</span>
-                </button>
-                <button
-                    class:active={activeWorkFilter === 'upcoming'}
-                    onclick={() => setWorkFilter('upcoming')}
-                    aria-pressed={activeWorkFilter === 'upcoming'}
-                    type="button"
-                >
-                    {$t('homeWorksUpcomingTab')}
-                    <span>{inProgressFigurines.length}</span>
-                </button>
-                <button
-                    class:active={activeWorkFilter === 'archive'}
-                    onclick={() => setWorkFilter('archive')}
-                    aria-pressed={activeWorkFilter === 'archive'}
-                    type="button"
-                >
-                    {$t('homeWorksArchiveTab')}
-                    <span>{archivePreviewFigurines.length}</span>
-                </button>
+                {#if availableFigurines.length > 0 || activeWorkFilter === 'available'}
+                    <button
+                        class:active={activeWorkFilter === 'available'}
+                        onclick={() => setWorkFilter('available')}
+                        aria-pressed={activeWorkFilter === 'available'}
+                        type="button"
+                    >
+                        {$t('homeWorksAvailableTab')}
+                        <span>{availableFigurines.length}</span>
+                    </button>
+                {/if}
+                {#if savedWorkFigurines.length > 0 || activeWorkFilter === 'saved'}
+                    <button
+                        class:active={activeWorkFilter === 'saved'}
+                        onclick={() => setWorkFilter('saved')}
+                        aria-pressed={activeWorkFilter === 'saved'}
+                        type="button"
+                    >
+                        {$t('homeWorksSavedTab')}
+                        <span>{savedWorkFigurines.length}</span>
+                    </button>
+                {/if}
+                {#if inProgressFigurines.length > 0 || activeWorkFilter === 'upcoming'}
+                    <button
+                        class:active={activeWorkFilter === 'upcoming'}
+                        onclick={() => setWorkFilter('upcoming')}
+                        aria-pressed={activeWorkFilter === 'upcoming'}
+                        type="button"
+                    >
+                        {$t('homeWorksUpcomingTab')}
+                        <span>{inProgressFigurines.length}</span>
+                    </button>
+                {/if}
+                {#if archivePreviewFigurines.length > 0 || activeWorkFilter === 'archive'}
+                    <button
+                        class:active={activeWorkFilter === 'archive'}
+                        onclick={() => setWorkFilter('archive')}
+                        aria-pressed={activeWorkFilter === 'archive'}
+                        type="button"
+                    >
+                        {$t('homeWorksArchiveTab')}
+                        <span>{archivePreviewFigurines.length}</span>
+                    </button>
+                {/if}
             </div>
 
             {#if visibleWorkFigurines.length > 0}
@@ -626,8 +568,10 @@
         --tan:     var(--color-ember-ink);
         --copper:  var(--color-ember);
         --gold:    var(--color-ochre);
-        --muted:   color-mix(in srgb, var(--color-ink-secondary) 68%, transparent);
-        --muted2:  color-mix(in srgb, var(--color-ink-secondary) 40%, transparent);
+        /* Сплошные приглушённые чернила (≥ 4.5:1 над фоном по WCAG AA),
+           вместо opacity-over-cream, который давал ~1.7–2.9:1. */
+        --muted:   var(--color-ink-tertiary);  /* ~6.45:1 */
+        --muted2:  var(--color-ink-tertiary);  /* ~6.45:1 — мелкие лейблы */
         --border:  color-mix(in srgb, var(--color-ink-primary) 10%, transparent);
         --border2: color-mix(in srgb, var(--color-ink-primary) 18%, transparent);
         --ease:    cubic-bezier(0.16,1,0.3,1);
@@ -705,7 +649,12 @@
         gap: clamp(28px, 3.8vw, 62px);
         align-items: center;
         min-height: auto;
-        padding: clamp(22px, 3.2vw, 40px) clamp(20px, 4.5vw, 64px) clamp(10px, 1.5vw, 20px);
+        /* Главная без header-offset — добавляем верхний воздух, чтобы фото и мета-строка
+           не уходили под фиксированную шапку. */
+        padding:
+            calc(var(--site-header-height) + clamp(18px, 2.4vw, 34px))
+            clamp(20px, 4.5vw, 64px)
+            clamp(28px, 3.2vw, 44px);
         max-width: 1520px;
         margin: 0 auto;
     }
@@ -720,8 +669,9 @@
         display: flex;
         align-items: center;
         gap: 12px;
-        font-size: 9px;
-        letter-spacing: 0.22em;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.10em;
         text-transform: uppercase;
         color: var(--muted2);
         margin-bottom: 12px;
@@ -809,7 +759,7 @@
         font-weight: 300;
         font-style: italic;
         line-height: 1.42;
-        color: rgba(52,37,28,0.76);
+        color: var(--color-ink-secondary);
         max-width: 390px;
         margin-bottom: 14px;
     }
@@ -831,8 +781,9 @@
         padding: 0 19px;
         background: var(--ink);
         color: var(--cream2);
-        font-size: 9.5px;
-        letter-spacing: 0.16em;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.09em;
         text-transform: uppercase;
         text-decoration: none;
         transition:
@@ -865,9 +816,10 @@
         align-items: center;
         min-height: 40px;
         padding: 0 4px;
-        color: color-mix(in srgb, var(--brown) 72%, transparent);
-        font-size: 9.5px;
-        letter-spacing: 0.16em;
+        color: var(--color-ink-secondary);
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.09em;
         text-transform: uppercase;
         text-decoration: none;
         border-bottom: 1px solid color-mix(in srgb, var(--color-ink-primary) 18%, transparent);
@@ -892,16 +844,15 @@
         flex-wrap: wrap;
         gap: 6px 12px;
         max-width: 520px;
-        color: rgba(52,37,28,0.60);
-        font-size: 8px;
-        letter-spacing: 0.14em;
-        line-height: 1.45;
-        text-transform: uppercase;
+        color: var(--muted);
+        font-size: 12.5px;
+        letter-spacing: 0.01em;
+        line-height: 1.5;
     }
 
     .hero-proof span {
         position: relative;
-        padding-left: 13px;
+        padding-left: 15px;
     }
 
     .hero-proof span::before {
@@ -914,102 +865,6 @@
         background: rgba(198,95,60,0.58);
     }
 
-    .hero-work-strip {
-        max-width: 540px;
-        margin-top: 12px;
-        padding-top: 10px;
-        border-top: 1px solid rgba(52,37,28,0.10);
-    }
-
-    .hero-work-strip-head {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 14px;
-        margin-bottom: 8px;
-        font-size: 8.5px;
-        letter-spacing: 0.16em;
-        line-height: 1.3;
-        text-transform: uppercase;
-        color: rgba(95,70,54,0.64);
-    }
-
-    .hero-work-strip-head em {
-        font-style: normal;
-        color: rgba(95,70,54,0.42);
-        text-align: right;
-    }
-
-    .hero-work-links {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 8px;
-    }
-
-    .hero-work-link {
-        min-width: 0;
-        display: grid;
-        grid-template-columns: 50px minmax(0, 1fr);
-        align-items: center;
-        gap: 10px;
-        min-height: 62px;
-        padding: 6px;
-        border: 1px solid rgba(52,37,28,0.12);
-        background: rgba(255,249,240,0.70);
-        color: rgba(52,37,28,0.78);
-        text-decoration: none;
-        transition: border-color 0.2s, background 0.2s, transform 0.2s;
-    }
-
-    .hero-work-link:hover {
-        border-color: rgba(198,95,60,0.34);
-        background: rgba(255,249,240,0.88);
-        transform: translateY(-1px);
-    }
-
-    .hero-work-link :global(.hero-work-img),
-    .hero-work-link :global(.hero-work-img .app-image-main),
-    .hero-work-link :global(.hero-work-img .app-image-thumb),
-    .hero-work-placeholder {
-        width: 50px;
-        height: 50px;
-        display: block;
-        object-fit: cover;
-        object-position: center 42%;
-        background: rgba(201,168,117,0.12);
-    }
-
-    .hero-work-placeholder {
-        display: grid;
-        place-items: center;
-        font-family: 'Cormorant Garamond', serif;
-        color: rgba(95,70,54,0.42);
-    }
-
-    .hero-work-link span:last-child {
-        min-width: 0;
-        display: grid;
-        gap: 3px;
-    }
-
-    .hero-work-link strong {
-        overflow: hidden;
-        white-space: nowrap;
-        text-overflow: ellipsis;
-        font-family: 'Cormorant Garamond', serif;
-        font-size: 19px;
-        font-weight: 400;
-        line-height: 1;
-    }
-
-    .hero-work-link em {
-        font-size: 8px;
-        font-style: normal;
-        letter-spacing: 0.14em;
-        text-transform: uppercase;
-        color: rgba(95,70,54,0.46);
-    }
-
     .release-note {
         max-width: 360px;
         margin-top: 34px;
@@ -1020,7 +875,7 @@
         font-style: italic;
         font-weight: 300;
         line-height: 1.42;
-        color: rgba(52,37,28,0.58);
+        color: var(--muted);
     }
 
     /* ── HERO VISUAL ─────────────────────────────── */
@@ -1031,8 +886,8 @@
     .img-meta {
         display: flex;
         justify-content: space-between;
-        font-size: 8.5px;
-        letter-spacing: 0.18em;
+        font-size: 11px;
+        letter-spacing: 0.10em;
         text-transform: uppercase;
         color: var(--muted2);
         padding-bottom: 8px;
@@ -1042,7 +897,7 @@
     .img-frame {
         position: relative;
         width: 100%;
-        height: clamp(260px, 31svh, 360px);
+        height: clamp(340px, 46svh, 520px);
         overflow: hidden;
         transform-style: preserve-3d;
         transition: filter 0.3s;
@@ -1130,8 +985,8 @@
         display: flex;
         align-items: center;
         gap: 10px;
-        font-size: 8.5px;
-        letter-spacing: 0.18em;
+        font-size: 11px;
+        letter-spacing: 0.10em;
         text-transform: uppercase;
         color: var(--muted2);
         text-decoration: none;
@@ -1177,10 +1032,10 @@
     }
 
     .art-caption-kicker {
-        font-size: 8px;
-        letter-spacing: 0.18em;
+        font-size: 10px;
+        letter-spacing: 0.12em;
         text-transform: uppercase;
-        color: rgba(255,240,218,0.58);
+        color: rgba(255,240,218,0.78);
     }
 
     .art-caption-name {
@@ -1192,11 +1047,11 @@
 
     .art-caption-meta,
     .art-caption-open {
-        font-size: 8px;
-        letter-spacing: 0.12em;
+        font-size: 10px;
+        letter-spacing: 0.10em;
         line-height: 1.3;
         text-transform: uppercase;
-        color: rgba(255,240,218,0.68);
+        color: rgba(255,240,218,0.78);
     }
 
     .art-caption-open {
@@ -1315,8 +1170,8 @@
 
     .zt-name {
         font-family: 'Instrument Sans', sans-serif;
-        font-size: 8.5px;
-        letter-spacing: 0.28em;
+        font-size: 11px;
+        letter-spacing: 0.12em;
         text-transform: uppercase;
         color: var(--cream2);
         background: rgba(44,23,16,0.80);
@@ -1343,120 +1198,11 @@
         transform: translateY(0);
     }
 
-    /* ── WORK HUB / SAVED RAIL ───────────────────── */
-    .hero-work-link:focus-visible,
-    .saved-rail-link:focus-visible,
+    /* ── WORK HUB ────────────────────────────────── */
     .all-link:focus-visible,
     .request-flow a:focus-visible {
         outline: 2px solid rgba(198,95,60,0.56);
         outline-offset: 3px;
-    }
-
-    .saved-rail {
-        display: grid;
-        grid-template-columns: auto minmax(0, 1fr) auto;
-        align-items: center;
-        gap: clamp(14px, 2vw, 24px);
-        margin: 0 0 clamp(16px, 2vw, 24px);
-        padding: 10px 12px;
-        border: 1px solid rgba(52,37,28,0.10);
-        background: rgba(255,249,240,0.42);
-    }
-
-    .saved-rail-copy {
-        display: grid;
-        gap: 4px;
-        min-width: 142px;
-    }
-
-    .saved-rail-copy span,
-    .saved-rail-link {
-        font-size: 8.5px;
-        letter-spacing: 0.16em;
-        text-transform: uppercase;
-        color: var(--muted2);
-    }
-
-    .saved-rail-copy strong {
-        font-family: 'Cormorant Garamond', serif;
-        font-size: clamp(20px, 1.8vw, 28px);
-        font-weight: 300;
-        line-height: 1;
-        color: var(--ink);
-    }
-
-    .saved-rail-items {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        min-width: 0;
-        overflow-x: auto;
-        scrollbar-width: none;
-    }
-
-    .saved-rail-items::-webkit-scrollbar {
-        display: none;
-    }
-
-    .saved-rail-item {
-        position: relative;
-        width: clamp(112px, 11vw, 154px);
-        min-height: 54px;
-        display: grid;
-        grid-template-columns: 42px minmax(0, 1fr);
-        align-items: center;
-        gap: 9px;
-        padding: 5px;
-        flex: 0 0 auto;
-        overflow: hidden;
-        border: 1px solid rgba(52,37,28,0.14);
-        background: rgba(255,249,240,0.74);
-        color: rgba(95,70,54,0.42);
-        text-decoration: none;
-        transition: transform 0.22s, border-color 0.22s;
-    }
-
-    .saved-rail-item:hover {
-        transform: translateY(-2px);
-        border-color: rgba(198,95,60,0.34);
-    }
-
-    .saved-rail-item:focus-visible {
-        outline: 2px solid rgba(198,95,60,0.56);
-        outline-offset: 3px;
-    }
-
-    .saved-rail-item :global(.saved-rail-img),
-    .saved-rail-item :global(.saved-rail-img .app-image-main),
-    .saved-rail-item :global(.saved-rail-img .app-image-thumb) {
-        width: 42px;
-        height: 42px;
-        object-fit: cover;
-        object-position: center 42%;
-        display: block;
-    }
-
-    .saved-rail-item > span {
-        min-width: 0;
-        overflow: hidden;
-        white-space: nowrap;
-        text-overflow: ellipsis;
-        font-family: 'Cormorant Garamond', serif;
-        font-size: 17px;
-        line-height: 1;
-        color: rgba(52,37,28,0.74);
-    }
-
-    .saved-rail-link {
-        color: var(--mid);
-        text-decoration: none;
-        border-bottom: 1px solid rgba(111,59,36,0.22);
-        padding-bottom: 3px;
-        white-space: nowrap;
-    }
-
-    .saved-rail-link:hover {
-        color: var(--copper);
     }
 
     /* ── CONTEXT SECTION ─────────────────────────── */
@@ -1519,16 +1265,17 @@
         padding: 0 13px;
         border: 1px solid rgba(52,37,28,0.12);
         background: rgba(255,249,240,0.48);
-        color: rgba(95,70,54,0.66);
-        font-size: 8.5px;
-        letter-spacing: 0.14em;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 500;
+        letter-spacing: 0.09em;
         text-transform: uppercase;
         cursor: pointer;
         transition: color 0.2s, border-color 0.2s, background 0.2s;
     }
 
     .work-tabs button span {
-        color: rgba(95,70,54,0.36);
+        color: var(--muted);
     }
 
     .work-tabs button.active {
@@ -1578,8 +1325,9 @@
         display: inline-flex;
         align-items: center;
         gap: 10px;
-        font-size: 9.5px;
-        letter-spacing: 0.16em;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.09em;
         text-transform: uppercase;
         color: var(--mid);
         text-decoration: none;
@@ -1630,9 +1378,9 @@
         padding: 10px 12px;
         border: 1px solid rgba(52,37,28,0.12);
         background: rgba(255,249,240,0.46);
-        color: rgba(52,37,28,0.72);
-        font-size: 9px;
-        letter-spacing: 0.12em;
+        color: var(--color-ink-secondary);
+        font-size: 11px;
+        letter-spacing: 0.09em;
         line-height: 1.25;
         text-transform: uppercase;
         text-decoration: none;
@@ -1652,12 +1400,12 @@
         font-size: 20px;
         font-weight: 300;
         line-height: 1;
-        color: rgba(198,95,60,0.78);
+        color: var(--copper);
     }
 
     .request-flow strong {
-        font-weight: 500;
-        color: rgba(52,37,28,0.78);
+        font-weight: 600;
+        color: var(--ink);
     }
 
     .request-flow em {
@@ -1691,27 +1439,18 @@
         .hero {
             grid-template-columns: 1fr;
             min-height: auto;
-            padding-top: 36px;
+            padding-top: calc(var(--site-header-height) + 24px);
             gap: 22px;
         }
 
         .hero-visual { order: 2; }
         .hero-text { order: 1; max-width: 580px; }
 
-        .img-frame { height: min(34svh, 360px); }
+        .img-frame { height: min(40svh, 420px); }
 
         .context-hd,
         .context-side {
             grid-template-columns: 1fr;
-        }
-
-        .saved-rail {
-            grid-template-columns: 1fr auto;
-        }
-
-        .saved-rail-items {
-            grid-column: 1 / -1;
-            order: 3;
         }
 
         .work-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -1732,7 +1471,7 @@
         }
 
         .hero {
-            padding: 28px 16px 18px;
+            padding: calc(var(--site-header-height) + 18px) 16px 22px;
             gap: 18px;
         }
 
@@ -1744,42 +1483,17 @@
 
         .hero-lead { font-size: 16px; max-width: 330px; }
 
-        .cta-primary { height: 40px; padding: 0 16px; font-size: 9px; }
+        .cta-primary { height: 40px; padding: 0 16px; font-size: 11px; }
 
         .cta-ghost {
             min-height: 40px;
             padding: 0 2px;
-            font-size: 9px;
+            font-size: 11px;
         }
 
         .hero-proof {
-            font-size: 8.5px;
+            font-size: 11px;
             line-height: 1.45;
-        }
-
-        .hero-work-strip-head {
-            align-items: flex-start;
-            flex-direction: column;
-            gap: 4px;
-        }
-
-        .hero-work-strip-head em {
-            text-align: left;
-        }
-
-        .hero-work-links {
-            display: flex;
-            overflow-x: auto;
-            scrollbar-width: none;
-        }
-
-        .hero-work-links::-webkit-scrollbar {
-            display: none;
-        }
-
-        .hero-work-link {
-            width: 190px;
-            flex: 0 0 auto;
         }
 
         .release-note {
@@ -1804,19 +1518,6 @@
 
         .art-caption-meta {
             display: none;
-        }
-
-        .saved-rail {
-            grid-template-columns: 1fr;
-            gap: 12px;
-        }
-
-        .saved-rail-copy {
-            min-width: 0;
-        }
-
-        .saved-rail-link {
-            justify-self: start;
         }
 
         .context-section {
