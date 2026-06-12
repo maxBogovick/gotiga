@@ -523,11 +523,46 @@
                     <span><b>03</b><strong>{$t('homeHowStep3Title')}</strong><em>{$t('homeHowStep3Text')}</em></span>
                 </div>
 
-                <aside class="request-custom">
+                <a href="/commission" class="request-custom">
                     <p>{$t('homeCustomRequestTitle')}</p>
                     <span>{$t('homeCustomRequestText')}</span>
-                    <a href="/commission">{$t('commissionInvite')}</a>
-                </aside>
+                    <strong class="request-custom-cta">
+                        {$t('homeCustomRequestCta')}
+                        <svg width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
+                            <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
+                        </svg>
+                    </strong>
+                </a>
+            </div>
+        </section>
+
+        <section class="workshop-feature" aria-labelledby="workshop-feature-title">
+            <div class="workshop-photos" aria-hidden="true">
+                <img src="/images/workshop/master-1.jpg" alt="" class="workshop-photo workshop-photo-back" loading="lazy" />
+                <img src="/images/workshop/master-2.jpg" alt="" class="workshop-photo workshop-photo-front" loading="lazy" />
+            </div>
+
+            <div class="workshop-copy">
+                <p class="eyebrow">
+                    <span class="eyebrow-rule"></span>
+                    {$t('homeWorkshopCta')}
+                </p>
+                <h2 id="workshop-feature-title" class="workshop-title">{$t('homeStudioTitle')}</h2>
+                <p class="workshop-text">{$t('homeStudioText')}</p>
+                <div class="workshop-actions">
+                    <a href="/workshop" class="workshop-link">
+                        {$t('homeWorkshopCta')}
+                        <svg width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
+                            <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
+                        </svg>
+                    </a>
+                    <a href="/author" class="workshop-link">
+                        {$t('navAuthor')}
+                        <svg width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
+                            <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
+                        </svg>
+                    </a>
+                </div>
             </div>
         </section>
 
@@ -1529,10 +1564,26 @@
     .request-custom {
         display: grid;
         align-content: start;
-        gap: 8px;
-        border-color: rgba(198,95,60,0.24);
-        background: rgba(255,246,239,0.68);
+        gap: 10px;
+        border-color: rgba(198,95,60,0.34);
+        background:
+            linear-gradient(135deg, rgba(255,246,239,0.88), rgba(255,249,240,0.68));
         color: var(--color-ink-secondary);
+        box-shadow: 0 10px 26px rgba(52,37,28,0.06);
+        transition: transform 0.22s ease, border-color 0.22s ease, background 0.22s ease, box-shadow 0.22s ease;
+    }
+
+    .request-custom:hover {
+        transform: translateY(-2px);
+        border-color: rgba(198,95,60,0.58);
+        background:
+            linear-gradient(135deg, rgba(255,242,233,0.96), rgba(255,249,240,0.78));
+        box-shadow: 0 18px 38px rgba(52,37,28,0.10);
+    }
+
+    .request-custom:focus-visible {
+        outline: 2px solid rgba(198,95,60,0.52);
+        outline-offset: 3px;
     }
 
     .request-custom p {
@@ -1555,22 +1606,130 @@
         color: var(--muted);
     }
 
-    .request-custom a {
+    .request-custom-cta {
         width: fit-content;
-        margin-top: 3px;
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 6px;
+        padding: 9px 12px;
+        border: 1px solid rgba(198,95,60,0.28);
+        background: rgba(255,249,240,0.72);
         color: var(--mid);
         font-size: 10px;
         font-weight: 600;
         letter-spacing: 0.1em;
         line-height: 1.1;
         text-transform: uppercase;
-        text-decoration: none;
-        border-bottom: 1px solid rgba(198,95,60,0.26);
+        transition: gap 0.22s ease, color 0.22s ease, border-color 0.22s ease;
     }
 
-    .request-custom a:hover {
+    .request-custom:hover .request-custom-cta {
+        gap: 15px;
         color: var(--copper);
-        border-color: rgba(198,95,60,0.48);
+        border-color: rgba(198,95,60,0.52);
+    }
+
+    /* ── WORKSHOP FEATURE ───────────────────────── */
+    .workshop-feature {
+        display: grid;
+        grid-template-columns: minmax(430px, 0.92fr) minmax(420px, 1.08fr);
+        gap: clamp(42px, 5.4vw, 92px);
+        align-items: center;
+        max-width: 1680px;
+        margin: 0 auto;
+        padding: clamp(56px, 7vw, 112px) clamp(20px, 4.5vw, 72px) clamp(70px, 8vw, 128px);
+    }
+
+    .workshop-photos {
+        position: relative;
+        min-height: clamp(420px, 42vw, 680px);
+    }
+
+    .workshop-photo {
+        position: absolute;
+        display: block;
+        object-fit: cover;
+        border: 1px solid rgba(52,37,28,0.08);
+        box-shadow: 0 28px 76px rgba(52,37,28,0.14);
+        filter: saturate(0.9) contrast(1.02);
+    }
+
+    .workshop-photo-back {
+        left: 0;
+        top: 0;
+        width: 69%;
+        height: 74%;
+        object-position: center;
+    }
+
+    .workshop-photo-front {
+        right: 0;
+        bottom: 0;
+        width: 69%;
+        height: 74%;
+        object-position: center;
+    }
+
+    .workshop-copy {
+        max-width: 760px;
+        padding-top: clamp(0px, 3vw, 34px);
+    }
+
+    .workshop-title {
+        margin: 0;
+        color: var(--ink);
+        font-family: 'Cormorant Garamond', serif;
+        font-size: clamp(48px, 5.4vw, 92px);
+        font-weight: 300;
+        letter-spacing: 0;
+        line-height: 0.92;
+    }
+
+    .workshop-text {
+        max-width: 720px;
+        margin: 26px 0 0;
+        color: var(--muted);
+        font-family: 'Cormorant Garamond', serif;
+        font-size: clamp(20px, 1.45vw, 27px);
+        font-style: italic;
+        line-height: 1.42;
+    }
+
+    .workshop-actions {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 22px;
+        margin-top: 54px;
+    }
+
+    .workshop-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        width: fit-content;
+        padding-bottom: 5px;
+        color: var(--mid);
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.1em;
+        line-height: 1.2;
+        text-transform: uppercase;
+        text-decoration: none;
+        border-bottom: 1px solid rgba(198,95,60,0.25);
+        transition: gap 0.24s ease, color 0.24s ease, border-color 0.24s ease;
+    }
+
+    .workshop-link:hover {
+        gap: 15px;
+        color: var(--copper);
+        border-color: rgba(198,95,60,0.52);
+    }
+
+    .workshop-link:focus-visible {
+        outline: 2px solid rgba(198,95,60,0.52);
+        outline-offset: 3px;
     }
 
     /* ── RESPONSIVE ──────────────────────────────── */
@@ -1611,6 +1770,15 @@
 
         .request-steps {
             grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+
+        .workshop-feature {
+            grid-template-columns: 1fr;
+            gap: 34px;
+        }
+
+        .workshop-photos {
+            min-height: min(72vw, 560px);
         }
     }
 
@@ -1708,6 +1876,40 @@
 
         .request-steps {
             grid-template-columns: 1fr;
+        }
+
+        .workshop-feature {
+            padding: 36px 16px 74px;
+        }
+
+        .workshop-photos {
+            min-height: 360px;
+        }
+
+        .workshop-photo-back,
+        .workshop-photo-front {
+            width: 78%;
+            height: 67%;
+        }
+
+        .workshop-copy {
+            padding-top: 0;
+        }
+
+        .workshop-title {
+            font-size: clamp(42px, 12vw, 60px);
+        }
+
+        .workshop-text {
+            margin-top: 18px;
+            font-size: 18px;
+        }
+
+        .workshop-actions {
+            align-items: flex-start;
+            flex-direction: column;
+            gap: 14px;
+            margin-top: 30px;
         }
 
     }
