@@ -72,6 +72,7 @@
     let selectedFigurine = $state<Figurine | null>(null);
     let savedSnapshot = $state<string>('');
     let isSaving = $state(false);
+    let showingsEditor = $state<FigurineShowingsEditor | null>(null);
     let showSettings = $state(false);
     let message = $state({ text: '', type: 'info' });
     let activeTab = $state<'registry' | 'home' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'commissions' | 'showings' | 'bookings' | 'waitlist' | 'analytics' | 'users' | 'comments' | 'messages' | 'server' | 'booking-rules' | 'contact' | 'design' | 'copy'>('registry');
@@ -312,6 +313,12 @@
         if (!selectedFigurine) return;
         isSaving = true;
         try {
+            // Сначала коммитим незакрытую инлайн-форму показа (если в ней есть данные).
+            // При невалидных данных flush() вернёт false и покажет свою ошибку инлайн —
+            // прерываем сохранение, чтобы автор их поправил.
+            if (showingsEditor && !(await showingsEditor.flush())) {
+                return;
+            }
             await api.saveFigurine(selectedFigurine);
             savedSnapshot = JSON.stringify(selectedFigurine);
             showMessage(isTauri ? $t('adminMsgSavedArchive') : $t('adminMsgSavedServer'), 'success');
@@ -854,7 +861,7 @@
 
                         <!-- Showings for this figurine -->
                         {#if selectedFigurine.id}
-                          <FigurineShowingsEditor figurineId={selectedFigurine.id} />
+                          <FigurineShowingsEditor bind:this={showingsEditor} figurineId={selectedFigurine.id} />
                         {/if}
 
                         <!-- Action bar -->

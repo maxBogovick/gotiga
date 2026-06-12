@@ -8,7 +8,7 @@
     import type { CabinetZone, FigurineListItem, HomeContent } from '$lib/types/api';
     import { t } from '$lib/i18n';
     import AppImage from '$lib/components/AppImage.svelte';
-    import FeaturedFigurineCard from '$lib/components/FeaturedFigurineCard.svelte';
+    import HomeFigurineTile from '$lib/components/HomeFigurineTile.svelte';
     import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
 
     let zones = $state<CabinetZone[]>([]);
@@ -40,6 +40,7 @@
     const parallaxSpring = spring({ x: 0, y: 0 }, { stiffness: 0.04, damping: 0.45 });
 
     type HeroMode = 'showcase' | 'release';
+    type WorkFilter = 'available' | 'saved' | 'upcoming' | 'archive';
 
     let configuredHeroMode = $derived(homeContent.heroMode ?? 'auto');
     let activeHeroMode = $derived<HeroMode>(
@@ -56,13 +57,7 @@
     let primaryCtaText = $derived(isReleaseMode ? $t('homeReleasePrimaryCta') : $t('homePrimaryCta'));
     let secondaryCtaHref = $derived(isReleaseMode ? '/upcoming' : '#request-path');
     let secondaryCtaText = $derived(isReleaseMode ? $t('homeReleaseSecondaryCta') : $t('homeOrderCta'));
-    let nextBlockMode = $derived<'available' | 'upcoming' | 'archive'>(
-        !isReleaseMode && availableFigurines.length > 0
-            ? 'available'
-            : inProgressFigurines.length > 0
-                ? 'upcoming'
-                : 'archive'
-    );
+    let activeWorkFilter = $state<WorkFilter>('available');
     let heroObjectName = $derived(homeContent.heroCaptionTitle?.trim() || heroFigurine?.name || homeContent.title?.trim() || '');
     let heroObjectMeta = $derived(homeContent.heroCaptionMeta?.trim() || $t('homeHeroObjectMeta'));
     let heroObjectCta = $derived(homeContent.heroCaptionCta?.trim() || (heroFigurine ? $t('homeHeroObjectOpen') : $t('homeSecondaryCta')));
@@ -74,7 +69,47 @@
         savedFigurines.ids
             .map((id) => collectionFigurines.find((item) => item.id === id))
             .filter((item): item is FigurineListItem => Boolean(item))
-            .slice(0, 4)
+            .slice(0, 5)
+    );
+    let savedWorkFigurines = $derived(
+        savedFigurines.ids
+            .map((id) => collectionFigurines.find((item) => item.id === id))
+            .filter((item): item is FigurineListItem => Boolean(item))
+    );
+    let activeWorkFigurines = $derived(
+        activeWorkFilter === 'saved'
+            ? savedWorkFigurines
+            : activeWorkFilter === 'upcoming'
+                ? inProgressFigurines
+                : activeWorkFilter === 'archive'
+                    ? archivePreviewFigurines
+                    : availableFigurines
+    );
+    let visibleWorkFigurines = $derived(activeWorkFigurines.slice(0, 8));
+    let activeWorkHref = $derived(
+        activeWorkFilter === 'saved'
+            ? '/profile'
+            : activeWorkFilter === 'upcoming'
+                ? '/upcoming'
+                : '/figurines'
+    );
+    let activeWorkCta = $derived(
+        activeWorkFilter === 'saved'
+            ? $t('homeSavedProfile')
+            : activeWorkFilter === 'upcoming'
+                ? $t('homeViewUpcoming')
+                : activeWorkFilter === 'archive'
+                    ? $t('homeOpenArchive')
+                    : $t('homeAllWorks')
+    );
+    let activeWorkText = $derived(
+        activeWorkFilter === 'saved'
+            ? $t('homeWorksSavedText')
+            : activeWorkFilter === 'upcoming'
+                ? $t('homeContextUpcomingText')
+                : activeWorkFilter === 'archive'
+                    ? $t('homeContextArchiveText')
+                    : $t('homeContextAvailableText')
     );
 
     // Count-up stats
@@ -168,12 +203,17 @@
             collectionFigurines = sortFeaturedFigurines(visibleFigurines);
             collectionTotal = visibleFigurines.length;
             availableTotal = figurines.filter((item) => item.status === 'available').length;
-            availableFigurines = sortFeaturedFigurines(visibleFigurines.filter((item) => item.status === 'available')).slice(0, 4);
-            inProgressFigurines = sortFeaturedFigurines(inProgress).slice(0, 3);
-            archivePreviewFigurines = sortFeaturedFigurines(visibleFigurines).slice(0, 4);
+            availableFigurines = sortFeaturedFigurines(visibleFigurines.filter((item) => item.status === 'available'));
+            inProgressFigurines = sortFeaturedFigurines(inProgress);
+            archivePreviewFigurines = sortFeaturedFigurines(visibleFigurines);
             heroFigurine = content.heroFigurineId
                 ? visibleFigurines.find((item) => item.id === content.heroFigurineId) ?? null
                 : null;
+            activeWorkFilter = !isReleaseMode && availableFigurines.length > 0
+                ? 'available'
+                : inProgressFigurines.length > 0
+                    ? 'upcoming'
+                    : 'archive';
             availDisplay.set(availableTotal);
             collDisplay.set(collectionTotal);
             isLoaded = true;
@@ -366,165 +406,140 @@
 
         </section>
 
-        <section id="available-works" class="context-section" aria-labelledby="context-title">
-            {#if savedPreviewFigurines.length > 0}
-                <div class="context-hd saved-context-hd">
-                    <div>
-                        <p class="eyebrow">
-                            <span class="eyebrow-rule"></span>
-                            {$t('homeSavedEyebrow')}
-                        </p>
-                        <h2 class="context-title">{$t('homeSavedTitle')}</h2>
-                    </div>
-                    <div class="context-side">
-                        <p class="context-desc">{$t('homeSavedText')}</p>
-                        <a href="/profile" class="all-link">
-                            {$t('homeSavedProfile')}
-                            <svg width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
-                                <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
-                            </svg>
-                        </a>
-                    </div>
-                </div>
+        <nav class="quick-nav" aria-label={$t('homeQuickNavLabel')}>
+            <a href="#available-works">{$t('homeWorksTitle')}</a>
+            <a href="#request-path">{$t('homeHowEyebrow')}</a>
+            <a href="/commission">{$t('commissionInvite')}</a>
+            <a href="/figurines">{$t('homeOpenArchive')}</a>
+        </nav>
 
-                <div class="cards saved-cards">
-                    {#each savedPreviewFigurines as fig, i}
-                        <FeaturedFigurineCard {fig} index={i} />
+        {#if savedPreviewFigurines.length > 0}
+            <aside class="personal-shelf" aria-label={$t('homeSavedTitle')}>
+                <div class="shelf-copy">
+                    <span>{$t('homeSavedEyebrow')}</span>
+                    <strong>{$t('homeSavedTitle')} · {savedWorkFigurines.length}</strong>
+                </div>
+                <div class="shelf-items">
+                    {#each savedPreviewFigurines as fig}
+                        <a class="shelf-thumb" href="/figurines/{fig.id}" aria-label="{$t('homeViewFigurine')}: {fig.name}">
+                            {#if fig.faceImageUrl}
+                                <AppImage src={fig.faceImageUrl} thumbUrl={fig.thumbUrl} alt={fig.name} class="shelf-img" loading="lazy" />
+                            {:else}
+                                <span>?</span>
+                            {/if}
+                        </a>
                     {/each}
                 </div>
+                <a href="/profile" class="shelf-link">{$t('homeSavedProfile')}</a>
+            </aside>
+        {/if}
 
-                <div class="context-divider" aria-hidden="true"></div>
-            {/if}
-
-            {#if nextBlockMode === 'available'}
-                <div class="context-hd">
-                    <div>
-                        <p class="eyebrow">
-                            <span class="eyebrow-rule"></span>
-                            {$t('homeContextAvailableEyebrow')}
-                        </p>
-                        <h2 id="context-title" class="context-title">{$t('homeContextAvailableTitle')}</h2>
-                    </div>
-                    <div class="context-side">
-                        <p class="context-desc">{$t('homeContextAvailableText')}</p>
-                        <a href="/figurines" class="all-link">
-                            {$t('homeAllWorks')}
-                            <svg width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
-                                <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
-                            </svg>
-                        </a>
-                    </div>
+        <section id="available-works" class="context-section work-hub" aria-labelledby="context-title">
+            <div class="context-hd work-hd">
+                <div>
+                    <p class="eyebrow">
+                        <span class="eyebrow-rule"></span>
+                        {$t('homeWorksEyebrow')}
+                    </p>
+                    <h2 id="context-title" class="context-title">{$t('homeWorksTitle')}</h2>
                 </div>
-
-                <div class="cards">
-                    {#each availableFigurines as fig, i}
-                        <FeaturedFigurineCard {fig} index={i} />
-                    {/each}
+                <div class="context-side">
+                    <p class="context-desc">{activeWorkText}</p>
+                    <a href={activeWorkHref} class="all-link">
+                        {activeWorkCta}
+                        <svg width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
+                            <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
+                        </svg>
+                    </a>
                 </div>
-            {:else if nextBlockMode === 'upcoming'}
-                <div class="context-hd">
-                    <div>
-                        <p class="eyebrow">
-                            <span class="eyebrow-rule"></span>
-                            {$t('homeContextUpcomingEyebrow')}
-                        </p>
-                        <h2 id="context-title" class="context-title">{$t('homeContextUpcomingTitle')}</h2>
-                    </div>
-                    <div class="context-side">
-                        <p class="context-desc">{$t('homeContextUpcomingText')}</p>
-                        <div class="context-actions">
-                            <a href="/upcoming" class="all-link">
-                                {$t('homeViewUpcoming')}
-                                <svg width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
-                                    <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
-                                </svg>
-                            </a>
-                            <a href="/figurines" class="context-link">{$t('homeOpenArchive')}</a>
-                        </div>
-                    </div>
-                </div>
+            </div>
 
-                <div class="upcoming-preview-grid">
-                    {#each inProgressFigurines as fig}
-                        <a class="upcoming-preview-card" href="/upcoming" aria-label="{$t('homeViewUpcoming')}: {fig.name}">
-                            <div class="upcoming-preview-img">
-                                {#if fig.faceImageUrl}
-                                    <AppImage src={fig.faceImageUrl} thumbUrl={fig.thumbUrl} alt={fig.name} class="upcoming-img" loading="lazy" />
-                                {:else}
-                                    <div class="upcoming-placeholder">?</div>
-                                {/if}
-                                <span class="upcoming-badge">{$t('upcomingWip')}</span>
-                            </div>
-                            <div class="upcoming-preview-meta">
-                                <h3>{fig.name}</h3>
-                                <p>{fig.technique || fig.material || $t('homeHeroObjectMeta')}</p>
-                            </div>
-                        </a>
+            <div class="work-tabs" role="tablist" aria-label={$t('homeWorksTitle')}>
+                <button
+                    class:active={activeWorkFilter === 'available'}
+                    onclick={() => activeWorkFilter = 'available'}
+                    disabled={availableFigurines.length === 0}
+                    type="button"
+                >
+                    {$t('homeWorksAvailableTab')}
+                    <span>{availableFigurines.length}</span>
+                </button>
+                <button
+                    class:active={activeWorkFilter === 'saved'}
+                    onclick={() => activeWorkFilter = 'saved'}
+                    disabled={savedWorkFigurines.length === 0}
+                    type="button"
+                >
+                    {$t('homeWorksSavedTab')}
+                    <span>{savedWorkFigurines.length}</span>
+                </button>
+                <button
+                    class:active={activeWorkFilter === 'upcoming'}
+                    onclick={() => activeWorkFilter = 'upcoming'}
+                    disabled={inProgressFigurines.length === 0}
+                    type="button"
+                >
+                    {$t('homeWorksUpcomingTab')}
+                    <span>{inProgressFigurines.length}</span>
+                </button>
+                <button
+                    class:active={activeWorkFilter === 'archive'}
+                    onclick={() => activeWorkFilter = 'archive'}
+                    disabled={archivePreviewFigurines.length === 0}
+                    type="button"
+                >
+                    {$t('homeWorksArchiveTab')}
+                    <span>{archivePreviewFigurines.length}</span>
+                </button>
+            </div>
+
+            {#if visibleWorkFigurines.length > 0}
+                <div class="work-grid">
+                    {#each visibleWorkFigurines as fig, i}
+                        <HomeFigurineTile {fig} index={i} />
                     {/each}
                 </div>
             {:else}
-                <div class="context-hd">
-                    <div>
-                        <p class="eyebrow">
-                            <span class="eyebrow-rule"></span>
-                            {$t('homeContextArchiveEyebrow')}
-                        </p>
-                        <h2 id="context-title" class="context-title">{$t('homeContextArchiveTitle')}</h2>
-                    </div>
-                    <div class="context-side">
-                        <p class="context-desc">{$t('homeContextArchiveText')}</p>
-                        <a href="/figurines" class="all-link">
-                            {$t('homeOpenArchive')}
-                            <svg width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
-                                <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
-                            </svg>
-                        </a>
-                    </div>
-                </div>
+                <p class="work-empty">{$t('homeWorksEmpty')}</p>
+            {/if}
 
-                {#if archivePreviewFigurines.length > 0}
-                    <div class="cards">
-                        {#each archivePreviewFigurines as fig, i}
-                            <FeaturedFigurineCard {fig} index={i} />
-                        {/each}
-                    </div>
-                {/if}
+            {#if activeWorkFigurines.length > visibleWorkFigurines.length}
+                <div class="work-more">
+                    <a href={activeWorkHref} class="all-link">
+                        {$t('homeWorksShowAll')}
+                        <svg width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
+                            <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
+                        </svg>
+                    </a>
+                </div>
             {/if}
         </section>
 
-        <section id="request-path" class="request-path" aria-labelledby="request-path-title">
+        <section id="request-path" class="request-path compact-request" aria-labelledby="request-path-title">
             <div class="request-copy">
                 <p class="eyebrow">
                     <span class="eyebrow-rule"></span>
                     {$t('homeHowEyebrow')}
                 </p>
                 <h2 id="request-path-title" class="request-title">{$t('homeHowTitle')}</h2>
-                <p class="request-desc">{$t('homeHowText')}</p>
             </div>
 
-            <div class="request-steps">
-                <article class="request-step">
-                    <span class="step-num">01</span>
-                    <h3>{$t('homeHowStep1Title')}</h3>
-                    <p>{$t('homeHowStep1Text')}</p>
-                </article>
-                <article class="request-step">
-                    <span class="step-num">02</span>
-                    <h3>{$t('homeHowStep2Title')}</h3>
-                    <p>{$t('homeHowStep2Text')}</p>
-                </article>
-                <article class="request-step">
-                    <span class="step-num">03</span>
-                    <h3>{$t('homeHowStep3Title')}</h3>
-                    <p>{$t('homeHowStep3Text')}</p>
-                </article>
+            <div class="request-flow">
+                <span><b>01</b>{$t('homeHowStep1Title')}</span>
+                <span><b>02</b>{$t('homeHowStep2Title')}</span>
+                <span><b>03</b>{$t('homeHowStep3Title')}</span>
+                <a href="/commission">{$t('commissionInvite')}</a>
             </div>
-
-            <p class="request-invite">
-                <span class="request-invite-lead">{$t('homeCommissionLead')}</span>
-                <a href="/commission" class="request-invite-link">{$t('commissionInvite')}</a>
-            </p>
         </section>
+
+        {#if savedWorkFigurines.length > 0}
+            <a href="/profile" class="saved-dock" aria-label="{$t('homeSavedTitle')}: {savedWorkFigurines.length}">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true">
+                    <path d="M7 12.5C7 12.5 1 8.5 1 4.5C1 2.5 2.5 1 4.5 1C5.5 1 6.5 1.8 7 3C7.5 1.8 8.5 1 9.5 1C11.5 1 13 2.5 13 4.5C13 8.5 7 12.5 7 12.5Z"/>
+                </svg>
+                <span>{savedWorkFigurines.length}</span>
+            </a>
+        {/if}
 
     </main>
     {/if}
@@ -648,8 +663,8 @@
         grid-template-columns: minmax(320px, 0.62fr) minmax(560px, 1.38fr);
         gap: clamp(44px, 5.8vw, 104px);
         align-items: center;
-        min-height: 100svh;
-        padding: 76px clamp(20px, 4.5vw, 72px) 54px;
+        min-height: min(820px, 82svh);
+        padding: 70px clamp(20px, 4.5vw, 72px) 34px;
         max-width: 1680px;
         margin: 0 auto;
     }
@@ -733,7 +748,7 @@
         line-height: 1.52;
         color: rgba(52,37,28,0.76);
         max-width: 430px;
-        margin-bottom: 34px;
+        margin-bottom: 24px;
     }
 
     /* ── CTAs ────────────────────────────────────── */
@@ -839,7 +854,7 @@
     .stats {
         display: flex;
         align-items: stretch;
-        margin-top: 34px;
+        margin-top: 22px;
     }
 
     .stat {
@@ -888,7 +903,7 @@
     .img-frame {
         position: relative;
         width: 100%;
-        height: clamp(520px, 70svh, 860px);
+        height: clamp(420px, 58svh, 720px);
         overflow: hidden;
         transform-style: preserve-3d;
         transition: filter 0.3s;
@@ -1183,9 +1198,135 @@
         transform: translateY(0);
     }
 
+    /* ── QUICK NAV / PERSONAL SHELF ───────────────── */
+    .quick-nav {
+        position: sticky;
+        top: 0;
+        z-index: 40;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        max-width: 1680px;
+        margin: 0 auto;
+        padding: 8px clamp(16px, 4vw, 72px);
+        background: color-mix(in srgb, var(--cream) 86%, transparent);
+        border-top: 1px solid rgba(52,37,28,0.08);
+        border-bottom: 1px solid rgba(52,37,28,0.08);
+        backdrop-filter: blur(14px);
+    }
+
+    .quick-nav a {
+        min-height: 30px;
+        display: inline-flex;
+        align-items: center;
+        padding: 0 11px;
+        color: rgba(95,70,54,0.62);
+        border: 1px solid transparent;
+        font-size: 8.5px;
+        letter-spacing: 0.15em;
+        line-height: 1;
+        text-transform: uppercase;
+        text-decoration: none;
+        white-space: nowrap;
+        transition: color 0.2s, border-color 0.2s, background 0.2s;
+    }
+
+    .quick-nav a:hover {
+        color: var(--mid);
+        border-color: rgba(198,95,60,0.20);
+        background: rgba(255,249,240,0.62);
+    }
+
+    .personal-shelf {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: clamp(14px, 2.2vw, 28px);
+        max-width: 1680px;
+        margin: clamp(22px, 3.8vw, 44px) auto 0;
+        padding: 0 clamp(20px, 4.5vw, 72px);
+    }
+
+    .shelf-copy {
+        display: grid;
+        gap: 4px;
+        min-width: 150px;
+    }
+
+    .shelf-copy span,
+    .shelf-link {
+        font-size: 8.5px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--muted2);
+    }
+
+    .shelf-copy strong {
+        font-family: 'Cormorant Garamond', serif;
+        font-size: clamp(22px, 2.2vw, 34px);
+        font-weight: 300;
+        line-height: 1;
+        color: var(--ink);
+    }
+
+    .shelf-items {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+        overflow-x: auto;
+        scrollbar-width: none;
+    }
+
+    .shelf-items::-webkit-scrollbar {
+        display: none;
+    }
+
+    .shelf-thumb {
+        width: clamp(48px, 5.8vw, 72px);
+        aspect-ratio: 1 / 1;
+        display: grid;
+        place-items: center;
+        flex: 0 0 auto;
+        overflow: hidden;
+        border: 1px solid rgba(52,37,28,0.14);
+        background: rgba(255,249,240,0.74);
+        color: rgba(95,70,54,0.42);
+        text-decoration: none;
+        transition: transform 0.22s, border-color 0.22s;
+    }
+
+    .shelf-thumb:hover {
+        transform: translateY(-2px);
+        border-color: rgba(198,95,60,0.34);
+    }
+
+    .shelf-thumb :global(.shelf-img),
+    .shelf-thumb :global(.shelf-img .app-image-main),
+    .shelf-thumb :global(.shelf-img .app-image-thumb) {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: center 42%;
+        display: block;
+    }
+
+    .shelf-link {
+        color: var(--mid);
+        text-decoration: none;
+        border-bottom: 1px solid rgba(111,59,36,0.22);
+        padding-bottom: 3px;
+        white-space: nowrap;
+    }
+
+    .shelf-link:hover {
+        color: var(--copper);
+    }
+
     /* ── CONTEXT SECTION ─────────────────────────── */
     .context-section {
-        padding: clamp(72px, 9vw, 128px) clamp(20px, 4.5vw, 72px) clamp(80px, 10vw, 144px);
+        padding: clamp(40px, 5.2vw, 78px) clamp(20px, 4.5vw, 72px) clamp(54px, 7vw, 96px);
         max-width: 1680px;
         margin: 0 auto;
     }
@@ -1195,14 +1336,14 @@
         grid-template-columns: 1fr 1fr;
         gap: clamp(24px, 4vw, 64px);
         align-items: end;
-        margin-bottom: clamp(36px, 5vw, 64px);
-        padding-bottom: clamp(28px, 4vw, 48px);
+        margin-bottom: clamp(22px, 3vw, 36px);
+        padding-bottom: clamp(18px, 2.4vw, 28px);
         border-bottom: 1px solid var(--border);
     }
 
     .context-title {
         font-family: 'Cormorant Garamond', serif;
-        font-size: clamp(36px, 5.5vw, 76px);
+        font-size: clamp(34px, 4.2vw, 62px);
         font-weight: 300;
         line-height: 0.92;
         color: var(--ink);
@@ -1227,11 +1368,63 @@
         max-width: 440px;
     }
 
-    .context-actions {
+    .work-tabs {
         display: flex;
         align-items: center;
         flex-wrap: wrap;
-        gap: 16px 22px;
+        gap: 8px;
+        margin-bottom: clamp(18px, 2.4vw, 30px);
+    }
+
+    .work-tabs button {
+        min-height: 34px;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 13px;
+        border: 1px solid rgba(52,37,28,0.12);
+        background: rgba(255,249,240,0.48);
+        color: rgba(95,70,54,0.66);
+        font-size: 8.5px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        cursor: pointer;
+        transition: color 0.2s, border-color 0.2s, background 0.2s;
+    }
+
+    .work-tabs button span {
+        color: rgba(95,70,54,0.36);
+    }
+
+    .work-tabs button.active {
+        color: var(--ink);
+        border-color: rgba(198,95,60,0.36);
+        background: rgba(255,249,240,0.86);
+    }
+
+    .work-tabs button:disabled {
+        opacity: 0.36;
+        cursor: not-allowed;
+    }
+
+    .work-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+        gap: clamp(12px, 1.5vw, 20px);
+    }
+
+    .work-empty {
+        padding: 30px 0;
+        font-family: 'Cormorant Garamond', serif;
+        font-size: 19px;
+        font-style: italic;
+        color: var(--muted);
+    }
+
+    .work-more {
+        display: flex;
+        justify-content: center;
+        margin-top: clamp(22px, 3vw, 38px);
     }
 
     .all-link {
@@ -1250,224 +1443,98 @@
 
     .all-link:hover { color: var(--copper); gap: 16px; }
 
-    .context-link {
-        display: inline-flex;
-        align-items: center;
-        min-height: 28px;
-        color: color-mix(in srgb, var(--brown) 64%, transparent);
-        font-size: 9.5px;
-        letter-spacing: 0.16em;
-        text-transform: uppercase;
-        text-decoration: none;
-        border-bottom: 1px solid color-mix(in srgb, var(--color-ink-primary) 14%, transparent);
-        transition: color 0.25s, border-color 0.25s;
-    }
-
-    .context-link:hover {
-        color: var(--copper);
-        border-color: rgba(198,95,60,0.42);
-    }
-
-    .upcoming-preview-grid {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: clamp(20px, 2.6vw, 38px);
-    }
-
-    .upcoming-preview-card {
-        display: grid;
-        grid-template-rows: auto 1fr;
-        color: var(--brown);
-        text-decoration: none;
-        border-top: 1px solid var(--border);
-    }
-
-    .upcoming-preview-img {
-        position: relative;
-        aspect-ratio: 4 / 5;
-        margin-top: 14px;
-        overflow: hidden;
-        background:
-            linear-gradient(135deg, rgba(52,37,28,0.08), rgba(198,95,60,0.06)),
-            var(--cream2);
-    }
-
-    .upcoming-preview-img :global(.upcoming-img),
-    .upcoming-preview-img :global(.app-image-main) {
-        width: 100%;
-        height: 100%;
-    }
-
-    .upcoming-preview-img :global(.app-image-main) {
-        object-fit: cover;
-        filter: saturate(0.78) contrast(1.04);
-        transition: transform 0.45s var(--ease), filter 0.45s;
-    }
-
-    .upcoming-preview-card:hover .upcoming-preview-img :global(.app-image-main) {
-        transform: scale(1.035);
-        filter: saturate(0.9) contrast(1.08);
-    }
-
-    .upcoming-placeholder {
-        display: grid;
-        width: 100%;
-        height: 100%;
-        place-items: center;
-        font-family: 'Cormorant Garamond', serif;
-        font-size: 56px;
-        color: var(--muted2);
-    }
-
-    .upcoming-badge {
-        position: absolute;
-        left: 14px;
-        top: 14px;
-        z-index: 2;
-        padding: 7px 10px;
-        background: rgba(44,23,16,0.72);
-        color: var(--cream2);
-        font-size: 8px;
-        letter-spacing: 0.18em;
-        text-transform: uppercase;
-        backdrop-filter: blur(10px);
-    }
-
-    .upcoming-preview-meta {
-        display: grid;
-        gap: 8px;
-        padding-top: 18px;
-    }
-
-    .upcoming-preview-meta h3 {
-        font-family: 'Cormorant Garamond', serif;
-        font-size: clamp(28px, 3vw, 42px);
-        font-style: italic;
-        font-weight: 300;
-        line-height: 0.95;
-        color: var(--ink);
-    }
-
-    .upcoming-preview-meta p {
-        font-size: 9px;
-        letter-spacing: 0.14em;
-        line-height: 1.4;
-        text-transform: uppercase;
-        color: var(--muted2);
-    }
-
-    /* ── CARDS ───────────────────────────────────── */
-    .cards {
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: clamp(20px, 2.4vw, 34px);
-    }
-
-    .saved-cards {
-        margin-bottom: clamp(34px, 5vw, 64px);
-    }
-
-    .context-divider {
-        height: 1px;
-        margin: 0 0 clamp(42px, 6vw, 76px);
-        background: linear-gradient(90deg, transparent, rgba(52,37,28,0.14), transparent);
-    }
-
     /* ── REQUEST PATH ───────────────────────────── */
     .request-path {
         display: grid;
-        grid-template-columns: minmax(280px, 0.76fr) minmax(420px, 1.24fr);
-        gap: clamp(28px, 5vw, 82px);
-        align-items: start;
+        grid-template-columns: minmax(220px, 0.62fr) minmax(360px, 1.38fr);
+        gap: clamp(18px, 3vw, 46px);
+        align-items: center;
         max-width: 1680px;
         margin: 0 auto;
-        padding: 0 clamp(20px, 4.5vw, 72px) clamp(88px, 10vw, 148px);
+        padding: 0 clamp(20px, 4.5vw, 72px) clamp(46px, 6vw, 82px);
+    }
+
+    .compact-request {
+        border-top: 1px solid rgba(52,37,28,0.10);
+        padding-top: clamp(22px, 3.2vw, 42px);
     }
 
     .request-title {
-        margin: 10px 0 18px;
+        margin: 8px 0 0;
         font-family: 'Cormorant Garamond', serif;
-        font-size: clamp(34px, 4.8vw, 72px);
+        font-size: clamp(28px, 3.4vw, 48px);
         font-weight: 300;
         line-height: 0.96;
         color: var(--ink);
     }
 
-    .request-desc {
-        max-width: 460px;
-        font-family: 'Cormorant Garamond', serif;
-        font-size: 18px;
-        font-style: italic;
-        font-weight: 300;
-        line-height: 1.5;
-        color: var(--muted);
-    }
-
-    .request-steps {
+    .request-flow {
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 14px;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
     }
 
-    .request-step {
-        min-height: 220px;
-        padding: 22px 20px;
-        border: 1px solid var(--border);
-        background: color-mix(in srgb, var(--color-canvas-raised) 72%, transparent);
-    }
-
-    .step-num {
-        display: block;
-        margin-bottom: 42px;
-        font-family: 'Cormorant Garamond', serif;
-        font-size: 34px;
-        line-height: 1;
-        color: color-mix(in srgb, var(--color-ember) 74%, transparent);
-    }
-
-    .request-step h3 {
-        margin-bottom: 10px;
-        font-size: 10px;
-        letter-spacing: 0.18em;
+    .request-flow span,
+    .request-flow a {
+        min-height: 52px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 12px;
+        border: 1px solid rgba(52,37,28,0.12);
+        background: rgba(255,249,240,0.46);
+        color: rgba(52,37,28,0.72);
+        font-size: 9px;
+        letter-spacing: 0.12em;
+        line-height: 1.25;
         text-transform: uppercase;
-        color: var(--ink);
-    }
-
-    .request-step p {
-        font-family: 'Cormorant Garamond', serif;
-        font-size: 16px;
-        font-style: italic;
-        font-weight: 300;
-        line-height: 1.42;
-        color: var(--muted);
-    }
-
-    .request-invite {
-        margin-top: clamp(28px, 4vw, 48px);
-        text-align: center;
-        font-family: 'Cormorant Garamond', serif;
-    }
-    .request-invite-lead {
-        display: block;
-        font-size: 17px;
-        font-style: italic;
-        font-weight: 300;
-        color: var(--muted);
-        margin-bottom: 0.6rem;
-    }
-    .request-invite-link {
-        font-family: 'Cormorant Garamond', serif;
-        font-style: italic;
-        font-size: 19px;
-        color: var(--accent, #c65f3c);
         text-decoration: none;
-        border-bottom: 1px solid color-mix(in srgb, var(--accent, #c65f3c) 40%, transparent);
-        padding-bottom: 2px;
-        transition: color 0.2s, border-color 0.2s;
     }
-    .request-invite-link:hover {
-        color: var(--ink);
-        border-color: var(--ink);
+
+    .request-flow b {
+        font-family: 'Cormorant Garamond', serif;
+        font-size: 20px;
+        font-weight: 300;
+        line-height: 1;
+        color: rgba(198,95,60,0.78);
+    }
+
+    .request-flow a {
+        justify-content: center;
+        color: var(--mid);
+        border-color: rgba(198,95,60,0.24);
+    }
+
+    .request-flow a:hover {
+        color: var(--copper);
+        border-color: rgba(198,95,60,0.44);
+        background: rgba(255,246,239,0.86);
+    }
+
+    .saved-dock {
+        position: fixed;
+        right: clamp(14px, 2vw, 28px);
+        bottom: clamp(14px, 2vw, 28px);
+        z-index: 80;
+        min-width: 46px;
+        height: 42px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        padding: 0 13px;
+        border: 1px solid rgba(198,95,60,0.28);
+        border-radius: 999px;
+        background: rgba(255,249,240,0.86);
+        color: var(--copper);
+        text-decoration: none;
+        box-shadow: 0 14px 34px rgba(68,37,20,0.14);
+        backdrop-filter: blur(14px);
+    }
+
+    .saved-dock span {
+        font-size: 10px;
+        letter-spacing: 0.08em;
     }
 
     /* ── RESPONSIVE ──────────────────────────────── */
@@ -1475,30 +1542,32 @@
         .hero {
             grid-template-columns: 1fr;
             min-height: auto;
-            padding-top: 88px;
+            padding-top: 82px;
             gap: 32px;
         }
 
         .hero-visual { order: 2; }
         .hero-text { order: 1; max-width: 580px; }
 
-        .img-frame { height: min(58svh, 620px); }
+        .img-frame { height: min(50svh, 560px); }
 
         .context-hd { grid-template-columns: 1fr; }
 
-        .cards { grid-template-columns: repeat(2, 1fr); }
-
-        .upcoming-preview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .work-grid { grid-template-columns: repeat(2, 1fr); }
 
         .request-path {
             grid-template-columns: 1fr;
             padding-top: 16px;
         }
+
+        .request-flow {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
     }
 
     @media (max-width: 680px) {
         .hero {
-            padding: 70px 16px 36px;
+            padding: 62px 16px 26px;
             gap: 24px;
         }
 
@@ -1528,7 +1597,7 @@
             font-size: 16px;
         }
 
-        .img-frame { height: 42svh; min-height: 300px; }
+        .img-frame { height: 34svh; min-height: 260px; }
 
         .scroll-cue { display: none; }
 
@@ -1547,30 +1616,68 @@
             display: none;
         }
 
+        .quick-nav {
+            justify-content: flex-start;
+            overflow-x: auto;
+            padding-inline: 12px;
+            scrollbar-width: none;
+        }
+
+        .quick-nav::-webkit-scrollbar {
+            display: none;
+        }
+
+        .personal-shelf {
+            grid-template-columns: 1fr;
+            gap: 12px;
+            padding-inline: 16px;
+        }
+
+        .shelf-copy {
+            min-width: 0;
+        }
+
+        .shelf-link {
+            justify-self: start;
+        }
+
         .context-section {
             padding-inline: 16px;
+            padding-top: 36px;
+            padding-bottom: 54px;
         }
 
         .context-title { font-size: clamp(32px, 9vw, 52px); }
         .context-desc { font-size: 16px; }
 
-        .cards { grid-template-columns: 1fr; gap: 22px; }
-        .upcoming-preview-grid { grid-template-columns: 1fr; gap: 28px; }
-
-        .request-path {
-            padding: 0 16px 88px;
+        .work-tabs {
+            overflow-x: auto;
+            flex-wrap: nowrap;
+            scrollbar-width: none;
         }
 
-        .request-steps {
+        .work-tabs::-webkit-scrollbar {
+            display: none;
+        }
+
+        .work-tabs button {
+            flex: 0 0 auto;
+        }
+
+        .work-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+
+        .request-path {
+            padding: 24px 16px 70px;
+        }
+
+        .request-flow {
             grid-template-columns: 1fr;
         }
 
-        .request-step {
-            min-height: 0;
-        }
-
-        .step-num {
-            margin-bottom: 24px;
+        .saved-dock {
+            right: 12px;
+            bottom: 12px;
+            height: 40px;
         }
     }
 

@@ -93,6 +93,8 @@
   }
 
   function handleBackdropKeydown(e: KeyboardEvent) {
+    // Срабатывает только на самом backdrop, а не на всплывших из инпутов событиях
+    if (e.target !== e.currentTarget) return;
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
       close();
