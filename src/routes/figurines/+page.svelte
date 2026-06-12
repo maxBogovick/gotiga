@@ -559,8 +559,8 @@
                     </svg>
                   </button>
 
-                  <!-- Slide-up action bar — appears on hover -->
-                  <div class="absolute bottom-0 left-0 right-0 z-10 flex items-center justify-between px-3.5 py-2.5
+                  <!-- Slide-up action bar — appears on hover (and stays open on touch, see <style>) -->
+                  <div class="card-actions-bar absolute bottom-0 left-0 right-0 z-10 flex items-center justify-between px-3.5 py-2.5
                               bg-gradient-to-t from-[rgba(44,23,16,0.72)] to-transparent
                               translate-y-full group-hover:translate-y-0
                               transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]">
@@ -717,6 +717,18 @@
 <style>
   @keyframes shimmer {
     100% { transform: translateX(200%); }
+  }
+
+  /* Touch devices have no hover: keep the action bar (quick view / share / request)
+     reachable instead of hidden off-screen. Scoped specificity beats the Tailwind utilities. */
+  @media (hover: none) {
+    .card-actions-bar {
+      transform: none;
+    }
+    .card-actions-bar button {
+      opacity: 1;
+      transform: none;
+    }
   }
 
   .bg-noise {

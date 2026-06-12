@@ -36,11 +36,7 @@
         return Date.now() - ts < 21 * 24 * 60 * 60 * 1000;
     });
 
-    // Two distinct facts for the card so the meta line reads like a catalogue entry.
     let primaryFact = $derived(fig.material || fig.technique || $t('homeTrustHandmade'));
-    let secondaryFact = $derived(
-        fig.series && fig.series !== primaryFact ? fig.series : null
-    );
     let specimenMeta = $derived(
         fig.status === 'available'
             ? `${primaryFact} · ${$t('homeCardTransferByRequest')}`
@@ -129,7 +125,7 @@
         {/if}
     </div>
 
-    <div class="tile-media-wrap">
+    <div class="tile-media-wrap" style="view-transition-name: figurine-{fig.id}">
         <a
             {href}
             class="tile-media"
@@ -144,10 +140,6 @@
             <span class="corner corner-tr"></span>
             <span class="corner corner-bl"></span>
             <span class="corner corner-br"></span>
-
-            <span class="tile-veil" aria-hidden="true">
-                <span class="tile-veil-cta">{$t('cardQuickView')}</span>
-            </span>
         </a>
 
         {#if isNew}
@@ -214,10 +206,6 @@
         </div>
 
         <p class="tile-meta">{specimenMeta}</p>
-
-        {#if secondaryFact}
-            <p class="tile-subfact">{secondaryFact}</p>
-        {/if}
 
         <div class="tile-actions">
             <span class="tile-file-hint">{archiveNumber}</span>
@@ -442,42 +430,6 @@
         filter: grayscale(0) saturate(1.04) contrast(1.04);
     }
 
-    /* hover veil with a quiet "quick view" cue, surfacing from the bottom */
-    .tile-veil {
-        position: absolute;
-        inset: auto 0 0 0;
-        z-index: 3;
-        display: flex;
-        justify-content: center;
-        padding: 18px 0 12px;
-        background: linear-gradient(0deg, rgba(28,18,12,0.62), transparent);
-        opacity: 0;
-        transform: translateY(8px);
-        transition: opacity 0.28s ease, transform 0.28s ease;
-        pointer-events: none;
-    }
-
-    .tile-veil-cta {
-        padding: 6px 13px;
-        border: 1px solid rgba(255,249,240,0.55);
-        border-radius: 999px;
-        background: rgba(255,249,240,0.14);
-        color: #fff7ea;
-        font-family: 'Instrument Sans', system-ui, sans-serif;
-        font-size: 9px;
-        font-weight: 600;
-        letter-spacing: 0.16em;
-        line-height: 1;
-        text-transform: uppercase;
-        backdrop-filter: blur(4px);
-    }
-
-    .tile:hover .tile-veil,
-    .tile-media:focus-visible .tile-veil {
-        opacity: 1;
-        transform: none;
-    }
-
     .corner {
         position: absolute;
         z-index: 2;
@@ -541,6 +493,7 @@
         gap: 8px;
     }
 
+    /* tools sit quietly present (not popping in) — calm, discoverable, not shop-like */
     .tile-tool {
         width: 34px;
         height: 34px;
@@ -552,17 +505,14 @@
         color: var(--color-ink-tertiary);
         backdrop-filter: blur(8px);
         cursor: pointer;
-        opacity: 0;
-        transform: translateY(-4px);
+        opacity: 0.82;
         transition: color 0.2s, background 0.2s, border-color 0.2s, transform 0.2s, opacity 0.2s;
     }
 
-    /* tools fade in on hover/focus, but a saved heart stays visible as a marker */
     .tile:hover .tile-tool,
     .tile:focus-within .tile-tool,
     .tile-tool.is-saved {
         opacity: 1;
-        transform: none;
     }
 
     .tile-save:hover,
@@ -686,20 +636,6 @@
         line-height: 1.25;
     }
 
-    .tile-subfact {
-        margin: -2px 0 0;
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        color: var(--color-ink-tertiary);
-        font-family: 'Instrument Sans', system-ui, sans-serif;
-        font-size: 9px;
-        font-weight: 600;
-        letter-spacing: 0.13em;
-        text-transform: uppercase;
-    }
-
     .tile-actions {
         display: flex;
         align-items: center;
@@ -819,7 +755,6 @@
         .tile,
         .tile::after,
         .tile-tool,
-        .tile-veil,
         .tile-cta,
         .tile-cta svg,
         .tile-media :global(.tile-img .app-image-main) {

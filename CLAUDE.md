@@ -32,6 +32,6 @@ Modals: rotate-1deg frame, double border, wax seal on success, Georgia/Fraunces/
 - Booking creates a `cancelToken` — user saves it to cancel later (no account system)
 - `FigurineClaimsStore` persists tokens in localStorage, re-verifies on mount + tab focus
 - Gallery keyboard nav: ←/→ arrows (undiscoverable — no hint shown)
-- `view-transition-name: figurine-{id}` set but `startViewTransition` not yet wired
+- `view-transition-name: figurine-{id}` enables shared-element morph card→detail; `startViewTransition` is wired globally in `+layout.svelte` (onNavigate). Each `figurine-{id}` must be unique per rendered page or the transition aborts.
 - Admin auth: `sessionStorage` only (lost on tab close by design)
 - `series` field exists in types but is not editable in admin form yet

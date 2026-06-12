@@ -200,6 +200,8 @@ pub struct FigurineListItemDto {
     pub technique: Option<String>,
     pub material: Option<String>,
     pub is_featured: bool,
+    /// When the piece was catalogued — lets the showcase mark recently added works.
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

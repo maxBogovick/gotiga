@@ -116,6 +116,7 @@ impl AppService {
                 technique: f.technique,
                 material: f.material,
                 is_featured: f.is_featured,
+                created_at: f.created_at,
             });
         }
         Ok(result)
@@ -147,6 +148,7 @@ impl AppService {
                 technique: f.technique,
                 material: f.material,
                 is_featured: f.is_featured,
+                created_at: f.created_at,
             });
         }
         Ok(result)
@@ -188,6 +190,7 @@ impl AppService {
                 technique: r.technique,
                 material: r.material,
                 is_featured: r.is_featured,
+                created_at: r.created_at,
             });
         }
 
