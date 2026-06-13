@@ -40,32 +40,32 @@
 {#if isActive && !reduced}
   <div class="fixed inset-0 pointer-events-none z-[100] overflow-hidden" transition:fade={{ duration: 1000 }}>
     <!-- Darkening layer to make the room feel dimmer -->
-    <div class="absolute inset-0 bg-[#6f3b24]/10"></div>
+    <div class="absolute inset-0 bg-[#2f170e]/[0.06]"></div>
 
     <!-- The Candle Light -->
     <div
-      class="absolute rounded-full pointer-events-none mix-blend-color-dodge transition-opacity duration-100"
+      class="absolute rounded-full pointer-events-none mix-blend-soft-light transition-opacity duration-100"
       style="
         left: {x}px;
         top: {y}px;
-        width: 400px;
-        height: 400px;
+        width: 360px;
+        height: 360px;
         transform: translate(-50%, -50%);
-        background: radial-gradient(circle, rgba(255, 200, 100, 1) 0%, rgba(200, 100, 50, 0.5) 30%, transparent 70%);
-        opacity: 0.8;
+        background: radial-gradient(circle, rgba(255, 214, 126, 0.82) 0%, rgba(211, 96, 41, 0.28) 36%, transparent 72%);
+        opacity: 0.62;
       "
     ></div>
     
     <!-- Secondary Glow (Warmth) -->
     <div
-      class="absolute rounded-full pointer-events-none mix-blend-screen"
+      class="absolute rounded-full pointer-events-none mix-blend-multiply"
       style="
         left: {x}px;
         top: {y}px;
-        width: 600px;
-        height: 600px;
+        width: 560px;
+        height: 560px;
         transform: translate(-50%, -50%);
-        background: radial-gradient(circle, rgba(255, 100, 50, 0.2) 0%, transparent 60%);
+        background: radial-gradient(circle, transparent 0%, transparent 42%, rgba(78, 33, 18, 0.08) 72%, transparent 100%);
       "
     ></div>
     

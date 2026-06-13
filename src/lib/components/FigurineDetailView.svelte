@@ -249,6 +249,24 @@
   );
 
   function resolveUrl(path: string | undefined | null) { return path ?? ''; }
+  function imageTypeLabel(type: string | undefined | null) {
+    switch (type) {
+      case 'face': return $t('detailImageFace');
+      case 'detail': return $t('detailImageDetail');
+      case 'full': return $t('detailImageFull');
+      default: return $t('detailImageView');
+    }
+  }
+  function processStepLabel(type: string | undefined | null) {
+    switch (type) {
+      case 'sketch': return $t('figurineStepSketch');
+      case 'prototype': return $t('figurineStepPrototype');
+      case 'modeling': return $t('figurineStepModeling');
+      case 'painting': return $t('figurineStepPainting');
+      case 'finish': return $t('figurineStepFinish');
+      default: return $t('detailMakingRecordStep');
+    }
+  }
   function selectImage(index: number) { if (index !== selectedImageIndex) selectedImageIndex = index; }
   function openLightbox(index: number) { lightboxStartIndex = index; showLightbox = true; }
   function toggleGrimoire() { isGrimoireOpen = !isGrimoireOpen; }
@@ -367,7 +385,7 @@
 
 <CandleReveal isActive={isCandleLit} />
 
-<div class="page-root" class:page-root--has-cta={figurine.status === 'available'}>
+<div class="page-root" class:page-root--has-cta={figurine.status === 'available'} class:page-root--candle={isCandleLit}>
   <OrderModal
     isOpen={showOrderModal}
     mode={orderMode}
@@ -606,7 +624,7 @@
 
         <button
           onclick={share}
-          class="control-btn {copied ? 'control-btn--active' : ''}"
+          class="control-btn control-btn--utility {copied ? 'control-btn--active' : ''}"
           aria-label={$t('figurineShare')}
           title={$t('figurineShare')}
         >
@@ -626,7 +644,7 @@
 
         <button
           onclick={openStoryModal}
-          class="control-btn"
+          class="control-btn control-btn--utility"
           aria-label={$t('figurineStoryShare')}
           title={$t('figurineStoryShare')}
           disabled={storySaving}
@@ -660,7 +678,7 @@
           </button>
         {/if}
 
-        <span class="ref-tag">ARC-{id.toUpperCase()}</span>
+        <span class="ref-tag">ARC-{id.slice(0, 8).toUpperCase()}</span>
       </div>
     </nav>
 
@@ -702,7 +720,8 @@
 
               {#if sortedImages.length > 1}
                 <div class="img-counter" aria-hidden="true">
-                  {selectedImageIndex + 1}<span class="img-counter-sep">/</span>{sortedImages.length}
+                  <span class="img-counter-type">{imageTypeLabel(currentImage?.imageType)}</span>
+                  <span class="img-counter-num">{selectedImageIndex + 1}<span class="img-counter-sep">/</span>{sortedImages.length}</span>
                 </div>
               {/if}
 
@@ -739,13 +758,6 @@
               <span class="eyebrow-year">Anno {figurine.year}</span>
             {/if}
           </div>
-          <span class="status-pill status-pill--{figurine.status}">
-            {figurine.status === 'sold'
-              ? $t('figurineStatusSold')
-              : figurine.status === 'reserved'
-                ? $t('figurineStatusReserved')
-                : $t('figurineStatusAvailable')}
-          </span>
         </div>
 
         <h1 class="figurine-title">{figurine.name}</h1>
@@ -754,7 +766,110 @@
           <p class="lore-short">{figurine.shortText}</p>
         {/if}
 
-        <!-- History FIRST — читаем перед решением -->
+        <section class="decision-panel decision-panel--{figurine.status}" aria-labelledby="decision-panel-title">
+          <div class="decision-head">
+            <span class="decision-kicker">
+              {figurine.status === 'available'
+                ? $t('figurineStatusAvailable')
+                : figurine.status === 'reserved'
+                  ? $t('figurineStatusReserved')
+                  : $t('figurineStatusSold')}
+            </span>
+            <span class="decision-price">{$t('figurinePriceOnRequest')}</span>
+          </div>
+
+          <h2 id="decision-panel-title" class="decision-title">
+            {figurine.status === 'available'
+              ? hasActiveShowing
+                ? $t('detailShowingPanelTitle')
+                : $t('detailRequestPanelTitle')
+              : figurine.status === 'reserved'
+                ? $t('detailReservedPanelTitle')
+                : $t('detailSoldPanelTitle')}
+          </h2>
+
+          <p class="decision-text">
+            {figurine.status === 'available'
+              ? hasActiveShowing
+                ? $t('detailShowingPanelText')
+                : $t('detailRequestPanelText')
+              : figurine.status === 'reserved'
+                ? $t('detailReservedPanelText')
+                : $t('detailSoldPanelText')}
+          </p>
+
+          <div class="decision-proof" aria-label={$t('detailRequestFacts')}>
+            <span>{$t('detailReplyWindow')}</span>
+            <span>{$t('detailNoObligation')}</span>
+            <span>{$t('detailPersonalTransfer')}</span>
+          </div>
+
+          {#if figurine.status === 'available'}
+            {#if hasActiveShowing}
+              <div class="decision-actions">
+                <button onclick={() => (showBookingModal = true)} class="decision-primary">
+                  {$t('figurineBook')}
+                  <svg width="15" height="15" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.35" aria-hidden="true">
+                    <rect x="0.5" y="1.5" width="12" height="11" rx="0.8"/>
+                    <path d="M3.5 1.5V0.5M9.5 1.5V0.5M0.5 5h12"/>
+                  </svg>
+                </button>
+                <button onclick={() => openModal('question')} class="decision-secondary">
+                  {$t('figurineAskQuestion')}
+                </button>
+              </div>
+            {:else}
+              <div class="decision-actions">
+                <button onclick={() => openModal('request')} class="decision-primary">
+                  {$t('figurineRequest')}
+                  <svg width="15" height="16" viewBox="0 0 14 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M4.5 5V3.5a2.5 2.5 0 0 1 5 0V5"/>
+                    <rect x="2" y="5" width="10" height="8.5" rx="1.2"/>
+                  </svg>
+                </button>
+                <button onclick={() => (showBookingModal = true)} class="decision-secondary">
+                  {$t('figurineBook')}
+                </button>
+              </div>
+              <button onclick={() => openModal('question')} class="decision-link">
+                {$t('figurineAskQuestion')}
+              </button>
+            {/if}
+          {:else if figurine.status === 'reserved'}
+            <div class="decision-actions">
+              <button onclick={() => (showBookingModal = true)} class="decision-primary">
+                {$t('figurineBook')}
+                <svg width="15" height="15" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.35" aria-hidden="true">
+                  <rect x="0.5" y="1.5" width="12" height="11" rx="0.8"/>
+                  <path d="M3.5 1.5V0.5M9.5 1.5V0.5M0.5 5h12"/>
+                </svg>
+              </button>
+              <button onclick={() => (showWaitlistModal = true)} class="decision-secondary">
+                {$t('ctaWaitlistTitle')}
+              </button>
+            </div>
+            <button onclick={() => openModal('question')} class="decision-link">
+              {$t('detailAskSimilar')}
+            </button>
+          {:else}
+            <div class="decision-actions">
+              <a href="/commission?figurine={id}" class="decision-primary">
+                {$t('detailRequestSimilar')}
+                <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M7 1.5v11M1.5 7h11"/>
+                </svg>
+              </a>
+              <button onclick={() => openModal('notify')} class="decision-secondary">
+                {$t('figurineNotify')}
+              </button>
+            </div>
+            {#if figurine.relatedItems && figurine.relatedItems.length > 0}
+              <a href="#related-works" class="decision-link">{$t('detailViewRelatedWorks')}</a>
+            {/if}
+          {/if}
+        </section>
+
+        <!-- Story and specifications follow the request decision. -->
         {#if figurine.fullDescription}
           <div class="d-history">
             <header class="d-section-header">
@@ -904,7 +1019,7 @@
         {/if}
         <!-- end available-only claim section -->
 
-        <!-- CTA at the bottom — после того как всё прочитано -->
+        <!-- Secondary actions after the story and specifications. -->
         <div class="d-cta-zone">
           {#if figurine.status === 'available'}
             <!-- Showings block: shows when there are showings OR when there are bookings with no showings -->
@@ -946,7 +1061,7 @@
               </div>
             {/if}
 
-            <!-- Request button: blocked during active showings -->
+            <!-- Transfer is blocked during active showings. -->
             {#if hasActiveShowing}
               <div class="cta-row">
                 <div class="cta-exhibition-block">
@@ -972,42 +1087,8 @@
                 <button onclick={() => openModal('notify')} class="cta-ask">{$t('figurineNotify')}</button>
               </div>
             {:else}
-              <div class="cta-row">
-                <button onclick={() => openModal('request')} class="cta-btn">
-                  <span class="cta-btn-label">{$t('figurineRequest')}</span>
-                  <svg class="cta-arrow" width="15" height="16" viewBox="0 0 14 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M4.5 5V3.5a2.5 2.5 0 0 1 5 0V5"/>
-                    <rect x="2" y="5" width="10" height="8.5" rx="1.2"/>
-                  </svg>
-                </button>
-                <button
-                  onclick={toggleWishlist}
-                  class="cta-heart {isWishlisted ? 'cta-heart--saved' : ''}"
-                  aria-label={isWishlisted ? $t('figurineWishlisted') : $t('figurineWishlist')}
-                  title={isWishlisted ? $t('figurineWishlisted') : $t('figurineWishlist')}
-                >
-                  <svg width="18" height="16" viewBox="0 0 18 16" fill={isWishlisted ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="1.5">
-                    <path d="M9 14.5S1.5 9.5 1.5 5A3.5 3.5 0 0 1 9 2.8 3.5 3.5 0 0 1 16.5 5C16.5 9.5 9 14.5 9 14.5z"/>
-                  </svg>
-                </button>
-              </div>
-              <div class="cta-secondary-row">
-                <p class="cta-note">{$t('figurineRequestNote')}</p>
-                <button onclick={() => openModal('question')} class="cta-ask">
-                  {$t('figurineAskQuestion')}
-                </button>
-              </div>
-              <p class="price-on-request">{$t('figurinePriceOnRequest')}</p>
+              <p class="cta-note cta-note--decision">{$t('detailDecisionPanelNote')}</p>
             {/if}
-
-            <!-- Book button: always available when status is available -->
-            <button onclick={() => (showBookingModal = true)} class="book-btn">
-              <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.3">
-                <rect x="0.5" y="1.5" width="12" height="11" rx="0.8"/>
-                <path d="M3.5 1.5V0.5M9.5 1.5V0.5M0.5 5h12"/>
-              </svg>
-              {$t('figurineBook')}
-            </button>
 
           {:else if figurine.status === 'reserved'}
             {#if cs.claims.length > 0}
@@ -1185,7 +1266,7 @@
 
           {:else}
             <div class="sold-notice">
-              <p class="sold-text">{$t('figurineStatusSold')} — эта работа обрела своего хранителя.</p>
+              <p class="sold-text">{$t('detailSoldNotice')}</p>
             </div>
             <div class="action-cards">
               <button onclick={() => openModal('notify')} class="action-card">
@@ -1208,9 +1289,34 @@
       </div>
     </div>
 
-    <!-- ── GRIMOIRE ── -->
+    <!-- ── MAKING RECORD ── -->
     {#if figurine.processSteps && figurine.processSteps.length > 0}
       <div class="grimoire-section" bind:this={grimoireRef}>
+        <div class="making-record">
+          <div class="making-copy">
+            <span class="making-kicker">{$t('detailMakingRecordKicker')}</span>
+            <h2 class="making-title">{$t('detailMakingRecordTitle')}</h2>
+            <p class="making-text">{$t('detailMakingRecordText')}</p>
+          </div>
+
+          <div class="making-strip" aria-label={$t('detailMakingRecordTitle')}>
+            {#each figurine.processSteps.slice(0, 4) as step, i (step.id)}
+              <article class="making-card">
+                <div class="making-img-wrap">
+                  <img src={resolveUrl(step.imageUrl)} alt="" class="making-img" loading="lazy" />
+                  <span class="making-count">{String(i + 1).padStart(2, '0')}</span>
+                </div>
+                <div class="making-card-copy">
+                  <h3>{processStepLabel(step.stepType)}</h3>
+                  {#if step.description}
+                    <p>{step.description}</p>
+                  {/if}
+                </div>
+              </article>
+            {/each}
+          </div>
+        </div>
+
         <button onclick={toggleGrimoire} class="grimoire-trigger" aria-expanded={isGrimoireOpen}>
           <span class="grimoire-icon" aria-hidden="true">
             <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
@@ -1273,13 +1379,17 @@
       </section>
     {/if}
 
-    <!-- ── RELATED — горизонтальная кинолента ── -->
+    <!-- ── RELATED NEXT CHOICES ── -->
     {#if figurine.relatedItems && figurine.relatedItems.length > 0}
-      <section class="related-section">
-        <header class="section-row">
-          <span class="sec-label">{$t('figurineRelated')}</span>
-          <div class="sec-rule" aria-hidden="true"></div>
+      <section id="related-works" class="related-section">
+        <header class="related-head">
+          <div>
+            <span class="sec-label">{$t('figurineRelated')}</span>
+            <h2 class="related-title">{$t('detailRelatedTitle')}</h2>
+          </div>
+          <p class="related-intro">{$t('detailRelatedText')}</p>
         </header>
+
         <div class="related-strip">
           {#each figurine.relatedItems as item}
             <a
@@ -1304,13 +1414,35 @@
                 <span class="related-status-badge related-status-badge--{item.status}">
                   {item.status === 'sold'
                     ? $t('figurineStatusSold')
-                    : item.status === 'reserved'
+                  : item.status === 'reserved'
                       ? $t('figurineStatusReserved')
                       : $t('figurineStatusAvailable')}
                 </span>
               </div>
               <div class="related-meta">
                 <h4 class="related-name">{item.name}</h4>
+                <p class="related-line">
+                  {#if item.material}
+                    {item.material}
+                  {:else if item.technique}
+                    {item.technique}
+                  {:else if item.series}
+                    {item.series}
+                  {:else}
+                    {$t('detailRelatedArchivePiece')}
+                  {/if}
+                </p>
+                <div class="related-foot">
+                  {#if item.year}
+                    <span>Anno {item.year}</span>
+                  {/if}
+                  <span class="related-action">
+                    {item.status === 'available' ? $t('detailRelatedRequestable') : $t('detailRelatedOpen')}
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                      <path d="M1.5 6h9M7 2.5L10.5 6 7 9.5"/>
+                    </svg>
+                  </span>
+                </div>
               </div>
             </a>
           {/each}
@@ -1323,15 +1455,17 @@
   </div>
 </div>
 
-<!-- Mobile sticky CTA — появляется при скролле на мобильных -->
+<!-- Mobile sticky CTA after the first screen. -->
 {#if figurine.status === 'available' && scrollY > 300}
   <div class="mobile-cta" transition:fade={{ duration: 180 }}>
     <div class="mobile-cta-info">
       <span class="mobile-cta-name">{figurine.name}</span>
-      <span class="mobile-cta-status">{$t('figurineStatusAvailable')}</span>
+      <span class="mobile-cta-status">
+        {hasActiveShowing ? $t('detailMobileShowingSub') : $t('figurinePriceOnRequest')}
+      </span>
     </div>
-    <button onclick={() => (showOrderModal = true)} class="mobile-cta-btn">
-      {$t('figurineRequest')}
+    <button onclick={() => openModal(hasActiveShowing ? 'question' : 'request')} class="mobile-cta-btn">
+      {hasActiveShowing ? $t('figurineAskQuestion') : $t('detailMobileRequestCta')}
       <svg width="13" height="14" viewBox="0 0 14 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
         <path d="M4.5 5V3.5a2.5 2.5 0 0 1 5 0V5"/>
         <rect x="2" y="5" width="10" height="8.5" rx="1.2"/>

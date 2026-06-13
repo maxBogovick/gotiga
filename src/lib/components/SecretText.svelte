@@ -52,15 +52,15 @@
     <!-- THE CIPHER (Always visible when not revealed) -->
     <span 
         class="font-['Inter'] text-xl tracking-wide transition-all duration-700
-        {isRevealed ? 'opacity-0 blur-sm scale-95' : 'opacity-70 blur-[1px]'}
-        {isCandleLit ? 'text-[#5f4636]' : 'text-[#d8c6b1]'}"
+        {isRevealed ? 'opacity-0 blur-sm scale-95' : 'opacity-65 blur-[0.6px]'}
+        {isCandleLit ? 'text-[#6b3a26]' : 'text-[#d8c6b1]'}"
     >
         {cipherText}
     </span>
 
     <!-- THE REVEALED TEXT (Visible only when revealed) -->
     <span 
-        class="absolute inset-0 font-['Georgia'] text-2xl italic tracking-wide text-[#ffcc00] drop-shadow-[0_0_8px_rgba(255,200,0,0.8)]
+        class="absolute inset-0 font-['Georgia'] text-2xl italic tracking-wide text-[#5a1f12] drop-shadow-[0_1px_0_rgba(255,246,229,0.7)]
         transition-all duration-500 transform
         {isRevealed ? 'opacity-100 scale-100' : 'opacity-0 scale-105'}"
     >
