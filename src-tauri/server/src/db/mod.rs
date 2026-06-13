@@ -37,6 +37,59 @@ impl Repository {
         Ok(rec)
     }
 
+    /// Create or refresh a "notify me" subscription. Deduplicates by
+    /// (figurine, email): a repeat request updates the existing row in place
+    /// and keeps its token, rather than piling up duplicates.
+    pub async fn upsert_notify_order(&self, order: &crate::models::OrderRequest) -> Result<crate::models::Order> {
+        let existing = sqlx::query_as::<_, crate::models::Order>(
+            "SELECT * FROM orders WHERE figurine_id = $1 AND lower(requester_email) = lower($2) AND mode = 'notify'::order_mode LIMIT 1"
+        )
+        .bind(&order.figurine_id)
+        .bind(&order.requester_email)
+        .fetch_optional(&self.pg_pool).await?;
+
+        if let Some(ex) = existing {
+            Ok(sqlx::query_as::<_, crate::models::Order>(
+                "UPDATE orders SET requester_name = $2, requester_phone = $3, message = $4, status = 'new'::order_status
+                 WHERE id = $1 RETURNING *"
+            )
+            .bind(ex.id)
+            .bind(&order.requester_name)
+            .bind(&order.requester_phone)
+            .bind(&order.message)
+            .fetch_one(&self.pg_pool).await?)
+        } else {
+            let token = Self::generate_cancel_token();
+            Ok(sqlx::query_as::<_, crate::models::Order>(
+                "INSERT INTO orders (figurine_id, figurine_name, requester_name, requester_email, requester_phone, message, mode, cancel_token)
+                 VALUES ($1, $2, $3, $4, $5, $6, 'notify'::order_mode, $7) RETURNING *"
+            )
+            .bind(&order.figurine_id)
+            .bind(&order.figurine_name)
+            .bind(&order.requester_name)
+            .bind(&order.requester_email)
+            .bind(&order.requester_phone)
+            .bind(&order.message)
+            .bind(&token)
+            .fetch_one(&self.pg_pool).await?)
+        }
+    }
+
+    pub async fn get_order_by_cancel_token(&self, token: &str) -> Result<Option<crate::models::Order>> {
+        Ok(sqlx::query_as::<_, crate::models::Order>(
+            "SELECT * FROM orders WHERE cancel_token = $1"
+        )
+        .bind(token)
+        .fetch_optional(&self.pg_pool).await?)
+    }
+
+    pub async fn delete_order_by_cancel_token(&self, token: &str) -> Result<()> {
+        sqlx::query("DELETE FROM orders WHERE cancel_token = $1")
+            .bind(token)
+            .execute(&self.pg_pool).await?;
+        Ok(())
+    }
+
     pub async fn get_orders_page(
         &self,
         status_filter: Option<&str>,
@@ -87,6 +140,16 @@ impl Repository {
         )
         .bind(id)
         .fetch_optional(&self.pg_pool).await?)
+    }
+
+    /// All "notify me" orders left for a figurine — used to alert the author
+    /// (personally) when the work becomes available again.
+    pub async fn get_notify_orders_for_figurine(&self, figurine_id: uuid::Uuid) -> Result<Vec<crate::models::Order>> {
+        Ok(sqlx::query_as::<_, crate::models::Order>(
+            "SELECT * FROM orders WHERE figurine_id = $1 AND mode = 'notify'::order_mode ORDER BY created_at ASC"
+        )
+        .bind(figurine_id.to_string())
+        .fetch_all(&self.pg_pool).await?)
     }
 
     pub async fn update_order_status(&self, id: uuid::Uuid, status: &crate::models::OrderStatus) -> Result<()> {
@@ -1427,25 +1490,84 @@ impl Repository {
 
     // === WAITLIST ===
 
+    /// Join a figurine's queue. If this email is already queued for the work,
+    /// the existing row is refreshed in place (keeping its original join time,
+    /// so the visitor keeps their place) rather than creating a duplicate.
+    /// Returns the entry plus its 1-based position in the queue.
     pub async fn add_to_waitlist(
         &self,
         figurine_id: Uuid,
         req: &crate::models::CreateWaitlistRequest,
         user_id: Option<Uuid>,
-    ) -> Result<crate::models::WaitlistEntry> {
-        let rec = sqlx::query_as::<_, crate::models::WaitlistEntry>(
-            "INSERT INTO figurine_waitlist (figurine_id, figurine_name, requester_name, requester_email, requester_phone, note, user_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *"
+    ) -> Result<(crate::models::WaitlistEntry, i64)> {
+        let existing = sqlx::query_as::<_, crate::models::WaitlistEntry>(
+            "SELECT * FROM figurine_waitlist WHERE figurine_id = $1 AND lower(requester_email) = lower($2) LIMIT 1"
         )
         .bind(figurine_id)
-        .bind(&req.figurine_name)
-        .bind(&req.requester_name)
         .bind(&req.requester_email)
-        .bind(&req.requester_phone)
-        .bind(&req.note)
-        .bind(user_id)
+        .fetch_optional(&self.pg_pool).await?;
+
+        let entry = if let Some(ex) = existing {
+            sqlx::query_as::<_, crate::models::WaitlistEntry>(
+                "UPDATE figurine_waitlist
+                 SET requester_name = $2, requester_phone = $3, note = $4, user_id = COALESCE($5, user_id)
+                 WHERE id = $1 RETURNING *"
+            )
+            .bind(ex.id)
+            .bind(&req.requester_name)
+            .bind(&req.requester_phone)
+            .bind(&req.note)
+            .bind(user_id)
+            .fetch_one(&self.pg_pool).await?
+        } else {
+            let token = Self::generate_cancel_token();
+            sqlx::query_as::<_, crate::models::WaitlistEntry>(
+                "INSERT INTO figurine_waitlist (figurine_id, figurine_name, requester_name, requester_email, requester_phone, note, user_id, cancel_token)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *"
+            )
+            .bind(figurine_id)
+            .bind(&req.figurine_name)
+            .bind(&req.requester_name)
+            .bind(&req.requester_email)
+            .bind(&req.requester_phone)
+            .bind(&req.note)
+            .bind(user_id)
+            .bind(&token)
+            .fetch_one(&self.pg_pool).await?
+        };
+
+        let position = self.waitlist_position(figurine_id, entry.created_at).await?;
+        Ok((entry, position))
+    }
+
+    /// 1-based rank of an entry in its figurine queue, ordered by join time.
+    /// Derived from `created_at` ordering, so positions recompute automatically
+    /// whenever anyone leaves the queue — no stored counter to maintain.
+    pub async fn waitlist_position(&self, figurine_id: Uuid, created_at: chrono::DateTime<chrono::Utc>) -> Result<i64> {
+        let (pos,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM figurine_waitlist WHERE figurine_id = $1 AND created_at <= $2"
+        )
+        .bind(figurine_id)
+        .bind(created_at)
         .fetch_one(&self.pg_pool).await?;
-        Ok(rec)
+        Ok(pos)
+    }
+
+    pub async fn get_waitlist_by_cancel_token(&self, token: &str) -> Result<Option<crate::models::WaitlistEntry>> {
+        Ok(sqlx::query_as::<_, crate::models::WaitlistEntry>(
+            "SELECT * FROM figurine_waitlist WHERE cancel_token = $1"
+        )
+        .bind(token)
+        .fetch_optional(&self.pg_pool).await?)
+    }
+
+    /// Leave the queue by token. Idempotent — returns the removed row if any.
+    pub async fn remove_waitlist_by_token(&self, token: &str) -> Result<Option<crate::models::WaitlistEntry>> {
+        Ok(sqlx::query_as::<_, crate::models::WaitlistEntry>(
+            "DELETE FROM figurine_waitlist WHERE cancel_token = $1 RETURNING *"
+        )
+        .bind(token)
+        .fetch_optional(&self.pg_pool).await?)
     }
 
     pub async fn get_waitlist_admin(

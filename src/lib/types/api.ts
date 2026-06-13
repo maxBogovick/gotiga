@@ -579,6 +579,30 @@ export interface WaitlistEntryDto {
     note: string | null;
     createdAt: string;
     userId: string | null;
+    /** 1-based rank within this figurine's queue. */
+    position: number;
+}
+
+export interface WaitlistCreatedResponse {
+    cancelToken: string;
+    position: number;
+}
+
+export interface OrderCreatedResponse {
+    /** Present only for notify-mode orders. */
+    cancelToken: string | null;
+}
+
+export interface NotifyInfo {
+    figurineId: string;
+    figurineName: string;
+}
+
+export interface WaitlistCancelInfo {
+    figurineId: string;
+    figurineName: string;
+    position: number;
+    createdAt: string;
 }
 
 export interface ThemeFonts {

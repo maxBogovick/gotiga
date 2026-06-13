@@ -59,6 +59,10 @@ pub fn router(service: AppService, config: Config) -> Router {
         .route("/bookings/cancel/:token",       get(handlers::get_booking_by_token)
                                                 .post(handlers::cancel_booking_by_token))
         .route("/bookings/cancel/:token/reschedule", patch(handlers::reschedule_booking_by_token))
+        .route("/waitlist/leave/:token",        get(handlers::get_waitlist_by_token)
+                                                .post(handlers::leave_waitlist_by_token))
+        .route("/orders/notify/:token",         get(handlers::get_notify_by_token)
+                                                .post(handlers::cancel_notify_by_token))
         // === PUBLIC LOGIN ===
         .route("/admin/login",                  post(handlers::admin_login))
         // === PROTECTED WRITE — use route_layer so auth only runs on matched routes ===

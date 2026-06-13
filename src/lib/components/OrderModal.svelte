@@ -19,7 +19,8 @@
     mode = 'request' as 'request' | 'question' | 'notify',
     schedule = null as FigurineSchedule | null,
     relatedAvailable = [] as FigurineListItem[],
-    onClose = () => {}
+    onClose = () => {},
+    onNotified = (_token: string) => {},
   } = $props();
 
   let upcomingShowings = $derived(
@@ -71,7 +72,7 @@
     isSubmitting = true;
 
     try {
-      await api.submitOrder({
+      const res = await api.submitOrder({
         figurineId: figurineId || 'unknown',
         figurineName,
         requesterName: effectiveName || '—',
@@ -81,6 +82,7 @@
         mode,
       });
 
+      if (mode === 'notify' && res?.cancelToken) onNotified(res.cancelToken);
       isSealed = true;
       if (mode !== 'notify' || relatedAvailable.length === 0) {
         setTimeout(() => { close(); }, 3000);

@@ -280,9 +280,17 @@ impl AppService {
 
     pub async fn save_figurine(&self, req: crate::models::SaveFigurineRequest) -> Result<()> {
         let figurine_id = Self::parse_uuid(&req.id)?;
+        let prev_status = self.repo.get_figurine_by_id(figurine_id).await?.map(|f| f.status);
         self.repo.upsert_figurine(&req).await?;
         self.repo.replace_images(figurine_id, &req.images).await?;
         self.repo.replace_steps(figurine_id, &req.process_steps).await?;
+        // Just flipped to available → alert the author to everyone who was waiting
+        // (queue + notify-me), so they can reach out personally.
+        let became_available = req.status == crate::models::FigurineStatus::Available
+            && prev_status.as_ref().is_some_and(|s| *s != crate::models::FigurineStatus::Available);
+        if became_available {
+            let _ = self.send_availability_digest(figurine_id, &req.name).await;
+        }
         Ok(())
     }
 
@@ -351,9 +359,31 @@ impl AppService {
     // === ORDERS / NOTIFICATIONS ===
 
     pub async fn create_order(&self, order: &OrderRequest) -> Result<Order> {
-        let saved = self.repo.save_order(order).await?;
+        // Notify-me subscriptions are deduplicated and carry a cancel token;
+        // request/question are plain one-off messages.
+        let saved = if order.mode == OrderMode::Notify {
+            self.repo.upsert_notify_order(order).await?
+        } else {
+            self.repo.save_order(order).await?
+        };
         let _ = self.send_order_notification(&saved).await;
         Ok(saved)
+    }
+
+    /// View a notify subscription by its token (visitor's receipt lookup).
+    pub async fn get_notify_by_token(&self, token: &str) -> Result<Option<crate::models::NotifyInfo>> {
+        let Some(o) = self.repo.get_order_by_cancel_token(token).await? else {
+            return Ok(None);
+        };
+        Ok(Some(crate::models::NotifyInfo {
+            figurine_id: o.figurine_id,
+            figurine_name: o.figurine_name,
+        }))
+    }
+
+    /// Stop a notify subscription by token. Idempotent.
+    pub async fn cancel_notify_by_token(&self, token: &str) -> Result<()> {
+        self.repo.delete_order_by_cancel_token(token).await
     }
 
     pub async fn list_orders(
@@ -1640,7 +1670,7 @@ impl AppService {
 
     // === WAITLIST ===
 
-    pub async fn join_waitlist(&self, figurine_id: String, req: CreateWaitlistRequest, user_id: Option<Uuid>) -> Result<()> {
+    pub async fn join_waitlist(&self, figurine_id: String, req: CreateWaitlistRequest, user_id: Option<Uuid>) -> Result<crate::models::WaitlistCreatedResponse> {
         let uuid = Self::parse_uuid(&figurine_id)?;
         if req.requester_name.trim().is_empty() {
             return Err(AppError::BadRequest("Name is required".to_string()));
@@ -1648,8 +1678,28 @@ impl AppService {
         if !req.requester_email.contains('@') {
             return Err(AppError::BadRequest("Valid email is required".to_string()));
         }
-        let entry = self.repo.add_to_waitlist(uuid, &req, user_id).await?;
+        let (entry, position) = self.repo.add_to_waitlist(uuid, &req, user_id).await?;
         let _ = self.send_waitlist_notification(&entry).await;
+        Ok(crate::models::WaitlistCreatedResponse { cancel_token: entry.cancel_token, position })
+    }
+
+    /// View a queue place by its cancel token (visitor's receipt lookup).
+    pub async fn get_waitlist_by_token(&self, token: &str) -> Result<Option<crate::models::WaitlistCancelInfo>> {
+        let Some(e) = self.repo.get_waitlist_by_cancel_token(token).await? else {
+            return Ok(None);
+        };
+        let position = self.repo.waitlist_position(e.figurine_id, e.created_at).await?;
+        Ok(Some(crate::models::WaitlistCancelInfo {
+            figurine_id: e.figurine_id.to_string(),
+            figurine_name: e.figurine_name,
+            position,
+            created_at: e.created_at.to_rfc3339(),
+        }))
+    }
+
+    /// Leave the queue by token. Idempotent.
+    pub async fn leave_waitlist_by_token(&self, token: &str) -> Result<()> {
+        let _ = self.repo.remove_waitlist_by_token(token).await?;
         Ok(())
     }
 
@@ -1672,6 +1722,10 @@ impl AppService {
                 notified += 1;
             }
         }
+        // Registered users get an in-app message; anonymous visitors have no
+        // account, so also send the author a digest with everyone's contacts
+        // to reach out personally. Runs before entries are cleared.
+        let _ = self.send_availability_digest(uuid, &figurine_name).await;
         // Remove all entries for this figurine after notification
         self.repo.mark_waitlist_notified(uuid).await?;
         Ok(serde_json::json!({ "notified": notified, "total": entries.len() }))
@@ -1683,16 +1737,24 @@ impl AppService {
             None => None,
         };
         let entries = self.repo.get_waitlist_admin(fid).await?;
-        Ok(entries.into_iter().map(|e| WaitlistEntryDto {
-            id: e.id.to_string(),
-            figurine_id: e.figurine_id.to_string(),
-            figurine_name: e.figurine_name,
-            requester_name: e.requester_name,
-            requester_email: e.requester_email,
-            requester_phone: e.requester_phone,
-            note: e.note,
-            created_at: e.created_at.to_rfc3339(),
-            user_id: e.user_id.map(|id| id.to_string()),
+        // Entries arrive ordered by join time, so a per-figurine running counter
+        // yields each row's 1-based position in its queue.
+        let mut counters: std::collections::HashMap<uuid::Uuid, i64> = std::collections::HashMap::new();
+        Ok(entries.into_iter().map(|e| {
+            let counter = counters.entry(e.figurine_id).or_insert(0);
+            *counter += 1;
+            WaitlistEntryDto {
+                id: e.id.to_string(),
+                figurine_id: e.figurine_id.to_string(),
+                figurine_name: e.figurine_name,
+                requester_name: e.requester_name,
+                requester_email: e.requester_email,
+                requester_phone: e.requester_phone,
+                note: e.note,
+                created_at: e.created_at.to_rfc3339(),
+                user_id: e.user_id.map(|id| id.to_string()),
+                position: *counter,
+            }
         }).collect())
     }
 
@@ -1720,6 +1782,70 @@ impl AppService {
             escape_markdown(&entry.requester_name),
             escape_markdown(&entry.requester_email),
             escape_markdown(entry.note.as_deref().unwrap_or("—")),
+            admin_link,
+        );
+
+        let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+        let _ = Client::new().post(&url)
+            .json(&serde_json::json!({ "chat_id": chat_id, "text": text, "parse_mode": "MarkdownV2" }))
+            .send().await;
+        Ok(())
+    }
+
+    /// When a work becomes reachable again, send the author one Telegram digest
+    /// listing everyone waiting — queue + "notify me" requests, including
+    /// anonymous visitors who have no account — so the author can reach out
+    /// personally. This is the handmade/author-model alternative to an
+    /// automated e-commerce mailshot.
+    async fn send_availability_digest(&self, figurine_id: Uuid, figurine_name: &str) -> Result<()> {
+        let (Some(token), Some(chat_id)) = (
+            self.config.telegram_bot_token.as_deref(),
+            self.config.telegram_chat_id.as_deref(),
+        ) else {
+            return Ok(());
+        };
+
+        let queue = self.repo.get_waitlist_for_figurine(figurine_id).await.unwrap_or_default();
+        let notify = self.repo.get_notify_orders_for_figurine(figurine_id).await.unwrap_or_default();
+        if queue.is_empty() && notify.is_empty() {
+            return Ok(());
+        }
+
+        let fmt_contact = |name: &str, email: &str, phone: Option<&str>, note: Option<&str>| {
+            let phone = phone.filter(|p| !p.trim().is_empty()).unwrap_or("—");
+            let note = note.filter(|n| !n.trim().is_empty()).unwrap_or("—");
+            format!(
+                "• {} — {} — {} — {}",
+                escape_markdown(name),
+                escape_markdown(email),
+                escape_markdown(phone),
+                escape_markdown(note),
+            )
+        };
+
+        let mut sections: Vec<String> = Vec::new();
+        if !queue.is_empty() {
+            let lines: Vec<String> = queue.iter().enumerate()
+                .map(|(i, e)| format!(
+                    "{}\\. {}",
+                    i + 1,
+                    fmt_contact(&e.requester_name, &e.requester_email, e.requester_phone.as_deref(), e.note.as_deref())
+                ))
+                .collect();
+            sections.push(format!("🪑 *Очередь* \\({}\\)\n{}", queue.len(), lines.join("\n")));
+        }
+        if !notify.is_empty() {
+            let lines: Vec<String> = notify.iter()
+                .map(|o| fmt_contact(&o.requester_name, &o.requester_email, o.requester_phone.as_deref(), o.message.as_deref()))
+                .collect();
+            sections.push(format!("🔔 *Просили уведомить* \\({}\\)\n{}", notify.len(), lines.join("\n")));
+        }
+
+        let admin_link = format!("{}/admin#waitlist", self.config.public_url.trim_end_matches('/'));
+        let text = format!(
+            "✨ Работа «{}» снова доступна\n\nСвяжитесь лично с теми, кто ждал:\n\n{}\n\n🔗 [Открыть в админке]({})",
+            escape_markdown(figurine_name),
+            sections.join("\n\n"),
             admin_link,
         );
 

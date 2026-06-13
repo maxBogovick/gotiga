@@ -12,11 +12,13 @@
     figurineId    = '',
     figurineName  = '',
     onClose       = () => {},
+    onJoined      = (_token: string, _position: number) => {},
   }: {
     isOpen?: boolean;
     figurineId?: string;
     figurineName?: string;
     onClose?: () => void;
+    onJoined?: (token: string, position: number) => void;
   } = $props();
 
   let name    = $state('');
@@ -26,13 +28,14 @@
   let submitting = $state(false);
   let submitError = $state('');
   let done    = $state(false);
+  let position = $state(0);
 
   function close() {
     if (submitting) return;
     onClose();
     setTimeout(() => {
       name = ''; email = ''; phone = ''; note = '';
-      submitError = ''; done = false;
+      submitError = ''; done = false; position = 0;
     }, 400);
   }
 
@@ -44,13 +47,15 @@
     if (!authStore.isLoggedIn && !isValidEmail(effectiveEmail)) { submitError = $t('formInvalidEmail'); return; }
     submitting = true; submitError = '';
     try {
-      await api.joinWaitlist(figurineId, {
+      const res = await api.joinWaitlist(figurineId, {
         figurineName,
         requesterName: effectiveName,
         requesterEmail: effectiveEmail,
         requesterPhone: phone.trim() || null,
         note: note.trim() || null,
       });
+      position = res.position;
+      onJoined(res.cancelToken, res.position);
       done = true;
     } catch {
       submitError = $t('waitlistError');
@@ -162,6 +167,12 @@
               <div class="flex flex-col items-center justify-center py-10" in:scale={{ duration: 600, start: 0.95, easing: elasticOut }}>
                 <div class="text-5xl text-[#6f3b24]/30 mb-4">✦</div>
                 <h3 class="font-['Fraunces'] text-3xl text-[#6f3b24] mb-3">{$t('waitlistSuccessTitle')}</h3>
+                {#if position > 0}
+                  <div class="flex flex-col items-center mb-4">
+                    <span class="text-[10px] font-['Inter'] font-bold tracking-[0.14em] text-[#9a7c5c] uppercase">{$t('waitlistPositionLabel')}</span>
+                    <span class="font-['Fraunces'] text-5xl text-[#6f3b24] leading-none mt-1">№{position}</span>
+                  </div>
+                {/if}
                 <p class="text-sm text-[#5f4636] italic text-center leading-relaxed max-w-xs">{$t('waitlistSuccessText')}</p>
                 <button onclick={close} class="mt-6 text-xs font-['Inter'] text-[#5f4636]/70 hover:text-[#c65f3c] tracking-wide uppercase border-b border-transparent hover:border-[#c65f3c]/30 transition-all">
                   {$t('cancelGoToFigurine')}

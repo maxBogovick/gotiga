@@ -950,6 +950,112 @@
   text-underline-offset: 0.3rem;
 }
 
+.decision-note {
+  margin: -0.1rem 0 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: color-mix(in srgb, var(--color-ink-secondary) 68%, transparent);
+  font-family: var(--font-body);
+  font-size: 0.7rem;
+  font-style: italic;
+  letter-spacing: 0.02em;
+  line-height: 1.4;
+}
+
+.decision-note::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--color-ember) 60%, transparent);
+}
+
+.queue-receipt {
+  margin-top: 0.4rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid color-mix(in srgb, var(--color-ember) 26%, transparent);
+  background: color-mix(in srgb, var(--color-ember-subtle) 40%, transparent);
+}
+
+.queue-receipt-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.queue-receipt-title {
+  font-family: var(--font-body);
+  font-size: 0.66rem;
+  font-weight: 750;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--color-ember-deep);
+}
+
+.queue-receipt-pos {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+.queue-receipt-pos-label {
+  font-family: var(--font-body);
+  font-size: 0.58rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-ink-secondary) 70%, transparent);
+}
+
+.queue-receipt-pos-num {
+  font-family: var(--font-display, Georgia, serif);
+  font-size: 1.5rem;
+  line-height: 1;
+  color: var(--color-ember-deep);
+}
+
+.queue-receipt-note {
+  margin: 0.5rem 0 0;
+  font-family: var(--font-body);
+  font-size: 0.72rem;
+  font-style: italic;
+  line-height: 1.45;
+  color: color-mix(in srgb, var(--color-ink-secondary) 80%, transparent);
+}
+
+.queue-receipt-leave {
+  margin-top: 0.7rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: color-mix(in srgb, var(--color-ink-secondary) 72%, transparent);
+  cursor: pointer;
+  font-family: var(--font-body);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-decoration: underline;
+  text-underline-offset: 0.35rem;
+  transition: color var(--duration-default) var(--ease-atelier);
+}
+
+.queue-receipt-leave:hover { color: var(--color-ember-deep); }
+.queue-receipt-leave:disabled { opacity: 0.6; cursor: default; }
+
+.queue-receipt-left {
+  margin-top: 0.4rem;
+  font-family: var(--font-body);
+  font-size: 0.72rem;
+  font-style: italic;
+  color: color-mix(in srgb, var(--color-ink-secondary) 70%, transparent);
+}
+
+/* Notify variant: same register as the queue receipt, calmer (no position number). */
+.queue-receipt--notify .queue-receipt-title { display: block; }
+
 .decision-primary:focus-visible,
 .decision-secondary:focus-visible,
 .decision-link:focus-visible {
@@ -1450,6 +1556,29 @@
   line-height: 1.2;
   text-transform: uppercase;
 }
+
+/* in_progress: a quiet pulsing dot marks the record as live. */
+.making-live {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 0.45rem;
+  border-radius: 50%;
+  background: var(--color-ember);
+  vertical-align: middle;
+  animation: making-live-pulse 2s var(--ease-atelier, ease-in-out) infinite;
+}
+
+@keyframes making-live-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-ember) 55%, transparent); }
+  50%      { opacity: 0.55; box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-ember) 0%, transparent); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .making-live { animation: none; }
+}
+
+.grimoire-section--live { scroll-margin-top: 120px; }
 
 .making-title {
   margin: 0;
@@ -2608,3 +2737,89 @@
   color: var(--color-ember);
   transform: translateX(3px);
 }
+
+/* ── Act dividers: a quiet gothic glyph marks a change of register ── */
+.act-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.1rem;
+  width: 100%;
+  max-width: 24rem;
+  margin: 3.25rem auto;
+}
+
+.act-divider::before,
+.act-divider::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: color-mix(in srgb, var(--color-ink-primary) 13%, transparent);
+}
+
+.act-divider span {
+  flex: 0 0 auto;
+  font-size: 0.95rem;
+  line-height: 1;
+  color: color-mix(in srgb, var(--color-ember) 60%, transparent);
+}
+
+@media (max-width: 640px) {
+  .act-divider { margin: 2.5rem auto; }
+}
+
+/* ── Presence & Schedule: one calm logistics band (timeline + status line) ── */
+.presence-section {
+  max-width: 48rem;
+  margin: 0 auto;
+}
+
+.presence-note {
+  margin: 1rem 0 0;
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  font-style: italic;
+  line-height: 1.5;
+  text-align: center;
+  color: color-mix(in srgb, var(--color-ink-secondary) 82%, transparent);
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   CONCEPT A — "Sustained Specimen"
+   Making / Video / Presence / Related / Comments now live INSIDE the
+   right reading column (.details-col) so the gallery stays present the
+   whole scroll. Their old layouts keyed off VIEWPORT width; the column
+   is narrow even on wide screens, so force the column-friendly variant
+   at every width.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* Making record: never two-column inside the dossier; strip scrolls horizontally. */
+.details-col .making-record { grid-template-columns: 1fr; }
+.details-col .making-strip {
+  display: flex;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  margin-inline: -0.35rem;
+  padding-inline: 0.35rem;
+  padding-bottom: 0.2rem;
+}
+.details-col .making-strip::-webkit-scrollbar { display: none; }
+.details-col .making-card { flex: 0 0 min(68%, 220px); scroll-snap-align: start; }
+
+/* Related: header stacks above the strip; kill the full-bleed negative margins. */
+.details-col .related-head { grid-template-columns: 1fr; gap: 0.5rem; align-items: start; }
+.details-col .related-title { font-size: clamp(1.8rem, 4vw, 2.6rem); margin-top: 0.35rem; }
+.details-col .related-intro { justify-self: start; max-width: none; }
+.details-col .related-strip { margin-left: 0; margin-right: 0; padding-left: 0; padding-right: 0; }
+
+/* Keep every moved section within the column box. */
+.details-col .video-section,
+.details-col .presence-section { max-width: 100%; }
+
+/* Spacing inside the column comes from the ❦ act-dividers, so drop the
+   big full-width top margins / redundant divider rules. */
+.details-col .video-section { margin-top: 0; }
+.details-col .related-section { margin-top: 0; padding-top: 0; border-top: 0; }
+.details-col .grimoire-section { margin-top: 0; }

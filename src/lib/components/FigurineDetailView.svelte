@@ -48,6 +48,93 @@
   let audioRef = $state<HTMLAudioElement | null>(null);
   let videoRef = $state<HTMLVideoElement | null>(null);
 
+  // ── Queue (waitlist) receipt: persisted per-figurine token, like booking claims ──
+  let queueKey = $derived(`gotiga_queue_${id}`);
+  let queuePosition = $state(0);
+  let queueLeaving = $state(false);
+  let queueLeft = $state(false);
+
+  function readQueueToken(): string | null {
+    try { return localStorage.getItem(queueKey); } catch { return null; }
+  }
+
+  async function loadQueue() {
+    const token = readQueueToken();
+    if (!token) return;
+    const info = await api.getWaitlistByToken(token);
+    if (info) {
+      queuePosition = info.position;
+      queueLeft = false;
+    } else {
+      // Token no longer valid (notified/removed) — clear it.
+      try { localStorage.removeItem(queueKey); } catch {}
+      queuePosition = 0;
+    }
+  }
+
+  function onQueueJoined(token: string, position: number) {
+    try { localStorage.setItem(queueKey, token); } catch {}
+    queuePosition = position;
+    queueLeft = false;
+  }
+
+  async function leaveQueue() {
+    const token = readQueueToken();
+    if (!token || queueLeaving) return;
+    queueLeaving = true;
+    try {
+      await api.leaveWaitlistByToken(token);
+      try { localStorage.removeItem(queueKey); } catch {}
+      queuePosition = 0;
+      queueLeft = true;
+    } finally {
+      queueLeaving = false;
+    }
+  }
+
+  // ── Notify-me subscription receipt: same pattern as the queue ──
+  let notifyKey = $derived(`gotiga_notify_${id}`);
+  let notifyActive = $state(false);
+  let notifyStopping = $state(false);
+  let notifyStopped = $state(false);
+
+  function readNotifyToken(): string | null {
+    try { return localStorage.getItem(notifyKey); } catch { return null; }
+  }
+
+  async function loadNotify() {
+    const token = readNotifyToken();
+    if (!token) return;
+    const info = await api.getNotifyByToken(token);
+    if (info) {
+      notifyActive = true;
+      notifyStopped = false;
+    } else {
+      try { localStorage.removeItem(notifyKey); } catch {}
+      notifyActive = false;
+    }
+  }
+
+  function onNotifySubscribed(token: string) {
+    try { localStorage.setItem(notifyKey, token); } catch {}
+    notifyActive = true;
+    notifyStopped = false;
+  }
+
+  async function stopNotify() {
+    const token = readNotifyToken();
+    if (!token || notifyStopping) return;
+    notifyStopping = true;
+    try {
+      await api.cancelNotifyByToken(token);
+      try { localStorage.removeItem(notifyKey); } catch {}
+      notifyActive = false;
+      notifyStopped = true;
+    } finally {
+      notifyStopping = false;
+    }
+  }
+
   let upcomingShowings = $derived(figurineSchedule.entries.filter(e => e.entryType === 'showing'));
 
   // Nearest date when figurine is fully free (after all showings + confirmed bookings)
@@ -66,8 +153,6 @@
   let todayStr = new Date().toISOString().split('T')[0];
   let hasActiveShowing = $derived(upcomingShowings.some(s => s.startsAt <= todayStr));
 
-  // Confirmed bookings visible in schedule (entryType === 'booking')
-  let upcomingBookings = $derived(figurineSchedule.entries.filter(e => e.entryType === 'booking'));
 
   // === CLAIM TOKEN (self-cancellation) ===
   // figurine.id captured once — component is never remounted with a different figurine
@@ -367,6 +452,8 @@
     cs.load();
     cs.verify();
     cs.startPolling();
+    loadQueue();
+    loadNotify();
   });
 
   onDestroy(() => {
@@ -385,7 +472,7 @@
 
 <CandleReveal isActive={isCandleLit} />
 
-<div class="page-root" class:page-root--has-cta={figurine.status === 'available'} class:page-root--candle={isCandleLit}>
+<div class="page-root page-root--has-cta" class:page-root--candle={isCandleLit}>
   <OrderModal
     isOpen={showOrderModal}
     mode={orderMode}
@@ -393,6 +480,7 @@
     figurineId={figurine.id}
     schedule={figurineSchedule}
     relatedAvailable={figurine.relatedItems.filter(r => r.status === 'available').slice(0, 3)}
+    onNotified={onNotifySubscribed}
     onClose={() => (showOrderModal = false)}
   />
 
@@ -400,6 +488,7 @@
     isOpen={showWaitlistModal}
     figurineId={id}
     figurineName={figurine.name}
+    onJoined={onQueueJoined}
     onClose={() => (showWaitlistModal = false)}
   />
 
@@ -773,7 +862,9 @@
                 ? $t('figurineStatusAvailable')
                 : figurine.status === 'reserved'
                   ? $t('figurineStatusReserved')
-                  : $t('figurineStatusSold')}
+                  : figurine.status === 'in_progress'
+                    ? $t('figurineStatusInProgress')
+                    : $t('figurineStatusSold')}
             </span>
             <span class="decision-price">{$t('figurinePriceOnRequest')}</span>
           </div>
@@ -785,7 +876,9 @@
                 : $t('detailRequestPanelTitle')
               : figurine.status === 'reserved'
                 ? $t('detailReservedPanelTitle')
-                : $t('detailSoldPanelTitle')}
+                : figurine.status === 'in_progress'
+                  ? $t('detailProgressPanelTitle')
+                  : $t('detailSoldPanelTitle')}
           </h2>
 
           <p class="decision-text">
@@ -795,7 +888,9 @@
                 : $t('detailRequestPanelText')
               : figurine.status === 'reserved'
                 ? $t('detailReservedPanelText')
-                : $t('detailSoldPanelText')}
+                : figurine.status === 'in_progress'
+                  ? $t('detailProgressPanelText')
+                  : $t('detailSoldPanelText')}
           </p>
 
           <div class="decision-proof" aria-label={$t('detailRequestFacts')}>
@@ -805,52 +900,84 @@
           </div>
 
           {#if figurine.status === 'available'}
-            {#if hasActiveShowing}
-              <div class="decision-actions">
-                <button onclick={() => (showBookingModal = true)} class="decision-primary">
-                  {$t('figurineBook')}
-                  <svg width="15" height="15" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.35" aria-hidden="true">
-                    <rect x="0.5" y="1.5" width="12" height="11" rx="0.8"/>
-                    <path d="M3.5 1.5V0.5M9.5 1.5V0.5M0.5 5h12"/>
-                  </svg>
-                </button>
-                <button onclick={() => openModal('question')} class="decision-secondary">
-                  {$t('figurineAskQuestion')}
-                </button>
-              </div>
-            {:else}
-              <div class="decision-actions">
-                <button onclick={() => openModal('request')} class="decision-primary">
-                  {$t('figurineRequest')}
-                  <svg width="15" height="16" viewBox="0 0 14 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M4.5 5V3.5a2.5 2.5 0 0 1 5 0V5"/>
-                    <rect x="2" y="5" width="10" height="8.5" rx="1.2"/>
-                  </svg>
-                </button>
-                <button onclick={() => (showBookingModal = true)} class="decision-secondary">
-                  {$t('figurineBook')}
-                </button>
-              </div>
-              <button onclick={() => openModal('question')} class="decision-link">
-                {$t('figurineAskQuestion')}
-              </button>
-            {/if}
-          {:else if figurine.status === 'reserved'}
             <div class="decision-actions">
-              <button onclick={() => (showBookingModal = true)} class="decision-primary">
-                {$t('figurineBook')}
-                <svg width="15" height="15" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.35" aria-hidden="true">
-                  <rect x="0.5" y="1.5" width="12" height="11" rx="0.8"/>
-                  <path d="M3.5 1.5V0.5M9.5 1.5V0.5M0.5 5h12"/>
+              <button onclick={() => openModal('request')} class="decision-primary">
+                {$t('figurineRequest')}
+                <svg width="15" height="16" viewBox="0 0 14 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M4.5 5V3.5a2.5 2.5 0 0 1 5 0V5"/>
+                  <rect x="2" y="5" width="10" height="8.5" rx="1.2"/>
                 </svg>
               </button>
-              <button onclick={() => (showWaitlistModal = true)} class="decision-secondary">
+              <button onclick={() => (showBookingModal = true)} class="decision-secondary">
+                {$t('detailRequestViewingDates')}
+              </button>
+            </div>
+            {#if hasActiveShowing}
+              <p class="decision-note">{$t('detailTransferAfterShowing')}</p>
+            {/if}
+            <button onclick={() => openModal('question')} class="decision-link">
+              {$t('figurineAskQuestion')}
+            </button>
+          {:else if figurine.status === 'reserved'}
+            <div class="decision-actions">
+              <button onclick={() => (showWaitlistModal = true)} class="decision-primary">
                 {$t('ctaWaitlistTitle')}
+                <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M2 4h7M2 7h7M2 10h4"/>
+                  <path d="M11 8l2 2-2 2"/>
+                </svg>
+              </button>
+              <button onclick={() => (showBookingModal = true)} class="decision-secondary">
+                {$t('detailRequestViewingDates')}
               </button>
             </div>
             <button onclick={() => openModal('question')} class="decision-link">
               {$t('detailAskSimilar')}
             </button>
+            {#if queuePosition > 0}
+              <div class="queue-receipt">
+                <div class="queue-receipt-head">
+                  <span class="queue-receipt-title">{$t('detailQueuePanelTitle')}</span>
+                  <span class="queue-receipt-pos">
+                    <span class="queue-receipt-pos-label">{$t('detailQueuePositionLabel')}</span>
+                    <span class="queue-receipt-pos-num">№{queuePosition}</span>
+                  </span>
+                </div>
+                <p class="queue-receipt-note">{$t('detailQueueNote')}</p>
+                <button onclick={leaveQueue} disabled={queueLeaving} class="queue-receipt-leave">
+                  {queueLeaving ? $t('detailQueueLeaving') : $t('detailQueueLeave')}
+                </button>
+              </div>
+            {:else if queueLeft}
+              <p class="queue-receipt-left">{$t('detailQueueLeft')}</p>
+            {/if}
+          {:else if figurine.status === 'in_progress'}
+            <div class="decision-actions">
+              <button onclick={() => openModal('notify')} class="decision-primary">
+                {$t('detailFollowProgress')}
+                <svg width="15" height="13" viewBox="0 0 15 11" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M1 5.5S3.5 1 7.5 1 14 5.5 14 5.5 11.5 10 7.5 10 1 5.5 1 5.5z"/>
+                  <circle cx="7.5" cy="5.5" r="1.8"/>
+                </svg>
+              </button>
+              <button onclick={() => openModal('question')} class="decision-secondary">
+                {$t('detailAskThisWork')}
+              </button>
+            </div>
+            <a href="/commission?figurine={id}" class="decision-link">
+              {$t('detailRequestSimilarIdea')}
+            </a>
+            {#if notifyActive}
+              <div class="queue-receipt queue-receipt--notify">
+                <span class="queue-receipt-title">{$t('detailNotifyPanelTitle')}</span>
+                <p class="queue-receipt-note">{$t('detailNotifyNote')}</p>
+                <button onclick={stopNotify} disabled={notifyStopping} class="queue-receipt-leave">
+                  {notifyStopping ? $t('detailNotifyStopping') : $t('detailNotifyStop')}
+                </button>
+              </div>
+            {:else if notifyStopped}
+              <p class="queue-receipt-left">{$t('detailNotifyStopped')}</p>
+            {/if}
           {:else}
             <div class="decision-actions">
               <a href="/commission?figurine={id}" class="decision-primary">
@@ -866,8 +993,97 @@
             {#if figurine.relatedItems && figurine.relatedItems.length > 0}
               <a href="#related-works" class="decision-link">{$t('detailViewRelatedWorks')}</a>
             {/if}
+            {#if notifyActive}
+              <div class="queue-receipt queue-receipt--notify">
+                <span class="queue-receipt-title">{$t('detailNotifyPanelTitle')}</span>
+                <p class="queue-receipt-note">{$t('detailNotifyNote')}</p>
+                <button onclick={stopNotify} disabled={notifyStopping} class="queue-receipt-leave">
+                  {notifyStopping ? $t('detailNotifyStopping') : $t('detailNotifyStop')}
+                </button>
+              </div>
+            {:else if notifyStopped}
+              <p class="queue-receipt-left">{$t('detailNotifyStopped')}</p>
+            {/if}
           {/if}
         </section>
+
+        <!-- YOUR RESERVATIONS — kept directly under the decision so the booking CTA and its receipt/management live together. -->
+        {#if figurine.status === 'available' || figurine.status === 'reserved'}
+          {#if cs.claims.length > 0 || (cs.cancelledTokens.size > 0 && cs.claims.length === 0)}
+            <div class="claims-panel {cs.claims.some(c => c.status === 'confirmed') ? 'claims-panel--has-confirmed' : ''}">
+              <div class="claims-panel-header">
+                {cs.claims.some(c => c.status === 'confirmed') ? $t('claimsYours') : $t('claimsPending')}
+              </div>
+              {#if cs.cancelledTokens.size > 0 && cs.claims.length === 0}
+                <div class="cp-row cp-row--done">
+                  <p class="cp-done">{$t('claimCancelDone')}</p>
+                </div>
+              {/if}
+              {#each cs.claims as c (c.token)}
+                {#if c.status === 'confirmed'}
+                  <div class="cp-row cp-row--confirmed">
+                    <div class="cp-row-main">
+                      <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.6" class="cp-icon cp-icon--ok" aria-hidden="true"><path d="M1 5.5l3 3 6-6"/></svg>
+                      <span class="cp-dates">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</span>
+                      <span class="cp-token">{c.token}</span>
+                      <div class="cp-actions">
+                        <a href={authStore.isLoggedIn ? '/profile' : `/cancel/${c.token}`} class="cp-link">{$t('claimManageLink')}</a>
+                        <button onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="cp-revoke">
+                          {cs.cancellingToken === c.token ? '…' : $t('claimCancelBtn')}
+                        </button>
+                      </div>
+                    </div>
+                    <p class="cp-note">{$t('claimConfirmedNext')}</p>
+                    {#if cs.claimErrors[c.token]}<p class="cp-err">{cs.claimErrors[c.token]}</p>{/if}
+                  </div>
+                {:else}
+                  <div class="cp-row">
+                    <div class="cp-row-main">
+                      <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.3" class="cp-icon" aria-hidden="true"><circle cx="5.5" cy="5.5" r="4.5"/><path d="M5.5 3.5v2.2l1.5 1.3"/></svg>
+                      <span class="cp-dates">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</span>
+                      <div class="cp-actions">
+                        <a href={authStore.isLoggedIn ? '/profile' : `/cancel/${c.token}`} class="cp-link cp-link--reschedule">{$t('ctaRescheduleLink')}</a>
+                        <button onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="cp-revoke">
+                          {cs.cancellingToken === c.token ? $t('claimCancelling') : $t('claimCancelBtn')}
+                        </button>
+                      </div>
+                    </div>
+                    <p class="cp-note cp-note--pending">{$t('claimPendingNote')}</p>
+                    {#if cs.claimErrors[c.token]}<p class="cp-err">{cs.claimErrors[c.token]}</p>{/if}
+                  </div>
+                {/if}
+              {/each}
+            </div>
+          {/if}
+
+          <div class="claim-lookup">
+            {#if !cs.showTokenForm}
+              <button onclick={() => cs.showTokenForm = true} class="claim-lookup-link">{$t('claimHaveCode')}</button>
+            {:else}
+              <div class="claim-lookup-form">
+                <input type="text" bind:value={cs.tokenInput} placeholder="XXXX-XXXX" maxlength="9"
+                  class="claim-lookup-input" oninput={() => { cs.tokenLookupInfo = null; cs.tokenLookupErr = ''; }} />
+                <button onclick={() => cs.lookupToken()} disabled={cs.tokenLooking} class="claim-lookup-btn">
+                  {cs.tokenLooking ? '…' : $t('claimLookupBtn')}
+                </button>
+                <button onclick={() => { cs.showTokenForm = false; cs.tokenInput = ''; cs.tokenLookupInfo = null; }} class="claim-lookup-close">✕</button>
+              </div>
+              {#if cs.tokenLookupErr}<p class="claim-err">{cs.tokenLookupErr}</p>{/if}
+              {#if cs.tokenLookupInfo}
+                <div class="claim-lookup-result">
+                  <p class="claim-dates">{fmtDate(cs.tokenLookupInfo.startsAt)} — {fmtDate(cs.tokenLookupInfo.endsAt)}</p>
+                  {#if cs.tokenLookupInfo.status === 'pending'}
+                    <button onclick={() => cs.cancelFromLookup()} disabled={cs.lookupCancelling} class="claim-cancel-btn">
+                      {cs.lookupCancelling ? $t('claimCancelling') : $t('claimCancelBtn')}
+                    </button>
+                  {:else}
+                    <p class="claim-status">{$t('claimStatus')}: {lookupStatusLabel(cs.tokenLookupInfo.status)}</p>
+                  {/if}
+                </div>
+              {/if}
+            {/if}
+          </div>
+        {/if}
 
         <!-- Story and specifications follow the request decision. -->
         {#if figurine.fullDescription}
@@ -934,369 +1150,25 @@
           </div>
         {/if}
 
-        <!-- Timeline показов -->
-        {#if figurineSchedule.entries.length > 0}
-          <ShowingsTimeline schedule={figurineSchedule} />
-        {/if}
-
-        <!-- ── CLAIM TOKEN: user's bookings (shown only when figurine is still available) ── -->
-        {#if figurine.status === 'available'}
-        {#if cs.claims.length > 0 || (cs.cancelledTokens.size > 0 && cs.claims.length === 0)}
-          <div class="claims-panel {cs.claims.some(c => c.status === 'confirmed') ? 'claims-panel--has-confirmed' : ''}">
-            <div class="claims-panel-header">
-              {cs.claims.some(c => c.status === 'confirmed') ? $t('claimsYours') : $t('claimsPending')}
-            </div>
-            {#if cs.cancelledTokens.size > 0 && cs.claims.length === 0}
-              <div class="cp-row cp-row--done">
-                <p class="cp-done">{$t('claimCancelDone')}</p>
-              </div>
-            {/if}
-            {#each cs.claims as c (c.token)}
-              {#if c.status === 'confirmed'}
-                <div class="cp-row cp-row--confirmed">
-                  <div class="cp-row-main">
-                    <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.6" class="cp-icon cp-icon--ok" aria-hidden="true"><path d="M1 5.5l3 3 6-6"/></svg>
-                    <span class="cp-dates">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</span>
-                    <span class="cp-token">{c.token}</span>
-                    <div class="cp-actions">
-                      <a href={authStore.isLoggedIn ? '/profile' : `/cancel/${c.token}`} class="cp-link">{$t('claimManageLink')}</a>
-                      <button onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="cp-revoke">
-                        {cs.cancellingToken === c.token ? '…' : $t('claimCancelBtn')}
-                      </button>
-                    </div>
-                  </div>
-                  <p class="cp-note">{$t('claimConfirmedNext')}</p>
-                  {#if cs.claimErrors[c.token]}<p class="cp-err">{cs.claimErrors[c.token]}</p>{/if}
-                </div>
-              {:else}
-                <div class="cp-row">
-                  <div class="cp-row-main">
-                    <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.3" class="cp-icon" aria-hidden="true"><circle cx="5.5" cy="5.5" r="4.5"/><path d="M5.5 3.5v2.2l1.5 1.3"/></svg>
-                    <span class="cp-dates">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</span>
-                    <div class="cp-actions">
-                      <a href={authStore.isLoggedIn ? '/profile' : `/cancel/${c.token}`} class="cp-link cp-link--reschedule">{$t('ctaRescheduleLink')}</a>
-                      <button onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="cp-revoke">
-                        {cs.cancellingToken === c.token ? $t('claimCancelling') : $t('claimCancelBtn')}
-                      </button>
-                    </div>
-                  </div>
-                  <p class="cp-note cp-note--pending">{$t('claimPendingNote')}</p>
-                  {#if cs.claimErrors[c.token]}<p class="cp-err">{cs.claimErrors[c.token]}</p>{/if}
-                </div>
-              {/if}
-            {/each}
-          </div>
-        {/if}
-
-        <!-- Manual token entry — only while figurine is still available -->
-        <div class="claim-lookup">
-          {#if !cs.showTokenForm}
-            <button onclick={() => cs.showTokenForm = true} class="claim-lookup-link">{$t('claimHaveCode')}</button>
-          {:else}
-            <div class="claim-lookup-form">
-              <input type="text" bind:value={cs.tokenInput} placeholder="XXXX-XXXX" maxlength="9"
-                class="claim-lookup-input" oninput={() => { cs.tokenLookupInfo = null; cs.tokenLookupErr = ''; }} />
-              <button onclick={() => cs.lookupToken()} disabled={cs.tokenLooking} class="claim-lookup-btn">
-                {cs.tokenLooking ? '…' : $t('claimLookupBtn')}
-              </button>
-              <button onclick={() => { cs.showTokenForm = false; cs.tokenInput = ''; cs.tokenLookupInfo = null; }} class="claim-lookup-close">✕</button>
-            </div>
-            {#if cs.tokenLookupErr}<p class="claim-err">{cs.tokenLookupErr}</p>{/if}
-            {#if cs.tokenLookupInfo}
-              <div class="claim-lookup-result">
-                <p class="claim-dates">{fmtDate(cs.tokenLookupInfo.startsAt)} — {fmtDate(cs.tokenLookupInfo.endsAt)}</p>
-                {#if cs.tokenLookupInfo.status === 'pending'}
-                  <button onclick={() => cs.cancelFromLookup()} disabled={cs.lookupCancelling} class="claim-cancel-btn">
-                    {cs.lookupCancelling ? $t('claimCancelling') : $t('claimCancelBtn')}
-                  </button>
-                {:else}
-                  <p class="claim-status">{$t('claimStatus')}: {lookupStatusLabel(cs.tokenLookupInfo.status)}</p>
-                {/if}
-              </div>
-            {/if}
-          {/if}
-        </div>
-        {/if}
-        <!-- end available-only claim section -->
-
-        <!-- Secondary actions after the story and specifications. -->
-        <div class="d-cta-zone">
-          {#if figurine.status === 'available'}
-            <!-- Showings block: shows when there are showings OR when there are bookings with no showings -->
-            {#if upcomingShowings.length > 0}
-              <div class="showing-block">
-                <div class="showing-block-head">
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" class="flex-shrink-0">
-                    <rect x="1" y="2" width="12" height="11" rx="1"/>
-                    <path d="M4 2V0.5M10 2V0.5M1 5.5h12"/>
-                  </svg>
-                  <span>{hasActiveShowing ? $t('figurineActiveShowing') : $t('figurineShowingsBlock')}</span>
-                </div>
-                {#each upcomingShowings as s}
-                  <p class="showing-block-entry">
-                    <span class="showing-block-type">{s.showingType === 'exhibition' ? $t('bookingShowingExhibition') : $t('bookingShowingPrivate')}</span>
-                    {#if s.title}«{s.title}»{/if}
-                    — {new Date(s.startsAt + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: 'short' })}
-                    – {new Date(s.endsAt + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' })}
-                  </p>
-                {/each}
-                {#if nextAvailableDate}
-                  <p class="showing-block-avail">
-                    {$t('figurineAvailableFrom')}
-                    <strong>{nextAvailableDate.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}</strong>
-                  </p>
-                {/if}
-              </div>
-            {:else if upcomingBookings.length > 0 && nextAvailableDate}
-              <!-- Only bookings, no showings — show a compact availability note -->
-              <div class="avail-note">
-                <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.3" class="flex-shrink-0">
-                  <rect x="0.5" y="1.5" width="12" height="11" rx="0.8"/>
-                  <path d="M3.5 1.5V0.5M9.5 1.5V0.5M0.5 5h12"/>
-                </svg>
-                <span>
-                  {$t('figurineAvailableFrom')}
-                  <strong>{nextAvailableDate.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}</strong>
-                </span>
-              </div>
-            {/if}
-
-            <!-- Transfer is blocked during active showings. -->
-            {#if hasActiveShowing}
-              <div class="cta-row">
-                <div class="cta-exhibition-block">
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3">
-                    <rect x="1" y="2" width="12" height="11" rx="1"/>
-                    <path d="M4 2V0.5M10 2V0.5M1 5.5h12"/>
-                  </svg>
-                  <span>{$t('figurineTransferBlocked')}</span>
-                </div>
-                <button
-                  onclick={toggleWishlist}
-                  class="cta-heart {isWishlisted ? 'cta-heart--saved' : ''}"
-                  aria-label={isWishlisted ? $t('figurineWishlisted') : $t('figurineWishlist')}
-                  title={isWishlisted ? $t('figurineWishlisted') : $t('figurineWishlist')}
-                >
-                  <svg width="18" height="16" viewBox="0 0 18 16" fill={isWishlisted ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="1.5">
-                    <path d="M9 14.5S1.5 9.5 1.5 5A3.5 3.5 0 0 1 9 2.8 3.5 3.5 0 0 1 16.5 5C16.5 9.5 9 14.5 9 14.5z"/>
-                  </svg>
-                </button>
-              </div>
-              <div class="cta-secondary-row">
-                <button onclick={() => openModal('question')} class="cta-ask">{$t('figurineAskQuestion')}</button>
-                <button onclick={() => openModal('notify')} class="cta-ask">{$t('figurineNotify')}</button>
-              </div>
-            {:else}
-              <p class="cta-note cta-note--decision">{$t('detailDecisionPanelNote')}</p>
-            {/if}
-
-          {:else if figurine.status === 'reserved'}
-            {#if cs.claims.length > 0}
-              <!-- Claims panel — all confirmed + pending in one compact register -->
-              <div class="claims-panel {cs.claims.some(c => c.status === 'confirmed') ? 'claims-panel--has-confirmed' : ''}">
-                <div class="claims-panel-header">
-                  {cs.claims.some(c => c.status === 'confirmed') ? $t('claimsYours') : $t('claimsPending')}
-                </div>
-                {#each cs.claims as c (c.token)}
-                  {#if c.status === 'confirmed'}
-                    <div class="cp-row cp-row--confirmed">
-                      <div class="cp-row-main">
-                        <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.6" class="cp-icon cp-icon--ok" aria-hidden="true"><path d="M1 5.5l3 3 6-6"/></svg>
-                        <span class="cp-dates">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</span>
-                        <span class="cp-token">{c.token}</span>
-                        <div class="cp-actions">
-                          <a href={authStore.isLoggedIn ? '/profile' : `/cancel/${c.token}`} class="cp-link">{$t('claimManageLink')}</a>
-                          <button onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="cp-revoke">
-                            {cs.cancellingToken === c.token ? '…' : $t('claimCancelBtn')}
-                          </button>
-                        </div>
-                      </div>
-                      <p class="cp-note">{$t('claimConfirmedNext')}</p>
-                      {#if cs.claimErrors[c.token]}<p class="cp-err">{cs.claimErrors[c.token]}</p>{/if}
-                    </div>
-                  {:else}
-                    <div class="cp-row">
-                      <div class="cp-row-main">
-                        <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.3" class="cp-icon" aria-hidden="true"><circle cx="5.5" cy="5.5" r="4.5"/><path d="M5.5 3.5v2.2l1.5 1.3"/></svg>
-                        <span class="cp-dates">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</span>
-                        <div class="cp-actions">
-                          <a href={authStore.isLoggedIn ? '/profile' : `/cancel/${c.token}`} class="cp-link cp-link--reschedule">{$t('ctaRescheduleLink')}</a>
-                          <button onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="cp-revoke">
-                            {cs.cancellingToken === c.token ? $t('claimCancelling') : $t('claimCancelBtn')}
-                          </button>
-                        </div>
-                      </div>
-                      <p class="cp-note cp-note--pending">{$t('claimPendingNote')}</p>
-                      {#if cs.claimErrors[c.token]}<p class="cp-err">{cs.claimErrors[c.token]}</p>{/if}
-                    </div>
-                  {/if}
-                {/each}
-              </div>
-              <!-- Action cards: 3 равнозначных карточки с micro-copy -->
-              <div class="action-cards">
-                <button onclick={() => openModal('notify')} class="action-card">
-                  <span class="action-card-icon" aria-hidden="true">
-                    <svg width="16" height="16" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.35">
-                      <path d="M7 1a4 4 0 0 1 4 4v3l1.5 2H1.5L3 8V5a4 4 0 0 1 4-4z"/>
-                      <path d="M5.5 11.5a1.5 1.5 0 0 0 3 0"/>
-                    </svg>
-                  </span>
-                  <span class="action-card-body">
-                    <span class="action-card-title">{$t('ctaNotifyTitle')}</span>
-                    <span class="action-card-sub">{$t('ctaNotifySub')}</span>
-                  </span>
-                  <span class="action-card-arrow" aria-hidden="true">›</span>
-                </button>
-                <button onclick={() => (showWaitlistModal = true)} class="action-card">
-                  <span class="action-card-icon" aria-hidden="true">
-                    <svg width="16" height="16" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.35">
-                      <path d="M2 3.5h10M2 7h10M2 10.5h6"/>
-                      <circle cx="11.5" cy="10.5" r="2" fill="currentColor" opacity="0.25" stroke="none"/>
-                      <path d="M10 10.5l1 1 2-1.5"/>
-                    </svg>
-                  </span>
-                  <span class="action-card-body">
-                    <span class="action-card-title">{$t('ctaWaitlistTitle')}</span>
-                    <span class="action-card-sub">{$t('ctaWaitlistSub')}</span>
-                  </span>
-                  <span class="action-card-arrow" aria-hidden="true">›</span>
-                </button>
-                <button onclick={() => (showBookingModal = true)} class="action-card">
-                  <span class="action-card-icon" aria-hidden="true">
-                    <svg width="16" height="16" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.35">
-                      <rect x="0.5" y="1.5" width="12" height="11" rx="0.8"/>
-                      <path d="M3.5 1.5V0.5M9.5 1.5V0.5M0.5 5h12"/>
-                    </svg>
-                  </span>
-                  <span class="action-card-body">
-                    <span class="action-card-title">{$t('ctaBookTitle')}</span>
-                    <span class="action-card-sub">{$t('ctaBookSub')}</span>
-                  </span>
-                  <span class="action-card-arrow" aria-hidden="true">›</span>
-                </button>
-              </div>
-            {:else}
-              <!-- No claims — generic reserved state -->
-              <div class="reserved-notice">
-                <svg class="reserved-icon" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.3">
-                  <circle cx="9" cy="9" r="7.5"/>
-                  <path d="M9 5.5v3.5l2.5 2"/>
-                </svg>
-                <div>
-                  <p class="reserved-title">{$t('figurineReserved')}</p>
-                  <p class="reserved-sub">{$t('figurineNotifyNote')}</p>
-                  {#if nextAvailableDate}
-                    <p class="reserved-avail">
-                      {$t('figurineAvailableFrom')}
-                      <strong>{nextAvailableDate.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}</strong>
-                    </p>
-                  {/if}
-                </div>
-              </div>
-              <div class="claim-lookup" style="margin-bottom:0.75rem">
-                {#if !cs.showTokenForm}
-                  <button onclick={() => cs.showTokenForm = true} class="claim-lookup-link">{$t('claimHaveCode')}</button>
-                {:else}
-                  <div class="claim-lookup-form">
-                    <input type="text" bind:value={cs.tokenInput} placeholder="XXXX-XXXX" maxlength="9"
-                      class="claim-lookup-input" oninput={() => { cs.tokenLookupInfo = null; cs.tokenLookupErr = ''; }} />
-                    <button onclick={() => cs.lookupToken()} disabled={cs.tokenLooking} class="claim-lookup-btn">
-                      {cs.tokenLooking ? '…' : $t('claimLookupBtn')}
-                    </button>
-                    <button onclick={() => { cs.showTokenForm = false; cs.tokenInput = ''; cs.tokenLookupInfo = null; }} class="claim-lookup-close">✕</button>
-                  </div>
-                  {#if cs.tokenLookupErr}<p class="claim-err">{cs.tokenLookupErr}</p>{/if}
-                  {#if cs.tokenLookupInfo}
-                    <div class="claim-lookup-result">
-                      <p class="claim-dates">{fmtDate(cs.tokenLookupInfo.startsAt)} — {fmtDate(cs.tokenLookupInfo.endsAt)}</p>
-                      {#if cs.tokenLookupInfo.status === 'pending'}
-                        <button onclick={() => cs.cancelFromLookup()} disabled={cs.lookupCancelling} class="claim-cancel-btn">
-                          {cs.lookupCancelling ? $t('claimCancelling') : $t('claimCancelBtn')}
-                        </button>
-                      {:else}
-                        <p class="claim-status">{$t('claimStatus')}: {lookupStatusLabel(cs.tokenLookupInfo.status)}</p>
-                      {/if}
-                    </div>
-                  {/if}
-                {/if}
-              </div>
-              <div class="action-cards">
-                <button onclick={() => openModal('notify')} class="action-card">
-                  <span class="action-card-icon" aria-hidden="true">
-                    <svg width="16" height="16" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.35">
-                      <path d="M7 1a4 4 0 0 1 4 4v3l1.5 2H1.5L3 8V5a4 4 0 0 1 4-4z"/>
-                      <path d="M5.5 11.5a1.5 1.5 0 0 0 3 0"/>
-                    </svg>
-                  </span>
-                  <span class="action-card-body">
-                    <span class="action-card-title">{$t('ctaNotifyTitle')}</span>
-                    <span class="action-card-sub">{$t('ctaNotifySub')}</span>
-                  </span>
-                  <span class="action-card-arrow" aria-hidden="true">›</span>
-                </button>
-                <button onclick={() => (showWaitlistModal = true)} class="action-card">
-                  <span class="action-card-icon" aria-hidden="true">
-                    <svg width="16" height="16" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.35">
-                      <path d="M2 3.5h10M2 7h10M2 10.5h6"/>
-                      <circle cx="11.5" cy="10.5" r="2" fill="currentColor" opacity="0.25" stroke="none"/>
-                      <path d="M10 10.5l1 1 2-1.5"/>
-                    </svg>
-                  </span>
-                  <span class="action-card-body">
-                    <span class="action-card-title">{$t('ctaWaitlistTitle')}</span>
-                    <span class="action-card-sub">{$t('ctaWaitlistSub')}</span>
-                  </span>
-                  <span class="action-card-arrow" aria-hidden="true">›</span>
-                </button>
-                <button onclick={() => (showBookingModal = true)} class="action-card">
-                  <span class="action-card-icon" aria-hidden="true">
-                    <svg width="16" height="16" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.35">
-                      <rect x="0.5" y="1.5" width="12" height="11" rx="0.8"/>
-                      <path d="M3.5 1.5V0.5M9.5 1.5V0.5M0.5 5h12"/>
-                    </svg>
-                  </span>
-                  <span class="action-card-body">
-                    <span class="action-card-title">{$t('ctaBookTitle')}</span>
-                    <span class="action-card-sub">{$t('ctaBookSub')}</span>
-                  </span>
-                  <span class="action-card-arrow" aria-hidden="true">›</span>
-                </button>
-              </div>
-            {/if}
-
-          {:else}
-            <div class="sold-notice">
-              <p class="sold-text">{$t('detailSoldNotice')}</p>
-            </div>
-            <div class="action-cards">
-              <button onclick={() => openModal('notify')} class="action-card">
-                <span class="action-card-icon" aria-hidden="true">
-                  <svg width="16" height="16" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.35">
-                    <path d="M7 1a4 4 0 0 1 4 4v3l1.5 2H1.5L3 8V5a4 4 0 0 1 4-4z"/>
-                    <path d="M5.5 11.5a1.5 1.5 0 0 0 3 0"/>
-                  </svg>
-                </span>
-                <span class="action-card-body">
-                  <span class="action-card-title">{$t('ctaNotifyTitle')}</span>
-                  <span class="action-card-sub">{$t('ctaNotifySoldSub')}</span>
-                </span>
-                <span class="action-card-arrow" aria-hidden="true">›</span>
-              </button>
-            </div>
-          {/if}
-        </div>
-
-      </div>
-    </div>
-
-    <!-- ── MAKING RECORD ── -->
-    {#if figurine.processSteps && figurine.processSteps.length > 0}
-      <div class="grimoire-section" bind:this={grimoireRef}>
+        <!-- ── MAKING RECORD ── -->
+        {#if figurine.processSteps && figurine.processSteps.length > 0}
+      <div class="act-divider" aria-hidden="true"><span>❦</span></div>
+      <div class="grimoire-section {figurine.status === 'in_progress' ? 'grimoire-section--live' : ''}" bind:this={grimoireRef}>
         <div class="making-record">
           <div class="making-copy">
-            <span class="making-kicker">{$t('detailMakingRecordKicker')}</span>
-            <h2 class="making-title">{$t('detailMakingRecordTitle')}</h2>
-            <p class="making-text">{$t('detailMakingRecordText')}</p>
+            <span class="making-kicker">
+              {#if figurine.status === 'in_progress'}
+                <span class="making-live" aria-hidden="true"></span>{$t('detailMakingProgressKicker')}
+              {:else}
+                {$t('detailMakingRecordKicker')}
+              {/if}
+            </span>
+            <h2 class="making-title">
+              {figurine.status === 'in_progress' ? $t('detailMakingProgressTitle') : $t('detailMakingRecordTitle')}
+            </h2>
+            <p class="making-text">
+              {figurine.status === 'in_progress' ? $t('detailMakingProgressText') : $t('detailMakingRecordText')}
+            </p>
           </div>
 
           <div class="making-strip" aria-label={$t('detailMakingRecordTitle')}>
@@ -1350,6 +1222,7 @@
 
     <!-- ── VIDEO ── -->
     {#if figurine.videoUrl}
+      <div class="act-divider" aria-hidden="true"><span>❦</span></div>
       <section class="video-section">
         <header class="section-row">
           <span class="sec-label">{$t('figurineVideo')}</span>
@@ -1379,8 +1252,41 @@
       </section>
     {/if}
 
+    <!-- ── PRESENCE & SCHEDULE (Act III — facts & logistics, merged from the old timeline + cta-zone notices) ── -->
+    {#if figurineSchedule.entries.length > 0 || nextAvailableDate || figurine.status === 'reserved' || figurine.status === 'sold'}
+      <div class="act-divider" aria-hidden="true"><span>❦</span></div>
+      <section class="presence-section">
+        <header class="section-row">
+          <span class="sec-label">{$t('detailPresenceLabel')}</span>
+          <div class="sec-rule" aria-hidden="true"></div>
+        </header>
+
+        {#if figurineSchedule.entries.length > 0}
+          <ShowingsTimeline schedule={figurineSchedule} />
+        {/if}
+
+        {#if hasActiveShowing}
+          <p class="presence-note">{$t('figurineTransferBlocked')}</p>
+        {/if}
+
+        {#if figurine.status === 'available' && nextAvailableDate}
+          <p class="presence-note">
+            {$t('figurineAvailableFrom')}
+            <strong>{nextAvailableDate.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}</strong>
+          </p>
+        {:else if figurine.status === 'reserved'}
+          <p class="presence-note">
+            {$t('figurineReserved')} — {$t('figurineNotifyNote')}{#if nextAvailableDate} · {$t('figurineAvailableFrom')} {nextAvailableDate.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}{/if}
+          </p>
+        {:else if figurine.status === 'sold'}
+          <p class="presence-note">{$t('detailSoldNotice')}</p>
+        {/if}
+      </section>
+    {/if}
+
     <!-- ── RELATED NEXT CHOICES ── -->
     {#if figurine.relatedItems && figurine.relatedItems.length > 0}
+      <div class="act-divider" aria-hidden="true"><span>❦</span></div>
       <section id="related-works" class="related-section">
         <header class="related-head">
           <div>
@@ -1416,6 +1322,8 @@
                     ? $t('figurineStatusSold')
                   : item.status === 'reserved'
                       ? $t('figurineStatusReserved')
+                  : item.status === 'in_progress'
+                      ? $t('figurineStatusInProgress')
                       : $t('figurineStatusAvailable')}
                 </span>
               </div>
@@ -1452,24 +1360,55 @@
 
     <FigurineComments figurineId={id} />
 
+      </div>
+    </div>
   </div>
 </div>
 
-<!-- Mobile sticky CTA after the first screen. -->
-{#if figurine.status === 'available' && scrollY > 300}
+<!-- Mobile sticky CTA after the first screen — present for every status. -->
+{#if scrollY > 300}
   <div class="mobile-cta" transition:fade={{ duration: 180 }}>
     <div class="mobile-cta-info">
       <span class="mobile-cta-name">{figurine.name}</span>
       <span class="mobile-cta-status">
-        {hasActiveShowing ? $t('detailMobileShowingSub') : $t('figurinePriceOnRequest')}
+        {figurine.status === 'available'
+          ? (hasActiveShowing ? $t('detailMobileShowingSub') : $t('figurinePriceOnRequest'))
+          : figurine.status === 'reserved'
+            ? $t('detailMobileReservedSub')
+            : figurine.status === 'in_progress'
+              ? $t('detailMobileProgressSub')
+              : $t('detailMobileSoldSub')}
       </span>
     </div>
-    <button onclick={() => openModal(hasActiveShowing ? 'question' : 'request')} class="mobile-cta-btn">
-      {hasActiveShowing ? $t('figurineAskQuestion') : $t('detailMobileRequestCta')}
-      <svg width="13" height="14" viewBox="0 0 14 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M4.5 5V3.5a2.5 2.5 0 0 1 5 0V5"/>
-        <rect x="2" y="5" width="10" height="8.5" rx="1.2"/>
-      </svg>
-    </button>
+    {#if figurine.status === 'available'}
+      <button onclick={() => openModal('request')} class="mobile-cta-btn">
+        {$t('detailMobileRequestCta')}
+        <svg width="13" height="14" viewBox="0 0 14 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4.5 5V3.5a2.5 2.5 0 0 1 5 0V5"/>
+          <rect x="2" y="5" width="10" height="8.5" rx="1.2"/>
+        </svg>
+      </button>
+    {:else if figurine.status === 'reserved'}
+      <button onclick={() => (showWaitlistModal = true)} class="mobile-cta-btn">
+        {$t('detailMobileQueueCta')}
+        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2 7h9M8 4l3 3-3 3"/>
+        </svg>
+      </button>
+    {:else if figurine.status === 'in_progress'}
+      <button onclick={() => openModal('notify')} class="mobile-cta-btn">
+        {$t('detailMobileFollowCta')}
+        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2 7h9M8 4l3 3-3 3"/>
+        </svg>
+      </button>
+    {:else}
+      <a href="/commission?figurine={id}" class="mobile-cta-btn">
+        {$t('detailMobileSimilarCta')}
+        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2 7h9M8 4l3 3-3 3"/>
+        </svg>
+      </a>
+    {/if}
   </div>
 {/if}

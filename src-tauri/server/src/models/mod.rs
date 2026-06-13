@@ -438,6 +438,23 @@ pub struct Order {
     pub admin_notes: Option<String>,
     pub created_at: DateTime<Utc>,
     pub user_id: Option<Uuid>,
+    /// Set only for notify-mode orders — the visitor's receipt/cancel token.
+    pub cancel_token: Option<String>,
+}
+
+/// Returned after submitting an order. Carries a token only for notify-mode.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrderCreatedResponse {
+    pub cancel_token: Option<String>,
+}
+
+/// Looked up by notify token so a visitor can see / stop their subscription.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotifyInfo {
+    pub figurine_id: String,
+    pub figurine_name: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1031,6 +1048,7 @@ pub struct WaitlistEntry {
     pub note: Option<String>,
     pub created_at: DateTime<Utc>,
     pub user_id: Option<Uuid>,
+    pub cancel_token: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1045,6 +1063,26 @@ pub struct WaitlistEntryDto {
     pub note: Option<String>,
     pub created_at: String,
     pub user_id: Option<String>,
+    /// 1-based rank within this figurine's queue, by join time.
+    pub position: i64,
+}
+
+/// Returned to the visitor right after joining the queue — their receipt.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WaitlistCreatedResponse {
+    pub cancel_token: String,
+    pub position: i64,
+}
+
+/// Looked up by cancel token so a visitor can see / leave their place in line.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WaitlistCancelInfo {
+    pub figurine_id: String,
+    pub figurine_name: String,
+    pub position: i64,
+    pub created_at: String,
 }
 
 // ============================================================

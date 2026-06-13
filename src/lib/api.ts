@@ -446,12 +446,24 @@ export const api = {
         });
     },
 
-    async submitOrder(order: OrderRequest): Promise<void> {
-        await webFetch('/orders', {
+    async submitOrder(order: OrderRequest): Promise<import('./types/api').OrderCreatedResponse> {
+        return webFetch('/orders', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(order),
         });
+    },
+
+    async getNotifyByToken(token: string): Promise<import('./types/api').NotifyInfo | null> {
+        try {
+            return await webFetch(`/orders/notify/${token}`);
+        } catch {
+            return null;
+        }
+    },
+
+    async cancelNotifyByToken(token: string): Promise<void> {
+        await webFetch(`/orders/notify/${token}`, { method: 'POST' });
     },
 
     async listOrders(opts?: { status?: string; page?: number; perPage?: number }): Promise<import('./types/api').OrdersPage> {
@@ -528,12 +540,24 @@ export const api = {
         });
     },
 
-    async joinWaitlist(figurineId: string, req: CreateWaitlistRequest): Promise<void> {
-        await webFetch(`/figurines/${figurineId}/waitlist`, {
+    async joinWaitlist(figurineId: string, req: CreateWaitlistRequest): Promise<import('./types/api').WaitlistCreatedResponse> {
+        return webFetch(`/figurines/${figurineId}/waitlist`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(req),
         });
+    },
+
+    async getWaitlistByToken(token: string): Promise<import('./types/api').WaitlistCancelInfo | null> {
+        try {
+            return await webFetch(`/waitlist/leave/${token}`);
+        } catch {
+            return null;
+        }
+    },
+
+    async leaveWaitlistByToken(token: string): Promise<void> {
+        await webFetch(`/waitlist/leave/${token}`, { method: 'POST' });
     },
 
     async adminListWaitlist(figurineId?: string): Promise<WaitlistEntryDto[]> {

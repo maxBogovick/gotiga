@@ -71,6 +71,7 @@
     <meta property="og:image:height" content="1800" />
   {/if}
   <meta property="og:url" content={page.url.href} />
+  <link rel="canonical" href={page.url.href} />
 
   <!-- Twitter / X -->
   <meta name="twitter:card"        content="summary_large_image" />

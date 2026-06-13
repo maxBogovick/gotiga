@@ -104,6 +104,7 @@
             <div class="space-y-2">
               {#each group.entries as entry (entry.id)}
                 <div class="border border-[#34251c]/10 bg-white p-3 flex items-start gap-3">
+                  <span class="flex-shrink-0 w-7 h-7 rounded-full bg-[#f4ece0] border border-[#d8c6b1] flex items-center justify-center font-serif text-sm text-[#6f3b24]" title="Место в очереди">{entry.position}</span>
                   <div class="flex-1 min-w-0">
                     <div class="flex items-center gap-1.5">
                       <p class="text-sm font-medium text-[#34251c]">{entry.requesterName}</p>

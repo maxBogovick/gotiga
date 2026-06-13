@@ -591,9 +591,26 @@ pub async fn save_author_profile(
 pub async fn create_order(
     State(service): State<AppService>,
     Json(order): Json<crate::models::OrderRequest>,
+) -> Result<Json<crate::models::OrderCreatedResponse>> {
+    let saved = service.create_order(&order).await?;
+    Ok(Json(crate::models::OrderCreatedResponse { cancel_token: saved.cancel_token }))
+}
+
+pub async fn get_notify_by_token(
+    State(service): State<AppService>,
+    Path(token): Path<String>,
+) -> Result<Json<crate::models::NotifyInfo>> {
+    service.get_notify_by_token(&token).await?
+        .map(Json)
+        .ok_or_else(|| crate::error::AppError::NotFound("Subscription not found".to_string()))
+}
+
+pub async fn cancel_notify_by_token(
+    State(service): State<AppService>,
+    Path(token): Path<String>,
 ) -> Result<StatusCode> {
-    service.create_order(&order).await?;
-    Ok(StatusCode::CREATED)
+    service.cancel_notify_by_token(&token).await?;
+    Ok(StatusCode::OK)
 }
 
 pub async fn list_orders(
@@ -1383,13 +1400,29 @@ pub async fn join_waitlist(
     headers: HeaderMap,
     Path(id): Path<String>,
     Json(body): Json<CreateWaitlistRequest>,
-) -> Result<StatusCode> {
+) -> Result<Json<crate::models::WaitlistCreatedResponse>> {
     let user_id = if let Some(token) = bearer_token(&headers) {
         service.get_user_from_session(token).await.ok().map(|u| u.id)
     } else {
         None
     };
-    service.join_waitlist(id, body, user_id).await?;
+    Ok(Json(service.join_waitlist(id, body, user_id).await?))
+}
+
+pub async fn get_waitlist_by_token(
+    State(service): State<AppService>,
+    Path(token): Path<String>,
+) -> Result<Json<crate::models::WaitlistCancelInfo>> {
+    service.get_waitlist_by_token(&token).await?
+        .map(Json)
+        .ok_or_else(|| crate::error::AppError::NotFound("Queue entry not found".to_string()))
+}
+
+pub async fn leave_waitlist_by_token(
+    State(service): State<AppService>,
+    Path(token): Path<String>,
+) -> Result<StatusCode> {
+    service.leave_waitlist_by_token(&token).await?;
     Ok(StatusCode::OK)
 }
 
