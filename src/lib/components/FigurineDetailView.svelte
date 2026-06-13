@@ -10,10 +10,9 @@
   import MemoryMirror from '$lib/components/MemoryMirror.svelte';
   import SecretText from '$lib/components/SecretText.svelte';
   import Lightbox from '$lib/components/Lightbox.svelte';
-  import { api } from '$lib/api';
+  import { api, resolveMediaUrl } from '$lib/api';
   import { t } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
-  import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
   import ShowingsTimeline from '$lib/components/ShowingsTimeline.svelte';
   import FigurineComments from '$lib/components/FigurineComments.svelte';
   import { FigurineClaimsStore, type ClaimData } from '$lib/stores/figurine-claims.svelte';
@@ -138,11 +137,19 @@
   let upcomingShowings = $derived(figurineSchedule.entries.filter(e => e.entryType === 'showing'));
 
   // Nearest date when figurine is fully free (after all showings + confirmed bookings)
+  function localIsoDate(date = new Date()): string {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
   let nextAvailableDate = $derived.by(() => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = localIsoDate();
     const blocking = figurineSchedule.entries.filter(e => e.entryType === 'showing' || e.entryType === 'booking');
     if (blocking.length === 0) return null;
-    const latestEnd = blocking.reduce((max, e) => e.endsAt > max ? e.endsAt : max, today);
+    const latestEnd = blocking.reduce<string | null>((max, e) => !max || e.endsAt > max ? e.endsAt : max, null);
+    if (!latestEnd) return null;
     if (latestEnd < today) return null;
     const d = new Date(latestEnd + 'T00:00:00');
     d.setDate(d.getDate() + 1);
@@ -150,8 +157,8 @@
   });
 
   // Showing that is happening TODAY (started but not yet ended)
-  let todayStr = new Date().toISOString().split('T')[0];
-  let hasActiveShowing = $derived(upcomingShowings.some(s => s.startsAt <= todayStr));
+  let todayStr = $derived(localIsoDate());
+  let hasActiveShowing = $derived(upcomingShowings.some(s => s.startsAt <= todayStr && s.endsAt >= todayStr));
 
 
   // === CLAIM TOKEN (self-cancellation) ===
@@ -332,8 +339,42 @@
   let lightboxImages = $derived(
     sortedImages.map((img) => ({ url: resolveUrl(img.originalUrl ?? img.url), alt: img.altText ?? '' }))
   );
+  let canOpenLightbox = $derived(lightboxImages.length > 0);
 
-  function resolveUrl(path: string | undefined | null) { return path ?? ''; }
+  $effect(() => {
+    const maxIndex = sortedImages.length - 1;
+    if (maxIndex < 0 && selectedImageIndex !== 0) {
+      selectedImageIndex = 0;
+    } else if (maxIndex >= 0 && selectedImageIndex > maxIndex) {
+      selectedImageIndex = maxIndex;
+    }
+  });
+
+  function hasText(value: string | null | undefined): value is string {
+    return Boolean(value?.trim());
+  }
+
+  let visibleProcessSteps = $derived(
+    (figurine.processSteps ?? []).filter((step) => hasText(step.imageUrl) || hasText(step.description))
+  );
+  let visibleRelatedItems = $derived(
+    (figurine.relatedItems ?? []).filter((item) => hasText(item.id) && hasText(item.name))
+  );
+  let hasHistorySection = $derived(hasText(figurine.fullDescription));
+  let hasMakingSection = $derived(visibleProcessSteps.length > 0);
+  let hasVideoSection = $derived(hasText(figurine.videoUrl));
+  let hasWorkStorySection = $derived(hasHistorySection || hasMakingSection || hasVideoSection);
+  let hasAttributesSection = $derived(
+    hasText(figurine.dimensions) || hasText(figurine.material) || hasText(figurine.technique)
+  );
+  let hasScheduleSection = $derived(figurineSchedule.entries.length > 0);
+  let hasFactsSection = $derived(hasAttributesSection || hasScheduleSection);
+  let hasPersonalRecord = $derived(
+    (figurine.status === 'available' || figurine.status === 'reserved') &&
+      (cs.claims.length > 0 || cs.cancelledTokens.size > 0 || cs.showTokenForm || Boolean(cs.tokenLookupInfo) || Boolean(cs.tokenLookupErr))
+  );
+
+  function resolveUrl(path: string | undefined | null) { return resolveMediaUrl(path) ?? ''; }
   function imageTypeLabel(type: string | undefined | null) {
     switch (type) {
       case 'face': return $t('detailImageFace');
@@ -352,8 +393,17 @@
       default: return $t('detailMakingRecordStep');
     }
   }
-  function selectImage(index: number) { if (index !== selectedImageIndex) selectedImageIndex = index; }
-  function openLightbox(index: number) { lightboxStartIndex = index; showLightbox = true; }
+  function selectImage(index: number) {
+    const maxIndex = sortedImages.length - 1;
+    if (maxIndex < 0) return;
+    const nextIndex = Math.max(0, Math.min(maxIndex, index));
+    if (nextIndex !== selectedImageIndex) selectedImageIndex = nextIndex;
+  }
+  function openLightbox(index: number) {
+    if (!canOpenLightbox) return;
+    lightboxStartIndex = Math.max(0, Math.min(lightboxImages.length - 1, index));
+    showLightbox = true;
+  }
   function toggleGrimoire() { isGrimoireOpen = !isGrimoireOpen; }
   function toggleCandle() { isCandleLit = !isCandleLit; }
 
@@ -362,22 +412,54 @@
     document.fullscreenElement ? document.exitFullscreen() : videoRef.requestFullscreen().catch(() => {});
   }
 
+  let audioFadeTimer: ReturnType<typeof setInterval> | null = null;
+
+  function clearAudioFade() {
+    if (!audioFadeTimer) return;
+    clearInterval(audioFadeTimer);
+    audioFadeTimer = null;
+  }
+
   function toggleAudio() {
     if (!audioRef || !figurine.ambiencePath) return;
-    isAudioPlaying ? fadeOutAudio() : (audioRef.volume = 0, audioRef.play().catch(console.error), isAudioPlaying = true, fadeInAudio());
+    if (isAudioPlaying) {
+      fadeOutAudio();
+    } else {
+      clearAudioFade();
+      audioRef.volume = 0;
+      audioRef.play().catch(console.error);
+      isAudioPlaying = true;
+      fadeInAudio();
+    }
   }
 
   function fadeInAudio() {
     if (!audioRef) return;
+    clearAudioFade();
     let vol = 0;
-    const iv = setInterval(() => { vol < 0.5 ? (vol += 0.05, audioRef!.volume = vol) : clearInterval(iv); }, 100);
+    audioFadeTimer = setInterval(() => {
+      if (!audioRef || vol >= 0.5) {
+        clearAudioFade();
+        return;
+      }
+      vol = Math.min(0.5, vol + 0.05);
+      audioRef.volume = vol;
+    }, 100);
   }
 
   function fadeOutAudio() {
     if (!audioRef) return;
+    clearAudioFade();
     let vol = audioRef.volume;
-    const iv = setInterval(() => {
-      vol > 0.05 ? (vol -= 0.05, audioRef!.volume = vol) : (clearInterval(iv), audioRef!.pause(), isAudioPlaying = false);
+    audioFadeTimer = setInterval(() => {
+      if (!audioRef || vol <= 0.05) {
+        clearAudioFade();
+        audioRef?.pause();
+        isAudioPlaying = false;
+        return;
+      }
+      vol = Math.max(0, vol - 0.05);
+      audioRef.volume = vol;
     }, 100);
   }
 
@@ -400,7 +482,7 @@
 
   // ── Keyboard gallery navigation ───────────────────────────────────────────
   function handleKeydown(e: KeyboardEvent) {
-    if (showLightbox || showOrderModal) return;
+    if (showLightbox || showOrderModal || showBookingModal || showWaitlistModal || showStoryModal) return;
     if (e.key === 'ArrowLeft')  selectImage(Math.max(0, selectedImageIndex - 1));
     if (e.key === 'ArrowRight') selectImage(Math.min(sortedImages.length - 1, selectedImageIndex + 1));
   }
@@ -409,19 +491,10 @@
   let scrollY = $state(0);
   let scrolled    = $derived(scrollY > 80);
 
-  // DOM-якоря для определения выхода секций из viewport
+  // DOM anchor for the sticky navigation identity.
   let galleryRef:  HTMLElement | undefined = $state();
-  let grimoireRef: HTMLElement | undefined = $state();
 
   let galleryExited  = $state(false); // Phase 2: галерея ушла за экран
-  let grimoireExited = $state(false); // Phase 3: grimoire ушёл за экран
-
-  // ── Wishlist ──────────────────────────────────────────────────────────────
-  let isWishlisted = $derived(savedFigurines.has(figurine.id));
-
-  function toggleWishlist() {
-    savedFigurines.toggle(figurine.id);
-  }
 
   function openModal(m: 'request' | 'question' | 'notify') {
     orderMode = m;
@@ -434,9 +507,6 @@
     if (galleryRef) {
       galleryExited = galleryRef.getBoundingClientRect().bottom < threshold;
     }
-    if (grimoireRef) {
-      grimoireExited = grimoireRef.getBoundingClientRect().bottom < threshold;
-    }
   }
 
   function handleVisibility() {
@@ -447,7 +517,7 @@
     window.addEventListener('keydown', handleKeydown);
     window.addEventListener('scroll', onScroll, { passive: true });
     document.addEventListener('visibilitychange', handleVisibility);
-    savedFigurines.load();
+    onScroll();
     api.getFigurineSchedule(figurine.id).then(s => { figurineSchedule = s; });
     cs.load();
     cs.verify();
@@ -461,6 +531,8 @@
     window.removeEventListener('scroll', onScroll);
     document.removeEventListener('visibilitychange', handleVisibility);
     clearTimeout(copiedTimer);
+    clearAudioFade();
+    if (storyObjectUrl) URL.revokeObjectURL(storyObjectUrl);
     if (audioRef) { audioRef.pause(); audioRef = null; }
     cs.stopPolling();
   });
@@ -479,7 +551,7 @@
     figurineName={figurine.name}
     figurineId={figurine.id}
     schedule={figurineSchedule}
-    relatedAvailable={figurine.relatedItems.filter(r => r.status === 'available').slice(0, 3)}
+    relatedAvailable={(figurine.relatedItems ?? []).filter(r => r.status === 'available').slice(0, 3)}
     onNotified={onNotifySubscribed}
     onClose={() => (showOrderModal = false)}
   />
@@ -509,20 +581,20 @@
          role="presentation">
       <div class="story-modal" transition:fade={{ duration: 150 }}
            role="dialog" aria-modal="true" aria-labelledby="story-modal-title" tabindex="-1" use:focusTrap>
-        <button class="story-close" onclick={closeStoryModal} aria-label={$t('lightboxClose')}>✕</button>
+        <button type="button" class="story-close" onclick={closeStoryModal} aria-label={$t('lightboxClose')}>✕</button>
 
         <p id="story-modal-title" class="story-modal-title">{$t('figurineStoryShare')}</p>
 
         <!-- 9:16 preview -->
         {#if storyObjectUrl}
           <div class="story-preview-wrap">
-            <img src={storyObjectUrl} alt="Story preview" class="story-preview-img" />
+            <img src={storyObjectUrl} alt={$t('figurineStoryShare')} class="story-preview-img" />
           </div>
         {/if}
 
         <div class="story-actions">
           {#if canNativeShare}
-            <button class="story-btn story-btn--primary" onclick={nativeShareStory}>
+            <button type="button" class="story-btn story-btn--primary" onclick={nativeShareStory}>
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3">
                 <circle cx="11" cy="3" r="1.5"/><circle cx="3" cy="7" r="1.5"/><circle cx="11" cy="11" r="1.5"/>
                 <path d="M4.4 6.1l5.2-2.6M4.4 7.9l5.2 2.6"/>
@@ -530,7 +602,7 @@
               {$t('storyShare')}
             </button>
           {/if}
-          <button class="story-btn {canNativeShare ? 'story-btn--secondary' : 'story-btn--primary'}" onclick={downloadStory}>
+          <button type="button" class="story-btn {canNativeShare ? 'story-btn--secondary' : 'story-btn--primary'}" onclick={downloadStory}>
             <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.3">
               <path d="M6.5 1v7.5M4 6l2.5 2.5L9 6" stroke-linecap="round" stroke-linejoin="round"/>
               <path d="M1 10v1.5A0.5 0.5 0 0 0 1.5 12h10a0.5 0.5 0 0 0 0.5-0.5V10"/>
@@ -565,7 +637,7 @@
         </a>
 
         {#if prev || next}
-          <div class="topnav-fig-nav" role="group" aria-label="Figurine navigation">
+          <div class="topnav-fig-nav" role="group" aria-label="{$t('figurineNavPrev')} / {$t('figurineNavNext')}">
             {#if prev}
               <a
                 href="/figurines/{prev.id}"
@@ -610,8 +682,8 @@
         {/if}
       </div>
 
-      <!-- Center: прогрессивная идентификация (3 фазы) -->
-      <div class="topnav-center" aria-hidden="true">
+      <!-- Center: progressive identity once the gallery leaves the viewport -->
+      <div class="topnav-center">
 
         <!-- Phase 1: только имя -->
         {#if scrolled && !galleryExited}
@@ -625,10 +697,11 @@
           <div class="topnav-identity" transition:fade={{ duration: 280 }}>
             {#if currentImage?.url}
               <button
+                type="button"
                 class="topnav-mini-img"
                 onclick={() => openLightbox(selectedImageIndex)}
-                tabindex="-1"
-                title="Open in fullscreen"
+                title={$t('figurineFullscreen')}
+                aria-label={$t('figurineFullscreen')}
               >
                 <img src={resolveUrl(currentImage.url)} alt="" loading="eager" />
               </button>
@@ -637,13 +710,13 @@
             <span class="topnav-ident-name">{figurine.name}</span>
 
             {#if sortedImages.length > 1}
-              <div class="topnav-dots" role="group" aria-label="Gallery navigation">
+              <div class="topnav-dots" role="group" aria-label={$t('figurineShowView')}>
                 {#each sortedImages as _, i}
                   <button
+                    type="button"
                     class="topnav-dot {i === selectedImageIndex ? 'topnav-dot--on' : ''}"
                     onclick={() => selectImage(i)}
-                    tabindex="-1"
-                    aria-label="Image {i + 1}"
+                    aria-label="{$t('figurineShowView')} {i + 1}"
                   ></button>
                 {/each}
               </div>
@@ -656,32 +729,25 @@
         {/if}
       </div>
 
-      <!-- Right: controls -->
+      <!-- Right: controls — candle (mood + reveal), whisper (if audio), share -->
       <div class="topnav-controls">
         <button
+          type="button"
           onclick={toggleCandle}
           class="control-btn {isCandleLit ? 'control-btn--lit' : ''}"
           aria-label={isCandleLit ? $t('figurineExtinguish') : $t('figurineCandle')}
           title={isCandleLit ? $t('figurineExtinguish') : $t('figurineCandle')}
         >
-          <span class="control-icon">{isCandleLit ? '🔥' : '🕯️'}</span>
-          <span class="btn-label">{isCandleLit ? $t('figurineExtinguish') : $t('figurineCandle')}</span>
-        </button>
-
-        <button
-          onclick={toggleWishlist}
-          class="control-btn {isWishlisted ? 'control-btn--lit' : ''}"
-          aria-label={isWishlisted ? $t('figurineWishlisted') : $t('figurineWishlist')}
-          title={isWishlisted ? $t('figurineWishlisted') : $t('figurineWishlist')}
-        >
-          <svg width="13" height="12" viewBox="0 0 13 12" fill={isWishlisted ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="1.4">
-            <path d="M6.5 10.5S1 7 1 3.5A2.5 2.5 0 0 1 6.5 2 2.5 2.5 0 0 1 12 3.5C12 7 6.5 10.5 6.5 10.5z"/>
+          <svg class="control-svg" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.35" aria-hidden="true">
+            <path d="M7 1.3c1.1 1.15 2.5 2.88 2.5 5.05a2.5 2.5 0 0 1-5 0C4.5 4.8 5.42 3.72 6.2 2.8c.32-.38.6-.72.8-1.5z" fill="currentColor" fill-opacity="0.12"/>
+            <path d="M4.25 12.2h5.5M5.15 9.6h3.7M7 1.3c1.1 1.15 2.5 2.88 2.5 5.05a2.5 2.5 0 0 1-5 0C4.5 4.8 5.42 3.72 6.2 2.8c.32-.38.6-.72.8-1.5z"/>
           </svg>
-          <span class="btn-label">{isWishlisted ? $t('figurineWishlisted') : $t('figurineWishlist')}</span>
+          <span class="btn-label">{isCandleLit ? $t('figurineExtinguish') : $t('figurineCandle')}</span>
         </button>
 
         {#if figurine.ambiencePath}
           <button
+            type="button"
             onclick={toggleAudio}
             class="control-btn {isAudioPlaying ? 'control-btn--active' : ''}"
             aria-label={isAudioPlaying ? $t('figurineSilence') : $t('figurineWhisper')}
@@ -692,82 +758,47 @@
           </button>
         {/if}
 
-        <!-- Phase 2+: кнопка Memory Mirror появляется когда галерея ушла -->
-        {#if figurine.processSteps && figurine.processSteps.length > 0 && galleryExited}
-          <button
-            onclick={() => { isGrimoireOpen = true; }}
-            class="control-btn control-btn--eye {isGrimoireOpen ? 'control-btn--active' : ''} {grimoireExited && !isGrimoireOpen ? 'control-btn--eye-pulse' : ''}"
-            aria-label={$t('figurineGrimoire')}
-            title={$t('figurineGrimoire')}
-            transition:fade={{ duration: 200 }}
-          >
-            <svg width="12" height="14" viewBox="0 0 12 14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="2.5" y="2" width="7" height="10" rx="1.2"/>
-              <path d="M2.5 2A1.5 1.5 0 0 0 1 3.5v7A1.5 1.5 0 0 0 2.5 12"/>
-              <path d="M9.5 2A1.5 1.5 0 0 1 11 3.5v7A1.5 1.5 0 0 1 9.5 12"/>
-              <path d="M4.5 5h3M4.5 7h3M4.5 9h1.5"/>
+        <button
+          type="button"
+          onclick={openStoryModal}
+          disabled={storySaving}
+          class="control-btn control-btn--utility {storySaving ? 'control-btn--active' : ''}"
+          aria-label={storySaving ? $t('figurineStorySaving') : $t('figurineStoryShare')}
+          title={storySaving ? $t('figurineStorySaving') : $t('figurineStoryShare')}
+        >
+          {#if storySaving}
+            <span class="control-spinner" aria-hidden="true"></span>
+            <span class="btn-label">{$t('figurineStorySaving')}</span>
+          {:else}
+            <svg class="control-svg" width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.35" aria-hidden="true">
+              <rect x="2" y="1.5" width="9" height="10" rx="1.2"/>
+              <path d="M4.1 8.5 6 6.8l1.3 1.1 1.6-2 1.1 1.4"/>
+              <circle cx="4.6" cy="4.1" r="0.65" fill="currentColor" stroke="none"/>
             </svg>
-            <span class="btn-label">{$t('figurineGrimoire')}</span>
-          </button>
-        {/if}
+            <span class="btn-label">{$t('figurineStoryShare')}</span>
+          {/if}
+        </button>
 
         <button
+          type="button"
           onclick={share}
           class="control-btn control-btn--utility {copied ? 'control-btn--active' : ''}"
           aria-label={$t('figurineShare')}
           title={$t('figurineShare')}
         >
           {#if copied}
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
+            <svg class="control-svg" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
               <path d="M2 6l3 3 5-5"/>
             </svg>
             <span class="btn-label">{$t('figurineCopied')}</span>
           {:else}
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
+            <svg class="control-svg" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
               <path d="M9 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM3 4.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM9 7.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z"/>
               <path d="M7.5 2.7l-3 1.8M7.5 9.3l-3-1.8"/>
             </svg>
             <span class="btn-label">{$t('figurineShare')}</span>
           {/if}
         </button>
-
-        <button
-          onclick={openStoryModal}
-          class="control-btn control-btn--utility"
-          aria-label={$t('figurineStoryShare')}
-          title={$t('figurineStoryShare')}
-          disabled={storySaving}
-        >
-          {#if storySaving}
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" style="animation:spin 1s linear infinite">
-              <path d="M6 1.5A4.5 4.5 0 1 1 1.5 6" stroke-linecap="round"/>
-            </svg>
-          {:else}
-            <svg width="12" height="14" viewBox="0 0 12 14" fill="none" stroke="currentColor" stroke-width="1.3">
-              <rect x="1" y="1" width="10" height="12" rx="1"/>
-              <path d="M3.5 5h5M3.5 7.5h5M3.5 10h3"/>
-            </svg>
-          {/if}
-          <span class="btn-label">{storySaving ? $t('figurineStorySaving') : $t('figurineStoryShare')}</span>
-        </button>
-
-        <!-- Phase 2+: компактная CTA в хидере -->
-        {#if galleryExited && figurine.status === 'available'}
-          <button
-            onclick={() => openModal('request')}
-            class="control-btn"
-            aria-label={$t('figurineRequest')}
-            transition:fade={{ duration: 200 }}
-          >
-            <svg width="11" height="12" viewBox="0 0 14 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M4.5 5V3.5a2.5 2.5 0 0 1 5 0V5"/>
-              <rect x="2" y="5" width="10" height="8.5" rx="1.2"/>
-            </svg>
-            <span class="btn-label">{$t('figurineRequest')}</span>
-          </button>
-        {/if}
-
-        <span class="ref-tag">ARC-{id.slice(0, 8).toUpperCase()}</span>
       </div>
     </nav>
 
@@ -779,9 +810,10 @@
         <div class="gallery-layout" class:gallery-layout--solo={sortedImages.length <= 1}>
 
           {#if sortedImages.length > 1}
-            <nav class="thumbs-strip" aria-label="Gallery thumbnails">
+            <nav class="thumbs-strip" aria-label={$t('figurineShowView')}>
               {#each sortedImages as img, i}
                 <button
+                  type="button"
                   class="thumb-v {selectedImageIndex === i ? 'thumb-v--active' : ''}"
                   onclick={() => selectImage(i)}
                   aria-label="{$t('figurineShowView')} {i + 1}"
@@ -799,10 +831,10 @@
               {#key currentImage?.id}
                 <div class="image-layer" in:fade={{ duration: 220 }}>
                   <BrassLens
-                    src={currentImage?.url}
-                    alt={figurine.name}
+                    src={resolveUrl(currentImage?.url)}
+                    alt={currentImage?.altText ?? figurine.name}
                     class="w-full h-full"
-                    onOpenLightbox={() => openLightbox(selectedImageIndex)}
+                    onOpenLightbox={() => canOpenLightbox && openLightbox(selectedImageIndex)}
                   />
                 </div>
               {/key}
@@ -814,16 +846,19 @@
                 </div>
               {/if}
 
-              <button
-                onclick={() => openLightbox(selectedImageIndex)}
-                class="expand-btn"
-                aria-label={$t('figurineFullscreen')}
-              >
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5">
-                  <path d="M1 4V1h3M6 1h3v3M9 6v3H6M4 9H1V6"/>
-                </svg>
-                {$t('figurineFullscreen')}
-              </button>
+              {#if canOpenLightbox}
+                <button
+                  type="button"
+                  onclick={() => openLightbox(selectedImageIndex)}
+                  class="expand-btn"
+                  aria-label={$t('figurineFullscreen')}
+                >
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                    <path d="M1 4V1h3M6 1h3v3M9 6v3H6M4 9H1V6"/>
+                  </svg>
+                  {$t('figurineFullscreen')}
+                </button>
+              {/if}
 
               <div class="image-vignette"></div>
             </div>
@@ -834,16 +869,12 @@
       <!-- RIGHT: Details — on warm page bg, no card wrapper -->
       <div class="details-col">
 
-        {#if figurine.secretText}
-          <div class="secret-anchor">
-            <SecretText text={figurine.secretText} isCandleLit={isCandleLit} />
-          </div>
-        {/if}
-
-        <!-- Eyebrow: year + status pill -->
+        <!-- Colophon: specimen ref + year, centered above the name -->
         <div class="d-eyebrow">
           <div class="eyebrow-tags">
+            <span class="colophon-ref">ARC-{id.slice(0, 8).toUpperCase()}</span>
             {#if figurine.year}
+              <span class="eyebrow-sep">·</span>
               <span class="eyebrow-year">Anno {figurine.year}</span>
             {/if}
           </div>
@@ -851,89 +882,51 @@
 
         <h1 class="figurine-title">{figurine.name}</h1>
 
-        {#if figurine.shortText}
+        <span class="colophon-kind">{$t('detailKind')}</span>
+
+        {#if hasText(figurine.shortText)}
           <p class="lore-short">{figurine.shortText}</p>
         {/if}
 
-        <section class="decision-panel decision-panel--{figurine.status}" aria-labelledby="decision-panel-title">
-          <div class="decision-head">
-            <span class="decision-kicker">
-              {figurine.status === 'available'
-                ? $t('figurineStatusAvailable')
-                : figurine.status === 'reserved'
-                  ? $t('figurineStatusReserved')
-                  : figurine.status === 'in_progress'
-                    ? $t('figurineStatusInProgress')
-                    : $t('figurineStatusSold')}
-            </span>
-            <span class="decision-price">{$t('figurinePriceOnRequest')}</span>
+        {#if hasText(figurine.secretText) && isCandleLit}
+          <div class="secret-anchor">
+            <SecretText text={figurine.secretText} isCandleLit={isCandleLit} />
           </div>
+        {/if}
 
-          <h2 id="decision-panel-title" class="decision-title">
+        <!-- ── Status & enquiry: commerce collapsed to one quiet marginal line ── -->
+        <div class="entry-status entry-status--{figurine.status}">
+          <span class="entry-status-kind">
             {figurine.status === 'available'
-              ? hasActiveShowing
-                ? $t('detailShowingPanelTitle')
-                : $t('detailRequestPanelTitle')
+              ? $t('figurineStatusAvailable')
               : figurine.status === 'reserved'
-                ? $t('detailReservedPanelTitle')
+                ? $t('figurineStatusReserved')
                 : figurine.status === 'in_progress'
-                  ? $t('detailProgressPanelTitle')
-                  : $t('detailSoldPanelTitle')}
-          </h2>
+                  ? $t('figurineStatusInProgress')
+                  : $t('figurineStatusSold')}
+          </span>
 
-          <p class="decision-text">
-            {figurine.status === 'available'
-              ? hasActiveShowing
-                ? $t('detailShowingPanelText')
-                : $t('detailRequestPanelText')
-              : figurine.status === 'reserved'
-                ? $t('detailReservedPanelText')
-                : figurine.status === 'in_progress'
-                  ? $t('detailProgressPanelText')
-                  : $t('detailSoldPanelText')}
-          </p>
-
-          <div class="decision-proof" aria-label={$t('detailRequestFacts')}>
-            <span>{$t('detailReplyWindow')}</span>
-            <span>{$t('detailNoObligation')}</span>
-            <span>{$t('detailPersonalTransfer')}</span>
-          </div>
+          <span class="entry-status-line">
+            <span class="entry-price">{$t('figurinePriceOnRequest')}</span>
+            {#if figurine.status === 'available'}
+              {#if hasActiveShowing}
+                <span class="entry-sep">·</span>{$t('detailPresenceOnExhibition')}{#if nextAvailableDate} <span class="entry-sep">·</span>{$t('figurineAvailableFrom')} {nextAvailableDate.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}{/if}
+              {:else if nextAvailableDate}
+                <span class="entry-sep">·</span>{$t('figurineAvailableFrom')} {nextAvailableDate.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}
+              {/if}
+            {:else if figurine.status === 'reserved'}
+              <span class="entry-sep">·</span>{#if nextAvailableDate}{$t('detailPresenceMayFree')} {nextAvailableDate.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}{:else}{$t('figurineReserved')}{/if}
+            {/if}
+          </span>
 
           {#if figurine.status === 'available'}
-            <div class="decision-actions">
-              <button onclick={() => openModal('request')} class="decision-primary">
-                {$t('figurineRequest')}
-                <svg width="15" height="16" viewBox="0 0 14 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M4.5 5V3.5a2.5 2.5 0 0 1 5 0V5"/>
-                  <rect x="2" y="5" width="10" height="8.5" rx="1.2"/>
-                </svg>
-              </button>
-              <button onclick={() => (showBookingModal = true)} class="decision-secondary">
-                {$t('detailRequestViewingDates')}
-              </button>
-            </div>
-            {#if hasActiveShowing}
-              <p class="decision-note">{$t('detailTransferAfterShowing')}</p>
-            {/if}
-            <button onclick={() => openModal('question')} class="decision-link">
-              {$t('figurineAskQuestion')}
+            <button type="button" onclick={() => (hasActiveShowing ? (showBookingModal = true) : openModal('request'))} class="entry-action">
+              {hasActiveShowing ? $t('detailRequestViewingDates') : $t('detailLeaveNote')} →
             </button>
+            <button type="button" onclick={() => openModal('question')} class="entry-aside">{$t('figurineAskQuestion')}</button>
           {:else if figurine.status === 'reserved'}
-            <div class="decision-actions">
-              <button onclick={() => (showWaitlistModal = true)} class="decision-primary">
-                {$t('ctaWaitlistTitle')}
-                <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M2 4h7M2 7h7M2 10h4"/>
-                  <path d="M11 8l2 2-2 2"/>
-                </svg>
-              </button>
-              <button onclick={() => (showBookingModal = true)} class="decision-secondary">
-                {$t('detailRequestViewingDates')}
-              </button>
-            </div>
-            <button onclick={() => openModal('question')} class="decision-link">
-              {$t('detailAskSimilar')}
-            </button>
+            <button type="button" onclick={() => (showWaitlistModal = true)} class="entry-action">{$t('detailBeNext')} →</button>
+            <button type="button" onclick={() => openModal('question')} class="entry-aside">{$t('detailAskSimilar')}</button>
             {#if queuePosition > 0}
               <div class="queue-receipt">
                 <div class="queue-receipt-head">
@@ -944,7 +937,7 @@
                   </span>
                 </div>
                 <p class="queue-receipt-note">{$t('detailQueueNote')}</p>
-                <button onclick={leaveQueue} disabled={queueLeaving} class="queue-receipt-leave">
+                <button type="button" onclick={leaveQueue} disabled={queueLeaving} class="queue-receipt-leave">
                   {queueLeaving ? $t('detailQueueLeaving') : $t('detailQueueLeave')}
                 </button>
               </div>
@@ -952,26 +945,13 @@
               <p class="queue-receipt-left">{$t('detailQueueLeft')}</p>
             {/if}
           {:else if figurine.status === 'in_progress'}
-            <div class="decision-actions">
-              <button onclick={() => openModal('notify')} class="decision-primary">
-                {$t('detailFollowProgress')}
-                <svg width="15" height="13" viewBox="0 0 15 11" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M1 5.5S3.5 1 7.5 1 14 5.5 14 5.5 11.5 10 7.5 10 1 5.5 1 5.5z"/>
-                  <circle cx="7.5" cy="5.5" r="1.8"/>
-                </svg>
-              </button>
-              <button onclick={() => openModal('question')} class="decision-secondary">
-                {$t('detailAskThisWork')}
-              </button>
-            </div>
-            <a href="/commission?figurine={id}" class="decision-link">
-              {$t('detailRequestSimilarIdea')}
-            </a>
+            <button type="button" onclick={() => openModal('notify')} class="entry-action">{$t('detailFollowProgress')} →</button>
+            <a href="/commission?figurine={id}" class="entry-aside">{$t('detailRequestSimilarIdea')}</a>
             {#if notifyActive}
               <div class="queue-receipt queue-receipt--notify">
                 <span class="queue-receipt-title">{$t('detailNotifyPanelTitle')}</span>
                 <p class="queue-receipt-note">{$t('detailNotifyNote')}</p>
-                <button onclick={stopNotify} disabled={notifyStopping} class="queue-receipt-leave">
+                <button type="button" onclick={stopNotify} disabled={notifyStopping} class="queue-receipt-leave">
                   {notifyStopping ? $t('detailNotifyStopping') : $t('detailNotifyStop')}
                 </button>
               </div>
@@ -979,25 +959,13 @@
               <p class="queue-receipt-left">{$t('detailNotifyStopped')}</p>
             {/if}
           {:else}
-            <div class="decision-actions">
-              <a href="/commission?figurine={id}" class="decision-primary">
-                {$t('detailRequestSimilar')}
-                <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M7 1.5v11M1.5 7h11"/>
-                </svg>
-              </a>
-              <button onclick={() => openModal('notify')} class="decision-secondary">
-                {$t('figurineNotify')}
-              </button>
-            </div>
-            {#if figurine.relatedItems && figurine.relatedItems.length > 0}
-              <a href="#related-works" class="decision-link">{$t('detailViewRelatedWorks')}</a>
-            {/if}
+            <a href="/commission?figurine={id}" class="entry-action">{$t('detailRequestSimilar')} →</a>
+            <button type="button" onclick={() => openModal('notify')} class="entry-aside">{$t('figurineNotify')}</button>
             {#if notifyActive}
               <div class="queue-receipt queue-receipt--notify">
                 <span class="queue-receipt-title">{$t('detailNotifyPanelTitle')}</span>
                 <p class="queue-receipt-note">{$t('detailNotifyNote')}</p>
-                <button onclick={stopNotify} disabled={notifyStopping} class="queue-receipt-leave">
+                <button type="button" onclick={stopNotify} disabled={notifyStopping} class="queue-receipt-leave">
                   {notifyStopping ? $t('detailNotifyStopping') : $t('detailNotifyStop')}
                 </button>
               </div>
@@ -1005,10 +973,16 @@
               <p class="queue-receipt-left">{$t('detailNotifyStopped')}</p>
             {/if}
           {/if}
-        </section>
 
-        <!-- YOUR RESERVATIONS — kept directly under the decision so the booking CTA and its receipt/management live together. -->
-        {#if figurine.status === 'available' || figurine.status === 'reserved'}
+          {#if figurineSchedule.entries.length > 0}
+            <a href="#presence" class="entry-aside">{$t('detailPresenceSeeSchedule')}</a>
+          {/if}
+        </div>
+
+        <!-- Personal record for this work: folded into a disclosure, not a dashboard on the leaf. -->
+        {#if hasPersonalRecord}
+          <details class="entry-record">
+            <summary>{$t('detailYourRecord')}</summary>
           {#if cs.claims.length > 0 || (cs.cancelledTokens.size > 0 && cs.claims.length === 0)}
             <div class="claims-panel {cs.claims.some(c => c.status === 'confirmed') ? 'claims-panel--has-confirmed' : ''}">
               <div class="claims-panel-header">
@@ -1028,7 +1002,7 @@
                       <span class="cp-token">{c.token}</span>
                       <div class="cp-actions">
                         <a href={authStore.isLoggedIn ? '/profile' : `/cancel/${c.token}`} class="cp-link">{$t('claimManageLink')}</a>
-                        <button onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="cp-revoke">
+                        <button type="button" onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="cp-revoke">
                           {cs.cancellingToken === c.token ? '…' : $t('claimCancelBtn')}
                         </button>
                       </div>
@@ -1043,7 +1017,7 @@
                       <span class="cp-dates">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</span>
                       <div class="cp-actions">
                         <a href={authStore.isLoggedIn ? '/profile' : `/cancel/${c.token}`} class="cp-link cp-link--reschedule">{$t('ctaRescheduleLink')}</a>
-                        <button onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="cp-revoke">
+                        <button type="button" onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="cp-revoke">
                           {cs.cancellingToken === c.token ? $t('claimCancelling') : $t('claimCancelBtn')}
                         </button>
                       </div>
@@ -1058,22 +1032,22 @@
 
           <div class="claim-lookup">
             {#if !cs.showTokenForm}
-              <button onclick={() => cs.showTokenForm = true} class="claim-lookup-link">{$t('claimHaveCode')}</button>
+              <button type="button" onclick={() => cs.showTokenForm = true} class="claim-lookup-link">{$t('claimHaveCode')}</button>
             {:else}
               <div class="claim-lookup-form">
                 <input type="text" bind:value={cs.tokenInput} placeholder="XXXX-XXXX" maxlength="9"
                   class="claim-lookup-input" oninput={() => { cs.tokenLookupInfo = null; cs.tokenLookupErr = ''; }} />
-                <button onclick={() => cs.lookupToken()} disabled={cs.tokenLooking} class="claim-lookup-btn">
+                <button type="button" onclick={() => cs.lookupToken()} disabled={cs.tokenLooking} class="claim-lookup-btn">
                   {cs.tokenLooking ? '…' : $t('claimLookupBtn')}
                 </button>
-                <button onclick={() => { cs.showTokenForm = false; cs.tokenInput = ''; cs.tokenLookupInfo = null; }} class="claim-lookup-close">✕</button>
+                <button type="button" onclick={() => { cs.showTokenForm = false; cs.tokenInput = ''; cs.tokenLookupInfo = null; }} class="claim-lookup-close">✕</button>
               </div>
               {#if cs.tokenLookupErr}<p class="claim-err">{cs.tokenLookupErr}</p>{/if}
               {#if cs.tokenLookupInfo}
                 <div class="claim-lookup-result">
                   <p class="claim-dates">{fmtDate(cs.tokenLookupInfo.startsAt)} — {fmtDate(cs.tokenLookupInfo.endsAt)}</p>
                   {#if cs.tokenLookupInfo.status === 'pending'}
-                    <button onclick={() => cs.cancelFromLookup()} disabled={cs.lookupCancelling} class="claim-cancel-btn">
+                    <button type="button" onclick={() => cs.cancelFromLookup()} disabled={cs.lookupCancelling} class="claim-cancel-btn">
                       {cs.lookupCancelling ? $t('claimCancelling') : $t('claimCancelBtn')}
                     </button>
                   {:else}
@@ -1083,10 +1057,15 @@
               {/if}
             {/if}
           </div>
+          </details>
         {/if}
 
-        <!-- Story and specifications follow the request decision. -->
-        {#if figurine.fullDescription}
+        {#if hasWorkStorySection}
+          <div class="act-divider" aria-hidden="true"><span>❦</span></div>
+        {/if}
+
+        <!-- ACT II — THE WORK: story → making → motion -->
+        {#if hasHistorySection}
           <div class="d-history">
             <header class="d-section-header">
               <span class="sec-label">{$t('figurineHistory')}</span>
@@ -1102,190 +1081,179 @@
           </div>
         {/if}
 
-        <!-- Attributes — compact spec rows -->
-        {#if figurine.dimensions || figurine.material || figurine.technique}
-          <div class="d-attrs">
-            <header class="d-section-header">
-              <span class="sec-label">{$t('figurineAttributes')}</span>
+        <!-- ── MAKING RECORD ── -->
+        {#if hasMakingSection}
+          <div class="grimoire-section {figurine.status === 'in_progress' ? 'grimoire-section--live' : ''}">
+            <div class="making-record">
+              <div class="making-copy">
+                <span class="making-kicker">
+                  {#if figurine.status === 'in_progress'}
+                    <span class="making-live" aria-hidden="true"></span>{$t('detailMakingProgressKicker')}
+                  {:else}
+                    {$t('detailMakingRecordKicker')}
+                  {/if}
+                </span>
+                <h2 class="making-title">
+                  {figurine.status === 'in_progress' ? $t('detailMakingProgressTitle') : $t('detailMakingRecordTitle')}
+                </h2>
+                <p class="making-text">
+                  {figurine.status === 'in_progress' ? $t('detailMakingProgressText') : $t('detailMakingRecordText')}
+                </p>
+              </div>
+
+              <div class="making-strip" aria-label={$t('detailMakingRecordTitle')}>
+                {#each visibleProcessSteps.slice(0, 4) as step, i (step.id)}
+                  <article class="making-card">
+                    <div class="making-img-wrap">
+                      {#if hasText(step.imageUrl)}
+                        <img src={resolveUrl(step.imageUrl)} alt="" class="making-img" loading="lazy" />
+                      {:else}
+                        <div class="making-img-placeholder" aria-hidden="true"></div>
+                      {/if}
+                      <span class="making-count">{String(i + 1).padStart(2, '0')}</span>
+                    </div>
+                    <div class="making-card-copy">
+                      <h3>{processStepLabel(step.stepType)}</h3>
+                      {#if step.description}
+                        <p>{step.description}</p>
+                      {/if}
+                    </div>
+                  </article>
+                {/each}
+              </div>
+
+            </div>
+
+            <button type="button" onclick={toggleGrimoire} class="grimoire-trigger" aria-expanded={isGrimoireOpen}>
+              <span class="grimoire-icon" aria-hidden="true">
+                <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+                  <ellipse cx="11" cy="11" rx="9" ry="5.5" stroke="currentColor" stroke-width="1.2"/>
+                  <circle cx="11" cy="11" r="2.5" fill="currentColor" opacity="0.7"/>
+                  <circle cx="11" cy="11" r="1" fill="currentColor"/>
+                </svg>
+              </span>
+              <span class="grimoire-body">
+                <span class="grimoire-title">
+                  {$t('figurineGrimoire')}
+                  <span class="grimoire-dot"></span>
+                </span>
+                <span class="grimoire-sub">{visibleProcessSteps.length} {$t('figurineGrimoireSub')}</span>
+              </span>
+              <span class="grimoire-arrow" aria-hidden="true">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+                  style="transform: rotate({isGrimoireOpen ? '90deg' : '0deg'}); transition: transform 0.3s ease">
+                  <path d="M3 8h10M9 4l4 4-4 4"/>
+                </svg>
+              </span>
+            </button>
+            <MemoryMirror
+              isOpen={isGrimoireOpen}
+              steps={visibleProcessSteps}
+              finalImage={resolveUrl(currentImage?.url)}
+              onClose={() => (isGrimoireOpen = false)}
+            />
+          </div>
+        {/if}
+
+        <!-- ── VIDEO ── -->
+        {#if hasVideoSection}
+          <section class="video-section">
+            <header class="section-row">
+              <span class="sec-label">{$t('figurineVideo')}</span>
               <div class="sec-rule" aria-hidden="true"></div>
             </header>
-            <dl class="attrs-specs">
-              {#if figurine.dimensions}
-                <div class="spec-row">
-                  <span class="spec-icon" aria-hidden="true">
-                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2">
-                      <rect x="0.7" y="4" width="12.6" height="6" rx="0.8"/>
-                      <path d="M3 4V6.5M5.5 4V7.5M8 4V6.5M10.5 4V7.5"/>
+            <div class="video-wrap group">
+              <div class="video-frame card group">
+                <span class="corner-tl"></span>
+                <span class="corner-tr"></span>
+                <span class="corner-bl"></span>
+                <span class="corner-br"></span>
+                <div class="video-stage">
+                  <video bind:this={videoRef} controls class="video-el"
+                    poster={resolveUrl(currentImage?.url)} preload="metadata">
+                    <source src={resolveUrl(figurine.videoUrl)} type="video/mp4" />
+                    {$t('figurineBrowserNoVideo')}
+                  </video>
+                  <button type="button" onclick={toggleFullscreen} class="video-fs-btn" title={$t('figurineFullscreen')} aria-label={$t('figurineFullscreen')}>
+                    <svg width="14" height="14" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                      <path d="M1 4V1h3M6 1h3v3M9 6v3H6M4 9H1V6"/>
                     </svg>
-                  </span>
-                  <dt class="spec-label">{$t('figurineDimensions')}</dt>
-                  <dd class="spec-value">{figurine.dimensions}</dd>
+                  </button>
                 </div>
-              {/if}
-              {#if figurine.material}
-                <div class="spec-row">
-                  <span class="spec-icon" aria-hidden="true">
-                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2">
-                      <path d="M7 1L12.5 4.5v5L7 13 1.5 9.5v-5L7 1z"/>
-                      <path d="M1.5 4.5h11"/>
-                    </svg>
-                  </span>
-                  <dt class="spec-label">{$t('figurineMaterial')}</dt>
-                  <dd class="spec-value">{figurine.material}</dd>
-                </div>
-              {/if}
-              {#if figurine.technique}
-                <div class="spec-row">
-                  <span class="spec-icon" aria-hidden="true">
-                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2">
-                      <path d="M9 1.5l3.5 3.5L4.5 13H1v-3.5L9 1.5z"/>
-                      <path d="M7.5 3l3 3"/>
-                    </svg>
-                  </span>
-                  <dt class="spec-label">{$t('figurineTechnique')}</dt>
-                  <dd class="spec-value">{figurine.technique}</dd>
-                </div>
-              {/if}
-            </dl>
-          </div>
-        {/if}
-
-        <!-- ── MAKING RECORD ── -->
-        {#if figurine.processSteps && figurine.processSteps.length > 0}
-      <div class="act-divider" aria-hidden="true"><span>❦</span></div>
-      <div class="grimoire-section {figurine.status === 'in_progress' ? 'grimoire-section--live' : ''}" bind:this={grimoireRef}>
-        <div class="making-record">
-          <div class="making-copy">
-            <span class="making-kicker">
-              {#if figurine.status === 'in_progress'}
-                <span class="making-live" aria-hidden="true"></span>{$t('detailMakingProgressKicker')}
-              {:else}
-                {$t('detailMakingRecordKicker')}
-              {/if}
-            </span>
-            <h2 class="making-title">
-              {figurine.status === 'in_progress' ? $t('detailMakingProgressTitle') : $t('detailMakingRecordTitle')}
-            </h2>
-            <p class="making-text">
-              {figurine.status === 'in_progress' ? $t('detailMakingProgressText') : $t('detailMakingRecordText')}
-            </p>
-          </div>
-
-          <div class="making-strip" aria-label={$t('detailMakingRecordTitle')}>
-            {#each figurine.processSteps.slice(0, 4) as step, i (step.id)}
-              <article class="making-card">
-                <div class="making-img-wrap">
-                  <img src={resolveUrl(step.imageUrl)} alt="" class="making-img" loading="lazy" />
-                  <span class="making-count">{String(i + 1).padStart(2, '0')}</span>
-                </div>
-                <div class="making-card-copy">
-                  <h3>{processStepLabel(step.stepType)}</h3>
-                  {#if step.description}
-                    <p>{step.description}</p>
-                  {/if}
-                </div>
-              </article>
-            {/each}
-          </div>
-        </div>
-
-        <button onclick={toggleGrimoire} class="grimoire-trigger" aria-expanded={isGrimoireOpen}>
-          <span class="grimoire-icon" aria-hidden="true">
-            <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
-              <ellipse cx="11" cy="11" rx="9" ry="5.5" stroke="currentColor" stroke-width="1.2"/>
-              <circle cx="11" cy="11" r="2.5" fill="currentColor" opacity="0.7"/>
-              <circle cx="11" cy="11" r="1" fill="currentColor"/>
-            </svg>
-          </span>
-          <span class="grimoire-body">
-            <span class="grimoire-title">
-              {$t('figurineGrimoire')}
-              <span class="grimoire-dot"></span>
-            </span>
-            <span class="grimoire-sub">{figurine.processSteps.length} {$t('figurineGrimoireSub')}</span>
-          </span>
-          <span class="grimoire-arrow" aria-hidden="true">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
-              style="transform: rotate({isGrimoireOpen ? '90deg' : '0deg'}); transition: transform 0.3s ease">
-              <path d="M3 8h10M9 4l4 4-4 4"/>
-            </svg>
-          </span>
-        </button>
-        <MemoryMirror
-          isOpen={isGrimoireOpen}
-          steps={figurine.processSteps}
-          finalImage={resolveUrl(currentImage?.url)}
-          onClose={() => (isGrimoireOpen = false)}
-        />
-      </div>
-    {/if}
-
-    <!-- ── VIDEO ── -->
-    {#if figurine.videoUrl}
-      <div class="act-divider" aria-hidden="true"><span>❦</span></div>
-      <section class="video-section">
-        <header class="section-row">
-          <span class="sec-label">{$t('figurineVideo')}</span>
-          <div class="sec-rule" aria-hidden="true"></div>
-        </header>
-        <div class="video-wrap group">
-          <div class="video-frame card group">
-            <span class="corner-tl"></span>
-            <span class="corner-tr"></span>
-            <span class="corner-bl"></span>
-            <span class="corner-br"></span>
-            <div class="video-stage">
-              <video bind:this={videoRef} controls class="video-el"
-                poster={resolveUrl(currentImage?.url)} preload="metadata">
-                <source src={resolveUrl(figurine.videoUrl)} type="video/mp4" />
-                {$t('figurineBrowserNoVideo')}
-              </video>
-              <button onclick={toggleFullscreen} class="video-fs-btn" title={$t('figurineFullscreen')}>
-                <svg width="14" height="14" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5">
-                  <path d="M1 4V1h3M6 1h3v3M9 6v3H6M4 9H1V6"/>
-                </svg>
-              </button>
+              </div>
             </div>
-          </div>
-        </div>
-        <p class="video-caption text-label">{$t('figurineVideoFilm')}{id.slice(-3)}</p>
-      </section>
-    {/if}
+            <p class="video-caption text-label">{$t('figurineVideoFilm')}{id.slice(-3)}</p>
+          </section>
+        {/if}
 
     <!-- ── PRESENCE & SCHEDULE (Act III — facts & logistics, merged from the old timeline + cta-zone notices) ── -->
-    {#if figurineSchedule.entries.length > 0 || nextAvailableDate || figurine.status === 'reserved' || figurine.status === 'sold'}
+    <!-- ── ACT III — FACTS & LOGISTICS: particulars + where to see it ── -->
+    {#if hasFactsSection}
       <div class="act-divider" aria-hidden="true"><span>❦</span></div>
-      <section class="presence-section">
-        <header class="section-row">
-          <span class="sec-label">{$t('detailPresenceLabel')}</span>
-          <div class="sec-rule" aria-hidden="true"></div>
-        </header>
 
-        {#if figurineSchedule.entries.length > 0}
+      {#if hasAttributesSection}
+        <div class="d-attrs">
+          <header class="d-section-header">
+            <span class="sec-label">{$t('figurineAttributes')}</span>
+            <div class="sec-rule" aria-hidden="true"></div>
+          </header>
+          <dl class="attrs-specs">
+            {#if hasText(figurine.dimensions)}
+              <div class="spec-row">
+                <span class="spec-icon" aria-hidden="true">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2">
+                    <rect x="0.7" y="4" width="12.6" height="6" rx="0.8"/>
+                    <path d="M3 4V6.5M5.5 4V7.5M8 4V6.5M10.5 4V7.5"/>
+                  </svg>
+                </span>
+                <dt class="spec-label">{$t('figurineDimensions')}</dt>
+                <dd class="spec-value">{figurine.dimensions}</dd>
+              </div>
+            {/if}
+            {#if hasText(figurine.material)}
+              <div class="spec-row">
+                <span class="spec-icon" aria-hidden="true">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2">
+                    <path d="M7 1L12.5 4.5v5L7 13 1.5 9.5v-5L7 1z"/>
+                    <path d="M1.5 4.5h11"/>
+                  </svg>
+                </span>
+                <dt class="spec-label">{$t('figurineMaterial')}</dt>
+                <dd class="spec-value">{figurine.material}</dd>
+              </div>
+            {/if}
+            {#if hasText(figurine.technique)}
+              <div class="spec-row">
+                <span class="spec-icon" aria-hidden="true">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2">
+                    <path d="M9 1.5l3.5 3.5L4.5 13H1v-3.5L9 1.5z"/>
+                    <path d="M7.5 3l3 3"/>
+                  </svg>
+                </span>
+                <dt class="spec-label">{$t('figurineTechnique')}</dt>
+                <dd class="spec-value">{figurine.technique}</dd>
+              </div>
+            {/if}
+          </dl>
+        </div>
+      {/if}
+
+      {#if hasScheduleSection}
+        <section id="presence" class="presence-section">
+          <header class="section-row">
+            <span class="sec-label">{$t('detailPresenceLabel')}</span>
+            <div class="sec-rule" aria-hidden="true"></div>
+          </header>
           <ShowingsTimeline schedule={figurineSchedule} />
-        {/if}
-
-        {#if hasActiveShowing}
-          <p class="presence-note">{$t('figurineTransferBlocked')}</p>
-        {/if}
-
-        {#if figurine.status === 'available' && nextAvailableDate}
-          <p class="presence-note">
-            {$t('figurineAvailableFrom')}
-            <strong>{nextAvailableDate.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}</strong>
-          </p>
-        {:else if figurine.status === 'reserved'}
-          <p class="presence-note">
-            {$t('figurineReserved')} — {$t('figurineNotifyNote')}{#if nextAvailableDate} · {$t('figurineAvailableFrom')} {nextAvailableDate.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}{/if}
-          </p>
-        {:else if figurine.status === 'sold'}
-          <p class="presence-note">{$t('detailSoldNotice')}</p>
-        {/if}
-      </section>
+          {#if hasActiveShowing}
+            <p class="presence-note">{$t('figurineTransferBlocked')}</p>
+          {/if}
+        </section>
+      {/if}
     {/if}
 
     <!-- ── RELATED NEXT CHOICES ── -->
-    {#if figurine.relatedItems && figurine.relatedItems.length > 0}
+    {#if visibleRelatedItems.length > 0}
       <div class="act-divider" aria-hidden="true"><span>❦</span></div>
       <section id="related-works" class="related-section">
         <header class="related-head">
@@ -1297,19 +1265,25 @@
         </header>
 
         <div class="related-strip">
-          {#each figurine.relatedItems as item}
+          {#each visibleRelatedItems as item}
             <a
               href="/figurines/{item.id}"
               class="related-card group"
               data-sveltekit-preload-data="hover"
             >
               <div class="related-img-wrap">
-                <img
-                  src={resolveUrl(item.faceImageUrl)}
-                  alt={item.name}
-                  class="related-img"
-                  loading="lazy"
-                />
+                {#if hasText(item.faceImageUrl)}
+                  <img
+                    src={resolveUrl(item.faceImageUrl)}
+                    alt={item.name}
+                    class="related-img"
+                    loading="lazy"
+                  />
+                {:else}
+                  <div class="related-placeholder" aria-hidden="true">
+                    <span>{item.name.slice(0, 1)}</span>
+                  </div>
+                {/if}
                 <div class="related-overlay" aria-hidden="true">
                   <span class="related-cta-hint">
                     <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -1381,31 +1355,31 @@
       </span>
     </div>
     {#if figurine.status === 'available'}
-      <button onclick={() => openModal('request')} class="mobile-cta-btn">
+      <button type="button" onclick={() => (hasActiveShowing ? (showBookingModal = true) : openModal('request'))} class="mobile-cta-btn">
         {$t('detailMobileRequestCta')}
-        <svg width="13" height="14" viewBox="0 0 14 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="13" height="14" viewBox="0 0 14 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M4.5 5V3.5a2.5 2.5 0 0 1 5 0V5"/>
           <rect x="2" y="5" width="10" height="8.5" rx="1.2"/>
         </svg>
       </button>
     {:else if figurine.status === 'reserved'}
-      <button onclick={() => (showWaitlistModal = true)} class="mobile-cta-btn">
+      <button type="button" onclick={() => (showWaitlistModal = true)} class="mobile-cta-btn">
         {$t('detailMobileQueueCta')}
-        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M2 7h9M8 4l3 3-3 3"/>
         </svg>
       </button>
     {:else if figurine.status === 'in_progress'}
-      <button onclick={() => openModal('notify')} class="mobile-cta-btn">
+      <button type="button" onclick={() => openModal('notify')} class="mobile-cta-btn">
         {$t('detailMobileFollowCta')}
-        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M2 7h9M8 4l3 3-3 3"/>
         </svg>
       </button>
     {:else}
       <a href="/commission?figurine={id}" class="mobile-cta-btn">
         {$t('detailMobileSimilarCta')}
-        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M2 7h9M8 4l3 3-3 3"/>
         </svg>
       </a>

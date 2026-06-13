@@ -117,12 +117,57 @@ function webApiBase(): string {
  */
 export function resolveMediaUrl(url: string | null | undefined): string | null {
     if (!url) return null;
-    if (url.startsWith('http')) return url;
-    if (url.startsWith('/static/') && typeof localStorage !== 'undefined') {
-        const serverUrl = localStorage.getItem('gotiga_server_url') ?? '';
-        return serverUrl ? `${serverUrl}${url}` : url;
+    const value = url.trim();
+    if (!value) return null;
+
+    const serverUrl = typeof localStorage !== 'undefined'
+        ? (localStorage.getItem('gotiga_server_url') ?? '').replace(/\/$/, '')
+        : '';
+
+    if (
+        value.startsWith('http://') ||
+        value.startsWith('https://')
+    ) {
+        if (serverUrl) {
+            try {
+                const parsed = new URL(value);
+                if (parsed.pathname.startsWith('/static/') || parsed.pathname.startsWith('/api/v1/assets/')) {
+                    return `${serverUrl}${parsed.pathname}${parsed.search}${parsed.hash}`;
+                }
+            } catch {
+                return value;
+            }
+        }
+        return value;
     }
-    return url;
+    if (value.startsWith('data:') || value.startsWith('blob:') || value.startsWith('file:')) {
+        return value;
+    }
+
+    if (value.startsWith('//') && typeof location !== 'undefined') {
+        return `${location.protocol}${value}`;
+    }
+
+    if (value.startsWith('/static/')) {
+        return serverUrl ? `${serverUrl}${value}` : value;
+    }
+
+    if (value.startsWith('static/')) {
+        return serverUrl ? `${serverUrl}/${value}` : `/${value}`;
+    }
+
+    if (value.startsWith('/api/v1/assets/')) {
+        return serverUrl ? `${serverUrl}${value}` : value;
+    }
+
+    // Legacy/local stored media paths, e.g. "images/original/x.jpg" or
+    // "backgrounds/x.jpg". In web mode those are served from the API server's
+    // static mount, not from the Svelte route.
+    if (/^(images|backgrounds|avatars|profile-uploads|uploads)\//.test(value)) {
+        return serverUrl ? `${serverUrl}/static/${value}` : `/static/${value}`;
+    }
+
+    return value;
 }
 
 function webPublicUrl(url: unknown): string | null {

@@ -16,6 +16,12 @@
 
   let container: HTMLDivElement;
   let isPointerFine = $state(true);
+  let imageFailed = $state(false);
+
+  $effect(() => {
+    void src;
+    imageFailed = false;
+  });
 
   onMount(() => {
     isPointerFine = window.matchMedia('(pointer: fine)').matches;
@@ -151,18 +157,23 @@
   aria-label={alt}
 >
   <!-- Main image -->
-  <img
-    {src}
-    {alt}
-    class="w-full h-full object-cover pointer-events-none select-none"
-    style="
-      object-position: center 20%;
-      transform: scale({scale}) translate({panX / scale}px, {panY / scale}px);
-      transition: {transitioning ? 'transform 0.28s cubic-bezier(0.22,0.1,0.2,1)' : 'none'};
-      touch-action: none;
-      will-change: transform;
-    "
-  />
+  {#if src && !imageFailed}
+    <img
+      {src}
+      {alt}
+      class="w-full h-full object-cover pointer-events-none select-none"
+      style="
+        object-position: center 20%;
+        transform: scale({scale}) translate({panX / scale}px, {panY / scale}px);
+        transition: {transitioning ? 'transform 0.28s cubic-bezier(0.22,0.1,0.2,1)' : 'none'};
+        touch-action: none;
+        will-change: transform;
+      "
+      onerror={() => (imageFailed = true)}
+    />
+  {:else}
+    <div class="lens-fallback" aria-hidden="true"></div>
+  {/if}
 
   <!-- Pinch-zoom reset hint (mobile, when zoomed) -->
   {#if !isPointerFine && scale > 1.2}
@@ -179,7 +190,7 @@
   {/if}
 
   <!-- Desktop brass magnifying lens -->
-  {#if showLens && isPointerFine && src}
+  {#if showLens && isPointerFine && src && !imageFailed}
     <div
       class="absolute z-50 rounded-full overflow-hidden pointer-events-none"
       transition:fade={{ duration: 150 }}
@@ -215,5 +226,13 @@
 <style>
   .bg-noise {
     background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  }
+
+  .lens-fallback {
+    width: 100%;
+    height: 100%;
+    background:
+      radial-gradient(circle at 50% 28%, rgba(255, 255, 255, 0.5), transparent 48%),
+      rgba(244, 236, 222, 0.75);
   }
 </style>
