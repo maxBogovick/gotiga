@@ -138,7 +138,9 @@
     </div>
   </div>
 {:else}
-  <FigurineDetailView {figurine} {id} prev={data.prev ?? null} next={data.next ?? null} />
+  {#key id}
+    <FigurineDetailView {figurine} {id} prev={data.prev ?? null} next={data.next ?? null} />
+  {/key}
 {/if}
 
 <style>

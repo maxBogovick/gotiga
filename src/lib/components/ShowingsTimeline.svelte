@@ -5,6 +5,8 @@
   let { schedule }: { schedule: FigurineSchedule } = $props();
 
   const MONTHS = 6;
+  const COLLAPSED_MONTHS = 3;
+  let showFullCalendar = $state(false);
 
   // ── Date helpers ──────────────────────────────────────────────
   function startOfDay(d: Date): Date {
@@ -121,7 +123,7 @@
   function segLabel(e: ScheduleEntry): string {
     if (e.entryType === 'showing')
       return e.title ?? (e.showingType === 'private' ? $t('bookingShowingPrivate') : $t('bookingShowingExhibition'));
-    if (e.entryType === 'booking') return $t('tlConfirmedBooking');
+    if (e.entryType === 'booking') return $t('tlLegendReserved');
     return $t('tlPendingBooking');
   }
 
@@ -156,9 +158,9 @@
 
   // ── Legend entries (only types present in schedule) ──────────
   const LEGEND = [
-    { key: 'exhibition', label: () => $t('bookingShowingExhibition') },
+    { key: 'exhibition', label: () => $t('tlLegendOnView') },
     { key: 'private',    label: () => $t('bookingShowingPrivate') },
-    { key: 'booking',    label: () => $t('tlConfirmedBooking') },
+    { key: 'booking',    label: () => $t('tlLegendReserved') },
     { key: 'pending',    label: () => $t('tlLegendPending') },
   ] as const;
 
@@ -171,6 +173,8 @@
   }
 
   let calendar = $derived(buildCalendar());
+  let visibleCalendar = $derived(showFullCalendar ? calendar : calendar.slice(0, COLLAPSED_MONTHS));
+  let canExpandCalendar = $derived(calendar.length > COLLAPSED_MONTHS);
   let hasEntries = $derived(schedule.entries.length > 0);
 
   // Weekday header labels (Mon–Sun)
@@ -179,14 +183,20 @@
 
 {#if hasEntries}
   <div class="cal-wrap" bind:this={wrapEl}>
-
-    <header class="cal-header">
-      <span class="cal-title">{$t('tlSchedule')}</span>
-      <div class="cal-rule"></div>
-    </header>
+    <!-- Legend -->
+    <div class="cal-legend" aria-label={$t('tlSchedule')}>
+      {#each LEGEND as leg}
+        {#if hasType(leg.key)}
+          <span class="leg-item">
+            <span class="leg-swatch leg-{leg.key}" aria-hidden="true"></span>
+            {leg.label()}
+          </span>
+        {/if}
+      {/each}
+    </div>
 
     <div class="cal-grid">
-      {#each calendar as month}
+      {#each visibleCalendar as month}
         <div class="month-block">
           <p class="month-name">{month.label}</p>
 
@@ -220,17 +230,11 @@
       {/each}
     </div>
 
-    <!-- Legend -->
-    <div class="cal-legend">
-      {#each LEGEND as leg}
-        {#if hasType(leg.key)}
-          <span class="leg-item">
-            <span class="leg-swatch leg-{leg.key}" aria-hidden="true"></span>
-            {leg.label()}
-          </span>
-        {/if}
-      {/each}
-    </div>
+    {#if canExpandCalendar}
+      <button type="button" class="cal-toggle" onclick={() => (showFullCalendar = !showFullCalendar)}>
+        {showFullCalendar ? $t('tlShowLess') : $t('tlShowMore')}
+      </button>
+    {/if}
 
     <!-- Tooltip -->
     {#if tooltip.visible}
@@ -253,42 +257,26 @@
 <style>
   /* ── Wrapper ───────────────────────────────────────────────── */
   .cal-wrap {
-    margin: 1.25rem 0;
-    font-family: 'Inter', system-ui, sans-serif;
     position: relative;
-  }
-
-  /* ── Header ────────────────────────────────────────────────── */
-  .cal-header {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    margin-bottom: 0.875rem;
-  }
-  .cal-title {
-    font-size: 0.625rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: rgba(95, 70, 54, 0.65);
-    white-space: nowrap;
-  }
-  .cal-rule {
-    flex: 1;
-    height: 1px;
-    background: rgba(52, 37, 28, 0.1);
+    margin: 0.75rem 0 0;
+    padding: 1rem;
+    border: 1px solid color-mix(in srgb, var(--color-ink-primary, #34251c) 8%, transparent);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--color-canvas-raised, #fff9f0) 54%, transparent);
+    font-family: 'Inter', system-ui, sans-serif;
   }
 
   /* ── Month grid ────────────────────────────────────────────── */
   .cal-grid {
     display: grid;
-    grid-template-columns: repeat(6, 1fr);
-    gap: 10px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1.25rem 1rem;
   }
 
   @media (max-width: 600px) {
     .cal-grid {
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: 1fr;
+      gap: 1rem;
     }
   }
 
@@ -330,7 +318,7 @@
   .day-cell {
     aspect-ratio: 1;
     width: 100%;
-    border-radius: 2px;
+    border-radius: 4px;
     border: none;
     cursor: default;
     position: relative;
@@ -347,7 +335,7 @@
   }
 
   .day-free {
-    background: rgba(52, 37, 28, 0.05);
+    background: rgba(52, 37, 28, 0.045);
     cursor: default;
   }
 
@@ -365,9 +353,8 @@
     cursor: pointer;
   }
   .day-pending {
-    background: transparent;
-    outline: 1.5px dashed #d97706;
-    outline-offset: -1.5px;
+    border: 1px solid rgba(217, 119, 6, 0.45);
+    background: rgba(217, 119, 6, 0.045);
     cursor: pointer;
   }
 
@@ -393,7 +380,7 @@
     right: 2px;
     width: 3px;
     height: 3px;
-    background: rgba(255, 255, 255, 0.85);
+    background: rgba(255, 249, 240, 0.86);
     border-radius: 50%;
   }
 
@@ -446,9 +433,11 @@
   /* ── Legend ────────────────────────────────────────────────── */
   .cal-legend {
     display: flex;
-    gap: 0.875rem;
+    gap: 0.75rem 1rem;
     flex-wrap: wrap;
-    margin-top: 0.625rem;
+    margin: 0 0 1rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid rgba(52, 37, 28, 0.08);
   }
   .leg-item {
     display: flex;
@@ -468,5 +457,32 @@
   .leg-exhibition { background: #b45309; }
   .leg-private    { background: #7c3aed; }
   .leg-booking    { background: #9e452d; }
-  .leg-pending    { background: transparent; outline: 1.5px dashed #d97706; outline-offset: -1px; }
+  .leg-pending    { border: 1px solid rgba(217, 119, 6, 0.45); background: rgba(217, 119, 6, 0.045); }
+
+  .cal-toggle {
+    display: flex;
+    width: fit-content;
+    margin: 1rem auto 0;
+    padding: 0;
+    border: 0;
+    color: rgba(95, 70, 54, 0.7);
+    background: transparent;
+    cursor: pointer;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    text-decoration: underline;
+    text-underline-offset: 0.22rem;
+  }
+
+  .cal-toggle:hover {
+    color: #34251c;
+  }
+
+  .cal-toggle:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--color-ember, #b45309) 55%, transparent);
+    outline-offset: 3px;
+  }
 </style>

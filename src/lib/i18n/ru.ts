@@ -335,8 +335,11 @@ export const ru: Record<TranslationKey, string> = {
   tlSun:                'Вс',
   tlConfirmedBooking:   'Подтверждённая бронь',
   tlPendingBooking:     'Запрос на бронирование',
+  tlLegendOnView:       'На показе',
   tlLegendReserved:     'Забронировано',
   tlLegendPending:      'Запрошено',
+  tlShowMore:           'Показать больше дат',
+  tlShowLess:           'Показать меньше дат',
   tlToday:              'сег',
 
   // === BOOKING MODAL ===

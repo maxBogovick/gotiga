@@ -356,8 +356,11 @@ export const en = {
   tlSun:                'Su',
   tlConfirmedBooking:   'Confirmed booking',
   tlPendingBooking:     'Booking request',
+  tlLegendOnView:       'On view',
   tlLegendReserved:     'Reserved',
   tlLegendPending:      'Requested',
+  tlShowMore:           'Show more dates',
+  tlShowLess:           'Show fewer dates',
   tlToday:              'today',
 
   // === BOOKING MODAL ===

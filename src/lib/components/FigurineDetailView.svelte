@@ -60,14 +60,18 @@
   async function loadQueue() {
     const token = readQueueToken();
     if (!token) return;
-    const info = await api.getWaitlistByToken(token);
-    if (info) {
-      queuePosition = info.position;
-      queueLeft = false;
-    } else {
-      // Token no longer valid (notified/removed) — clear it.
-      try { localStorage.removeItem(queueKey); } catch {}
-      queuePosition = 0;
+    try {
+      const info = await api.getWaitlistByToken(token);
+      if (info) {
+        queuePosition = info.position;
+        queueLeft = false;
+      } else {
+        // Token no longer valid (notified/removed) - clear it.
+        try { localStorage.removeItem(queueKey); } catch {}
+        queuePosition = 0;
+      }
+    } catch {
+      // Keep the local token; this can be a transient network/backend error.
     }
   }
 
@@ -104,13 +108,17 @@
   async function loadNotify() {
     const token = readNotifyToken();
     if (!token) return;
-    const info = await api.getNotifyByToken(token);
-    if (info) {
-      notifyActive = true;
-      notifyStopped = false;
-    } else {
-      try { localStorage.removeItem(notifyKey); } catch {}
-      notifyActive = false;
+    try {
+      const info = await api.getNotifyByToken(token);
+      if (info) {
+        notifyActive = true;
+        notifyStopped = false;
+      } else {
+        try { localStorage.removeItem(notifyKey); } catch {}
+        notifyActive = false;
+      }
+    } catch {
+      // Keep the local token; this can be a transient network/backend error.
     }
   }
 
@@ -136,7 +144,7 @@
 
   let upcomingShowings = $derived(figurineSchedule.entries.filter(e => e.entryType === 'showing'));
 
-  // Nearest date when figurine is fully free (after all showings + confirmed bookings)
+  // Nearest date when figurine is fully free (after all showings + blocking bookings).
   function localIsoDate(date = new Date()): string {
     const y = date.getFullYear();
     const m = String(date.getMonth() + 1).padStart(2, '0');
@@ -144,8 +152,32 @@
     return `${y}-${m}-${d}`;
   }
 
+  let todayStr = $state(localIsoDate());
+  let todayRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function refreshToday() {
+    todayStr = localIsoDate();
+  }
+
+  function clearTodayRefresh() {
+    if (!todayRefreshTimer) return;
+    clearTimeout(todayRefreshTimer);
+    todayRefreshTimer = null;
+  }
+
+  function scheduleTodayRefresh() {
+    if (typeof window === 'undefined') return;
+    clearTodayRefresh();
+    const nextMidnight = new Date();
+    nextMidnight.setHours(24, 0, 0, 50);
+    todayRefreshTimer = setTimeout(() => {
+      refreshToday();
+      scheduleTodayRefresh();
+    }, Math.max(1000, nextMidnight.getTime() - Date.now()));
+  }
+
   let nextAvailableDate = $derived.by(() => {
-    const today = localIsoDate();
+    const today = todayStr;
     const blocking = figurineSchedule.entries.filter(e => e.entryType === 'showing' || e.entryType === 'booking');
     if (blocking.length === 0) return null;
     const latestEnd = blocking.reduce<string | null>((max, e) => !max || e.endsAt > max ? e.endsAt : max, null);
@@ -157,7 +189,6 @@
   });
 
   // Showing that is happening TODAY (started but not yet ended)
-  let todayStr = $derived(localIsoDate());
   let hasActiveShowing = $derived(upcomingShowings.some(s => s.startsAt <= todayStr && s.endsAt >= todayStr));
 
 
@@ -165,7 +196,7 @@
   // figurine.id captured once — component is never remounted with a different figurine
   // svelte-ignore state_referenced_locally
   const cs = new FigurineClaimsStore(id, () => {
-    api.getFigurineSchedule(id).then(s => { figurineSchedule = s; });
+    api.getFigurineSchedule(id).then(s => { figurineSchedule = s; }).catch(() => {});
   });
 
   function fmtDate(ds: string) {
@@ -188,15 +219,39 @@
     return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
   }
 
+  function normalizeCssColor(color: string, fallback: string): string {
+    if (typeof document === 'undefined') return fallback;
+    const probe = document.createElement('span');
+    probe.style.color = color;
+    probe.style.display = 'none';
+    document.body.appendChild(probe);
+    const computed = getComputedStyle(probe).color;
+    document.body.removeChild(probe);
+    return computed || fallback;
+  }
+
   function withAlpha(color: string, alpha: number, fallback: string): string {
     const hex = color.trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
-    if (!hex) return fallback;
-    const value = hex[1].length === 3
-      ? hex[1].split('').map(ch => ch + ch).join('')
-      : hex[1];
-    const r = parseInt(value.slice(0, 2), 16);
-    const g = parseInt(value.slice(2, 4), 16);
-    const b = parseInt(value.slice(4, 6), 16);
+    if (hex) {
+      const value = hex[1].length === 3
+        ? hex[1].split('').map(ch => ch + ch).join('')
+        : hex[1];
+      const r = parseInt(value.slice(0, 2), 16);
+      const g = parseInt(value.slice(2, 4), 16);
+      const b = parseInt(value.slice(4, 6), 16);
+      return `rgba(${r},${g},${b},${alpha})`;
+    }
+
+    const normalized = normalizeCssColor(color, fallback);
+    const rgb = normalized.match(/^rgba?\((.+)\)$/i);
+    if (!rgb) return fallback;
+    const parts = rgb[1]
+      .replace(/\//g, ' ')
+      .replace(/,/g, ' ')
+      .trim()
+      .split(/\s+/);
+    const [r, g, b] = parts;
+    if (!r || !g || !b) return fallback;
     return `rgba(${r},${g},${b},${alpha})`;
   }
 
@@ -288,12 +343,16 @@
     a.href = storyObjectUrl;
     a.download = `gotiga-${figurine.name.replace(/\s+/g, '-').toLowerCase()}-story.jpg`;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(closeStoryModal, 250);
   }
 
   async function nativeShareStory() {
     if (!storyBlob) return;
     const file = new File([storyBlob], 'gotiga-story.jpg', { type: 'image/jpeg' });
-    try { await navigator.share({ files: [file], title: figurine.name }); } catch { /* user cancelled */ }
+    try {
+      await navigator.share({ files: [file], title: figurine.name });
+      closeStoryModal();
+    } catch { /* user cancelled */ }
   }
 
   function closeStoryModal() {
@@ -335,20 +394,18 @@
     })
   );
 
-  let currentImage = $derived(sortedImages[selectedImageIndex]);
+  function clampImageIndex(index: number, imageCount = sortedImages.length) {
+    const maxIndex = imageCount - 1;
+    if (maxIndex < 0) return 0;
+    return Math.max(0, Math.min(maxIndex, index));
+  }
+
+  let activeImageIndex = $derived(clampImageIndex(selectedImageIndex, sortedImages.length));
+  let currentImage = $derived(sortedImages[activeImageIndex]);
   let lightboxImages = $derived(
     sortedImages.map((img) => ({ url: resolveUrl(img.originalUrl ?? img.url), alt: img.altText ?? '' }))
   );
   let canOpenLightbox = $derived(lightboxImages.length > 0);
-
-  $effect(() => {
-    const maxIndex = sortedImages.length - 1;
-    if (maxIndex < 0 && selectedImageIndex !== 0) {
-      selectedImageIndex = 0;
-    } else if (maxIndex >= 0 && selectedImageIndex > maxIndex) {
-      selectedImageIndex = maxIndex;
-    }
-  });
 
   function hasText(value: string | null | undefined): value is string {
     return Boolean(value?.trim());
@@ -369,9 +426,11 @@
   );
   let hasScheduleSection = $derived(figurineSchedule.entries.length > 0);
   let hasFactsSection = $derived(hasAttributesSection || hasScheduleSection);
+  let canShowPersonalRecord = $derived(figurine.status === 'available' || figurine.status === 'reserved');
+  let hasClaimRecords = $derived(cs.claims.length > 0 || (cs.cancelledTokens.size > 0 && cs.claims.length === 0));
+  let hasClaimLookupState = $derived(cs.showTokenForm || Boolean(cs.tokenLookupInfo) || Boolean(cs.tokenLookupErr));
   let hasPersonalRecord = $derived(
-    (figurine.status === 'available' || figurine.status === 'reserved') &&
-      (cs.claims.length > 0 || cs.cancelledTokens.size > 0 || cs.showTokenForm || Boolean(cs.tokenLookupInfo) || Boolean(cs.tokenLookupErr))
+    canShowPersonalRecord && (hasClaimRecords || hasClaimLookupState)
   );
 
   function resolveUrl(path: string | undefined | null) { return resolveMediaUrl(path) ?? ''; }
@@ -395,8 +454,11 @@
   }
   function selectImage(index: number) {
     const maxIndex = sortedImages.length - 1;
-    if (maxIndex < 0) return;
-    const nextIndex = Math.max(0, Math.min(maxIndex, index));
+    if (maxIndex < 0) {
+      selectedImageIndex = 0;
+      return;
+    }
+    const nextIndex = clampImageIndex(index, sortedImages.length);
     if (nextIndex !== selectedImageIndex) selectedImageIndex = nextIndex;
   }
   function openLightbox(index: number) {
@@ -427,9 +489,15 @@
     } else {
       clearAudioFade();
       audioRef.volume = 0;
-      audioRef.play().catch(console.error);
-      isAudioPlaying = true;
-      fadeInAudio();
+      audioRef.play()
+        .then(() => {
+          isAudioPlaying = true;
+          fadeInAudio();
+        })
+        .catch(() => {
+          clearAudioFade();
+          isAudioPlaying = false;
+        });
     }
   }
 
@@ -473,18 +541,36 @@
       await navigator.share({ title: figurine.name, text: figurine.shortText ?? figurine.name, url })
         .catch(() => {});
     } else {
-      await navigator.clipboard.writeText(url).catch(() => {});
-      copied = true;
-      clearTimeout(copiedTimer);
-      copiedTimer = setTimeout(() => { copied = false; }, 2200);
+      try {
+        if (!navigator.clipboard?.writeText) return;
+        await navigator.clipboard.writeText(url);
+        copied = true;
+        clearTimeout(copiedTimer);
+        copiedTimer = setTimeout(() => { copied = false; }, 2200);
+      } catch {
+        copied = false;
+      }
     }
   }
 
   // ── Keyboard gallery navigation ───────────────────────────────────────────
   function handleKeydown(e: KeyboardEvent) {
+    if (showStoryModal && e.key === 'Escape') {
+      closeStoryModal();
+      return;
+    }
     if (showLightbox || showOrderModal || showBookingModal || showWaitlistModal || showStoryModal) return;
-    if (e.key === 'ArrowLeft')  selectImage(Math.max(0, selectedImageIndex - 1));
-    if (e.key === 'ArrowRight') selectImage(Math.min(sortedImages.length - 1, selectedImageIndex + 1));
+    const target = e.target as HTMLElement | null;
+    if (target?.closest('input, textarea, select, button, a, [contenteditable="true"]')) return;
+    if (sortedImages.length <= 1) return;
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      selectImage(activeImageIndex - 1);
+    }
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      selectImage(activeImageIndex + 1);
+    }
   }
 
   // ── Sticky condensed nav — три фазы ─────────────────────────────────────
@@ -501,6 +587,23 @@
     showOrderModal = true;
   }
 
+  function openClaimLookup() {
+    cs.showTokenForm = true;
+  }
+
+  function closeClaimLookup() {
+    cs.showTokenForm = false;
+    cs.tokenInput = '';
+    cs.tokenLookupInfo = null;
+    cs.tokenLookupErr = '';
+  }
+
+  function handlePersonalRecordToggle(e: Event) {
+    if (!(e.currentTarget as HTMLDetailsElement).open) {
+      closeClaimLookup();
+    }
+  }
+
   function onScroll() {
     scrollY = window.scrollY;
     const threshold = 130; // высота SiteHeader + topnav
@@ -510,20 +613,26 @@
   }
 
   function handleVisibility() {
-    if (document.visibilityState === 'visible') cs.verify();
+    if (document.visibilityState === 'visible') {
+      refreshToday();
+      scheduleTodayRefresh();
+      cs.verify();
+    }
   }
 
   onMount(() => {
     window.addEventListener('keydown', handleKeydown);
     window.addEventListener('scroll', onScroll, { passive: true });
     document.addEventListener('visibilitychange', handleVisibility);
+    refreshToday();
+    scheduleTodayRefresh();
     onScroll();
-    api.getFigurineSchedule(figurine.id).then(s => { figurineSchedule = s; });
+    api.getFigurineSchedule(figurine.id).then(s => { figurineSchedule = s; }).catch(() => {});
     cs.load();
     cs.verify();
     cs.startPolling();
-    loadQueue();
-    loadNotify();
+    void loadQueue();
+    void loadNotify();
   });
 
   onDestroy(() => {
@@ -531,6 +640,7 @@
     window.removeEventListener('scroll', onScroll);
     document.removeEventListener('visibilitychange', handleVisibility);
     clearTimeout(copiedTimer);
+    clearTodayRefresh();
     clearAudioFade();
     if (storyObjectUrl) URL.revokeObjectURL(storyObjectUrl);
     if (audioRef) { audioRef.pause(); audioRef = null; }
@@ -575,13 +685,15 @@
 
   <!-- ── Story share modal ──────────────────────────────────────────────── -->
   {#if showStoryModal}
-    <div class="story-backdrop" transition:fade={{ duration: 200 }}
-         onclick={(e) => { if (e.target === e.currentTarget) closeStoryModal(); }}
-         onkeydown={(e) => e.key === 'Escape' && closeStoryModal()}
-         role="presentation">
+    <div class="story-backdrop" transition:fade={{ duration: 200 }}>
+      <button type="button" class="story-backdrop-dismiss" onclick={closeStoryModal} aria-label={$t('lightboxClose')}></button>
       <div class="story-modal" transition:fade={{ duration: 150 }}
            role="dialog" aria-modal="true" aria-labelledby="story-modal-title" tabindex="-1" use:focusTrap>
-        <button type="button" class="story-close" onclick={closeStoryModal} aria-label={$t('lightboxClose')}>✕</button>
+        <button type="button" class="story-close" onclick={closeStoryModal} aria-label={$t('lightboxClose')}>
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+            <path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke-linecap="round" />
+          </svg>
+        </button>
 
         <p id="story-modal-title" class="story-modal-title">{$t('figurineStoryShare')}</p>
 
@@ -699,7 +811,7 @@
               <button
                 type="button"
                 class="topnav-mini-img"
-                onclick={() => openLightbox(selectedImageIndex)}
+                onclick={() => openLightbox(activeImageIndex)}
                 title={$t('figurineFullscreen')}
                 aria-label={$t('figurineFullscreen')}
               >
@@ -714,7 +826,7 @@
                 {#each sortedImages as _, i}
                   <button
                     type="button"
-                    class="topnav-dot {i === selectedImageIndex ? 'topnav-dot--on' : ''}"
+                    class="topnav-dot {i === activeImageIndex ? 'topnav-dot--on' : ''}"
                     onclick={() => selectImage(i)}
                     aria-label="{$t('figurineShowView')} {i + 1}"
                   ></button>
@@ -814,10 +926,10 @@
               {#each sortedImages as img, i}
                 <button
                   type="button"
-                  class="thumb-v {selectedImageIndex === i ? 'thumb-v--active' : ''}"
+                  class="thumb-v {activeImageIndex === i ? 'thumb-v--active' : ''}"
                   onclick={() => selectImage(i)}
                   aria-label="{$t('figurineShowView')} {i + 1}"
-                  aria-current={selectedImageIndex === i ? 'true' : undefined}
+                  aria-current={activeImageIndex === i ? 'true' : undefined}
                 >
                   <img src={resolveUrl(img.thumbUrl ?? img.url)} alt="" class="thumb-v-img" loading="lazy" />
                   <div class="thumb-v-bar" aria-hidden="true"></div>
@@ -834,7 +946,7 @@
                     src={resolveUrl(currentImage?.url)}
                     alt={currentImage?.altText ?? figurine.name}
                     class="w-full h-full"
-                    onOpenLightbox={() => canOpenLightbox && openLightbox(selectedImageIndex)}
+                    onOpenLightbox={() => canOpenLightbox && openLightbox(activeImageIndex)}
                   />
                 </div>
               {/key}
@@ -842,14 +954,14 @@
               {#if sortedImages.length > 1}
                 <div class="img-counter" aria-hidden="true">
                   <span class="img-counter-type">{imageTypeLabel(currentImage?.imageType)}</span>
-                  <span class="img-counter-num">{selectedImageIndex + 1}<span class="img-counter-sep">/</span>{sortedImages.length}</span>
+                  <span class="img-counter-num">{activeImageIndex + 1}<span class="img-counter-sep">/</span>{sortedImages.length}</span>
                 </div>
               {/if}
 
               {#if canOpenLightbox}
                 <button
                   type="button"
-                  onclick={() => openLightbox(selectedImageIndex)}
+                  onclick={() => openLightbox(activeImageIndex)}
                   class="expand-btn"
                   aria-label={$t('figurineFullscreen')}
                 >
@@ -980,88 +1092,98 @@
         </div>
 
         <!-- Personal record for this work: folded into a disclosure, not a dashboard on the leaf. -->
-        {#if hasPersonalRecord}
-          <details class="entry-record">
-            <summary>{$t('detailYourRecord')}</summary>
-          {#if cs.claims.length > 0 || (cs.cancelledTokens.size > 0 && cs.claims.length === 0)}
-            <div class="claims-panel {cs.claims.some(c => c.status === 'confirmed') ? 'claims-panel--has-confirmed' : ''}">
-              <div class="claims-panel-header">
-                {cs.claims.some(c => c.status === 'confirmed') ? $t('claimsYours') : $t('claimsPending')}
-              </div>
-              {#if cs.cancelledTokens.size > 0 && cs.claims.length === 0}
-                <div class="cp-row cp-row--done">
-                  <p class="cp-done">{$t('claimCancelDone')}</p>
-                </div>
+        {#if canShowPersonalRecord}
+          <details class="entry-record" class:entry-record--empty={!hasPersonalRecord} ontoggle={handlePersonalRecordToggle}>
+            <summary>{hasPersonalRecord ? $t('detailYourRecord') : $t('claimHaveCode')}</summary>
+            <div class="entry-record-body">
+              {#if hasClaimRecords}
+                <section class="entry-record-section entry-record-section--claims" aria-label={$t('detailYourRecord')}>
+                  <div class="claims-panel {cs.claims.some(c => c.status === 'confirmed') ? 'claims-panel--has-confirmed' : ''}">
+                    <div class="claims-panel-header">
+                      {cs.claims.some(c => c.status === 'confirmed') ? $t('claimsYours') : $t('claimsPending')}
+                    </div>
+                    {#if cs.cancelledTokens.size > 0 && cs.claims.length === 0}
+                      <div class="cp-row cp-row--done">
+                        <p class="cp-done">{$t('claimCancelDone')}</p>
+                      </div>
+                    {/if}
+                    {#each cs.claims as c (c.token)}
+                      {#if c.status === 'confirmed'}
+                        <div class="cp-row cp-row--confirmed">
+                          <div class="cp-row-main">
+                            <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.6" class="cp-icon cp-icon--ok" aria-hidden="true"><path d="M1 5.5l3 3 6-6"/></svg>
+                            <span class="cp-dates">{fmtDate(c.startsAt)} - {fmtDate(c.endsAt)}</span>
+                            <span class="cp-token">{c.token}</span>
+                            <div class="cp-actions">
+                              <a href={authStore.isLoggedIn ? '/profile' : `/cancel/${c.token}`} class="cp-link">{$t('claimManageLink')}</a>
+                              <button type="button" onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="cp-revoke">
+                                {cs.cancellingToken === c.token ? '...' : $t('claimCancelBtn')}
+                              </button>
+                            </div>
+                          </div>
+                          <p class="cp-note">{$t('claimConfirmedNext')}</p>
+                          {#if cs.claimErrors[c.token]}<p class="cp-err">{cs.claimErrors[c.token]}</p>{/if}
+                        </div>
+                      {:else}
+                        <div class="cp-row">
+                          <div class="cp-row-main">
+                            <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.3" class="cp-icon" aria-hidden="true"><circle cx="5.5" cy="5.5" r="4.5"/><path d="M5.5 3.5v2.2l1.5 1.3"/></svg>
+                            <span class="cp-dates">{fmtDate(c.startsAt)} - {fmtDate(c.endsAt)}</span>
+                            <div class="cp-actions">
+                              <a href={authStore.isLoggedIn ? '/profile' : `/cancel/${c.token}`} class="cp-link cp-link--reschedule">{$t('ctaRescheduleLink')}</a>
+                              <button type="button" onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="cp-revoke">
+                                {cs.cancellingToken === c.token ? $t('claimCancelling') : $t('claimCancelBtn')}
+                              </button>
+                            </div>
+                          </div>
+                          <p class="cp-note cp-note--pending">{$t('claimPendingNote')}</p>
+                          {#if cs.claimErrors[c.token]}<p class="cp-err">{cs.claimErrors[c.token]}</p>{/if}
+                        </div>
+                      {/if}
+                    {/each}
+                  </div>
+                </section>
               {/if}
-              {#each cs.claims as c (c.token)}
-                {#if c.status === 'confirmed'}
-                  <div class="cp-row cp-row--confirmed">
-                    <div class="cp-row-main">
-                      <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.6" class="cp-icon cp-icon--ok" aria-hidden="true"><path d="M1 5.5l3 3 6-6"/></svg>
-                      <span class="cp-dates">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</span>
-                      <span class="cp-token">{c.token}</span>
-                      <div class="cp-actions">
-                        <a href={authStore.isLoggedIn ? '/profile' : `/cancel/${c.token}`} class="cp-link">{$t('claimManageLink')}</a>
-                        <button type="button" onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="cp-revoke">
-                          {cs.cancellingToken === c.token ? '…' : $t('claimCancelBtn')}
-                        </button>
-                      </div>
-                    </div>
-                    <p class="cp-note">{$t('claimConfirmedNext')}</p>
-                    {#if cs.claimErrors[c.token]}<p class="cp-err">{cs.claimErrors[c.token]}</p>{/if}
-                  </div>
-                {:else}
-                  <div class="cp-row">
-                    <div class="cp-row-main">
-                      <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.3" class="cp-icon" aria-hidden="true"><circle cx="5.5" cy="5.5" r="4.5"/><path d="M5.5 3.5v2.2l1.5 1.3"/></svg>
-                      <span class="cp-dates">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</span>
-                      <div class="cp-actions">
-                        <a href={authStore.isLoggedIn ? '/profile' : `/cancel/${c.token}`} class="cp-link cp-link--reschedule">{$t('ctaRescheduleLink')}</a>
-                        <button type="button" onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="cp-revoke">
-                          {cs.cancellingToken === c.token ? $t('claimCancelling') : $t('claimCancelBtn')}
-                        </button>
-                      </div>
-                    </div>
-                    <p class="cp-note cp-note--pending">{$t('claimPendingNote')}</p>
-                    {#if cs.claimErrors[c.token]}<p class="cp-err">{cs.claimErrors[c.token]}</p>{/if}
-                  </div>
-                {/if}
-              {/each}
-            </div>
-          {/if}
 
-          <div class="claim-lookup">
-            {#if !cs.showTokenForm}
-              <button type="button" onclick={() => cs.showTokenForm = true} class="claim-lookup-link">{$t('claimHaveCode')}</button>
-            {:else}
-              <div class="claim-lookup-form">
-                <input type="text" bind:value={cs.tokenInput} placeholder="XXXX-XXXX" maxlength="9"
-                  class="claim-lookup-input" oninput={() => { cs.tokenLookupInfo = null; cs.tokenLookupErr = ''; }} />
-                <button type="button" onclick={() => cs.lookupToken()} disabled={cs.tokenLooking} class="claim-lookup-btn">
-                  {cs.tokenLooking ? '…' : $t('claimLookupBtn')}
-                </button>
-                <button type="button" onclick={() => { cs.showTokenForm = false; cs.tokenInput = ''; cs.tokenLookupInfo = null; }} class="claim-lookup-close">✕</button>
-              </div>
-              {#if cs.tokenLookupErr}<p class="claim-err">{cs.tokenLookupErr}</p>{/if}
-              {#if cs.tokenLookupInfo}
-                <div class="claim-lookup-result">
-                  <p class="claim-dates">{fmtDate(cs.tokenLookupInfo.startsAt)} — {fmtDate(cs.tokenLookupInfo.endsAt)}</p>
-                  {#if cs.tokenLookupInfo.status === 'pending'}
-                    <button type="button" onclick={() => cs.cancelFromLookup()} disabled={cs.lookupCancelling} class="claim-cancel-btn">
-                      {cs.lookupCancelling ? $t('claimCancelling') : $t('claimCancelBtn')}
-                    </button>
+              <section class="entry-record-section entry-record-section--lookup" aria-label={$t('claimHaveCode')}>
+                <div class="claim-lookup">
+                  {#if !cs.showTokenForm}
+                    <button type="button" onclick={openClaimLookup} class="claim-lookup-link">{$t('claimHaveCode')}</button>
                   {:else}
-                    <p class="claim-status">{$t('claimStatus')}: {lookupStatusLabel(cs.tokenLookupInfo.status)}</p>
+                    <div class="claim-lookup-form">
+                      <input type="text" bind:value={cs.tokenInput} placeholder="XXXX-XXXX" maxlength="9"
+                        class="claim-lookup-input" oninput={() => { cs.tokenLookupInfo = null; cs.tokenLookupErr = ''; }} />
+                      <button type="button" onclick={() => cs.lookupToken()} disabled={cs.tokenLooking} class="claim-lookup-btn">
+                        {cs.tokenLooking ? '...' : $t('claimLookupBtn')}
+                      </button>
+                      <button type="button" onclick={closeClaimLookup} class="claim-lookup-close" aria-label={$t('lightboxClose')}>
+                        <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                          <path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke-linecap="round" />
+                        </svg>
+                      </button>
+                    </div>
+                    {#if cs.tokenLookupErr}<p class="claim-err">{cs.tokenLookupErr}</p>{/if}
+                    {#if cs.tokenLookupInfo}
+                      <div class="claim-lookup-result">
+                        <p class="claim-dates">{fmtDate(cs.tokenLookupInfo.startsAt)} - {fmtDate(cs.tokenLookupInfo.endsAt)}</p>
+                        {#if cs.tokenLookupInfo.status === 'pending'}
+                          <button type="button" onclick={() => cs.cancelFromLookup()} disabled={cs.lookupCancelling} class="claim-cancel-btn">
+                            {cs.lookupCancelling ? $t('claimCancelling') : $t('claimCancelBtn')}
+                          </button>
+                        {:else}
+                          <p class="claim-status">{$t('claimStatus')}: {lookupStatusLabel(cs.tokenLookupInfo.status)}</p>
+                        {/if}
+                      </div>
+                    {/if}
                   {/if}
                 </div>
-              {/if}
-            {/if}
-          </div>
+              </section>
+            </div>
           </details>
         {/if}
 
         {#if hasWorkStorySection}
-          <div class="act-divider" aria-hidden="true"><span>❦</span></div>
+          <div class="act-divider" aria-hidden="true"></div>
         {/if}
 
         <!-- ACT II — THE WORK: story → making → motion -->
@@ -1140,8 +1262,16 @@
                 <span class="grimoire-sub">{visibleProcessSteps.length} {$t('figurineGrimoireSub')}</span>
               </span>
               <span class="grimoire-arrow" aria-hidden="true">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
-                  style="transform: rotate({isGrimoireOpen ? '90deg' : '0deg'}); transition: transform 0.3s ease">
+                <svg
+                  class="grimoire-arrow-svg"
+                  class:grimoire-arrow-svg--open={isGrimoireOpen}
+                  width="16"
+                  height="16"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                >
                   <path d="M3 8h10M9 4l4 4-4 4"/>
                 </svg>
               </span>
@@ -1162,12 +1292,8 @@
               <span class="sec-label">{$t('figurineVideo')}</span>
               <div class="sec-rule" aria-hidden="true"></div>
             </header>
-            <div class="video-wrap group">
-              <div class="video-frame card group">
-                <span class="corner-tl"></span>
-                <span class="corner-tr"></span>
-                <span class="corner-bl"></span>
-                <span class="corner-br"></span>
+            <div class="video-wrap">
+              <div class="video-frame">
                 <div class="video-stage">
                   <video bind:this={videoRef} controls class="video-el"
                     poster={resolveUrl(currentImage?.url)} preload="metadata">
@@ -1189,7 +1315,7 @@
     <!-- ── PRESENCE & SCHEDULE (Act III — facts & logistics, merged from the old timeline + cta-zone notices) ── -->
     <!-- ── ACT III — FACTS & LOGISTICS: particulars + where to see it ── -->
     {#if hasFactsSection}
-      <div class="act-divider" aria-hidden="true"><span>❦</span></div>
+      <div class="act-divider" aria-hidden="true"></div>
 
       {#if hasAttributesSection}
         <div class="d-attrs">
@@ -1254,7 +1380,7 @@
 
     <!-- ── RELATED NEXT CHOICES ── -->
     {#if visibleRelatedItems.length > 0}
-      <div class="act-divider" aria-hidden="true"><span>❦</span></div>
+      <div class="act-divider" aria-hidden="true"></div>
       <section id="related-works" class="related-section">
         <header class="related-head">
           <div>
@@ -1266,15 +1392,16 @@
 
         <div class="related-strip">
           {#each visibleRelatedItems as item}
+            {@const relatedImageUrl = resolveUrl(item.faceImageUrl ?? item.thumbUrl)}
             <a
               href="/figurines/{item.id}"
-              class="related-card group"
+              class="related-card"
               data-sveltekit-preload-data="hover"
             >
               <div class="related-img-wrap">
-                {#if hasText(item.faceImageUrl)}
+                {#if relatedImageUrl}
                   <img
-                    src={resolveUrl(item.faceImageUrl)}
+                    src={relatedImageUrl}
                     alt={item.name}
                     class="related-img"
                     loading="lazy"
