@@ -53,6 +53,20 @@ export const READING_FONTS: ReadingFont[] = [
         stack: "'Lora', Georgia, serif",
         href: 'https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;1,400&display=swap',
     },
+    {
+        id: 'yeseva',
+        name: 'Yeseva One',
+        note: 'выразительный',
+        stack: "'Yeseva One', Georgia, serif",
+        href: 'https://fonts.googleapis.com/css2?family=Yeseva+One&display=swap',
+    },
+    {
+        id: 'caveat',
+        name: 'Caveat',
+        note: 'от руки',
+        stack: "'Caveat', 'Segoe Script', cursive",
+        href: 'https://fonts.googleapis.com/css2?family=Caveat:wght@400;500;600&display=swap',
+    },
 ];
 
 const DEFAULT_ID = 'garamond';
