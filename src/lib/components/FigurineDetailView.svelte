@@ -1264,36 +1264,28 @@
 
             </div>
 
-            <button type="button" onclick={toggleGrimoire} class="grimoire-trigger" aria-expanded={isGrimoireOpen}>
-              <span class="grimoire-icon" aria-hidden="true">
-                <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
-                  <ellipse cx="11" cy="11" rx="9" ry="5.5" stroke="currentColor" stroke-width="1.2"/>
-                  <circle cx="11" cy="11" r="2.5" fill="currentColor" opacity="0.7"/>
-                  <circle cx="11" cy="11" r="1" fill="currentColor"/>
-                </svg>
-              </span>
-              <span class="grimoire-body">
-                <span class="grimoire-title">
-                  {$t('figurineGrimoire')}
-                  <span class="grimoire-dot"></span>
-                </span>
-                <span class="grimoire-sub">{visibleProcessSteps.length} {$t('figurineGrimoireSub')}</span>
-              </span>
-              <span class="grimoire-arrow" aria-hidden="true">
+            <!-- Memory Mirror demoted to a quiet continuation of this same act —
+                 only when there are more steps than the preview strip shows. -->
+            {#if visibleProcessSteps.length > 4}
+              <button type="button" onclick={toggleGrimoire} class="mirror-link" aria-expanded={isGrimoireOpen}>
+                <span class="mirror-link-mark" aria-hidden="true"></span>
+                <span class="mirror-link-label">{$t('figurineGrimoire')}</span>
+                <span class="mirror-link-count">{visibleProcessSteps.length} {$t('figurineGrimoireSub')}</span>
                 <svg
-                  class="grimoire-arrow-svg"
-                  class:grimoire-arrow-svg--open={isGrimoireOpen}
-                  width="16"
-                  height="16"
+                  class="mirror-link-arrow"
+                  class:mirror-link-arrow--open={isGrimoireOpen}
+                  width="15"
+                  height="15"
                   viewBox="0 0 16 16"
                   fill="none"
                   stroke="currentColor"
                   stroke-width="1.5"
+                  aria-hidden="true"
                 >
                   <path d="M3 8h10M9 4l4 4-4 4"/>
                 </svg>
-              </span>
-            </button>
+              </button>
+            {/if}
             <MemoryMirror
               isOpen={isGrimoireOpen}
               steps={visibleProcessSteps}
