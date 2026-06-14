@@ -2,9 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { fade } from 'svelte/transition';
   import type { Figurine, FigurineSchedule } from '$lib/types/api';
-  import OrderModal from '$lib/components/OrderModal.svelte';
-  import BookingModal from '$lib/components/BookingModal.svelte';
-  import WaitlistModal from '$lib/components/WaitlistModal.svelte';
+  import UnifiedRequestModal from '$lib/components/UnifiedRequestModal.svelte';
   import BrassLens from '$lib/components/BrassLens.svelte';
   import CandleReveal from '$lib/components/CandleReveal.svelte';
   import MemoryMirror from '$lib/components/MemoryMirror.svelte';
@@ -35,10 +33,8 @@
 
   let selectedImageIndex = $state(0);
   let isGrimoireOpen = $state(false);
-  let showOrderModal = $state(false);
-  let showBookingModal = $state(false);
-  let showWaitlistModal = $state(false);
-  let orderMode = $state<'request' | 'question' | 'notify'>('request');
+  let showRequestModal = $state(false);
+  let requestInitialIntent = $state<'request' | 'waitlist' | 'viewing' | 'similar' | 'question' | 'notify'>('request');
   let figurineSchedule = $state<FigurineSchedule>({ entries: [] });
   let isAudioPlaying = $state(false);
   let isCandleLit = $state(false);
@@ -559,7 +555,7 @@
       closeStoryModal();
       return;
     }
-    if (showLightbox || showOrderModal || showBookingModal || showWaitlistModal || showStoryModal) return;
+    if (showLightbox || showRequestModal || showStoryModal) return;
     const target = e.target as HTMLElement | null;
     if (target?.closest('input, textarea, select, button, a, [contenteditable="true"]')) return;
     if (sortedImages.length <= 1) return;
@@ -582,9 +578,16 @@
 
   let galleryExited  = $state(false); // Phase 2: галерея ушла за экран
 
-  function openModal(m: 'request' | 'question' | 'notify') {
-    orderMode = m;
-    showOrderModal = true;
+  function defaultRequestIntent(): 'request' | 'waitlist' | 'viewing' | 'similar' | 'question' | 'notify' {
+    if (figurine.status === 'reserved') return 'waitlist';
+    if (figurine.status === 'in_progress') return 'notify';
+    if (figurine.status === 'sold') return 'similar';
+    return hasActiveShowing ? 'viewing' : 'request';
+  }
+
+  function openRequestModal(intent = defaultRequestIntent()) {
+    requestInitialIntent = intent;
+    showRequestModal = true;
   }
 
   function openClaimLookup() {
@@ -655,32 +658,17 @@
 <CandleReveal isActive={isCandleLit} />
 
 <div class="page-root page-root--has-cta" class:page-root--candle={isCandleLit}>
-  <OrderModal
-    isOpen={showOrderModal}
-    mode={orderMode}
+  <UnifiedRequestModal
+    isOpen={showRequestModal}
     figurineName={figurine.name}
     figurineId={figurine.id}
+    status={figurine.status}
     schedule={figurineSchedule}
-    relatedAvailable={(figurine.relatedItems ?? []).filter(r => r.status === 'available').slice(0, 3)}
-    onNotified={onNotifySubscribed}
-    onClose={() => (showOrderModal = false)}
-  />
-
-  <WaitlistModal
-    isOpen={showWaitlistModal}
-    figurineId={id}
-    figurineName={figurine.name}
+    initialIntent={requestInitialIntent}
     onJoined={onQueueJoined}
-    onClose={() => (showWaitlistModal = false)}
-  />
-
-  <BookingModal
-    isOpen={showBookingModal}
+    onNotified={onNotifySubscribed}
     onBookingCreated={(claim: ClaimData) => cs.onBookingCreated(claim)}
-    figurineName={figurine.name}
-    figurineId={figurine.id}
-    schedule={figurineSchedule}
-    onClose={() => (showBookingModal = false)}
+    onClose={() => (showRequestModal = false)}
   />
 
   <!-- ── Story share modal ──────────────────────────────────────────────── -->
@@ -1008,37 +996,75 @@
 
         <!-- ── Status & enquiry: commerce collapsed to one quiet marginal line ── -->
         <div class="entry-status entry-status--{figurine.status}">
-          <span class="entry-status-kind">
-            {figurine.status === 'available'
-              ? $t('figurineStatusAvailable')
-              : figurine.status === 'reserved'
-                ? $t('figurineStatusReserved')
-                : figurine.status === 'in_progress'
-                  ? $t('figurineStatusInProgress')
-                  : $t('figurineStatusSold')}
-          </span>
+          <div class="entry-status-head">
+            <span class="entry-status-marque">
+              <span class="entry-status-kind">
+                {figurine.status === 'available'
+                  ? $t('figurineStatusAvailable')
+                  : figurine.status === 'reserved'
+                    ? $t('figurineStatusReserved')
+                    : figurine.status === 'in_progress'
+                      ? $t('figurineStatusInProgress')
+                      : $t('figurineStatusSold')}
+              </span>
+              <span class="entry-wax" aria-hidden="true">GT</span>
+            </span>
+            <span class="entry-registry">{$t('detailRegistryNo')} {id.slice(0, 3).toUpperCase()}</span>
+          </div>
 
-          <span class="entry-status-line">
-            <span class="entry-price">{$t('figurinePriceOnRequest')}</span>
-            {#if figurine.status === 'available'}
-              {#if hasActiveShowing}
-                <span class="entry-sep">·</span>{$t('detailPresenceOnExhibition')}{#if nextAvailableDate} <span class="entry-sep">·</span>{$t('figurineAvailableFrom')} {nextAvailableDate.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}{/if}
-              {:else if nextAvailableDate}
-                <span class="entry-sep">·</span>{$t('figurineAvailableFrom')} {nextAvailableDate.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}
-              {/if}
-            {:else if figurine.status === 'reserved'}
-              <span class="entry-sep">·</span>{#if nextAvailableDate}{$t('detailPresenceMayFree')} {nextAvailableDate.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}{:else}{$t('figurineReserved')}{/if}
-            {/if}
-          </span>
+          <div class="entry-status-body">
+            <div class="entry-status-copy">
+              <h2 class="entry-status-title">
+                {figurine.status === 'available'
+                  ? (hasActiveShowing ? $t('detailRegistryViewingTitle') : $t('detailRegistryAvailableTitle'))
+                  : figurine.status === 'reserved'
+                    ? $t('detailRegistryReservedTitle')
+                    : figurine.status === 'in_progress'
+                      ? $t('detailRegistryProgressTitle')
+                      : $t('detailRegistrySoldTitle')}
+              </h2>
 
-          {#if figurine.status === 'available'}
-            <button type="button" onclick={() => (hasActiveShowing ? (showBookingModal = true) : openModal('request'))} class="entry-action">
-              {hasActiveShowing ? $t('detailRequestViewingDates') : $t('detailLeaveNote')} →
-            </button>
-            <button type="button" onclick={() => openModal('question')} class="entry-aside">{$t('figurineAskQuestion')}</button>
-          {:else if figurine.status === 'reserved'}
-            <button type="button" onclick={() => (showWaitlistModal = true)} class="entry-action">{$t('detailBeNext')} →</button>
-            <button type="button" onclick={() => openModal('question')} class="entry-aside">{$t('detailAskSimilar')}</button>
+              <p class="entry-status-line">
+                <span class="entry-price">{$t('figurinePriceOnRequest')}</span>
+                {#if figurine.status === 'available'}
+                  {#if hasActiveShowing}
+                    <span class="entry-sep">·</span>{$t('detailPresenceOnExhibition')}{#if nextAvailableDate} <span class="entry-sep">·</span>{$t('figurineAvailableFrom')} {nextAvailableDate.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}{/if}
+                  {:else if nextAvailableDate}
+                    <span class="entry-sep">·</span>{$t('figurineAvailableFrom')} {nextAvailableDate.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}
+                  {:else}
+                    <span class="entry-sep">·</span>{$t('detailPresenceAvailableNow')}
+                  {/if}
+                {:else if figurine.status === 'reserved'}
+                  <span class="entry-sep">·</span>{#if nextAvailableDate}{$t('detailPresenceMayFree')} {nextAvailableDate.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}{:else}{$t('figurineReserved')}{/if}
+                {/if}
+              </p>
+            </div>
+
+            <div class="entry-action-stack">
+              <button type="button" onclick={() => openRequestModal()} class="entry-action">
+                {$t('unifiedOpenRequest')} →
+              </button>
+              <p class="entry-action-note">
+                {figurine.status === 'reserved'
+                  ? $t('unifiedReservedNote')
+                  : figurine.status === 'in_progress'
+                    ? $t('unifiedProgressNote')
+                    : figurine.status === 'sold'
+                      ? $t('unifiedSoldNote')
+                      : hasActiveShowing
+                        ? $t('unifiedShowingNote')
+                        : $t('unifiedAvailableNote')}
+              </p>
+            </div>
+          </div>
+
+          <div class="entry-status-facts" aria-label={$t('detailRegistryFacts')}>
+            <span>{$t('detailReplyWindow')}</span>
+            <span>{$t('detailNoObligation')}</span>
+            <span>{$t('detailPersonalTransfer')}</span>
+          </div>
+
+          {#if figurine.status === 'reserved'}
             {#if queuePosition > 0}
               <div class="queue-receipt">
                 <div class="queue-receipt-head">
@@ -1057,8 +1083,6 @@
               <p class="queue-receipt-left">{$t('detailQueueLeft')}</p>
             {/if}
           {:else if figurine.status === 'in_progress'}
-            <button type="button" onclick={() => openModal('notify')} class="entry-action">{$t('detailFollowProgress')} →</button>
-            <a href="/commission?figurine={id}" class="entry-aside">{$t('detailRequestSimilarIdea')}</a>
             {#if notifyActive}
               <div class="queue-receipt queue-receipt--notify">
                 <span class="queue-receipt-title">{$t('detailNotifyPanelTitle')}</span>
@@ -1070,9 +1094,7 @@
             {:else if notifyStopped}
               <p class="queue-receipt-left">{$t('detailNotifyStopped')}</p>
             {/if}
-          {:else}
-            <a href="/commission?figurine={id}" class="entry-action">{$t('detailRequestSimilar')} →</a>
-            <button type="button" onclick={() => openModal('notify')} class="entry-aside">{$t('figurineNotify')}</button>
+          {:else if figurine.status === 'sold'}
             {#if notifyActive}
               <div class="queue-receipt queue-receipt--notify">
                 <span class="queue-receipt-title">{$t('detailNotifyPanelTitle')}</span>
@@ -1084,10 +1106,6 @@
             {:else if notifyStopped}
               <p class="queue-receipt-left">{$t('detailNotifyStopped')}</p>
             {/if}
-          {/if}
-
-          {#if figurineSchedule.entries.length > 0}
-            <a href="#presence" class="entry-aside">{$t('detailPresenceSeeSchedule')}</a>
           {/if}
         </div>
 
@@ -1482,7 +1500,7 @@
       </span>
     </div>
     {#if figurine.status === 'available'}
-      <button type="button" onclick={() => (hasActiveShowing ? (showBookingModal = true) : openModal('request'))} class="mobile-cta-btn">
+      <button type="button" onclick={() => openRequestModal()} class="mobile-cta-btn">
         {$t('detailMobileRequestCta')}
         <svg width="13" height="14" viewBox="0 0 14 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M4.5 5V3.5a2.5 2.5 0 0 1 5 0V5"/>
@@ -1490,26 +1508,26 @@
         </svg>
       </button>
     {:else if figurine.status === 'reserved'}
-      <button type="button" onclick={() => (showWaitlistModal = true)} class="mobile-cta-btn">
-        {$t('detailMobileQueueCta')}
+      <button type="button" onclick={() => openRequestModal()} class="mobile-cta-btn">
+        {$t('unifiedOpenRequest')}
         <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M2 7h9M8 4l3 3-3 3"/>
         </svg>
       </button>
     {:else if figurine.status === 'in_progress'}
-      <button type="button" onclick={() => openModal('notify')} class="mobile-cta-btn">
-        {$t('detailMobileFollowCta')}
+      <button type="button" onclick={() => openRequestModal()} class="mobile-cta-btn">
+        {$t('unifiedOpenRequest')}
         <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M2 7h9M8 4l3 3-3 3"/>
         </svg>
       </button>
     {:else}
-      <a href="/commission?figurine={id}" class="mobile-cta-btn">
-        {$t('detailMobileSimilarCta')}
+      <button type="button" onclick={() => openRequestModal()} class="mobile-cta-btn">
+        {$t('unifiedOpenRequest')}
         <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M2 7h9M8 4l3 3-3 3"/>
         </svg>
-      </a>
+      </button>
     {/if}
   </div>
 {/if}
