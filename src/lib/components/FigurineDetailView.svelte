@@ -1351,6 +1351,7 @@
                   </svg>
                 </span>
                 <dt class="spec-label">{$t('figurineDimensions')}</dt>
+                <span class="spec-leader" aria-hidden="true"></span>
                 <dd class="spec-value">{figurine.dimensions}</dd>
               </div>
             {/if}
@@ -1363,6 +1364,7 @@
                   </svg>
                 </span>
                 <dt class="spec-label">{$t('figurineMaterial')}</dt>
+                <span class="spec-leader" aria-hidden="true"></span>
                 <dd class="spec-value">{figurine.material}</dd>
               </div>
             {/if}
@@ -1375,6 +1377,7 @@
                   </svg>
                 </span>
                 <dt class="spec-label">{$t('figurineTechnique')}</dt>
+                <span class="spec-leader" aria-hidden="true"></span>
                 <dd class="spec-value">{figurine.technique}</dd>
               </div>
             {/if}
