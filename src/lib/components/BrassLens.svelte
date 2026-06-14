@@ -6,11 +6,15 @@
     src,
     alt,
     class: className = '',
+    imageFit = 'cover',
+    objectPosition = 'center 20%',
     onOpenLightbox = () => {},
   }: {
     src?: string | null;
     alt?: string;
     class?: string;
+    imageFit?: 'cover' | 'contain';
+    objectPosition?: string;
     onOpenLightbox?: () => void;
   } = $props();
 
@@ -161,9 +165,9 @@
     <img
       {src}
       {alt}
-      class="w-full h-full object-cover pointer-events-none select-none"
+      class="w-full h-full pointer-events-none select-none {imageFit === 'contain' ? 'object-contain' : 'object-cover'}"
       style="
-        object-position: center 20%;
+        object-position: {objectPosition};
         transform: scale({scale}) translate({panX / scale}px, {panY / scale}px);
         transition: {transitioning ? 'transform 0.28s cubic-bezier(0.22,0.1,0.2,1)' : 'none'};
         touch-action: none;
@@ -206,8 +210,8 @@
         transform: translate({lensSize/2 - lx * zoom}px, {lensSize/2 - ly * zoom}px) scale({zoom});
         overflow: hidden;
       ">
-        <img {src} {alt} class="w-full h-full object-cover pointer-events-none"
-          style="object-position: center 20%" />
+        <img {src} {alt} class="w-full h-full pointer-events-none {imageFit === 'contain' ? 'object-contain' : 'object-cover'}"
+          style="object-position: {objectPosition}" />
       </div>
       <div class="absolute inset-0 rounded-full pointer-events-none"
         style="box-shadow: inset 3px 0 0 rgba(255,0,0,0.12), inset -3px 0 0 rgba(0,220,255,0.12); mix-blend-mode: color-dodge;"></div>

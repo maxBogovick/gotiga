@@ -175,11 +175,25 @@ function webPublicUrl(url: unknown): string | null {
     return resolveMediaUrl(url);
 }
 
+class ApiError extends Error {
+    status: number;
+
+    constructor(status: number, body: string) {
+        super(`API ${status}: ${body}`);
+        this.name = 'ApiError';
+        this.status = status;
+    }
+}
+
+function isNotFoundError(err: unknown): boolean {
+    return err instanceof ApiError && (err.status === 404 || err.status === 410);
+}
+
 async function webFetch<T>(path: string, options?: RequestInit): Promise<T> {
     const res = await fetch(`${webApiBase()}${path}`, options);
     if (!res.ok) {
         const text = await res.text().catch(() => '');
-        throw new Error(`API ${res.status}: ${text}`);
+        throw new ApiError(res.status, text);
     }
     const ct = res.headers.get('content-type') ?? '';
     if (!ct.includes('json') || res.status === 204) return undefined as T;
@@ -502,8 +516,9 @@ export const api = {
     async getNotifyByToken(token: string): Promise<import('./types/api').NotifyInfo | null> {
         try {
             return await webFetch(`/orders/notify/${token}`);
-        } catch {
-            return null;
+        } catch (err) {
+            if (isNotFoundError(err)) return null;
+            throw err;
         }
     },
 
@@ -596,8 +611,9 @@ export const api = {
     async getWaitlistByToken(token: string): Promise<import('./types/api').WaitlistCancelInfo | null> {
         try {
             return await webFetch(`/waitlist/leave/${token}`);
-        } catch {
-            return null;
+        } catch (err) {
+            if (isNotFoundError(err)) return null;
+            throw err;
         }
     },
 

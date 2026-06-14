@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import { fade } from 'svelte/transition';
   import type { Figurine, FigurineSchedule } from '$lib/types/api';
   import UnifiedRequestModal from '$lib/components/UnifiedRequestModal.svelte';
@@ -140,7 +140,7 @@
     }
   }
 
-  let upcomingShowings = $derived(figurineSchedule.entries.filter(e => e.entryType === 'showing'));
+  let showings = $derived(figurineSchedule.entries.filter(e => e.entryType === 'showing'));
 
   // Nearest date when figurine is fully free (after all showings + blocking bookings).
   function localIsoDate(date = new Date()): string {
@@ -176,7 +176,11 @@
 
   let nextAvailableDate = $derived.by(() => {
     const today = todayStr;
-    const blocking = figurineSchedule.entries.filter(e => e.entryType === 'showing' || e.entryType === 'booking');
+    const blocking = figurineSchedule.entries.filter((e) => {
+      if (e.entryType !== 'showing' && e.entryType !== 'booking') return false;
+      if (figurine.status === 'available') return e.startsAt <= today && e.endsAt >= today;
+      return e.endsAt >= today;
+    });
     if (blocking.length === 0) return null;
     const latestEnd = blocking.reduce<string | null>((max, e) => !max || e.endsAt > max ? e.endsAt : max, null);
     if (!latestEnd) return null;
@@ -187,7 +191,7 @@
   });
 
   // Showing that is happening TODAY (started but not yet ended)
-  let hasActiveShowing = $derived(upcomingShowings.some(s => s.startsAt <= todayStr && s.endsAt >= todayStr));
+  let hasActiveShowing = $derived(showings.some(s => s.startsAt <= todayStr && s.endsAt >= todayStr));
 
 
   // === CLAIM TOKEN (self-cancellation) ===
@@ -199,6 +203,12 @@
 
   function fmtDate(ds: string) {
     return new Date(ds + 'T00:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
+  }
+
+  function maskToken(token: string): string {
+    const clean = token.trim();
+    if (clean.length <= 4) return clean;
+    return `${clean.slice(0, 2)}...${clean.slice(-2)}`;
   }
 
   function lookupStatusLabel(s: string): string {
@@ -259,12 +269,14 @@
   let storyObjectUrl = $state('');
   let showStoryModal = $state(false);
   let canNativeShare = $state(false);
+  let storyModalRef = $state<HTMLElement | null>(null);
 
   async function openStoryModal() {
     if (storySaving) return;
     storySaving = true;
     try {
-      const faceImg = figurine.images.find(i => i.imageType === 'face') ?? figurine.images[0];
+      const images = figurine.images ?? [];
+      const faceImg = images.find(i => i.imageType === 'face') ?? images[0];
       const imgSrc  = faceImg?.originalUrl ?? faceImg?.url ?? '';
       const W = 1080, H = 1920;
       const storyBase = themeColor('--color-canvas-base', '#f8f1e7');
@@ -325,6 +337,7 @@
 
       if (!blob) return;
 
+      if (storyObjectUrl) URL.revokeObjectURL(storyObjectUrl);
       storyBlob      = blob;
       storyObjectUrl = URL.createObjectURL(blob);
       const testFile = new File([blob], 'story.jpg', { type: 'image/jpeg' });
@@ -335,11 +348,20 @@
     }
   }
 
+  function storyFileName() {
+    const slug = figurine.name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/gi, '-')
+      .replace(/^-+|-+$/g, '') || 'figurine';
+    return `gotiga-${slug}-story.jpg`;
+  }
+
   function downloadStory() {
     if (!storyObjectUrl) return;
     const a = document.createElement('a');
     a.href = storyObjectUrl;
-    a.download = `gotiga-${figurine.name.replace(/\s+/g, '-').toLowerCase()}-story.jpg`;
+    a.download = storyFileName();
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     setTimeout(closeStoryModal, 250);
   }
@@ -358,6 +380,11 @@
     if (storyObjectUrl) { URL.revokeObjectURL(storyObjectUrl); storyObjectUrl = ''; }
     storyBlob = null;
   }
+
+  $effect(() => {
+    if (!showStoryModal || !storyModalRef) return;
+    void tick().then(() => storyModalRef?.focus());
+  });
 
   // ── Ink reveal ───────────────────────────────────────────────────────────
   let historyRef = $state<HTMLElement | null>(null);
@@ -384,12 +411,20 @@
     }).join(' ');
   }
 
+  function imagePriority(type: string | undefined | null): number {
+    switch (type) {
+      case 'face': return 0;
+      case 'full': return 1;
+      case 'detail': return 2;
+      default: return 3;
+    }
+  }
+
   let sortedImages = $derived(
-    figurine.images.slice().sort((a, b) => {
-      if (a.imageType === 'face') return -1;
-      if (b.imageType === 'face') return 1;
-      return 0;
-    })
+    (figurine.images ?? [])
+      .map((img, order) => ({ img, order }))
+      .sort((a, b) => imagePriority(a.img.imageType) - imagePriority(b.img.imageType) || a.order - b.order)
+      .map(({ img }) => img)
   );
 
   function clampImageIndex(index: number, imageCount = sortedImages.length) {
@@ -400,6 +435,39 @@
 
   let activeImageIndex = $derived(clampImageIndex(selectedImageIndex, sortedImages.length));
   let currentImage = $derived(sortedImages[activeImageIndex]);
+
+  // Stage adapts to the work's real proportion so the frame hugs the image
+  // instead of floating a landscape photo inside a tall portrait box. The
+  // orientation also reshapes the gallery: wide works move their thumbnail
+  // strip + caption below the image, so the column grows to match the dossier.
+  let stageAspect = $state('4 / 5');
+  let aspectNum = $state(0.8);
+  let isLandscape = $derived(aspectNum >= 1.1);
+  $effect(() => {
+    const url = resolveUrl(currentImage?.url);
+    if (!url || typeof Image === 'undefined') { stageAspect = '4 / 5'; aspectNum = 0.8; return; }
+    let cancelled = false;
+    const probe = new Image();
+    probe.onload = () => {
+      if (!cancelled && probe.naturalWidth > 0 && probe.naturalHeight > 0) {
+        stageAspect = `${probe.naturalWidth} / ${probe.naturalHeight}`;
+        aspectNum = probe.naturalWidth / probe.naturalHeight;
+      }
+    };
+    probe.src = url;
+    return () => { cancelled = true; };
+  });
+
+  // For portrait works, hug the plate to the image's real width and centre it
+  // without letting very narrow aspect ratios shrink the main photograph into a
+  // thumbnail. The max width mirrors the stage height cap, so the outer frame
+  // wraps the visible photo instead of leaving an empty mat column.
+  let plateStyle = $derived(
+    aspectNum < 1
+      ? `width: min(100%, min(clamp(28rem, 38vw, 42rem), calc(min(82vh, 880px) * ${aspectNum.toFixed(4)}))); margin-inline: auto;`
+      : ''
+  );
+
   let lightboxImages = $derived(
     sortedImages.map((img) => ({ url: resolveUrl(img.originalUrl ?? img.url), alt: img.altText ?? '' }))
   );
@@ -444,6 +512,12 @@
     for (const [v, s] of table) { while (n >= v) { out += s; n -= v; } }
     return out;
   }
+
+  function safeCssIdentifier(value: string): string {
+    return value.replace(/[^a-zA-Z0-9_-]/g, '-').replace(/^-+/, 'id-') || 'figurine';
+  }
+
+  let viewTransitionName = $derived(`figurine-${safeCssIdentifier(id)}`);
   let hasVideoSection = $derived(hasText(figurine.videoUrl));
   let hasWorkStorySection = $derived(hasHistorySection || hasMakingSection || hasVideoSection);
   let hasAttributesSection = $derived(
@@ -461,10 +535,18 @@
   function resolveUrl(path: string | undefined | null) { return resolveMediaUrl(path) ?? ''; }
   function imageTypeLabel(type: string | undefined | null) {
     switch (type) {
-      case 'face': return $t('detailImageFace');
+      case 'face': return $t('detailImageMain');
       case 'detail': return $t('detailImageDetail');
-      case 'full': return $t('detailImageFull');
+      case 'full': return $t('detailImageScale');
       default: return $t('detailImageView');
+    }
+  }
+  function imageRoleNote(type: string | undefined | null) {
+    switch (type) {
+      case 'face': return $t('detailImageMainNote');
+      case 'detail': return $t('detailImageDetailNote');
+      case 'full': return $t('detailImageScaleNote');
+      default: return $t('detailImageViewNote');
     }
   }
   function processStepLabel(type: string | undefined | null) {
@@ -621,7 +703,7 @@
   function defaultRequestIntent(): 'request' | 'waitlist' | 'viewing' | 'similar' | 'question' | 'notify' {
     if (figurine.status === 'reserved') return 'waitlist';
     if (figurine.status === 'in_progress') return 'notify';
-    if (figurine.status === 'sold') return 'similar';
+    if (figurine.status === 'sold') return 'notify';
     return hasActiveShowing ? 'viewing' : 'request';
   }
 
@@ -697,7 +779,7 @@
 
 <CandleReveal isActive={isCandleLit} />
 
-<div class="page-root page-root--has-cta" class:page-root--candle={isCandleLit}>
+<div class="page-root" class:page-root--has-cta={scrollY > 300} class:page-root--candle={isCandleLit}>
   <UnifiedRequestModal
     isOpen={showRequestModal}
     figurineName={figurine.name}
@@ -715,7 +797,7 @@
   {#if showStoryModal}
     <div class="story-backdrop" transition:fade={{ duration: 200 }}>
       <button type="button" class="story-backdrop-dismiss" onclick={closeStoryModal} aria-label={$t('lightboxClose')}></button>
-      <div class="story-modal" transition:fade={{ duration: 150 }}
+      <div class="story-modal" bind:this={storyModalRef} transition:fade={{ duration: 150 }}
            role="dialog" aria-modal="true" aria-labelledby="story-modal-title" tabindex="-1" use:focusTrap>
         <button type="button" class="story-close" onclick={closeStoryModal} aria-label={$t('lightboxClose')}>
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
@@ -954,7 +1036,11 @@
 
       <!-- LEFT: Gallery with vertical thumbnail strip -->
       <div class="gallery-col" bind:this={galleryRef}>
-        <div class="gallery-layout" class:gallery-layout--solo={sortedImages.length <= 1}>
+        <div
+          class="gallery-layout"
+          class:gallery-layout--solo={sortedImages.length <= 1}
+          class:gallery-layout--wide={isLandscape}
+        >
 
           {#if sortedImages.length > 1}
             <nav class="thumbs-strip" aria-label={$t('figurineShowView')}>
@@ -963,24 +1049,33 @@
                   type="button"
                   class="thumb-v {activeImageIndex === i ? 'thumb-v--active' : ''}"
                   onclick={() => selectImage(i)}
-                  aria-label="{$t('figurineShowView')} {i + 1}"
+                  aria-label="{imageTypeLabel(img.imageType)}: {imageRoleNote(img.imageType)}"
                   aria-current={activeImageIndex === i ? 'true' : undefined}
                 >
-                  <img src={resolveUrl(img.thumbUrl ?? img.url)} alt="" class="thumb-v-img" loading="lazy" />
+                  <span class="thumb-v-media">
+                    <img src={resolveUrl(img.thumbUrl ?? img.url)} alt="" class="thumb-v-img" loading="lazy" />
+                  </span>
+                  <span class="thumb-v-copy">
+                    <span class="thumb-v-label">{imageTypeLabel(img.imageType)}</span>
+                    <span class="thumb-v-note">{imageRoleNote(img.imageType)}</span>
+                  </span>
                   <div class="thumb-v-bar" aria-hidden="true"></div>
                 </button>
               {/each}
             </nav>
           {/if}
 
+          <figure class="image-col" style={plateStyle}>
           <div class="image-frame">
-            <div class="image-stage" style="view-transition-name: figurine-{id}">
+            <div class="image-stage" style="view-transition-name: {viewTransitionName}; aspect-ratio: {stageAspect};">
               {#key currentImage?.id}
                 <div class="image-layer" in:fade={{ duration: 220 }}>
                   <BrassLens
                     src={resolveUrl(currentImage?.url)}
                     alt={currentImage?.altText ?? figurine.name}
                     class="w-full h-full"
+                    imageFit="contain"
+                    objectPosition="center center"
                     onOpenLightbox={() => canOpenLightbox && openLightbox(activeImageIndex)}
                   />
                 </div>
@@ -1010,6 +1105,17 @@
               <div class="image-vignette"></div>
             </div>
           </div>
+
+          {#if currentImage}
+            <figcaption class="plate-caption">
+              <span class="plate-caption-label">{imageTypeLabel(currentImage.imageType)}</span>
+              <span class="plate-caption-note">{imageRoleNote(currentImage.imageType)}</span>
+              {#if hasText(figurine.dimensions)}
+                <span class="plate-caption-dim">{figurine.dimensions}</span>
+              {/if}
+            </figcaption>
+          {/if}
+          </figure>
         </div>
       </div>
 
@@ -1033,6 +1139,29 @@
 
         {#if hasText(figurine.shortText)}
           <p class="lore-short">{figurine.shortText}</p>
+        {/if}
+
+        {#if hasAttributesSection}
+          <dl class="hero-facts" aria-label={$t('figurineAttributes')}>
+            {#if hasText(figurine.dimensions)}
+              <div>
+                <dt>{$t('figurineDimensions')}</dt>
+                <dd>{figurine.dimensions}</dd>
+              </div>
+            {/if}
+            {#if hasText(figurine.material)}
+              <div>
+                <dt>{$t('figurineMaterial')}</dt>
+                <dd>{figurine.material}</dd>
+              </div>
+            {/if}
+            {#if hasText(figurine.technique)}
+              <div>
+                <dt>{$t('figurineTechnique')}</dt>
+                <dd>{figurine.technique}</dd>
+              </div>
+            {/if}
+          </dl>
         {/if}
 
         {#if hasText(figurine.secretText) && isCandleLit}
@@ -1178,7 +1307,7 @@
                           <div class="cp-row-main">
                             <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.6" class="cp-icon cp-icon--ok" aria-hidden="true"><path d="M1 5.5l3 3 6-6"/></svg>
                             <span class="cp-dates">{fmtDate(c.startsAt)} - {fmtDate(c.endsAt)}</span>
-                            <span class="cp-token">{c.token}</span>
+                            <span class="cp-token">{maskToken(c.token)}</span>
                             <div class="cp-actions">
                               <a href={authStore.isLoggedIn ? '/profile' : `/cancel/${c.token}`} class="cp-link">{$t('claimManageLink')}</a>
                               <button type="button" onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="cp-revoke">
