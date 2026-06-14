@@ -334,7 +334,7 @@
   }
 
   .brand-name {
-    font-family: 'Cormorant Garamond', 'Fraunces', Georgia, serif;
+    font-family: var(--font-display);
     font-size: 20px;
     font-weight: 400;
     letter-spacing: 0.3em;
@@ -344,7 +344,7 @@
   }
 
   .brand-sub {
-    font-family: 'Instrument Sans', var(--font-body), system-ui, sans-serif;
+    font-family: var(--font-body);
     font-size: 11px;
     letter-spacing: 0.14em;
     text-transform: uppercase;
@@ -404,7 +404,7 @@
     align-items: center;
     height: 68px;
     padding: 0 18px;
-    font-family: 'Instrument Sans', var(--font-body), system-ui, sans-serif;
+    font-family: var(--font-body);
     font-size: 12px;
     font-weight: 500;
     letter-spacing: 0.10em;

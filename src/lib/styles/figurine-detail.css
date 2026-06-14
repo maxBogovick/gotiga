@@ -6,12 +6,6 @@
   min-height: 100svh;
   padding-bottom: 3rem;
   color: var(--color-ink-primary);
-  /* The reader's chosen typeface governs the WHOLE detail page — headings,
-     labels and prose alike. Only --font-display/-body are remapped here;
-     --font-serif is left untouched (it already feeds --font-reading, so
-     remapping it would create a self-referential variable cycle). */
-  --font-display: var(--font-reading);
-  --font-body: var(--font-reading);
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--color-canvas-raised) 72%, white) 0%, var(--color-canvas-base) 32rem),
     var(--color-canvas-base);

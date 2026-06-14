@@ -95,7 +95,7 @@
   {/if}
 </svelte:head>
 
-<div class="min-h-screen bg-[#f8f1e7]">
+<div class="min-h-screen bg-[#f8f1e7]" class:reading-typeset={showSiteHeader}>
   {#if showSiteHeader}
     <SiteHeader />
   {/if}
@@ -110,6 +110,16 @@
 </div>
 
 <style>
+  /* The reader's chosen typeface governs the ENTIRE public site — header,
+     headings, body and prose on every page. Scoped to the wrapper (not :root)
+     so it overrides any admin font set inline on <html>, and excluded on /admin
+     so the design-system editor's own font preview keeps working.
+     --font-serif is left alone: it feeds --font-reading (would be a var cycle). */
+  .reading-typeset {
+    --font-display: var(--font-reading);
+    --font-body: var(--font-reading);
+  }
+
   .with-site-header {
     padding-top: 68px;
   }
