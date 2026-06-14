@@ -106,9 +106,33 @@
   // ── Keyboard ───────────────────────────────────────────────────────────────
   function handleKey(e: KeyboardEvent) {
     if (!isOpen) return;
-    if (e.key === 'Escape') onClose();
+    if (e.key === 'Escape') closeMirror();
     if (e.key === 'ArrowRight') currentStepIndex = Math.min(steps.length - 1, currentStepIndex + 1);
     if (e.key === 'ArrowLeft')  currentStepIndex = Math.max(0, currentStepIndex - 1);
+  }
+
+  function closeMirror() {
+    onClose();
+  }
+
+  function closeFromButton(e: MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    closeMirror();
+  }
+
+  function portal(node: HTMLElement) {
+    const parent = node.parentNode;
+    const anchor = document.createComment('memory-mirror-anchor');
+    parent?.insertBefore(anchor, node);
+    document.body.appendChild(node);
+
+    return {
+      destroy() {
+        node.remove();
+        anchor.remove();
+      }
+    };
   }
 
   let reduced = $state(false);
@@ -124,6 +148,15 @@
     window.removeEventListener('keydown', handleKey);
   });
 
+  $effect(() => {
+    if (!isOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  });
+
   let currentStep = $derived(steps[currentStepIndex]);
   let stepLabel = $derived(
     currentStep?.stepType === 'sketch'    ? $t('figurineStepSketch')    :
@@ -137,10 +170,10 @@
 {#if isOpen}
   <div
     class="mirror-overlay"
-    transition:fade={{ duration: 600 }}
     role="dialog"
     aria-modal="true"
     aria-label={$t('mirrorTitle')}
+    use:portal
   >
     <!-- ── HEADER ──────────────────────────────────────────────────────────── -->
     <header class="mirror-header">
@@ -153,7 +186,12 @@
 
       <p class="mirror-hint">{$t('mirrorHint')}</p>
 
-      <button class="mirror-close" onclick={onClose} aria-label={$t('figurineGrimoireClose')}>
+      <button
+        type="button"
+        class="mirror-close"
+        onclick={closeFromButton}
+        aria-label={$t('figurineGrimoireClose')}
+      >
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">
           <path d="M1 1l12 12M13 1L1 13"/>
         </svg>
@@ -244,27 +282,47 @@
   /* ── Overlay ── */
   .mirror-overlay {
     position: fixed;
-    inset: 0;
+    top: 0;
+    left: 0;
     /* Above SiteHeader and its dropdown layers. */
     z-index: 1000;
-    display: flex;
-    flex-direction: column;
-    background: rgba(248, 241, 231, 0.97);
-    backdrop-filter: blur(12px) saturate(1.2);
-    -webkit-backdrop-filter: blur(12px) saturate(1.2);
+    display: grid;
+    grid-template-rows: 64px minmax(0, 1fr) auto;
+    width: 100vw;
+    height: 100vh;
+    min-height: 100dvh;
+    overflow: hidden;
+    background:
+      radial-gradient(ellipse 80% 70% at 50% 35%, rgba(253, 250, 245, 0.96) 0%, rgba(248, 241, 231, 0.98) 62%, #f8f1e7 100%),
+      #f8f1e7;
+    isolation: isolate;
+  }
+
+  .mirror-overlay::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    opacity: 0.045;
+    mix-blend-mode: multiply;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-size: 180px 180px;
   }
 
   /* ── Header ── */
   .mirror-header {
+    position: relative;
+    z-index: 3;
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
     padding: 0 2rem;
-    height: 60px;
-    flex-shrink: 0;
+    min-height: 64px;
     border-bottom: 1px solid rgba(180, 140, 100, 0.18);
-    background: rgba(253, 250, 245, 0.80);
+    background: rgba(253, 250, 245, 0.96);
+    box-shadow: 0 1px 0 rgba(255, 249, 240, 0.9) inset;
   }
 
   .mirror-header-left {
@@ -310,6 +368,8 @@
 
   /* ── Кнопка закрытия — намеренно крупная и очевидная ── */
   .mirror-close {
+    position: relative;
+    z-index: 4;
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
@@ -341,20 +401,18 @@
 
   /* ── Canvas stage ── */
   .mirror-stage {
-    flex: 1;
     min-height: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 1.5rem 2rem;
+    display: grid;
+    place-items: center;
+    padding: clamp(1rem, 3vh, 2rem) clamp(1rem, 4vw, 3rem);
+    overflow: hidden;
   }
 
   .mirror-canvas-wrap {
     position: relative;
-    width: 100%;
-    max-width: 860px;
-    height: 100%;
-    max-height: 520px;
+    width: min(100%, 980px);
+    height: min(100%, calc((100vw - 2rem) * 0.75), 620px);
+    max-height: 100%;
     aspect-ratio: 4/3;
     background: var(--color-canvas-raised);
     border: 1px solid rgba(180,140,100,0.22);
@@ -443,10 +501,11 @@
     align-items: center;
     justify-content: center;
     gap: 0;
-    padding: 1rem 2rem 1.25rem;
-    flex-shrink: 0;
+    min-height: 94px;
+    padding: 0.85rem 2rem calc(0.95rem + env(safe-area-inset-bottom, 0px));
     border-top: 1px solid rgba(180,140,100,0.14);
-    background: rgba(253,250,245,0.7);
+    background: rgba(253,250,245,0.96);
+    box-shadow: 0 -18px 50px rgba(111, 59, 36, 0.07);
     overflow-x: auto;
     scrollbar-width: none;
   }
@@ -524,7 +583,11 @@
   }
 
   @media (max-width: 480px) {
-    .mirror-header { padding: 0 1rem; }
+    .mirror-overlay {
+      grid-template-rows: 58px minmax(0, 1fr) auto;
+    }
+
+    .mirror-header { padding: 0 1rem; min-height: 58px; }
     .mirror-stage  { padding: 1rem; }
     .film-thumb    { width: 38px; height: 38px; }
     .mirror-close span { display: none; }

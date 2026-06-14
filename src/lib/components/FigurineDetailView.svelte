@@ -491,7 +491,18 @@
     lightboxStartIndex = Math.max(0, Math.min(lightboxImages.length - 1, index));
     showLightbox = true;
   }
-  function toggleGrimoire() { isGrimoireOpen = !isGrimoireOpen; }
+  let lastGrimoireCloseAt = $state(0);
+
+  function openGrimoire() {
+    if (Date.now() - lastGrimoireCloseAt < 350) return;
+    isGrimoireOpen = true;
+  }
+
+  function closeGrimoire() {
+    lastGrimoireCloseAt = Date.now();
+    isGrimoireOpen = false;
+  }
+
   function toggleCandle() { isCandleLit = !isCandleLit; }
 
   function toggleFullscreen() {
@@ -750,6 +761,13 @@
   {#if showLightbox}
     <Lightbox images={lightboxImages} startIndex={lightboxStartIndex} onClose={() => (showLightbox = false)} />
   {/if}
+
+  <MemoryMirror
+    isOpen={isGrimoireOpen}
+    steps={visibleProcessSteps}
+    finalImage={resolveUrl(currentImage?.url)}
+    onClose={closeGrimoire}
+  />
 
   <div class="page-container">
 
@@ -1307,7 +1325,7 @@
             <!-- Memory Mirror demoted to a quiet continuation of this same act —
                  with the reveal as teaser, it leads to every in-between stage. -->
             {#if showMirrorLink}
-              <button type="button" onclick={toggleGrimoire} class="mirror-link" aria-expanded={isGrimoireOpen}>
+              <button type="button" onclick={openGrimoire} class="mirror-link" aria-expanded={isGrimoireOpen}>
                 <span class="mirror-link-mark" aria-hidden="true"></span>
                 <span class="mirror-link-label">{$t('figurineGrimoire')}</span>
                 <span class="mirror-link-count">{visibleProcessSteps.length} {$t('figurineGrimoireSub')}</span>
@@ -1326,12 +1344,6 @@
                 </svg>
               </button>
             {/if}
-            <MemoryMirror
-              isOpen={isGrimoireOpen}
-              steps={visibleProcessSteps}
-              finalImage={resolveUrl(currentImage?.url)}
-              onClose={() => (isGrimoireOpen = false)}
-            />
           </div>
         {/if}
 
