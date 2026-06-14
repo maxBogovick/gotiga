@@ -6,8 +6,10 @@
   import BrassLens from '$lib/components/BrassLens.svelte';
   import CandleReveal from '$lib/components/CandleReveal.svelte';
   import MemoryMirror from '$lib/components/MemoryMirror.svelte';
+  import BecomingReveal from '$lib/components/BecomingReveal.svelte';
   import SecretText from '$lib/components/SecretText.svelte';
   import Lightbox from '$lib/components/Lightbox.svelte';
+  import FontSwitcher from '$lib/components/FontSwitcher.svelte';
   import { api, resolveMediaUrl } from '$lib/api';
   import { t } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
@@ -415,6 +417,33 @@
   );
   let hasHistorySection = $derived(hasText(figurine.fullDescription));
   let hasMakingSection = $derived(visibleProcessSteps.length > 0);
+
+  // "The Becoming" reveal: first stage (raw) ↔ the finished work.
+  let firstStep = $derived(visibleProcessSteps[0]);
+  let lastStep = $derived(visibleProcessSteps[visibleProcessSteps.length - 1]);
+  let becomingBefore = $derived(firstStep ? resolveUrl(firstStep.imageUrl) : '');
+  let becomingAfter = $derived(currentImage?.url ? resolveUrl(currentImage.url) : '');
+  let hasBecoming = $derived(
+    hasText(firstStep?.imageUrl) && hasText(currentImage?.url) && becomingBefore !== becomingAfter
+  );
+  // With the reveal in place, the Memory Mirror is the way to all the in-between
+  // stages — surface it whenever there is a real sequence (≥2), not only >4.
+  let showMirrorLink = $derived(
+    hasBecoming ? visibleProcessSteps.length >= 2 : visibleProcessSteps.length > 4
+  );
+
+  function toRoman(n: number): string {
+    if (!Number.isFinite(n) || n <= 0) return String(n);
+    if (n >= 4000) return String(n);
+    const table: [number, string][] = [
+      [1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'],
+      [100, 'C'], [90, 'XC'], [50, 'L'], [40, 'XL'],
+      [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I'],
+    ];
+    let out = '';
+    for (const [v, s] of table) { while (n >= v) { out += s; n -= v; } }
+    return out;
+  }
   let hasVideoSection = $derived(hasText(figurine.videoUrl));
   let hasWorkStorySection = $derived(hasHistorySection || hasMakingSection || hasVideoSection);
   let hasAttributesSection = $derived(
@@ -1210,6 +1239,7 @@
             <header class="d-section-header">
               <span class="sec-label">{$t('figurineHistory')}</span>
               <div class="sec-rule" aria-hidden="true"></div>
+              <FontSwitcher variant="colophon" />
             </header>
             <p bind:this={historyRef} class="history-body drop-cap">
               {#if inkReady}
@@ -1236,11 +1266,20 @@
                 <h2 class="making-title">
                   {figurine.status === 'in_progress' ? $t('detailMakingProgressTitle') : $t('detailMakingRecordTitle')}
                 </h2>
-                <p class="making-text">
-                  {figurine.status === 'in_progress' ? $t('detailMakingProgressText') : $t('detailMakingRecordText')}
+                <p class="making-colophon">
+                  {toRoman(visibleProcessSteps.length)} {$t('detailMakingStages')}<span class="mc-sep">·</span>{processStepLabel(firstStep?.stepType)} → {#if figurine.status === 'in_progress'}{$t('detailMakingLive')}{:else}{processStepLabel(lastStep?.stepType)}<span class="mc-sep">·</span>{$t('detailMakingByOneHand')}{/if}
                 </p>
               </div>
 
+              {#if hasBecoming}
+                <BecomingReveal
+                  beforeSrc={becomingBefore}
+                  afterSrc={becomingAfter}
+                  beforeLabel={processStepLabel(firstStep?.stepType)}
+                  afterLabel={$t('detailBecomingFinished')}
+                  hint={$t('detailBecomingHint')}
+                />
+              {:else}
               <div class="making-strip" aria-label={$t('detailMakingRecordTitle')}>
                 {#each visibleProcessSteps.slice(0, 4) as step, i (step.id)}
                   <article class="making-card">
@@ -1261,12 +1300,13 @@
                   </article>
                 {/each}
               </div>
+              {/if}
 
             </div>
 
             <!-- Memory Mirror demoted to a quiet continuation of this same act —
-                 only when there are more steps than the preview strip shows. -->
-            {#if visibleProcessSteps.length > 4}
+                 with the reveal as teaser, it leads to every in-between stage. -->
+            {#if showMirrorLink}
               <button type="button" onclick={toggleGrimoire} class="mirror-link" aria-expanded={isGrimoireOpen}>
                 <span class="mirror-link-mark" aria-hidden="true"></span>
                 <span class="mirror-link-label">{$t('figurineGrimoire')}</span>

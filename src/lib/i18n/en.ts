@@ -241,6 +241,10 @@ export const en = {
   detailMakingProgressKicker:'In the making',
   detailMakingProgressTitle: 'This figure is taking shape now',
   detailMakingProgressText:  'These are its latest steps from the workshop. Follow the progress and the author will tell you the moment it is ready.',
+  detailMakingStages:      'stages',
+  detailMakingByOneHand:   'by one hand',
+  detailBecomingFinished:  'Finished',
+  detailBecomingHint:      'Drag to watch it take shape',
   detailPresenceLabel:     'Where to see it',
   detailPresenceOnExhibition:'Currently on exhibition',
   detailPresenceAvailableNow:'Available now · a viewing can be arranged',
@@ -837,6 +841,12 @@ export const en = {
   navMenu:     'Open navigation',
   navAdmin:    'Admin access',
   navLanguage: 'Language',
+  navTypeface: 'Reading typeface',
+
+  // === READING TYPEFACE ===
+  readingColophon: 'set in',
+  readingMenuTitle: 'Reading typeface',
+  readingMenuHint: 'Choose the type the prose is set in. Your choice is remembered.',
 
   // === PROFILE ===
   profileTitle:          'Your archive',

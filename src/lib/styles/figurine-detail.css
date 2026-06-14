@@ -894,7 +894,7 @@
   padding-top: 0.75rem;
   border-top: 1px solid color-mix(in srgb, var(--color-ink-primary) 8%, transparent);
   color: var(--color-ember-deep);
-  font-family: var(--font-serif);
+  font-family: var(--font-reading);
   font-size: 1rem;
   font-style: italic;
   letter-spacing: 0;
@@ -1674,7 +1674,7 @@
   max-width: 40rem;
   margin: 0;
   color: color-mix(in srgb, var(--color-ink-primary) 88%, transparent);
-  font-family: var(--font-serif);
+  font-family: var(--font-reading);
   font-size: 1rem;
   font-weight: 400;
   line-height: 1.68;
@@ -1830,13 +1830,24 @@
   text-wrap: balance;
 }
 
-.making-text {
+/* Factual labour colophon — replaces the generic boilerplate paragraph */
+.making-colophon {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.1rem 0.35rem;
   margin: 0;
-  color: color-mix(in srgb, var(--color-ink-secondary) 78%, transparent);
-  font-family: var(--font-serif);
-  font-size: 0.9rem;
-  font-style: italic;
-  line-height: 1.48;
+  color: color-mix(in srgb, var(--color-ink-secondary) 70%, transparent);
+  font-family: var(--font-body);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  line-height: 1.5;
+  text-transform: uppercase;
+}
+
+.making-colophon .mc-sep {
+  color: color-mix(in srgb, var(--color-ink-primary) 30%, transparent);
 }
 
 .making-strip {
@@ -1935,7 +1946,7 @@
   overflow: hidden;
   margin: 0;
   color: color-mix(in srgb, var(--color-ink-secondary) 72%, transparent);
-  font-family: var(--font-serif);
+  font-family: var(--font-reading);
   font-size: 0.78rem;
   font-style: italic;
   line-height: 1.35;
@@ -2139,7 +2150,7 @@
   max-width: none;
   margin: 0;
   color: color-mix(in srgb, var(--color-ink-secondary) 78%, transparent);
-  font-family: var(--font-serif);
+  font-family: var(--font-reading);
   font-size: 0.95rem;
   font-style: italic;
   line-height: 1.45;
@@ -2326,7 +2337,7 @@
   overflow: hidden;
   margin: 0.45rem 0 0.8rem;
   color: color-mix(in srgb, var(--color-ink-secondary) 74%, transparent);
-  font-family: var(--font-serif);
+  font-family: var(--font-reading);
   font-size: 0.86rem;
   font-style: italic;
   line-height: 1.35;
@@ -2502,7 +2513,7 @@
 .story-hint {
   margin: 0;
   color: color-mix(in srgb, var(--color-ink-secondary) 55%, transparent);
-  font-family: var(--font-serif);
+  font-family: var(--font-reading);
   font-size: 0.72rem;
   font-style: italic;
   line-height: 1.45;

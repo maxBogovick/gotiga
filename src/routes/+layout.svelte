@@ -7,6 +7,7 @@
   import DustParticles from '$lib/components/DustParticles.svelte';
   import { themeConfig, themeCSS, startListeningForPreview, applyPreviewPayload } from '$lib/stores/theme.svelte';
   import { setCopyOverrides } from '$lib/i18n';
+  import '$lib/stores/reading-font.svelte'; // initialises --font-reading from saved preference
   import { api } from '$lib/api';
   import type { Lang } from '$lib/i18n';
 

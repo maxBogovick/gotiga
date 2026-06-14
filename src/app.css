@@ -98,6 +98,9 @@
   --font-display: 'Fraunces', Georgia, serif;
   --font-body: 'DM Sans', system-ui, sans-serif;
   --font-serif: 'EB Garamond', Georgia, serif;
+  /* Reader's chosen prose typeface — set at runtime by reading-font store;
+     falls back to the admin-controlled serif when no choice is made. */
+  --font-reading: var(--font-serif);
   --font-mono: 'JetBrains Mono', monospace;
   --font-cinzel: var(--font-body);
   --font-gothic: var(--font-display);
@@ -227,13 +230,13 @@
 
   em {
     font-style: italic;
-    font-family: var(--font-serif);
+    font-family: var(--font-reading);
     font-size: 1.05em;
   }
 
   /* Garamond quotes */
   blockquote {
-    font-family: var(--font-serif);
+    font-family: var(--font-reading);
     font-size: 1.2rem;
     line-height: 1.7;
     color: var(--color-ink-tertiary);
@@ -802,7 +805,7 @@
   }
 
   .section-subtitle {
-    font-family: var(--font-serif);
+    font-family: var(--font-reading);
     font-size: 1.0625rem;
     font-style: italic;
     color: var(--color-ink-tertiary);
@@ -987,7 +990,7 @@
   }
 
   .text-serif {
-    font-family: var(--font-serif);
+    font-family: var(--font-reading);
     font-style: italic;
   }
 

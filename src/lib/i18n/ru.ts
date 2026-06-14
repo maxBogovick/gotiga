@@ -242,6 +242,10 @@ export const ru: Record<TranslationKey, string> = {
   detailMakingProgressKicker:'В работе',
   detailMakingProgressTitle: 'Эта фигура рождается прямо сейчас',
   detailMakingProgressText:  'Это её последние этапы из мастерской. Следите за процессом — автор сообщит, как только она будет готова.',
+  detailMakingStages:      'стадий',
+  detailMakingByOneHand:   'в одну руку',
+  detailBecomingFinished:  'Готово',
+  detailBecomingHint:      'Тяните, чтобы увидеть, как обретает форму',
   detailPresenceLabel:     'Где увидеть',
   detailPresenceOnExhibition:'Сейчас на выставке',
   detailPresenceAvailableNow:'Доступна · просмотр можно организовать',
@@ -839,6 +843,12 @@ export const ru: Record<TranslationKey, string> = {
   navMenu:     'Открыть навигацию',
   navAdmin:    'Доступ администратора',
   navLanguage: 'Язык',
+  navTypeface: 'Шрифт чтения',
+
+  // === READING TYPEFACE ===
+  readingColophon: 'набрано шрифтом',
+  readingMenuTitle: 'Шрифт чтения',
+  readingMenuHint: 'Выберите, каким шрифтом набрана проза. Выбор запомнится.',
 
   // === PROFILE ===
   profileTitle:          'Ваш архив',

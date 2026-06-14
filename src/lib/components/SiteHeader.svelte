@@ -3,6 +3,7 @@
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import LangSwitcher from '$lib/components/LangSwitcher.svelte';
+  import FontSwitcher from '$lib/components/FontSwitcher.svelte';
   import { allClaims } from '$lib/stores/all-claims.svelte';
   import { authStore } from '$lib/stores/auth.svelte';
   import { t } from '$lib/i18n';
@@ -132,6 +133,7 @@
 
   <div class="header-end">
     <LangSwitcher variant="light" />
+    <FontSwitcher variant="header" />
 
     <!-- Bookings indicator -->
     <div class="bookings-anchor" bind:this={panelRef}>
