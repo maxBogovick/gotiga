@@ -245,8 +245,8 @@
   .mirror-overlay {
     position: fixed;
     inset: 0;
-    /* выше SiteHeader (z: 200) */
-    z-index: 220;
+    /* Above SiteHeader and its dropdown layers. */
+    z-index: 1000;
     display: flex;
     flex-direction: column;
     background: rgba(248, 241, 231, 0.97);

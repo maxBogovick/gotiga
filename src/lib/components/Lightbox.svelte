@@ -194,8 +194,8 @@
   .lb-overlay {
     position: fixed;
     inset: 0;
-    /* выше SiteHeader (200) и MemoryMirror (220) */
-    z-index: 230;
+    /* Above SiteHeader and its dropdown layers. */
+    z-index: 1000;
     background: rgba(16, 8, 4, 0.97);
     display: flex;
     flex-direction: column;

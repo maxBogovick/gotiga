@@ -109,7 +109,7 @@
 {#if isOpen}
   <!-- Backdrop -->
   <div
-          class="fixed inset-0 z-[220] flex items-center justify-center p-4 bg-[#6f3b24]/35 backdrop-blur-sm"
+          class="fixed inset-0 z-[1000] flex items-center justify-center p-4 bg-[#6f3b24]/35 backdrop-blur-sm"
           transition:fade={{ duration: 400 }}
           onclick={(e) => { if (e.target === e.currentTarget) close(); }}
           onkeydown={handleBackdropKeydown}

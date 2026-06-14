@@ -65,7 +65,7 @@
   .att-lightbox {
     position: fixed;
     inset: 0;
-    z-index: 300;
+    z-index: 1000;
     display: flex;
     align-items: center;
     justify-content: center;

@@ -131,6 +131,17 @@
   --border2: color-mix(in srgb, var(--color-ink-primary) 18%, transparent);
 }
 
+/*
+  Public modals are mounted inside route components, while SiteHeader is a
+  fixed sibling in the root layout. Some pages create their own stacking
+  contexts, so a modal's local z-index cannot always overtake the header.
+  When any modal dialog is open, push the header behind the modal layer.
+*/
+:root:has([aria-modal="true"]) .site-header {
+  z-index: -1 !important;
+  pointer-events: none;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    BASE LAYER
    ═══════════════════════════════════════════════════════════════════════════ */
