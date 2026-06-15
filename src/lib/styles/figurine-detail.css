@@ -584,8 +584,7 @@
 /* image + its caption form one cell ("the plate") */
 .image-col {
   --plate-max-width: 860px;
-  --image-aspect-ratio: 4 / 5;
-  --stage-max-height: 620px;
+  --viewer-aspect-ratio: 16 / 10;
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
@@ -793,10 +792,9 @@
 
 .image-stage {
   position: relative;
-  aspect-ratio: var(--image-aspect-ratio);
+  aspect-ratio: var(--viewer-aspect-ratio);
   height: auto;
   min-height: 0;
-  max-height: var(--stage-max-height);
   overflow: hidden;
   border-radius: 3px;
   background:
@@ -858,6 +856,13 @@
   gap: 0;
   padding: 0.16rem;
   border: 1px solid color-mix(in srgb, var(--color-canvas-raised) 18%, transparent);
+  opacity: 0.78;
+  transition: opacity var(--duration-fast) var(--ease-atelier);
+}
+
+.image-stage:hover .image-view-tools,
+.image-view-tools:focus-within {
+  opacity: 1;
 }
 
 .image-view-tool {

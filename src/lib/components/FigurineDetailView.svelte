@@ -472,15 +472,10 @@
   // Stage adapts to the work's real proportion. The gallery grid itself stays
   // stable while the image probe resolves, which avoids the tiny-photo/blank-mat
   // layout shifts that came from changing the grid after first paint.
-  let stageAspect = $state('4 / 5');
   let aspectNum = $state(0.8);
-  let imageAspectReady = $state(false);
-  let viewportHeight = $state(900);
 
   function resetImageAspect() {
-    stageAspect = '4 / 5';
     aspectNum = 0.8;
-    imageAspectReady = false;
   }
 
   $effect(() => {
@@ -493,9 +488,7 @@
     const probe = new Image();
     probe.onload = () => {
       if (!cancelled && probe.naturalWidth > 0 && probe.naturalHeight > 0) {
-        stageAspect = `${probe.naturalWidth} / ${probe.naturalHeight}`;
         aspectNum = probe.naturalWidth / probe.naturalHeight;
-        imageAspectReady = true;
         void tick().then(onScroll);
       }
     };
@@ -509,20 +502,8 @@
     return () => { cancelled = true; };
   });
 
-  let stageMaxHeightPx = $derived(
-    Math.round(Math.max(440, Math.min(680, viewportHeight - 300)))
-  );
-
-  let plateMaxWidthPx = $derived.by(() => {
-    const aspect = imageAspectReady ? aspectNum : 1.25;
-    const heightBoundWidth = stageMaxHeightPx * aspect;
-    const hardMax = aspect >= 1 ? 880 : 680;
-    return Math.round(Math.max(340, Math.min(hardMax, heightBoundWidth)));
-  });
-
-  let plateStyle = $derived(
-    `--image-aspect-ratio: ${stageAspect}; --plate-max-width: ${plateMaxWidthPx}px; --stage-max-height: ${stageMaxHeightPx}px;`
-  );
+  let viewerAspect = $derived(aspectNum < 0.9 ? '5 / 4' : '16 / 10');
+  let plateStyle = $derived(`--viewer-aspect-ratio: ${viewerAspect};`);
 
   let lightboxImages = $derived(
     sortedImages.map((img) => ({ url: resolveUrl(img.originalUrl ?? img.url), alt: img.altText ?? '' }))
@@ -622,7 +603,10 @@
       return;
     }
     const nextIndex = clampImageIndex(index, sortedImages.length);
-    if (nextIndex !== selectedImageIndex) selectedImageIndex = nextIndex;
+    if (nextIndex !== selectedImageIndex) {
+      selectedImageIndex = nextIndex;
+      imageViewMode = 'fit';
+    }
   }
   function openLightbox(index: number) {
     if (!canOpenLightbox) return;
@@ -802,11 +786,6 @@
     }
   }
 
-  function updateViewportHeight() {
-    viewportHeight = window.innerHeight || viewportHeight;
-    requestAnimationFrame(onScroll);
-  }
-
   function handleVisibility() {
     if (document.visibilityState === 'visible') {
       refreshToday();
@@ -818,9 +797,7 @@
   onMount(() => {
     window.addEventListener('keydown', handleKeydown);
     window.addEventListener('scroll', onScroll, { passive: true });
-    window.addEventListener('resize', updateViewportHeight, { passive: true });
     document.addEventListener('visibilitychange', handleVisibility);
-    updateViewportHeight();
     refreshToday();
     scheduleTodayRefresh();
     onScroll();
@@ -839,7 +816,6 @@
   onDestroy(() => {
     window.removeEventListener('keydown', handleKeydown);
     window.removeEventListener('scroll', onScroll);
-    window.removeEventListener('resize', updateViewportHeight);
     document.removeEventListener('visibilitychange', handleVisibility);
     if (copiedTimer) clearTimeout(copiedTimer);
     galleryResizeObserver?.disconnect();
@@ -1118,10 +1094,11 @@
 
       <!-- LEFT: Gallery with vertical thumbnail strip -->
       <div class="gallery-col" bind:this={galleryRef}>
-        <div
-          class="gallery-layout"
-          class:gallery-layout--solo={sortedImages.length <= 1}
-        >
+	        <div
+	          class="gallery-layout"
+	          class:gallery-layout--solo={sortedImages.length <= 1}
+	          style={plateStyle}
+	        >
 
           {#if sortedImages.length > 1}
             <nav class="thumbs-strip" aria-label={$t('figurineShowView')}>
@@ -1146,7 +1123,7 @@
             </nav>
           {/if}
 
-          <figure class="image-col" style={plateStyle}>
+	          <figure class="image-col">
             <div class="image-frame">
               <div
                 class="image-stage"
