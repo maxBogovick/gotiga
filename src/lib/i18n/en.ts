@@ -239,6 +239,9 @@ export const en = {
   detailImageScaleNote:    'Full form',
   detailImageView:         'View',
   detailImageViewNote:     'Additional view',
+  detailImageViewMode:     'Image view mode',
+  detailImageFit:          'Fit',
+  detailImageDetailView:   'Detail',
   detailMakingRecordKicker:'Making record',
   detailMakingRecordTitle: 'How this figure took shape',
   detailMakingRecordText:  'Sketches, material tests, and workshop traces show that the work is made by hand, one step at a time.',
@@ -288,6 +291,7 @@ export const en = {
   storyShare:             'Share',
   storyDownload:          'Save to device',
   storyHint:              'Open Instagram → New Story → select from gallery',
+  storyBuildError:        'Could not prepare the story image. Please try again.',
   orderNotifyRelated:     'Available now',
   figurineBook:        'Reserve Dates',
   figurineBookNote:    'Book a viewing period',
@@ -1163,6 +1167,8 @@ export const en = {
   detailNotifyStop:        'Stop notifications',
   detailNotifyStopping:    'Stopping…',
   detailNotifyStopped:     'Notifications stopped.',
+  detailReceiptStale:      'Could not refresh this record. The saved token is kept; please try again later.',
+  detailScheduleLoadStale: 'Schedule could not be refreshed. Availability may be outdated.',
 
   // === ADMIN TABS ===
   adminTabWaitlist:        'Waitlist',

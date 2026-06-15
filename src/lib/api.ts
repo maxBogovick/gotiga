@@ -546,11 +546,7 @@ export const api = {
     // === SCHEDULE & BOOKINGS (PUBLIC) ===
 
     async getFigurineSchedule(figurineId: string): Promise<FigurineSchedule> {
-        try {
-            return await webFetch(`/figurines/${figurineId}/schedule`);
-        } catch {
-            return { entries: [] };
-        }
+        return webFetch(`/figurines/${figurineId}/schedule`);
     },
 
     async submitBooking(req: CreateBookingRequest): Promise<import('./types/api').BookingCreatedResponse> {

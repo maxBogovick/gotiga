@@ -38,6 +38,7 @@
   let showRequestModal = $state(false);
   let requestInitialIntent = $state<'request' | 'waitlist' | 'viewing' | 'similar' | 'question' | 'notify'>('request');
   let figurineSchedule = $state<FigurineSchedule>({ entries: [] });
+  let scheduleLoadFailed = $state(false);
   let isAudioPlaying = $state(false);
   let isCandleLit = $state(false);
   let showLightbox = $state(false);
@@ -50,6 +51,7 @@
   let queuePosition = $state(0);
   let queueLeaving = $state(false);
   let queueLeft = $state(false);
+  let queueLookupStale = $state(false);
 
   function readQueueToken(): string | null {
     try { return localStorage.getItem(queueKey); } catch { return null; }
@@ -60,6 +62,7 @@
     if (!token) return;
     try {
       const info = await api.getWaitlistByToken(token);
+      queueLookupStale = false;
       if (info) {
         queuePosition = info.position;
         queueLeft = false;
@@ -70,6 +73,7 @@
       }
     } catch {
       // Keep the local token; this can be a transient network/backend error.
+      queueLookupStale = true;
     }
   }
 
@@ -77,6 +81,7 @@
     try { localStorage.setItem(queueKey, token); } catch {}
     queuePosition = position;
     queueLeft = false;
+    queueLookupStale = false;
   }
 
   async function leaveQueue() {
@@ -88,6 +93,7 @@
       try { localStorage.removeItem(queueKey); } catch {}
       queuePosition = 0;
       queueLeft = true;
+      queueLookupStale = false;
     } finally {
       queueLeaving = false;
     }
@@ -98,6 +104,7 @@
   let notifyActive = $state(false);
   let notifyStopping = $state(false);
   let notifyStopped = $state(false);
+  let notifyLookupStale = $state(false);
 
   function readNotifyToken(): string | null {
     try { return localStorage.getItem(notifyKey); } catch { return null; }
@@ -108,6 +115,7 @@
     if (!token) return;
     try {
       const info = await api.getNotifyByToken(token);
+      notifyLookupStale = false;
       if (info) {
         notifyActive = true;
         notifyStopped = false;
@@ -117,6 +125,7 @@
       }
     } catch {
       // Keep the local token; this can be a transient network/backend error.
+      notifyLookupStale = true;
     }
   }
 
@@ -124,6 +133,7 @@
     try { localStorage.setItem(notifyKey, token); } catch {}
     notifyActive = true;
     notifyStopped = false;
+    notifyLookupStale = false;
   }
 
   async function stopNotify() {
@@ -135,6 +145,7 @@
       try { localStorage.removeItem(notifyKey); } catch {}
       notifyActive = false;
       notifyStopped = true;
+      notifyLookupStale = false;
     } finally {
       notifyStopping = false;
     }
@@ -198,8 +209,17 @@
   // figurine.id captured once — component is never remounted with a different figurine
   // svelte-ignore state_referenced_locally
   const cs = new FigurineClaimsStore(id, () => {
-    api.getFigurineSchedule(id).then(s => { figurineSchedule = s; }).catch(() => {});
+    void loadSchedule();
   });
+
+  async function loadSchedule() {
+    try {
+      figurineSchedule = await api.getFigurineSchedule(id);
+      scheduleLoadFailed = false;
+    } catch {
+      scheduleLoadFailed = true;
+    }
+  }
 
   function fmtDate(ds: string) {
     return new Date(ds + 'T00:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
@@ -270,10 +290,12 @@
   let showStoryModal = $state(false);
   let canNativeShare = $state(false);
   let storyModalRef = $state<HTMLElement | null>(null);
+  let storyError = $state('');
 
   async function openStoryModal() {
     if (storySaving) return;
     storySaving = true;
+    storyError = '';
     try {
       const images = figurine.images ?? [];
       const faceImg = images.find(i => i.imageType === 'face') ?? images[0];
@@ -285,7 +307,8 @@
       async function buildCanvas(withImage: boolean): Promise<HTMLCanvasElement> {
         const cv = document.createElement('canvas');
         cv.width = W; cv.height = H;
-        const ctx = cv.getContext('2d')!;
+        const ctx = cv.getContext('2d');
+        if (!ctx) throw new Error('Canvas 2D context is unavailable');
         ctx.fillStyle = storyBase;
         ctx.fillRect(0, 0, W, H);
         if (withImage && imgSrc) {
@@ -331,11 +354,19 @@
         const cv = await buildCanvas(true);
         blob = await new Promise<Blob | null>(res => cv.toBlob(res, 'image/jpeg', 0.92));
       } catch {
-        const cv = await buildCanvas(false);
-        blob = await new Promise<Blob | null>(res => cv.toBlob(res, 'image/jpeg', 0.92));
+        try {
+          const cv = await buildCanvas(false);
+          blob = await new Promise<Blob | null>(res => cv.toBlob(res, 'image/jpeg', 0.92));
+        } catch {
+          storyError = $t('storyBuildError');
+          return;
+        }
       }
 
-      if (!blob) return;
+      if (!blob) {
+        storyError = $t('storyBuildError');
+        return;
+      }
 
       if (storyObjectUrl) URL.revokeObjectURL(storyObjectUrl);
       storyBlob      = blob;
@@ -435,37 +466,62 @@
 
   let activeImageIndex = $derived(clampImageIndex(selectedImageIndex, sortedImages.length));
   let currentImage = $derived(sortedImages[activeImageIndex]);
+  let imageViewMode = $state<'fit' | 'detail'>('fit');
+  let currentImageFit = $derived<'cover' | 'contain'>(imageViewMode === 'detail' ? 'cover' : 'contain');
 
-  // Stage adapts to the work's real proportion so the frame hugs the image
-  // instead of floating a landscape photo inside a tall portrait box. The
-  // orientation also reshapes the gallery: wide works move their thumbnail
-  // strip + caption below the image, so the column grows to match the dossier.
+  // Stage adapts to the work's real proportion. The gallery grid itself stays
+  // stable while the image probe resolves, which avoids the tiny-photo/blank-mat
+  // layout shifts that came from changing the grid after first paint.
   let stageAspect = $state('4 / 5');
   let aspectNum = $state(0.8);
-  let isLandscape = $derived(aspectNum >= 1.1);
+  let imageAspectReady = $state(false);
+  let viewportHeight = $state(900);
+
+  function resetImageAspect() {
+    stageAspect = '4 / 5';
+    aspectNum = 0.8;
+    imageAspectReady = false;
+  }
+
   $effect(() => {
     const url = resolveUrl(currentImage?.url);
-    if (!url || typeof Image === 'undefined') { stageAspect = '4 / 5'; aspectNum = 0.8; return; }
+    if (!url || typeof Image === 'undefined') {
+      resetImageAspect();
+      return;
+    }
     let cancelled = false;
     const probe = new Image();
     probe.onload = () => {
       if (!cancelled && probe.naturalWidth > 0 && probe.naturalHeight > 0) {
         stageAspect = `${probe.naturalWidth} / ${probe.naturalHeight}`;
         aspectNum = probe.naturalWidth / probe.naturalHeight;
+        imageAspectReady = true;
+        void tick().then(onScroll);
+      }
+    };
+    probe.onerror = () => {
+      if (!cancelled) {
+        resetImageAspect();
+        void tick().then(onScroll);
       }
     };
     probe.src = url;
     return () => { cancelled = true; };
   });
 
-  // For portrait works, hug the plate to the image's real width and centre it
-  // without letting very narrow aspect ratios shrink the main photograph into a
-  // thumbnail. The max width mirrors the stage height cap, so the outer frame
-  // wraps the visible photo instead of leaving an empty mat column.
+  let stageMaxHeightPx = $derived(
+    Math.round(Math.max(440, Math.min(680, viewportHeight - 300)))
+  );
+
+  let plateMaxWidthPx = $derived.by(() => {
+    const aspect = imageAspectReady ? aspectNum : 1.25;
+    const heightBoundWidth = stageMaxHeightPx * aspect;
+    const hardMax = aspect >= 1 ? 880 : 680;
+    return Math.round(Math.max(340, Math.min(hardMax, heightBoundWidth)));
+  });
+
   let plateStyle = $derived(
-    aspectNum < 1
-      ? `width: min(100%, min(clamp(28rem, 38vw, 42rem), calc(min(82vh, 880px) * ${aspectNum.toFixed(4)}))); margin-inline: auto;`
-      : ''
+    `--image-aspect-ratio: ${stageAspect}; --plate-max-width: ${plateMaxWidthPx}px; --stage-max-height: ${stageMaxHeightPx}px;`
   );
 
   let lightboxImages = $derived(
@@ -651,23 +707,31 @@
 
   // ── Share ────────────────────────────────────────────────────────────────
   let copied = $state(false);
-  let copiedTimer: ReturnType<typeof setTimeout>;
+  let copiedTimer: ReturnType<typeof setTimeout> | null = null;
+
+  async function copyShareUrl(url: string) {
+    if (!navigator.clipboard?.writeText) return;
+    await navigator.clipboard.writeText(url);
+    copied = true;
+    if (copiedTimer) clearTimeout(copiedTimer);
+    copiedTimer = setTimeout(() => { copied = false; copiedTimer = null; }, 2200);
+  }
 
   async function share() {
     const url = window.location.href;
     if (navigator.share) {
-      await navigator.share({ title: figurine.name, text: figurine.shortText ?? figurine.name, url })
-        .catch(() => {});
-    } else {
       try {
-        if (!navigator.clipboard?.writeText) return;
-        await navigator.clipboard.writeText(url);
-        copied = true;
-        clearTimeout(copiedTimer);
-        copiedTimer = setTimeout(() => { copied = false; }, 2200);
+        await navigator.share({ title: figurine.name, text: figurine.shortText ?? figurine.name, url });
+        return;
       } catch {
-        copied = false;
+        // User cancellation is harmless; other share failures can still fall back
+        // to copying the URL where clipboard access is available.
       }
+    }
+    try {
+      await copyShareUrl(url);
+    } catch {
+      copied = false;
     }
   }
 
@@ -697,6 +761,7 @@
 
   // DOM anchor for the sticky navigation identity.
   let galleryRef:  HTMLElement | undefined = $state();
+  let galleryResizeObserver: ResizeObserver | null = null;
 
   let galleryExited  = $state(false); // Phase 2: галерея ушла за экран
 
@@ -737,6 +802,11 @@
     }
   }
 
+  function updateViewportHeight() {
+    viewportHeight = window.innerHeight || viewportHeight;
+    requestAnimationFrame(onScroll);
+  }
+
   function handleVisibility() {
     if (document.visibilityState === 'visible') {
       refreshToday();
@@ -748,23 +818,31 @@
   onMount(() => {
     window.addEventListener('keydown', handleKeydown);
     window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', updateViewportHeight, { passive: true });
     document.addEventListener('visibilitychange', handleVisibility);
+    updateViewportHeight();
     refreshToday();
     scheduleTodayRefresh();
     onScroll();
-    api.getFigurineSchedule(figurine.id).then(s => { figurineSchedule = s; }).catch(() => {});
+    void loadSchedule();
     cs.load();
     cs.verify();
     cs.startPolling();
     void loadQueue();
     void loadNotify();
+    if (galleryRef) {
+      galleryResizeObserver = new ResizeObserver(() => onScroll());
+      galleryResizeObserver.observe(galleryRef);
+    }
   });
 
   onDestroy(() => {
     window.removeEventListener('keydown', handleKeydown);
     window.removeEventListener('scroll', onScroll);
+    window.removeEventListener('resize', updateViewportHeight);
     document.removeEventListener('visibilitychange', handleVisibility);
-    clearTimeout(copiedTimer);
+    if (copiedTimer) clearTimeout(copiedTimer);
+    galleryResizeObserver?.disconnect();
     clearTodayRefresh();
     clearAudioFade();
     if (storyObjectUrl) URL.revokeObjectURL(storyObjectUrl);
@@ -1032,6 +1110,10 @@
     </nav>
 
     <!-- ── MAIN GRID ── -->
+    {#if storyError}
+      <p class="detail-inline-alert" role="alert">{storyError}</p>
+    {/if}
+
     <div class="main-grid">
 
       <!-- LEFT: Gallery with vertical thumbnail strip -->
@@ -1039,7 +1121,6 @@
         <div
           class="gallery-layout"
           class:gallery-layout--solo={sortedImages.length <= 1}
-          class:gallery-layout--wide={isLandscape}
         >
 
           {#if sortedImages.length > 1}
@@ -1066,55 +1147,78 @@
           {/if}
 
           <figure class="image-col" style={plateStyle}>
-          <div class="image-frame">
-            <div class="image-stage" style="view-transition-name: {viewTransitionName}; aspect-ratio: {stageAspect};">
-              {#key currentImage?.id}
-                <div class="image-layer" in:fade={{ duration: 220 }}>
-                  <BrassLens
-                    src={resolveUrl(currentImage?.url)}
-                    alt={currentImage?.altText ?? figurine.name}
-                    class="w-full h-full"
-                    imageFit="contain"
-                    objectPosition="center center"
-                    onOpenLightbox={() => canOpenLightbox && openLightbox(activeImageIndex)}
-                  />
+            <div class="image-frame">
+              <div
+                class="image-stage"
+                class:image-stage--detail={imageViewMode === 'detail'}
+                style="view-transition-name: {viewTransitionName};"
+              >
+                {#key currentImage?.id}
+                  <div class="image-layer" in:fade={{ duration: 220 }}>
+                    <BrassLens
+                      src={resolveUrl(currentImage?.url)}
+                      alt={currentImage?.altText ?? figurine.name}
+                      class="w-full h-full"
+                      imageFit={currentImageFit}
+                      objectPosition="center center"
+                      onOpenLightbox={() => canOpenLightbox && openLightbox(activeImageIndex)}
+                    />
+                  </div>
+                {/key}
+
+                {#if sortedImages.length > 1}
+                  <div class="img-counter" aria-hidden="true">
+                    <span class="img-counter-type">{imageTypeLabel(currentImage?.imageType)}</span>
+                    <span class="img-counter-num">{activeImageIndex + 1}<span class="img-counter-sep">/</span>{sortedImages.length}</span>
+                  </div>
+                {/if}
+
+                <div class="image-view-tools" aria-label={$t('detailImageViewMode')}>
+                  <button
+                    type="button"
+                    class="image-view-tool {imageViewMode === 'fit' ? 'image-view-tool--active' : ''}"
+                    onclick={() => (imageViewMode = 'fit')}
+                    aria-pressed={imageViewMode === 'fit'}
+                  >
+                    {$t('detailImageFit')}
+                  </button>
+                  <button
+                    type="button"
+                    class="image-view-tool {imageViewMode === 'detail' ? 'image-view-tool--active' : ''}"
+                    onclick={() => (imageViewMode = 'detail')}
+                    aria-pressed={imageViewMode === 'detail'}
+                  >
+                    {$t('detailImageDetailView')}
+                  </button>
                 </div>
-              {/key}
 
-              {#if sortedImages.length > 1}
-                <div class="img-counter" aria-hidden="true">
-                  <span class="img-counter-type">{imageTypeLabel(currentImage?.imageType)}</span>
-                  <span class="img-counter-num">{activeImageIndex + 1}<span class="img-counter-sep">/</span>{sortedImages.length}</span>
-                </div>
-              {/if}
+                {#if canOpenLightbox}
+                  <button
+                    type="button"
+                    onclick={() => openLightbox(activeImageIndex)}
+                    class="expand-btn"
+                    aria-label={$t('figurineFullscreen')}
+                  >
+                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                      <path d="M1 4V1h3M6 1h3v3M9 6v3H6M4 9H1V6"/>
+                    </svg>
+                    {$t('figurineFullscreen')}
+                  </button>
+                {/if}
 
-              {#if canOpenLightbox}
-                <button
-                  type="button"
-                  onclick={() => openLightbox(activeImageIndex)}
-                  class="expand-btn"
-                  aria-label={$t('figurineFullscreen')}
-                >
-                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-                    <path d="M1 4V1h3M6 1h3v3M9 6v3H6M4 9H1V6"/>
-                  </svg>
-                  {$t('figurineFullscreen')}
-                </button>
-              {/if}
-
-              <div class="image-vignette"></div>
+                <div class="image-vignette"></div>
+              </div>
             </div>
-          </div>
 
-          {#if currentImage}
-            <figcaption class="plate-caption">
-              <span class="plate-caption-label">{imageTypeLabel(currentImage.imageType)}</span>
-              <span class="plate-caption-note">{imageRoleNote(currentImage.imageType)}</span>
-              {#if hasText(figurine.dimensions)}
-                <span class="plate-caption-dim">{figurine.dimensions}</span>
-              {/if}
-            </figcaption>
-          {/if}
+            {#if currentImage}
+              <figcaption class="plate-caption">
+                <span class="plate-caption-label">{imageTypeLabel(currentImage.imageType)}</span>
+                <span class="plate-caption-note">{imageRoleNote(currentImage.imageType)}</span>
+                {#if hasText(figurine.dimensions)}
+                  <span class="plate-caption-dim">{figurine.dimensions}</span>
+                {/if}
+              </figcaption>
+            {/if}
           </figure>
         </div>
       </div>
@@ -1240,6 +1344,10 @@
             <span>{$t('detailPersonalTransfer')}</span>
           </div>
 
+          {#if scheduleLoadFailed}
+            <p class="queue-receipt-left queue-receipt-left--warning">{$t('detailScheduleLoadStale')}</p>
+          {/if}
+
           {#if figurine.status === 'reserved'}
             {#if queuePosition > 0}
               <div class="queue-receipt">
@@ -1251,10 +1359,15 @@
                   </span>
                 </div>
                 <p class="queue-receipt-note">{$t('detailQueueNote')}</p>
+                {#if queueLookupStale}
+                  <p class="queue-receipt-note queue-receipt-note--warning">{$t('detailReceiptStale')}</p>
+                {/if}
                 <button type="button" onclick={leaveQueue} disabled={queueLeaving} class="queue-receipt-leave">
                   {queueLeaving ? $t('detailQueueLeaving') : $t('detailQueueLeave')}
                 </button>
               </div>
+            {:else if queueLookupStale}
+              <p class="queue-receipt-left queue-receipt-left--warning">{$t('detailReceiptStale')}</p>
             {:else if queueLeft}
               <p class="queue-receipt-left">{$t('detailQueueLeft')}</p>
             {/if}
@@ -1263,10 +1376,15 @@
               <div class="queue-receipt queue-receipt--notify">
                 <span class="queue-receipt-title">{$t('detailNotifyPanelTitle')}</span>
                 <p class="queue-receipt-note">{$t('detailNotifyNote')}</p>
+                {#if notifyLookupStale}
+                  <p class="queue-receipt-note queue-receipt-note--warning">{$t('detailReceiptStale')}</p>
+                {/if}
                 <button type="button" onclick={stopNotify} disabled={notifyStopping} class="queue-receipt-leave">
                   {notifyStopping ? $t('detailNotifyStopping') : $t('detailNotifyStop')}
                 </button>
               </div>
+            {:else if notifyLookupStale}
+              <p class="queue-receipt-left queue-receipt-left--warning">{$t('detailReceiptStale')}</p>
             {:else if notifyStopped}
               <p class="queue-receipt-left">{$t('detailNotifyStopped')}</p>
             {/if}
@@ -1275,10 +1393,15 @@
               <div class="queue-receipt queue-receipt--notify">
                 <span class="queue-receipt-title">{$t('detailNotifyPanelTitle')}</span>
                 <p class="queue-receipt-note">{$t('detailNotifyNote')}</p>
+                {#if notifyLookupStale}
+                  <p class="queue-receipt-note queue-receipt-note--warning">{$t('detailReceiptStale')}</p>
+                {/if}
                 <button type="button" onclick={stopNotify} disabled={notifyStopping} class="queue-receipt-leave">
                   {notifyStopping ? $t('detailNotifyStopping') : $t('detailNotifyStop')}
                 </button>
               </div>
+            {:else if notifyLookupStale}
+              <p class="queue-receipt-left queue-receipt-left--warning">{$t('detailReceiptStale')}</p>
             {:else if notifyStopped}
               <p class="queue-receipt-left">{$t('detailNotifyStopped')}</p>
             {/if}
