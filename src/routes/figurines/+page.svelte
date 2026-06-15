@@ -517,7 +517,7 @@
                     <AppImage
                             src={figurine.faceImageUrl}
                             thumbUrl={figurine.thumbUrl}
-                            class="w-full h-full object-cover opacity-70 grayscale transition-all duration-700 ease-out group-hover:opacity-100 group-hover:grayscale-0 group-hover:scale-105"
+                            class="w-full h-full object-cover transition-all duration-700 ease-out group-hover:scale-105 fig-img--{figurine.status}"
                             loading="lazy"
                     />
                   {:else}
@@ -526,7 +526,7 @@
                     </div>
                   {/if}
 
-                  <div class="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,rgba(111,59,36,0.8)_100%)] pointer-events-none transition-opacity duration-500 group-hover:opacity-60"></div>
+                  <div class="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,rgba(111,59,36,0.8)_100%)] pointer-events-none transition-opacity duration-500 fig-vignette--{figurine.status}"></div>
 
                   <div class="absolute top-2 left-2 w-4 h-4 border-t border-l border-[#34251c]/20 group-hover:border-[#34251c]/60 transition-colors pointer-events-none"></div>
                   <div class="absolute bottom-2 right-2 w-4 h-4 border-b border-r border-[#34251c]/20 group-hover:border-[#34251c]/60 transition-colors pointer-events-none"></div>
@@ -641,7 +641,7 @@
                 </div>
 
                 <div class="pl-2 border-l border-transparent group-hover:border-[#34251c]/40 transition-all duration-500">
-                  <h2 class="font-['Fraunces'] text-xl sm:text-2xl text-[#34251c] mb-1 group-hover:text-[#6f3b24] transition-colors tracking-wide">
+                  <h2 class="font-['Fraunces'] text-xl sm:text-2xl text-[#34251c] mb-1 group-hover:text-[#6f3b24] transition-colors tracking-wide line-clamp-2 leading-snug">
                     {figurine.name}
                   </h2>
                   <div class="flex flex-wrap items-center gap-2">
@@ -717,6 +717,44 @@
 <style>
   @keyframes shimmer {
     100% { transform: translateX(200%); }
+  }
+
+  /* ── STATUS-BASED IMAGE TREATMENT ──────────────────────────────── */
+
+  /* Available: full colour, light vignette — это доступные работы, они должны звать */
+  :global(.fig-img--available) { opacity: 1; filter: none; }
+  :global(.group:hover .fig-img--available) { opacity: 1; filter: none; }
+  :global(.fig-vignette--available) { opacity: 0.30; }
+  :global(.group:hover .fig-vignette--available) { opacity: 0.18; }
+
+  /* Reserved: лёгкий налёт — не мертво, но занято */
+  :global(.fig-img--reserved) { opacity: 0.88; filter: grayscale(0.40) saturate(0.72); }
+  :global(.group:hover .fig-img--reserved) { opacity: 1; filter: grayscale(0) saturate(1); }
+  :global(.fig-vignette--reserved) { opacity: 0.52; }
+  :global(.group:hover .fig-vignette--reserved) { opacity: 0.35; }
+
+  /* Sold: серое и приглушённое — ушло навсегда, даже ховер не оживляет полностью */
+  :global(.fig-img--sold) { opacity: 0.72; filter: grayscale(0.68) saturate(0.52); }
+  :global(.group:hover .fig-img--sold) { opacity: 0.88; filter: grayscale(0.30) saturate(0.78); }
+  :global(.fig-vignette--sold) { opacity: 0.68; }
+  :global(.group:hover .fig-vignette--sold) { opacity: 0.52; }
+
+  /* In progress: приглушённее available, но не серое */
+  :global(.fig-img--in_progress) { opacity: 0.82; filter: saturate(0.80); }
+  :global(.group:hover .fig-img--in_progress) { opacity: 1; filter: saturate(1); }
+  :global(.fig-vignette--in_progress) { opacity: 0.48; }
+  :global(.group:hover .fig-vignette--in_progress) { opacity: 0.30; }
+
+  /* Mobile: без ховера — показываем всё в цвете */
+  @media (hover: none) {
+    :global(.fig-img--available),
+    :global(.fig-img--reserved),
+    :global(.fig-img--sold),
+    :global(.fig-img--in_progress) { opacity: 1; filter: none; }
+    :global(.fig-vignette--available),
+    :global(.fig-vignette--reserved),
+    :global(.fig-vignette--in_progress) { opacity: 0.25; }
+    :global(.fig-vignette--sold) { opacity: 0.50; }
   }
 
   /* Touch devices have no hover: keep the action bar (quick view / share / request)

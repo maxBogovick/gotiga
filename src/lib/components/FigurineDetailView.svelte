@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
   import { fade } from 'svelte/transition';
-  import type { Figurine, FigurineSchedule } from '$lib/types/api';
+  import type { Figurine, FigurineSchedule, FigurineStatus } from '$lib/types/api';
   import UnifiedRequestModal from '$lib/components/UnifiedRequestModal.svelte';
+  import FigurineClaimRow from '$lib/components/FigurineClaimRow.svelte';
+  import FigurineReceiptPanel from '$lib/components/FigurineReceiptPanel.svelte';
   import BrassLens from '$lib/components/BrassLens.svelte';
   import CandleReveal from '$lib/components/CandleReveal.svelte';
   import MemoryMirror from '$lib/components/MemoryMirror.svelte';
@@ -16,6 +18,7 @@
   import ShowingsTimeline from '$lib/components/ShowingsTimeline.svelte';
   import FigurineComments from '$lib/components/FigurineComments.svelte';
   import { FigurineClaimsStore, type ClaimData } from '$lib/stores/figurine-claims.svelte';
+  import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
   import { focusTrap } from '$lib/actions/focusTrap';
   import '$lib/styles/figurine-detail.css';
 
@@ -36,7 +39,7 @@
   let selectedImageIndex = $state(0);
   let isGrimoireOpen = $state(false);
   let showRequestModal = $state(false);
-  let requestInitialIntent = $state<'request' | 'waitlist' | 'viewing' | 'similar' | 'question' | 'notify'>('request');
+  let requestInitialIntent = $state<RequestIntent>('request');
   let figurineSchedule = $state<FigurineSchedule>({ entries: [] });
   let scheduleLoadFailed = $state(false);
   let isAudioPlaying = $state(false);
@@ -46,6 +49,18 @@
   let audioRef = $state<HTMLAudioElement | null>(null);
   let videoRef = $state<HTMLVideoElement | null>(null);
 
+  function readStoredToken(key: string): string | null {
+    try { return localStorage.getItem(key); } catch { return null; }
+  }
+
+  function writeStoredToken(key: string, token: string) {
+    try { localStorage.setItem(key, token); } catch {}
+  }
+
+  function removeStoredToken(key: string) {
+    try { localStorage.removeItem(key); } catch {}
+  }
+
   // ── Queue (waitlist) receipt: persisted per-figurine token, like booking claims ──
   let queueKey = $derived(`gotiga_queue_${id}`);
   let queuePosition = $state(0);
@@ -53,12 +68,8 @@
   let queueLeft = $state(false);
   let queueLookupStale = $state(false);
 
-  function readQueueToken(): string | null {
-    try { return localStorage.getItem(queueKey); } catch { return null; }
-  }
-
   async function loadQueue() {
-    const token = readQueueToken();
+    const token = readStoredToken(queueKey);
     if (!token) return;
     try {
       const info = await api.getWaitlistByToken(token);
@@ -68,7 +79,7 @@
         queueLeft = false;
       } else {
         // Token no longer valid (notified/removed) - clear it.
-        try { localStorage.removeItem(queueKey); } catch {}
+        removeStoredToken(queueKey);
         queuePosition = 0;
       }
     } catch {
@@ -78,19 +89,19 @@
   }
 
   function onQueueJoined(token: string, position: number) {
-    try { localStorage.setItem(queueKey, token); } catch {}
+    writeStoredToken(queueKey, token);
     queuePosition = position;
     queueLeft = false;
     queueLookupStale = false;
   }
 
   async function leaveQueue() {
-    const token = readQueueToken();
+    const token = readStoredToken(queueKey);
     if (!token || queueLeaving) return;
     queueLeaving = true;
     try {
       await api.leaveWaitlistByToken(token);
-      try { localStorage.removeItem(queueKey); } catch {}
+      removeStoredToken(queueKey);
       queuePosition = 0;
       queueLeft = true;
       queueLookupStale = false;
@@ -106,12 +117,8 @@
   let notifyStopped = $state(false);
   let notifyLookupStale = $state(false);
 
-  function readNotifyToken(): string | null {
-    try { return localStorage.getItem(notifyKey); } catch { return null; }
-  }
-
   async function loadNotify() {
-    const token = readNotifyToken();
+    const token = readStoredToken(notifyKey);
     if (!token) return;
     try {
       const info = await api.getNotifyByToken(token);
@@ -120,7 +127,7 @@
         notifyActive = true;
         notifyStopped = false;
       } else {
-        try { localStorage.removeItem(notifyKey); } catch {}
+        removeStoredToken(notifyKey);
         notifyActive = false;
       }
     } catch {
@@ -130,19 +137,19 @@
   }
 
   function onNotifySubscribed(token: string) {
-    try { localStorage.setItem(notifyKey, token); } catch {}
+    writeStoredToken(notifyKey, token);
     notifyActive = true;
     notifyStopped = false;
     notifyLookupStale = false;
   }
 
   async function stopNotify() {
-    const token = readNotifyToken();
+    const token = readStoredToken(notifyKey);
     if (!token || notifyStopping) return;
     notifyStopping = true;
     try {
       await api.cancelNotifyByToken(token);
-      try { localStorage.removeItem(notifyKey); } catch {}
+      removeStoredToken(notifyKey);
       notifyActive = false;
       notifyStopped = true;
       notifyLookupStale = false;
@@ -204,6 +211,62 @@
   // Showing that is happening TODAY (started but not yet ended)
   let hasActiveShowing = $derived(showings.some(s => s.startsAt <= todayStr && s.endsAt >= todayStr));
 
+  type RequestIntent = 'request' | 'waitlist' | 'viewing' | 'similar' | 'question' | 'notify';
+  type AttributeKind = 'dimensions' | 'material' | 'technique';
+
+  function statusLabel(status: FigurineStatus): string {
+    switch (status) {
+      case 'available': return $t('figurineStatusAvailable');
+      case 'reserved': return $t('figurineStatusReserved');
+      case 'in_progress': return $t('figurineStatusInProgress');
+      case 'sold': return $t('figurineStatusSold');
+    }
+  }
+
+  let statusUi = $derived.by(() => {
+    const isAvailable = figurine.status === 'available';
+    const title = isAvailable
+      ? (hasActiveShowing ? $t('detailRegistryViewingTitle') : $t('detailRegistryAvailableTitle'))
+      : figurine.status === 'reserved'
+        ? $t('detailRegistryReservedTitle')
+        : figurine.status === 'in_progress'
+          ? $t('detailRegistryProgressTitle')
+          : $t('detailRegistrySoldTitle');
+    const note = figurine.status === 'reserved'
+      ? $t('unifiedReservedNote')
+      : figurine.status === 'in_progress'
+        ? $t('unifiedProgressNote')
+        : figurine.status === 'sold'
+          ? $t('unifiedSoldNote')
+          : hasActiveShowing
+            ? $t('unifiedShowingNote')
+            : $t('unifiedAvailableNote');
+    const mobileSubtitle = isAvailable
+      ? (hasActiveShowing ? $t('detailMobileShowingSub') : $t('figurinePriceOnRequest'))
+      : figurine.status === 'reserved'
+        ? $t('detailMobileReservedSub')
+        : figurine.status === 'in_progress'
+          ? $t('detailMobileProgressSub')
+          : $t('detailMobileSoldSub');
+    const defaultIntent: RequestIntent = figurine.status === 'reserved'
+      ? 'waitlist'
+      : figurine.status === 'in_progress' || figurine.status === 'sold'
+        ? 'notify'
+        : hasActiveShowing
+          ? 'viewing'
+          : 'request';
+
+    return {
+      label: statusLabel(figurine.status),
+      title,
+      note,
+      mobileSubtitle,
+      mobileCtaLabel: isAvailable ? $t('detailMobileRequestCta') : $t('unifiedOpenRequest'),
+      mobileIcon: isAvailable ? 'lock' : 'arrow',
+      defaultIntent,
+    };
+  });
+
 
   // === CLAIM TOKEN (self-cancellation) ===
   // figurine.id captured once — component is never remounted with a different figurine
@@ -223,12 +286,6 @@
 
   function fmtDate(ds: string) {
     return new Date(ds + 'T00:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
-  }
-
-  function maskToken(token: string): string {
-    const clean = token.trim();
-    if (clean.length <= 4) return clean;
-    return `${clean.slice(0, 2)}...${clean.slice(-2)}`;
   }
 
   function lookupStatusLabel(s: string): string {
@@ -467,6 +524,7 @@
   let activeImageIndex = $derived(clampImageIndex(selectedImageIndex, sortedImages.length));
   let currentImage = $derived(sortedImages[activeImageIndex]);
   let imageViewMode = $state<'fit' | 'detail'>('fit');
+  let isLensEnabled = $state(false);
   let currentImageFit = $derived<'cover' | 'contain'>(imageViewMode === 'detail' ? 'cover' : 'contain');
 
   // Stage adapts to the work's real proportion. The gallery grid itself stays
@@ -509,6 +567,7 @@
     sortedImages.map((img) => ({ url: resolveUrl(img.originalUrl ?? img.url), alt: img.altText ?? '' }))
   );
   let canOpenLightbox = $derived(lightboxImages.length > 0);
+  let isSaved = $derived(savedFigurines.has(id));
 
   function hasText(value: string | null | undefined): value is string {
     return Boolean(value?.trim());
@@ -557,11 +616,16 @@
   let viewTransitionName = $derived(`figurine-${safeCssIdentifier(id)}`);
   let hasVideoSection = $derived(hasText(figurine.videoUrl));
   let hasWorkStorySection = $derived(hasHistorySection || hasMakingSection || hasVideoSection);
-  let hasAttributesSection = $derived(
-    hasText(figurine.dimensions) || hasText(figurine.material) || hasText(figurine.technique)
-  );
+  let attributes = $derived.by(() => {
+    const items: { kind: AttributeKind; label: string; value: string }[] = [];
+    if (hasText(figurine.dimensions)) items.push({ kind: 'dimensions', label: $t('figurineDimensions'), value: figurine.dimensions });
+    if (hasText(figurine.material)) items.push({ kind: 'material', label: $t('figurineMaterial'), value: figurine.material });
+    if (hasText(figurine.technique)) items.push({ kind: 'technique', label: $t('figurineTechnique'), value: figurine.technique });
+    return items;
+  });
+  let hasAttributesSection = $derived(attributes.length > 0);
   let hasScheduleSection = $derived(figurineSchedule.entries.length > 0);
-  let hasFactsSection = $derived(hasAttributesSection || hasScheduleSection);
+  let hasFactsSection = $derived(hasScheduleSection);
   let canShowPersonalRecord = $derived(figurine.status === 'available' || figurine.status === 'reserved');
   let hasClaimRecords = $derived(cs.claims.length > 0 || (cs.cancelledTokens.size > 0 && cs.claims.length === 0));
   let hasClaimLookupState = $derived(cs.showTokenForm || Boolean(cs.tokenLookupInfo) || Boolean(cs.tokenLookupErr));
@@ -606,12 +670,19 @@
     if (nextIndex !== selectedImageIndex) {
       selectedImageIndex = nextIndex;
       imageViewMode = 'fit';
+      isLensEnabled = false;
     }
   }
   function openLightbox(index: number) {
     if (!canOpenLightbox) return;
     lightboxStartIndex = Math.max(0, Math.min(lightboxImages.length - 1, index));
     showLightbox = true;
+  }
+  function toggleSaved() {
+    savedFigurines.toggle(id);
+  }
+  function toggleLens() {
+    isLensEnabled = !isLensEnabled;
   }
   let lastGrimoireCloseAt = $state(0);
 
@@ -749,11 +820,8 @@
 
   let galleryExited  = $state(false); // Phase 2: галерея ушла за экран
 
-  function defaultRequestIntent(): 'request' | 'waitlist' | 'viewing' | 'similar' | 'question' | 'notify' {
-    if (figurine.status === 'reserved') return 'waitlist';
-    if (figurine.status === 'in_progress') return 'notify';
-    if (figurine.status === 'sold') return 'notify';
-    return hasActiveShowing ? 'viewing' : 'request';
+  function defaultRequestIntent(): RequestIntent {
+    return statusUi.defaultIntent;
   }
 
   function openRequestModal(intent = defaultRequestIntent()) {
@@ -803,6 +871,7 @@
     onScroll();
     void loadSchedule();
     cs.load();
+    savedFigurines.load();
     cs.verify();
     cs.startPolling();
     void loadQueue();
@@ -1138,6 +1207,7 @@
                       class="w-full h-full"
                       imageFit={currentImageFit}
                       objectPosition="center center"
+                      lensEnabled={isLensEnabled}
                       onOpenLightbox={() => canOpenLightbox && openLightbox(activeImageIndex)}
                     />
                   </div>
@@ -1149,6 +1219,41 @@
                     <span class="img-counter-num">{activeImageIndex + 1}<span class="img-counter-sep">/</span>{sortedImages.length}</span>
                   </div>
                 {/if}
+
+                <button
+                  type="button"
+                  class="gallery-heart"
+                  class:gallery-heart--saved={isSaved}
+                  onclick={toggleSaved}
+                  aria-label={isSaved ? $t('cardSaved') : $t('cardSave')}
+                  title={isSaved ? $t('cardSaved') : $t('cardSave')}
+                  aria-pressed={isSaved}
+                >
+                  <svg width="15" height="15" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                    <path
+                      d="M7 12.5C7 12.5 1 8.5 1 4.5C1 2.5 2.5 1 4.5 1C5.5 1 6.5 1.8 7 3C7.5 1.8 8.5 1 9.5 1C11.5 1 13 2.5 13 4.5C13 8.5 7 12.5 7 12.5Z"
+                      fill={isSaved ? 'currentColor' : 'none'}
+                      stroke="currentColor"
+                      stroke-width="1.15"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </button>
+
+                <button
+                  type="button"
+                  class="gallery-lens"
+                  class:gallery-lens--active={isLensEnabled}
+                  onclick={toggleLens}
+                  aria-label={isLensEnabled ? $t('detailImageLensOff') : $t('detailImageLensOn')}
+                  title={isLensEnabled ? $t('detailImageLensOff') : $t('detailImageLensOn')}
+                  aria-pressed={isLensEnabled}
+                >
+                  <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" aria-hidden="true">
+                    <circle cx="6" cy="6" r="3.7" />
+                    <path d="M8.8 8.8L12 12" />
+                  </svg>
+                </button>
 
                 <div class="image-view-tools" aria-label={$t('detailImageViewMode')}>
                   <button
@@ -1214,7 +1319,7 @@
           </div>
         </div>
 
-        <h1 class="figurine-title">{figurine.name}</h1>
+        <h1 class="figurine-title {figurine.name.length > 60 ? 'figurine-title--long' : figurine.name.length > 30 ? 'figurine-title--medium' : ''}">{figurine.name}</h1>
 
         <span class="colophon-kind">{$t('detailKind')}</span>
 
@@ -1224,24 +1329,12 @@
 
         {#if hasAttributesSection}
           <dl class="hero-facts" aria-label={$t('figurineAttributes')}>
-            {#if hasText(figurine.dimensions)}
+            {#each attributes as attr (attr.kind)}
               <div>
-                <dt>{$t('figurineDimensions')}</dt>
-                <dd>{figurine.dimensions}</dd>
+                <dt>{attr.label}</dt>
+                <dd>{attr.value}</dd>
               </div>
-            {/if}
-            {#if hasText(figurine.material)}
-              <div>
-                <dt>{$t('figurineMaterial')}</dt>
-                <dd>{figurine.material}</dd>
-              </div>
-            {/if}
-            {#if hasText(figurine.technique)}
-              <div>
-                <dt>{$t('figurineTechnique')}</dt>
-                <dd>{figurine.technique}</dd>
-              </div>
-            {/if}
+            {/each}
           </dl>
         {/if}
 
@@ -1254,31 +1347,19 @@
         <!-- ── Status & enquiry: commerce collapsed to one quiet marginal line ── -->
         <div class="entry-status entry-status--{figurine.status}">
           <div class="entry-status-head">
-            <span class="entry-status-marque">
-              <span class="entry-status-kind">
-                {figurine.status === 'available'
-                  ? $t('figurineStatusAvailable')
-                  : figurine.status === 'reserved'
-                    ? $t('figurineStatusReserved')
-                    : figurine.status === 'in_progress'
-                      ? $t('figurineStatusInProgress')
-                      : $t('figurineStatusSold')}
+              <span class="entry-status-marque">
+                <span class="entry-status-kind">
+                  {statusUi.label}
+                </span>
+                <span class="entry-wax" aria-hidden="true">GT</span>
               </span>
-              <span class="entry-wax" aria-hidden="true">GT</span>
-            </span>
             <span class="entry-registry">{$t('detailRegistryNo')} {id.slice(0, 3).toUpperCase()}</span>
           </div>
 
           <div class="entry-status-body">
             <div class="entry-status-copy">
               <h2 class="entry-status-title">
-                {figurine.status === 'available'
-                  ? (hasActiveShowing ? $t('detailRegistryViewingTitle') : $t('detailRegistryAvailableTitle'))
-                  : figurine.status === 'reserved'
-                    ? $t('detailRegistryReservedTitle')
-                    : figurine.status === 'in_progress'
-                      ? $t('detailRegistryProgressTitle')
-                      : $t('detailRegistrySoldTitle')}
+                {statusUi.title}
               </h2>
 
               <p class="entry-status-line">
@@ -1302,15 +1383,7 @@
                 {$t('unifiedOpenRequest')} →
               </button>
               <p class="entry-action-note">
-                {figurine.status === 'reserved'
-                  ? $t('unifiedReservedNote')
-                  : figurine.status === 'in_progress'
-                    ? $t('unifiedProgressNote')
-                    : figurine.status === 'sold'
-                      ? $t('unifiedSoldNote')
-                      : hasActiveShowing
-                        ? $t('unifiedShowingNote')
-                        : $t('unifiedAvailableNote')}
+                {statusUi.note}
               </p>
             </div>
           </div>
@@ -1327,56 +1400,34 @@
 
           {#if figurine.status === 'reserved'}
             {#if queuePosition > 0}
-              <div class="queue-receipt">
-                <div class="queue-receipt-head">
-                  <span class="queue-receipt-title">{$t('detailQueuePanelTitle')}</span>
-                  <span class="queue-receipt-pos">
-                    <span class="queue-receipt-pos-label">{$t('detailQueuePositionLabel')}</span>
-                    <span class="queue-receipt-pos-num">№{queuePosition}</span>
-                  </span>
-                </div>
-                <p class="queue-receipt-note">{$t('detailQueueNote')}</p>
-                {#if queueLookupStale}
-                  <p class="queue-receipt-note queue-receipt-note--warning">{$t('detailReceiptStale')}</p>
-                {/if}
-                <button type="button" onclick={leaveQueue} disabled={queueLeaving} class="queue-receipt-leave">
-                  {queueLeaving ? $t('detailQueueLeaving') : $t('detailQueueLeave')}
-                </button>
-              </div>
+              <FigurineReceiptPanel
+                title={$t('detailQueuePanelTitle')}
+                note={$t('detailQueueNote')}
+                stale={queueLookupStale}
+                position={queuePosition}
+                positionLabel={$t('detailQueuePositionLabel')}
+                actionLabel={$t('detailQueueLeave')}
+                actionBusyLabel={$t('detailQueueLeaving')}
+                busy={queueLeaving}
+                onAction={leaveQueue}
+              />
             {:else if queueLookupStale}
               <p class="queue-receipt-left queue-receipt-left--warning">{$t('detailReceiptStale')}</p>
             {:else if queueLeft}
               <p class="queue-receipt-left">{$t('detailQueueLeft')}</p>
             {/if}
-          {:else if figurine.status === 'in_progress'}
+          {:else if figurine.status === 'in_progress' || figurine.status === 'sold'}
             {#if notifyActive}
-              <div class="queue-receipt queue-receipt--notify">
-                <span class="queue-receipt-title">{$t('detailNotifyPanelTitle')}</span>
-                <p class="queue-receipt-note">{$t('detailNotifyNote')}</p>
-                {#if notifyLookupStale}
-                  <p class="queue-receipt-note queue-receipt-note--warning">{$t('detailReceiptStale')}</p>
-                {/if}
-                <button type="button" onclick={stopNotify} disabled={notifyStopping} class="queue-receipt-leave">
-                  {notifyStopping ? $t('detailNotifyStopping') : $t('detailNotifyStop')}
-                </button>
-              </div>
-            {:else if notifyLookupStale}
-              <p class="queue-receipt-left queue-receipt-left--warning">{$t('detailReceiptStale')}</p>
-            {:else if notifyStopped}
-              <p class="queue-receipt-left">{$t('detailNotifyStopped')}</p>
-            {/if}
-          {:else if figurine.status === 'sold'}
-            {#if notifyActive}
-              <div class="queue-receipt queue-receipt--notify">
-                <span class="queue-receipt-title">{$t('detailNotifyPanelTitle')}</span>
-                <p class="queue-receipt-note">{$t('detailNotifyNote')}</p>
-                {#if notifyLookupStale}
-                  <p class="queue-receipt-note queue-receipt-note--warning">{$t('detailReceiptStale')}</p>
-                {/if}
-                <button type="button" onclick={stopNotify} disabled={notifyStopping} class="queue-receipt-leave">
-                  {notifyStopping ? $t('detailNotifyStopping') : $t('detailNotifyStop')}
-                </button>
-              </div>
+              <FigurineReceiptPanel
+                title={$t('detailNotifyPanelTitle')}
+                note={$t('detailNotifyNote')}
+                stale={notifyLookupStale}
+                actionLabel={$t('detailNotifyStop')}
+                actionBusyLabel={$t('detailNotifyStopping')}
+                busy={notifyStopping}
+                variant="notify"
+                onAction={stopNotify}
+              />
             {:else if notifyLookupStale}
               <p class="queue-receipt-left queue-receipt-left--warning">{$t('detailReceiptStale')}</p>
             {:else if notifyStopped}
@@ -1402,38 +1453,14 @@
                       </div>
                     {/if}
                     {#each cs.claims as c (c.token)}
-                      {#if c.status === 'confirmed'}
-                        <div class="cp-row cp-row--confirmed">
-                          <div class="cp-row-main">
-                            <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.6" class="cp-icon cp-icon--ok" aria-hidden="true"><path d="M1 5.5l3 3 6-6"/></svg>
-                            <span class="cp-dates">{fmtDate(c.startsAt)} - {fmtDate(c.endsAt)}</span>
-                            <span class="cp-token">{maskToken(c.token)}</span>
-                            <div class="cp-actions">
-                              <a href={authStore.isLoggedIn ? '/profile' : `/cancel/${c.token}`} class="cp-link">{$t('claimManageLink')}</a>
-                              <button type="button" onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="cp-revoke">
-                                {cs.cancellingToken === c.token ? '...' : $t('claimCancelBtn')}
-                              </button>
-                            </div>
-                          </div>
-                          <p class="cp-note">{$t('claimConfirmedNext')}</p>
-                          {#if cs.claimErrors[c.token]}<p class="cp-err">{cs.claimErrors[c.token]}</p>{/if}
-                        </div>
-                      {:else}
-                        <div class="cp-row">
-                          <div class="cp-row-main">
-                            <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.3" class="cp-icon" aria-hidden="true"><circle cx="5.5" cy="5.5" r="4.5"/><path d="M5.5 3.5v2.2l1.5 1.3"/></svg>
-                            <span class="cp-dates">{fmtDate(c.startsAt)} - {fmtDate(c.endsAt)}</span>
-                            <div class="cp-actions">
-                              <a href={authStore.isLoggedIn ? '/profile' : `/cancel/${c.token}`} class="cp-link cp-link--reschedule">{$t('ctaRescheduleLink')}</a>
-                              <button type="button" onclick={() => cs.cancel(c)} disabled={cs.cancellingToken === c.token} class="cp-revoke">
-                                {cs.cancellingToken === c.token ? $t('claimCancelling') : $t('claimCancelBtn')}
-                              </button>
-                            </div>
-                          </div>
-                          <p class="cp-note cp-note--pending">{$t('claimPendingNote')}</p>
-                          {#if cs.claimErrors[c.token]}<p class="cp-err">{cs.claimErrors[c.token]}</p>{/if}
-                        </div>
-                      {/if}
+                      <FigurineClaimRow
+                        claim={c}
+                        isLoggedIn={authStore.isLoggedIn}
+                        isCancelling={cs.cancellingToken === c.token}
+                        error={cs.claimErrors[c.token]}
+                        formatDate={fmtDate}
+                        onCancel={(claim) => cs.cancel(claim)}
+                      />
                     {/each}
                   </div>
                 </section>
@@ -1603,60 +1630,9 @@
           </section>
         {/if}
 
-    <!-- ── PRESENCE & SCHEDULE (Act III — facts & logistics, merged from the old timeline + cta-zone notices) ── -->
-    <!-- ── ACT III — FACTS & LOGISTICS: particulars + where to see it ── -->
+    <!-- ── PRESENCE & SCHEDULE (Act III — logistics only; attributes already live near the title) ── -->
     {#if hasFactsSection}
       <div class="act-divider" aria-hidden="true"></div>
-
-      {#if hasAttributesSection}
-        <div class="d-attrs">
-          <header class="d-section-header">
-            <span class="sec-label">{$t('figurineAttributes')}</span>
-            <div class="sec-rule" aria-hidden="true"></div>
-          </header>
-          <dl class="attrs-specs">
-            {#if hasText(figurine.dimensions)}
-              <div class="spec-row">
-                <span class="spec-icon" aria-hidden="true">
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2">
-                    <rect x="0.7" y="4" width="12.6" height="6" rx="0.8"/>
-                    <path d="M3 4V6.5M5.5 4V7.5M8 4V6.5M10.5 4V7.5"/>
-                  </svg>
-                </span>
-                <dt class="spec-label">{$t('figurineDimensions')}</dt>
-                <span class="spec-leader" aria-hidden="true"></span>
-                <dd class="spec-value">{figurine.dimensions}</dd>
-              </div>
-            {/if}
-            {#if hasText(figurine.material)}
-              <div class="spec-row">
-                <span class="spec-icon" aria-hidden="true">
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2">
-                    <path d="M7 1L12.5 4.5v5L7 13 1.5 9.5v-5L7 1z"/>
-                    <path d="M1.5 4.5h11"/>
-                  </svg>
-                </span>
-                <dt class="spec-label">{$t('figurineMaterial')}</dt>
-                <span class="spec-leader" aria-hidden="true"></span>
-                <dd class="spec-value">{figurine.material}</dd>
-              </div>
-            {/if}
-            {#if hasText(figurine.technique)}
-              <div class="spec-row">
-                <span class="spec-icon" aria-hidden="true">
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2">
-                    <path d="M9 1.5l3.5 3.5L4.5 13H1v-3.5L9 1.5z"/>
-                    <path d="M7.5 3l3 3"/>
-                  </svg>
-                </span>
-                <dt class="spec-label">{$t('figurineTechnique')}</dt>
-                <span class="spec-leader" aria-hidden="true"></span>
-                <dd class="spec-value">{figurine.technique}</dd>
-              </div>
-            {/if}
-          </dl>
-        </div>
-      {/if}
 
       {#if hasScheduleSection}
         <section id="presence" class="presence-section">
@@ -1713,13 +1689,7 @@
                   </span>
                 </div>
                 <span class="related-status-badge related-status-badge--{item.status}">
-                  {item.status === 'sold'
-                    ? $t('figurineStatusSold')
-                  : item.status === 'reserved'
-                      ? $t('figurineStatusReserved')
-                  : item.status === 'in_progress'
-                      ? $t('figurineStatusInProgress')
-                      : $t('figurineStatusAvailable')}
+                  {statusLabel(item.status)}
                 </span>
               </div>
               <div class="related-meta">
@@ -1766,44 +1736,21 @@
     <div class="mobile-cta-info">
       <span class="mobile-cta-name">{figurine.name}</span>
       <span class="mobile-cta-status">
-        {figurine.status === 'available'
-          ? (hasActiveShowing ? $t('detailMobileShowingSub') : $t('figurinePriceOnRequest'))
-          : figurine.status === 'reserved'
-            ? $t('detailMobileReservedSub')
-            : figurine.status === 'in_progress'
-              ? $t('detailMobileProgressSub')
-              : $t('detailMobileSoldSub')}
+        {statusUi.mobileSubtitle}
       </span>
     </div>
-    {#if figurine.status === 'available'}
-      <button type="button" onclick={() => openRequestModal()} class="mobile-cta-btn">
-        {$t('detailMobileRequestCta')}
+    <button type="button" onclick={() => openRequestModal()} class="mobile-cta-btn">
+      {statusUi.mobileCtaLabel}
+      {#if statusUi.mobileIcon === 'lock'}
         <svg width="13" height="14" viewBox="0 0 14 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M4.5 5V3.5a2.5 2.5 0 0 1 5 0V5"/>
           <rect x="2" y="5" width="10" height="8.5" rx="1.2"/>
         </svg>
-      </button>
-    {:else if figurine.status === 'reserved'}
-      <button type="button" onclick={() => openRequestModal()} class="mobile-cta-btn">
-        {$t('unifiedOpenRequest')}
+      {:else}
         <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M2 7h9M8 4l3 3-3 3"/>
         </svg>
-      </button>
-    {:else if figurine.status === 'in_progress'}
-      <button type="button" onclick={() => openRequestModal()} class="mobile-cta-btn">
-        {$t('unifiedOpenRequest')}
-        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M2 7h9M8 4l3 3-3 3"/>
-        </svg>
-      </button>
-    {:else}
-      <button type="button" onclick={() => openRequestModal()} class="mobile-cta-btn">
-        {$t('unifiedOpenRequest')}
-        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M2 7h9M8 4l3 3-3 3"/>
-        </svg>
-      </button>
-    {/if}
+      {/if}
+    </button>
   </div>
 {/if}

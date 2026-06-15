@@ -832,6 +832,8 @@
 
 .img-counter,
 .expand-btn,
+.gallery-heart,
+.gallery-lens,
 .image-view-tools {
   position: absolute;
   z-index: 10;
@@ -894,6 +896,52 @@
   left: 0.75rem;
   padding: 0.25rem 0.5rem;
   pointer-events: none;
+}
+
+.gallery-heart,
+.gallery-lens {
+  left: 0.75rem;
+  justify-content: center;
+  width: 2.35rem;
+  height: 2.35rem;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--color-canvas-raised) 22%, transparent);
+  color: color-mix(in srgb, var(--color-canvas-raised) 82%, transparent);
+  cursor: pointer;
+  opacity: 0.92;
+  transition:
+    background var(--duration-fast) var(--ease-atelier),
+    border-color var(--duration-fast) var(--ease-atelier),
+    color var(--duration-fast) var(--ease-atelier),
+    transform var(--duration-fast) var(--ease-atelier);
+}
+
+.gallery-heart {
+  bottom: 0.75rem;
+}
+
+.gallery-lens {
+  bottom: 3.45rem;
+}
+
+.gallery-heart:hover,
+.gallery-lens:hover {
+  color: var(--color-canvas-raised);
+  background: color-mix(in srgb, var(--color-ember) 42%, var(--color-ink-primary));
+  border-color: color-mix(in srgb, var(--color-ember) 56%, transparent);
+  transform: scale(1.06);
+}
+
+.gallery-heart--saved,
+.gallery-lens--active {
+  color: var(--color-canvas-raised);
+  background: color-mix(in srgb, var(--color-ember) 52%, var(--color-ink-primary));
+  border-color: color-mix(in srgb, var(--color-ember) 64%, transparent);
+}
+
+.gallery-heart--saved:hover,
+.gallery-lens--active:hover {
+  background: color-mix(in srgb, var(--color-ember) 62%, var(--color-ink-primary));
 }
 
 .img-counter-type {
@@ -1014,8 +1062,7 @@
 .eyebrow-year,
 .colophon-kind,
 .sec-label,
-.making-kicker,
-.spec-label {
+.making-kicker {
   font-family: var(--font-body);
   font-weight: 800;
   line-height: 1.2;
@@ -1040,15 +1087,24 @@
 }
 
 .figurine-title {
-  max-width: 14ch;
+  max-width: 20ch;
   margin: 0 0 0.75rem;
   color: var(--color-ink-primary);
   font-family: var(--font-display);
-  font-size: 3rem;
+  font-size: clamp(1.75rem, 3.5vw, 2.75rem);
   font-weight: 400;
   letter-spacing: 0;
-  line-height: 1.03;
+  line-height: 1.08;
   text-wrap: balance;
+}
+.figurine-title--medium {
+  font-size: clamp(1.5rem, 2.8vw, 2rem);
+  max-width: 26ch;
+}
+.figurine-title--long {
+  font-size: clamp(1.1rem, 2vw, 1.5rem);
+  max-width: none;
+  line-height: 1.18;
 }
 
 .colophon-kind {
@@ -1385,7 +1441,6 @@
 
 .queue-receipt,
 .entry-record,
-.d-attrs,
 .details-col .video-frame {
   border-radius: 3px;
   /* Pressed into the parchment — same letterpress as the registry card */
@@ -1916,70 +1971,6 @@
   to { opacity: 1; }
 }
 
-/* Attributes */
-.d-attrs {
-  margin-top: 0;
-  padding: 0.75rem 0.85rem;
-  border: 1px solid color-mix(in srgb, var(--color-ink-primary) 8%, transparent);
-  background: color-mix(in srgb, var(--color-canvas-raised) 52%, transparent);
-}
-
-.attrs-specs {
-  display: flex;
-  flex-direction: column;
-  margin: 0;
-}
-
-.spec-row {
-  display: flex;
-  align-items: baseline;
-  gap: 0.55rem;
-  padding: 0.55rem 0;
-  border-bottom: 1px dotted color-mix(in srgb, var(--color-ink-primary) 16%, transparent);
-}
-
-.spec-row:last-child {
-  border-bottom: 0;
-}
-
-/* Museum-label dotted leader: Material · · · · · · bronze */
-.spec-leader {
-  flex: 1 1 auto;
-  min-width: 1.5rem;
-  height: 0;
-  margin: 0 0.15rem;
-  border-bottom: 1px dotted color-mix(in srgb, var(--color-ink-primary) 30%, transparent);
-  transform: translateY(-0.26em);
-}
-
-.spec-icon {
-  display: flex;
-  flex: none;
-  align-self: center;
-  color: var(--color-ember);
-}
-
-.spec-label {
-  flex: none;
-  margin: 0;
-  color: color-mix(in srgb, var(--color-ink-secondary) 56%, transparent);
-  font-size: 0.56rem;
-  letter-spacing: 0.13em;
-  white-space: nowrap;
-}
-
-.spec-value {
-  flex: 0 1 auto;
-  min-width: 0;
-  margin: 0;
-  color: var(--color-ink-primary);
-  font-family: var(--font-body);
-  font-size: 0.9rem;
-  font-weight: 500;
-  line-height: 1.42;
-  text-align: right;
-}
-
 /* Making record */
 .grimoire-section {
   margin-top: 2rem;
@@ -2297,10 +2288,6 @@
 /* Presence */
 .presence-section {
   max-width: 100%;
-}
-
-.d-attrs + .presence-section {
-  margin-top: 2rem;
 }
 
 .presence-note {
@@ -2814,9 +2801,9 @@
 
 /* Responsive detail refinements */
 @media (max-width: 1023px) {
-  .figurine-title {
-    font-size: 2.55rem;
-  }
+  .figurine-title { font-size: clamp(1.5rem, 3.5vw, 2.25rem); }
+  .figurine-title--medium { font-size: clamp(1.3rem, 2.8vw, 1.75rem); }
+  .figurine-title--long { font-size: clamp(1rem, 2vw, 1.35rem); }
 
   .details-col .cal-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2838,10 +2825,9 @@
     max-width: none;
   }
 
-  .figurine-title {
-    max-width: none;
-    font-size: 2.25rem;
-  }
+  .figurine-title { max-width: none; font-size: clamp(1.4rem, 5vw, 2rem); }
+  .figurine-title--medium { font-size: clamp(1.2rem, 4.5vw, 1.6rem); }
+  .figurine-title--long { font-size: clamp(1rem, 3.5vw, 1.3rem); }
 
   .lore-short,
   .history-body {
@@ -2881,25 +2867,6 @@
 
   .entry-status-facts span + span::before {
     content: none;
-  }
-
-  .spec-row {
-    display: grid;
-    grid-template-columns: 16px minmax(0, 1fr);
-    align-items: start;
-  }
-
-  .spec-label {
-    grid-column: 2;
-  }
-
-  .spec-leader {
-    display: none;
-  }
-
-  .spec-value {
-    grid-column: 2;
-    text-align: left;
   }
 
   .making-strip,

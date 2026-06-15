@@ -505,6 +505,20 @@
                 </aside>
             </div>
 
+            {#if activeWorkFigurines.length > 8}
+                <a href={activeWorkHref} class="work-more-ledger">
+                    <span class="work-more-ledger__rule"></span>
+                    <span class="work-more-ledger__label">
+                        <span class="work-more-ledger__count">{activeWorkFigurines.length - 8}</span>
+                        {$t('homeMoreInArchive')}
+                    </span>
+                    <span class="work-more-ledger__rule"></span>
+                    <svg class="work-more-ledger__arrow" width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
+                        <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
+                    </svg>
+                </a>
+            {/if}
+
         </section>
 
         <section id="request-path" class="request-path compact-request" aria-labelledby="request-path-title">
@@ -1472,6 +1486,57 @@
     }
 
     .all-link:hover { color: var(--copper); gap: 16px; }
+
+    /* ── ARCHIVE LEDGER LINE ────────────────────── */
+    .work-more-ledger {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-top: 24px;
+        text-decoration: none;
+        color: var(--mid);
+        transition: color 0.32s ease;
+    }
+    .work-more-ledger:hover { color: var(--copper); }
+
+    .work-more-ledger__rule {
+        flex: 1;
+        height: 1px;
+        background: currentColor;
+        opacity: 0.15;
+        transition: opacity 0.32s ease;
+    }
+    .work-more-ledger:hover .work-more-ledger__rule { opacity: 0.30; }
+
+    .work-more-ledger__label {
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        white-space: nowrap;
+        flex-shrink: 0;
+    }
+
+    .work-more-ledger__count {
+        font-family: 'Cormorant Garamond', serif;
+        font-size: 18px;
+        font-weight: 400;
+        letter-spacing: 0;
+        line-height: 1;
+    }
+
+    .work-more-ledger__arrow {
+        flex-shrink: 0;
+        opacity: 0.55;
+        transition: transform 0.28s ease, opacity 0.28s ease;
+    }
+    .work-more-ledger:hover .work-more-ledger__arrow {
+        transform: translateX(4px);
+        opacity: 1;
+    }
 
     /* ── REQUEST PATH ───────────────────────────── */
     .request-path {

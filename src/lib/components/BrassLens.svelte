@@ -8,6 +8,7 @@
     class: className = '',
     imageFit = 'cover',
     objectPosition = 'center 20%',
+    lensEnabled = false,
     onOpenLightbox = () => {},
   }: {
     src?: string | null;
@@ -15,6 +16,7 @@
     class?: string;
     imageFit?: 'cover' | 'contain';
     objectPosition?: string;
+    lensEnabled?: boolean;
     onOpenLightbox?: () => void;
   } = $props();
 
@@ -38,11 +40,15 @@
   const lensSize = 220, zoom = 2.4;
 
   function handleMouseMove(e: MouseEvent) {
-    if (!container || !isPointerFine) return;
+    if (!container || !isPointerFine || !lensEnabled) return;
     const r = container.getBoundingClientRect();
     lx = e.clientX - r.left; ly = e.clientY - r.top;
     cw = r.width; ch = r.height;
   }
+
+  $effect(() => {
+    if (!lensEnabled) showLens = false;
+  });
 
   // ── Mobile: pinch-to-zoom + pan + double-tap ──────────────────────────────
   let scale       = $state(1);
@@ -150,9 +156,9 @@
 
 <div
   bind:this={container}
-  class="relative w-full h-full overflow-hidden {isPointerFine ? 'cursor-none' : ''} {className}"
+  class="relative w-full h-full overflow-hidden {isPointerFine && lensEnabled ? 'cursor-none' : ''} {className}"
   onmousemove={handleMouseMove}
-  onmouseenter={() => { if (isPointerFine) showLens = true; }}
+  onmouseenter={() => { if (isPointerFine && lensEnabled) showLens = true; }}
   onmouseleave={() => showLens = false}
   ontouchstart={handleTouchStart}
   ontouchmove={handleTouchMove}
