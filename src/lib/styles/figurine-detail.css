@@ -1355,35 +1355,6 @@
   line-height: 1.45;
 }
 
-.entry-secondary-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.55rem 0.9rem;
-}
-
-.entry-aside {
-  justify-self: start;
-  padding: 0;
-  border: 0;
-  color: color-mix(in srgb, var(--color-ink-secondary) 68%, transparent);
-  background: transparent;
-  cursor: pointer;
-  font-family: var(--font-body);
-  font-size: 0.65rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  line-height: 1.25;
-  text-decoration: underline;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 0.25rem;
-  text-transform: uppercase;
-}
-
-.entry-aside:hover {
-  color: var(--color-ember-deep);
-}
-
 .entry-status-facts {
   display: flex;
   flex-wrap: wrap;
@@ -2902,10 +2873,6 @@
     width: 100%;
   }
 
-  .entry-secondary-actions {
-    align-items: flex-start;
-  }
-
   .entry-status-facts {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
@@ -2997,7 +2964,6 @@
 .thumb-v:focus-visible,
 .expand-btn:focus-visible,
 .entry-action:focus-visible,
-.entry-aside:focus-visible,
 .queue-receipt-leave:focus-visible,
 .entry-record > summary:focus-visible,
 .claim-lookup-link:focus-visible,
