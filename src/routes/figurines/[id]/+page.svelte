@@ -2,8 +2,10 @@
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { fade } from 'svelte/transition';
+  import { invalidateAll } from '$app/navigation';
   import DustParticles from '$lib/components/DustParticles.svelte';
   import FigurineDetailView from '$lib/components/FigurineDetailView.svelte';
+  import NotFound from '$lib/components/NotFound.svelte';
   import { t } from '$lib/i18n';
 
   let { data } = $props();
@@ -88,9 +90,7 @@
     {@html `<script type="application/ld+json">${jsonLd()}<\/script>`}
   {/if}
 
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,500;9..144,650;9..144,750&display=swap" rel="stylesheet">
+  <!-- Fonts loaded once globally in app.html -->
 </svelte:head>
 
 <div class="fixed inset-0 bg-cabinet-bg -z-50"></div>
@@ -99,44 +99,28 @@
 
 <DustParticles />
 
-{#if !figurine}
-  <!-- Skeleton (п.5) — показывается только при прямом переходе без prefetch -->
-  <div class="min-h-screen py-10 px-6 sm:px-12 max-w-7xl mx-auto" out:fade>
-    <div class="h-3 w-24 bg-[#34251c]/8 rounded animate-pulse mb-14"></div>
-    <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)] gap-12 lg:gap-20">
-      <!-- Gallery skeleton -->
-      <div>
-        <div class="relative aspect-[4/5] bg-[#34251c]/6 overflow-hidden">
-          <div class="absolute inset-0 -translate-x-full animate-[shimmer_1.6s_infinite] bg-gradient-to-r from-transparent via-[#fff9f0]/60 to-transparent"></div>
-        </div>
-        <div class="flex gap-2 mt-3">
-          {#each Array(3) as _}
-            <div class="w-14 h-14 bg-[#34251c]/6 animate-pulse"></div>
-          {/each}
-        </div>
-      </div>
-      <!-- Details skeleton -->
-      <div class="space-y-5 pt-2">
-        <div class="h-2.5 w-32 bg-[#34251c]/8 rounded animate-pulse"></div>
-        <div class="h-11 w-3/4 bg-[#34251c]/10 rounded animate-pulse"></div>
-        <div class="h-3 w-20 bg-[#34251c]/6 rounded animate-pulse"></div>
-        <div class="space-y-2 pt-2">
-          {#each Array(5) as _}
-            <div class="h-3 w-full bg-[#34251c]/6 rounded animate-pulse"></div>
-          {/each}
-        </div>
-        <div class="border-t border-[#34251c]/8 pt-5 space-y-3">
-          {#each [28, 20, 32] as w}
-            <div class="flex gap-6">
-              <div class="h-2.5 w-16 bg-[#34251c]/8 rounded animate-pulse"></div>
-              <div class="h-2.5 bg-[#34251c]/6 rounded animate-pulse" style="width:{w}%"></div>
-            </div>
-          {/each}
-        </div>
-        <div class="h-12 w-48 bg-[#34251c]/8 rounded animate-pulse mt-2"></div>
-      </div>
+{#if data.loadError}
+  <!-- Backend unreachable — distinct from a genuine 404 (see +page.ts) -->
+  <div class="min-h-screen flex flex-col items-center justify-center p-8 text-center max-w-md mx-auto" in:fade>
+    <h1 class="font-['Fraunces'] text-4xl text-[#6f3b24] mb-4 opacity-85">{$t('loadErrorTitle')}</h1>
+    <div class="w-24 h-px bg-gradient-to-r from-transparent via-[#34251c]/30 to-transparent mx-auto mb-6" aria-hidden="true"></div>
+    <p class="text-[#34251c] text-sm tracking-wide leading-relaxed mb-8">{$t('loadErrorHint')}</p>
+    <div class="flex items-center gap-4">
+      <button
+        onclick={() => invalidateAll()}
+        class="px-8 py-3 border border-[#34251c]/25 hover:border-[#34251c]/55 text-[#5f4636] hover:text-[#34251c] text-xs tracking-[0.08em] uppercase transition-all duration-500"
+      >
+        {$t('loadErrorRetry')}
+      </button>
+      <a href="/figurines" class="text-xs tracking-[0.08em] uppercase text-[#7c6554] hover:text-[#34251c] underline underline-offset-4 transition-colors">
+        {$t('figurineBackToArchive')}
+      </a>
     </div>
   </div>
+{:else if !figurine}
+  <!-- No such work (404) — load() resolves before render, so a null figurine here
+       means the backend returned not-found, not a loading state. -->
+  <NotFound backHref="/figurines" backLabel={$t('figurineBackToArchive')} />
 {:else}
   {#key id}
     <FigurineDetailView {figurine} {id} prev={data.prev ?? null} next={data.next ?? null} />

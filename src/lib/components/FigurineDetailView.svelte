@@ -816,7 +816,8 @@
 
   // DOM anchor for the sticky navigation identity.
   let galleryRef:  HTMLElement | undefined = $state();
-  let galleryResizeObserver: ResizeObserver | null = null;
+  let galleryObserver: IntersectionObserver | null = null;
+  const TOPNAV_THRESHOLD = 130; // высота SiteHeader + topnav
 
   let galleryExited  = $state(false); // Phase 2: галерея ушла за экран
 
@@ -846,12 +847,12 @@
     }
   }
 
+  // Scroll path stays cheap: only read window.scrollY (drives `scrolled` and the
+  // CTA threshold). Whether the gallery has left the top of the viewport is tracked
+  // by an IntersectionObserver below, so we no longer call getBoundingClientRect on
+  // every scroll frame (that forced a synchronous layout reflow).
   function onScroll() {
     scrollY = window.scrollY;
-    const threshold = 130; // высота SiteHeader + topnav
-    if (galleryRef) {
-      galleryExited = galleryRef.getBoundingClientRect().bottom < threshold;
-    }
   }
 
   function handleVisibility() {
@@ -877,8 +878,16 @@
     void loadQueue();
     void loadNotify();
     if (galleryRef) {
-      galleryResizeObserver = new ResizeObserver(() => onScroll());
-      galleryResizeObserver.observe(galleryRef);
+      // The observer reports the gallery's geometry in its own callback (no reflow on
+      // our side) and also refires on layout/resize changes — e.g. when the image
+      // aspect probe resolves — so it replaces the old ResizeObserver+rect combo.
+      galleryObserver = new IntersectionObserver(
+        ([entry]) => {
+          galleryExited = !entry.isIntersecting && entry.boundingClientRect.bottom < TOPNAV_THRESHOLD;
+        },
+        { rootMargin: `-${TOPNAV_THRESHOLD}px 0px 0px 0px`, threshold: 0 }
+      );
+      galleryObserver.observe(galleryRef);
     }
   });
 
@@ -887,7 +896,7 @@
     window.removeEventListener('scroll', onScroll);
     document.removeEventListener('visibilitychange', handleVisibility);
     if (copiedTimer) clearTimeout(copiedTimer);
-    galleryResizeObserver?.disconnect();
+    galleryObserver?.disconnect();
     clearTodayRefresh();
     clearAudioFade();
     if (storyObjectUrl) URL.revokeObjectURL(storyObjectUrl);

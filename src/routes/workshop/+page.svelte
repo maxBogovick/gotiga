@@ -60,9 +60,7 @@
 
 <svelte:head>
   <title>Workshop — Gothic Museum</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Fraunces&display=swap" rel="stylesheet">
+  <!-- Fonts loaded once globally in app.html -->
 </svelte:head>
 
 <div class="fixed inset-0 bg-[#f8f1e7] -z-50 overflow-hidden">

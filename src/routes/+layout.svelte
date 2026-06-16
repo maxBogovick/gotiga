@@ -6,7 +6,7 @@
   import SiteHeader from '$lib/components/SiteHeader.svelte';
   import DustParticles from '$lib/components/DustParticles.svelte';
   import { themeConfig, themeCSS, startListeningForPreview, applyPreviewPayload } from '$lib/stores/theme.svelte';
-  import { setCopyOverrides } from '$lib/i18n';
+  import { setCopyOverrides, lang } from '$lib/i18n';
   import '$lib/stores/reading-font.svelte'; // initialises --font-reading from saved preference
   import { api } from '$lib/api';
   import type { Lang } from '$lib/i18n';
@@ -17,6 +17,14 @@
   let hasHeaderOffset = $derived(showSiteHeader && page.url.pathname !== '/');
   // Detail page has its own DustParticles at higher intensity — skip in layout to avoid double canvas
   let showDust = $derived(showSiteHeader && !page.url.pathname.startsWith('/figurines/'));
+
+  // Keep <html lang> in sync with the active language. app.html hard-codes lang="ru",
+  // but the default content language is English (i18n getInitialLang) and the reader
+  // can switch — a stale lang attribute mispronounces in screen readers and misleads
+  // search engines. SPA mode (ssr=false) has no handle hook, so we set it client-side.
+  $effect(() => {
+    if (typeof document !== 'undefined') document.documentElement.lang = $lang;
+  });
 
   let stopPreviewListener: (() => void) | null = null;
   let removeMessageListener: (() => void) | null = null;

@@ -36,9 +36,7 @@
 <svelte:head>
     <title>{$t('upcomingTitle')} — Gotiga</title>
     <meta name="description" content="Авторские фигурки в процессе создания. Можно забронировать." />
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
-    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Instrument+Sans:wght@400;500&display=swap" rel="stylesheet">
+    <!-- Fonts loaded once globally in app.html -->
 </svelte:head>
 
 <div class="root">

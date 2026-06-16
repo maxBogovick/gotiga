@@ -283,9 +283,7 @@
     <meta property="og:image" content="/images/cabinet-room.jpg" />
     <meta property="og:type" content="website" />
     <meta name="theme-color" content="#f8f1e7" />
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
-    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400;1,500&family=Instrument+Sans:wght@400;500&display=swap" rel="stylesheet">
+    <!-- Fonts loaded once globally in app.html -->
 </svelte:head>
 
 <svelte:window onmousemove={handleMouseMove} ontouchmove={handleTouchMove} />

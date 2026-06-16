@@ -29,9 +29,11 @@ bg parchment `#f8f1e7` · text `#34251c` · accent `#c65f3c` · deep `#6f3b24` �
 Modals: rotate-1deg frame, double border, wax seal on success, Georgia/Fraunces/Inter fonts.
 
 ## Non-obvious patterns
-- Booking creates a `cancelToken` — user saves it to cancel later (no account system)
+- Booking creates a `cancelToken` — user saves it to cancel later. Works fully anonymously; logged-in users can additionally link bookings to their profile (`api.userLinkBookings`).
 - `FigurineClaimsStore` persists tokens in localStorage, re-verifies on mount + tab focus
 - Gallery keyboard nav: ←/→ arrows (undiscoverable — no hint shown)
 - `view-transition-name: figurine-{id}` enables shared-element morph card→detail; `startViewTransition` is wired globally in `+layout.svelte` (onNavigate). Each `figurine-{id}` must be unique per rendered page or the transition aborts.
 - Admin auth: `sessionStorage` only (lost on tab close by design)
-- `series` field exists in types but is not editable in admin form yet
+- `series` field is editable in the admin figurine form (`admin/+page.svelte`) and is a filter axis on the archive page.
+- Web fonts: one consolidated Google Fonts `<link>` lives in `app.html`; route `<svelte:head>` blocks must NOT add their own (reader-font and admin design-preview fonts load dynamically via their stores).
+- `<html lang>` is kept in sync with the language store from `+layout.svelte` (SPA has no SSR handle hook).

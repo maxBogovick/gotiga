@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { beforeNavigate, afterNavigate } from '$app/navigation';
+  import { beforeNavigate, afterNavigate, invalidateAll } from '$app/navigation';
   import { fade, slide } from 'svelte/transition';
   import { t } from '$lib/i18n';
   import AppImage from '$lib/components/AppImage.svelte';
@@ -288,9 +288,7 @@
 <svelte:head>
   <title>Archive — Gothic Miniatures Collection</title>
   <meta name="description" content="Gothic miniatures registry" />
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Fraunces&display=swap" rel="stylesheet">
+  <!-- Fonts loaded once globally in app.html -->
 </svelte:head>
 
 <div class="fixed inset-0 bg-[#f8f1e7] -z-50"></div>
@@ -711,6 +709,17 @@
             </button>
           </div>
         {/if}
+      {:else if data.loadError}
+        <div class="flex flex-col items-center justify-center py-32 border border-dashed border-[#c65f3c]/25 rounded-lg" in:fade>
+          <p class="font-['Fraunces'] text-3xl text-[#6f3b24] mb-2 opacity-85">{$t('loadErrorTitle')}</p>
+          <p class="text-xs tracking-wide text-[#7c6554] uppercase max-w-md text-center mb-6">{$t('loadErrorHint')}</p>
+          <button
+            onclick={() => invalidateAll()}
+            class="px-8 py-3 border border-[#34251c]/25 hover:border-[#34251c]/55 text-[#5f4636] hover:text-[#34251c] text-xs tracking-[0.08em] uppercase transition-all duration-500"
+          >
+            {$t('loadErrorRetry')}
+          </button>
+        </div>
       {:else if searchQuery}
         <div class="flex flex-col items-center justify-center py-32 border border-dashed border-[#34251c]/10 rounded-lg" in:fade>
           <p class="font-['Fraunces'] text-3xl text-[#5f4636] mb-2 opacity-75">{$t('archiveNotFound')}</p>
