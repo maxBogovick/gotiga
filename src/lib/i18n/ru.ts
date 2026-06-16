@@ -134,6 +134,8 @@ export const ru: Record<TranslationKey, string> = {
   archiveTechniqueAll:    'Вся техника',
   archiveMaterialLabel:   'Материал',
   archiveMaterialAll:     'Все материалы',
+  archiveRefine:          'Уточнить по технике, материалу, году',
+  archiveRefineHide:      'Свернуть уточнения',
   archiveStatusAll:      'Все',
   archiveStatusAvailable:'В наличии',
   archiveStatusReserved: 'Бронь',

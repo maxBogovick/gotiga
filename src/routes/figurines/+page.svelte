@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { beforeNavigate, afterNavigate } from '$app/navigation';
-  import { fade } from 'svelte/transition';
+  import { fade, slide } from 'svelte/transition';
   import { t } from '$lib/i18n';
   import AppImage from '$lib/components/AppImage.svelte';
   import Lightbox from '$lib/components/Lightbox.svelte';
   import OrderModal from '$lib/components/OrderModal.svelte';
+  import FilterPopover from '$lib/components/FilterPopover.svelte';
   import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
   import type { FigurineListItem } from '$lib/types/api';
 
@@ -103,6 +104,41 @@
     sortMode !== 'curated' || yearFilter !== 'all' || techniqueFilter !== 'all' ||
     seriesFilter !== 'all' || materialFilter !== 'all'
   );
+
+  // ── Popover option lists (single chip vocabulary, no native <select>) ──────
+  let sortOptions = $derived([
+    { value: 'curated',   label: $t('archiveSortCurated') },
+    { value: 'available', label: $t('archiveSortAvailable') },
+    { value: 'newest',    label: $t('archiveSortNewest') },
+    { value: 'oldest',    label: $t('archiveSortOldest') },
+    { value: 'name',      label: $t('archiveSortName') },
+  ]);
+
+  const countBy = (key: 'technique' | 'material' | 'series', val: string) =>
+    (figurines as FigItem[]).filter((f) => (f[key] ?? '') === val).length;
+
+  let techniqueOptions = $derived(
+    availableTechniques.map((t) => ({ value: t, label: t, count: countBy('technique', t) }))
+  );
+  let materialOptions = $derived(
+    availableMaterials.map((m) => ({ value: m, label: m, count: countBy('material', m) }))
+  );
+  let seriesOptions = $derived(
+    availableSeries.map((s) => ({ value: s, label: s, count: countBy('series', s) }))
+  );
+
+  // Secondary axes only exist if there is more than one value to choose between.
+  let hasRefineAxes = $derived(
+    availableYears.length > 0 || techniqueOptions.length > 0 ||
+    seriesOptions.length > 0 || materialOptions.length > 0
+  );
+  let secondaryActive = $derived(
+    yearFilter !== 'all' || techniqueFilter !== 'all' ||
+    seriesFilter !== 'all' || materialFilter !== 'all'
+  );
+  let refineOpen = $state(false);
+  // Keep refinements visible whenever one is active (e.g. restored on back-nav).
+  $effect(() => { if (secondaryActive) refineOpen = true; });
 
   $effect(() => {
     void mainFilter; void searchQuery; void sortMode; void yearFilter; void techniqueFilter;
@@ -307,19 +343,14 @@
             {/if}
           </label>
 
-          <!-- Sort select -->
-          <div class="filter-bar__sort-wrap">
-            <select bind:value={sortMode} class="filter-bar__sort">
-              <option value="curated">{$t('archiveSortCurated')}</option>
-              <option value="available">{$t('archiveSortAvailable')}</option>
-              <option value="newest">{$t('archiveSortNewest')}</option>
-              <option value="oldest">{$t('archiveSortOldest')}</option>
-              <option value="name">{$t('archiveSortName')}</option>
-            </select>
-            <svg class="filter-bar__sort-arrow" width="8" height="5" viewBox="0 0 8 5" fill="none" aria-hidden="true">
-              <path d="M1 1l3 3 3-3" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
-            </svg>
-          </div>
+          <!-- Sort — same chip vocabulary, not a native select -->
+          <FilterPopover
+            label={$t('archiveSortLabel')}
+            bind:value={sortMode}
+            options={sortOptions}
+            allValue="curated"
+            allLabel={$t('archiveSortCurated')}
+          />
         </div>
 
         <!-- Row 3: Primary filter chips (status + saved + viewed) -->
@@ -413,83 +444,82 @@
           </button>
         </div>
 
-        <!-- Row 4: Secondary filters (year chips + selects + clear) -->
-        {#if availableYears.length > 0 || availableTechniques.length > 0 || availableSeries.length > 0 || availableMaterials.length > 0 || hasActiveFilters}
-        <div class="filter-secondary">
-
-          <!-- Year chips -->
-          {#if availableYears.length > 0}
-          <div class="filter-secondary__years">
-            {#each availableYears as year}
+        <!-- Row 4: Refine — secondary axes folded as marginalia, calm by default -->
+        {#if hasRefineAxes || hasActiveFilters}
+        <div class="filter-refine">
+          <div class="filter-refine__head">
+            {#if hasRefineAxes}
             <button
-              class="fchip fchip--sm {yearFilter === String(year) ? 'fchip--active-default' : 'fchip--off'}"
-              onclick={() => yearFilter = yearFilter === String(year) ? 'all' : String(year)}
-              aria-pressed={yearFilter === String(year)}
-            >{year}</button>
-            {/each}
-          </div>
-          {/if}
+              type="button"
+              class="refine-toggle {refineOpen ? 'refine-toggle--open' : ''}"
+              onclick={() => refineOpen = !refineOpen}
+              aria-expanded={refineOpen}
+            >
+              <span class="refine-toggle__mark">{refineOpen ? '–' : '+'}</span>
+              {refineOpen ? $t('archiveRefineHide') : $t('archiveRefine')}
+            </button>
+            {/if}
 
-          <!-- Technique select -->
-          {#if availableTechniques.length > 0}
-          {#if availableYears.length > 0}
-            <span class="filter-secondary__sep" aria-hidden="true"></span>
-          {/if}
-          <div class="filter-bar__sort-wrap">
-            <select bind:value={techniqueFilter} class="filter-bar__sort filter-bar__sort--sm">
-              <option value="all">{$t('archiveTechniqueAll')}</option>
-              {#each availableTechniques as tech}
-              <option value={tech}>{tech}</option>
+            {#if hasActiveFilters}
+            <button type="button" onclick={clearFilters} class="filter-clear">
+              <svg width="9" height="9" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+                <path d="M1 5h8M5 1v8" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" transform="rotate(45 5 5)"/>
+              </svg>
+              {$t('archiveClearFilters')}
+            </button>
+            {/if}
+          </div>
+
+          {#if refineOpen && hasRefineAxes}
+          <div class="filter-secondary" transition:slide={{ duration: 260 }}>
+
+            <!-- Year chips -->
+            {#if availableYears.length > 0}
+            <div class="filter-secondary__years">
+              {#each availableYears as year}
+              <button
+                class="fchip fchip--sm {yearFilter === String(year) ? 'fchip--active-default' : 'fchip--off'}"
+                onclick={() => yearFilter = yearFilter === String(year) ? 'all' : String(year)}
+                aria-pressed={yearFilter === String(year)}
+              >{year}</button>
               {/each}
-            </select>
-            <svg class="filter-bar__sort-arrow" width="8" height="5" viewBox="0 0 8 5" fill="none" aria-hidden="true">
-              <path d="M1 1l3 3 3-3" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
-            </svg>
-          </div>
-          {/if}
+            </div>
+            {/if}
 
-          <!-- Series select -->
-          {#if availableSeries.length > 0}
-          <div class="filter-bar__sort-wrap">
-            <select bind:value={seriesFilter} class="filter-bar__sort filter-bar__sort--sm {seriesFilter !== 'all' ? 'filter-bar__sort--active' : ''}">
-              <option value="all">{$t('archiveSeriesAll')}</option>
-              {#each availableSeries as s}
-              <option value={s}>{s}</option>
-              {/each}
-            </select>
-            <svg class="filter-bar__sort-arrow" width="8" height="5" viewBox="0 0 8 5" fill="none" aria-hidden="true">
-              <path d="M1 1l3 3 3-3" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
-            </svg>
-          </div>
-          {/if}
+            {#if availableYears.length > 0 && (techniqueOptions.length > 0 || seriesOptions.length > 0 || materialOptions.length > 0)}
+              <span class="filter-secondary__sep" aria-hidden="true"></span>
+            {/if}
 
-          <!-- Material select -->
-          {#if availableMaterials.length > 0}
-          <div class="filter-bar__sort-wrap">
-            <select bind:value={materialFilter} class="filter-bar__sort filter-bar__sort--sm {materialFilter !== 'all' ? 'filter-bar__sort--active' : ''}">
-              <option value="all">{$t('archiveMaterialAll')}</option>
-              {#each availableMaterials as m}
-              <option value={m}>{m}</option>
-              {/each}
-            </select>
-            <svg class="filter-bar__sort-arrow" width="8" height="5" viewBox="0 0 8 5" fill="none" aria-hidden="true">
-              <path d="M1 1l3 3 3-3" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
-            </svg>
-          </div>
-          {/if}
+            <!-- Technique -->
+            {#if techniqueOptions.length > 0}
+            <FilterPopover
+              label={$t('archiveTechniqueLabel')}
+              bind:value={techniqueFilter}
+              options={techniqueOptions}
+              allLabel={$t('archiveTechniqueAll')}
+            />
+            {/if}
 
-          <!-- Clear all -->
-          {#if hasActiveFilters}
-          <button
-            type="button"
-            onclick={clearFilters}
-            class="filter-clear"
-          >
-            <svg width="9" height="9" viewBox="0 0 10 10" fill="none" aria-hidden="true">
-              <path d="M1 5h8M5 1v8" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" transform="rotate(45 5 5)"/>
-            </svg>
-            {$t('archiveClearFilters')}
-          </button>
+            <!-- Series -->
+            {#if seriesOptions.length > 0}
+            <FilterPopover
+              label={$t('archiveSeriesLabel')}
+              bind:value={seriesFilter}
+              options={seriesOptions}
+              allLabel={$t('archiveSeriesAll')}
+            />
+            {/if}
+
+            <!-- Material -->
+            {#if materialOptions.length > 0}
+            <FilterPopover
+              label={$t('archiveMaterialLabel')}
+              bind:value={materialFilter}
+              options={materialOptions}
+              allLabel={$t('archiveMaterialAll')}
+            />
+            {/if}
+          </div>
           {/if}
         </div>
         {/if}
@@ -890,52 +920,6 @@
   }
   .filter-bar__search-clear:hover { color: #34251c; }
 
-  .filter-bar__sort-wrap {
-    position: relative;
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-  }
-
-  .filter-bar__sort {
-    appearance: none;
-    background: transparent;
-    border: 1px solid rgba(52,37,28,0.15);
-    padding: 8px 26px 8px 11px;
-    font-size: 9.5px;
-    letter-spacing: 0.10em;
-    text-transform: uppercase;
-    color: rgba(52,37,28,0.72);
-    font-family: 'Inter', sans-serif;
-    outline: none;
-    cursor: pointer;
-    transition: border-color 0.2s, color 0.2s;
-    min-width: 130px;
-  }
-  .filter-bar__sort:focus,
-  .filter-bar__sort:hover { border-color: rgba(52,37,28,0.38); color: #34251c; }
-
-  .filter-bar__sort--sm {
-    min-width: 110px;
-    padding: 5px 24px 5px 10px;
-    font-size: 9px;
-  }
-
-  .filter-bar__sort--active {
-    border-color: rgba(52,37,28,0.45);
-    color: #34251c;
-    background: rgba(52,37,28,0.04);
-  }
-
-  .filter-bar__sort-arrow {
-    position: absolute;
-    right: 9px;
-    top: 50%;
-    transform: translateY(-50%);
-    color: rgba(95,70,54,0.45);
-    pointer-events: none;
-  }
-
   /* ── PRIMARY FILTER CHIPS ──────────────────────────────────────── */
   .filter-chips {
     display: flex;
@@ -1044,12 +1028,52 @@
   .fchip__dot--res   { background: rgba(175,120,20,0.75); }
   .fchip__dot--sold  { background: rgba(120,95,80,0.65); }
 
+  /* ── REFINE DISCLOSURE ─────────────────────────────────────────── */
+  .filter-refine__head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .refine-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 4px 2px;
+    font-family: 'Inter', sans-serif;
+    font-size: 9.5px;
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+    color: rgba(95,70,54,0.55);
+    background: none;
+    border: none;
+    cursor: pointer;
+    transition: color 0.2s;
+  }
+  .refine-toggle:hover { color: #34251c; }
+  .refine-toggle--open { color: rgba(52,37,28,0.78); }
+
+  .refine-toggle__mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 13px;
+    height: 13px;
+    font-size: 12px;
+    line-height: 1;
+    color: rgba(95,70,54,0.55);
+    border: 1px solid rgba(52,37,28,0.20);
+    border-radius: 50%;
+  }
+  .refine-toggle:hover .refine-toggle__mark { border-color: rgba(52,37,28,0.45); color: #34251c; }
+
   /* ── SECONDARY FILTERS ─────────────────────────────────────────── */
   .filter-secondary {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
     gap: 8px;
+    padding-top: 14px;
   }
 
   .filter-secondary__years {

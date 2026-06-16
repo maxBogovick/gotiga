@@ -132,6 +132,8 @@ export const en = {
   archiveTechniqueAll:    'All techniques',
   archiveMaterialLabel:   'Material',
   archiveMaterialAll:     'All materials',
+  archiveRefine:          'Refine by technique, material, year',
+  archiveRefineHide:      'Hide refinements',
   archiveStatusAll:      'All',
   archiveStatusAvailable:'Available',
   archiveStatusReserved: 'Reserved',
