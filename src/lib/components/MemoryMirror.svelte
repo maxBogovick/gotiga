@@ -144,8 +144,9 @@
   });
 
   onDestroy(() => {
+    // onDestroy runs during SSR teardown in Svelte 5 — guard the browser-only cleanup.
     clearInterval(restoreInterval);
-    window.removeEventListener('keydown', handleKey);
+    if (typeof window !== 'undefined') window.removeEventListener('keydown', handleKey);
   });
 
   $effect(() => {

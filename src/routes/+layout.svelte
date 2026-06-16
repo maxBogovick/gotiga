@@ -4,6 +4,7 @@
   import { onNavigate } from '$app/navigation';
   import { page } from '$app/state';
   import SiteHeader from '$lib/components/SiteHeader.svelte';
+  import SiteFooter from '$lib/components/SiteFooter.svelte';
   import DustParticles from '$lib/components/DustParticles.svelte';
   import { themeConfig, themeCSS, startListeningForPreview, applyPreviewPayload } from '$lib/stores/theme.svelte';
   import { setCopyOverrides, lang } from '$lib/i18n';
@@ -115,6 +116,10 @@
   <main class="min-h-screen" class:with-site-header={hasHeaderOffset}>
     {@render children()}
   </main>
+
+  {#if showSiteHeader}
+    <SiteFooter />
+  {/if}
 </div>
 
 <style>

@@ -861,6 +861,18 @@ export const en = {
   navLanguage: 'Language',
   navTypeface: 'Reading typeface',
 
+  // === FOOTER ===
+  footerKicker:        'Correspondence',
+  footerTagline:       'A quiet cabinet of gothic miniatures. Each piece kept, never sold in haste.',
+  footerNavTitle:      'The Cabinet',
+  footerContactTitle:  'Reach the workshop',
+  footerEmailLabel:    'Letters',
+  footerPhoneLabel:    'By voice',
+  footerTelegramLabel: 'Telegram',
+  footerColophon:      'Bound by hand · Gotiga',
+  footerRights:        'All works one of a kind',
+  footerEstablished:   'Est. MMXXIV',
+
   // === READING TYPEFACE ===
   readingColophon: 'set in',
   readingMenuTitle: 'Reading typeface',

@@ -892,9 +892,13 @@
   });
 
   onDestroy(() => {
-    window.removeEventListener('keydown', handleKeydown);
-    window.removeEventListener('scroll', onScroll);
-    document.removeEventListener('visibilitychange', handleVisibility);
+    // onDestroy runs during SSR teardown in Svelte 5; these listeners were only added
+    // in onMount (client), so guard the browser-only cleanup.
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('keydown', handleKeydown);
+      window.removeEventListener('scroll', onScroll);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    }
     if (copiedTimer) clearTimeout(copiedTimer);
     galleryObserver?.disconnect();
     clearTodayRefresh();

@@ -107,7 +107,15 @@ function getWebHomeContent(): HomeContent {
 
 function webApiBase(): string {
     const { serverUrl } = getWebSettings();
-    return serverUrl ? `${serverUrl}/api/v1` : '/api/v1';
+    if (serverUrl) return `${serverUrl}/api/v1`;
+    // In the browser always use a same-origin relative path so requests go through the
+    // nginx /api proxy. Only during prerender/SSR (Node — no window, no localStorage)
+    // do we need an absolute origin, injected at build time via VITE_API_BASE.
+    if (typeof window === 'undefined') {
+        const buildBase = import.meta.env.VITE_API_BASE;
+        if (buildBase) return `${buildBase.replace(/\/$/, '')}/api/v1`;
+    }
+    return '/api/v1';
 }
 
 /**

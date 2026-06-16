@@ -86,9 +86,13 @@
   });
 
   onDestroy(() => {
+    // onDestroy runs during SSR teardown in Svelte 5; the listeners were only added
+    // in onMount (client), so guard the browser-only cleanup.
     allClaims.stopPolling();
-    document.removeEventListener('click', handleOutside, { capture: true });
-    document.removeEventListener('click', handleUserOutside, { capture: true });
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('click', handleOutside, { capture: true });
+      document.removeEventListener('click', handleUserOutside, { capture: true });
+    }
   });
 
   $effect(() => {

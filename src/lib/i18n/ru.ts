@@ -863,6 +863,18 @@ export const ru: Record<TranslationKey, string> = {
   navLanguage: 'Язык',
   navTypeface: 'Шрифт чтения',
 
+  // === FOOTER ===
+  footerKicker:        'Для связи',
+  footerTagline:       'Тихий кабинет готических миниатюр. Каждая работа хранится, а не продаётся в спешке.',
+  footerNavTitle:      'Кабинет',
+  footerContactTitle:  'Связаться с мастерской',
+  footerEmailLabel:    'Письма',
+  footerPhoneLabel:    'Голосом',
+  footerTelegramLabel: 'Телеграм',
+  footerColophon:      'Переплетено вручную · Gotiga',
+  footerRights:        'Все работы в единственном экземпляре',
+  footerEstablished:   'Осн. MMXXIV',
+
   // === READING TYPEFACE ===
   readingColophon: 'набрано шрифтом',
   readingMenuTitle: 'Шрифт чтения',

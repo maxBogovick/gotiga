@@ -12,6 +12,15 @@ const config = {
     adapter: adapter({
       fallback: "app.html",
     }),
+    prerender: {
+      // Only routes that explicitly opt in (figurines archive + details) are
+      // prerendered. Crawling is off so the prerenderer never wanders into SPA-only
+      // routes (admin, profile, the /admin link in the header, etc.).
+      crawl: false,
+      // An empty catalog (entries() → []) must not fail the build. A genuinely
+      // unreachable API still fails loudly because entries() itself throws.
+      handleUnseenRoutes: 'ignore',
+    },
   },
 };
 
