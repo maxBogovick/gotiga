@@ -97,11 +97,11 @@
         });
       }
       bgImage = await api.setMainBackground(fileOrPath);
-      message = 'Hero-фото обновлено';
+      message = 'Hero photo updated';
     } catch (e) {
       if (String(e) !== 'Error: no file') {
         console.error('Failed to update hero image:', e);
-        message = 'Не удалось обновить hero-фото';
+        message = 'Failed to update hero photo';
       }
     } finally {
       isUploadingBg = false;
@@ -134,10 +134,10 @@
         heroMode: payload.heroMode,
       };
       savedSnapshot = JSON.stringify(content);
-      message = 'Главная обновлена';
+      message = 'Home page updated';
     } catch (e) {
       console.error('Failed to save home content:', e);
-      message = 'Не удалось сохранить текст главной';
+      message = 'Failed to save home page text';
     } finally {
       isSaving = false;
     }
@@ -162,47 +162,47 @@
     <div class="mb-8 flex items-start justify-between gap-6">
       <div>
         <p class="text-[10px] uppercase tracking-[0.14em] text-[#5f4636] mb-2">Homepage</p>
-        <h2 class="font-gothic text-3xl text-[#6f3b24]">Первый экран главной</h2>
+        <h2 class="font-gothic text-3xl text-[#6f3b24]">Home hero section</h2>
         <p class="mt-3 text-sm leading-7 text-[#5f4636] max-w-2xl">
-          Здесь связывается hero-фото, подпись и работа, которую откроет пользователь. Так картинка и ссылка не расходятся.
+          This links the hero photo, caption, and the work the user will open. That keeps the image and link in sync.
         </p>
       </div>
 
       {#if hasUnsaved}
         <span class="shrink-0 px-3 py-1.5 text-[10px] uppercase tracking-[0.1em] border border-amber-700/30 bg-amber-50 text-amber-800">
-          Есть изменения
+          Unsaved changes
         </span>
       {/if}
     </div>
 
     {#if isLoading}
-      <p class="text-xs uppercase tracking-[0.12em] text-[#5f4636] animate-pulse">Загрузка…</p>
+      <p class="text-xs uppercase tracking-[0.12em] text-[#5f4636] animate-pulse">Loading…</p>
     {:else}
       <div class="space-y-6">
         <div class="border border-[#34251c]/10 bg-[#f8f1e7]/70 p-6 space-y-4">
           <div>
             <p class="text-[10px] uppercase tracking-[0.14em] text-[#5f4636] mb-2">Hero mode</p>
-            <h3 class="font-gothic text-2xl text-[#6f3b24]">Режим первого экрана</h3>
+            <h3 class="font-gothic text-2xl text-[#6f3b24]">Hero mode</h3>
             <p class="mt-2 text-sm leading-6 text-[#5f4636] max-w-2xl">
-              Витрина ведёт к доступным работам. Редкий выпуск лучше, когда доступных работ нет и нужно вести в архив или к работам в процессе.
+              Showcase leads to available works. Rare release is better when there are no available works and you need to point to the archive or works in progress.
             </p>
           </div>
 
           <div class="mode-grid">
             <label class:active={content.heroMode === 'auto'}>
               <input type="radio" bind:group={content.heroMode} value="auto" />
-              <span>Авто</span>
-              <small>Если доступных нет, включит редкий выпуск</small>
+              <span>Auto</span>
+              <small>Switches to rare release when nothing is available</small>
             </label>
             <label class:active={content.heroMode === 'showcase'}>
               <input type="radio" bind:group={content.heroMode} value="showcase" />
-              <span>Витрина</span>
-              <small>Главный CTA ведёт к доступным работам</small>
+              <span>Showcase</span>
+              <small>Primary CTA leads to available works</small>
             </label>
             <label class:active={content.heroMode === 'release'}>
               <input type="radio" bind:group={content.heroMode} value="release" />
-              <span>Редкий выпуск</span>
-              <small>Главный CTA ведёт в архив, второй — в работу</small>
+              <span>Rare release</span>
+              <small>Primary CTA leads to the archive, secondary to works in progress</small>
             </label>
           </div>
         </div>
@@ -229,30 +229,30 @@
           <div class="flex items-start justify-between gap-4">
             <div>
               <p class="text-[10px] uppercase tracking-[0.14em] text-[#5f4636] mb-2">Hero work</p>
-              <h3 class="font-gothic text-2xl text-[#6f3b24]">Работа, которую откроет подпись</h3>
+              <h3 class="font-gothic text-2xl text-[#6f3b24]">Work opened by the caption</h3>
               <p class="mt-2 text-sm leading-6 text-[#5f4636] max-w-2xl">
-                Выберите фигурку, соответствующую hero-фото. Подпись на главной будет вести именно на эту работу.
+                Choose the figure matching the hero photo. The home caption will link to this exact work.
               </p>
             </div>
             {#if selectedHeroFigurine}
               <span class="shrink-0 px-3 py-1.5 text-[10px] uppercase tracking-[0.1em] border border-emerald-700/25 bg-emerald-50 text-emerald-800">
-                Связано
+                Linked
               </span>
             {:else}
               <span class="shrink-0 px-3 py-1.5 text-[10px] uppercase tracking-[0.1em] border border-amber-700/30 bg-amber-50 text-amber-800">
-                Не выбрано
+                Not selected
               </span>
             {/if}
           </div>
 
           <label class="block">
-            <span class="label">Фигурка для hero</span>
+            <span class="label">Hero figure</span>
             <select
               class="input-gothic"
               value={content.heroFigurineId ?? ''}
               onchange={(e) => selectHeroFigurine((e.currentTarget as HTMLSelectElement).value)}
             >
-              <option value="">Не связывать с конкретной работой</option>
+              <option value="">Do not link to a specific work</option>
               {#each figurines as fig}
                 <option value={fig.id}>
                   {fig.name} · {fig.status}{fig.year ? ` · ${fig.year}` : ''}
@@ -267,20 +267,20 @@
                 <img src={selectedHeroFigurine.faceImageUrl} alt={selectedHeroFigurine.name} />
               {/if}
               <div>
-                <p class="text-[10px] uppercase tracking-[0.14em] text-[#5f4636] mb-1">Будет открываться</p>
+                <p class="text-[10px] uppercase tracking-[0.14em] text-[#5f4636] mb-1">Will open</p>
                 <p class="font-gothic text-2xl text-[#2c1710]">{selectedHeroFigurine.name}</p>
                 <p class="mt-1 text-xs uppercase tracking-[0.12em] text-[#5f4636]">
                   /figurines/{selectedHeroFigurine.id}
                 </p>
               </div>
               <div class="ml-auto flex gap-2">
-                <button type="button" onclick={useSelectedName} class="btn-small">Название в подпись</button>
-                <button type="button" onclick={clearHeroFigurine} class="btn-small">Очистить</button>
+                <button type="button" onclick={useSelectedName} class="btn-small">Name to caption</button>
+                <button type="button" onclick={clearHeroFigurine} class="btn-small">Clear</button>
               </div>
             </div>
           {:else}
             <p class="warning">
-              Если работа не выбрана, подпись не будет вести на случайную featured-фигурку. Клик откроет архив.
+              If no work is selected, the caption will not link to a random featured figure. A click opens the archive.
             </p>
           {/if}
         </div>
@@ -289,13 +289,13 @@
           <div class="flex items-start justify-between gap-4">
             <div>
               <p class="text-[10px] uppercase tracking-[0.14em] text-[#5f4636] mb-2">Hero image</p>
-              <h3 class="font-gothic text-2xl text-[#6f3b24]">Фото первого экрана</h3>
+              <h3 class="font-gothic text-2xl text-[#6f3b24]">Hero photo</h3>
               <p class="mt-2 text-sm leading-6 text-[#5f4636] max-w-2xl">
-                Это то же фото, которое используется на главной. Оно должно визуально соответствовать выбранной работе.
+                This is the same photo used on the home page. It should visually match the selected work.
               </p>
             </div>
             <button type="button" onclick={changeBackground} disabled={isUploadingBg} class="btn-gothic disabled:opacity-40">
-              {isUploadingBg ? 'Загрузка…' : 'Заменить фото'}
+              {isUploadingBg ? 'Uploading…' : 'Replace photo'}
             </button>
           </div>
 
@@ -304,27 +304,27 @@
               <img src={bgImage} alt="Hero" />
             </div>
           {:else}
-            <p class="warning">Hero-фото не загружено. Будет использован fallback.</p>
+            <p class="warning">No hero photo uploaded. A fallback will be used.</p>
           {/if}
         </div>
 
         <div class="border border-[#34251c]/10 bg-[#f8f1e7]/70 p-6 space-y-5">
           <div>
             <p class="text-[10px] uppercase tracking-[0.14em] text-[#5f4636] mb-2">Hero caption</p>
-            <h3 class="font-gothic text-2xl text-[#6f3b24]">Подпись на фото</h3>
+            <h3 class="font-gothic text-2xl text-[#6f3b24]">Photo caption</h3>
           </div>
 
           <label class="block">
-            <span class="label">Название в подписи</span>
+            <span class="label">Caption title</span>
             <input
               bind:value={content.heroCaptionTitle}
               class="input-gothic"
-              placeholder={selectedHeroFigurine?.name || 'Простак'}
+              placeholder={selectedHeroFigurine?.name || 'The Fool'}
             />
           </label>
 
           <label class="block">
-            <span class="label">Мета-строка</span>
+            <span class="label">Meta line</span>
             <input
               bind:value={content.heroCaptionMeta}
               class="input-gothic"
@@ -333,7 +333,7 @@
           </label>
 
           <label class="block">
-            <span class="label">Текст ссылки</span>
+            <span class="label">Link text</span>
             <input
               bind:value={content.heroCaptionCta}
               class="input-gothic"
@@ -354,7 +354,7 @@
             {content.lead?.trim() || $t('homeLead')}
           </p>
           <div class="mt-6 border-l border-[#c65f3c]/50 pl-4">
-            <p class="text-[10px] uppercase tracking-[0.14em] text-[#5f4636]">Подпись на фото</p>
+            <p class="text-[10px] uppercase tracking-[0.14em] text-[#5f4636]">Photo caption</p>
             <p class="font-gothic text-3xl italic text-[#2c1710]">
               {content.heroCaptionTitle?.trim() || selectedHeroFigurine?.name || '—'}
             </p>
@@ -377,14 +377,14 @@
             disabled={isSaving || !hasUnsaved}
             class="btn-gothic disabled:opacity-40"
           >
-            {isSaving ? 'Сохранение…' : 'Сохранить главную'}
+            {isSaving ? 'Saving…' : 'Save home page'}
           </button>
           <button
             onclick={resetToFallbacks}
             disabled={isSaving}
             class="btn-gothic opacity-70"
           >
-            Вернуть тексты по умолчанию
+            Reset texts to default
           </button>
         </div>
       </div>

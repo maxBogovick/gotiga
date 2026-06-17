@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
+  import { brandName } from '$lib/i18n';
   import type { Order } from '$lib/types/api';
 
   let { onNewCount = (_n: number) => {} } = $props();
@@ -33,7 +34,7 @@
       newCount = res.newCount;
       onNewCount(res.newCount);
     } catch {
-      error = 'Не удалось загрузить заявки';
+      error = 'Failed to load requests';
     } finally {
       loading = false;
     }
@@ -62,10 +63,10 @@
   onMount(() => load());
 
   const statusLabel: Record<string, string> = {
-    new: 'Новая', seen: 'Просмотрена', replied: 'Отвечено',
+    new: 'New', seen: 'Seen', replied: 'Replied',
   };
   const modeLabel: Record<string, string> = {
-    request: 'Запрос', question: 'Вопрос', notify: 'Уведомить',
+    request: 'Request', question: 'Question', notify: 'Notify',
   };
   const statusColor: Record<string, string> = {
     new:     'bg-red-100 text-red-800 border-red-200',
@@ -79,7 +80,7 @@
   };
 
   function formatDate(iso: string) {
-    return new Date(iso).toLocaleString('ru-RU', {
+    return new Date(iso).toLocaleString('en-US', {
       day: '2-digit', month: '2-digit', year: '2-digit',
       hour: '2-digit', minute: '2-digit',
     });
@@ -87,18 +88,18 @@
 
   function makeMailtoLink(order: Order): string {
     const name = order.requesterName && order.requesterName !== '—' ? order.requesterName : '';
-    const greeting = name ? `Здравствуйте, ${name}!\n\n` : 'Здравствуйте!\n\n';
+    const greeting = name ? `Hello, ${name}!\n\n` : 'Hello!\n\n';
     let body: string;
     if (order.mode === 'request') {
-      body = `${greeting}Ваш запрос на работу «${order.figurineName}» получен. `;
-      body += order.message ? `Ваше сообщение:\n«${order.message}»\n\n` : '\n\n';
-      body += 'С уважением,\nGotiga';
+      body = `${greeting}Your request for the work “${order.figurineName}” has been received. `;
+      body += order.message ? `Your message:\n“${order.message}”\n\n` : '\n\n';
+      body += `Best regards,\n${$brandName}`;
     } else if (order.mode === 'question') {
-      body = `${greeting}По вашему вопросу о работе «${order.figurineName}»:\n\n`;
+      body = `${greeting}Regarding your question about the work “${order.figurineName}”:\n\n`;
       body += order.message ? `> ${order.message}\n\n` : '';
-      body += 'С уважением,\nGotiga';
+      body += `Best regards,\n${$brandName}`;
     } else {
-      body = `${greeting}Уведомление о работе «${order.figurineName}»:\n\nС уважением,\nGotiga`;
+      body = `${greeting}Notification about the work “${order.figurineName}”:\n\nBest regards,\n${$brandName}`;
     }
     const subject = encodeURIComponent(`Re: ${order.figurineName}`);
     return `mailto:${order.requesterEmail}?subject=${subject}&body=${encodeURIComponent(body)}`;
@@ -122,14 +123,14 @@
   <!-- Toolbar -->
   <div class="flex items-center gap-3 px-6 py-3 border-b border-[#34251c]/10 flex-shrink-0 bg-[#fff9f0]">
     <h2 class="font-['Fraunces'] text-lg text-[#34251c]">
-      Заявки
+      Requests
       {#if newCount > 0}
         <span class="ml-2 inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold">{newCount}</span>
       {/if}
     </h2>
 
     <div class="flex gap-1 ml-auto">
-      {#each [['', 'Все'], ['new', 'Новые'], ['seen', 'Просмотрены'], ['replied', 'Отвечено']] as [val, label]}
+      {#each [['', 'All'], ['new', 'New'], ['seen', 'Seen'], ['replied', 'Replied']] as [val, label]}
         <button
           onclick={() => { statusFilter = val as typeof statusFilter; load(true); }}
           class="px-3 py-1 text-[10px] uppercase tracking-wide border transition-colors
@@ -143,18 +144,18 @@
     <button
       onclick={() => load()}
       class="text-xs text-[#5f4636] hover:text-[#34251c] border border-[#34251c]/20 px-2 py-1 transition-colors"
-      title="Обновить"
+      title="Refresh"
     >↺</button>
   </div>
 
   <!-- Content -->
   <div class="flex-1 overflow-y-auto px-6 py-4">
     {#if loading}
-      <div class="text-center text-[#5f4636] py-12 text-sm">Загрузка…</div>
+      <div class="text-center text-[#5f4636] py-12 text-sm">Loading…</div>
     {:else if error}
       <div class="text-center text-red-700 py-12 text-sm">{error}</div>
     {:else if items.length === 0}
-      <div class="text-center text-[#5f4636]/60 py-12 font-['Fraunces'] text-lg">Заявок нет</div>
+      <div class="text-center text-[#5f4636]/60 py-12 font-['Fraunces'] text-lg">No requests</div>
     {:else}
       <div class="space-y-3">
         {#each items as order (order.id)}
@@ -168,7 +169,7 @@
                     target="_blank"
                     rel="noopener"
                     class="font-['Fraunces'] text-[#34251c] font-semibold hover:text-[#c65f3c] hover:underline transition-colors"
-                    title="Открыть работу"
+                    title="Open work"
                   >{order.figurineName} ↗</a>
                   <span class="text-[10px] px-1.5 py-0.5 rounded {modeColor[order.mode]}">{modeLabel[order.mode]}</span>
                 </div>
@@ -197,7 +198,7 @@
 
             <!-- Actions -->
             <div class="flex gap-1 mt-3 pt-2 border-t border-[#34251c]/5">
-              {#each [['new', 'Новая'], ['seen', 'Просмотрена'], ['replied', 'Отвечено']] as [s, lbl]}
+              {#each [['new', 'New'], ['seen', 'Seen'], ['replied', 'Replied']] as [s, lbl]}
                 <button
                   onclick={() => setStatus(order, s as 'new' | 'seen' | 'replied')}
                   disabled={order.status === s || updatingId === order.id}
@@ -210,7 +211,7 @@
               <a
                 href={makeMailtoLink(order)}
                 class="ml-auto text-[10px] px-2 py-1 border border-[#c65f3c]/30 text-[#c65f3c] hover:bg-[#c65f3c]/5 transition-colors"
-              >✉ Ответить</a>
+              >✉ Reply</a>
             </div>
           </div>
         {/each}
@@ -223,7 +224,7 @@
     <div class="flex items-center justify-between px-6 py-3 border-t border-[#34251c]/10 flex-shrink-0 bg-[#fff9f0]">
       <span class="text-[11px] text-[#5f4636]/70">
         {#if total > 0}
-          {(page - 1) * PER_PAGE + 1}–{Math.min(page * PER_PAGE, total)} из {total}
+          {(page - 1) * PER_PAGE + 1}–{Math.min(page * PER_PAGE, total)} of {total}
         {/if}
       </span>
 

@@ -15,7 +15,7 @@
     loading = true; error = '';
     try {
       items = await api.adminListWaitlist(figurineFilter || undefined);
-    } catch { error = 'Не удалось загрузить список'; }
+    } catch { error = 'Failed to load the list'; }
     finally { loading = false; }
   }
 
@@ -40,7 +40,7 @@
   onMount(load);
 
   function formatTs(iso: string) {
-    return new Date(iso).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+    return new Date(iso).toLocaleString('en-US', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
   }
 
   // Group by figurine for readability
@@ -58,21 +58,21 @@
   <!-- Toolbar -->
   <div class="flex items-center gap-3 px-6 py-3 border-b border-[#34251c]/10 flex-shrink-0 bg-[#fff9f0]">
     <h2 class="font-['Fraunces'] text-lg text-[#34251c]">
-      Лист ожидания
+      Waitlist
       {#if items.length > 0}
         <span class="ml-2 inline-flex items-center justify-center w-5 h-5 rounded-full bg-[#6f3b24] text-white text-[10px] font-bold">{items.length}</span>
       {/if}
     </h2>
-    <button onclick={load} class="ml-auto text-xs text-[#5f4636] hover:text-[#34251c] border border-[#34251c]/20 px-2 py-1 transition-colors" title="Обновить">↺</button>
+    <button onclick={load} class="ml-auto text-xs text-[#5f4636] hover:text-[#34251c] border border-[#34251c]/20 px-2 py-1 transition-colors" title="Refresh">↺</button>
   </div>
 
   <div class="flex-1 overflow-y-auto px-6 py-4">
     {#if loading}
-      <div class="text-center text-[#5f4636] py-12 text-sm">Загрузка…</div>
+      <div class="text-center text-[#5f4636] py-12 text-sm">Loading…</div>
     {:else if error}
       <div class="text-center text-red-700 py-12 text-sm">{error}</div>
     {:else if items.length === 0}
-      <div class="text-center text-[#5f4636]/60 py-12 font-['Fraunces'] text-lg">Лист пуст</div>
+      <div class="text-center text-[#5f4636]/60 py-12 font-['Fraunces'] text-lg">List is empty</div>
     {:else}
       <div class="space-y-6">
         {#each grouped as group}
@@ -83,17 +83,17 @@
                 class="font-['Fraunces'] text-base text-[#34251c] hover:text-[#c65f3c] hover:underline transition-colors">
                 {group.figurineName} ↗
               </a>
-              <span class="text-[10px] text-[#5f4636]/50 uppercase tracking-wide">{group.entries.length} чел.</span>
+              <span class="text-[10px] text-[#5f4636]/50 uppercase tracking-wide">{group.entries.length} ppl</span>
               {#if registered > 0}
-                <span class="text-[10px] text-[#6a9e5a] uppercase tracking-wide">· {registered} с акк.</span>
+                <span class="text-[10px] text-[#6a9e5a] uppercase tracking-wide">· {registered} w/ acct</span>
               {/if}
               <button
                 onclick={() => notifyAll(group.figurineId)}
                 disabled={notifyingId === group.figurineId}
                 class="ml-auto text-[10px] px-2 py-1 border border-[#6a9e5a]/50 text-[#6a9e5a] hover:bg-[#6a9e5a]/8 transition-colors disabled:opacity-40"
-                title="Отправить сообщение всем зарегистрированным пользователям в листе ожидания"
+                title="Send a message to all registered users in the waitlist"
               >
-                {notifyingId === group.figurineId ? '…' : '✉ Уведомить всех'}
+                {notifyingId === group.figurineId ? '…' : '✉ Notify all'}
               </button>
               {#if notifyResult[group.figurineId]}
                 <span class="text-[10px] text-[#6a9e5a]">
@@ -104,12 +104,12 @@
             <div class="space-y-2">
               {#each group.entries as entry (entry.id)}
                 <div class="border border-[#34251c]/10 bg-white p-3 flex items-start gap-3">
-                  <span class="flex-shrink-0 w-7 h-7 rounded-full bg-[#f4ece0] border border-[#d8c6b1] flex items-center justify-center font-serif text-sm text-[#6f3b24]" title="Место в очереди">{entry.position}</span>
+                  <span class="flex-shrink-0 w-7 h-7 rounded-full bg-[#f4ece0] border border-[#d8c6b1] flex items-center justify-center font-serif text-sm text-[#6f3b24]" title="Queue position">{entry.position}</span>
                   <div class="flex-1 min-w-0">
                     <div class="flex items-center gap-1.5">
                       <p class="text-sm font-medium text-[#34251c]">{entry.requesterName}</p>
                       {#if entry.userId}
-                        <span class="text-[9px] bg-[#e8f4e8] text-[#2d6a3f] px-1.5 py-0.5 rounded" title="Зарегистрированный пользователь">акк</span>
+                        <span class="text-[9px] bg-[#e8f4e8] text-[#2d6a3f] px-1.5 py-0.5 rounded" title="Registered user">acct</span>
                       {/if}
                     </div>
                     <p class="text-xs text-[#5f4636]">

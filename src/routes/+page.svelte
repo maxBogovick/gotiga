@@ -7,7 +7,7 @@
     import { spring } from 'svelte/motion';
     import { api } from '$lib/api';
     import type { CabinetZone, FigurineListItem, HomeContent } from '$lib/types/api';
-    import { t } from '$lib/i18n';
+    import { t, brandName } from '$lib/i18n';
     import AppImage from '$lib/components/AppImage.svelte';
     import HomeFigurineTile from '$lib/components/HomeFigurineTile.svelte';
     import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
@@ -277,9 +277,9 @@
 </script>
 
 <svelte:head>
-    <title>Gotiga — кабинет авторских готических фигурок</title>
-    <meta name="description" content="Авторский кабинет готических фигурок и миниатюр ручной работы." />
-    <meta property="og:title" content="Gotiga — кабинет готических фигурок" />
+    <title>{$brandName} — Cabinet of Gothic Miniatures</title>
+    <meta name="description" content="An author's cabinet of gothic figures and handmade miniatures." />
+    <meta property="og:title" content="{$brandName} — Cabinet of Gothic Miniatures" />
     <meta property="og:image" content="/images/cabinet-room.jpg" />
     <meta property="og:type" content="website" />
     <meta name="theme-color" content="#f8f1e7" />
@@ -331,7 +331,7 @@
                     <a href={secondaryCtaHref} class="cta-ghost">{secondaryCtaText}</a>
                 </div>
 
-                <div class="hero-proof" aria-label="Gotiga">
+                <div class="hero-proof" aria-label={$brandName}>
                     <span>{$t('homeTrustUnique')}</span>
                     <span>{$t('homeTrustHandmade')}</span>
                     <span>{$t('homeTrustAuthorReply')}</span>

@@ -98,7 +98,7 @@
 
 <div class="ap">
   {#if loading}
-    <div class="ap-loading">Загрузка аналитики…</div>
+    <div class="ap-loading">Loading analytics…</div>
   {:else if error}
     <div class="ap-error">{error}</div>
   {:else}
@@ -107,24 +107,24 @@
     <div class="ap-cards">
       <div class="ap-card">
         <p class="ap-card-value">{statTotal}</p>
-        <p class="ap-card-label">Фигурок в архиве</p>
+        <p class="ap-card-label">Figures in archive</p>
         <div class="ap-mini-bar">
-          <div class="ap-mini-seg ap-seg--available" style="width:{pct(statAvailable,statTotal)}%" title="Доступных: {statAvailable}"></div>
-          <div class="ap-mini-seg ap-seg--reserved"  style="width:{pct(statReserved, statTotal)}%" title="Зарезервировано: {statReserved}"></div>
-          <div class="ap-mini-seg ap-seg--sold"      style="width:{pct(statSold,    statTotal)}%" title="Продано: {statSold}"></div>
-          <div class="ap-mini-seg ap-seg--wip"       style="width:{pct(statWip,     statTotal)}%" title="В работе: {statWip}"></div>
+          <div class="ap-mini-seg ap-seg--available" style="width:{pct(statAvailable,statTotal)}%" title="Available: {statAvailable}"></div>
+          <div class="ap-mini-seg ap-seg--reserved"  style="width:{pct(statReserved, statTotal)}%" title="Reserved: {statReserved}"></div>
+          <div class="ap-mini-seg ap-seg--sold"      style="width:{pct(statSold,    statTotal)}%" title="Sold: {statSold}"></div>
+          <div class="ap-mini-seg ap-seg--wip"       style="width:{pct(statWip,     statTotal)}%" title="In progress: {statWip}"></div>
         </div>
         <div class="ap-card-detail">
-          <span class="dot dot--available"></span>{statAvailable} доступных ·
-          <span class="dot dot--reserved"></span>{statReserved} брон. ·
-          <span class="dot dot--sold"></span>{statSold} продано ·
-          <span class="dot dot--wip"></span>{statWip} в работе
+          <span class="dot dot--available"></span>{statAvailable} available ·
+          <span class="dot dot--reserved"></span>{statReserved} booked ·
+          <span class="dot dot--sold"></span>{statSold} sold ·
+          <span class="dot dot--wip"></span>{statWip} in progress
         </div>
       </div>
 
       <div class="ap-card">
         <p class="ap-card-value">{bookTotal}</p>
-        <p class="ap-card-label">Заявок на бронь</p>
+        <p class="ap-card-label">Booking requests</p>
         <div class="ap-mini-bar">
           <div class="ap-mini-seg ap-seg--pending"   style="width:{pct(bookPending,   bookTotal)}%"></div>
           <div class="ap-mini-seg ap-seg--confirmed" style="width:{pct(bookConfirmed, bookTotal)}%"></div>
@@ -132,53 +132,53 @@
           <div class="ap-mini-seg ap-seg--cancelled" style="width:{pct(bookCancelled, bookTotal)}%"></div>
         </div>
         <div class="ap-card-detail">
-          <span class="dot dot--pending"></span>{bookPending} ожидают ·
-          <span class="dot dot--confirmed"></span>{bookConfirmed} подтверждено ·
-          <span class="dot dot--rejected"></span>{bookRejected + bookCancelled} отклонено
+          <span class="dot dot--pending"></span>{bookPending} pending ·
+          <span class="dot dot--confirmed"></span>{bookConfirmed} confirmed ·
+          <span class="dot dot--rejected"></span>{bookRejected + bookCancelled} rejected
         </div>
       </div>
 
       <div class="ap-card">
         <p class="ap-card-value">{ordTotal}</p>
-        <p class="ap-card-label">Запросов / обращений</p>
+        <p class="ap-card-label">Requests / inquiries</p>
         <div class="ap-mini-bar">
           <div class="ap-mini-seg ap-seg--request"  style="width:{pct(ordRequests,  ordTotal)}%"></div>
           <div class="ap-mini-seg ap-seg--question" style="width:{pct(ordQuestions, ordTotal)}%"></div>
           <div class="ap-mini-seg ap-seg--notify"   style="width:{pct(ordNotify,    ordTotal)}%"></div>
         </div>
         <div class="ap-card-detail">
-          <span class="dot dot--request"></span>{ordRequests} запросов ·
-          <span class="dot dot--question"></span>{ordQuestions} вопросов ·
-          <span class="dot dot--notify"></span>{ordNotify} подписок
+          <span class="dot dot--request"></span>{ordRequests} requests ·
+          <span class="dot dot--question"></span>{ordQuestions} questions ·
+          <span class="dot dot--notify"></span>{ordNotify} subscriptions
         </div>
       </div>
 
       <div class="ap-card ap-card--highlight">
         <p class="ap-card-value ap-conversion">{bookConversion}%</p>
-        <p class="ap-card-label">Конверсия броней</p>
+        <p class="ap-card-label">Booking conversion</p>
         <div class="ap-conversion-bar">
           <div class="ap-conversion-fill" style="width:{bookConversion}%"></div>
         </div>
         <p class="ap-card-detail">
-          {bookConfirmed} из {bookTotal} заявок подтверждено
+          {bookConfirmed} of {bookTotal} requests confirmed
         </p>
       </div>
     </div>
 
     <!-- ── Weekly activity ────────────────────────────────────────────── -->
     <div class="ap-section">
-      <h3 class="ap-section-title">Активность по неделям (последние 8 нед.)</h3>
+      <h3 class="ap-section-title">Weekly activity (last 8 weeks)</h3>
       <div class="ap-weeks">
         {#each weekBars as w}
           <div class="ap-week-col">
             <div class="ap-week-bars">
               <div class="ap-week-bar ap-week-bar--orders"
                    style="height:{pct(w.orders, maxWeekVal)}%"
-                   title="Запросы: {w.orders}">
+                   title="Requests: {w.orders}">
               </div>
               <div class="ap-week-bar ap-week-bar--bookings"
                    style="height:{pct(w.bookings, maxWeekVal)}%"
-                   title="Брони: {w.bookings}">
+                   title="Bookings: {w.bookings}">
               </div>
             </div>
             <span class="ap-week-label">{w.label}</span>
@@ -186,15 +186,15 @@
         {/each}
       </div>
       <div class="ap-legend">
-        <span class="ap-legend-item"><span class="ap-legend-dot ap-legend-dot--bookings"></span>Брони</span>
-        <span class="ap-legend-item"><span class="ap-legend-dot ap-legend-dot--orders"></span>Запросы</span>
+        <span class="ap-legend-item"><span class="ap-legend-dot ap-legend-dot--bookings"></span>Bookings</span>
+        <span class="ap-legend-item"><span class="ap-legend-dot ap-legend-dot--orders"></span>Requests</span>
       </div>
     </div>
 
     <!-- ── Top figurines ─────────────────────────────────────────────── -->
     {#if topFigurines.length > 0}
       <div class="ap-section">
-        <h3 class="ap-section-title">Самые запрашиваемые фигурки</h3>
+        <h3 class="ap-section-title">Most requested figures</h3>
         <div class="ap-top-list">
           {#each topFigurines as f, i}
             <div class="ap-top-row">
@@ -207,14 +207,14 @@
                 </div>
               </div>
               <span class="ap-top-count">{f.total}</span>
-              <span class="ap-top-detail">{f.bookings}б / {f.orders}з</span>
+              <span class="ap-top-detail">{f.bookings}b / {f.orders}r</span>
             </div>
           {/each}
         </div>
-        <p class="ap-legend-small">б — брони · з — запросы</p>
+        <p class="ap-legend-small">b — bookings · r — requests</p>
       </div>
     {:else}
-      <div class="ap-empty">Данных пока нет — активность появится по мере бронирований и запросов.</div>
+      <div class="ap-empty">No data yet — activity will appear as bookings and requests come in.</div>
     {/if}
 
   {/if}

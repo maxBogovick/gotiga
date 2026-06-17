@@ -6,7 +6,7 @@
   import FontSwitcher from '$lib/components/FontSwitcher.svelte';
   import { allClaims } from '$lib/stores/all-claims.svelte';
   import { authStore } from '$lib/stores/auth.svelte';
-  import { t } from '$lib/i18n';
+  import { t, brandName } from '$lib/i18n';
   import { fade, fly } from 'svelte/transition';
   import { api, resolveMediaUrl } from '$lib/api';
 
@@ -102,8 +102,8 @@
 </script>
 
 <header class="site-header">
-  <a href="/" class="brand" aria-label="Gotiga">
-    <span class="brand-name">Gotiga</span>
+  <a href="/" class="brand" aria-label={$brandName}>
+    <span class="brand-name">{$brandName}</span>
     <span class="brand-sub">Cabinet of Gothic Miniatures</span>
   </a>
 

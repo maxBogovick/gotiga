@@ -21,11 +21,36 @@ lang.subscribe((l) => {
 
 export const copyOverrides = writable<Record<Lang, Record<string, string>>>({ en: {}, ru: {} });
 
+// Brand name resolution. Precedence:
+//   1. admin override (copyOverrides → `brandName` key, per-language, en as fallback)
+//   2. compile-time default (VITE_BRAND_NAME, baked in at build)
+//   3. hardcoded dictionary default ('Gotiga')
+// Anywhere the literal brand appears in copy, use the `{brand}` token — `t()`
+// substitutes it below — or read the `brandName` store directly in components.
+const ENV_BRAND = (import.meta.env.VITE_BRAND_NAME ?? 'Ritunia').trim();
+
+function resolveBrand($lang: Lang, $overrides: Record<Lang, Record<string, string>>): string {
+  return (
+    $overrides[$lang]?.brandName?.trim() ||
+    $overrides.en?.brandName?.trim() ||
+    ENV_BRAND ||
+    en.brandName
+  );
+}
+
+export const brandName = derived(
+  [lang, copyOverrides],
+  ([$lang, $overrides]) => resolveBrand($lang, $overrides),
+);
+
 export const t = derived([lang, copyOverrides], ([$lang, $overrides]) => {
   const d = dicts[$lang];
   const overridesForLang = $overrides[$lang] ?? {};
-  return (key: TranslationKey): string =>
-    overridesForLang[key] ?? d[key] ?? en[key];
+  const brand = resolveBrand($lang, $overrides);
+  return (key: TranslationKey): string => {
+    const raw = overridesForLang[key] ?? d[key] ?? en[key];
+    return raw.includes('{brand}') ? raw.split('{brand}').join(brand) : raw;
+  };
 });
 
 export function setLang(l: Lang): void {

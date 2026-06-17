@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
+  import { brandName } from '$lib/i18n';
   import type { BookingDto, FigurineListItem } from '$lib/types/api';
 
   let { onPendingCount = (_n: number) => {} } = $props();
@@ -112,7 +113,7 @@
       pendingCount = res.pendingCount;
       onPendingCount(res.pendingCount);
     } catch {
-      error = 'Не удалось загрузить брони';
+      error = 'Failed to load bookings';
     } finally {
       loading = false;
     }
@@ -132,7 +133,7 @@
       const raw = err instanceof Error ? err.message : '';
       // Extract JSON error body from "API 409: {\"error\":\"...\"}"
       const match = raw.match(/API \d+: (.+)$/s);
-      let msg = 'Ошибка обновления статуса';
+      let msg = 'Failed to update status';
       if (match) {
         try { msg = JSON.parse(match[1]).error ?? msg; } catch { /* keep default */ }
       }
@@ -148,7 +149,7 @@
   });
 
   const statusLabel: Record<string, string> = {
-    pending: 'Новая', confirmed: 'Подтверждена', rejected: 'Отклонена', cancelled: 'Отменена', completed: 'Возвращена',
+    pending: 'New', confirmed: 'Confirmed', rejected: 'Rejected', cancelled: 'Cancelled', completed: 'Returned',
   };
   const statusColor: Record<string, string> = {
     pending:   'bg-amber-100 text-amber-800 border-amber-200',
@@ -161,25 +162,25 @@
   function makeMailtoLink(booking: BookingDto, type: 'confirm' | 'reject'): string {
     const subject = encodeURIComponent(
       type === 'confirm'
-        ? `Ваша заявка на показ подтверждена: ${booking.figurineName}`
-        : `Ваша заявка на показ: ${booking.figurineName}`
+        ? `Your viewing request is confirmed: ${booking.figurineName}`
+        : `Your viewing request: ${booking.figurineName}`
     );
     const period = `${formatDate(booking.startsAt)} — ${formatDate(booking.endsAt)}`;
     const body = encodeURIComponent(
       type === 'confirm'
-        ? `Здравствуйте, ${booking.requesterName}!\n\nВаша заявка на показ фигурки «${booking.figurineName}» (${period}) подтверждена.${booking.adminNotes ? `\n\nПримечание: ${booking.adminNotes}` : ''}\n\nС уважением,\nGotiga`
-        : `Здравствуйте, ${booking.requesterName}!\n\nК сожалению, заявка на показ фигурки «${booking.figurineName}» (${period}) не может быть принята.${booking.adminNotes ? `\n\nПричина: ${booking.adminNotes}` : ''}\n\nС уважением,\nGotiga`
+        ? `Hello, ${booking.requesterName}!\n\nYour request to view the figure “${booking.figurineName}” (${period}) has been confirmed.${booking.adminNotes ? `\n\nNote: ${booking.adminNotes}` : ''}\n\nBest regards,\n${$brandName}`
+        : `Hello, ${booking.requesterName}!\n\nUnfortunately, the request to view the figure “${booking.figurineName}” (${period}) cannot be accepted.${booking.adminNotes ? `\n\nReason: ${booking.adminNotes}` : ''}\n\nBest regards,\n${$brandName}`
     );
     return `mailto:${booking.requesterEmail}?subject=${subject}&body=${body}`;
   }
 
   function formatDate(iso: string) {
-    return new Date(iso + 'T00:00:00').toLocaleDateString('ru-RU', {
+    return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', {
       day: '2-digit', month: 'short', year: 'numeric'
     });
   }
   function formatTs(iso: string) {
-    return new Date(iso).toLocaleString('ru-RU', {
+    return new Date(iso).toLocaleString('en-US', {
       day: '2-digit', month: '2-digit', year: '2-digit',
       hour: '2-digit', minute: '2-digit',
     });
@@ -202,7 +203,7 @@
   <!-- Toolbar -->
   <div class="flex items-center gap-3 px-6 py-3 border-b border-[#34251c]/10 flex-shrink-0 bg-[#fff9f0]">
     <h2 class="font-['Fraunces'] text-lg text-[#34251c]">
-      Брони
+      Bookings
       {#if pendingCount > 0}
         <span class="ml-2 inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-500 text-white text-[10px] font-bold">{pendingCount}</span>
       {/if}
@@ -215,7 +216,7 @@
         onchange={(e) => { figurineFilter = (e.target as HTMLSelectElement).value; load(true); }}
         class="ml-auto text-[10px] border border-[#34251c]/20 text-[#5f4636] bg-[#fff9f0] px-2 py-1 focus:outline-none focus:border-[#34251c]/50 max-w-[180px] truncate"
       >
-        <option value="">Все фигурки</option>
+        <option value="">All figures</option>
         {#each figurines as f}
           <option value={f.id}>{f.name}</option>
         {/each}
@@ -223,7 +224,7 @@
     {/if}
 
     <div class="flex gap-1 flex-wrap">
-      {#each [['', 'Все'], ['pending', 'Новые'], ['confirmed', 'Подтверждённые'], ['rejected', 'Отклонённые'], ['cancelled', 'Отменённые'], ['completed', 'Возвращённые']] as [val, label]}
+      {#each [['', 'All'], ['pending', 'New'], ['confirmed', 'Confirmed'], ['rejected', 'Rejected'], ['cancelled', 'Cancelled'], ['completed', 'Returned']] as [val, label]}
         <button
           onclick={() => { statusFilter = val; load(true); }}
           class="px-3 py-1 text-[10px] uppercase tracking-wide border transition-colors
@@ -234,15 +235,15 @@
       {/each}
     </div>
 
-    <button onclick={() => load()} class="text-xs text-[#5f4636] hover:text-[#34251c] border border-[#34251c]/20 px-2 py-1 transition-colors" title="Обновить">↺</button>
+    <button onclick={() => load()} class="text-xs text-[#5f4636] hover:text-[#34251c] border border-[#34251c]/20 px-2 py-1 transition-colors" title="Refresh">↺</button>
 
     <button
       onclick={toggleCalMode}
       class="ml-auto text-[10px] uppercase tracking-wide border px-3 py-1 transition-colors
         {calMode ? 'bg-[#34251c] text-[#fff9f0] border-[#34251c]' : 'border-[#34251c]/20 text-[#5f4636] hover:border-[#34251c]/50'}"
-      title={calMode ? 'Список' : 'Календарь'}
+      title={calMode ? 'List' : 'Calendar'}
     >
-      {calMode ? '≡ Список' : '⊞ Календарь'}
+      {calMode ? '≡ List' : '⊞ Calendar'}
     </button>
   </div>
 
@@ -258,7 +259,7 @@
       </div>
 
       {#if calLoading}
-        <div class="text-center text-xs text-[#5f4636]/60 py-8">Загрузка…</div>
+        <div class="text-center text-xs text-[#5f4636]/60 py-8">Loading…</div>
       {:else}
         <!-- Day-of-week header -->
         <div class="grid grid-cols-7 mb-1">
@@ -305,8 +306,8 @@
 
         <!-- Legend -->
         <div class="flex gap-4 mt-3 text-[9px] text-[#5f4636]/60 uppercase tracking-wide">
-          <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-amber-500 inline-block"></span>Ожидает</span>
-          <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-green-600 inline-block"></span>Подтверждена</span>
+          <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-amber-500 inline-block"></span>Pending</span>
+          <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-green-600 inline-block"></span>Confirmed</span>
         </div>
       {/if}
     </div>
@@ -315,7 +316,7 @@
     <div class="flex-1 min-w-0">
       {#if calSelected && calSelectedBookings.length > 0}
         <p class="text-[10px] uppercase tracking-wide text-[#5f4636]/60 mb-3">
-          {new Date(calSelected + 'T00:00:00').toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })}
+          {new Date(calSelected + 'T00:00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' })}
         </p>
         <div class="space-y-2">
           {#each calSelectedBookings as b (b.id)}
@@ -333,9 +334,9 @@
           {/each}
         </div>
       {:else if calSelected}
-        <p class="text-sm text-[#5f4636]/50 font-['Fraunces'] italic mt-6">Броней нет</p>
+        <p class="text-sm text-[#5f4636]/50 font-['Fraunces'] italic mt-6">No bookings</p>
       {:else}
-        <p class="text-sm text-[#5f4636]/40 font-['Fraunces'] italic mt-6">Выберите день</p>
+        <p class="text-sm text-[#5f4636]/40 font-['Fraunces'] italic mt-6">Select a day</p>
       {/if}
     </div>
   </div>
@@ -345,11 +346,11 @@
   <!-- Content -->
   <div class="flex-1 overflow-y-auto px-6 py-4">
     {#if loading}
-      <div class="text-center text-[#5f4636] py-12 text-sm">Загрузка…</div>
+      <div class="text-center text-[#5f4636] py-12 text-sm">Loading…</div>
     {:else if error}
       <div class="text-center text-red-700 py-12 text-sm">{error}</div>
     {:else if items.length === 0}
-      <div class="text-center text-[#5f4636]/60 py-12 font-['Fraunces'] text-lg">Заявок нет</div>
+      <div class="text-center text-[#5f4636]/60 py-12 font-['Fraunces'] text-lg">No requests</div>
     {:else}
       <div class="space-y-3">
         {#each items as booking (booking.id)}
@@ -377,7 +378,7 @@
                     {formatDate(booking.startsAt)} — {formatDate(booking.endsAt)}
                   </span>
                   {#if isStale(booking)}
-                    <span class="text-[9px] px-1.5 py-0.5 bg-orange-100 text-orange-700 border border-orange-300 rounded font-['Inter'] uppercase tracking-wide">просрочена</span>
+                    <span class="text-[9px] px-1.5 py-0.5 bg-orange-100 text-orange-700 border border-orange-300 rounded font-['Inter'] uppercase tracking-wide">overdue</span>
                   {/if}
                 </div>
                 <div class="text-xs text-[#5f4636]/60 mt-0.5">{formatTs(booking.createdAt)}</div>
@@ -401,7 +402,7 @@
               <div class="mt-2 flex flex-wrap gap-2 text-[10px] font-['Inter']">
                 {#if booking.displayType}
                   <span class="px-1.5 py-0.5 bg-[#f8f1e7] border border-[#d8c6b1] text-[#5f4636]">
-                    {booking.displayType === 'private' ? 'Частный' : booking.displayType === 'exhibition' ? 'Выставка' : 'Фото/видео'}
+                    {booking.displayType === 'private' ? 'Private' : booking.displayType === 'exhibition' ? 'Exhibition' : 'Photo/video'}
                   </span>
                 {/if}
                 {#if booking.venue}
@@ -418,14 +419,14 @@
               <div class="mt-3 space-y-2">
                 <input
                   type="text"
-                  placeholder="Примечание (причина отказа, необязательно)…"
+                  placeholder="Note (reason for rejection, optional)…"
                   value={notesMap[booking.id] ?? booking.adminNotes ?? ''}
                   oninput={(e) => { notesMap[booking.id] = (e.target as HTMLInputElement).value; notesMap = {...notesMap}; }}
                   class="w-full border-b border-[#d8c6b1] bg-transparent text-xs py-1 text-[#34251c] font-['Inter'] focus:outline-none focus:border-[#c65f3c] placeholder-[#5f4636]/40"
                 />
                 <input
                   type="text"
-                  placeholder="Условия куратора (видны клиенту при подтверждении)…"
+                  placeholder="Curator conditions (shown to the client on confirmation)…"
                   value={curatorMap[booking.id] ?? booking.curatorConditions ?? ''}
                   oninput={(e) => { curatorMap[booking.id] = (e.target as HTMLInputElement).value; curatorMap = {...curatorMap}; }}
                   class="w-full border-b border-[#d8c6b1] bg-transparent text-xs py-1 text-[#34251c] font-['Inter'] focus:outline-none focus:border-[#c65f3c] placeholder-[#5f4636]/40"
@@ -433,10 +434,10 @@
               </div>
             {:else}
               {#if booking.adminNotes}
-                <p class="text-xs text-[#5f4636]/70 font-['Inter'] mt-2 italic">Примечание: {booking.adminNotes}</p>
+                <p class="text-xs text-[#5f4636]/70 font-['Inter'] mt-2 italic">Note: {booking.adminNotes}</p>
               {/if}
               {#if booking.curatorConditions}
-                <p class="text-xs text-[#34251c] font-['Inter'] mt-1.5 border-l-2 border-green-500/50 pl-2">Условия куратора: {booking.curatorConditions}</p>
+                <p class="text-xs text-[#34251c] font-['Inter'] mt-1.5 border-l-2 border-green-500/50 pl-2">Curator conditions: {booking.curatorConditions}</p>
               {/if}
             {/if}
 
@@ -455,42 +456,42 @@
                   onclick={() => setStatus(booking, 'confirmed')}
                   disabled={updatingId === booking.id}
                   class="text-[10px] px-3 py-1 bg-green-700 text-white border border-green-700 hover:bg-green-800 transition-colors disabled:opacity-40 font-['Inter'] uppercase tracking-wide"
-                >✓ Подтвердить</button>
+                >✓ Confirm</button>
                 <button
                   onclick={() => setStatus(booking, 'rejected')}
                   disabled={updatingId === booking.id}
                   class="text-[10px] px-3 py-1 border border-red-300 text-red-700 hover:bg-red-50 transition-colors disabled:opacity-40 font-['Inter'] uppercase tracking-wide"
-                >✕ Отклонить</button>
+                >✕ Reject</button>
               {:else if booking.status === 'confirmed'}
                 <button
                   onclick={() => setStatus(booking, 'completed')}
                   disabled={updatingId === booking.id}
                   class="text-[10px] px-3 py-1 bg-teal-700 text-white border border-teal-700 hover:bg-teal-800 transition-colors disabled:opacity-40 font-['Inter'] uppercase tracking-wide"
-                >↩ Возвращена</button>
+                >↩ Returned</button>
                 <button
                   onclick={() => setStatus(booking, 'cancelled')}
                   disabled={updatingId === booking.id}
                   class="text-[10px] px-3 py-1 border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-40 font-['Inter'] uppercase tracking-wide"
-                >Отменить</button>
+                >Cancel</button>
               {/if}
               <div class="ml-auto flex gap-1">
                 {#if booking.status === 'confirmed'}
                   <a
                     href={makeMailtoLink(booking, 'confirm')}
                     class="text-[10px] px-2 py-1 border border-green-600/40 text-green-700 hover:bg-green-50 transition-colors"
-                    title="Написать об подтверждении"
-                  >✉ Подтверждено</a>
+                    title="Email about confirmation"
+                  >✉ Confirmed</a>
                 {:else if booking.status === 'rejected'}
                   <a
                     href={makeMailtoLink(booking, 'reject')}
                     class="text-[10px] px-2 py-1 border border-red-300/60 text-red-700 hover:bg-red-50 transition-colors"
-                    title="Написать об отказе"
-                  >✉ Отказ</a>
+                    title="Email about rejection"
+                  >✉ Rejection</a>
                 {:else}
                   <a
-                    href="mailto:{booking.requesterEmail}?subject=Re: заявка на показ {booking.figurineName}"
+                    href="mailto:{booking.requesterEmail}?subject=Re: viewing request {booking.figurineName}"
                     class="text-[10px] px-2 py-1 border border-[#c65f3c]/30 text-[#c65f3c] hover:bg-[#c65f3c]/5 transition-colors"
-                  >✉ Написать</a>
+                  >✉ Email</a>
                 {/if}
               </div>
             </div>
@@ -505,7 +506,7 @@
   {#if !calMode && (totalPages > 1 || total > 0)}
     <div class="flex items-center justify-between px-6 py-3 border-t border-[#34251c]/10 flex-shrink-0 bg-[#fff9f0]">
       <span class="text-[11px] text-[#5f4636]/70">
-        {#if total > 0}{(page - 1) * PER_PAGE + 1}–{Math.min(page * PER_PAGE, total)} из {total}{/if}
+        {#if total > 0}{(page - 1) * PER_PAGE + 1}–{Math.min(page * PER_PAGE, total)} of {total}{/if}
       </span>
       {#if totalPages > 1}
         <div class="flex items-center gap-1">

@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { fade } from 'svelte/transition';
   import { goto } from '$app/navigation';
-  import { t } from '$lib/i18n';
+  import { t , brandName } from '$lib/i18n';
   import { allClaims } from '$lib/stores/all-claims.svelte';
   import { authStore } from '$lib/stores/auth.svelte';
 
@@ -36,7 +36,7 @@
 </script>
 
 <svelte:head>
-  <title>{$t('bookingsPageTitle')} — Gotiga</title>
+  <title>{$t('bookingsPageTitle')} — {$brandName}</title>
 </svelte:head>
 
 <div class="bookings-page">
@@ -80,7 +80,7 @@
             </p>
 
             <div class="claim-meta">
-              <span class="claim-token-label">Код:</span>
+              <span class="claim-token-label">Code:</span>
               <span class="claim-token">{c.token}</span>
             </div>
 

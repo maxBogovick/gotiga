@@ -167,7 +167,7 @@
                 id="profile-photo"
                 bind:value={profile.photoUrl}
                 type="text"
-                placeholder="или вставьте URL вручную"
+                placeholder="or paste a URL manually"
                 class="admin-input w-full text-[10px] opacity-60"
               />
             </div>

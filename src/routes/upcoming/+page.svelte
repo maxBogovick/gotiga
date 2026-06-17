@@ -4,7 +4,7 @@
     import { cubicOut } from 'svelte/easing';
     import { api } from '$lib/api';
     import type { FigurineListItem } from '$lib/types/api';
-    import { t } from '$lib/i18n';
+    import { t , brandName } from '$lib/i18n';
     import OrderModal from '$lib/components/OrderModal.svelte';
     import AppImage from '$lib/components/AppImage.svelte';
 
@@ -34,8 +34,8 @@
 </script>
 
 <svelte:head>
-    <title>{$t('upcomingTitle')} — Gotiga</title>
-    <meta name="description" content="Авторские фигурки в процессе создания. Можно забронировать." />
+    <title>{$t('upcomingTitle')} — {$brandName}</title>
+    <meta name="description" content="Author-made figures in progress. Available to reserve." />
     <!-- Fonts loaded once globally in app.html -->
 </svelte:head>
 

@@ -44,7 +44,7 @@
       newCount = res.newCount;
       onNewCount(res.newCount);
     } catch {
-      error = 'Не удалось загрузить прошения';
+      error = 'Failed to load requests';
     } finally {
       loading = false;
     }
@@ -139,7 +139,7 @@
   }
 
   function chatFormatDate(iso: string) {
-    return new Date(iso).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    return new Date(iso).toLocaleString('en-US', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
   }
 
   // Delete petition as moderation (refused once work has started).
@@ -164,8 +164,8 @@
   onMount(() => load());
 
   const statusLabel: Record<CommissionStatus, string> = {
-    new: 'Новое', reviewing: 'На рассмотрении', accepted: 'Принято',
-    in_progress: 'В работе', completed: 'Завершено', declined: 'Отклонено',
+    new: 'New', reviewing: 'Reviewing', accepted: 'Accepted',
+    in_progress: 'In progress', completed: 'Completed', declined: 'Declined',
   };
   const statusColor: Record<CommissionStatus, string> = {
     new: 'bg-red-100 text-red-800 border-red-200',
@@ -177,9 +177,9 @@
   };
 
   function formatDate(iso: string) {
-    return new Date(iso).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+    return new Date(iso).toLocaleString('en-US', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
   }
-  const filterTabs: [string, string][] = [['', 'Все'], ...STATUSES.map((s) => [s, statusLabel[s]] as [string, string])];
+  const filterTabs: [string, string][] = [['', 'All'], ...STATUSES.map((s) => [s, statusLabel[s]] as [string, string])];
 </script>
 
 <div class="h-full flex flex-col overflow-hidden">
@@ -199,23 +199,23 @@
         >{label}</button>
       {/each}
     </div>
-    <button onclick={() => load()} class="text-xs text-[#5f4636] hover:text-[#34251c] border border-[#34251c]/20 px-2 py-1 transition-colors" title="Обновить">↺</button>
+    <button onclick={() => load()} class="text-xs text-[#5f4636] hover:text-[#34251c] border border-[#34251c]/20 px-2 py-1 transition-colors" title="Refresh">↺</button>
   </div>
 
   <div class="flex-1 overflow-y-auto px-6 py-4">
     {#if loading}
-      <div class="text-center text-[#5f4636] py-12 text-sm">Загрузка…</div>
+      <div class="text-center text-[#5f4636] py-12 text-sm">Loading…</div>
     {:else if error}
       <div class="text-center text-red-700 py-12 text-sm">{error}</div>
     {:else if items.length === 0}
-      <div class="text-center text-[#5f4636]/60 py-12 font-['Fraunces'] text-lg">Прошений нет</div>
+      <div class="text-center text-[#5f4636]/60 py-12 font-['Fraunces'] text-lg">No requests</div>
     {:else}
       <div class="space-y-3">
         {#each items as c (c.id)}
           <div class="border border-[#34251c]/10 bg-white p-4 {c.status === 'new' ? 'border-l-4 border-l-red-400' : ''}">
             <div class="flex items-start gap-3 mb-2">
               <div class="flex-1 min-w-0">
-                <div class="font-['Fraunces'] text-[#34251c] font-semibold">{c.title || '(без названия)'}</div>
+                <div class="font-['Fraunces'] text-[#34251c] font-semibold">{c.title || '(untitled)'}</div>
                 <div class="text-xs text-[#5f4636]/60 mt-0.5">{formatDate(c.createdAt)}</div>
               </div>
               <span class="text-[10px] px-2 py-0.5 border rounded flex-shrink-0 {statusColor[c.status]}">{statusLabel[c.status]}</span>
@@ -230,11 +230,11 @@
             <p class="text-sm text-[#5f4636] whitespace-pre-wrap border-l-2 border-[#d8c6b1] pl-2 mt-2">{c.description}</p>
 
             <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[#5f4636] mt-2">
-              {#if c.sizeNote}<span><b>Размер:</b> {c.sizeNote}</span>{/if}
-              {#if c.mood}<span><b>Настроение:</b> {c.mood}</span>{/if}
-              {#if c.deadline}<span><b>Срок:</b> {c.deadline}</span>{/if}
-              {#if c.budgetNote}<span><b>Бюджет:</b> {c.budgetNote}</span>{/if}
-              {#if c.occasion}<span><b>Повод:</b> {c.occasion}</span>{/if}
+              {#if c.sizeNote}<span><b>Size:</b> {c.sizeNote}</span>{/if}
+              {#if c.mood}<span><b>Mood:</b> {c.mood}</span>{/if}
+              {#if c.deadline}<span><b>Deadline:</b> {c.deadline}</span>{/if}
+              {#if c.budgetNote}<span><b>Budget:</b> {c.budgetNote}</span>{/if}
+              {#if c.occasion}<span><b>Occasion:</b> {c.occasion}</span>{/if}
             </div>
 
             {#if c.attachments.length > 0}
@@ -262,14 +262,14 @@
               <div class="flex flex-wrap gap-2 items-center">
                 <input
                   type="text"
-                  placeholder="ID фигурки (при принятии)"
+                  placeholder="Figure ID (on acceptance)"
                   value={figurineDraft[c.id] ?? c.figurineId ?? ''}
                   oninput={(e) => figurineDraft[c.id] = (e.target as HTMLInputElement).value}
                   class="flex-1 min-w-[140px] text-xs border border-[#34251c]/15 px-2 py-1 bg-[#fff9f0]"
                 />
                 <input
                   type="text"
-                  placeholder="Заметка для отправителя"
+                  placeholder="Note for the sender"
                   value={notesDraft[c.id] ?? c.adminNotes ?? ''}
                   oninput={(e) => notesDraft[c.id] = (e.target as HTMLInputElement).value}
                   class="flex-[2] min-w-[180px] text-xs border border-[#34251c]/15 px-2 py-1 bg-[#fff9f0]"
@@ -278,38 +278,38 @@
                   onclick={() => saveDraft(c)}
                   disabled={savingId === c.id}
                   class="text-[10px] px-3 py-1 border border-[#6f3b24] bg-[#6f3b24] text-[#fff9f0] hover:bg-[#c65f3c] hover:border-[#c65f3c] transition-colors disabled:opacity-50"
-                >{savingId === c.id ? '…' : savedId === c.id ? '✓ Сохранено' : 'Сохранить'}</button>
+                >{savingId === c.id ? '…' : savedId === c.id ? '✓ Saved' : 'Save'}</button>
               </div>
-              <p class="text-[10px] text-[#5f4636]/50">Заметка добавляется к письму отправителю при смене статуса (Принято / В работе / Завершено / Отклонено).</p>
+              <p class="text-[10px] text-[#5f4636]/50">The note is added to the email sent to the sender when the status changes (Accepted / In progress / Completed / Declined).</p>
 
               <!-- Edit / delete (refused once work has started) -->
               <div class="flex items-center gap-3 flex-wrap">
                 {#if c.started}
-                  <span class="text-[10px] italic text-[#8a7a6a]">Работа начата — редактировать и удалять нельзя</span>
+                  <span class="text-[10px] italic text-[#8a7a6a]">Work has started — editing and deleting are disabled</span>
                 {:else if confirmDeleteId === c.id}
-                  <span class="text-[10px] text-[#a3361d]">Удалить это прошение? Автор получит уведомление.</span>
-                  <button onclick={() => removeCommission(c)} disabled={deletingId === c.id} class="text-[10px] text-[#a3361d] underline disabled:opacity-50">{deletingId === c.id ? '…' : 'Да, удалить'}</button>
-                  <button onclick={() => confirmDeleteId = null} class="text-[10px] text-[#5f4636] underline">Отмена</button>
+                  <span class="text-[10px] text-[#a3361d]">Delete this request? The author will be notified.</span>
+                  <button onclick={() => removeCommission(c)} disabled={deletingId === c.id} class="text-[10px] text-[#a3361d] underline disabled:opacity-50">{deletingId === c.id ? '…' : 'Yes, delete'}</button>
+                  <button onclick={() => confirmDeleteId = null} class="text-[10px] text-[#5f4636] underline">Cancel</button>
                 {:else}
-                  <button onclick={() => confirmDeleteId = c.id} class="text-[10px] text-[#a3361d] underline">Удалить</button>
+                  <button onclick={() => confirmDeleteId = c.id} class="text-[10px] text-[#a3361d] underline">Delete</button>
                 {/if}
               </div>
 
               <!-- Conversation -->
               {#if c.threadId}
                 <button onclick={() => toggleChat(c)} class="text-[11px] text-[#c65f3c] hover:underline">
-                  {openChatId === c.id ? '▾ Скрыть переписку' : '▸ Переписка'}
+                  {openChatId === c.id ? '▾ Hide thread' : '▸ Thread'}
                 </button>
                 {#if openChatId === c.id}
                   <div class="border border-[#34251c]/15 bg-[#fffaf2] p-3 mt-1">
                     {#if chatLoading}
-                      <p class="text-xs text-[#5f4636] text-center py-3">Загрузка…</p>
+                      <p class="text-xs text-[#5f4636] text-center py-3">Loading…</p>
                     {:else if chatDetail}
                       <div class="max-h-72 overflow-y-auto space-y-2 mb-3">
                         {#each chatDetail.messages as msg (msg.id)}
                           <div class="text-sm {msg.fromAdmin ? 'text-right' : 'text-left'}">
                             <div class="inline-block max-w-[85%] px-3 py-2 border {msg.fromAdmin ? 'bg-[#6f3b24]/8 border-[#6f3b24]/20' : 'bg-white border-[#34251c]/10'}">
-                              <div class="text-[9px] uppercase tracking-wide text-[#5f4636]/60 mb-0.5">{msg.fromAdmin ? 'Мастер' : (chatDetail.user?.displayName ?? 'Отправитель')}</div>
+                              <div class="text-[9px] uppercase tracking-wide text-[#5f4636]/60 mb-0.5">{msg.fromAdmin ? 'Master' : (chatDetail.user?.displayName ?? 'Sender')}</div>
                               {#if msg.body}<p class="text-[#34251c] whitespace-pre-wrap text-left">{msg.body}</p>{/if}
                               {#if msg.attachments && msg.attachments.length > 0}
                                 <MessageAttachments attachments={msg.attachments} />
@@ -320,7 +320,7 @@
                         {/each}
                       </div>
                       {#if chatDetail.thread.status === 'resolved'}
-                        <p class="text-[11px] text-[#5f4636]/60 italic">Переписка завершена — ответ откроет её снова.</p>
+                        <p class="text-[11px] text-[#5f4636]/60 italic">Thread closed — a reply will reopen it.</p>
                       {/if}
                       {#if chatAttachments.length > 0}
                         <div class="flex flex-wrap gap-1 mb-2">
@@ -336,10 +336,10 @@
                         <textarea
                           bind:value={chatReply}
                           rows="2"
-                          placeholder="Ответ отправителю…"
+                          placeholder="Reply to the sender…"
                           class="flex-1 text-sm border border-[#34251c]/15 px-2 py-1 bg-white resize-none"
                         ></textarea>
-                        <label class="grid place-items-center w-8 h-8 border border-[#d8c6b1] cursor-pointer text-sm" title="Прикрепить изображение">
+                        <label class="grid place-items-center w-8 h-8 border border-[#d8c6b1] cursor-pointer text-sm" title="Attach image">
                           <input type="file" accept="image/*" multiple hidden onchange={handleChatFiles} />
                           {chatUploading ? '…' : '📎'}
                         </label>
@@ -347,17 +347,17 @@
                           onclick={sendChat}
                           disabled={chatSending || (!chatReply.trim() && chatAttachments.length === 0)}
                           class="px-3 py-1.5 text-xs border border-[#6f3b24] bg-[#6f3b24] text-[#fff9f0] hover:bg-[#c65f3c] hover:border-[#c65f3c] transition-colors disabled:opacity-50"
-                        >{chatSending ? '…' : 'Отправить'}</button>
+                        >{chatSending ? '…' : 'Send'}</button>
                       </div>
                     {:else}
-                      <p class="text-xs text-red-700 text-center py-3">Не удалось загрузить переписку.</p>
+                      <p class="text-xs text-red-700 text-center py-3">Failed to load the thread.</p>
                     {/if}
                   </div>
                 {/if}
               {:else}
                 <div class="text-[11px] text-[#5f4636]/50">
-                  Переписка станет доступна после того, как отправитель привяжет аккаунт.
-                  <a href="mailto:{c.requesterEmail}" class="text-[#c65f3c] hover:underline">Написать на email →</a>
+                  The thread becomes available once the sender links an account.
+                  <a href="mailto:{c.requesterEmail}" class="text-[#c65f3c] hover:underline">Email →</a>
                 </div>
               {/if}
             </div>

@@ -268,7 +268,7 @@
             </div>
           {/if}
           <div class="reply-controls">
-            <label class="reply-attach" title="Прикрепить изображение">
+            <label class="reply-attach" title="Attach image">
               <input type="file" accept="image/*" multiple hidden onchange={handleAdminFiles} />
               {replyUploading ? '…' : '📎'}
             </label>

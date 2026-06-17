@@ -1,6 +1,9 @@
 import type { TranslationKey } from './en';
 
 export const ru: Record<TranslationKey, string> = {
+  // === BRAND ===
+  brandName:           'Gotiga',
+
   // === HOME / CABINET ===
   zoneShowcase:        'АРХИВЪ',
   zoneDesk:            'МАСТЕРСКАЯ',
@@ -21,7 +24,7 @@ export const ru: Record<TranslationKey, string> = {
   zoneWindowsDesc:     'Процесс, эскизы и новые формы',
   homeKicker:          'Готические миниатюры ручной работы',
   homeTitle:           'Авторские готические фигурки',
-  homeReleaseTitle:    'Новый выпуск Gotiga',
+  homeReleaseTitle:    'Новый выпуск {brand}',
   homeLead:            'Единственные в своём роде готические фигурки со своими лицами, следами мастерской и тихим архивом историй.',
   homeReleaseLead:     'Работы появляются редко и существуют в одном экземпляре. Следующий выпуск можно отслеживать заранее.',
   homePrimaryCta:      'Смотреть доступные работы',
@@ -79,7 +82,7 @@ export const ru: Record<TranslationKey, string> = {
   homeContextUpcomingTitle:    'Следующий выпуск готовится',
   homeContextUpcomingText:     'Новых доступных работ сейчас нет, поэтому главный путь — посмотреть процесс и заранее выбрать то, за чем хочется следить.',
   homeContextArchiveEyebrow:   'Архив',
-  homeContextArchiveTitle:     'Архив Gotiga',
+  homeContextArchiveTitle:     'Архив {brand}',
   homeContextArchiveText:      'Новые работы появляются редко. Пока можно изучить прошлые фигурки, стиль и истории коллекции.',
   homeSavedEyebrow:            'Ваши отметки',
   homeSavedTitle:              'Сохранённые работы',
@@ -871,7 +874,7 @@ export const ru: Record<TranslationKey, string> = {
   footerEmailLabel:    'Письма',
   footerPhoneLabel:    'Голосом',
   footerTelegramLabel: 'Телеграм',
-  footerColophon:      'Переплетено вручную · Gotiga',
+  footerColophon:      'Переплетено вручную · {brand}',
   footerRights:        'Все работы в единственном экземпляре',
   footerEstablished:   'Осн. MMXXIV',
 

@@ -3,7 +3,7 @@
   import { cubicOut, elasticOut } from 'svelte/easing';
   import { onMount } from 'svelte';
   import { api, resolveMediaUrl } from '$lib/api';
-  import { t } from '$lib/i18n';
+  import { t, brandName } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
   import { isValidEmail } from '$lib/validation';
   import { focusTrap } from '$lib/actions/focusTrap';
@@ -207,7 +207,7 @@
       day: 'numeric', month: 'long', year: 'numeric'
     });
     const content = [
-      'GOTIGA — Booking Claim',
+      `${$brandName.toUpperCase()} — Booking Claim`,
       '======================',
       `Code:     ${cancelToken}`,
       `Artifact: ${figurineName}`,

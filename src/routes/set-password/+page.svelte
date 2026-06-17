@@ -2,7 +2,7 @@
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  import { t } from '$lib/i18n';
+  import { t , brandName } from '$lib/i18n';
   import { api } from '$lib/api';
   import { VISUAL_CATEGORIES, iconLabel } from '$lib/data/visualIcons';
   import { lang } from '$lib/i18n';
@@ -61,7 +61,7 @@
 </script>
 
 <svelte:head>
-  <title>{$t('setPasswordTitle')} — Gotiga</title>
+  <title>{$t('setPasswordTitle')} — {$brandName}</title>
 </svelte:head>
 
 <AuthFrame tilt={0.5}>

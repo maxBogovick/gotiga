@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { t, lang } from '$lib/i18n';
+  import { t, lang, brandName } from '$lib/i18n';
   import { getIconById, iconLabel, svgForCanvas, type IconCategory } from '$lib/data/visualIcons';
 
   interface Props {
@@ -121,7 +121,7 @@
           {/if}
         {/each}
       </div>
-      <p class="card-brand">GOTIGA</p>
+      <p class="card-brand">{$brandName.toUpperCase()}</p>
     </div>
 
     <div class="card-actions">

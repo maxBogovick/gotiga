@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { t } from '$lib/i18n';
+  import { t, brandName } from '$lib/i18n';
 
   // Single source of truth for the contact details. Phone doubles as the
   // Telegram handle (Telegram resolves +<number> links directly).
@@ -31,10 +31,10 @@
   <div class="inner">
     <!-- Colophon / brand -->
     <section class="col col-brand">
-      <a href="/" class="monogram" aria-label="Gotiga">
-        <span class="monogram-mark">G</span>
+      <a href="/" class="monogram" aria-label={$brandName}>
+        <span class="monogram-mark">{$brandName.charAt(0).toUpperCase()}</span>
         <span class="monogram-text">
-          <span class="monogram-name">Gotiga</span>
+          <span class="monogram-name">{$brandName}</span>
           <span class="monogram-sub">Cabinet of Gothic Miniatures</span>
         </span>
       </a>

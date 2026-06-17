@@ -2,7 +2,7 @@
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import { api, resolveMediaUrl } from '$lib/api';
-  import { t, lang } from '$lib/i18n';
+  import { t, lang , brandName } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
   import { isValidEmail } from '$lib/validation';
   import type { AttachmentInput } from '$lib/types/api';
@@ -128,7 +128,7 @@
 </script>
 
 <svelte:head>
-  <title>{$t('commissionTitle')} — Gotiga</title>
+  <title>{$t('commissionTitle')} — {$brandName}</title>
   <meta name="description" content={$t('commissionSubtitle')} />
   <!-- Fonts loaded once globally in app.html -->
 </svelte:head>

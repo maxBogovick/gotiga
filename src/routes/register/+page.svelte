@@ -1,6 +1,6 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
-  import { t } from '$lib/i18n';
+  import { t , brandName } from '$lib/i18n';
   import { api } from '$lib/api';
   import { isValidEmail } from '$lib/validation';
   import { VISUAL_CATEGORIES, iconLabel } from '$lib/data/visualIcons';
@@ -79,7 +79,7 @@
 </script>
 
 <svelte:head>
-  <title>{$t('authRegister')} — Gotiga</title>
+  <title>{$t('authRegister')} — {$brandName}</title>
 </svelte:head>
 
 <AuthFrame tilt={-0.3}>

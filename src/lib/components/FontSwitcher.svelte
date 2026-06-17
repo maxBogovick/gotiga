@@ -94,7 +94,7 @@
                 <span class="item-name" style="font-family: {font.stack}">{font.name}</span>
                 <span class="item-note">{font.note}</span>
               </span>
-              <span class="item-sample" style="font-family: {font.stack}" aria-hidden="true">Аа Gg</span>
+              <span class="item-sample" style="font-family: {font.stack}" aria-hidden="true">Aa Gg</span>
             </button>
           </li>
         {/each}

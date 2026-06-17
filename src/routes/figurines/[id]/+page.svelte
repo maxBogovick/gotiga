@@ -6,7 +6,7 @@
   import DustParticles from '$lib/components/DustParticles.svelte';
   import FigurineDetailView from '$lib/components/FigurineDetailView.svelte';
   import NotFound from '$lib/components/NotFound.svelte';
-  import { t } from '$lib/i18n';
+  import { t , brandName } from '$lib/i18n';
 
   let { data } = $props();
   let figurine = $derived(data.figurine);
@@ -65,7 +65,7 @@
 
   <!-- Open Graph -->
   <meta property="og:type"        content="article" />
-  <meta property="og:title"       content="{figurine?.name ?? 'Gothic Miniature'} — Gotiga" />
+  <meta property="og:title"       content="{figurine?.name ?? 'Gothic Miniature'} — {$brandName}" />
   <meta property="og:description" content={figurine?.shortText ?? figurine?.fullDescription ?? ''} />
   {#if ogImage()}
     <meta property="og:image" content={ogImage()} />
@@ -77,7 +77,7 @@
 
   <!-- Twitter / X -->
   <meta name="twitter:card"        content="summary_large_image" />
-  <meta name="twitter:title"       content="{figurine?.name ?? 'Gothic Miniature'} — Gotiga" />
+  <meta name="twitter:title"       content="{figurine?.name ?? 'Gothic Miniature'} — {$brandName}" />
   <meta name="twitter:description" content={figurine?.shortText ?? ''} />
   {#if ogImage()}
     <meta name="twitter:image" content={ogImage()} />

@@ -14,6 +14,8 @@ declare global {
 	interface ImportMetaEnv {
 		readonly VITE_API_BASE?: string;
 		readonly VITE_BUILD_TARGET?: string;
+		// Brand name baked in at build. Falls back to 'Gotiga'; admin copy override wins at runtime.
+		readonly VITE_BRAND_NAME?: string;
 	}
 }
 

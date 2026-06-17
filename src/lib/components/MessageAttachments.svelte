@@ -14,7 +14,7 @@
         type="button"
         class="att-thumb"
         onclick={() => (lightboxUrl = resolveMediaUrl(att.url))}
-        title="Открыть изображение"
+        title="Open image"
       >
         <img src={resolveMediaUrl(att.thumbUrl ?? att.url)} alt="" loading="lazy" />
       </button>
@@ -27,7 +27,7 @@
     class="att-lightbox"
     role="button"
     tabindex="0"
-    aria-label="Закрыть"
+    aria-label="Close"
     onclick={() => (lightboxUrl = null)}
     onkeydown={(e) => { if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') lightboxUrl = null; }}
   >

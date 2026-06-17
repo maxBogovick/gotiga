@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/state';
   import { fade } from 'svelte/transition';
-  import { t } from '$lib/i18n';
+  import { t , brandName } from '$lib/i18n';
   import { api } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
   import DateRangePicker from '$lib/components/DateRangePicker.svelte';
@@ -128,7 +128,7 @@
 </script>
 
 <svelte:head>
-  <title>{$t('cancelPageTitle')} — Gotiga</title>
+  <title>{$t('cancelPageTitle')} — {$brandName}</title>
 </svelte:head>
 
 <div class="cancel-wrap">

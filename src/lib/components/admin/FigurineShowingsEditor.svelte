@@ -90,7 +90,7 @@
   }
 
   function fmt(iso: string) {
-    return new Date(iso + 'T00:00:00').toLocaleDateString('ru-RU', { day: '2-digit', month: 'short', year: 'numeric' });
+    return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' });
   }
 
   // При смене выбранной фигурины компонент не ремаунтится (та же позиция в DOM),

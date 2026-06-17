@@ -291,7 +291,7 @@ export const api = {
 
     async cleanupUnusedMedia(): Promise<string[]> {
         if (isTauri) return invoke('cleanup_unused_media');
-        throw new Error('Очистка локальных медиа доступна только в Tauri-приложении.');
+        throw new Error('Clearing local media is only available in the Tauri app.');
     },
 
     async getMediaInventory(): Promise<MediaInventory> {
@@ -468,18 +468,18 @@ export const api = {
 
     async exportRelease(): Promise<string> {
         if (isTauri) return invoke('export_release');
-        throw new Error('В веб-режиме данные сохраняются напрямую на сервер без создания релизов.');
+        throw new Error('In web mode, data is saved directly to the server without creating releases.');
     },
 
     async pullUpdates(): Promise<string> {
         if (isTauri) return invoke('pull_updates');
-        throw new Error('В веб-режиме данные загружаются напрямую с сервера.');
+        throw new Error('In web mode, data is loaded directly from the server.');
     },
 
     async pushFigurine(figurine: Figurine): Promise<string> {
         if (isTauri) return invoke('push_figurine', { figurine });
         await api.saveFigurine(figurine);
-        return 'Сохранено на сервере';
+        return 'Saved to server';
     },
 
     async getServerReleases(): Promise<ServerRelease[]> {

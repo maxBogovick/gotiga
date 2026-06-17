@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
-  import { t, lang } from '$lib/i18n';
+  import { t, lang , brandName } from '$lib/i18n';
   import { api, resolveMediaUrl } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
   import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
@@ -24,8 +24,8 @@
   let error = $state('');
 
   const COMMISSION_STATUS_LABEL: Record<string, string> = {
-    new: 'Новое', reviewing: 'На рассмотрении', accepted: 'Принято',
-    in_progress: 'В работе', completed: 'Завершено', declined: 'Отклонено',
+    new: 'New', reviewing: 'Reviewing', accepted: 'Accepted',
+    in_progress: 'In progress', completed: 'Completed', declined: 'Declined',
   };
 
   // Petition edit / delete
@@ -388,7 +388,7 @@
 </script>
 
 <svelte:head>
-  <title>{$t('profileTitle')} — Gotiga</title>
+  <title>{$t('profileTitle')} — {$brandName}</title>
 </svelte:head>
 
 <div class="page">
