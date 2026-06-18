@@ -422,6 +422,9 @@ export interface AdminSessionDto {
     createdAt: string;
     expiresAt: string;
     isActive: boolean;
+    ip: string | null;
+    countryCode: string | null;
+    city: string | null;
 }
 
 export interface MessageThreadDto {
@@ -471,6 +474,17 @@ export interface AdminUserDetail {
     adminNotes: string | null;
     isBlocked: boolean;
     createdAt: string;
+    signupIp: string | null;
+    signupCountryCode: string | null;
+    signupCity: string | null;
+    lastResetIp: string | null;
+    lastResetCountryCode: string | null;
+    lastResetCity: string | null;
+    lastResetAt: string | null;
+    lastResetRequestIp: string | null;
+    lastResetRequestCountryCode: string | null;
+    lastResetRequestCity: string | null;
+    lastResetRequestAt: string | null;
     bookings: UserBookingDto[];
     orders: UserOrderDto[];
     sessions: AdminSessionDto[];
@@ -545,6 +559,26 @@ export interface ContactSettings {
     email: string | null;
     telegram: string | null;
     phone: string | null;
+}
+
+/** Customizable "Workshop" feature block on the home page. Blank text fields
+ *  fall back to the i18n defaults; blank photos fall back to the bundled ones. */
+export interface WorkshopFeature {
+    visible: boolean;
+    photoBack: string | null;
+    photoFront: string | null;
+    eyebrowEn: string | null;
+    eyebrowRu: string | null;
+    titleEn: string | null;
+    titleRu: string | null;
+    textEn: string | null;
+    textRu: string | null;
+    link1LabelEn: string | null;
+    link1LabelRu: string | null;
+    link1Href: string | null;
+    link2LabelEn: string | null;
+    link2LabelRu: string | null;
+    link2Href: string | null;
 }
 
 export interface BookingRules {

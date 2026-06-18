@@ -16,12 +16,8 @@ async fn main() -> anyhow::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    tracing::info!(
-        "Starting server on {}:{} | db: {}",
-        config.host,
-        config.port,
-        config.database_url
-    );
+    // NB: never log database_url — it contains DB credentials.
+    tracing::info!("Starting server on {}:{}", config.host, config.port);
 
     // 3. Connect to DB
     let pool = PgPoolOptions::new()
@@ -48,6 +44,23 @@ async fn main() -> anyhow::Result<()> {
             "Failed to load active release: {}. Server will start in empty mode.",
             e
         );
+    }
+
+    // Background: prune login attempts past the retention window (runs now, then daily).
+    {
+        let svc = service.clone();
+        tokio::spawn(async move {
+            const RETENTION_DAYS: i64 = 90;
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(24 * 3600));
+            loop {
+                tick.tick().await;
+                match svc.prune_login_history(RETENTION_DAYS).await {
+                    Ok(n) if n > 0 => tracing::info!("Pruned {n} login attempts older than {RETENTION_DAYS} days"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("Login-attempt prune failed: {e}"),
+                }
+            }
+        });
     }
 
     let router = api::router(service, config.clone());

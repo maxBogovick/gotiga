@@ -3,7 +3,7 @@ use axum::{
     Router,
     middleware::{self, Next},
     extract::Request,
-    http::{StatusCode, HeaderMap},
+    http::{StatusCode, HeaderMap, HeaderValue, Method, header},
     response::Response,
 };
 use crate::services::AppService;
@@ -11,6 +11,12 @@ use crate::config::Config;
 use tower_http::services::ServeDir;
 use tower_http::cors::CorsLayer;
 use axum::extract::DefaultBodyLimit;
+
+/// Global request-body cap. Small by default so an unauthenticated request can't
+/// pin memory; the large media-upload routes opt into a higher limit explicitly.
+const DEFAULT_BODY_LIMIT: usize = 16 * 1024 * 1024; // 16 MB
+/// Upper bound for authenticated admin media uploads (videos/audio).
+const MEDIA_UPLOAD_LIMIT: usize = 256 * 1024 * 1024; // 256 MB
 
 mod handlers;
 
@@ -35,13 +41,11 @@ pub fn router(service: AppService, config: Config) -> Router {
     let api = Router::new()
         // === PUBLIC READ ===
         .route("/health",                       get(handlers::health_check))
-        .route("/sync/db",                      get(handlers::download_release_db))
         .route("/figurines",                    get(handlers::list_figurines))
         .route("/figurines/in-progress",        get(handlers::list_in_progress_figurines))
         .route("/figurines/:id",                get(handlers::get_figurine))
         .route("/content/texts/:param",         get(handlers::get_texts_by_param))
         .route("/cabinet/zones",                get(handlers::get_cabinet_zones))
-        .route("/assets/:table/:id",            get(handlers::get_asset))
         .route("/main-background",              get(handlers::get_main_background))
         .route("/home-content",                 get(handlers::get_home_content))
         .route("/author/profile",               get(handlers::get_author_profile))
@@ -55,6 +59,7 @@ pub fn router(service: AppService, config: Config) -> Router {
         .route("/figurines/:id/waitlist",       post(handlers::join_waitlist))
         .route("/booking-rules",                get(handlers::get_booking_rules))
         .route("/settings/contact",             get(handlers::get_contact_settings))
+        .route("/settings/workshop-feature",    get(handlers::get_workshop_feature))
         .route("/bookings/by-tokens",           post(handlers::get_bookings_by_tokens))
         .route("/bookings/cancel/:token",       get(handlers::get_booking_by_token)
                                                 .post(handlers::cancel_booking_by_token))
@@ -74,6 +79,7 @@ pub fn router(service: AppService, config: Config) -> Router {
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
         .route("/upload",
             post(handlers::upload_file)
+            .layer(DefaultBodyLimit::max(MEDIA_UPLOAD_LIMIT))
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
         .route("/admin/media",
             get(handlers::get_media_inventory)
@@ -86,6 +92,7 @@ pub fn router(service: AppService, config: Config) -> Router {
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
         .route("/admin/media/replace",
             post(handlers::replace_media_everywhere)
+            .layer(DefaultBodyLimit::max(MEDIA_UPLOAD_LIMIT))
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
         .route("/cabinet/zones",
             post(handlers::save_zone)
@@ -99,6 +106,7 @@ pub fn router(service: AppService, config: Config) -> Router {
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
         .route("/main-background",
             post(handlers::upload_main_background)
+            .layer(DefaultBodyLimit::max(MEDIA_UPLOAD_LIMIT))
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
         .route("/home-content",
             post(handlers::save_home_content)
@@ -113,6 +121,9 @@ pub fn router(service: AppService, config: Config) -> Router {
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
         .route("/admin/settings/contact",
             put(handlers::admin_save_contact_settings)
+            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
+        .route("/admin/settings/workshop-feature",
+            put(handlers::save_workshop_feature)
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
         // === THEME CONFIG ===
         .route("/settings/theme",
@@ -234,34 +245,36 @@ pub fn router(service: AppService, config: Config) -> Router {
             post(handlers::admin_create_thread_for_user)
             .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
         // === PASSWORD RESET (PUBLIC) ===
+        .route("/auth/forgot-password",     post(handlers::forgot_password))
         .route("/auth/reset-token/:token",  get(handlers::validate_reset_token))
         .route("/auth/reset-password",      post(handlers::apply_password_reset))
-        // === RELEASES ===
-        .route("/admin/releases",
-            get(handlers::list_releases)
-            .post(handlers::upload_release_db)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/admin/release/db",
-            post(handlers::upload_release_db)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/admin/releases/:id/activate",
-            post(handlers::switch_release)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        // Legacy paths
-        .route("/releases",
-            get(handlers::list_releases)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/releases/:id/activate",
-            post(handlers::switch_release)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .layer(DefaultBodyLimit::max(1024 * 1024 * 500));
+        .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT));
 
-    Router::new()
+    // Serve only known media subdirectories — never the whole UPLOAD_DIR (which can
+    // contain *.db dumps, temp files, etc.). Each subdir is mounted explicitly.
+    let upload_dir = std::path::Path::new(&config.upload_dir);
+    let mut app = Router::new()
         .nest("/api/v1", api)
-        .route("/sitemap.xml", get(handlers::sitemap_xml))
-        .nest_service("/static", ServeDir::new(&config.upload_dir))
-        .layer(CorsLayer::permissive())
-        .with_state(state)
+        .route("/sitemap.xml", get(handlers::sitemap_xml));
+    for subdir in ["images", "videos", "audio", "backgrounds", "avatars"] {
+        app = app.nest_service(
+            &format!("/static/{}", subdir),
+            ServeDir::new(upload_dir.join(subdir)),
+        );
+    }
+
+    // Restrict CORS to configured origins (defaults to PUBLIC_URL) instead of
+    // allowing any origin to call a bearer-token API.
+    let allowed_origins: Vec<HeaderValue> = config.cors_allowed_origins
+        .iter()
+        .filter_map(|o| o.parse().ok())
+        .collect();
+    let cors = CorsLayer::new()
+        .allow_origin(allowed_origins)
+        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::PATCH, Method::DELETE, Method::OPTIONS])
+        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]);
+
+    app.layer(cors).with_state(state)
 }
 
 async fn auth_middleware(

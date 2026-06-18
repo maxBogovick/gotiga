@@ -12,18 +12,40 @@
   import { onMount } from 'svelte';
 
   const TOTAL_STEPS = 6;
-  const CATEGORY_IDS: IconCategory[] = ['animals', 'dishes', 'seasons', 'colors'];
+  const CATEGORY_IDS: IconCategory[] = ['animals', 'dishes', 'seasons', 'symbols'];
 
   let step = $state(1);
   let email = $state('');
   let error = $state('');
   let loading = $state(false);
   let forgotOpen = $state(false);
+  let forgotEmail = $state('');
+  let forgotLoading = $state(false);
+  let forgotSent = $state(false);
   let contacts = $state<ContactSettings>({ email: null, telegram: null, phone: null });
 
   onMount(async () => {
     try { contacts = await api.getContactSettings(); } catch { /* non-critical */ }
   });
+
+  function toggleForgot() {
+    forgotOpen = !forgotOpen;
+    if (forgotOpen && !forgotEmail) forgotEmail = email;
+  }
+
+  async function requestReset() {
+    if (!isValidEmail(forgotEmail)) { error = $t('authErrorEmail'); return; }
+    error = '';
+    forgotLoading = true;
+    try {
+      await api.requestPasswordReset(forgotEmail.trim().toLowerCase());
+    } catch { /* generic — never reveal whether the account exists */ }
+    finally {
+      // Always show the same confirmation regardless of outcome (anti-enumeration).
+      forgotSent = true;
+      forgotLoading = false;
+    }
+  }
 
   let challengeId = $state('');
   let challengeSteps = $state<ChallengeStepDto[]>([]);
@@ -194,9 +216,21 @@
       {$t('authNoAccount')}
       <button class="auth-link" onclick={() => goto('/register')}>{$t('authRegister')}</button>
     </p>
-    <p class="auth-forgot">
-      <button class="auth-forgot-toggle" onclick={() => forgotOpen = !forgotOpen}>{$t('authForgotLink')}</button>
+    <div class="auth-forgot">
+      <button class="auth-forgot-toggle" onclick={toggleForgot}>{$t('authForgotLink')}</button>
       {#if forgotOpen}
+        {#if forgotSent}
+          <span class="auth-forgot-note">{$t('authForgotSent')}</span>
+        {:else}
+          <span class="auth-forgot-note">{$t('authForgotPrompt')}</span>
+          <div class="auth-forgot-form">
+            <input type="email" bind:value={forgotEmail} placeholder={$t('authEmailPlaceholder')}
+                   autocomplete="email" onkeydown={(e) => e.key === 'Enter' && requestReset()} />
+            <button class="auth-btn-primary" onclick={requestReset} disabled={forgotLoading}>
+              {forgotLoading ? '…' : $t('authForgotSend')}
+            </button>
+          </div>
+        {/if}
         <span class="auth-forgot-note">{$t('authForgotNote')}</span>
         {#if contacts.email || contacts.telegram || contacts.phone}
           <span class="auth-forgot-contacts">
@@ -221,7 +255,7 @@
           </span>
         {/if}
       {/if}
-    </p>
+    </div>
   {/if}
 </AuthFrame>
 
@@ -257,6 +291,36 @@
     color: rgba(95, 70, 54, 0.45);
     text-align: center;
     line-height: 1.45;
+  }
+
+  .auth-forgot-form {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    width: 100%;
+    max-width: 320px;
+    margin-top: 2px;
+  }
+  .auth-forgot-form input {
+    flex: 1;
+    min-width: 0;
+    padding: 6px 9px;
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: 14px;
+    color: #34251c;
+    background: rgba(255, 255, 255, 0.5);
+    border: 1px solid #d8c6b1;
+    border-radius: 3px;
+  }
+  .auth-forgot-form input:focus {
+    outline: none;
+    border-color: #c65f3c;
+  }
+  .auth-forgot-form .auth-btn-primary {
+    flex: 0 0 auto;
+    padding: 6px 12px;
+    font-size: 13px;
+    white-space: nowrap;
   }
 
   .auth-forgot-contacts {

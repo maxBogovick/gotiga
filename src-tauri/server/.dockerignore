@@ -1,0 +1,13 @@
+# Keep secrets, local state and build artefacts out of the build context/image.
+.env
+.env.*
+!.env.example
+.idea
+.vscode
+target
+uploads
+test_uploads_*
+**/*.db
+.git
+.gitignore
+SECURITY_FIXES_PROGRESS.md

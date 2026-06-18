@@ -1,0 +1,19 @@
+# Keep the frontend build context tiny. The SvelteKit web build only needs
+# src/, static/, and the config files at the repo root — nothing else.
+.git
+node_modules
+build
+.svelte-kit
+package
+
+# Rust/Tauri side — not used by the web build (src-tauri/target alone is ~9 GB).
+src-tauri
+
+# Deploy tooling, generated artifacts, editor/OS cruft.
+deploy
+etsy_export
+.idea
+.vscode
+.DS_Store
+*.timestamp-*
+*.tar.gz

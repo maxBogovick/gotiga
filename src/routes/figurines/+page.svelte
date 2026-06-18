@@ -28,6 +28,11 @@
   let displayLimit = $state(PAGE_SIZE);
   let batchOffset  = $state(0);
 
+  // Declared up here (not next to its onMount loader) because the filter/count
+  // $derived blocks below reference it. Under SSR/prerender deriveds evaluate
+  // eagerly in source order, so a later `let` would be in the temporal dead zone.
+  let viewedIds = $state(new Set<string>());
+
   // ── Derived filter data ────────────────────────────────────────
   type FigItem = import('$lib/types/api').FigurineListItem;
 
@@ -176,8 +181,6 @@
   let lightboxFig = $state<FigurineListItem | null>(null);
   let orderFig = $state<FigurineListItem | null>(null);
   let shareCopiedId = $state('');
-
-  let viewedIds = $state(new Set<string>());
 
   onMount(() => {
     savedFigurines.load();

@@ -69,7 +69,7 @@
 
   let canRequestWork = $derived(status === 'available');
   let canWaitlist = $derived(status === 'reserved');
-  let canViewing = $derived(upcomingShowings.length > 0);
+  let canViewing = $derived(status === 'available' || upcomingShowings.length > 0);
   let canNotify = $derived(status === 'in_progress' || status === 'sold');
 
   let intentOptions = $derived.by(() => {
@@ -209,6 +209,9 @@
           endsAt,
         });
         const claim = { token: res.cancelToken, figurineName, startsAt, endsAt, submittedAt: new Date().toISOString() };
+        if (authStore.isLoggedIn && authStore.token) {
+          api.userLinkBookings(authStore.token, [res.cancelToken]).catch(() => {});
+        }
         onBookingCreated(claim);
         successTitle = $t('bookingSuccessTitle');
         successText = $t('bookingSuccessText');

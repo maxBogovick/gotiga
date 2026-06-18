@@ -25,6 +25,7 @@
     import FigurineShowingsEditor from '$lib/components/admin/FigurineShowingsEditor.svelte';
     import DesignEditor from '$lib/components/admin/DesignEditor.svelte';
     import CopyEditor from '$lib/components/admin/CopyEditor.svelte';
+    import WorkshopFeaturePanel from '$lib/components/admin/WorkshopFeaturePanel.svelte';
     import { t } from '$lib/i18n';
     import LangSwitcher from '$lib/components/LangSwitcher.svelte';
 
@@ -75,7 +76,7 @@
     let showingsEditor = $state<FigurineShowingsEditor | null>(null);
     let showSettings = $state(false);
     let message = $state({ text: '', type: 'info' });
-    let activeTab = $state<'registry' | 'home' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'commissions' | 'showings' | 'bookings' | 'waitlist' | 'analytics' | 'users' | 'comments' | 'messages' | 'server' | 'booking-rules' | 'contact' | 'design' | 'copy'>('registry');
+    let activeTab = $state<'registry' | 'home' | 'workshop-feature' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'commissions' | 'showings' | 'bookings' | 'waitlist' | 'analytics' | 'users' | 'comments' | 'messages' | 'server' | 'booking-rules' | 'contact' | 'design' | 'copy'>('registry');
     let activeAuthorSubTab = $state<'profile' | 'texts'>('profile');
     let newOrdersCount = $state(0);
     let newCommissionsCount = $state(0);
@@ -355,7 +356,7 @@
         }
         // Hash-based tab routing (e.g. Telegram notification links)
         const hash = window.location.hash.replace('#', '');
-        const validTabs = ['registry','home','zones','author','workshop','media','releases','orders','commissions','showings','bookings','waitlist','analytics','users','comments','messages','server','booking-rules','contact'];
+        const validTabs = ['registry','home','workshop-feature','zones','author','workshop','media','releases','orders','commissions','showings','bookings','waitlist','analytics','users','comments','messages','server','booking-rules','contact'];
         if (validTabs.includes(hash)) {
             activeTab = hash as typeof activeTab;
         }
@@ -447,6 +448,7 @@
                 label: $t('adminGroupShowcase'),
                 tabs: [
                   ['home',     'Home'],
+                  ['workshop-feature', $t('adminTabWorkshopFeature')],
                   ['author',   $t('adminTabAuthor')],
                   ['workshop', $t('adminTabWorkshop')],
                   ['media',    'Media'],
@@ -898,6 +900,9 @@
 
         {:else if activeTab === 'home'}
             <HomeContentEditor />
+
+        {:else if activeTab === 'workshop-feature'}
+            <div in:fade class="h-full"><WorkshopFeaturePanel /></div>
 
         {:else if activeTab === 'zones'}
             <div in:fade class="h-full"><ZoneEditor /></div>

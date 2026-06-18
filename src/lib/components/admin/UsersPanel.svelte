@@ -189,6 +189,21 @@
         </div>
         <span class="detail-email">{detail.email}</span>
         <span class="detail-date">{$t('adminUsersRegistered')}: {new Date(detail.createdAt).toLocaleDateString()}</span>
+        {#if detail.signupIp || detail.signupCity || detail.signupCountryCode}
+          <span class="detail-origin">
+            {$t('adminUsersSignupFrom')}: {[detail.signupCity, detail.signupCountryCode].filter(Boolean).join(', ')}{#if detail.signupIp}<span class="detail-ip"> · {detail.signupIp}</span>{/if}
+          </span>
+        {/if}
+        {#if detail.lastResetRequestIp || detail.lastResetRequestCity || detail.lastResetRequestCountryCode}
+          <span class="detail-origin">
+            {$t('adminUsersResetRequestFrom')}: {[detail.lastResetRequestCity, detail.lastResetRequestCountryCode].filter(Boolean).join(', ')}{#if detail.lastResetRequestIp}<span class="detail-ip"> · {detail.lastResetRequestIp}</span>{/if}{#if detail.lastResetRequestAt} ({new Date(detail.lastResetRequestAt).toLocaleDateString()}){/if}
+          </span>
+        {/if}
+        {#if detail.lastResetIp || detail.lastResetCity || detail.lastResetCountryCode}
+          <span class="detail-origin">
+            {$t('adminUsersLastResetFrom')}: {[detail.lastResetCity, detail.lastResetCountryCode].filter(Boolean).join(', ')}{#if detail.lastResetIp}<span class="detail-ip"> · {detail.lastResetIp}</span>{/if}{#if detail.lastResetAt} ({new Date(detail.lastResetAt).toLocaleDateString()}){/if}
+          </span>
+        {/if}
       </div>
 
       <!-- Block / Password reset actions -->
@@ -258,6 +273,11 @@
                 <span class="session-dates">
                   {new Date(s.createdAt).toLocaleString()} → {new Date(s.expiresAt).toLocaleDateString()}
                 </span>
+                {#if s.ip || s.city || s.countryCode}
+                  <span class="session-origin">
+                    {[s.city, s.countryCode].filter(Boolean).join(', ')}{#if s.ip}<span class="session-ip"> · {s.ip}</span>{/if}
+                  </span>
+                {/if}
               </li>
             {/each}
           </ul>
@@ -543,6 +563,8 @@
   }
   .detail-email { font-size: .85rem; color: #6f3b24; }
   .detail-date  { font-size: .78rem; color: #999; }
+  .detail-origin { font-size: .74rem; color: #9a7b63; }
+  .detail-ip { color: #b0a08f; }
 
   /* Sections */
   .detail-section {
@@ -685,6 +707,8 @@
   .session-item.active .session-status  { color: #4a7c59; }
   .session-item.expired .session-status { color: #aaa; }
   .session-dates { color: #888; }
+  .session-origin { color: #9a7b63; font-size: 11px; }
+  .session-ip { color: #b0a08f; }
 
   /* History lists */
   .history-list {

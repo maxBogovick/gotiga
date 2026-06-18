@@ -21,16 +21,57 @@ pub struct AppService {
     config: Config,
     comment_rate_limiter: RateLimiter,
     commission_rate_limiter: RateLimiter,
+    /// Shared limiter for assorted public endpoints (auth, bookings, orders,
+    /// waitlist, token lookups), keyed by "bucket|ip".
+    general_rate_limiter: RateLimiter,
+    /// Offline IP → country/city resolver (best-effort; may be a no-op).
+    geoip: Arc<crate::geo::GeoIp>,
 }
 
 impl AppService {
     pub fn new(repo: Repository, config: Config) -> Self {
+        let geoip = Arc::new(crate::geo::GeoIp::open(config.geoip_db_path.as_deref()));
         Self {
             repo,
             config,
             comment_rate_limiter: Arc::new(Mutex::new(HashMap::new())),
             commission_rate_limiter: Arc::new(Mutex::new(HashMap::new())),
+            general_rate_limiter: Arc::new(Mutex::new(HashMap::new())),
+            geoip,
         }
+    }
+
+    /// Delete login attempts older than the retention window (privacy / GDPR).
+    pub async fn prune_login_history(&self, retention_days: i64) -> Result<u64> {
+        self.repo.prune_old_login_attempts(retention_days).await
+    }
+
+    /// Assemble request metadata for storage, resolving geolocation from the IP.
+    fn client_context(&self, ip: Option<String>, user_agent: Option<String>) -> crate::models::ClientContext {
+        let (country_code, city) = ip
+            .as_deref()
+            .map(|i| self.geoip.lookup(i))
+            .unwrap_or((None, None));
+        crate::models::ClientContext { ip, user_agent, country_code, city }
+    }
+
+    /// Generic in-memory rate limit: at most `max` requests per `window_secs`
+    /// for a given (bucket, ip). Best-effort (in-process, resets on restart) —
+    /// a coarse abuse brake, not a hard quota.
+    pub async fn check_rate_limit(&self, bucket: &str, ip: &str, max: usize, window_secs: u64) -> Result<()> {
+        let now = Instant::now();
+        let window = Duration::from_secs(window_secs);
+        let key = format!("{bucket}|{ip}");
+        let mut map = self.general_rate_limiter.lock().await;
+        let entry = map.entry(key).or_default();
+        entry.retain(|t: &Instant| now.duration_since(*t) < window);
+        if entry.len() >= max {
+            return Err(AppError::BadRequest(
+                "Too many requests from this address. Please wait and try again.".into()
+            ));
+        }
+        entry.push(now);
+        Ok(())
     }
 
     pub async fn check_commission_rate_limit(&self, ip: &str) -> Result<()> {
@@ -53,33 +94,20 @@ impl AppService {
         Ok(()) // Postgres is always ready, no pool to load
     }
 
-    pub async fn list_releases(&self) -> Result<Vec<Release>> {
-        self.repo.get_releases().await
-    }
-
-    pub async fn get_active_release_path(&self) -> Result<Option<String>> {
-        Ok(None) // No SQLite content DB concept anymore
-    }
-
     // === CONTENT API ===
-
-    fn asset_url(&self, table: &str, id: &str) -> String {
-        let base = self.config.public_url.trim_end_matches('/');
-        format!("{}/api/v1/assets/{}/{}", base, table, id)
-    }
 
     // Resolve a stored path/URL to a full URL for the frontend:
     // - "http..." → use as-is (external URL or legacy full URL)
     // - "/static/..." → prepend public_url (web-uploaded file, stored as relative path)
-    // - anything else → serve via blob asset endpoint (Tauri-embedded BLOB path)
-    fn resolve_url(&self, file_path: &str, table: &str, id: &str) -> String {
+    // - anything else → treat as a relative path under /static (legacy stored paths)
+    fn resolve_url(&self, file_path: &str, _table: &str, _id: &str) -> String {
+        let base = self.config.public_url.trim_end_matches('/');
         if file_path.starts_with("http") {
             file_path.to_string()
         } else if file_path.starts_with("/static/") {
-            let base = self.config.public_url.trim_end_matches('/');
             format!("{}{}", base, file_path)
         } else {
-            self.asset_url(table, id)
+            format!("{}/static/{}", base, file_path.trim_start_matches('/'))
         }
     }
 
@@ -88,70 +116,57 @@ impl AppService {
             .map_err(|_| crate::error::AppError::BadRequest(format!("Invalid ID: {}", s)))
     }
 
+    /// Resolve the public URL for a figurine's face thumbnail (thumb if present,
+    /// else the full image).
+    fn face_image_url(&self, img: &Image) -> String {
+        let i_id_str = img.id.to_string();
+        img.thumb_path
+            .as_ref()
+            .map(|p| self.resolve_url(p, "images_thumb", &i_id_str))
+            .unwrap_or_else(|| self.resolve_url(&img.file_path, "images", &i_id_str))
+    }
+
+    fn to_list_item(&self, f: Figurine, face: Option<&Image>) -> FigurineListItemDto {
+        FigurineListItemDto {
+            id: f.id.to_string(),
+            name: f.name,
+            status: f.status,
+            face_image_url: face.map(|i| self.face_image_url(i)),
+            year: f.year,
+            sort_order: f.sort_order,
+            series: None,
+            technique: f.technique,
+            material: f.material,
+            is_featured: f.is_featured,
+            created_at: f.created_at,
+        }
+    }
+
     pub async fn list_figurines(&self, visible_only: bool) -> Result<Vec<FigurineListItemDto>> {
         let figurines = self.repo.get_all_figurines(visible_only).await?;
-        let mut result = Vec::new();
-
-        for f in figurines {
-            let images = self.repo.get_images_by_figurine(f.id).await?;
-            let id_str = f.id.to_string();
-            let face_img = images.iter()
-                .find(|i| i.image_type == ImageType::Face)
-                .map(|i| {
-                    let i_id_str = i.id.to_string();
-                    i.thumb_path
-                        .as_ref()
-                        .map(|p| self.resolve_url(p, "images_thumb", &i_id_str))
-                        .unwrap_or_else(|| self.resolve_url(&i.file_path, "images", &i_id_str))
-                });
-
-            result.push(FigurineListItemDto {
-                id: id_str,
-                name: f.name,
-                status: f.status,
-                face_image_url: face_img,
-                year: f.year,
-                sort_order: f.sort_order,
-                series: None,
-                technique: f.technique,
-                material: f.material,
-                is_featured: f.is_featured,
-                created_at: f.created_at,
-            });
-        }
-        Ok(result)
+        let ids: Vec<Uuid> = figurines.iter().map(|f| f.id).collect();
+        let faces = self.repo.get_face_images_for_figurines(&ids).await?;
+        Ok(figurines.into_iter()
+            .map(|f| {
+                let face = faces.get(&f.id);
+                self.to_list_item(f, face)
+            })
+            .collect())
     }
 
     pub async fn list_in_progress_figurines(&self) -> Result<Vec<FigurineListItemDto>> {
         let all = self.repo.get_all_figurines(true).await?;
-        let mut result = Vec::new();
-        for f in all.into_iter().filter(|f| f.status == crate::models::FigurineStatus::InProgress) {
-            let images = self.repo.get_images_by_figurine(f.id).await?;
-            let id_str = f.id.to_string();
-            let face_img = images.iter()
-                .find(|i| i.image_type == ImageType::Face)
-                .map(|i| {
-                    let i_id_str = i.id.to_string();
-                    i.thumb_path
-                        .as_ref()
-                        .map(|p| self.resolve_url(p, "images_thumb", &i_id_str))
-                        .unwrap_or_else(|| self.resolve_url(&i.file_path, "images", &i_id_str))
-                });
-            result.push(FigurineListItemDto {
-                id: id_str,
-                name: f.name,
-                status: f.status,
-                face_image_url: face_img,
-                year: f.year,
-                sort_order: f.sort_order,
-                series: None,
-                technique: f.technique,
-                material: f.material,
-                is_featured: f.is_featured,
-                created_at: f.created_at,
-            });
-        }
-        Ok(result)
+        let figurines: Vec<Figurine> = all.into_iter()
+            .filter(|f| f.status == crate::models::FigurineStatus::InProgress)
+            .collect();
+        let ids: Vec<Uuid> = figurines.iter().map(|f| f.id).collect();
+        let faces = self.repo.get_face_images_for_figurines(&ids).await?;
+        Ok(figurines.into_iter()
+            .map(|f| {
+                let face = faces.get(&f.id);
+                self.to_list_item(f, face)
+            })
+            .collect())
     }
 
     pub async fn get_figurine_details(&self, id: String) -> Result<FigurineDto> {
@@ -165,34 +180,14 @@ impl AppService {
 
         let fig_id_str = figurine.id.to_string();
 
-        let mut related_items = Vec::new();
-        for r in related_entities {
-            let r_id_str = r.id.to_string();
-            let r_imgs = self.repo.get_images_by_figurine(r.id).await?;
-            let face = r_imgs.iter()
-                .find(|i| i.image_type == ImageType::Face)
-                .map(|i| {
-                    let i_id_str = i.id.to_string();
-                    i.thumb_path
-                        .as_ref()
-                        .map(|p| self.resolve_url(p, "images_thumb", &i_id_str))
-                        .unwrap_or_else(|| self.resolve_url(&i.file_path, "images", &i_id_str))
-                });
-
-            related_items.push(FigurineListItemDto {
-                id: r_id_str,
-                name: r.name,
-                status: r.status,
-                face_image_url: face,
-                year: r.year,
-                sort_order: r.sort_order,
-                series: None,
-                technique: r.technique,
-                material: r.material,
-                is_featured: r.is_featured,
-                created_at: r.created_at,
-            });
-        }
+        let related_ids: Vec<Uuid> = related_entities.iter().map(|r| r.id).collect();
+        let related_faces = self.repo.get_face_images_for_figurines(&related_ids).await?;
+        let related_items: Vec<FigurineListItemDto> = related_entities.into_iter()
+            .map(|r| {
+                let face = related_faces.get(&r.id);
+                self.to_list_item(r, face)
+            })
+            .collect();
 
         let image_dtos = images.into_iter().map(|i| {
             let i_id_str = i.id.to_string();
@@ -280,10 +275,15 @@ impl AppService {
 
     pub async fn save_figurine(&self, req: crate::models::SaveFigurineRequest) -> Result<()> {
         let figurine_id = Self::parse_uuid(&req.id)?;
+        validate_text("Name", &req.name, 200)?;
+        if req.images.len() > 50 {
+            return Err(AppError::BadRequest("Too many images (max 50)".into()));
+        }
+        if req.process_steps.len() > 50 {
+            return Err(AppError::BadRequest("Too many process steps (max 50)".into()));
+        }
         let prev_status = self.repo.get_figurine_by_id(figurine_id).await?.map(|f| f.status);
-        self.repo.upsert_figurine(&req).await?;
-        self.repo.replace_images(figurine_id, &req.images).await?;
-        self.repo.replace_steps(figurine_id, &req.process_steps).await?;
+        self.repo.save_figurine_full(&req, &req.images, &req.process_steps).await?;
         // Just flipped to available → alert the author to everyone who was waiting
         // (queue + notify-me), so they can reach out personally.
         let became_available = req.status == crate::models::FigurineStatus::Available
@@ -321,15 +321,13 @@ impl AppService {
     pub async fn get_background(&self) -> Result<Option<String>> {
         let path = self.repo.get_main_background().await?;
         Ok(path.map(|p| {
+            let base = self.config.public_url.trim_end_matches('/');
             if p.starts_with("http") {
                 p
             } else if p.starts_with("/static/") {
-                let base = self.config.public_url.trim_end_matches('/');
                 format!("{}{}", base, p)
             } else {
-                // Tauri-embedded local path — serve BLOB from app_resources.data
-                let base = self.config.public_url.trim_end_matches('/');
-                format!("{}/api/v1/assets/background/main_background", base)
+                format!("{}/static/{}", base, p.trim_start_matches('/'))
             }
         }))
     }
@@ -400,9 +398,9 @@ impl AppService {
 
     pub async fn update_order_status(&self, id: uuid::Uuid, status: &OrderStatus) -> Result<()> {
         self.repo.update_order_status(id, status).await?;
-        if *status == OrderStatus::Replied {
-            if let Ok(Some(order)) = self.repo.get_order_by_id(id).await {
-                if let Some(user_id) = order.user_id {
+        if *status == OrderStatus::Replied
+            && let Ok(Some(order)) = self.repo.get_order_by_id(id).await
+                && let Some(user_id) = order.user_id {
                     let subject = format!("Ответ на ваш запрос — {}", order.figurine_name);
                     let body = match order.admin_notes.as_deref() {
                         Some(n) if !n.is_empty() => format!(
@@ -411,10 +409,8 @@ impl AppService {
                         ),
                         _ => format!("Ваш запрос по «{}» получил ответ.", order.figurine_name),
                     };
-                    let _ = self.repo.create_thread(user_id, "order", Some(order.id), &subject, &body, true).await;
+                    let _ = self.repo.create_thread(user_id, "order", Some(order.id), &subject, &body, true, &[]).await;
                 }
-            }
-        }
         Ok(())
     }
 
@@ -496,6 +492,7 @@ impl AppService {
     }
 
     pub async fn create_commission(&self, req: &CommissionRequest) -> Result<CommissionCreatedResponse> {
+        validate_attachments(&req.attachment_urls)?;
         let saved = self.repo.create_commission(req).await?;
         let _ = self.send_commission_notification(&saved).await;
         Ok(CommissionCreatedResponse {
@@ -525,7 +522,7 @@ impl AppService {
                 "Прошение о новой фигурке".to_string()
             };
             let _ = self.repo.create_thread(
-                user_id, "commission", Some(commission.id), &subject, &commission.description, false,
+                user_id, "commission", Some(commission.id), &subject, &commission.description, false, &[],
             ).await;
         }
 
@@ -542,15 +539,17 @@ impl AppService {
     ) -> Result<CommissionDto> {
         let existing = self.repo.get_commission_by_id(id).await?
             .ok_or_else(|| crate::error::AppError::NotFound("Commission not found".to_string()))?;
-        if let Some(uid) = owner {
-            if existing.user_id != Some(uid) {
+        if let Some(uid) = owner
+            && existing.user_id != Some(uid) {
                 return Err(crate::error::AppError::Unauthorized);
             }
-        }
         if existing.status.is_started() {
             return Err(crate::error::AppError::BadRequest(
                 "Work has already begun on this petition — it can no longer be edited.".into()
             ));
+        }
+        if let Some(atts) = &req.attachment_urls {
+            validate_attachments(atts)?;
         }
         let updated = self.repo.update_commission_content(id, req).await?
             .ok_or_else(|| crate::error::AppError::NotFound("Commission not found".to_string()))?;
@@ -562,11 +561,10 @@ impl AppService {
     pub async fn delete_commission(&self, id: Uuid, owner: Option<Uuid>) -> Result<()> {
         let existing = self.repo.get_commission_by_id(id).await?
             .ok_or_else(|| crate::error::AppError::NotFound("Commission not found".to_string()))?;
-        if let Some(uid) = owner {
-            if existing.user_id != Some(uid) {
+        if let Some(uid) = owner
+            && existing.user_id != Some(uid) {
                 return Err(crate::error::AppError::Unauthorized);
             }
-        }
         if existing.status.is_started() {
             return Err(crate::error::AppError::BadRequest(
                 "Work has already begun on this petition — it can no longer be deleted.".into()
@@ -576,8 +574,8 @@ impl AppService {
         // When the master removes a claimed petition, the petitioner must be told.
         // The commission's own conversation is cascade-deleted with it, so the
         // notice goes into a separate, persistent system thread (owner = None ⇒ admin).
-        if owner.is_none() {
-            if let Some(user_id) = existing.user_id {
+        if owner.is_none()
+            && let Some(user_id) = existing.user_id {
                 let en = existing.lang == "en";
                 let titled = !existing.title.trim().is_empty();
                 let subject = if en { "Petition removed" } else { "Прошение снято" };
@@ -592,9 +590,8 @@ impl AppService {
                 } else {
                     "Ваше прошение снято хранителем архива. Вы можете отправить новое.".to_string()
                 };
-                let _ = self.repo.create_thread(user_id, "system", None, subject, &body, true).await;
+                let _ = self.repo.create_thread(user_id, "system", None, subject, &body, true, &[]).await;
             }
-        }
 
         self.repo.delete_commission(id).await
     }
@@ -650,10 +647,10 @@ impl AppService {
                         _ => text.to_string(),
                     };
                     if let Some(thread) = self.repo.find_thread_by_reference(c.id, "commission").await? {
-                        let _ = self.repo.add_thread_reply(thread.id, uuid::Uuid::nil(), true, &body).await;
+                        let _ = self.repo.add_thread_reply(thread.id, uuid::Uuid::nil(), true, &body, &[]).await;
                     } else {
                         let subject = if !c.title.trim().is_empty() { c.title.clone() } else if en { "Your petition".to_string() } else { "Ваше прошение".to_string() };
-                        let _ = self.repo.create_thread(user_id, "commission", Some(c.id), &subject, &body, true).await;
+                        let _ = self.repo.create_thread(user_id, "commission", Some(c.id), &subject, &body, true, &[]).await;
                     }
                 }
             }
@@ -788,8 +785,27 @@ impl AppService {
         Ok(())
     }
 
+    /// Booking-rule validation (duration + advance notice), shared between the
+    /// initial create and reschedule so a booking can't be created that could
+    /// never be rescheduled.
+    fn validate_booking_rules(rules: &BookingRules, starts_at: chrono::NaiveDate, ends_at: chrono::NaiveDate) -> Result<()> {
+        let duration = (ends_at - starts_at).num_days() + 1;
+        if duration < rules.min_days {
+            return Err(AppError::BadRequest(format!("Minimum booking duration is {} day(s)", rules.min_days)));
+        }
+        if duration > rules.max_days {
+            return Err(AppError::BadRequest(format!("Maximum booking duration is {} day(s)", rules.max_days)));
+        }
+        if rules.advance_days > 0 {
+            let earliest = chrono::Utc::now().date_naive() + chrono::Duration::days(rules.advance_days);
+            if starts_at < earliest {
+                return Err(AppError::BadRequest(format!("Booking must start at least {} day(s) in advance", rules.advance_days)));
+            }
+        }
+        Ok(())
+    }
+
     pub async fn create_booking(&self, req: CreateBookingRequest) -> Result<Booking> {
-        let figurine_id = Self::parse_uuid(&req.figurine_id)?;
         let starts_at = chrono::NaiveDate::parse_from_str(&req.starts_at, "%Y-%m-%d")
             .map_err(|_| crate::error::AppError::BadRequest("Invalid starts_at date".to_string()))?;
         let ends_at = chrono::NaiveDate::parse_from_str(&req.ends_at, "%Y-%m-%d")
@@ -799,13 +815,14 @@ impl AppService {
             return Err(crate::error::AppError::BadRequest("starts_at must be before or equal to ends_at".to_string()));
         }
 
-        if self.repo.check_booking_conflicts(figurine_id, starts_at, ends_at).await? {
-            return Err(crate::error::AppError::Conflict(
-                "These dates conflict with existing showings or confirmed bookings".to_string()
-            ));
-        }
+        // Apply the same booking rules as reschedule (was previously skipped on create).
+        let rules = self.get_booking_rules().await?;
+        Self::validate_booking_rules(&rules, starts_at, ends_at)?;
 
-        let booking = self.repo.save_booking(&req).await?;
+        let booking = self.repo.create_booking_atomic(&req, starts_at, ends_at).await?
+            .ok_or_else(|| crate::error::AppError::Conflict(
+                "These dates conflict with existing showings or confirmed bookings".to_string()
+            ))?;
         let _ = self.send_booking_notification(&booking).await;
         Ok(booking)
     }
@@ -916,13 +933,14 @@ impl AppService {
             .ok_or_else(|| crate::error::AppError::NotFound(format!("Booking {} not found", id)))?;
 
         if status == BookingStatus::Confirmed {
-            if let Some(reason) = self.repo.check_admin_confirm_conflicts(
-                id, booking.figurine_id, booking.starts_at, booking.ends_at
+            // Conflict re-check + booking/figurine update happen atomically under a
+            // per-figurine lock, so two confirmations can't race into a double-book.
+            if let Some(reason) = self.repo.confirm_booking_atomic(
+                id, booking.figurine_id, booking.starts_at, booking.ends_at,
+                admin_notes.as_deref(), curator_conditions.as_deref(),
             ).await? {
                 return Err(crate::error::AppError::Conflict(reason));
             }
-            self.repo.update_booking_status(id, &status, admin_notes.as_deref(), curator_conditions.as_deref()).await?;
-            self.repo.update_figurine_status(booking.figurine_id, &FigurineStatus::Reserved).await?;
             self.send_booking_status_message(&booking, &status, admin_notes.as_deref(), curator_conditions.as_deref()).await;
             return Ok(());
         }
@@ -997,23 +1015,7 @@ impl AppService {
             ),
             _ => return,
         };
-        let _ = self.repo.create_thread(user_id, "booking", Some(booking.id), &subject, &body, true).await;
-    }
-
-    pub async fn get_asset(&self, table: &str, id: String) -> Result<Option<Vec<u8>>> {
-        let (real_table, column) = match table {
-            "images" => ("images", "data"),
-            "images_original" => ("images", "original_data"),
-            "images_thumb" => ("images", "thumb_data"),
-            "process_steps" => ("process_steps", "image_data"),
-            "figurines_video" => ("figurines", "video_data"),
-            "figurines_audio" => ("figurines", "ambience_data"),
-            "texts" => ("texts", "image_data"),
-            "background" => ("app_resources", "data"),
-            _ => return Err(crate::error::AppError::BadRequest("Invalid asset type".to_string())),
-        };
-
-        self.repo.get_blob(real_table, column, id).await
+        let _ = self.repo.create_thread(user_id, "booking", Some(booking.id), &subject, &body, true, &[]).await;
     }
 
     fn clean_media_path(&self, path: &str) -> String {
@@ -1197,6 +1199,60 @@ impl AppService {
     }
 }
 
+// ── Input validation helpers ────────────────────────────────────────────────
+
+const MAX_ATTACHMENTS: usize = 10;
+const MAX_URL_LEN: usize = 2048;
+
+/// Validate uploaded-reference URLs: bounded count, bounded length, and only
+/// our own `/static/` paths or absolute http(s) URLs (no `javascript:` / `data:`
+/// / `file:` smuggling).
+fn validate_attachments(atts: &[AttachmentInput]) -> Result<()> {
+    if atts.len() > MAX_ATTACHMENTS {
+        return Err(AppError::BadRequest(format!("Too many attachments (max {MAX_ATTACHMENTS})")));
+    }
+    let ok_url = |u: &str| {
+        u.len() <= MAX_URL_LEN
+            && (u.starts_with("/static/") || u.starts_with("http://") || u.starts_with("https://"))
+    };
+    for a in atts {
+        if !ok_url(&a.url) {
+            return Err(AppError::BadRequest("Invalid attachment URL".into()));
+        }
+        if let Some(t) = &a.thumb_url
+            && !ok_url(t) {
+                return Err(AppError::BadRequest("Invalid attachment thumbnail URL".into()));
+            }
+    }
+    Ok(())
+}
+
+/// Require a trimmed string within `[1, max]` characters.
+fn validate_text(field: &str, value: &str, max: usize) -> Result<()> {
+    let len = value.trim().chars().count();
+    if len == 0 {
+        return Err(AppError::BadRequest(format!("{field} is required")));
+    }
+    if len > max {
+        return Err(AppError::BadRequest(format!("{field} is too long (max {max} characters)")));
+    }
+    Ok(())
+}
+
+/// Decode a JSON-stored setting. Missing → default, but a *corrupt* value is a
+/// hard error instead of being silently reset to defaults (which would quietly
+/// wipe SMTP creds / theme / booking rules).
+fn parse_json_setting<T>(key: &str, json: Option<String>) -> Result<T>
+where
+    T: serde::de::DeserializeOwned + Default,
+{
+    match json {
+        Some(j) => serde_json::from_str(&j)
+            .map_err(|e| AppError::Internal(format!("Corrupt setting '{key}': {e}"))),
+        None => Ok(T::default()),
+    }
+}
+
 fn escape_markdown(s: &str) -> String {
     // Telegram MarkdownV2 special chars
     s.chars().fold(String::new(), |mut acc, c| {
@@ -1212,17 +1268,109 @@ fn escape_markdown(s: &str) -> String {
 // AUTH CONSTANTS
 // ============================================================
 
-const CATEGORIES: [&str; 4] = ["animals", "dishes", "seasons", "colors"];
+const CATEGORIES: [&str; 4] = ["animals", "dishes", "seasons", "symbols"];
 
+/// How many icons each user is shown per category (their personal subset).
+const POOL_PER_CATEGORY: usize = 8;
+
+/// Master icon pool. Each user is shown a random subset of POOL_PER_CATEGORY of
+/// these per category (chosen at registration, persisted, replayed at login).
+/// IDs must match `src/lib/data/visualIcons.ts` exactly on the frontend.
 const ICONS: &[(&str, &[&str])] = &[
-    ("animals", &["wolf", "raven", "fox", "owl", "snake", "deer", "bat", "cat"]),
-    ("dishes",  &["mushroom", "apple", "bread", "cup", "fish", "berry", "honey", "herb"]),
-    ("seasons", &["snowflake", "bare_tree", "sprout", "rain", "sun", "wheat", "leaf", "acorn"]),
-    ("colors",  &["red", "blue", "green", "amber", "violet", "copper", "black", "ivory"]),
+    ("animals", &[
+        "wolf", "raven", "fox", "owl", "snake", "deer", "bat", "cat",
+        "bear", "hare", "boar", "lynx", "crow", "moth", "spider", "frog",
+        "hound", "horse", "goat", "ram", "hawk", "mouse", "beetle", "stag_beetle",
+    ]),
+    ("dishes", &[
+        "mushroom", "apple", "bread", "cup", "fish", "berry", "honey", "herb",
+        "pear", "plum", "egg", "cheese", "grapes", "carrot", "onion", "pumpkin",
+        "walnut", "pie", "soup", "wine", "milk", "salt", "pepper", "garlic",
+    ]),
+    ("seasons", &[
+        "snowflake", "bare_tree", "sprout", "rain", "sun", "wheat", "leaf", "acorn",
+        "icicle", "frost_pane", "bud", "blossom", "cloud", "lightning", "mist", "pinecone",
+        "fern", "sheaf", "crescent", "dewdrop", "hail", "gust", "ember", "catkin",
+    ]),
+    ("symbols", &[
+        "key", "candle", "hourglass", "skull", "moon", "star", "cross", "anchor",
+        "bell", "clock", "feather", "inkpot", "scroll", "dagger", "crown", "eye",
+        "lantern", "mask", "book", "chalice", "compass", "keyhole", "ring", "coin",
+    ]),
 ];
 
 fn valid_icon_ids(category: &str) -> Option<&'static [&'static str]> {
     ICONS.iter().find(|(c, _)| *c == category).map(|(_, ids)| *ids)
+}
+
+/// Deterministically derive a per-email decoy subset for emails that have no
+/// account, so the login grid is stable and statistically indistinguishable
+/// from a real stored pool (prevents account enumeration via the icon set).
+/// Keyed by the admin secret so the subset can't be recomputed by an attacker.
+fn decoy_pool(secret: &str, email: &str) -> Vec<Vec<String>> {
+    use rand::seq::SliceRandom;
+    use rand::SeedableRng;
+    use sha2::{Digest, Sha256};
+
+    CATEGORIES.iter().map(|category| {
+        let mut hasher = Sha256::new();
+        hasher.update(secret.as_bytes());
+        hasher.update(b"\x00");
+        hasher.update(email.as_bytes());
+        hasher.update(b"\x00");
+        hasher.update(category.as_bytes());
+        let seed: [u8; 32] = hasher.finalize().into();
+        let mut rng = rand::rngs::StdRng::from_seed(seed);
+
+        let mut ids: Vec<&'static str> = valid_icon_ids(category).unwrap_or(&[]).to_vec();
+        ids.shuffle(&mut rng);
+        ids.into_iter().take(POOL_PER_CATEGORY).map(str::to_string).collect()
+    }).collect()
+}
+
+/// Validate a client-proposed personal pool against the master pool and the
+/// chosen selections, returning the `{category: [icon_id]}` JSON to persist.
+/// Each category must contain exactly POOL_PER_CATEGORY distinct valid icon_ids,
+/// and the selection for that category must be one of them.
+fn validate_pool(pool: &[Vec<String>; 4], selections: &[String; 4]) -> Result<serde_json::Value> {
+    let mut pool_obj = serde_json::Map::new();
+    for (i, category) in CATEGORIES.iter().enumerate() {
+        let master = valid_icon_ids(category)
+            .ok_or_else(|| AppError::Internal("Unknown category".into()))?;
+        let entries = &pool[i];
+
+        if entries.len() != POOL_PER_CATEGORY {
+            return Err(AppError::BadRequest(format!("Invalid pool size for {category}")));
+        }
+        let mut seen = std::collections::HashSet::new();
+        for id in entries {
+            if !master.contains(&id.as_str()) {
+                return Err(AppError::BadRequest(format!("Invalid pool icon for {category}")));
+            }
+            if !seen.insert(id.as_str()) {
+                return Err(AppError::BadRequest(format!("Duplicate pool icon for {category}")));
+            }
+        }
+        if !entries.contains(&selections[i]) {
+            return Err(AppError::BadRequest(format!("Selection not in pool for {category}")));
+        }
+        pool_obj.insert(category.to_string(), serde_json::json!(entries));
+    }
+    Ok(serde_json::Value::Object(pool_obj))
+}
+
+/// Parse a stored `visual_pool` JSON value ({category: [icon_id]}) into the
+/// fixed category order. Returns None if the shape is unusable.
+fn parse_stored_pool(value: &serde_json::Value) -> Option<Vec<Vec<String>>> {
+    let obj = value.as_object()?;
+    let mut out = Vec::with_capacity(CATEGORIES.len());
+    for category in CATEGORIES {
+        let arr = obj.get(category)?.as_array()?;
+        let ids: Vec<String> = arr.iter().filter_map(|v| v.as_str().map(str::to_string)).collect();
+        if ids.is_empty() { return None; }
+        out.push(ids);
+    }
+    Some(out)
 }
 
 fn build_hash_input(selections: &[String; 4]) -> String {
@@ -1252,7 +1400,7 @@ fn verify_password(input: &str, hash: &str) -> bool {
 // ============================================================
 
 impl AppService {
-    pub async fn register_user(&self, req: &RegisterRequest) -> Result<UserDto> {
+    pub async fn register_user(&self, req: &RegisterRequest, ip: Option<String>, user_agent: Option<String>) -> Result<UserDto> {
         if !req.email.contains('@') {
             return Err(AppError::BadRequest("Invalid email".into()));
         }
@@ -1260,19 +1408,16 @@ impl AppService {
             return Err(AppError::BadRequest("Display name required".into()));
         }
 
-        for (i, sel) in req.selections.iter().enumerate() {
-            let valid = valid_icon_ids(CATEGORIES[i])
-                .ok_or_else(|| AppError::Internal("Unknown category".into()))?;
-            if !valid.contains(&sel.as_str()) {
-                return Err(AppError::BadRequest(format!("Invalid selection for {}", CATEGORIES[i])));
-            }
-        }
+        // Validate the personal pool (alphabet shown at login) and that each
+        // selection is drawn from it.
+        let pool_json = validate_pool(&req.pool, &req.selections)?;
 
         let hash_input = build_hash_input(&req.selections);
         let hash = hash_password(&hash_input)
             .map_err(|e| AppError::Internal(format!("Hash error: {e}")))?;
 
-        let user = self.repo.create_user(&req.email.to_lowercase(), &req.display_name, &hash).await?;
+        let ctx = self.client_context(ip, user_agent);
+        let user = self.repo.create_user(&req.email.to_lowercase(), &req.display_name, &hash, &pool_json, &ctx).await?;
         Ok(UserDto::from(&user))
     }
 
@@ -1280,14 +1425,10 @@ impl AppService {
         use rand::seq::SliceRandom;
         let email_lower = email.to_lowercase();
 
-        // Fail fast: unknown email → no challenge issued, no DB row wasted.
-        // Returns the same Unauthorized as a wrong password to prevent enumeration
-        // at the HTTP level (both cases → challenge never appears).
-        match self.repo.find_user_by_email(&email_lower).await? {
-            None => return Err(AppError::Unauthorized),
-            Some(u) if u.is_blocked => return Err(AppError::BadRequest("Account is blocked.".into())),
-            _ => {}
-        }
+        // A challenge is always issued — for unknown, valid, AND blocked emails —
+        // so the response never reveals whether an account exists. The actual
+        // user/password/blocked checks happen in login_verify, which returns the
+        // same generic Unauthorized for every failure. (Avoids account enumeration.)
 
         // Check lockout before issuing challenge
         let failures = self.repo.count_recent_failures(&email_lower, 15).await?;
@@ -1295,14 +1436,26 @@ impl AppService {
             return Err(AppError::BadRequest("Too many failed attempts. Try again in 15 minutes.".into()));
         }
 
+        // Determine the icon set to show. For a real account it's the personal
+        // pool stored at registration; for an unknown email (or a legacy account
+        // with no pool) it's a deterministic decoy keyed by the admin secret, so
+        // the grid is stable per email and reveals nothing about account
+        // existence. (.await before building tokens — ThreadRng is !Send.)
+        let user = self.repo.find_user_by_email(&email_lower).await?;
+        let pool: Vec<Vec<String>> = user
+            .as_ref()
+            .and_then(|u| u.visual_pool.as_ref())
+            .and_then(parse_stored_pool)
+            .unwrap_or_else(|| decoy_pool(&self.config.admin_api_key, &email_lower));
+
         // Build tokens synchronously in a block so ThreadRng (!Send) is dropped before any .await
         let (all_tokens, steps) = {
             let mut rng = rand::thread_rng();
             let mut all_tokens: Vec<ChallengeToken> = Vec::new();
             let mut steps: Vec<ChallengeStepDto> = Vec::new();
 
-            for (category, icon_ids) in ICONS {
-                let mut icons_shuffled: Vec<&&str> = icon_ids.iter().collect();
+            for (i, category) in CATEGORIES.iter().enumerate() {
+                let mut icons_shuffled: Vec<&String> = pool[i].iter().collect();
                 icons_shuffled.shuffle(&mut rng);
 
                 let mut step_icons: Vec<ChallengeIconDto> = Vec::new();
@@ -1311,11 +1464,11 @@ impl AppService {
                     all_tokens.push(ChallengeToken {
                         token: token.clone(),
                         category: category.to_string(),
-                        icon_id: icon_id.to_string(),
+                        icon_id: icon_id.clone(),
                     });
                     step_icons.push(ChallengeIconDto {
                         token,
-                        icon_id: icon_id.to_string(),
+                        icon_id: icon_id.clone(),
                     });
                 }
                 steps.push(ChallengeStepDto {
@@ -1337,7 +1490,11 @@ impl AppService {
         })
     }
 
-    pub async fn login_verify(&self, req: &LoginVerifyRequest) -> Result<LoginVerifyResponse> {
+    pub async fn login_verify(&self, req: &LoginVerifyRequest, ip: Option<String>, user_agent: Option<String>) -> Result<LoginVerifyResponse> {
+        // Resolve geo once up front; the same context is stored on every attempt
+        // (success or failure) and on the created session.
+        let ctx = self.client_context(ip, user_agent);
+
         let challenge_id = Uuid::parse_str(&req.challenge_id)
             .map_err(|_| AppError::BadRequest("Invalid challenge ID".into()))?;
 
@@ -1369,24 +1526,30 @@ impl AppService {
         let user = match self.repo.find_user_by_email(&email).await? {
             Some(u) => u,
             None => {
-                self.repo.record_attempt(&email, false).await?;
+                self.repo.record_attempt(&email, false, &ctx).await?;
                 return Err(AppError::Unauthorized);
             }
         };
 
         let hash_input = build_hash_input(&resolved_selections);
         if !verify_password(&hash_input, &user.visual_password_hash) {
-            self.repo.record_attempt(&email, false).await?;
+            self.repo.record_attempt(&email, false, &ctx).await?;
+            return Err(AppError::Unauthorized);
+        }
+
+        // Blocked accounts fail with the same generic Unauthorized (no enumeration).
+        if user.is_blocked {
+            self.repo.record_attempt(&email, false, &ctx).await?;
             return Err(AppError::Unauthorized);
         }
 
         // record_attempt failure must not abort a successful login — use .ok()
-        self.repo.record_attempt(&email, true).await.ok();
+        self.repo.record_attempt(&email, true, &ctx).await.ok();
 
         // Create 30-day session; prune expired sessions for this user at the same time
         let session_token = Uuid::new_v4().to_string();
         let expires_at = chrono::Utc::now() + chrono::Duration::days(30);
-        self.repo.create_session(user.id, &session_token, expires_at).await?;
+        self.repo.create_session(user.id, &session_token, expires_at, &ctx).await?;
         self.repo.prune_expired_sessions(user.id).await.ok();
 
         Ok(LoginVerifyResponse {
@@ -1405,7 +1568,9 @@ impl AppService {
     }
 
     pub async fn link_bookings(&self, user_id: Uuid, cancel_tokens: &[String]) -> Result<usize> {
-        self.repo.link_bookings_to_user(user_id, cancel_tokens).await
+        let user = self.repo.find_user_by_id(user_id).await?
+            .ok_or(AppError::Unauthorized)?;
+        self.repo.link_bookings_to_user(user_id, &user.email, cancel_tokens).await
     }
 
     pub async fn get_user_bookings(&self, user_id: Uuid) -> Result<Vec<UserBookingDto>> {
@@ -1460,6 +1625,17 @@ impl AppService {
             display_name: user.display_name,
             admin_notes: user.admin_notes,
             created_at: user.created_at.to_rfc3339(),
+            signup_ip: user.signup_ip,
+            signup_country_code: user.signup_country_code,
+            signup_city: user.signup_city,
+            last_reset_ip: user.last_reset_ip,
+            last_reset_country_code: user.last_reset_country_code,
+            last_reset_city: user.last_reset_city,
+            last_reset_at: user.last_reset_at.map(|t| t.to_rfc3339()),
+            last_reset_request_ip: user.last_reset_request_ip,
+            last_reset_request_country_code: user.last_reset_request_country_code,
+            last_reset_request_city: user.last_reset_request_city,
+            last_reset_request_at: user.last_reset_request_at.map(|t| t.to_rfc3339()),
             bookings,
             orders,
             sessions,
@@ -1501,25 +1677,108 @@ impl AppService {
         Ok(UserDto::from(&user))
     }
 
-    pub async fn apply_password_reset(&self, req: &ApplyPasswordResetRequest) -> Result<()> {
+    pub async fn apply_password_reset(&self, req: &ApplyPasswordResetRequest, ip: Option<String>, user_agent: Option<String>) -> Result<()> {
         let user = self.repo.find_user_by_reset_token(&req.token).await?
             .ok_or_else(|| AppError::BadRequest("Reset link is invalid or has expired.".into()))?;
 
-        for (i, sel) in req.selections.iter().enumerate() {
-            let valid = valid_icon_ids(CATEGORIES[i])
-                .ok_or_else(|| AppError::Internal("Unknown category".into()))?;
-            if !valid.contains(&sel.as_str()) {
-                return Err(AppError::BadRequest(format!("Invalid selection for {}", CATEGORIES[i])));
-            }
-        }
+        // Reset regenerates the personal pool, so validate it the same way as
+        // registration and persist it alongside the new hash.
+        let pool_json = validate_pool(&req.pool, &req.selections)?;
 
         let hash_input = build_hash_input(&req.selections);
         let new_hash = hash_password(&hash_input)
             .map_err(|e| AppError::Internal(format!("Hash error: {e}")))?;
 
+        // Record where the reset was applied from (audit), then persist.
+        let ctx = self.client_context(ip, user_agent);
+
         // Invalidate all existing sessions so old password can't be used
         self.repo.admin_revoke_all_sessions(user.id).await?;
-        self.repo.apply_password_reset(user.id, &new_hash).await
+        self.repo.apply_password_reset(user.id, &new_hash, &pool_json, &ctx).await
+    }
+
+    /// Self-service "forgot password": issue a reset token and email the link to
+    /// the account owner. Always succeeds from the caller's view — whether or not
+    /// the email maps to an account is never revealed (anti-enumeration), and the
+    /// email is sent out of band so response latency doesn't leak existence.
+    pub async fn request_password_reset(&self, email: &str, ip: Option<String>, user_agent: Option<String>) -> Result<()> {
+        let email_lower = email.trim().to_lowercase();
+
+        // Unknown or blocked accounts: silently do nothing, same response.
+        let Some(user) = self.repo.find_user_by_email(&email_lower).await? else {
+            return Ok(());
+        };
+        if user.is_blocked {
+            return Ok(());
+        }
+
+        let token = Uuid::new_v4().to_string();
+        let expires_at = chrono::Utc::now() + chrono::Duration::hours(48);
+        let ctx = self.client_context(ip, user_agent);
+        self.repo.create_self_reset_token(user.id, &token, expires_at, &ctx).await?;
+
+        // Fire-and-forget the email so the slow SMTP path can't be timed to infer
+        // whether the account exists.
+        let svc = self.clone();
+        let to = user.email.clone();
+        tokio::spawn(async move {
+            if let Err(e) = svc.send_password_reset_email(&to, &token).await {
+                tracing::warn!("Password reset email failed: {e}");
+            }
+        });
+
+        Ok(())
+    }
+
+    async fn send_password_reset_email(&self, to: &str, token: &str) -> Result<()> {
+        use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
+        use lettre::transport::smtp::authentication::Credentials;
+        use lettre::message::header::ContentType;
+
+        // DB settings take precedence over env config (same resolution as replies).
+        let db = self.get_smtp_settings().await.unwrap_or_default();
+        let host = db.host.as_deref().or(self.config.smtp_host.as_deref());
+        let user = db.user.as_deref().or(self.config.smtp_user.as_deref());
+        let pass = db.pass.as_deref().or(self.config.smtp_pass.as_deref());
+        let from = db.from.as_deref().or(self.config.smtp_from.as_deref());
+        let port = db.port.or(self.config.smtp_port).unwrap_or(587);
+
+        let (Some(host), Some(user), Some(pass), Some(from)) = (host, user, pass, from) else {
+            tracing::warn!("SMTP not configured — password reset link not sent to {to}");
+            return Ok(());
+        };
+
+        let link = format!(
+            "{}/set-password?token={}",
+            self.config.public_url.trim_end_matches('/'),
+            token
+        );
+        let body_text = format!(
+            "Someone asked to restore the way into the archive for this address.\n\n\
+            If it was you, follow this passage within 48 hours:\n\n\
+            {link}\n\n\
+            You will be asked to choose your signs anew.\n\n\
+            If it was not you, no harm is done — ignore this letter and nothing changes.",
+        );
+
+        let email = Message::builder()
+            .from(from.parse().map_err(|_| AppError::Internal("Invalid SMTP from address".into()))?)
+            .to(to.parse().map_err(|_| AppError::Internal("Invalid recipient address".into()))?)
+            .subject("A key to the archive")
+            .header(ContentType::TEXT_PLAIN)
+            .body(body_text)
+            .map_err(|e| AppError::Internal(format!("Email build error: {e}")))?;
+
+        let creds = Credentials::new(user.to_string(), pass.to_string());
+        let mailer = AsyncSmtpTransport::<Tokio1Executor>::relay(host)
+            .map_err(|e| AppError::Internal(format!("SMTP relay error: {e}")))?
+            .port(port)
+            .credentials(creds)
+            .build();
+
+        mailer.send(email).await
+            .map_err(|e| AppError::Internal(format!("SMTP send error: {e}")))?;
+        Ok(())
     }
 
     // === COMMENTS ===
@@ -1541,10 +1800,7 @@ impl AppService {
     }
 
     pub async fn get_smtp_settings(&self) -> Result<SmtpSettings> {
-        match self.repo.get_setting("smtp").await? {
-            Some(json) => Ok(serde_json::from_str(&json).unwrap_or_default()),
-            None => Ok(SmtpSettings::default()),
-        }
+        parse_json_setting("smtp", self.repo.get_setting("smtp").await?)
     }
 
     pub async fn save_smtp_settings(&self, s: SmtpSettings) -> Result<()> {
@@ -1554,10 +1810,7 @@ impl AppService {
     }
 
     pub async fn get_contact_settings(&self) -> Result<ContactSettings> {
-        match self.repo.get_setting("contact").await? {
-            Some(json) => Ok(serde_json::from_str(&json).unwrap_or_default()),
-            None => Ok(ContactSettings::default()),
-        }
+        parse_json_setting("contact", self.repo.get_setting("contact").await?)
     }
 
     pub async fn save_contact_settings(&self, s: ContactSettings) -> Result<()> {
@@ -1566,13 +1819,25 @@ impl AppService {
         self.repo.upsert_setting("contact", &json).await
     }
 
+    // === WORKSHOP FEATURE (home page) ===
+
+    pub async fn get_workshop_feature(&self) -> Result<WorkshopFeature> {
+        parse_json_setting("workshop_feature", self.repo.get_setting("workshop_feature").await?)
+    }
+
+    pub async fn save_workshop_feature(&self, feature: WorkshopFeature) -> Result<()> {
+        let json = serde_json::to_string(&feature)
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        if json.len() > 64 * 1024 {
+            return Err(AppError::BadRequest("Workshop feature is too large".into()));
+        }
+        self.repo.upsert_setting("workshop_feature", &json).await
+    }
+
     // === BOOKING RULES ===
 
     pub async fn get_booking_rules(&self) -> Result<BookingRules> {
-        match self.repo.get_setting("booking_rules").await? {
-            Some(json) => Ok(serde_json::from_str(&json).unwrap_or_default()),
-            None => Ok(BookingRules::default()),
-        }
+        parse_json_setting("booking_rules", self.repo.get_setting("booking_rules").await?)
     }
 
     pub async fn save_booking_rules(&self, rules: BookingRules) -> Result<()> {
@@ -1584,30 +1849,30 @@ impl AppService {
     // === THEME CONFIG ===
 
     pub async fn get_theme_config(&self) -> Result<ThemeConfig> {
-        match self.repo.get_setting("theme_config").await? {
-            Some(json) => Ok(serde_json::from_str(&json).unwrap_or_default()),
-            None => Ok(ThemeConfig::default()),
-        }
+        parse_json_setting("theme_config", self.repo.get_setting("theme_config").await?)
     }
 
     pub async fn save_theme_config(&self, config: ThemeConfig) -> Result<()> {
         let json = serde_json::to_string(&config)
             .map_err(|e| AppError::Internal(e.to_string()))?;
+        if json.len() > 100 * 1024 {
+            return Err(AppError::BadRequest("Theme config is too large".into()));
+        }
         self.repo.upsert_setting("theme_config", &json).await
     }
 
     // === COPY OVERRIDES ===
 
     pub async fn get_copy_overrides(&self) -> Result<CopyOverrides> {
-        match self.repo.get_setting("copy_overrides").await? {
-            Some(json) => Ok(serde_json::from_str(&json).unwrap_or_default()),
-            None => Ok(CopyOverrides::default()),
-        }
+        parse_json_setting("copy_overrides", self.repo.get_setting("copy_overrides").await?)
     }
 
     pub async fn save_copy_overrides(&self, overrides: CopyOverrides) -> Result<()> {
         let json = serde_json::to_string(&overrides)
             .map_err(|e| AppError::Internal(e.to_string()))?;
+        if json.len() > 500 * 1024 {
+            return Err(AppError::BadRequest("Copy overrides are too large".into()));
+        }
         self.repo.upsert_setting("copy_overrides", &json).await
     }
 
@@ -1625,21 +1890,7 @@ impl AppService {
             return Err(AppError::BadRequest("starts_at must be ≤ ends_at".to_string()));
         }
 
-        let duration = (ends_at - starts_at).num_days() + 1;
-        if duration < rules.min_days {
-            return Err(AppError::BadRequest(format!("Minimum booking duration is {} day(s)", rules.min_days)));
-        }
-        if duration > rules.max_days {
-            return Err(AppError::BadRequest(format!("Maximum booking duration is {} day(s)", rules.max_days)));
-        }
-
-        let today = chrono::Utc::now().date_naive();
-        if rules.advance_days > 0 {
-            let earliest = today + chrono::Duration::days(rules.advance_days);
-            if starts_at < earliest {
-                return Err(AppError::BadRequest(format!("Booking must start at least {} day(s) in advance", rules.advance_days)));
-            }
-        }
+        Self::validate_booking_rules(&rules, starts_at, ends_at)?;
 
         // Fetch the current booking to get figurine_id for conflict check
         let current = self.repo.get_booking_by_cancel_token(token).await?
@@ -1672,12 +1923,14 @@ impl AppService {
 
     pub async fn join_waitlist(&self, figurine_id: String, req: CreateWaitlistRequest, user_id: Option<Uuid>) -> Result<crate::models::WaitlistCreatedResponse> {
         let uuid = Self::parse_uuid(&figurine_id)?;
-        if req.requester_name.trim().is_empty() {
-            return Err(AppError::BadRequest("Name is required".to_string()));
-        }
-        if !req.requester_email.contains('@') {
+        validate_text("Name", &req.requester_name, 100)?;
+        if !req.requester_email.contains('@') || req.requester_email.len() > 200 {
             return Err(AppError::BadRequest("Valid email is required".to_string()));
         }
+        if let Some(note) = &req.note
+            && note.chars().count() > 1000 {
+                return Err(AppError::BadRequest("Note is too long (max 1000 characters)".to_string()));
+            }
         let (entry, position) = self.repo.add_to_waitlist(uuid, &req, user_id).await?;
         let _ = self.send_waitlist_notification(&entry).await;
         Ok(crate::models::WaitlistCreatedResponse { cancel_token: entry.cancel_token, position })
@@ -1718,7 +1971,7 @@ impl AppService {
         let mut notified = 0u64;
         for entry in &entries {
             if let Some(uid) = entry.user_id {
-                let _ = self.repo.create_thread(uid, "waitlist", None, &subject, &body, true).await;
+                let _ = self.repo.create_thread(uid, "waitlist", None, &subject, &body, true, &[]).await;
                 notified += 1;
             }
         }
@@ -2030,8 +2283,8 @@ impl AppService {
 
         // Send email to commenter if reply was just set and they have an email
         let reply_is_new = admin_reply.map(|r| !r.trim().is_empty()).unwrap_or(false);
-        if reply_is_new {
-            if let Some(email) = prev.author_email.as_deref() {
+        if reply_is_new
+            && let Some(email) = prev.author_email.as_deref() {
                 let fid = prev.figurine_id.to_string();
                 let _ = self.send_reply_email(
                     email,
@@ -2041,7 +2294,6 @@ impl AppService {
                     admin_reply.unwrap_or(""),
                 ).await;
             }
-        }
 
         Ok(AdminCommentDto {
             id: prev.id.to_string(),
@@ -2130,9 +2382,11 @@ impl AppService {
     }
 
     pub async fn user_create_thread(&self, user_id: Uuid, subject: String, body: String, category: Option<String>, attachments: Vec<AttachmentInput>) -> Result<ThreadDetailDto> {
+        validate_text("Subject", &subject, 200)?;
+        validate_text("Message", &body, 5000)?;
+        validate_attachments(&attachments)?;
         let category = category.unwrap_or_else(|| "general".to_string());
-        let (thread, msg) = self.repo.create_thread(user_id, &category, None, &subject, &body, false).await?;
-        self.repo.insert_message_attachments(msg.id, &attachments).await?;
+        let (thread, msg) = self.repo.create_thread(user_id, &category, None, &subject, &body, false, &attachments).await?;
         Ok(ThreadDetailDto {
             thread: Self::thread_dto(&thread, 0, Some(msg.body.clone())),
             messages: vec![self.message_dto_with_attachments(&msg).await?],
@@ -2141,12 +2395,13 @@ impl AppService {
     }
 
     pub async fn user_reply_to_thread(&self, thread_id: Uuid, user_id: Uuid, body: String, attachments: Vec<AttachmentInput>) -> Result<ThreadMessageDto> {
+        validate_text("Message", &body, 5000)?;
+        validate_attachments(&attachments)?;
         let (thread, _) = self.repo.get_thread_messages(thread_id, Some(user_id)).await?;
         if thread.status == "resolved" {
             self.repo.reopen_thread(thread_id).await?;
         }
-        let msg = self.repo.add_thread_reply(thread_id, user_id, false, &body).await?;
-        self.repo.insert_message_attachments(msg.id, &attachments).await?;
+        let msg = self.repo.add_thread_reply(thread_id, user_id, false, &body, &attachments).await?;
         self.message_dto_with_attachments(&msg).await
     }
 
@@ -2159,9 +2414,9 @@ impl AppService {
         reference_id: Option<Uuid>,
         attachments: Vec<AttachmentInput>,
     ) -> Result<ThreadDetailDto> {
+        validate_attachments(&attachments)?;
         let category = category.unwrap_or_else(|| "general".to_string());
-        let (thread, msg) = self.repo.create_thread(user_id, &category, reference_id, &subject, &body, true).await?;
-        self.repo.insert_message_attachments(msg.id, &attachments).await?;
+        let (thread, msg) = self.repo.create_thread(user_id, &category, reference_id, &subject, &body, true, &attachments).await?;
         let user = self.repo.find_user_by_id(user_id).await?;
         Ok(ThreadDetailDto {
             thread: Self::thread_dto(&thread, 0, Some(msg.body.clone())),
@@ -2171,8 +2426,8 @@ impl AppService {
     }
 
     pub async fn admin_reply_to_thread(&self, thread_id: Uuid, body: String, attachments: Vec<AttachmentInput>) -> Result<ThreadMessageDto> {
-        let msg = self.repo.add_thread_reply(thread_id, uuid::Uuid::nil(), true, &body).await?;
-        self.repo.insert_message_attachments(msg.id, &attachments).await?;
+        validate_attachments(&attachments)?;
+        let msg = self.repo.add_thread_reply(thread_id, uuid::Uuid::nil(), true, &body, &attachments).await?;
         self.message_dto_with_attachments(&msg).await
     }
 

@@ -6,8 +6,8 @@
     import { cubicOut } from 'svelte/easing';
     import { spring } from 'svelte/motion';
     import { api } from '$lib/api';
-    import type { CabinetZone, FigurineListItem, HomeContent } from '$lib/types/api';
-    import { t, brandName } from '$lib/i18n';
+    import type { CabinetZone, FigurineListItem, HomeContent, WorkshopFeature } from '$lib/types/api';
+    import { t, brandName, lang } from '$lib/i18n';
     import AppImage from '$lib/components/AppImage.svelte';
     import HomeFigurineTile from '$lib/components/HomeFigurineTile.svelte';
     import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
@@ -34,8 +34,39 @@
         heroCaptionCta: null,
         heroMode: null,
     });
+    let workshopFeature = $state<WorkshopFeature>({
+        visible: true,
+        photoBack: null,
+        photoFront: null,
+        eyebrowEn: null,
+        eyebrowRu: null,
+        titleEn: null,
+        titleRu: null,
+        textEn: null,
+        textRu: null,
+        link1LabelEn: null,
+        link1LabelRu: null,
+        link1Href: null,
+        link2LabelEn: null,
+        link2LabelRu: null,
+        link2Href: null,
+    });
     let mouseX = $state(0.5);
     let mouseY = $state(0.5);
+
+    // Pick the field for the current language, falling back to the other language.
+    const wfLoc = (l: string, en?: string | null, ru?: string | null): string =>
+        ((l === 'ru' ? (ru || en) : (en || ru)) ?? '').trim();
+
+    let wfEyebrow = $derived(wfLoc($lang, workshopFeature.eyebrowEn, workshopFeature.eyebrowRu) || $t('homeWorkshopCta'));
+    let wfTitle = $derived(wfLoc($lang, workshopFeature.titleEn, workshopFeature.titleRu) || $t('homeStudioTitle'));
+    let wfText = $derived(wfLoc($lang, workshopFeature.textEn, workshopFeature.textRu) || $t('homeStudioText'));
+    let wfPhotoBack = $derived(workshopFeature.photoBack?.trim() || '/images/workshop/master-1.jpg');
+    let wfPhotoFront = $derived(workshopFeature.photoFront?.trim() || '/images/workshop/master-2.jpg');
+    let wfLink1Label = $derived(wfLoc($lang, workshopFeature.link1LabelEn, workshopFeature.link1LabelRu) || $t('homeWorkshopCta'));
+    let wfLink1Href = $derived(workshopFeature.link1Href?.trim() || '/workshop');
+    let wfLink2Label = $derived(wfLoc($lang, workshopFeature.link2LabelEn, workshopFeature.link2LabelRu) || $t('navAuthor'));
+    let wfLink2Href = $derived(workshopFeature.link2Href?.trim() || '/author');
 
     const parallaxSpring = spring({ x: 0, y: 0 }, { stiffness: 0.04, damping: 0.45 });
 
@@ -191,7 +222,7 @@
 
     async function init() {
         try {
-            const [dbZones, bgPath, figurines, inProgress, content] = await Promise.all([
+            const [dbZones, bgPath, figurines, inProgress, content, workshop] = await Promise.all([
                 api.getCabinetZones().catch(() => DEFAULT_ZONES),
                 api.getMainBackground().catch(() => null),
                 api.getAllFigurines().catch(() => [] as FigurineListItem[]),
@@ -205,10 +236,12 @@
                     heroCaptionMeta: null,
                     heroCaptionCta: null,
                     heroMode: null,
-                } satisfies HomeContent))
+                } satisfies HomeContent)),
+                api.getWorkshopFeature().catch(() => null)
             ]);
             if (bgPath) imageUrl = bgPath;
             homeContent = content;
+            if (workshop) workshopFeature = workshop;
             await preloadImage(imageUrl);
             zones = dbZones && dbZones.length > 0 ? dbZones : DEFAULT_ZONES;
             const visibleFigurines = figurines.filter(f => f.status !== 'in_progress');
@@ -548,35 +581,41 @@
             </div>
         </section>
 
+        {#if workshopFeature.visible}
         <section class="workshop-feature" aria-labelledby="workshop-feature-title">
             <div class="workshop-photos" aria-hidden="true">
-                <img src="/images/workshop/master-1.jpg" alt="" class="workshop-photo workshop-photo-back" loading="lazy" />
-                <img src="/images/workshop/master-2.jpg" alt="" class="workshop-photo workshop-photo-front" loading="lazy" />
+                <img src={wfPhotoBack} alt="" class="workshop-photo workshop-photo-back" loading="lazy" />
+                <img src={wfPhotoFront} alt="" class="workshop-photo workshop-photo-front" loading="lazy" />
             </div>
 
             <div class="workshop-copy">
                 <p class="eyebrow">
                     <span class="eyebrow-rule"></span>
-                    {$t('homeWorkshopCta')}
+                    {wfEyebrow}
                 </p>
-                <h2 id="workshop-feature-title" class="workshop-title">{$t('homeStudioTitle')}</h2>
-                <p class="workshop-text">{$t('homeStudioText')}</p>
+                <h2 id="workshop-feature-title" class="workshop-title">{wfTitle}</h2>
+                <p class="workshop-text">{wfText}</p>
                 <div class="workshop-actions">
-                    <a href="/workshop" class="workshop-link">
-                        {$t('homeWorkshopCta')}
+                    {#if wfLink1Label}
+                    <a href={wfLink1Href} class="workshop-link">
+                        {wfLink1Label}
                         <svg width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
                             <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
                         </svg>
                     </a>
-                    <a href="/author" class="workshop-link">
-                        {$t('navAuthor')}
+                    {/if}
+                    {#if wfLink2Label}
+                    <a href={wfLink2Href} class="workshop-link">
+                        {wfLink2Label}
                         <svg width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
                             <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
                         </svg>
                     </a>
+                    {/if}
                 </div>
             </div>
         </section>
+        {/if}
 
     </main>
     {/if}

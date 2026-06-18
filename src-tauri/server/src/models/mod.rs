@@ -171,18 +171,6 @@ pub struct CabinetZone {
     pub sort_order: i32,
 }
 
-// Postgres — timestamps are real TIMESTAMPTZ, use DateTime<Utc>
-#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Release {
-    pub id: Uuid,
-    pub version: i32,
-    pub file_path: String,
-    pub is_active: bool,
-    pub created_at: DateTime<Utc>,
-    pub description: Option<String>,
-}
-
 // ============================================================
 // DTOs (API Contract — camelCase for JS frontend)
 // ============================================================
@@ -312,8 +300,6 @@ pub struct SaveFigurineRequest {
     pub images: Vec<SaveImageRequest>,
     #[serde(default)]
     pub process_steps: Vec<SaveStepRequest>,
-    #[serde(default)]
-    pub related_item_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -362,25 +348,6 @@ pub struct SaveZoneRequest {
 // ============================================================
 // Misc
 // ============================================================
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Manifest {
-    pub version: i64,
-    pub generated_at: String,
-    pub figurines: Vec<Figurine>,
-    pub images: Vec<Image>,
-    pub process_steps: Vec<ProcessStep>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReleasePayload {
-    pub figurines: Vec<FigurineDto>,
-    pub author_texts: Vec<TextDto>,
-    pub workshop_items: Vec<WorkshopItemDto>,
-    pub zones: Vec<CabinetZoneDto>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -701,6 +668,23 @@ pub struct User {
     pub password_reset_expires_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub avatar_url: Option<String>,
+    /// Personal visual-password alphabet: { category: [icon_id; 8] }.
+    /// NULL for legacy accounts registered before per-user pools existed.
+    pub visual_pool: Option<serde_json::Value>,
+    /// IP / geolocation the account registered from (best-effort, may be NULL).
+    pub signup_ip: Option<String>,
+    pub signup_country_code: Option<String>,
+    pub signup_city: Option<String>,
+    /// IP / geolocation the most recent password reset was applied from.
+    pub last_reset_ip: Option<String>,
+    pub last_reset_country_code: Option<String>,
+    pub last_reset_city: Option<String>,
+    pub last_reset_at: Option<DateTime<Utc>>,
+    /// IP / geolocation the most recent self-service reset link was requested from.
+    pub last_reset_request_ip: Option<String>,
+    pub last_reset_request_country_code: Option<String>,
+    pub last_reset_request_city: Option<String>,
+    pub last_reset_request_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -710,6 +694,17 @@ pub struct UserSession {
     pub token: String,
     pub expires_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
+}
+
+/// Originating request metadata captured for login attempts and sessions.
+/// All fields best-effort: IP/UA may be absent behind some proxies, and geo is
+/// only populated when an offline GeoIP database is configured.
+#[derive(Debug, Clone, Default)]
+pub struct ClientContext {
+    pub ip: Option<String>,
+    pub user_agent: Option<String>,
+    pub country_code: Option<String>,
+    pub city: Option<String>,
 }
 
 /// One token entry inside the challenge JSONB array
@@ -727,8 +722,12 @@ pub struct ChallengeToken {
 pub struct RegisterRequest {
     pub email: String,
     pub display_name: String,
-    /// icon_id per category in fixed order: animals, dishes, seasons, colors
+    /// icon_id per category in fixed order: animals, dishes, seasons, symbols
     pub selections: [String; 4],
+    /// The personal subset shown to this user during registration:
+    /// one entry per category (fixed order), each a list of icon_ids.
+    /// Persisted so the same grid can be rebuilt at login.
+    pub pool: [Vec<String>; 4],
 }
 
 #[derive(Debug, Deserialize)]
@@ -861,6 +860,9 @@ pub struct AdminSessionDto {
     pub created_at: String,
     pub expires_at: String,
     pub is_active: bool,
+    pub ip: Option<String>,
+    pub country_code: Option<String>,
+    pub city: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -871,6 +873,17 @@ pub struct AdminUserDetail {
     pub display_name: String,
     pub admin_notes: Option<String>,
     pub created_at: String,
+    pub signup_ip: Option<String>,
+    pub signup_country_code: Option<String>,
+    pub signup_city: Option<String>,
+    pub last_reset_ip: Option<String>,
+    pub last_reset_country_code: Option<String>,
+    pub last_reset_city: Option<String>,
+    pub last_reset_at: Option<String>,
+    pub last_reset_request_ip: Option<String>,
+    pub last_reset_request_country_code: Option<String>,
+    pub last_reset_request_city: Option<String>,
+    pub last_reset_request_at: Option<String>,
     pub bookings: Vec<UserBookingDto>,
     pub orders: Vec<UserOrderDto>,
     pub sessions: Vec<AdminSessionDto>,
@@ -901,8 +914,18 @@ pub struct ResetTokenResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ApplyPasswordResetRequest {
     pub token: String,
-    /// icon_id per category in fixed order: animals, dishes, seasons, colors
+    /// icon_id per category in fixed order: animals, dishes, seasons, symbols
     pub selections: [String; 4],
+    /// Fresh personal subset (one list per category) — reset regenerates the
+    /// user's pool so the new selections are always replayable at login.
+    pub pool: [Vec<String>; 4],
+}
+
+/// Self-service "forgot password": email a reset link to the account owner.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForgotPasswordRequest {
+    pub email: String,
 }
 
 // ============================================================
@@ -1003,6 +1026,52 @@ pub struct ContactSettings {
     pub email: Option<String>,
     pub telegram: Option<String>,
     pub phone: Option<String>,
+}
+
+/// Customizable "Workshop" feature block on the home page.
+/// All text fields are bilingual; `None`/blank values fall back to the i18n
+/// defaults on the client. `visible = true` by default so the section shows
+/// before any admin configuration exists.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkshopFeature {
+    pub visible: bool,
+    pub photo_back: Option<String>,
+    pub photo_front: Option<String>,
+    pub eyebrow_en: Option<String>,
+    pub eyebrow_ru: Option<String>,
+    pub title_en: Option<String>,
+    pub title_ru: Option<String>,
+    pub text_en: Option<String>,
+    pub text_ru: Option<String>,
+    pub link1_label_en: Option<String>,
+    pub link1_label_ru: Option<String>,
+    pub link1_href: Option<String>,
+    pub link2_label_en: Option<String>,
+    pub link2_label_ru: Option<String>,
+    pub link2_href: Option<String>,
+}
+
+impl Default for WorkshopFeature {
+    fn default() -> Self {
+        Self {
+            visible: true,
+            photo_back: None,
+            photo_front: None,
+            eyebrow_en: None,
+            eyebrow_ru: None,
+            title_en: None,
+            title_ru: None,
+            text_en: None,
+            text_ru: None,
+            link1_label_en: None,
+            link1_label_ru: None,
+            link1_href: None,
+            link2_label_en: None,
+            link2_label_ru: None,
+            link2_href: None,
+        }
+    }
 }
 
 // ============================================================

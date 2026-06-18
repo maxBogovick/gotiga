@@ -33,6 +33,7 @@ import type {
     AdminCommentDto,
     SmtpSettings,
     ContactSettings,
+    WorkshopFeature,
     BookingRules,
     RescheduleBookingRequest,
     CreateWaitlistRequest,
@@ -689,11 +690,11 @@ export const api = {
 
     // === USER AUTH ===
 
-    async userRegister(email: string, displayName: string, selections: [string, string, string, string]): Promise<{ user: UserDto }> {
+    async userRegister(email: string, displayName: string, selections: [string, string, string, string], pool: string[][]): Promise<{ user: UserDto }> {
         return webFetch('/auth/register', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, displayName, selections }),
+            body: JSON.stringify({ email, displayName, selections, pool }),
         });
     },
 
@@ -964,15 +965,23 @@ export const api = {
         await webFetch(`/admin/threads/${threadId}/reopen`, { method: 'POST', headers: authHeaders() });
     },
 
+    async requestPasswordReset(email: string): Promise<void> {
+        await webFetch('/auth/forgot-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email }),
+        });
+    },
+
     async validateResetToken(token: string): Promise<{ id: string; email: string; displayName: string }> {
         return webFetch(`/auth/reset-token/${token}`);
     },
 
-    async applyPasswordReset(token: string, selections: [string, string, string, string]): Promise<void> {
+    async applyPasswordReset(token: string, selections: [string, string, string, string], pool: string[][]): Promise<void> {
         await webFetch('/auth/reset-password', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token, selections }),
+            body: JSON.stringify({ token, selections, pool }),
         });
     },
 
@@ -1049,6 +1058,20 @@ export const api = {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify(s),
+        });
+    },
+
+    // === WORKSHOP FEATURE (home page) ===
+
+    async getWorkshopFeature(): Promise<WorkshopFeature> {
+        return webFetch('/settings/workshop-feature');
+    },
+
+    async saveWorkshopFeature(feature: WorkshopFeature): Promise<WorkshopFeature> {
+        return webFetch('/admin/settings/workshop-feature', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(feature),
         });
     },
 

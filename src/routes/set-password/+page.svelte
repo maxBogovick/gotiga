@@ -4,11 +4,10 @@
   import { onMount } from 'svelte';
   import { t , brandName } from '$lib/i18n';
   import { api } from '$lib/api';
-  import { VISUAL_CATEGORIES, iconLabel } from '$lib/data/visualIcons';
+  import { VISUAL_CATEGORIES, iconLabel, getIconById, generatePersonalPool } from '$lib/data/visualIcons';
   import { lang } from '$lib/i18n';
   import AuthFrame from '$lib/components/auth/AuthFrame.svelte';
 
-  const CATEGORY_IDS = VISUAL_CATEGORIES.map(c => c.id);
   // steps: 0=validating, 1-4=icon selection, 5=success, -1=error
   let step        = $state(0);
   let error       = $state('');
@@ -17,8 +16,18 @@
   let token       = $state('');
   let selections  = $state<string[]>(['', '', '', '']);
 
+  // Reset regenerates the personal subset, so the new selections are always
+  // replayable at login. Generated once and sent with the reset.
+  const pool = generatePersonalPool();
+
   function currentStepIndex() { return step - 1; }   // 0-based index into categories
   function currentCategory()  { return VISUAL_CATEGORIES[currentStepIndex()]; }
+  function currentIcons() {
+    const cat = currentCategory();
+    return pool[currentStepIndex()]
+      .map(id => getIconById(cat.id, id))
+      .filter((i): i is NonNullable<typeof i> => !!i);
+  }
 
   onMount(async () => {
     token = $page.url.searchParams.get('token') ?? '';
@@ -50,7 +59,7 @@
   async function submit() {
     loading = true;
     try {
-      await api.applyPasswordReset(token, selections as [string, string, string, string]);
+      await api.applyPasswordReset(token, selections as [string, string, string, string], pool);
       step = 5;
     } catch {
       error = $t('authErrorServer');
@@ -85,7 +94,7 @@
     <p class="auth-hint auth-category-hint">{$t(`authCategory${cat.id.charAt(0).toUpperCase()}${cat.id.slice(1)}` as Parameters<typeof $t>[0])}</p>
     <p class="auth-choose">{$t('authChooseOne')}</p>
     <div class="auth-grid">
-      {#each cat.icons as icon}
+      {#each currentIcons() as icon}
         <button
           class="auth-icon-btn"
           class:selected={selections[currentStepIndex()] === icon.id}

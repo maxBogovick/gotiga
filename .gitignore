@@ -13,3 +13,6 @@ etsy_export/
 deploy/
 # contains a Docker Hub access token
 build-and-push.sh
+
+# Offline GeoIP databases (licensed data — fetched at build / mounted)
+*.mmdb

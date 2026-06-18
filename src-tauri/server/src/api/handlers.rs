@@ -22,21 +22,6 @@ use image::codecs::jpeg::JpegEncoder;
 use image::codecs::webp::WebPEncoder;
 use image::imageops::FilterType;
 
-fn detect_mime(bytes: &[u8], table: &str) -> &'static str {
-    if table.contains("video") {
-        return "video/mp4";
-    }
-    if table.contains("audio") || table == "figurines_audio" {
-        return "audio/mpeg";
-    }
-    match bytes.get(..4) {
-        Some([0xFF, 0xD8, 0xFF, _]) => "image/jpeg",
-        Some([0x89, 0x50, 0x4E, 0x47]) => "image/png",
-        Some([0x52, 0x49, 0x46, 0x46]) => "image/webp",
-        _ => "application/octet-stream",
-    }
-}
-
 fn media_subdir_for_ext(ext: &str) -> Option<&'static str> {
     match ext {
         "jpg" | "jpeg" | "png" | "webp" => Some("images"),
@@ -72,7 +57,78 @@ fn replacement_subdir_for_target(path: &str) -> Option<&'static str> {
     }
 }
 
+/// Max accepted raw upload size for an image before decoding (guards memory).
+const MAX_IMAGE_BYTES: usize = 40 * 1024 * 1024; // 40 MB
+/// Max decoded pixel count (guards against decompression bombs).
+const MAX_IMAGE_PIXELS: u64 = 50_000_000; // 50 MP
+
+/// All encoded representations of one uploaded image.
+struct EncodedImageVariants {
+    original_jpeg: Vec<u8>,
+    preview_jpeg: Vec<u8>,
+    thumb_jpeg: Vec<u8>,
+    preview_webp: Vec<u8>,
+    thumb_webp: Vec<u8>,
+}
+
+fn encode_jpeg_bytes(image: &image::RgbImage, quality: u8) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    let mut encoder = JpegEncoder::new_with_quality(&mut bytes, quality);
+    encoder.encode_image(image)
+        .map_err(|e| AppError::Internal(format!("Failed to encode image: {}", e)))?;
+    Ok(bytes)
+}
+
+fn encode_webp_bytes(image: &image::RgbImage) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    let encoder = WebPEncoder::new_lossless(&mut bytes);
+    encoder.encode(
+        image.as_raw(),
+        image.width(),
+        image.height(),
+        image::ExtendedColorType::Rgb8,
+    ).map_err(|e| AppError::Internal(format!("Failed to encode WebP: {}", e)))?;
+    Ok(bytes)
+}
+
+/// CPU-bound: decode + resize + encode. Runs inside spawn_blocking so it never
+/// blocks an async runtime worker.
+fn build_image_variants(data: &[u8]) -> Result<EncodedImageVariants> {
+    let image = image::load_from_memory(data)
+        .map_err(|e| AppError::BadRequest(format!("Invalid image file: {}", e)))?;
+
+    if (image.width() as u64) * (image.height() as u64) > MAX_IMAGE_PIXELS {
+        return Err(AppError::BadRequest("Image dimensions are too large".into()));
+    }
+
+    let original = image.to_rgb8();
+    let preview  = image.resize(1800, 1800, FilterType::Lanczos3).to_rgb8();
+    let thumb    = image.resize(420, 420, FilterType::Lanczos3).to_rgb8();
+
+    Ok(EncodedImageVariants {
+        original_jpeg: encode_jpeg_bytes(&original, 95)?,
+        preview_jpeg:  encode_jpeg_bytes(&preview, 86)?,
+        thumb_jpeg:    encode_jpeg_bytes(&thumb, 78)?,
+        preview_webp:  encode_webp_bytes(&preview)?,
+        thumb_webp:    encode_webp_bytes(&thumb)?,
+    })
+}
+
+async fn write_bytes(upload_dir: &str, relative_path: &str, bytes: &[u8]) -> Result<()> {
+    let path = std::path::Path::new(upload_dir).join(relative_path);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).await.map_err(AppError::Io)?;
+    }
+    let mut file = fs::File::create(&path).await.map_err(AppError::Io)?;
+    file.write_all(bytes).await.map_err(AppError::Io)?;
+    Ok(())
+}
+
 async fn save_image_variants(upload_dir: &str, data: &[u8]) -> Result<serde_json::Value> {
+    if data.len() > MAX_IMAGE_BYTES {
+        return Err(AppError::BadRequest("Image file is too large".into()));
+    }
+
     let id = Uuid::new_v4().to_string();
     let original_relative  = format!("images/original/{}.jpg",  id);
     let preview_relative   = format!("images/preview/{}.jpg",   id);
@@ -80,18 +136,16 @@ async fn save_image_variants(upload_dir: &str, data: &[u8]) -> Result<serde_json
     let preview_webp       = format!("images/preview/{}.webp",  id);
     let thumb_webp         = format!("images/thumb/{}.webp",    id);
 
-    let image = image::load_from_memory(data)
-        .map_err(|e| AppError::BadRequest(format!("Invalid image file: {}", e)))?;
+    let data_owned = data.to_vec();
+    let variants = tokio::task::spawn_blocking(move || build_image_variants(&data_owned))
+        .await
+        .map_err(|e| AppError::Internal(format!("Image processing task failed: {}", e)))??;
 
-    let original = image.to_rgb8();
-    let preview  = image.resize(1800, 1800, FilterType::Lanczos3).to_rgb8();
-    let thumb    = image.resize(420, 420, FilterType::Lanczos3).to_rgb8();
-
-    write_jpeg(upload_dir, &original_relative, &original, 95).await?;
-    write_jpeg(upload_dir, &preview_relative,  &preview,  86).await?;
-    write_jpeg(upload_dir, &thumb_relative,    &thumb,    78).await?;
-    write_webp(upload_dir, &preview_webp,      &preview).await?;
-    write_webp(upload_dir, &thumb_webp,        &thumb).await?;
+    write_bytes(upload_dir, &original_relative, &variants.original_jpeg).await?;
+    write_bytes(upload_dir, &preview_relative,  &variants.preview_jpeg).await?;
+    write_bytes(upload_dir, &thumb_relative,    &variants.thumb_jpeg).await?;
+    write_bytes(upload_dir, &preview_webp,      &variants.preview_webp).await?;
+    write_bytes(upload_dir, &thumb_webp,        &variants.thumb_webp).await?;
 
     Ok(serde_json::json!({
         "url":                  public_static_url(&preview_relative),
@@ -103,55 +157,6 @@ async fn save_image_variants(upload_dir: &str, data: &[u8]) -> Result<serde_json
         "thumbRelativePath":    thumb_relative,
         "thumbWebpUrl":         public_static_url(&thumb_webp)
     }))
-}
-
-async fn write_jpeg(
-    upload_dir: &str,
-    relative_path: &str,
-    image: &image::RgbImage,
-    quality: u8,
-) -> Result<()> {
-    let path = std::path::Path::new(upload_dir).join(relative_path);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).await.map_err(AppError::Io)?;
-    }
-
-    let mut bytes = Vec::new();
-    {
-        let mut encoder = JpegEncoder::new_with_quality(&mut bytes, quality);
-        encoder.encode_image(image)
-            .map_err(|e| AppError::Internal(format!("Failed to encode image: {}", e)))?;
-    }
-
-    let mut file = fs::File::create(&path).await.map_err(AppError::Io)?;
-    file.write_all(&bytes).await.map_err(AppError::Io)?;
-    Ok(())
-}
-
-async fn write_webp(
-    upload_dir: &str,
-    relative_path: &str,
-    image: &image::RgbImage,
-) -> Result<()> {
-    let path = std::path::Path::new(upload_dir).join(relative_path);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).await.map_err(AppError::Io)?;
-    }
-
-    let mut bytes = Vec::new();
-    {
-        let encoder = WebPEncoder::new_lossless(&mut bytes);
-        encoder.encode(
-            image.as_raw(),
-            image.width(),
-            image.height(),
-            image::ExtendedColorType::Rgb8,
-        ).map_err(|e| AppError::Internal(format!("Failed to encode WebP: {}", e)))?;
-    }
-
-    let mut file = fs::File::create(&path).await.map_err(AppError::Io)?;
-    file.write_all(&bytes).await.map_err(AppError::Io)?;
-    Ok(())
 }
 
 async fn save_regular_media_file(
@@ -260,26 +265,6 @@ pub async fn get_cabinet_zones(
     Ok(Json(zones))
 }
 
-// === ASSET STREAMING ===
-
-pub async fn get_asset(
-    State(service): State<AppService>,
-    Path((table, id)): Path<(String, String)>, // Changed to String
-) -> Result<impl IntoResponse> {
-    let data = service.get_asset(&table, id).await?;
-    match data {
-        Some(bytes) => {
-            // Detect MIME from first bytes (magic numbers)
-            let mime = detect_mime(&bytes, table.as_str());
-            Ok((
-                [(axum::http::header::CONTENT_TYPE, mime)],
-                Bytes::from(bytes)
-            ))
-        },
-        None => Err(AppError::NotFound("Asset not found".to_string()))
-    }
-}
-
 // === ADMIN AUTH ===
 
 pub async fn admin_login(
@@ -327,7 +312,7 @@ pub async fn upload_file(
                 .and_then(|e| e.to_str())
                 .unwrap_or("bin")
                 .to_lowercase();
-            let data = field.bytes().await.map_err(|e| AppError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            let data = field.bytes().await.map_err(|e| AppError::Io(std::io::Error::other(e)))?;
 
             let subdir = media_subdir_for_ext(ext.as_str())
                 .ok_or_else(|| AppError::BadRequest(format!("Unsupported media extension: {}", ext)))?;
@@ -391,7 +376,7 @@ pub async fn replace_media_everywhere(
             target_path = Some(clean_static_path(&value, &config.public_url));
         } else if name == "file" {
             file_name = Some(field.file_name().unwrap_or("file").to_string());
-            file_data = Some(field.bytes().await.map_err(|e| AppError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?);
+            file_data = Some(field.bytes().await.map_err(|e| AppError::Io(std::io::Error::other(e)))?);
         }
     }
 
@@ -498,7 +483,7 @@ pub async fn upload_main_background(
             if media_subdir_for_ext(ext.as_str()) != Some("images") {
                 return Err(AppError::BadRequest(format!("Unsupported background extension: {}", ext)));
             }
-            let data = field.bytes().await.map_err(|e| AppError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            let data = field.bytes().await.map_err(|e| AppError::Io(std::io::Error::other(e)))?;
 
             let bg_dir = format!("{}/backgrounds", config.upload_dir);
             fs::create_dir_all(&bg_dir).await.map_err(AppError::Io)?;
@@ -532,43 +517,6 @@ pub async fn save_home_content(
     Ok(StatusCode::OK)
 }
 
-// === ADMIN / RELEASE MANAGEMENT ===
-
-// Content is now managed directly in PostgreSQL via the admin UI.
-// This endpoint is kept for compatibility but no longer imports SQLite data.
-pub async fn upload_release_db(
-    State(_service): State<AppService>,
-    mut multipart: Multipart,
-) -> Result<StatusCode> {
-    // Drain the multipart to avoid connection errors
-    while let Some(_field) = multipart.next_field().await.map_err(|e| AppError::BadRequest(e.to_string()))? {}
-    Ok(StatusCode::OK)
-}
-
-// Content is now stored in PostgreSQL — no SQLite file to download.
-pub async fn download_release_db(
-    State(_service): State<AppService>,
-) -> Result<impl IntoResponse> {
-    Err::<axum::response::Response, _>(AppError::NotFound(
-        "Content is now managed in PostgreSQL; SQLite export is no longer available".to_string()
-    ))
-}
-
-pub async fn list_releases(
-    State(service): State<AppService>,
-) -> Result<Json<Vec<Release>>> {
-    let releases = service.list_releases().await?;
-    Ok(Json(releases))
-}
-
-pub async fn switch_release(
-    State(_service): State<AppService>,
-    Path(_id): Path<Uuid>,
-) -> Result<StatusCode> {
-    // No-op in server-primary mode — content.db is always the master
-    Ok(StatusCode::OK)
-}
-
 // === AUTHOR PROFILE ===
 
 pub async fn get_author_profile(
@@ -590,16 +538,20 @@ pub async fn save_author_profile(
 
 pub async fn create_order(
     State(service): State<AppService>,
+    headers: HeaderMap,
     Json(order): Json<crate::models::OrderRequest>,
 ) -> Result<Json<crate::models::OrderCreatedResponse>> {
+    service.check_rate_limit("order", &extract_ip(&headers), 15, 3600).await?;
     let saved = service.create_order(&order).await?;
     Ok(Json(crate::models::OrderCreatedResponse { cancel_token: saved.cancel_token }))
 }
 
 pub async fn get_notify_by_token(
     State(service): State<AppService>,
+    headers: HeaderMap,
     Path(token): Path<String>,
 ) -> Result<Json<crate::models::NotifyInfo>> {
+    service.check_rate_limit("token", &extract_ip(&headers), 60, 3600).await?;
     service.get_notify_by_token(&token).await?
         .map(Json)
         .ok_or_else(|| crate::error::AppError::NotFound("Subscription not found".to_string()))
@@ -607,8 +559,10 @@ pub async fn get_notify_by_token(
 
 pub async fn cancel_notify_by_token(
     State(service): State<AppService>,
+    headers: HeaderMap,
     Path(token): Path<String>,
 ) -> Result<StatusCode> {
+    service.check_rate_limit("token", &extract_ip(&headers), 60, 3600).await?;
     service.cancel_notify_by_token(&token).await?;
     Ok(StatusCode::OK)
 }
@@ -755,7 +709,7 @@ pub async fn user_upload_file(
             let ext = std::path::Path::new(&filename)
                 .extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
             let data = field.bytes().await
-                .map_err(|e| AppError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+                .map_err(|e| AppError::Io(std::io::Error::other(e)))?;
 
             if data.len() > 8 * 1024 * 1024 {
                 return Err(AppError::BadRequest("Image is too large (max 8MB).".into()));
@@ -810,17 +764,21 @@ pub async fn get_figurine_schedule(
 
 pub async fn create_booking(
     State(service): State<AppService>,
+    headers: HeaderMap,
     Path(_id): Path<String>,
     Json(req): Json<crate::models::CreateBookingRequest>,
 ) -> Result<Json<crate::models::BookingCreatedResponse>> {
+    service.check_rate_limit("booking", &extract_ip(&headers), 15, 3600).await?;
     let booking = service.create_booking(req).await?;
     Ok(Json(crate::models::BookingCreatedResponse { cancel_token: booking.cancel_token }))
 }
 
 pub async fn get_booking_by_token(
     State(service): State<AppService>,
+    headers: HeaderMap,
     Path(token): Path<String>,
 ) -> Result<Json<crate::models::BookingCancelInfo>> {
+    service.check_rate_limit("token", &extract_ip(&headers), 60, 3600).await?;
     service.get_booking_by_token(&token).await?
         .map(Json)
         .ok_or_else(|| crate::error::AppError::NotFound("Booking not found".to_string()))
@@ -881,8 +839,10 @@ pub async fn get_bookings_by_tokens(
 
 pub async fn cancel_booking_by_token(
     State(service): State<AppService>,
+    headers: HeaderMap,
     Path(token): Path<String>,
 ) -> Result<StatusCode> {
+    service.check_rate_limit("token", &extract_ip(&headers), 60, 3600).await?;
     service.cancel_booking_by_token(&token).await?;
     Ok(StatusCode::OK)
 }
@@ -939,25 +899,33 @@ pub async fn update_booking_status(
 
 pub async fn user_register(
     State(service): State<AppService>,
+    headers: HeaderMap,
     Json(body): Json<RegisterRequest>,
 ) -> Result<Json<serde_json::Value>> {
-    let user = service.register_user(&body).await?;
+    let ip = extract_ip(&headers);
+    service.check_rate_limit("register", &ip, 5, 3600).await?;
+    let user = service.register_user(&body, client_ip(&ip), extract_user_agent(&headers)).await?;
     Ok(Json(serde_json::json!({ "user": user })))
 }
 
 pub async fn user_login_challenge(
     State(service): State<AppService>,
+    headers: HeaderMap,
     Json(body): Json<LoginChallengeRequest>,
 ) -> Result<Json<LoginChallengeResponse>> {
+    service.check_rate_limit("login", &extract_ip(&headers), 20, 3600).await?;
     let response = service.login_challenge(&body.email).await?;
     Ok(Json(response))
 }
 
 pub async fn user_login_verify(
     State(service): State<AppService>,
+    headers: HeaderMap,
     Json(body): Json<LoginVerifyRequest>,
 ) -> Result<Json<LoginVerifyResponse>> {
-    let response = service.login_verify(&body).await?;
+    let ip = extract_ip(&headers);
+    service.check_rate_limit("login", &ip, 30, 3600).await?;
+    let response = service.login_verify(&body, client_ip(&ip), extract_user_agent(&headers)).await?;
     Ok(Json(response))
 }
 
@@ -1077,9 +1045,24 @@ pub async fn validate_reset_token(
 
 pub async fn apply_password_reset(
     State(service): State<AppService>,
+    headers: HeaderMap,
     Json(body): Json<ApplyPasswordResetRequest>,
 ) -> Result<StatusCode> {
-    service.apply_password_reset(&body).await?;
+    let ip = extract_ip(&headers);
+    service.check_rate_limit("reset", &ip, 10, 3600).await?;
+    service.apply_password_reset(&body, client_ip(&ip), extract_user_agent(&headers)).await?;
+    Ok(StatusCode::OK)
+}
+
+pub async fn forgot_password(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(body): Json<ForgotPasswordRequest>,
+) -> Result<StatusCode> {
+    let ip = extract_ip(&headers);
+    service.check_rate_limit("forgot", &ip, 5, 3600).await?;
+    // Always 200 — the response never reveals whether the account exists.
+    service.request_password_reset(&body.email, client_ip(&ip), extract_user_agent(&headers)).await?;
     Ok(StatusCode::OK)
 }
 
@@ -1093,6 +1076,19 @@ fn extract_ip(headers: &HeaderMap) -> String {
         .and_then(|v| v.split(',').next())
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// The IP for storage: drop the `"unknown"` sentinel so we persist NULL rather
+/// than a fake address (see `extract_ip`, which keeps it for rate-limit keys).
+fn client_ip(ip: &str) -> Option<String> {
+    (ip != "unknown").then(|| ip.to_string())
+}
+
+/// Raw User-Agent header, truncated to a sane length for storage.
+fn extract_user_agent(headers: &HeaderMap) -> Option<String> {
+    headers.get(axum::http::header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.chars().take(512).collect())
 }
 
 pub async fn get_figurine_comments(
@@ -1181,6 +1177,22 @@ pub async fn admin_save_contact_settings(
     Ok(Json(body))
 }
 
+// === WORKSHOP FEATURE ===
+
+pub async fn get_workshop_feature(
+    State(service): State<AppService>,
+) -> Result<Json<WorkshopFeature>> {
+    Ok(Json(service.get_workshop_feature().await?))
+}
+
+pub async fn save_workshop_feature(
+    State(service): State<AppService>,
+    Json(body): Json<WorkshopFeature>,
+) -> Result<Json<WorkshopFeature>> {
+    service.save_workshop_feature(body.clone()).await?;
+    Ok(Json(body))
+}
+
 // === THEME CONFIG ===
 
 pub async fn get_theme_config(
@@ -1236,23 +1248,31 @@ pub async fn user_upload_avatar(
     while let Some(field) = multipart.next_field().await.map_err(|e| AppError::BadRequest(e.to_string()))? {
         if field.name().unwrap_or("") == "file" {
             let data = field.bytes().await
-                .map_err(|e| AppError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+                .map_err(|e| AppError::Io(std::io::Error::other(e)))?;
 
-            let img = image::load_from_memory(&data)
-                .map_err(|e| AppError::BadRequest(format!("Invalid image: {}", e)))?;
-            let thumb = img.resize_to_fill(200, 200, FilterType::Lanczos3).to_rgb8();
+            if data.len() > 10 * 1024 * 1024 {
+                return Err(AppError::BadRequest("Avatar image is too large (max 10MB).".into()));
+            }
+
+            // Decode + resize + encode off the async runtime.
+            let data_owned = data.to_vec();
+            let buf = tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
+                let img = image::load_from_memory(&data_owned)
+                    .map_err(|e| AppError::BadRequest(format!("Invalid image: {}", e)))?;
+                if (img.width() as u64) * (img.height() as u64) > MAX_IMAGE_PIXELS {
+                    return Err(AppError::BadRequest("Image dimensions are too large".into()));
+                }
+                let thumb = img.resize_to_fill(200, 200, FilterType::Lanczos3).to_rgb8();
+                encode_jpeg_bytes(&thumb, 88)
+            })
+            .await
+            .map_err(|e| AppError::Internal(format!("Image processing task failed: {}", e)))??;
 
             let id = Uuid::new_v4();
             let avatar_dir = format!("{}/avatars", config.upload_dir);
             fs::create_dir_all(&avatar_dir).await.map_err(AppError::Io)?;
 
             let file_path = format!("{}/{}.jpg", avatar_dir, id);
-            let mut buf = Vec::new();
-            {
-                let mut encoder = JpegEncoder::new_with_quality(&mut buf, 88);
-                encoder.encode_image(&thumb)
-                    .map_err(|e| AppError::Internal(format!("Encode error: {}", e)))?;
-            }
             fs::write(&file_path, &buf).await.map_err(AppError::Io)?;
 
             let url = format!("/static/avatars/{}.jpg", id);
@@ -1401,6 +1421,7 @@ pub async fn join_waitlist(
     Path(id): Path<String>,
     Json(body): Json<CreateWaitlistRequest>,
 ) -> Result<Json<crate::models::WaitlistCreatedResponse>> {
+    service.check_rate_limit("waitlist", &extract_ip(&headers), 15, 3600).await?;
     let user_id = if let Some(token) = bearer_token(&headers) {
         service.get_user_from_session(token).await.ok().map(|u| u.id)
     } else {
@@ -1411,8 +1432,10 @@ pub async fn join_waitlist(
 
 pub async fn get_waitlist_by_token(
     State(service): State<AppService>,
+    headers: HeaderMap,
     Path(token): Path<String>,
 ) -> Result<Json<crate::models::WaitlistCancelInfo>> {
+    service.check_rate_limit("token", &extract_ip(&headers), 60, 3600).await?;
     service.get_waitlist_by_token(&token).await?
         .map(Json)
         .ok_or_else(|| crate::error::AppError::NotFound("Queue entry not found".to_string()))
@@ -1420,8 +1443,10 @@ pub async fn get_waitlist_by_token(
 
 pub async fn leave_waitlist_by_token(
     State(service): State<AppService>,
+    headers: HeaderMap,
     Path(token): Path<String>,
 ) -> Result<StatusCode> {
+    service.check_rate_limit("token", &extract_ip(&headers), 60, 3600).await?;
     service.leave_waitlist_by_token(&token).await?;
     Ok(StatusCode::OK)
 }
