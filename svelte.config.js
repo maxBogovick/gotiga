@@ -13,6 +13,12 @@ const config = {
       fallback: "app.html",
     }),
     prerender: {
+      // The public production origin baked into prerendered HTML wherever
+      // `url.origin`/`url.href` appears (og:url, canonical, absolute og:image).
+      // Without this it defaults to the `http://sveltekit-prerender` placeholder,
+      // which leaks into share previews and breaks them. Override per-deploy via
+      // VITE_PUBLIC_ORIGIN; defaults to the live site.
+      origin: process.env.VITE_PUBLIC_ORIGIN || 'https://ritunia.com',
       // Only routes that explicitly opt in (figurines archive + details) are
       // prerendered. Crawling is off so the prerenderer never wanders into SPA-only
       // routes (admin, profile, the /admin link in the header, etc.).

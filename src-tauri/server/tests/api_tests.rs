@@ -3,13 +3,15 @@ use gotiga_server::config::Config;
 use gotiga_server::db::Repository;
 use gotiga_server::services::AppService;
 use sqlx::PgPool;
-use tokio::net::TcpListener;
-use tokio::fs;
 use std::path::PathBuf;
+use tokio::fs;
+use tokio::net::TcpListener;
 
 // Spin up the real router against a test Postgres pool on a random port.
 async fn spawn_app(pool: PgPool) -> (String, String, PathBuf) {
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("Failed to bind random port");
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("Failed to bind random port");
     let port = listener.local_addr().unwrap().port();
     let addr = format!("http://127.0.0.1:{}", port);
 
@@ -56,11 +58,19 @@ async fn health_and_public_listing(pool: PgPool) {
     let client = reqwest::Client::new();
 
     // Health check responds OK.
-    let resp = client.get(format!("{}/api/v1/health", addr)).send().await.unwrap();
+    let resp = client
+        .get(format!("{}/api/v1/health", addr))
+        .send()
+        .await
+        .unwrap();
     assert!(resp.status().is_success());
 
     // Public figurine listing returns a JSON array (empty on a fresh DB).
-    let resp = client.get(format!("{}/api/v1/figurines", addr)).send().await.unwrap();
+    let resp = client
+        .get(format!("{}/api/v1/figurines", addr))
+        .send()
+        .await
+        .unwrap();
     assert!(resp.status().is_success());
     let list: Vec<serde_json::Value> = resp.json().await.unwrap();
     assert_eq!(list.len(), 0);

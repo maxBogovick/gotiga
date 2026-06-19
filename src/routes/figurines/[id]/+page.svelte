@@ -23,12 +23,24 @@
   });
   let id = $derived(page.params.id ?? '');
 
-  // Absolute URL for OG image (relative paths get current-origin prepended)
+  // Absolute, public-origin URL for OG image. Crawlers fetch this from the static
+  // HTML, so it must point at the live site — never at the build-time API host
+  // (the backend returns absolute URLs bound to whatever host built the page, e.g.
+  // localhost). We keep only the asset path and re-root it on page.url.origin, which
+  // is the public origin at prerender time (kit.prerender.origin) and the real site
+  // origin in the browser. nginx serves /static + /api at the same origin.
   let ogImage = $derived(() => {
     const img = figurine?.images?.find((i: { imageType: string }) => i.imageType === 'face')?.url
       ?? figurine?.images?.[0]?.url ?? '';
     if (!img) return '';
-    if (img.startsWith('http')) return img;
+    if (img.startsWith('http')) {
+      try {
+        const p = new URL(img);
+        return `${page.url.origin}${p.pathname}${p.search}`;
+      } catch {
+        return img;
+      }
+    }
     return `${page.url.origin}${img}`;
   });
 
@@ -60,7 +72,7 @@
 </script>
 
 <svelte:head>
-  <title>{figurine?.name ?? $t('zoneShowcase')} — Gothic Miniatures</title>
+  <title>{figurine?.name ?? $t('zoneShowcase')} — {$brandName}</title>
   <meta name="description" content={figurine?.shortText ?? figurine?.fullDescription ?? 'Gothic handcrafted miniature'} />
 
   <!-- Open Graph -->
@@ -73,7 +85,8 @@
     <meta property="og:image:height" content="1800" />
   {/if}
   <meta property="og:url" content={page.url.href} />
-  <link rel="canonical" href={page.url.href} />
+  <!-- canonical is emitted globally in +layout.svelte; no per-page duplicate -->
+
 
   <!-- Twitter / X -->
   <meta name="twitter:card"        content="summary_large_image" />

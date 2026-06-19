@@ -241,7 +241,7 @@ export const en = {
   unifiedIntentNotify: 'Notify me',
   unifiedIntentNotifyHint: 'Get a note when there is news.',
   unifiedSubmitRequest: 'Send request',
-  unifiedSubmitReserve: 'Send reserve request',
+  unifiedSubmitReserve: 'Send',
   unifiedSubmitWaitlist: 'Join waitlist',
   unifiedSubmitViewing: 'Request dates',
   unifiedSubmitSimilar: 'Send similar request',

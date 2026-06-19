@@ -55,7 +55,9 @@ async fn main() -> anyhow::Result<()> {
             loop {
                 tick.tick().await;
                 match svc.prune_login_history(RETENTION_DAYS).await {
-                    Ok(n) if n > 0 => tracing::info!("Pruned {n} login attempts older than {RETENTION_DAYS} days"),
+                    Ok(n) if n > 0 => {
+                        tracing::info!("Pruned {n} login attempts older than {RETENTION_DAYS} days")
+                    }
                     Ok(_) => {}
                     Err(e) => tracing::warn!("Login-attempt prune failed: {e}"),
                 }

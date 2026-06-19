@@ -26,14 +26,26 @@ pub struct Config {
 
 /// Values that must never ship to production. Startup aborts if any secret
 /// still holds one of these, instead of silently exposing an open admin panel.
-const FORBIDDEN_SECRETS: &[&str] = &["", "123", "admin", "password", "change_me", "change_me_in_prod"];
+const FORBIDDEN_SECRETS: &[&str] = &[
+    "",
+    "123",
+    "admin",
+    "password",
+    "change_me",
+    "change_me_in_prod",
+];
 
 impl Config {
     pub fn from_env() -> Self {
         let public_url = dotenvy::var("PUBLIC_URL").expect("PUBLIC_URL must be set");
         let cors_allowed_origins = dotenvy::var("ALLOWED_ORIGINS")
             .ok()
-            .map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect::<Vec<_>>())
+            .map(|v| {
+                v.split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+            })
             .filter(|v| !v.is_empty())
             .unwrap_or_else(|| vec![public_url.trim_end_matches('/').to_string()]);
 
@@ -69,10 +81,14 @@ impl Config {
     fn validate(&self) {
         let weak = |v: &str| FORBIDDEN_SECRETS.contains(&v.trim().to_lowercase().as_str());
         if weak(&self.admin_password) || self.admin_password.len() < 8 {
-            panic!("ADMIN_PASSWORD is unset, weak, or a known default — set a strong value (>= 8 chars)");
+            panic!(
+                "ADMIN_PASSWORD is unset, weak, or a known default — set a strong value (>= 8 chars)"
+            );
         }
         if weak(&self.admin_api_key) || self.admin_api_key.len() < 16 {
-            panic!("ADMIN_API_KEY is unset, weak, or a known default — set a strong value (>= 16 chars)");
+            panic!(
+                "ADMIN_API_KEY is unset, weak, or a known default — set a strong value (>= 16 chars)"
+            );
         }
     }
 }

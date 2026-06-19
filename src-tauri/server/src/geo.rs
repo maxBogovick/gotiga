@@ -8,7 +8,7 @@
 
 use std::net::IpAddr;
 
-use maxminddb::{geoip2, Reader};
+use maxminddb::{Reader, geoip2};
 
 pub struct GeoIp {
     reader: Option<Reader<Vec<u8>>>,
@@ -34,8 +34,12 @@ impl GeoIp {
     /// Resolve `(country_code, city)` for a textual IP. Best-effort: any failure
     /// (no DB, unparseable IP, private range, lookup miss) yields `(None, None)`.
     pub fn lookup(&self, ip: &str) -> (Option<String>, Option<String>) {
-        let Some(reader) = &self.reader else { return (None, None) };
-        let Ok(addr) = ip.parse::<IpAddr>() else { return (None, None) };
+        let Some(reader) = &self.reader else {
+            return (None, None);
+        };
+        let Ok(addr) = ip.parse::<IpAddr>() else {
+            return (None, None);
+        };
         if is_private(&addr) {
             return (None, None);
         }

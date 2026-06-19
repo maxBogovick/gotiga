@@ -1,16 +1,16 @@
-use axum::{
-    routing::{get, post, delete, patch, put},
-    Router,
-    middleware::{self, Next},
-    extract::Request,
-    http::{StatusCode, HeaderMap, HeaderValue, Method, header},
-    response::Response,
-};
-use crate::services::AppService;
 use crate::config::Config;
-use tower_http::services::ServeDir;
-use tower_http::cors::CorsLayer;
+use crate::services::AppService;
 use axum::extract::DefaultBodyLimit;
+use axum::{
+    Router,
+    extract::Request,
+    http::{HeaderMap, HeaderValue, Method, StatusCode, header},
+    middleware::{self, Next},
+    response::Response,
+    routing::{delete, get, patch, post, put},
+};
+use tower_http::cors::CorsLayer;
+use tower_http::services::ServeDir;
 
 /// Global request-body cap. Small by default so an unauthenticated request can't
 /// pin memory; the large media-upload routes opt into a higher limit explicitly.
@@ -27,231 +27,464 @@ pub struct AppState {
 }
 
 impl axum::extract::FromRef<AppState> for AppService {
-    fn from_ref(state: &AppState) -> Self { state.service.clone() }
+    fn from_ref(state: &AppState) -> Self {
+        state.service.clone()
+    }
 }
 
 impl axum::extract::FromRef<AppState> for Config {
-    fn from_ref(state: &AppState) -> Self { state.config.clone() }
+    fn from_ref(state: &AppState) -> Self {
+        state.config.clone()
+    }
 }
 
 pub fn router(service: AppService, config: Config) -> Router {
-    let state = AppState { service, config: config.clone() };
+    let state = AppState {
+        service,
+        config: config.clone(),
+    };
 
     // All routes under /api/v1 — no auth on the router level
-    let api = Router::new()
-        // === PUBLIC READ ===
-        .route("/health",                       get(handlers::health_check))
-        .route("/figurines",                    get(handlers::list_figurines))
-        .route("/figurines/in-progress",        get(handlers::list_in_progress_figurines))
-        .route("/figurines/:id",                get(handlers::get_figurine))
-        .route("/content/texts/:param",         get(handlers::get_texts_by_param))
-        .route("/cabinet/zones",                get(handlers::get_cabinet_zones))
-        .route("/main-background",              get(handlers::get_main_background))
-        .route("/home-content",                 get(handlers::get_home_content))
-        .route("/author/profile",               get(handlers::get_author_profile))
-        .route("/orders",                       post(handlers::create_order))
-        .route("/commissions",                  post(handlers::create_commission))
-        .route("/commissions/:token",           get(handlers::get_commission_by_token))
-        .route("/figurines/:id/schedule",       get(handlers::get_figurine_schedule))
-        .route("/figurines/:id/comments",       get(handlers::get_figurine_comments)
-                                                .post(handlers::submit_comment))
-        .route("/figurines/:id/book",           post(handlers::create_booking))
-        .route("/figurines/:id/waitlist",       post(handlers::join_waitlist))
-        .route("/booking-rules",                get(handlers::get_booking_rules))
-        .route("/settings/contact",             get(handlers::get_contact_settings))
-        .route("/settings/workshop-feature",    get(handlers::get_workshop_feature))
-        .route("/bookings/by-tokens",           post(handlers::get_bookings_by_tokens))
-        .route("/bookings/cancel/:token",       get(handlers::get_booking_by_token)
-                                                .post(handlers::cancel_booking_by_token))
-        .route("/bookings/cancel/:token/reschedule", patch(handlers::reschedule_booking_by_token))
-        .route("/waitlist/leave/:token",        get(handlers::get_waitlist_by_token)
-                                                .post(handlers::leave_waitlist_by_token))
-        .route("/orders/notify/:token",         get(handlers::get_notify_by_token)
-                                                .post(handlers::cancel_notify_by_token))
-        // === PUBLIC LOGIN ===
-        .route("/admin/login",                  post(handlers::admin_login))
-        // === PROTECTED WRITE — use route_layer so auth only runs on matched routes ===
-        .route("/figurines",
-            post(handlers::save_figurine)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/figurines/:id",
-            delete(handlers::delete_figurine)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/upload",
-            post(handlers::upload_file)
-            .layer(DefaultBodyLimit::max(MEDIA_UPLOAD_LIMIT))
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/admin/media",
-            get(handlers::get_media_inventory)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/admin/media/cleanup-report",
-            get(handlers::get_unused_media_report)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/admin/media/cleanup",
-            post(handlers::cleanup_unused_media)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/admin/media/replace",
-            post(handlers::replace_media_everywhere)
-            .layer(DefaultBodyLimit::max(MEDIA_UPLOAD_LIMIT))
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/cabinet/zones",
-            post(handlers::save_zone)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/cabinet/zones/:id",
-            delete(handlers::delete_zone)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/content/texts/:param",
-            post(handlers::save_text)
-            .delete(handlers::delete_text)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/main-background",
-            post(handlers::upload_main_background)
-            .layer(DefaultBodyLimit::max(MEDIA_UPLOAD_LIMIT))
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/home-content",
-            post(handlers::save_home_content)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/author/profile",
-            post(handlers::save_author_profile)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        // === SERVER SETTINGS (ADMIN) ===
-        .route("/admin/settings/smtp",
-            get(handlers::admin_get_smtp_settings)
-            .put(handlers::admin_save_smtp_settings)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/admin/settings/contact",
-            put(handlers::admin_save_contact_settings)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/admin/settings/workshop-feature",
-            put(handlers::save_workshop_feature)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        // === THEME CONFIG ===
-        .route("/settings/theme",
-            get(handlers::get_theme_config))
-        .route("/admin/settings/theme",
-            put(handlers::save_theme_config)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        // === COPY OVERRIDES ===
-        .route("/settings/copy",
-            get(handlers::get_copy_overrides))
-        .route("/admin/settings/copy",
-            put(handlers::save_copy_overrides)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        // === COMMENTS (ADMIN) ===
-        .route("/admin/comments",
-            get(handlers::admin_list_comments)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/admin/comments/:id",
-            patch(handlers::admin_moderate_comment)
-            .delete(handlers::admin_delete_comment)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        // === ORDERS (ADMIN) ===
-        .route("/admin/orders",
-            get(handlers::list_orders)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/admin/orders/:id",
-            patch(handlers::update_order_status)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        // === COMMISSIONS (ADMIN) ===
-        .route("/admin/commissions",
-            get(handlers::admin_list_commissions)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/admin/commissions/:id",
-            patch(handlers::admin_update_commission)
-            .delete(handlers::admin_delete_commission)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        // === SHOWINGS (ADMIN) ===
-        .route("/admin/showings",
-            get(handlers::list_showings)
-            .post(handlers::save_showing)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/admin/showings/:id",
-            delete(handlers::delete_showing)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        // === BOOKINGS (ADMIN) ===
-        .route("/admin/bookings",
-            get(handlers::list_bookings)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/admin/bookings/:id/status",
-            put(handlers::update_booking_status)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        // === BOOKING RULES (ADMIN) ===
-        .route("/admin/booking-rules",
-            put(handlers::save_booking_rules)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        // === WAITLIST (ADMIN) ===
-        .route("/admin/waitlist",
-            get(handlers::admin_list_waitlist)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/admin/waitlist/:id",
-            delete(handlers::admin_remove_from_waitlist)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/admin/waitlist/:figurine_id/notify",
-            post(handlers::admin_notify_waitlist)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        // === USER AUTH ===
-        .route("/auth/register",          post(handlers::user_register))
-        .route("/auth/login/challenge",   post(handlers::user_login_challenge))
-        .route("/auth/login/verify",      post(handlers::user_login_verify))
-        .route("/auth/logout",            post(handlers::user_logout))
-        .route("/auth/me",                get(handlers::user_me))
-        .route("/auth/link-bookings",     post(handlers::user_link_bookings))
-        .route("/profile/bookings",       get(handlers::user_profile_bookings))
-        .route("/profile/orders",         get(handlers::user_profile_orders))
-        .route("/profile/wishlist",       get(handlers::user_get_wishlist).put(handlers::user_set_wishlist))
-        .route("/profile/waitlist",       get(handlers::user_profile_waitlist))
-        .route("/profile/claims/link",    post(handlers::user_link_claim))
-        .route("/profile/me",             patch(handlers::user_update_profile).delete(handlers::user_delete_account))
-        .route("/profile/avatar",         post(handlers::user_upload_avatar))
-        .route("/profile/uploads",        post(handlers::user_upload_file))
-        .route("/profile/commissions",        get(handlers::user_list_commissions))
-        .route("/profile/commissions/claim",  post(handlers::user_claim_commission))
-        .route("/profile/commissions/:id",    patch(handlers::user_edit_commission).delete(handlers::user_delete_commission))
-        .route("/profile/threads",            get(handlers::user_get_threads).post(handlers::user_create_thread))
-        .route("/profile/threads/:id",        get(handlers::user_get_thread))
-        .route("/profile/threads/:id/reply",  post(handlers::user_reply_to_thread))
-        // === ADMIN USER MANAGEMENT ===
-        .route("/admin/users",
-            get(handlers::admin_list_users)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/admin/users/:id",
-            get(handlers::admin_get_user)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/admin/users/:id/sessions",
-            delete(handlers::admin_revoke_user_sessions)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/admin/users/:id/notes",
-            patch(handlers::admin_update_user_notes)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/admin/users/:id/block",
-            patch(handlers::admin_set_user_blocked)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/admin/users/:id/reset-token",
-            post(handlers::admin_generate_reset_token)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/admin/threads",
-            get(handlers::admin_list_threads)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/admin/threads/:id",
-            get(handlers::admin_get_thread)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/admin/threads/:id/reply",
-            post(handlers::admin_reply_to_thread)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/admin/threads/:id/resolve",
-            post(handlers::admin_resolve_thread)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/admin/threads/:id/reopen",
-            post(handlers::admin_reopen_thread)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        .route("/admin/users/:id/threads",
-            post(handlers::admin_create_thread_for_user)
-            .route_layer(middleware::from_fn_with_state(config.clone(), auth_middleware)))
-        // === PASSWORD RESET (PUBLIC) ===
-        .route("/auth/forgot-password",     post(handlers::forgot_password))
-        .route("/auth/reset-token/:token",  get(handlers::validate_reset_token))
-        .route("/auth/reset-password",      post(handlers::apply_password_reset))
-        .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT));
+    let api =
+        Router::new()
+            // === PUBLIC READ ===
+            .route("/health", get(handlers::health_check))
+            .route("/figurines", get(handlers::list_figurines))
+            .route(
+                "/figurines/in-progress",
+                get(handlers::list_in_progress_figurines),
+            )
+            .route("/figurines/:id", get(handlers::get_figurine))
+            .route("/content/texts/:param", get(handlers::get_texts_by_param))
+            .route("/cabinet/zones", get(handlers::get_cabinet_zones))
+            .route("/main-background", get(handlers::get_main_background))
+            .route("/home-content", get(handlers::get_home_content))
+            .route("/author/profile", get(handlers::get_author_profile))
+            .route("/orders", post(handlers::create_order))
+            .route("/commissions", post(handlers::create_commission))
+            .route(
+                "/commissions/:token",
+                get(handlers::get_commission_by_token),
+            )
+            .route(
+                "/figurines/:id/schedule",
+                get(handlers::get_figurine_schedule),
+            )
+            .route(
+                "/figurines/:id/comments",
+                get(handlers::get_figurine_comments).post(handlers::submit_comment),
+            )
+            .route("/figurines/:id/book", post(handlers::create_booking))
+            .route("/figurines/:id/waitlist", post(handlers::join_waitlist))
+            .route("/booking-rules", get(handlers::get_booking_rules))
+            .route("/settings/contact", get(handlers::get_contact_settings))
+            .route(
+                "/settings/workshop-feature",
+                get(handlers::get_workshop_feature),
+            )
+            .route(
+                "/bookings/by-tokens",
+                post(handlers::get_bookings_by_tokens),
+            )
+            .route(
+                "/bookings/cancel/:token",
+                get(handlers::get_booking_by_token).post(handlers::cancel_booking_by_token),
+            )
+            .route(
+                "/bookings/cancel/:token/reschedule",
+                patch(handlers::reschedule_booking_by_token),
+            )
+            .route(
+                "/waitlist/leave/:token",
+                get(handlers::get_waitlist_by_token).post(handlers::leave_waitlist_by_token),
+            )
+            .route(
+                "/orders/notify/:token",
+                get(handlers::get_notify_by_token).post(handlers::cancel_notify_by_token),
+            )
+            // === PUBLIC LOGIN ===
+            .route("/admin/login", post(handlers::admin_login))
+            // === PROTECTED WRITE — use route_layer so auth only runs on matched routes ===
+            .route(
+                "/figurines",
+                post(handlers::save_figurine).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/figurines/:id",
+                delete(handlers::delete_figurine).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/upload",
+                post(handlers::upload_file)
+                    .layer(DefaultBodyLimit::max(MEDIA_UPLOAD_LIMIT))
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            .route(
+                "/admin/media",
+                get(handlers::get_media_inventory).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/admin/media/cleanup-report",
+                get(handlers::get_unused_media_report).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/admin/media/cleanup",
+                post(handlers::cleanup_unused_media).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/admin/media/replace",
+                post(handlers::replace_media_everywhere)
+                    .layer(DefaultBodyLimit::max(MEDIA_UPLOAD_LIMIT))
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            .route(
+                "/cabinet/zones",
+                post(handlers::save_zone).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/cabinet/zones/:id",
+                delete(handlers::delete_zone).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/content/texts/:param",
+                post(handlers::save_text)
+                    .delete(handlers::delete_text)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            .route(
+                "/main-background",
+                post(handlers::upload_main_background)
+                    .layer(DefaultBodyLimit::max(MEDIA_UPLOAD_LIMIT))
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            .route(
+                "/home-content",
+                post(handlers::save_home_content).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/author/profile",
+                post(handlers::save_author_profile).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            // === SERVER SETTINGS (ADMIN) ===
+            .route(
+                "/admin/settings/smtp",
+                get(handlers::admin_get_smtp_settings)
+                    .put(handlers::admin_save_smtp_settings)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            .route(
+                "/admin/settings/contact",
+                put(handlers::admin_save_contact_settings).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/settings/workshop-feature",
+                put(handlers::save_workshop_feature).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            // === THEME CONFIG ===
+            .route("/settings/theme", get(handlers::get_theme_config))
+            .route(
+                "/admin/settings/theme",
+                put(handlers::save_theme_config).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            // === COPY OVERRIDES ===
+            .route("/settings/copy", get(handlers::get_copy_overrides))
+            .route(
+                "/admin/settings/copy",
+                put(handlers::save_copy_overrides).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            // === COMMENTS (ADMIN) ===
+            .route(
+                "/admin/comments",
+                get(handlers::admin_list_comments).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/admin/comments/:id",
+                patch(handlers::admin_moderate_comment)
+                    .delete(handlers::admin_delete_comment)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            // === ORDERS (ADMIN) ===
+            .route(
+                "/admin/orders",
+                get(handlers::list_orders).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/admin/orders/:id",
+                patch(handlers::update_order_status).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            // === COMMISSIONS (ADMIN) ===
+            .route(
+                "/admin/commissions",
+                get(handlers::admin_list_commissions).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/admin/commissions/:id",
+                patch(handlers::admin_update_commission)
+                    .delete(handlers::admin_delete_commission)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            // === SHOWINGS (ADMIN) ===
+            .route(
+                "/admin/showings",
+                get(handlers::list_showings)
+                    .post(handlers::save_showing)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            .route(
+                "/admin/showings/:id",
+                delete(handlers::delete_showing).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            // === BOOKINGS (ADMIN) ===
+            .route(
+                "/admin/bookings",
+                get(handlers::list_bookings).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/admin/bookings/:id/status",
+                put(handlers::update_booking_status).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            // === BOOKING RULES (ADMIN) ===
+            .route(
+                "/admin/booking-rules",
+                put(handlers::save_booking_rules).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            // === WAITLIST (ADMIN) ===
+            .route(
+                "/admin/waitlist",
+                get(handlers::admin_list_waitlist).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/admin/waitlist/:id",
+                delete(handlers::admin_remove_from_waitlist).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/waitlist/:figurine_id/notify",
+                post(handlers::admin_notify_waitlist).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            // === USER AUTH ===
+            .route("/auth/register", post(handlers::user_register))
+            .route(
+                "/auth/login/challenge",
+                post(handlers::user_login_challenge),
+            )
+            .route("/auth/login/verify", post(handlers::user_login_verify))
+            .route("/auth/logout", post(handlers::user_logout))
+            .route("/auth/me", get(handlers::user_me))
+            .route("/auth/link-bookings", post(handlers::user_link_bookings))
+            .route("/profile/bookings", get(handlers::user_profile_bookings))
+            .route("/profile/orders", get(handlers::user_profile_orders))
+            .route(
+                "/profile/wishlist",
+                get(handlers::user_get_wishlist).put(handlers::user_set_wishlist),
+            )
+            .route("/profile/waitlist", get(handlers::user_profile_waitlist))
+            .route("/profile/claims/link", post(handlers::user_link_claim))
+            .route(
+                "/profile/me",
+                patch(handlers::user_update_profile).delete(handlers::user_delete_account),
+            )
+            .route("/profile/avatar", post(handlers::user_upload_avatar))
+            .route("/profile/uploads", post(handlers::user_upload_file))
+            .route("/profile/commissions", get(handlers::user_list_commissions))
+            .route(
+                "/profile/commissions/claim",
+                post(handlers::user_claim_commission),
+            )
+            .route(
+                "/profile/commissions/:id",
+                patch(handlers::user_edit_commission).delete(handlers::user_delete_commission),
+            )
+            .route(
+                "/profile/threads",
+                get(handlers::user_get_threads).post(handlers::user_create_thread),
+            )
+            .route("/profile/threads/:id", get(handlers::user_get_thread))
+            .route(
+                "/profile/threads/:id/reply",
+                post(handlers::user_reply_to_thread),
+            )
+            // === ADMIN USER MANAGEMENT ===
+            .route(
+                "/admin/users",
+                get(handlers::admin_list_users).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/admin/users/:id",
+                get(handlers::admin_get_user).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/admin/users/:id/sessions",
+                delete(handlers::admin_revoke_user_sessions).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/users/:id/notes",
+                patch(handlers::admin_update_user_notes).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/users/:id/block",
+                patch(handlers::admin_set_user_blocked).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/users/:id/reset-token",
+                post(handlers::admin_generate_reset_token).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/threads",
+                get(handlers::admin_list_threads).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/admin/threads/:id",
+                get(handlers::admin_get_thread).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/admin/threads/:id/reply",
+                post(handlers::admin_reply_to_thread).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/admin/threads/:id/resolve",
+                post(handlers::admin_resolve_thread).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/admin/threads/:id/reopen",
+                post(handlers::admin_reopen_thread).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/admin/users/:id/threads",
+                post(handlers::admin_create_thread_for_user).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            // === PASSWORD RESET (PUBLIC) ===
+            .route("/auth/forgot-password", post(handlers::forgot_password))
+            .route(
+                "/auth/reset-token/:token",
+                get(handlers::validate_reset_token),
+            )
+            .route("/auth/reset-password", post(handlers::apply_password_reset))
+            .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT));
 
     // Serve only known media subdirectories — never the whole UPLOAD_DIR (which can
     // contain *.db dumps, temp files, etc.). Each subdir is mounted explicitly.
@@ -268,13 +501,21 @@ pub fn router(service: AppService, config: Config) -> Router {
 
     // Restrict CORS to configured origins (defaults to PUBLIC_URL) instead of
     // allowing any origin to call a bearer-token API.
-    let allowed_origins: Vec<HeaderValue> = config.cors_allowed_origins
+    let allowed_origins: Vec<HeaderValue> = config
+        .cors_allowed_origins
         .iter()
         .filter_map(|o| o.parse().ok())
         .collect();
     let cors = CorsLayer::new()
         .allow_origin(allowed_origins)
-        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::PATCH, Method::DELETE, Method::OPTIONS])
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
         .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]);
 
     app.layer(cors).with_state(state)
@@ -286,7 +527,8 @@ async fn auth_middleware(
     request: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    let auth_header = headers.get("Authorization")
+    let auth_header = headers
+        .get("Authorization")
         .and_then(|h| h.to_str().ok())
         .ok_or(StatusCode::UNAUTHORIZED)?;
 

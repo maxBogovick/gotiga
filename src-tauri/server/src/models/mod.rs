@@ -1,7 +1,7 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::prelude::Type;
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 
 // ============================================================
 // ENUMS
@@ -401,7 +401,9 @@ pub struct OrderRequest {
     pub mode: OrderMode,
 }
 
-fn default_order_mode() -> OrderMode { OrderMode::Request }
+fn default_order_mode() -> OrderMode {
+    OrderMode::Request
+}
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1147,7 +1149,11 @@ pub struct BookingRules {
 
 impl Default for BookingRules {
     fn default() -> Self {
-        Self { min_days: 1, max_days: 30, advance_days: 0 }
+        Self {
+            min_days: 1,
+            max_days: 30,
+            advance_days: 0,
+        }
     }
 }
 
@@ -1365,7 +1371,10 @@ pub struct Commission {
 impl CommissionStatus {
     /// Work has begun — the petition may no longer be deleted or edited.
     pub fn is_started(&self) -> bool {
-        matches!(self, CommissionStatus::Accepted | CommissionStatus::InProgress | CommissionStatus::Completed)
+        matches!(
+            self,
+            CommissionStatus::Accepted | CommissionStatus::InProgress | CommissionStatus::Completed
+        )
     }
 }
 
@@ -1386,7 +1395,11 @@ pub struct AttachmentDto {
 
 impl From<&Attachment> for AttachmentDto {
     fn from(a: &Attachment) -> Self {
-        AttachmentDto { id: a.id.to_string(), url: a.url.clone(), thumb_url: a.thumb_url.clone() }
+        AttachmentDto {
+            id: a.id.to_string(),
+            url: a.url.clone(),
+            thumb_url: a.thumb_url.clone(),
+        }
     }
 }
 

@@ -1,7 +1,7 @@
+use crate::error::{AppError, Result};
+use crate::models::*;
 use sqlx::PgPool;
 use uuid::Uuid;
-use crate::error::{Result, AppError};
-use crate::models::*;
 
 /// Parse an optional `YYYY-MM-DD` deadline. Empty/absent → None; a present but
 /// unparseable value is a client error (400) rather than a silent drop.
@@ -10,7 +10,9 @@ fn parse_optional_deadline(raw: Option<&str>) -> Result<Option<chrono::NaiveDate
         None => Ok(None),
         Some(s) => chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
             .map(Some)
-            .map_err(|_| AppError::BadRequest("Invalid deadline date (expected YYYY-MM-DD)".to_string())),
+            .map_err(|_| {
+                AppError::BadRequest("Invalid deadline date (expected YYYY-MM-DD)".to_string())
+            }),
     }
 }
 
@@ -40,7 +42,11 @@ impl Repository {
 
     // === ORDERS (Postgres) ===
 
-    pub async fn save_order(&self, order: &crate::models::OrderRequest, user_id: Option<Uuid>) -> Result<crate::models::Order> {
+    pub async fn save_order(
+        &self,
+        order: &crate::models::OrderRequest,
+        user_id: Option<Uuid>,
+    ) -> Result<crate::models::Order> {
         let rec = sqlx::query_as::<_, crate::models::Order>(
             "INSERT INTO orders (
                 figurine_id, figurine_name, requester_name, requester_email,
@@ -50,7 +56,7 @@ impl Repository {
                 $1, $2, $3, $4, $5, $6, $7, $8,
                 CASE WHEN $7 = 'reserve'::order_mode THEN 'requested'::reserve_status ELSE NULL END
              )
-             RETURNING *"
+             RETURNING *",
         )
         .bind(&order.figurine_id)
         .bind(&order.figurine_name)
@@ -82,7 +88,11 @@ impl Repository {
     /// Create or refresh a "notify me" subscription. Deduplicates by
     /// (figurine, email): a repeat request updates the existing row in place
     /// and keeps its token, rather than piling up duplicates.
-    pub async fn upsert_notify_order(&self, order: &crate::models::OrderRequest, user_id: Option<Uuid>) -> Result<crate::models::Order> {
+    pub async fn upsert_notify_order(
+        &self,
+        order: &crate::models::OrderRequest,
+        user_id: Option<Uuid>,
+    ) -> Result<crate::models::Order> {
         let existing = sqlx::query_as::<_, crate::models::Order>(
             "SELECT * FROM orders WHERE figurine_id = $1 AND lower(requester_email) = lower($2) AND mode = 'notify'::order_mode LIMIT 1"
         )
@@ -120,18 +130,23 @@ impl Repository {
         }
     }
 
-    pub async fn get_order_by_cancel_token(&self, token: &str) -> Result<Option<crate::models::Order>> {
+    pub async fn get_order_by_cancel_token(
+        &self,
+        token: &str,
+    ) -> Result<Option<crate::models::Order>> {
         Ok(sqlx::query_as::<_, crate::models::Order>(
-            "SELECT * FROM orders WHERE cancel_token = $1"
+            "SELECT * FROM orders WHERE cancel_token = $1",
         )
         .bind(token)
-        .fetch_optional(&self.pg_pool).await?)
+        .fetch_optional(&self.pg_pool)
+        .await?)
     }
 
     pub async fn delete_order_by_cancel_token(&self, token: &str) -> Result<()> {
         sqlx::query("DELETE FROM orders WHERE cancel_token = $1")
             .bind(token)
-            .execute(&self.pg_pool).await?;
+            .execute(&self.pg_pool)
+            .await?;
         Ok(())
     }
 
@@ -147,17 +162,23 @@ impl Repository {
                 let items = sqlx::query_as::<_, crate::models::Order>(
                     "SELECT * FROM orders
                      WHERE status = $1::order_status AND mode = $2::order_mode
-                     ORDER BY created_at DESC LIMIT $3 OFFSET $4"
+                     ORDER BY created_at DESC LIMIT $3 OFFSET $4",
                 )
-                .bind(status).bind(mode).bind(limit).bind(offset)
-                .fetch_all(&self.pg_pool).await?;
+                .bind(status)
+                .bind(mode)
+                .bind(limit)
+                .bind(offset)
+                .fetch_all(&self.pg_pool)
+                .await?;
 
                 let (total,): (i64,) = sqlx::query_as(
                     "SELECT COUNT(*) FROM orders
-                     WHERE status = $1::order_status AND mode = $2::order_mode"
+                     WHERE status = $1::order_status AND mode = $2::order_mode",
                 )
-                .bind(status).bind(mode)
-                .fetch_one(&self.pg_pool).await?;
+                .bind(status)
+                .bind(mode)
+                .fetch_one(&self.pg_pool)
+                .await?;
 
                 (items, total)
             }
@@ -168,11 +189,11 @@ impl Repository {
                 .bind(status).bind(limit).bind(offset)
                 .fetch_all(&self.pg_pool).await?;
 
-                let (total,): (i64,) = sqlx::query_as(
-                    "SELECT COUNT(*) FROM orders WHERE status = $1::order_status"
-                )
-                .bind(status)
-                .fetch_one(&self.pg_pool).await?;
+                let (total,): (i64,) =
+                    sqlx::query_as("SELECT COUNT(*) FROM orders WHERE status = $1::order_status")
+                        .bind(status)
+                        .fetch_one(&self.pg_pool)
+                        .await?;
 
                 (items, total)
             }
@@ -183,23 +204,26 @@ impl Repository {
                 .bind(mode).bind(limit).bind(offset)
                 .fetch_all(&self.pg_pool).await?;
 
-                let (total,): (i64,) = sqlx::query_as(
-                    "SELECT COUNT(*) FROM orders WHERE mode = $1::order_mode"
-                )
-                .bind(mode)
-                .fetch_one(&self.pg_pool).await?;
+                let (total,): (i64,) =
+                    sqlx::query_as("SELECT COUNT(*) FROM orders WHERE mode = $1::order_mode")
+                        .bind(mode)
+                        .fetch_one(&self.pg_pool)
+                        .await?;
 
                 (items, total)
             }
             (None, None) => {
                 let items = sqlx::query_as::<_, crate::models::Order>(
-                    "SELECT * FROM orders ORDER BY created_at DESC LIMIT $1 OFFSET $2"
+                    "SELECT * FROM orders ORDER BY created_at DESC LIMIT $1 OFFSET $2",
                 )
-                .bind(limit).bind(offset)
-                .fetch_all(&self.pg_pool).await?;
+                .bind(limit)
+                .bind(offset)
+                .fetch_all(&self.pg_pool)
+                .await?;
 
                 let (total,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM orders")
-                    .fetch_one(&self.pg_pool).await?;
+                    .fetch_one(&self.pg_pool)
+                    .await?;
 
                 (items, total)
             }
@@ -208,25 +232,27 @@ impl Repository {
     }
 
     pub async fn get_new_orders_count(&self) -> Result<i64> {
-        let (count,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM orders WHERE status = 'new'"
-        )
-        .fetch_one(&self.pg_pool)
-        .await?;
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM orders WHERE status = 'new'")
+            .fetch_one(&self.pg_pool)
+            .await?;
         Ok(count)
     }
 
     pub async fn get_order_by_id(&self, id: uuid::Uuid) -> Result<Option<crate::models::Order>> {
-        Ok(sqlx::query_as::<_, crate::models::Order>(
-            "SELECT * FROM orders WHERE id = $1"
+        Ok(
+            sqlx::query_as::<_, crate::models::Order>("SELECT * FROM orders WHERE id = $1")
+                .bind(id)
+                .fetch_optional(&self.pg_pool)
+                .await?,
         )
-        .bind(id)
-        .fetch_optional(&self.pg_pool).await?)
     }
 
     /// All "notify me" orders left for a figurine — used to alert the author
     /// (personally) when the work becomes available again.
-    pub async fn get_notify_orders_for_figurine(&self, figurine_id: uuid::Uuid) -> Result<Vec<crate::models::Order>> {
+    pub async fn get_notify_orders_for_figurine(
+        &self,
+        figurine_id: uuid::Uuid,
+    ) -> Result<Vec<crate::models::Order>> {
         Ok(sqlx::query_as::<_, crate::models::Order>(
             "SELECT * FROM orders WHERE figurine_id = $1 AND mode = 'notify'::order_mode ORDER BY created_at ASC"
         )
@@ -254,7 +280,7 @@ impl Repository {
                  reserve_expires_at = CASE WHEN $4 THEN $5 ELSE reserve_expires_at END,
                  admin_terms_note = COALESCE($6, admin_terms_note),
                  invoice_note = COALESCE($7, invoice_note)
-             WHERE id = $8"
+             WHERE id = $8",
         )
         .bind(status)
         .bind(admin_notes)
@@ -279,16 +305,14 @@ impl Repository {
     pub async fn get_all_figurines(&self, visible_only: bool) -> Result<Vec<Figurine>> {
         let figurines = if visible_only {
             sqlx::query_as::<_, Figurine>(
-                "SELECT * FROM figurines WHERE is_visible = true ORDER BY sort_order"
+                "SELECT * FROM figurines WHERE is_visible = true ORDER BY sort_order",
             )
             .fetch_all(&self.pg_pool)
             .await?
         } else {
-            sqlx::query_as::<_, Figurine>(
-                "SELECT * FROM figurines ORDER BY sort_order"
-            )
-            .fetch_all(&self.pg_pool)
-            .await?
+            sqlx::query_as::<_, Figurine>("SELECT * FROM figurines ORDER BY sort_order")
+                .fetch_all(&self.pg_pool)
+                .await?
         };
         Ok(figurines)
     }
@@ -303,7 +327,7 @@ impl Repository {
 
     pub async fn get_images_by_figurine(&self, figurine_id: Uuid) -> Result<Vec<Image>> {
         let images = sqlx::query_as::<_, Image>(
-            "SELECT * FROM images WHERE figurine_id = $1 ORDER BY sort_order"
+            "SELECT * FROM images WHERE figurine_id = $1 ORDER BY sort_order",
         )
         .bind(figurine_id)
         .fetch_all(&self.pg_pool)
@@ -324,16 +348,17 @@ impl Repository {
         let rows = sqlx::query_as::<_, Image>(
             "SELECT DISTINCT ON (figurine_id) * FROM images
              WHERE figurine_id = ANY($1) AND image_type = 'face'
-             ORDER BY figurine_id, sort_order"
+             ORDER BY figurine_id, sort_order",
         )
         .bind(ids)
-        .fetch_all(&self.pg_pool).await?;
+        .fetch_all(&self.pg_pool)
+        .await?;
         Ok(rows.into_iter().map(|i| (i.figurine_id, i)).collect())
     }
 
     pub async fn get_steps_by_figurine(&self, figurine_id: Uuid) -> Result<Vec<ProcessStep>> {
         let steps = sqlx::query_as::<_, ProcessStep>(
-            "SELECT * FROM process_steps WHERE figurine_id = $1 ORDER BY sort_order"
+            "SELECT * FROM process_steps WHERE figurine_id = $1 ORDER BY sort_order",
         )
         .bind(figurine_id)
         .fetch_all(&self.pg_pool)
@@ -349,7 +374,9 @@ impl Repository {
 
         // Take the first 4 *characters* (not bytes) so non-ASCII material names
         // (e.g. Cyrillic) can't panic on a mid-codepoint byte slice.
-        let material_hint: String = current.material.as_deref()
+        let material_hint: String = current
+            .material
+            .as_deref()
             .unwrap_or("")
             .chars()
             .take(4)
@@ -364,7 +391,7 @@ impl Repository {
                  OR ($3 != '' AND material LIKE '%' || $4 || '%')
              )
              ORDER BY RANDOM()
-             LIMIT 3"
+             LIMIT 3",
         )
         .bind(current_id)
         .bind(current.year)
@@ -378,7 +405,7 @@ impl Repository {
 
     pub async fn get_texts_by_category(&self, category: TextCategory) -> Result<Vec<Text>> {
         let texts = sqlx::query_as::<_, Text>(
-            "SELECT * FROM texts WHERE category = $1 ORDER BY sort_order"
+            "SELECT * FROM texts WHERE category = $1 ORDER BY sort_order",
         )
         .bind(category)
         .fetch_all(&self.pg_pool)
@@ -387,11 +414,10 @@ impl Repository {
     }
 
     pub async fn get_zones(&self) -> Result<Vec<CabinetZone>> {
-        let zones = sqlx::query_as::<_, CabinetZone>(
-            "SELECT * FROM cabinet_zones ORDER BY sort_order"
-        )
-        .fetch_all(&self.pg_pool)
-        .await?;
+        let zones =
+            sqlx::query_as::<_, CabinetZone>("SELECT * FROM cabinet_zones ORDER BY sort_order")
+                .fetch_all(&self.pg_pool)
+                .await?;
         Ok(zones)
     }
 
@@ -411,14 +437,18 @@ impl Repository {
             .map_err(|_| AppError::BadRequest("Invalid figurine ID".to_string()))?;
 
         // Parse all child IDs first — fail before mutating anything.
-        let image_rows: Vec<(Uuid, &crate::models::SaveImageRequest, i32)> = images.iter().enumerate()
+        let image_rows: Vec<(Uuid, &crate::models::SaveImageRequest, i32)> = images
+            .iter()
+            .enumerate()
             .map(|(idx, img)| {
                 let img_id = Uuid::parse_str(&img.id)
                     .map_err(|_| AppError::BadRequest("Invalid image ID".to_string()))?;
                 Ok((img_id, img, img.sort_order.unwrap_or(idx as i32)))
             })
             .collect::<Result<_>>()?;
-        let step_rows: Vec<(Uuid, &crate::models::SaveStepRequest, i32)> = steps.iter().enumerate()
+        let step_rows: Vec<(Uuid, &crate::models::SaveStepRequest, i32)> = steps
+            .iter()
+            .enumerate()
             .map(|(idx, step)| {
                 let step_id = Uuid::parse_str(&step.id)
                     .map_err(|_| AppError::BadRequest("Invalid step ID".to_string()))?;
@@ -445,7 +475,9 @@ impl Repository {
         .execute(&mut *tx).await?;
 
         sqlx::query("DELETE FROM images WHERE figurine_id = $1")
-            .bind(id).execute(&mut *tx).await?;
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
         for (img_id, img, sort) in &image_rows {
             sqlx::query(
                 "INSERT INTO images (id, figurine_id, image_type, file_path, original_path, thumb_path, alt_text, sort_order) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
@@ -457,7 +489,9 @@ impl Repository {
         }
 
         sqlx::query("DELETE FROM process_steps WHERE figurine_id = $1")
-            .bind(id).execute(&mut *tx).await?;
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
         for (step_id, step, sort) in &step_rows {
             sqlx::query(
                 "INSERT INTO process_steps (id, figurine_id, step_type, description, image_path, sort_order) VALUES ($1, $2, $3, $4, $5, $6)"
@@ -473,11 +507,17 @@ impl Repository {
 
     pub async fn delete_figurine(&self, id: Uuid) -> Result<()> {
         sqlx::query("DELETE FROM figurines WHERE id = $1")
-            .bind(id).execute(&self.pg_pool).await?;
+            .bind(id)
+            .execute(&self.pg_pool)
+            .await?;
         Ok(())
     }
 
-    pub async fn upsert_zone(&self, z: &crate::models::SaveZoneRequest, sort_order: i32) -> Result<()> {
+    pub async fn upsert_zone(
+        &self,
+        z: &crate::models::SaveZoneRequest,
+        sort_order: i32,
+    ) -> Result<()> {
         let id = Uuid::parse_str(&z.id)
             .map_err(|_| AppError::BadRequest("Invalid zone ID".to_string()))?;
         sqlx::query(
@@ -496,17 +536,24 @@ impl Repository {
 
     pub async fn delete_zone(&self, id: Uuid) -> Result<()> {
         sqlx::query("DELETE FROM cabinet_zones WHERE id = $1")
-            .bind(id).execute(&self.pg_pool).await?;
+            .bind(id)
+            .execute(&self.pg_pool)
+            .await?;
         Ok(())
     }
 
     pub async fn get_zone_count(&self) -> Result<i32> {
         let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM cabinet_zones")
-            .fetch_one(&self.pg_pool).await?;
+            .fetch_one(&self.pg_pool)
+            .await?;
         Ok(row.0 as i32)
     }
 
-    pub async fn upsert_text(&self, t: &crate::models::SaveTextRequest, category: &crate::models::TextCategory) -> Result<()> {
+    pub async fn upsert_text(
+        &self,
+        t: &crate::models::SaveTextRequest,
+        category: &crate::models::TextCategory,
+    ) -> Result<()> {
         let id = Uuid::parse_str(&t.id)
             .map_err(|_| AppError::BadRequest("Invalid text ID".to_string()))?;
         sqlx::query(
@@ -524,15 +571,17 @@ impl Repository {
 
     pub async fn delete_text(&self, id: Uuid) -> Result<()> {
         sqlx::query("DELETE FROM texts WHERE id = $1")
-            .bind(id).execute(&self.pg_pool).await?;
+            .bind(id)
+            .execute(&self.pg_pool)
+            .await?;
         Ok(())
     }
 
     pub async fn get_main_background(&self) -> Result<Option<String>> {
-        let row: Option<(String,)> = sqlx::query_as(
-            "SELECT file_path FROM app_resources WHERE key = 'main_background'"
-        )
-        .fetch_optional(&self.pg_pool).await?;
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT file_path FROM app_resources WHERE key = 'main_background'")
+                .fetch_optional(&self.pg_pool)
+                .await?;
         Ok(row.map(|r| r.0))
     }
 
@@ -546,10 +595,10 @@ impl Repository {
     }
 
     pub async fn get_home_content(&self) -> Result<Option<crate::models::HomeContent>> {
-        let row: Option<(String,)> = sqlx::query_as(
-            "SELECT file_path FROM app_resources WHERE key = 'home_content'"
-        )
-        .fetch_optional(&self.pg_pool).await?;
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT file_path FROM app_resources WHERE key = 'home_content'")
+                .fetch_optional(&self.pg_pool)
+                .await?;
         match row {
             None => Ok(None),
             Some((json,)) => {
@@ -561,8 +610,7 @@ impl Repository {
     }
 
     pub async fn save_home_content(&self, content: &crate::models::HomeContent) -> Result<()> {
-        let json = serde_json::to_string(content)
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+        let json = serde_json::to_string(content).map_err(|e| AppError::Internal(e.to_string()))?;
         sqlx::query(
             "INSERT INTO app_resources (key, file_path, updated_at) VALUES ('home_content', $1, NOW())
              ON CONFLICT (key) DO UPDATE SET file_path=EXCLUDED.file_path, updated_at=NOW()"
@@ -572,10 +620,10 @@ impl Repository {
     }
 
     pub async fn get_author_profile(&self) -> Result<Option<crate::models::AuthorProfile>> {
-        let row: Option<(String,)> = sqlx::query_as(
-            "SELECT file_path FROM app_resources WHERE key = 'author_profile'"
-        )
-        .fetch_optional(&self.pg_pool).await?;
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT file_path FROM app_resources WHERE key = 'author_profile'")
+                .fetch_optional(&self.pg_pool)
+                .await?;
         match row {
             None => Ok(None),
             Some((json,)) => {
@@ -587,8 +635,7 @@ impl Repository {
     }
 
     pub async fn save_author_profile(&self, profile: &crate::models::AuthorProfile) -> Result<()> {
-        let json = serde_json::to_string(profile)
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+        let json = serde_json::to_string(profile).map_err(|e| AppError::Internal(e.to_string()))?;
         sqlx::query(
             "INSERT INTO app_resources (key, file_path, updated_at) VALUES ('author_profile', $1, NOW())
              ON CONFLICT (key) DO UPDATE SET file_path=EXCLUDED.file_path, updated_at=NOW()"
@@ -602,13 +649,25 @@ impl Repository {
     pub async fn get_media_usages(&self) -> Result<Vec<MediaUsageDto>> {
         let mut usages = Vec::new();
 
-        let image_rows: Vec<(String, String, Option<String>, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+        let image_rows: Vec<(
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        )> = sqlx::query_as(
             "SELECT i.id::text, i.file_path, i.original_path, i.thumb_path, f.id::text, f.name
              FROM images i
-             LEFT JOIN figurines f ON f.id = i.figurine_id"
-        ).fetch_all(&self.pg_pool).await?;
+             LEFT JOIN figurines f ON f.id = i.figurine_id",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?;
         for (image_id, preview, original, thumb, fig_id, fig_name) in image_rows {
-            let label = format!("Image for {}", fig_name.unwrap_or_else(|| "Unknown figurine".to_string()));
+            let label = format!(
+                "Image for {}",
+                fig_name.unwrap_or_else(|| "Unknown figurine".to_string())
+            );
             let entity_id = fig_id.unwrap_or_else(|| image_id.clone());
             usages.push(MediaUsageDto {
                 path: preview,
@@ -640,12 +699,17 @@ impl Repository {
         let step_rows: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
             "SELECT ps.id::text, ps.image_path, f.id::text, f.name
              FROM process_steps ps
-             LEFT JOIN figurines f ON f.id = ps.figurine_id"
-        ).fetch_all(&self.pg_pool).await?;
+             LEFT JOIN figurines f ON f.id = ps.figurine_id",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?;
         for (step_id, path, fig_id, fig_name) in step_rows {
             usages.push(MediaUsageDto {
                 path,
-                label: format!("Process step for {}", fig_name.unwrap_or_else(|| "Unknown figurine".to_string())),
+                label: format!(
+                    "Process step for {}",
+                    fig_name.unwrap_or_else(|| "Unknown figurine".to_string())
+                ),
                 entity_type: "processStep".to_string(),
                 entity_id: fig_id.unwrap_or(step_id),
                 field: "image".to_string(),
@@ -665,9 +729,10 @@ impl Repository {
             });
         }
 
-        let figurine_rows: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
-            "SELECT id::text, name, ambience_path, video_url FROM figurines"
-        ).fetch_all(&self.pg_pool).await?;
+        let figurine_rows: Vec<(String, String, Option<String>, Option<String>)> =
+            sqlx::query_as("SELECT id::text, name, ambience_path, video_url FROM figurines")
+                .fetch_all(&self.pg_pool)
+                .await?;
         for (id, name, ambience, video) in figurine_rows {
             if let Some(path) = ambience {
                 usages.push(MediaUsageDto {
@@ -709,24 +774,26 @@ impl Repository {
 
     pub async fn get_showings_by_figurine(&self, figurine_id: Uuid) -> Result<Vec<Showing>> {
         let rows = sqlx::query_as::<_, Showing>(
-            "SELECT * FROM figurine_showings WHERE figurine_id = $1 ORDER BY starts_at"
+            "SELECT * FROM figurine_showings WHERE figurine_id = $1 ORDER BY starts_at",
         )
         .bind(figurine_id)
-        .fetch_all(&self.pg_pool).await?;
+        .fetch_all(&self.pg_pool)
+        .await?;
         Ok(rows)
     }
 
     pub async fn get_all_showings(&self) -> Result<Vec<Showing>> {
-        let rows = sqlx::query_as::<_, Showing>(
-            "SELECT * FROM figurine_showings ORDER BY starts_at DESC"
-        )
-        .fetch_all(&self.pg_pool).await?;
+        let rows =
+            sqlx::query_as::<_, Showing>("SELECT * FROM figurine_showings ORDER BY starts_at DESC")
+                .fetch_all(&self.pg_pool)
+                .await?;
         Ok(rows)
     }
 
     pub async fn upsert_showing(&self, req: &crate::models::SaveShowingRequest) -> Result<Uuid> {
         let id = match &req.id {
-            Some(s) => Uuid::parse_str(s).map_err(|_| AppError::BadRequest("Invalid showing ID".to_string()))?,
+            Some(s) => Uuid::parse_str(s)
+                .map_err(|_| AppError::BadRequest("Invalid showing ID".to_string()))?,
             None => Uuid::new_v4(),
         };
         let figurine_id = Uuid::parse_str(&req.figurine_id)
@@ -752,11 +819,16 @@ impl Repository {
 
     pub async fn delete_showing(&self, id: Uuid) -> Result<()> {
         sqlx::query("DELETE FROM figurine_showings WHERE id = $1")
-            .bind(id).execute(&self.pg_pool).await?;
+            .bind(id)
+            .execute(&self.pg_pool)
+            .await?;
         Ok(())
     }
 
-    pub async fn get_figurine_schedule(&self, figurine_id: Uuid) -> Result<(Vec<Showing>, Vec<Booking>, Vec<Booking>)> {
+    pub async fn get_figurine_schedule(
+        &self,
+        figurine_id: Uuid,
+    ) -> Result<(Vec<Showing>, Vec<Booking>, Vec<Booking>)> {
         let today = chrono::Utc::now().date_naive();
         let showings = sqlx::query_as::<_, Showing>(
             "SELECT * FROM figurine_showings WHERE figurine_id = $1 AND ends_at >= $2 ORDER BY starts_at"
@@ -805,21 +877,26 @@ impl Repository {
         let mut tx = self.pg_pool.begin().await?;
         sqlx::query("SELECT pg_advisory_xact_lock($1)")
             .bind(Self::booking_lock_key(figurine_id))
-            .execute(&mut *tx).await?;
+            .execute(&mut *tx)
+            .await?;
 
         let (showing_conflict,): (bool,) = sqlx::query_as(
             "SELECT EXISTS(SELECT 1 FROM figurine_showings WHERE figurine_id = $1 AND starts_at <= $3 AND ends_at >= $2)"
         )
         .bind(figurine_id).bind(starts_at).bind(ends_at)
         .fetch_one(&mut *tx).await?;
-        if showing_conflict { return Ok(None); }
+        if showing_conflict {
+            return Ok(None);
+        }
 
         let (booking_conflict,): (bool,) = sqlx::query_as(
             "SELECT EXISTS(SELECT 1 FROM figurine_bookings WHERE figurine_id = $1 AND status = 'confirmed' AND starts_at <= $3 AND ends_at >= $2)"
         )
         .bind(figurine_id).bind(starts_at).bind(ends_at)
         .fetch_one(&mut *tx).await?;
-        if booking_conflict { return Ok(None); }
+        if booking_conflict {
+            return Ok(None);
+        }
 
         let cancel_token = Self::generate_cancel_token();
         let rec = sqlx::query_as::<_, Booking>(
@@ -841,33 +918,42 @@ impl Repository {
     /// old 8-char (~32-bit) token.
     fn generate_cancel_token() -> String {
         let raw = Uuid::new_v4().to_string().replace('-', "").to_uppercase();
-        format!("{}-{}-{}-{}", &raw[..4], &raw[4..8], &raw[8..12], &raw[12..16])
+        format!(
+            "{}-{}-{}-{}",
+            &raw[..4],
+            &raw[4..8],
+            &raw[8..12],
+            &raw[12..16]
+        )
     }
 
     pub async fn get_booking_by_cancel_token(&self, token: &str) -> Result<Option<Booking>> {
-        Ok(sqlx::query_as::<_, Booking>(
-            "SELECT * FROM figurine_bookings WHERE cancel_token = $1"
+        Ok(
+            sqlx::query_as::<_, Booking>("SELECT * FROM figurine_bookings WHERE cancel_token = $1")
+                .bind(token)
+                .fetch_optional(&self.pg_pool)
+                .await?,
         )
-        .bind(token)
-        .fetch_optional(&self.pg_pool).await?)
     }
 
     pub async fn get_bookings_by_cancel_tokens(&self, tokens: &[String]) -> Result<Vec<Booking>> {
         Ok(sqlx::query_as::<_, Booking>(
-            "SELECT * FROM figurine_bookings WHERE cancel_token = ANY($1)"
+            "SELECT * FROM figurine_bookings WHERE cancel_token = ANY($1)",
         )
         .bind(tokens)
-        .fetch_all(&self.pg_pool).await?)
+        .fetch_all(&self.pg_pool)
+        .await?)
     }
 
     pub async fn cancel_booking_by_token(&self, token: &str) -> Result<Option<Booking>> {
         Ok(sqlx::query_as::<_, Booking>(
             "UPDATE figurine_bookings SET status = 'cancelled'
              WHERE cancel_token = $1 AND status = 'pending'
-             RETURNING *"
+             RETURNING *",
         )
         .bind(token)
-        .fetch_optional(&self.pg_pool).await?)
+        .fetch_optional(&self.pg_pool)
+        .await?)
     }
 
     pub async fn get_bookings_page(
@@ -879,40 +965,73 @@ impl Repository {
     ) -> Result<(Vec<Booking>, i64)> {
         // Build WHERE clauses dynamically
         let mut conditions: Vec<String> = Vec::new();
-        if status_filter.is_some()    { conditions.push(format!("status = ${}::booking_status", conditions.len() + 1)); }
-        if figurine_id_filter.is_some() { conditions.push(format!("figurine_id = ${}", conditions.len() + 1)); }
-        let where_clause = if conditions.is_empty() { String::new() } else { format!("WHERE {}", conditions.join(" AND ")) };
+        if status_filter.is_some() {
+            conditions.push(format!(
+                "status = ${}::booking_status",
+                conditions.len() + 1
+            ));
+        }
+        if figurine_id_filter.is_some() {
+            conditions.push(format!("figurine_id = ${}", conditions.len() + 1));
+        }
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
 
-        let items_sql = format!("SELECT * FROM figurine_bookings {} ORDER BY created_at DESC LIMIT ${} OFFSET ${}", where_clause, conditions.len() + 1, conditions.len() + 2);
+        let items_sql = format!(
+            "SELECT * FROM figurine_bookings {} ORDER BY created_at DESC LIMIT ${} OFFSET ${}",
+            where_clause,
+            conditions.len() + 1,
+            conditions.len() + 2
+        );
         let count_sql = format!("SELECT COUNT(*) FROM figurine_bookings {}", where_clause);
 
         macro_rules! bind_filters {
             ($q:expr) => {{
                 let mut q = $q;
-                if let Some(s) = status_filter      { q = q.bind(s); }
-                if let Some(f) = figurine_id_filter  { q = q.bind(f); }
+                if let Some(s) = status_filter {
+                    q = q.bind(s);
+                }
+                if let Some(f) = figurine_id_filter {
+                    q = q.bind(f);
+                }
                 q
             }};
         }
 
         let items = bind_filters!(sqlx::query_as::<_, Booking>(&items_sql))
-            .bind(limit).bind(offset)
-            .fetch_all(&self.pg_pool).await?;
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.pg_pool)
+            .await?;
 
         let (total,): (i64,) = bind_filters!(sqlx::query_as::<_, (i64,)>(&count_sql))
-            .fetch_one(&self.pg_pool).await?;
+            .fetch_one(&self.pg_pool)
+            .await?;
 
         Ok((items, total))
     }
 
-    pub async fn update_figurine_status(&self, figurine_id: Uuid, status: &crate::models::FigurineStatus) -> Result<()> {
+    pub async fn update_figurine_status(
+        &self,
+        figurine_id: Uuid,
+        status: &crate::models::FigurineStatus,
+    ) -> Result<()> {
         sqlx::query("UPDATE figurines SET status = $1, updated_at = NOW() WHERE id = $2")
-            .bind(status).bind(figurine_id)
-            .execute(&self.pg_pool).await?;
+            .bind(status)
+            .bind(figurine_id)
+            .execute(&self.pg_pool)
+            .await?;
         Ok(())
     }
 
-    pub async fn has_future_confirmed_bookings(&self, figurine_id: Uuid, exclude_id: Uuid) -> Result<bool> {
+    pub async fn has_future_confirmed_bookings(
+        &self,
+        figurine_id: Uuid,
+        exclude_id: Uuid,
+    ) -> Result<bool> {
         let today = chrono::Utc::now().date_naive();
         let (exists,): (bool,) = sqlx::query_as(
             "SELECT EXISTS(SELECT 1 FROM figurine_bookings WHERE id != $1 AND figurine_id = $2 AND status = 'confirmed' AND ends_at >= $3)"
@@ -923,11 +1042,12 @@ impl Repository {
     }
 
     pub async fn get_booking_by_id(&self, id: Uuid) -> Result<Option<Booking>> {
-        Ok(sqlx::query_as::<_, Booking>(
-            "SELECT * FROM figurine_bookings WHERE id = $1"
+        Ok(
+            sqlx::query_as::<_, Booking>("SELECT * FROM figurine_bookings WHERE id = $1")
+                .bind(id)
+                .fetch_optional(&self.pg_pool)
+                .await?,
         )
-        .bind(id)
-        .fetch_optional(&self.pg_pool).await?)
     }
 
     /// Confirm a booking atomically: lock the figurine, re-check conflicts
@@ -946,7 +1066,8 @@ impl Repository {
         let mut tx = self.pg_pool.begin().await?;
         sqlx::query("SELECT pg_advisory_xact_lock($1)")
             .bind(Self::booking_lock_key(figurine_id))
-            .execute(&mut *tx).await?;
+            .execute(&mut *tx)
+            .await?;
 
         let (showing_conflict,): (bool,) = sqlx::query_as(
             "SELECT EXISTS(SELECT 1 FROM figurine_showings WHERE figurine_id = $1 AND starts_at <= $3 AND ends_at >= $2)"
@@ -963,7 +1084,9 @@ impl Repository {
         .bind(booking_id).bind(figurine_id).bind(starts_at).bind(ends_at)
         .fetch_one(&mut *tx).await?;
         if booking_conflict {
-            return Ok(Some("На эти даты уже есть подтверждённая бронь".to_string()));
+            return Ok(Some(
+                "На эти даты уже есть подтверждённая бронь".to_string(),
+            ));
         }
 
         sqlx::query(
@@ -974,21 +1097,28 @@ impl Repository {
 
         sqlx::query("UPDATE figurines SET status = 'reserved', updated_at = NOW() WHERE id = $1")
             .bind(figurine_id)
-            .execute(&mut *tx).await?;
+            .execute(&mut *tx)
+            .await?;
 
         tx.commit().await?;
         Ok(None)
     }
 
     pub async fn get_pending_bookings_count(&self) -> Result<i64> {
-        let (count,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM figurine_bookings WHERE status = 'pending'"
-        )
-        .fetch_one(&self.pg_pool).await?;
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM figurine_bookings WHERE status = 'pending'")
+                .fetch_one(&self.pg_pool)
+                .await?;
         Ok(count)
     }
 
-    pub async fn update_booking_status(&self, id: Uuid, status: &crate::models::BookingStatus, admin_notes: Option<&str>, curator_conditions: Option<&str>) -> Result<()> {
+    pub async fn update_booking_status(
+        &self,
+        id: Uuid,
+        status: &crate::models::BookingStatus,
+        admin_notes: Option<&str>,
+        curator_conditions: Option<&str>,
+    ) -> Result<()> {
         // Direct assignment (not COALESCE) so the admin can clear notes/conditions
         // by sending null/empty, not only overwrite them.
         let affected = sqlx::query(
@@ -1012,11 +1142,13 @@ impl Repository {
     ) -> Result<usize> {
         let mut updated = 0usize;
 
-        if new_preview_path.starts_with("images/preview/") || new_preview_path.starts_with("/static/images/preview/") {
+        if new_preview_path.starts_with("images/preview/")
+            || new_preview_path.starts_with("/static/images/preview/")
+        {
             let result = sqlx::query(
                 "UPDATE images
                  SET file_path = $1, original_path = $2, thumb_path = $3
-                 WHERE file_path = $4 OR original_path = $5 OR thumb_path = $6"
+                 WHERE file_path = $4 OR original_path = $5 OR thumb_path = $6",
             )
             .bind(new_preview_path)
             .bind(new_original_path)
@@ -1024,7 +1156,8 @@ impl Repository {
             .bind(old_path)
             .bind(old_path)
             .bind(old_path)
-            .execute(&self.pg_pool).await?;
+            .execute(&self.pg_pool)
+            .await?;
             updated += result.rows_affected() as usize;
         } else {
             for column in ["file_path", "original_path", "thumb_path"] {
@@ -1032,7 +1165,8 @@ impl Repository {
                 let result = sqlx::query(&query)
                     .bind(new_preview_path)
                     .bind(old_path)
-                    .execute(&self.pg_pool).await?;
+                    .execute(&self.pg_pool)
+                    .await?;
                 updated += result.rows_affected() as usize;
             }
         }
@@ -1047,7 +1181,8 @@ impl Repository {
             let result = sqlx::query(&query)
                 .bind(new_preview_path)
                 .bind(old_path)
-                .execute(&self.pg_pool).await?;
+                .execute(&self.pg_pool)
+                .await?;
             updated += result.rows_affected() as usize;
         }
 
@@ -1067,7 +1202,14 @@ impl Repository {
     // USER ACCOUNTS
     // ============================================================
 
-    pub async fn create_user(&self, email: &str, display_name: &str, hash: &str, visual_pool: &serde_json::Value, ctx: &crate::models::ClientContext) -> Result<crate::models::User> {
+    pub async fn create_user(
+        &self,
+        email: &str,
+        display_name: &str,
+        hash: &str,
+        visual_pool: &serde_json::Value,
+        ctx: &crate::models::ClientContext,
+    ) -> Result<crate::models::User> {
         let user = sqlx::query_as::<_, crate::models::User>(
             "INSERT INTO users (email, display_name, visual_password_hash, visual_pool, signup_ip, signup_country_code, signup_city)
              VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *"
@@ -1092,28 +1234,30 @@ impl Repository {
     }
 
     pub async fn find_user_by_email(&self, email: &str) -> Result<Option<crate::models::User>> {
-        let user = sqlx::query_as::<_, crate::models::User>(
-            "SELECT * FROM users WHERE email = $1"
-        )
-        .bind(email)
-        .fetch_optional(&self.pg_pool)
-        .await?;
+        let user = sqlx::query_as::<_, crate::models::User>("SELECT * FROM users WHERE email = $1")
+            .bind(email)
+            .fetch_optional(&self.pg_pool)
+            .await?;
         Ok(user)
     }
 
     pub async fn find_user_by_id(&self, id: Uuid) -> Result<Option<crate::models::User>> {
-        let user = sqlx::query_as::<_, crate::models::User>(
-            "SELECT * FROM users WHERE id = $1"
-        )
-        .bind(id)
-        .fetch_optional(&self.pg_pool)
-        .await?;
+        let user = sqlx::query_as::<_, crate::models::User>("SELECT * FROM users WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&self.pg_pool)
+            .await?;
         Ok(user)
     }
 
     // ── Sessions ─────────────────────────────────────────────
 
-    pub async fn create_session(&self, user_id: Uuid, token: &str, expires_at: chrono::DateTime<chrono::Utc>, ctx: &crate::models::ClientContext) -> Result<()> {
+    pub async fn create_session(
+        &self,
+        user_id: Uuid,
+        token: &str,
+        expires_at: chrono::DateTime<chrono::Utc>,
+        ctx: &crate::models::ClientContext,
+    ) -> Result<()> {
         sqlx::query(
             "INSERT INTO user_sessions (user_id, token, expires_at, ip, user_agent, country_code, city)
              VALUES ($1, $2, $3, $4, $5, $6, $7)"
@@ -1134,7 +1278,7 @@ impl Repository {
         let user = sqlx::query_as::<_, crate::models::User>(
             "SELECT u.* FROM users u
              JOIN user_sessions s ON s.user_id = u.id
-             WHERE s.token = $1 AND s.expires_at > NOW()"
+             WHERE s.token = $1 AND s.expires_at > NOW()",
         )
         .bind(token)
         .fetch_optional(&self.pg_pool)
@@ -1153,12 +1297,10 @@ impl Repository {
     // ── Wishlist ─────────────────────────────────────────────
 
     pub async fn get_user_wishlist(&self, user_id: Uuid) -> Result<Vec<String>> {
-        let row: (Vec<String>,) = sqlx::query_as(
-            "SELECT wishlist FROM users WHERE id = $1"
-        )
-        .bind(user_id)
-        .fetch_one(&self.pg_pool)
-        .await?;
+        let row: (Vec<String>,) = sqlx::query_as("SELECT wishlist FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_one(&self.pg_pool)
+            .await?;
         Ok(row.0)
     }
 
@@ -1178,7 +1320,13 @@ impl Repository {
     // three. The email guard mirrors link_bookings_to_user: the secret token is the
     // lookup key, but the row's email must match the account claiming it.
 
-    async fn link_claim_row(&self, table: &str, user_id: Uuid, email: &str, token: &str) -> Result<Option<ClaimMatch>> {
+    async fn link_claim_row(
+        &self,
+        table: &str,
+        user_id: Uuid,
+        email: &str,
+        token: &str,
+    ) -> Result<Option<ClaimMatch>> {
         // `table` is a trusted, hard-coded constant (never user input); token and
         // email are bound parameters, so there is no injection surface.
         let select = format!(
@@ -1188,10 +1336,16 @@ impl Repository {
             .bind(token)
             .fetch_optional(&self.pg_pool)
             .await?;
-        let Some((req_email, owner, name)) = row else { return Ok(None) };
+        let Some((req_email, owner, name)) = row else {
+            return Ok(None);
+        };
 
         if !req_email.trim().eq_ignore_ascii_case(email.trim()) {
-            return Ok(Some(ClaimMatch { email_ok: false, linked: false, name }));
+            return Ok(Some(ClaimMatch {
+                email_ok: false,
+                linked: false,
+                name,
+            }));
         }
         let linked = match owner {
             Some(o) if o != user_id => false, // already attached to a different account
@@ -1205,18 +1359,39 @@ impl Repository {
                 true
             }
         };
-        Ok(Some(ClaimMatch { email_ok: true, linked, name }))
+        Ok(Some(ClaimMatch {
+            email_ok: true,
+            linked,
+            name,
+        }))
     }
 
-    pub async fn link_booking_by_token(&self, user_id: Uuid, email: &str, token: &str) -> Result<Option<ClaimMatch>> {
-        self.link_claim_row("figurine_bookings", user_id, email, token).await
+    pub async fn link_booking_by_token(
+        &self,
+        user_id: Uuid,
+        email: &str,
+        token: &str,
+    ) -> Result<Option<ClaimMatch>> {
+        self.link_claim_row("figurine_bookings", user_id, email, token)
+            .await
     }
 
-    pub async fn link_waitlist_by_token(&self, user_id: Uuid, email: &str, token: &str) -> Result<Option<ClaimMatch>> {
-        self.link_claim_row("figurine_waitlist", user_id, email, token).await
+    pub async fn link_waitlist_by_token(
+        &self,
+        user_id: Uuid,
+        email: &str,
+        token: &str,
+    ) -> Result<Option<ClaimMatch>> {
+        self.link_claim_row("figurine_waitlist", user_id, email, token)
+            .await
     }
 
-    pub async fn link_notify_order_by_token(&self, user_id: Uuid, email: &str, token: &str) -> Result<Option<ClaimMatch>> {
+    pub async fn link_notify_order_by_token(
+        &self,
+        user_id: Uuid,
+        email: &str,
+        token: &str,
+    ) -> Result<Option<ClaimMatch>> {
         // Only "notify" orders ever carry a cancel_token, so a match here is unambiguous.
         self.link_claim_row("orders", user_id, email, token).await
     }
@@ -1237,10 +1412,14 @@ impl Repository {
 
     // ── Challenges ───────────────────────────────────────────
 
-    pub async fn save_challenge(&self, email: &str, tokens_json: &serde_json::Value) -> Result<Uuid> {
+    pub async fn save_challenge(
+        &self,
+        email: &str,
+        tokens_json: &serde_json::Value,
+    ) -> Result<Uuid> {
         let rec: (Uuid,) = sqlx::query_as(
             "INSERT INTO login_challenges (email, tokens_json)
-             VALUES ($1, $2) RETURNING id"
+             VALUES ($1, $2) RETURNING id",
         )
         .bind(email)
         .bind(tokens_json)
@@ -1252,7 +1431,7 @@ impl Repository {
     pub async fn get_challenge(&self, id: Uuid) -> Result<Option<(String, serde_json::Value)>> {
         let row: Option<(String, serde_json::Value)> = sqlx::query_as(
             "SELECT email, tokens_json FROM login_challenges
-             WHERE id = $1 AND expires_at > NOW() AND used_at IS NULL"
+             WHERE id = $1 AND expires_at > NOW() AND used_at IS NULL",
         )
         .bind(id)
         .fetch_optional(&self.pg_pool)
@@ -1270,10 +1449,15 @@ impl Repository {
 
     // ── Lockout ──────────────────────────────────────────────
 
-    pub async fn record_attempt(&self, email: &str, success: bool, ctx: &crate::models::ClientContext) -> Result<()> {
+    pub async fn record_attempt(
+        &self,
+        email: &str,
+        success: bool,
+        ctx: &crate::models::ClientContext,
+    ) -> Result<()> {
         sqlx::query(
             "INSERT INTO login_attempts (email, success, ip, user_agent, country_code, city)
-             VALUES ($1, $2, $3, $4, $5, $6)"
+             VALUES ($1, $2, $3, $4, $5, $6)",
         )
         .bind(email)
         .bind(success)
@@ -1289,7 +1473,7 @@ impl Repository {
     /// Delete login attempts older than `days` (retention / GDPR housekeeping).
     pub async fn prune_old_login_attempts(&self, days: i64) -> Result<u64> {
         let result = sqlx::query(
-            "DELETE FROM login_attempts WHERE attempted_at < NOW() - ($1 || ' days')::interval"
+            "DELETE FROM login_attempts WHERE attempted_at < NOW() - ($1 || ' days')::interval",
         )
         .bind(days)
         .execute(&self.pg_pool)
@@ -1302,7 +1486,7 @@ impl Repository {
             "SELECT COUNT(*) FROM login_attempts
              WHERE email = $1
                AND success = false
-               AND attempted_at > NOW() - ($2 || ' minutes')::interval"
+               AND attempted_at > NOW() - ($2 || ' minutes')::interval",
         )
         .bind(email)
         .bind(window_minutes)
@@ -1317,8 +1501,15 @@ impl Repository {
     /// not proof of ownership, so we additionally require the booking's
     /// requester_email to match the account's email — preventing a guessed token
     /// from claiming someone else's booking.
-    pub async fn link_bookings_to_user(&self, user_id: Uuid, email: &str, cancel_tokens: &[String]) -> Result<usize> {
-        if cancel_tokens.is_empty() { return Ok(0); }
+    pub async fn link_bookings_to_user(
+        &self,
+        user_id: Uuid,
+        email: &str,
+        cancel_tokens: &[String],
+    ) -> Result<usize> {
+        if cancel_tokens.is_empty() {
+            return Ok(0);
+        }
         let result = sqlx::query(
             "UPDATE figurine_bookings SET user_id = $1
              WHERE cancel_token = ANY($2) AND user_id IS NULL AND lower(requester_email) = lower($3)"
@@ -1341,7 +1532,7 @@ impl Repository {
 
     pub async fn get_user_bookings(&self, user_id: Uuid) -> Result<Vec<crate::models::Booking>> {
         let bookings = sqlx::query_as::<_, crate::models::Booking>(
-            "SELECT * FROM figurine_bookings WHERE user_id = $1 ORDER BY created_at DESC"
+            "SELECT * FROM figurine_bookings WHERE user_id = $1 ORDER BY created_at DESC",
         )
         .bind(user_id)
         .fetch_all(&self.pg_pool)
@@ -1351,7 +1542,7 @@ impl Repository {
 
     pub async fn get_user_orders(&self, user_id: Uuid) -> Result<Vec<crate::models::Order>> {
         let orders = sqlx::query_as::<_, crate::models::Order>(
-            "SELECT * FROM orders WHERE user_id = $1 ORDER BY created_at DESC"
+            "SELECT * FROM orders WHERE user_id = $1 ORDER BY created_at DESC",
         )
         .bind(user_id)
         .fetch_all(&self.pg_pool)
@@ -1361,7 +1552,12 @@ impl Repository {
 
     // ── Admin user management ────────────────────────────────
 
-    pub async fn admin_list_users(&self, search: Option<&str>, limit: i64, offset: i64) -> Result<(Vec<crate::models::AdminUserListItem>, i64)> {
+    pub async fn admin_list_users(
+        &self,
+        search: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<crate::models::AdminUserListItem>, i64)> {
         let pattern = search.map(|s| format!("%{}%", s.to_lowercase()));
         let items = if let Some(ref p) = pattern {
             sqlx::query_as::<_, crate::models::AdminUserListItem>(
@@ -1375,10 +1571,13 @@ impl Repository {
                  WHERE LOWER(u.email) LIKE $1 OR LOWER(u.display_name) LIKE $1
                  GROUP BY u.id
                  ORDER BY u.created_at DESC
-                 LIMIT $2 OFFSET $3"
+                 LIMIT $2 OFFSET $3",
             )
-            .bind(p).bind(limit).bind(offset)
-            .fetch_all(&self.pg_pool).await?
+            .bind(p)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.pg_pool)
+            .await?
         } else {
             sqlx::query_as::<_, crate::models::AdminUserListItem>(
                 "SELECT u.id::text, u.email, u.display_name, u.admin_notes,
@@ -1390,10 +1589,12 @@ impl Repository {
                  LEFT JOIN orders o ON o.user_id = u.id
                  GROUP BY u.id
                  ORDER BY u.created_at DESC
-                 LIMIT $1 OFFSET $2"
+                 LIMIT $1 OFFSET $2",
             )
-            .bind(limit).bind(offset)
-            .fetch_all(&self.pg_pool).await?
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.pg_pool)
+            .await?
         };
 
         let (total,): (i64,) = if let Some(ref p) = pattern {
@@ -1402,32 +1603,47 @@ impl Repository {
             ).bind(p).fetch_one(&self.pg_pool).await?
         } else {
             sqlx::query_as("SELECT COUNT(*) FROM users")
-                .fetch_one(&self.pg_pool).await?
+                .fetch_one(&self.pg_pool)
+                .await?
         };
 
         Ok((items, total))
     }
 
-    pub async fn admin_get_user_sessions(&self, user_id: Uuid) -> Result<Vec<crate::models::AdminSessionDto>> {
-        let rows: Vec<(Uuid, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, Option<String>, Option<String>, Option<String>)> =
-            sqlx::query_as(
-                "SELECT id, created_at, expires_at, ip, country_code, city FROM user_sessions
-                 WHERE user_id = $1 ORDER BY created_at DESC"
-            )
-            .bind(user_id)
-            .fetch_all(&self.pg_pool)
-            .await?;
+    pub async fn admin_get_user_sessions(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<crate::models::AdminSessionDto>> {
+        let rows: Vec<(
+            Uuid,
+            chrono::DateTime<chrono::Utc>,
+            chrono::DateTime<chrono::Utc>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        )> = sqlx::query_as(
+            "SELECT id, created_at, expires_at, ip, country_code, city FROM user_sessions
+                 WHERE user_id = $1 ORDER BY created_at DESC",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pg_pool)
+        .await?;
 
         let now = chrono::Utc::now();
-        Ok(rows.into_iter().map(|(id, created_at, expires_at, ip, country_code, city)| crate::models::AdminSessionDto {
-            id: id.to_string(),
-            created_at: created_at.to_rfc3339(),
-            expires_at: expires_at.to_rfc3339(),
-            is_active: expires_at > now,
-            ip,
-            country_code,
-            city,
-        }).collect())
+        Ok(rows
+            .into_iter()
+            .map(|(id, created_at, expires_at, ip, country_code, city)| {
+                crate::models::AdminSessionDto {
+                    id: id.to_string(),
+                    created_at: created_at.to_rfc3339(),
+                    expires_at: expires_at.to_rfc3339(),
+                    is_active: expires_at > now,
+                    ip,
+                    country_code,
+                    city,
+                }
+            })
+            .collect())
     }
 
     pub async fn admin_revoke_all_sessions(&self, user_id: Uuid) -> Result<u64> {
@@ -1456,7 +1672,12 @@ impl Repository {
         Ok(())
     }
 
-    pub async fn admin_create_reset_token(&self, user_id: Uuid, token: &str, expires_at: chrono::DateTime<chrono::Utc>) -> Result<()> {
+    pub async fn admin_create_reset_token(
+        &self,
+        user_id: Uuid,
+        token: &str,
+        expires_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<()> {
         sqlx::query(
             "UPDATE users SET password_reset_token = $1, password_reset_expires_at = $2 WHERE id = $3"
         )
@@ -1469,12 +1690,18 @@ impl Repository {
     }
 
     /// Self-service reset: store the token and record where it was requested from.
-    pub async fn create_self_reset_token(&self, user_id: Uuid, token: &str, expires_at: chrono::DateTime<chrono::Utc>, ctx: &crate::models::ClientContext) -> Result<()> {
+    pub async fn create_self_reset_token(
+        &self,
+        user_id: Uuid,
+        token: &str,
+        expires_at: chrono::DateTime<chrono::Utc>,
+        ctx: &crate::models::ClientContext,
+    ) -> Result<()> {
         sqlx::query(
             "UPDATE users SET password_reset_token = $1, password_reset_expires_at = $2,
                  last_reset_request_ip = $3, last_reset_request_country_code = $4,
                  last_reset_request_city = $5, last_reset_request_at = NOW()
-             WHERE id = $6"
+             WHERE id = $6",
         )
         .bind(token)
         .bind(expires_at)
@@ -1488,7 +1715,10 @@ impl Repository {
     }
 
     /// Returns the user if token is valid and not yet expired.
-    pub async fn find_user_by_reset_token(&self, token: &str) -> Result<Option<crate::models::User>> {
+    pub async fn find_user_by_reset_token(
+        &self,
+        token: &str,
+    ) -> Result<Option<crate::models::User>> {
         let user = sqlx::query_as::<_, crate::models::User>(
             "SELECT * FROM users WHERE password_reset_token = $1 AND password_reset_expires_at > NOW()"
         )
@@ -1498,7 +1728,13 @@ impl Repository {
         Ok(user)
     }
 
-    pub async fn apply_password_reset(&self, user_id: Uuid, new_hash: &str, visual_pool: &serde_json::Value, ctx: &crate::models::ClientContext) -> Result<()> {
+    pub async fn apply_password_reset(
+        &self,
+        user_id: Uuid,
+        new_hash: &str,
+        visual_pool: &serde_json::Value,
+        ctx: &crate::models::ClientContext,
+    ) -> Result<()> {
         sqlx::query(
             "UPDATE users SET visual_password_hash = $1, visual_pool = $2,
                  password_reset_token = NULL, password_reset_expires_at = NULL,
@@ -1529,7 +1765,7 @@ impl Repository {
         let rec = sqlx::query_as::<_, crate::models::Comment>(
             "INSERT INTO figurine_comments (figurine_id, user_id, author_name, author_email, body)
              VALUES ($1, $2, $3, $4, $5)
-             RETURNING *"
+             RETURNING *",
         )
         .bind(figurine_id)
         .bind(user_id)
@@ -1541,19 +1777,21 @@ impl Repository {
         Ok(rec)
     }
 
-    pub async fn get_approved_comments(&self, figurine_id: Uuid, newest_first: bool) -> Result<Vec<crate::models::CommentWithAvatar>> {
+    pub async fn get_approved_comments(
+        &self,
+        figurine_id: Uuid,
+        newest_first: bool,
+    ) -> Result<Vec<crate::models::CommentWithAvatar>> {
         let order = if newest_first { "DESC" } else { "ASC" };
-        let rows = sqlx::query_as::<_, crate::models::CommentWithAvatar>(
-            &format!(
-                "SELECT c.id, c.figurine_id, c.user_id, c.author_name, c.author_email, \
+        let rows = sqlx::query_as::<_, crate::models::CommentWithAvatar>(&format!(
+            "SELECT c.id, c.figurine_id, c.user_id, c.author_name, c.author_email, \
                         c.body, c.is_approved, c.admin_reply, c.created_at, \
                         u.avatar_url \
                  FROM figurine_comments c \
                  LEFT JOIN users u ON u.id = c.user_id \
                  WHERE c.figurine_id = $1 AND c.is_approved = true \
                  ORDER BY c.created_at {order}"
-            )
-        )
+        ))
         .bind(figurine_id)
         .fetch_all(&self.pg_pool)
         .await?;
@@ -1561,11 +1799,10 @@ impl Repository {
     }
 
     pub async fn get_pending_comments_count(&self) -> Result<i64> {
-        let (count,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM figurine_comments WHERE is_approved = false"
-        )
-        .fetch_one(&self.pg_pool)
-        .await?;
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM figurine_comments WHERE is_approved = false")
+                .fetch_one(&self.pg_pool)
+                .await?;
         Ok(count)
     }
 
@@ -1578,7 +1815,9 @@ impl Repository {
         offset: i64,
     ) -> Result<(Vec<(crate::models::Comment, String)>, i64)> {
         let mut conditions = Vec::new();
-        if only_pending { conditions.push("c.is_approved = false"); }
+        if only_pending {
+            conditions.push("c.is_approved = false");
+        }
         let figurine_cond;
         if figurine_filter.is_some() {
             figurine_cond = "c.figurine_id = $3".to_string();
@@ -1601,31 +1840,39 @@ impl Repository {
                  LIMIT $1 OFFSET $2"
             );
             let mut q = sqlx::query(&query_str).bind(limit).bind(offset);
-            if let Some(fid) = figurine_filter { q = q.bind(fid); }
+            if let Some(fid) = figurine_filter {
+                q = q.bind(fid);
+            }
 
             let rows = q.fetch_all(&self.pg_pool).await?;
 
             use sqlx::Row;
-            rows.into_iter().map(|row| {
-                let c = crate::models::Comment {
-                    id:           row.get("id"),
-                    figurine_id:  row.get("figurine_id"),
-                    user_id:      row.get("user_id"),
-                    author_name:  row.get("author_name"),
-                    author_email: row.get("author_email"),
-                    body:         row.get("body"),
-                    is_approved:  row.get("is_approved"),
-                    admin_reply:  row.get("admin_reply"),
-                    created_at:   row.get("created_at"),
-                };
-                let name: String = row.get("figurine_name");
-                (c, name)
-            }).collect()
+            rows.into_iter()
+                .map(|row| {
+                    let c = crate::models::Comment {
+                        id: row.get("id"),
+                        figurine_id: row.get("figurine_id"),
+                        user_id: row.get("user_id"),
+                        author_name: row.get("author_name"),
+                        author_email: row.get("author_email"),
+                        body: row.get("body"),
+                        is_approved: row.get("is_approved"),
+                        admin_reply: row.get("admin_reply"),
+                        created_at: row.get("created_at"),
+                    };
+                    let name: String = row.get("figurine_name");
+                    (c, name)
+                })
+                .collect()
         };
 
-        let count_str = format!("SELECT COUNT(*) FROM figurine_comments c JOIN figurines f ON f.id = c.figurine_id {where_clause}");
+        let count_str = format!(
+            "SELECT COUNT(*) FROM figurine_comments c JOIN figurines f ON f.id = c.figurine_id {where_clause}"
+        );
         let mut count_q = sqlx::query_as::<_, (i64,)>(&count_str);
-        if let Some(fid) = figurine_filter { count_q = count_q.bind(fid); }
+        if let Some(fid) = figurine_filter {
+            count_q = count_q.bind(fid);
+        }
         let (total,) = count_q.fetch_one(&self.pg_pool).await?;
 
         Ok((items, total))
@@ -1674,7 +1921,7 @@ impl Repository {
     pub async fn upsert_setting(&self, key: &str, value: &str) -> Result<()> {
         sqlx::query(
             "INSERT INTO settings (key, value) VALUES ($1, $2)
-             ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"
+             ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
         )
         .bind(key)
         .bind(value)
@@ -1683,9 +1930,13 @@ impl Repository {
         Ok(())
     }
 
-    pub async fn update_user_display_name(&self, user_id: Uuid, display_name: &str) -> Result<crate::models::User> {
+    pub async fn update_user_display_name(
+        &self,
+        user_id: Uuid,
+        display_name: &str,
+    ) -> Result<crate::models::User> {
         let user = sqlx::query_as::<_, crate::models::User>(
-            "UPDATE users SET display_name = $1 WHERE id = $2 RETURNING *"
+            "UPDATE users SET display_name = $1 WHERE id = $2 RETURNING *",
         )
         .bind(display_name)
         .bind(user_id)
@@ -1694,9 +1945,13 @@ impl Repository {
         Ok(user)
     }
 
-    pub async fn update_user_avatar(&self, user_id: Uuid, avatar_url: &str) -> Result<crate::models::User> {
+    pub async fn update_user_avatar(
+        &self,
+        user_id: Uuid,
+        avatar_url: &str,
+    ) -> Result<crate::models::User> {
         let user = sqlx::query_as::<_, crate::models::User>(
-            "UPDATE users SET avatar_url = $1 WHERE id = $2 RETURNING *"
+            "UPDATE users SET avatar_url = $1 WHERE id = $2 RETURNING *",
         )
         .bind(avatar_url)
         .bind(user_id)
@@ -1729,7 +1984,9 @@ impl Repository {
         .bind(figurine_id).bind(starts_at).bind(ends_at)
         .fetch_one(&self.pg_pool).await?;
 
-        if showing_conflict { return Ok(true); }
+        if showing_conflict {
+            return Ok(true);
+        }
 
         let (booking_conflict,): (bool,) = sqlx::query_as(
             "SELECT EXISTS(SELECT 1 FROM figurine_bookings WHERE figurine_id = $1 AND id != $2 AND status = 'confirmed' AND starts_at <= $4 AND ends_at >= $3)"
@@ -1753,10 +2010,13 @@ impl Repository {
         Ok(sqlx::query_as::<_, crate::models::Booking>(
             "UPDATE figurine_bookings SET starts_at = $1, ends_at = $2
              WHERE cancel_token = $3 AND status = 'pending'
-             RETURNING *"
+             RETURNING *",
         )
-        .bind(starts_at).bind(ends_at).bind(token)
-        .fetch_optional(&self.pg_pool).await?)
+        .bind(starts_at)
+        .bind(ends_at)
+        .bind(token)
+        .fetch_optional(&self.pg_pool)
+        .await?)
     }
 
     // === WAITLIST ===
@@ -1796,46 +2056,65 @@ impl Repository {
         .bind(&token)
         .fetch_one(&self.pg_pool).await?;
 
-        let position = self.waitlist_position(figurine_id, entry.created_at).await?;
+        let position = self
+            .waitlist_position(figurine_id, entry.created_at)
+            .await?;
         Ok((entry, position))
     }
 
     /// 1-based rank of an entry in its figurine queue, ordered by join time.
     /// Derived from `created_at` ordering, so positions recompute automatically
     /// whenever anyone leaves the queue — no stored counter to maintain.
-    pub async fn waitlist_position(&self, figurine_id: Uuid, created_at: chrono::DateTime<chrono::Utc>) -> Result<i64> {
+    pub async fn waitlist_position(
+        &self,
+        figurine_id: Uuid,
+        created_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<i64> {
         let (pos,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM figurine_waitlist WHERE figurine_id = $1 AND created_at <= $2"
+            "SELECT COUNT(*) FROM figurine_waitlist WHERE figurine_id = $1 AND created_at <= $2",
         )
         .bind(figurine_id)
         .bind(created_at)
-        .fetch_one(&self.pg_pool).await?;
+        .fetch_one(&self.pg_pool)
+        .await?;
         Ok(pos)
     }
 
-    pub async fn get_user_waitlist(&self, user_id: Uuid) -> Result<Vec<crate::models::WaitlistEntry>> {
+    pub async fn get_user_waitlist(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<crate::models::WaitlistEntry>> {
         Ok(sqlx::query_as::<_, crate::models::WaitlistEntry>(
-            "SELECT * FROM figurine_waitlist WHERE user_id = $1 ORDER BY created_at DESC"
+            "SELECT * FROM figurine_waitlist WHERE user_id = $1 ORDER BY created_at DESC",
         )
         .bind(user_id)
-        .fetch_all(&self.pg_pool).await?)
+        .fetch_all(&self.pg_pool)
+        .await?)
     }
 
-    pub async fn get_waitlist_by_cancel_token(&self, token: &str) -> Result<Option<crate::models::WaitlistEntry>> {
+    pub async fn get_waitlist_by_cancel_token(
+        &self,
+        token: &str,
+    ) -> Result<Option<crate::models::WaitlistEntry>> {
         Ok(sqlx::query_as::<_, crate::models::WaitlistEntry>(
-            "SELECT * FROM figurine_waitlist WHERE cancel_token = $1"
+            "SELECT * FROM figurine_waitlist WHERE cancel_token = $1",
         )
         .bind(token)
-        .fetch_optional(&self.pg_pool).await?)
+        .fetch_optional(&self.pg_pool)
+        .await?)
     }
 
     /// Leave the queue by token. Idempotent — returns the removed row if any.
-    pub async fn remove_waitlist_by_token(&self, token: &str) -> Result<Option<crate::models::WaitlistEntry>> {
+    pub async fn remove_waitlist_by_token(
+        &self,
+        token: &str,
+    ) -> Result<Option<crate::models::WaitlistEntry>> {
         Ok(sqlx::query_as::<_, crate::models::WaitlistEntry>(
-            "DELETE FROM figurine_waitlist WHERE cancel_token = $1 RETURNING *"
+            "DELETE FROM figurine_waitlist WHERE cancel_token = $1 RETURNING *",
         )
         .bind(token)
-        .fetch_optional(&self.pg_pool).await?)
+        .fetch_optional(&self.pg_pool)
+        .await?)
     }
 
     pub async fn get_waitlist_admin(
@@ -1844,15 +2123,17 @@ impl Repository {
     ) -> Result<Vec<crate::models::WaitlistEntry>> {
         if let Some(fid) = figurine_id {
             Ok(sqlx::query_as::<_, crate::models::WaitlistEntry>(
-                "SELECT * FROM figurine_waitlist WHERE figurine_id = $1 ORDER BY created_at ASC"
+                "SELECT * FROM figurine_waitlist WHERE figurine_id = $1 ORDER BY created_at ASC",
             )
             .bind(fid)
-            .fetch_all(&self.pg_pool).await?)
+            .fetch_all(&self.pg_pool)
+            .await?)
         } else {
             Ok(sqlx::query_as::<_, crate::models::WaitlistEntry>(
-                "SELECT * FROM figurine_waitlist ORDER BY created_at ASC"
+                "SELECT * FROM figurine_waitlist ORDER BY created_at ASC",
             )
-            .fetch_all(&self.pg_pool).await?)
+            .fetch_all(&self.pg_pool)
+            .await?)
         }
     }
 
@@ -1864,21 +2145,26 @@ impl Repository {
         Ok(())
     }
 
-    pub async fn get_waitlist_for_figurine(&self, figurine_id: Uuid) -> Result<Vec<crate::models::WaitlistEntry>> {
+    pub async fn get_waitlist_for_figurine(
+        &self,
+        figurine_id: Uuid,
+    ) -> Result<Vec<crate::models::WaitlistEntry>> {
         Ok(sqlx::query_as::<_, crate::models::WaitlistEntry>(
-            "SELECT * FROM figurine_waitlist WHERE figurine_id = $1 ORDER BY created_at ASC"
+            "SELECT * FROM figurine_waitlist WHERE figurine_id = $1 ORDER BY created_at ASC",
         )
         .bind(figurine_id)
-        .fetch_all(&self.pg_pool).await?)
+        .fetch_all(&self.pg_pool)
+        .await?)
     }
 
     pub async fn mark_waitlist_notified(&self, figurine_id: Uuid) -> Result<u64> {
-        Ok(sqlx::query(
-            "DELETE FROM figurine_waitlist WHERE figurine_id = $1"
+        Ok(
+            sqlx::query("DELETE FROM figurine_waitlist WHERE figurine_id = $1")
+                .bind(figurine_id)
+                .execute(&self.pg_pool)
+                .await?
+                .rows_affected(),
         )
-        .bind(figurine_id)
-        .execute(&self.pg_pool).await?
-        .rows_affected())
     }
 
     // ── Message threads ────────────────────────────────────────
@@ -1899,17 +2185,24 @@ impl Repository {
 
         let thread = sqlx::query_as::<_, crate::models::MessageThread>(
             "INSERT INTO message_threads (user_id, category, reference_id, subject)
-             VALUES ($1, $2, $3, $4) RETURNING *"
+             VALUES ($1, $2, $3, $4) RETURNING *",
         )
-        .bind(user_id).bind(category).bind(reference_id).bind(subject)
-        .fetch_one(&mut *tx).await?;
+        .bind(user_id)
+        .bind(category)
+        .bind(reference_id)
+        .bind(subject)
+        .fetch_one(&mut *tx)
+        .await?;
 
         let msg = sqlx::query_as::<_, crate::models::ThreadMessage>(
             "INSERT INTO thread_messages (thread_id, from_admin, body)
-             VALUES ($1, $2, $3) RETURNING *"
+             VALUES ($1, $2, $3) RETURNING *",
         )
-        .bind(thread.id).bind(from_admin).bind(body)
-        .fetch_one(&mut *tx).await?;
+        .bind(thread.id)
+        .bind(from_admin)
+        .bind(body)
+        .fetch_one(&mut *tx)
+        .await?;
 
         for att in attachments {
             sqlx::query(
@@ -1933,22 +2226,28 @@ impl Repository {
     ) -> Result<crate::models::ThreadMessage> {
         let mut tx = self.pg_pool.begin().await?;
 
-        let exists: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM message_threads WHERE id = $1)"
-        )
-        .bind(thread_id)
-        .fetch_one(&mut *tx).await?;
+        let exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM message_threads WHERE id = $1)")
+                .bind(thread_id)
+                .fetch_one(&mut *tx)
+                .await?;
 
         if !exists {
-            return Err(crate::error::AppError::NotFound(format!("Thread {} not found", thread_id)));
+            return Err(crate::error::AppError::NotFound(format!(
+                "Thread {} not found",
+                thread_id
+            )));
         }
 
         let msg = sqlx::query_as::<_, crate::models::ThreadMessage>(
             "INSERT INTO thread_messages (thread_id, from_admin, body)
-             VALUES ($1, $2, $3) RETURNING *"
+             VALUES ($1, $2, $3) RETURNING *",
         )
-        .bind(thread_id).bind(from_admin).bind(body)
-        .fetch_one(&mut *tx).await?;
+        .bind(thread_id)
+        .bind(from_admin)
+        .bind(body)
+        .fetch_one(&mut *tx)
+        .await?;
 
         for att in attachments {
             sqlx::query(
@@ -1959,16 +2258,20 @@ impl Repository {
         }
 
         sqlx::query(
-            "UPDATE message_threads SET last_message_at = NOW(), status = 'open' WHERE id = $1"
+            "UPDATE message_threads SET last_message_at = NOW(), status = 'open' WHERE id = $1",
         )
         .bind(thread_id)
-        .execute(&mut *tx).await?;
+        .execute(&mut *tx)
+        .await?;
 
         tx.commit().await?;
         Ok(msg)
     }
 
-    pub async fn get_user_threads(&self, user_id: Uuid) -> Result<Vec<(crate::models::MessageThread, i64, Option<String>)>> {
+    pub async fn get_user_threads(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<(crate::models::MessageThread, i64, Option<String>)>> {
         let rows: Vec<(Uuid, Uuid, String, Option<Uuid>, String, String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, i64, Option<String>)> = sqlx::query_as(
             r#"SELECT
                 t.id, t.user_id, t.category, t.reference_id, t.subject,
@@ -1984,30 +2287,67 @@ impl Repository {
         .bind(user_id)
         .fetch_all(&self.pg_pool).await?;
 
-        Ok(rows.into_iter().map(|(id, user_id, category, reference_id, subject, status, created_at, last_message_at, unread, preview)| {
-            let thread = crate::models::MessageThread { id, user_id, category, reference_id, subject, status, created_at, last_message_at };
-            (thread, unread, preview)
-        }).collect())
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    user_id,
+                    category,
+                    reference_id,
+                    subject,
+                    status,
+                    created_at,
+                    last_message_at,
+                    unread,
+                    preview,
+                )| {
+                    let thread = crate::models::MessageThread {
+                        id,
+                        user_id,
+                        category,
+                        reference_id,
+                        subject,
+                        status,
+                        created_at,
+                        last_message_at,
+                    };
+                    (thread, unread, preview)
+                },
+            )
+            .collect())
     }
 
-    pub async fn get_thread_messages(&self, thread_id: Uuid, user_id: Option<Uuid>) -> Result<(crate::models::MessageThread, Vec<crate::models::ThreadMessage>)> {
+    pub async fn get_thread_messages(
+        &self,
+        thread_id: Uuid,
+        user_id: Option<Uuid>,
+    ) -> Result<(
+        crate::models::MessageThread,
+        Vec<crate::models::ThreadMessage>,
+    )> {
         let thread = sqlx::query_as::<_, crate::models::MessageThread>(
-            "SELECT * FROM message_threads WHERE id = $1"
+            "SELECT * FROM message_threads WHERE id = $1",
         )
         .bind(thread_id)
-        .fetch_optional(&self.pg_pool).await?
-        .ok_or_else(|| crate::error::AppError::NotFound(format!("Thread {} not found", thread_id)))?;
+        .fetch_optional(&self.pg_pool)
+        .await?
+        .ok_or_else(|| {
+            crate::error::AppError::NotFound(format!("Thread {} not found", thread_id))
+        })?;
 
         if let Some(uid) = user_id
-            && thread.user_id != uid {
-                return Err(crate::error::AppError::Unauthorized);
-            }
+            && thread.user_id != uid
+        {
+            return Err(crate::error::AppError::Unauthorized);
+        }
 
         let messages = sqlx::query_as::<_, crate::models::ThreadMessage>(
-            "SELECT * FROM thread_messages WHERE thread_id = $1 ORDER BY created_at ASC"
+            "SELECT * FROM thread_messages WHERE thread_id = $1 ORDER BY created_at ASC",
         )
         .bind(thread_id)
-        .fetch_all(&self.pg_pool).await?;
+        .fetch_all(&self.pg_pool)
+        .await?;
 
         Ok((thread, messages))
     }
@@ -2016,34 +2356,39 @@ impl Repository {
         sqlx::query(
             "UPDATE thread_messages SET read_at = NOW()
              WHERE thread_id = $1 AND from_admin = true AND read_at IS NULL
-             AND EXISTS (SELECT 1 FROM message_threads WHERE id = $1 AND user_id = $2)"
+             AND EXISTS (SELECT 1 FROM message_threads WHERE id = $1 AND user_id = $2)",
         )
-        .bind(thread_id).bind(user_id)
-        .execute(&self.pg_pool).await?;
+        .bind(thread_id)
+        .bind(user_id)
+        .execute(&self.pg_pool)
+        .await?;
         Ok(())
     }
 
     pub async fn mark_thread_read_admin(&self, thread_id: Uuid) -> Result<()> {
         sqlx::query(
             "UPDATE thread_messages SET read_at = NOW()
-             WHERE thread_id = $1 AND from_admin = false AND read_at IS NULL"
+             WHERE thread_id = $1 AND from_admin = false AND read_at IS NULL",
         )
         .bind(thread_id)
-        .execute(&self.pg_pool).await?;
+        .execute(&self.pg_pool)
+        .await?;
         Ok(())
     }
 
     pub async fn resolve_thread(&self, thread_id: Uuid) -> Result<()> {
         sqlx::query("UPDATE message_threads SET status = 'resolved' WHERE id = $1")
             .bind(thread_id)
-            .execute(&self.pg_pool).await?;
+            .execute(&self.pg_pool)
+            .await?;
         Ok(())
     }
 
     pub async fn reopen_thread(&self, thread_id: Uuid) -> Result<()> {
         sqlx::query("UPDATE message_threads SET status = 'open' WHERE id = $1")
             .bind(thread_id)
-            .execute(&self.pg_pool).await?;
+            .execute(&self.pg_pool)
+            .await?;
         Ok(())
     }
 
@@ -2052,10 +2397,11 @@ impl Repository {
             r#"SELECT COUNT(DISTINCT t.id)
                FROM message_threads t
                JOIN thread_messages m ON m.thread_id = t.id
-               WHERE t.user_id = $1 AND m.from_admin = true AND m.read_at IS NULL"#
+               WHERE t.user_id = $1 AND m.from_admin = true AND m.read_at IS NULL"#,
         )
         .bind(user_id)
-        .fetch_one(&self.pg_pool).await?;
+        .fetch_one(&self.pg_pool)
+        .await?;
         Ok(row.0)
     }
 
@@ -2065,28 +2411,52 @@ impl Repository {
         status: Option<&str>,
         page: i64,
         per_page: i64,
-    ) -> Result<(Vec<(crate::models::MessageThread, crate::models::User, i64, Option<String>)>, i64)> {
+    ) -> Result<(
+        Vec<(
+            crate::models::MessageThread,
+            crate::models::User,
+            i64,
+            Option<String>,
+        )>,
+        i64,
+    )> {
         let offset = (page - 1) * per_page;
 
         // Build the WHERE clause with bound parameters ($1, $2, …) instead of
         // interpolating values into the SQL string.
         let mut conditions: Vec<String> = Vec::new();
-        if category.is_some() { conditions.push(format!("t.category = ${}", conditions.len() + 1)); }
-        if status.is_some()   { conditions.push(format!("t.status = ${}", conditions.len() + 1)); }
-        let where_clause = if conditions.is_empty() { String::new() } else { format!("WHERE {}", conditions.join(" AND ")) };
+        if category.is_some() {
+            conditions.push(format!("t.category = ${}", conditions.len() + 1));
+        }
+        if status.is_some() {
+            conditions.push(format!("t.status = ${}", conditions.len() + 1));
+        }
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
 
         macro_rules! bind_filters {
             ($q:expr) => {{
                 let mut q = $q;
-                if let Some(c) = category { q = q.bind(c); }
-                if let Some(s) = status   { q = q.bind(s); }
+                if let Some(c) = category {
+                    q = q.bind(c);
+                }
+                if let Some(s) = status {
+                    q = q.bind(s);
+                }
                 q
             }};
         }
 
-        let count_sql = format!("SELECT COUNT(DISTINCT t.id) FROM message_threads t {}", where_clause);
+        let count_sql = format!(
+            "SELECT COUNT(DISTINCT t.id) FROM message_threads t {}",
+            where_clause
+        );
         let (total,): (i64,) = bind_filters!(sqlx::query_as::<_, (i64,)>(&count_sql))
-            .fetch_one(&self.pg_pool).await?;
+            .fetch_one(&self.pg_pool)
+            .await?;
 
         let main_sql = format!(
             r#"SELECT
@@ -2104,57 +2474,67 @@ impl Repository {
             GROUP BY t.id, u.id
             ORDER BY t.last_message_at DESC
             LIMIT ${} OFFSET ${}"#,
-            where_clause, conditions.len() + 1, conditions.len() + 2
+            where_clause,
+            conditions.len() + 1,
+            conditions.len() + 2
         );
         let rows = bind_filters!(sqlx::query(&main_sql))
-            .bind(per_page).bind(offset)
-            .fetch_all(&self.pg_pool).await?;
+            .bind(per_page)
+            .bind(offset)
+            .fetch_all(&self.pg_pool)
+            .await?;
 
         use sqlx::Row;
-        let items = rows.into_iter().map(|r| {
-            let thread = crate::models::MessageThread {
-                id: r.get("thread_id"),
-                user_id: r.get("user_id"),
-                category: r.get("category"),
-                reference_id: r.get("reference_id"),
-                subject: r.get("subject"),
-                status: r.get("status"),
-                created_at: r.get("thread_created_at"),
-                last_message_at: r.get("last_message_at"),
-            };
-            let user = crate::models::User {
-                id: r.get("u_id"),
-                email: r.get("email"),
-                display_name: r.get("display_name"),
-                visual_password_hash: r.get("visual_password_hash"),
-                admin_notes: r.get("admin_notes"),
-                is_blocked: r.get("is_blocked"),
-                password_reset_token: r.get("password_reset_token"),
-                password_reset_expires_at: r.get("password_reset_expires_at"),
-                created_at: r.get("u_created_at"),
-                avatar_url: r.get("avatar_url"),
-                visual_pool: None, // not needed for admin thread listing
-                signup_ip: None,
-                signup_country_code: None,
-                signup_city: None,
-                last_reset_ip: None,
-                last_reset_country_code: None,
-                last_reset_city: None,
-                last_reset_at: None,
-                last_reset_request_ip: None,
-                last_reset_request_country_code: None,
-                last_reset_request_city: None,
-                last_reset_request_at: None,
-            };
-            let unread: i64 = r.get("unread");
-            let preview: Option<String> = r.get("preview");
-            (thread, user, unread, preview)
-        }).collect();
+        let items = rows
+            .into_iter()
+            .map(|r| {
+                let thread = crate::models::MessageThread {
+                    id: r.get("thread_id"),
+                    user_id: r.get("user_id"),
+                    category: r.get("category"),
+                    reference_id: r.get("reference_id"),
+                    subject: r.get("subject"),
+                    status: r.get("status"),
+                    created_at: r.get("thread_created_at"),
+                    last_message_at: r.get("last_message_at"),
+                };
+                let user = crate::models::User {
+                    id: r.get("u_id"),
+                    email: r.get("email"),
+                    display_name: r.get("display_name"),
+                    visual_password_hash: r.get("visual_password_hash"),
+                    admin_notes: r.get("admin_notes"),
+                    is_blocked: r.get("is_blocked"),
+                    password_reset_token: r.get("password_reset_token"),
+                    password_reset_expires_at: r.get("password_reset_expires_at"),
+                    created_at: r.get("u_created_at"),
+                    avatar_url: r.get("avatar_url"),
+                    visual_pool: None, // not needed for admin thread listing
+                    signup_ip: None,
+                    signup_country_code: None,
+                    signup_city: None,
+                    last_reset_ip: None,
+                    last_reset_country_code: None,
+                    last_reset_city: None,
+                    last_reset_at: None,
+                    last_reset_request_ip: None,
+                    last_reset_request_country_code: None,
+                    last_reset_request_city: None,
+                    last_reset_request_at: None,
+                };
+                let unread: i64 = r.get("unread");
+                let preview: Option<String> = r.get("preview");
+                (thread, user, unread, preview)
+            })
+            .collect();
 
         Ok((items, total))
     }
 
-    pub async fn get_user_threads_for_admin(&self, user_id: Uuid) -> Result<Vec<(crate::models::MessageThread, i64, Option<String>)>> {
+    pub async fn get_user_threads_for_admin(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<(crate::models::MessageThread, i64, Option<String>)>> {
         let rows: Vec<(Uuid, Uuid, String, Option<Uuid>, String, String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, i64, Option<String>)> = sqlx::query_as(
             r#"SELECT
                 t.id, t.user_id, t.category, t.reference_id, t.subject,
@@ -2170,15 +2550,43 @@ impl Repository {
         .bind(user_id)
         .fetch_all(&self.pg_pool).await?;
 
-        Ok(rows.into_iter().map(|(id, user_id, category, reference_id, subject, status, created_at, last_message_at, unread, preview)| {
-            let thread = crate::models::MessageThread { id, user_id, category, reference_id, subject, status, created_at, last_message_at };
-            (thread, unread, preview)
-        }).collect())
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    user_id,
+                    category,
+                    reference_id,
+                    subject,
+                    status,
+                    created_at,
+                    last_message_at,
+                    unread,
+                    preview,
+                )| {
+                    let thread = crate::models::MessageThread {
+                        id,
+                        user_id,
+                        category,
+                        reference_id,
+                        subject,
+                        status,
+                        created_at,
+                        last_message_at,
+                    };
+                    (thread, unread, preview)
+                },
+            )
+            .collect())
     }
 
     // === MESSAGE ATTACHMENTS ===
 
-    pub async fn get_message_attachments(&self, message_id: Uuid) -> Result<Vec<crate::models::Attachment>> {
+    pub async fn get_message_attachments(
+        &self,
+        message_id: Uuid,
+    ) -> Result<Vec<crate::models::Attachment>> {
         Ok(sqlx::query_as::<_, crate::models::Attachment>(
             "SELECT id, url, thumb_url FROM thread_message_attachments WHERE message_id = $1 ORDER BY created_at ASC"
         )
@@ -2239,7 +2647,7 @@ impl Repository {
                 title, description, size_note, mood, deadline, budget_note, occasion,
                 source_figurine_id, similar_keep_note, similar_change_note, similar_tags, lang)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-               RETURNING *"#
+               RETURNING *"#,
         )
         .bind(&claim_token)
         .bind(req.requester_name.clone().unwrap_or_default())
@@ -2257,7 +2665,8 @@ impl Repository {
         .bind(&similar_change_note)
         .bind(&similar_tags)
         .bind(lang)
-        .fetch_one(&mut *tx).await?;
+        .fetch_one(&mut *tx)
+        .await?;
 
         for att in &req.attachment_urls {
             sqlx::query(
@@ -2271,7 +2680,10 @@ impl Repository {
         Ok(commission)
     }
 
-    pub async fn get_commission_attachments(&self, commission_id: Uuid) -> Result<Vec<crate::models::Attachment>> {
+    pub async fn get_commission_attachments(
+        &self,
+        commission_id: Uuid,
+    ) -> Result<Vec<crate::models::Attachment>> {
         Ok(sqlx::query_as::<_, crate::models::Attachment>(
             "SELECT id, url, thumb_url FROM commission_attachments WHERE commission_id = $1 ORDER BY created_at ASC"
         )
@@ -2279,20 +2691,28 @@ impl Repository {
         .fetch_all(&self.pg_pool).await?)
     }
 
-    pub async fn get_commission_by_token(&self, token: &str) -> Result<Option<crate::models::Commission>> {
+    pub async fn get_commission_by_token(
+        &self,
+        token: &str,
+    ) -> Result<Option<crate::models::Commission>> {
         Ok(sqlx::query_as::<_, crate::models::Commission>(
-            "SELECT * FROM commissions WHERE claim_token = $1"
+            "SELECT * FROM commissions WHERE claim_token = $1",
         )
         .bind(token)
-        .fetch_optional(&self.pg_pool).await?)
+        .fetch_optional(&self.pg_pool)
+        .await?)
     }
 
-    pub async fn get_commission_by_id(&self, id: Uuid) -> Result<Option<crate::models::Commission>> {
+    pub async fn get_commission_by_id(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<crate::models::Commission>> {
         Ok(sqlx::query_as::<_, crate::models::Commission>(
-            "SELECT * FROM commissions WHERE id = $1"
+            "SELECT * FROM commissions WHERE id = $1",
         )
         .bind(id)
-        .fetch_optional(&self.pg_pool).await?)
+        .fetch_optional(&self.pg_pool)
+        .await?)
     }
 
     pub async fn get_commissions_page(
@@ -2322,10 +2742,11 @@ impl Repository {
                 .bind(status).bind(limit).bind(offset)
                 .fetch_all(&self.pg_pool).await?;
                 let (total,): (i64,) = sqlx::query_as(
-                    "SELECT COUNT(*) FROM commissions WHERE status = $1::commission_status"
+                    "SELECT COUNT(*) FROM commissions WHERE status = $1::commission_status",
                 )
                 .bind(status)
-                .fetch_one(&self.pg_pool).await?;
+                .fetch_one(&self.pg_pool)
+                .await?;
                 (items, total)
             }
         } else if similar_only {
@@ -2335,28 +2756,32 @@ impl Repository {
             .bind(limit).bind(offset)
             .fetch_all(&self.pg_pool).await?;
             let (total,): (i64,) = sqlx::query_as(
-                "SELECT COUNT(*) FROM commissions WHERE source_figurine_id IS NOT NULL"
+                "SELECT COUNT(*) FROM commissions WHERE source_figurine_id IS NOT NULL",
             )
-            .fetch_one(&self.pg_pool).await?;
+            .fetch_one(&self.pg_pool)
+            .await?;
             (items, total)
         } else {
             let items = sqlx::query_as::<_, crate::models::Commission>(
-                "SELECT * FROM commissions ORDER BY created_at DESC LIMIT $1 OFFSET $2"
+                "SELECT * FROM commissions ORDER BY created_at DESC LIMIT $1 OFFSET $2",
             )
-            .bind(limit).bind(offset)
-            .fetch_all(&self.pg_pool).await?;
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.pg_pool)
+            .await?;
             let (total,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM commissions")
-                .fetch_one(&self.pg_pool).await?;
+                .fetch_one(&self.pg_pool)
+                .await?;
             (items, total)
         };
         Ok((items, total))
     }
 
     pub async fn get_new_commissions_count(&self) -> Result<i64> {
-        let (count,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM commissions WHERE status = 'new'"
-        )
-        .fetch_one(&self.pg_pool).await?;
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM commissions WHERE status = 'new'")
+                .fetch_one(&self.pg_pool)
+                .await?;
         Ok(count)
     }
 
@@ -2374,10 +2799,14 @@ impl Repository {
                    figurine_id = COALESCE($3, figurine_id),
                    updated_at = NOW()
                WHERE id = $4
-               RETURNING *"#
+               RETURNING *"#,
         )
-        .bind(status).bind(admin_notes).bind(figurine_id).bind(id)
-        .fetch_optional(&self.pg_pool).await?)
+        .bind(status)
+        .bind(admin_notes)
+        .bind(figurine_id)
+        .bind(id)
+        .fetch_optional(&self.pg_pool)
+        .await?)
     }
 
     pub async fn update_commission_content(
@@ -2394,7 +2823,7 @@ impl Repository {
                SET title = $1, description = $2, size_note = $3, mood = $4,
                    deadline = $5, budget_note = $6, occasion = $7, updated_at = NOW()
                WHERE id = $8
-               RETURNING *"#
+               RETURNING *"#,
         )
         .bind(req.title.clone().unwrap_or_default())
         .bind(&req.description)
@@ -2404,22 +2833,25 @@ impl Repository {
         .bind(&req.budget_note)
         .bind(&req.occasion)
         .bind(id)
-        .fetch_optional(&mut *tx).await?;
+        .fetch_optional(&mut *tx)
+        .await?;
 
         // Replace the reference set only when the client sent one.
         if updated.is_some()
-            && let Some(attachments) = &req.attachment_urls {
-                sqlx::query("DELETE FROM commission_attachments WHERE commission_id = $1")
-                    .bind(id)
-                    .execute(&mut *tx).await?;
-                for att in attachments {
-                    sqlx::query(
+            && let Some(attachments) = &req.attachment_urls
+        {
+            sqlx::query("DELETE FROM commission_attachments WHERE commission_id = $1")
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+            for att in attachments {
+                sqlx::query(
                         "INSERT INTO commission_attachments (commission_id, url, thumb_url) VALUES ($1, $2, $3)"
                     )
                     .bind(id).bind(&att.url).bind(&att.thumb_url)
                     .execute(&mut *tx).await?;
-                }
             }
+        }
 
         tx.commit().await?;
         Ok(updated)
@@ -2428,35 +2860,49 @@ impl Repository {
     pub async fn delete_commission(&self, id: Uuid) -> Result<()> {
         let mut tx = self.pg_pool.begin().await?;
         // Remove the linked conversation (messages + attachments cascade via FK).
-        sqlx::query("DELETE FROM message_threads WHERE reference_id = $1 AND category = 'commission'")
-            .bind(id)
-            .execute(&mut *tx).await?;
+        sqlx::query(
+            "DELETE FROM message_threads WHERE reference_id = $1 AND category = 'commission'",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
         sqlx::query("DELETE FROM commissions WHERE id = $1")
             .bind(id)
-            .execute(&mut *tx).await?;
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
         Ok(())
     }
 
     /// Attach a guest commission to a user account. Returns the commission if the
     /// token matched and it was previously unclaimed (or already owned by this user).
-    pub async fn claim_commission(&self, token: &str, user_id: Uuid) -> Result<Option<crate::models::Commission>> {
+    pub async fn claim_commission(
+        &self,
+        token: &str,
+        user_id: Uuid,
+    ) -> Result<Option<crate::models::Commission>> {
         Ok(sqlx::query_as::<_, crate::models::Commission>(
             r#"UPDATE commissions
                SET user_id = $1, updated_at = NOW()
                WHERE claim_token = $2 AND (user_id IS NULL OR user_id = $1)
-               RETURNING *"#
-        )
-        .bind(user_id).bind(token)
-        .fetch_optional(&self.pg_pool).await?)
-    }
-
-    pub async fn get_user_commissions(&self, user_id: Uuid) -> Result<Vec<crate::models::Commission>> {
-        Ok(sqlx::query_as::<_, crate::models::Commission>(
-            "SELECT * FROM commissions WHERE user_id = $1 ORDER BY created_at DESC"
+               RETURNING *"#,
         )
         .bind(user_id)
-        .fetch_all(&self.pg_pool).await?)
+        .bind(token)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn get_user_commissions(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<crate::models::Commission>> {
+        Ok(sqlx::query_as::<_, crate::models::Commission>(
+            "SELECT * FROM commissions WHERE user_id = $1 ORDER BY created_at DESC",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pg_pool)
+        .await?)
     }
 
     /// Claim tokens of unclaimed petitions whose email matches an account — so they
@@ -2472,7 +2918,11 @@ impl Repository {
     }
 
     /// Find an existing thread linked to a commission (category 'commission').
-    pub async fn find_thread_by_reference(&self, reference_id: Uuid, category: &str) -> Result<Option<crate::models::MessageThread>> {
+    pub async fn find_thread_by_reference(
+        &self,
+        reference_id: Uuid,
+        category: &str,
+    ) -> Result<Option<crate::models::MessageThread>> {
         Ok(sqlx::query_as::<_, crate::models::MessageThread>(
             "SELECT * FROM message_threads WHERE reference_id = $1 AND category = $2 ORDER BY created_at ASC LIMIT 1"
         )

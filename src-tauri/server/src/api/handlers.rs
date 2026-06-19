@@ -1,26 +1,27 @@
-use axum::{
-    extract::{Path, State, Multipart, Query},
-    Json,
-    http::{StatusCode, HeaderMap},
-    response::IntoResponse,
-    body::Bytes,
-};
-use crate::services::AppService;
 use crate::config::Config;
+use crate::error::{AppError, Result};
 use crate::models::*;
-use crate::error::{Result, AppError};
+use crate::services::AppService;
+use axum::{
+    Json,
+    body::Bytes,
+    extract::{Multipart, Path, Query, State},
+    http::{HeaderMap, StatusCode},
+    response::IntoResponse,
+};
 use uuid::Uuid;
 
 fn bearer_token(headers: &HeaderMap) -> Option<&str> {
-    headers.get("Authorization")
+    headers
+        .get("Authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
 }
-use tokio::fs;
-use tokio::io::AsyncWriteExt;
 use image::codecs::jpeg::JpegEncoder;
 use image::codecs::webp::WebPEncoder;
 use image::imageops::FilterType;
+use tokio::fs;
+use tokio::io::AsyncWriteExt;
 
 fn media_subdir_for_ext(ext: &str) -> Option<&'static str> {
     match ext {
@@ -74,7 +75,8 @@ struct EncodedImageVariants {
 fn encode_jpeg_bytes(image: &image::RgbImage, quality: u8) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     let mut encoder = JpegEncoder::new_with_quality(&mut bytes, quality);
-    encoder.encode_image(image)
+    encoder
+        .encode_image(image)
         .map_err(|e| AppError::Internal(format!("Failed to encode image: {}", e)))?;
     Ok(bytes)
 }
@@ -82,12 +84,14 @@ fn encode_jpeg_bytes(image: &image::RgbImage, quality: u8) -> Result<Vec<u8>> {
 fn encode_webp_bytes(image: &image::RgbImage) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     let encoder = WebPEncoder::new_lossless(&mut bytes);
-    encoder.encode(
-        image.as_raw(),
-        image.width(),
-        image.height(),
-        image::ExtendedColorType::Rgb8,
-    ).map_err(|e| AppError::Internal(format!("Failed to encode WebP: {}", e)))?;
+    encoder
+        .encode(
+            image.as_raw(),
+            image.width(),
+            image.height(),
+            image::ExtendedColorType::Rgb8,
+        )
+        .map_err(|e| AppError::Internal(format!("Failed to encode WebP: {}", e)))?;
     Ok(bytes)
 }
 
@@ -98,19 +102,21 @@ fn build_image_variants(data: &[u8]) -> Result<EncodedImageVariants> {
         .map_err(|e| AppError::BadRequest(format!("Invalid image file: {}", e)))?;
 
     if (image.width() as u64) * (image.height() as u64) > MAX_IMAGE_PIXELS {
-        return Err(AppError::BadRequest("Image dimensions are too large".into()));
+        return Err(AppError::BadRequest(
+            "Image dimensions are too large".into(),
+        ));
     }
 
     let original = image.to_rgb8();
-    let preview  = image.resize(1800, 1800, FilterType::Lanczos3).to_rgb8();
-    let thumb    = image.resize(420, 420, FilterType::Lanczos3).to_rgb8();
+    let preview = image.resize(1800, 1800, FilterType::Lanczos3).to_rgb8();
+    let thumb = image.resize(420, 420, FilterType::Lanczos3).to_rgb8();
 
     Ok(EncodedImageVariants {
         original_jpeg: encode_jpeg_bytes(&original, 95)?,
-        preview_jpeg:  encode_jpeg_bytes(&preview, 86)?,
-        thumb_jpeg:    encode_jpeg_bytes(&thumb, 78)?,
-        preview_webp:  encode_webp_bytes(&preview)?,
-        thumb_webp:    encode_webp_bytes(&thumb)?,
+        preview_jpeg: encode_jpeg_bytes(&preview, 86)?,
+        thumb_jpeg: encode_jpeg_bytes(&thumb, 78)?,
+        preview_webp: encode_webp_bytes(&preview)?,
+        thumb_webp: encode_webp_bytes(&thumb)?,
     })
 }
 
@@ -130,11 +136,11 @@ async fn save_image_variants(upload_dir: &str, data: &[u8]) -> Result<serde_json
     }
 
     let id = Uuid::new_v4().to_string();
-    let original_relative  = format!("images/original/{}.jpg",  id);
-    let preview_relative   = format!("images/preview/{}.jpg",   id);
-    let thumb_relative     = format!("images/thumb/{}.jpg",     id);
-    let preview_webp       = format!("images/preview/{}.webp",  id);
-    let thumb_webp         = format!("images/thumb/{}.webp",    id);
+    let original_relative = format!("images/original/{}.jpg", id);
+    let preview_relative = format!("images/preview/{}.jpg", id);
+    let thumb_relative = format!("images/thumb/{}.jpg", id);
+    let preview_webp = format!("images/preview/{}.webp", id);
+    let thumb_webp = format!("images/thumb/{}.webp", id);
 
     let data_owned = data.to_vec();
     let variants = tokio::task::spawn_blocking(move || build_image_variants(&data_owned))
@@ -142,10 +148,10 @@ async fn save_image_variants(upload_dir: &str, data: &[u8]) -> Result<serde_json
         .map_err(|e| AppError::Internal(format!("Image processing task failed: {}", e)))??;
 
     write_bytes(upload_dir, &original_relative, &variants.original_jpeg).await?;
-    write_bytes(upload_dir, &preview_relative,  &variants.preview_jpeg).await?;
-    write_bytes(upload_dir, &thumb_relative,    &variants.thumb_jpeg).await?;
-    write_bytes(upload_dir, &preview_webp,      &variants.preview_webp).await?;
-    write_bytes(upload_dir, &thumb_webp,        &variants.thumb_webp).await?;
+    write_bytes(upload_dir, &preview_relative, &variants.preview_jpeg).await?;
+    write_bytes(upload_dir, &thumb_relative, &variants.thumb_jpeg).await?;
+    write_bytes(upload_dir, &preview_webp, &variants.preview_webp).await?;
+    write_bytes(upload_dir, &thumb_webp, &variants.thumb_webp).await?;
 
     Ok(serde_json::json!({
         "url":                  public_static_url(&preview_relative),
@@ -201,7 +207,10 @@ mod tests {
 // === PUBLIC READ-ONLY HANDLERS ===
 
 pub async fn health_check() -> impl IntoResponse {
-    (StatusCode::OK, Json(serde_json::json!({ "status": "ok", "version": "1.0.0" })))
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "status": "ok", "version": "1.0.0" })),
+    )
 }
 
 /*pub async fn get_sync_manifest(
@@ -249,12 +258,15 @@ pub async fn get_texts_by_param(
         "author" => {
             let texts = service.get_author_texts().await?;
             Ok(Json(texts).into_response())
-        },
+        }
         "workshop" => {
             let items = service.get_workshop_items().await?;
             Ok(Json(items).into_response())
-        },
-        _ => Err(AppError::NotFound(format!("Unknown text category: {}", param))),
+        }
+        _ => Err(AppError::NotFound(format!(
+            "Unknown text category: {}",
+            param
+        ))),
     }
 }
 
@@ -303,7 +315,11 @@ pub async fn upload_file(
     State(config): State<Config>,
     mut multipart: Multipart,
 ) -> Result<Json<serde_json::Value>> {
-    while let Some(field) = multipart.next_field().await.map_err(|e| AppError::BadRequest(e.to_string()))? {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::BadRequest(e.to_string()))?
+    {
         let name = field.name().unwrap_or("").to_string();
         if name == "file" {
             let filename = field.file_name().unwrap_or("file").to_string();
@@ -312,10 +328,14 @@ pub async fn upload_file(
                 .and_then(|e| e.to_str())
                 .unwrap_or("bin")
                 .to_lowercase();
-            let data = field.bytes().await.map_err(|e| AppError::Io(std::io::Error::other(e)))?;
+            let data = field
+                .bytes()
+                .await
+                .map_err(|e| AppError::Io(std::io::Error::other(e)))?;
 
-            let subdir = media_subdir_for_ext(ext.as_str())
-                .ok_or_else(|| AppError::BadRequest(format!("Unsupported media extension: {}", ext)))?;
+            let subdir = media_subdir_for_ext(ext.as_str()).ok_or_else(|| {
+                AppError::BadRequest(format!("Unsupported media extension: {}", ext))
+            })?;
             if subdir == "images" {
                 let payload = save_image_variants(&config.upload_dir, &data).await?;
                 return Ok(Json(payload));
@@ -369,22 +389,36 @@ pub async fn replace_media_everywhere(
     let mut file_name: Option<String> = None;
     let mut file_data: Option<Bytes> = None;
 
-    while let Some(field) = multipart.next_field().await.map_err(|e| AppError::BadRequest(e.to_string()))? {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::BadRequest(e.to_string()))?
+    {
         let name = field.name().unwrap_or("").to_string();
         if name == "targetPath" {
-            let value = field.text().await.map_err(|e| AppError::BadRequest(e.to_string()))?;
+            let value = field
+                .text()
+                .await
+                .map_err(|e| AppError::BadRequest(e.to_string()))?;
             target_path = Some(clean_static_path(&value, &config.public_url));
         } else if name == "file" {
             file_name = Some(field.file_name().unwrap_or("file").to_string());
-            file_data = Some(field.bytes().await.map_err(|e| AppError::Io(std::io::Error::other(e)))?);
+            file_data = Some(
+                field
+                    .bytes()
+                    .await
+                    .map_err(|e| AppError::Io(std::io::Error::other(e)))?,
+            );
         }
     }
 
-    let target_path = target_path.ok_or_else(|| AppError::BadRequest("Missing targetPath".to_string()))?;
+    let target_path =
+        target_path.ok_or_else(|| AppError::BadRequest("Missing targetPath".to_string()))?;
     let file_name = file_name.ok_or_else(|| AppError::BadRequest("Missing file".to_string()))?;
     let data = file_data.ok_or_else(|| AppError::BadRequest("Missing file data".to_string()))?;
-    let target_subdir = replacement_subdir_for_target(&target_path)
-        .ok_or_else(|| AppError::BadRequest(format!("Unsupported managed media path: {}", target_path)))?;
+    let target_subdir = replacement_subdir_for_target(&target_path).ok_or_else(|| {
+        AppError::BadRequest(format!("Unsupported managed media path: {}", target_path))
+    })?;
     let ext = std::path::Path::new(&file_name)
         .extension()
         .and_then(|e| e.to_str())
@@ -393,23 +427,36 @@ pub async fn replace_media_everywhere(
 
     let result = if target_subdir == "images" {
         if media_subdir_for_ext(ext.as_str()) != Some("images") {
-            return Err(AppError::BadRequest(format!("Replacement must be an image, got {}", ext)));
+            return Err(AppError::BadRequest(format!(
+                "Replacement must be an image, got {}",
+                ext
+            )));
         }
         let payload = save_image_variants(&config.upload_dir, &data).await?;
-        let new_path = payload.get("relativePath")
+        let new_path = payload
+            .get("relativePath")
             .and_then(|v| v.as_str())
             .ok_or_else(|| AppError::Internal("Missing replacement relativePath".to_string()))?;
         let original_path = payload.get("originalRelativePath").and_then(|v| v.as_str());
         let thumb_path = payload.get("thumbRelativePath").and_then(|v| v.as_str());
-        service.replace_media_everywhere(&target_path, new_path, original_path, thumb_path).await?
+        service
+            .replace_media_everywhere(&target_path, new_path, original_path, thumb_path)
+            .await?
     } else {
-        let expected_subdir = media_subdir_for_ext(ext.as_str())
-            .ok_or_else(|| AppError::BadRequest(format!("Unsupported replacement extension: {}", ext)))?;
+        let expected_subdir = media_subdir_for_ext(ext.as_str()).ok_or_else(|| {
+            AppError::BadRequest(format!("Unsupported replacement extension: {}", ext))
+        })?;
         if target_subdir != "backgrounds" && target_subdir != expected_subdir {
-            return Err(AppError::BadRequest(format!("Replacement type does not match target {}", target_path)));
+            return Err(AppError::BadRequest(format!(
+                "Replacement type does not match target {}",
+                target_path
+            )));
         }
-        let new_path = save_regular_media_file(&config.upload_dir, target_subdir, &ext, &data).await?;
-        service.replace_media_everywhere(&target_path, &new_path, None, None).await?
+        let new_path =
+            save_regular_media_file(&config.upload_dir, target_subdir, &ext, &data).await?;
+        service
+            .replace_media_everywhere(&target_path, &new_path, None, None)
+            .await?
     };
 
     Ok(Json(result))
@@ -471,7 +518,11 @@ pub async fn upload_main_background(
     State(config): State<Config>,
     mut multipart: Multipart,
 ) -> Result<Json<serde_json::Value>> {
-    while let Some(field) = multipart.next_field().await.map_err(|e| AppError::BadRequest(e.to_string()))? {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::BadRequest(e.to_string()))?
+    {
         let name = field.name().unwrap_or("").to_string();
         if name == "file" {
             let filename = field.file_name().unwrap_or("bg.jpg").to_string();
@@ -481,9 +532,15 @@ pub async fn upload_main_background(
                 .unwrap_or("jpg")
                 .to_lowercase();
             if media_subdir_for_ext(ext.as_str()) != Some("images") {
-                return Err(AppError::BadRequest(format!("Unsupported background extension: {}", ext)));
+                return Err(AppError::BadRequest(format!(
+                    "Unsupported background extension: {}",
+                    ext
+                )));
             }
-            let data = field.bytes().await.map_err(|e| AppError::Io(std::io::Error::other(e)))?;
+            let data = field
+                .bytes()
+                .await
+                .map_err(|e| AppError::Io(std::io::Error::other(e)))?;
 
             let bg_dir = format!("{}/backgrounds", config.upload_dir);
             fs::create_dir_all(&bg_dir).await.map_err(AppError::Io)?;
@@ -502,9 +559,7 @@ pub async fn upload_main_background(
     Err(AppError::BadRequest("No file field found".to_string()))
 }
 
-pub async fn get_home_content(
-    State(service): State<AppService>,
-) -> Result<Json<HomeContent>> {
+pub async fn get_home_content(State(service): State<AppService>) -> Result<Json<HomeContent>> {
     let content = service.get_home_content().await?;
     Ok(Json(content))
 }
@@ -541,16 +596,24 @@ pub async fn create_order(
     headers: HeaderMap,
     Json(order): Json<crate::models::OrderRequest>,
 ) -> Result<Json<crate::models::OrderCreatedResponse>> {
-    service.check_rate_limit("order", &extract_ip(&headers), 15, 3600).await?;
+    service
+        .check_rate_limit("order", &extract_ip(&headers), 15, 3600)
+        .await?;
     // Tie the order to the account when the request carries a valid session, so it
     // shows up in the sender's profile — not only in the admin panel.
     let user_id = if let Some(token) = bearer_token(&headers) {
-        service.get_user_from_session(token).await.ok().map(|u| u.id)
+        service
+            .get_user_from_session(token)
+            .await
+            .ok()
+            .map(|u| u.id)
     } else {
         None
     };
     let saved = service.create_order(&order, user_id).await?;
-    Ok(Json(crate::models::OrderCreatedResponse { cancel_token: saved.cancel_token }))
+    Ok(Json(crate::models::OrderCreatedResponse {
+        cancel_token: saved.cancel_token,
+    }))
 }
 
 pub async fn get_notify_by_token(
@@ -558,8 +621,12 @@ pub async fn get_notify_by_token(
     headers: HeaderMap,
     Path(token): Path<String>,
 ) -> Result<Json<crate::models::NotifyInfo>> {
-    service.check_rate_limit("token", &extract_ip(&headers), 60, 3600).await?;
-    service.get_notify_by_token(&token).await?
+    service
+        .check_rate_limit("token", &extract_ip(&headers), 60, 3600)
+        .await?;
+    service
+        .get_notify_by_token(&token)
+        .await?
         .map(Json)
         .ok_or_else(|| crate::error::AppError::NotFound("Subscription not found".to_string()))
 }
@@ -569,7 +636,9 @@ pub async fn cancel_notify_by_token(
     headers: HeaderMap,
     Path(token): Path<String>,
 ) -> Result<StatusCode> {
-    service.check_rate_limit("token", &extract_ip(&headers), 60, 3600).await?;
+    service
+        .check_rate_limit("token", &extract_ip(&headers), 60, 3600)
+        .await?;
     service.cancel_notify_by_token(&token).await?;
     Ok(StatusCode::OK)
 }
@@ -579,13 +648,27 @@ pub async fn list_orders(
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<crate::models::OrdersPage>> {
     let status = params.get("status").map(|s| s.as_str());
-    let mode = params.get("mode").map(|s| s.as_str()).filter(|s| !s.is_empty());
+    let mode = params
+        .get("mode")
+        .map(|s| s.as_str())
+        .filter(|s| !s.is_empty());
     if let Some(mode) = mode
-        && !matches!(mode, "request" | "question" | "notify" | "reserve") {
-            return Err(AppError::BadRequest("Invalid order mode filter".to_string()));
-        }
-    let page = params.get("page").and_then(|p| p.parse::<i64>().ok()).unwrap_or(1).max(1);
-    let per_page = params.get("perPage").and_then(|p| p.parse::<i64>().ok()).unwrap_or(20).clamp(1, 100);
+        && !matches!(mode, "request" | "question" | "notify" | "reserve")
+    {
+        return Err(AppError::BadRequest(
+            "Invalid order mode filter".to_string(),
+        ));
+    }
+    let page = params
+        .get("page")
+        .and_then(|p| p.parse::<i64>().ok())
+        .unwrap_or(1)
+        .max(1);
+    let per_page = params
+        .get("perPage")
+        .and_then(|p| p.parse::<i64>().ok())
+        .unwrap_or(20)
+        .clamp(1, 100);
     let page_data = service.list_orders(status, mode, page, per_page).await?;
     Ok(Json(page_data))
 }
@@ -604,7 +687,12 @@ pub async fn update_order_status(
 fn looks_like_email(s: &str) -> bool {
     let s = s.trim();
     match s.split_once('@') {
-        Some((local, domain)) => !local.is_empty() && domain.contains('.') && !domain.starts_with('.') && !domain.ends_with('.'),
+        Some((local, domain)) => {
+            !local.is_empty()
+                && domain.contains('.')
+                && !domain.starts_with('.')
+                && !domain.ends_with('.')
+        }
         None => false,
     }
 }
@@ -615,7 +703,12 @@ pub async fn create_commission(
     Json(req): Json<crate::models::CommissionRequest>,
 ) -> Result<Json<crate::models::CommissionCreatedResponse>> {
     // Honeypot: real users never fill `website`. Pretend success, save nothing.
-    if req.website.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false) {
+    if req
+        .website
+        .as_deref()
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false)
+    {
         return Ok(Json(crate::models::CommissionCreatedResponse {
             id: Uuid::new_v4().to_string(),
             claim_token: Uuid::new_v4().to_string().replace('-', ""),
@@ -637,13 +730,29 @@ pub async fn create_commission(
     if req.attachment_urls.len() > 5 {
         return Err(AppError::BadRequest("Too many attachments.".into()));
     }
-    if req.source_figurine_id.as_deref().map(|s| s.trim().chars().count() > 80).unwrap_or(false) {
-        return Err(AppError::BadRequest("Source figurine id is too long.".into()));
+    if req
+        .source_figurine_id
+        .as_deref()
+        .map(|s| s.trim().chars().count() > 80)
+        .unwrap_or(false)
+    {
+        return Err(AppError::BadRequest(
+            "Source figurine id is too long.".into(),
+        ));
     }
-    if req.similar_keep_note.as_deref().map(|s| s.chars().count() > 1000).unwrap_or(false)
-        || req.similar_change_note.as_deref().map(|s| s.chars().count() > 1000).unwrap_or(false) {
-            return Err(AppError::BadRequest("Similar notes are too long.".into()));
-        }
+    if req
+        .similar_keep_note
+        .as_deref()
+        .map(|s| s.chars().count() > 1000)
+        .unwrap_or(false)
+        || req
+            .similar_change_note
+            .as_deref()
+            .map(|s| s.chars().count() > 1000)
+            .unwrap_or(false)
+    {
+        return Err(AppError::BadRequest("Similar notes are too long.".into()));
+    }
     if req.similar_tags.len() > 12 {
         return Err(AppError::BadRequest("Too many similar tags.".into()));
     }
@@ -666,7 +775,9 @@ pub async fn get_commission_by_token(
     State(service): State<AppService>,
     Path(token): Path<String>,
 ) -> Result<Json<crate::models::CommissionDto>> {
-    service.get_commission_by_token(&token).await?
+    service
+        .get_commission_by_token(&token)
+        .await?
         .map(Json)
         .ok_or_else(|| AppError::NotFound("Commission not found".to_string()))
 }
@@ -678,7 +789,9 @@ pub async fn user_claim_commission(
 ) -> Result<Json<crate::models::CommissionDto>> {
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
     let user = service.get_user_from_session(token).await?;
-    Ok(Json(service.claim_commission(&body.claim_token, user.id).await?))
+    Ok(Json(
+        service.claim_commission(&body.claim_token, user.id).await?,
+    ))
 }
 
 pub async fn user_list_commissions(
@@ -689,7 +802,9 @@ pub async fn user_list_commissions(
     let user = service.get_user_from_session(token).await?;
     // Adopt orphan petitions sent from this account's email (guest petitions, or
     // ones whose claim token was lost when localStorage was cleared) before listing.
-    let _ = service.adopt_commissions_by_email(user.id, &user.email).await;
+    let _ = service
+        .adopt_commissions_by_email(user.id, &user.email)
+        .await;
     let commissions = service.get_user_commissions(user.id).await?;
     Ok(Json(serde_json::json!({ "commissions": commissions })))
 }
@@ -702,7 +817,9 @@ pub async fn user_edit_commission(
 ) -> Result<Json<crate::models::CommissionDto>> {
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
     let user = service.get_user_from_session(token).await?;
-    Ok(Json(service.edit_commission(id, Some(user.id), &body).await?))
+    Ok(Json(
+        service.edit_commission(id, Some(user.id), &body).await?,
+    ))
 }
 
 pub async fn user_delete_commission(
@@ -728,19 +845,30 @@ pub async fn user_upload_file(
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
     let _user = service.get_user_from_session(token).await?;
 
-    while let Some(field) = multipart.next_field().await.map_err(|e| AppError::BadRequest(e.to_string()))? {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::BadRequest(e.to_string()))?
+    {
         if field.name().unwrap_or("") == "file" {
             let filename = field.file_name().unwrap_or("file").to_string();
             let ext = std::path::Path::new(&filename)
-                .extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
-            let data = field.bytes().await
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            let data = field
+                .bytes()
+                .await
                 .map_err(|e| AppError::Io(std::io::Error::other(e)))?;
 
             if data.len() > 8 * 1024 * 1024 {
                 return Err(AppError::BadRequest("Image is too large (max 8MB).".into()));
             }
             if media_subdir_for_ext(&ext) != Some("images") {
-                return Err(AppError::BadRequest("Only image uploads are allowed.".into()));
+                return Err(AppError::BadRequest(
+                    "Only image uploads are allowed.".into(),
+                ));
             }
             let payload = save_image_variants(&config.upload_dir, &data).await?;
             return Ok(Json(payload));
@@ -754,10 +882,24 @@ pub async fn admin_list_commissions(
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<crate::models::CommissionsPage>> {
     let status = params.get("status").map(|s| s.as_str());
-    let similar = params.get("similar").is_some_and(|s| matches!(s.as_str(), "true" | "1"));
-    let page = params.get("page").and_then(|p| p.parse::<i64>().ok()).unwrap_or(1).max(1);
-    let per_page = params.get("perPage").and_then(|p| p.parse::<i64>().ok()).unwrap_or(20).clamp(1, 100);
-    Ok(Json(service.list_commissions(status, similar, page, per_page).await?))
+    let similar = params
+        .get("similar")
+        .is_some_and(|s| matches!(s.as_str(), "true" | "1"));
+    let page = params
+        .get("page")
+        .and_then(|p| p.parse::<i64>().ok())
+        .unwrap_or(1)
+        .max(1);
+    let per_page = params
+        .get("perPage")
+        .and_then(|p| p.parse::<i64>().ok())
+        .unwrap_or(20)
+        .clamp(1, 100);
+    Ok(Json(
+        service
+            .list_commissions(status, similar, page, per_page)
+            .await?,
+    ))
 }
 
 pub async fn admin_update_commission(
@@ -765,7 +907,14 @@ pub async fn admin_update_commission(
     Path(id): Path<Uuid>,
     Json(body): Json<crate::models::UpdateCommissionStatusRequest>,
 ) -> Result<Json<crate::models::CommissionDto>> {
-    service.update_commission(id, &body.status, body.admin_notes.as_deref(), body.figurine_id.as_deref()).await?
+    service
+        .update_commission(
+            id,
+            &body.status,
+            body.admin_notes.as_deref(),
+            body.figurine_id.as_deref(),
+        )
+        .await?
         .map(Json)
         .ok_or_else(|| AppError::NotFound("Commission not found".to_string()))
 }
@@ -794,16 +943,24 @@ pub async fn create_booking(
     Path(_id): Path<String>,
     Json(req): Json<crate::models::CreateBookingRequest>,
 ) -> Result<Json<crate::models::BookingCreatedResponse>> {
-    service.check_rate_limit("booking", &extract_ip(&headers), 15, 3600).await?;
+    service
+        .check_rate_limit("booking", &extract_ip(&headers), 15, 3600)
+        .await?;
     // Tie the booking to the account when the request carries a valid session, so it
     // lands in the sender's profile without relying on a separate client-side link.
     let user_id = if let Some(token) = bearer_token(&headers) {
-        service.get_user_from_session(token).await.ok().map(|u| u.id)
+        service
+            .get_user_from_session(token)
+            .await
+            .ok()
+            .map(|u| u.id)
     } else {
         None
     };
     let booking = service.create_booking(req, user_id).await?;
-    Ok(Json(crate::models::BookingCreatedResponse { cancel_token: booking.cancel_token }))
+    Ok(Json(crate::models::BookingCreatedResponse {
+        cancel_token: booking.cancel_token,
+    }))
 }
 
 pub async fn get_booking_by_token(
@@ -811,8 +968,12 @@ pub async fn get_booking_by_token(
     headers: HeaderMap,
     Path(token): Path<String>,
 ) -> Result<Json<crate::models::BookingCancelInfo>> {
-    service.check_rate_limit("token", &extract_ip(&headers), 60, 3600).await?;
-    service.get_booking_by_token(&token).await?
+    service
+        .check_rate_limit("token", &extract_ip(&headers), 60, 3600)
+        .await?;
+    service
+        .get_booking_by_token(&token)
+        .await?
         .map(Json)
         .ok_or_else(|| crate::error::AppError::NotFound("Booking not found".to_string()))
 }
@@ -831,8 +992,14 @@ pub async fn sitemap_xml(
     State(service): State<AppService>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse> {
-    let host = headers.get("host").and_then(|h| h.to_str().ok()).unwrap_or("localhost");
-    let proto = headers.get("x-forwarded-proto").and_then(|h| h.to_str().ok()).unwrap_or("https");
+    let host = headers
+        .get("host")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("localhost");
+    let proto = headers
+        .get("x-forwarded-proto")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("https");
     let base = format!("{proto}://{host}");
 
     let figurines = service.list_figurines(true).await?;
@@ -853,7 +1020,10 @@ pub async fn sitemap_xml(
          <urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n{urls}</urlset>\n"
     );
     Ok((
-        [(axum::http::header::CONTENT_TYPE, "application/xml; charset=utf-8")],
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "application/xml; charset=utf-8",
+        )],
         body,
     ))
 }
@@ -875,7 +1045,9 @@ pub async fn cancel_booking_by_token(
     headers: HeaderMap,
     Path(token): Path<String>,
 ) -> Result<StatusCode> {
-    service.check_rate_limit("token", &extract_ip(&headers), 60, 3600).await?;
+    service
+        .check_rate_limit("token", &extract_ip(&headers), 60, 3600)
+        .await?;
     service.cancel_booking_by_token(&token).await?;
     Ok(StatusCode::OK)
 }
@@ -910,11 +1082,24 @@ pub async fn list_bookings(
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<crate::models::BookingsPage>> {
     let status = params.get("status").map(|s| s.as_str());
-    let figurine_id = params.get("figurineId")
+    let figurine_id = params
+        .get("figurineId")
         .and_then(|s| Uuid::parse_str(s).ok());
-    let page = params.get("page").and_then(|p| p.parse::<i64>().ok()).unwrap_or(1).max(1);
-    let per_page = params.get("perPage").and_then(|p| p.parse::<i64>().ok()).unwrap_or(20).clamp(1, 100);
-    Ok(Json(service.list_bookings(status, figurine_id, page, per_page).await?))
+    let page = params
+        .get("page")
+        .and_then(|p| p.parse::<i64>().ok())
+        .unwrap_or(1)
+        .max(1);
+    let per_page = params
+        .get("perPage")
+        .and_then(|p| p.parse::<i64>().ok())
+        .unwrap_or(20)
+        .clamp(1, 100);
+    Ok(Json(
+        service
+            .list_bookings(status, figurine_id, page, per_page)
+            .await?,
+    ))
 }
 
 pub async fn update_booking_status(
@@ -922,7 +1107,9 @@ pub async fn update_booking_status(
     Path(id): Path<Uuid>,
     Json(body): Json<crate::models::UpdateBookingStatusRequest>,
 ) -> Result<StatusCode> {
-    service.update_booking_status(id, body.status, body.admin_notes, body.curator_conditions).await?;
+    service
+        .update_booking_status(id, body.status, body.admin_notes, body.curator_conditions)
+        .await?;
     Ok(StatusCode::OK)
 }
 
@@ -937,7 +1124,9 @@ pub async fn user_register(
 ) -> Result<Json<serde_json::Value>> {
     let ip = extract_ip(&headers);
     service.check_rate_limit("register", &ip, 5, 3600).await?;
-    let user = service.register_user(&body, client_ip(&ip), extract_user_agent(&headers)).await?;
+    let user = service
+        .register_user(&body, client_ip(&ip), extract_user_agent(&headers))
+        .await?;
     Ok(Json(serde_json::json!({ "user": user })))
 }
 
@@ -946,7 +1135,9 @@ pub async fn user_login_challenge(
     headers: HeaderMap,
     Json(body): Json<LoginChallengeRequest>,
 ) -> Result<Json<LoginChallengeResponse>> {
-    service.check_rate_limit("login", &extract_ip(&headers), 20, 3600).await?;
+    service
+        .check_rate_limit("login", &extract_ip(&headers), 20, 3600)
+        .await?;
     let response = service.login_challenge(&body.email).await?;
     Ok(Json(response))
 }
@@ -958,7 +1149,9 @@ pub async fn user_login_verify(
 ) -> Result<Json<LoginVerifyResponse>> {
     let ip = extract_ip(&headers);
     service.check_rate_limit("login", &ip, 30, 3600).await?;
-    let response = service.login_verify(&body, client_ip(&ip), extract_user_agent(&headers)).await?;
+    let response = service
+        .login_verify(&body, client_ip(&ip), extract_user_agent(&headers))
+        .await?;
     Ok(Json(response))
 }
 
@@ -1041,7 +1234,9 @@ pub async fn user_set_wishlist(
 ) -> Result<Json<Vec<String>>> {
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
     let user = service.get_user_from_session(token).await?;
-    let ids = service.set_user_wishlist(user.id, body.figurine_ids).await?;
+    let ids = service
+        .set_user_wishlist(user.id, body.figurine_ids)
+        .await?;
     Ok(Json(ids))
 }
 
@@ -1065,10 +1260,20 @@ pub async fn admin_list_users(
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>> {
     let search = params.get("search").map(|s| s.as_str());
-    let page = params.get("page").and_then(|p| p.parse::<i64>().ok()).unwrap_or(1).max(1);
-    let per_page = params.get("perPage").and_then(|p| p.parse::<i64>().ok()).unwrap_or(20).clamp(1, 100);
+    let page = params
+        .get("page")
+        .and_then(|p| p.parse::<i64>().ok())
+        .unwrap_or(1)
+        .max(1);
+    let per_page = params
+        .get("perPage")
+        .and_then(|p| p.parse::<i64>().ok())
+        .unwrap_or(20)
+        .clamp(1, 100);
     let (items, total) = service.admin_list_users(search, page, per_page).await?;
-    Ok(Json(serde_json::json!({ "items": items, "total": total, "page": page, "perPage": per_page })))
+    Ok(Json(
+        serde_json::json!({ "items": items, "total": total, "page": page, "perPage": per_page }),
+    ))
 }
 
 pub async fn admin_get_user(
@@ -1092,7 +1297,9 @@ pub async fn admin_update_user_notes(
     Path(id): Path<Uuid>,
     Json(body): Json<UpdateUserAdminNotesRequest>,
 ) -> Result<StatusCode> {
-    service.admin_update_user_notes(id, body.admin_notes.as_deref()).await?;
+    service
+        .admin_update_user_notes(id, body.admin_notes.as_deref())
+        .await?;
     Ok(StatusCode::OK)
 }
 
@@ -1128,7 +1335,9 @@ pub async fn apply_password_reset(
 ) -> Result<StatusCode> {
     let ip = extract_ip(&headers);
     service.check_rate_limit("reset", &ip, 10, 3600).await?;
-    service.apply_password_reset(&body, client_ip(&ip), extract_user_agent(&headers)).await?;
+    service
+        .apply_password_reset(&body, client_ip(&ip), extract_user_agent(&headers))
+        .await?;
     Ok(StatusCode::OK)
 }
 
@@ -1140,7 +1349,9 @@ pub async fn forgot_password(
     let ip = extract_ip(&headers);
     service.check_rate_limit("forgot", &ip, 5, 3600).await?;
     // Always 200 — the response never reveals whether the account exists.
-    service.request_password_reset(&body.email, client_ip(&ip), extract_user_agent(&headers)).await?;
+    service
+        .request_password_reset(&body.email, client_ip(&ip), extract_user_agent(&headers))
+        .await?;
     Ok(StatusCode::OK)
 }
 
@@ -1149,7 +1360,8 @@ pub async fn forgot_password(
 // ============================================================
 
 fn extract_ip(headers: &HeaderMap) -> String {
-    headers.get("x-forwarded-for")
+    headers
+        .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.split(',').next())
         .map(|s| s.trim().to_string())
@@ -1164,7 +1376,8 @@ fn client_ip(ip: &str) -> Option<String> {
 
 /// Raw User-Agent header, truncated to a sane length for storage.
 fn extract_user_agent(headers: &HeaderMap) -> Option<String> {
-    headers.get(axum::http::header::USER_AGENT)
+    headers
+        .get(axum::http::header::USER_AGENT)
         .and_then(|v| v.to_str().ok())
         .map(|s| s.chars().take(512).collect())
 }
@@ -1175,7 +1388,9 @@ pub async fn get_figurine_comments(
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<Vec<CommentDto>>> {
     let newest_first = params.get("sort").map(|v| v == "newest").unwrap_or(false);
-    let comments = service.get_figurine_comments(figurine_id, newest_first).await?;
+    let comments = service
+        .get_figurine_comments(figurine_id, newest_first)
+        .await?;
     Ok(Json(comments))
 }
 
@@ -1191,7 +1406,9 @@ pub async fn submit_comment(
         None
     };
     let ip = extract_ip(&headers);
-    service.submit_comment(figurine_id, user.as_ref(), &body, &ip).await?;
+    service
+        .submit_comment(figurine_id, user.as_ref(), &body, &ip)
+        .await?;
     Ok(StatusCode::CREATED)
 }
 
@@ -1201,11 +1418,22 @@ pub async fn admin_list_comments(
 ) -> Result<Json<AdminCommentsPage>> {
     let only_pending = params.get("pending").map(|v| v == "true").unwrap_or(false);
     let newest_first = params.get("sort").map(|v| v == "newest").unwrap_or(true);
-    let figurine_filter = params.get("figurineId")
+    let figurine_filter = params
+        .get("figurineId")
         .and_then(|v| Uuid::parse_str(v).ok());
-    let page = params.get("page").and_then(|p| p.parse::<i64>().ok()).unwrap_or(1).max(1);
-    let per_page = params.get("perPage").and_then(|p| p.parse::<i64>().ok()).unwrap_or(20).clamp(1, 100);
-    let page_data = service.admin_list_comments(only_pending, figurine_filter, newest_first, page, per_page).await?;
+    let page = params
+        .get("page")
+        .and_then(|p| p.parse::<i64>().ok())
+        .unwrap_or(1)
+        .max(1);
+    let per_page = params
+        .get("perPage")
+        .and_then(|p| p.parse::<i64>().ok())
+        .unwrap_or(20)
+        .clamp(1, 100);
+    let page_data = service
+        .admin_list_comments(only_pending, figurine_filter, newest_first, page, per_page)
+        .await?;
     Ok(Json(page_data))
 }
 
@@ -1214,7 +1442,9 @@ pub async fn admin_moderate_comment(
     Path(id): Path<Uuid>,
     Json(body): Json<ModerateCommentRequest>,
 ) -> Result<Json<AdminCommentDto>> {
-    let comment = service.admin_moderate_comment(id, body.is_approved, body.admin_reply.as_deref()).await?;
+    let comment = service
+        .admin_moderate_comment(id, body.is_approved, body.admin_reply.as_deref())
+        .await?;
     Ok(Json(comment))
 }
 
@@ -1273,9 +1503,7 @@ pub async fn save_workshop_feature(
 
 // === THEME CONFIG ===
 
-pub async fn get_theme_config(
-    State(service): State<AppService>,
-) -> Result<Json<ThemeConfig>> {
+pub async fn get_theme_config(State(service): State<AppService>) -> Result<Json<ThemeConfig>> {
     Ok(Json(service.get_theme_config().await?))
 }
 
@@ -1289,9 +1517,7 @@ pub async fn save_theme_config(
 
 // === COPY OVERRIDES ===
 
-pub async fn get_copy_overrides(
-    State(service): State<AppService>,
-) -> Result<Json<CopyOverrides>> {
+pub async fn get_copy_overrides(State(service): State<AppService>) -> Result<Json<CopyOverrides>> {
     Ok(Json(service.get_copy_overrides().await?))
 }
 
@@ -1323,13 +1549,21 @@ pub async fn user_upload_avatar(
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
     let user = service.get_user_from_session(token).await?;
 
-    while let Some(field) = multipart.next_field().await.map_err(|e| AppError::BadRequest(e.to_string()))? {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::BadRequest(e.to_string()))?
+    {
         if field.name().unwrap_or("") == "file" {
-            let data = field.bytes().await
+            let data = field
+                .bytes()
+                .await
                 .map_err(|e| AppError::Io(std::io::Error::other(e)))?;
 
             if data.len() > 10 * 1024 * 1024 {
-                return Err(AppError::BadRequest("Avatar image is too large (max 10MB).".into()));
+                return Err(AppError::BadRequest(
+                    "Avatar image is too large (max 10MB).".into(),
+                ));
             }
 
             // Decode + resize + encode off the async runtime.
@@ -1338,7 +1572,9 @@ pub async fn user_upload_avatar(
                 let img = image::load_from_memory(&data_owned)
                     .map_err(|e| AppError::BadRequest(format!("Invalid image: {}", e)))?;
                 if (img.width() as u64) * (img.height() as u64) > MAX_IMAGE_PIXELS {
-                    return Err(AppError::BadRequest("Image dimensions are too large".into()));
+                    return Err(AppError::BadRequest(
+                        "Image dimensions are too large".into(),
+                    ));
                 }
                 let thumb = img.resize_to_fill(200, 200, FilterType::Lanczos3).to_rgb8();
                 encode_jpeg_bytes(&thumb, 88)
@@ -1348,7 +1584,9 @@ pub async fn user_upload_avatar(
 
             let id = Uuid::new_v4();
             let avatar_dir = format!("{}/avatars", config.upload_dir);
-            fs::create_dir_all(&avatar_dir).await.map_err(AppError::Io)?;
+            fs::create_dir_all(&avatar_dir)
+                .await
+                .map_err(AppError::Io)?;
 
             let file_path = format!("{}/{}.jpg", avatar_dir, id);
             fs::write(&file_path, &buf).await.map_err(AppError::Io)?;
@@ -1381,7 +1619,9 @@ pub async fn user_get_threads(
     let user = service.get_user_from_session(token).await?;
     let threads = service.get_user_threads(user.id).await?;
     let unread = service.count_unread_threads(user.id).await?;
-    Ok(Json(serde_json::json!({ "threads": threads, "unread": unread })))
+    Ok(Json(
+        serde_json::json!({ "threads": threads, "unread": unread }),
+    ))
 }
 
 pub async fn user_get_thread(
@@ -1401,7 +1641,17 @@ pub async fn user_create_thread(
 ) -> Result<Json<ThreadDetailDto>> {
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
     let user = service.get_user_from_session(token).await?;
-    Ok(Json(service.user_create_thread(user.id, body.subject, body.body, body.category, body.attachment_urls).await?))
+    Ok(Json(
+        service
+            .user_create_thread(
+                user.id,
+                body.subject,
+                body.body,
+                body.category,
+                body.attachment_urls,
+            )
+            .await?,
+    ))
 }
 
 pub async fn user_reply_to_thread(
@@ -1412,7 +1662,11 @@ pub async fn user_reply_to_thread(
 ) -> Result<Json<ThreadMessageDto>> {
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
     let user = service.get_user_from_session(token).await?;
-    Ok(Json(service.user_reply_to_thread(id, user.id, body.body, body.attachment_urls).await?))
+    Ok(Json(
+        service
+            .user_reply_to_thread(id, user.id, body.body, body.attachment_urls)
+            .await?,
+    ))
 }
 
 pub async fn admin_list_threads(
@@ -1421,9 +1675,21 @@ pub async fn admin_list_threads(
 ) -> Result<Json<serde_json::Value>> {
     let category = params.get("category").cloned();
     let status = params.get("status").cloned();
-    let page = params.get("page").and_then(|p| p.parse::<i64>().ok()).unwrap_or(1).max(1);
-    let per_page = params.get("perPage").and_then(|p| p.parse::<i64>().ok()).unwrap_or(25).clamp(1, 100);
-    Ok(Json(service.admin_list_threads(category, status, page, per_page).await?))
+    let page = params
+        .get("page")
+        .and_then(|p| p.parse::<i64>().ok())
+        .unwrap_or(1)
+        .max(1);
+    let per_page = params
+        .get("perPage")
+        .and_then(|p| p.parse::<i64>().ok())
+        .unwrap_or(25)
+        .clamp(1, 100);
+    Ok(Json(
+        service
+            .admin_list_threads(category, status, page, per_page)
+            .await?,
+    ))
 }
 
 pub async fn admin_get_thread(
@@ -1438,7 +1704,18 @@ pub async fn admin_create_thread_for_user(
     Path(user_id): Path<Uuid>,
     Json(body): Json<CreateThreadRequest>,
 ) -> Result<Json<ThreadDetailDto>> {
-    Ok(Json(service.admin_create_thread(user_id, body.subject, body.body, body.category, None, body.attachment_urls).await?))
+    Ok(Json(
+        service
+            .admin_create_thread(
+                user_id,
+                body.subject,
+                body.body,
+                body.category,
+                None,
+                body.attachment_urls,
+            )
+            .await?,
+    ))
 }
 
 pub async fn admin_reply_to_thread(
@@ -1446,7 +1723,11 @@ pub async fn admin_reply_to_thread(
     Path(id): Path<Uuid>,
     Json(body): Json<ReplyToThreadRequest>,
 ) -> Result<Json<ThreadMessageDto>> {
-    Ok(Json(service.admin_reply_to_thread(id, body.body, body.attachment_urls).await?))
+    Ok(Json(
+        service
+            .admin_reply_to_thread(id, body.body, body.attachment_urls)
+            .await?,
+    ))
 }
 
 pub async fn admin_resolve_thread(
@@ -1467,9 +1748,7 @@ pub async fn admin_reopen_thread(
 
 // === BOOKING RULES ===
 
-pub async fn get_booking_rules(
-    State(service): State<AppService>,
-) -> Result<Json<BookingRules>> {
+pub async fn get_booking_rules(State(service): State<AppService>) -> Result<Json<BookingRules>> {
     Ok(Json(service.get_booking_rules().await?))
 }
 
@@ -1488,7 +1767,9 @@ pub async fn reschedule_booking_by_token(
     Path(token): Path<String>,
     Json(body): Json<RescheduleBookingRequest>,
 ) -> Result<Json<BookingCancelInfo>> {
-    Ok(Json(service.reschedule_booking_by_token(&token, body).await?))
+    Ok(Json(
+        service.reschedule_booking_by_token(&token, body).await?,
+    ))
 }
 
 // === WAITLIST ===
@@ -1499,9 +1780,15 @@ pub async fn join_waitlist(
     Path(id): Path<String>,
     Json(body): Json<CreateWaitlistRequest>,
 ) -> Result<Json<crate::models::WaitlistCreatedResponse>> {
-    service.check_rate_limit("waitlist", &extract_ip(&headers), 15, 3600).await?;
+    service
+        .check_rate_limit("waitlist", &extract_ip(&headers), 15, 3600)
+        .await?;
     let user_id = if let Some(token) = bearer_token(&headers) {
-        service.get_user_from_session(token).await.ok().map(|u| u.id)
+        service
+            .get_user_from_session(token)
+            .await
+            .ok()
+            .map(|u| u.id)
     } else {
         None
     };
@@ -1513,8 +1800,12 @@ pub async fn get_waitlist_by_token(
     headers: HeaderMap,
     Path(token): Path<String>,
 ) -> Result<Json<crate::models::WaitlistCancelInfo>> {
-    service.check_rate_limit("token", &extract_ip(&headers), 60, 3600).await?;
-    service.get_waitlist_by_token(&token).await?
+    service
+        .check_rate_limit("token", &extract_ip(&headers), 60, 3600)
+        .await?;
+    service
+        .get_waitlist_by_token(&token)
+        .await?
         .map(Json)
         .ok_or_else(|| crate::error::AppError::NotFound("Queue entry not found".to_string()))
 }
@@ -1524,7 +1815,9 @@ pub async fn leave_waitlist_by_token(
     headers: HeaderMap,
     Path(token): Path<String>,
 ) -> Result<StatusCode> {
-    service.check_rate_limit("token", &extract_ip(&headers), 60, 3600).await?;
+    service
+        .check_rate_limit("token", &extract_ip(&headers), 60, 3600)
+        .await?;
     service.leave_waitlist_by_token(&token).await?;
     Ok(StatusCode::OK)
 }

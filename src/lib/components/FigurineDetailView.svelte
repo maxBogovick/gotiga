@@ -1454,9 +1454,6 @@
                       ? $t('detailTrustNextProgress')
                       : $t('detailTrustNextSold')}
                 </p>
-                <a href={createSimilarHref} class="trust-ledger-link">
-                  {$t('commissionCreateSimilarShort')} →
-                </a>
               {/if}
             </div>
           </section>
@@ -1798,7 +1795,7 @@
 </div>
 
 <!-- Mobile sticky CTA after the first screen — present for every status. -->
-{#if scrollY > 300}
+{#if scrollY > 300 && !showRequestModal}
   <div class="mobile-cta" transition:fade={{ duration: 180 }}>
     <div class="mobile-cta-info">
       <span class="mobile-cta-name">{figurine.name}</span>

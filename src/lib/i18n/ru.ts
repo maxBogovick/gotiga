@@ -240,7 +240,7 @@ export const ru: Record<TranslationKey, string> = {
   unifiedIntentNotify:   'Уведомить меня',
   unifiedIntentNotifyHint:'Получить сообщение, когда будут новости.',
   unifiedSubmitRequest:  'Отправить запрос',
-  unifiedSubmitReserve:  'Отправить запрос резерва',
+  unifiedSubmitReserve:  'Отправить',
   unifiedSubmitWaitlist: 'Встать в очередь',
   unifiedSubmitViewing:  'Запросить даты',
   unifiedSubmitSimilar:  'Отправить запрос',
