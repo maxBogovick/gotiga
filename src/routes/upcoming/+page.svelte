@@ -1,16 +1,16 @@
 <script lang="ts">
-    import { onMount } from 'svelte';
     import { fade, fly } from 'svelte/transition';
     import { cubicOut } from 'svelte/easing';
-    import { api } from '$lib/api';
     import type { FigurineListItem } from '$lib/types/api';
     import { t , brandName } from '$lib/i18n';
+    import { SITE_URL } from '$lib/site';
     import OrderModal from '$lib/components/OrderModal.svelte';
     import AppImage from '$lib/components/AppImage.svelte';
 
-    let items = $state<FigurineListItem[]>([]);
-    let isLoading = $state(true);
-    let error = $state<string | null>(null);
+    // Data from the universal load (+page.ts): real items at prerender time so bots see
+    // the in-progress pieces, fresh fetch on client-side navigation.
+    let { data } = $props();
+    let items = $derived(data.items);
 
     let modalOpen = $state(false);
     let modalFigurineId = $state('');
@@ -22,20 +22,18 @@
         modalOpen = true;
     }
 
-    onMount(async () => {
-        try {
-            items = await api.getInProgressFigurines();
-        } catch (e) {
-            error = 'load_error';
-        } finally {
-            isLoading = false;
-        }
-    });
 </script>
 
 <svelte:head>
     <title>{$t('upcomingTitle')} — {$brandName}</title>
     <meta name="description" content="Author-made figures in progress. Available to reserve." />
+    <meta property="og:site_name" content={$brandName} />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="{$t('upcomingTitle')} — {$brandName}" />
+    <meta property="og:description" content="Author-made figures in progress. Available to reserve." />
+    <meta property="og:url" content="{SITE_URL}/upcoming" />
+    <meta property="og:image" content="{SITE_URL}/images/cabinet-room.jpg" />
     <!-- Fonts loaded once globally in app.html -->
 </svelte:head>
 
@@ -56,13 +54,7 @@
             <p class="page-subtitle">{$t('upcomingSubtitle')}</p>
         </header>
 
-        {#if isLoading}
-            <div class="loading" in:fade>
-                <span class="loading-dot"></span>
-                <span class="loading-dot"></span>
-                <span class="loading-dot"></span>
-            </div>
-        {:else if error || items.length === 0}
+        {#if items.length === 0}
             <div class="empty" in:fade={{ duration: 700, delay: 200 }}>
                 <p class="empty-title">{$t('upcomingEmpty')}</p>
                 <p class="empty-hint">{$t('upcomingEmptyHint')}</p>
@@ -260,26 +252,6 @@
         font-style: italic;
         line-height: 1.55;
         color: var(--muted);
-    }
-
-    /* Loading */
-    .loading {
-        display: flex;
-        gap: 8px;
-        padding: 80px 0;
-    }
-    .loading-dot {
-        width: 5px;
-        height: 5px;
-        border-radius: 50%;
-        background: var(--copper);
-        animation: dot-pulse 1.4s ease-in-out infinite;
-    }
-    .loading-dot:nth-child(2) { animation-delay: 0.2s; }
-    .loading-dot:nth-child(3) { animation-delay: 0.4s; }
-    @keyframes dot-pulse {
-        0%,80%,100% { opacity: 0.25; transform: scale(0.8); }
-        40% { opacity: 1; transform: scale(1); }
     }
 
     /* Empty */

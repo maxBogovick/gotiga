@@ -6,8 +6,11 @@ import type { FigurineListItem } from '$lib/types/api';
 // robots.txt). The Tauri build has no server and no SEO surface, so it's excluded.
 export const prerender = import.meta.env.VITE_BUILD_TARGET === 'web';
 
-// Public, indexable routes. /admin is intentionally absent (also Disallowed in robots).
-const STATIC_ROUTES = ['/', '/figurines', '/upcoming', '/workshop', '/author', '/commission'];
+// Public, prerendered routes with real, indexable HTML. /admin is intentionally
+// absent (also Disallowed in robots). /commission is omitted on purpose: it reads a
+// ?source query param so it can't be prerendered, and listing a JS-only shell here
+// would point crawlers at a thin page.
+const STATIC_ROUTES = ['/', '/figurines', '/upcoming', '/workshop', '/author'];
 
 function xmlEscape(s: string): string {
     return s.replace(/[<>&'"]/g, (c) =>

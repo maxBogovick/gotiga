@@ -2,16 +2,14 @@
   import { onMount } from 'svelte';
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
-  import { api } from '$lib/api';
-  import type { WorkshopItem } from '$lib/types/api';
-  import { BackButton, LoadingScreen } from '$lib/components';
-  import { t } from '$lib/i18n';
+  import { t, brandName } from '$lib/i18n';
+  import { SITE_URL } from '$lib/site';
   import AppImage from '$lib/components/AppImage.svelte';
 
-  // State (Svelte 5 Runes)
-  let items = $state<WorkshopItem[]>([]);
-  let isLoading = $state(true);
-  let error = $state<string | null>(null);
+  // Data from the universal load (+page.ts): real items at prerender time so bots see
+  // the workshop, fresh fetch on client-side navigation.
+  let { data } = $props();
+  let items = $derived(data.items);
   let expandedItem = $state<string | null>(null);
   let prefersReducedMotion = $state(false);
 
@@ -40,26 +38,21 @@
     expandedItem = expandedItem === id ? null : id;
   }
 
-  // Lifecycle
-  onMount(async () => {
-    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
-    prefersReducedMotion = mediaQuery.matches;
-
-    try {
-      items = await api.getWorkshopContent();
-      // Небольшая задержка для проявления "пыли"
-      await new Promise(r => setTimeout(r, 400));
-    } catch (e) {
-      console.error('Failed to load workshop:', e);
-      error = 'workshopError';
-    } finally {
-      isLoading = false;
-    }
+  onMount(() => {
+    prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   });
 </script>
 
 <svelte:head>
-  <title>Workshop — Gothic Museum</title>
+  <title>Workshop — {$brandName}</title>
+  <meta name="description" content={$t('workshopSubtitle')} />
+  <meta property="og:site_name" content={$brandName} />
+  <meta property="og:locale" content="en_US" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Workshop — {$brandName}" />
+  <meta property="og:description" content={$t('workshopSubtitle')} />
+  <meta property="og:url" content="{SITE_URL}/workshop" />
+  <meta property="og:image" content="{SITE_URL}/images/cabinet-room.jpg" />
   <!-- Fonts loaded once globally in app.html -->
 </svelte:head>
 
@@ -70,17 +63,7 @@
   <div class="absolute inset-0 pointer-events-none bg-noise opacity-[0.06] mix-blend-overlay"></div>
 </div>
 
-{#if isLoading}
-  <LoadingScreen />
-{:else if error}
-  <div class="min-h-screen flex flex-col items-center justify-center p-8 z-10 relative font-['Inter']">
-    <p class="text-[#5f4636] mb-6 tracking-wide uppercase text-sm">{$t('workshopError')}</p>
-    <button class="px-6 py-2 border border-[#34251c]/20 text-[#34251c] hover:bg-[#34251c]/5" onclick={() => window.location.reload()}>
-      {$t('workshopRetry')}
-    </button>
-  </div>
-{:else}
-  <div class="min-h-screen relative z-10 p-6 lg:p-16 font-['Inter'] text-[#34251c]">
+<div class="min-h-screen relative z-10 p-6 lg:p-16 font-['Inter'] text-[#34251c]">
 
     <div class="mb-10" in:fade={{ duration: 800 }}>
       <a href="/" class="text-[10px] tracking-[0.10em] text-[#5f4636] hover:text-[#34251c] transition-colors group">
@@ -187,7 +170,6 @@
 
     <div class="h-40"></div>
   </div>
-{/if}
 
 <style>
   /* Тяжелая древесная текстура */

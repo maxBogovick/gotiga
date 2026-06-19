@@ -11,8 +11,19 @@
     import AppImage from '$lib/components/AppImage.svelte';
     import HomeFigurineTile from '$lib/components/HomeFigurineTile.svelte';
     import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
+    import { SITE_URL } from '$lib/site';
 
     let { data } = $props();
+
+    // WebSite entity — anchors the brand for search engines and LLMs and ties every
+    // other JSON-LD node (figurines, the author) back to a single named site.
+    let websiteJsonLd = $derived(JSON.stringify({
+        '@context': 'https://schema.org',
+        '@type': 'WebSite',
+        name: $brandName,
+        url: SITE_URL,
+        description: 'An author\'s cabinet of gothic figures and handmade miniatures.',
+    }));
 
     let zones = $state<CabinetZone[]>([]);
     let isLoaded = $state(false);
@@ -314,10 +325,18 @@
 <svelte:head>
     <title>{$brandName} — Cabinet of Gothic Miniatures</title>
     <meta name="description" content="An author's cabinet of gothic figures and handmade miniatures." />
+    <meta property="og:site_name" content={$brandName} />
+    <meta property="og:locale" content="en_US" />
     <meta property="og:title" content="{$brandName} — Cabinet of Gothic Miniatures" />
+    <meta property="og:description" content="An author's cabinet of gothic figures and handmade miniatures." />
     <meta property="og:image" content={data.ogImage} />
     <meta property="og:type" content="website" />
+    <meta property="og:url" content={SITE_URL} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="{$brandName} — Cabinet of Gothic Miniatures" />
+    <meta name="twitter:image" content={data.ogImage} />
     <meta name="theme-color" content="#f8f1e7" />
+    {@html `<script type="application/ld+json">${websiteJsonLd}<\/script>`}
     <!-- Fonts loaded once globally in app.html -->
 </svelte:head>
 

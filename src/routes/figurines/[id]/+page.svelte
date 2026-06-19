@@ -77,6 +77,8 @@
 
   <!-- Open Graph -->
   <meta property="og:type"        content="article" />
+  <meta property="og:site_name"   content={$brandName} />
+  <meta property="og:locale"      content="en_US" />
   <meta property="og:title"       content="{figurine?.name ?? 'Gothic Miniature'} — {$brandName}" />
   <meta property="og:description" content={figurine?.shortText ?? figurine?.fullDescription ?? ''} />
   {#if ogImage()}

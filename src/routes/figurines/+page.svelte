@@ -2,7 +2,8 @@
   import { onMount } from 'svelte';
   import { beforeNavigate, afterNavigate, invalidateAll, goto } from '$app/navigation';
   import { fade, slide } from 'svelte/transition';
-  import { t } from '$lib/i18n';
+  import { t, brandName } from '$lib/i18n';
+  import { SITE_URL } from '$lib/site';
   import AppImage from '$lib/components/AppImage.svelte';
   import Lightbox from '$lib/components/Lightbox.svelte';
   import OrderModal from '$lib/components/OrderModal.svelte';
@@ -296,8 +297,18 @@
 </script>
 
 <svelte:head>
-  <title>Archive — Gothic Miniatures Collection</title>
+  <title>Archive — Gothic Miniatures Collection — {$brandName}</title>
   <meta name="description" content={$t('archiveMetaDescription')} />
+  <meta property="og:site_name" content={$brandName} />
+  <meta property="og:locale" content="en_US" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Archive — Gothic Miniatures Collection — {$brandName}" />
+  <meta property="og:description" content={$t('archiveMetaDescription')} />
+  <meta property="og:image" content="{SITE_URL}/images/cabinet-room.jpg" />
+  <meta property="og:url" content="{SITE_URL}/figurines" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Archive — Gothic Miniatures Collection — {$brandName}" />
+  <meta name="twitter:image" content="{SITE_URL}/images/cabinet-room.jpg" />
   <!-- Fonts loaded once globally in app.html -->
 </svelte:head>
 

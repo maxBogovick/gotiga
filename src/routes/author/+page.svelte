@@ -2,14 +2,16 @@
   import { onMount } from 'svelte';
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
-  import { api } from '$lib/api';
-  import type { AuthorText, AuthorProfile } from '$lib/types/api';
-  import { t } from '$lib/i18n';
+  import { resolveMediaUrl } from '$lib/api';
+  import { SITE_URL } from '$lib/site';
+  import { t, brandName } from '$lib/i18n';
 
-  let texts = $state<AuthorText[]>([]);
-  let profile = $state<AuthorProfile | null>(null);
-  let isLoading = $state(true);
-  let error = $state<string | null>(null);
+  // Data comes from the universal load (+page.ts): real values at prerender time so
+  // bots see the bio, and a fresh fetch on client-side navigation.
+  let { data } = $props();
+  let texts = $derived(data.texts);
+  let profile = $derived(data.profile);
+  let portraitUrl = $derived(resolveMediaUrl(profile?.photoUrl) ?? '');
   let prefersReducedMotion = $state(false);
 
   function getNoteStyle(index: number) {
@@ -23,21 +25,8 @@
     };
   }
 
-  onMount(async () => {
-    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-    prefersReducedMotion = mq.matches;
-
-    try {
-      [texts, profile] = await Promise.all([
-        api.getAuthorTexts(),
-        api.getAuthorProfile().catch(() => null),
-      ]);
-    } catch (e) {
-      console.error('Failed to load author page:', e);
-      error = $t('authorError');
-    } finally {
-      isLoading = false;
-    }
+  onMount(() => {
+    prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   });
 
   const socialLinks = $derived(profile ? [
@@ -50,10 +39,36 @@
     profile.website    ? { label: 'Website',    icon: 'ws', href: profile.website.startsWith('http') ? profile.website : `https://${profile.website}` } : null,
     profile.email      ? { label: $t('authorContactLabel'), icon: 'em', href: `mailto:${profile.email}` }                               : null,
   ].filter(Boolean) : []);
+
+  // Person entity — lets search engines and LLMs attach a named maker to the works,
+  // with sameAs pointing at the verified social profiles. Only emitted when there is
+  // a real profile to describe.
+  let personJsonLd = $derived(profile?.name ? JSON.stringify({
+    '@context': 'https://schema.org',
+    '@type': 'Person',
+    name: profile.name,
+    url: `${SITE_URL}/author`,
+    ...(profile.tagline ? { jobTitle: profile.tagline } : {}),
+    ...(profile.bio ? { description: profile.bio } : {}),
+    ...(portraitUrl ? { image: portraitUrl } : {}),
+    worksFor: { '@type': 'Organization', name: $brandName, url: SITE_URL },
+    sameAs: socialLinks
+      .map((l) => l?.href)
+      .filter((h): h is string => !!h && h.startsWith('http')),
+  }) : '');
 </script>
 
 <svelte:head>
-  <title>About the Master — Archive</title>
+  <title>About the Master — {$brandName}</title>
+  <meta name="description" content={profile?.tagline ?? profile?.bio ?? 'The maker behind the gothic miniatures of Ritunia.'} />
+  <meta property="og:site_name" content={$brandName} />
+  <meta property="og:locale" content="en_US" />
+  <meta property="og:type" content="profile" />
+  <meta property="og:title" content="About the Master — {$brandName}" />
+  <meta property="og:description" content={profile?.tagline ?? profile?.bio ?? 'The maker behind the gothic miniatures of Ritunia.'} />
+  <meta property="og:url" content="{SITE_URL}/author" />
+  {#if portraitUrl}<meta property="og:image" content={portraitUrl} />{/if}
+  {#if personJsonLd}{@html `<script type="application/ld+json">${personJsonLd}<\/script>`}{/if}
   <!-- Fonts loaded once globally in app.html -->
 </svelte:head>
 
@@ -63,17 +78,7 @@
   <div class="absolute bottom-[-10%] right-[-5%] w-[50vw] h-[50vw] bg-[#c65f3c]/20 rounded-full blur-[100px] pointer-events-none"></div>
 </div>
 
-{#if isLoading}
-  <div class="min-h-screen flex items-center justify-center" out:fade>
-    <span class="font-['Inter'] text-[#5f4636] tracking-[0.12em] text-xs animate-pulse uppercase">{$t('authorSilence')}</span>
-  </div>
-{:else if error}
-  <div class="min-h-screen flex flex-col items-center justify-center p-8 text-center" in:fade>
-    <p class="font-['Inter'] text-[#5f4636] mb-6 tracking-wide">{$t('authorError')}</p>
-    <a href="/" class="text-[#34251c] border-b border-[#34251c]/20 pb-1 text-xs tracking-wide">{$t('authorReturnLink')}</a>
-  </div>
-{:else}
-  <div class="min-h-screen relative z-10 font-['Inter'] text-[#34251c] pb-32">
+<div class="min-h-screen relative z-10 font-['Inter'] text-[#34251c] pb-32">
     <div class="max-w-5xl mx-auto px-6 py-12 lg:py-20">
 
       <nav class="mb-16" in:fade={{ duration: 1000 }}>
@@ -97,10 +102,10 @@
 
               <!-- Portrait -->
               <div class="flex-shrink-0">
-                {#if profile.photoUrl}
+                {#if portraitUrl}
                   <div class="relative w-40 h-52 lg:w-52 lg:h-64 overflow-hidden border border-[#34251c]/15 shadow-2xl">
                     <img
-                      src={profile.photoUrl}
+                      src={portraitUrl}
                       alt={profile.name}
                       class="w-full h-full object-cover grayscale sepia opacity-80"
                     />
@@ -243,7 +248,6 @@
 
     </div>
   </div>
-{/if}
 
 <style>
   .bg-noise {
