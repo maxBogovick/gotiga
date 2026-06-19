@@ -112,6 +112,7 @@ export const en = {
   homeViewFigurine: 'View figure',
 
   // === ARCHIVE LIST (/figurines) ===
+  archiveMetaDescription: 'A registry of gothic handmade miniatures — browse the full archive of creatures by status, year, and series.',
   archivePageTitle: 'Archive of Creatures',
   archiveBackLink: '← Return to hall',
   archiveStudying: 'Studying the archives…',
@@ -897,6 +898,24 @@ export const en = {
 
   // === PROFILE ===
   profileTitle: 'Your archive',
+  profileOverview: 'Requests',
+  profileOverviewKindBooking: 'Booking',
+  profileOverviewKindOrder: 'Request',
+  profileOverviewKindCommission: 'Petition',
+  profileOverviewNewReply: 'New reply',
+  profileLinkClaimTitle: 'Attach a request by code',
+  profileLinkClaimHint: 'Booked, joined a queue or wrote in as a guest? Paste the code from your email to attach it to this account.',
+  profileLinkClaimPlaceholder: 'Paste your code',
+  profileLinkClaimButton: 'Attach',
+  profileLinkClaimLinking: 'Attaching…',
+  profileLinkClaimLinked: 'Attached to your account:',
+  profileLinkClaimMismatch: 'This code was issued to a different email than this account.',
+  profileLinkClaimAlready: 'This request is already attached to an account.',
+  profileLinkClaimNotFound: 'No request was found for this code.',
+  profileLinkClaimKindBooking: 'Booking',
+  profileLinkClaimKindWaitlist: 'Waiting list',
+  profileLinkClaimKindNotify: 'Notify-me',
+  profileLinkClaimKindCommission: 'Petition',
   profileBookings: 'Bookings',
   profileBookingManage: 'Manage →',
   profileBookingCuratorConditions: 'Curator conditions',

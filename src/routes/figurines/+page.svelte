@@ -290,7 +290,7 @@
 
 <svelte:head>
   <title>Archive — Gothic Miniatures Collection</title>
-  <meta name="description" content="Gothic miniatures registry" />
+  <meta name="description" content={$t('archiveMetaDescription')} />
   <!-- Fonts loaded once globally in app.html -->
 </svelte:head>
 
@@ -414,7 +414,7 @@
             class="fchip {mainFilter === 'saved' ? 'fchip--active-saved' : savedCount > 0 ? 'fchip--off' : 'fchip--empty'}"
             onclick={() => { if (savedCount > 0) mainFilter = mainFilter === 'saved' ? 'all' : 'saved'; }}
             aria-pressed={mainFilter === 'saved'}
-            aria-disabled={savedCount === 0}
+            disabled={savedCount === 0}
             title={savedCount === 0 ? 'Press ♡ on any card to save' : undefined}
           >
             <svg width="11" height="11" viewBox="0 0 14 14" fill="none" aria-hidden="true">
@@ -433,7 +433,7 @@
             class="fchip {mainFilter === 'viewed' ? 'fchip--active-viewed' : viewedCount > 0 ? 'fchip--off' : 'fchip--empty'}"
             onclick={() => { if (viewedCount > 0) mainFilter = mainFilter === 'viewed' ? 'all' : 'viewed'; }}
             aria-pressed={mainFilter === 'viewed'}
-            aria-disabled={viewedCount === 0}
+            disabled={viewedCount === 0}
             title={viewedCount === 0 ? 'Open figurines to track viewed' : undefined}
           >
             <svg width="12" height="11" viewBox="0 0 14 14" fill="none" aria-hidden="true">

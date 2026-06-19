@@ -3,4 +3,4 @@ Allow: /
 Disallow: /admin
 Disallow: /api/
 
-Sitemap: https://gotiga.com/sitemap.xml
+Sitemap: https://ritunia.com/sitemap.xml

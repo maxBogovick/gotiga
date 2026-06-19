@@ -211,6 +211,15 @@ export interface CommissionCreatedResponse {
     claimToken: string;
 }
 
+export type LinkClaimKind = 'booking' | 'waitlist' | 'notify' | 'commission';
+export type LinkClaimResult = 'linked' | 'email_mismatch' | 'already_linked' | 'not_found';
+
+export interface LinkClaimResponse {
+    result: LinkClaimResult;
+    kind: LinkClaimKind | null;
+    name: string | null;
+}
+
 export interface CommissionsPage {
     items: CommissionDto[];
     total: number;

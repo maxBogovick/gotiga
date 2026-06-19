@@ -356,16 +356,20 @@ impl AppService {
 
     // === ORDERS / NOTIFICATIONS ===
 
-    pub async fn create_order(&self, order: &OrderRequest) -> Result<Order> {
+    pub async fn create_order(&self, order: &OrderRequest, user_id: Option<Uuid>) -> Result<Order> {
         // Notify-me subscriptions are deduplicated and carry a cancel token;
         // request/question are plain one-off messages.
         let saved = if order.mode == OrderMode::Notify {
-            self.repo.upsert_notify_order(order).await?
+            self.repo.upsert_notify_order(order, user_id).await?
         } else {
-            self.repo.save_order(order).await?
+            self.repo.save_order(order, user_id).await?
         };
         let _ = self.send_order_notification(&saved).await;
         Ok(saved)
+    }
+
+    pub async fn link_orders_to_user(&self, user_id: Uuid, email: &str) -> Result<u64> {
+        self.repo.link_orders_to_user(user_id, email).await
     }
 
     /// View a notify subscription by its token (visitor's receipt lookup).
@@ -621,6 +625,18 @@ impl AppService {
         Ok(dtos)
     }
 
+    /// Adopt unclaimed petitions sent from this account's email. Each goes through
+    /// claim_commission so its conversation thread is seeded exactly as on manual
+    /// claim. Covers guest petitions and the case where only the last claim token
+    /// survived in the browser's localStorage.
+    pub async fn adopt_commissions_by_email(&self, user_id: Uuid, email: &str) -> Result<()> {
+        let tokens = self.repo.orphan_commission_tokens_by_email(email).await?;
+        for token in tokens {
+            let _ = self.claim_commission(&token, user_id).await;
+        }
+        Ok(())
+    }
+
     pub async fn update_commission(
         &self,
         id: Uuid,
@@ -805,7 +821,7 @@ impl AppService {
         Ok(())
     }
 
-    pub async fn create_booking(&self, req: CreateBookingRequest) -> Result<Booking> {
+    pub async fn create_booking(&self, req: CreateBookingRequest, user_id: Option<Uuid>) -> Result<Booking> {
         let starts_at = chrono::NaiveDate::parse_from_str(&req.starts_at, "%Y-%m-%d")
             .map_err(|_| crate::error::AppError::BadRequest("Invalid starts_at date".to_string()))?;
         let ends_at = chrono::NaiveDate::parse_from_str(&req.ends_at, "%Y-%m-%d")
@@ -819,7 +835,7 @@ impl AppService {
         let rules = self.get_booking_rules().await?;
         Self::validate_booking_rules(&rules, starts_at, ends_at)?;
 
-        let booking = self.repo.create_booking_atomic(&req, starts_at, ends_at).await?
+        let booking = self.repo.create_booking_atomic(&req, starts_at, ends_at, user_id).await?
             .ok_or_else(|| crate::error::AppError::Conflict(
                 "These dates conflict with existing showings or confirmed bookings".to_string()
             ))?;
@@ -1588,6 +1604,81 @@ impl AppService {
             venue: b.venue,
             curator_conditions: b.curator_conditions,
         }).collect())
+    }
+
+    pub async fn get_user_wishlist(&self, user_id: Uuid) -> Result<Vec<String>> {
+        self.repo.get_user_wishlist(user_id).await
+    }
+
+    pub async fn set_user_wishlist(&self, user_id: Uuid, ids: Vec<String>) -> Result<Vec<String>> {
+        // Dedupe and cap so the column stays bounded even if a client misbehaves.
+        let mut seen = std::collections::HashSet::new();
+        let cleaned: Vec<String> = ids
+            .into_iter()
+            .filter(|s| !s.trim().is_empty() && seen.insert(s.clone()))
+            .take(500)
+            .collect();
+        self.repo.set_user_wishlist(user_id, &cleaned).await?;
+        Ok(cleaned)
+    }
+
+    /// Attach a guest request to the account by its secret code. Tries each request
+    /// type in turn (booking → waitlist → notify → commission); the first table that
+    /// recognises the token decides the outcome.
+    pub async fn link_claim_by_token(&self, user: &User, token: &str) -> Result<LinkClaimResponse> {
+        let token = token.trim();
+        if token.is_empty() {
+            return Ok(LinkClaimResponse { result: "not_found".into(), kind: None, name: None });
+        }
+        if let Some(m) = self.repo.link_booking_by_token(user.id, &user.email, token).await? {
+            return Ok(Self::claim_response("booking", m));
+        }
+        if let Some(m) = self.repo.link_waitlist_by_token(user.id, &user.email, token).await? {
+            return Ok(Self::claim_response("waitlist", m));
+        }
+        if let Some(m) = self.repo.link_notify_order_by_token(user.id, &user.email, token).await? {
+            return Ok(Self::claim_response("notify", m));
+        }
+        if self.repo.commission_claimable_by(token, user.id).await? {
+            // Token-only (no email guard). Reuse claim_commission so the conversation
+            // thread is seeded exactly as it is for the in-app claim flow.
+            let dto = self.claim_commission(token, user.id).await?;
+            let name = if dto.title.trim().is_empty() { dto.requester_name.clone() } else { dto.title.clone() };
+            return Ok(LinkClaimResponse { result: "linked".into(), kind: Some("commission".into()), name: Some(name) });
+        }
+        Ok(LinkClaimResponse { result: "not_found".into(), kind: None, name: None })
+    }
+
+    fn claim_response(kind: &str, m: crate::db::ClaimMatch) -> LinkClaimResponse {
+        let result = if m.linked {
+            "linked"
+        } else if !m.email_ok {
+            "email_mismatch"
+        } else {
+            "already_linked"
+        };
+        LinkClaimResponse { result: result.to_string(), kind: Some(kind.to_string()), name: Some(m.name) }
+    }
+
+    pub async fn get_user_waitlist(&self, user_id: Uuid) -> Result<Vec<WaitlistEntryDto>> {
+        let entries = self.repo.get_user_waitlist(user_id).await?;
+        let mut dtos = Vec::with_capacity(entries.len());
+        for e in entries {
+            let position = self.repo.waitlist_position(e.figurine_id, e.created_at).await?;
+            dtos.push(WaitlistEntryDto {
+                id: e.id.to_string(),
+                figurine_id: e.figurine_id.to_string(),
+                figurine_name: e.figurine_name,
+                requester_name: e.requester_name,
+                requester_email: e.requester_email,
+                requester_phone: e.requester_phone,
+                note: e.note,
+                created_at: e.created_at.to_rfc3339(),
+                user_id: e.user_id.map(|u| u.to_string()),
+                position,
+            });
+        }
+        Ok(dtos)
     }
 
     pub async fn get_user_orders(&self, user_id: Uuid) -> Result<Vec<UserOrderDto>> {

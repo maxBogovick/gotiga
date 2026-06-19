@@ -514,10 +514,12 @@ export const api = {
         });
     },
 
-    async submitOrder(order: OrderRequest): Promise<import('./types/api').OrderCreatedResponse> {
+    async submitOrder(order: OrderRequest, sessionToken?: string | null): Promise<import('./types/api').OrderCreatedResponse> {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
         return webFetch('/orders', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers,
             body: JSON.stringify(order),
         });
     },
@@ -558,10 +560,12 @@ export const api = {
         return webFetch(`/figurines/${figurineId}/schedule`);
     },
 
-    async submitBooking(req: CreateBookingRequest): Promise<import('./types/api').BookingCreatedResponse> {
+    async submitBooking(req: CreateBookingRequest, sessionToken?: string | null): Promise<import('./types/api').BookingCreatedResponse> {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
         return webFetch(`/figurines/${req.figurineId}/book`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers,
             body: JSON.stringify(req),
         });
     },
@@ -744,6 +748,36 @@ export const api = {
     async userProfileOrders(sessionToken: string): Promise<UserOrderDto[]> {
         return webFetch('/profile/orders', {
             headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    async getWishlist(sessionToken: string): Promise<string[]> {
+        return webFetch('/profile/wishlist', {
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    async userProfileWaitlist(sessionToken: string): Promise<WaitlistEntryDto[]> {
+        return webFetch('/profile/waitlist', {
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    async setWishlist(sessionToken: string, figurineIds: string[]): Promise<string[]> {
+        return webFetch('/profile/wishlist', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
+            body: JSON.stringify({ figurineIds }),
+        });
+    },
+
+    // Attach a guest request (booking / waitlist / notify / commission) to the
+    // account by its secret code — for visitors who lost the localStorage receipt.
+    async linkClaimByToken(sessionToken: string, token: string): Promise<import('./types/api').LinkClaimResponse> {
+        return webFetch('/profile/claims/link', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
+            body: JSON.stringify({ token }),
         });
     },
 

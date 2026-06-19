@@ -207,8 +207,10 @@
           venue: venue.trim() || null,
           startsAt,
           endsAt,
-        });
+        }, authStore.token);
         const claim = { token: res.cancelToken, figurineName, startsAt, endsAt, submittedAt: new Date().toISOString() };
+        // Backend already ties the booking to the account when the token is sent;
+        // this stays as a harmless fallback (no-op once user_id is set).
         if (authStore.isLoggedIn && authStore.token) {
           api.userLinkBookings(authStore.token, [res.cancelToken]).catch(() => {});
         }
@@ -233,7 +235,7 @@
           requesterPhone: phone.trim() || null,
           message: orderMessage(prefix),
           mode,
-        });
+        }, authStore.token);
         if (intent === 'notify' && res?.cancelToken) onNotified(res.cancelToken);
         successTitle = $t('orderSuccessTitle');
         successText = $t('orderSuccessText');

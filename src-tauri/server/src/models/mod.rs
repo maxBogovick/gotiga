@@ -552,6 +552,34 @@ pub struct BookingsByTokensRequest {
     pub tokens: Vec<String>,
 }
 
+/// Full replacement of a logged-in user's wishlist (figurine ids).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetWishlistRequest {
+    pub figurine_ids: Vec<String>,
+}
+
+/// Attach a guest request (booking / waitlist / notify / commission) to the
+/// logged-in account by its secret code, for visitors who changed device or
+/// cleared their browser and lost the localStorage receipt.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkClaimRequest {
+    pub token: String,
+}
+
+/// Outcome of a link-by-code attempt. `result` is one of:
+/// "linked" | "email_mismatch" | "already_linked" | "not_found".
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkClaimResponse {
+    pub result: String,
+    /// "booking" | "waitlist" | "notify" | "commission" when a row was found.
+    pub kind: Option<String>,
+    /// Figurine / petition name, for a human-readable confirmation.
+    pub name: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShowingDto {

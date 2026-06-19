@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api, resolveMediaUrl } from '$lib/api';
-  import type { CommissionDto, CommissionStatus, ThreadDetailDto, AttachmentInput } from '$lib/types/api';
+  import type { CommissionDto, CommissionStatus, ThreadDetailDto, AttachmentInput, Figurine, FigurineListItem } from '$lib/types/api';
   import MessageAttachments from '$lib/components/MessageAttachments.svelte';
 
   let { onNewCount = (_n: number) => {} } = $props();
@@ -21,6 +21,58 @@
   let savedId = $state<string | null>(null);
   let notesDraft = $state<Record<string, string>>({});
   let figurineDraft = $state<Record<string, string>>({});
+
+  // Registry of existing works, so the link is a pick — not a hand-typed UUID.
+  let registry = $state<FigurineListItem[]>([]);
+  let creatingWorkId = $state<string | null>(null);
+
+  async function loadRegistry() {
+    try { registry = await api.getAllFigurinesAdmin(); } catch { registry = []; }
+  }
+
+  // Spin up a fresh in-progress, non-public work pre-filled from the request, then
+  // link it and move the petition to "in progress". Saves the master from creating a
+  // figurine by hand and pasting its id back here.
+  async function createWork(c: CommissionDto) {
+    if (creatingWorkId) return;
+    creatingWorkId = c.id;
+    try {
+      const fig: Figurine = {
+        id: crypto.randomUUID(),
+        name: c.title?.trim() || (c.requesterName ? `Petition — ${c.requesterName}` : 'New work'),
+        shortText: '',
+        fullDescription: c.description ?? '',
+        dimensions: c.sizeNote ?? '',
+        material: '',
+        technique: '',
+        year: new Date().getFullYear(),
+        ambiencePath: null,
+        videoUrl: null,
+        secretText: '',
+        status: 'in_progress',
+        sortOrder: registry.length,
+        isVisible: false,
+        isFeatured: false,
+        series: null,
+        images: [],
+        processSteps: [],
+        relatedItems: [],
+      };
+      await api.saveFigurine(fig);
+      figurineDraft[c.id] = fig.id;
+      const updated = await api.updateCommissionStatus(c.id, 'in_progress', {
+        adminNotes: notesDraft[c.id] ?? c.adminNotes ?? undefined,
+        figurineId: fig.id,
+      });
+      applyUpdate(updated);
+      await loadRegistry();
+      await load();
+    } catch {
+      // ignore — the master can retry or link manually
+    } finally {
+      creatingWorkId = null;
+    }
+  }
 
   // Embedded conversation
   let openChatId = $state<string | null>(null);
@@ -161,7 +213,7 @@
     }
   }
 
-  onMount(() => load());
+  onMount(() => { load(); loadRegistry(); });
 
   const statusLabel: Record<CommissionStatus, string> = {
     new: 'New', reviewing: 'Reviewing', accepted: 'Accepted',
@@ -260,13 +312,23 @@
                 {/each}
               </div>
               <div class="flex flex-wrap gap-2 items-center">
-                <input
-                  type="text"
-                  placeholder="Figure ID (on acceptance)"
+                <select
                   value={figurineDraft[c.id] ?? c.figurineId ?? ''}
-                  oninput={(e) => figurineDraft[c.id] = (e.target as HTMLInputElement).value}
-                  class="flex-1 min-w-[140px] text-xs border border-[#34251c]/15 px-2 py-1 bg-[#fff9f0]"
-                />
+                  onchange={(e) => figurineDraft[c.id] = (e.target as HTMLSelectElement).value}
+                  class="flex-1 min-w-[160px] text-xs border border-[#34251c]/15 px-2 py-1 bg-[#fff9f0]"
+                  title="Link this request to a work from the registry"
+                >
+                  <option value="">— no linked work —</option>
+                  {#each registry as f (f.id)}
+                    <option value={f.id}>{f.name} · {f.status}</option>
+                  {/each}
+                </select>
+                <button
+                  onclick={() => createWork(c)}
+                  disabled={creatingWorkId === c.id}
+                  class="text-[10px] px-2 py-1 border border-[#6f3b24]/40 text-[#6f3b24] hover:border-[#6f3b24] hover:bg-[#6f3b24]/5 transition-colors disabled:opacity-50 whitespace-nowrap"
+                  title="Create a new in-progress work pre-filled from this request and link it"
+                >{creatingWorkId === c.id ? '…' : '＋ Create work'}</button>
                 <input
                   type="text"
                   placeholder="Note for the sender"

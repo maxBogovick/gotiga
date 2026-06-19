@@ -12,6 +12,8 @@
     import HomeFigurineTile from '$lib/components/HomeFigurineTile.svelte';
     import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
 
+    let { data } = $props();
+
     let zones = $state<CabinetZone[]>([]);
     let isLoaded = $state(false);
     let imageLoaded = $state(false);
@@ -313,7 +315,7 @@
     <title>{$brandName} — Cabinet of Gothic Miniatures</title>
     <meta name="description" content="An author's cabinet of gothic figures and handmade miniatures." />
     <meta property="og:title" content="{$brandName} — Cabinet of Gothic Miniatures" />
-    <meta property="og:image" content="/images/cabinet-room.jpg" />
+    <meta property="og:image" content={data.ogImage} />
     <meta property="og:type" content="website" />
     <meta name="theme-color" content="#f8f1e7" />
     <!-- Fonts loaded once globally in app.html -->

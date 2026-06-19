@@ -1,4 +1,6 @@
 import { browser } from '$app/environment';
+import { authStore } from './auth.svelte';
+import { api } from '$lib/api';
 
 const CANONICAL_KEY = 'gotiga_saved_figurines';
 const LEGACY_KEYS = ['gotiga_liked', 'gotiga_wishlist'] as const;
@@ -47,12 +49,44 @@ class SavedFigurinesStore {
     else set.add(id);
     this.ids = [...set];
     this.#persist();
+    this.#pushToServer();
   }
 
   remove(id: string) {
     this.load();
     this.ids = this.ids.filter((savedId) => savedId !== id);
     this.#persist();
+    this.#pushToServer();
+  }
+
+  // Merge the server-stored wishlist with the local one and converge both sides.
+  // Called after a session is established (login / session restore). When logged
+  // out or offline it's a no-op, so anonymous visitors keep using localStorage.
+  async syncWithServer() {
+    if (!browser) return;
+    const token = authStore.token;
+    if (!token) return;
+    this.load();
+    try {
+      const server = await api.getWishlist(token);
+      const merged = dedupe([...this.ids, ...server]);
+      const changed =
+        merged.length !== this.ids.length || merged.length !== server.length;
+      this.ids = merged;
+      this.#persist();
+      // Only write back when the merged set actually differs from the server's.
+      if (changed) await api.setWishlist(token, merged);
+    } catch {
+      // Not logged in / transient error — keep the local list untouched.
+    }
+  }
+
+  #pushToServer() {
+    if (!browser) return;
+    const token = authStore.token;
+    if (!token) return;
+    // Best effort: localStorage already holds the source of truth for this device.
+    api.setWishlist(token, this.ids).catch(() => {});
   }
 
   #persist() {

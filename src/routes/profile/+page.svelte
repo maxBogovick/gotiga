@@ -5,23 +5,70 @@
   import { api, resolveMediaUrl } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
   import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
-  import type { UserBookingDto, UserOrderDto, MessageThreadDto, ThreadDetailDto, CommissionDto, AttachmentInput, FigurineListItem } from '$lib/types/api';
+  import type { UserBookingDto, UserOrderDto, MessageThreadDto, ThreadDetailDto, CommissionDto, AttachmentInput, FigurineListItem, LinkClaimResponse, LinkClaimKind, WaitlistEntryDto } from '$lib/types/api';
   import AppImage from '$lib/components/AppImage.svelte';
   import MessageAttachments from '$lib/components/MessageAttachments.svelte';
   import CommissionEditModal from '$lib/components/CommissionEditModal.svelte';
 
-  type Tab = 'bookings' | 'orders' | 'commissions' | 'wishlist' | 'messages';
-  let activeTab = $state<Tab>('bookings');
+  type Tab = 'overview' | 'bookings' | 'orders' | 'commissions' | 'wishlist' | 'messages';
+  let activeTab = $state<Tab>('overview');
 
   let bookings = $state<UserBookingDto[]>([]);
   let orders = $state<UserOrderDto[]>([]);
   let commissions = $state<CommissionDto[]>([]);
+  let waitlist = $state<WaitlistEntryDto[]>([]);
   let wishlistIds = $state<string[]>([]);
   let wishlistItems = $state<Map<string, FigurineListItem | null>>(new Map());
   let threads = $state<MessageThreadDto[]>([]);
   let unreadCount = $state(0);
   let loading = $state(true);
   let error = $state('');
+
+  // ── Attach a guest request by its secret code ──
+  let claimCode = $state('');
+  let claimSubmitting = $state(false);
+  let claimResult = $state<LinkClaimResponse | null>(null);
+  let claimError = $state('');
+
+  // Where to send the user after a successful link. Waitlist has no profile tab,
+  // so it stays on the current one and relies on the inline confirmation.
+  const CLAIM_KIND_TAB: Partial<Record<LinkClaimKind, Tab>> = {
+    booking: 'bookings',
+    notify: 'orders',
+    commission: 'commissions',
+  };
+
+  function claimKindLabel(kind: LinkClaimKind): string {
+    const map: Record<LinkClaimKind, string> = {
+      booking: $t('profileLinkClaimKindBooking'),
+      waitlist: $t('profileLinkClaimKindWaitlist'),
+      notify: $t('profileLinkClaimKindNotify'),
+      commission: $t('profileLinkClaimKindCommission'),
+    };
+    return map[kind];
+  }
+
+  async function submitClaim() {
+    const code = claimCode.trim();
+    if (!code || claimSubmitting) return;
+    claimSubmitting = true;
+    claimError = '';
+    claimResult = null;
+    try {
+      const res = await api.linkClaimByToken(authStore.token!, code);
+      claimResult = res;
+      if (res.result === 'linked') {
+        claimCode = '';
+        await loadData();
+        const tab = res.kind ? CLAIM_KIND_TAB[res.kind] : undefined;
+        if (tab) activeTab = tab;
+      }
+    } catch {
+      claimError = $t('profileActionError');
+    } finally {
+      claimSubmitting = false;
+    }
+  }
 
   const COMMISSION_STATUS_LABEL: Record<string, string> = {
     new: 'New', reviewing: 'Reviewing', accepted: 'Accepted',
@@ -145,19 +192,21 @@
     error = '';
     try {
       const token = authStore.token!;
-      const [b, o, th, com] = await Promise.all([
+      const [b, o, th, com, wl] = await Promise.all([
         api.userProfileBookings(token),
         api.userProfileOrders(token),
         api.getUserThreads(token),
         api.getUserCommissions(token),
+        api.userProfileWaitlist(token).catch(() => [] as WaitlistEntryDto[]),
       ]);
       bookings = b;
       orders = o;
       commissions = com;
+      waitlist = wl;
       threads = th.threads;
       unreadCount = th.unread;
 
-      savedFigurines.load();
+      await savedFigurines.syncWithServer();
       wishlistIds = [...savedFigurines.ids];
 
       if (wishlistIds.length > 0) {
@@ -385,6 +434,108 @@
     };
     return map[status] ?? status;
   }
+
+  // ── Overview: one quiet chronological feed across all request types ──
+  type FeedTone = 'pending' | 'confirmed' | 'rejected' | 'neutral' | 'attention';
+  interface FeedItem {
+    kind: 'booking' | 'order' | 'commission' | 'waitlist';
+    status: string;
+    id: string;
+    title: string;
+    date: string;
+    tone: FeedTone;
+    figurineId?: string;
+    threadId: string | null;
+    unread: number;
+  }
+
+  // Labels are resolved in the template (where the $t store can be read), so the
+  // derived feed below stays free of store subscriptions.
+  function feedKindLabel(kind: FeedItem['kind']): string {
+    return kind === 'booking' ? $t('profileOverviewKindBooking')
+      : kind === 'order' ? $t('profileOverviewKindOrder')
+      : kind === 'waitlist' ? $t('profileLinkClaimKindWaitlist')
+      : $t('profileOverviewKindCommission');
+  }
+  function feedStatusLabel(item: FeedItem): string {
+    return item.kind === 'booking' ? bookingStatusLabel(item.status)
+      : item.kind === 'order' ? orderStatusLabel(item.status)
+      : item.kind === 'waitlist' ? `№${item.status}`
+      : (COMMISSION_STATUS_LABEL[item.status] ?? item.status);
+  }
+
+  // referenceId on a thread points back at the booking/order/commission it belongs to,
+  // so a feed row can show "new reply" and jump straight into the conversation.
+  let threadsByRef = $derived.by(() => {
+    const m = new Map<string, { id: string; unread: number }>();
+    for (const th of threads) {
+      if (!th.referenceId) continue;
+      const prev = m.get(th.referenceId);
+      m.set(th.referenceId, { id: th.id, unread: (prev?.unread ?? 0) + th.unread });
+    }
+    return m;
+  });
+
+  function bookingTone(s: string): FeedTone {
+    return s === 'confirmed' ? 'confirmed' : s === 'rejected' ? 'rejected' : s === 'cancelled' ? 'neutral' : 'pending';
+  }
+  function orderTone(s: string): FeedTone {
+    return s === 'replied' ? 'confirmed' : s === 'seen' ? 'neutral' : 'pending';
+  }
+  function commissionTone(s: string): FeedTone {
+    return s === 'completed' ? 'confirmed'
+      : s === 'declined' ? 'rejected'
+      : (s === 'accepted' || s === 'in_progress') ? 'attention'
+      : 'pending';
+  }
+
+  let feed = $derived.by<FeedItem[]>(() => {
+    const ref = threadsByRef;
+    const items: FeedItem[] = [];
+    for (const b of bookings) {
+      const t = ref.get(b.id);
+      items.push({
+        kind: 'booking', status: b.status,
+        id: b.id, title: b.figurineName, date: b.createdAt,
+        tone: bookingTone(b.status),
+        figurineId: b.figurineId, threadId: t?.id ?? null, unread: t?.unread ?? 0,
+      });
+    }
+    for (const o of orders) {
+      const t = ref.get(o.id);
+      items.push({
+        kind: 'order', status: o.status,
+        id: o.id, title: o.figurineName, date: o.createdAt,
+        tone: orderTone(o.status),
+        figurineId: o.figurineId, threadId: t?.id ?? null, unread: t?.unread ?? 0,
+      });
+    }
+    for (const c of commissions) {
+      const t = ref.get(c.id);
+      items.push({
+        kind: 'commission', status: c.status,
+        id: c.id, title: c.title, date: c.createdAt,
+        tone: commissionTone(c.status),
+        threadId: c.threadId ?? t?.id ?? null, unread: t?.unread ?? 0,
+      });
+    }
+    for (const w of waitlist) {
+      const t = ref.get(w.id);
+      items.push({
+        kind: 'waitlist', status: String(w.position),
+        id: w.id, title: w.figurineName, date: w.createdAt,
+        tone: 'neutral',
+        figurineId: w.figurineId, threadId: t?.id ?? null, unread: t?.unread ?? 0,
+      });
+    }
+    return items.sort((a, b) => +new Date(b.date) - +new Date(a.date));
+  });
+
+  function openFeedThread(item: FeedItem) {
+    if (!item.threadId) return;
+    activeTab = 'messages';
+    openThreadDetail(item.threadId);
+  }
 </script>
 
 <svelte:head>
@@ -457,6 +608,10 @@
           </div>
         </div>
         <nav class="sidebar-nav">
+          <button class="nav-item" class:active={activeTab === 'overview'} onclick={() => activeTab = 'overview'}>
+            <span>{$t('profileOverview')}</span>
+            {#if feed.length > 0}<span class="nav-badge">{feed.length}</span>{/if}
+          </button>
           <button class="nav-item" class:active={activeTab === 'bookings'} onclick={() => activeTab = 'bookings'}>
             <span>{$t('profileBookings')}</span>
             {#if bookings.length > 0}<span class="nav-badge">{bookings.length}</span>{/if}
@@ -502,10 +657,78 @@
 
       <!-- Content -->
       <div class="content">
+
+        <!-- Attach a guest request by code (lost localStorage / changed device) -->
+        <section class="claim-link" aria-labelledby="claim-link-title">
+          <div class="claim-link-head">
+            <h2 id="claim-link-title" class="claim-link-title">{$t('profileLinkClaimTitle')}</h2>
+            <p class="claim-link-hint">{$t('profileLinkClaimHint')}</p>
+          </div>
+          <form class="claim-link-form" onsubmit={(e) => { e.preventDefault(); submitClaim(); }}>
+            <input
+              class="claim-link-input"
+              bind:value={claimCode}
+              placeholder={$t('profileLinkClaimPlaceholder')}
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck="false"
+              aria-label={$t('profileLinkClaimTitle')}
+            />
+            <button class="claim-link-btn" type="submit" disabled={claimSubmitting || !claimCode.trim()}>
+              {claimSubmitting ? $t('profileLinkClaimLinking') : $t('profileLinkClaimButton')}
+            </button>
+          </form>
+          {#if claimError}
+            <p class="claim-link-msg claim-link-msg--err" role="alert">{claimError}</p>
+          {:else if claimResult}
+            {#if claimResult.result === 'linked'}
+              <p class="claim-link-msg claim-link-msg--ok" role="status">
+                {$t('profileLinkClaimLinked')}
+                {#if claimResult.kind}<span class="claim-link-kind">{claimKindLabel(claimResult.kind)}</span>{/if}
+                {#if claimResult.name}<span class="claim-link-name">{claimResult.name}</span>{/if}
+              </p>
+            {:else if claimResult.result === 'email_mismatch'}
+              <p class="claim-link-msg claim-link-msg--warn" role="alert">{$t('profileLinkClaimMismatch')}</p>
+            {:else if claimResult.result === 'already_linked'}
+              <p class="claim-link-msg claim-link-msg--warn" role="status">{$t('profileLinkClaimAlready')}</p>
+            {:else}
+              <p class="claim-link-msg claim-link-msg--err" role="alert">{$t('profileLinkClaimNotFound')}</p>
+            {/if}
+          {/if}
+        </section>
+
         {#if loading}
           <p class="empty">…</p>
         {:else if error}
           <p class="error-msg">{error}</p>
+        {:else if activeTab === 'overview'}
+          {#if feed.length === 0}
+            <p class="empty">{$t('profileEmpty')}</p>
+          {:else}
+            <ul class="feed">
+              {#each feed as item (item.kind + item.id)}
+                <li class="feed-row feed-row--{item.tone}" class:feed-row--unread={item.unread > 0}>
+                  <div class="feed-meta">
+                    <span class="feed-kind">{feedKindLabel(item.kind)}</span>
+                    <span class="feed-date">{formatDate(item.date)}</span>
+                  </div>
+                  <div class="feed-main">
+                    {#if item.figurineId}
+                      <a href="/figurines/{item.figurineId}" class="feed-title feed-title--link">{item.title || $t('commissionUntitled')}</a>
+                    {:else}
+                      <span class="feed-title">{item.title || $t('commissionUntitled')}</span>
+                    {/if}
+                  </div>
+                  <div class="feed-side">
+                    {#if item.unread > 0}
+                      <button class="feed-reply" onclick={() => openFeedThread(item)}>{$t('profileOverviewNewReply')} →</button>
+                    {/if}
+                    <span class="feed-status feed-status--{item.tone}">{feedStatusLabel(item)}</span>
+                  </div>
+                </li>
+              {/each}
+            </ul>
+          {/if}
         {:else if activeTab === 'bookings'}
           {#if bookings.length === 0}
             <p class="empty">{$t('profileEmpty')}</p>
@@ -1190,6 +1413,194 @@
     font-size: 0.85rem;
     font-family: Inter, sans-serif;
     padding: 1rem 0;
+  }
+
+  /* ── Attach a request by code ── */
+  .claim-link {
+    margin-bottom: 1.75rem;
+    padding: 1rem 1.1rem 1.1rem;
+    border: 1px solid #e4d8c8;
+    border-left: 2px solid rgba(198,95,60,0.55);
+    background: rgba(255,252,246,0.6);
+  }
+
+  .claim-link-head { margin-bottom: 0.7rem; }
+
+  .claim-link-title {
+    font-family: 'Fraunces', Georgia, serif;
+    font-size: 1rem;
+    font-weight: 400;
+    color: #34251c;
+    margin: 0 0 0.2rem;
+  }
+
+  .claim-link-hint {
+    font-family: Inter, sans-serif;
+    font-size: 0.76rem;
+    line-height: 1.5;
+    color: #8a7253;
+    margin: 0;
+    max-width: 52ch;
+  }
+
+  .claim-link-form {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .claim-link-input {
+    flex: 1;
+    min-width: 180px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.82rem;
+    letter-spacing: 0.04em;
+    background: #fffaf4;
+    border: 1px solid #d8c6b1;
+    color: #34251c;
+    padding: 0.5rem 0.7rem;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .claim-link-input::placeholder { color: #b5a090; font-family: Inter, sans-serif; letter-spacing: 0; }
+  .claim-link-input:focus { border-color: #c65f3c; }
+
+  .claim-link-btn {
+    background: #6f3b24;
+    border: none;
+    color: #f8f1e7;
+    font-family: Inter, sans-serif;
+    font-size: 0.72rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    padding: 0.5rem 1.1rem;
+    cursor: pointer;
+    transition: background 0.15s;
+    white-space: nowrap;
+  }
+  .claim-link-btn:hover:not(:disabled) { background: #c65f3c; }
+  .claim-link-btn:disabled { opacity: 0.45; cursor: default; }
+
+  .claim-link-msg {
+    margin: 0.65rem 0 0;
+    font-family: Inter, sans-serif;
+    font-size: 0.78rem;
+    line-height: 1.45;
+  }
+  .claim-link-msg--ok   { color: #2d6a3f; }
+  .claim-link-msg--warn { color: #8a5a1a; }
+  .claim-link-msg--err  { color: #a03020; }
+
+  .claim-link-kind {
+    display: inline-block;
+    font-size: 0.6rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #6f3b24;
+    background: rgba(198,95,60,0.1);
+    border: 1px solid rgba(198,95,60,0.25);
+    padding: 1px 6px;
+    margin: 0 0.15rem;
+    vertical-align: middle;
+  }
+
+  .claim-link-name { font-style: italic; }
+
+  /* ── Overview feed (quiet ledger across all request types) ── */
+  .feed {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-width: 760px;
+  }
+
+  .feed-row {
+    display: grid;
+    grid-template-columns: 150px 1fr auto;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.8rem 0.25rem 0.8rem 0.9rem;
+    border-bottom: 1px solid #eadfce;
+    border-left: 2px solid transparent;
+  }
+  .feed-row:first-child { border-top: 1px solid #eadfce; }
+  .feed-row--unread { border-left-color: #c65f3c; background: rgba(198,95,60,0.03); }
+
+  .feed-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+  .feed-kind {
+    font-family: Inter, sans-serif;
+    font-size: 0.6rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #9a7c5c;
+  }
+  .feed-date {
+    font-family: Inter, sans-serif;
+    font-size: 0.7rem;
+    color: #b5a090;
+  }
+
+  .feed-main { min-width: 0; }
+  .feed-title {
+    font-family: Georgia, serif;
+    font-size: 0.95rem;
+    color: #34251c;
+    text-decoration: none;
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .feed-title--link:hover { color: #c65f3c; }
+
+  .feed-side {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    flex-shrink: 0;
+  }
+
+  .feed-reply {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    font-family: Inter, sans-serif;
+    font-size: 0.68rem;
+    letter-spacing: 0.04em;
+    color: #c65f3c;
+    white-space: nowrap;
+  }
+  .feed-reply:hover { text-decoration: underline; }
+
+  .feed-status {
+    font-family: Inter, sans-serif;
+    font-size: 0.62rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 2px;
+    white-space: nowrap;
+  }
+  .feed-status--pending   { background: #f4ead8; color: #6f3b24; }
+  .feed-status--confirmed { background: #e8f4e8; color: #2d6a3f; }
+  .feed-status--rejected  { background: #fde8e8; color: #9b2020; }
+  .feed-status--attention { background: #eef0fb; color: #3a4a8a; }
+  .feed-status--neutral   { background: #ececec; color: #666; }
+
+  @media (max-width: 680px) {
+    .feed-row {
+      grid-template-columns: 1fr auto;
+      grid-template-areas: "meta side" "main main";
+      gap: 0.4rem 1rem;
+    }
+    .feed-meta { grid-area: meta; flex-direction: row; align-items: baseline; gap: 0.5rem; }
+    .feed-main { grid-area: main; }
+    .feed-side { grid-area: side; }
   }
 
   /* ── Cards grid ── */

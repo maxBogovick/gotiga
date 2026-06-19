@@ -6,6 +6,7 @@
   import FontSwitcher from '$lib/components/FontSwitcher.svelte';
   import { allClaims } from '$lib/stores/all-claims.svelte';
   import { authStore } from '$lib/stores/auth.svelte';
+  import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
   import { t, brandName } from '$lib/i18n';
   import { fade, fly } from 'svelte/transition';
   import { api, resolveMediaUrl } from '$lib/api';
@@ -82,6 +83,13 @@
       } catch {
         authStore.clearSession();
       }
+    }
+
+    // Once a session is confirmed, reconcile the wishlist with the server copy so
+    // saved figurines follow the account across devices.
+    if (authStore.token) {
+      savedFigurines.load();
+      savedFigurines.syncWithServer();
     }
   });
 

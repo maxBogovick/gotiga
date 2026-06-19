@@ -19,6 +19,16 @@ pub struct Repository {
     pg_pool: PgPool,
 }
 
+/// Result of attempting to attach a token-bearing guest request to a user.
+pub struct ClaimMatch {
+    /// Whether the row's requester email matched the account's email.
+    pub email_ok: bool,
+    /// Whether this call set (or confirmed) the row's user_id to the account.
+    pub linked: bool,
+    /// Figurine / petition name for a human-readable confirmation.
+    pub name: String,
+}
+
 impl Repository {
     pub fn new(pg_pool: PgPool) -> Self {
         Self { pg_pool }
@@ -30,10 +40,10 @@ impl Repository {
 
     // === ORDERS (Postgres) ===
 
-    pub async fn save_order(&self, order: &crate::models::OrderRequest) -> Result<crate::models::Order> {
+    pub async fn save_order(&self, order: &crate::models::OrderRequest, user_id: Option<Uuid>) -> Result<crate::models::Order> {
         let rec = sqlx::query_as::<_, crate::models::Order>(
-            "INSERT INTO orders (figurine_id, figurine_name, requester_name, requester_email, requester_phone, message, mode)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
+            "INSERT INTO orders (figurine_id, figurine_name, requester_name, requester_email, requester_phone, message, mode, user_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
              RETURNING *"
         )
         .bind(&order.figurine_id)
@@ -43,15 +53,30 @@ impl Repository {
         .bind(&order.requester_phone)
         .bind(&order.message)
         .bind(&order.mode)
+        .bind(user_id)
         .fetch_one(&self.pg_pool)
         .await?;
         Ok(rec)
     }
 
+    /// Adopt any guest orders whose email matches a verified account but that were
+    /// never tied to a user_id (submitted while logged out, or before order linking
+    /// existed). Mirrors the email-based booking linking.
+    pub async fn link_orders_to_user(&self, user_id: Uuid, email: &str) -> Result<u64> {
+        let res = sqlx::query(
+            "UPDATE orders SET user_id = $1 WHERE user_id IS NULL AND lower(requester_email) = lower($2)"
+        )
+        .bind(user_id)
+        .bind(email)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected())
+    }
+
     /// Create or refresh a "notify me" subscription. Deduplicates by
     /// (figurine, email): a repeat request updates the existing row in place
     /// and keeps its token, rather than piling up duplicates.
-    pub async fn upsert_notify_order(&self, order: &crate::models::OrderRequest) -> Result<crate::models::Order> {
+    pub async fn upsert_notify_order(&self, order: &crate::models::OrderRequest, user_id: Option<Uuid>) -> Result<crate::models::Order> {
         let existing = sqlx::query_as::<_, crate::models::Order>(
             "SELECT * FROM orders WHERE figurine_id = $1 AND lower(requester_email) = lower($2) AND mode = 'notify'::order_mode LIMIT 1"
         )
@@ -61,19 +86,21 @@ impl Repository {
 
         if let Some(ex) = existing {
             Ok(sqlx::query_as::<_, crate::models::Order>(
-                "UPDATE orders SET requester_name = $2, requester_phone = $3, message = $4, status = 'new'::order_status
+                "UPDATE orders SET requester_name = $2, requester_phone = $3, message = $4, status = 'new'::order_status,
+                        user_id = COALESCE($5, user_id)
                  WHERE id = $1 RETURNING *"
             )
             .bind(ex.id)
             .bind(&order.requester_name)
             .bind(&order.requester_phone)
             .bind(&order.message)
+            .bind(user_id)
             .fetch_one(&self.pg_pool).await?)
         } else {
             let token = Self::generate_cancel_token();
             Ok(sqlx::query_as::<_, crate::models::Order>(
-                "INSERT INTO orders (figurine_id, figurine_name, requester_name, requester_email, requester_phone, message, mode, cancel_token)
-                 VALUES ($1, $2, $3, $4, $5, $6, 'notify'::order_mode, $7) RETURNING *"
+                "INSERT INTO orders (figurine_id, figurine_name, requester_name, requester_email, requester_phone, message, mode, cancel_token, user_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, 'notify'::order_mode, $7, $8) RETURNING *"
             )
             .bind(&order.figurine_id)
             .bind(&order.figurine_name)
@@ -82,6 +109,7 @@ impl Repository {
             .bind(&order.requester_phone)
             .bind(&order.message)
             .bind(&token)
+            .bind(user_id)
             .fetch_one(&self.pg_pool).await?)
         }
     }
@@ -702,6 +730,7 @@ impl Repository {
         req: &crate::models::CreateBookingRequest,
         starts_at: chrono::NaiveDate,
         ends_at: chrono::NaiveDate,
+        user_id: Option<Uuid>,
     ) -> Result<Option<Booking>> {
         let figurine_id = Uuid::parse_str(&req.figurine_id)
             .map_err(|_| AppError::BadRequest("Invalid figurine ID".to_string()))?;
@@ -727,13 +756,13 @@ impl Repository {
 
         let cancel_token = Self::generate_cancel_token();
         let rec = sqlx::query_as::<_, Booking>(
-            "INSERT INTO figurine_bookings (figurine_id, figurine_name, requester_name, requester_email, requester_phone, purpose, display_type, venue, starts_at, ends_at, cancel_token)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *"
+            "INSERT INTO figurine_bookings (figurine_id, figurine_name, requester_name, requester_email, requester_phone, purpose, display_type, venue, starts_at, ends_at, cancel_token, user_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *"
         )
         .bind(figurine_id).bind(&req.figurine_name).bind(&req.requester_name)
         .bind(&req.requester_email).bind(&req.requester_phone).bind(&req.purpose)
         .bind(&req.display_type).bind(&req.venue)
-        .bind(starts_at).bind(ends_at).bind(&cancel_token)
+        .bind(starts_at).bind(ends_at).bind(&cancel_token).bind(user_id)
         .fetch_one(&mut *tx).await?;
 
         tx.commit().await?;
@@ -1052,6 +1081,91 @@ impl Repository {
             .execute(&self.pg_pool)
             .await?;
         Ok(())
+    }
+
+    // ── Wishlist ─────────────────────────────────────────────
+
+    pub async fn get_user_wishlist(&self, user_id: Uuid) -> Result<Vec<String>> {
+        let row: (Vec<String>,) = sqlx::query_as(
+            "SELECT wishlist FROM users WHERE id = $1"
+        )
+        .bind(user_id)
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(row.0)
+    }
+
+    pub async fn set_user_wishlist(&self, user_id: Uuid, ids: &[String]) -> Result<()> {
+        sqlx::query("UPDATE users SET wishlist = $1 WHERE id = $2")
+            .bind(ids)
+            .bind(user_id)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
+    // ── Link guest requests by code ──────────────────────────
+    //
+    // bookings, waitlist entries and notify-orders all carry a `cancel_token`,
+    // `requester_email`, `user_id` and `figurine_name`, so one helper covers all
+    // three. The email guard mirrors link_bookings_to_user: the secret token is the
+    // lookup key, but the row's email must match the account claiming it.
+
+    async fn link_claim_row(&self, table: &str, user_id: Uuid, email: &str, token: &str) -> Result<Option<ClaimMatch>> {
+        // `table` is a trusted, hard-coded constant (never user input); token and
+        // email are bound parameters, so there is no injection surface.
+        let select = format!(
+            "SELECT requester_email, user_id, figurine_name FROM {table} WHERE cancel_token = $1"
+        );
+        let row = sqlx::query_as::<_, (String, Option<Uuid>, String)>(&select)
+            .bind(token)
+            .fetch_optional(&self.pg_pool)
+            .await?;
+        let Some((req_email, owner, name)) = row else { return Ok(None) };
+
+        if !req_email.trim().eq_ignore_ascii_case(email.trim()) {
+            return Ok(Some(ClaimMatch { email_ok: false, linked: false, name }));
+        }
+        let linked = match owner {
+            Some(o) if o != user_id => false, // already attached to a different account
+            _ => {
+                let update = format!("UPDATE {table} SET user_id = $1 WHERE cancel_token = $2");
+                sqlx::query(&update)
+                    .bind(user_id)
+                    .bind(token)
+                    .execute(&self.pg_pool)
+                    .await?;
+                true
+            }
+        };
+        Ok(Some(ClaimMatch { email_ok: true, linked, name }))
+    }
+
+    pub async fn link_booking_by_token(&self, user_id: Uuid, email: &str, token: &str) -> Result<Option<ClaimMatch>> {
+        self.link_claim_row("figurine_bookings", user_id, email, token).await
+    }
+
+    pub async fn link_waitlist_by_token(&self, user_id: Uuid, email: &str, token: &str) -> Result<Option<ClaimMatch>> {
+        self.link_claim_row("figurine_waitlist", user_id, email, token).await
+    }
+
+    pub async fn link_notify_order_by_token(&self, user_id: Uuid, email: &str, token: &str) -> Result<Option<ClaimMatch>> {
+        // Only "notify" orders ever carry a cancel_token, so a match here is unambiguous.
+        self.link_claim_row("orders", user_id, email, token).await
+    }
+
+    /// Whether a commission with this claim token exists and is still claimable by
+    /// the given user (unclaimed, or already theirs). Commissions are token-only
+    /// (no email guard), matching the existing claim_commission contract.
+    pub async fn commission_claimable_by(&self, token: &str, user_id: Uuid) -> Result<bool> {
+        let row: Option<(i32,)> = sqlx::query_as(
+            "SELECT 1 FROM commissions WHERE claim_token = $1 AND (user_id IS NULL OR user_id = $2)"
+        )
+        .bind(token)
+        .bind(user_id)
+        .fetch_optional(&self.pg_pool)
+        .await?;
+        Ok(row.is_some())
     }
 
     // ── Challenges ───────────────────────────────────────────
@@ -1630,6 +1744,14 @@ impl Repository {
         .bind(created_at)
         .fetch_one(&self.pg_pool).await?;
         Ok(pos)
+    }
+
+    pub async fn get_user_waitlist(&self, user_id: Uuid) -> Result<Vec<crate::models::WaitlistEntry>> {
+        Ok(sqlx::query_as::<_, crate::models::WaitlistEntry>(
+            "SELECT * FROM figurine_waitlist WHERE user_id = $1 ORDER BY created_at DESC"
+        )
+        .bind(user_id)
+        .fetch_all(&self.pg_pool).await?)
     }
 
     pub async fn get_waitlist_by_cancel_token(&self, token: &str) -> Result<Option<crate::models::WaitlistEntry>> {
@@ -2211,6 +2333,18 @@ impl Repository {
         )
         .bind(user_id)
         .fetch_all(&self.pg_pool).await?)
+    }
+
+    /// Claim tokens of unclaimed petitions whose email matches an account — so they
+    /// can be adopted (each via claim_commission, which also seeds its thread).
+    pub async fn orphan_commission_tokens_by_email(&self, email: &str) -> Result<Vec<String>> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT claim_token FROM commissions WHERE user_id IS NULL AND lower(requester_email) = lower($1)"
+        )
+        .bind(email)
+        .fetch_all(&self.pg_pool)
+        .await?;
+        Ok(rows.into_iter().map(|r| r.0).collect())
     }
 
     /// Find an existing thread linked to a commission (category 'commission').

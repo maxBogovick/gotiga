@@ -4,6 +4,7 @@
   import { t , brandName } from '$lib/i18n';
   import { api } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
+  import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
   import { isValidEmail } from '$lib/validation';
   import { getIconById, iconLabel, type IconCategory } from '$lib/data/visualIcons';
   import { lang } from '$lib/i18n';
@@ -130,6 +131,9 @@
           if (tokens.length > 0) await api.userLinkBookings(res.sessionToken, tokens);
         }
       } catch { /* non-critical */ }
+
+      // Merge this device's saved figurines into the account's wishlist.
+      savedFigurines.syncWithServer();
 
       const redirectTo = page.url.searchParams.get('from') ?? '/';
       goto(redirectTo);

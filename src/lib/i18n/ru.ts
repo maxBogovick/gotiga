@@ -112,6 +112,7 @@ export const ru: Record<TranslationKey, string> = {
   homeViewFigurine:    'Открыть фигуру',
 
   // === ARCHIVE LIST ===
+  archiveMetaDescription: 'Реестръ готическихъ миниатюръ ручной работы — полный архивъ существъ по статусу, году и серіи.',
   archivePageTitle:  'Архивъ Существ',
   archiveBackLink:   '← В зал',
   archiveStudying:       'Изучение архивов…',
@@ -897,6 +898,24 @@ export const ru: Record<TranslationKey, string> = {
 
   // === PROFILE ===
   profileTitle:          'Ваш архив',
+  profileOverview:               'Обращения',
+  profileOverviewKindBooking:    'Бронь',
+  profileOverviewKindOrder:      'Запрос',
+  profileOverviewKindCommission: 'Прошение',
+  profileOverviewNewReply:       'Новый ответ',
+  profileLinkClaimTitle:       'Привязать заявку по коду',
+  profileLinkClaimHint:        'Бронировали, вставали в очередь или писали как гость? Вставьте код из письма, чтобы привязать заявку к этому аккаунту.',
+  profileLinkClaimPlaceholder: 'Вставьте код',
+  profileLinkClaimButton:      'Привязать',
+  profileLinkClaimLinking:     'Привязываю…',
+  profileLinkClaimLinked:      'Привязано к вашему аккаунту:',
+  profileLinkClaimMismatch:    'Этот код выписан на другой email, чем у этого аккаунта.',
+  profileLinkClaimAlready:     'Эта заявка уже привязана к аккаунту.',
+  profileLinkClaimNotFound:    'По этому коду заявка не найдена.',
+  profileLinkClaimKindBooking:    'Бронь',
+  profileLinkClaimKindWaitlist:   'Очередь',
+  profileLinkClaimKindNotify:     'Уведомление',
+  profileLinkClaimKindCommission: 'Прошение',
   profileBookings:       'Бронирования',
   profileBookingManage:          'Управлять →',
   profileBookingCuratorConditions: 'Условия куратора',

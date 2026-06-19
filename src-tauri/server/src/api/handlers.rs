@@ -542,7 +542,14 @@ pub async fn create_order(
     Json(order): Json<crate::models::OrderRequest>,
 ) -> Result<Json<crate::models::OrderCreatedResponse>> {
     service.check_rate_limit("order", &extract_ip(&headers), 15, 3600).await?;
-    let saved = service.create_order(&order).await?;
+    // Tie the order to the account when the request carries a valid session, so it
+    // shows up in the sender's profile — not only in the admin panel.
+    let user_id = if let Some(token) = bearer_token(&headers) {
+        service.get_user_from_session(token).await.ok().map(|u| u.id)
+    } else {
+        None
+    };
+    let saved = service.create_order(&order, user_id).await?;
     Ok(Json(crate::models::OrderCreatedResponse { cancel_token: saved.cancel_token }))
 }
 
@@ -665,6 +672,9 @@ pub async fn user_list_commissions(
 ) -> Result<Json<serde_json::Value>> {
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
     let user = service.get_user_from_session(token).await?;
+    // Adopt orphan petitions sent from this account's email (guest petitions, or
+    // ones whose claim token was lost when localStorage was cleared) before listing.
+    let _ = service.adopt_commissions_by_email(user.id, &user.email).await;
     let commissions = service.get_user_commissions(user.id).await?;
     Ok(Json(serde_json::json!({ "commissions": commissions })))
 }
@@ -769,7 +779,14 @@ pub async fn create_booking(
     Json(req): Json<crate::models::CreateBookingRequest>,
 ) -> Result<Json<crate::models::BookingCreatedResponse>> {
     service.check_rate_limit("booking", &extract_ip(&headers), 15, 3600).await?;
-    let booking = service.create_booking(req).await?;
+    // Tie the booking to the account when the request carries a valid session, so it
+    // lands in the sender's profile without relying on a separate client-side link.
+    let user_id = if let Some(token) = bearer_token(&headers) {
+        service.get_user_from_session(token).await.ok().map(|u| u.id)
+    } else {
+        None
+    };
+    let booking = service.create_booking(req, user_id).await?;
     Ok(Json(crate::models::BookingCreatedResponse { cancel_token: booking.cancel_token }))
 }
 
@@ -974,8 +991,53 @@ pub async fn user_profile_orders(
 ) -> Result<Json<Vec<UserOrderDto>>> {
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
     let user = service.get_user_from_session(token).await?;
+    // Adopt any orphan guest orders sent from this account's email (legacy rows or
+    // ones submitted while logged out) before listing.
+    let _ = service.link_orders_to_user(user.id, &user.email).await;
     let orders = service.get_user_orders(user.id).await?;
     Ok(Json(orders))
+}
+
+pub async fn user_get_wishlist(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<String>>> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
+    let ids = service.get_user_wishlist(user.id).await?;
+    Ok(Json(ids))
+}
+
+pub async fn user_profile_waitlist(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<WaitlistEntryDto>>> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
+    let entries = service.get_user_waitlist(user.id).await?;
+    Ok(Json(entries))
+}
+
+pub async fn user_set_wishlist(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(body): Json<SetWishlistRequest>,
+) -> Result<Json<Vec<String>>> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
+    let ids = service.set_user_wishlist(user.id, body.figurine_ids).await?;
+    Ok(Json(ids))
+}
+
+pub async fn user_link_claim(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(body): Json<LinkClaimRequest>,
+) -> Result<Json<LinkClaimResponse>> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
+    let result = service.link_claim_by_token(&user, &body.token).await?;
+    Ok(Json(result))
 }
 
 // ============================================================
