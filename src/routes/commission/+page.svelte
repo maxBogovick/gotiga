@@ -1,11 +1,12 @@
 <script lang="ts">
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
+  import { page } from '$app/state';
   import { api, resolveMediaUrl } from '$lib/api';
   import { t, lang , brandName } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
   import { isValidEmail } from '$lib/validation';
-  import type { AttachmentInput } from '$lib/types/api';
+  import type { AttachmentInput, Figurine } from '$lib/types/api';
 
   const STORE_KEY = 'gotiga_commissions';
   const PENDING_CLAIM_KEY = 'gotiga_pending_claim';
@@ -16,6 +17,25 @@
   // Step 1 — the idea
   let title = $state('');
   let description = $state('');
+  let similarKeepNote = $state('');
+  let similarChangeNote = $state('');
+  let sourceFigurine = $state<Figurine | null>(null);
+  let sourceLoadError = $state(false);
+  let sourceTitleApplied = $state(false);
+  let sourceFigurineId = $derived(
+    page.url.searchParams.get('source') ?? page.url.searchParams.get('sourceFigurineId') ?? '',
+  );
+  let sourceImageUrl = $derived.by(() => {
+    const image = sourceFigurine?.images.find((img) => img.imageType === 'face') ?? sourceFigurine?.images[0];
+    return resolveMediaUrl(image?.thumbUrl ?? image?.url);
+  });
+  let similarTags = $derived.by(() => {
+    if (!sourceFigurine) return [] as string[];
+    return [sourceFigurine.series, sourceFigurine.technique, sourceFigurine.material]
+      .map((tag) => tag?.trim())
+      .filter((tag): tag is string => Boolean(tag))
+      .slice(0, 6);
+  });
 
   // Step 2 — details & references
   let sizeNote = $state('');
@@ -41,6 +61,33 @@
   let claimToken = $state('');
 
   let canAdvanceFromStep1 = $derived(description.trim().length > 0);
+
+  $effect(() => {
+    const id = sourceFigurineId.trim();
+    sourceLoadError = false;
+    sourceFigurine = null;
+    sourceTitleApplied = false;
+    if (!id) return;
+
+    let cancelled = false;
+    api.getFigurine(id)
+      .then((fig) => {
+        if (cancelled) return;
+        sourceFigurine = fig;
+        sourceLoadError = !fig;
+        if (fig && !sourceTitleApplied && !title.trim()) {
+          title = `${$t('commissionInspiredTitlePrefix')} ${fig.name}`;
+          sourceTitleApplied = true;
+        }
+      })
+      .catch(() => {
+        if (!cancelled) sourceLoadError = true;
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  });
 
   function next() {
     submitError = '';
@@ -107,6 +154,10 @@
           deadline: deadline || null,
           budgetNote: budgetNote.trim() || null,
           occasion: occasionValue || null,
+          sourceFigurineId: sourceFigurineId.trim() || null,
+          similarKeepNote: similarKeepNote.trim() || null,
+          similarChangeNote: similarChangeNote.trim() || null,
+          similarTags,
           attachmentUrls: attachments,
           website: website || null,
           lang: $lang,
@@ -168,6 +219,29 @@
         <p class="page-subtitle">{$t('commissionSubtitle')}</p>
       </header>
 
+      {#if sourceFigurineId}
+        <aside class="source-card" aria-label={$t('commissionSourceLabel')}>
+          {#if sourceImageUrl}
+            <img src={sourceImageUrl} alt="" class="source-card-img" />
+          {:else}
+            <div class="source-card-img source-card-img--empty" aria-hidden="true">GT</div>
+          {/if}
+          <div class="source-card-copy">
+            <span class="source-card-kicker">{$t('commissionSourceKicker')}</span>
+            <strong>{sourceFigurine?.name ?? $t('commissionSourceLoading')}</strong>
+            <span>
+              {#if sourceLoadError}
+                {$t('commissionSourceUnavailable')}
+              {:else if sourceFigurine}
+                {$t('commissionSourceHint')}
+              {:else}
+                {$t('commissionSourceLoading')}
+              {/if}
+            </span>
+          </div>
+        </aside>
+      {/if}
+
       <!-- Progress -->
       <div class="progress" aria-hidden="true">
         {#each [1, 2, 3] as s}
@@ -194,6 +268,18 @@
               <span class="field-label">{$t('commissionFieldIdea')} *</span>
               <textarea class="input area" bind:value={description} rows="7" placeholder={$t('commissionFieldIdeaPh')} maxlength="5000"></textarea>
             </label>
+            {#if sourceFigurineId}
+              <div class="similar-fields">
+                <label class="field">
+                  <span class="field-label">{$t('commissionSimilarKeep')}</span>
+                  <textarea class="input area area--compact" bind:value={similarKeepNote} rows="3" placeholder={$t('commissionSimilarKeepPh')} maxlength="1000"></textarea>
+                </label>
+                <label class="field">
+                  <span class="field-label">{$t('commissionSimilarChange')}</span>
+                  <textarea class="input area area--compact" bind:value={similarChangeNote} rows="3" placeholder={$t('commissionSimilarChangePh')} maxlength="1000"></textarea>
+                </label>
+              </div>
+            {/if}
           </div>
         {:else if step === 2}
           <div class="step" in:fade={{ duration: 350 }}>
@@ -325,6 +411,36 @@
   .page-title { font-family: 'Fraunces', Georgia, serif; font-size: clamp(2rem, 6vw, 3rem); font-weight: 400; line-height: 1.05; margin: 0 0 0.75rem; }
   .page-subtitle { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 1.2rem; font-style: italic; color: #6f3b24; max-width: 36ch; }
 
+  .source-card {
+    display: grid;
+    grid-template-columns: 72px 1fr;
+    gap: 0.9rem;
+    align-items: center;
+    margin: 1.75rem 0 0;
+    padding: 0.75rem;
+    border: 1px solid #d8c6b1;
+    background: rgba(255, 250, 242, 0.72);
+  }
+  .source-card-img {
+    width: 72px;
+    aspect-ratio: 1;
+    object-fit: cover;
+    border: 1px solid #d8c6b1;
+    background: #f0e6d6;
+  }
+  .source-card-img--empty {
+    display: grid;
+    place-items: center;
+    color: #6f3b24;
+    font-family: 'Fraunces', Georgia, serif;
+    font-size: 0.9rem;
+    letter-spacing: 0.08em;
+  }
+  .source-card-copy { display: flex; min-width: 0; flex-direction: column; gap: 0.18rem; }
+  .source-card-kicker { font-size: 0.65rem; letter-spacing: 0.12em; text-transform: uppercase; color: #c65f3c; }
+  .source-card-copy strong { font-family: 'Fraunces', Georgia, serif; font-size: 1.05rem; color: #34251c; }
+  .source-card-copy span:last-child { font-size: 0.86rem; color: #6f3b24; }
+
   .progress { display: flex; gap: 0.5rem; margin: 2.5rem 0 1.5rem; }
   .progress-step { display: flex; align-items: center; gap: 0.5rem; flex: 1; opacity: 0.4; transition: opacity 0.3s; }
   .progress-step.on { opacity: 1; }
@@ -341,6 +457,8 @@
   .input { width: 100%; background: #f8f1e7; border: 1px solid #d8c6b1; padding: 0.6rem 0.7rem; font-family: inherit; font-size: 0.95rem; color: #34251c; transition: border-color 0.2s; }
   .input:focus { outline: none; border-color: #c65f3c; }
   .area { resize: vertical; min-height: 7rem; font-family: 'Cormorant Garamond', Georgia, serif; font-size: 1.05rem; }
+  .area--compact { min-height: 4.5rem; font-family: inherit; font-size: 0.95rem; }
+  .similar-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; padding-top: 0.2rem; }
 
   .refs { display: flex; flex-wrap: wrap; gap: 0.5rem; }
   .ref-thumb { position: relative; width: 64px; height: 64px; border: 1px solid #d8c6b1; overflow: hidden; }
@@ -376,6 +494,9 @@
 
   @media (max-width: 520px) {
     .row { flex-direction: column; gap: 1.1rem; }
+    .source-card { grid-template-columns: 56px 1fr; }
+    .source-card-img { width: 56px; }
+    .similar-fields { grid-template-columns: 1fr; }
     .letter { padding: 1.3rem; }
   }
 </style>

@@ -42,8 +42,14 @@ impl Repository {
 
     pub async fn save_order(&self, order: &crate::models::OrderRequest, user_id: Option<Uuid>) -> Result<crate::models::Order> {
         let rec = sqlx::query_as::<_, crate::models::Order>(
-            "INSERT INTO orders (figurine_id, figurine_name, requester_name, requester_email, requester_phone, message, mode, user_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            "INSERT INTO orders (
+                figurine_id, figurine_name, requester_name, requester_email,
+                requester_phone, message, mode, user_id, reserve_status
+             )
+             VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8,
+                CASE WHEN $7 = 'reserve'::order_mode THEN 'requested'::reserve_status ELSE NULL END
+             )
              RETURNING *"
         )
         .bind(&order.figurine_id)
@@ -132,34 +138,71 @@ impl Repository {
     pub async fn get_orders_page(
         &self,
         status_filter: Option<&str>,
+        mode_filter: Option<&str>,
         limit: i64,
         offset: i64,
     ) -> Result<(Vec<crate::models::Order>, i64)> {
-        let (items, total) = if let Some(status) = status_filter {
-            let items = sqlx::query_as::<_, crate::models::Order>(
-                "SELECT * FROM orders WHERE status = $1::order_status ORDER BY created_at DESC LIMIT $2 OFFSET $3"
-            )
-            .bind(status).bind(limit).bind(offset)
-            .fetch_all(&self.pg_pool).await?;
+        let (items, total) = match (status_filter, mode_filter) {
+            (Some(status), Some(mode)) => {
+                let items = sqlx::query_as::<_, crate::models::Order>(
+                    "SELECT * FROM orders
+                     WHERE status = $1::order_status AND mode = $2::order_mode
+                     ORDER BY created_at DESC LIMIT $3 OFFSET $4"
+                )
+                .bind(status).bind(mode).bind(limit).bind(offset)
+                .fetch_all(&self.pg_pool).await?;
 
-            let (total,): (i64,) = sqlx::query_as(
-                "SELECT COUNT(*) FROM orders WHERE status = $1::order_status"
-            )
-            .bind(status)
-            .fetch_one(&self.pg_pool).await?;
-
-            (items, total)
-        } else {
-            let items = sqlx::query_as::<_, crate::models::Order>(
-                "SELECT * FROM orders ORDER BY created_at DESC LIMIT $1 OFFSET $2"
-            )
-            .bind(limit).bind(offset)
-            .fetch_all(&self.pg_pool).await?;
-
-            let (total,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM orders")
+                let (total,): (i64,) = sqlx::query_as(
+                    "SELECT COUNT(*) FROM orders
+                     WHERE status = $1::order_status AND mode = $2::order_mode"
+                )
+                .bind(status).bind(mode)
                 .fetch_one(&self.pg_pool).await?;
 
-            (items, total)
+                (items, total)
+            }
+            (Some(status), None) => {
+                let items = sqlx::query_as::<_, crate::models::Order>(
+                    "SELECT * FROM orders WHERE status = $1::order_status ORDER BY created_at DESC LIMIT $2 OFFSET $3"
+                )
+                .bind(status).bind(limit).bind(offset)
+                .fetch_all(&self.pg_pool).await?;
+
+                let (total,): (i64,) = sqlx::query_as(
+                    "SELECT COUNT(*) FROM orders WHERE status = $1::order_status"
+                )
+                .bind(status)
+                .fetch_one(&self.pg_pool).await?;
+
+                (items, total)
+            }
+            (None, Some(mode)) => {
+                let items = sqlx::query_as::<_, crate::models::Order>(
+                    "SELECT * FROM orders WHERE mode = $1::order_mode ORDER BY created_at DESC LIMIT $2 OFFSET $3"
+                )
+                .bind(mode).bind(limit).bind(offset)
+                .fetch_all(&self.pg_pool).await?;
+
+                let (total,): (i64,) = sqlx::query_as(
+                    "SELECT COUNT(*) FROM orders WHERE mode = $1::order_mode"
+                )
+                .bind(mode)
+                .fetch_one(&self.pg_pool).await?;
+
+                (items, total)
+            }
+            (None, None) => {
+                let items = sqlx::query_as::<_, crate::models::Order>(
+                    "SELECT * FROM orders ORDER BY created_at DESC LIMIT $1 OFFSET $2"
+                )
+                .bind(limit).bind(offset)
+                .fetch_all(&self.pg_pool).await?;
+
+                let (total,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM orders")
+                    .fetch_one(&self.pg_pool).await?;
+
+                (items, total)
+            }
         };
         Ok((items, total))
     }
@@ -191,11 +234,35 @@ impl Repository {
         .fetch_all(&self.pg_pool).await?)
     }
 
-    pub async fn update_order_status(&self, id: uuid::Uuid, status: &crate::models::OrderStatus) -> Result<()> {
+    pub async fn update_order_status(
+        &self,
+        id: uuid::Uuid,
+        status: &crate::models::OrderStatus,
+        admin_notes: Option<&str>,
+        reserve_status: Option<&crate::models::ReserveStatus>,
+        reserve_expires_at: Option<&str>,
+        admin_terms_note: Option<&str>,
+        invoice_note: Option<&str>,
+    ) -> Result<()> {
+        let reserve_expires_at_provided = reserve_expires_at.is_some();
+        let reserve_expires_at = parse_optional_deadline(reserve_expires_at)?;
         let affected = sqlx::query(
-            "UPDATE orders SET status = $1 WHERE id = $2"
+            "UPDATE orders
+             SET status = $1,
+                 admin_notes = COALESCE($2, admin_notes),
+                 reserve_status = COALESCE($3::reserve_status, reserve_status),
+                 reserve_expires_at = CASE WHEN $4 THEN $5 ELSE reserve_expires_at END,
+                 admin_terms_note = COALESCE($6, admin_terms_note),
+                 invoice_note = COALESCE($7, invoice_note)
+             WHERE id = $8"
         )
         .bind(status)
+        .bind(admin_notes)
+        .bind(reserve_status)
+        .bind(reserve_expires_at_provided)
+        .bind(reserve_expires_at)
+        .bind(admin_terms_note)
+        .bind(invoice_note)
         .bind(id)
         .execute(&self.pg_pool)
         .await?
@@ -2140,11 +2207,38 @@ impl Repository {
             Some("en") => "en",
             _ => "ru",
         };
+        let source_figurine_id = req
+            .source_figurine_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToOwned::to_owned);
+        let similar_keep_note = req
+            .similar_keep_note
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToOwned::to_owned);
+        let similar_change_note = req
+            .similar_change_note
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToOwned::to_owned);
+        let similar_tags: Vec<String> = req
+            .similar_tags
+            .iter()
+            .map(|tag| tag.trim())
+            .filter(|tag| !tag.is_empty())
+            .take(12)
+            .map(ToOwned::to_owned)
+            .collect();
         let commission = sqlx::query_as::<_, crate::models::Commission>(
             r#"INSERT INTO commissions
                (claim_token, requester_name, requester_email, requester_phone,
-                title, description, size_note, mood, deadline, budget_note, occasion, lang)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                title, description, size_note, mood, deadline, budget_note, occasion,
+                source_figurine_id, similar_keep_note, similar_change_note, similar_tags, lang)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
                RETURNING *"#
         )
         .bind(&claim_token)
@@ -2158,6 +2252,10 @@ impl Repository {
         .bind(deadline)
         .bind(&req.budget_note)
         .bind(&req.occasion)
+        .bind(&source_figurine_id)
+        .bind(&similar_keep_note)
+        .bind(&similar_change_note)
+        .bind(&similar_tags)
         .bind(lang)
         .fetch_one(&mut *tx).await?;
 
@@ -2200,19 +2298,45 @@ impl Repository {
     pub async fn get_commissions_page(
         &self,
         status_filter: Option<&str>,
+        similar_only: bool,
         limit: i64,
         offset: i64,
     ) -> Result<(Vec<crate::models::Commission>, i64)> {
         let (items, total) = if let Some(status) = status_filter {
+            if similar_only {
+                let items = sqlx::query_as::<_, crate::models::Commission>(
+                    "SELECT * FROM commissions WHERE status = $1::commission_status AND source_figurine_id IS NOT NULL ORDER BY created_at DESC LIMIT $2 OFFSET $3"
+                )
+                .bind(status).bind(limit).bind(offset)
+                .fetch_all(&self.pg_pool).await?;
+                let (total,): (i64,) = sqlx::query_as(
+                    "SELECT COUNT(*) FROM commissions WHERE status = $1::commission_status AND source_figurine_id IS NOT NULL"
+                )
+                .bind(status)
+                .fetch_one(&self.pg_pool).await?;
+                (items, total)
+            } else {
+                let items = sqlx::query_as::<_, crate::models::Commission>(
+                    "SELECT * FROM commissions WHERE status = $1::commission_status ORDER BY created_at DESC LIMIT $2 OFFSET $3"
+                )
+                .bind(status).bind(limit).bind(offset)
+                .fetch_all(&self.pg_pool).await?;
+                let (total,): (i64,) = sqlx::query_as(
+                    "SELECT COUNT(*) FROM commissions WHERE status = $1::commission_status"
+                )
+                .bind(status)
+                .fetch_one(&self.pg_pool).await?;
+                (items, total)
+            }
+        } else if similar_only {
             let items = sqlx::query_as::<_, crate::models::Commission>(
-                "SELECT * FROM commissions WHERE status = $1::commission_status ORDER BY created_at DESC LIMIT $2 OFFSET $3"
+                "SELECT * FROM commissions WHERE source_figurine_id IS NOT NULL ORDER BY created_at DESC LIMIT $1 OFFSET $2"
             )
-            .bind(status).bind(limit).bind(offset)
+            .bind(limit).bind(offset)
             .fetch_all(&self.pg_pool).await?;
             let (total,): (i64,) = sqlx::query_as(
-                "SELECT COUNT(*) FROM commissions WHERE status = $1::commission_status"
+                "SELECT COUNT(*) FROM commissions WHERE source_figurine_id IS NOT NULL"
             )
-            .bind(status)
             .fetch_one(&self.pg_pool).await?;
             (items, total)
         } else {

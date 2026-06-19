@@ -579,9 +579,14 @@ pub async fn list_orders(
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<crate::models::OrdersPage>> {
     let status = params.get("status").map(|s| s.as_str());
+    let mode = params.get("mode").map(|s| s.as_str()).filter(|s| !s.is_empty());
+    if let Some(mode) = mode
+        && !matches!(mode, "request" | "question" | "notify" | "reserve") {
+            return Err(AppError::BadRequest("Invalid order mode filter".to_string()));
+        }
     let page = params.get("page").and_then(|p| p.parse::<i64>().ok()).unwrap_or(1).max(1);
     let per_page = params.get("perPage").and_then(|p| p.parse::<i64>().ok()).unwrap_or(20).clamp(1, 100);
-    let page_data = service.list_orders(status, page, per_page).await?;
+    let page_data = service.list_orders(status, mode, page, per_page).await?;
     Ok(Json(page_data))
 }
 
@@ -590,7 +595,7 @@ pub async fn update_order_status(
     Path(id): Path<Uuid>,
     Json(body): Json<crate::models::UpdateOrderStatusRequest>,
 ) -> Result<StatusCode> {
-    service.update_order_status(id, &body.status).await?;
+    service.update_order_status(id, &body).await?;
     Ok(StatusCode::OK)
 }
 
@@ -631,6 +636,16 @@ pub async fn create_commission(
     }
     if req.attachment_urls.len() > 5 {
         return Err(AppError::BadRequest("Too many attachments.".into()));
+    }
+    if req.source_figurine_id.as_deref().map(|s| s.trim().chars().count() > 80).unwrap_or(false) {
+        return Err(AppError::BadRequest("Source figurine id is too long.".into()));
+    }
+    if req.similar_keep_note.as_deref().map(|s| s.chars().count() > 1000).unwrap_or(false)
+        || req.similar_change_note.as_deref().map(|s| s.chars().count() > 1000).unwrap_or(false) {
+            return Err(AppError::BadRequest("Similar notes are too long.".into()));
+        }
+    if req.similar_tags.len() > 12 {
+        return Err(AppError::BadRequest("Too many similar tags.".into()));
     }
 
     // If the requester is logged in, attach their account immediately.
@@ -739,9 +754,10 @@ pub async fn admin_list_commissions(
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<crate::models::CommissionsPage>> {
     let status = params.get("status").map(|s| s.as_str());
+    let similar = params.get("similar").is_some_and(|s| matches!(s.as_str(), "true" | "1"));
     let page = params.get("page").and_then(|p| p.parse::<i64>().ok()).unwrap_or(1).max(1);
     let per_page = params.get("perPage").and_then(|p| p.parse::<i64>().ok()).unwrap_or(20).clamp(1, 100);
-    Ok(Json(service.list_commissions(status, page, per_page).await?))
+    Ok(Json(service.list_commissions(status, similar, page, per_page).await?))
 }
 
 pub async fn admin_update_commission(

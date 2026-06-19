@@ -89,7 +89,7 @@
     // saved figurines follow the account across devices.
     if (authStore.token) {
       savedFigurines.load();
-      savedFigurines.syncWithServer();
+      savedFigurines.syncWithServer({ importLocal: false });
     }
   });
 

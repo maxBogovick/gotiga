@@ -10,6 +10,9 @@ import type {
     AuthorProfile,
     HomeContent,
     OrderRequest,
+    OrderMode,
+    OrderStatus,
+    ReserveStatus,
     MediaInventory,
     MediaCleanupReport,
     MediaReplaceResult,
@@ -537,20 +540,34 @@ export const api = {
         await webFetch(`/orders/notify/${token}`, { method: 'POST' });
     },
 
-    async listOrders(opts?: { status?: string; page?: number; perPage?: number }): Promise<import('./types/api').OrdersPage> {
+    async listOrders(opts?: { status?: string; mode?: OrderMode; page?: number; perPage?: number }): Promise<import('./types/api').OrdersPage> {
         const p = new URLSearchParams();
         if (opts?.status)  p.set('status',  opts.status);
+        if (opts?.mode)    p.set('mode',    opts.mode);
         if (opts?.page)    p.set('page',    String(opts.page));
         if (opts?.perPage) p.set('perPage', String(opts.perPage));
         const qs = p.toString() ? `?${p}` : '';
         return webFetch(`/admin/orders${qs}`, { headers: authHeaders() });
     },
 
-    async updateOrderStatus(id: string, status: 'new' | 'seen' | 'replied', adminNotes?: string): Promise<void> {
+    async updateOrderStatus(
+        id: string,
+        status: OrderStatus,
+        opts?: {
+            adminNotes?: string | null;
+            reserveStatus?: ReserveStatus | null;
+            reserveExpiresAt?: string | null;
+            adminTermsNote?: string | null;
+            invoiceNote?: string | null;
+        } | string
+    ): Promise<void> {
+        const payload = typeof opts === 'string'
+            ? { status, adminNotes: opts }
+            : { status, ...(opts ?? {}) };
         await webFetch(`/admin/orders/${id}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
-            body: JSON.stringify({ status, adminNotes }),
+            body: JSON.stringify(payload),
         });
     },
 
@@ -974,9 +991,10 @@ export const api = {
         });
     },
 
-    async adminListCommissions(opts?: { status?: string; page?: number; perPage?: number }): Promise<CommissionsPage> {
+    async adminListCommissions(opts?: { status?: string; similar?: boolean; page?: number; perPage?: number }): Promise<CommissionsPage> {
         const p = new URLSearchParams();
         if (opts?.status)  p.set('status',  opts.status);
+        if (opts?.similar) p.set('similar', 'true');
         if (opts?.page)    p.set('page',    String(opts.page));
         if (opts?.perPage) p.set('perPage', String(opts.perPage));
         const qs = p.toString() ? `?${p}` : '';

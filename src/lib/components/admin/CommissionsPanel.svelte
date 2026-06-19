@@ -16,6 +16,7 @@
   let loading = $state(true);
   let error = $state('');
   let statusFilter = $state<'' | CommissionStatus>('');
+  let similarOnly = $state(false);
   let updatingId = $state<string | null>(null);
   let savingId = $state<string | null>(null);
   let savedId = $state<string | null>(null);
@@ -25,6 +26,8 @@
   // Registry of existing works, so the link is a pick — not a hand-typed UUID.
   let registry = $state<FigurineListItem[]>([]);
   let creatingWorkId = $state<string | null>(null);
+  let registryById = $derived(new Map(registry.map((f) => [f.id, f])));
+  let visibleItems = $derived(similarOnly ? items.filter((c) => Boolean(c.sourceFigurineId)) : items);
 
   async function loadRegistry() {
     try { registry = await api.getAllFigurinesAdmin(); } catch { registry = []; }
@@ -90,7 +93,7 @@
     loading = true;
     error = '';
     try {
-      const res = await api.adminListCommissions({ status: statusFilter || undefined, page, perPage: PER_PAGE });
+      const res = await api.adminListCommissions({ status: statusFilter || undefined, similar: similarOnly, page, perPage: PER_PAGE });
       items = res.items;
       total = res.total;
       newCount = res.newCount;
@@ -250,6 +253,11 @@
             {statusFilter === val ? 'bg-[#34251c] text-[#fff9f0] border-[#34251c]' : 'border-[#34251c]/20 text-[#5f4636] hover:border-[#34251c]/50'}"
         >{label}</button>
       {/each}
+      <button
+        onclick={() => { similarOnly = !similarOnly; load(true); }}
+        class="px-2.5 py-1 text-[10px] uppercase tracking-wide border transition-colors
+          {similarOnly ? 'bg-[#6f3b24] text-[#fff9f0] border-[#6f3b24]' : 'border-[#34251c]/20 text-[#5f4636] hover:border-[#34251c]/50'}"
+      >Similar</button>
     </div>
     <button onclick={() => load()} class="text-xs text-[#5f4636] hover:text-[#34251c] border border-[#34251c]/20 px-2 py-1 transition-colors" title="Refresh">↺</button>
   </div>
@@ -259,11 +267,11 @@
       <div class="text-center text-[#5f4636] py-12 text-sm">Loading…</div>
     {:else if error}
       <div class="text-center text-red-700 py-12 text-sm">{error}</div>
-    {:else if items.length === 0}
+    {:else if visibleItems.length === 0}
       <div class="text-center text-[#5f4636]/60 py-12 font-['Fraunces'] text-lg">No requests</div>
     {:else}
       <div class="space-y-3">
-        {#each items as c (c.id)}
+        {#each visibleItems as c (c.id)}
           <div class="border border-[#34251c]/10 bg-white p-4 {c.status === 'new' ? 'border-l-4 border-l-red-400' : ''}">
             <div class="flex items-start gap-3 mb-2">
               <div class="flex-1 min-w-0">
@@ -280,6 +288,42 @@
             </div>
 
             <p class="text-sm text-[#5f4636] whitespace-pre-wrap border-l-2 border-[#d8c6b1] pl-2 mt-2">{c.description}</p>
+
+            {#if c.sourceFigurineId}
+              {@const source = registryById.get(c.sourceFigurineId)}
+              <div class="mt-2 border border-[#6f3b24]/15 bg-[#fff9f0] p-2 flex gap-2 items-start">
+                {#if source?.faceImageUrl}
+                  <a href="/figurines/{c.sourceFigurineId}" target="_blank" rel="noopener" class="block w-14 h-14 border border-[#d8c6b1] overflow-hidden flex-shrink-0">
+                    <img src={resolveMediaUrl(source.faceImageUrl)} alt="" class="w-full h-full object-cover" />
+                  </a>
+                {:else}
+                  <a href="/figurines/{c.sourceFigurineId}" target="_blank" rel="noopener" class="grid place-items-center w-14 h-14 border border-[#d8c6b1] bg-[#f0e6d6] text-[10px] tracking-wide text-[#6f3b24] flex-shrink-0">GT</a>
+                {/if}
+                <div class="min-w-0 flex-1">
+                  <div class="text-[9px] uppercase tracking-[0.14em] text-[#c65f3c] font-semibold">Create similar source</div>
+                  {#if source}
+                    <a href="/figurines/{c.sourceFigurineId}" target="_blank" rel="noopener" class="font-['Fraunces'] text-sm text-[#34251c] hover:text-[#c65f3c] truncate block">{source.name}</a>
+                    <div class="text-[10px] text-[#5f4636]/70">{source.status}{#if source.year} · {source.year}{/if}</div>
+                  {:else}
+                    <a href="/figurines/{c.sourceFigurineId}" target="_blank" rel="noopener" class="font-mono text-xs text-[#34251c] hover:text-[#c65f3c] break-all">{c.sourceFigurineId}</a>
+                    <div class="text-[10px] text-[#5f4636]/70">Source is not in current registry list</div>
+                  {/if}
+                  {#if c.similarKeepNote || c.similarChangeNote}
+                    <div class="mt-1 grid gap-1 text-xs text-[#5f4636]">
+                      {#if c.similarKeepNote}<p class="m-0"><b>Keep:</b> {c.similarKeepNote}</p>{/if}
+                      {#if c.similarChangeNote}<p class="m-0"><b>Change:</b> {c.similarChangeNote}</p>{/if}
+                    </div>
+                  {/if}
+                  {#if c.similarTags.length > 0}
+                    <div class="mt-1 flex flex-wrap gap-1">
+                      {#each c.similarTags as tag}
+                        <span class="text-[9px] px-1.5 py-0.5 border border-[#34251c]/10 text-[#5f4636] bg-white">{tag}</span>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+              </div>
+            {/if}
 
             <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[#5f4636] mt-2">
               {#if c.sizeNote}<span><b>Size:</b> {c.sizeNote}</span>{/if}

@@ -116,6 +116,10 @@ export interface AuthorProfile {
     youtube: string | null;
 }
 
+export type OrderMode = 'request' | 'question' | 'notify' | 'reserve';
+export type OrderStatus = 'new' | 'seen' | 'replied';
+export type ReserveStatus = 'requested' | 'reviewing' | 'terms_sent' | 'confirmed' | 'declined' | 'expired';
+
 export interface OrderRequest {
     figurineId: string;
     figurineName: string;
@@ -123,7 +127,7 @@ export interface OrderRequest {
     requesterEmail: string;
     requesterPhone: string | null;
     message: string | null;
-    mode: 'request' | 'question' | 'notify';
+    mode: OrderMode;
 }
 
 export interface Order {
@@ -134,9 +138,13 @@ export interface Order {
     requesterEmail: string;
     requesterPhone: string | null;
     message: string | null;
-    mode: 'request' | 'question' | 'notify';
-    status: 'new' | 'seen' | 'replied';
+    mode: OrderMode;
+    status: OrderStatus;
     adminNotes: string | null;
+    reserveStatus: ReserveStatus | null;
+    reserveExpiresAt: string | null;
+    adminTermsNote: string | null;
+    invoiceNote: string | null;
     createdAt: string;
 }
 
@@ -163,6 +171,10 @@ export interface CommissionRequest {
     deadline?: string | null;
     budgetNote?: string | null;
     occasion?: string | null;
+    sourceFigurineId?: string | null;
+    similarKeepNote?: string | null;
+    similarChangeNote?: string | null;
+    similarTags?: string[];
     attachmentUrls?: AttachmentInput[];
     /** Honeypot — leave empty. */
     website?: string | null;
@@ -195,6 +207,10 @@ export interface CommissionDto {
     deadline: string | null;
     budgetNote: string | null;
     occasion: string | null;
+    sourceFigurineId: string | null;
+    similarKeepNote: string | null;
+    similarChangeNote: string | null;
+    similarTags: string[];
     figurineId: string | null;
     status: CommissionStatus;
     adminNotes: string | null;
@@ -408,9 +424,14 @@ export interface UserOrderDto {
     id: string;
     figurineId: string;
     figurineName: string;
-    mode: 'request' | 'question' | 'notify';
-    status: 'new' | 'seen' | 'replied';
+    mode: OrderMode;
+    status: OrderStatus;
     createdAt: string;
+    adminNotes: string | null;
+    reserveStatus: ReserveStatus | null;
+    reserveExpiresAt: string | null;
+    adminTermsNote: string | null;
+    invoiceNote: string | null;
 }
 
 // ── Admin user management ────────────────────────────────────

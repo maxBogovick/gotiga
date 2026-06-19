@@ -24,6 +24,8 @@
   let forgotLoading = $state(false);
   let forgotSent = $state(false);
   let contacts = $state<ContactSettings>({ email: null, telegram: null, phone: null });
+  let pendingWishlistImport = $state<{ localIds: string[]; serverIds: string[]; redirectTo: string } | null>(null);
+  let importLoading = $state(false);
 
   onMount(async () => {
     try { contacts = await api.getContactSettings(); } catch { /* non-critical */ }
@@ -132,10 +134,16 @@
         }
       } catch { /* non-critical */ }
 
-      // Merge this device's saved figurines into the account's wishlist.
-      savedFigurines.syncWithServer();
-
       const redirectTo = page.url.searchParams.get('from') ?? '/';
+      const localIds = savedFigurines.localIds();
+      const serverIds = await api.getWishlist(res.sessionToken).catch(() => null);
+      if (serverIds && localIds.some((id) => !serverIds.includes(id))) {
+        pendingWishlistImport = { localIds, serverIds, redirectTo };
+        step = 6;
+        return;
+      }
+
+      await savedFigurines.syncWithServer({ importLocal: false });
       goto(redirectTo);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : '';
@@ -148,6 +156,24 @@
       }
     } finally {
       loading = false;
+    }
+  }
+
+  async function finishWishlistImport(shouldImport: boolean) {
+    if (!pendingWishlistImport || importLoading) return;
+    importLoading = true;
+    error = '';
+    try {
+      if (shouldImport) {
+        await savedFigurines.importLocalToServer(pendingWishlistImport.localIds);
+      } else {
+        savedFigurines.replaceLocal(pendingWishlistImport.serverIds);
+      }
+      goto(pendingWishlistImport.redirectTo);
+    } catch {
+      error = $t('wishlistImportError');
+    } finally {
+      importLoading = false;
     }
   }
 </script>
@@ -205,6 +231,21 @@
 
   {#if error}
     <p class="auth-error">{error}</p>
+  {/if}
+
+  {#if step === 6 && pendingWishlistImport}
+    <h1 class="auth-title">{$t('wishlistImportTitle')}</h1>
+    <p class="auth-hint">
+      {$t('wishlistImportBody').replace('{count}', String(pendingWishlistImport.localIds.filter((id) => !pendingWishlistImport?.serverIds.includes(id)).length))}
+    </p>
+    <div class="auth-nav">
+      <button class="auth-btn-primary" onclick={() => finishWishlistImport(true)} disabled={importLoading}>
+        {importLoading ? '…' : $t('wishlistImportConfirm')}
+      </button>
+      <button class="auth-link" onclick={() => finishWishlistImport(false)} disabled={importLoading}>
+        {$t('wishlistImportSkip')}
+      </button>
+    </div>
   {/if}
 
   {#if step < 6}

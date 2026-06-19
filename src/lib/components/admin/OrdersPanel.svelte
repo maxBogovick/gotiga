@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
   import { brandName } from '$lib/i18n';
-  import type { Order } from '$lib/types/api';
+  import type { Order, OrderMode, OrderStatus, ReserveStatus } from '$lib/types/api';
 
   let { onNewCount = (_n: number) => {} } = $props();
 
@@ -15,7 +15,13 @@
   let loading = $state(true);
   let error = $state('');
   let statusFilter = $state<'' | 'new' | 'seen' | 'replied'>('');
+  let modeFilter = $state<'' | OrderMode>('');
   let updatingId = $state<string | null>(null);
+  let reserveStatusDraft = $state<Record<string, ReserveStatus>>({});
+  let reserveExpiryDraft = $state<Record<string, string>>({});
+  let adminNotesDraft = $state<Record<string, string>>({});
+  let termsDraft = $state<Record<string, string>>({});
+  let invoiceDraft = $state<Record<string, string>>({});
 
   let totalPages = $derived(Math.max(1, Math.ceil(total / PER_PAGE)));
 
@@ -26,6 +32,7 @@
     try {
       const res = await api.listOrders({
         status: statusFilter || undefined,
+        mode: modeFilter || undefined,
         page,
         perPage: PER_PAGE,
       });
@@ -45,10 +52,20 @@
     await load();
   }
 
-  async function setStatus(order: Order, status: 'new' | 'seen' | 'replied') {
+  function reservePayload(order: Order) {
+    return {
+      adminNotes: adminNotesDraft[order.id] ?? order.adminNotes ?? '',
+      reserveStatus: reserveStatusDraft[order.id] ?? order.reserveStatus ?? 'requested',
+      reserveExpiresAt: reserveExpiryDraft[order.id] ?? order.reserveExpiresAt ?? '',
+      adminTermsNote: termsDraft[order.id] ?? order.adminTermsNote ?? '',
+      invoiceNote: invoiceDraft[order.id] ?? order.invoiceNote ?? '',
+    };
+  }
+
+  async function setStatus(order: Order, status: OrderStatus) {
     updatingId = order.id;
     try {
-      await api.updateOrderStatus(order.id, status);
+      await api.updateOrderStatus(order.id, status, order.mode === 'reserve' ? reservePayload(order) : undefined);
       order.status = status;
       items = [...items];
       // Refresh count after status change
@@ -60,13 +77,37 @@
     }
   }
 
+  async function saveReserve(order: Order) {
+    updatingId = order.id;
+    try {
+      await api.updateOrderStatus(order.id, order.status, reservePayload(order));
+      await load();
+    } catch {
+      // keep edits in place for retry
+    } finally {
+      updatingId = null;
+    }
+  }
+
   onMount(() => load());
 
+  const modeFilters: Array<{ value: '' | OrderMode; label: string }> = [
+    { value: '', label: 'All modes' },
+    { value: 'reserve', label: 'Reserve' },
+  ];
+  const reserveStatusOptions: Array<{ value: ReserveStatus; label: string }> = [
+    { value: 'requested', label: 'Requested' },
+    { value: 'reviewing', label: 'Reviewing' },
+    { value: 'terms_sent', label: 'Terms sent' },
+    { value: 'confirmed', label: 'Confirmed' },
+    { value: 'declined', label: 'Declined' },
+    { value: 'expired', label: 'Expired' },
+  ];
   const statusLabel: Record<string, string> = {
     new: 'New', seen: 'Seen', replied: 'Replied',
   };
   const modeLabel: Record<string, string> = {
-    request: 'Request', question: 'Question', notify: 'Notify',
+    request: 'Request', question: 'Question', notify: 'Notify', reserve: 'Reserve',
   };
   const statusColor: Record<string, string> = {
     new:     'bg-red-100 text-red-800 border-red-200',
@@ -77,6 +118,7 @@
     request:  'bg-[#c65f3c]/10 text-[#c65f3c]',
     question: 'bg-blue-50 text-blue-700',
     notify:   'bg-purple-50 text-purple-700',
+    reserve:  'bg-emerald-50 text-emerald-800',
   };
 
   function formatDate(iso: string) {
@@ -84,6 +126,10 @@
       day: '2-digit', month: '2-digit', year: '2-digit',
       hour: '2-digit', minute: '2-digit',
     });
+  }
+
+  function reserveStatusLabel(status: ReserveStatus | null) {
+    return reserveStatusOptions.find(s => s.value === status)?.label ?? 'Requested';
   }
 
   function makeMailtoLink(order: Order): string {
@@ -97,6 +143,12 @@
     } else if (order.mode === 'question') {
       body = `${greeting}Regarding your question about the work “${order.figurineName}”:\n\n`;
       body += order.message ? `> ${order.message}\n\n` : '';
+      body += `Best regards,\n${$brandName}`;
+    } else if (order.mode === 'reserve') {
+      body = `${greeting}Your reserve request for “${order.figurineName}” has been reviewed.\n\n`;
+      if (order.adminTermsNote) body += `Terms:\n${order.adminTermsNote}\n\n`;
+      if (order.invoiceNote) body += `Invoice note:\n${order.invoiceNote}\n\n`;
+      if (order.reserveExpiresAt) body += `Please reply before ${order.reserveExpiresAt}.\n\n`;
       body += `Best regards,\n${$brandName}`;
     } else {
       body = `${greeting}Notification about the work “${order.figurineName}”:\n\nBest regards,\n${$brandName}`;
@@ -138,6 +190,18 @@
               ? 'bg-[#34251c] text-[#fff9f0] border-[#34251c]'
               : 'border-[#34251c]/20 text-[#5f4636] hover:border-[#34251c]/50'}"
         >{label}</button>
+      {/each}
+    </div>
+
+    <div class="flex gap-1">
+      {#each modeFilters as filter}
+        <button
+          onclick={() => { modeFilter = filter.value; load(true); }}
+          class="px-3 py-1 text-[10px] uppercase tracking-wide border transition-colors
+            {modeFilter === filter.value
+              ? 'bg-[#6f3b24] text-[#fff9f0] border-[#6f3b24]'
+              : 'border-[#34251c]/20 text-[#5f4636] hover:border-[#34251c]/50'}"
+        >{filter.label}</button>
       {/each}
     </div>
 
@@ -194,6 +258,81 @@
             <!-- Message -->
             {#if order.message}
               <p class="text-sm text-[#5f4636] italic border-l-2 border-[#d8c6b1] pl-2 mt-2">{order.message}</p>
+            {/if}
+
+            {#if order.mode === 'reserve'}
+              <div class="mt-3 border border-emerald-900/10 bg-emerald-50/45 p-3 space-y-2">
+                <div class="flex flex-wrap items-center gap-2 text-[11px] font-['Inter'] text-[#34251c]">
+                  <span class="font-semibold uppercase tracking-wide">Reserve status</span>
+                  <span class="px-1.5 py-0.5 bg-white border border-emerald-900/10 text-emerald-800">
+                    {reserveStatusLabel(order.reserveStatus)}
+                  </span>
+                  {#if order.reserveExpiresAt}
+                    <span class="text-[#5f4636]/75">Expires: {order.reserveExpiresAt}</span>
+                  {/if}
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_10rem] gap-2">
+                  <label class="text-[10px] uppercase tracking-wide text-[#5f4636] font-['Inter']">
+                    Reserve stage
+                    <select
+                      value={reserveStatusDraft[order.id] ?? order.reserveStatus ?? 'requested'}
+                      onchange={(e) => { reserveStatusDraft[order.id] = (e.target as HTMLSelectElement).value as ReserveStatus; reserveStatusDraft = { ...reserveStatusDraft }; }}
+                      class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1.5 text-xs normal-case tracking-normal text-[#34251c] font-['Inter']"
+                    >
+                      {#each reserveStatusOptions as option}
+                        <option value={option.value}>{option.label}</option>
+                      {/each}
+                    </select>
+                  </label>
+                  <label class="text-[10px] uppercase tracking-wide text-[#5f4636] font-['Inter']">
+                    Expires
+                    <input
+                      type="date"
+                      value={reserveExpiryDraft[order.id] ?? order.reserveExpiresAt ?? ''}
+                      oninput={(e) => { reserveExpiryDraft[order.id] = (e.target as HTMLInputElement).value; reserveExpiryDraft = { ...reserveExpiryDraft }; }}
+                      class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1.5 text-xs normal-case tracking-normal text-[#34251c] font-['Inter']"
+                    />
+                  </label>
+                </div>
+                <label class="block text-[10px] uppercase tracking-wide text-[#5f4636] font-['Inter']">
+                  Terms shown to client
+                  <textarea
+                    rows="2"
+                    value={termsDraft[order.id] ?? order.adminTermsNote ?? ''}
+                    oninput={(e) => { termsDraft[order.id] = (e.target as HTMLTextAreaElement).value; termsDraft = { ...termsDraft }; }}
+                    placeholder="Manual reserve terms, pickup/payment window, handoff details…"
+                    class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1.5 text-xs normal-case tracking-normal text-[#34251c] font-['Inter'] resize-y"
+                  ></textarea>
+                </label>
+                <label class="block text-[10px] uppercase tracking-wide text-[#5f4636] font-['Inter']">
+                  Invoice note
+                  <textarea
+                    rows="2"
+                    value={invoiceDraft[order.id] ?? order.invoiceNote ?? ''}
+                    oninput={(e) => { invoiceDraft[order.id] = (e.target as HTMLTextAreaElement).value; invoiceDraft = { ...invoiceDraft }; }}
+                    placeholder="Manual invoice, payment method, amount, or next instruction…"
+                    class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1.5 text-xs normal-case tracking-normal text-[#34251c] font-['Inter'] resize-y"
+                  ></textarea>
+                </label>
+                <label class="block text-[10px] uppercase tracking-wide text-[#5f4636] font-['Inter']">
+                  Internal note
+                  <input
+                    type="text"
+                    value={adminNotesDraft[order.id] ?? order.adminNotes ?? ''}
+                    oninput={(e) => { adminNotesDraft[order.id] = (e.target as HTMLInputElement).value; adminNotesDraft = { ...adminNotesDraft }; }}
+                    placeholder="Private admin note…"
+                    class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1.5 text-xs normal-case tracking-normal text-[#34251c] font-['Inter']"
+                  />
+                </label>
+                <div class="flex justify-end">
+                  <button
+                    type="button"
+                    onclick={() => saveReserve(order)}
+                    disabled={updatingId === order.id}
+                    class="text-[10px] px-2 py-1 border border-emerald-700/30 text-emerald-800 bg-white hover:bg-emerald-50 transition-colors disabled:opacity-40"
+                  >Save reserve details</button>
+                </div>
+              </div>
             {/if}
 
             <!-- Actions -->

@@ -1395,6 +1395,16 @@
     0 14px 26px color-mix(in srgb, var(--color-ember-deep) 18%, transparent);
 }
 
+.entry-action--secondary {
+  color: var(--color-ink-primary);
+  background: color-mix(in srgb, var(--color-canvas-raised) 64%, transparent);
+  box-shadow: none;
+}
+
+.entry-action--secondary:hover {
+  color: var(--color-canvas-raised);
+}
+
 .entry-action-stack {
   display: grid;
   gap: 0.65rem;
@@ -1437,6 +1447,105 @@
   content: "·";
   margin-right: 0.7rem;
   color: color-mix(in srgb, var(--color-ink-primary) 32%, transparent);
+}
+
+.trust-ledger {
+  display: grid;
+  gap: 0.7rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid color-mix(in srgb, var(--color-ink-primary) 8%, transparent);
+}
+
+.trust-ledger-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.trust-ledger-head span {
+  color: var(--color-ember);
+  font-family: var(--font-body);
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.trust-ledger-head strong {
+  color: var(--color-ink-primary);
+  font-family: var(--font-display);
+  font-size: 0.98rem;
+  font-weight: 500;
+  line-height: 1.2;
+  text-align: right;
+}
+
+.trust-ledger-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem 0.75rem;
+  margin: 0;
+}
+
+.trust-ledger-facts div {
+  min-width: 0;
+}
+
+.trust-ledger-facts dt {
+  color: color-mix(in srgb, var(--color-ink-secondary) 62%, transparent);
+  font-family: var(--font-body);
+  font-size: 0.54rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.trust-ledger-facts dd {
+  overflow: hidden;
+  margin: 0.12rem 0 0;
+  color: var(--color-ink-primary);
+  font-family: var(--font-body);
+  font-size: 0.75rem;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+}
+
+.trust-ledger-next {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  padding-top: 0.15rem;
+}
+
+.trust-ledger-next p {
+  margin: 0;
+  color: color-mix(in srgb, var(--color-ink-secondary) 82%, transparent);
+  font-family: var(--font-body);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.trust-ledger-link {
+  flex: 0 0 auto;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-ember) 42%, transparent);
+  background: transparent;
+  color: var(--color-ember-deep);
+  cursor: pointer;
+  font-family: var(--font-body);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1.2;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.trust-ledger-link:hover {
+  color: var(--color-ink-primary);
 }
 
 .queue-receipt,
@@ -2799,6 +2908,30 @@
   background: var(--color-ember-deep);
 }
 
+.mobile-cta-link {
+  appearance: none;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  max-width: 34vw;
+  min-height: 2.45rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid color-mix(in srgb, var(--color-ink-primary) 22%, transparent);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--color-ink-primary);
+  font-family: var(--font-body);
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1.1;
+  text-align: center;
+  text-decoration: none;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
 /* Responsive detail refinements */
 @media (max-width: 1023px) {
   .figurine-title { font-size: clamp(1.5rem, 3.5vw, 2.25rem); }
@@ -2869,6 +3002,20 @@
     content: none;
   }
 
+  .trust-ledger-head,
+  .trust-ledger-next {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .trust-ledger-head strong {
+    text-align: left;
+  }
+
+  .trust-ledger-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .making-strip,
   .details-col .cal-grid {
     grid-template-columns: 1fr;
@@ -2910,6 +3057,12 @@
     max-width: 48vw;
     padding-inline: 0.75rem;
     font-size: 0.66rem;
+  }
+
+  .mobile-cta-link {
+    max-width: 30vw;
+    padding-inline: 0.55rem;
+    font-size: 0.52rem;
   }
 }
 

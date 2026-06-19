@@ -6,7 +6,7 @@
   import { authStore } from '$lib/stores/auth.svelte';
   import { isValidEmail } from '$lib/validation';
   import { focusTrap } from '$lib/actions/focusTrap';
-  import type { FigurineSchedule } from '$lib/types/api';
+  import type { FigurineSchedule, OrderMode } from '$lib/types/api';
 
   let avatarUrl = $derived(resolveMediaUrl(authStore.user?.avatarUrl));
 
@@ -16,7 +16,7 @@
     isOpen = false,
     figurineName = '',
     figurineId = '',
-    mode = 'request' as 'request' | 'question' | 'notify',
+    mode = 'request' as OrderMode,
     schedule = null as FigurineSchedule | null,
     relatedAvailable = [] as FigurineListItem[],
     onClose = () => {},
@@ -57,6 +57,7 @@
   let subjectPrefix = $derived(
     mode === 'question' ? 'Question: '
     : mode === 'notify'   ? 'Notify me: '
+    : mode === 'reserve'  ? 'Reserve request: '
     : ''
   );
 
@@ -65,7 +66,7 @@
     const effectiveEmail = authStore.isLoggedIn ? (authStore.user?.email ?? '') : email.trim();
 
     submitError = '';
-    if (mode === 'request' && !effectiveName) { submitError = $t('formFillFields'); return; }
+    if ((mode === 'request' || mode === 'reserve') && !effectiveName) { submitError = $t('formFillFields'); return; }
     if (!effectiveEmail) { submitError = $t('formFillFields'); return; }
     if (!authStore.isLoggedIn && !isValidEmail(effectiveEmail)) { submitError = $t('formInvalidEmail'); return; }
 

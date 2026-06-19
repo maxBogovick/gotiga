@@ -357,6 +357,18 @@ impl AppService {
     // === ORDERS / NOTIFICATIONS ===
 
     pub async fn create_order(&self, order: &OrderRequest, user_id: Option<Uuid>) -> Result<Order> {
+        if order.mode == OrderMode::Reserve {
+            let figurine_id = uuid::Uuid::parse_str(&order.figurine_id)
+                .map_err(|_| AppError::BadRequest("Invalid figurine ID".to_string()))?;
+            let figurine = self.repo.get_figurine_by_id(figurine_id).await?
+                .ok_or_else(|| AppError::NotFound("Figurine not found".to_string()))?;
+            if figurine.status != FigurineStatus::Available {
+                return Err(AppError::BadRequest(
+                    "Reserve requests are available only for available works".to_string(),
+                ));
+            }
+        }
+
         // Notify-me subscriptions are deduplicated and carry a cancel token;
         // request/question are plain one-off messages.
         let saved = if order.mode == OrderMode::Notify {
@@ -391,18 +403,27 @@ impl AppService {
     pub async fn list_orders(
         &self,
         status_filter: Option<&str>,
+        mode_filter: Option<&str>,
         page: i64,
         per_page: i64,
     ) -> Result<OrdersPage> {
         let offset = (page - 1) * per_page;
-        let (items, total) = self.repo.get_orders_page(status_filter, per_page, offset).await?;
+        let (items, total) = self.repo.get_orders_page(status_filter, mode_filter, per_page, offset).await?;
         let new_count = self.repo.get_new_orders_count().await?;
         Ok(OrdersPage { items, total, new_count, page, per_page })
     }
 
-    pub async fn update_order_status(&self, id: uuid::Uuid, status: &OrderStatus) -> Result<()> {
-        self.repo.update_order_status(id, status).await?;
-        if *status == OrderStatus::Replied
+    pub async fn update_order_status(&self, id: uuid::Uuid, body: &UpdateOrderStatusRequest) -> Result<()> {
+        self.repo.update_order_status(
+            id,
+            &body.status,
+            body.admin_notes.as_deref(),
+            body.reserve_status.as_ref(),
+            body.reserve_expires_at.as_deref(),
+            body.admin_terms_note.as_deref(),
+            body.invoice_note.as_deref(),
+        ).await?;
+        if body.status == OrderStatus::Replied
             && let Ok(Some(order)) = self.repo.get_order_by_id(id).await
                 && let Some(user_id) = order.user_id {
                     let subject = format!("Ответ на ваш запрос — {}", order.figurine_name);
@@ -430,6 +451,7 @@ impl AppService {
             OrderMode::Request  => "🛒 Запрос на покупку",
             OrderMode::Question => "❓ Вопрос",
             OrderMode::Notify   => "🔔 Уведомить о наличии",
+            OrderMode::Reserve  => "🔒 Запрос резерва",
         };
 
         let admin_link = format!(
@@ -484,6 +506,10 @@ impl AppService {
             deadline: c.deadline.map(|d| d.to_string()),
             budget_note: c.budget_note.clone(),
             occasion: c.occasion.clone(),
+            source_figurine_id: c.source_figurine_id.clone(),
+            similar_keep_note: c.similar_keep_note.clone(),
+            similar_change_note: c.similar_change_note.clone(),
+            similar_tags: c.similar_tags.clone(),
             figurine_id: c.figurine_id.clone(),
             status: c.status.clone(),
             admin_notes: c.admin_notes.clone(),
@@ -497,6 +523,12 @@ impl AppService {
 
     pub async fn create_commission(&self, req: &CommissionRequest) -> Result<CommissionCreatedResponse> {
         validate_attachments(&req.attachment_urls)?;
+        if let Some(source_id) = req.source_figurine_id.as_deref().map(str::trim).filter(|id| !id.is_empty()) {
+            let uuid = Self::parse_uuid(source_id)?;
+            if self.repo.get_figurine_by_id(uuid).await?.is_none() {
+                return Err(crate::error::AppError::BadRequest("Source figurine not found.".into()));
+            }
+        }
         let saved = self.repo.create_commission(req).await?;
         let _ = self.send_commission_notification(&saved).await;
         Ok(CommissionCreatedResponse {
@@ -603,11 +635,12 @@ impl AppService {
     pub async fn list_commissions(
         &self,
         status_filter: Option<&str>,
+        similar_only: bool,
         page: i64,
         per_page: i64,
     ) -> Result<CommissionsPage> {
         let offset = (page - 1) * per_page;
-        let (items, total) = self.repo.get_commissions_page(status_filter, per_page, offset).await?;
+        let (items, total) = self.repo.get_commissions_page(status_filter, similar_only, per_page, offset).await?;
         let new_count = self.repo.get_new_commissions_count().await?;
         let mut dtos = Vec::with_capacity(items.len());
         for c in &items {
@@ -1690,6 +1723,11 @@ impl AppService {
             mode: o.mode,
             status: o.status,
             created_at: o.created_at.to_rfc3339(),
+            admin_notes: o.admin_notes,
+            reserve_status: o.reserve_status,
+            reserve_expires_at: o.reserve_expires_at.map(|d| d.to_string()),
+            admin_terms_note: o.admin_terms_note,
+            invoice_note: o.invoice_note,
         }).collect())
     }
 

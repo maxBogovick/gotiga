@@ -10,8 +10,12 @@
   import MessageAttachments from '$lib/components/MessageAttachments.svelte';
   import CommissionEditModal from '$lib/components/CommissionEditModal.svelte';
 
-  type Tab = 'overview' | 'bookings' | 'orders' | 'commissions' | 'wishlist' | 'messages';
-  let activeTab = $state<Tab>('overview');
+  // ── Cabinet navigation: hub → section → card ──
+  type View = 'hub' | 'dealings' | 'card' | 'messages' | 'wishlist';
+  let view = $state<View>('hub');
+  type DealFilter = 'all' | 'booking' | 'order' | 'commission' | 'waitlist';
+  let dealFilter = $state<DealFilter>('all');
+  let openCardKey = $state<string | null>(null);
 
   let bookings = $state<UserBookingDto[]>([]);
   let orders = $state<UserOrderDto[]>([]);
@@ -19,6 +23,9 @@
   let waitlist = $state<WaitlistEntryDto[]>([]);
   let wishlistIds = $state<string[]>([]);
   let wishlistItems = $state<Map<string, FigurineListItem | null>>(new Map());
+  let sourceFigurineItems = $state<Map<string, FigurineListItem | null>>(new Map());
+  // Full figurine lookup (image/name) for any piece referenced by a dealing.
+  let figurineById = $state<Map<string, FigurineListItem>>(new Map());
   let threads = $state<MessageThreadDto[]>([]);
   let unreadCount = $state(0);
   let loading = $state(true);
@@ -30,13 +37,14 @@
   let claimResult = $state<LinkClaimResponse | null>(null);
   let claimError = $state('');
 
-  // Where to send the user after a successful link. Waitlist has no profile tab,
-  // so it stays on the current one and relies on the inline confirmation.
-  const CLAIM_KIND_TAB: Partial<Record<LinkClaimKind, Tab>> = {
-    booking: 'bookings',
-    notify: 'orders',
-    commission: 'commissions',
-  };
+  // After linking a guest request, drop the user into the dealings section,
+  // filtered to the kind they just attached.
+  function claimKindToFilter(kind: LinkClaimKind): DealFilter {
+    return kind === 'booking' ? 'booking'
+      : kind === 'notify' ? 'order'
+      : kind === 'commission' ? 'commission'
+      : 'waitlist';
+  }
 
   function claimKindLabel(kind: LinkClaimKind): string {
     const map: Record<LinkClaimKind, string> = {
@@ -60,8 +68,10 @@
       if (res.result === 'linked') {
         claimCode = '';
         await loadData();
-        const tab = res.kind ? CLAIM_KIND_TAB[res.kind] : undefined;
-        if (tab) activeTab = tab;
+        if (res.kind) {
+          dealFilter = claimKindToFilter(res.kind);
+          view = 'dealings';
+        }
       }
     } catch {
       claimError = $t('profileActionError');
@@ -161,6 +171,9 @@
   let showDeleteConfirm = $state(false);
   let deleting = $state(false);
 
+  // Claim-by-code is an edge tool, hidden behind a masthead toggle (progressive disclosure).
+  let showClaim = $state(false);
+
   onMount(async () => {
     if (!authStore.isLoggedIn && !authStore.token) {
       goto('/login?from=/profile');
@@ -206,12 +219,9 @@
       threads = th.threads;
       unreadCount = th.unread;
 
-      await savedFigurines.syncWithServer();
+      await savedFigurines.syncWithServer({ importLocal: false });
       wishlistIds = [...savedFigurines.ids];
-
-      if (wishlistIds.length > 0) {
-        loadWishlistDetails();
-      }
+      await loadFigurineReferenceDetails();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : '';
       if (msg.includes('401')) {
@@ -225,16 +235,36 @@
     }
   }
 
-  async function loadWishlistDetails() {
+  async function loadFigurineReferenceDetails() {
     const ids = [...savedFigurines.ids];
+    const sourceIds = [...new Set(commissions.map((c) => c.sourceFigurineId).filter((id): id is string => Boolean(id)))];
+    // Every piece a dealing points at (so work-cards can show its photo).
+    const dealingIds = [
+      ...bookings.map((b) => b.figurineId),
+      ...orders.map((o) => o.figurineId),
+      ...waitlist.map((w) => w.figurineId),
+    ].filter((id): id is string => Boolean(id));
     wishlistIds = ids;
+    if (ids.length === 0 && sourceIds.length === 0 && dealingIds.length === 0) {
+      wishlistItems = new Map();
+      sourceFigurineItems = new Map();
+      figurineById = new Map();
+      return;
+    }
     const all = await api.getAllFigurines().catch(() => [] as FigurineListItem[]);
     const byId = new Map(all.map((fig) => [fig.id, fig]));
+    figurineById = byId;
     const map = new Map<string, FigurineListItem | null>();
     ids.forEach((id) => {
       map.set(id, byId.get(id) ?? null);
     });
     wishlistItems = map;
+
+    const sourceMap = new Map<string, FigurineListItem | null>();
+    sourceIds.forEach((id) => {
+      sourceMap.set(id, byId.get(id) ?? null);
+    });
+    sourceFigurineItems = sourceMap;
   }
 
   function removeSavedFigurine(id: string) {
@@ -404,8 +434,21 @@
       request:  $t('profileOrderModeRequest'),
       question: $t('profileOrderModeQuestion'),
       notify:   $t('profileOrderModeNotify'),
+      reserve:  $t('profileOrderModeReserve'),
     };
     return map[mode] ?? mode;
+  }
+
+  function reserveStatusLabel(status: string | null): string {
+    const map: Record<string, string> = {
+      requested:  $t('profileReserveRequested'),
+      reviewing:  $t('profileReserveReviewing'),
+      terms_sent: $t('profileReserveTermsSent'),
+      confirmed:  $t('profileReserveConfirmed'),
+      declined:   $t('profileReserveDeclined'),
+      expired:    $t('profileReserveExpired'),
+    };
+    return status ? (map[status] ?? status) : $t('profileReserveRequested');
   }
 
   function orderStatusLabel(status: string): string {
@@ -533,8 +576,73 @@
 
   function openFeedThread(item: FeedItem) {
     if (!item.threadId) return;
-    activeTab = 'messages';
+    view = 'messages';
     openThreadDetail(item.threadId);
+  }
+
+  // Each record shows its full detail inline (dates, mode, description, actions)
+  // from these lookups — nothing hidden behind a click.
+  let bookingById = $derived(new Map(bookings.map((b) => [b.id, b])));
+  let orderById = $derived(new Map(orders.map((o) => [o.id, o])));
+  let commissionById = $derived(new Map(commissions.map((c) => [c.id, c])));
+
+  // ── Object-centric grouping: one card per work, aggregating every dealing the
+  // user has on it. Commissions (a proposed new piece) stand as their own cards.
+  interface WorkCard {
+    key: string;
+    figurineId?: string;
+    title: string;
+    items: FeedItem[];
+    kinds: FeedItem['kind'][];
+    unread: number;
+    tone: FeedTone;
+    date: string;
+  }
+  // Headline tone for a card = the most "live" tone among its dealings.
+  const TONE_RANK: FeedTone[] = ['attention', 'pending', 'confirmed', 'rejected', 'neutral'];
+  let workCards = $derived.by<WorkCard[]>(() => {
+    const groups = new Map<string, FeedItem[]>();
+    for (const it of feed) {
+      const key = it.figurineId ?? `${it.kind}:${it.id}`;
+      const arr = groups.get(key);
+      if (arr) arr.push(it); else groups.set(key, [it]);
+    }
+    const cards: WorkCard[] = [];
+    for (const [key, items] of groups) {
+      items.sort((a, b) => +new Date(b.date) - +new Date(a.date));
+      cards.push({
+        key,
+        figurineId: items[0].figurineId,
+        title: items[0].title,
+        items,
+        kinds: [...new Set(items.map((i) => i.kind))],
+        unread: items.reduce((s, i) => s + i.unread, 0),
+        tone: TONE_RANK.find((t) => items.some((i) => i.tone === t)) ?? 'neutral',
+        date: items[0].date,
+      });
+    }
+    return cards.sort((a, b) => +new Date(b.date) - +new Date(a.date));
+  });
+
+  const DEAL_FILTERS: DealFilter[] = ['all', 'booking', 'order', 'commission', 'waitlist'];
+  let visibleCards = $derived.by(() => {
+    if (dealFilter === 'all') return workCards;
+    const k = dealFilter;
+    return workCards.filter((c) => c.kinds.includes(k));
+  });
+  let selectedCard = $derived(workCards.find((c) => c.key === openCardKey) ?? null);
+
+  function openCard(key: string) { openCardKey = key; view = 'card'; }
+
+  function dealFilterLabel(f: DealFilter): string {
+    return f === 'all' ? $t('profileRailAll')
+      : f === 'booking' ? $t('profileBookings')
+      : f === 'order' ? $t('profileOrders')
+      : f === 'commission' ? $t('profileCommissions')
+      : $t('profileLinkClaimKindWaitlist');
+  }
+  function dealFilterCount(f: DealFilter): number {
+    return f === 'all' ? workCards.length : workCards.filter((c) => c.kinds.includes(f)).length;
   }
 </script>
 
@@ -546,127 +654,80 @@
   <div class="frame">
     <div class="body">
 
-      <!-- ── Sidebar ── -->
-      <aside class="sidebar">
+      <!-- ── Masthead: identity + account actions ── -->
+      <header class="masthead">
+        <div class="masthead-id">
+          <button
+            class="ms-avatar"
+            onclick={() => avatarInput?.click()}
+            title={$t('profileUploadPhoto')}
+            disabled={uploadingAvatar}
+          >
+            {#if resolveMediaUrl(authStore.user?.avatarUrl)}
+              <img src={resolveMediaUrl(authStore.user?.avatarUrl)} alt="" class="ms-avatar-img" />
+            {:else}
+              <span class="ms-avatar-initials">{(authStore.user?.displayName ?? '?')[0].toUpperCase()}</span>
+            {/if}
+            <span class="ms-avatar-cap">{uploadingAvatar ? $t('profileUploadingPhoto') : $t('profileUploadPhoto')}</span>
+          </button>
+          <input
+            bind:this={avatarInput}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            class="sr-only"
+            onchange={handleAvatarChange}
+          />
 
-        <!-- Profile (hero) -->
-        <div class="sidebar-profile">
-          <div class="hero-avatar-zone">
-            <button
-              class="hero-avatar-btn"
-              onclick={() => avatarInput?.click()}
-              title={$t('profileUploadPhoto')}
-              disabled={uploadingAvatar}
-            >
-              {#if resolveMediaUrl(authStore.user?.avatarUrl)}
-                <img src={resolveMediaUrl(authStore.user?.avatarUrl)} alt="" class="hero-avatar-img" />
-              {:else}
-                <span class="hero-avatar-initials">{(authStore.user?.displayName ?? '?')[0].toUpperCase()}</span>
-              {/if}
-              <span class="hero-avatar-overlay">{uploadingAvatar ? $t('profileUploadingPhoto') : $t('profileUploadPhoto')}</span>
-            </button>
-            <input
-              bind:this={avatarInput}
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              class="sr-only"
-              onchange={handleAvatarChange}
-            />
-            {#if avatarError}<p class="field-error" role="alert">{avatarError}</p>{/if}
-          </div>
-
-          <div class="hero-identity">
+          <div class="ms-identity">
             {#if editingName}
-              <div class="hero-name-edit">
+              <div class="ms-name-edit">
                 <input
-                  class="hero-name-input"
+                  class="ms-name-input"
                   bind:value={editNameValue}
                   onkeydown={(e) => { if (e.key === 'Enter') saveName(); if (e.key === 'Escape') cancelEditName(); }}
                   use:focusOnMount
                 />
-                <button class="hero-name-save" onclick={saveName} disabled={savingName}>
+                <button class="ms-name-save" onclick={saveName} disabled={savingName}>
                   {savingName ? '…' : $t('profileSaveName')}
                 </button>
-                <button class="hero-name-cancel" onclick={cancelEditName}>✕</button>
+                <button class="ms-name-cancel" onclick={cancelEditName}>✕</button>
               </div>
               {#if nameError}<span class="field-error" role="alert">{nameError}</span>{/if}
             {:else}
-              <div class="hero-name-row">
-                <h1 class="hero-name">{authStore.user?.displayName ?? ''}</h1>
-                <button class="hero-edit-btn" onclick={startEditName} title={$t('profileEditName')}>
+              <div class="ms-name-row">
+                <h1 class="ms-name">{authStore.user?.displayName ?? ''}</h1>
+                <button class="ms-edit-btn" onclick={startEditName} title={$t('profileEditName')}>
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true">
                     <path d="M8.5 1.5L10.5 3.5L4 10H2V8L8.5 1.5Z"/>
                   </svg>
                 </button>
+                {#if nameSaved}<span class="ms-name-saved">{$t('profileNameSaved')}</span>{/if}
               </div>
-              {#if nameSaved}<span class="hero-name-saved">{$t('profileNameSaved')}</span>{/if}
             {/if}
-            <p class="hero-email">{authStore.user?.email ?? ''}</p>
-            {#if authStore.user?.createdAt}
-              <p class="hero-since">{$t('profileMemberSince')} {formatDate(authStore.user.createdAt)}</p>
-            {/if}
+            <p class="ms-sub">
+              <span class="ms-email">{authStore.user?.email ?? ''}</span>
+              {#if authStore.user?.createdAt}
+                <span class="ms-since">· {$t('profileMemberSince')} {formatDate(authStore.user.createdAt)}</span>
+              {/if}
+            </p>
+            {#if avatarError}<p class="field-error" role="alert">{avatarError}</p>{/if}
           </div>
         </div>
-        <nav class="sidebar-nav">
-          <button class="nav-item" class:active={activeTab === 'overview'} onclick={() => activeTab = 'overview'}>
-            <span>{$t('profileOverview')}</span>
-            {#if feed.length > 0}<span class="nav-badge">{feed.length}</span>{/if}
-          </button>
-          <button class="nav-item" class:active={activeTab === 'bookings'} onclick={() => activeTab = 'bookings'}>
-            <span>{$t('profileBookings')}</span>
-            {#if bookings.length > 0}<span class="nav-badge">{bookings.length}</span>{/if}
-          </button>
-          <button class="nav-item" class:active={activeTab === 'orders'} onclick={() => activeTab = 'orders'}>
-            <span>{$t('profileOrders')}</span>
-            {#if orders.length > 0}<span class="nav-badge">{orders.length}</span>{/if}
-          </button>
-          <button class="nav-item" class:active={activeTab === 'commissions'} onclick={() => activeTab = 'commissions'}>
-            <span>{$t('profileCommissions')}</span>
-            {#if commissions.length > 0}<span class="nav-badge">{commissions.length}</span>{/if}
-          </button>
-          <button class="nav-item" class:active={activeTab === 'wishlist'} onclick={() => activeTab = 'wishlist'}>
-            <span>{$t('profileWishlist')}</span>
-            {#if wishlistIds.length > 0}<span class="nav-badge">{wishlistIds.length}</span>{/if}
-          </button>
-          <button class="nav-item" class:active={activeTab === 'messages'} onclick={() => { activeTab = 'messages'; closeThread(); }}>
-            <span>{$t('profileMessages')}</span>
-            {#if unreadCount > 0}<span class="nav-badge nav-badge--unread">{unreadCount}</span>{/if}
-          </button>
-        </nav>
 
-        <div class="sidebar-footer">
-          <button class="sidebar-logout" onclick={logout}>{$t('profileLogout')}</button>
-          {#if !showDeleteConfirm}
-            <button class="sidebar-delete-btn" onclick={() => showDeleteConfirm = true}>{$t('profileDeleteAccount')}</button>
-          {:else}
-            <div class="sidebar-delete-confirm">
-              <p class="sidebar-delete-warning">{$t('profileDeleteWarning')}</p>
-              <div class="sidebar-delete-actions">
-                <button class="sidebar-delete-yes" onclick={deleteAccount} disabled={deleting}>
-                  {deleting ? $t('profileDeleting') : $t('profileDeleteConfirm')}
-                </button>
-                <button class="sidebar-delete-cancel" onclick={() => showDeleteConfirm = false}>
-                  {$t('profileDeleteCancel')}
-                </button>
-              </div>
-              {#if deleteError}<p class="field-error" role="alert">{deleteError}</p>{/if}
-            </div>
-          {/if}
+        <div class="masthead-actions">
+          <button class="ms-link" class:active={showClaim} onclick={() => showClaim = !showClaim}>{$t('profileCodeToggle')}</button>
+          <span class="ms-sep" aria-hidden="true">·</span>
+          <button class="ms-link" onclick={logout}>{$t('profileLogout')}</button>
         </div>
-      </aside>
+      </header>
 
-      <!-- Content -->
-      <div class="content">
-
-        <!-- Attach a guest request by code (lost localStorage / changed device) -->
-        <section class="claim-link" aria-labelledby="claim-link-title">
-          <div class="claim-link-head">
-            <h2 id="claim-link-title" class="claim-link-title">{$t('profileLinkClaimTitle')}</h2>
-            <p class="claim-link-hint">{$t('profileLinkClaimHint')}</p>
-          </div>
-          <form class="claim-link-form" onsubmit={(e) => { e.preventDefault(); submitClaim(); }}>
+      <!-- ── Attach a guest request by code (progressive disclosure) ── -->
+      {#if showClaim}
+        <section class="claim" aria-labelledby="claim-title">
+          <p id="claim-title" class="claim-hint">{$t('profileLinkClaimHint')}</p>
+          <form class="claim-form" onsubmit={(e) => { e.preventDefault(); submitClaim(); }}>
             <input
-              class="claim-link-input"
+              class="claim-input"
               bind:value={claimCode}
               placeholder={$t('profileLinkClaimPlaceholder')}
               autocomplete="off"
@@ -674,152 +735,67 @@
               spellcheck="false"
               aria-label={$t('profileLinkClaimTitle')}
             />
-            <button class="claim-link-btn" type="submit" disabled={claimSubmitting || !claimCode.trim()}>
+            <button class="claim-btn" type="submit" disabled={claimSubmitting || !claimCode.trim()}>
               {claimSubmitting ? $t('profileLinkClaimLinking') : $t('profileLinkClaimButton')}
             </button>
           </form>
           {#if claimError}
-            <p class="claim-link-msg claim-link-msg--err" role="alert">{claimError}</p>
+            <p class="claim-msg claim-msg--err" role="alert">{claimError}</p>
           {:else if claimResult}
             {#if claimResult.result === 'linked'}
-              <p class="claim-link-msg claim-link-msg--ok" role="status">
+              <p class="claim-msg claim-msg--ok" role="status">
                 {$t('profileLinkClaimLinked')}
-                {#if claimResult.kind}<span class="claim-link-kind">{claimKindLabel(claimResult.kind)}</span>{/if}
-                {#if claimResult.name}<span class="claim-link-name">{claimResult.name}</span>{/if}
+                {#if claimResult.kind}<span class="claim-kind">{claimKindLabel(claimResult.kind)}</span>{/if}
+                {#if claimResult.name}<span class="claim-name">{claimResult.name}</span>{/if}
               </p>
             {:else if claimResult.result === 'email_mismatch'}
-              <p class="claim-link-msg claim-link-msg--warn" role="alert">{$t('profileLinkClaimMismatch')}</p>
+              <p class="claim-msg claim-msg--warn" role="alert">{$t('profileLinkClaimMismatch')}</p>
             {:else if claimResult.result === 'already_linked'}
-              <p class="claim-link-msg claim-link-msg--warn" role="status">{$t('profileLinkClaimAlready')}</p>
+              <p class="claim-msg claim-msg--warn" role="status">{$t('profileLinkClaimAlready')}</p>
             {:else}
-              <p class="claim-link-msg claim-link-msg--err" role="alert">{$t('profileLinkClaimNotFound')}</p>
+              <p class="claim-msg claim-msg--err" role="alert">{$t('profileLinkClaimNotFound')}</p>
             {/if}
           {/if}
         </section>
+      {/if}
+
+      <!-- Body: hub → section → card -->
+      <div class="ledger-body">
 
         {#if loading}
           <p class="empty">…</p>
         {:else if error}
           <p class="error-msg">{error}</p>
-        {:else if activeTab === 'overview'}
-          {#if feed.length === 0}
-            <p class="empty">{$t('profileEmpty')}</p>
-          {:else}
-            <ul class="feed">
-              {#each feed as item (item.kind + item.id)}
-                <li class="feed-row feed-row--{item.tone}" class:feed-row--unread={item.unread > 0}>
-                  <div class="feed-meta">
-                    <span class="feed-kind">{feedKindLabel(item.kind)}</span>
-                    <span class="feed-date">{formatDate(item.date)}</span>
-                  </div>
-                  <div class="feed-main">
-                    {#if item.figurineId}
-                      <a href="/figurines/{item.figurineId}" class="feed-title feed-title--link">{item.title || $t('commissionUntitled')}</a>
-                    {:else}
-                      <span class="feed-title">{item.title || $t('commissionUntitled')}</span>
-                    {/if}
-                  </div>
-                  <div class="feed-side">
-                    {#if item.unread > 0}
-                      <button class="feed-reply" onclick={() => openFeedThread(item)}>{$t('profileOverviewNewReply')} →</button>
-                    {/if}
-                    <span class="feed-status feed-status--{item.tone}">{feedStatusLabel(item)}</span>
-                  </div>
-                </li>
-              {/each}
-            </ul>
+        {:else if view === 'hub'}
+          <!-- ── Hub: three large entrances ── -->
+          <section class="hub">
+            <button class="hub-tile" onclick={() => view = 'dealings'}>
+              <span class="hub-kicker">{$t('profileHubDealingsHint')}</span>
+              <span class="hub-name">{$t('profileHubDealings')}</span>
+              <span class="hub-foot">
+                {#if workCards.length > 0}<span class="hub-count">{workCards.length}</span> {$t('profileHubWorks')}{:else}{$t('profileEmpty')}{/if}
+              </span>
+            </button>
+            <button class="hub-tile" onclick={() => { view = 'messages'; closeThread(); }}>
+              <span class="hub-kicker">{$t('profileHubMessagesHint')}</span>
+              <span class="hub-name">{$t('profileMessages')}</span>
+              <span class="hub-foot">
+                {#if unreadCount > 0}<span class="hub-count hub-count--unread">{unreadCount}</span> {$t('profileHubNew')}{:else if threads.length > 0}{threads.length} {$t('profileHubThreads')}{:else}{$t('profileEmpty')}{/if}
+              </span>
+            </button>
+            <button class="hub-tile" onclick={() => view = 'wishlist'}>
+              <span class="hub-kicker">{$t('profileHubWishlistHint')}</span>
+              <span class="hub-name">{$t('profileWishlist')}</span>
+              <span class="hub-foot">
+                {#if wishlistIds.length > 0}<span class="hub-count">{wishlistIds.length}</span> {$t('profileHubPieces')}{:else}{$t('profileEmpty')}{/if}
+              </span>
+            </button>
+          </section>
+        {:else if view === 'wishlist'}
+          <button class="crumb" onclick={() => view = 'hub'}>← {$t('profileTitle')}</button>
+          {#if savedFigurines.syncError}
+            <p class="wishlist-sync-error">{$t('profileWishlistSyncError')}</p>
           {/if}
-        {:else if activeTab === 'bookings'}
-          {#if bookings.length === 0}
-            <p class="empty">{$t('profileEmpty')}</p>
-          {:else}
-            <div class="cards-grid">
-              {#each bookings as b}
-                <div class="card">
-                  <div class="card-head">
-                    <a href="/figurines/{b.figurineId}" class="card-name card-name--link">{b.figurineName}</a>
-                    <span class="status status--{b.status}">{bookingStatusLabel(b.status)}</span>
-                  </div>
-                  <p class="card-range">{formatDateRange(b.startsAt, b.endsAt)}</p>
-                  {#if b.curatorConditions}
-                    <div class="card-curator">
-                      <span class="card-curator-label">{$t('profileBookingCuratorConditions')}</span>
-                      <p class="card-curator-text">{b.curatorConditions}</p>
-                    </div>
-                  {/if}
-                  <div class="card-footer">
-                    <p class="card-date">{formatDate(b.createdAt)}</p>
-                    <a href="/cancel/{b.cancelToken}" class="card-manage">{$t('profileBookingManage')}</a>
-                  </div>
-                </div>
-              {/each}
-            </div>
-          {/if}
-        {:else if activeTab === 'orders'}
-          {#if orders.length === 0}
-            <p class="empty">{$t('profileEmpty')}</p>
-          {:else}
-            <div class="cards-grid">
-              {#each orders as o}
-                <a href="/figurines/{o.figurineId}" class="card">
-                  <div class="card-head">
-                    <span class="card-name">{o.figurineName}</span>
-                    <div class="order-badges">
-                      <span class="mode">{orderModeLabel(o.mode)}</span>
-                      <span class="order-status order-status--{o.status}">{orderStatusLabel(o.status)}</span>
-                    </div>
-                  </div>
-                  <p class="card-date">{formatDate(o.createdAt)}</p>
-                </a>
-              {/each}
-            </div>
-          {/if}
-        {:else if activeTab === 'commissions'}
-          {#if commissions.length === 0}
-            <div class="empty-with-cta">
-              <p class="empty">{$t('profileCommissionsEmpty')}</p>
-              <a href="/commission" class="commission-cta">{$t('profileCommissionsNew')}</a>
-            </div>
-          {:else}
-            <div class="cards-grid">
-              {#each commissions as c}
-                <div class="card commission-card">
-                  <div class="card-head">
-                    <span class="card-name">{c.title || $t('commissionUntitled')}</span>
-                    <span class="order-status order-status--{c.status === 'declined' ? 'rejected' : c.status === 'completed' ? 'confirmed' : 'pending'}">{COMMISSION_STATUS_LABEL[c.status] ?? c.status}</span>
-                  </div>
-                  <p class="card-desc">{c.description}</p>
-                  {#if c.attachments.length > 0}
-                    <div class="commission-thumbs">
-                      {#each c.attachments as att (att.id)}
-                        <img src={resolveMediaUrl(att.thumbUrl ?? att.url)} alt="" />
-                      {/each}
-                    </div>
-                  {/if}
-                  <div class="card-foot">
-                    <span class="card-date">{formatDate(c.createdAt)}</span>
-                    {#if c.threadId}
-                      <button class="commission-open" onclick={() => { activeTab = 'messages'; openThreadDetail(c.threadId!); }}>{$t('profileCommissionsOpenChat')} →</button>
-                    {/if}
-                  </div>
-                  <div class="commission-manage">
-                    {#if c.started}
-                      <span class="commission-locked">{$t('profileCommissionsLocked')}</span>
-                    {:else if confirmDeleteId === c.id}
-                      <span class="commission-confirm">{$t('profileCommissionsDeleteConfirm')}</span>
-                      <button class="commission-link danger" onclick={() => removeCommission(c)} disabled={deletingId === c.id}>{deletingId === c.id ? '…' : $t('profileCommissionsDeleteYes')}</button>
-                      <button class="commission-link" onclick={() => confirmDeleteId = null}>{$t('commissionBack')}</button>
-                    {:else}
-                      <button class="commission-link" onclick={() => editingCommission = c}>{$t('profileCommissionsEdit')}</button>
-                      <button class="commission-link danger" onclick={() => confirmDeleteId = c.id}>{$t('profileCommissionsDelete')}</button>
-                    {/if}
-                  </div>
-                </div>
-              {/each}
-            </div>
-            <a href="/commission" class="commission-cta commission-cta--inline">{$t('profileCommissionsNew')}</a>
-          {/if}
-        {:else if activeTab === 'wishlist'}
           {#if wishlistIds.length === 0}
             <p class="empty">{$t('profileEmpty')}</p>
           {:else}
@@ -861,7 +837,8 @@
               {/each}
             </div>
           {/if}
-        {:else if activeTab === 'messages'}
+        {:else if view === 'messages'}
+          <button class="crumb" onclick={() => view = 'hub'}>← {$t('profileTitle')}</button>
           <div class="messages-wrap">
             {#if openThread}
               <!-- ── Thread detail ── -->
@@ -1009,8 +986,226 @@
               {/if}
             {/if}
           </div>
+        {:else if view === 'card'}
+          <!-- ── One work: every dealing the user has on it ── -->
+          <button class="crumb" onclick={() => view = 'dealings'}>← {$t('profileHubDealings')}</button>
+          {#if selectedCard}
+            {@const card = selectedCard}
+            {@const fig = card.figurineId ? figurineById.get(card.figurineId) : undefined}
+            <header class="work-head">
+              {#if card.figurineId}
+                <a href="/figurines/{card.figurineId}" class="work-head-thumb" aria-label={card.title}>
+                  {#if fig?.faceImageUrl}
+                    <AppImage src={fig.faceImageUrl} thumbUrl={fig.thumbUrl} alt={card.title} class="work-head-img" loading="lazy" />
+                  {:else}
+                    <span class="work-head-ph">{(card.title || '?')[0]}</span>
+                  {/if}
+                </a>
+              {/if}
+              <div class="work-head-copy">
+                <h2 class="work-head-name">{card.title || $t('commissionUntitled')}</h2>
+                <p class="work-head-sub">{card.items.length} · {$t('profileHubActivities')}</p>
+              </div>
+            </header>
+            <ul class="book">
+              {#each card.items as item (item.kind + ':' + item.id)}
+                <li class="entry" class:entry--unread={item.unread > 0}>
+                  <div class="entry-head">
+                    <span class="entry-date">{formatDate(item.date)}</span>
+                    <span class="entry-kind">{feedKindLabel(item.kind)}</span>
+                    {#if item.figurineId}
+                      <a class="entry-title entry-title--link" href="/figurines/{item.figurineId}">{item.title || $t('commissionUntitled')}</a>
+                    {:else}
+                      <span class="entry-title">{item.title || $t('commissionUntitled')}</span>
+                    {/if}
+                    <span class="entry-status entry-status--{item.tone}">{feedStatusLabel(item)}</span>
+                  </div>
+
+                  {#if item.kind === 'booking'}
+                    {@const b = bookingById.get(item.id)}
+                    {#if b}
+                      <div class="entry-detail">
+                        <p class="d-range">{formatDateRange(b.startsAt, b.endsAt)}</p>
+                        {#if b.curatorConditions}
+                          <div class="d-curator">
+                            <span class="d-curator-label">{$t('profileBookingCuratorConditions')}</span>
+                            <p class="d-curator-text">{b.curatorConditions}</p>
+                          </div>
+                        {/if}
+                        <div class="d-actions">
+                          <a class="d-link" href="/cancel/{b.cancelToken}">{$t('profileBookingManage')}</a>
+                        </div>
+                      </div>
+                    {/if}
+                  {:else if item.kind === 'order'}
+                    {@const o = orderById.get(item.id)}
+                    {#if o}
+                      <div class="entry-detail">
+                        <p class="d-line"><span class="d-tag">{orderModeLabel(o.mode)}</span></p>
+                        {#if o.mode === 'reserve'}
+                          <div class="reserve-detail">
+                            <span class="d-tag">{reserveStatusLabel(o.reserveStatus)}</span>
+                            {#if o.reserveExpiresAt}
+                              <p>{$t('profileReserveExpires')} {formatDate(o.reserveExpiresAt)}</p>
+                            {/if}
+                            {#if o.adminTermsNote}
+                              <div class="d-curator">
+                                <span class="d-curator-label">{$t('profileReserveTerms')}</span>
+                                <p class="d-curator-text">{o.adminTermsNote}</p>
+                              </div>
+                            {/if}
+                            {#if o.invoiceNote}
+                              <div class="d-curator">
+                                <span class="d-curator-label">{$t('profileReserveInvoice')}</span>
+                                <p class="d-curator-text">{o.invoiceNote}</p>
+                              </div>
+                            {/if}
+                            {#if o.adminNotes}
+                              <p class="reserve-note">{o.adminNotes}</p>
+                            {/if}
+                          </div>
+                        {/if}
+                      </div>
+                    {/if}
+                  {:else if item.kind === 'commission'}
+                    {@const c = commissionById.get(item.id)}
+                    {#if c}
+                      <div class="entry-detail">
+                        {#if c.sourceFigurineId}
+                          {@const source = sourceFigurineItems.get(c.sourceFigurineId)}
+                          <div class="commission-source">
+                            {#if source?.faceImageUrl}
+                              <a href="/figurines/{c.sourceFigurineId}" class="commission-source-thumb" aria-label={source.name}>
+                                <AppImage src={source.faceImageUrl} thumbUrl={source.thumbUrl} alt={source.name} class="commission-source-img" loading="lazy" />
+                              </a>
+                            {:else}
+                              <a href="/figurines/{c.sourceFigurineId}" class="commission-source-thumb commission-source-thumb--empty" aria-label={source?.name ?? c.sourceFigurineId}>
+                                <span>GT</span>
+                              </a>
+                            {/if}
+                            <div class="commission-source-copy">
+                              <span class="commission-source-label">{$t('profileCommissionSource')}</span>
+                              {#if source}
+                                <a href="/figurines/{c.sourceFigurineId}" class="commission-source-name">{source.name}</a>
+                                <span class="commission-source-meta">{wishlistStatusLabel(source.status)}</span>
+                              {:else}
+                                <span class="commission-source-name commission-source-name--missing">{c.sourceFigurineId}</span>
+                                <span class="commission-source-meta">{$t('profileCommissionSourceMissing')}</span>
+                              {/if}
+                            </div>
+                          </div>
+                        {/if}
+                        {#if c.description}<p class="d-desc">{c.description}</p>{/if}
+                        {#if c.similarKeepNote || c.similarChangeNote}
+                          <div class="commission-similar-notes">
+                            {#if c.similarKeepNote}
+                              <p><span>{$t('profileCommissionKeep')}</span>{c.similarKeepNote}</p>
+                            {/if}
+                            {#if c.similarChangeNote}
+                              <p><span>{$t('profileCommissionChange')}</span>{c.similarChangeNote}</p>
+                            {/if}
+                          </div>
+                        {/if}
+                        {#if c.attachments.length > 0}
+                          <div class="commission-thumbs">
+                            {#each c.attachments as att (att.id)}
+                              <img src={resolveMediaUrl(att.thumbUrl ?? att.url)} alt="" />
+                            {/each}
+                          </div>
+                        {/if}
+                        <div class="d-actions">
+                          {#if c.threadId}
+                            <button class="d-link" onclick={() => { view = 'messages'; openThreadDetail(c.threadId!); }}>{$t('profileCommissionsOpenChat')} →</button>
+                          {/if}
+                          {#if c.started}
+                            <span class="commission-locked">{$t('profileCommissionsLocked')}</span>
+                          {:else if confirmDeleteId === c.id}
+                            <span class="commission-confirm">{$t('profileCommissionsDeleteConfirm')}</span>
+                            <button class="d-link danger" onclick={() => removeCommission(c)} disabled={deletingId === c.id}>{deletingId === c.id ? '…' : $t('profileCommissionsDeleteYes')}</button>
+                            <button class="d-link" onclick={() => confirmDeleteId = null}>{$t('commissionBack')}</button>
+                          {:else}
+                            <button class="d-link" onclick={() => editingCommission = c}>{$t('profileCommissionsEdit')}</button>
+                            <button class="d-link danger" onclick={() => confirmDeleteId = c.id}>{$t('profileCommissionsDelete')}</button>
+                          {/if}
+                        </div>
+                      </div>
+                    {/if}
+                  {/if}
+
+                  {#if item.unread > 0 && item.threadId}
+                    <button class="entry-reply" onclick={() => openFeedThread(item)}>✦ {$t('profileOverviewNewReply')} →</button>
+                  {/if}
+                </li>
+              {/each}
+            </ul>
+          {:else}
+            <p class="empty">{$t('profileEmpty')}</p>
+          {/if}
+        {:else}
+          <!-- ── Dealings: one card per work, with its dealing markers ── -->
+          <button class="crumb" onclick={() => view = 'hub'}>← {$t('profileTitle')}</button>
+          <nav class="subfilter">
+            {#each DEAL_FILTERS as f (f)}
+              {@const n = dealFilterCount(f)}
+              <button class="subfilter-tab" class:active={dealFilter === f} onclick={() => dealFilter = f} aria-pressed={dealFilter === f}>
+                {dealFilterLabel(f)}{#if n > 0}<span class="subfilter-count">{n}</span>{/if}
+              </button>
+            {/each}
+          </nav>
+          {#if dealFilter === 'commission' && commissions.length === 0}
+            <div class="empty-with-cta">
+              <p class="empty">{$t('profileCommissionsEmpty')}</p>
+              <a href="/commission" class="commission-cta">{$t('profileCommissionsNew')}</a>
+            </div>
+          {:else if visibleCards.length === 0}
+            <p class="empty">{$t('profileEmpty')}</p>
+          {:else}
+            <div class="works-grid">
+              {#each visibleCards as card (card.key)}
+                {@const fig = card.figurineId ? figurineById.get(card.figurineId) : undefined}
+                <button class="work work--{card.tone}" onclick={() => openCard(card.key)}>
+                  <span class="work-thumb">
+                    {#if fig?.faceImageUrl}
+                      <AppImage src={fig.faceImageUrl} thumbUrl={fig.thumbUrl} alt={card.title} class="work-img" loading="lazy" />
+                    {:else}
+                      <span class="work-thumb-ph">{(card.title || '?')[0]}</span>
+                    {/if}
+                    {#if card.unread > 0}<span class="work-flag" title={$t('profileOverviewNewReply')}>✦</span>{/if}
+                  </span>
+                  <span class="work-body">
+                    <span class="work-name">{card.title || $t('commissionUntitled')}</span>
+                    <span class="work-kinds">
+                      {#each card.kinds as k}<span class="work-kind">{feedKindLabel(k)}</span>{/each}
+                    </span>
+                  </span>
+                </button>
+              {/each}
+            </div>
+          {/if}
         {/if}
       </div>
+
+      <!-- ── Footer: account removal (quiet danger zone, hub only) ── -->
+      {#if view === 'hub' && !loading}
+      <footer class="ledger-foot">
+        {#if !showDeleteConfirm}
+          <button class="foot-delete" onclick={() => showDeleteConfirm = true}>{$t('profileDeleteAccount')}</button>
+        {:else}
+          <div class="foot-confirm">
+            <p class="foot-warning">{$t('profileDeleteWarning')}</p>
+            <div class="foot-confirm-actions">
+              <button class="foot-yes" onclick={deleteAccount} disabled={deleting}>
+                {deleting ? $t('profileDeleting') : $t('profileDeleteConfirm')}
+              </button>
+              <button class="foot-cancel" onclick={() => showDeleteConfirm = false}>
+                {$t('profileDeleteCancel')}
+              </button>
+            </div>
+            {#if deleteError}<p class="field-error" role="alert">{deleteError}</p>{/if}
+          </div>
+        {/if}
+      </footer>
+      {/if}
 
     </div>
   </div>
@@ -1036,28 +1231,31 @@
 
   .frame { display: contents; }
 
-  /* ── Body layout ── */
+  /* ── Masthead: identity + account actions ── */
 
-  /* ── Sidebar profile (hero) ── */
-
-  .sidebar-profile {
-    background: #2a1a10;
-    padding: 1.75rem 1.25rem 1.5rem;
+  .masthead {
     display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.6rem;
-    text-align: center;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem 1.5rem;
+    flex-wrap: wrap;
+    padding-bottom: 1.1rem;
+    border-bottom: 1px solid #d8c6b1;
   }
 
-  .hero-avatar-zone { position: relative; }
+  .masthead-id {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    min-width: 0;
+  }
 
-  .hero-avatar-btn {
-    width: 70px;
-    height: 70px;
-    border-radius: 50%;
-    border: 2px solid rgba(248,241,231,0.2);
-    background: rgba(248,241,231,0.06);
+  .ms-avatar {
+    width: 52px;
+    height: 52px;
+    border-radius: 3px;
+    border: 1px solid #cbb89c;
+    background: #efe4d2;
     cursor: pointer;
     overflow: hidden;
     position: relative;
@@ -1065,41 +1263,42 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    flex-shrink: 0;
     transition: border-color 0.2s;
   }
-  .hero-avatar-btn:hover { border-color: rgba(198,95,60,0.6); }
-  .hero-avatar-btn:disabled { cursor: default; opacity: 0.7; }
+  .ms-avatar:hover { border-color: #c65f3c; }
+  .ms-avatar:disabled { cursor: default; opacity: 0.7; }
 
-  .hero-avatar-img { width: 100%; height: 100%; object-fit: cover; }
+  .ms-avatar-img { width: 100%; height: 100%; object-fit: cover; }
 
-  .hero-avatar-initials {
+  .ms-avatar-initials {
     font-family: 'Fraunces', Georgia, serif;
-    font-size: 1.6rem;
-    color: rgba(248,241,231,0.55);
+    font-size: 1.4rem;
+    color: #8a7253;
     line-height: 1;
     pointer-events: none;
   }
 
-  .hero-avatar-overlay {
+  .ms-avatar-cap {
     position: absolute;
     inset: 0;
     background: rgba(42,26,16,0.72);
     color: #f8f1e7;
     font-family: Inter, sans-serif;
-    font-size: 0.55rem;
-    letter-spacing: 0.06em;
+    font-size: 0.5rem;
+    letter-spacing: 0.05em;
     text-transform: uppercase;
     display: flex;
     align-items: center;
     justify-content: center;
     text-align: center;
-    padding: 4px;
+    padding: 3px;
     opacity: 0;
     transition: opacity 0.18s;
     pointer-events: none;
   }
-  .hero-avatar-btn:hover .hero-avatar-overlay { opacity: 1; }
-  .hero-avatar-btn:disabled .hero-avatar-overlay { opacity: 1; }
+  .ms-avatar:hover .ms-avatar-cap { opacity: 1; }
+  .ms-avatar:disabled .ms-avatar-cap { opacity: 1; }
 
   .sr-only {
     position: absolute;
@@ -1109,29 +1308,28 @@
     pointer-events: none;
   }
 
-  .hero-identity { text-align: center; }
+  .ms-identity { min-width: 0; }
 
-  .hero-name-row {
+  .ms-name-row {
     display: flex;
     align-items: center;
-    justify-content: center;
-    gap: 0.4rem;
-    margin-bottom: 0.25rem;
+    gap: 0.45rem;
+    flex-wrap: wrap;
   }
 
-  .hero-name {
+  .ms-name {
     font-family: 'Fraunces', Georgia, serif;
-    font-size: 1.35rem;
+    font-size: 1.5rem;
     font-weight: 400;
-    color: #f8f1e7;
+    color: #34251c;
     margin: 0;
-    line-height: 1.2;
+    line-height: 1.15;
   }
 
-  .hero-edit-btn {
+  .ms-edit-btn {
     background: transparent;
     border: none;
-    color: rgba(248,241,231,0.3);
+    color: #b5a090;
     cursor: pointer;
     padding: 2px;
     display: flex;
@@ -1139,60 +1337,57 @@
     transition: color 0.15s;
     flex-shrink: 0;
   }
-  .hero-edit-btn:hover { color: #c65f3c; }
+  .ms-edit-btn:hover { color: #c65f3c; }
 
-  .hero-name-saved {
-    display: block;
+  .ms-name-saved {
     font-family: Inter, sans-serif;
-    font-size: 0.62rem;
-    color: #6a9e5a;
+    font-size: 0.6rem;
+    color: #4a7a3a;
     letter-spacing: 0.07em;
     text-transform: uppercase;
-    text-align: center;
-    margin-bottom: 0.2rem;
   }
 
-  .hero-name-edit {
+  .ms-name-edit {
     display: flex;
     align-items: center;
-    justify-content: center;
     gap: 0.4rem;
-    margin-bottom: 0.25rem;
+    flex-wrap: wrap;
   }
 
-  .hero-name-input {
+  .ms-name-input {
     font-family: 'Fraunces', Georgia, serif;
-    font-size: 1.1rem;
+    font-size: 1.25rem;
     background: transparent;
     border: none;
-    border-bottom: 1.5px solid rgba(198,95,60,0.65);
-    color: #f8f1e7;
+    border-bottom: 1.5px solid #c65f3c;
+    color: #34251c;
     padding: 2px 0;
     outline: none;
-    text-align: center;
-    width: 180px;
+    width: 220px;
+    max-width: 60vw;
   }
 
-  .hero-name-save {
+  .ms-name-save {
     background: transparent;
     border: 1px solid rgba(198,95,60,0.55);
-    color: rgba(198,95,60,0.9);
+    color: #b9522f;
     font-family: Inter, sans-serif;
-    font-size: 0.67rem;
+    font-size: 0.65rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    padding: 2px 8px;
+    padding: 3px 9px;
+    border-radius: 3px;
     cursor: pointer;
     flex-shrink: 0;
     transition: background 0.15s;
   }
-  .hero-name-save:hover:not(:disabled) { background: rgba(198,95,60,0.12); }
-  .hero-name-save:disabled { opacity: 0.5; }
+  .ms-name-save:hover:not(:disabled) { background: rgba(198,95,60,0.1); }
+  .ms-name-save:disabled { opacity: 0.5; }
 
-  .hero-name-cancel {
+  .ms-name-cancel {
     background: transparent;
     border: none;
-    color: rgba(248,241,231,0.35);
+    color: #b5a090;
     cursor: pointer;
     font-size: 0.85rem;
     padding: 2px 4px;
@@ -1200,166 +1395,384 @@
     flex-shrink: 0;
     transition: color 0.15s;
   }
-  .hero-name-cancel:hover { color: #f8f1e7; }
+  .ms-name-cancel:hover { color: #34251c; }
 
-  .hero-email {
+  .ms-sub {
     font-family: Inter, sans-serif;
-    font-size: 0.79rem;
-    color: rgba(200,168,130,0.75);
-    margin: 0 0 0.12rem;
+    font-size: 0.76rem;
+    color: #9a7c5c;
+    margin: 0.2rem 0 0;
+    line-height: 1.4;
+  }
+  .ms-since { color: #b5a090; }
+
+  /* account actions (code · logout) */
+  .masthead-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+    padding-top: 0.3rem;
   }
 
-  .hero-since {
+  .ms-link {
+    background: transparent;
+    border: none;
+    color: #9a7c5c;
     font-family: Inter, sans-serif;
-    font-size: 0.67rem;
-    color: rgba(200,168,130,0.45);
-    margin: 0;
-    letter-spacing: 0.02em;
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+    padding: 0.2rem 0;
+    transition: color 0.15s;
   }
+  .ms-link:hover { color: #34251c; }
+  .ms-link.active { color: #c65f3c; }
+  .ms-sep { color: #cbb89c; }
 
-  /* ── Body layout ── */
+  /* ── Ledger column layout ── */
 
   .body {
     display: flex;
-    align-items: flex-start;
+    flex-direction: column;
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 2.25rem 2rem 3rem;
     min-height: calc(100vh - 68px);
   }
 
-  /* ── Sidebar ── */
-
-  .sidebar {
-    position: fixed;
-    left: 0;
-    top: 68px;
-    height: calc(100vh - 68px);
-    width: 220px;
-    flex-shrink: 0;
-    display: flex;
-    flex-direction: column;
-    overflow-y: auto;
-    border-right: 1px solid rgba(52,37,28,0.12);
-    z-index: 5;
-  }
-
   @media (max-width: 680px) {
-    .sidebar {
-      position: static;
-      width: 100%;
-      height: auto;
-      z-index: auto;
-    }
-    .body {
-      flex-direction: column;
-      height: auto;
-      min-height: calc(100vh - 58px);
-    }
-    .content {
-      margin-left: 0;
-    }
+    .body { padding: 1.5rem 1.1rem 2.5rem; min-height: calc(100vh - 58px); }
   }
 
-  .sidebar-nav {
-    flex: 1;
-    padding: 0.85rem 0;
+  /* ── Hub: three large entrances ── */
+
+  .hub {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+    margin-top: 1.6rem;
+  }
+
+  .hub-tile {
     display: flex;
     flex-direction: column;
-    background: #f0e6d6;
+    gap: 0.4rem;
+    min-height: 9.5rem;
+    padding: 1.4rem 1.3rem;
+    text-align: left;
+    background: #fffaf3;
+    border: 1px solid #e0d2bd;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: border-color 0.18s, background 0.18s;
+  }
+  .hub-tile:hover { border-color: #c65f3c; background: #fff6ec; }
+
+  .hub-kicker {
+    font-family: Inter, sans-serif;
+    font-size: 0.62rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #a8916f;
   }
 
-  .nav-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    width: 100%;
-    padding: 0.6rem 1.25rem;
+  .hub-name {
+    font-family: 'Fraunces', Georgia, serif;
+    font-size: 1.85rem;
+    line-height: 1.05;
+    color: #34251c;
+    margin-top: auto;
+  }
+
+  .hub-foot {
+    font-family: Inter, sans-serif;
+    font-size: 0.74rem;
+    color: #9a7c5c;
+  }
+  .hub-count { font-weight: 700; color: #6f3b24; }
+  .hub-count--unread {
+    background: #c65f3c;
+    color: #fff;
+    border-radius: 999px;
+    padding: 1px 7px;
+  }
+
+  /* ── Breadcrumb / back ── */
+
+  .crumb {
+    display: inline-block;
+    margin: 0.2rem 0 1.1rem;
     background: transparent;
     border: none;
-    border-left: 2px solid transparent;
-    text-align: left;
+    padding: 0;
+    cursor: pointer;
     font-family: Inter, sans-serif;
     font-size: 0.72rem;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: #9a7c5c;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-  .nav-item:hover { background: rgba(52,37,28,0.05); color: #34251c; }
-  .nav-item.active { color: #c65f3c; background: rgba(198,95,60,0.07); border-left-color: #c65f3c; }
-
-  .nav-badge {
-    background: #d8c6b1;
-    color: #6f3b24;
-    font-family: Inter, sans-serif;
-    font-size: 0.6rem;
-    border-radius: 10px;
-    padding: 1px 6px;
-    min-width: 18px;
-    text-align: center;
-    flex-shrink: 0;
-  }
-  .nav-badge--unread { background: #c65f3c; color: #fff; }
-
-  .sidebar-footer {
-    padding: 1rem 1.25rem;
-    border-top: 1px solid rgba(52,37,28,0.1);
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    background: #f0e6d6;
-  }
-
-  .sidebar-logout {
-    background: transparent;
-    border: none;
-    color: #9a7c5c;
-    font-family: Inter, sans-serif;
-    font-size: 0.7rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    cursor: pointer;
-    padding: 0.25rem 0;
-    text-align: left;
+    color: #9a7c5c;
     transition: color 0.15s;
   }
-  .sidebar-logout:hover { color: #34251c; }
+  .crumb:hover { color: #c65f3c; }
 
-  .sidebar-delete-btn {
+  /* ── Sub-filter inside Dealings ── */
+
+  .subfilter {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.15rem 0.3rem;
+    align-items: baseline;
+    margin-bottom: 1.1rem;
+    padding-bottom: 0.6rem;
+    border-bottom: 1px solid #e7dccb;
+  }
+
+  .subfilter-tab {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.3rem;
+    background: transparent;
+    border: none;
+    border-bottom: 1.5px solid transparent;
+    color: #9a7c5c;
+    font-family: 'Fraunces', Georgia, serif;
+    font-size: 0.92rem;
+    cursor: pointer;
+    padding: 0.2rem 0.5rem 0.3rem;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .subfilter-tab:hover { color: #34251c; }
+  .subfilter-tab.active { color: #6f3b24; border-bottom-color: #c65f3c; }
+  .subfilter-count {
+    font-family: Inter, sans-serif;
+    font-size: 0.6rem;
+    color: #b5a090;
+  }
+  .subfilter-tab.active .subfilter-count { color: #c65f3c; }
+
+  /* ── Dealings: cards grouped per work ── */
+
+  .works-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 1rem;
+  }
+
+  .work {
+    display: flex;
+    flex-direction: column;
+    text-align: left;
+    padding: 0;
+    overflow: hidden;
+    background: #fffaf3;
+    border: 1px solid #e4d8c8;
+    border-left: 3px solid #d8c6b1;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: border-color 0.18s;
+  }
+  .work:hover { border-color: #c65f3c; border-left-color: #c65f3c; }
+  .work--pending   { border-left-color: #c8a96a; }
+  .work--confirmed { border-left-color: #5a9a5a; }
+  .work--rejected  { border-left-color: #c06a6a; }
+  .work--attention { border-left-color: #6f7bd0; }
+  .work--neutral   { border-left-color: #d8c6b1; }
+
+  .work-thumb {
+    position: relative;
+    display: block;
+    aspect-ratio: 4 / 3;
+    overflow: hidden;
+    background: #f0e6d6;
+    border-bottom: 1px solid #e4d8c8;
+  }
+  .work-thumb :global(.work-img),
+  .work-thumb :global(.work-img .app-image-main),
+  .work-thumb :global(.work-img .app-image-thumb) {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: cover;
+    object-position: center 42%;
+  }
+  .work-thumb :global(.work-img .app-image-main) {
+    filter: grayscale(0.08) saturate(0.96);
+    transition: transform 0.45s ease, filter 0.45s ease;
+  }
+  .work:hover .work-thumb :global(.work-img .app-image-main) {
+    transform: scale(1.035);
+    filter: grayscale(0) saturate(1.02);
+  }
+
+  .work-thumb-ph {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    height: 100%;
+    font-family: 'Fraunces', Georgia, serif;
+    font-size: 2rem;
+    color: #b5a090;
+  }
+
+  .work-flag {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    display: grid;
+    place-items: center;
+    width: 1.4rem;
+    height: 1.4rem;
+    background: #c65f3c;
+    color: #fff;
+    border-radius: 999px;
+    font-size: 0.7rem;
+  }
+
+  .work-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 0.8rem 0.85rem 0.9rem;
+  }
+
+  .work-name {
+    font-family: Georgia, serif;
+    font-size: 0.92rem;
+    line-height: 1.3;
+    color: #34251c;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .work-kinds {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+  }
+  .work-kind {
+    font-family: Inter, sans-serif;
+    font-size: 0.55rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #6f3b24;
+    background: rgba(111,59,36,0.07);
+    border: 1px solid rgba(111,59,36,0.16);
+    border-radius: 2px;
+    padding: 1px 6px;
+  }
+
+  /* ── Work detail header ── */
+
+  .work-head {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1.2rem;
+    padding-bottom: 1.1rem;
+    border-bottom: 1px solid #e7dccb;
+  }
+  .work-head-thumb {
+    display: block;
+    width: 84px;
+    aspect-ratio: 4 / 3;
+    flex-shrink: 0;
+    overflow: hidden;
+    border: 1px solid #d8c6b1;
+    border-radius: 3px;
+    background: #f0e6d6;
+  }
+  .work-head-thumb :global(.work-head-img),
+  .work-head-thumb :global(.work-head-img .app-image-main),
+  .work-head-thumb :global(.work-head-img .app-image-thumb) {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: cover;
+    object-position: center 42%;
+  }
+  .work-head-ph {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    height: 100%;
+    font-family: 'Fraunces', Georgia, serif;
+    font-size: 1.6rem;
+    color: #b5a090;
+  }
+  .work-head-name {
+    font-family: 'Fraunces', Georgia, serif;
+    font-size: 1.5rem;
+    font-weight: 400;
+    color: #34251c;
+    margin: 0 0 0.2rem;
+    line-height: 1.15;
+  }
+  .work-head-sub {
+    font-family: Inter, sans-serif;
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    color: #9a7c5c;
+    margin: 0;
+  }
+
+  /* ── Body ── */
+
+  .ledger-body {
+    flex: 1;
+    min-width: 0;
+    padding-top: 0.3rem;
+  }
+
+  /* ── Footer: quiet danger zone ── */
+
+  .ledger-foot {
+    margin-top: 2.5rem;
+    padding-top: 1.1rem;
+    border-top: 1px solid #e4d8c8;
+  }
+
+  .foot-delete {
     background: transparent;
     border: none;
     color: #c8b89a;
     font-family: Inter, sans-serif;
-    font-size: 0.68rem;
-    letter-spacing: 0.05em;
+    font-size: 0.66rem;
+    letter-spacing: 0.07em;
     text-transform: uppercase;
     cursor: pointer;
     padding: 0;
-    text-align: left;
     transition: color 0.15s;
   }
-  .sidebar-delete-btn:hover { color: #c65f3c; }
+  .foot-delete:hover { color: #a3361d; }
 
-  .sidebar-delete-confirm {
-    padding: 0.65rem 0.75rem;
+  .foot-confirm {
+    max-width: 420px;
+    padding: 0.75rem 0.85rem;
     background: #fdf3f3;
     border: 1px solid #f0d0c8;
+    border-radius: 3px;
   }
 
-  .sidebar-delete-warning {
+  .foot-warning {
     font-family: Inter, sans-serif;
-    font-size: 0.72rem;
+    font-size: 0.74rem;
     color: #7a3020;
-    margin: 0 0 0.6rem;
+    margin: 0 0 0.7rem;
     line-height: 1.45;
   }
 
-  .sidebar-delete-actions {
+  .foot-confirm-actions {
     display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
+    gap: 0.5rem;
+    flex-wrap: wrap;
   }
 
-  .sidebar-delete-yes {
+  .foot-yes {
     background: #9b2020;
     border: none;
     color: #fff;
@@ -1367,14 +1780,15 @@
     font-size: 0.68rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    padding: 0.35rem 0.75rem;
+    padding: 0.4rem 0.85rem;
+    border-radius: 3px;
     cursor: pointer;
     transition: background 0.15s;
   }
-  .sidebar-delete-yes:hover:not(:disabled) { background: #7a1818; }
-  .sidebar-delete-yes:disabled { opacity: 0.6; cursor: not-allowed; }
+  .foot-yes:hover:not(:disabled) { background: #7a1818; }
+  .foot-yes:disabled { opacity: 0.6; cursor: not-allowed; }
 
-  .sidebar-delete-cancel {
+  .foot-cancel {
     background: transparent;
     border: 1px solid #d8c6b1;
     color: #9a7c5c;
@@ -1382,22 +1796,12 @@
     font-size: 0.68rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    padding: 0.3rem 0.75rem;
+    padding: 0.4rem 0.85rem;
+    border-radius: 3px;
     cursor: pointer;
     transition: all 0.15s;
-    text-align: center;
   }
-  .sidebar-delete-cancel:hover { border-color: #9a7c5c; color: #34251c; }
-
-  /* ── Content ── */
-
-  .content {
-    flex: 1;
-    margin-left: 220px;
-    background: #f8f1e7;
-    padding: 2rem 2.5rem;
-    min-height: 400px;
-  }
+  .foot-cancel:hover { border-color: #9a7c5c; color: #34251c; }
 
   .empty {
     color: #9a7c5c;
@@ -1416,40 +1820,31 @@
   }
 
   /* ── Attach a request by code ── */
-  .claim-link {
-    margin-bottom: 1.75rem;
-    padding: 1rem 1.1rem 1.1rem;
+  .claim {
+    margin: 0.9rem 0 0.2rem;
+    padding: 0.9rem 1rem 1rem;
     border: 1px solid #e4d8c8;
-    border-left: 2px solid rgba(198,95,60,0.55);
-    background: rgba(255,252,246,0.6);
+    border-left: 2px solid #c65f3c;
+    border-radius: 3px;
+    background: rgba(255,252,246,0.7);
   }
 
-  .claim-link-head { margin-bottom: 0.7rem; }
-
-  .claim-link-title {
-    font-family: 'Fraunces', Georgia, serif;
-    font-size: 1rem;
-    font-weight: 400;
-    color: #34251c;
-    margin: 0 0 0.2rem;
-  }
-
-  .claim-link-hint {
+  .claim-hint {
     font-family: Inter, sans-serif;
     font-size: 0.76rem;
     line-height: 1.5;
     color: #8a7253;
-    margin: 0;
-    max-width: 52ch;
+    margin: 0 0 0.7rem;
+    max-width: 56ch;
   }
 
-  .claim-link-form {
+  .claim-form {
     display: flex;
     gap: 0.5rem;
     flex-wrap: wrap;
   }
 
-  .claim-link-input {
+  .claim-input {
     flex: 1;
     min-width: 180px;
     font-family: 'Courier New', monospace;
@@ -1457,15 +1852,16 @@
     letter-spacing: 0.04em;
     background: #fffaf4;
     border: 1px solid #d8c6b1;
+    border-radius: 3px;
     color: #34251c;
     padding: 0.5rem 0.7rem;
     outline: none;
     transition: border-color 0.15s;
   }
-  .claim-link-input::placeholder { color: #b5a090; font-family: Inter, sans-serif; letter-spacing: 0; }
-  .claim-link-input:focus { border-color: #c65f3c; }
+  .claim-input::placeholder { color: #b5a090; font-family: Inter, sans-serif; letter-spacing: 0; }
+  .claim-input:focus { border-color: #c65f3c; }
 
-  .claim-link-btn {
+  .claim-btn {
     background: #6f3b24;
     border: none;
     color: #f8f1e7;
@@ -1474,24 +1870,25 @@
     letter-spacing: 0.07em;
     text-transform: uppercase;
     padding: 0.5rem 1.1rem;
+    border-radius: 3px;
     cursor: pointer;
     transition: background 0.15s;
     white-space: nowrap;
   }
-  .claim-link-btn:hover:not(:disabled) { background: #c65f3c; }
-  .claim-link-btn:disabled { opacity: 0.45; cursor: default; }
+  .claim-btn:hover:not(:disabled) { background: #c65f3c; }
+  .claim-btn:disabled { opacity: 0.45; cursor: default; }
 
-  .claim-link-msg {
+  .claim-msg {
     margin: 0.65rem 0 0;
     font-family: Inter, sans-serif;
     font-size: 0.78rem;
     line-height: 1.45;
   }
-  .claim-link-msg--ok   { color: #2d6a3f; }
-  .claim-link-msg--warn { color: #8a5a1a; }
-  .claim-link-msg--err  { color: #a03020; }
+  .claim-msg--ok   { color: #2d6a3f; }
+  .claim-msg--warn { color: #8a5a1a; }
+  .claim-msg--err  { color: #a03020; }
 
-  .claim-link-kind {
+  .claim-kind {
     display: inline-block;
     font-size: 0.6rem;
     letter-spacing: 0.08em;
@@ -1503,104 +1900,294 @@
     margin: 0 0.15rem;
     vertical-align: middle;
   }
+  .claim-name { font-style: italic; }
 
-  .claim-link-name { font-style: italic; }
-
-  /* ── Overview feed (quiet ledger across all request types) ── */
-  .feed {
+  /* ── The ledger (гроссбух): one ruled account of every dealing ── */
+  .book {
     list-style: none;
     margin: 0;
     padding: 0;
-    max-width: 760px;
   }
 
-  .feed-row {
-    display: grid;
-    grid-template-columns: 150px 1fr auto;
-    align-items: center;
-    gap: 1rem;
-    padding: 0.8rem 0.25rem 0.8rem 0.9rem;
-    border-bottom: 1px solid #eadfce;
+  .entry {
+    border-bottom: 1px solid #e7dccb;
     border-left: 2px solid transparent;
+    padding: 0.95rem 0.5rem 1rem 0.9rem;
   }
-  .feed-row:first-child { border-top: 1px solid #eadfce; }
-  .feed-row--unread { border-left-color: #c65f3c; background: rgba(198,95,60,0.03); }
+  .entry:first-child { border-top: 1px solid #e7dccb; }
+  .entry--unread { border-left-color: #c65f3c; background: rgba(198,95,60,0.025); }
 
-  .feed-meta {
+  .entry-head {
     display: flex;
-    flex-direction: column;
-    gap: 0.15rem;
+    align-items: baseline;
+    gap: 0.7rem;
+    color: #34251c;
+    font-family: Georgia, serif;
   }
-  .feed-kind {
-    font-family: Inter, sans-serif;
-    font-size: 0.6rem;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: #9a7c5c;
-  }
-  .feed-date {
+
+  .entry-date {
     font-family: Inter, sans-serif;
     font-size: 0.7rem;
-    color: #b5a090;
+    color: #a8916f;
+    flex-shrink: 0;
+    min-width: 8.5rem;
+    font-variant-numeric: tabular-nums;
   }
 
-  .feed-main { min-width: 0; }
-  .feed-title {
-    font-family: Georgia, serif;
-    font-size: 0.95rem;
+  .entry-kind {
+    font-family: Inter, sans-serif;
+    font-size: 0.58rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: #9a7c5c;
+    flex-shrink: 0;
+    min-width: 5.2rem;
+  }
+
+  .entry-title {
+    font-size: 0.97rem;
     color: #34251c;
     text-decoration: none;
-    display: block;
+    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
+    flex: 1 1 auto;
+    min-width: 0;
   }
-  .feed-title--link:hover { color: #c65f3c; }
+  .entry-title--link:hover { color: #c65f3c; }
 
-  .feed-side {
-    display: flex;
-    align-items: center;
-    gap: 0.7rem;
-    flex-shrink: 0;
-  }
-
-  .feed-reply {
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 0;
-    font-family: Inter, sans-serif;
-    font-size: 0.68rem;
-    letter-spacing: 0.04em;
-    color: #c65f3c;
-    white-space: nowrap;
-  }
-  .feed-reply:hover { text-decoration: underline; }
-
-  .feed-status {
+  .entry-status {
     font-family: Inter, sans-serif;
     font-size: 0.62rem;
     letter-spacing: 0.07em;
     text-transform: uppercase;
-    padding: 2px 7px;
+    padding: 2px 8px;
     border-radius: 2px;
     white-space: nowrap;
+    flex-shrink: 0;
+    margin-left: auto;
   }
-  .feed-status--pending   { background: #f4ead8; color: #6f3b24; }
-  .feed-status--confirmed { background: #e8f4e8; color: #2d6a3f; }
-  .feed-status--rejected  { background: #fde8e8; color: #9b2020; }
-  .feed-status--attention { background: #eef0fb; color: #3a4a8a; }
-  .feed-status--neutral   { background: #ececec; color: #666; }
+  .entry-status--pending   { background: #f4ead8; color: #6f3b24; }
+  .entry-status--confirmed { background: #e8f4e8; color: #2d6a3f; }
+  .entry-status--rejected  { background: #fde8e8; color: #9b2020; }
+  .entry-status--attention { background: #eef0fb; color: #3a4a8a; }
+  .entry-status--neutral   { background: #ececec; color: #666; }
+
+  /* always-visible record detail, indented under the title */
+  .entry-detail {
+    padding: 0.55rem 0 0 9.2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    align-items: flex-start;
+  }
+
+  .d-range {
+    font-family: Inter, sans-serif;
+    font-style: italic;
+    font-size: 0.82rem;
+    color: #6f4e37;
+    margin: 0;
+  }
+
+  .d-line { margin: 0; }
+  .d-tag {
+    font-family: Inter, sans-serif;
+    font-size: 0.62rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: #9a7c5c;
+  }
+
+  .d-desc {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: 1.02rem;
+    line-height: 1.5;
+    color: #5f4636;
+    margin: 0;
+    max-width: 60ch;
+    white-space: pre-wrap;
+  }
+
+  .reserve-detail {
+    display: grid;
+    gap: 0.55rem;
+    width: min(100%, 34rem);
+  }
+
+  .reserve-detail > p,
+  .reserve-note {
+    margin: 0;
+    color: #5f4636;
+    font-family: Inter, sans-serif;
+    font-size: 0.78rem;
+    line-height: 1.45;
+  }
+
+  .reserve-note {
+    font-style: italic;
+  }
+
+  .commission-source {
+    display: grid;
+    grid-template-columns: 54px minmax(0, 1fr);
+    gap: 0.65rem;
+    align-items: center;
+    width: min(100%, 28rem);
+    padding: 0.55rem;
+    border: 1px solid rgba(52,37,28,0.12);
+    background: rgba(255,250,242,0.62);
+  }
+
+  .commission-source-thumb {
+    display: block;
+    width: 54px;
+    aspect-ratio: 1;
+    overflow: hidden;
+    border: 1px solid #d8c6b1;
+    background: #f0e6d6;
+    text-decoration: none;
+  }
+
+  .commission-source-thumb--empty {
+    display: grid;
+    place-items: center;
+    color: #6f3b24;
+    font-family: 'Fraunces', Georgia, serif;
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+  }
+
+  .commission-source-copy {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 0.08rem;
+  }
+
+  .commission-source-label {
+    font-family: Inter, sans-serif;
+    font-size: 0.55rem;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: rgba(95,70,54,0.62);
+  }
+
+  .commission-source-name {
+    overflow: hidden;
+    color: #34251c;
+    font-family: 'Fraunces', Georgia, serif;
+    font-size: 0.96rem;
+    text-decoration: none;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .commission-source-name:hover { color: #c65f3c; }
+  .commission-source-name--missing {
+    color: #9a7c5c;
+    font-family: 'Courier New', monospace;
+    font-size: 0.74rem;
+  }
+  .commission-source-meta {
+    color: #8a6d55;
+    font-family: Inter, sans-serif;
+    font-size: 0.68rem;
+  }
+
+  .commission-similar-notes {
+    display: grid;
+    gap: 0.3rem;
+    width: min(100%, 34rem);
+  }
+
+  .commission-similar-notes p {
+    margin: 0;
+    color: #5f4636;
+    font-family: Inter, sans-serif;
+    font-size: 0.78rem;
+    line-height: 1.45;
+  }
+
+  .commission-similar-notes span {
+    display: block;
+    margin-bottom: 0.08rem;
+    color: rgba(95,70,54,0.62);
+    font-size: 0.56rem;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+  }
+
+  .d-curator {
+    padding: 0.45rem 0.7rem;
+    background: rgba(34,139,34,0.05);
+    border-left: 2px solid rgba(34,139,34,0.3);
+  }
+  .d-curator-label {
+    display: block;
+    font-family: Inter, sans-serif;
+    font-size: 0.56rem;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    color: rgba(95,70,54,0.55);
+    font-weight: 700;
+    margin-bottom: 0.2rem;
+  }
+  .d-curator-text {
+    margin: 0;
+    font-size: 0.84rem;
+    color: #34251c;
+    font-style: italic;
+    line-height: 1.4;
+  }
+
+  .d-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.4rem 1rem;
+  }
+
+  .d-link {
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    font-family: Inter, sans-serif;
+    font-size: 0.72rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: #6f3b24;
+    text-decoration: none;
+    transition: color 0.15s;
+  }
+  .d-link:hover { color: #c65f3c; }
+  .d-link.danger { color: #a3361d; }
+  .d-link.danger:hover { color: #7a1818; }
+  .d-link:disabled { opacity: 0.5; cursor: default; }
+
+  .entry-reply {
+    margin: 0.55rem 0 0 9.2rem;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    font-family: Inter, sans-serif;
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    color: #c65f3c;
+  }
+  .entry-reply:hover { text-decoration: underline; }
 
   @media (max-width: 680px) {
-    .feed-row {
-      grid-template-columns: 1fr auto;
-      grid-template-areas: "meta side" "main main";
-      gap: 0.4rem 1rem;
-    }
-    .feed-meta { grid-area: meta; flex-direction: row; align-items: baseline; gap: 0.5rem; }
-    .feed-main { grid-area: main; }
-    .feed-side { grid-area: side; }
+    .entry-head { flex-wrap: wrap; gap: 0.3rem 0.6rem; }
+    .entry-kind { min-width: 0; }
+    .entry-title { white-space: normal; flex: 1 1 100%; order: 5; }
+    .entry-status { margin-left: 0; }
+    .entry-detail { padding-left: 0; }
+    .entry-reply { margin-left: 0; }
   }
 
   /* ── Cards grid ── */
@@ -1614,17 +2201,16 @@
 
   .card {
     display: block;
-    background: #fff;
+    background: #fffaf3;
     border: 1px solid #e4d8c8;
+    border-radius: 3px;
     padding: 1rem 1.1rem;
     text-decoration: none;
     color: #34251c;
-    transition: border-color 0.18s, box-shadow 0.18s, transform 0.15s;
+    transition: border-color 0.18s;
   }
   .card:hover {
     border-color: #c65f3c;
-    box-shadow: 0 2px 10px rgba(198,95,60,0.1);
-    transform: translateY(-1px);
   }
 
   .card-head {
@@ -1651,6 +2237,17 @@
   .wishlist-card {
     padding: 0;
     overflow: hidden;
+  }
+
+  .wishlist-sync-error {
+    margin: 0 0 0.8rem;
+    padding: 0.55rem 0.7rem;
+    border: 1px solid #f0d0c8;
+    background: #fdf3f0;
+    color: #8a3926;
+    font-family: Inter, sans-serif;
+    font-size: 0.76rem;
+    line-height: 1.4;
   }
 
   .wishlist-thumb {
@@ -1904,10 +2501,10 @@
     gap: 0.75rem;
     flex-wrap: wrap;
     border-bottom: 1px solid rgba(216,198,177,0.5);
-    margin-left: -2.5rem;
-    margin-right: -2.5rem;
-    padding-left: 2.5rem;
-    padding-right: 2.5rem;
+    margin-left: -2rem;
+    margin-right: -2rem;
+    padding-left: 2rem;
+    padding-right: 2rem;
   }
 
   @media (max-width: 680px) {

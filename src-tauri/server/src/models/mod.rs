@@ -33,6 +33,19 @@ pub enum OrderMode {
     Request,
     Question,
     Notify,
+    Reserve,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+#[sqlx(type_name = "reserve_status", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum ReserveStatus {
+    Requested,
+    Reviewing,
+    TermsSent,
+    Confirmed,
+    Declined,
+    Expired,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -407,6 +420,11 @@ pub struct Order {
     pub user_id: Option<Uuid>,
     /// Set only for notify-mode orders — the visitor's receipt/cancel token.
     pub cancel_token: Option<String>,
+    /// Set only for reserve-mode orders.
+    pub reserve_status: Option<ReserveStatus>,
+    pub reserve_expires_at: Option<chrono::NaiveDate>,
+    pub admin_terms_note: Option<String>,
+    pub invoice_note: Option<String>,
 }
 
 /// Returned after submitting an order. Carries a token only for notify-mode.
@@ -428,6 +446,11 @@ pub struct NotifyInfo {
 #[serde(rename_all = "camelCase")]
 pub struct UpdateOrderStatusRequest {
     pub status: OrderStatus,
+    pub admin_notes: Option<String>,
+    pub reserve_status: Option<ReserveStatus>,
+    pub reserve_expires_at: Option<String>,
+    pub admin_terms_note: Option<String>,
+    pub invoice_note: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -863,6 +886,11 @@ pub struct UserOrderDto {
     pub mode: OrderMode,
     pub status: OrderStatus,
     pub created_at: String,
+    pub admin_notes: Option<String>,
+    pub reserve_status: Option<ReserveStatus>,
+    pub reserve_expires_at: Option<String>,
+    pub admin_terms_note: Option<String>,
+    pub invoice_note: Option<String>,
 }
 
 // ============================================================
@@ -1322,6 +1350,10 @@ pub struct Commission {
     pub deadline: Option<chrono::NaiveDate>,
     pub budget_note: Option<String>,
     pub occasion: Option<String>,
+    pub source_figurine_id: Option<String>,
+    pub similar_keep_note: Option<String>,
+    pub similar_change_note: Option<String>,
+    pub similar_tags: Vec<String>,
     pub figurine_id: Option<String>,
     pub status: CommissionStatus,
     pub admin_notes: Option<String>,
@@ -1379,6 +1411,11 @@ pub struct CommissionRequest {
     pub deadline: Option<String>,
     pub budget_note: Option<String>,
     pub occasion: Option<String>,
+    pub source_figurine_id: Option<String>,
+    pub similar_keep_note: Option<String>,
+    pub similar_change_note: Option<String>,
+    #[serde(default)]
+    pub similar_tags: Vec<String>,
     #[serde(default)]
     pub attachment_urls: Vec<AttachmentInput>,
     /// Honeypot — real users never fill this. Non-empty ⇒ silently dropped.
@@ -1420,6 +1457,10 @@ pub struct CommissionDto {
     pub deadline: Option<String>,
     pub budget_note: Option<String>,
     pub occasion: Option<String>,
+    pub source_figurine_id: Option<String>,
+    pub similar_keep_note: Option<String>,
+    pub similar_change_note: Option<String>,
+    pub similar_tags: Vec<String>,
     pub figurine_id: Option<String>,
     pub status: CommissionStatus,
     pub admin_notes: Option<String>,

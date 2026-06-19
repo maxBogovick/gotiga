@@ -10,7 +10,7 @@
   import DateRangePicker from '$lib/components/DateRangePicker.svelte';
   import type { BookingRules, FigurineSchedule, FigurineStatus } from '$lib/types/api';
 
-  type RequestIntent = 'request' | 'waitlist' | 'viewing' | 'similar' | 'question' | 'notify';
+  type RequestIntent = 'request' | 'reserve' | 'waitlist' | 'viewing' | 'similar' | 'question' | 'notify';
   type ClaimData = { token: string; figurineName: string; startsAt: string; endsAt: string; submittedAt: string };
 
   let {
@@ -68,6 +68,7 @@
   );
 
   let canRequestWork = $derived(status === 'available');
+  let canReserve = $derived(status === 'available');
   let canWaitlist = $derived(status === 'reserved');
   let canViewing = $derived(status === 'available' || upcomingShowings.length > 0);
   let canNotify = $derived(status === 'in_progress' || status === 'sold');
@@ -75,6 +76,7 @@
   let intentOptions = $derived.by(() => {
     const options: { value: RequestIntent; label: string; hint: string }[] = [];
     if (canRequestWork) options.push({ value: 'request', label: $t('unifiedIntentRequest'), hint: $t('unifiedIntentRequestHint') });
+    if (canReserve) options.push({ value: 'reserve', label: $t('unifiedIntentReserve'), hint: $t('unifiedIntentReserveHint') });
     if (canWaitlist) options.push({ value: 'waitlist', label: $t('unifiedIntentWaitlist'), hint: $t('unifiedIntentWaitlistHint') });
     if (canViewing) options.push({ value: 'viewing', label: $t('unifiedIntentViewing'), hint: $t('unifiedIntentViewingHint') });
     options.push({ value: 'similar', label: $t('unifiedIntentSimilar'), hint: $t('unifiedIntentSimilarHint') });
@@ -97,7 +99,9 @@
   });
 
   let modalTitle = $derived(
-    status === 'reserved'
+    intent === 'reserve'
+      ? $t('unifiedReserveTitle')
+      : status === 'reserved'
       ? $t('unifiedReservedTitle')
       : status === 'in_progress'
         ? $t('unifiedProgressTitle')
@@ -117,7 +121,9 @@
             ? $t('unifiedSubmitQuestion')
             : intent === 'notify'
               ? $t('unifiedSubmitNotify')
-              : $t('unifiedSubmitRequest')
+              : intent === 'reserve'
+                ? $t('unifiedSubmitReserve')
+                : $t('unifiedSubmitRequest')
   );
 
   function reset() {
@@ -218,12 +224,20 @@
         successTitle = $t('bookingSuccessTitle');
         successText = $t('bookingSuccessText');
       } else {
-        const mode = intent === 'notify' ? 'notify' : intent === 'question' ? 'question' : 'request';
+        const mode = intent === 'notify'
+          ? 'notify'
+          : intent === 'question'
+            ? 'question'
+            : intent === 'reserve'
+              ? 'reserve'
+              : 'request';
         const prefix =
           intent === 'similar'
             ? $t('unifiedSimilarPrefix')
             : intent === 'request'
               ? $t('unifiedRequestPrefix')
+              : intent === 'reserve'
+                ? $t('unifiedReservePrefix')
               : intent === 'notify'
                 ? $t('unifiedNotifyPrefix')
                 : $t('unifiedQuestionPrefix');
@@ -314,6 +328,10 @@
                 <p class="unified-error">{dateError}</p>
               {/if}
             </div>
+          {/if}
+
+          {#if intent === 'reserve'}
+            <p class="unified-notice">{$t('unifiedReserveNotice')}</p>
           {/if}
 
           {#if authStore.isLoggedIn}
@@ -593,6 +611,17 @@
     color: #991b1b;
     font-family: "Inter", sans-serif;
     font-size: 0.82rem;
+  }
+
+  .unified-notice {
+    margin: 0;
+    padding: 0.75rem;
+    border: 1px solid rgba(111, 59, 36, 0.16);
+    background: rgba(248, 241, 231, 0.7);
+    color: rgba(95, 70, 54, 0.9);
+    font-family: "Inter", sans-serif;
+    font-size: 0.82rem;
+    line-height: 1.45;
   }
 
   .unified-actions,

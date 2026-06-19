@@ -40,6 +40,7 @@
   let isGrimoireOpen = $state(false);
   let showRequestModal = $state(false);
   let requestInitialIntent = $state<RequestIntent>('request');
+  let createSimilarHref = $derived(`/commission?source=${encodeURIComponent(id)}`);
   let figurineSchedule = $state<FigurineSchedule>({ entries: [] });
   let scheduleLoadFailed = $state(false);
   let isAudioPlaying = $state(false);
@@ -211,8 +212,9 @@
   // Showing that is happening TODAY (started but not yet ended)
   let hasActiveShowing = $derived(showings.some(s => s.startsAt <= todayStr && s.endsAt >= todayStr));
 
-  type RequestIntent = 'request' | 'waitlist' | 'viewing' | 'similar' | 'question' | 'notify';
+  type RequestIntent = 'request' | 'reserve' | 'waitlist' | 'viewing' | 'similar' | 'question' | 'notify';
   type AttributeKind = 'dimensions' | 'material' | 'technique';
+  type TrustFact = { label: string; value: string };
 
   function statusLabel(status: FigurineStatus): string {
     switch (status) {
@@ -622,6 +624,18 @@
     if (hasText(figurine.material)) items.push({ kind: 'material', label: $t('figurineMaterial'), value: figurine.material });
     if (hasText(figurine.technique)) items.push({ kind: 'technique', label: $t('figurineTechnique'), value: figurine.technique });
     return items;
+  });
+  let trustFacts = $derived.by<TrustFact[]>(() => {
+    const facts: TrustFact[] = [
+      { label: $t('detailTrustWork'), value: figurine.name },
+      { label: $t('detailTrustStatus'), value: statusLabel(figurine.status) },
+    ];
+    if (hasText(figurine.dimensions)) facts.push({ label: $t('figurineDimensions'), value: figurine.dimensions });
+    if (hasText(figurine.material)) facts.push({ label: $t('figurineMaterial'), value: figurine.material });
+    if (hasText(figurine.technique)) facts.push({ label: $t('figurineTechnique'), value: figurine.technique });
+    if (figurine.year) facts.push({ label: $t('detailTrustYear'), value: String(figurine.year) });
+    if (hasText(figurine.series)) facts.push({ label: $t('detailTrustSeries'), value: figurine.series });
+    return facts;
   });
   let hasAttributesSection = $derived(attributes.length > 0);
   let hasScheduleSection = $derived(figurineSchedule.entries.length > 0);
@@ -1395,6 +1409,15 @@
               <button type="button" onclick={() => openRequestModal()} class="entry-action">
                 {$t('unifiedOpenRequest')} →
               </button>
+              {#if figurine.status === 'available'}
+                <button type="button" class="entry-action entry-action--secondary" onclick={() => openRequestModal('reserve')}>
+                  {$t('unifiedReserveShort')} →
+                </button>
+              {:else}
+                <a href={createSimilarHref} class="entry-action entry-action--secondary">
+                  {$t('commissionCreateSimilarCta')} →
+                </a>
+              {/if}
               <p class="entry-action-note">
                 {statusUi.note}
               </p>
@@ -1406,6 +1429,37 @@
             <span>{$t('detailNoObligation')}</span>
             <span>{$t('detailPersonalTransfer')}</span>
           </div>
+
+          <section class="trust-ledger" aria-label={$t('detailTrustBlockLabel')}>
+            <div class="trust-ledger-head">
+              <span>{$t('detailTrustKicker')}</span>
+              <strong>{$t('detailTrustUnique')}</strong>
+            </div>
+            <dl class="trust-ledger-facts">
+              {#each trustFacts as fact (fact.label)}
+                <div>
+                  <dt>{fact.label}</dt>
+                  <dd>{fact.value}</dd>
+                </div>
+              {/each}
+            </dl>
+            <div class="trust-ledger-next">
+              {#if figurine.status === 'available'}
+                <p>{$t('detailTrustNextAvailable')}</p>
+              {:else}
+                <p>
+                  {figurine.status === 'reserved'
+                    ? $t('detailTrustNextReserved')
+                    : figurine.status === 'in_progress'
+                      ? $t('detailTrustNextProgress')
+                      : $t('detailTrustNextSold')}
+                </p>
+                <a href={createSimilarHref} class="trust-ledger-link">
+                  {$t('commissionCreateSimilarShort')} →
+                </a>
+              {/if}
+            </div>
+          </section>
 
           {#if scheduleLoadFailed}
             <p class="queue-receipt-left queue-receipt-left--warning">{$t('detailScheduleLoadStale')}</p>
@@ -1765,5 +1819,10 @@
         </svg>
       {/if}
     </button>
+    {#if figurine.status === 'available'}
+      <button type="button" onclick={() => openRequestModal('reserve')} class="mobile-cta-link">{$t('unifiedReserveShort')}</button>
+    {:else}
+      <a href={createSimilarHref} class="mobile-cta-link">{$t('commissionCreateSimilarShort')}</a>
+    {/if}
   </div>
 {/if}

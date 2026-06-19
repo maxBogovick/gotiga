@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { beforeNavigate, afterNavigate, invalidateAll } from '$app/navigation';
+  import { beforeNavigate, afterNavigate, invalidateAll, goto } from '$app/navigation';
   import { fade, slide } from 'svelte/transition';
   import { t } from '$lib/i18n';
   import AppImage from '$lib/components/AppImage.svelte';
@@ -245,6 +245,13 @@
     e.preventDefault();
     e.stopPropagation();
     orderFig = fig;
+  }
+
+  function openSimilarCommission(e: MouseEvent, fig: FigurineListItem) {
+    e.preventDefault();
+    e.stopPropagation();
+    markViewed(fig.id);
+    goto(`/commission?source=${encodeURIComponent(fig.id)}`);
   }
 
   // ── Scroll + filter state restoration ────────────────────────────────────
@@ -664,6 +671,26 @@
                           <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true">
                             <rect x="2" y="4" width="10" height="7" rx="0.5" stroke="currentColor" stroke-width="1"/>
                             <path d="M2 5L7 8.5L12 5" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+                          </svg>
+                        </button>
+                      {:else}
+                        <!-- Similar commission -->
+                        <button
+                          class="flex items-center justify-center w-7 h-7 rounded-full
+                                 bg-[rgba(198,95,60,0.18)] border border-[rgba(198,95,60,0.32)]
+                                 text-[rgba(255,200,170,0.88)] hover:bg-[rgba(198,95,60,0.38)] hover:border-[rgba(198,95,60,0.55)] hover:text-[rgba(255,224,208,1)]
+                                 cursor-pointer transition-all duration-200
+                                 translate-y-1 opacity-0 group-hover:translate-y-0 group-hover:opacity-100
+                                 [transition-delay:130ms]"
+                          onclick={(e) => openSimilarCommission(e, figurine)}
+                          title={$t('commissionCreateSimilarCta')}
+                          aria-label={$t('commissionCreateSimilarCta')}
+                        >
+                          <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                            <path d="M3 7.5C3 4.8 5.1 2.8 7.8 2.8H11" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+                            <path d="M8.5 1.4L11 2.8L8.5 4.4" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+                            <path d="M11 6.5C11 9.2 8.9 11.2 6.2 11.2H3" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+                            <path d="M5.5 9.6L3 11.2L5.5 12.6" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
                           </svg>
                         </button>
                       {/if}
