@@ -65,9 +65,22 @@
     name: figurine?.name ?? '',
     description: figurine?.shortText ?? figurine?.fullDescription ?? '',
     image: ogImage(),
+    url: page.url.href,
+    creator: { '@type': 'Organization', name: $brandName, url: page.url.origin },
     ...(figurine?.material ? { artMedium: figurine.material } : {}),
     ...(figurine?.technique ? { artform: figurine.technique } : {}),
     ...(figurine?.year ? { dateCreated: String(figurine.year) } : {}),
+  }));
+
+  // Breadcrumb trail — Google renders these in the result snippet (Home › Archive › name).
+  let breadcrumbJsonLd = $derived(() => JSON.stringify({
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: $brandName, item: page.url.origin },
+      { '@type': 'ListItem', position: 2, name: 'Archive', item: `${page.url.origin}/figurines` },
+      { '@type': 'ListItem', position: 3, name: figurine?.name ?? 'Miniature', item: page.url.href },
+    ],
   }));
 </script>
 
@@ -100,9 +113,10 @@
 
   <!-- view-transition timing injected via $effect in script -->
 
-  <!-- JSON-LD (п.7) -->
+  <!-- JSON-LD: VisualArtwork + breadcrumb trail -->
   {#if figurine}
     {@html `<script type="application/ld+json">${jsonLd()}<\/script>`}
+    {@html `<script type="application/ld+json">${breadcrumbJsonLd()}<\/script>`}
   {/if}
 
   <!-- Fonts loaded once globally in app.html -->

@@ -69,6 +69,7 @@
   <meta property="og:url" content="{SITE_URL}/author" />
   {#if portraitUrl}<meta property="og:image" content={portraitUrl} />{/if}
   {#if personJsonLd}{@html `<script type="application/ld+json">${personJsonLd}<\/script>`}{/if}
+  {@html `<script type="application/ld+json">${JSON.stringify({ '@context': 'https://schema.org', '@type': 'BreadcrumbList', itemListElement: [ { '@type': 'ListItem', position: 1, name: $brandName, item: SITE_URL }, { '@type': 'ListItem', position: 2, name: 'About the Master', item: `${SITE_URL}/author` } ] })}<\/script>`}
   <!-- Fonts loaded once globally in app.html -->
 </svelte:head>
 

@@ -34,6 +34,7 @@
     <meta property="og:description" content="Author-made figures in progress. Available to reserve." />
     <meta property="og:url" content="{SITE_URL}/upcoming" />
     <meta property="og:image" content="{SITE_URL}/images/cabinet-room.jpg" />
+    {@html `<script type="application/ld+json">${JSON.stringify({ '@context': 'https://schema.org', '@type': 'BreadcrumbList', itemListElement: [ { '@type': 'ListItem', position: 1, name: $brandName, item: SITE_URL }, { '@type': 'ListItem', position: 2, name: 'In Progress', item: `${SITE_URL}/upcoming` } ] })}<\/script>`}
     <!-- Fonts loaded once globally in app.html -->
 </svelte:head>
 

@@ -1010,8 +1010,9 @@ pub async fn sitemap_xml(
     }
     for f in &figurines {
         urls.push_str(&format!(
-            "  <url><loc>{base}/figurines/{}</loc></url>\n",
-            xml_escape(&f.id)
+            "  <url><loc>{base}/figurines/{}</loc><lastmod>{}</lastmod></url>\n",
+            xml_escape(&f.id),
+            f.created_at.format("%Y-%m-%d")
         ));
     }
 

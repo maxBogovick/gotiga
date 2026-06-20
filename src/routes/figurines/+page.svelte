@@ -309,6 +309,7 @@
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Archive — Gothic Miniatures Collection — {$brandName}" />
   <meta name="twitter:image" content="{SITE_URL}/images/cabinet-room.jpg" />
+  {@html `<script type="application/ld+json">${JSON.stringify({ '@context': 'https://schema.org', '@type': 'BreadcrumbList', itemListElement: [ { '@type': 'ListItem', position: 1, name: $brandName, item: SITE_URL }, { '@type': 'ListItem', position: 2, name: 'Archive', item: `${SITE_URL}/figurines` } ] })}<\/script>`}
   <!-- Fonts loaded once globally in app.html -->
 </svelte:head>
 

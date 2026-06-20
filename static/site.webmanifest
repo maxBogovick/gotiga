@@ -1,0 +1,17 @@
+{
+  "name": "Ritunia — Cabinet of Gothic Miniatures",
+  "short_name": "Ritunia",
+  "description": "An author's cabinet of gothic, handmade miniatures and art dolls.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f8f1e7",
+  "theme_color": "#f8f1e7",
+  "lang": "en",
+  "icons": [
+    { "src": "/favicon-32x32.png", "sizes": "32x32", "type": "image/png" },
+    { "src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "/favicon.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/favicon.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

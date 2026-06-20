@@ -1,14 +1,41 @@
-# ── Build stage ────────────────────────────────────────────────────────────────
-FROM rust:1.90-slim-bookworm AS builder
-
-WORKDIR /usr/src/app
-COPY . .
-
+# syntax=docker/dockerfile:1
+# ── Builder: native-arch cross-compile + dependency caching ────────────────────
+# Pinned to $BUILDPLATFORM so the Rust compiler runs on the build host's NATIVE
+# arch (e.g. arm64 on Apple Silicon) instead of under QEMU emulation, then
+# cross-compiles to x86_64 (the deploy server is amd64). cargo-chef caches the
+# dependency build in its own layer, so editing app source no longer recompiles
+# every crate. BuildKit cache mounts persist the cargo registry + target dir
+# across builds. The project is rustls-only (no OpenSSL), so the cross toolchain
+# is just the GNU x86_64 cross-gcc — no C TLS libraries to wrangle.
+FROM --platform=$BUILDPLATFORM rust:1.90-slim-bookworm AS chef
+WORKDIR /app
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends pkg-config libssl-dev \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get install -y --no-install-recommends gcc-x86-64-linux-gnu g++-x86-64-linux-gnu \
+    && rm -rf /var/lib/apt/lists/* \
+    && rustup target add x86_64-unknown-linux-gnu \
+    && cargo install cargo-chef --locked
+ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc \
+    CC_x86_64_unknown_linux_gnu=x86_64-linux-gnu-gcc \
+    CXX_x86_64_unknown_linux_gnu=x86_64-linux-gnu-g++ \
+    AR_x86_64_unknown_linux_gnu=x86_64-linux-gnu-ar
 
-RUN cargo build --release
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder
+COPY --from=planner /app/recipe.json recipe.json
+# Build & cache dependencies only — this layer is reused until Cargo.toml/lock change.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo chef cook --release --target x86_64-unknown-linux-gnu --recipe-path recipe.json
+# Now the app itself. target/ is a cache mount, so copy the binary out of it.
+COPY . .
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release --target x86_64-unknown-linux-gnu \
+    && cp target/x86_64-unknown-linux-gnu/release/gotiga-server /gotiga-server \
+    && x86_64-linux-gnu-strip /gotiga-server
 
 # ── GeoIP stage: optionally bake an offline IP→city database into the image ────
 # DB-IP "City Lite" (MMDB format, CC-BY) needs no account/license key and is read
@@ -17,8 +44,8 @@ RUN cargo build --release
 # boundary (DB-IP publishes a new file at the start of each month).
 #   --build-arg GEOIP_ENABLED=        → skip the DB (lighter image, geo disabled)
 #   --build-arg GEOIP_MONTH=YYYY-MM   → pin a specific month
-# Rebuild the image to refresh the data.
-FROM debian:bookworm-slim AS geoip
+# Built on $BUILDPLATFORM (the .mmdb is arch-independent data) to avoid emulation.
+FROM --platform=$BUILDPLATFORM debian:bookworm-slim AS geoip
 ARG GEOIP_ENABLED=true
 ARG GEOIP_MONTH
 RUN apt-get update \
@@ -42,17 +69,18 @@ RUN set -eu; \
         : > city.mmdb; \
     fi
 
-# ── Runtime stage ──────────────────────────────────────────────────────────────
+# ── Runtime stage (target arch) ────────────────────────────────────────────────
 FROM debian:bookworm-slim
 
 WORKDIR /app
 
+# No libssl: the binary is rustls-only. curl is needed for the compose healthcheck.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libssl3 ca-certificates curl \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /usr/src/app/target/release/gotiga-server /usr/local/bin/gotiga-server
-COPY --from=builder /usr/src/app/migrations ./migrations
+COPY --from=builder /gotiga-server /usr/local/bin/gotiga-server
+COPY migrations ./migrations
 COPY --from=geoip /geoip/city.mmdb /app/geoip/city.mmdb
 
 # Run as an unprivileged user; own the uploads dir it needs to write.

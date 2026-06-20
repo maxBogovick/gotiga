@@ -15,14 +15,31 @@
 
     let { data } = $props();
 
-    // WebSite entity — anchors the brand for search engines and LLMs and ties every
-    // other JSON-LD node (figurines, the author) back to a single named site.
+    // WebSite + Organization graph — anchors the brand for search engines and LLMs and
+    // ties every other JSON-LD node (figurines, the author) back to one named entity.
+    // The Organization carries a logo so Google can show it in brand/knowledge panels.
     let websiteJsonLd = $derived(JSON.stringify({
         '@context': 'https://schema.org',
-        '@type': 'WebSite',
-        name: $brandName,
-        url: SITE_URL,
-        description: 'An author\'s cabinet of gothic figures and handmade miniatures.',
+        '@graph': [
+            {
+                '@type': 'WebSite',
+                '@id': `${SITE_URL}/#website`,
+                name: $brandName,
+                url: SITE_URL,
+                description: 'An author\'s cabinet of gothic figures and handmade miniatures.',
+                publisher: { '@id': `${SITE_URL}/#org` },
+            },
+            {
+                '@type': 'Organization',
+                '@id': `${SITE_URL}/#org`,
+                name: $brandName,
+                url: SITE_URL,
+                logo: {
+                    '@type': 'ImageObject',
+                    url: `${SITE_URL}/favicon.png`,
+                },
+            },
+        ],
     }));
 
     let zones = $state<CabinetZone[]>([]);
