@@ -1449,7 +1449,7 @@ fn verify_password(input: &str, hash: &str) -> bool {
 // ============================================================
 
 impl AppService {
-    pub async fn register_user(&self, req: &RegisterRequest, ip: Option<String>, user_agent: Option<String>) -> Result<UserDto> {
+    pub async fn register_user(&self, req: &RegisterRequest, ip: Option<String>, user_agent: Option<String>) -> Result<LoginVerifyResponse> {
         if !req.email.contains('@') {
             return Err(AppError::BadRequest("Invalid email".into()));
         }
@@ -1465,9 +1465,18 @@ impl AppService {
         let hash = hash_password(&hash_input)
             .map_err(|e| AppError::Internal(format!("Hash error: {e}")))?;
 
-        let ctx = self.client_context(ip, user_agent);
+        let ctx = self.client_context(ip.clone(), user_agent.clone());
         let user = self.repo.create_user(&req.email.to_lowercase(), &req.display_name, &hash, &pool_json, &ctx).await?;
-        Ok(UserDto::from(&user))
+
+        let session_token = Uuid::new_v4().to_string();
+        let expires_at = chrono::Utc::now() + chrono::Duration::days(30);
+        let session_ctx = self.client_context(ip, user_agent);
+        self.repo.create_session(user.id, &session_token, expires_at, &session_ctx).await?;
+
+        Ok(LoginVerifyResponse {
+            session_token,
+            user: UserDto::from(&user),
+        })
     }
 
     pub async fn login_challenge(&self, email: &str) -> Result<LoginChallengeResponse> {

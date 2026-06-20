@@ -711,7 +711,7 @@ export const api = {
 
     // === USER AUTH ===
 
-    async userRegister(email: string, displayName: string, selections: [string, string, string, string], pool: string[][]): Promise<{ user: UserDto }> {
+    async userRegister(email: string, displayName: string, selections: [string, string, string, string], pool: string[][]): Promise<LoginVerifyResponse> {
         return webFetch('/auth/register', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

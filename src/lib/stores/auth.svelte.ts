@@ -13,9 +13,14 @@ function saveToken(token: string): void {
   localStorage.setItem(SESSION_KEY, token);
 }
 
+const CLAIMS_PREFIX = 'gotiga_claims_';
+
 function clearToken(): void {
   if (!browser) return;
   localStorage.removeItem(SESSION_KEY);
+  Object.keys(localStorage)
+    .filter(k => k.startsWith(CLAIMS_PREFIX))
+    .forEach(k => localStorage.removeItem(k));
 }
 
 class AuthStore {

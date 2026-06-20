@@ -835,6 +835,8 @@ export const ru: Record<TranslationKey, string> = {
   adminMsgError:         'Ошибка: ',
   adminMsgUnsavedLeave:  'Есть несохранённые изменения. Покинуть?',
   adminMsgUnsavedCancel: 'Есть несохранённые изменения. Отменить?',
+  adminCancel:           'Отменить',
+  adminConfirmLeave:     'Покинуть',
 
   // === AUTH ===
   authRegister:          'Создать архив',

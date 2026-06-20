@@ -835,6 +835,8 @@ export const en = {
   adminMsgError: 'Error: ',
   adminMsgUnsavedLeave: 'You have unsaved changes. Leave?',
   adminMsgUnsavedCancel: 'You have unsaved changes. Cancel?',
+  adminCancel: 'Cancel',
+  adminConfirmLeave: 'Leave',
 
   // === AUTH ===
   authRegister: 'Create your archive',
