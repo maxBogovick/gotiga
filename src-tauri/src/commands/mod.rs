@@ -501,6 +501,7 @@ pub async fn save_figurine(
             let file_path = clean_path(Some(img_dto.url)).unwrap_or_default();
             let original_path = clean_path(img_dto.original_url);
             let thumb_path = clean_path(img_dto.thumb_url);
+            let depth_path = clean_path(img_dto.depth_url);
             let (derived_original, derived_thumb) = derive_image_variants(&file_path);
             Image {
                 id: img_dto.id,
@@ -509,6 +510,7 @@ pub async fn save_figurine(
                 file_path,
                 original_path: original_path.or(derived_original),
                 thumb_path: thumb_path.or(derived_thumb),
+                depth_path,
                 alt_text: img_dto.alt_text,
                 sort_order: 0,
                 updated_at: now.clone(),

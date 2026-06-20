@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS images (
     file_path TEXT NOT NULL,
     original_path TEXT,
     thumb_path TEXT,
+    depth_path TEXT, -- Карта глубины для 2.5D-параллакса (LivingDaguerreotype)
     data BLOB, -- Встроенное изображение
     original_data BLOB, -- Встроенный оригинал
     thumb_data BLOB, -- Встроенный thumbnail

@@ -228,6 +228,10 @@ impl AppService {
                         .thumb_path
                         .as_ref()
                         .map(|p| self.resolve_url(p, "images_thumb", &i_id_str)),
+                    depth_url: i
+                        .depth_path
+                        .as_ref()
+                        .map(|p| self.resolve_url(p, "images_depth", &i_id_str)),
                     alt_text: i.alt_text,
                 }
             })

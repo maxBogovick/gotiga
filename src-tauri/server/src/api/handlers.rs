@@ -986,6 +986,17 @@ fn xml_escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
+fn image_sitemap_entry(url: Option<&str>) -> String {
+    url.filter(|u| !u.trim().is_empty())
+        .map(|u| {
+            format!(
+                "<image:image><image:loc>{}</image:loc></image:image>",
+                xml_escape(u.trim())
+            )
+        })
+        .unwrap_or_default()
+}
+
 /// Public sitemap. Absolute URLs are built from the forwarded Host/proto headers so the
 /// same binary works across environments without a hard-coded domain.
 pub async fn sitemap_xml(
@@ -1009,8 +1020,25 @@ pub async fn sitemap_xml(
         urls.push_str(&format!("  <url><loc>{base}{path}</loc></url>\n"));
     }
     for f in &figurines {
+        if f.status == FigurineStatus::InProgress {
+            continue;
+        }
+
+        let detail = service.get_figurine_details(f.id.clone()).await.ok();
+        let image_url = detail
+            .as_ref()
+            .and_then(|d| {
+                d.images
+                    .iter()
+                    .find(|i| i.image_type == ImageType::Face)
+                    .or_else(|| d.images.first())
+            })
+            .map(|i| i.url.as_str())
+            .or(f.face_image_url.as_deref());
+        let image = image_sitemap_entry(image_url);
+
         urls.push_str(&format!(
-            "  <url><loc>{base}/figurines/{}</loc><lastmod>{}</lastmod></url>\n",
+            "  <url><loc>{base}/figurines/{}</loc><lastmod>{}</lastmod>{image}</url>\n",
             xml_escape(&f.id),
             f.created_at.format("%Y-%m-%d")
         ));
@@ -1018,7 +1046,7 @@ pub async fn sitemap_xml(
 
     let body = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
-         <urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n{urls}</urlset>\n"
+         <urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\" xmlns:image=\"http://www.google.com/schemas/sitemap-image/1.1\">\n{urls}</urlset>\n"
     );
     Ok((
         [(

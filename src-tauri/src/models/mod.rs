@@ -80,6 +80,7 @@ pub struct Image {
     pub file_path: String,
     pub original_path: Option<String>,
     pub thumb_path: Option<String>,
+    pub depth_path: Option<String>,
     pub alt_text: Option<String>,
     pub sort_order: i32,
     pub updated_at: String,
@@ -294,6 +295,7 @@ pub struct ImageDto {
     pub url: String, // путь для frontend (asset://)
     pub original_url: Option<String>,
     pub thumb_url: Option<String>,
+    pub depth_url: Option<String>,
     pub alt_text: Option<String>,
 }
 
@@ -306,6 +308,7 @@ impl ImageDto {
             url: resolve(image.file_path),
             original_url: image.original_path.map(resolve),
             thumb_url: image.thumb_path.map(resolve),
+            depth_url: image.depth_path.map(resolve),
             alt_text: image.alt_text,
         }
     }

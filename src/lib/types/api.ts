@@ -24,6 +24,12 @@ export interface FigurineImage {
     originalUrl: string | null;
     thumbUrl: string | null;
     altText: string | null;
+    /**
+     * Precomputed monocular depth map (grayscale), used by LivingDaguerreotype
+     * for 2.5D parallax. Optional — when absent the renderer derives depth from
+     * the colour image's luminance instead. Populated by an offline pipeline.
+     */
+    depthUrl?: string | null;
 }
 
 export interface ProcessStep {

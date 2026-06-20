@@ -228,24 +228,30 @@
         });
     }
 
+    // Picks a media source for the current platform: a local path string in Tauri,
+    // a File on web. Returns null when the user cancels (Tauri) — the web picker
+    // rejects with 'no file' instead, which callers swallow.
+    async function pickMediaSource(type: 'images' | 'videos' | 'audio'): Promise<string | File | null> {
+        if (isTauri) {
+            const { open } = await import('@tauri-apps/plugin-dialog');
+            const filters = [];
+            if (type === 'images') filters.push({ name: 'Images', extensions: ['jpg', 'png', 'webp'] });
+            else if (type === 'videos') filters.push({ name: 'Videos', extensions: ['mp4', 'webm', 'mov'] });
+            else filters.push({ name: 'Audio', extensions: ['mp3', 'wav', 'ogg', 'm4a'] });
+            const selected = await open({ multiple: false, filters });
+            if (!selected || typeof selected !== 'string') return null;
+            return selected;
+        }
+        return await pickFileWeb(type);
+    }
+
     async function handlePickFile(type: 'images' | 'videos' | 'audio', stepIndex?: number) {
         if (!selectedFigurine) return;
         if (type === 'videos') uploadingVideo = true;
         if (type === 'audio') uploadingAudio = true;
         try {
-            let fileOrPath: string | File;
-            if (isTauri) {
-                const { open } = await import('@tauri-apps/plugin-dialog');
-                const filters = [];
-                if (type === 'images') filters.push({ name: 'Images', extensions: ['jpg', 'png', 'webp'] });
-                else if (type === 'videos') filters.push({ name: 'Videos', extensions: ['mp4', 'webm', 'mov'] });
-                else filters.push({ name: 'Audio', extensions: ['mp3', 'wav', 'ogg', 'm4a'] });
-                const selected = await open({ multiple: false, filters });
-                if (!selected || typeof selected !== 'string') return;
-                fileOrPath = selected;
-            } else {
-                fileOrPath = await pickFileWeb(type);
-            }
+            const fileOrPath = await pickMediaSource(type);
+            if (fileOrPath === null) return;
 
             const imported = await api.importMediaWithVariants(fileOrPath, type === 'videos' ? 'videos' : type === 'audio' ? 'audio' : 'images');
             const localUrl = imported.url;
@@ -264,7 +270,8 @@
                     url: localUrl,
                     originalUrl: imported.originalUrl ?? variants.originalUrl,
                     thumbUrl: imported.thumbUrl ?? variants.thumbUrl,
-                    altText: ''
+                    altText: '',
+                    depthUrl: null
                 }];
             }
             showMessage($t('adminMsgFileUploaded'), 'success');
@@ -275,6 +282,30 @@
             if (type === 'videos') uploadingVideo = false;
             if (type === 'audio') uploadingAudio = false;
         }
+    }
+
+    // Attach a precomputed depth map to a single image (LivingDaguerreotype 2.5D
+    // parallax). It's just a grayscale image upload — the offline batch produces
+    // higher-fidelity maps, this is the manual path. NULL falls back to luminance.
+    async function handlePickDepth(imgIdx: number) {
+        if (!selectedFigurine) return;
+        try {
+            const fileOrPath = await pickMediaSource('images');
+            if (fileOrPath === null) return;
+            const imported = await api.importMediaWithVariants(fileOrPath, 'images');
+            selectedFigurine.images[imgIdx].depthUrl = imported.url;
+            selectedFigurine.images = [...selectedFigurine.images];
+            showMessage($t('adminMediaDepthUploaded'), 'success');
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e);
+            if (msg !== 'no file') showMessage($t('adminMsgError') + msg, 'error');
+        }
+    }
+
+    function clearDepth(imgIdx: number) {
+        if (!selectedFigurine) return;
+        selectedFigurine.images[imgIdx].depthUrl = null;
+        selectedFigurine.images = [...selectedFigurine.images];
     }
 
     function deriveImageVariants(url: string): { originalUrl: string | null; thumbUrl: string | null } {
@@ -863,6 +894,19 @@
                                                 placeholder={$t('adminMediaAltPlaceholder')}
                                                 class="w-28 bg-[#f8f1e7] border border-[#34251c]/10 px-1.5 py-1 text-[9px] text-[#5f4636] focus:border-[#34251c]/30 outline-none"
                                             />
+                                            <!-- Depth map (2.5D parallax) -->
+                                            <div class="w-28 flex items-center gap-1" title={$t('adminMediaDepthHint')}>
+                                                {#if img.depthUrl}
+                                                    <img src={resolveUrl(img.depthUrl)} alt="" class="w-6 h-6 object-cover border border-[#34251c]/20 shrink-0" />
+                                                    <button onclick={() => handlePickDepth(imgIdx)}
+                                                        class="flex-1 text-[8px] uppercase text-[#5f4636] hover:text-[#34251c] px-1 py-0.5 border border-[#34251c]/15">{$t('adminMediaDepthReplace')}</button>
+                                                    <button onclick={() => clearDepth(imgIdx)}
+                                                        class="text-[8px] text-red-800/70 hover:text-red-900 px-1 py-0.5 border border-red-800/20 shrink-0">✕</button>
+                                                {:else}
+                                                    <button onclick={() => handlePickDepth(imgIdx)}
+                                                        class="w-full text-[8px] uppercase text-[#5f4636] hover:text-[#34251c] px-1 py-0.5 border border-dashed border-[#34251c]/20">{$t('adminMediaDepthAdd')}</button>
+                                                {/if}
+                                            </div>
                                         </div>
                                     {/each}
                                 </div>

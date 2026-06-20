@@ -6,6 +6,7 @@
   import FigurineClaimRow from '$lib/components/FigurineClaimRow.svelte';
   import FigurineReceiptPanel from '$lib/components/FigurineReceiptPanel.svelte';
   import BrassLens from '$lib/components/BrassLens.svelte';
+  import LivingDaguerreotype from '$lib/components/LivingDaguerreotype.svelte';
   import CandleReveal from '$lib/components/CandleReveal.svelte';
   import MemoryMirror from '$lib/components/MemoryMirror.svelte';
   import BecomingReveal from '$lib/components/BecomingReveal.svelte';
@@ -528,6 +529,16 @@
   let isLensEnabled = $state(false);
   let currentImageFit = $derived<'cover' | 'contain'>(imageViewMode === 'detail' ? 'cover' : 'contain');
 
+  // Living daguerreotype (2.5D depth parallax) is the resting presentation of the
+  // main plate. It only takes over on desktop pointers, with motion allowed, while
+  // the lens is off and we're in fit (contain) mode — otherwise BrassLens keeps its
+  // lens / mobile pinch-zoom / lightbox behaviour untouched.
+  let isPointerFine = $state(false);
+  let prefersReducedMotion = $state(false);
+  let useDaguerreotype = $derived(
+    isPointerFine && !prefersReducedMotion && !isLensEnabled && imageViewMode === 'fit'
+  );
+
   // Stage adapts to the work's real proportion. The gallery grid itself stays
   // stable while the image probe resolves, which avoids the tiny-photo/blank-mat
   // layout shifts that came from changing the grid after first paint.
@@ -865,6 +876,8 @@
   }
 
   onMount(() => {
+    isPointerFine = window.matchMedia('(pointer: fine)').matches;
+    prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     window.addEventListener('keydown', handleKeydown);
     window.addEventListener('scroll', onScroll, { passive: true });
     document.addEventListener('visibilitychange', handleVisibility);
@@ -1215,15 +1228,25 @@
               >
                 {#key currentImage?.id}
                   <div class="image-layer" in:fade={{ duration: 220 }}>
-                    <BrassLens
-                      src={resolveUrl(currentImage?.url)}
-                      alt={currentImage?.altText ?? figurine.name}
-                      class="w-full h-full"
-                      imageFit={currentImageFit}
-                      objectPosition="center center"
-                      lensEnabled={isLensEnabled}
-                      onOpenLightbox={() => canOpenLightbox && openLightbox(activeImageIndex)}
-                    />
+                    {#if useDaguerreotype}
+                      <LivingDaguerreotype
+                        src={resolveUrl(currentImage?.url)}
+                        depthSrc={resolveUrl(currentImage?.depthUrl) || null}
+                        alt={currentImage?.altText ?? figurine.name}
+                        class="w-full h-full"
+                        onActivate={() => canOpenLightbox && openLightbox(activeImageIndex)}
+                      />
+                    {:else}
+                      <BrassLens
+                        src={resolveUrl(currentImage?.url)}
+                        alt={currentImage?.altText ?? figurine.name}
+                        class="w-full h-full"
+                        imageFit={currentImageFit}
+                        objectPosition="center center"
+                        lensEnabled={isLensEnabled}
+                        onOpenLightbox={() => canOpenLightbox && openLightbox(activeImageIndex)}
+                      />
+                    {/if}
                   </div>
                 {/key}
 

@@ -567,6 +567,7 @@
                     <AppImage
                             src={figurine.faceImageUrl}
                             thumbUrl={figurine.thumbUrl}
+                            alt={figurine.name}
                             class="w-full h-full object-cover transition-all duration-700 ease-out group-hover:scale-105 fig-img--{figurine.status}"
                             loading="lazy"
                     />

@@ -38,6 +38,7 @@ impl Database {
         conn.execute_batch(include_str!("schema.sql"))?;
         add_column_if_missing(&conn, "images", "original_path", "TEXT")?;
         add_column_if_missing(&conn, "images", "thumb_path", "TEXT")?;
+        add_column_if_missing(&conn, "images", "depth_path", "TEXT")?;
         add_column_if_missing(&conn, "images", "original_data", "BLOB")?;
         add_column_if_missing(&conn, "images", "thumb_data", "BLOB")?;
         add_column_if_missing(

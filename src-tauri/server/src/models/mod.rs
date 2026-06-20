@@ -149,6 +149,7 @@ pub struct Image {
     pub file_path: String,
     pub original_path: Option<String>,
     pub thumb_path: Option<String>,
+    pub depth_path: Option<String>,
     pub alt_text: Option<String>,
     pub sort_order: i32,
     pub created_at: DateTime<Utc>,
@@ -220,6 +221,7 @@ pub struct ImageDto {
     pub url: String,
     pub original_url: Option<String>,
     pub thumb_url: Option<String>,
+    pub depth_url: Option<String>,
     pub alt_text: Option<String>,
 }
 
@@ -344,6 +346,7 @@ pub struct SaveImageRequest {
     pub url: String,
     pub original_url: Option<String>,
     pub thumb_url: Option<String>,
+    pub depth_url: Option<String>,
     pub alt_text: Option<String>,
     pub sort_order: Option<i32>,
 }

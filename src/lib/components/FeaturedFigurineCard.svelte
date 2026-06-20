@@ -109,7 +109,7 @@
         </button>
 
         {#if fig.faceImageUrl}
-            <AppImage src={fig.faceImageUrl} thumbUrl={fig.thumbUrl} class="card-img" loading="lazy" />
+            <AppImage src={fig.faceImageUrl} thumbUrl={fig.thumbUrl} alt={fig.name} class="card-img" loading="lazy" />
         {:else}
             <div class="card-ph">?</div>
         {/if}
