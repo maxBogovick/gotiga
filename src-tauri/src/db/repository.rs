@@ -28,7 +28,7 @@ impl<'a> Repository<'a> {
 
     pub fn get_all_figurines(&self) -> Result<Vec<Figurine>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, short_text, full_description, dimensions, material, technique, year, ambience_path, video_url, secret_text, status, sort_order, updated_at, is_visible, COALESCE(is_featured, 0)
+            "SELECT id, name, short_text, full_description, dimensions, material, technique, year, passport_number, edition, created_period, care_instructions, provenance_note, authenticity_note, included_items, ambience_path, video_url, secret_text, status, sort_order, updated_at, is_visible, COALESCE(is_featured, 0)
              FROM figurines
              ORDER BY sort_order"
         )?;
@@ -43,14 +43,21 @@ impl<'a> Repository<'a> {
                 material: row.get(5)?,
                 technique: row.get(6)?,
                 year: row.get(7)?,
-                ambience_path: row.get(8)?,
-                video_url: row.get(9)?,
-                secret_text: row.get(10)?,
-                status: FigurineStatus::from_str(&row.get::<_, String>(11)?),
-                sort_order: row.get(12)?,
-                updated_at: get_iso_date(row, 13)?,
-                is_visible: row.get(14)?,
-                is_featured: row.get::<_, i32>(15).unwrap_or(0) != 0,
+                passport_number: row.get(8)?,
+                edition: row.get(9)?,
+                created_period: row.get(10)?,
+                care_instructions: row.get(11)?,
+                provenance_note: row.get(12)?,
+                authenticity_note: row.get(13)?,
+                included_items: row.get(14)?,
+                ambience_path: row.get(15)?,
+                video_url: row.get(16)?,
+                secret_text: row.get(17)?,
+                status: FigurineStatus::from_str(&row.get::<_, String>(18)?),
+                sort_order: row.get(19)?,
+                updated_at: get_iso_date(row, 20)?,
+                is_visible: row.get(21)?,
+                is_featured: row.get::<_, i32>(22).unwrap_or(0) != 0,
             })
         })?;
 
@@ -59,7 +66,7 @@ impl<'a> Repository<'a> {
 
     pub fn get_figurine_by_id(&self, id: &str) -> Result<Option<Figurine>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, short_text, full_description, dimensions, material, technique, year, ambience_path, video_url, secret_text, status, sort_order, updated_at, is_visible, COALESCE(is_featured, 0)
+            "SELECT id, name, short_text, full_description, dimensions, material, technique, year, passport_number, edition, created_period, care_instructions, provenance_note, authenticity_note, included_items, ambience_path, video_url, secret_text, status, sort_order, updated_at, is_visible, COALESCE(is_featured, 0)
              FROM figurines
              WHERE id = ?"
         )?;
@@ -76,14 +83,21 @@ impl<'a> Repository<'a> {
                 material: row.get(5)?,
                 technique: row.get(6)?,
                 year: row.get(7)?,
-                ambience_path: row.get(8)?,
-                video_url: row.get(9)?,
-                secret_text: row.get(10)?,
-                status: FigurineStatus::from_str(&row.get::<_, String>(11)?),
-                sort_order: row.get(12)?,
-                updated_at: get_iso_date(row, 13)?,
-                is_visible: row.get(14)?,
-                is_featured: row.get::<_, i32>(15).unwrap_or(0) != 0,
+                passport_number: row.get(8)?,
+                edition: row.get(9)?,
+                created_period: row.get(10)?,
+                care_instructions: row.get(11)?,
+                provenance_note: row.get(12)?,
+                authenticity_note: row.get(13)?,
+                included_items: row.get(14)?,
+                ambience_path: row.get(15)?,
+                video_url: row.get(16)?,
+                secret_text: row.get(17)?,
+                status: FigurineStatus::from_str(&row.get::<_, String>(18)?),
+                sort_order: row.get(19)?,
+                updated_at: get_iso_date(row, 20)?,
+                is_visible: row.get(21)?,
+                is_featured: row.get::<_, i32>(22).unwrap_or(0) != 0,
             }))
         } else {
             Ok(None)
@@ -96,8 +110,9 @@ impl<'a> Repository<'a> {
         let mut stmt = self.conn.prepare(
             "INSERT INTO figurines (
                 id, name, short_text, full_description, dimensions, material, technique,
-                year, ambience_path, video_url, secret_text, status, sort_order, is_visible, is_featured, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+                year, passport_number, edition, created_period, care_instructions, provenance_note, authenticity_note, included_items,
+                ambience_path, video_url, secret_text, status, sort_order, is_visible, is_featured, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)
             ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name,
                 short_text=excluded.short_text,
@@ -106,6 +121,13 @@ impl<'a> Repository<'a> {
                 material=excluded.material,
                 technique=excluded.technique,
                 year=excluded.year,
+                passport_number=excluded.passport_number,
+                edition=excluded.edition,
+                created_period=excluded.created_period,
+                care_instructions=excluded.care_instructions,
+                provenance_note=excluded.provenance_note,
+                authenticity_note=excluded.authenticity_note,
+                included_items=excluded.included_items,
                 ambience_path=excluded.ambience_path,
                 video_url=excluded.video_url,
                 secret_text=excluded.secret_text,
@@ -125,6 +147,13 @@ impl<'a> Repository<'a> {
             f.material,
             f.technique,
             f.year,
+            f.passport_number,
+            f.edition,
+            f.created_period,
+            f.care_instructions,
+            f.provenance_note,
+            f.authenticity_note,
+            f.included_items,
             f.ambience_path,
             f.video_url,
             f.secret_text,
@@ -669,7 +698,7 @@ impl<'a> Repository<'a> {
 
     pub fn get_related_figurines(&self, id: &str) -> Result<Vec<Figurine>> {
         let mut stmt = self.conn.prepare(
-            "SELECT DISTINCT f.id, f.name, f.short_text, f.full_description, f.dimensions, f.material, f.technique, f.year, f.ambience_path, f.video_url, f.secret_text, f.status, f.sort_order, f.updated_at, f.is_visible, COALESCE(f.is_featured, 0)
+            "SELECT DISTINCT f.id, f.name, f.short_text, f.full_description, f.dimensions, f.material, f.technique, f.year, f.passport_number, f.edition, f.created_period, f.care_instructions, f.provenance_note, f.authenticity_note, f.included_items, f.ambience_path, f.video_url, f.secret_text, f.status, f.sort_order, f.updated_at, f.is_visible, COALESCE(f.is_featured, 0)
              FROM figurines f
              JOIN figurines current ON current.id = ?1
              WHERE f.id != ?1
@@ -692,14 +721,21 @@ impl<'a> Repository<'a> {
                 material: row.get(5)?,
                 technique: row.get(6)?,
                 year: row.get(7)?,
-                ambience_path: row.get(8)?,
-                video_url: row.get(9)?,
-                secret_text: row.get(10)?,
-                status: FigurineStatus::from_str(&row.get::<_, String>(11)?),
-                sort_order: row.get(12)?,
-                updated_at: get_iso_date(row, 13)?,
-                is_visible: row.get(14)?,
-                is_featured: row.get::<_, i32>(15).unwrap_or(0) != 0,
+                passport_number: row.get(8)?,
+                edition: row.get(9)?,
+                created_period: row.get(10)?,
+                care_instructions: row.get(11)?,
+                provenance_note: row.get(12)?,
+                authenticity_note: row.get(13)?,
+                included_items: row.get(14)?,
+                ambience_path: row.get(15)?,
+                video_url: row.get(16)?,
+                secret_text: row.get(17)?,
+                status: FigurineStatus::from_str(&row.get::<_, String>(18)?),
+                sort_order: row.get(19)?,
+                updated_at: get_iso_date(row, 20)?,
+                is_visible: row.get(21)?,
+                is_featured: row.get::<_, i32>(22).unwrap_or(0) != 0,
             })
         })?;
 

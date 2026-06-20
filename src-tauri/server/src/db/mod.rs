@@ -247,6 +247,74 @@ impl Repository {
         )
     }
 
+    pub async fn issue_order_certificate(
+        &self,
+        id: uuid::Uuid,
+        token: &str,
+        certificate_number: &str,
+    ) -> Result<crate::models::Order> {
+        let order = sqlx::query_as::<_, crate::models::Order>(
+            "UPDATE orders
+             SET certificate_token = COALESCE(certificate_token, $2),
+                 certificate_number = COALESCE(certificate_number, $3),
+                 certificate_issued_at = COALESCE(certificate_issued_at, NOW()),
+                 certificate_revoked_at = NULL
+             WHERE id = $1
+               AND mode = 'reserve'::order_mode
+               AND reserve_status = 'confirmed'::reserve_status
+             RETURNING *",
+        )
+        .bind(id)
+        .bind(token)
+        .bind(certificate_number)
+        .fetch_optional(&self.pg_pool)
+        .await?;
+        order.ok_or_else(|| {
+            AppError::BadRequest(
+                "Certificate can be issued only for confirmed reserve orders".to_string(),
+            )
+        })
+    }
+
+    pub async fn revoke_order_certificate(&self, id: uuid::Uuid) -> Result<crate::models::Order> {
+        let order = sqlx::query_as::<_, crate::models::Order>(
+            "UPDATE orders
+             SET certificate_revoked_at = NOW()
+             WHERE id = $1 AND certificate_token IS NOT NULL
+             RETURNING *",
+        )
+        .bind(id)
+        .fetch_optional(&self.pg_pool)
+        .await?;
+        order.ok_or_else(|| AppError::NotFound("Certificate not found".to_string()))
+    }
+
+    pub async fn get_order_by_certificate_token(
+        &self,
+        token: &str,
+    ) -> Result<Option<crate::models::Order>> {
+        Ok(sqlx::query_as::<_, crate::models::Order>(
+            "SELECT * FROM orders WHERE certificate_token = $1",
+        )
+        .bind(token)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn get_user_certificate_orders(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<crate::models::Order>> {
+        Ok(sqlx::query_as::<_, crate::models::Order>(
+            "SELECT * FROM orders
+             WHERE user_id = $1 AND certificate_token IS NOT NULL
+             ORDER BY certificate_issued_at DESC NULLS LAST, created_at DESC",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
     /// All "notify me" orders left for a figurine — used to alert the author
     /// (personally) when the work becomes available again.
     pub async fn get_notify_orders_for_figurine(
@@ -459,17 +527,23 @@ impl Repository {
         let mut tx = self.pg_pool.begin().await?;
 
         sqlx::query(
-            "INSERT INTO figurines (id, name, short_text, full_description, dimensions, material, technique, year, ambience_path, video_url, secret_text, is_visible, is_featured, status, sort_order, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW())
+            "INSERT INTO figurines (id, name, short_text, full_description, dimensions, material, technique, year, passport_number, edition, created_period, care_instructions, provenance_note, authenticity_note, included_items, ambience_path, video_url, secret_text, is_visible, is_featured, status, sort_order, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, NOW())
              ON CONFLICT (id) DO UPDATE SET
                name=EXCLUDED.name, short_text=EXCLUDED.short_text, full_description=EXCLUDED.full_description,
                dimensions=EXCLUDED.dimensions, material=EXCLUDED.material, technique=EXCLUDED.technique,
+               passport_number=EXCLUDED.passport_number, edition=EXCLUDED.edition, created_period=EXCLUDED.created_period,
+               care_instructions=EXCLUDED.care_instructions, provenance_note=EXCLUDED.provenance_note,
+               authenticity_note=EXCLUDED.authenticity_note, included_items=EXCLUDED.included_items,
                year=EXCLUDED.year, ambience_path=EXCLUDED.ambience_path, video_url=EXCLUDED.video_url,
                secret_text=EXCLUDED.secret_text, is_visible=EXCLUDED.is_visible, is_featured=EXCLUDED.is_featured,
                status=EXCLUDED.status, sort_order=EXCLUDED.sort_order, updated_at=NOW()"
         )
         .bind(id).bind(&f.name).bind(&f.short_text).bind(&f.full_description)
         .bind(&f.dimensions).bind(&f.material).bind(&f.technique).bind(f.year)
+        .bind(&f.passport_number).bind(&f.edition).bind(&f.created_period)
+        .bind(&f.care_instructions).bind(&f.provenance_note).bind(&f.authenticity_note)
+        .bind(&f.included_items)
         .bind(&f.ambience_path).bind(&f.video_url).bind(&f.secret_text)
         .bind(f.is_visible).bind(f.is_featured).bind(&f.status).bind(f.sort_order)
         .execute(&mut *tx).await?;

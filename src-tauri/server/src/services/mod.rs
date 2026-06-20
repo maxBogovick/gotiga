@@ -255,6 +255,13 @@ impl AppService {
             material: figurine.material,
             technique: figurine.technique,
             year: figurine.year,
+            passport_number: figurine.passport_number,
+            edition: figurine.edition,
+            created_period: figurine.created_period,
+            care_instructions: figurine.care_instructions,
+            provenance_note: figurine.provenance_note,
+            authenticity_note: figurine.authenticity_note,
+            included_items: figurine.included_items,
             ambience_path: figurine
                 .ambience_path
                 .as_ref()
@@ -531,6 +538,72 @@ impl AppService {
                 .await;
         }
         Ok(())
+    }
+
+    fn certificate_dto(order: &Order) -> Option<CollectorCertificateDto> {
+        let token = order.certificate_token.clone()?;
+        let certificate_number = order.certificate_number.clone()?;
+        let issued_at = order.certificate_issued_at?;
+        Some(CollectorCertificateDto {
+            token,
+            certificate_number,
+            figurine_id: order.figurine_id.clone(),
+            figurine_name: order.figurine_name.clone(),
+            order_id: order.id.to_string(),
+            issued_at: issued_at.to_rfc3339(),
+            revoked_at: order.certificate_revoked_at.map(|d| d.to_rfc3339()),
+        })
+    }
+
+    pub async fn issue_order_certificate(&self, id: uuid::Uuid) -> Result<CollectorCertificateDto> {
+        let token = format!("cert_{}", uuid::Uuid::new_v4().simple());
+        let certificate_number = format!(
+            "CERT-{}",
+            uuid::Uuid::new_v4().simple().to_string()[..8].to_uppercase()
+        );
+        let order = self
+            .repo
+            .issue_order_certificate(id, &token, &certificate_number)
+            .await?;
+        Self::certificate_dto(&order)
+            .ok_or_else(|| AppError::Internal("Issued certificate is incomplete".to_string()))
+    }
+
+    pub async fn revoke_order_certificate(
+        &self,
+        id: uuid::Uuid,
+    ) -> Result<CollectorCertificateDto> {
+        let order = self.repo.revoke_order_certificate(id).await?;
+        Self::certificate_dto(&order)
+            .ok_or_else(|| AppError::Internal("Revoked certificate is incomplete".to_string()))
+    }
+
+    pub async fn get_public_certificate(
+        &self,
+        token: &str,
+    ) -> Result<Option<PublicCertificateDto>> {
+        let Some(order) = self.repo.get_order_by_certificate_token(token).await? else {
+            return Ok(None);
+        };
+        let Some(c) = Self::certificate_dto(&order) else {
+            return Ok(None);
+        };
+        Ok(Some(PublicCertificateDto {
+            token: c.token,
+            certificate_number: c.certificate_number,
+            figurine_id: c.figurine_id,
+            figurine_name: c.figurine_name,
+            issued_at: c.issued_at,
+            revoked: c.revoked_at.is_some(),
+        }))
+    }
+
+    pub async fn get_user_certificates(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<CollectorCertificateDto>> {
+        let orders = self.repo.get_user_certificate_orders(user_id).await?;
+        Ok(orders.iter().filter_map(Self::certificate_dto).collect())
     }
 
     async fn send_order_notification(&self, order: &Order) -> Result<()> {
@@ -2296,18 +2369,22 @@ impl AppService {
         let orders = self.repo.get_user_orders(user_id).await?;
         Ok(orders
             .into_iter()
-            .map(|o| UserOrderDto {
-                id: o.id.to_string(),
-                figurine_id: o.figurine_id,
-                figurine_name: o.figurine_name,
-                mode: o.mode,
-                status: o.status,
-                created_at: o.created_at.to_rfc3339(),
-                admin_notes: o.admin_notes,
-                reserve_status: o.reserve_status,
-                reserve_expires_at: o.reserve_expires_at.map(|d| d.to_string()),
-                admin_terms_note: o.admin_terms_note,
-                invoice_note: o.invoice_note,
+            .map(|o| {
+                let certificate = Self::certificate_dto(&o);
+                UserOrderDto {
+                    id: o.id.to_string(),
+                    figurine_id: o.figurine_id,
+                    figurine_name: o.figurine_name,
+                    mode: o.mode,
+                    status: o.status,
+                    created_at: o.created_at.to_rfc3339(),
+                    admin_notes: o.admin_notes,
+                    reserve_status: o.reserve_status,
+                    reserve_expires_at: o.reserve_expires_at.map(|d| d.to_string()),
+                    admin_terms_note: o.admin_terms_note,
+                    invoice_note: o.invoice_note,
+                    certificate,
+                }
             })
             .collect())
     }

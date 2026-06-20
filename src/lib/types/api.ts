@@ -42,6 +42,13 @@ export interface Figurine {
     material: string | null;
     technique: string | null;
     year: number | null;
+    passportNumber: string | null;
+    edition: string | null;
+    createdPeriod: string | null;
+    careInstructions: string | null;
+    provenanceNote: string | null;
+    authenticityNote: string | null;
+    includedItems: string | null;
     ambiencePath: string | null;
     videoUrl: string | null;
     secretText: string | null;
@@ -145,6 +152,10 @@ export interface Order {
     reserveExpiresAt: string | null;
     adminTermsNote: string | null;
     invoiceNote: string | null;
+    certificateToken: string | null;
+    certificateNumber: string | null;
+    certificateIssuedAt: string | null;
+    certificateRevokedAt: string | null;
     createdAt: string;
 }
 
@@ -432,6 +443,26 @@ export interface UserOrderDto {
     reserveExpiresAt: string | null;
     adminTermsNote: string | null;
     invoiceNote: string | null;
+    certificate: CollectorCertificateDto | null;
+}
+
+export interface CollectorCertificateDto {
+    token: string;
+    certificateNumber: string;
+    figurineId: string;
+    figurineName: string;
+    orderId: string;
+    issuedAt: string;
+    revokedAt: string | null;
+}
+
+export interface PublicCertificateDto {
+    token: string;
+    certificateNumber: string;
+    figurineId: string;
+    figurineName: string;
+    issuedAt: string;
+    revoked: boolean;
 }
 
 // ── Admin user management ────────────────────────────────────

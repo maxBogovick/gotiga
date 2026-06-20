@@ -214,7 +214,6 @@
 
   type RequestIntent = 'request' | 'reserve' | 'waitlist' | 'viewing' | 'similar' | 'question' | 'notify';
   type AttributeKind = 'dimensions' | 'material' | 'technique';
-  type TrustFact = { label: string; value: string };
 
   function statusLabel(status: FigurineStatus): string {
     switch (status) {
@@ -624,18 +623,6 @@
     if (hasText(figurine.material)) items.push({ kind: 'material', label: $t('figurineMaterial'), value: figurine.material });
     if (hasText(figurine.technique)) items.push({ kind: 'technique', label: $t('figurineTechnique'), value: figurine.technique });
     return items;
-  });
-  let trustFacts = $derived.by<TrustFact[]>(() => {
-    const facts: TrustFact[] = [
-      { label: $t('detailTrustWork'), value: figurine.name },
-      { label: $t('detailTrustStatus'), value: statusLabel(figurine.status) },
-    ];
-    if (hasText(figurine.dimensions)) facts.push({ label: $t('figurineDimensions'), value: figurine.dimensions });
-    if (hasText(figurine.material)) facts.push({ label: $t('figurineMaterial'), value: figurine.material });
-    if (hasText(figurine.technique)) facts.push({ label: $t('figurineTechnique'), value: figurine.technique });
-    if (figurine.year) facts.push({ label: $t('detailTrustYear'), value: String(figurine.year) });
-    if (hasText(figurine.series)) facts.push({ label: $t('detailTrustSeries'), value: figurine.series });
-    return facts;
   });
   let hasAttributesSection = $derived(attributes.length > 0);
   let hasScheduleSection = $derived(figurineSchedule.entries.length > 0);
@@ -1431,18 +1418,10 @@
           </div>
 
           <section class="trust-ledger" aria-label={$t('detailTrustBlockLabel')}>
-            <div class="trust-ledger-head">
-              <span>{$t('detailTrustKicker')}</span>
-              <strong>{$t('detailTrustUnique')}</strong>
-            </div>
-            <dl class="trust-ledger-facts">
-              {#each trustFacts as fact (fact.label)}
-                <div>
-                  <dt>{fact.label}</dt>
-                  <dd>{fact.value}</dd>
-                </div>
-              {/each}
-            </dl>
+            <p class="trust-ledger-mark">
+              <span class="trust-ledger-lozenge" aria-hidden="true"></span>
+              {$t('detailTrustUnique')}
+            </p>
             <div class="trust-ledger-next">
               {#if figurine.status === 'available'}
                 <p>{$t('detailTrustNextAvailable')}</p>
@@ -1455,6 +1434,9 @@
                       : $t('detailTrustNextSold')}
                 </p>
               {/if}
+              <a class="trust-ledger-link" href="/figurines/{id}/passport">
+                {$t('detailOpenPassport')} →
+              </a>
             </div>
           </section>
 

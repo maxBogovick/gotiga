@@ -1063,6 +1063,22 @@
                             {#if o.adminNotes}
                               <p class="reserve-note">{o.adminNotes}</p>
                             {/if}
+                            {#if o.certificate}
+                              <div class="d-curator">
+                                <span class="d-curator-label">{$t('profileCertificateTitle')}</span>
+                                <p class="d-curator-text">
+                                  {o.certificate.certificateNumber}
+                                  {#if o.certificate.revokedAt}
+                                    · {$t('profileCertificateRevoked')}
+                                  {/if}
+                                </p>
+                                <div class="d-actions">
+                                  <a class="d-link" href="/certificate/{o.certificate.token}">
+                                    {$t('profileCertificateOpen')}
+                                  </a>
+                                </div>
+                              </div>
+                            {/if}
                           </div>
                         {/if}
                       </div>

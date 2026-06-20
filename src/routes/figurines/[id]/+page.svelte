@@ -58,19 +58,38 @@
     return () => s.remove();
   });
 
+  function propertyValue(name: string, value: string | null | undefined) {
+    const text = value?.trim();
+    return text ? { '@type': 'PropertyValue', name, value: text } : null;
+  }
+
   // VisualArtwork (not Product/Offer) — this is a showcase, not a shop.
-  let jsonLd = $derived(() => JSON.stringify({
-    '@context': 'https://schema.org',
-    '@type': 'VisualArtwork',
-    name: figurine?.name ?? '',
-    description: figurine?.shortText ?? figurine?.fullDescription ?? '',
-    image: ogImage(),
-    url: page.url.href,
-    creator: { '@type': 'Organization', name: $brandName, url: page.url.origin },
-    ...(figurine?.material ? { artMedium: figurine.material } : {}),
-    ...(figurine?.technique ? { artform: figurine.technique } : {}),
-    ...(figurine?.year ? { dateCreated: String(figurine.year) } : {}),
-  }));
+  let jsonLd = $derived(() => {
+    const additionalProperty = [
+      propertyValue('Passport number', figurine?.passportNumber),
+      propertyValue('Edition', figurine?.edition),
+      propertyValue('Created period', figurine?.createdPeriod),
+      propertyValue('Care instructions', figurine?.careInstructions),
+      propertyValue('Authenticity note', figurine?.authenticityNote),
+      propertyValue('Included items', figurine?.includedItems),
+    ].filter(Boolean);
+
+    return JSON.stringify({
+      '@context': 'https://schema.org',
+      '@type': 'VisualArtwork',
+      name: figurine?.name ?? '',
+      description: figurine?.shortText ?? figurine?.fullDescription ?? '',
+      image: ogImage(),
+      url: page.url.href,
+      creator: { '@type': 'Organization', name: $brandName, url: page.url.origin },
+      ...(figurine?.material ? { artMedium: figurine.material } : {}),
+      ...(figurine?.technique ? { artform: figurine.technique } : {}),
+      ...(figurine?.year ? { dateCreated: String(figurine.year) } : {}),
+      ...(figurine?.passportNumber ? { identifier: figurine.passportNumber } : {}),
+      ...(figurine?.provenanceNote ? { provenance: figurine.provenanceNote } : {}),
+      ...(additionalProperty.length ? { additionalProperty } : {}),
+    });
+  });
 
   // Breadcrumb trail — Google renders these in the result snippet (Home › Archive › name).
   let breadcrumbJsonLd = $derived(() => JSON.stringify({

@@ -1208,6 +1208,47 @@ pub async fn user_profile_orders(
     Ok(Json(orders))
 }
 
+pub async fn user_profile_certificates(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<CollectorCertificateDto>>> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
+    let certificates = service.get_user_certificates(user.id).await?;
+    Ok(Json(certificates))
+}
+
+pub async fn get_public_certificate(
+    State(service): State<AppService>,
+    Path(token): Path<String>,
+) -> Result<Json<PublicCertificateDto>> {
+    service
+        .get_public_certificate(&token)
+        .await?
+        .map(Json)
+        .ok_or_else(|| AppError::NotFound("Certificate not found".to_string()))
+}
+
+pub async fn issue_order_certificate(
+    State(service): State<AppService>,
+    Path(id): Path<String>,
+) -> Result<Json<CollectorCertificateDto>> {
+    let id =
+        Uuid::parse_str(&id).map_err(|_| AppError::BadRequest("Invalid order ID".to_string()))?;
+    let certificate = service.issue_order_certificate(id).await?;
+    Ok(Json(certificate))
+}
+
+pub async fn revoke_order_certificate(
+    State(service): State<AppService>,
+    Path(id): Path<String>,
+) -> Result<Json<CollectorCertificateDto>> {
+    let id =
+        Uuid::parse_str(&id).map_err(|_| AppError::BadRequest("Invalid order ID".to_string()))?;
+    let certificate = service.revoke_order_certificate(id).await?;
+    Ok(Json(certificate))
+}
+
 pub async fn user_get_wishlist(
     State(service): State<AppService>,
     headers: HeaderMap,

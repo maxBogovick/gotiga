@@ -40,7 +40,19 @@ impl Database {
         add_column_if_missing(&conn, "images", "thumb_path", "TEXT")?;
         add_column_if_missing(&conn, "images", "original_data", "BLOB")?;
         add_column_if_missing(&conn, "images", "thumb_data", "BLOB")?;
-        add_column_if_missing(&conn, "figurines", "is_featured", "INTEGER NOT NULL DEFAULT 0")?;
+        add_column_if_missing(
+            &conn,
+            "figurines",
+            "is_featured",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        add_column_if_missing(&conn, "figurines", "passport_number", "TEXT")?;
+        add_column_if_missing(&conn, "figurines", "edition", "TEXT")?;
+        add_column_if_missing(&conn, "figurines", "created_period", "TEXT")?;
+        add_column_if_missing(&conn, "figurines", "care_instructions", "TEXT")?;
+        add_column_if_missing(&conn, "figurines", "provenance_note", "TEXT")?;
+        add_column_if_missing(&conn, "figurines", "authenticity_note", "TEXT")?;
+        add_column_if_missing(&conn, "figurines", "included_items", "TEXT")?;
         migrate_figurines_status_constraint(&conn)?;
 
         Ok(())
@@ -80,7 +92,8 @@ fn migrate_figurines_status_constraint(conn: &Connection) -> Result<()> {
     // Drop leftover temp table from any previous failed migration
     conn.execute_batch("DROP TABLE IF EXISTS figurines_new;")?;
 
-    conn.execute_batch("
+    conn.execute_batch(
+        "
         PRAGMA foreign_keys = OFF;
         BEGIN;
         CREATE TABLE figurines_new (
@@ -92,6 +105,13 @@ fn migrate_figurines_status_constraint(conn: &Connection) -> Result<()> {
             material TEXT,
             technique TEXT,
             year INTEGER,
+            passport_number TEXT,
+            edition TEXT,
+            created_period TEXT,
+            care_instructions TEXT,
+            provenance_note TEXT,
+            authenticity_note TEXT,
+            included_items TEXT,
             ambience_path TEXT,
             video_url TEXT,
             ambience_data BLOB,
@@ -107,7 +127,9 @@ fn migrate_figurines_status_constraint(conn: &Connection) -> Result<()> {
         );
         INSERT INTO figurines_new
             SELECT id, name, short_text, full_description, dimensions, material, technique,
-                   year, ambience_path, video_url, ambience_data, video_data, secret_text,
+                   year, passport_number, edition, created_period, care_instructions,
+                   provenance_note, authenticity_note, included_items,
+                   ambience_path, video_url, ambience_data, video_data, secret_text,
                    is_visible, 0, status, sort_order, created_at, updated_at
             FROM figurines;
         DROP TABLE figurines;
@@ -115,7 +137,8 @@ fn migrate_figurines_status_constraint(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_figurines_sort ON figurines(sort_order);
         COMMIT;
         PRAGMA foreign_keys = ON;
-    ")?;
+    ",
+    )?;
 
     Ok(())
 }

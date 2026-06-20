@@ -277,6 +277,15 @@ pub fn router(service: AppService, config: Config) -> Router {
                     auth_middleware,
                 )),
             )
+            .route(
+                "/admin/orders/:id/certificate",
+                post(handlers::issue_order_certificate)
+                    .delete(handlers::revoke_order_certificate)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
             // === COMMISSIONS (ADMIN) ===
             .route(
                 "/admin/commissions",
@@ -365,8 +374,16 @@ pub fn router(service: AppService, config: Config) -> Router {
             .route("/auth/logout", post(handlers::user_logout))
             .route("/auth/me", get(handlers::user_me))
             .route("/auth/link-bookings", post(handlers::user_link_bookings))
+            .route(
+                "/certificates/:token",
+                get(handlers::get_public_certificate),
+            )
             .route("/profile/bookings", get(handlers::user_profile_bookings))
             .route("/profile/orders", get(handlers::user_profile_orders))
+            .route(
+                "/profile/certificates",
+                get(handlers::user_profile_certificates),
+            )
             .route(
                 "/profile/wishlist",
                 get(handlers::user_get_wishlist).put(handlers::user_set_wishlist),

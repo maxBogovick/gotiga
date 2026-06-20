@@ -120,6 +120,13 @@
         material: '',
         technique: '',
         year: new Date().getFullYear(),
+        passportNumber: '',
+        edition: '',
+        createdPeriod: '',
+        careInstructions: '',
+        provenanceNote: '',
+        authenticityNote: '',
+        includedItems: '',
         ambiencePath: null,
         videoUrl: null,
         secretText: '',
@@ -695,6 +702,43 @@
                             <span class="label">{$t('adminFieldHistory')}</span>
                             <textarea bind:value={selectedFigurine.fullDescription} class="input-gothic h-40"></textarea>
                         </label>
+
+                        <div class="border-t border-[#34251c]/10 pt-8 mb-8">
+                            <h3 class="text-xl font-gothic mb-2">{$t('adminPassportHeading')}</h3>
+                            <p class="text-xs text-[#5f4636]/75 mb-5 max-w-2xl">{$t('adminPassportHint')}</p>
+                            <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
+                                <label class="block">
+                                    <span class="label">{$t('passportNumber')}</span>
+                                    <input bind:value={selectedFigurine.passportNumber} class="input-gothic" placeholder="RTN-2026-001" />
+                                </label>
+                                <label class="block">
+                                    <span class="label">{$t('passportEdition')}</span>
+                                    <input bind:value={selectedFigurine.edition} class="input-gothic" placeholder="1 of 1" />
+                                </label>
+                                <label class="block">
+                                    <span class="label">{$t('passportCreated')}</span>
+                                    <input bind:value={selectedFigurine.createdPeriod} class="input-gothic" placeholder="Spring 2026" />
+                                </label>
+                            </div>
+                            <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                                <label class="block">
+                                    <span class="label">{$t('passportProvenance')}</span>
+                                    <textarea bind:value={selectedFigurine.provenanceNote} class="input-gothic h-24"></textarea>
+                                </label>
+                                <label class="block">
+                                    <span class="label">{$t('passportAuthenticity')}</span>
+                                    <textarea bind:value={selectedFigurine.authenticityNote} class="input-gothic h-24"></textarea>
+                                </label>
+                                <label class="block">
+                                    <span class="label">{$t('passportCare')}</span>
+                                    <textarea bind:value={selectedFigurine.careInstructions} class="input-gothic h-24"></textarea>
+                                </label>
+                                <label class="block">
+                                    <span class="label">{$t('passportIncluded')}</span>
+                                    <textarea bind:value={selectedFigurine.includedItems} class="input-gothic h-24"></textarea>
+                                </label>
+                            </div>
+                        </div>
 
                         <!-- Media -->
                         <div class="border-t border-[#34251c]/10 pt-8 mb-8">

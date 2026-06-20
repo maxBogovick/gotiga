@@ -17,6 +17,7 @@
   let statusFilter = $state<'' | 'new' | 'seen' | 'replied'>('');
   let modeFilter = $state<'' | OrderMode>('');
   let updatingId = $state<string | null>(null);
+  let certificateUpdatingId = $state<string | null>(null);
   let reserveStatusDraft = $state<Record<string, ReserveStatus>>({});
   let reserveExpiryDraft = $state<Record<string, string>>({});
   let adminNotesDraft = $state<Record<string, string>>({});
@@ -89,6 +90,38 @@
     }
   }
 
+  async function issueCertificate(order: Order) {
+    certificateUpdatingId = order.id;
+    try {
+      const certificate = await api.issueOrderCertificate(order.id);
+      order.certificateToken = certificate.token;
+      order.certificateNumber = certificate.certificateNumber;
+      order.certificateIssuedAt = certificate.issuedAt;
+      order.certificateRevokedAt = certificate.revokedAt;
+      items = [...items];
+    } catch {
+      // keep the row available for retry
+    } finally {
+      certificateUpdatingId = null;
+    }
+  }
+
+  async function revokeCertificate(order: Order) {
+    certificateUpdatingId = order.id;
+    try {
+      const certificate = await api.revokeOrderCertificate(order.id);
+      order.certificateToken = certificate.token;
+      order.certificateNumber = certificate.certificateNumber;
+      order.certificateIssuedAt = certificate.issuedAt;
+      order.certificateRevokedAt = certificate.revokedAt;
+      items = [...items];
+    } catch {
+      // keep current certificate state visible for retry
+    } finally {
+      certificateUpdatingId = null;
+    }
+  }
+
   onMount(() => load());
 
   const modeFilters: Array<{ value: '' | OrderMode; label: string }> = [
@@ -130,6 +163,10 @@
 
   function reserveStatusLabel(status: ReserveStatus | null) {
     return reserveStatusOptions.find(s => s.value === status)?.label ?? 'Requested';
+  }
+
+  function certificateUrl(token: string): string {
+    return `${window.location.origin}/certificate/${token}`;
   }
 
   function makeMailtoLink(order: Order): string {
@@ -332,6 +369,47 @@
                     class="text-[10px] px-2 py-1 border border-emerald-700/30 text-emerald-800 bg-white hover:bg-emerald-50 transition-colors disabled:opacity-40"
                   >Save reserve details</button>
                 </div>
+                {#if order.reserveStatus === 'confirmed'}
+                  <div class="border-t border-emerald-900/10 pt-2">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                      <div class="min-w-0">
+                        <p class="text-[10px] uppercase tracking-wide text-[#5f4636] font-['Inter']">Collector certificate</p>
+                        {#if order.certificateToken && order.certificateNumber}
+                          <a
+                            href="/certificate/{order.certificateToken}"
+                            target="_blank"
+                            rel="noopener"
+                            class="text-xs text-emerald-800 hover:underline break-all"
+                          >{order.certificateNumber} · {certificateUrl(order.certificateToken)}</a>
+                          {#if order.certificateRevokedAt}
+                            <p class="text-[11px] text-red-700 mt-1">Revoked: {formatDate(order.certificateRevokedAt)}</p>
+                          {:else if order.certificateIssuedAt}
+                            <p class="text-[11px] text-[#5f4636]/75 mt-1">Issued: {formatDate(order.certificateIssuedAt)}</p>
+                          {/if}
+                        {:else}
+                          <p class="text-xs text-[#5f4636]/70">No certificate issued yet.</p>
+                        {/if}
+                      </div>
+                      <div class="flex gap-1">
+                        {#if order.certificateToken && !order.certificateRevokedAt}
+                          <button
+                            type="button"
+                            onclick={() => revokeCertificate(order)}
+                            disabled={certificateUpdatingId === order.id}
+                            class="text-[10px] px-2 py-1 border border-red-700/25 text-red-700 bg-white hover:bg-red-50 transition-colors disabled:opacity-40"
+                          >Revoke</button>
+                        {:else}
+                          <button
+                            type="button"
+                            onclick={() => issueCertificate(order)}
+                            disabled={certificateUpdatingId === order.id}
+                            class="text-[10px] px-2 py-1 border border-emerald-700/30 text-emerald-800 bg-white hover:bg-emerald-50 transition-colors disabled:opacity-40"
+                          >Issue certificate</button>
+                        {/if}
+                      </div>
+                    </div>
+                  </div>
+                {/if}
               </div>
             {/if}
 

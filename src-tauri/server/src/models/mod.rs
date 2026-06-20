@@ -123,6 +123,13 @@ pub struct Figurine {
     pub material: Option<String>,
     pub technique: Option<String>,
     pub year: Option<i32>,
+    pub passport_number: Option<String>,
+    pub edition: Option<String>,
+    pub created_period: Option<String>,
+    pub care_instructions: Option<String>,
+    pub provenance_note: Option<String>,
+    pub authenticity_note: Option<String>,
+    pub included_items: Option<String>,
     pub ambience_path: Option<String>,
     pub video_url: Option<String>,
     pub secret_text: Option<String>,
@@ -236,6 +243,13 @@ pub struct FigurineDto {
     pub material: Option<String>,
     pub technique: Option<String>,
     pub year: Option<i32>,
+    pub passport_number: Option<String>,
+    pub edition: Option<String>,
+    pub created_period: Option<String>,
+    pub care_instructions: Option<String>,
+    pub provenance_note: Option<String>,
+    pub authenticity_note: Option<String>,
+    pub included_items: Option<String>,
     pub ambience_path: Option<String>,
     pub video_url: Option<String>,
     pub secret_text: Option<String>,
@@ -302,6 +316,13 @@ pub struct SaveFigurineRequest {
     pub material: Option<String>,
     pub technique: Option<String>,
     pub year: Option<i32>,
+    pub passport_number: Option<String>,
+    pub edition: Option<String>,
+    pub created_period: Option<String>,
+    pub care_instructions: Option<String>,
+    pub provenance_note: Option<String>,
+    pub authenticity_note: Option<String>,
+    pub included_items: Option<String>,
     pub ambience_path: Option<String>,
     pub video_url: Option<String>,
     pub secret_text: Option<String>,
@@ -427,6 +448,10 @@ pub struct Order {
     pub reserve_expires_at: Option<chrono::NaiveDate>,
     pub admin_terms_note: Option<String>,
     pub invoice_note: Option<String>,
+    pub certificate_token: Option<String>,
+    pub certificate_number: Option<String>,
+    pub certificate_issued_at: Option<DateTime<Utc>>,
+    pub certificate_revoked_at: Option<DateTime<Utc>>,
 }
 
 /// Returned after submitting an order. Carries a token only for notify-mode.
@@ -442,6 +467,29 @@ pub struct OrderCreatedResponse {
 pub struct NotifyInfo {
     pub figurine_id: String,
     pub figurine_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectorCertificateDto {
+    pub token: String,
+    pub certificate_number: String,
+    pub figurine_id: String,
+    pub figurine_name: String,
+    pub order_id: String,
+    pub issued_at: String,
+    pub revoked_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublicCertificateDto {
+    pub token: String,
+    pub certificate_number: String,
+    pub figurine_id: String,
+    pub figurine_name: String,
+    pub issued_at: String,
+    pub revoked: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -893,6 +941,7 @@ pub struct UserOrderDto {
     pub reserve_expires_at: Option<String>,
     pub admin_terms_note: Option<String>,
     pub invoice_note: Option<String>,
+    pub certificate: Option<CollectorCertificateDto>,
 }
 
 // ============================================================

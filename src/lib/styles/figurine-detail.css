@@ -1451,65 +1451,33 @@
 
 .trust-ledger {
   display: grid;
-  gap: 0.7rem;
-  padding-top: 0.85rem;
+  gap: 0.85rem;
+  padding-top: 0.95rem;
   border-top: 1px solid color-mix(in srgb, var(--color-ink-primary) 8%, transparent);
 }
 
-.trust-ledger-head {
+/* The house assurance — author-made, one-of-a-kind, set as a colophon line */
+.trust-ledger-mark {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.trust-ledger-head span {
-  color: var(--color-ember);
-  font-family: var(--font-body);
-  font-size: 0.58rem;
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.trust-ledger-head strong {
+  gap: 0.6rem;
+  margin: 0;
   color: var(--color-ink-primary);
   font-family: var(--font-display);
-  font-size: 0.98rem;
+  font-size: 1.04rem;
+  font-style: italic;
   font-weight: 500;
-  line-height: 1.2;
-  text-align: right;
+  line-height: 1.25;
 }
 
-.trust-ledger-facts {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.45rem 0.75rem;
-  margin: 0;
-}
-
-.trust-ledger-facts div {
-  min-width: 0;
-}
-
-.trust-ledger-facts dt {
-  color: color-mix(in srgb, var(--color-ink-secondary) 62%, transparent);
-  font-family: var(--font-body);
-  font-size: 0.54rem;
-  font-weight: 800;
-  letter-spacing: 0.1em;
-  line-height: 1.2;
-  text-transform: uppercase;
-}
-
-.trust-ledger-facts dd {
-  overflow: hidden;
-  margin: 0.12rem 0 0;
-  color: var(--color-ink-primary);
-  font-family: var(--font-body);
-  font-size: 0.75rem;
-  line-height: 1.3;
-  text-overflow: ellipsis;
+/* Ember lozenge — old-book section mark, rhymes with the act divider */
+.trust-ledger-lozenge {
+  flex: none;
+  width: 0.42rem;
+  height: 0.42rem;
+  transform: rotate(45deg) translateY(-0.05rem);
+  background: var(--color-ember);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-ember) 14%, transparent);
 }
 
 .trust-ledger-next {
@@ -3002,18 +2970,9 @@
     content: none;
   }
 
-  .trust-ledger-head,
   .trust-ledger-next {
     align-items: flex-start;
     flex-direction: column;
-  }
-
-  .trust-ledger-head strong {
-    text-align: left;
-  }
-
-  .trust-ledger-facts {
-    grid-template-columns: minmax(0, 1fr);
   }
 
   .making-strip,

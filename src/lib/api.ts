@@ -26,6 +26,8 @@ import type {
     UserDto,
     UserBookingDto,
     UserOrderDto,
+    CollectorCertificateDto,
+    PublicCertificateDto,
     AdminUsersPage,
     AdminUserDetail,
     ResetTokenResponse,
@@ -571,6 +573,24 @@ export const api = {
         });
     },
 
+    async issueOrderCertificate(id: string): Promise<CollectorCertificateDto> {
+        return webFetch(`/admin/orders/${id}/certificate`, {
+            method: 'POST',
+            headers: authHeaders(),
+        });
+    },
+
+    async revokeOrderCertificate(id: string): Promise<CollectorCertificateDto> {
+        return webFetch(`/admin/orders/${id}/certificate`, {
+            method: 'DELETE',
+            headers: authHeaders(),
+        });
+    },
+
+    async getPublicCertificate(token: string): Promise<PublicCertificateDto> {
+        return webFetch(`/certificates/${encodeURIComponent(token)}`);
+    },
+
     // === SCHEDULE & BOOKINGS (PUBLIC) ===
 
     async getFigurineSchedule(figurineId: string): Promise<FigurineSchedule> {
@@ -764,6 +784,12 @@ export const api = {
 
     async userProfileOrders(sessionToken: string): Promise<UserOrderDto[]> {
         return webFetch('/profile/orders', {
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    async userProfileCertificates(sessionToken: string): Promise<CollectorCertificateDto[]> {
+        return webFetch('/profile/certificates', {
             headers: { Authorization: `Bearer ${sessionToken}` },
         });
     },

@@ -8,6 +8,13 @@ CREATE TABLE IF NOT EXISTS figurines (
     material TEXT,
     technique TEXT,
     year INTEGER,
+    passport_number TEXT,
+    edition TEXT,
+    created_period TEXT,
+    care_instructions TEXT,
+    provenance_note TEXT,
+    authenticity_note TEXT,
+    included_items TEXT,
     ambience_path TEXT,
     video_url TEXT,
     ambience_data BLOB, -- Встроенное аудио
