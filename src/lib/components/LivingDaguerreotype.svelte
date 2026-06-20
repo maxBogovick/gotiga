@@ -14,6 +14,11 @@
    *    SSR, the card→detail view-transition, reduced-motion and WebGL-less
    *    browsers all show the real photograph with zero jank.
    *
+   * Lifecycle: the WebGL context, shader program and geometry are built ONCE in
+   * onMount and persist for the component's life. Switching the gallery image
+   * only reloads the textures (via the $effect on src/depthSrc) — no context
+   * teardown, no shader recompile, no context-loss churn while paging ←/→.
+   *
    * Depth source, in order of preference:
    *  1. `depthSrc` — a precomputed monocular depth map (Depth-Anything-class),
    *     a grayscale image served as a media variant. The headline path.
@@ -54,10 +59,191 @@
     typeof window !== 'undefined' &&
     window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+  // ── Persistent GL state (built once, reused across image switches) ──────────
+  let gl: WebGLRenderingContext | null = null;
+  let uColor: WebGLUniformLocation | null = null;
+  let uDepth: WebGLUniformLocation | null = null;
+  let uHasDepth: WebGLUniformLocation | null = null;
+  let uImageAspect: WebGLUniformLocation | null = null;
+  let uCanvasAspect: WebGLUniformLocation | null = null;
+  let uMouse: WebGLUniformLocation | null = null;
+  let uIntensity: WebGLUniformLocation | null = null;
+
+  let colorTex: WebGLTexture | null = null;
+  let depthTex: WebGLTexture | null = null;
+  let hasDepth = 0;
+  let imageAspect = 1;
+
+  // pointer → eased camera offset
+  let targetX = 0, targetY = 0, curX = 0, curY = 0;
+  let pointerInside = false;
+  let visible = true;
+  let running = false;
+  let raf = 0;
+
+  let destroyed = false;
+  let initialized = false; // GL context + program ready
+  let loadedKey = '';      // de-dupes the (src|depthSrc) currently loaded/loading
+  let loadSeq = 0;         // supersedes in-flight loads when the image changes fast
+
+  function makeTexture(): WebGLTexture | null {
+    if (!gl) return null;
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    return tex;
+  }
+
+  function uploadImage(tex: WebGLTexture | null, img: HTMLImageElement): boolean {
+    if (!gl) return false;
+    try {
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+      return true;
+    } catch {
+      return false; // cross-origin taint etc. → caller falls back
+    }
+  }
+
+  function loadImage(url: string): Promise<HTMLImageElement | null> {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => resolve(img);
+      img.onerror = () => resolve(null);
+      img.src = url;
+    });
+  }
+
+  // Await an existing <img> instead of fetching the URL again. The browser is
+  // already loading the visible base image, so the colour texture costs zero
+  // extra network requests — we just upload that same element once it's ready.
+  function awaitImg(img: HTMLImageElement): Promise<HTMLImageElement | null> {
+    if (img.complete) return Promise.resolve(img.naturalWidth > 0 ? img : null);
+    return new Promise((resolve) => {
+      img.addEventListener('load', () => resolve(img.naturalWidth > 0 ? img : null), { once: true });
+      img.addEventListener('error', () => resolve(null), { once: true });
+    });
+  }
+
+  function resize() {
+    if (!host || !canvas) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = Math.max(1, Math.round(host.clientWidth * dpr));
+    const h = Math.max(1, Math.round(host.clientHeight * dpr));
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+    }
+  }
+
+  function draw() {
+    if (!gl || !canvas || !colorTex) return;
+    resize();
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, colorTex);
+    gl.uniform1i(uColor, 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, depthTex ?? colorTex);
+    gl.uniform1i(uDepth, 1);
+
+    gl.uniform1f(uHasDepth, hasDepth);
+    gl.uniform1f(uImageAspect, imageAspect);
+    gl.uniform1f(uCanvasAspect, canvas.width / canvas.height);
+    gl.uniform2f(uMouse, curX, curY);
+    gl.uniform1f(uIntensity, MAX_SHIFT * Math.max(0, Math.min(1, intensity)));
+
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
+
+  function frame() {
+    const dx = targetX - curX;
+    const dy = targetY - curY;
+    curX += dx * EASE;
+    curY += dy * EASE;
+    draw();
+    // settle: once at rest and the pointer has left, stop burning frames.
+    if (!pointerInside && Math.hypot(dx, dy) < 0.0006) {
+      running = false;
+      raf = 0;
+      return;
+    }
+    raf = requestAnimationFrame(frame);
+  }
+
+  function kick() {
+    if (running || destroyed || !visible || !colorTex) return;
+    running = true;
+    raf = requestAnimationFrame(frame);
+  }
+
+  function onMove(e: PointerEvent) {
+    if (!host) return;
+    const r = host.getBoundingClientRect();
+    targetX = ((e.clientX - r.left) / r.width) * 2 - 1;
+    targetY = ((e.clientY - r.top) / r.height) * 2 - 1;
+    pointerInside = true;
+    kick();
+  }
+  function onLeave() {
+    pointerInside = false;
+    targetX = 0;
+    targetY = 0;
+    kick(); // ease back to the resting frame
+  }
+
+  // Load (or reload) the colour + optional depth textures for a given pair of
+  // sources. Idempotent per (src|depthSrc); a newer call supersedes an older
+  // in-flight one via loadSeq. Reuses the persistent GL context — no teardown.
+  async function loadTextures(colorSrc: string, depthSrc2: string | null) {
+    if (!gl || destroyed) return;
+    const key = `${colorSrc}|${depthSrc2 ?? ''}`;
+    if (key === loadedKey) return;
+    loadedKey = key;
+    const seq = ++loadSeq;
+
+    // Fade the canvas out while the new plate loads; the base <img> (its src is
+    // bound reactively) shows through and fades the new photograph in.
+    glReady = false;
+    imageFailed = false;
+
+    // Colour: reuse the visible base <img> when it's the same element/source,
+    // else a fresh load (covers the no-DOM-yet edge).
+    const colorImg = baseImg ? await awaitImg(baseImg) : await loadImage(colorSrc);
+    if (destroyed || seq !== loadSeq) return;
+    if (!colorImg) { imageFailed = true; return; }
+
+    imageAspect = colorImg.naturalWidth / Math.max(1, colorImg.naturalHeight);
+    if (!colorTex) colorTex = makeTexture();
+    if (!uploadImage(colorTex, colorImg)) return; // tainted → base <img> stays
+
+    // Depth: optional, fetched separately (it's small and only present sometimes).
+    hasDepth = 0;
+    if (depthSrc2) {
+      const depthImg = await loadImage(depthSrc2);
+      if (destroyed || seq !== loadSeq) return;
+      if (depthImg) {
+        if (!depthTex) depthTex = makeTexture();
+        if (uploadImage(depthTex, depthImg)) hasDepth = 1;
+      }
+    }
+
+    draw();
+    glReady = true; // fade the canvas in over the base <img>
+    kick();
+  }
+
   onMount(() => {
     if (reducedMotion || !canvas || !host || !src) return;
 
-    const gl =
+    gl =
       (canvas.getContext('webgl', { alpha: true, premultipliedAlpha: false, antialias: true }) as WebGLRenderingContext | null) ||
       (canvas.getContext('experimental-webgl', { alpha: true }) as WebGLRenderingContext | null);
     if (!gl) return; // base <img> stays visible — silent, correct fallback
@@ -126,13 +312,13 @@
 
     const vs = compile(gl.VERTEX_SHADER, vsrc);
     const fs = compile(gl.FRAGMENT_SHADER, fsrc);
-    if (!vs || !fs) return;
+    if (!vs || !fs) { gl = null; return; }
     const prog = gl.createProgram();
-    if (!prog) return;
+    if (!prog) { gl = null; return; }
     gl.attachShader(prog, vs);
     gl.attachShader(prog, fs);
     gl.linkProgram(prog);
-    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return;
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) { gl = null; return; }
     gl.useProgram(prog);
 
     // ── geometry: full-frame quad. uv (0,0) = top-left, matching image rows. ──
@@ -156,137 +342,16 @@
     gl.enableVertexAttribArray(aUv);
     gl.vertexAttribPointer(aUv, 2, gl.FLOAT, false, 16, 8);
 
-    const uColor = gl.getUniformLocation(prog, 'uColor');
-    const uDepth = gl.getUniformLocation(prog, 'uDepth');
-    const uHasDepth = gl.getUniformLocation(prog, 'uHasDepth');
-    const uImageAspect = gl.getUniformLocation(prog, 'uImageAspect');
-    const uCanvasAspect = gl.getUniformLocation(prog, 'uCanvasAspect');
-    const uMouse = gl.getUniformLocation(prog, 'uMouse');
-    const uIntensity = gl.getUniformLocation(prog, 'uIntensity');
+    uColor = gl.getUniformLocation(prog, 'uColor');
+    uDepth = gl.getUniformLocation(prog, 'uDepth');
+    uHasDepth = gl.getUniformLocation(prog, 'uHasDepth');
+    uImageAspect = gl.getUniformLocation(prog, 'uImageAspect');
+    uCanvasAspect = gl.getUniformLocation(prog, 'uCanvasAspect');
+    uMouse = gl.getUniformLocation(prog, 'uMouse');
+    uIntensity = gl.getUniformLocation(prog, 'uIntensity');
 
-    function makeTexture(): WebGLTexture | null {
-      const tex = gl!.createTexture();
-      gl!.bindTexture(gl!.TEXTURE_2D, tex);
-      gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_WRAP_S, gl!.CLAMP_TO_EDGE);
-      gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_WRAP_T, gl!.CLAMP_TO_EDGE);
-      gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_MIN_FILTER, gl!.LINEAR);
-      gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_MAG_FILTER, gl!.LINEAR);
-      return tex;
-    }
-
-    let imageAspect = 1;
-    let destroyed = false;
-    let colorTex: WebGLTexture | null = null;
-    let depthTex: WebGLTexture | null = null;
-    let hasDepth = 0;
-
-    function uploadImage(tex: WebGLTexture | null, img: HTMLImageElement): boolean {
-      try {
-        gl!.bindTexture(gl!.TEXTURE_2D, tex);
-        gl!.texImage2D(gl!.TEXTURE_2D, 0, gl!.RGBA, gl!.RGBA, gl!.UNSIGNED_BYTE, img);
-        return true;
-      } catch {
-        return false; // cross-origin taint etc. → caller falls back
-      }
-    }
-
-    function loadImage(url: string): Promise<HTMLImageElement | null> {
-      return new Promise((resolve) => {
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        img.onload = () => resolve(img);
-        img.onerror = () => resolve(null);
-        img.src = url;
-      });
-    }
-
-    // Await an existing <img> instead of fetching the URL again. The browser is
-    // already loading the visible base image, so the colour texture costs zero
-    // extra network requests — we just upload that same element once it's ready.
-    function awaitImg(img: HTMLImageElement): Promise<HTMLImageElement | null> {
-      if (img.complete) return Promise.resolve(img.naturalWidth > 0 ? img : null);
-      return new Promise((resolve) => {
-        img.addEventListener('load', () => resolve(img.naturalWidth > 0 ? img : null), { once: true });
-        img.addEventListener('error', () => resolve(null), { once: true });
-      });
-    }
-
-    // ── pointer → eased camera offset ────────────────────────────────────────
-    let targetX = 0, targetY = 0, curX = 0, curY = 0;
-    let pointerInside = false;
-    let visible = true;
-    let running = false;
-    let raf = 0;
-
-    function resize() {
-      if (!host || !canvas) return;
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const w = Math.max(1, Math.round(host.clientWidth * dpr));
-      const h = Math.max(1, Math.round(host.clientHeight * dpr));
-      if (canvas.width !== w || canvas.height !== h) {
-        canvas.width = w;
-        canvas.height = h;
-      }
-    }
-
-    function draw() {
-      if (!canvas) return;
-      resize();
-      gl!.viewport(0, 0, canvas.width, canvas.height);
-      gl!.clearColor(0, 0, 0, 0);
-      gl!.clear(gl!.COLOR_BUFFER_BIT);
-
-      gl!.activeTexture(gl!.TEXTURE0);
-      gl!.bindTexture(gl!.TEXTURE_2D, colorTex);
-      gl!.uniform1i(uColor, 0);
-      gl!.activeTexture(gl!.TEXTURE1);
-      gl!.bindTexture(gl!.TEXTURE_2D, depthTex ?? colorTex);
-      gl!.uniform1i(uDepth, 1);
-
-      gl!.uniform1f(uHasDepth, hasDepth);
-      gl!.uniform1f(uImageAspect, imageAspect);
-      gl!.uniform1f(uCanvasAspect, canvas.width / canvas.height);
-      gl!.uniform2f(uMouse, curX, curY);
-      gl!.uniform1f(uIntensity, MAX_SHIFT * Math.max(0, Math.min(1, intensity)));
-
-      gl!.drawArrays(gl!.TRIANGLE_STRIP, 0, 4);
-    }
-
-    function frame() {
-      const dx = targetX - curX;
-      const dy = targetY - curY;
-      curX += dx * EASE;
-      curY += dy * EASE;
-      draw();
-      // settle: once at rest and the pointer has left, stop burning frames.
-      if (!pointerInside && Math.hypot(dx, dy) < 0.0006) {
-        running = false;
-        raf = 0;
-        return;
-      }
-      raf = requestAnimationFrame(frame);
-    }
-
-    function kick() {
-      if (running || destroyed || !visible) return;
-      running = true;
-      raf = requestAnimationFrame(frame);
-    }
-
-    function onMove(e: PointerEvent) {
-      if (!host) return;
-      const r = host.getBoundingClientRect();
-      targetX = ((e.clientX - r.left) / r.width) * 2 - 1;
-      targetY = ((e.clientY - r.top) / r.height) * 2 - 1;
-      pointerInside = true;
-      kick();
-    }
-    function onLeave() {
-      pointerInside = false;
-      targetX = 0;
-      targetY = 0;
-      kick(); // ease back to the resting frame
-    }
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
     host.addEventListener('pointermove', onMove);
     host.addEventListener('pointerleave', onLeave);
@@ -303,32 +368,10 @@
     const ro = new ResizeObserver(() => kick());
     ro.observe(host);
 
-    // ── boot: load colour (required) + optional depth, then reveal canvas ────
-    (async () => {
-      // Reuse the visible base <img> as the texture source (no second fetch of
-      // the same photo). Fall back to a fresh load only if it isn't bound yet.
-      const colorImg = baseImg ? await awaitImg(baseImg) : await loadImage(src!);
-      if (destroyed) return;
-      if (!colorImg) { imageFailed = true; return; }
-      imageAspect = colorImg.naturalWidth / Math.max(1, colorImg.naturalHeight);
-      colorTex = makeTexture();
-      if (!uploadImage(colorTex, colorImg)) return; // tainted → base <img> stays
-
-      if (depthSrc) {
-        const depthImg = await loadImage(depthSrc);
-        if (destroyed) return;
-        if (depthImg) {
-          depthTex = makeTexture();
-          if (uploadImage(depthTex, depthImg)) hasDepth = 1;
-        }
-      }
-
-      gl!.enable(gl!.BLEND);
-      gl!.blendFunc(gl!.SRC_ALPHA, gl!.ONE_MINUS_SRC_ALPHA);
-      draw();
-      glReady = true; // fade the canvas in over the base <img>
-      kick();
-    })();
+    initialized = true;
+    // Initial textures. Later src/depthSrc changes are driven by the $effect
+    // below, which reuses this very context (no remount, no recompile).
+    loadTextures(src, depthSrc);
 
     return () => {
       destroyed = true;
@@ -337,9 +380,19 @@
       host?.removeEventListener('pointerleave', onLeave);
       io.disconnect();
       ro.disconnect();
-      const ext = gl.getExtension('WEBGL_lose_context');
+      const ext = gl?.getExtension('WEBGL_lose_context');
       ext?.loseContext();
+      gl = null;
     };
+  });
+
+  // Reload only the textures when the gallery image (or its depth map) changes —
+  // the GL context, program and geometry above are untouched. Guarded so the
+  // initial mount (handled in onMount) isn't loaded twice.
+  $effect(() => {
+    const s = src;
+    const d = depthSrc;
+    if (initialized && s) loadTextures(s, d);
   });
 </script>
 
@@ -353,11 +406,11 @@
   onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onActivate?.(); } }}
 >
   <!-- Base photograph: always present (SSR, view-transition, reduced-motion,
-       no-WebGL fallback). The canvas fades in on top once it has drawn. -->
+       no-WebGL fallback). The canvas fades in on top once it has drawn.
+       crossorigin keeps the WebGL upload from this element CORS-clean (so the
+       effect also works on a cross-origin media host) AND makes the texture
+       reuse the same cached request as the visible image — one fetch, not two. -->
   {#if src && !imageFailed}
-    <!-- crossorigin keeps the WebGL upload from this element CORS-clean (so the
-         effect also works on a cross-origin media host) AND makes the texture
-         reuse the same cached request as the visible image — one fetch, not two. -->
     <img bind:this={baseImg} class="daguerreotype-base" {src} {alt} class:is-hidden={glReady}
          crossorigin="anonymous" draggable="false" />
   {:else}

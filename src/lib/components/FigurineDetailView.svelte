@@ -1226,17 +1226,22 @@
                 class:image-stage--detail={imageViewMode === 'detail'}
                 style="view-transition-name: {viewTransitionName};"
               >
-                {#key currentImage?.id}
-                  <div class="image-layer" in:fade={{ duration: 220 }}>
-                    {#if useDaguerreotype}
-                      <LivingDaguerreotype
-                        src={resolveUrl(currentImage?.url)}
-                        depthSrc={resolveUrl(currentImage?.depthUrl) || null}
-                        alt={currentImage?.altText ?? figurine.name}
-                        class="w-full h-full"
-                        onActivate={() => canOpenLightbox && openLightbox(activeImageIndex)}
-                      />
-                    {:else}
+                {#if useDaguerreotype}
+                  <!-- Persistent across image switches (NO {#key}) so the WebGL
+                       context/shaders survive ←/→ paging; the component reloads
+                       only its textures and crossfades them internally. -->
+                  <div class="image-layer">
+                    <LivingDaguerreotype
+                      src={resolveUrl(currentImage?.url)}
+                      depthSrc={resolveUrl(currentImage?.depthUrl) || null}
+                      alt={currentImage?.altText ?? figurine.name}
+                      class="w-full h-full"
+                      onActivate={() => canOpenLightbox && openLightbox(activeImageIndex)}
+                    />
+                  </div>
+                {:else}
+                  {#key currentImage?.id}
+                    <div class="image-layer" in:fade={{ duration: 220 }}>
                       <BrassLens
                         src={resolveUrl(currentImage?.url)}
                         alt={currentImage?.altText ?? figurine.name}
@@ -1246,9 +1251,9 @@
                         lensEnabled={isLensEnabled}
                         onOpenLightbox={() => canOpenLightbox && openLightbox(activeImageIndex)}
                       />
-                    {/if}
-                  </div>
-                {/key}
+                    </div>
+                  {/key}
+                {/if}
 
                 {#if sortedImages.length > 1}
                   <div class="img-counter" aria-hidden="true">

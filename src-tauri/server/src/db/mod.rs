@@ -1889,20 +1889,27 @@ impl Repository {
         limit: i64,
         offset: i64,
     ) -> Result<(Vec<(crate::models::Comment, String)>, i64)> {
-        let mut conditions = Vec::new();
-        if only_pending {
-            conditions.push("c.is_approved = false");
-        }
-        let figurine_cond;
-        if figurine_filter.is_some() {
-            figurine_cond = "c.figurine_id = $3".to_string();
-            conditions.push(&figurine_cond);
-        }
-        let where_clause = if conditions.is_empty() {
-            String::new()
-        } else {
-            format!("WHERE {}", conditions.join(" AND "))
+        // The items query binds limit ($1) and offset ($2) first, so its
+        // figurine filter is $3. The count query has no limit/offset, so its
+        // figurine filter must be $1. Build a where-clause for each — sharing a
+        // single clause would leave the count query referencing an unbound $3
+        // (Postgres: "could not determine data type of parameter $2").
+        let build_where = |figurine_placeholder: &str| {
+            let mut conditions: Vec<String> = Vec::new();
+            if only_pending {
+                conditions.push("c.is_approved = false".to_string());
+            }
+            if figurine_filter.is_some() {
+                conditions.push(format!("c.figurine_id = {figurine_placeholder}"));
+            }
+            if conditions.is_empty() {
+                String::new()
+            } else {
+                format!("WHERE {}", conditions.join(" AND "))
+            }
         };
+        let where_clause = build_where("$3");
+        let count_where = build_where("$1");
         let order = if newest_first { "DESC" } else { "ASC" };
 
         let items: Vec<(crate::models::Comment, String)> = {
@@ -1942,7 +1949,7 @@ impl Repository {
         };
 
         let count_str = format!(
-            "SELECT COUNT(*) FROM figurine_comments c JOIN figurines f ON f.id = c.figurine_id {where_clause}"
+            "SELECT COUNT(*) FROM figurine_comments c JOIN figurines f ON f.id = c.figurine_id {count_where}"
         );
         let mut count_q = sqlx::query_as::<_, (i64,)>(&count_str);
         if let Some(fid) = figurine_filter {

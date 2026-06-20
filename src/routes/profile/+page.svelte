@@ -280,7 +280,7 @@
     if (token) {
       try { await api.userLogout(token); } catch { /* ok */ }
     }
-    authStore.clearSession();
+    authStore.logout();
     goto('/');
   }
 

@@ -1150,13 +1150,11 @@ pub async fn user_register(
     State(service): State<AppService>,
     headers: HeaderMap,
     Json(body): Json<RegisterRequest>,
-) -> Result<Json<serde_json::Value>> {
+) -> Result<Json<LoginVerifyResponse>> {
     let ip = extract_ip(&headers);
     service.check_rate_limit("register", &ip, 5, 3600).await?;
-    let user = service
-        .register_user(&body, client_ip(&ip), extract_user_agent(&headers))
-        .await?;
-    Ok(Json(serde_json::json!({ "user": user })))
+    let response = service.register_user(&body, client_ip(&ip), extract_user_agent(&headers)).await?;
+    Ok(Json(response))
 }
 
 pub async fn user_login_challenge(

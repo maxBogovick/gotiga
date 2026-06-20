@@ -2,6 +2,7 @@
   import { goto } from '$app/navigation';
   import { t , brandName } from '$lib/i18n';
   import { api } from '$lib/api';
+  import { authStore } from '$lib/stores/auth.svelte';
   import { isValidEmail } from '$lib/validation';
   import { VISUAL_CATEGORIES, iconLabel, getIconById, generatePersonalPool } from '$lib/data/visualIcons';
   import { lang } from '$lib/i18n';
@@ -96,6 +97,7 @@
         pool
       );
       registeredUser = result.user;
+      authStore.setSession(result.sessionToken, result.user); // auto-login the freshly created account
       finalSelections = [...selections]; // selections stay local — never returned by server
 
       if (typeof localStorage !== 'undefined') {
