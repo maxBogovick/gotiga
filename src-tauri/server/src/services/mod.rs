@@ -2,6 +2,7 @@ use crate::config::Config;
 use crate::db::Repository;
 use crate::error::{AppError, Result};
 use crate::models::*;
+use crate::observability::ObservabilityState;
 use argon2::password_hash::{SaltString, rand_core::OsRng};
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use reqwest::Client;
@@ -26,6 +27,7 @@ pub struct AppService {
     general_rate_limiter: RateLimiter,
     /// Offline IP → country/city resolver (best-effort; may be a no-op).
     geoip: Arc<crate::geo::GeoIp>,
+    observability: ObservabilityState,
 }
 
 impl AppService {
@@ -38,7 +40,28 @@ impl AppService {
             commission_rate_limiter: Arc::new(Mutex::new(HashMap::new())),
             general_rate_limiter: Arc::new(Mutex::new(HashMap::new())),
             geoip,
+            observability: ObservabilityState::default(),
         }
+    }
+
+    pub fn observability(&self) -> ObservabilityState {
+        self.observability.clone()
+    }
+
+    fn log_domain_event(
+        event: &'static str,
+        entity: &'static str,
+        entity_id: impl std::fmt::Display,
+        outcome: &'static str,
+    ) {
+        tracing::info!(
+            target: "gotiga_server::domain",
+            event,
+            entity,
+            entity_id = %entity_id,
+            outcome,
+            "domain event"
+        );
     }
 
     /// Delete login attempts older than the retention window (privacy / GDPR).
@@ -107,6 +130,10 @@ impl AppService {
 
     pub async fn initialize(&self) -> Result<()> {
         Ok(()) // Postgres is always ready, no pool to load
+    }
+
+    pub async fn health_check(&self) -> Result<()> {
+        self.repo.health_check().await
     }
 
     // === CONTENT API ===
@@ -286,6 +313,95 @@ impl AppService {
         })
     }
 
+    /// On-demand depth-map generation for one figurine (admin button). Runs
+    /// Depth-Anything in-process (candle, CPU) for each image that still lacks a
+    /// depth map, writes the grayscale PNG into the uploads tree and records
+    /// `depth_path`. Inference is serialised inside the depth module.
+    pub async fn generate_figurine_depth(&self, id: String) -> Result<DepthGenSummary> {
+        if !crate::depth::is_available() {
+            return Err(AppError::Internal(
+                "Depth model unavailable (weights not bundled in this build)".into(),
+            ));
+        }
+        let uuid = Self::parse_uuid(&id)?;
+        self.repo
+            .get_figurine_by_id(uuid)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("Figurine {} not found", id)))?;
+
+        let images = self.repo.get_images_by_figurine(uuid).await?;
+        let upload_dir = self.config.upload_dir.clone();
+        let mut results = Vec::new();
+        let (mut generated, mut skipped, mut failed) = (0usize, 0usize, 0usize);
+
+        for img in images {
+            let image_id = img.id.to_string();
+
+            if img.depth_path.is_some() {
+                skipped += 1;
+                results.push(DepthGenItem {
+                    image_id,
+                    status: "skip".into(),
+                    detail: Some("already has a depth map".into()),
+                });
+                continue;
+            }
+
+            let stored = img
+                .original_path
+                .clone()
+                .unwrap_or_else(|| img.file_path.clone());
+            let src = crate::depth::local_source(&stored, &upload_dir);
+            if !src.exists() {
+                skipped += 1;
+                results.push(DepthGenItem {
+                    image_id,
+                    status: "skip".into(),
+                    detail: Some(format!("source missing: {}", src.display())),
+                });
+                continue;
+            }
+
+            let rel_depth = format!("images/depth/{}.png", image_id);
+            let out = std::path::Path::new(&upload_dir).join(&rel_depth);
+            let (src2, out2) = (src.clone(), out.clone());
+            let res = tokio::task::spawn_blocking(move || crate::depth::generate(&src2, &out2))
+                .await
+                .map_err(|e| AppError::Internal(format!("depth task join error: {e}")))?;
+
+            match res {
+                Ok(()) => {
+                    sqlx::query("UPDATE images SET depth_path = $1 WHERE id = $2")
+                        .bind(&rel_depth)
+                        .bind(img.id)
+                        .execute(self.repo.pg_pool())
+                        .await?;
+                    generated += 1;
+                    results.push(DepthGenItem {
+                        image_id,
+                        status: "done".into(),
+                        detail: Some(rel_depth),
+                    });
+                }
+                Err(e) => {
+                    failed += 1;
+                    results.push(DepthGenItem {
+                        image_id,
+                        status: "fail".into(),
+                        detail: Some(e.to_string()),
+                    });
+                }
+            }
+        }
+
+        Ok(DepthGenSummary {
+            generated,
+            skipped,
+            failed,
+            results,
+        })
+    }
+
     pub async fn get_author_texts(&self) -> Result<Vec<TextDto>> {
         let texts = self
             .repo
@@ -352,12 +468,12 @@ impl AppService {
             ));
         }
         for image in &req.images {
-            if let Some(value) = image.parallax_intensity {
-                if !(0.0..=1.0).contains(&value) {
-                    return Err(AppError::BadRequest(
-                        "Image parallax intensity must be between 0 and 1".into(),
-                    ));
-                }
+            if let Some(value) = image.parallax_intensity
+                && !(0.0..=1.0).contains(&value)
+            {
+                return Err(AppError::BadRequest(
+                    "Image parallax intensity must be between 0 and 1".into(),
+                ));
             }
         }
         let prev_status = self
@@ -377,22 +493,30 @@ impl AppService {
         if became_available {
             let _ = self.send_availability_digest(figurine_id, &req.name).await;
         }
+        Self::log_domain_event("figurine_saved", "figurine", figurine_id, "ok");
         Ok(())
     }
 
     pub async fn delete_figurine(&self, id: String) -> Result<()> {
         let uuid = Self::parse_uuid(&id)?;
-        self.repo.delete_figurine(uuid).await
+        self.repo.delete_figurine(uuid).await?;
+        Self::log_domain_event("figurine_deleted", "figurine", uuid, "ok");
+        Ok(())
     }
 
     pub async fn save_zone(&self, req: crate::models::SaveZoneRequest) -> Result<()> {
+        let zone_id = req.id.clone();
         let count = self.repo.get_zone_count().await?;
-        self.repo.upsert_zone(&req, count).await
+        self.repo.upsert_zone(&req, count).await?;
+        Self::log_domain_event("zone_saved", "zone", zone_id, "ok");
+        Ok(())
     }
 
     pub async fn delete_zone(&self, id: String) -> Result<()> {
         let uuid = Self::parse_uuid(&id)?;
-        self.repo.delete_zone(uuid).await
+        self.repo.delete_zone(uuid).await?;
+        Self::log_domain_event("zone_deleted", "zone", uuid, "ok");
+        Ok(())
     }
 
     pub async fn save_text(
@@ -400,12 +524,17 @@ impl AppService {
         category: crate::models::TextCategory,
         req: crate::models::SaveTextRequest,
     ) -> Result<()> {
-        self.repo.upsert_text(&req, &category).await
+        let text_id = req.id.clone();
+        self.repo.upsert_text(&req, &category).await?;
+        Self::log_domain_event("text_saved", "text", text_id, "ok");
+        Ok(())
     }
 
     pub async fn delete_text_item(&self, id: String) -> Result<()> {
         let uuid = Self::parse_uuid(&id)?;
-        self.repo.delete_text(uuid).await
+        self.repo.delete_text(uuid).await?;
+        Self::log_domain_event("text_deleted", "text", uuid, "ok");
+        Ok(())
     }
 
     pub async fn get_background(&self) -> Result<Option<String>> {
@@ -423,7 +552,9 @@ impl AppService {
     }
 
     pub async fn set_background(&self, url: String) -> Result<()> {
-        self.repo.set_main_background(&url).await
+        self.repo.set_main_background(&url).await?;
+        Self::log_domain_event("background_saved", "setting", "main_background", "ok");
+        Ok(())
     }
 
     pub async fn get_home_content(&self) -> Result<HomeContent> {
@@ -431,7 +562,9 @@ impl AppService {
     }
 
     pub async fn save_home_content(&self, content: HomeContent) -> Result<()> {
-        self.repo.save_home_content(&content).await
+        self.repo.save_home_content(&content).await?;
+        Self::log_domain_event("home_content_saved", "setting", "home_content", "ok");
+        Ok(())
     }
 
     // === AUTHOR PROFILE ===
@@ -441,7 +574,9 @@ impl AppService {
     }
 
     pub async fn save_author_profile(&self, profile: AuthorProfile) -> Result<()> {
-        self.repo.save_author_profile(&profile).await
+        self.repo.save_author_profile(&profile).await?;
+        Self::log_domain_event("author_profile_saved", "setting", "author_profile", "ok");
+        Ok(())
     }
 
     // === ORDERS / NOTIFICATIONS ===
@@ -469,6 +604,9 @@ impl AppService {
         } else {
             self.repo.save_order(order, user_id).await?
         };
+        self.observability
+            .record_business_event("order_created", "ok");
+        Self::log_domain_event("order_created", "order", saved.id, "ok");
         let _ = self.send_order_notification(&saved).await;
         Ok(saved)
     }
@@ -534,6 +672,7 @@ impl AppService {
                 body.invoice_note.as_deref(),
             )
             .await?;
+        Self::log_domain_event("order_status_updated", "order", id, "ok");
         if body.status == OrderStatus::Replied
             && let Ok(Some(order)) = self.repo.get_order_by_id(id).await
             && let Some(user_id) = order.user_id
@@ -579,6 +718,7 @@ impl AppService {
             .repo
             .issue_order_certificate(id, &token, &certificate_number)
             .await?;
+        Self::log_domain_event("order_certificate_issued", "order", id, "ok");
         Self::certificate_dto(&order)
             .ok_or_else(|| AppError::Internal("Issued certificate is incomplete".to_string()))
     }
@@ -588,6 +728,7 @@ impl AppService {
         id: uuid::Uuid,
     ) -> Result<CollectorCertificateDto> {
         let order = self.repo.revoke_order_certificate(id).await?;
+        Self::log_domain_event("order_certificate_revoked", "order", id, "ok");
         Self::certificate_dto(&order)
             .ok_or_else(|| AppError::Internal("Revoked certificate is incomplete".to_string()))
     }
@@ -725,6 +866,9 @@ impl AppService {
             }
         }
         let saved = self.repo.create_commission(req).await?;
+        self.observability
+            .record_business_event("commission_created", "ok");
+        Self::log_domain_event("commission_created", "commission", saved.id, "ok");
         let _ = self.send_commission_notification(&saved).await;
         Ok(CommissionCreatedResponse {
             id: saved.id.to_string(),
@@ -774,6 +918,7 @@ impl AppService {
                 .await;
         }
 
+        Self::log_domain_event("commission_claimed", "commission", commission.id, "ok");
         self.commission_to_dto(&commission).await
     }
 
@@ -807,6 +952,7 @@ impl AppService {
             .update_commission_content(id, req)
             .await?
             .ok_or_else(|| crate::error::AppError::NotFound("Commission not found".to_string()))?;
+        Self::log_domain_event("commission_edited", "commission", id, "ok");
         self.commission_to_dto(&updated).await
     }
 
@@ -864,7 +1010,9 @@ impl AppService {
                 .await;
         }
 
-        self.repo.delete_commission(id).await
+        self.repo.delete_commission(id).await?;
+        Self::log_domain_event("commission_deleted", "commission", id, "ok");
+        Ok(())
     }
 
     pub async fn list_commissions(
@@ -926,6 +1074,7 @@ impl AppService {
             .update_commission(id, status, admin_notes, figurine_id)
             .await?;
         if let Some(ref c) = updated {
+            Self::log_domain_event("commission_status_updated", "commission", c.id, "ok");
             // If the petitioner has an account, drop a note into their conversation,
             // in the language they wrote the petition in.
             if let Some(user_id) = c.user_id {
@@ -1207,6 +1356,9 @@ impl AppService {
                     "These dates conflict with existing showings or confirmed bookings".to_string(),
                 )
             })?;
+        self.observability
+            .record_business_event("booking_created", "ok");
+        Self::log_domain_event("booking_created", "booking", booking.id, "ok");
         let _ = self.send_booking_notification(&booking).await;
         Ok(booking)
     }
@@ -1276,6 +1428,7 @@ impl AppService {
 
     pub async fn save_showing(&self, req: SaveShowingRequest) -> Result<ShowingDto> {
         let id = self.repo.upsert_showing(&req).await?;
+        Self::log_domain_event("showing_saved", "showing", id, "ok");
         Ok(ShowingDto {
             id: id.to_string(),
             figurine_id: req.figurine_id,
@@ -1290,7 +1443,9 @@ impl AppService {
 
     pub async fn delete_showing(&self, id: String) -> Result<()> {
         let uuid = Self::parse_uuid(&id)?;
-        self.repo.delete_showing(uuid).await
+        self.repo.delete_showing(uuid).await?;
+        Self::log_domain_event("showing_deleted", "showing", uuid, "ok");
+        Ok(())
     }
 
     // === BOOKINGS (ADMIN) ===
@@ -1373,6 +1528,9 @@ impl AppService {
                 curator_conditions.as_deref(),
             )
             .await;
+            self.observability
+                .record_business_event("booking_status_changed", "ok");
+            Self::log_domain_event("booking_status_updated", "booking", id, "ok");
             return Ok(());
         }
 
@@ -1405,6 +1563,9 @@ impl AppService {
                 curator_conditions.as_deref(),
             )
             .await;
+            self.observability
+                .record_business_event("booking_status_changed", "ok");
+            Self::log_domain_event("booking_status_updated", "booking", id, "ok");
             return Ok(());
         }
 
@@ -1423,6 +1584,9 @@ impl AppService {
             curator_conditions.as_deref(),
         )
         .await;
+        self.observability
+            .record_business_event("booking_status_changed", "ok");
+        Self::log_domain_event("booking_status_updated", "booking", id, "ok");
         Ok(())
     }
 
@@ -1658,6 +1822,7 @@ impl AppService {
                 removed.push(file.path);
             }
         }
+        Self::log_domain_event("media_cleanup_completed", "media", removed.len(), "ok");
         Ok(removed)
     }
 
@@ -1694,6 +1859,7 @@ impl AppService {
         if let Some(path) = new_thumb_path {
             imported_paths.push(path.to_string());
         }
+        Self::log_domain_event("media_replaced", "media", &old_path, "ok");
         Ok(MediaReplaceResultDto {
             old_path,
             new_path: new_preview_path.to_string(),
@@ -2031,7 +2197,12 @@ fn verify_password(input: &str, hash: &str) -> bool {
 // ============================================================
 
 impl AppService {
-    pub async fn register_user(&self, req: &RegisterRequest, ip: Option<String>, user_agent: Option<String>) -> Result<LoginVerifyResponse> {
+    pub async fn register_user(
+        &self,
+        req: &RegisterRequest,
+        ip: Option<String>,
+        user_agent: Option<String>,
+    ) -> Result<LoginVerifyResponse> {
         if !req.email.contains('@') {
             return Err(AppError::BadRequest("Invalid email".into()));
         }
@@ -2048,13 +2219,25 @@ impl AppService {
             .map_err(|e| AppError::Internal(format!("Hash error: {e}")))?;
 
         let ctx = self.client_context(ip.clone(), user_agent.clone());
-        let user = self.repo.create_user(&req.email.to_lowercase(), &req.display_name, &hash, &pool_json, &ctx).await?;
+        let user = self
+            .repo
+            .create_user(
+                &req.email.to_lowercase(),
+                &req.display_name,
+                &hash,
+                &pool_json,
+                &ctx,
+            )
+            .await?;
 
         let session_token = Uuid::new_v4().to_string();
         let expires_at = chrono::Utc::now() + chrono::Duration::days(30);
         let session_ctx = self.client_context(ip, user_agent);
-        self.repo.create_session(user.id, &session_token, expires_at, &session_ctx).await?;
+        self.repo
+            .create_session(user.id, &session_token, expires_at, &session_ctx)
+            .await?;
 
+        Self::log_domain_event("user_registered", "user", user.id, "ok");
         Ok(LoginVerifyResponse {
             session_token,
             user: UserDto::from(&user),
@@ -2207,6 +2390,7 @@ impl AppService {
             .await?;
         self.repo.prune_expired_sessions(user.id).await.ok();
 
+        Self::log_domain_event("user_login", "user", user.id, "ok");
         Ok(LoginVerifyResponse {
             session_token,
             user: UserDto::from(&user),
@@ -2221,7 +2405,9 @@ impl AppService {
     }
 
     pub async fn logout(&self, token: &str) -> Result<()> {
-        self.repo.delete_session(token).await
+        self.repo.delete_session(token).await?;
+        Self::log_domain_event("user_logout", "session", "current", "ok");
+        Ok(())
     }
 
     pub async fn link_bookings(&self, user_id: Uuid, cancel_tokens: &[String]) -> Result<usize> {
@@ -2277,6 +2463,7 @@ impl AppService {
             .take(500)
             .collect();
         self.repo.set_user_wishlist(user_id, &cleaned).await?;
+        Self::log_domain_event("wishlist_updated", "user", user_id, "ok");
         Ok(cleaned)
     }
 
@@ -2328,6 +2515,7 @@ impl AppService {
                 name: Some(name),
             });
         }
+        Self::log_domain_event("claim_link_checked", "user", user.id, "not_found");
         Ok(LinkClaimResponse {
             result: "not_found".into(),
             kind: None,
@@ -2452,11 +2640,15 @@ impl AppService {
     }
 
     pub async fn admin_revoke_user_sessions(&self, user_id: Uuid) -> Result<u64> {
-        self.repo.admin_revoke_all_sessions(user_id).await
+        let revoked = self.repo.admin_revoke_all_sessions(user_id).await?;
+        Self::log_domain_event("user_sessions_revoked", "user", user_id, "ok");
+        Ok(revoked)
     }
 
     pub async fn admin_update_user_notes(&self, user_id: Uuid, notes: Option<&str>) -> Result<()> {
-        self.repo.admin_update_user_notes(user_id, notes).await
+        self.repo.admin_update_user_notes(user_id, notes).await?;
+        Self::log_domain_event("user_notes_updated", "user", user_id, "ok");
+        Ok(())
     }
 
     pub async fn admin_set_user_blocked(&self, user_id: Uuid, blocked: bool) -> Result<()> {
@@ -2464,7 +2656,9 @@ impl AppService {
         if blocked {
             self.repo.admin_revoke_all_sessions(user_id).await?;
         }
-        self.repo.admin_set_user_blocked(user_id, blocked).await
+        self.repo.admin_set_user_blocked(user_id, blocked).await?;
+        Self::log_domain_event("user_blocked_updated", "user", user_id, "ok");
+        Ok(())
     }
 
     pub async fn admin_generate_reset_token(&self, user_id: Uuid) -> Result<ResetTokenResponse> {
@@ -2479,6 +2673,7 @@ impl AppService {
         self.repo
             .admin_create_reset_token(user_id, &token, expires_at)
             .await?;
+        Self::log_domain_event("admin_reset_token_created", "user", user_id, "ok");
         Ok(ResetTokenResponse {
             token,
             expires_at: expires_at.to_rfc3339(),
@@ -2521,7 +2716,9 @@ impl AppService {
         self.repo.admin_revoke_all_sessions(user.id).await?;
         self.repo
             .apply_password_reset(user.id, &new_hash, &pool_json, &ctx)
-            .await
+            .await?;
+        Self::log_domain_event("password_reset_applied", "user", user.id, "ok");
+        Ok(())
     }
 
     /// Self-service "forgot password": issue a reset token and email the link to
@@ -2550,6 +2747,7 @@ impl AppService {
         self.repo
             .create_self_reset_token(user.id, &token, expires_at, &ctx)
             .await?;
+        Self::log_domain_event("password_reset_requested", "user", user.id, "ok");
 
         // Fire-and-forget the email so the slow SMTP path can't be timed to infer
         // whether the account exists.
@@ -2808,6 +3006,9 @@ impl AppService {
             ));
         }
         let (entry, position) = self.repo.add_to_waitlist(uuid, &req, user_id).await?;
+        self.observability
+            .record_business_event("waitlist_joined", "ok");
+        Self::log_domain_event("waitlist_joined", "waitlist", entry.id, "ok");
         let _ = self.send_waitlist_notification(&entry).await;
         Ok(crate::models::WaitlistCreatedResponse {
             cancel_token: entry.cancel_token,
@@ -2837,7 +3038,11 @@ impl AppService {
 
     /// Leave the queue by token. Idempotent.
     pub async fn leave_waitlist_by_token(&self, token: &str) -> Result<()> {
-        let _ = self.repo.remove_waitlist_by_token(token).await?;
+        let removed = self.repo.remove_waitlist_by_token(token).await?;
+        match removed {
+            Some(entry) => Self::log_domain_event("waitlist_left", "waitlist", entry.id, "ok"),
+            None => Self::log_domain_event("waitlist_left", "waitlist", "unknown", "not_found"),
+        }
         Ok(())
     }
 
@@ -2869,6 +3074,7 @@ impl AppService {
         let _ = self.send_availability_digest(uuid, &figurine_name).await;
         // Remove all entries for this figurine after notification
         self.repo.mark_waitlist_notified(uuid).await?;
+        Self::log_domain_event("waitlist_notified", "figurine", uuid, "ok");
         Ok(serde_json::json!({ "notified": notified, "total": entries.len() }))
     }
 
@@ -2907,7 +3113,9 @@ impl AppService {
     }
 
     pub async fn remove_waitlist_entry(&self, id: uuid::Uuid) -> Result<()> {
-        self.repo.remove_from_waitlist(id).await
+        self.repo.remove_from_waitlist(id).await?;
+        Self::log_domain_event("waitlist_removed", "waitlist", id, "ok");
+        Ok(())
     }
 
     async fn send_waitlist_notification(&self, entry: &WaitlistEntry) -> Result<()> {
@@ -3188,6 +3396,7 @@ impl AppService {
                 body,
             )
             .await?;
+        Self::log_domain_event("comment_submitted", "figurine", figurine_id, "ok");
 
         let figurine_name = self
             .repo
@@ -3300,6 +3509,7 @@ impl AppService {
                 .await;
         }
 
+        Self::log_domain_event("comment_moderated", "comment", id, "ok");
         Ok(AdminCommentDto {
             id: prev.id.to_string(),
             figurine_id: prev.figurine_id.to_string(),
@@ -3315,7 +3525,9 @@ impl AppService {
     }
 
     pub async fn admin_delete_comment(&self, id: Uuid) -> Result<()> {
-        self.repo.delete_comment(id).await
+        self.repo.delete_comment(id).await?;
+        Self::log_domain_event("comment_deleted", "comment", id, "ok");
+        Ok(())
     }
 
     pub async fn update_profile(&self, user_id: Uuid, display_name: &str) -> Result<UserDto> {
@@ -3326,16 +3538,20 @@ impl AppService {
             .repo
             .update_user_display_name(user_id, display_name)
             .await?;
+        Self::log_domain_event("profile_updated", "user", user_id, "ok");
         Ok(UserDto::from(&user))
     }
 
     pub async fn set_user_avatar(&self, user_id: Uuid, avatar_url: &str) -> Result<UserDto> {
         let user = self.repo.update_user_avatar(user_id, avatar_url).await?;
+        Self::log_domain_event("avatar_updated", "user", user_id, "ok");
         Ok(UserDto::from(&user))
     }
 
     pub async fn delete_account(&self, user_id: Uuid) -> Result<()> {
-        self.repo.delete_user(user_id).await
+        self.repo.delete_user(user_id).await?;
+        Self::log_domain_event("account_deleted", "user", user_id, "ok");
+        Ok(())
     }
 
     // ── Message threads ─────────────────────────────────────────
@@ -3442,6 +3658,7 @@ impl AppService {
                 &attachments,
             )
             .await?;
+        Self::log_domain_event("thread_created", "thread", thread.id, "ok");
         Ok(ThreadDetailDto {
             thread: Self::thread_dto(&thread, 0, Some(msg.body.clone())),
             messages: vec![self.message_dto_with_attachments(&msg).await?],
@@ -3469,6 +3686,7 @@ impl AppService {
             .repo
             .add_thread_reply(thread_id, user_id, false, &body, &attachments)
             .await?;
+        Self::log_domain_event("thread_replied", "thread", thread_id, "ok");
         self.message_dto_with_attachments(&msg).await
     }
 
@@ -3496,6 +3714,7 @@ impl AppService {
             )
             .await?;
         let user = self.repo.find_user_by_id(user_id).await?;
+        Self::log_domain_event("admin_thread_created", "thread", thread.id, "ok");
         Ok(ThreadDetailDto {
             thread: Self::thread_dto(&thread, 0, Some(msg.body.clone())),
             messages: vec![self.message_dto_with_attachments(&msg).await?],
@@ -3518,6 +3737,7 @@ impl AppService {
             .repo
             .add_thread_reply(thread_id, uuid::Uuid::nil(), true, &body, &attachments)
             .await?;
+        Self::log_domain_event("admin_thread_replied", "thread", thread_id, "ok");
         self.message_dto_with_attachments(&msg).await
     }
 
@@ -3559,11 +3779,15 @@ impl AppService {
     }
 
     pub async fn admin_resolve_thread(&self, thread_id: Uuid) -> Result<()> {
-        self.repo.resolve_thread(thread_id).await
+        self.repo.resolve_thread(thread_id).await?;
+        Self::log_domain_event("thread_resolved", "thread", thread_id, "ok");
+        Ok(())
     }
 
     pub async fn admin_reopen_thread(&self, thread_id: Uuid) -> Result<()> {
-        self.repo.reopen_thread(thread_id).await
+        self.repo.reopen_thread(thread_id).await?;
+        Self::log_domain_event("thread_reopened", "thread", thread_id, "ok");
+        Ok(())
     }
 
     pub async fn admin_get_user_threads(&self, user_id: Uuid) -> Result<Vec<MessageThreadDto>> {

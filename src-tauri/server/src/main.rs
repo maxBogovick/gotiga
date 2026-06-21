@@ -1,4 +1,4 @@
-use gotiga_server::{api, config, db, services};
+use gotiga_server::{api, config, db, logs, services};
 use sqlx::postgres::PgPoolOptions;
 use std::net::SocketAddr;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -9,12 +9,29 @@ async fn main() -> anyhow::Result<()> {
 
     // 1. Load Config
     let config = config::Config::from_env();
+    let log_store = logs::AdminLogStore::open(&config.admin_log_db_path).await?;
+    let admin_log_layer = log_store.layer();
 
     // 2. Setup Logging
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::new(&config.rust_log))
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    let env_filter = tracing_subscriber::EnvFilter::new(&config.rust_log);
+    if matches!(dotenvy::var("LOG_FORMAT").as_deref(), Ok("json")) {
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(admin_log_layer)
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .json()
+                    .with_current_span(false)
+                    .with_span_list(false),
+            )
+            .init();
+    } else {
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(admin_log_layer)
+            .with(tracing_subscriber::fmt::layer().compact())
+            .init();
+    }
 
     // NB: never log database_url — it contains DB credentials.
     tracing::info!("Starting server on {}:{}", config.host, config.port);
@@ -65,7 +82,7 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    let router = api::router(service, config.clone());
+    let router = api::router(service, config.clone(), log_store);
 
     // 6. Start Server
     let addr: SocketAddr = format!("{}:{}", config.host, config.port)

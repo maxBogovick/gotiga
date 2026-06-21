@@ -30,30 +30,63 @@ pub enum AppError {
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        let (status, error_message) = match self {
-            AppError::Database(e) => {
-                tracing::error!("Database error: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "Internal server error".to_string(),
-                )
+        let (status, error_kind, client_message, log_message) = match &self {
+            AppError::Database(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "database",
+                "Internal server error".to_string(),
+                format!("{e:?}"),
+            ),
+            AppError::Io(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "io",
+                "Internal server error".to_string(),
+                format!("{e:?}"),
+            ),
+            AppError::NotFound(msg) => {
+                (StatusCode::NOT_FOUND, "not_found", msg.clone(), msg.clone())
             }
-            AppError::Io(e) => {
-                tracing::error!("IO error: {:?}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "Internal server error".to_string(),
-                )
-            }
-            AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
-            AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized".to_string()),
-            AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
-            AppError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
-            AppError::Conflict(msg) => (StatusCode::CONFLICT, msg),
+            AppError::Unauthorized => (
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                "Unauthorized".to_string(),
+                "Unauthorized".to_string(),
+            ),
+            AppError::BadRequest(msg) => (
+                StatusCode::BAD_REQUEST,
+                "bad_request",
+                msg.clone(),
+                msg.clone(),
+            ),
+            AppError::Internal(msg) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                msg.clone(),
+                msg.clone(),
+            ),
+            AppError::Conflict(msg) => (StatusCode::CONFLICT, "conflict", msg.clone(), msg.clone()),
         };
 
+        if status.is_server_error() {
+            tracing::error!(
+                target: "gotiga_server::error",
+                status = status.as_u16(),
+                error_kind,
+                error = %log_message,
+                "request failed"
+            );
+        } else {
+            tracing::warn!(
+                target: "gotiga_server::error",
+                status = status.as_u16(),
+                error_kind,
+                error = %log_message,
+                "request rejected"
+            );
+        }
+
         let body = Json(json!({
-            "error": error_message,
+            "error": client_message,
         }));
 
         (status, body).into_response()

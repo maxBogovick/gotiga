@@ -6,12 +6,13 @@ edition = "2024"
 [dependencies]
 axum = { version = "0.7", features = ["multipart"] }
 tokio = { version = "1.0", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono"] }
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "sqlite", "uuid", "chrono"] }
 dotenvy = "0.15"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tower = { version = "0.4", features = ["util"] }
 tower-http = { version = "0.5", features = ["cors", "fs", "trace", "limit"] }
 uuid = { version = "1.0", features = ["serde", "v4"] }
@@ -26,6 +27,11 @@ maxminddb = "0.24"
 reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-features = false }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 lettre = { version = "0.11", features = ["tokio1-rustls-tls", "smtp-transport", "builder"], default-features = false }
+# On-demand depth maps ("Living Daguerreotype"): Depth-Anything-V2 inference in
+# pure Rust on CPU — no Python, no torch image. Weights are bundled at build time.
+candle-core = "0.9"
+candle-nn = "0.9"
+candle-transformers = "0.9"
 
 [dev-dependencies]
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "migrate"] }

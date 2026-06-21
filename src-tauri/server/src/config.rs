@@ -22,6 +22,8 @@ pub struct Config {
     pub smtp_from: Option<String>,
     /// Path to a MaxMind GeoLite2-City `.mmdb`. Absent → geolocation disabled.
     pub geoip_db_path: Option<String>,
+    /// Local SQLite database used by the admin log viewer.
+    pub admin_log_db_path: String,
 }
 
 /// Values that must never ship to production. Startup aborts if any secret
@@ -71,6 +73,8 @@ impl Config {
             smtp_pass: dotenvy::var("SMTP_PASS").ok(),
             smtp_from: dotenvy::var("SMTP_FROM").ok(),
             geoip_db_path: dotenvy::var("GEOIP_DB_PATH").ok().filter(|s| !s.is_empty()),
+            admin_log_db_path: dotenvy::var("ADMIN_LOG_DB_PATH")
+                .unwrap_or_else(|_| "./data/admin_logs.sqlite".to_string()),
         };
         config.validate();
         config

@@ -227,6 +227,24 @@ pub struct ImageDto {
     pub alt_text: Option<String>,
 }
 
+/// Result of an on-demand depth-map generation run for one figurine.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DepthGenSummary {
+    pub generated: usize,
+    pub skipped: usize,
+    pub failed: usize,
+    pub results: Vec<DepthGenItem>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DepthGenItem {
+    pub image_id: String,
+    pub status: String, // "done" | "skip" | "fail"
+    pub detail: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProcessStepDto {

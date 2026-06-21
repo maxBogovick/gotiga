@@ -1,10 +1,12 @@
 use crate::config::Config;
+use crate::logs::AdminLogStore;
+use crate::observability::{ObservabilityState, request_observability_middleware};
 use crate::services::AppService;
 use axum::extract::DefaultBodyLimit;
 use axum::{
     Router,
     extract::Request,
-    http::{HeaderMap, HeaderValue, Method, StatusCode, header},
+    http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header},
     middleware::{self, Next},
     response::Response,
     routing::{delete, get, patch, post, put},
@@ -24,6 +26,8 @@ mod handlers;
 pub struct AppState {
     pub service: AppService,
     pub config: Config,
+    pub observability: ObservabilityState,
+    pub log_store: AdminLogStore,
 }
 
 impl axum::extract::FromRef<AppState> for AppService {
@@ -38,10 +42,25 @@ impl axum::extract::FromRef<AppState> for Config {
     }
 }
 
-pub fn router(service: AppService, config: Config) -> Router {
+impl axum::extract::FromRef<AppState> for ObservabilityState {
+    fn from_ref(state: &AppState) -> Self {
+        state.observability.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for AdminLogStore {
+    fn from_ref(state: &AppState) -> Self {
+        state.log_store.clone()
+    }
+}
+
+pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> Router {
+    let observability = service.observability();
     let state = AppState {
         service,
         config: config.clone(),
+        observability: observability.clone(),
+        log_store,
     };
 
     // All routes under /api/v1 — no auth on the router level
@@ -49,6 +68,27 @@ pub fn router(service: AppService, config: Config) -> Router {
         Router::new()
             // === PUBLIC READ ===
             .route("/health", get(handlers::health_check))
+            .route("/ready", get(handlers::readiness_check))
+            .route(
+                "/metrics",
+                get(crate::observability::metrics_handler).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/logs",
+                get(crate::logs::admin_list_logs).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/admin/logs/stream",
+                get(crate::logs::admin_stream_logs).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
             .route("/figurines", get(handlers::list_figurines))
             .route(
                 "/figurines/in-progress",
@@ -118,6 +158,12 @@ pub fn router(service: AppService, config: Config) -> Router {
                     config.clone(),
                     auth_middleware,
                 )),
+            )
+            .route(
+                "/admin/figurines/:id/generate-depth",
+                post(handlers::admin_generate_figurine_depth).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
             )
             .route(
                 "/upload",
@@ -533,9 +579,21 @@ pub fn router(service: AppService, config: Config) -> Router {
             Method::DELETE,
             Method::OPTIONS,
         ])
-        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]);
+        .allow_headers([
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            HeaderName::from_static(crate::observability::REQUEST_ID_HEADER),
+        ])
+        .expose_headers([HeaderName::from_static(
+            crate::observability::REQUEST_ID_HEADER,
+        )]);
 
-    app.layer(cors).with_state(state)
+    app.layer(cors)
+        .layer(middleware::from_fn_with_state(
+            observability,
+            request_observability_middleware,
+        ))
+        .with_state(state)
 }
 
 async fn auth_middleware(
@@ -547,9 +605,25 @@ async fn auth_middleware(
     let auth_header = headers
         .get("Authorization")
         .and_then(|h| h.to_str().ok())
-        .ok_or(StatusCode::UNAUTHORIZED)?;
+        .ok_or_else(|| {
+            tracing::warn!(
+                target: "gotiga_server::auth",
+                event = "admin_auth",
+                outcome = "missing",
+                route = %request.uri().path(),
+                "admin authorization missing"
+            );
+            StatusCode::UNAUTHORIZED
+        })?;
 
     if auth_header != format!("Bearer {}", config.admin_api_key) {
+        tracing::warn!(
+            target: "gotiga_server::auth",
+            event = "admin_auth",
+            outcome = "rejected",
+            route = %request.uri().path(),
+            "admin authorization rejected"
+        );
         return Err(StatusCode::UNAUTHORIZED);
     }
 

@@ -1,6 +1,7 @@
 use gotiga_server::api;
 use gotiga_server::config::Config;
 use gotiga_server::db::Repository;
+use gotiga_server::logs::AdminLogStore;
 use gotiga_server::services::AppService;
 use sqlx::PgPool;
 use std::path::PathBuf;
@@ -37,11 +38,15 @@ async fn spawn_app(pool: PgPool) -> (String, String, PathBuf) {
         smtp_pass: None,
         smtp_from: None,
         geoip_db_path: None,
+        admin_log_db_path: format!("/tmp/gotiga-api-logs-{}.sqlite", uuid::Uuid::new_v4()),
     };
 
     let repo = Repository::new(pool);
     let service = AppService::new(repo, config.clone());
-    let router = api::router(service, config.clone());
+    let log_store = AdminLogStore::open(&config.admin_log_db_path)
+        .await
+        .unwrap();
+    let router = api::router(service, config.clone(), log_store);
 
     tokio::spawn(async move {
         axum::serve(listener, router).await.unwrap();
@@ -54,16 +59,34 @@ async fn spawn_app(pool: PgPool) -> (String, String, PathBuf) {
 #[ignore = "requires a reachable PostgreSQL test database"]
 async fn health_and_public_listing(pool: PgPool) {
     sqlx::migrate!("./migrations/").run(&pool).await.unwrap();
-    let (addr, _api_key, upload_dir) = spawn_app(pool).await;
+    let (addr, api_key, upload_dir) = spawn_app(pool).await;
     let client = reqwest::Client::new();
 
     // Health check responds OK.
     let resp = client
         .get(format!("{}/api/v1/health", addr))
+        .header("x-request-id", "test-request-id-1")
         .send()
         .await
         .unwrap();
     assert!(resp.status().is_success());
+    assert_eq!(
+        resp.headers()
+            .get("x-request-id")
+            .and_then(|v| v.to_str().ok()),
+        Some("test-request-id-1")
+    );
+
+    // Readiness checks the real database connection.
+    let resp = client
+        .get(format!("{}/api/v1/ready", addr))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+    let ready: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(ready["status"], "ready");
+    assert_eq!(ready["checks"]["postgres"], "ok");
 
     // Public figurine listing returns a JSON array (empty on a fresh DB).
     let resp = client
@@ -74,6 +97,44 @@ async fn health_and_public_listing(pool: PgPool) {
     assert!(resp.status().is_success());
     let list: Vec<serde_json::Value> = resp.json().await.unwrap();
     assert_eq!(list.len(), 0);
+
+    // Metrics are exposed in Prometheus text format, but only to admin callers.
+    let resp = client
+        .get(format!("{}/api/v1/metrics", addr))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+    let metrics = client
+        .get(format!("{}/api/v1/metrics", addr))
+        .bearer_auth(&api_key)
+        .send()
+        .await
+        .unwrap();
+    assert!(metrics.status().is_success());
+    let body = metrics.text().await.unwrap();
+    assert!(body.contains("gotiga_http_requests_total"));
+    assert!(body.contains("gotiga_http_request_duration_seconds_bucket"));
+    assert!(body.contains("gotiga_build_info"));
+
+    let resp = client
+        .get(format!("{}/api/v1/admin/logs?limit=10", addr))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+    let logs = client
+        .get(format!("{}/api/v1/admin/logs?limit=10", addr))
+        .bearer_auth(&api_key)
+        .send()
+        .await
+        .unwrap();
+    assert!(logs.status().is_success());
+    let body: serde_json::Value = logs.json().await.unwrap();
+    assert!(body["items"].is_array());
+    assert!(body["droppedTotal"].is_number());
 
     let _ = fs::remove_dir_all(upload_dir).await;
 }

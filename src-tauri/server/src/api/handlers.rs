@@ -213,6 +213,19 @@ pub async fn health_check() -> impl IntoResponse {
     )
 }
 
+pub async fn readiness_check(State(service): State<AppService>) -> Result<impl IntoResponse> {
+    service.health_check().await?;
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "status": "ready",
+            "checks": {
+                "postgres": "ok"
+            }
+        })),
+    ))
+}
+
 /*pub async fn get_sync_manifest(
     State(service): State<AppService>
 ) -> Result<Json<Manifest>> {
@@ -284,8 +297,20 @@ pub async fn admin_login(
     Json(creds): Json<LoginRequest>,
 ) -> Result<Json<serde_json::Value>> {
     if creds.login == config.admin_login && creds.password == config.admin_password {
+        tracing::info!(
+            target: "gotiga_server::auth",
+            event = "admin_login",
+            outcome = "ok",
+            "admin login accepted"
+        );
         Ok(Json(serde_json::json!({ "token": config.admin_api_key })))
     } else {
+        tracing::warn!(
+            target: "gotiga_server::auth",
+            event = "admin_login",
+            outcome = "rejected",
+            "admin login rejected"
+        );
         Err(AppError::Unauthorized)
     }
 }
@@ -306,6 +331,16 @@ pub async fn delete_figurine(
 ) -> Result<StatusCode> {
     service.delete_figurine(id).await?;
     Ok(StatusCode::OK)
+}
+
+/// Admin: generate depth maps for a figurine's images on demand (the per-card
+/// button). Runs Depth-Anything in-process (candle, CPU).
+pub async fn admin_generate_figurine_depth(
+    State(service): State<AppService>,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse> {
+    let summary = service.generate_figurine_depth(id).await?;
+    Ok(Json(summary))
 }
 
 // === ADMIN MEDIA UPLOAD ===
@@ -338,6 +373,14 @@ pub async fn upload_file(
             })?;
             if subdir == "images" {
                 let payload = save_image_variants(&config.upload_dir, &data).await?;
+                tracing::info!(
+                    target: "gotiga_server::media",
+                    event = "media_uploaded",
+                    media_type = "images",
+                    bytes = data.len(),
+                    outcome = "ok",
+                    "media uploaded"
+                );
                 return Ok(Json(payload));
             }
 
@@ -352,6 +395,15 @@ pub async fn upload_file(
 
             let relative_path = format!("{}/{}", subdir, file_name);
             let url = public_static_url(&relative_path);
+            tracing::info!(
+                target: "gotiga_server::media",
+                event = "media_uploaded",
+                media_type = subdir,
+                path = %relative_path,
+                bytes = data.len(),
+                outcome = "ok",
+                "media uploaded"
+            );
             return Ok(Json(serde_json::json!({
                 "url": url,
                 "relativePath": relative_path
@@ -459,6 +511,15 @@ pub async fn replace_media_everywhere(
             .await?
     };
 
+    tracing::info!(
+        target: "gotiga_server::media",
+        event = "media_replace_uploaded",
+        target_path = %target_path,
+        updated_references = result.updated_references,
+        bytes = data.len(),
+        outcome = "ok",
+        "media replacement uploaded"
+    );
     Ok(Json(result))
 }
 
@@ -1153,7 +1214,9 @@ pub async fn user_register(
 ) -> Result<Json<LoginVerifyResponse>> {
     let ip = extract_ip(&headers);
     service.check_rate_limit("register", &ip, 5, 3600).await?;
-    let response = service.register_user(&body, client_ip(&ip), extract_user_agent(&headers)).await?;
+    let response = service
+        .register_user(&body, client_ip(&ip), extract_user_agent(&headers))
+        .await?;
     Ok(Json(response))
 }
 

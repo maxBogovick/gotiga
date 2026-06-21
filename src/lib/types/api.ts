@@ -37,6 +37,19 @@ export interface FigurineImage {
     parallaxIntensity?: number | null;
 }
 
+export interface DepthGenItem {
+    imageId: string;
+    status: 'done' | 'skip' | 'fail';
+    detail: string | null;
+}
+
+export interface DepthGenSummary {
+    generated: number;
+    skipped: number;
+    failed: number;
+    results: DepthGenItem[];
+}
+
 export interface ProcessStep {
     id: string;
     stepType: 'sketch' | 'prototype' | 'modeling' | 'painting' | 'finish';
@@ -176,6 +189,52 @@ export interface OrdersPage {
     newCount: number;
     page: number;
     perPage: number;
+}
+
+export type AdminLogLevel = 'TRACE' | 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
+
+export interface AdminLogEntry {
+    id: number;
+    ts: string;
+    level: AdminLogLevel | string;
+    target: string;
+    message: string;
+    requestId: string | null;
+    method: string | null;
+    route: string | null;
+    status: number | null;
+    latencyMs: number | null;
+    fields: Record<string, unknown>;
+}
+
+export interface AdminLogsPage {
+    items: AdminLogEntry[];
+    nextBeforeId: number | null;
+    nextOffset: number | null;
+    droppedTotal: number;
+}
+
+export type AdminLogsSortBy = 'time' | 'level' | 'request' | 'route' | 'status' | 'latency' | 'message';
+export type AdminLogsSortDir = 'asc' | 'desc';
+
+export interface AdminLogsQuery {
+    beforeId?: number | null;
+    offset?: number | null;
+    sortBy?: AdminLogsSortBy;
+    sortDir?: AdminLogsSortDir;
+    from?: string;
+    to?: string;
+    level?: string;
+    requestId?: string;
+    route?: string;
+    method?: string;
+    status?: number | null;
+    statusClass?: number | null;
+    minLatencyMs?: number | null;
+    maxLatencyMs?: number | null;
+    target?: string;
+    q?: string;
+    limit?: number;
 }
 
 // ── Commissions: a petition to the master to create a NEW figurine ──

@@ -26,6 +26,7 @@
     import DesignEditor from '$lib/components/admin/DesignEditor.svelte';
     import CopyEditor from '$lib/components/admin/CopyEditor.svelte';
     import WorkshopFeaturePanel from '$lib/components/admin/WorkshopFeaturePanel.svelte';
+    import LogsPanel from '$lib/components/admin/LogsPanel.svelte';
     import { t } from '$lib/i18n';
     import LangSwitcher from '$lib/components/LangSwitcher.svelte';
 
@@ -76,7 +77,7 @@
     let showingsEditor = $state<FigurineShowingsEditor | null>(null);
     let showSettings = $state(false);
     let message = $state({ text: '', type: 'info' });
-    let activeTab = $state<'registry' | 'home' | 'workshop-feature' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'commissions' | 'showings' | 'bookings' | 'waitlist' | 'analytics' | 'users' | 'comments' | 'messages' | 'server' | 'booking-rules' | 'contact' | 'design' | 'copy'>('registry');
+    let activeTab = $state<'registry' | 'home' | 'workshop-feature' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'commissions' | 'showings' | 'bookings' | 'waitlist' | 'analytics' | 'users' | 'comments' | 'messages' | 'server' | 'logs' | 'booking-rules' | 'contact' | 'design' | 'copy'>('registry');
     let activeAuthorSubTab = $state<'profile' | 'texts'>('profile');
     let newOrdersCount = $state(0);
     let newCommissionsCount = $state(0);
@@ -338,6 +339,37 @@
         selectedFigurine.images = [...selectedFigurine.images];
     }
 
+    let generatingDepth = $state(false);
+
+    // Generate depth maps for every image of the current figurine via the Rust
+    // API (Depth-Anything on CPU). Requires the figurine to already exist server
+    // side; then refresh each image's depthUrl so the badge/preview update.
+    async function generateDepth() {
+        if (!selectedFigurine) return;
+        if (hasUnsaved) {
+            showMessage($t('adminMediaDepthGenSaveFirst'), 'info');
+            return;
+        }
+        generatingDepth = true;
+        try {
+            const res = await api.generateFigurineDepth(selectedFigurine.id);
+            // Pull fresh depthUrls (the API just wrote them) without clobbering
+            // any in-form edits: merge by image id.
+            const fresh = await api.getFigurine(selectedFigurine.id);
+            const byId = new Map((fresh?.images ?? []).map(i => [i.id, i.depthUrl ?? null]));
+            selectedFigurine.images = selectedFigurine.images.map(img => ({
+                ...img,
+                depthUrl: byId.get(img.id) ?? img.depthUrl ?? null,
+            }));
+            showMessage(`${$t('adminMediaDepthGenDone')}: ${res.generated}/${res.results.length}`, 'success');
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e);
+            showMessage($t('adminMsgError') + msg, 'error');
+        } finally {
+            generatingDepth = false;
+        }
+    }
+
     function setParallaxIntensity(imgIdx: number, value: string) {
         if (!selectedFigurine) return;
         const parsed = Number(value);
@@ -560,6 +592,7 @@
                 label: $t('adminGroupSystem'),
                 tabs: [
                   ['server',        $t('adminTabServer')],
+                  ['logs',          'Logs'],
                   ['booking-rules', $t('adminTabBookingRules')],
                   ['contact',       $t('adminTabContact')],
                 ]
@@ -906,7 +939,15 @@
                             <div class="p-4 border border-dashed border-[#34251c]/20">
                                 <div class="flex justify-between items-center mb-4">
                                     <span class="label">{$t('adminMediaPhotos')} ({selectedFigurine.images.length})</span>
-                                    <button onclick={() => handlePickFile('images')} class="btn-gothic text-[10px]">{$t('adminMediaAddPhoto')}</button>
+                                    <div class="flex gap-2">
+                                        {#if !isTauri && selectedFigurine.images.length > 0}
+                                            <button onclick={generateDepth} disabled={generatingDepth}
+                                                title={$t('adminMediaDepthHint')}
+                                                class="btn-gothic text-[10px] disabled:opacity-60 disabled:cursor-wait">
+                                                {generatingDepth ? $t('adminMediaDepthGenRunning') : $t('adminMediaDepthGen')}</button>
+                                        {/if}
+                                        <button onclick={() => handlePickFile('images')} class="btn-gothic text-[10px]">{$t('adminMediaAddPhoto')}</button>
+                                    </div>
                                 </div>
                                 <div class="flex flex-wrap gap-3">
                                     {#each selectedFigurine.images as img, imgIdx}
@@ -1120,6 +1161,8 @@
             <div in:fade class="h-full overflow-y-auto"><CommentsPanel onPendingCount={(n) => pendingCommentsCount = n} /></div>
         {:else if activeTab === 'server'}
             <div in:fade class="h-full overflow-y-auto"><SmtpSettingsPanel /></div>
+        {:else if activeTab === 'logs'}
+            <div in:fade class="h-full overflow-hidden"><LogsPanel /></div>
         {:else if activeTab === 'waitlist'}
             <div in:fade class="h-full"><WaitlistPanel /></div>
         {:else if activeTab === 'messages'}

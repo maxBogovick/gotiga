@@ -40,6 +40,11 @@ impl Repository {
         &self.pg_pool
     }
 
+    pub async fn health_check(&self) -> Result<()> {
+        sqlx::query("SELECT 1").execute(&self.pg_pool).await?;
+        Ok(())
+    }
+
     // === ORDERS (Postgres) ===
 
     pub async fn save_order(

@@ -32,43 +32,7 @@ try:
 except ImportError:
     sys.exit("Missing dependency: pip install psycopg2-binary")
 
-try:
-    import numpy as np
-    from PIL import Image
-    from transformers import pipeline
-except ImportError:
-    sys.exit("Missing dependencies: pip install -r requirements.txt")
-
-
-def local_source(stored: str, upload_root: "Path") -> "Path":
-    """Map a stored image path to its file on disk under UPLOAD_DIR.
-
-    The server records image paths as full public URLs
-    ('https://host/static/images/original/x.jpg') or '/static/...' or already
-    relative ('images/original/x.jpg'). On disk the API serves '/static/images'
-    from '<UPLOAD_DIR>/images', so we keep everything after '/static/'."""
-    p = (stored or "").split("?", 1)[0].split("#", 1)[0]  # drop any query/fragment
-    marker = "/static/"
-    idx = p.find(marker)
-    if idx != -1:
-        p = p[idx + len(marker):]
-    elif "://" in p:                      # URL without /static/ — drop scheme+host
-        p = p.split("/", 3)[-1]
-    return upload_root / p.lstrip("/")
-
-
-def normalize_depth(depth_img: "Image.Image") -> "Image.Image":
-    """Stretch the predicted depth to full 0..255 so the shader's [0,1] range is used.
-
-    Convention: brighter = nearer. Depth-Anything outputs larger = nearer already,
-    which matches the component (foreground shifts most with the pointer)."""
-    arr = np.asarray(depth_img, dtype=np.float32)
-    lo, hi = float(arr.min()), float(arr.max())
-    if hi - lo < 1e-6:
-        arr[:] = 128.0
-    else:
-        arr = (arr - lo) / (hi - lo) * 255.0
-    return Image.fromarray(arr.astype(np.uint8), mode="L")
+from depth_core import generate_one, get_estimator  # noqa: E402
 
 
 def main() -> int:
@@ -104,31 +68,18 @@ def main() -> int:
         return 0
 
     print(f"Loading model {args.model} …")
-    estimator = pipeline(task="depth-estimation", model=args.model)
+    estimator = get_estimator(args.model)
 
     done = 0
     for image_id, rel_path in rows:
-        src = local_source(rel_path, upload_root)
-        if not src.exists():
-            print(f"  ! skip {image_id}: source missing ({rel_path} → {src})", file=sys.stderr)
-            continue
-        try:
-            img = Image.open(src).convert("RGB")
-            result = estimator(img)
-            depth = normalize_depth(result["depth"])
-            # Match the colour image's pixel grid so the shader's UVs line up exactly.
-            if depth.size != img.size:
-                depth = depth.resize(img.size, Image.BILINEAR)
-
-            rel_depth = f"images/depth/{image_id}.webp"
-            depth.save(upload_root / rel_depth, format="WEBP", quality=80, method=6)
-            cur.execute("UPDATE images SET depth_path = %s WHERE id = %s", (rel_depth, image_id))
-            conn.commit()
+        status, detail = generate_one(cur, conn, estimator, upload_root, image_id, rel_path)
+        if status == "done":
             done += 1
-            print(f"  ✓ {image_id} → {rel_depth}")
-        except Exception as exc:  # noqa: BLE001 — keep the batch going
-            conn.rollback()
-            print(f"  ! fail {image_id}: {exc}", file=sys.stderr)
+            print(f"  ✓ {image_id} → {detail}")
+        elif status == "skip":
+            print(f"  ! skip {image_id}: {detail}", file=sys.stderr)
+        else:
+            print(f"  ! fail {image_id}: {detail}", file=sys.stderr)
 
     cur.close()
     conn.close()

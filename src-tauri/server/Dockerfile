@@ -69,6 +69,29 @@ RUN set -eu; \
         : > city.mmdb; \
     fi
 
+# ── Depth-Anything-V2 weights ("Living Daguerreotype" depth maps) ──────────────
+# Baked in so the in-process candle inference needs no network at runtime. Two
+# safetensors: DINOv2-small backbone + the Depth-Anything head (~150 MB total).
+# Build with DEPTH_ENABLED="" to skip — the depth endpoint then disables itself.
+FROM --platform=$BUILDPLATFORM debian:bookworm-slim AS depthweights
+ARG DEPTH_ENABLED=true
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /depth-weights
+RUN set -eu; \
+    if [ -n "$DEPTH_ENABLED" ]; then \
+        curl -fsSL --retry 3 --retry-delay 2 \
+            "https://huggingface.co/lmz/candle-dino-v2/resolve/main/dinov2_vits14.safetensors" \
+            -o dinov2_vits14.safetensors; \
+        curl -fsSL --retry 3 --retry-delay 2 \
+            "https://huggingface.co/jeroenvlek/depth-anything-v2-safetensors/resolve/main/depth_anything_v2_vits.safetensors" \
+            -o depth_anything_v2_vits.safetensors; \
+        test -s dinov2_vits14.safetensors && test -s depth_anything_v2_vits.safetensors; \
+    else \
+        echo "DEPTH_ENABLED empty — building WITHOUT depth weights (endpoint disabled)"; \
+    fi
+
 # ── Runtime stage (target arch) ────────────────────────────────────────────────
 FROM debian:bookworm-slim
 
@@ -82,6 +105,7 @@ RUN apt-get update \
 COPY --from=builder /gotiga-server /usr/local/bin/gotiga-server
 COPY migrations ./migrations
 COPY --from=geoip /geoip/city.mmdb /app/geoip/city.mmdb
+COPY --from=depthweights /depth-weights /app/depth-weights
 
 # Run as an unprivileged user; own the uploads dir it needs to write.
 RUN useradd --system --uid 10001 --user-group --no-create-home app \
@@ -96,6 +120,8 @@ ENV RUST_LOG=info
 # Offline geolocation DB baked above; override to a mounted file if you prefer
 # fresher data without rebuilding.
 ENV GEOIP_DB_PATH=/app/geoip/city.mmdb
+# Bundled Depth-Anything weights for on-demand depth maps (admin "Generate depth").
+ENV DEPTH_WEIGHTS_DIR=/app/depth-weights
 
 EXPOSE 3000
 

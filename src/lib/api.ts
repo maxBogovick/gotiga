@@ -36,6 +36,8 @@ import type {
     SubmitCommentRequest,
     ModerateCommentRequest,
     AdminCommentDto,
+    AdminLogsPage,
+    AdminLogsQuery,
     SmtpSettings,
     ContactSettings,
     WorkshopFeature,
@@ -54,6 +56,7 @@ import type {
     CommissionsPage,
     EditCommissionRequest,
     AttachmentInput,
+    DepthGenSummary,
 } from './types/api';
 
 export type { AppSettings };
@@ -221,6 +224,14 @@ function authHeaders(): Record<string, string> {
     return apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
 }
 
+export function authenticatedApiUrl(path: string): string {
+    return `${webApiBase()}${path}`;
+}
+
+export function currentAuthHeaders(): Record<string, string> {
+    return authHeaders();
+}
+
 export const api = {
     // === AUTH ===
     async adminLogin(login: string, password: string): Promise<string> {
@@ -230,6 +241,32 @@ export const api = {
             body: JSON.stringify({ login, password }),
         });
         return data.token;
+    },
+
+    async adminListLogs(opts?: AdminLogsQuery): Promise<AdminLogsPage> {
+        const p = new URLSearchParams();
+        const setNumber = (key: string, value: number | null | undefined) => {
+            if (value != null && Number.isFinite(value)) p.set(key, String(value));
+        };
+        setNumber('before_id', opts?.beforeId);
+        setNumber('offset', opts?.offset);
+        if (opts?.sortBy) p.set('sort_by', opts.sortBy);
+        if (opts?.sortDir) p.set('sort_dir', opts.sortDir);
+        if (opts?.from) p.set('from', opts.from);
+        if (opts?.to) p.set('to', opts.to);
+        if (opts?.level) p.set('level', opts.level);
+        if (opts?.requestId) p.set('request_id', opts.requestId);
+        if (opts?.route) p.set('route', opts.route);
+        if (opts?.method) p.set('method', opts.method);
+        setNumber('status', opts?.status);
+        setNumber('status_class', opts?.statusClass);
+        setNumber('min_latency_ms', opts?.minLatencyMs);
+        setNumber('max_latency_ms', opts?.maxLatencyMs);
+        if (opts?.target) p.set('target', opts.target);
+        if (opts?.q) p.set('q', opts.q);
+        setNumber('limit', opts?.limit);
+        const qs = p.toString() ? `?${p}` : '';
+        return webFetch(`/admin/logs${qs}`, { headers: authHeaders() });
     },
 
     // === READ (public) ===
@@ -283,6 +320,19 @@ export const api = {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify(figurine),
+        });
+    },
+
+    /**
+     * Generate depth maps ("Living Daguerreotype" parallax) for a figurine's
+     * images on demand. Runs Depth-Anything in the Rust API (CPU). Server build
+     * only — the Tauri desktop app has no depth model bundled.
+     */
+    async generateFigurineDepth(id: string): Promise<DepthGenSummary> {
+        if (isTauri) throw new Error('Depth generation is only available on the server build.');
+        return webFetch(`/admin/figurines/${id}/generate-depth`, {
+            method: 'POST',
+            headers: authHeaders(),
         });
     },
 

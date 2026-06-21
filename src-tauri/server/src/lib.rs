@@ -6,7 +6,10 @@
 pub mod api;
 pub mod config;
 pub mod db;
+pub mod depth;
 pub mod error;
 pub mod geo;
+pub mod logs;
 pub mod models;
+pub mod observability;
 pub mod services;

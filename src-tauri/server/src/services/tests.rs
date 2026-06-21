@@ -36,6 +36,7 @@ fn test_config() -> Config {
         smtp_pass: None,
         smtp_from: None,
         geoip_db_path: None,
+        admin_log_db_path: "/tmp/gotiga-test-admin-logs.sqlite".into(),
     }
 }
 
@@ -53,7 +54,10 @@ fn lazy_service() -> AppService {
 /// with `selected` guaranteed to be a member.
 fn valid_category(index: usize) -> Vec<String> {
     let ids = valid_icon_ids(CATEGORIES[index]).unwrap();
-    ids.iter().take(POOL_PER_CATEGORY).map(|s| s.to_string()).collect()
+    ids.iter()
+        .take(POOL_PER_CATEGORY)
+        .map(|s| s.to_string())
+        .collect()
 }
 
 /// A complete, valid `(pool, selections)` pair for registration.
@@ -88,7 +92,10 @@ fn assert_bad_request(err: AppError, needle: &str) {
 #[test]
 fn validate_text_rejects_blank_and_whitespace_only() {
     assert_bad_request(validate_text("Name", "", 10).unwrap_err(), "required");
-    assert_bad_request(validate_text("Name", "   \t\n", 10).unwrap_err(), "required");
+    assert_bad_request(
+        validate_text("Name", "   \t\n", 10).unwrap_err(),
+        "required",
+    );
 }
 
 #[test]
@@ -109,7 +116,10 @@ fn validate_text_trims_before_measuring() {
 // ── validate_attachments ────────────────────────────────────────────────────
 
 fn att(url: &str) -> AttachmentInput {
-    AttachmentInput { url: url.into(), thumb_url: None }
+    AttachmentInput {
+        url: url.into(),
+        thumb_url: None,
+    }
 }
 
 #[test]
@@ -144,20 +154,17 @@ fn validate_attachments_validates_thumbnail_too() {
         url: "/static/ok.png".into(),
         thumb_url: Some("ftp://evil".into()),
     };
-    assert_bad_request(
-        validate_attachments(&[bad_thumb]).unwrap_err(),
-        "thumbnail",
-    );
+    assert_bad_request(validate_attachments(&[bad_thumb]).unwrap_err(), "thumbnail");
 }
 
 #[test]
 fn validate_attachments_enforces_count_cap() {
-    let many: Vec<AttachmentInput> =
-        (0..MAX_ATTACHMENTS + 1).map(|_| att("/static/x.png")).collect();
+    let many: Vec<AttachmentInput> = (0..MAX_ATTACHMENTS + 1)
+        .map(|_| att("/static/x.png"))
+        .collect();
     assert_bad_request(validate_attachments(&many).unwrap_err(), "Too many");
     // Exactly the cap is allowed.
-    let at_cap: Vec<AttachmentInput> =
-        (0..MAX_ATTACHMENTS).map(|_| att("/static/x.png")).collect();
+    let at_cap: Vec<AttachmentInput> = (0..MAX_ATTACHMENTS).map(|_| att("/static/x.png")).collect();
     assert!(validate_attachments(&at_cap).is_ok());
 }
 
@@ -219,7 +226,10 @@ fn escape_markdown_leaves_plain_text_untouched() {
 fn decoy_pool_is_deterministic_for_same_email_and_secret() {
     let a = decoy_pool("secret", "user@example.com");
     let b = decoy_pool("secret", "user@example.com");
-    assert_eq!(a, b, "decoy grid must be stable so it can't be probed for liveness");
+    assert_eq!(
+        a, b,
+        "decoy grid must be stable so it can't be probed for liveness"
+    );
 }
 
 #[test]
@@ -234,7 +244,11 @@ fn decoy_pool_has_correct_shape() {
         // Every icon is a real master-pool id for that category.
         let master = valid_icon_ids(CATEGORIES[i]).unwrap();
         for id in cat {
-            assert!(master.contains(&id.as_str()), "{id} not a valid {}", CATEGORIES[i]);
+            assert!(
+                master.contains(&id.as_str()),
+                "{id} not a valid {}",
+                CATEGORIES[i]
+            );
         }
     }
 }
@@ -242,7 +256,11 @@ fn decoy_pool_has_correct_shape() {
 #[test]
 fn decoy_pool_differs_by_email_and_by_secret() {
     let base = decoy_pool("secret", "a@example.com");
-    assert_ne!(base, decoy_pool("secret", "b@example.com"), "must vary per email");
+    assert_ne!(
+        base,
+        decoy_pool("secret", "b@example.com"),
+        "must vary per email"
+    );
     assert_ne!(
         base,
         decoy_pool("other-secret", "a@example.com"),
@@ -267,21 +285,30 @@ fn validate_pool_accepts_well_formed_pool_and_returns_keyed_json() {
 fn validate_pool_rejects_wrong_size() {
     let (mut pool, selections) = valid_pool_and_selections();
     pool[0].pop(); // now 7
-    assert_bad_request(validate_pool(&pool, &selections).unwrap_err(), "Invalid pool size");
+    assert_bad_request(
+        validate_pool(&pool, &selections).unwrap_err(),
+        "Invalid pool size",
+    );
 }
 
 #[test]
 fn validate_pool_rejects_foreign_icon() {
     let (mut pool, selections) = valid_pool_and_selections();
     pool[1][0] = "not_a_real_icon".into();
-    assert_bad_request(validate_pool(&pool, &selections).unwrap_err(), "Invalid pool icon");
+    assert_bad_request(
+        validate_pool(&pool, &selections).unwrap_err(),
+        "Invalid pool icon",
+    );
 }
 
 #[test]
 fn validate_pool_rejects_duplicates() {
     let (mut pool, selections) = valid_pool_and_selections();
     pool[2][1] = pool[2][0].clone();
-    assert_bad_request(validate_pool(&pool, &selections).unwrap_err(), "Duplicate pool icon");
+    assert_bad_request(
+        validate_pool(&pool, &selections).unwrap_err(),
+        "Duplicate pool icon",
+    );
 }
 
 #[test]
@@ -289,9 +316,15 @@ fn validate_pool_rejects_selection_outside_pool() {
     let (pool, mut selections) = valid_pool_and_selections();
     // Pick a valid icon for that category that is NOT in the shown subset.
     let master = valid_icon_ids(CATEGORIES[0]).unwrap();
-    let outside = master.iter().find(|id| !pool[0].contains(&id.to_string())).unwrap();
+    let outside = master
+        .iter()
+        .find(|id| !pool[0].contains(&id.to_string()))
+        .unwrap();
     selections[0] = outside.to_string();
-    assert_bad_request(validate_pool(&pool, &selections).unwrap_err(), "Selection not in pool");
+    assert_bad_request(
+        validate_pool(&pool, &selections).unwrap_err(),
+        "Selection not in pool",
+    );
 }
 
 // ── parse_stored_pool ───────────────────────────────────────────────────────
@@ -339,16 +372,32 @@ fn build_hash_input_is_category_labelled_and_ordered() {
 fn build_hash_input_distinguishes_same_icons_in_different_categories() {
     // Two selection arrays sharing icon strings but in different category slots
     // must hash-input differently, so a credential can't be replayed cross-slot.
-    let a = ["x".to_string(), "y".to_string(), "z".to_string(), "w".to_string()];
-    let b = ["y".to_string(), "x".to_string(), "z".to_string(), "w".to_string()];
+    let a = [
+        "x".to_string(),
+        "y".to_string(),
+        "z".to_string(),
+        "w".to_string(),
+    ];
+    let b = [
+        "y".to_string(),
+        "x".to_string(),
+        "z".to_string(),
+        "w".to_string(),
+    ];
     assert_ne!(build_hash_input(&a), build_hash_input(&b));
 }
 
 #[test]
 fn hash_password_verifies_and_rejects_wrong_input() {
     let hash = hash_password("animals:wolf|dishes:apple|seasons:sun|symbols:key").unwrap();
-    assert!(verify_password("animals:wolf|dishes:apple|seasons:sun|symbols:key", &hash));
-    assert!(!verify_password("animals:fox|dishes:apple|seasons:sun|symbols:key", &hash));
+    assert!(verify_password(
+        "animals:wolf|dishes:apple|seasons:sun|symbols:key",
+        &hash
+    ));
+    assert!(!verify_password(
+        "animals:fox|dishes:apple|seasons:sun|symbols:key",
+        &hash
+    ));
 }
 
 #[test]
@@ -372,14 +421,22 @@ fn d(s: &str) -> chrono::NaiveDate {
 
 #[test]
 fn booking_rules_duration_is_inclusive_of_both_endpoints() {
-    let rules = BookingRules { min_days: 1, max_days: 30, advance_days: 0 };
+    let rules = BookingRules {
+        min_days: 1,
+        max_days: 30,
+        advance_days: 0,
+    };
     // Same start/end day = 1-day booking, must satisfy min_days = 1.
     assert!(AppService::validate_booking_rules(&rules, d("2030-01-10"), d("2030-01-10")).is_ok());
 }
 
 #[test]
 fn booking_rules_rejects_below_min_and_above_max() {
-    let rules = BookingRules { min_days: 2, max_days: 3, advance_days: 0 };
+    let rules = BookingRules {
+        min_days: 2,
+        max_days: 3,
+        advance_days: 0,
+    };
     assert_bad_request(
         AppService::validate_booking_rules(&rules, d("2030-01-10"), d("2030-01-10")).unwrap_err(),
         "Minimum booking duration",
@@ -393,7 +450,11 @@ fn booking_rules_rejects_below_min_and_above_max() {
 
 #[test]
 fn booking_rules_enforces_advance_notice() {
-    let rules = BookingRules { min_days: 1, max_days: 30, advance_days: 7 };
+    let rules = BookingRules {
+        min_days: 1,
+        max_days: 30,
+        advance_days: 7,
+    };
     // Starting tomorrow violates a 7-day advance requirement.
     let tomorrow = chrono::Utc::now().date_naive() + chrono::Duration::days(1);
     assert_bad_request(
@@ -411,25 +472,42 @@ fn booking_rules_enforces_advance_notice() {
 fn parse_uuid_accepts_valid_and_reports_the_bad_value() {
     let id = Uuid::new_v4();
     assert_eq!(AppService::parse_uuid(&id.to_string()).unwrap(), id);
-    assert_bad_request(AppService::parse_uuid("nope").unwrap_err(), "Invalid ID: nope");
+    assert_bad_request(
+        AppService::parse_uuid("nope").unwrap_err(),
+        "Invalid ID: nope",
+    );
 }
 
 // ── media path classification ───────────────────────────────────────────────
 
 #[test]
 fn is_managed_media_path_only_matches_managed_roots() {
-    for p in ["images/a.png", "videos/a.mp4", "audio/a.mp3", "backgrounds/b.png"] {
-        assert!(AppService::is_managed_media_path(p), "{p} should be managed");
+    for p in [
+        "images/a.png",
+        "videos/a.mp4",
+        "audio/a.mp3",
+        "backgrounds/b.png",
+    ] {
+        assert!(
+            AppService::is_managed_media_path(p),
+            "{p} should be managed"
+        );
     }
     for p in ["uploads/x", "static/x", "x.png", ""] {
-        assert!(!AppService::is_managed_media_path(p), "{p} should not be managed");
+        assert!(
+            !AppService::is_managed_media_path(p),
+            "{p} should not be managed"
+        );
     }
 }
 
 #[test]
 fn media_type_for_path_maps_each_root() {
     assert_eq!(AppService::media_type_for_path("images/a.png"), "image");
-    assert_eq!(AppService::media_type_for_path("backgrounds/a.png"), "image");
+    assert_eq!(
+        AppService::media_type_for_path("backgrounds/a.png"),
+        "image"
+    );
     assert_eq!(AppService::media_type_for_path("videos/a.mp4"), "video");
     assert_eq!(AppService::media_type_for_path("audio/a.mp3"), "audio");
     assert_eq!(AppService::media_type_for_path("misc/a"), "other");
@@ -437,9 +515,18 @@ fn media_type_for_path_maps_each_root() {
 
 #[test]
 fn variant_for_path_recognises_image_variants_only() {
-    assert_eq!(AppService::variant_for_path("images/original/a.png").as_deref(), Some("original"));
-    assert_eq!(AppService::variant_for_path("images/preview/a.png").as_deref(), Some("preview"));
-    assert_eq!(AppService::variant_for_path("images/thumb/a.png").as_deref(), Some("thumb"));
+    assert_eq!(
+        AppService::variant_for_path("images/original/a.png").as_deref(),
+        Some("original")
+    );
+    assert_eq!(
+        AppService::variant_for_path("images/preview/a.png").as_deref(),
+        Some("preview")
+    );
+    assert_eq!(
+        AppService::variant_for_path("images/thumb/a.png").as_deref(),
+        Some("thumb")
+    );
     assert_eq!(AppService::variant_for_path("images/a.png"), None);
     assert_eq!(AppService::variant_for_path("videos/original/a.mp4"), None);
 }
@@ -486,7 +573,10 @@ async fn clean_and_public_media_url_are_inverse_around_public_base() {
 #[tokio::test]
 async fn clean_media_path_normalises_backslashes() {
     let svc = lazy_service();
-    assert_eq!(svc.clean_media_path("images\\sub\\a.png"), "images/sub/a.png");
+    assert_eq!(
+        svc.clean_media_path("images\\sub\\a.png"),
+        "images/sub/a.png"
+    );
 }
 
 // ── in-memory rate limiter ──────────────────────────────────────────────────
@@ -495,12 +585,33 @@ async fn clean_media_path_normalises_backslashes() {
 async fn check_rate_limit_allows_up_to_max_then_blocks_per_key() {
     let svc = lazy_service();
     // First two requests for (bucket, ip) pass; the third is throttled.
-    assert!(svc.check_rate_limit("auth", "1.2.3.4", 2, 3600).await.is_ok());
-    assert!(svc.check_rate_limit("auth", "1.2.3.4", 2, 3600).await.is_ok());
-    assert_bad_request(svc.check_rate_limit("auth", "1.2.3.4", 2, 3600).await.unwrap_err(), "Too many");
+    assert!(
+        svc.check_rate_limit("auth", "1.2.3.4", 2, 3600)
+            .await
+            .is_ok()
+    );
+    assert!(
+        svc.check_rate_limit("auth", "1.2.3.4", 2, 3600)
+            .await
+            .is_ok()
+    );
+    assert_bad_request(
+        svc.check_rate_limit("auth", "1.2.3.4", 2, 3600)
+            .await
+            .unwrap_err(),
+        "Too many",
+    );
 
     // A different IP has its own independent budget.
-    assert!(svc.check_rate_limit("auth", "5.6.7.8", 2, 3600).await.is_ok());
+    assert!(
+        svc.check_rate_limit("auth", "5.6.7.8", 2, 3600)
+            .await
+            .is_ok()
+    );
     // …and so does a different bucket for the same IP.
-    assert!(svc.check_rate_limit("orders", "1.2.3.4", 2, 3600).await.is_ok());
+    assert!(
+        svc.check_rate_limit("orders", "1.2.3.4", 2, 3600)
+            .await
+            .is_ok()
+    );
 }
