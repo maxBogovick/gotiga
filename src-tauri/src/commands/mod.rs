@@ -498,12 +498,17 @@ pub async fn save_figurine(
     let images: Vec<Image> = images_dto
         .into_iter()
         .map(|img_dto| {
+            if let Some(value) = img_dto.parallax_intensity {
+                if !(0.0..=1.0).contains(&value) {
+                    return Err("Image parallax intensity must be between 0 and 1".to_string());
+                }
+            }
             let file_path = clean_path(Some(img_dto.url)).unwrap_or_default();
             let original_path = clean_path(img_dto.original_url);
             let thumb_path = clean_path(img_dto.thumb_url);
             let depth_path = clean_path(img_dto.depth_url);
             let (derived_original, derived_thumb) = derive_image_variants(&file_path);
-            Image {
+            Ok(Image {
                 id: img_dto.id,
                 figurine_id: figurine_id.clone(),
                 image_type: ImageType::from_str(&img_dto.image_type),
@@ -511,12 +516,13 @@ pub async fn save_figurine(
                 original_path: original_path.or(derived_original),
                 thumb_path: thumb_path.or(derived_thumb),
                 depth_path,
+                parallax_intensity: img_dto.parallax_intensity,
                 alt_text: img_dto.alt_text,
                 sort_order: 0,
                 updated_at: now.clone(),
-            }
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>, String>>()?;
 
     repo.replace_images(&figurine_id, images)
         .map_err(|e| format!("Database error images: {}", e))?;

@@ -554,11 +554,12 @@ impl Repository {
             .await?;
         for (img_id, img, sort) in &image_rows {
             sqlx::query(
-                "INSERT INTO images (id, figurine_id, image_type, file_path, original_path, thumb_path, depth_path, alt_text, sort_order) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+                "INSERT INTO images (id, figurine_id, image_type, file_path, original_path, thumb_path, depth_path, parallax_intensity, alt_text, sort_order) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
             )
             .bind(img_id).bind(id).bind(&img.image_type)
             .bind(&img.url).bind(&img.original_url).bind(&img.thumb_url)
             .bind(&img.depth_url)
+            .bind(img.parallax_intensity)
             .bind(&img.alt_text).bind(*sort)
             .execute(&mut *tx).await?;
         }

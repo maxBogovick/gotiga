@@ -333,8 +333,10 @@
     deleteError = '';
     try {
       await api.deleteAccount(authStore.token!);
-      authStore.clearSession();
-      goto('/');
+      authStore.purgeAllLocalData();
+      // Hard navigation so in-memory stores (wishlist, claims) reset too, not
+      // just their localStorage backing.
+      window.location.href = '/';
     } catch {
       deleteError = $t('profileActionError');
       deleting = false;

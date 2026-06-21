@@ -111,6 +111,30 @@
         return path;
     }
 
+    function loadImageAspect(url: string): Promise<number | null> {
+        if (!url) return Promise.resolve(null);
+        return new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+                resolve(img.naturalWidth && img.naturalHeight
+                    ? img.naturalWidth / img.naturalHeight
+                    : null);
+            };
+            img.onerror = () => resolve(null);
+            img.src = url;
+        });
+    }
+
+    async function confirmDepthAspectMatches(imageUrl: string, depthUrl: string): Promise<boolean> {
+        const [imageAspect, depthAspect] = await Promise.all([
+            loadImageAspect(resolveUrl(imageUrl)),
+            loadImageAspect(resolveUrl(depthUrl)),
+        ]);
+        if (!imageAspect || !depthAspect) return true;
+        const drift = Math.abs(imageAspect - depthAspect) / imageAspect;
+        return drift <= 0.03 || confirm($t('adminMediaDepthAspectWarning'));
+    }
+
     const emptyFigurine: Figurine = {
         id: '',
         name: '',
@@ -271,7 +295,8 @@
                     originalUrl: imported.originalUrl ?? variants.originalUrl,
                     thumbUrl: imported.thumbUrl ?? variants.thumbUrl,
                     altText: '',
-                    depthUrl: null
+                    depthUrl: null,
+                    parallaxIntensity: null
                 }];
             }
             showMessage($t('adminMsgFileUploaded'), 'success');
@@ -293,6 +318,11 @@
             const fileOrPath = await pickMediaSource('images');
             if (fileOrPath === null) return;
             const imported = await api.importMediaWithVariants(fileOrPath, 'images');
+            const targetImage = selectedFigurine.images[imgIdx];
+            if (targetImage && !(await confirmDepthAspectMatches(targetImage.url, imported.url))) {
+                showMessage($t('adminMediaDepthCancelled'), 'info');
+                return;
+            }
             selectedFigurine.images[imgIdx].depthUrl = imported.url;
             selectedFigurine.images = [...selectedFigurine.images];
             showMessage($t('adminMediaDepthUploaded'), 'success');
@@ -306,6 +336,26 @@
         if (!selectedFigurine) return;
         selectedFigurine.images[imgIdx].depthUrl = null;
         selectedFigurine.images = [...selectedFigurine.images];
+    }
+
+    function setParallaxIntensity(imgIdx: number, value: string) {
+        if (!selectedFigurine) return;
+        const parsed = Number(value);
+        selectedFigurine.images[imgIdx].parallaxIntensity = Number.isFinite(parsed)
+            ? Math.max(0, Math.min(1, parsed))
+            : null;
+        selectedFigurine.images = [...selectedFigurine.images];
+    }
+
+    function resetParallaxIntensity(imgIdx: number) {
+        if (!selectedFigurine) return;
+        selectedFigurine.images[imgIdx].parallaxIntensity = null;
+        selectedFigurine.images = [...selectedFigurine.images];
+    }
+
+    function parallaxValue(value: number | null | undefined): number {
+        if (typeof value !== 'number' || !Number.isFinite(value)) return 0.6;
+        return Math.max(0, Math.min(1, value));
     }
 
     function deriveImageVariants(url: string): { originalUrl: string | null; thumbUrl: string | null } {
@@ -886,6 +936,10 @@
                                                 {#if img.imageType === 'face'}
                                                     <div class="absolute bottom-0 left-0 right-0 bg-amber-500/80 text-black text-[8px] text-center py-0.5 font-bold">{$t('adminMediaCoverBadge')}</div>
                                                 {/if}
+                                                {#if img.depthUrl}
+                                                    <div class="absolute top-0 left-0 bg-[#34251c]/85 text-[#f3e9d8] text-[8px] px-1 py-0.5 leading-none tracking-wider font-bold pointer-events-none"
+                                                        title={$t('adminMediaDepthHint')}>{$t('adminMediaDepthBadge')}</div>
+                                                {/if}
                                             </div>
                                             <!-- Alt text -->
                                             <input
@@ -906,6 +960,33 @@
                                                     <button onclick={() => handlePickDepth(imgIdx)}
                                                         class="w-full text-[8px] uppercase text-[#5f4636] hover:text-[#34251c] px-1 py-0.5 border border-dashed border-[#34251c]/20">{$t('adminMediaDepthAdd')}</button>
                                                 {/if}
+                                            </div>
+                                            <div class="w-28 space-y-1" title={$t('adminMediaParallaxHint')}>
+                                                <div class="flex items-center justify-between gap-1">
+                                                    <span class="text-[8px] uppercase tracking-[0.08em] text-[#5f4636]">{$t('adminMediaParallax')}</span>
+                                                    <button
+                                                        type="button"
+                                                        onclick={() => resetParallaxIntensity(imgIdx)}
+                                                        class="text-[8px] text-[#5f4636] hover:text-[#34251c]"
+                                                        disabled={img.parallaxIntensity == null}
+                                                    >
+                                                        {$t('adminMediaParallaxReset')}
+                                                    </button>
+                                                </div>
+                                                <div class="flex items-center gap-1">
+                                                    <input
+                                                        type="range"
+                                                        min="0"
+                                                        max="1"
+                                                        step="0.05"
+                                                        value={parallaxValue(img.parallaxIntensity)}
+                                                        oninput={(e) => setParallaxIntensity(imgIdx, (e.currentTarget as HTMLInputElement).value)}
+                                                        class="w-full accent-[#6f3b24]"
+                                                    />
+                                                    <span class="w-7 text-right text-[8px] tabular-nums text-[#5f4636]">
+                                                        {parallaxValue(img.parallaxIntensity).toFixed(2)}
+                                                    </span>
+                                                </div>
                                             </div>
                                         </div>
                                     {/each}

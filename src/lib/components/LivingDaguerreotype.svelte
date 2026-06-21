@@ -80,11 +80,28 @@
   let visible = true;
   let running = false;
   let raf = 0;
+  let hostRect: DOMRect | null = null;
+  let hostRectDirty = true;
 
   let destroyed = false;
   let initialized = false; // GL context + program ready
   let loadedKey = '';      // de-dupes the (src|depthSrc) currently loaded/loading
   let loadSeq = 0;         // supersedes in-flight loads when the image changes fast
+
+  function updateHostRect() {
+    hostRect = host?.getBoundingClientRect() ?? null;
+    hostRectDirty = false;
+  }
+
+  function markHostRectDirty() {
+    hostRectDirty = true;
+  }
+
+  function stopAnimation() {
+    running = false;
+    if (raf) cancelAnimationFrame(raf);
+    raf = 0;
+  }
 
   function makeTexture(): WebGLTexture | null {
     if (!gl) return null;
@@ -121,10 +138,19 @@
   // Await an existing <img> instead of fetching the URL again. The browser is
   // already loading the visible base image, so the colour texture costs zero
   // extra network requests — we just upload that same element once it's ready.
-  function awaitImg(img: HTMLImageElement): Promise<HTMLImageElement | null> {
+  function imageMatches(img: HTMLImageElement, url: string): boolean {
+    try {
+      return img.currentSrc === url || img.src === new URL(url, window.location.href).href;
+    } catch {
+      return img.currentSrc === url || img.src === url;
+    }
+  }
+
+  function awaitImg(img: HTMLImageElement, expectedUrl: string): Promise<HTMLImageElement | null> {
+    if (!imageMatches(img, expectedUrl)) return Promise.resolve(null);
     if (img.complete) return Promise.resolve(img.naturalWidth > 0 ? img : null);
     return new Promise((resolve) => {
-      img.addEventListener('load', () => resolve(img.naturalWidth > 0 ? img : null), { once: true });
+      img.addEventListener('load', () => resolve(imageMatches(img, expectedUrl) && img.naturalWidth > 0 ? img : null), { once: true });
       img.addEventListener('error', () => resolve(null), { once: true });
     });
   }
@@ -186,7 +212,10 @@
 
   function onMove(e: PointerEvent) {
     if (!host) return;
-    const r = host.getBoundingClientRect();
+    if (!hostRect || hostRectDirty) updateHostRect();
+    const r = hostRect;
+    if (!r) return;
+    if (!r.width || !r.height) return;
     targetX = ((e.clientX - r.left) / r.width) * 2 - 1;
     targetY = ((e.clientY - r.top) / r.height) * 2 - 1;
     pointerInside = true;
@@ -194,6 +223,8 @@
   }
   function onLeave() {
     pointerInside = false;
+    hostRect = null;
+    hostRectDirty = true;
     targetX = 0;
     targetY = 0;
     kick(); // ease back to the resting frame
@@ -216,7 +247,9 @@
 
     // Colour: reuse the visible base <img> when it's the same element/source,
     // else a fresh load (covers the no-DOM-yet edge).
-    const colorImg = baseImg ? await awaitImg(baseImg) : await loadImage(colorSrc);
+    const colorImg = baseImg
+      ? (await awaitImg(baseImg, colorSrc)) ?? await loadImage(colorSrc)
+      : await loadImage(colorSrc);
     if (destroyed || seq !== loadSeq) return;
     if (!colorImg) { imageFailed = true; return; }
 
@@ -353,19 +386,46 @@
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
+    function handleContextLost(e: Event) {
+      e.preventDefault();
+      stopAnimation();
+      glReady = false;
+      initialized = false;
+      loadedKey = '';
+      colorTex = null;
+      depthTex = null;
+      gl = null;
+    }
+
+    function handleContextRestored() {
+      // The base <img> remains visible. A full remount recreates the context and
+      // shader program; avoid presenting a stale canvas after browser recovery.
+      glReady = false;
+    }
+
+    canvas.addEventListener('webglcontextlost', handleContextLost);
+    canvas.addEventListener('webglcontextrestored', handleContextRestored);
+    host.addEventListener('pointerenter', updateHostRect);
     host.addEventListener('pointermove', onMove);
     host.addEventListener('pointerleave', onLeave);
+    const scrollOptions = { passive: true, capture: true };
+    window.addEventListener('scroll', markHostRectDirty, scrollOptions);
+    window.addEventListener('resize', markHostRectDirty);
 
     const io = new IntersectionObserver(
       ([entry]) => {
         visible = entry.isIntersecting;
+        if (visible) markHostRectDirty();
         if (visible) kick();
       },
       { threshold: 0 },
     );
     io.observe(host);
 
-    const ro = new ResizeObserver(() => kick());
+    const ro = new ResizeObserver(() => {
+      markHostRectDirty();
+      kick();
+    });
     ro.observe(host);
 
     initialized = true;
@@ -375,9 +435,14 @@
 
     return () => {
       destroyed = true;
-      if (raf) cancelAnimationFrame(raf);
+      stopAnimation();
+      canvas?.removeEventListener('webglcontextlost', handleContextLost);
+      canvas?.removeEventListener('webglcontextrestored', handleContextRestored);
+      host?.removeEventListener('pointerenter', updateHostRect);
       host?.removeEventListener('pointermove', onMove);
       host?.removeEventListener('pointerleave', onLeave);
+      window.removeEventListener('scroll', markHostRectDirty, scrollOptions);
+      window.removeEventListener('resize', markHostRectDirty);
       io.disconnect();
       ro.disconnect();
       const ext = gl?.getExtension('WEBGL_lose_context');
@@ -393,6 +458,14 @@
     const s = src;
     const d = depthSrc;
     if (initialized && s) loadTextures(s, d);
+  });
+
+  $effect(() => {
+    intensity;
+    if (initialized && colorTex) {
+      draw();
+      kick();
+    }
   });
 </script>
 

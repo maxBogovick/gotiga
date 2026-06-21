@@ -232,6 +232,7 @@ impl AppService {
                         .depth_path
                         .as_ref()
                         .map(|p| self.resolve_url(p, "images_depth", &i_id_str)),
+                    parallax_intensity: i.parallax_intensity,
                     alt_text: i.alt_text,
                 }
             })
@@ -349,6 +350,15 @@ impl AppService {
             return Err(AppError::BadRequest(
                 "Too many process steps (max 50)".into(),
             ));
+        }
+        for image in &req.images {
+            if let Some(value) = image.parallax_intensity {
+                if !(0.0..=1.0).contains(&value) {
+                    return Err(AppError::BadRequest(
+                        "Image parallax intensity must be between 0 and 1".into(),
+                    ));
+                }
+            }
         }
         let prev_status = self
             .repo

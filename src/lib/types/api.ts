@@ -30,6 +30,11 @@ export interface FigurineImage {
      * the colour image's luminance instead. Populated by an offline pipeline.
      */
     depthUrl?: string | null;
+    /**
+     * Optional 0..1 multiplier for the 2.5D parallax. Null/undefined means the
+     * renderer default is used, preserving old catalogue behaviour.
+     */
+    parallaxIntensity?: number | null;
 }
 
 export interface ProcessStep {

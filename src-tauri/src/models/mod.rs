@@ -81,6 +81,7 @@ pub struct Image {
     pub original_path: Option<String>,
     pub thumb_path: Option<String>,
     pub depth_path: Option<String>,
+    pub parallax_intensity: Option<f32>,
     pub alt_text: Option<String>,
     pub sort_order: i32,
     pub updated_at: String,
@@ -296,6 +297,7 @@ pub struct ImageDto {
     pub original_url: Option<String>,
     pub thumb_url: Option<String>,
     pub depth_url: Option<String>,
+    pub parallax_intensity: Option<f32>,
     pub alt_text: Option<String>,
 }
 
@@ -309,6 +311,7 @@ impl ImageDto {
             original_url: image.original_path.map(resolve),
             thumb_url: image.thumb_path.map(resolve),
             depth_url: image.depth_path.map(resolve),
+            parallax_intensity: image.parallax_intensity,
             alt_text: image.alt_text,
         }
     }

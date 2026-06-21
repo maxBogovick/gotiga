@@ -83,6 +83,7 @@
     });
     let mouseX = $state(0.5);
     let mouseY = $state(0.5);
+    let canUseHeroTilt = $state(false);
 
     // Pick the field for the current language, falling back to the other language.
     const wfLoc = (l: string, en?: string | null, ru?: string | null): string =>
@@ -306,20 +307,11 @@
     }
 
     function handleMouseMove(e: MouseEvent) {
+        if (!canUseHeroTilt) return;
         const { innerWidth, innerHeight } = window;
         mouseX = e.clientX / innerWidth;
         mouseY = e.clientY / innerHeight;
         parallaxSpring.set({ x: (mouseX - 0.5) * 2, y: (mouseY - 0.5) * 2 });
-    }
-
-    function handleTouchMove(e: TouchEvent) {
-        if (e.touches.length === 0) return;
-        const { innerWidth, innerHeight } = window;
-        const touch = e.touches[0];
-        parallaxSpring.set({
-            x: (touch.clientX / innerWidth - 0.5) * 2,
-            y: (touch.clientY / innerHeight - 0.5) * 2
-        });
     }
 
     async function handleZoneInteraction(zone: CabinetZone) {
@@ -334,8 +326,25 @@
     onMount(() => {
         savedFigurines.load();
         init();
+        const reduceMq = window.matchMedia('(prefers-reduced-motion: reduce)');
+        const pointerMq = window.matchMedia('(pointer: fine)');
+        const syncTiltPreference = () => {
+            canUseHeroTilt = pointerMq.matches && !reduceMq.matches;
+            if (!canUseHeroTilt) {
+                mouseX = 0.5;
+                mouseY = 0.5;
+                parallaxSpring.set({ x: 0, y: 0 });
+            }
+        };
+        syncTiltPreference();
+        reduceMq.addEventListener('change', syncTiltPreference);
+        pointerMq.addEventListener('change', syncTiltPreference);
         const hintTimer = setTimeout(() => { if (!hoveredZone) showHint = true; }, 3000);
-        return () => { clearTimeout(hintTimer); };
+        return () => {
+            clearTimeout(hintTimer);
+            reduceMq.removeEventListener('change', syncTiltPreference);
+            pointerMq.removeEventListener('change', syncTiltPreference);
+        };
     });
 </script>
 
@@ -357,7 +366,7 @@
     <!-- Fonts loaded once globally in app.html -->
 </svelte:head>
 
-<svelte:window onmousemove={handleMouseMove} ontouchmove={handleTouchMove} />
+<svelte:window onmousemove={handleMouseMove} />
 
 <div class="root">
     <div class="cursor-glow" style="left:{mouseX*100}%;top:{mouseY*100}%"></div>
@@ -428,8 +437,8 @@
                     style="
                         transform:
                             perspective(2200px)
-                            rotateY({$parallaxSpring.x * -1.2}deg)
-                            rotateX({$parallaxSpring.y * 1.2}deg)
+                            rotateY({canUseHeroTilt ? $parallaxSpring.x * -1.2 : 0}deg)
+                            rotateX({canUseHeroTilt ? $parallaxSpring.y * 1.2 : 0}deg)
                             scale(1.02);
                     "
                 >

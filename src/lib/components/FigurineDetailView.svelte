@@ -1234,6 +1234,7 @@
                     <LivingDaguerreotype
                       src={resolveUrl(currentImage?.url)}
                       depthSrc={resolveUrl(currentImage?.depthUrl) || null}
+                      intensity={currentImage?.parallaxIntensity ?? undefined}
                       alt={currentImage?.altText ?? figurine.name}
                       class="w-full h-full"
                       onActivate={() => canOpenLightbox && openLightbox(activeImageIndex)}

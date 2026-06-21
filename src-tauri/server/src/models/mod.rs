@@ -150,6 +150,7 @@ pub struct Image {
     pub original_path: Option<String>,
     pub thumb_path: Option<String>,
     pub depth_path: Option<String>,
+    pub parallax_intensity: Option<f32>,
     pub alt_text: Option<String>,
     pub sort_order: i32,
     pub created_at: DateTime<Utc>,
@@ -222,6 +223,7 @@ pub struct ImageDto {
     pub original_url: Option<String>,
     pub thumb_url: Option<String>,
     pub depth_url: Option<String>,
+    pub parallax_intensity: Option<f32>,
     pub alt_text: Option<String>,
 }
 
@@ -347,6 +349,7 @@ pub struct SaveImageRequest {
     pub original_url: Option<String>,
     pub thumb_url: Option<String>,
     pub depth_url: Option<String>,
+    pub parallax_intensity: Option<f32>,
     pub alt_text: Option<String>,
     pub sort_order: Option<i32>,
 }

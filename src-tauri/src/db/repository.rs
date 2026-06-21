@@ -184,8 +184,8 @@ impl<'a> Repository<'a> {
 
         // Вставляем новые
         let mut stmt = self.conn.prepare(
-            "INSERT INTO images (id, figurine_id, image_type, file_path, original_path, thumb_path, depth_path, alt_text, sort_order, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"
+            "INSERT INTO images (id, figurine_id, image_type, file_path, original_path, thumb_path, depth_path, parallax_intensity, alt_text, sort_order, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"
         )?;
 
         for (i, img) in images.into_iter().enumerate() {
@@ -197,6 +197,7 @@ impl<'a> Repository<'a> {
                 img.original_path,
                 img.thumb_path,
                 img.depth_path,
+                img.parallax_intensity,
                 img.alt_text,
                 i as i32,
                 img.updated_at // String
@@ -208,7 +209,7 @@ impl<'a> Repository<'a> {
 
     pub fn get_all_images(&self) -> Result<Vec<Image>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, figurine_id, image_type, file_path, original_path, thumb_path, depth_path, alt_text, sort_order, updated_at FROM images"
+            "SELECT id, figurine_id, image_type, file_path, original_path, thumb_path, depth_path, parallax_intensity, alt_text, sort_order, updated_at FROM images"
         )?;
         let iter = stmt.query_map([], |row| {
             Ok(Image {
@@ -219,9 +220,10 @@ impl<'a> Repository<'a> {
                 original_path: row.get(4)?,
                 thumb_path: row.get(5)?,
                 depth_path: row.get(6)?,
-                alt_text: row.get(7)?,
-                sort_order: row.get(8)?,
-                updated_at: get_iso_date(row, 9)?,
+                parallax_intensity: row.get(7)?,
+                alt_text: row.get(8)?,
+                sort_order: row.get(9)?,
+                updated_at: get_iso_date(row, 10)?,
             })
         })?;
         iter.collect()
@@ -507,7 +509,7 @@ impl<'a> Repository<'a> {
 
     pub fn get_images_for_figurine(&self, figurine_id: &str) -> Result<Vec<Image>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, figurine_id, image_type, file_path, original_path, thumb_path, depth_path, alt_text, sort_order, updated_at
+            "SELECT id, figurine_id, image_type, file_path, original_path, thumb_path, depth_path, parallax_intensity, alt_text, sort_order, updated_at
              FROM images
              WHERE figurine_id = ?
              ORDER BY sort_order"
@@ -522,9 +524,10 @@ impl<'a> Repository<'a> {
                 original_path: row.get(4)?,
                 thumb_path: row.get(5)?,
                 depth_path: row.get(6)?,
-                alt_text: row.get(7)?,
-                sort_order: row.get(8)?,
-                updated_at: get_iso_date(row, 9)?,
+                parallax_intensity: row.get(7)?,
+                alt_text: row.get(8)?,
+                sort_order: row.get(9)?,
+                updated_at: get_iso_date(row, 10)?,
             })
         })?;
 
