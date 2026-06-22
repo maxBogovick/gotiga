@@ -78,7 +78,11 @@
       const page = await api.adminListLogs(query(reset ? null : nextOffset));
       droppedTotal = page.droppedTotal;
       nextOffset = page.nextOffset;
-      items = reset ? page.items : [...items, ...page.items].slice(0, MAX_ROWS);
+      // Offset pagination over a live-growing table can re-return rows already on
+      // screen (the live stream prepends newer logs, shifting the offset window).
+      // Duplicate ids here would produce duplicate keys in the keyed {#each},
+      // which crashes Svelte's reconciler with "Invalid array length".
+      items = dedupeById(reset ? page.items : [...items, ...page.items]).slice(0, MAX_ROWS);
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to load logs';
     } finally {
@@ -124,7 +128,18 @@
 
   function prepend(item: AdminLogEntry) {
     if (!matchesActiveFilters(item)) return;
-    items = sortRows([item, ...items]).slice(0, MAX_ROWS);
+    items = sortRows(dedupeById([item, ...items])).slice(0, MAX_ROWS);
+  }
+
+  function dedupeById(rows: AdminLogEntry[]): AdminLogEntry[] {
+    const seen = new Set<number>();
+    const out: AdminLogEntry[] = [];
+    for (const row of rows) {
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
+      out.push(row);
+    }
+    return out;
   }
 
   function changeSort(column: AdminLogsSortBy) {

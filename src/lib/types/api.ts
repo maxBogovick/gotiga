@@ -237,6 +237,112 @@ export interface AdminLogsQuery {
     limit?: number;
 }
 
+export type AnalyticsSignal =
+    | 'high_conversion'
+    | 'attention_no_submissions'
+    | 'low_visibility'
+    | 'growing_interest'
+    | 'low_data'
+    | 'normal';
+
+export interface AnalyticsSummary {
+    views: number;
+    uniqueVisitors: number;
+    engagedViews: number;
+    ctaClicks: number;
+    submissions: number;
+    conversionRate: number;
+}
+
+export interface AnalyticsDailyPoint {
+    day: string;
+    views: number;
+    uniqueVisitors: number;
+    engagedViews: number;
+    ctaClicks: number;
+    submissions: number;
+}
+
+export interface AnalyticsSourcePoint {
+    source: string;
+    views: number;
+    uniqueVisitors: number;
+}
+
+export interface AnalyticsBreakdownPoint {
+    key: string;
+    views: number;
+    uniqueVisitors: number;
+}
+
+export interface AnalyticsFunnel {
+    views: number;
+    engagedViews: number;
+    ctaClicks: number;
+    submissions: number;
+}
+
+export interface AdminFigurineAnalyticsListItem {
+    figurineId: string;
+    name: string;
+    status: FigurineStatus;
+    faceUrl: string | null;
+    signal: AnalyticsSignal;
+    topSource?: string | null;
+    topCountry?: string | null;
+    topDevice?: string | null;
+    topBrowser?: string | null;
+    views: number;
+    uniqueVisitors: number;
+    engagedViews: number;
+    ctaClicks: number;
+    submissions: number;
+    conversionRate: number;
+}
+
+export interface AdminFigurineAnalyticsListPage {
+    items: AdminFigurineAnalyticsListItem[];
+    total: number;
+    summary: AnalyticsSummary;
+}
+
+export interface AdminFigurineAnalyticsDetail {
+    figurine: FigurineListItem;
+    signal: AnalyticsSignal;
+    summary: AnalyticsSummary;
+    daily: AnalyticsDailyPoint[];
+    sources: AnalyticsSourcePoint[];
+    countries: AnalyticsBreakdownPoint[];
+    devices: AnalyticsBreakdownPoint[];
+    browsers: AnalyticsBreakdownPoint[];
+    referrers: AnalyticsBreakdownPoint[];
+    utmSources: AnalyticsBreakdownPoint[];
+    visitorCohorts: AnalyticsBreakdownPoint[];
+    funnel: AnalyticsFunnel;
+}
+
+export interface AdminAnalyticsQuery {
+    from?: string;
+    to?: string;
+    sort?: string;
+    dir?: 'asc' | 'desc';
+}
+
+export interface AnalyticsEventPayload {
+    eventType: 'figurine_view' | 'figurine_engaged' | 'figurine_cta_click';
+    figurineId: string;
+    path: string;
+    referrer?: string | null;
+    utmSource?: string | null;
+    utmMedium?: string | null;
+    utmCampaign?: string | null;
+    durationMs?: number | null;
+    scrollDepth?: number | null;
+    ctaType?: string | null;
+    pageViewId?: string | null;
+    clientTs?: string;
+}
+
 // ── Commissions: a petition to the master to create a NEW figurine ──
 export type CommissionStatus =
     | 'new' | 'reviewing' | 'accepted' | 'in_progress' | 'completed' | 'declined';

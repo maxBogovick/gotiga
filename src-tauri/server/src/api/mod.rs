@@ -20,7 +20,7 @@ const DEFAULT_BODY_LIMIT: usize = 16 * 1024 * 1024; // 16 MB
 /// Upper bound for authenticated admin media uploads (videos/audio).
 const MEDIA_UPLOAD_LIMIT: usize = 256 * 1024 * 1024; // 256 MB
 
-mod handlers;
+pub(crate) mod handlers;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -101,6 +101,7 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             .route("/home-content", get(handlers::get_home_content))
             .route("/author/profile", get(handlers::get_author_profile))
             .route("/orders", post(handlers::create_order))
+            .route("/analytics/events", post(handlers::record_analytics_event))
             .route("/commissions", post(handlers::create_commission))
             .route(
                 "/commissions/:token",
@@ -309,6 +310,18 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                     )),
             )
             // === ORDERS (ADMIN) ===
+            .route(
+                "/admin/analytics/figurines",
+                get(handlers::admin_list_figurine_analytics).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/analytics/figurines/:id",
+                get(handlers::admin_get_figurine_analytics).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
             .route(
                 "/admin/orders",
                 get(handlers::list_orders).route_layer(middleware::from_fn_with_state(

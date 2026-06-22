@@ -24,6 +24,8 @@ pub struct Config {
     pub geoip_db_path: Option<String>,
     /// Local SQLite database used by the admin log viewer.
     pub admin_log_db_path: String,
+    /// Secret used only for privacy-preserving analytics visitor hashes.
+    pub analytics_hash_secret: String,
 }
 
 /// Values that must never ship to production. Startup aborts if any secret
@@ -51,6 +53,18 @@ impl Config {
             .filter(|v| !v.is_empty())
             .unwrap_or_else(|| vec![public_url.trim_end_matches('/').to_string()]);
 
+        let admin_api_key = dotenvy::var("ADMIN_API_KEY").expect("ADMIN_API_KEY must be set");
+        let analytics_hash_secret = match dotenvy::var("ANALYTICS_HASH_SECRET") {
+            Ok(value) if !value.trim().is_empty() => value,
+            _ if is_local_public_url(&public_url) => {
+                tracing::warn!(
+                    "ANALYTICS_HASH_SECRET is not set; falling back to ADMIN_API_KEY for local development"
+                );
+                admin_api_key.clone()
+            }
+            _ => panic!("ANALYTICS_HASH_SECRET must be set outside local development"),
+        };
+
         let config = Self {
             database_url: dotenvy::var("DATABASE_URL").expect("DATABASE_URL must be set"),
             host: dotenvy::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
@@ -58,7 +72,7 @@ impl Config {
                 .unwrap_or_else(|_| "3000".to_string())
                 .parse()
                 .expect("PORT must be a number"),
-            admin_api_key: dotenvy::var("ADMIN_API_KEY").expect("ADMIN_API_KEY must be set"),
+            admin_api_key,
             upload_dir: dotenvy::var("UPLOAD_DIR").unwrap_or_else(|_| "./uploads".to_string()),
             public_url,
             rust_log: dotenvy::var("RUST_LOG").unwrap_or_else(|_| "info,sqlx=warn".into()),
@@ -75,6 +89,7 @@ impl Config {
             geoip_db_path: dotenvy::var("GEOIP_DB_PATH").ok().filter(|s| !s.is_empty()),
             admin_log_db_path: dotenvy::var("ADMIN_LOG_DB_PATH")
                 .unwrap_or_else(|_| "./data/admin_logs.sqlite".to_string()),
+            analytics_hash_secret,
         };
         config.validate();
         config
@@ -94,5 +109,16 @@ impl Config {
                 "ADMIN_API_KEY is unset, weak, or a known default — set a strong value (>= 16 chars)"
             );
         }
+        if weak(&self.analytics_hash_secret) || self.analytics_hash_secret.len() < 16 {
+            panic!(
+                "ANALYTICS_HASH_SECRET is unset, weak, or a known default — set a strong value (>= 16 chars)"
+            );
+        }
     }
+}
+
+fn is_local_public_url(public_url: &str) -> bool {
+    public_url.contains("localhost")
+        || public_url.contains("127.0.0.1")
+        || public_url.contains("[::1]")
 }

@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::prelude::Type;
 use uuid::Uuid;
@@ -286,6 +286,180 @@ pub struct FigurineDto {
     pub process_steps: Vec<ProcessStepDto>,
     #[serde(default)]
     pub related_items: Vec<FigurineListItemDto>,
+}
+
+// ============================================================
+// FIGURINE ANALYTICS
+// ============================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalyticsEventType {
+    FigurineView,
+    FigurineEngaged,
+    FigurineCtaClick,
+}
+
+impl AnalyticsEventType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::FigurineView => "figurine_view",
+            Self::FigurineEngaged => "figurine_engaged",
+            Self::FigurineCtaClick => "figurine_cta_click",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyticsEventRequest {
+    pub event_type: AnalyticsEventType,
+    pub figurine_id: String,
+    pub path: String,
+    pub referrer: Option<String>,
+    pub utm_source: Option<String>,
+    pub utm_medium: Option<String>,
+    pub utm_campaign: Option<String>,
+    pub duration_ms: Option<i32>,
+    pub scroll_depth: Option<i32>,
+    pub cta_type: Option<String>,
+    pub page_view_id: Option<String>,
+    pub client_ts: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AnalyticsEventRecord {
+    pub occurred_at: DateTime<Utc>,
+    pub event_date: NaiveDate,
+    pub event_type: &'static str,
+    pub figurine_id: Uuid,
+    pub visitor_hash: Option<String>,
+    pub page_view_id: Option<Uuid>,
+    pub path: String,
+    pub source: String,
+    pub referrer_host: Option<String>,
+    pub utm_source: Option<String>,
+    pub utm_medium: Option<String>,
+    pub utm_campaign: Option<String>,
+    pub device_class: Option<String>,
+    pub browser_family: Option<String>,
+    pub country_code: Option<String>,
+    pub duration_ms: Option<i32>,
+    pub scroll_depth: Option<i32>,
+    pub cta_type: Option<String>,
+    pub user_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalyticsSignal {
+    HighConversion,
+    AttentionNoSubmissions,
+    LowVisibility,
+    GrowingInterest,
+    LowData,
+    Normal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyticsSummary {
+    pub views: i64,
+    pub unique_visitors: i64,
+    pub engaged_views: i64,
+    pub cta_clicks: i64,
+    pub submissions: i64,
+    pub conversion_rate: f64,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyticsDailyPoint {
+    pub day: NaiveDate,
+    pub views: i64,
+    pub unique_visitors: i64,
+    pub engaged_views: i64,
+    pub cta_clicks: i64,
+    pub submissions: i64,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyticsSourcePoint {
+    pub source: String,
+    pub views: i64,
+    pub unique_visitors: i64,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyticsBreakdownPoint {
+    pub key: String,
+    pub views: i64,
+    pub unique_visitors: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyticsFunnel {
+    pub views: i64,
+    pub engaged_views: i64,
+    pub cta_clicks: i64,
+    pub submissions: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminFigurineAnalyticsListItem {
+    pub figurine_id: String,
+    pub name: String,
+    pub status: FigurineStatus,
+    pub face_url: Option<String>,
+    pub signal: AnalyticsSignal,
+    pub top_source: Option<String>,
+    pub top_country: Option<String>,
+    pub top_device: Option<String>,
+    pub top_browser: Option<String>,
+    pub views: i64,
+    pub unique_visitors: i64,
+    pub engaged_views: i64,
+    pub cta_clicks: i64,
+    pub submissions: i64,
+    pub conversion_rate: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminFigurineAnalyticsListPage {
+    pub items: Vec<AdminFigurineAnalyticsListItem>,
+    pub total: i64,
+    pub summary: AnalyticsSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminFigurineAnalyticsDetail {
+    pub figurine: FigurineListItemDto,
+    pub signal: AnalyticsSignal,
+    pub summary: AnalyticsSummary,
+    pub daily: Vec<AnalyticsDailyPoint>,
+    pub sources: Vec<AnalyticsSourcePoint>,
+    pub countries: Vec<AnalyticsBreakdownPoint>,
+    pub devices: Vec<AnalyticsBreakdownPoint>,
+    pub browsers: Vec<AnalyticsBreakdownPoint>,
+    pub referrers: Vec<AnalyticsBreakdownPoint>,
+    pub utm_sources: Vec<AnalyticsBreakdownPoint>,
+    pub visitor_cohorts: Vec<AnalyticsBreakdownPoint>,
+    pub funnel: AnalyticsFunnel,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminAnalyticsQuery {
+    pub from: Option<NaiveDate>,
+    pub to: Option<NaiveDate>,
+    pub sort: Option<String>,
+    pub dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

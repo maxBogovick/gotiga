@@ -37,6 +37,7 @@ fn test_config() -> Config {
         smtp_from: None,
         geoip_db_path: None,
         admin_log_db_path: "/tmp/gotiga-test-admin-logs.sqlite".into(),
+        analytics_hash_secret: "analytics-secret-for-tests".into(),
     }
 }
 

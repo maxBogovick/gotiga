@@ -82,7 +82,39 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    let router = api::router(service, config.clone(), log_store);
+    // Background: prune raw analytics events in small chunks so retention never
+    // creates a large delete transaction on the small production server.
+    {
+        let svc = service.clone();
+        tokio::spawn(async move {
+            const RETENTION_DAYS: i64 = 30;
+            const BATCH_SIZE: i64 = 1000;
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(24 * 3600));
+            loop {
+                tick.tick().await;
+                loop {
+                    match svc
+                        .prune_analytics_events_chunked(RETENTION_DAYS, BATCH_SIZE)
+                        .await
+                    {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            tracing::info!(
+                                "Pruned {n} analytics events older than {RETENTION_DAYS} days"
+                            );
+                            tokio::task::yield_now().await;
+                        }
+                        Err(e) => {
+                            tracing::warn!("Analytics retention prune failed: {e}");
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    let router = api::router(service.clone(), config.clone(), log_store);
 
     // 6. Start Server
     let addr: SocketAddr = format!("{}:{}", config.host, config.port)
@@ -93,6 +125,7 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(listener, router)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
+    service.shutdown_analytics().await;
 
     Ok(())
 }

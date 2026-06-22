@@ -23,6 +23,8 @@ rand = "0.8"
 anyhow = "1.0.100"
 argon2 = "0.5"
 sha2 = "0.10"
+hmac = "0.12"
+hex = "0.4"
 maxminddb = "0.24"
 reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-features = false }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }

@@ -226,6 +226,56 @@ pub async fn readiness_check(State(service): State<AppService>) -> Result<impl I
     ))
 }
 
+pub async fn record_analytics_event(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<impl IntoResponse> {
+    const MAX_ANALYTICS_BODY: usize = 4096;
+    if body.len() > MAX_ANALYTICS_BODY {
+        return Err(AppError::BadRequest(
+            "Analytics payload is too large".into(),
+        ));
+    }
+
+    let content_type = headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let req: AnalyticsEventRequest = if content_type.starts_with("text/plain")
+        || content_type.starts_with("application/json")
+        || content_type.is_empty()
+    {
+        serde_json::from_slice(&body)
+            .map_err(|_| AppError::BadRequest("Invalid analytics payload".into()))?
+    } else {
+        return Err(AppError::BadRequest(
+            "Unsupported analytics content type".into(),
+        ));
+    };
+
+    service.enqueue_analytics_event(req, &headers).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_list_figurine_analytics(
+    State(service): State<AppService>,
+    Query(query): Query<AdminAnalyticsQuery>,
+) -> Result<Json<AdminFigurineAnalyticsListPage>> {
+    service.refresh_analytics_hot_window_if_due().await?;
+    Ok(Json(service.admin_list_figurine_analytics(query).await?))
+}
+
+pub async fn admin_get_figurine_analytics(
+    State(service): State<AppService>,
+    Path(id): Path<String>,
+    Query(query): Query<AdminAnalyticsQuery>,
+) -> Result<Json<AdminFigurineAnalyticsDetail>> {
+    service.refresh_analytics_hot_window_if_due().await?;
+    Ok(Json(service.admin_get_figurine_analytics(id, query).await?))
+}
+
 /*pub async fn get_sync_manifest(
     State(service): State<AppService>
 ) -> Result<Json<Manifest>> {
@@ -1505,12 +1555,20 @@ fn client_ip(ip: &str) -> Option<String> {
     (ip != "unknown").then(|| ip.to_string())
 }
 
+pub(crate) fn client_ip_from_headers(headers: &HeaderMap) -> Option<String> {
+    client_ip(&extract_ip(headers))
+}
+
 /// Raw User-Agent header, truncated to a sane length for storage.
 fn extract_user_agent(headers: &HeaderMap) -> Option<String> {
     headers
         .get(axum::http::header::USER_AGENT)
         .and_then(|v| v.to_str().ok())
         .map(|s| s.chars().take(512).collect())
+}
+
+pub(crate) fn extract_user_agent_from_headers(headers: &HeaderMap) -> Option<String> {
+    extract_user_agent(headers)
 }
 
 pub async fn get_figurine_comments(

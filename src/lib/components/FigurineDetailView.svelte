@@ -14,6 +14,7 @@
   import Lightbox from '$lib/components/Lightbox.svelte';
   import FontSwitcher from '$lib/components/FontSwitcher.svelte';
   import { api, resolveMediaUrl } from '$lib/api';
+  import { createFigurineAnalytics } from '$lib/analytics';
   import { t } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
   import ShowingsTimeline from '$lib/components/ShowingsTimeline.svelte';
@@ -50,6 +51,10 @@
   let lightboxStartIndex = $state(0);
   let audioRef = $state<HTMLAudioElement | null>(null);
   let videoRef = $state<HTMLVideoElement | null>(null);
+  let analyticsClient: ReturnType<typeof createFigurineAnalytics> | null = null;
+  let analyticsMountedAt = 0;
+  let analyticsEngagedTimer: ReturnType<typeof setTimeout> | null = null;
+  let analyticsScrollSent = false;
 
   function readStoredToken(key: string): string | null {
     try { return localStorage.getItem(key); } catch { return null; }
@@ -691,6 +696,7 @@
     showLightbox = true;
   }
   function toggleSaved() {
+    analyticsClient?.cta('wishlist');
     savedFigurines.toggle(id);
   }
   function toggleLens() {
@@ -838,6 +844,12 @@
   }
 
   function openRequestModal(intent = defaultRequestIntent()) {
+    const analyticsIntent = intent === 'similar'
+      ? 'create_similar'
+      : intent === 'viewing'
+        ? 'booking'
+        : intent;
+    analyticsClient?.cta(analyticsIntent);
     requestInitialIntent = intent;
     showRequestModal = true;
   }
@@ -865,6 +877,17 @@
   // every scroll frame (that forced a synchronous layout reflow).
   function onScroll() {
     scrollY = window.scrollY;
+    if (!analyticsClient || analyticsScrollSent) return;
+    const doc = document.documentElement;
+    const maxScroll = Math.max(1, doc.scrollHeight - window.innerHeight);
+    const depth = Math.round((window.scrollY / maxScroll) * 100);
+    if (depth >= 50) {
+      analyticsScrollSent = true;
+      analyticsClient.engaged({
+        durationMs: Math.max(0, Date.now() - analyticsMountedAt),
+        scrollDepth: Math.min(100, depth),
+      });
+    }
   }
 
   function handleVisibility() {
@@ -876,6 +899,18 @@
   }
 
   onMount(() => {
+    analyticsClient = createFigurineAnalytics(id);
+    analyticsMountedAt = Date.now();
+    analyticsClient.view();
+    analyticsEngagedTimer = setTimeout(() => {
+      analyticsClient?.engaged({
+        durationMs: Math.max(0, Date.now() - analyticsMountedAt),
+        scrollDepth: Math.min(
+          100,
+          Math.round((window.scrollY / Math.max(1, document.documentElement.scrollHeight - window.innerHeight)) * 100)
+        ),
+      });
+    }, 8000);
     isPointerFine = window.matchMedia('(pointer: fine)').matches;
     prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     window.addEventListener('keydown', handleKeydown);
@@ -914,6 +949,7 @@
       document.removeEventListener('visibilitychange', handleVisibility);
     }
     if (copiedTimer) clearTimeout(copiedTimer);
+    if (analyticsEngagedTimer) clearTimeout(analyticsEngagedTimer);
     galleryObserver?.disconnect();
     clearTodayRefresh();
     clearAudioFade();
@@ -1430,7 +1466,7 @@
                   {$t('unifiedReserveShort')} →
                 </button>
               {:else}
-                <a href={createSimilarHref} class="entry-action entry-action--secondary">
+                <a href={createSimilarHref} class="entry-action entry-action--secondary" onclick={() => analyticsClient?.cta('create_similar')}>
                   {$t('commissionCreateSimilarCta')} →
                 </a>
               {/if}
@@ -1463,7 +1499,7 @@
                       : $t('detailTrustNextSold')}
                 </p>
               {/if}
-              <a class="trust-ledger-link" href="/figurines/{id}/passport">
+              <a class="trust-ledger-link" href="/figurines/{id}/passport" onclick={() => analyticsClient?.cta('passport')}>
                 {$t('detailOpenPassport')} →
               </a>
             </div>
@@ -1740,6 +1776,7 @@
             {@const relatedImageUrl = resolveUrl(item.faceImageUrl ?? item.thumbUrl)}
             <a
               href="/figurines/{item.id}"
+              onclick={() => analyticsClient?.cta('related_figurine')}
               class="related-card"
               data-sveltekit-preload-data="hover"
             >
@@ -1830,7 +1867,7 @@
     {#if figurine.status === 'available'}
       <button type="button" onclick={() => openRequestModal('reserve')} class="mobile-cta-link">{$t('unifiedReserveShort')}</button>
     {:else}
-      <a href={createSimilarHref} class="mobile-cta-link">{$t('commissionCreateSimilarShort')}</a>
+      <a href={createSimilarHref} class="mobile-cta-link" onclick={() => analyticsClient?.cta('create_similar')}>{$t('commissionCreateSimilarShort')}</a>
     {/if}
   </div>
 {/if}

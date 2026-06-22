@@ -28,11 +28,14 @@ pub struct AppService {
     /// Offline IP → country/city resolver (best-effort; may be a no-op).
     geoip: Arc<crate::geo::GeoIp>,
     observability: ObservabilityState,
+    analytics: crate::analytics::AnalyticsRuntime,
+    analytics_refresh_gate: Arc<Mutex<Option<Instant>>>,
 }
 
 impl AppService {
     pub fn new(repo: Repository, config: Config) -> Self {
         let geoip = Arc::new(crate::geo::GeoIp::open(config.geoip_db_path.as_deref()));
+        let analytics = crate::analytics::AnalyticsRuntime::new(repo.clone());
         Self {
             repo,
             config,
@@ -41,11 +44,21 @@ impl AppService {
             general_rate_limiter: Arc::new(Mutex::new(HashMap::new())),
             geoip,
             observability: ObservabilityState::default(),
+            analytics,
+            analytics_refresh_gate: Arc::new(Mutex::new(None)),
         }
     }
 
     pub fn observability(&self) -> ObservabilityState {
         self.observability.clone()
+    }
+
+    pub fn analytics(&self) -> crate::analytics::AnalyticsRuntime {
+        self.analytics.clone()
+    }
+
+    pub async fn shutdown_analytics(&self) {
+        self.analytics.shutdown().await;
     }
 
     fn log_domain_event(
@@ -134,6 +147,242 @@ impl AppService {
 
     pub async fn health_check(&self) -> Result<()> {
         self.repo.health_check().await
+    }
+
+    // === FIGURINE ANALYTICS ===
+
+    pub async fn enqueue_analytics_event(
+        &self,
+        req: AnalyticsEventRequest,
+        headers: &axum::http::HeaderMap,
+    ) -> Result<()> {
+        let request_context = self.client_context(
+            crate::api::handlers::client_ip_from_headers(headers),
+            crate::api::handlers::extract_user_agent_from_headers(headers),
+        );
+        let ctx = crate::analytics::AnalyticsRequestContext {
+            headers,
+            admin_api_key: &self.config.admin_api_key,
+            hash_secret: &self.config.analytics_hash_secret,
+            country_code: request_context.country_code,
+        };
+        let Some(event) = crate::analytics::build_event_record(req, ctx)? else {
+            return Ok(());
+        };
+        if !self.analytics.try_enqueue(event).await {
+            tracing::warn!(
+                dropped_total = self.analytics.dropped_total(),
+                "analytics event dropped"
+            );
+        }
+        Ok(())
+    }
+
+    pub async fn refresh_analytics_hot_window_if_due(&self) -> Result<()> {
+        const MIN_REFRESH_GAP: Duration = Duration::from_secs(30);
+        {
+            let last = self.analytics_refresh_gate.lock().await;
+            if last.is_some_and(|instant| instant.elapsed() < MIN_REFRESH_GAP) {
+                return Ok(());
+            }
+        }
+        crate::analytics::refresh_hot_window(&self.repo).await?;
+        *self.analytics_refresh_gate.lock().await = Some(Instant::now());
+        Ok(())
+    }
+
+    pub async fn prune_analytics_events_chunked(
+        &self,
+        retention_days: i64,
+        batch_size: i64,
+    ) -> Result<u64> {
+        self.repo
+            .prune_old_analytics_events_chunked(retention_days, batch_size)
+            .await
+    }
+
+    pub async fn admin_list_figurine_analytics(
+        &self,
+        query: AdminAnalyticsQuery,
+    ) -> Result<AdminFigurineAnalyticsListPage> {
+        let (from, to) = Self::analytics_range(query.from, query.to)?;
+        let sort = query.sort.as_deref().unwrap_or("views");
+        let dir = query.dir.as_deref().unwrap_or("desc");
+        let mut items = self
+            .repo
+            .get_admin_figurine_analytics_list(from, to, sort, dir)
+            .await?;
+        for item in &mut items {
+            if let Some(face) = item.face_url.clone() {
+                item.face_url = Some(self.resolve_url(&face, "images_thumb", &item.figurine_id));
+            }
+        }
+        let summary = Self::analytics_summary(items.iter().map(|i| {
+            (
+                i.views,
+                i.unique_visitors,
+                i.engaged_views,
+                i.cta_clicks,
+                i.submissions,
+            )
+        }));
+        Ok(AdminFigurineAnalyticsListPage {
+            total: items.len() as i64,
+            items,
+            summary,
+        })
+    }
+
+    pub async fn admin_get_figurine_analytics(
+        &self,
+        id: String,
+        query: AdminAnalyticsQuery,
+    ) -> Result<AdminFigurineAnalyticsDetail> {
+        let figurine_id = Self::parse_uuid(&id)?;
+        let (from, to) = Self::analytics_range(query.from, query.to)?;
+        let figurine = self
+            .repo
+            .get_figurine_by_id(figurine_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("Figurine {} not found", id)))?;
+        let face = self
+            .repo
+            .get_face_images_for_figurines(&[figurine_id])
+            .await?
+            .get(&figurine_id)
+            .cloned();
+        let daily = self
+            .repo
+            .get_admin_figurine_analytics_daily(figurine_id, from, to)
+            .await?;
+        let sources = self
+            .repo
+            .get_admin_figurine_analytics_sources(figurine_id, from, to)
+            .await?;
+        let countries = self
+            .repo
+            .get_admin_figurine_analytics_breakdown(figurine_id, from, to, "country", 12)
+            .await?;
+        let devices = self
+            .repo
+            .get_admin_figurine_analytics_breakdown(figurine_id, from, to, "device", 8)
+            .await?;
+        let browsers = self
+            .repo
+            .get_admin_figurine_analytics_breakdown(figurine_id, from, to, "browser", 8)
+            .await?;
+        let referrers = self
+            .repo
+            .get_admin_figurine_analytics_breakdown(figurine_id, from, to, "referrer", 12)
+            .await?;
+        let utm_sources = self
+            .repo
+            .get_admin_figurine_analytics_breakdown(figurine_id, from, to, "utm_source", 12)
+            .await?;
+        let visitor_cohorts = self
+            .repo
+            .get_admin_figurine_analytics_breakdown(figurine_id, from, to, "visitor", 12)
+            .await?;
+        let summary = Self::analytics_summary(daily.iter().map(|d| {
+            (
+                d.views,
+                d.unique_visitors,
+                d.engaged_views,
+                d.cta_clicks,
+                d.submissions,
+            )
+        }));
+        let signal = Self::analytics_signal(
+            summary.views,
+            summary.engaged_views,
+            summary.cta_clicks,
+            summary.submissions,
+            summary.conversion_rate,
+        );
+        let funnel = AnalyticsFunnel {
+            views: summary.views,
+            engaged_views: summary.engaged_views,
+            cta_clicks: summary.cta_clicks,
+            submissions: summary.submissions,
+        };
+        Ok(AdminFigurineAnalyticsDetail {
+            figurine: self.to_list_item(figurine, face.as_ref()),
+            signal,
+            summary,
+            daily,
+            sources,
+            countries,
+            devices,
+            browsers,
+            referrers,
+            utm_sources,
+            visitor_cohorts,
+            funnel,
+        })
+    }
+
+    fn analytics_range(
+        from: Option<chrono::NaiveDate>,
+        to: Option<chrono::NaiveDate>,
+    ) -> Result<(chrono::NaiveDate, chrono::NaiveDate)> {
+        let today = chrono::Utc::now().date_naive();
+        let to = to.unwrap_or(today);
+        let from = from.unwrap_or(to - chrono::Duration::days(29));
+        if from > to {
+            return Err(AppError::BadRequest("Invalid analytics date range".into()));
+        }
+        if (to - from).num_days() > 366 {
+            return Err(AppError::BadRequest(
+                "Analytics date range is too large".into(),
+            ));
+        }
+        Ok((from, to))
+    }
+
+    fn analytics_summary(
+        rows: impl Iterator<Item = (i64, i64, i64, i64, i64)>,
+    ) -> AnalyticsSummary {
+        let mut summary = AnalyticsSummary {
+            views: 0,
+            unique_visitors: 0,
+            engaged_views: 0,
+            cta_clicks: 0,
+            submissions: 0,
+            conversion_rate: 0.0,
+        };
+        for (views, unique_visitors, engaged_views, cta_clicks, submissions) in rows {
+            summary.views += views;
+            summary.unique_visitors += unique_visitors;
+            summary.engaged_views += engaged_views;
+            summary.cta_clicks += cta_clicks;
+            summary.submissions += submissions;
+        }
+        summary.conversion_rate = if summary.engaged_views > 0 {
+            ((summary.submissions as f64 / summary.engaged_views as f64) * 10000.0).round() / 100.0
+        } else {
+            0.0
+        };
+        summary
+    }
+
+    fn analytics_signal(
+        views: i64,
+        engaged_views: i64,
+        cta_clicks: i64,
+        submissions: i64,
+        conversion_rate: f64,
+    ) -> AnalyticsSignal {
+        if views < 10 {
+            AnalyticsSignal::LowData
+        } else if conversion_rate >= 12.0 && submissions >= 2 {
+            AnalyticsSignal::HighConversion
+        } else if submissions == 0 && (engaged_views >= 8 || cta_clicks >= 3) {
+            AnalyticsSignal::AttentionNoSubmissions
+        } else if views < 25 {
+            AnalyticsSignal::LowVisibility
+        } else {
+            AnalyticsSignal::Normal
+        }
     }
 
     // === CONTENT API ===

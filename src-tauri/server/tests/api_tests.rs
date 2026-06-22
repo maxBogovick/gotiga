@@ -39,6 +39,7 @@ async fn spawn_app(pool: PgPool) -> (String, String, PathBuf) {
         smtp_from: None,
         geoip_db_path: None,
         admin_log_db_path: format!("/tmp/gotiga-api-logs-{}.sqlite", uuid::Uuid::new_v4()),
+        analytics_hash_secret: "test-analytics-secret-0123456789".to_string(),
     };
 
     let repo = Repository::new(pool);
@@ -135,6 +136,51 @@ async fn health_and_public_listing(pool: PgPool) {
     let body: serde_json::Value = logs.json().await.unwrap();
     assert!(body["items"].is_array());
     assert!(body["droppedTotal"].is_number());
+
+    let _ = fs::remove_dir_all(upload_dir).await;
+}
+
+#[sqlx::test]
+#[ignore = "requires a reachable PostgreSQL test database"]
+async fn analytics_accepts_text_plain_and_exposes_admin_page(pool: PgPool) {
+    sqlx::migrate!("./migrations/").run(&pool).await.unwrap();
+    let figurine_id = uuid::Uuid::new_v4();
+    sqlx::query("INSERT INTO figurines (id, name) VALUES ($1, $2)")
+        .bind(figurine_id)
+        .bind("Analytics Test Figurine")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let (addr, api_key, upload_dir) = spawn_app(pool).await;
+    let client = reqwest::Client::new();
+    let payload = serde_json::json!({
+        "eventType": "figurine_view",
+        "figurineId": figurine_id.to_string(),
+        "path": format!("/figurines/{figurine_id}"),
+        "pageViewId": uuid::Uuid::new_v4().to_string(),
+        "clientTs": chrono::Utc::now().to_rfc3339(),
+    });
+
+    let ingest = client
+        .post(format!("{}/api/v1/analytics/events", addr))
+        .header("content-type", "text/plain;charset=UTF-8")
+        .body(payload.to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ingest.status(), reqwest::StatusCode::NO_CONTENT);
+
+    let page = client
+        .get(format!("{}/api/v1/admin/analytics/figurines", addr))
+        .bearer_auth(&api_key)
+        .send()
+        .await
+        .unwrap();
+    assert!(page.status().is_success());
+    let body: serde_json::Value = page.json().await.unwrap();
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["items"][0]["figurineId"], figurine_id.to_string());
 
     let _ = fs::remove_dir_all(upload_dir).await;
 }

@@ -1,6 +1,6 @@
 use crate::error::{AppError, Result};
 use crate::models::*;
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, QueryBuilder};
 use uuid::Uuid;
 
 /// Parse an optional `YYYY-MM-DD` deadline. Empty/absent → None; a present but
@@ -13,6 +13,26 @@ fn parse_optional_deadline(raw: Option<&str>) -> Result<Option<chrono::NaiveDate
             .map_err(|_| {
                 AppError::BadRequest("Invalid deadline date (expected YYYY-MM-DD)".to_string())
             }),
+    }
+}
+
+fn analytics_signal(
+    views: i64,
+    engaged_views: i64,
+    cta_clicks: i64,
+    submissions: i64,
+    conversion_rate: f64,
+) -> AnalyticsSignal {
+    if views < 10 {
+        AnalyticsSignal::LowData
+    } else if conversion_rate >= 12.0 && submissions >= 2 {
+        AnalyticsSignal::HighConversion
+    } else if submissions == 0 && (engaged_views >= 8 || cta_clicks >= 3) {
+        AnalyticsSignal::AttentionNoSubmissions
+    } else if views < 25 {
+        AnalyticsSignal::LowVisibility
+    } else {
+        AnalyticsSignal::Normal
     }
 }
 
@@ -43,6 +63,554 @@ impl Repository {
     pub async fn health_check(&self) -> Result<()> {
         sqlx::query("SELECT 1").execute(&self.pg_pool).await?;
         Ok(())
+    }
+
+    // === FIGURINE ANALYTICS ===
+
+    pub async fn bulk_insert_analytics_events(
+        &self,
+        events: &[AnalyticsEventRecord],
+    ) -> Result<u64> {
+        if events.is_empty() {
+            return Ok(0);
+        }
+
+        let mut builder: QueryBuilder<Postgres> = QueryBuilder::new(
+            "INSERT INTO figurine_analytics_events (
+                occurred_at, event_date, event_type, figurine_id, visitor_hash,
+                page_view_id, path, source, referrer_host, utm_source, utm_medium,
+                utm_campaign, device_class, browser_family, country_code,
+                duration_ms, scroll_depth, cta_type, user_id
+            ) ",
+        );
+        builder.push_values(events, |mut b, event| {
+            b.push_bind(event.occurred_at)
+                .push_bind(event.event_date)
+                .push_bind(event.event_type)
+                .push_bind(event.figurine_id)
+                .push_bind(&event.visitor_hash)
+                .push_bind(event.page_view_id)
+                .push_bind(&event.path)
+                .push_bind(&event.source)
+                .push_bind(&event.referrer_host)
+                .push_bind(&event.utm_source)
+                .push_bind(&event.utm_medium)
+                .push_bind(&event.utm_campaign)
+                .push_bind(&event.device_class)
+                .push_bind(&event.browser_family)
+                .push_bind(&event.country_code)
+                .push_bind(event.duration_ms)
+                .push_bind(event.scroll_depth)
+                .push_bind(&event.cta_type)
+                .push_bind(event.user_id);
+        });
+
+        let result = builder.build().execute(&self.pg_pool).await?;
+        Ok(result.rows_affected())
+    }
+
+    pub async fn refresh_analytics_aggregates(
+        &self,
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+    ) -> Result<()> {
+        let mut tx = self.pg_pool.begin().await?;
+
+        sqlx::query("DELETE FROM figurine_analytics_daily WHERE day BETWEEN $1 AND $2")
+            .bind(from)
+            .bind(to)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM figurine_analytics_sources_daily WHERE day BETWEEN $1 AND $2")
+            .bind(from)
+            .bind(to)
+            .execute(&mut *tx)
+            .await?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO figurine_analytics_daily (
+                figurine_id, day, views, unique_visitors, engaged_views, cta_clicks,
+                order_starts, reserve_starts, booking_starts, waitlist_starts,
+                commission_starts, orders_submitted, bookings_submitted,
+                waitlist_submitted, commissions_submitted, updated_at
+            )
+            SELECT
+                figurine_id,
+                day,
+                SUM(views)::int,
+                SUM(unique_visitors)::int,
+                SUM(engaged_views)::int,
+                SUM(cta_clicks)::int,
+                SUM(order_starts)::int,
+                SUM(reserve_starts)::int,
+                SUM(booking_starts)::int,
+                SUM(waitlist_starts)::int,
+                SUM(commission_starts)::int,
+                SUM(orders_submitted)::int,
+                SUM(bookings_submitted)::int,
+                SUM(waitlist_submitted)::int,
+                SUM(commissions_submitted)::int,
+                NOW()
+            FROM (
+                SELECT
+                    e.figurine_id,
+                    e.event_date AS day,
+                    COUNT(*) FILTER (WHERE event_type = 'figurine_view') AS views,
+                    COUNT(DISTINCT visitor_hash) FILTER (
+                        WHERE event_type = 'figurine_view' AND visitor_hash IS NOT NULL
+                    ) AS unique_visitors,
+                    COUNT(*) FILTER (WHERE event_type = 'figurine_engaged') AS engaged_views,
+                    COUNT(*) FILTER (WHERE event_type = 'figurine_cta_click') AS cta_clicks,
+                    COUNT(*) FILTER (
+                        WHERE event_type = 'figurine_cta_click' AND cta_type = 'request'
+                    ) AS order_starts,
+                    COUNT(*) FILTER (
+                        WHERE event_type = 'figurine_cta_click' AND cta_type = 'reserve'
+                    ) AS reserve_starts,
+                    COUNT(*) FILTER (
+                        WHERE event_type = 'figurine_cta_click' AND cta_type = 'booking'
+                    ) AS booking_starts,
+                    COUNT(*) FILTER (
+                        WHERE event_type = 'figurine_cta_click' AND cta_type IN ('waitlist', 'notify')
+                    ) AS waitlist_starts,
+                    COUNT(*) FILTER (
+                        WHERE event_type = 'figurine_cta_click' AND cta_type = 'create_similar'
+                    ) AS commission_starts,
+                    0::bigint AS orders_submitted,
+                    0::bigint AS bookings_submitted,
+                    0::bigint AS waitlist_submitted,
+                    0::bigint AS commissions_submitted
+                FROM figurine_analytics_events e
+                INNER JOIN figurines f ON f.id = e.figurine_id
+                WHERE e.event_date BETWEEN $1 AND $2
+                GROUP BY e.figurine_id, e.event_date
+
+                UNION ALL
+
+                SELECT
+                    figurine_id::uuid,
+                    created_at::date AS day,
+                    0, 0, 0, 0,
+                    0, 0, 0, 0, 0,
+                    COUNT(*) FILTER (WHERE mode IN ('request', 'reserve')) AS orders_submitted,
+                    0, 0, 0
+                FROM orders
+                WHERE created_at::date BETWEEN $1 AND $2
+                  AND figurine_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                GROUP BY figurine_id::uuid, created_at::date
+
+                UNION ALL
+
+                SELECT
+                    figurine_id,
+                    created_at::date AS day,
+                    0, 0, 0, 0,
+                    0, 0, 0, 0, 0,
+                    0,
+                    COUNT(*) FILTER (WHERE status != 'cancelled') AS bookings_submitted,
+                    0,
+                    0
+                FROM figurine_bookings
+                WHERE created_at::date BETWEEN $1 AND $2
+                GROUP BY figurine_id, created_at::date
+
+                UNION ALL
+
+                SELECT
+                    figurine_id,
+                    created_at::date AS day,
+                    0, 0, 0, 0,
+                    0, 0, 0, 0, 0,
+                    0, 0,
+                    COUNT(*) AS waitlist_submitted,
+                    0
+                FROM figurine_waitlist
+                WHERE created_at::date BETWEEN $1 AND $2
+                GROUP BY figurine_id, created_at::date
+
+                UNION ALL
+
+                SELECT
+                    figurine_id::uuid,
+                    created_at::date AS day,
+                    0, 0, 0, 0,
+                    0, 0, 0, 0, 0,
+                    0, 0, 0,
+                    COUNT(*) AS commissions_submitted
+                FROM commissions
+                WHERE created_at::date BETWEEN $1 AND $2
+                  AND figurine_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                GROUP BY figurine_id::uuid, created_at::date
+            ) rows
+            GROUP BY figurine_id, day
+            HAVING SUM(views) > 0
+                OR SUM(engaged_views) > 0
+                OR SUM(cta_clicks) > 0
+                OR SUM(orders_submitted) > 0
+                OR SUM(bookings_submitted) > 0
+                OR SUM(waitlist_submitted) > 0
+                OR SUM(commissions_submitted) > 0
+            "#,
+        )
+        .bind(from)
+        .bind(to)
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO figurine_analytics_sources_daily (
+                figurine_id, day, source, views, unique_visitors, updated_at
+            )
+            SELECT
+                e.figurine_id,
+                e.event_date AS day,
+                e.source,
+                COUNT(*)::int AS views,
+                COUNT(DISTINCT visitor_hash) FILTER (WHERE visitor_hash IS NOT NULL)::int AS unique_visitors,
+                NOW()
+            FROM figurine_analytics_events e
+            INNER JOIN figurines f ON f.id = e.figurine_id
+            WHERE e.event_date BETWEEN $1 AND $2
+              AND e.event_type = 'figurine_view'
+            GROUP BY e.figurine_id, e.event_date, e.source
+            "#,
+        )
+        .bind(from)
+        .bind(to)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn get_admin_figurine_analytics_list(
+        &self,
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+        sort: &str,
+        dir: &str,
+    ) -> Result<Vec<AdminFigurineAnalyticsListItem>> {
+        let order_col = match sort {
+            "name" => "f.name",
+            "status" => "f.status::text",
+            "uniqueVisitors" | "unique_visitors" => "unique_visitors",
+            "engagedViews" | "engaged_views" => "engaged_views",
+            "ctaClicks" | "cta_clicks" => "cta_clicks",
+            "submissions" => "submissions",
+            "conversionRate" | "conversion_rate" => "conversion_rate",
+            _ => "views",
+        };
+        let order_dir = if dir.eq_ignore_ascii_case("asc") {
+            "ASC"
+        } else {
+            "DESC"
+        };
+        let sql = format!(
+            r#"
+            WITH face AS (
+                SELECT DISTINCT ON (figurine_id)
+                    figurine_id,
+                    COALESCE(thumb_path, file_path) AS face_url
+                FROM images
+                WHERE image_type = 'face'
+                ORDER BY figurine_id, sort_order
+            ),
+            stats AS (
+                SELECT
+                    figurine_id,
+                    COALESCE(SUM(views), 0)::bigint AS views,
+                    COALESCE(SUM(unique_visitors), 0)::bigint AS unique_visitors,
+                    COALESCE(SUM(engaged_views), 0)::bigint AS engaged_views,
+                    COALESCE(SUM(cta_clicks), 0)::bigint AS cta_clicks,
+                    COALESCE(SUM(
+                        orders_submitted + bookings_submitted + waitlist_submitted + commissions_submitted
+                    ), 0)::bigint AS submissions
+                FROM figurine_analytics_daily
+                WHERE day BETWEEN $1 AND $2
+                GROUP BY figurine_id
+            ),
+            top_source AS (
+                SELECT figurine_id, source AS top_source
+                FROM (
+                    SELECT
+                        figurine_id,
+                        source,
+                        COUNT(*) AS views,
+                        ROW_NUMBER() OVER (PARTITION BY figurine_id ORDER BY COUNT(*) DESC, source ASC) AS rn
+                    FROM figurine_analytics_events
+                    WHERE event_date BETWEEN $1 AND $2 AND event_type = 'figurine_view'
+                    GROUP BY figurine_id, source
+                ) ranked
+                WHERE rn = 1
+            ),
+            top_country AS (
+                SELECT figurine_id, country_code AS top_country
+                FROM (
+                    SELECT
+                        figurine_id,
+                        COALESCE(country_code, 'unknown') AS country_code,
+                        COUNT(*) AS views,
+                        ROW_NUMBER() OVER (PARTITION BY figurine_id ORDER BY COUNT(*) DESC, COALESCE(country_code, 'unknown') ASC) AS rn
+                    FROM figurine_analytics_events
+                    WHERE event_date BETWEEN $1 AND $2 AND event_type = 'figurine_view'
+                    GROUP BY figurine_id, COALESCE(country_code, 'unknown')
+                ) ranked
+                WHERE rn = 1
+            ),
+            top_device AS (
+                SELECT figurine_id, device_class AS top_device
+                FROM (
+                    SELECT
+                        figurine_id,
+                        COALESCE(device_class, 'unknown') AS device_class,
+                        COUNT(*) AS views,
+                        ROW_NUMBER() OVER (PARTITION BY figurine_id ORDER BY COUNT(*) DESC, COALESCE(device_class, 'unknown') ASC) AS rn
+                    FROM figurine_analytics_events
+                    WHERE event_date BETWEEN $1 AND $2 AND event_type = 'figurine_view'
+                    GROUP BY figurine_id, COALESCE(device_class, 'unknown')
+                ) ranked
+                WHERE rn = 1
+            ),
+            top_browser AS (
+                SELECT figurine_id, browser_family AS top_browser
+                FROM (
+                    SELECT
+                        figurine_id,
+                        COALESCE(browser_family, 'unknown') AS browser_family,
+                        COUNT(*) AS views,
+                        ROW_NUMBER() OVER (PARTITION BY figurine_id ORDER BY COUNT(*) DESC, COALESCE(browser_family, 'unknown') ASC) AS rn
+                    FROM figurine_analytics_events
+                    WHERE event_date BETWEEN $1 AND $2 AND event_type = 'figurine_view'
+                    GROUP BY figurine_id, COALESCE(browser_family, 'unknown')
+                ) ranked
+                WHERE rn = 1
+            )
+            SELECT
+                f.id::text AS figurine_id,
+                f.name,
+                f.status,
+                face.face_url,
+                top_source.top_source,
+                top_country.top_country,
+                top_device.top_device,
+                top_browser.top_browser,
+                COALESCE(stats.views, 0)::bigint AS views,
+                COALESCE(stats.unique_visitors, 0)::bigint AS unique_visitors,
+                COALESCE(stats.engaged_views, 0)::bigint AS engaged_views,
+                COALESCE(stats.cta_clicks, 0)::bigint AS cta_clicks,
+                COALESCE(stats.submissions, 0)::bigint AS submissions,
+                CASE
+                    WHEN COALESCE(stats.engaged_views, 0) > 0
+                    THEN ROUND((COALESCE(stats.submissions, 0)::numeric / stats.engaged_views::numeric) * 100, 2)::float8
+                    ELSE 0::float8
+                END AS conversion_rate
+            FROM figurines f
+            LEFT JOIN stats ON stats.figurine_id = f.id
+            LEFT JOIN face ON face.figurine_id = f.id
+            LEFT JOIN top_source ON top_source.figurine_id = f.id
+            LEFT JOIN top_country ON top_country.figurine_id = f.id
+            LEFT JOIN top_device ON top_device.figurine_id = f.id
+            LEFT JOIN top_browser ON top_browser.figurine_id = f.id
+            ORDER BY {order_col} {order_dir}, f.name ASC
+            "#
+        );
+
+        let rows = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                FigurineStatus,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                i64,
+                i64,
+                i64,
+                i64,
+                i64,
+                f64,
+            ),
+        >(&sql)
+        .bind(from)
+        .bind(to)
+        .fetch_all(&self.pg_pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    figurine_id,
+                    name,
+                    status,
+                    face_url,
+                    top_source,
+                    top_country,
+                    top_device,
+                    top_browser,
+                    views,
+                    unique_visitors,
+                    engaged_views,
+                    cta_clicks,
+                    submissions,
+                    conversion_rate,
+                )| {
+                    let signal = analytics_signal(
+                        views,
+                        engaged_views,
+                        cta_clicks,
+                        submissions,
+                        conversion_rate,
+                    );
+                    AdminFigurineAnalyticsListItem {
+                        figurine_id,
+                        name,
+                        status,
+                        face_url,
+                        signal,
+                        top_source,
+                        top_country,
+                        top_device,
+                        top_browser,
+                        views,
+                        unique_visitors,
+                        engaged_views,
+                        cta_clicks,
+                        submissions,
+                        conversion_rate,
+                    }
+                },
+            )
+            .collect())
+    }
+
+    pub async fn get_admin_figurine_analytics_daily(
+        &self,
+        figurine_id: Uuid,
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+    ) -> Result<Vec<AnalyticsDailyPoint>> {
+        Ok(sqlx::query_as::<_, AnalyticsDailyPoint>(
+            r#"
+            SELECT
+                day,
+                views::bigint,
+                unique_visitors::bigint,
+                engaged_views::bigint,
+                cta_clicks::bigint,
+                (orders_submitted + bookings_submitted + waitlist_submitted + commissions_submitted)::bigint AS submissions
+            FROM figurine_analytics_daily
+            WHERE figurine_id = $1 AND day BETWEEN $2 AND $3
+            ORDER BY day ASC
+            "#,
+        )
+        .bind(figurine_id)
+        .bind(from)
+        .bind(to)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn get_admin_figurine_analytics_sources(
+        &self,
+        figurine_id: Uuid,
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+    ) -> Result<Vec<AnalyticsSourcePoint>> {
+        Ok(sqlx::query_as::<_, AnalyticsSourcePoint>(
+            r#"
+            SELECT
+                source,
+                COALESCE(SUM(views), 0)::bigint AS views,
+                COALESCE(SUM(unique_visitors), 0)::bigint AS unique_visitors
+            FROM figurine_analytics_sources_daily
+            WHERE figurine_id = $1 AND day BETWEEN $2 AND $3
+            GROUP BY source
+            ORDER BY views DESC, source ASC
+            "#,
+        )
+        .bind(figurine_id)
+        .bind(from)
+        .bind(to)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn get_admin_figurine_analytics_breakdown(
+        &self,
+        figurine_id: Uuid,
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+        dimension: &str,
+        limit: i64,
+    ) -> Result<Vec<AnalyticsBreakdownPoint>> {
+        let expr = match dimension {
+            "country" => "COALESCE(country_code, 'unknown')",
+            "device" => "COALESCE(device_class, 'unknown')",
+            "browser" => "COALESCE(browser_family, 'unknown')",
+            "referrer" => "COALESCE(referrer_host, 'direct')",
+            "utm_source" => "COALESCE(utm_source, 'none')",
+            "visitor" => "COALESCE(SUBSTRING(visitor_hash FROM 1 FOR 12), 'unknown')",
+            _ => {
+                return Err(AppError::BadRequest(
+                    "Invalid analytics breakdown".to_string(),
+                ));
+            }
+        };
+        let sql = format!(
+            r#"
+            SELECT
+                {expr} AS key,
+                COUNT(*)::bigint AS views,
+                COUNT(DISTINCT visitor_hash) FILTER (WHERE visitor_hash IS NOT NULL)::bigint AS unique_visitors
+            FROM figurine_analytics_events
+            WHERE figurine_id = $1
+              AND event_date BETWEEN $2 AND $3
+              AND event_type = 'figurine_view'
+            GROUP BY {expr}
+            ORDER BY views DESC, key ASC
+            LIMIT $4
+            "#
+        );
+        Ok(sqlx::query_as::<_, AnalyticsBreakdownPoint>(&sql)
+            .bind(figurine_id)
+            .bind(from)
+            .bind(to)
+            .bind(limit)
+            .fetch_all(&self.pg_pool)
+            .await?)
+    }
+
+    pub async fn prune_old_analytics_events_chunked(
+        &self,
+        retention_days: i64,
+        batch_size: i64,
+    ) -> Result<u64> {
+        let result = sqlx::query(
+            r#"
+            WITH doomed AS (
+                SELECT id
+                FROM figurine_analytics_events
+                WHERE event_date < (CURRENT_DATE - ($1::int * INTERVAL '1 day'))
+                ORDER BY id
+                LIMIT $2
+            )
+            DELETE FROM figurine_analytics_events e
+            USING doomed
+            WHERE e.id = doomed.id
+            "#,
+        )
+        .bind(retention_days as i32)
+        .bind(batch_size)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(result.rows_affected())
     }
 
     // === ORDERS (Postgres) ===

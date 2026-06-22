@@ -57,6 +57,10 @@ import type {
     EditCommissionRequest,
     AttachmentInput,
     DepthGenSummary,
+    AdminFigurineAnalyticsListPage,
+    AdminFigurineAnalyticsDetail,
+    AdminAnalyticsQuery,
+    AnalyticsEventPayload,
 } from './types/api';
 
 export type { AppSettings };
@@ -267,6 +271,36 @@ export const api = {
         setNumber('limit', opts?.limit);
         const qs = p.toString() ? `?${p}` : '';
         return webFetch(`/admin/logs${qs}`, { headers: authHeaders() });
+    },
+
+    async listFigurineAnalytics(opts?: AdminAnalyticsQuery): Promise<AdminFigurineAnalyticsListPage> {
+        const p = new URLSearchParams();
+        if (opts?.from) p.set('from', opts.from);
+        if (opts?.to) p.set('to', opts.to);
+        if (opts?.sort) p.set('sort', opts.sort);
+        if (opts?.dir) p.set('dir', opts.dir);
+        const qs = p.toString() ? `?${p}` : '';
+        return webFetch(`/admin/analytics/figurines${qs}`, { headers: authHeaders() });
+    },
+
+    async getFigurineAnalytics(id: string, opts?: AdminAnalyticsQuery): Promise<AdminFigurineAnalyticsDetail> {
+        const p = new URLSearchParams();
+        if (opts?.from) p.set('from', opts.from);
+        if (opts?.to) p.set('to', opts.to);
+        if (opts?.sort) p.set('sort', opts.sort);
+        if (opts?.dir) p.set('dir', opts.dir);
+        const qs = p.toString() ? `?${p}` : '';
+        return webFetch(`/admin/analytics/figurines/${id}${qs}`, { headers: authHeaders() });
+    },
+
+    async sendAnalyticsEvent(payload: AnalyticsEventPayload): Promise<void> {
+        if (isTauri) return;
+        await fetch(`${webApiBase()}/analytics/events`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+            body: JSON.stringify(payload),
+            keepalive: true,
+        }).catch(() => undefined);
     },
 
     // === READ (public) ===
