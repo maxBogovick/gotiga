@@ -27,7 +27,16 @@
   let registry = $state<FigurineListItem[]>([]);
   let creatingWorkId = $state<string | null>(null);
   let registryById = $derived(new Map(registry.map((f) => [f.id, f])));
+  // Resolve a tag back to a work: reference-work tags carry the exact figurine name,
+  // so they become links; free tags (technique/material) won't match and stay plain.
+  let registryByName = $derived(new Map(registry.filter((f) => f.name).map((f) => [f.name, f] as const)));
   let visibleItems = $derived(similarOnly ? items.filter((c) => Boolean(c.sourceFigurineId)) : items);
+
+  // Accordion: collapse cards by default so a long list stays scannable.
+  let expandedIds = $state<string[]>([]);
+  function toggleExpand(id: string) {
+    expandedIds = expandedIds.includes(id) ? expandedIds.filter((x) => x !== id) : [...expandedIds, id];
+  }
 
   async function loadRegistry() {
     try { registry = await api.getAllFigurinesAdmin(); } catch { registry = []; }
@@ -279,15 +288,31 @@
     {:else}
       <div class="space-y-3">
         {#each visibleItems as c (c.id)}
-          <div class="border border-[#34251c]/10 bg-white p-4 {c.status === 'new' ? 'border-l-4 border-l-red-400' : ''}">
-            <div class="flex items-start gap-3 mb-2">
+          {@const expanded = expandedIds.includes(c.id)}
+          <div class="border border-[#34251c]/10 bg-white {c.status === 'new' ? 'border-l-4 border-l-red-400' : ''}">
+            <button
+              type="button"
+              onclick={() => toggleExpand(c.id)}
+              aria-expanded={expanded}
+              class="w-full text-left flex items-start gap-3 p-4 hover:bg-[#fff9f0] transition-colors"
+            >
+              <span class="mt-1 text-[#5f4636]/70 text-xs flex-shrink-0">{expanded ? '▾' : '▸'}</span>
               <div class="flex-1 min-w-0">
                 <div class="font-['Fraunces'] text-[#34251c] font-semibold">{c.title || '(untitled)'}</div>
-                <div class="text-xs text-[#5f4636]/60 mt-0.5">{formatDate(c.createdAt)}</div>
+                <div class="text-xs text-[#5f4636]/70 mt-0.5">
+                  {formatDate(c.createdAt)}
+                  {#if c.requesterName}· <span class="font-medium text-[#5f4636]">{c.requesterName}</span>{/if}
+                  · {c.requesterEmail}
+                </div>
+                {#if !expanded}
+                  <div class="text-xs text-[#5f4636]/80 mt-1 truncate">{c.description}</div>
+                {/if}
               </div>
               <span class="text-[10px] px-2 py-0.5 border rounded flex-shrink-0 {statusColor[c.status]}">{statusLabel[c.status]}</span>
-            </div>
+            </button>
 
+          {#if expanded}
+            <div class="px-4 pb-4">
             <div class="text-sm text-[#34251c] mb-1">
               {#if c.requesterName}<span class="font-medium">{c.requesterName}</span> · {/if}
               <a href="mailto:{c.requesterEmail}" class="text-[#c65f3c] hover:underline">{c.requesterEmail}</a>
@@ -324,7 +349,12 @@
                   {#if c.similarTags.length > 0}
                     <div class="mt-1 flex flex-wrap gap-1">
                       {#each c.similarTags as tag}
-                        <span class="text-[9px] px-1.5 py-0.5 border border-[#34251c]/10 text-[#5f4636] bg-white">{tag}</span>
+                        {@const work = registryByName.get(tag)}
+                        {#if work}
+                          <a href="/figurines/{work.id}" target="_blank" rel="noopener" class="text-[9px] px-1.5 py-0.5 border border-[#c65f3c]/40 text-[#6f3b24] bg-white hover:bg-[#c65f3c]/10 hover:border-[#c65f3c] transition-colors">{tag} ↗</a>
+                        {:else}
+                          <span class="text-[9px] px-1.5 py-0.5 border border-[#34251c]/10 text-[#5f4636] bg-white">{tag}</span>
+                        {/if}
                       {/each}
                     </div>
                   {/if}
@@ -474,6 +504,8 @@
                 </div>
               {/if}
             </div>
+            </div>
+          {/if}
           </div>
         {/each}
       </div>

@@ -6,7 +6,7 @@
   import { t, lang , brandName } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
   import { isValidEmail } from '$lib/validation';
-  import type { AttachmentInput, Figurine } from '$lib/types/api';
+  import type { AttachmentInput, Figurine, FigurineListItem } from '$lib/types/api';
 
   const STORE_KEY = 'gotiga_commissions';
   const PENDING_CLAIM_KEY = 'gotiga_pending_claim';
@@ -48,6 +48,65 @@
   let attachments = $state<AttachmentInput[]>([]);
   let uploading = $state(false);
   let uploadError = $state('');
+
+  // Reference works — only on the general form (no source figurine from the URL).
+  // The visitor can tick one or several archive pieces whose mood/craft inspires them.
+  let showRefs = $state(false);
+  let refItems = $state<FigurineListItem[]>([]);
+  let refsLoaded = $state(false);
+  let loadingRefs = $state(false);
+  let selectedRefIds = $state<string[]>([]);
+
+  async function loadReferences() {
+    if (refsLoaded || loadingRefs) return;
+    loadingRefs = true;
+    try {
+      refItems = await api.getAllFigurines();
+      refsLoaded = true;
+    } catch {
+      /* leave empty — picker simply shows nothing to choose */
+    } finally {
+      loadingRefs = false;
+    }
+  }
+
+  function toggleRef(id: string) {
+    selectedRefIds = selectedRefIds.includes(id)
+      ? selectedRefIds.filter((x) => x !== id)
+      : [...selectedRefIds, id];
+  }
+
+  // Search / filter / paginate the archive so a large catalogue stays browsable.
+  const REF_PAGE_SIZE = 8;
+  let refSearch = $state('');
+  let refSeries = $state('');
+  let refPage = $state(1);
+
+  let refSeriesOptions = $derived.by(() => {
+    const set = new Set<string>();
+    for (const f of refItems) if (f.series) set.add(f.series);
+    return [...set].sort((a, b) => a.localeCompare(b));
+  });
+
+  let filteredRefs = $derived.by(() => {
+    const q = refSearch.trim().toLowerCase();
+    return refItems.filter(
+      (f) => (!q || f.name.toLowerCase().includes(q)) && (!refSeries || f.series === refSeries),
+    );
+  });
+
+  let refTotalPages = $derived(Math.max(1, Math.ceil(filteredRefs.length / REF_PAGE_SIZE)));
+  let pagedRefs = $derived(filteredRefs.slice((refPage - 1) * REF_PAGE_SIZE, refPage * REF_PAGE_SIZE));
+
+  // Snap back to the first page whenever the filters change.
+  $effect(() => {
+    refSearch; refSeries;
+    refPage = 1;
+  });
+
+  function refName(id: string) {
+    return refItems.find((f) => f.id === id)?.name ?? id;
+  }
 
   // Step 3 — contact
   let name = $state('');
@@ -140,6 +199,16 @@
     if (!authStore.isLoggedIn && !isValidEmail(effectiveEmail)) { submitError = $t('formInvalidEmail'); return; }
     if (!description.trim()) { submitError = $t('commissionNeedIdea'); step = 1; return; }
 
+    // On the general form (no URL source) carry the checkbox selection: the first
+    // ticked work becomes the linked source (thumbnail in admin/profile), and every
+    // selected work's name goes into the tags so all references stay visible.
+    const manualRefIds = sourceFigurineId.trim() ? [] : selectedRefIds;
+    const manualRefNames = manualRefIds
+      .map((id) => refItems.find((f) => f.id === id)?.name)
+      .filter((n): n is string => Boolean(n));
+    const effectiveSourceId = sourceFigurineId.trim() || manualRefIds[0] || null;
+    const effectiveTags = manualRefNames.length ? manualRefNames : similarTags;
+
     isSubmitting = true;
     try {
       const res = await api.submitCommission(
@@ -154,10 +223,10 @@
           deadline: deadline || null,
           budgetNote: budgetNote.trim() || null,
           occasion: occasionValue || null,
-          sourceFigurineId: sourceFigurineId.trim() || null,
+          sourceFigurineId: effectiveSourceId,
           similarKeepNote: similarKeepNote.trim() || null,
           similarChangeNote: similarChangeNote.trim() || null,
-          similarTags,
+          similarTags: effectiveTags,
           attachmentUrls: attachments,
           website: website || null,
           lang: $lang,
@@ -266,60 +335,127 @@
             </label>
             <label class="field">
               <span class="field-label">{$t('commissionFieldIdea')} *</span>
-              <textarea class="input area" bind:value={description} rows="7" placeholder={$t('commissionFieldIdeaPh')} maxlength="5000"></textarea>
+              <textarea class="input area" bind:value={description} rows="5" placeholder={$t('commissionFieldIdeaPh')} maxlength="5000"></textarea>
             </label>
             {#if sourceFigurineId}
               <div class="similar-fields">
                 <label class="field">
                   <span class="field-label">{$t('commissionSimilarKeep')}</span>
-                  <textarea class="input area area--compact" bind:value={similarKeepNote} rows="3" placeholder={$t('commissionSimilarKeepPh')} maxlength="1000"></textarea>
+                  <textarea class="input area--compact" bind:value={similarKeepNote} rows="3" placeholder={$t('commissionSimilarKeepPh')} maxlength="1000"></textarea>
                 </label>
                 <label class="field">
                   <span class="field-label">{$t('commissionSimilarChange')}</span>
-                  <textarea class="input area area--compact" bind:value={similarChangeNote} rows="3" placeholder={$t('commissionSimilarChangePh')} maxlength="1000"></textarea>
+                  <textarea class="input area--compact" bind:value={similarChangeNote} rows="3" placeholder={$t('commissionSimilarChangePh')} maxlength="1000"></textarea>
                 </label>
+              </div>
+            {:else}
+              <div class="ref-works">
+                <span class="field-label">{$t('commissionRefWorksLabel')}</span>
+                {#if !showRefs}
+                  <button type="button" class="ref-works-toggle" onclick={() => { showRefs = true; loadReferences(); }}>
+                    {$t('commissionRefWorksAdd')} +
+                  </button>
+                {:else}
+                  <p class="quiet ref-works-hint">{$t('commissionRefWorksHint')}</p>
+                  {#if loadingRefs}
+                    <p class="quiet">{$t('commissionRefWorksLoading')}</p>
+                  {:else if refItems.length === 0}
+                    <p class="quiet">{$t('commissionRefWorksEmpty')}</p>
+                  {:else}
+                    <div class="ref-tools">
+                      <input class="input ref-search" type="text" bind:value={refSearch} placeholder={$t('commissionRefWorksSearchPh')} />
+                      {#if refSeriesOptions.length > 0}
+                        <select class="input input--select ref-series" bind:value={refSeries}>
+                          <option value="">{$t('commissionRefWorksAllSeries')}</option>
+                          {#each refSeriesOptions as s}
+                            <option value={s}>{s}</option>
+                          {/each}
+                        </select>
+                      {/if}
+                    </div>
+
+                    {#if selectedRefIds.length > 0}
+                      <div class="ref-chosen">
+                        <span class="ref-chosen-label">{$t('commissionRefWorksSelected')} {selectedRefIds.length}</span>
+                        {#each selectedRefIds as id (id)}
+                          <button type="button" class="ref-chip" onclick={() => toggleRef(id)}>{refName(id)} ×</button>
+                        {/each}
+                      </div>
+                    {/if}
+
+                    {#if filteredRefs.length === 0}
+                      <p class="quiet">{$t('commissionRefWorksNothing')}</p>
+                    {:else}
+                      <ul class="ref-list">
+                        {#each pagedRefs as fig (fig.id)}
+                          {@const on = selectedRefIds.includes(fig.id)}
+                          {@const thumb = resolveMediaUrl(fig.thumbUrl ?? fig.faceImageUrl)}
+                          <li>
+                            <label class="ref-row" class:ref-row--on={on}>
+                              <input type="checkbox" class="ref-row-input" checked={on} onchange={() => toggleRef(fig.id)} />
+                              <span class="ref-row-tick" aria-hidden="true">{on ? '✓' : ''}</span>
+                              {#if thumb}
+                                <img src={thumb} alt="" class="ref-row-img" />
+                              {:else}
+                                <span class="ref-row-img ref-row-img--empty" aria-hidden="true">GT</span>
+                              {/if}
+                              <span class="ref-row-name">{fig.name}</span>
+                              {#if fig.series}<span class="ref-row-series">{fig.series}</span>{/if}
+                            </label>
+                          </li>
+                        {/each}
+                      </ul>
+
+                      {#if refTotalPages > 1}
+                        <div class="ref-pager">
+                          <button type="button" class="ref-pager-btn" disabled={refPage <= 1} onclick={() => refPage -= 1} aria-label="←">←</button>
+                          <span class="ref-pager-count">{refPage} / {refTotalPages}</span>
+                          <button type="button" class="ref-pager-btn" disabled={refPage >= refTotalPages} onclick={() => refPage += 1} aria-label="→">→</button>
+                        </div>
+                      {/if}
+                    {/if}
+                  {/if}
+                {/if}
               </div>
             {/if}
           </div>
         {:else if step === 2}
           <div class="step" in:fade={{ duration: 350 }}>
+            <label class="field">
+              <span class="field-label">{$t('commissionFieldSize')}</span>
+              <select class="input input--select" bind:value={sizeNote}>
+                <option value="">{$t('commissionSizeUnsure')}</option>
+                <option value={$t('commissionSizeXs')}>{$t('commissionSizeXs')}</option>
+                <option value={$t('commissionSizeS')}>{$t('commissionSizeS')}</option>
+                <option value={$t('commissionSizeM')}>{$t('commissionSizeM')}</option>
+                <option value={$t('commissionSizeL')}>{$t('commissionSizeL')}</option>
+                <option value={$t('commissionSizeXl')}>{$t('commissionSizeXl')}</option>
+              </select>
+            </label>
             <div class="row">
-              <label class="field">
-                <span class="field-label">{$t('commissionFieldSize')}</span>
-                <select class="input" bind:value={sizeNote}>
-                  <option value="">{$t('commissionSizeUnsure')}</option>
-                  <option value={$t('commissionSizeXs')}>{$t('commissionSizeXs')}</option>
-                  <option value={$t('commissionSizeS')}>{$t('commissionSizeS')}</option>
-                  <option value={$t('commissionSizeM')}>{$t('commissionSizeM')}</option>
-                  <option value={$t('commissionSizeL')}>{$t('commissionSizeL')}</option>
-                  <option value={$t('commissionSizeXl')}>{$t('commissionSizeXl')}</option>
-                </select>
-              </label>
               <label class="field">
                 <span class="field-label">{$t('commissionFieldMood')}</span>
                 <input class="input" type="text" bind:value={mood} placeholder={$t('commissionFieldMoodPh')} />
               </label>
-            </div>
-            <div class="row">
               <label class="field">
                 <span class="field-label">{$t('commissionFieldDeadline')}</span>
                 <input class="input" type="date" bind:value={deadline} />
               </label>
-              <label class="field">
-                <span class="field-label">{$t('commissionFieldOccasion')}</span>
-                <select class="input" bind:value={occasionChoice}>
-                  <option value="">{$t('commissionOccasionChoose')}</option>
-                  <option value={$t('commissionOccasionGift')}>{$t('commissionOccasionGift')}</option>
-                  <option value={$t('commissionOccasionSelf')}>{$t('commissionOccasionSelf')}</option>
-                  <option value={$t('commissionOccasionCollection')}>{$t('commissionOccasionCollection')}</option>
-                  <option value={$t('commissionOccasionMemorial')}>{$t('commissionOccasionMemorial')}</option>
-                  <option value="__custom__">{$t('commissionOccasionOther')}</option>
-                </select>
-                {#if occasionChoice === '__custom__'}
-                  <input class="input" type="text" bind:value={occasionCustom} placeholder={$t('commissionOccasionCustomPh')} style="margin-top:0.5rem" />
-                {/if}
-              </label>
             </div>
+            <label class="field">
+              <span class="field-label">{$t('commissionFieldOccasion')}</span>
+              <select class="input input--select" bind:value={occasionChoice}>
+                <option value="">{$t('commissionOccasionChoose')}</option>
+                <option value={$t('commissionOccasionGift')}>{$t('commissionOccasionGift')}</option>
+                <option value={$t('commissionOccasionSelf')}>{$t('commissionOccasionSelf')}</option>
+                <option value={$t('commissionOccasionCollection')}>{$t('commissionOccasionCollection')}</option>
+                <option value={$t('commissionOccasionMemorial')}>{$t('commissionOccasionMemorial')}</option>
+                <option value="__custom__">{$t('commissionOccasionOther')}</option>
+              </select>
+              {#if occasionChoice === '__custom__'}
+                <input class="input" type="text" bind:value={occasionCustom} placeholder={$t('commissionOccasionCustomPh')} style="margin-top:0.5rem" />
+              {/if}
+            </label>
             <label class="field">
               <span class="field-label">{$t('commissionFieldBudget')}</span>
               <input class="input" type="text" bind:value={budgetNote} placeholder={$t('commissionFieldBudgetPh')} />
@@ -458,17 +594,73 @@
   .row .field { flex: 1; }
   .field { display: flex; flex-direction: column; gap: 0.4rem; }
   .field-label { font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase; color: #6f3b24; }
-  .input { width: 100%; background: #f8f1e7; border: 1px solid #d8c6b1; padding: 0.6rem 0.7rem; font-family: inherit; font-size: 0.95rem; color: #34251c; transition: border-color 0.2s; }
+  .input { box-sizing: border-box; width: 100%; min-height: 2.9rem; background: #f8f1e7; border: 1px solid #d8c6b1; padding: 0.6rem 0.7rem; font-family: inherit; font-size: 0.95rem; line-height: 1.4; color: #34251c; transition: border-color 0.2s; }
   .input:focus { outline: none; border-color: #c65f3c; }
-  .area { resize: vertical; min-height: 7rem; font-family: 'Cormorant Garamond', Georgia, serif; font-size: 1.05rem; }
-  .area--compact { min-height: 4.5rem; font-family: inherit; font-size: 0.95rem; }
-  .similar-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; padding-top: 0.2rem; }
+  /* Selects: strip the native chrome and draw one consistent chevron so they match the inputs. */
+  .input--select {
+    appearance: none;
+    -webkit-appearance: none;
+    padding-right: 2.2rem;
+    cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%236f3b24' stroke-width='1.4'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.85rem center;
+    background-size: 0.7rem;
+  }
+  /* type=date keeps a consistent baseline with the text inputs. */
+  .input[type="date"] { line-height: normal; }
+  .area { resize: vertical; min-height: 8rem; font-family: 'Cormorant Garamond', Georgia, serif; font-size: 1.05rem; line-height: 1.5; }
+  .area--compact { resize: vertical; min-height: 5rem; font-family: inherit; font-size: 0.95rem; line-height: 1.45; }
+  /* Full-width, stacked — these are free-text fields and need room to type in. */
+  .similar-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+    margin-top: 0.4rem;
+    padding-top: 1.1rem;
+    border-top: 1px solid #e7d8c4;
+  }
 
   .refs { display: flex; flex-wrap: wrap; gap: 0.5rem; }
   .ref-thumb { position: relative; width: 64px; height: 64px; border: 1px solid #d8c6b1; overflow: hidden; }
   .ref-thumb img { width: 100%; height: 100%; object-fit: cover; }
   .ref-x { position: absolute; top: 0; right: 0; width: 18px; height: 18px; background: rgba(52,37,28,0.8); color: #fff; border: none; cursor: pointer; line-height: 1; font-size: 0.8rem; }
   .ref-add { display: grid; place-items: center; width: 64px; height: 64px; border: 1px dashed #c65f3c; color: #c65f3c; font-size: 1.4rem; cursor: pointer; }
+
+  /* Reference-works picker (general form): searchable, paginated list of checkboxes */
+  .ref-works { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.4rem; padding-top: 1.1rem; border-top: 1px solid #e7d8c4; }
+  .ref-works-toggle { align-self: flex-start; margin-top: 0.2rem; padding: 0.55rem 1rem; background: transparent; border: 1px dashed #c65f3c; color: #6f3b24; font-family: inherit; font-size: 0.82rem; letter-spacing: 0.02em; cursor: pointer; transition: background 0.2s, border-color 0.2s; }
+  .ref-works-toggle:hover { background: #f0e6d6; border-style: solid; }
+  .ref-works-hint { margin: 0.1rem 0 0.3rem; }
+
+  .ref-tools { display: flex; gap: 0.6rem; margin: 0.3rem 0 0.2rem; }
+  .ref-search { flex: 1 1 auto; }
+  .ref-series { flex: 0 0 auto; max-width: 42%; }
+
+  .ref-chosen { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin: 0.5rem 0 0.2rem; }
+  .ref-chosen-label { font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; color: #6f3b24; }
+  .ref-chip { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.25rem 0.6rem; border: 1px solid #c65f3c; background: rgba(198,95,60,0.1); color: #6f3b24; font-family: inherit; font-size: 0.78rem; cursor: pointer; transition: background 0.2s; }
+  .ref-chip:hover { background: rgba(198,95,60,0.2); }
+
+  .ref-list { list-style: none; margin: 0.4rem 0 0; padding: 0; border: 1px solid #e0d0bb; }
+  .ref-list li + li .ref-row { border-top: 1px solid #ece0cf; }
+  .ref-row { display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0.7rem; cursor: pointer; transition: background 0.15s; }
+  .ref-row:hover { background: #f8f1e7; }
+  .ref-row--on { background: rgba(198,95,60,0.08); }
+  .ref-row-input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+  .ref-row-tick { flex: 0 0 auto; display: grid; place-items: center; width: 1.25rem; height: 1.25rem; border: 1px solid #d8c6b1; border-radius: 3px; background: #fffaf2; color: #c65f3c; font-size: 0.8rem; line-height: 1; }
+  .ref-row--on .ref-row-tick { background: #c65f3c; border-color: #c65f3c; color: #fffaf2; }
+  .ref-row-input:focus-visible ~ .ref-row-tick { border-color: #c65f3c; box-shadow: 0 0 0 2px rgba(198,95,60,0.35); }
+  .ref-row-img { flex: 0 0 auto; width: 44px; height: 44px; object-fit: cover; border: 1px solid #d8c6b1; background: #f0e6d6; }
+  .ref-row-img--empty { display: grid; place-items: center; color: #6f3b24; font-family: 'Fraunces', Georgia, serif; font-size: 0.7rem; letter-spacing: 0.06em; }
+  .ref-row-name { flex: 1 1 auto; min-width: 0; font-size: 0.9rem; color: #34251c; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ref-row-series { flex: 0 0 auto; font-size: 0.72rem; letter-spacing: 0.04em; text-transform: uppercase; color: #9a7c5c; }
+
+  .ref-pager { display: flex; align-items: center; justify-content: center; gap: 1rem; margin-top: 0.7rem; }
+  .ref-pager-btn { width: 2.2rem; height: 2.2rem; border: 1px solid #d8c6b1; background: #fffaf2; color: #6f3b24; font-size: 1rem; cursor: pointer; transition: background 0.2s, border-color 0.2s; }
+  .ref-pager-btn:hover:not(:disabled) { background: #f0e6d6; border-color: #c65f3c; }
+  .ref-pager-btn:disabled { opacity: 0.4; cursor: default; }
+  .ref-pager-count { font-size: 0.82rem; color: #6f3b24; min-width: 3.5rem; text-align: center; }
 
   .as-user { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 1.1rem; color: #34251c; }
   .quiet { font-family: 'Cormorant Garamond', Georgia, serif; font-style: italic; color: #6f3b24; font-size: 1rem; }
@@ -503,7 +695,8 @@
     .row { flex-direction: column; gap: 1.1rem; }
     .source-card { grid-template-columns: 56px 1fr; }
     .source-card-img { width: 56px; }
-    .similar-fields { grid-template-columns: 1fr; }
+    .ref-tools { flex-direction: column; }
+    .ref-series { max-width: none; }
     .letter { padding: 1.3rem; }
   }
 </style>
