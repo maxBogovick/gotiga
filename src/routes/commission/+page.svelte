@@ -368,6 +368,10 @@
               </label>
             {/if}
             <p class="quiet decline-note">{$t('commissionMayDecline')}</p>
+            <div class="terms-note">
+              <span class="terms-title">{$t('commissionTermsTitle')}</span>
+              <p>{$t('commissionTerms')}</p>
+            </div>
           </div>
         {/if}
 
@@ -469,6 +473,9 @@
   .as-user { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 1.1rem; color: #34251c; }
   .quiet { font-family: 'Cormorant Garamond', Georgia, serif; font-style: italic; color: #6f3b24; font-size: 1rem; }
   .decline-note { margin-top: 0.5rem; padding-top: 0.75rem; border-top: 1px solid #d8c6b1; }
+  .terms-note { margin-top: 1rem; padding: 0.9rem 1rem; background: #f8f1e7; border: 1px solid #d8c6b1; }
+  .terms-title { display: block; font-size: 0.68rem; letter-spacing: 0.12em; text-transform: uppercase; color: #c65f3c; margin-bottom: 0.4rem; }
+  .terms-note p { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 1rem; line-height: 1.5; color: #6f3b24; margin: 0; }
 
   .err { color: #a3361d; font-size: 0.85rem; }
   .err.center { text-align: center; }

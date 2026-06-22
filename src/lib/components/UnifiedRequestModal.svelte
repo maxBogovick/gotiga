@@ -3,7 +3,7 @@
   import { fade, fly, scale } from 'svelte/transition';
   import { cubicOut, elasticOut } from 'svelte/easing';
   import { api, resolveMediaUrl } from '$lib/api';
-  import { t } from '$lib/i18n';
+  import { t, lang } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
   import { isValidEmail } from '$lib/validation';
   import { focusTrap } from '$lib/actions/focusTrap';
@@ -35,6 +35,13 @@
   let message = $state('');
   let displayType = $state('private');
   let venue = $state('');
+  // "Commission similar work" — compact core fields, submitted via api.submitCommission.
+  let keepNote = $state('');
+  let changeNote = $state('');
+  let sizeNote = $state('');
+  let deadline = $state('');
+  let budgetNote = $state('');
+  let similarFullFormHref = $derived(`/commission?source=${encodeURIComponent(figurineId)}`);
   let submitting = $state(false);
   let submitError = $state('');
   let done = $state(false);
@@ -63,14 +70,13 @@
     return d.toISOString().split('T')[0];
   });
 
-  let upcomingShowings = $derived(
-    schedule.entries.filter(e => e.entryType === 'showing' && e.endsAt >= new Date().toISOString().split('T')[0])
-  );
-
   let canRequestWork = $derived(status === 'available');
   let canReserve = $derived(status === 'available');
   let canWaitlist = $derived(status === 'reserved');
-  let canViewing = $derived(status === 'available' || upcomingShowings.length > 0);
+  // Exhibition-loan ("viewing" with dates) is retired from the public flow — it is the
+  // returnable model (ship out → return, risk of loss/breakage) the showcase no longer offers.
+  // The booking code is kept for a possible museum/gallery channel later. See plan.
+  let canViewing = $derived(false);
   let canNotify = $derived(status === 'in_progress' || status === 'sold');
 
   let intentOptions = $derived.by(() => {
@@ -80,7 +86,6 @@
     if (canWaitlist) options.push({ value: 'waitlist', label: $t('unifiedIntentWaitlist'), hint: $t('unifiedIntentWaitlistHint') });
     if (canViewing) options.push({ value: 'viewing', label: $t('unifiedIntentViewing'), hint: $t('unifiedIntentViewingHint') });
     options.push({ value: 'similar', label: $t('unifiedIntentSimilar'), hint: $t('unifiedIntentSimilarHint') });
-    options.push({ value: 'question', label: $t('unifiedIntentQuestion'), hint: $t('unifiedIntentQuestionHint') });
     if (canNotify) options.unshift({ value: 'notify', label: $t('unifiedIntentNotify'), hint: $t('unifiedIntentNotifyHint') });
     return options;
   });
@@ -133,6 +138,11 @@
     message = '';
     displayType = 'private';
     venue = '';
+    keepNote = '';
+    changeNote = '';
+    sizeNote = '';
+    deadline = '';
+    budgetNote = '';
     startsAt = today;
     endsAt = addDays(today, 1);
     dateError = '';
@@ -188,6 +198,11 @@
       }
     }
 
+    if (intent === 'similar' && !message.trim() && !keepNote.trim() && !changeNote.trim()) {
+      submitError = $t('commissionNeedIdea');
+      return;
+    }
+
     submitting = true;
     try {
       if (intent === 'waitlist') {
@@ -223,6 +238,26 @@
         onBookingCreated(claim);
         successTitle = $t('bookingSuccessTitle');
         successText = $t('bookingSuccessText');
+      } else if (intent === 'similar') {
+        const description = message.trim()
+          || [keepNote.trim(), changeNote.trim()].filter(Boolean).join('\n')
+          || figurineName;
+        await api.submitCommission({
+          requesterName: contact.requesterName || null,
+          requesterEmail: contact.requesterEmail,
+          requesterPhone: phone.trim() || null,
+          title: `${$t('commissionInspiredTitlePrefix')} ${figurineName}`,
+          description,
+          sizeNote: sizeNote.trim() || null,
+          deadline: deadline || null,
+          budgetNote: budgetNote.trim() || null,
+          sourceFigurineId: figurineId || null,
+          similarKeepNote: keepNote.trim() || null,
+          similarChangeNote: changeNote.trim() || null,
+          lang: $lang,
+        }, authStore.token ?? undefined);
+        successTitle = $t('commissionSentTitle');
+        successText = $t('commissionSentBody');
       } else {
         const mode = intent === 'notify'
           ? 'notify'
@@ -232,12 +267,10 @@
               ? 'reserve'
               : 'request';
         const prefix =
-          intent === 'similar'
-            ? $t('unifiedSimilarPrefix')
-            : intent === 'request'
-              ? $t('unifiedRequestPrefix')
-              : intent === 'reserve'
-                ? $t('unifiedReservePrefix')
+          intent === 'request'
+            ? $t('unifiedRequestPrefix')
+            : intent === 'reserve'
+              ? $t('unifiedReservePrefix')
               : intent === 'notify'
                 ? $t('unifiedNotifyPrefix')
                 : $t('unifiedQuestionPrefix');
@@ -332,6 +365,40 @@
 
           {#if intent === 'reserve'}
             <p class="unified-notice">{$t('unifiedReserveNotice')}</p>
+          {/if}
+
+          {#if intent === 'similar'}
+            <p class="unified-notice">{$t('unifiedSimilarIntro')}</p>
+            <label class="unified-field">
+              <span>{$t('commissionSimilarKeep')}</span>
+              <textarea bind:value={keepNote} rows="2" placeholder={$t('commissionSimilarKeepPh')}></textarea>
+            </label>
+            <label class="unified-field">
+              <span>{$t('commissionSimilarChange')}</span>
+              <textarea bind:value={changeNote} rows="2" placeholder={$t('commissionSimilarChangePh')}></textarea>
+            </label>
+            <div class="unified-fields">
+              <label class="unified-field">
+                <span>{$t('commissionFieldSize')}</span>
+                <select bind:value={sizeNote}>
+                  <option value="">{$t('commissionSizeUnsure')}</option>
+                  <option value={$t('commissionSizeXs')}>{$t('commissionSizeXs')}</option>
+                  <option value={$t('commissionSizeS')}>{$t('commissionSizeS')}</option>
+                  <option value={$t('commissionSizeM')}>{$t('commissionSizeM')}</option>
+                  <option value={$t('commissionSizeL')}>{$t('commissionSizeL')}</option>
+                  <option value={$t('commissionSizeXl')}>{$t('commissionSizeXl')}</option>
+                </select>
+              </label>
+              <label class="unified-field">
+                <span>{$t('commissionFieldDeadline')}</span>
+                <input type="date" bind:value={deadline} />
+              </label>
+            </div>
+            <label class="unified-field">
+              <span>{$t('commissionFieldBudget')}</span>
+              <input type="text" bind:value={budgetNote} placeholder={$t('commissionFieldBudgetPh')} />
+            </label>
+            <a class="unified-fullform" href={similarFullFormHref}>{$t('unifiedSimilarFullForm')}</a>
           {/if}
 
           {#if authStore.isLoggedIn}
@@ -622,6 +689,19 @@
     font-family: "Inter", sans-serif;
     font-size: 0.82rem;
     line-height: 1.45;
+  }
+
+  .unified-fullform {
+    margin: -0.35rem 0 0;
+    color: #c65f3c;
+    font-family: "Inter", sans-serif;
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-decoration: none;
+  }
+
+  .unified-fullform:hover {
+    text-decoration: underline;
   }
 
   .unified-actions,

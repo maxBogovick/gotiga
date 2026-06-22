@@ -147,7 +147,10 @@
     <LangSwitcher variant="light" />
     <FontSwitcher variant="header" />
 
-    <!-- Bookings indicator -->
+    <!-- Bookings (exhibition-loan) indicator — retired from the public flow.
+         Kept only for legacy claim-holders so they can still track/cancel an existing
+         booking; new visitors never see it since bookings can no longer be created. -->
+    {#if allClaims.claims.length > 0}
     <div class="bookings-anchor" bind:this={panelRef}>
       <button
         class="bookings-btn"
@@ -221,6 +224,7 @@
         </div>
       {/if}
     </div>
+    {/if}
 
     <!-- User button -->
     <div class="user-anchor" bind:this={userMenuRef}>

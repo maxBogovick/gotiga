@@ -8,6 +8,17 @@
 
   const PER_PAGE = 20;
 
+  // Manual deposit policy template — the showcase takes no payment online. Pasting this into
+  // the terms shown to the client keeps every reserve on the same footing: a non-refundable
+  // deposit secures the work, the balance is settled before shipping, delivery is insured and
+  // one-way, and the finished piece is a final sale. Edit the percentage/method per order.
+  const DEPOSIT_TERMS_TEMPLATE = [
+    'To hold this work I ask for a non-refundable deposit of 30% (covers materials and time).',
+    'The remaining balance is settled before the piece is shipped.',
+    'Payment: Wise or PayPal — I will send the exact details once you confirm.',
+    'Shipping is insured, tracked, and one-way. All sales are final — each piece is fragile and made by hand.',
+  ].join('\n');
+
   let items = $state<Order[]>([]);
   let total = $state(0);
   let newCount = $state(0);
@@ -332,7 +343,14 @@
                   </label>
                 </div>
                 <label class="block text-[10px] uppercase tracking-wide text-[#5f4636] font-['Inter']">
-                  Terms shown to client
+                  <span class="flex items-center justify-between gap-2">
+                    Terms shown to client
+                    <button
+                      type="button"
+                      onclick={() => { termsDraft[order.id] = DEPOSIT_TERMS_TEMPLATE; termsDraft = { ...termsDraft }; }}
+                      class="normal-case tracking-normal text-[10px] text-[#c65f3c] hover:underline"
+                    >Insert deposit terms</button>
+                  </span>
                   <textarea
                     rows="2"
                     value={termsDraft[order.id] ?? order.adminTermsNote ?? ''}

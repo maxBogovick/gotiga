@@ -19,4 +19,4 @@ build-and-push.sh
 # Offline GeoIP databases (licensed data — fetched at build / mounted)
 *.mmdb
 planning/
-src-tauri/server/data
+src-tauri/server/data/*

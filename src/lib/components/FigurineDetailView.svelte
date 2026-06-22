@@ -259,9 +259,7 @@
       ? 'waitlist'
       : figurine.status === 'in_progress' || figurine.status === 'sold'
         ? 'notify'
-        : hasActiveShowing
-          ? 'viewing'
-          : 'request';
+        : 'request';
 
     return {
       label: statusLabel(figurine.status),
