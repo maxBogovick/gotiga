@@ -1119,6 +1119,20 @@ export const api = {
         });
     },
 
+    async issueCommissionCertificate(id: string): Promise<CollectorCertificateDto> {
+        return webFetch(`/admin/commissions/${id}/certificate`, {
+            method: 'POST',
+            headers: authHeaders(),
+        });
+    },
+
+    async revokeCommissionCertificate(id: string): Promise<CollectorCertificateDto> {
+        return webFetch(`/admin/commissions/${id}/certificate`, {
+            method: 'DELETE',
+            headers: authHeaders(),
+        });
+    },
+
     async adminResolveThread(threadId: string): Promise<void> {
         await webFetch(`/admin/threads/${threadId}/resolve`, { method: 'POST', headers: authHeaders() });
     },

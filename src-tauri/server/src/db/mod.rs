@@ -888,6 +888,76 @@ impl Repository {
         .await?)
     }
 
+    pub async fn issue_commission_certificate(
+        &self,
+        id: uuid::Uuid,
+        token: &str,
+        certificate_number: &str,
+    ) -> Result<crate::models::Commission> {
+        let commission = sqlx::query_as::<_, crate::models::Commission>(
+            "UPDATE commissions
+             SET certificate_token = COALESCE(certificate_token, $2),
+                 certificate_number = COALESCE(certificate_number, $3),
+                 certificate_issued_at = COALESCE(certificate_issued_at, NOW()),
+                 certificate_revoked_at = NULL
+             WHERE id = $1
+               AND status = 'completed'::commission_status
+             RETURNING *",
+        )
+        .bind(id)
+        .bind(token)
+        .bind(certificate_number)
+        .fetch_optional(&self.pg_pool)
+        .await?;
+        commission.ok_or_else(|| {
+            AppError::BadRequest(
+                "Certificate can be issued only for completed commissions".to_string(),
+            )
+        })
+    }
+
+    pub async fn revoke_commission_certificate(
+        &self,
+        id: uuid::Uuid,
+    ) -> Result<crate::models::Commission> {
+        let commission = sqlx::query_as::<_, crate::models::Commission>(
+            "UPDATE commissions
+             SET certificate_revoked_at = NOW()
+             WHERE id = $1 AND certificate_token IS NOT NULL
+             RETURNING *",
+        )
+        .bind(id)
+        .fetch_optional(&self.pg_pool)
+        .await?;
+        commission.ok_or_else(|| AppError::NotFound("Certificate not found".to_string()))
+    }
+
+    pub async fn get_commission_by_certificate_token(
+        &self,
+        token: &str,
+    ) -> Result<Option<crate::models::Commission>> {
+        Ok(sqlx::query_as::<_, crate::models::Commission>(
+            "SELECT * FROM commissions WHERE certificate_token = $1",
+        )
+        .bind(token)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn get_user_certificate_commissions(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<crate::models::Commission>> {
+        Ok(sqlx::query_as::<_, crate::models::Commission>(
+            "SELECT * FROM commissions
+             WHERE user_id = $1 AND certificate_token IS NOT NULL
+             ORDER BY certificate_issued_at DESC NULLS LAST, created_at DESC",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
     /// All "notify me" orders left for a figurine — used to alert the author
     /// (personally) when the work becomes available again.
     pub async fn get_notify_orders_for_figurine(

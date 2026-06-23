@@ -38,6 +38,21 @@
     expandedIds = expandedIds.includes(id) ? expandedIds.filter((x) => x !== id) : [...expandedIds, id];
   }
 
+  // Certificate of authenticity — available once a commission is completed.
+  let certUpdatingId = $state<string | null>(null);
+  async function issueCert(c: CommissionDto) {
+    certUpdatingId = c.id;
+    try { await api.issueCommissionCertificate(c.id); await load(); }
+    catch { /* ignore — master can retry */ }
+    finally { certUpdatingId = null; }
+  }
+  async function revokeCert(c: CommissionDto) {
+    certUpdatingId = c.id;
+    try { await api.revokeCommissionCertificate(c.id); await load(); }
+    catch { /* ignore */ }
+    finally { certUpdatingId = null; }
+  }
+
   async function loadRegistry() {
     try { registry = await api.getAllFigurinesAdmin(); } catch { registry = []; }
   }
@@ -424,6 +439,23 @@
                 >{savingId === c.id ? '…' : savedId === c.id ? '✓ Saved' : 'Save'}</button>
               </div>
               <p class="text-[10px] text-[#5f4636]/50">The note is added to the email sent to the sender when the status changes (Accepted / In progress / Completed / Declined).</p>
+
+              <!-- Certificate of authenticity (completed commissions only) -->
+              {#if c.status === 'completed'}
+                <div class="flex items-center gap-2 flex-wrap pt-1">
+                  {#if c.certificate}
+                    <span class="text-[10px] uppercase tracking-wide text-[#6f3b24]">Certificate</span>
+                    <span class="text-[11px] font-mono text-[#34251c]">{c.certificate.certificateNumber}</span>
+                    {#if c.certificate.revokedAt}
+                      <span class="text-[10px] text-[#a3361d]">revoked</span>
+                    {/if}
+                    <a href="/certificate/{c.certificate.token}" target="_blank" rel="noopener" class="text-[11px] text-[#c65f3c] hover:underline">View ↗</a>
+                    <button onclick={() => revokeCert(c)} disabled={certUpdatingId === c.id} class="text-[10px] text-[#a3361d] underline disabled:opacity-50">{certUpdatingId === c.id ? '…' : 'Revoke'}</button>
+                  {:else}
+                    <button onclick={() => issueCert(c)} disabled={certUpdatingId === c.id} class="text-[10px] px-2 py-1 border border-[#6f3b24]/40 text-[#6f3b24] hover:border-[#6f3b24] hover:bg-[#6f3b24]/5 transition-colors disabled:opacity-50">{certUpdatingId === c.id ? '…' : '＋ Issue certificate'}</button>
+                  {/if}
+                </div>
+              {/if}
 
               <!-- Edit / delete (refused once work has started) -->
               <div class="flex items-center gap-3 flex-wrap">

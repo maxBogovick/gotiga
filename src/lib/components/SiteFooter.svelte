@@ -13,6 +13,7 @@
     { href: '/upcoming', label: $t('navUpcoming') },
     { href: '/workshop', label: $t('navWorkshop') },
     { href: '/author', label: $t('navAuthor') },
+    { href: '/acquire', label: $t('navAcquire') },
   ]);
 
   let year = $derived(new Date().getFullYear());

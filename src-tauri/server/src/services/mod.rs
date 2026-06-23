@@ -982,14 +982,64 @@ impl AppService {
             .ok_or_else(|| AppError::Internal("Revoked certificate is incomplete".to_string()))
     }
 
+    fn commission_certificate_dto(c: &Commission) -> Option<CollectorCertificateDto> {
+        let token = c.certificate_token.clone()?;
+        let certificate_number = c.certificate_number.clone()?;
+        let issued_at = c.certificate_issued_at?;
+        Some(CollectorCertificateDto {
+            token,
+            certificate_number,
+            figurine_id: c.figurine_id.clone().unwrap_or_default(),
+            figurine_name: c.title.clone(),
+            order_id: c.id.to_string(),
+            issued_at: issued_at.to_rfc3339(),
+            revoked_at: c.certificate_revoked_at.map(|d| d.to_rfc3339()),
+        })
+    }
+
+    pub async fn issue_commission_certificate(
+        &self,
+        id: uuid::Uuid,
+    ) -> Result<CollectorCertificateDto> {
+        let token = format!("cert_{}", uuid::Uuid::new_v4().simple());
+        let certificate_number = format!(
+            "CERT-{}",
+            uuid::Uuid::new_v4().simple().to_string()[..8].to_uppercase()
+        );
+        let commission = self
+            .repo
+            .issue_commission_certificate(id, &token, &certificate_number)
+            .await?;
+        Self::log_domain_event("commission_certificate_issued", "commission", id, "ok");
+        Self::commission_certificate_dto(&commission)
+            .ok_or_else(|| AppError::Internal("Issued certificate is incomplete".to_string()))
+    }
+
+    pub async fn revoke_commission_certificate(
+        &self,
+        id: uuid::Uuid,
+    ) -> Result<CollectorCertificateDto> {
+        let commission = self.repo.revoke_commission_certificate(id).await?;
+        Self::log_domain_event("commission_certificate_revoked", "commission", id, "ok");
+        Self::commission_certificate_dto(&commission)
+            .ok_or_else(|| AppError::Internal("Revoked certificate is incomplete".to_string()))
+    }
+
     pub async fn get_public_certificate(
         &self,
         token: &str,
     ) -> Result<Option<PublicCertificateDto>> {
-        let Some(order) = self.repo.get_order_by_certificate_token(token).await? else {
-            return Ok(None);
+        // A public token may belong to an order (reserve) or a commission.
+        let cert = if let Some(order) = self.repo.get_order_by_certificate_token(token).await? {
+            Self::certificate_dto(&order)
+        } else if let Some(commission) =
+            self.repo.get_commission_by_certificate_token(token).await?
+        {
+            Self::commission_certificate_dto(&commission)
+        } else {
+            None
         };
-        let Some(c) = Self::certificate_dto(&order) else {
+        let Some(c) = cert else {
             return Ok(None);
         };
         Ok(Some(PublicCertificateDto {
@@ -1007,7 +1057,15 @@ impl AppService {
         user_id: Uuid,
     ) -> Result<Vec<CollectorCertificateDto>> {
         let orders = self.repo.get_user_certificate_orders(user_id).await?;
-        Ok(orders.iter().filter_map(Self::certificate_dto).collect())
+        let commissions = self.repo.get_user_certificate_commissions(user_id).await?;
+        let mut certs: Vec<CollectorCertificateDto> =
+            orders.iter().filter_map(Self::certificate_dto).collect();
+        certs.extend(
+            commissions
+                .iter()
+                .filter_map(Self::commission_certificate_dto),
+        );
+        Ok(certs)
     }
 
     async fn send_order_notification(&self, order: &Order) -> Result<()> {
@@ -1093,6 +1151,7 @@ impl AppService {
             attachments: attachments.iter().map(AttachmentDto::from).collect(),
             thread_id: thread.map(|t| t.id.to_string()),
             started: c.status.is_started(),
+            certificate: Self::commission_certificate_dto(c),
         })
     }
 

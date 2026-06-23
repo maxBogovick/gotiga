@@ -507,6 +507,7 @@
             <div class="terms-note">
               <span class="terms-title">{$t('commissionTermsTitle')}</span>
               <p>{$t('commissionTerms')}</p>
+              <a class="terms-link" href="/acquire">{$t('navAcquire')} →</a>
             </div>
           </div>
         {/if}
@@ -668,6 +669,8 @@
   .terms-note { margin-top: 1rem; padding: 0.9rem 1rem; background: #f8f1e7; border: 1px solid #d8c6b1; }
   .terms-title { display: block; font-size: 0.68rem; letter-spacing: 0.12em; text-transform: uppercase; color: #c65f3c; margin-bottom: 0.4rem; }
   .terms-note p { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 1rem; line-height: 1.5; color: #6f3b24; margin: 0; }
+  .terms-link { display: inline-block; margin-top: 0.6rem; font-size: 0.8rem; letter-spacing: 0.04em; color: #c65f3c; text-decoration: none; }
+  .terms-link:hover { text-decoration: underline; }
 
   .err { color: #a3361d; font-size: 0.85rem; }
   .err.center { text-align: center; }

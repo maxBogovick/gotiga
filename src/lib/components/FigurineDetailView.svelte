@@ -21,6 +21,7 @@
   import FigurineComments from '$lib/components/FigurineComments.svelte';
   import { FigurineClaimsStore, type ClaimData } from '$lib/stores/figurine-claims.svelte';
   import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
+  import { pageTurn } from '$lib/stores/page-turn.svelte';
   import { focusTrap } from '$lib/actions/focusTrap';
   import '$lib/styles/figurine-detail.css';
 
@@ -536,10 +537,16 @@
   // main plate. It only takes over on desktop pointers, with motion allowed, while
   // the lens is off and we're in fit (contain) mode — otherwise BrassLens keeps its
   // lens / mobile pinch-zoom / lightbox behaviour untouched.
+  //
+  // It is also suppressed while a prev/next page-turn is armed: a WebGL canvas does
+  // not survive a view-transition snapshot reliably across browsers (Safari leaves
+  // it blank), so during the turn we render the plain <img> the browser can capture
+  // cleanly, and the daguerreotype re-mounts once the leaf has settled.
   let isPointerFine = $state(false);
   let prefersReducedMotion = $state(false);
   let useDaguerreotype = $derived(
     isPointerFine && !prefersReducedMotion && !isLensEnabled && imageViewMode === 'fit'
+      && !pageTurn.direction
   );
 
   // Stage adapts to the work's real proportion. The gallery grid itself stays
@@ -628,7 +635,12 @@
     return value.replace(/[^a-zA-Z0-9_-]/g, '-').replace(/^-+/, 'id-') || 'figurine';
   }
 
-  let viewTransitionName = $derived(`figurine-${safeCssIdentifier(id)}`);
+  // During a prev/next page-turn the whole leaf turns as one, so the plate must
+  // stay inside the root snapshot — drop its name while a turn is armed. The
+  // card→detail morph (no direction armed) keeps the shared name.
+  let viewTransitionName = $derived(
+    pageTurn.direction ? 'none' : `figurine-${safeCssIdentifier(id)}`
+  );
   let hasVideoSection = $derived(hasText(figurine.videoUrl));
   let hasWorkStorySection = $derived(hasHistorySection || hasMakingSection || hasVideoSection);
   let attributes = $derived.by(() => {
@@ -804,6 +816,15 @@
     } catch {
       copied = false;
     }
+  }
+
+  // Arm the book page-turn for prev/next paging — but only for a plain in-tab
+  // navigation. A modified click (cmd/ctrl/shift/middle → new tab/window) won't
+  // fire onNavigate, so arming there would strand the direction and blank the
+  // current plate's morph name.
+  function armPageTurn(e: MouseEvent, direction: 'forward' | 'backward') {
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    pageTurn.arm(direction);
   }
 
   // ── Keyboard gallery navigation ───────────────────────────────────────────
@@ -1058,6 +1079,7 @@
                 title={prev.name}
                 aria-label="{$t('figurineNavPrev')}: {prev.name}"
                 data-sveltekit-preload-data="hover"
+                onclick={(e) => armPageTurn(e, 'backward')}
               >
                 <svg class="fig-nav-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6">
                   <path d="M6.5 2L3.5 5 6.5 8"/>
@@ -1078,6 +1100,7 @@
                 title={next.name}
                 aria-label="{$t('figurineNavNext')}: {next.name}"
                 data-sveltekit-preload-data="hover"
+                onclick={(e) => armPageTurn(e, 'forward')}
               >
                 <span class="fig-nav-name">{next.name}</span>
                 <svg class="fig-nav-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6">
@@ -1258,6 +1281,7 @@
               <div
                 class="image-stage"
                 class:image-stage--detail={imageViewMode === 'detail'}
+                data-figurine-plate
                 style="view-transition-name: {viewTransitionName};"
               >
                 {#if useDaguerreotype}

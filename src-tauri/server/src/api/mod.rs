@@ -362,6 +362,15 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                         auth_middleware,
                     )),
             )
+            .route(
+                "/admin/commissions/:id/certificate",
+                post(handlers::issue_commission_certificate)
+                    .delete(handlers::revoke_commission_certificate)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
             // === SHOWINGS (ADMIN) ===
             .route(
                 "/admin/showings",

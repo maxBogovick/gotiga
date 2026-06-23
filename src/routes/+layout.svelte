@@ -9,8 +9,14 @@
   import { themeConfig, themeCSS, startListeningForPreview, applyPreviewPayload } from '$lib/stores/theme.svelte';
   import { setCopyOverrides, lang } from '$lib/i18n';
   import '$lib/stores/reading-font.svelte'; // initialises --font-reading from saved preference
+  import { pageTurn } from '$lib/stores/page-turn.svelte';
   import { api } from '$lib/api';
   import type { Lang } from '$lib/i18n';
+
+  type ViewTransition = { finished: Promise<void>; ready: Promise<void> };
+  type VTDocument = Document & {
+    startViewTransition(cb: () => void | Promise<void>): ViewTransition;
+  };
 
   let canonicalUrl = $derived(`${page.url.origin}${page.url.pathname}`);
   let { children } = $props();
@@ -86,13 +92,55 @@
   });
 
   onNavigate((navigation) => {
-    if (!('startViewTransition' in document)) return;
-    return new Promise<void>((resolve) => {
-      (document as Document & { startViewTransition(cb: () => Promise<void>): void })
-        .startViewTransition(async () => {
+    if (!('startViewTransition' in document)) {
+      pageTurn.disarm();
+      return;
+    }
+    const vtDocument = document as VTDocument;
+
+    // Heavy book page-turn for prev/next figurine paging. Anything else (and the
+    // reduced-motion fallback) keeps the gentle cross-fade defined in app.css.
+    const direction = pageTurn.direction;
+    const reduceMotion =
+      typeof window !== 'undefined' &&
+      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    const turning = Boolean(direction) && !reduceMotion;
+
+    if (!turning) {
+      // Direction may be armed but suppressed (reduced motion) — clear it so the
+      // incoming plate keeps its figurine-{id} name and morphs as usual.
+      pageTurn.disarm();
+      return new Promise<void>((resolve) => {
+        vtDocument.startViewTransition(async () => {
           resolve();
           await navigation.complete;
         });
+      });
+    }
+
+    const root = document.documentElement;
+    root.classList.add('gt-page-turn', `gt-${direction}`);
+    // Drop the figurine name from the OUTGOING plate so the whole leaf is captured
+    // in the root snapshot and turns as one piece (the incoming plate omits it via
+    // the pageTurn store in FigurineDetailView). Snapshots are taken synchronously
+    // when startViewTransition() is called, so this must happen first.
+    document.querySelectorAll<HTMLElement>('[data-figurine-plate]').forEach((el) => {
+      el.style.viewTransitionName = 'none';
+    });
+
+    return new Promise<void>((resolve) => {
+      const transition = vtDocument.startViewTransition(async () => {
+        resolve();
+        await navigation.complete;
+      });
+      transition.finished.finally(() => {
+        root.classList.remove('gt-page-turn', 'gt-forward', 'gt-backward');
+        pageTurn.disarm();
+        // The WebGL plate (LivingDaguerreotype) parks its render loop after one
+        // frame; a view transition can leave that frame blank until the next
+        // draw. Nudge it to repaint now instead of waiting for a pointermove.
+        requestAnimationFrame(() => window.dispatchEvent(new Event('gotiga:redraw')));
+      });
     });
   });
 </script>

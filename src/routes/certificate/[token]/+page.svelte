@@ -80,9 +80,13 @@
             <div>
               <dt class="text-[10px] uppercase tracking-[0.16em] text-[#5f4636]/70">Work</dt>
               <dd class="mt-1">
-                <a class="text-[#6f3b24] hover:underline" href="/figurines/{certificate.figurineId}">
-                  {certificate.figurineName}
-                </a>
+                {#if certificate.figurineId}
+                  <a class="text-[#6f3b24] hover:underline" href="/figurines/{certificate.figurineId}">
+                    {certificate.figurineName}
+                  </a>
+                {:else}
+                  <span class="text-[#34251c]">{certificate.figurineName}</span>
+                {/if}
               </dd>
             </div>
             <div>

@@ -1388,6 +1388,26 @@ pub async fn revoke_order_certificate(
     Ok(Json(certificate))
 }
 
+pub async fn issue_commission_certificate(
+    State(service): State<AppService>,
+    Path(id): Path<String>,
+) -> Result<Json<CollectorCertificateDto>> {
+    let id = Uuid::parse_str(&id)
+        .map_err(|_| AppError::BadRequest("Invalid commission ID".to_string()))?;
+    let certificate = service.issue_commission_certificate(id).await?;
+    Ok(Json(certificate))
+}
+
+pub async fn revoke_commission_certificate(
+    State(service): State<AppService>,
+    Path(id): Path<String>,
+) -> Result<Json<CollectorCertificateDto>> {
+    let id = Uuid::parse_str(&id)
+        .map_err(|_| AppError::BadRequest("Invalid commission ID".to_string()))?;
+    let certificate = service.revoke_commission_certificate(id).await?;
+    Ok(Json(certificate))
+}
+
 pub async fn user_get_wishlist(
     State(service): State<AppService>,
     headers: HeaderMap,

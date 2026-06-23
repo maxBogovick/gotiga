@@ -85,6 +85,18 @@
     in_progress: 'In progress', completed: 'Completed', declined: 'Declined',
   };
 
+  // Linear happy-path of a commission, for the client-facing progress stepper.
+  // 'declined' is terminal and off-path — shown separately, not on the line.
+  const COMMISSION_STAGES = ['new', 'reviewing', 'accepted', 'in_progress', 'completed'] as const;
+  function commissionStageState(status: string, stage: string): 'done' | 'current' | 'todo' {
+    if (status === 'declined') return 'todo';
+    const stages: readonly string[] = COMMISSION_STAGES;
+    const cur = stages.indexOf(status);
+    const idx = stages.indexOf(stage);
+    if (cur < 0) return 'todo';
+    return idx < cur ? 'done' : idx === cur ? 'current' : 'todo';
+  }
+
   // Petition edit / delete
   let editingCommission = $state<CommissionDto | null>(null);
   let deletingId = $state<string | null>(null);
@@ -1089,6 +1101,37 @@
                     {@const c = commissionById.get(item.id)}
                     {#if c}
                       <div class="entry-detail">
+                        {#if c.status === 'declined'}
+                          <p class="ctl-declined">{COMMISSION_STATUS_LABEL.declined}</p>
+                        {:else}
+                          <ol class="ctl">
+                            {#each COMMISSION_STAGES as stage (stage)}
+                              {@const st = commissionStageState(c.status, stage)}
+                              <li class="ctl-step ctl-step--{st}">
+                                <span class="ctl-dot">{st === 'done' ? '✓' : ''}</span>
+                                <span class="ctl-label">{COMMISSION_STATUS_LABEL[stage]}</span>
+                              </li>
+                            {/each}
+                          </ol>
+                        {/if}
+                        {#if c.adminNotes}
+                          <div class="d-curator">
+                            <span class="d-curator-label">{$t('profileCommissionMasterNote')}</span>
+                            <p class="d-curator-text">{c.adminNotes}</p>
+                          </div>
+                        {/if}
+                        {#if c.certificate}
+                          <div class="d-curator">
+                            <span class="d-curator-label">{$t('profileCertificateTitle')}</span>
+                            <p class="d-curator-text">
+                              {c.certificate.certificateNumber}
+                              {#if c.certificate.revokedAt}· {$t('profileCertificateRevoked')}{/if}
+                            </p>
+                            <div class="d-actions">
+                              <a class="d-link" href="/certificate/{c.certificate.token}">{$t('profileCertificateOpen')}</a>
+                            </div>
+                          </div>
+                        {/if}
                         {#if c.sourceFigurineId}
                           {@const source = sourceFigurineItems.get(c.sourceFigurineId)}
                           <div class="commission-source">
@@ -2025,6 +2068,78 @@
     margin: 0;
     max-width: 60ch;
     white-space: pre-wrap;
+  }
+
+  /* Commission progress stepper (client-facing) */
+  .ctl {
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.2rem 0;
+    margin: 0 0 0.9rem;
+    padding: 0;
+  }
+  .ctl-step {
+    position: relative;
+    flex: 1 1 0;
+    min-width: 4.5rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.35rem;
+    text-align: center;
+  }
+  /* connector line between dots */
+  .ctl-step::before {
+    content: '';
+    position: absolute;
+    top: 0.6rem;
+    left: -50%;
+    width: 100%;
+    height: 2px;
+    background: #d8c6b1;
+    z-index: 0;
+  }
+  .ctl-step:first-child::before { display: none; }
+  .ctl-step--done::before { background: #c65f3c; }
+  .ctl-dot {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    place-items: center;
+    width: 1.2rem;
+    height: 1.2rem;
+    border-radius: 50%;
+    border: 2px solid #d8c6b1;
+    background: #f8f1e7;
+    color: #fffaf2;
+    font-size: 0.65rem;
+    line-height: 1;
+  }
+  .ctl-step--done .ctl-dot { background: #c65f3c; border-color: #c65f3c; }
+  .ctl-step--current .ctl-dot { border-color: #c65f3c; box-shadow: 0 0 0 3px rgba(198,95,60,0.2); background: #fffaf2; }
+  .ctl-label {
+    font-family: Inter, sans-serif;
+    font-size: 0.66rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: #9a7c5c;
+    line-height: 1.2;
+  }
+  .ctl-step--done .ctl-label,
+  .ctl-step--current .ctl-label { color: #6f3b24; }
+  .ctl-step--current .ctl-label { font-weight: 700; }
+  .ctl-declined {
+    margin: 0 0 0.9rem;
+    display: inline-block;
+    padding: 0.3rem 0.7rem;
+    border: 1px solid #c0a08f;
+    background: rgba(120,80,60,0.06);
+    color: #8a5a44;
+    font-family: Inter, sans-serif;
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
   }
 
   .reserve-detail {

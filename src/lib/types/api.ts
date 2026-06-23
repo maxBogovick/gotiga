@@ -407,6 +407,8 @@ export interface CommissionDto {
     threadId: string | null;
     /** Work has begun — petition can no longer be edited or deleted. */
     started: boolean;
+    /** Certificate of authenticity, present once issued for a completed commission. */
+    certificate: CollectorCertificateDto | null;
 }
 
 export interface CommissionCreatedResponse {

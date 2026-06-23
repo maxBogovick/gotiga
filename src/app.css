@@ -1263,6 +1263,91 @@
   Dynamic per-page CSS is injected via <svelte:head> in the figurine detail route.
 */
 
+/* ───────────────────────────────────────────────────────────────────────────
+   BOOK PAGE-TURN — prev/next figurine paging
+   ───────────────────────────────────────────────────────────────────────────
+   Armed by the prev/next links (see page-turn.svelte store). +layout.svelte adds
+   .gt-page-turn + .gt-forward / .gt-backward to <html> for the duration of the
+   transition and drops the figurine-{id} name so the entire leaf is one snapshot.
+
+   The outgoing leaf is hinged at the spine and swings away in depth like a heavy
+   page being lifted and laid over; the incoming leaf rests beneath, rising out of
+   the spine's shadow. Slow + weighty on purpose — this is a gesture for the
+   reader who already found the (undiscoverable) paging arrows.
+
+   Specificity (html.gt-page-turn…) overrides the default root cross-fade above. */
+html.gt-page-turn::view-transition-image-pair(root) {
+  perspective: 2600px;
+  transform-style: preserve-3d;
+}
+
+/* The turning leaf rides above the one being revealed. */
+html.gt-page-turn::view-transition-old(root) {
+  z-index: 20;
+  backface-visibility: hidden;
+  will-change: transform, filter, opacity;
+}
+html.gt-page-turn::view-transition-new(root) {
+  z-index: 10;
+  will-change: transform, filter;
+}
+
+/* Slow, front-loaded ease — the leaf takes weight before it settles. */
+html.gt-forward::view-transition-old(root) {
+  transform-origin: center left;
+  animation: gt-leaf-turn-fwd 1080ms cubic-bezier(0.52, 0.02, 0.22, 1) both;
+}
+html.gt-forward::view-transition-new(root) {
+  transform-origin: center left;
+  animation: gt-leaf-rise 1080ms cubic-bezier(0.52, 0.02, 0.22, 1) both;
+}
+html.gt-backward::view-transition-old(root) {
+  transform-origin: center right;
+  animation: gt-leaf-turn-bwd 1080ms cubic-bezier(0.52, 0.02, 0.22, 1) both;
+}
+html.gt-backward::view-transition-new(root) {
+  transform-origin: center right;
+  animation: gt-leaf-rise 1080ms cubic-bezier(0.52, 0.02, 0.22, 1) both;
+}
+
+/* Forward: hinge at the left spine, the right edge lifts toward the reader and
+   lays over to the left. Darkens into the fold + casts a shadow on the leaf below. */
+@keyframes gt-leaf-turn-fwd {
+  0% {
+    transform: rotateY(0deg);
+    filter: brightness(1) drop-shadow(0 0 0 rgba(28, 16, 8, 0));
+  }
+  100% {
+    transform: rotateY(-112deg);
+    filter: brightness(0.58) drop-shadow(-22px 0 26px rgba(28, 16, 8, 0.42));
+  }
+}
+/* Backward: mirror — hinge at the right spine. */
+@keyframes gt-leaf-turn-bwd {
+  0% {
+    transform: rotateY(0deg);
+    filter: brightness(1) drop-shadow(0 0 0 rgba(28, 16, 8, 0));
+  }
+  100% {
+    transform: rotateY(112deg);
+    filter: brightness(0.58) drop-shadow(22px 0 26px rgba(28, 16, 8, 0.42));
+  }
+}
+/* The revealed leaf rises out of the spine's shadow into full light. */
+@keyframes gt-leaf-rise {
+  0% {
+    transform: scale(0.986);
+    filter: brightness(0.8);
+  }
+  55% {
+    filter: brightness(0.9);
+  }
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    REDUCED MOTION
    ═══════════════════════════════════════════════════════════════════════════ */

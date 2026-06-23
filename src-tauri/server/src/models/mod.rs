@@ -1611,6 +1611,10 @@ pub struct Commission {
     pub status: CommissionStatus,
     pub admin_notes: Option<String>,
     pub lang: String,
+    pub certificate_token: Option<String>,
+    pub certificate_number: Option<String>,
+    pub certificate_issued_at: Option<DateTime<Utc>>,
+    pub certificate_revoked_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -1730,6 +1734,8 @@ pub struct CommissionDto {
     pub thread_id: Option<String>,
     /// Whether work has begun (petition can no longer be deleted or edited).
     pub started: bool,
+    /// Certificate of authenticity, present once issued for a completed commission.
+    pub certificate: Option<CollectorCertificateDto>,
 }
 
 #[derive(Debug, Serialize)]

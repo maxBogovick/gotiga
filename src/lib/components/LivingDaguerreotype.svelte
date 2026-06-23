@@ -276,9 +276,15 @@
   onMount(() => {
     if (reducedMotion || !canvas || !host || !src) return;
 
+    // preserveDrawingBuffer: this canvas draws a single frame then parks its rAF
+    // loop to save power. Without buffer preservation the browser discards those
+    // pixels on any composite that isn't preceded by a redraw — notably a view
+    // transition snapshot (the book page-turn) or the canvas's own opacity
+    // fade-in — leaving the stage blank until the next pointermove forces draw().
+    // Cheap for a small, mostly-static canvas; correctness over a micro-optimisation.
     gl =
-      (canvas.getContext('webgl', { alpha: true, premultipliedAlpha: false, antialias: true }) as WebGLRenderingContext | null) ||
-      (canvas.getContext('experimental-webgl', { alpha: true }) as WebGLRenderingContext | null);
+      (canvas.getContext('webgl', { alpha: true, premultipliedAlpha: false, antialias: true, preserveDrawingBuffer: true }) as WebGLRenderingContext | null) ||
+      (canvas.getContext('experimental-webgl', { alpha: true, preserveDrawingBuffer: true }) as WebGLRenderingContext | null);
     if (!gl) return; // base <img> stays visible — silent, correct fallback
 
     // ── program ────────────────────────────────────────────────────────────
@@ -403,6 +409,18 @@
       glReady = false;
     }
 
+    // After a view transition (e.g. the book page-turn) the live canvas can be
+    // left holding a stale/blank buffer until something forces a fresh draw —
+    // a pointermove normally does it, which is why the image "returned on hover".
+    // The layout fires this once the transition settles so the plate redraws
+    // without any user input.
+    function onExternalRedraw() {
+      markHostRectDirty();
+      draw();
+      kick();
+    }
+    window.addEventListener('gotiga:redraw', onExternalRedraw);
+
     canvas.addEventListener('webglcontextlost', handleContextLost);
     canvas.addEventListener('webglcontextrestored', handleContextRestored);
     host.addEventListener('pointerenter', updateHostRect);
@@ -436,6 +454,7 @@
     return () => {
       destroyed = true;
       stopAnimation();
+      window.removeEventListener('gotiga:redraw', onExternalRedraw);
       canvas?.removeEventListener('webglcontextlost', handleContextLost);
       canvas?.removeEventListener('webglcontextrestored', handleContextRestored);
       host?.removeEventListener('pointerenter', updateHostRect);
