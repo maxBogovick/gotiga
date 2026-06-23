@@ -22,6 +22,9 @@
   import { FigurineClaimsStore, type ClaimData } from '$lib/stores/figurine-claims.svelte';
   import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
   import { pageTurn } from '$lib/stores/page-turn.svelte';
+  import { turnSound } from '$lib/stores/page-turn-sound.svelte';
+  import { playTurnSound } from '$lib/audio/page-turn-sounds';
+  import TurnSoundSwitcher from '$lib/components/TurnSoundSwitcher.svelte';
   import { focusTrap } from '$lib/actions/focusTrap';
   import '$lib/styles/figurine-detail.css';
 
@@ -825,7 +828,28 @@
   function armPageTurn(e: MouseEvent, direction: 'forward' | 'backward') {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     pageTurn.arm(direction);
+    const sound = turnSound.value;
+    if (sound !== 'off') playTurnSound(sound, direction);
   }
+
+  // Paper bleed-through: while a neighbour pill is hovered/focused, a faint ghost
+  // of that work shows through the spine edge of the current leaf, as if the page
+  // were thin enough to see the next one underneath. The image is already in cache
+  // (the pills preload on hover), so this costs no extra request.
+  let bleedDir = $state<'prev' | 'next' | null>(null);
+  let bleedImage = $derived(
+    bleedDir === 'prev'
+      ? resolveUrl(prev?.thumbUrl ?? prev?.faceImageUrl)
+      : bleedDir === 'next'
+        ? resolveUrl(next?.thumbUrl ?? next?.faceImageUrl)
+        : ''
+  );
+  // Keep the last shown side+image while fading out, so the ghost doesn't pop to
+  // full-bleed when the pointer leaves and bleedDir clears.
+  let lastBleed = $state<{ dir: 'prev' | 'next'; img: string } | null>(null);
+  $effect(() => {
+    if (bleedDir && bleedImage) lastBleed = { dir: bleedDir, img: bleedImage };
+  });
 
   // ── Keyboard gallery navigation ───────────────────────────────────────────
   function handleKeydown(e: KeyboardEvent) {
@@ -943,6 +967,7 @@
     savedFigurines.load();
     cs.verify();
     cs.startPolling();
+    turnSound.load();
     void loadQueue();
     void loadNotify();
     if (galleryRef) {
@@ -1080,6 +1105,10 @@
                 aria-label="{$t('figurineNavPrev')}: {prev.name}"
                 data-sveltekit-preload-data="hover"
                 onclick={(e) => armPageTurn(e, 'backward')}
+                onpointerenter={() => (bleedDir = 'prev')}
+                onpointerleave={() => (bleedDir = null)}
+                onfocus={() => (bleedDir = 'prev')}
+                onblur={() => (bleedDir = null)}
               >
                 <svg class="fig-nav-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6">
                   <path d="M6.5 2L3.5 5 6.5 8"/>
@@ -1101,6 +1130,10 @@
                 aria-label="{$t('figurineNavNext')}: {next.name}"
                 data-sveltekit-preload-data="hover"
                 onclick={(e) => armPageTurn(e, 'forward')}
+                onpointerenter={() => (bleedDir = 'next')}
+                onpointerleave={() => (bleedDir = null)}
+                onfocus={() => (bleedDir = 'next')}
+                onblur={() => (bleedDir = null)}
               >
                 <span class="fig-nav-name">{next.name}</span>
                 <svg class="fig-nav-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6">
@@ -1165,8 +1198,10 @@
         {/if}
       </div>
 
-      <!-- Right: controls — candle (mood + reveal), whisper (if audio), share -->
+      <!-- Right: controls — turn-sound, candle (mood + reveal), whisper (if audio), share -->
       <div class="topnav-controls">
+        <TurnSoundSwitcher />
+
         <button
           type="button"
           onclick={toggleCandle}
@@ -1312,6 +1347,15 @@
                       />
                     </div>
                   {/key}
+                {/if}
+
+                {#if lastBleed}
+                  <div
+                    class="leaf-bleed leaf-bleed--{lastBleed.dir}"
+                    class:leaf-bleed--on={bleedDir}
+                    aria-hidden="true"
+                    style="background-image: url('{lastBleed.img}');"
+                  ></div>
                 {/if}
 
                 {#if sortedImages.length > 1}

@@ -23,6 +23,37 @@
   });
   let id = $derived(page.params.id ?? '');
 
+  // Foxing-on-stillness: the longer a reader rests on a leaf without moving, the
+  // more the parchment slowly develops faint age-stains — as if attention itself
+  // ages the paper. Blooms in slowly, clears quickly on any activity, and resets
+  // whenever a new work is opened. Rewards exactly the stillness the place is for.
+  let aged = $state(false);
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function bumpStillness() {
+    aged = false;
+    if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+    if (typeof window === 'undefined') return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    idleTimer = setTimeout(() => (aged = true), 3500);
+  }
+
+  // Restart the dwell timer on mount and on every navigation to a different work.
+  $effect(() => {
+    id;
+    bumpStillness();
+  });
+
+  onMount(() => {
+    const events = ['scroll', 'pointermove', 'pointerdown', 'keydown', 'wheel', 'touchstart'] as const;
+    const opts: AddEventListenerOptions = { passive: true };
+    events.forEach((e) => window.addEventListener(e, bumpStillness, opts));
+    return () => {
+      events.forEach((e) => window.removeEventListener(e, bumpStillness, opts));
+      if (idleTimer) clearTimeout(idleTimer);
+    };
+  });
+
   // Absolute, public-origin URL for OG image. Crawlers fetch this from the static
   // HTML, so it must point at the live site — never at the build-time API host
   // (the backend returns absolute URLs bound to whatever host built the page, e.g.
@@ -144,6 +175,11 @@
 <div class="fixed inset-0 bg-cabinet-bg -z-50"></div>
 <div class="fixed inset-0 pointer-events-none z-0 bg-noise opacity-[0.08] mix-blend-overlay"></div>
 <div class="fixed inset-0 pointer-events-none z-0 detail-backdrop"></div>
+<div
+  class="fixed inset-0 pointer-events-none z-0 foxing"
+  style:opacity={aged ? 0.85 : 0}
+  style:transition-duration={aged ? '7000ms' : '650ms'}
+></div>
 
 <DustParticles />
 
@@ -185,5 +221,29 @@
       radial-gradient(ellipse 70% 55% at 72% 38%, color-mix(in srgb, var(--color-ember) 7%, transparent) 0%, transparent 65%),
       radial-gradient(ellipse 50% 70% at 18% 72%, color-mix(in srgb, var(--color-ochre) 6%, transparent) 0%, transparent 60%),
       var(--color-canvas-base);
+  }
+
+  /* Foxing: scattered, soft sepia blotches multiplied onto the parchment. Sits
+     behind all content (z-0), so it tints only the paper — never the text. The
+     slow/fast bloom is driven by transition-duration toggled from the script. */
+  .foxing {
+    background-image:
+      radial-gradient(circle at 12% 22%, rgba(120, 70, 30, 0.11), transparent 8%),
+      radial-gradient(circle at 79% 14%, rgba(118, 66, 28, 0.09), transparent 6%),
+      radial-gradient(circle at 64% 73%, rgba(110, 60, 28, 0.10), transparent 7%),
+      radial-gradient(circle at 28% 85%, rgba(120, 70, 30, 0.08), transparent 6%),
+      radial-gradient(circle at 90% 58%, rgba(110, 60, 28, 0.07), transparent 6%),
+      radial-gradient(circle at 45% 40%, rgba(120, 70, 30, 0.06), transparent 9%),
+      radial-gradient(circle at 7% 62%, rgba(112, 62, 26, 0.07), transparent 5%),
+      radial-gradient(circle at 53% 9%, rgba(118, 66, 28, 0.06), transparent 5%);
+    mix-blend-mode: multiply;
+    transition-property: opacity;
+    transition-timing-function: ease;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .foxing {
+      display: none;
+    }
   }
 </style>

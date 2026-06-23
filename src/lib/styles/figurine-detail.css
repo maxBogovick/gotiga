@@ -819,6 +819,38 @@
   transform: scale(1.18);
 }
 
+/* Paper bleed-through: a faint ghost of the neighbouring leaf, masked so it only
+   seeps in from the spine edge the relevant pill points toward. Reads as the page
+   being thin enough to see the next one underneath — never a thumbnail preview. */
+.leaf-bleed {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  background-size: cover;
+  background-position: center;
+  opacity: 0;
+  filter: grayscale(0.55) sepia(0.35) contrast(0.92) brightness(1.04);
+  mix-blend-mode: multiply;
+  pointer-events: none;
+  transition: opacity 900ms var(--ease-atelier);
+}
+.leaf-bleed--on {
+  opacity: 0.16;
+}
+.leaf-bleed--prev {
+  -webkit-mask-image: linear-gradient(to right, #000 0%, transparent 52%);
+  mask-image: linear-gradient(to right, #000 0%, transparent 52%);
+}
+.leaf-bleed--next {
+  -webkit-mask-image: linear-gradient(to left, #000 0%, transparent 52%);
+  mask-image: linear-gradient(to left, #000 0%, transparent 52%);
+}
+@media (prefers-reduced-motion: reduce) {
+  .leaf-bleed {
+    transition: none;
+  }
+}
+
 .image-vignette {
   position: absolute;
   inset: 0;
