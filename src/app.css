@@ -1159,6 +1159,91 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   HOUSE-DESCENT  ·  Tier-2 ambient effect
+   ─────────────────────────────────────────────────────────────────────────
+   "Погружение вглубь дома при прокрутке." The further the reader scrolls, the
+   deeper the vignette closes in and the warmer/darker the periphery becomes —
+   as if walking down from a bright hallway into a dim back room.
+
+   PROVABLY MODERN, NOT A JS HACK:
+   The depth is bound to scroll position through a native CSS *scroll-driven
+   animation* (`animation-timeline: scroll(root block)`, the W3C
+   scroll-driven-animations standard). There is no scroll event listener, no
+   requestAnimationFrame, no layout reads — the compositor ticks the timeline
+   off the main thread, so it stays glassy under load and never jank-couples
+   with the view-transition page turns. Only `opacity` animates → compositor
+   only, no per-frame repaint of the gradient.
+
+   READABILITY (the Tier-2 caveat): the treatment is PERIPHERY-ONLY. The radial
+   centre (≤46%) is fully transparent, so the centred reading column stays a lit
+   "candle pool" on the page while the four edges deepen. Dark ink is never laid
+   over a darkened backdrop, so contrast at the foot of long texts is preserved.
+   This is the same "candle lit → the room darkens, vignette closes in" language
+   used on the figurine detail page.
+
+   EFFECT-A GUARD: must not stack with a time-of-day global dimmer. Setting
+   `data-ambient="time-of-day"` (or any non-"house") on <html> opts this out, so
+   the two diffusers can never double-dim. ═══════════════════════════════════ */
+
+.house-descent {
+  position: fixed;
+  inset: 0;
+  z-index: 150; /* above body content, below SiteHeader (200) and modals (300+) */
+  pointer-events: none;
+  contain: layout paint;
+  will-change: opacity;
+
+  /* Edge vignette (cool deep brown) over a warm copper glow rising from the
+     floor. Both keep the central reading band transparent. Baked at full
+     target intensity — the scroll timeline only rides `opacity`. */
+  background:
+    radial-gradient(120% 115% at 50% 22%,
+        transparent 30%,
+        rgba(50, 26, 13, 0.42) 64%,
+        rgba(18, 9, 4, 0.86) 100%),
+    radial-gradient(170% 135% at 50% 104%,
+        rgba(120, 62, 34, 0) 38%,
+        rgba(120, 62, 34, 0.55) 100%);
+
+  opacity: 0; /* bright hallway at the top of the scroll */
+  animation: house-descent linear both;
+  animation-timeline: scroll(root block);
+}
+
+@keyframes house-descent {
+  /* Ramps in early so even a short scroll is felt, then deepens to a heavy,
+     close-walled dim by the foot of the page. */
+  from { opacity: 0.12; }   /* top of page  — bright hallway */
+  to   { opacity: 1; }      /* foot of page — dark back room */
+}
+
+/* Opt out when a time-of-day (effect A) global dimmer owns the ambient light. */
+:root[data-ambient]:not([data-ambient="house"]) .house-descent {
+  display: none;
+}
+
+/* Graceful fallback where scroll-driven animations are unsupported
+   (e.g. Firefox without the flag): keep a quiet, intentional static vignette
+   instead of a broken always-dark overlay. */
+@supports not (animation-timeline: scroll()) {
+  .house-descent {
+    animation: none;
+    opacity: 0.5;
+  }
+}
+
+/* Reduced motion: never couple the dimmer to scroll. The global reduce rule
+   collapses animation-duration, which would otherwise snap a scroll timeline to
+   its dark end-state — so we explicitly drop the animation and hold a gentle,
+   constant haze. */
+@media (prefers-reduced-motion: reduce) {
+  .house-descent {
+    animation: none !important;
+    opacity: 0.4;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    KEYFRAMES
    ═══════════════════════════════════════════════════════════════════════════ */
 

@@ -173,15 +173,13 @@ pub async fn get_all_figurines(
             .get_images_for_figurine(&fig.id)
             .map_err(|e| format!("Database error: {}", e))?;
 
-        let face_image = images
-            .iter()
-            .find(|img| img.image_type == ImageType::Face)
-            .map(|img| {
-                resolve_path(
-                    &base_path,
-                    img.thumb_path.as_deref().unwrap_or(&img.file_path),
-                )
-            });
+        let face = images.iter().find(|img| img.image_type == ImageType::Face);
+        let face_image = face.map(|img| {
+            resolve_path(
+                &base_path,
+                img.thumb_path.as_deref().unwrap_or(&img.file_path),
+            )
+        });
 
         result.push(FigurineListItemDto {
             id: fig.id,
@@ -192,6 +190,14 @@ pub async fn get_all_figurines(
             sort_order: fig.sort_order,
             series: None,
             is_featured: fig.is_featured,
+            focal_x: face.and_then(|i| i.focal_x),
+            focal_y: face.and_then(|i| i.focal_y),
+            reveal_radius: face.and_then(|i| i.reveal_radius),
+            darkness: face.and_then(|i| i.darkness),
+            open_from_min: fig.open_from_min,
+            open_until_min: fig.open_until_min,
+            sealed_door_image: fig.sealed_door_image,
+            showing_room_id: fig.showing_room_id,
         });
     }
 
@@ -233,15 +239,13 @@ pub async fn get_figurine(
                     .get_images_for_figurine(&r_fig.id)
                     .map_err(|e| format!("Database error: {}", e))?;
 
-                let r_face_image = r_images
-                    .iter()
-                    .find(|img| img.image_type == ImageType::Face)
-                    .map(|img| {
-                        resolve_path(
-                            &base_path,
-                            img.thumb_path.as_deref().unwrap_or(&img.file_path),
-                        )
-                    });
+                let r_face = r_images.iter().find(|img| img.image_type == ImageType::Face);
+                let r_face_image = r_face.map(|img| {
+                    resolve_path(
+                        &base_path,
+                        img.thumb_path.as_deref().unwrap_or(&img.file_path),
+                    )
+                });
 
                 related_items.push(FigurineListItemDto {
                     id: r_fig.id,
@@ -252,6 +256,14 @@ pub async fn get_figurine(
                     sort_order: r_fig.sort_order,
                     series: None,
                     is_featured: r_fig.is_featured,
+                    focal_x: r_face.and_then(|i| i.focal_x),
+                    focal_y: r_face.and_then(|i| i.focal_y),
+                    reveal_radius: r_face.and_then(|i| i.reveal_radius),
+                    darkness: r_face.and_then(|i| i.darkness),
+                    open_from_min: r_fig.open_from_min,
+                    open_until_min: r_fig.open_until_min,
+                    sealed_door_image: r_fig.sealed_door_image,
+                    showing_room_id: r_fig.showing_room_id,
                 });
             }
 
@@ -489,6 +501,10 @@ pub async fn save_figurine(
         updated_at: now.clone(),
         is_visible: figurine.is_visible,
         is_featured: figurine.is_featured,
+        open_from_min: figurine.open_from_min,
+        open_until_min: figurine.open_until_min,
+        sealed_door_image: figurine.sealed_door_image,
+        showing_room_id: figurine.showing_room_id,
     };
 
     repo.upsert_figurine(&model)
@@ -501,6 +517,22 @@ pub async fn save_figurine(
             if let Some(value) = img_dto.parallax_intensity {
                 if !(0.0..=1.0).contains(&value) {
                     return Err("Image parallax intensity must be between 0 and 1".to_string());
+                }
+            }
+            for value in [
+                img_dto.focal_x,
+                img_dto.focal_y,
+                img_dto.reveal_radius,
+                img_dto.darkness,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if !(0.0..=1.0).contains(&value) {
+                    return Err(
+                        "Image focal point / reveal radius / darkness must be between 0 and 1"
+                            .to_string(),
+                    );
                 }
             }
             let file_path = clean_path(Some(img_dto.url)).unwrap_or_default();
@@ -517,6 +549,10 @@ pub async fn save_figurine(
                 thumb_path: thumb_path.or(derived_thumb),
                 depth_path,
                 parallax_intensity: img_dto.parallax_intensity,
+                focal_x: img_dto.focal_x,
+                focal_y: img_dto.focal_y,
+                reveal_radius: img_dto.reveal_radius,
+                darkness: img_dto.darkness,
                 alt_text: img_dto.alt_text,
                 sort_order: 0,
                 updated_at: now.clone(),
@@ -573,6 +609,43 @@ pub async fn delete_cabinet_zone(id: String, db: State<'_, Database>) -> Result<
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let repo = Repository::new(&conn);
     repo.delete_cabinet_zone(&id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_showing_rooms(db: State<'_, Database>) -> Result<Vec<ShowingRoomDto>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let repo = Repository::new(&conn);
+    let rooms = repo
+        .get_showing_rooms()
+        .map_err(|e| format!("Database error: {}", e))?;
+    Ok(rooms.into_iter().map(ShowingRoomDto::from).collect())
+}
+
+#[tauri::command]
+pub async fn save_showing_room(
+    room: ShowingRoomDto,
+    db: State<'_, Database>,
+) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let repo = Repository::new(&conn);
+    let model = ShowingRoom {
+        id: room.id,
+        name: room.name,
+        open_from_min: room.open_from_min,
+        open_until_min: room.open_until_min,
+        open_days_mask: room.open_days_mask,
+        open_month_day: room.open_month_day,
+        open_date_from: room.open_date_from,
+        open_date_until: room.open_date_until,
+    };
+    repo.upsert_showing_room(&model).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_showing_room(id: String, db: State<'_, Database>) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let repo = Repository::new(&conn);
+    repo.delete_showing_room(&id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

@@ -430,6 +430,14 @@ impl AppService {
             material: f.material,
             is_featured: f.is_featured,
             created_at: f.created_at,
+            focal_x: face.and_then(|i| i.focal_x),
+            focal_y: face.and_then(|i| i.focal_y),
+            reveal_radius: face.and_then(|i| i.reveal_radius),
+            darkness: face.and_then(|i| i.darkness),
+            open_from_min: f.open_from_min,
+            open_until_min: f.open_until_min,
+            sealed_door_image: f.sealed_door_image,
+            showing_room_id: f.showing_room_id.map(|u| u.to_string()),
         }
     }
 
@@ -509,6 +517,10 @@ impl AppService {
                         .as_ref()
                         .map(|p| self.resolve_url(p, "images_depth", &i_id_str)),
                     parallax_intensity: i.parallax_intensity,
+                    focal_x: i.focal_x,
+                    focal_y: i.focal_y,
+                    reveal_radius: i.reveal_radius,
+                    darkness: i.darkness,
                     alt_text: i.alt_text,
                 }
             })
@@ -556,6 +568,10 @@ impl AppService {
             sort_order: figurine.sort_order,
             is_visible: figurine.is_visible,
             is_featured: figurine.is_featured,
+            open_from_min: figurine.open_from_min,
+            open_until_min: figurine.open_until_min,
+            sealed_door_image: figurine.sealed_door_image,
+            showing_room_id: figurine.showing_room_id.map(|u| u.to_string()),
             images: image_dtos,
             process_steps: step_dtos,
             related_items,
@@ -724,6 +740,28 @@ impl AppService {
                     "Image parallax intensity must be between 0 and 1".into(),
                 ));
             }
+            for value in [
+                image.focal_x,
+                image.focal_y,
+                image.reveal_radius,
+                image.darkness,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if !(0.0..=1.0).contains(&value) {
+                    return Err(AppError::BadRequest(
+                        "Image focal point / reveal radius / darkness must be between 0 and 1".into(),
+                    ));
+                }
+            }
+        }
+        for value in [req.open_from_min, req.open_until_min].into_iter().flatten() {
+            if !(0..=1439).contains(&value) {
+                return Err(AppError::BadRequest(
+                    "Showing window minutes must be between 0 and 1439".into(),
+                ));
+            }
         }
         let prev_status = self
             .repo
@@ -765,6 +803,41 @@ impl AppService {
         let uuid = Self::parse_uuid(&id)?;
         self.repo.delete_zone(uuid).await?;
         Self::log_domain_event("zone_deleted", "zone", uuid, "ok");
+        Ok(())
+    }
+
+    pub async fn get_showing_rooms(&self) -> Result<Vec<crate::models::ShowingRoomDto>> {
+        let rooms = self.repo.get_showing_rooms().await?;
+        Ok(rooms
+            .into_iter()
+            .map(|r| crate::models::ShowingRoomDto {
+                id: r.id.to_string(),
+                name: r.name,
+                open_from_min: r.open_from_min,
+                open_until_min: r.open_until_min,
+                open_days_mask: r.open_days_mask,
+                open_month_day: r.open_month_day,
+                open_date_from: r.open_date_from,
+                open_date_until: r.open_date_until,
+            })
+            .collect())
+    }
+
+    pub async fn save_showing_room(
+        &self,
+        req: crate::models::SaveShowingRoomRequest,
+    ) -> Result<()> {
+        let room_id = req.id.clone();
+        let count = self.repo.get_showing_room_count().await?;
+        self.repo.upsert_showing_room(&req, count).await?;
+        Self::log_domain_event("showing_room_saved", "showing_room", room_id, "ok");
+        Ok(())
+    }
+
+    pub async fn delete_showing_room(&self, id: String) -> Result<()> {
+        let uuid = Self::parse_uuid(&id)?;
+        self.repo.delete_showing_room(uuid).await?;
+        Self::log_domain_event("showing_room_deleted", "showing_room", uuid, "ok");
         Ok(())
     }
 

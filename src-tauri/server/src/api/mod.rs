@@ -97,6 +97,7 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             .route("/figurines/:id", get(handlers::get_figurine))
             .route("/content/texts/:param", get(handlers::get_texts_by_param))
             .route("/cabinet/zones", get(handlers::get_cabinet_zones))
+            .route("/showing-rooms", get(handlers::get_showing_rooms))
             .route("/main-background", get(handlers::get_main_background))
             .route("/home-content", get(handlers::get_home_content))
             .route("/author/profile", get(handlers::get_author_profile))
@@ -215,6 +216,20 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             .route(
                 "/cabinet/zones/:id",
                 delete(handlers::delete_zone).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/showing-rooms",
+                post(handlers::save_showing_room).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/showing-rooms/:id",
+                delete(handlers::delete_showing_room).route_layer(middleware::from_fn_with_state(
                     config.clone(),
                     auth_middleware,
                 )),

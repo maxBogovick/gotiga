@@ -24,6 +24,10 @@
   let hasHeaderOffset = $derived(showSiteHeader && page.url.pathname !== '/');
   // Detail page has its own DustParticles at higher intensity — skip in layout to avoid double canvas
   let showDust = $derived(showSiteHeader && !page.url.pathname.startsWith('/figurines/'));
+  // House-descent scroll dimmer: every public page EXCEPT the figurine detail /
+  // passport routes, which run their own candle vignette (stacking a second
+  // scroll-linked dimmer there would over-darken the specimen).
+  let showDescent = $derived(showSiteHeader && !page.url.pathname.startsWith('/figurines/'));
 
   // Keep <html lang> in sync with the active language. app.html hard-codes lang="ru",
   // but the default content language is English (i18n getInitialLang) and the reader
@@ -159,6 +163,11 @@
 
   {#if showDust}
     <DustParticles opacity={0.2} />
+  {/if}
+
+  {#if showDescent}
+    <!-- Scroll-driven "descent into the house" dimmer (app.css .house-descent) -->
+    <div class="house-descent" aria-hidden="true"></div>
   {/if}
 
   <main class="min-h-screen" class:with-site-header={hasHeaderOffset}>

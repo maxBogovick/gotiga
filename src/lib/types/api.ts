@@ -15,6 +15,49 @@ export interface FigurineListItem {
     isFeatured?: boolean;
     createdAt?: string | null;
     thumbUrl?: string | null;
+    /**
+     * "Keyhole" reveal of the face image on the card: focus point and radius,
+     * all normalised 0..1. Null/undefined → centred focus + renderer default
+     * radius. Set per image in the admin figurine form.
+     */
+    focalX?: number | null;
+    focalY?: number | null;
+    revealRadius?: number | null;
+    /** Per-image darkness override (0..1); null → global keyhole darkness. */
+    darkness?: number | null;
+    /**
+     * "The house wakes" — daily showing window, minutes from midnight (0..1439),
+     * read against the visitor's LOCAL clock. Both null → always open. When the
+     * window is closed the card shows a carved sealed door instead of the work,
+     * and is not enterable. `openUntilMin < openFromMin` wraps past midnight.
+     */
+    openFromMin?: number | null;
+    openUntilMin?: number | null;
+    /**
+     * Optional door asset shown while the window is closed. When null the sealed
+     * door is drawn procedurally (carved oak) instead.
+     */
+    sealedDoorImage?: string | null;
+    /**
+     * Optional showing room this work belongs to. When set, the room's window is
+     * used instead of openFromMin/openUntilMin (mutually exclusive). null → own window.
+     */
+    showingRoomId?: string | null;
+}
+
+/** A named, shared showing window several works can point at (e.g. "Night hall"). */
+export interface ShowingRoom {
+    id: string;
+    name: string;
+    openFromMin: number;
+    openUntilMin: number;
+    /** Allowed weekdays bitmask (bit0=Mon … bit6=Sun); null → every day. */
+    openDaysMask?: number | null;
+    /** "MM-DD" — open every year on that date; null → unused. */
+    openMonthDay?: string | null;
+    /** One-off inclusive date range "YYYY-MM-DD"; null → unused. */
+    openDateFrom?: string | null;
+    openDateUntil?: string | null;
 }
 
 export interface FigurineImage {
@@ -35,6 +78,15 @@ export interface FigurineImage {
      * renderer default is used, preserving old catalogue behaviour.
      */
     parallaxIntensity?: number | null;
+    /**
+     * "Keyhole" reveal focus point + radius (all normalised 0..1) for the card
+     * teaser. Null → centred focus + default radius. Edited in the admin form.
+     */
+    focalX?: number | null;
+    focalY?: number | null;
+    revealRadius?: number | null;
+    /** Per-image darkness override (0..1); null → global keyhole darkness. */
+    darkness?: number | null;
 }
 
 export interface DepthGenItem {
@@ -81,6 +133,13 @@ export interface Figurine {
     isVisible: boolean;
     isFeatured: boolean;
     series?: string | null;
+    /** "The house wakes" — showing window, minutes from midnight; both null → always open. */
+    openFromMin?: number | null;
+    openUntilMin?: number | null;
+    /** Optional sealed-door asset; null → procedural carved oak door. */
+    sealedDoorImage?: string | null;
+    /** Showing room this work belongs to; null → uses its own window. */
+    showingRoomId?: string | null;
     images: FigurineImage[];
     processSteps: ProcessStep[];
     relatedItems: FigurineListItem[];
@@ -892,10 +951,25 @@ export interface ThemeMotion {
     durationGlacial: string | null;
 }
 
+export interface ThemeEffects {
+    /**
+     * Global "keyhole" darkness (0..1) — how deep the shadow over sealed cards
+     * is. Higher hides more detail. Per-image `darkness` overrides this; null
+     * falls back to the renderer default.
+     */
+    keyholeDarkness: number | null;
+    /**
+     * Seconds of dwell (hover) on a sealed card before its shadow lifts on its
+     * own — no need to open the work. 0 / null disables the behaviour.
+     */
+    keyholeDwellReveal: number | null;
+}
+
 export interface ThemeConfig {
     colors: Record<string, string>;
     fonts: ThemeFonts;
     motion: ThemeMotion;
+    effects: ThemeEffects;
 }
 
 export interface CopyOverrides {

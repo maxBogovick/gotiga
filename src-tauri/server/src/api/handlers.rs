@@ -591,6 +591,31 @@ pub async fn delete_zone(
     Ok(StatusCode::OK)
 }
 
+// === SHOWING ROOMS (the house wakes) ===
+
+pub async fn get_showing_rooms(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<crate::models::ShowingRoomDto>>> {
+    let rooms = service.get_showing_rooms().await?;
+    Ok(Json(rooms))
+}
+
+pub async fn save_showing_room(
+    State(service): State<AppService>,
+    Json(req): Json<crate::models::SaveShowingRoomRequest>,
+) -> Result<StatusCode> {
+    service.save_showing_room(req).await?;
+    Ok(StatusCode::OK)
+}
+
+pub async fn delete_showing_room(
+    State(service): State<AppService>,
+    Path(id): Path<String>,
+) -> Result<StatusCode> {
+    service.delete_showing_room(id).await?;
+    Ok(StatusCode::OK)
+}
+
 // === ADMIN TEXT CRUD ===
 
 pub async fn save_text(

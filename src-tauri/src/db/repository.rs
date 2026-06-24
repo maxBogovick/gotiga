@@ -28,7 +28,7 @@ impl<'a> Repository<'a> {
 
     pub fn get_all_figurines(&self) -> Result<Vec<Figurine>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, short_text, full_description, dimensions, material, technique, year, passport_number, edition, created_period, care_instructions, provenance_note, authenticity_note, included_items, ambience_path, video_url, secret_text, status, sort_order, updated_at, is_visible, COALESCE(is_featured, 0)
+            "SELECT id, name, short_text, full_description, dimensions, material, technique, year, passport_number, edition, created_period, care_instructions, provenance_note, authenticity_note, included_items, ambience_path, video_url, secret_text, status, sort_order, updated_at, is_visible, COALESCE(is_featured, 0), open_from_min, open_until_min, sealed_door_image, showing_room_id
              FROM figurines
              ORDER BY sort_order"
         )?;
@@ -58,6 +58,10 @@ impl<'a> Repository<'a> {
                 updated_at: get_iso_date(row, 20)?,
                 is_visible: row.get(21)?,
                 is_featured: row.get::<_, i32>(22).unwrap_or(0) != 0,
+                open_from_min: row.get(23)?,
+                open_until_min: row.get(24)?,
+                sealed_door_image: row.get(25)?,
+                showing_room_id: row.get(26)?,
             })
         })?;
 
@@ -66,7 +70,7 @@ impl<'a> Repository<'a> {
 
     pub fn get_figurine_by_id(&self, id: &str) -> Result<Option<Figurine>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, short_text, full_description, dimensions, material, technique, year, passport_number, edition, created_period, care_instructions, provenance_note, authenticity_note, included_items, ambience_path, video_url, secret_text, status, sort_order, updated_at, is_visible, COALESCE(is_featured, 0)
+            "SELECT id, name, short_text, full_description, dimensions, material, technique, year, passport_number, edition, created_period, care_instructions, provenance_note, authenticity_note, included_items, ambience_path, video_url, secret_text, status, sort_order, updated_at, is_visible, COALESCE(is_featured, 0), open_from_min, open_until_min, sealed_door_image, showing_room_id
              FROM figurines
              WHERE id = ?"
         )?;
@@ -98,6 +102,10 @@ impl<'a> Repository<'a> {
                 updated_at: get_iso_date(row, 20)?,
                 is_visible: row.get(21)?,
                 is_featured: row.get::<_, i32>(22).unwrap_or(0) != 0,
+                open_from_min: row.get(23)?,
+                open_until_min: row.get(24)?,
+                sealed_door_image: row.get(25)?,
+                showing_room_id: row.get(26)?,
             }))
         } else {
             Ok(None)
@@ -111,8 +119,8 @@ impl<'a> Repository<'a> {
             "INSERT INTO figurines (
                 id, name, short_text, full_description, dimensions, material, technique,
                 year, passport_number, edition, created_period, care_instructions, provenance_note, authenticity_note, included_items,
-                ambience_path, video_url, secret_text, status, sort_order, is_visible, is_featured, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)
+                ambience_path, video_url, secret_text, status, sort_order, is_visible, is_featured, open_from_min, open_until_min, sealed_door_image, showing_room_id, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)
             ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name,
                 short_text=excluded.short_text,
@@ -135,6 +143,10 @@ impl<'a> Repository<'a> {
                 sort_order=excluded.sort_order,
                 is_visible=excluded.is_visible,
                 is_featured=excluded.is_featured,
+                open_from_min=excluded.open_from_min,
+                sealed_door_image=excluded.sealed_door_image,
+                showing_room_id=excluded.showing_room_id,
+                open_until_min=excluded.open_until_min,
                 updated_at=excluded.updated_at"
         )?;
 
@@ -161,6 +173,10 @@ impl<'a> Repository<'a> {
             f.sort_order,
             f.is_visible,
             f.is_featured as i32,
+            f.open_from_min,
+            f.open_until_min,
+            f.sealed_door_image,
+            f.showing_room_id,
             f.updated_at
         ])?;
 
@@ -184,8 +200,8 @@ impl<'a> Repository<'a> {
 
         // Вставляем новые
         let mut stmt = self.conn.prepare(
-            "INSERT INTO images (id, figurine_id, image_type, file_path, original_path, thumb_path, depth_path, parallax_intensity, alt_text, sort_order, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"
+            "INSERT INTO images (id, figurine_id, image_type, file_path, original_path, thumb_path, depth_path, parallax_intensity, focal_x, focal_y, reveal_radius, darkness, alt_text, sort_order, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)"
         )?;
 
         for (i, img) in images.into_iter().enumerate() {
@@ -198,6 +214,10 @@ impl<'a> Repository<'a> {
                 img.thumb_path,
                 img.depth_path,
                 img.parallax_intensity,
+                img.focal_x,
+                img.focal_y,
+                img.reveal_radius,
+                img.darkness,
                 img.alt_text,
                 i as i32,
                 img.updated_at // String
@@ -209,7 +229,7 @@ impl<'a> Repository<'a> {
 
     pub fn get_all_images(&self) -> Result<Vec<Image>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, figurine_id, image_type, file_path, original_path, thumb_path, depth_path, parallax_intensity, alt_text, sort_order, updated_at FROM images"
+            "SELECT id, figurine_id, image_type, file_path, original_path, thumb_path, depth_path, parallax_intensity, focal_x, focal_y, reveal_radius, darkness, alt_text, sort_order, updated_at FROM images"
         )?;
         let iter = stmt.query_map([], |row| {
             Ok(Image {
@@ -221,9 +241,13 @@ impl<'a> Repository<'a> {
                 thumb_path: row.get(5)?,
                 depth_path: row.get(6)?,
                 parallax_intensity: row.get(7)?,
-                alt_text: row.get(8)?,
-                sort_order: row.get(9)?,
-                updated_at: get_iso_date(row, 10)?,
+                focal_x: row.get(8)?,
+                focal_y: row.get(9)?,
+                reveal_radius: row.get(10)?,
+                darkness: row.get(11)?,
+                alt_text: row.get(12)?,
+                sort_order: row.get(13)?,
+                updated_at: get_iso_date(row, 14)?,
             })
         })?;
         iter.collect()
@@ -509,7 +533,7 @@ impl<'a> Repository<'a> {
 
     pub fn get_images_for_figurine(&self, figurine_id: &str) -> Result<Vec<Image>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, figurine_id, image_type, file_path, original_path, thumb_path, depth_path, parallax_intensity, alt_text, sort_order, updated_at
+            "SELECT id, figurine_id, image_type, file_path, original_path, thumb_path, depth_path, parallax_intensity, focal_x, focal_y, reveal_radius, darkness, alt_text, sort_order, updated_at
              FROM images
              WHERE figurine_id = ?
              ORDER BY sort_order"
@@ -525,9 +549,13 @@ impl<'a> Repository<'a> {
                 thumb_path: row.get(5)?,
                 depth_path: row.get(6)?,
                 parallax_intensity: row.get(7)?,
-                alt_text: row.get(8)?,
-                sort_order: row.get(9)?,
-                updated_at: get_iso_date(row, 10)?,
+                focal_x: row.get(8)?,
+                focal_y: row.get(9)?,
+                reveal_radius: row.get(10)?,
+                darkness: row.get(11)?,
+                alt_text: row.get(12)?,
+                sort_order: row.get(13)?,
+                updated_at: get_iso_date(row, 14)?,
             })
         })?;
 
@@ -586,6 +614,57 @@ impl<'a> Repository<'a> {
     pub fn delete_cabinet_zone(&self, id: &str) -> Result<()> {
         self.conn
             .execute("DELETE FROM cabinet_zones WHERE id = ?", params![id])?;
+        Ok(())
+    }
+
+    // === SHOWING ROOMS ===
+
+    pub fn get_showing_rooms(&self) -> Result<Vec<ShowingRoom>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, open_from_min, open_until_min, open_days_mask, open_month_day, open_date_from, open_date_until
+             FROM showing_rooms
+             ORDER BY sort_order, name",
+        )?;
+        let iter = stmt.query_map([], |row| {
+            Ok(ShowingRoom {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                open_from_min: row.get(2)?,
+                open_until_min: row.get(3)?,
+                open_days_mask: row.get(4)?,
+                open_month_day: row.get(5)?,
+                open_date_from: row.get(6)?,
+                open_date_until: row.get(7)?,
+            })
+        })?;
+        iter.collect()
+    }
+
+    pub fn upsert_showing_room(&self, r: &ShowingRoom) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO showing_rooms (id, name, open_from_min, open_until_min, open_days_mask, open_month_day, open_date_from, open_date_until, sort_order)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0)
+             ON CONFLICT(id) DO UPDATE SET
+                name=excluded.name,
+                open_from_min=excluded.open_from_min,
+                open_until_min=excluded.open_until_min,
+                open_days_mask=excluded.open_days_mask,
+                open_month_day=excluded.open_month_day,
+                open_date_from=excluded.open_date_from,
+                open_date_until=excluded.open_date_until",
+            params![r.id, r.name, r.open_from_min, r.open_until_min, r.open_days_mask, r.open_month_day, r.open_date_from, r.open_date_until],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_showing_room(&self, id: &str) -> Result<()> {
+        // Free any works pointing at this room (mirror server ON DELETE SET NULL).
+        self.conn.execute(
+            "UPDATE figurines SET showing_room_id = NULL WHERE showing_room_id = ?",
+            params![id],
+        )?;
+        self.conn
+            .execute("DELETE FROM showing_rooms WHERE id = ?", params![id])?;
         Ok(())
     }
 
@@ -704,7 +783,7 @@ impl<'a> Repository<'a> {
 
     pub fn get_related_figurines(&self, id: &str) -> Result<Vec<Figurine>> {
         let mut stmt = self.conn.prepare(
-            "SELECT DISTINCT f.id, f.name, f.short_text, f.full_description, f.dimensions, f.material, f.technique, f.year, f.passport_number, f.edition, f.created_period, f.care_instructions, f.provenance_note, f.authenticity_note, f.included_items, f.ambience_path, f.video_url, f.secret_text, f.status, f.sort_order, f.updated_at, f.is_visible, COALESCE(f.is_featured, 0)
+            "SELECT DISTINCT f.id, f.name, f.short_text, f.full_description, f.dimensions, f.material, f.technique, f.year, f.passport_number, f.edition, f.created_period, f.care_instructions, f.provenance_note, f.authenticity_note, f.included_items, f.ambience_path, f.video_url, f.secret_text, f.status, f.sort_order, f.updated_at, f.is_visible, COALESCE(f.is_featured, 0), f.open_from_min, f.open_until_min, f.sealed_door_image, f.showing_room_id
              FROM figurines f
              JOIN figurines current ON current.id = ?1
              WHERE f.id != ?1
@@ -742,6 +821,10 @@ impl<'a> Repository<'a> {
                 updated_at: get_iso_date(row, 20)?,
                 is_visible: row.get(21)?,
                 is_featured: row.get::<_, i32>(22).unwrap_or(0) != 0,
+                open_from_min: row.get(23)?,
+                open_until_min: row.get(24)?,
+                sealed_door_image: row.get(25)?,
+                showing_room_id: row.get(26)?,
             })
         })?;
 

@@ -1167,11 +1167,16 @@ impl Repository {
             })
             .collect::<Result<_>>()?;
 
+        // Lenient parse: a bad/empty room id frees the work (NULL → always open)
+        // rather than aborting the save.
+        let showing_room_uuid =
+            f.showing_room_id.as_deref().and_then(|s| Uuid::parse_str(s).ok());
+
         let mut tx = self.pg_pool.begin().await?;
 
         sqlx::query(
-            "INSERT INTO figurines (id, name, short_text, full_description, dimensions, material, technique, year, passport_number, edition, created_period, care_instructions, provenance_note, authenticity_note, included_items, ambience_path, video_url, secret_text, is_visible, is_featured, status, sort_order, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, NOW())
+            "INSERT INTO figurines (id, name, short_text, full_description, dimensions, material, technique, year, passport_number, edition, created_period, care_instructions, provenance_note, authenticity_note, included_items, ambience_path, video_url, secret_text, is_visible, is_featured, status, sort_order, open_from_min, open_until_min, sealed_door_image, showing_room_id, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, NOW())
              ON CONFLICT (id) DO UPDATE SET
                name=EXCLUDED.name, short_text=EXCLUDED.short_text, full_description=EXCLUDED.full_description,
                dimensions=EXCLUDED.dimensions, material=EXCLUDED.material, technique=EXCLUDED.technique,
@@ -1180,7 +1185,10 @@ impl Repository {
                authenticity_note=EXCLUDED.authenticity_note, included_items=EXCLUDED.included_items,
                year=EXCLUDED.year, ambience_path=EXCLUDED.ambience_path, video_url=EXCLUDED.video_url,
                secret_text=EXCLUDED.secret_text, is_visible=EXCLUDED.is_visible, is_featured=EXCLUDED.is_featured,
-               status=EXCLUDED.status, sort_order=EXCLUDED.sort_order, updated_at=NOW()"
+               status=EXCLUDED.status, sort_order=EXCLUDED.sort_order,
+               open_from_min=EXCLUDED.open_from_min, open_until_min=EXCLUDED.open_until_min,
+               sealed_door_image=EXCLUDED.sealed_door_image,
+               showing_room_id=EXCLUDED.showing_room_id, updated_at=NOW()"
         )
         .bind(id).bind(&f.name).bind(&f.short_text).bind(&f.full_description)
         .bind(&f.dimensions).bind(&f.material).bind(&f.technique).bind(f.year)
@@ -1189,6 +1197,8 @@ impl Repository {
         .bind(&f.included_items)
         .bind(&f.ambience_path).bind(&f.video_url).bind(&f.secret_text)
         .bind(f.is_visible).bind(f.is_featured).bind(&f.status).bind(f.sort_order)
+        .bind(f.open_from_min).bind(f.open_until_min).bind(&f.sealed_door_image)
+        .bind(showing_room_uuid)
         .execute(&mut *tx).await?;
 
         sqlx::query("DELETE FROM images WHERE figurine_id = $1")
@@ -1197,12 +1207,14 @@ impl Repository {
             .await?;
         for (img_id, img, sort) in &image_rows {
             sqlx::query(
-                "INSERT INTO images (id, figurine_id, image_type, file_path, original_path, thumb_path, depth_path, parallax_intensity, alt_text, sort_order) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
+                "INSERT INTO images (id, figurine_id, image_type, file_path, original_path, thumb_path, depth_path, parallax_intensity, focal_x, focal_y, reveal_radius, darkness, alt_text, sort_order) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)"
             )
             .bind(img_id).bind(id).bind(&img.image_type)
             .bind(&img.url).bind(&img.original_url).bind(&img.thumb_url)
             .bind(&img.depth_url)
             .bind(img.parallax_intensity)
+            .bind(img.focal_x).bind(img.focal_y).bind(img.reveal_radius)
+            .bind(img.darkness)
             .bind(&img.alt_text).bind(*sort)
             .execute(&mut *tx).await?;
         }
@@ -1263,6 +1275,60 @@ impl Repository {
 
     pub async fn get_zone_count(&self) -> Result<i32> {
         let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM cabinet_zones")
+            .fetch_one(&self.pg_pool)
+            .await?;
+        Ok(row.0 as i32)
+    }
+
+    pub async fn get_showing_rooms(&self) -> Result<Vec<crate::models::ShowingRoom>> {
+        let rooms = sqlx::query_as::<_, crate::models::ShowingRoom>(
+            "SELECT * FROM showing_rooms ORDER BY sort_order, name",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?;
+        Ok(rooms)
+    }
+
+    pub async fn upsert_showing_room(
+        &self,
+        r: &crate::models::SaveShowingRoomRequest,
+        sort_order: i32,
+    ) -> Result<()> {
+        let id = Uuid::parse_str(&r.id)
+            .map_err(|_| AppError::BadRequest("Invalid room ID".to_string()))?;
+        sqlx::query(
+            "INSERT INTO showing_rooms (id, name, open_from_min, open_until_min, open_days_mask, open_month_day, open_date_from, open_date_until, sort_order, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+             ON CONFLICT (id) DO UPDATE SET
+               name=EXCLUDED.name, open_from_min=EXCLUDED.open_from_min,
+               open_until_min=EXCLUDED.open_until_min, open_days_mask=EXCLUDED.open_days_mask,
+               open_month_day=EXCLUDED.open_month_day, open_date_from=EXCLUDED.open_date_from,
+               open_date_until=EXCLUDED.open_date_until, sort_order=EXCLUDED.sort_order, updated_at=NOW()",
+        )
+        .bind(id)
+        .bind(&r.name)
+        .bind(r.open_from_min)
+        .bind(r.open_until_min)
+        .bind(r.open_days_mask)
+        .bind(&r.open_month_day)
+        .bind(&r.open_date_from)
+        .bind(&r.open_date_until)
+        .bind(sort_order)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn delete_showing_room(&self, id: Uuid) -> Result<()> {
+        sqlx::query("DELETE FROM showing_rooms WHERE id = $1")
+            .bind(id)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn get_showing_room_count(&self) -> Result<i32> {
+        let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM showing_rooms")
             .fetch_one(&self.pg_pool)
             .await?;
         Ok(row.0 as i32)

@@ -1,9 +1,11 @@
 <script lang="ts">
     import { onMount } from 'svelte';
     import { api, isTauri } from '$lib/api';
-    import type { Figurine, FigurineListItem } from '$lib/types/api';
+    import type { Figurine, FigurineListItem, ShowingRoom } from '$lib/types/api';
     import { fade, slide } from 'svelte/transition';
     import SettingsModal from '$lib/components/SettingsModal.svelte';
+    import KeyholeVeil from '$lib/components/KeyholeVeil.svelte';
+    import { themeConfig } from '$lib/stores/theme.svelte';
     import ZoneEditor from '$lib/components/admin/ZoneEditor.svelte';
     import TextEditor from '$lib/components/admin/TextEditor.svelte';
     import ReleaseManager from '$lib/components/admin/ReleaseManager.svelte';
@@ -27,7 +29,9 @@
     import CopyEditor from '$lib/components/admin/CopyEditor.svelte';
     import WorkshopFeaturePanel from '$lib/components/admin/WorkshopFeaturePanel.svelte';
     import LogsPanel from '$lib/components/admin/LogsPanel.svelte';
-    import { t } from '$lib/i18n';
+    import { t, lang } from '$lib/i18n';
+    import SealedDoor from '$lib/components/SealedDoor.svelte';
+    import { resolveWindow, isShowingOpen, type ShowingWindow } from '$lib/showing-window';
     import LangSwitcher from '$lib/components/LangSwitcher.svelte';
 
     // === AUTH ===
@@ -53,6 +57,7 @@
             }
             isAuthenticated = true;
             await loadFigurines();
+            await loadShowingRooms();
         } catch {
             loginError = $t('adminLoginError');
         } finally {
@@ -77,7 +82,7 @@
     let showingsEditor = $state<FigurineShowingsEditor | null>(null);
     let showSettings = $state(false);
     let message = $state({ text: '', type: 'info' });
-    let activeTab = $state<'registry' | 'home' | 'workshop-feature' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'commissions' | 'showings' | 'bookings' | 'waitlist' | 'analytics' | 'users' | 'comments' | 'messages' | 'server' | 'logs' | 'booking-rules' | 'contact' | 'design' | 'copy'>('registry');
+    let activeTab = $state<'registry' | 'rooms' | 'home' | 'workshop-feature' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'commissions' | 'showings' | 'bookings' | 'waitlist' | 'analytics' | 'users' | 'comments' | 'messages' | 'server' | 'logs' | 'booking-rules' | 'contact' | 'design' | 'copy'>('registry');
     let activeAuthorSubTab = $state<'profile' | 'texts'>('profile');
     let newOrdersCount = $state(0);
     let newCommissionsCount = $state(0);
@@ -160,10 +165,142 @@
         isVisible: true,
         isFeatured: false,
         series: null,
+        openFromMin: null,
+        openUntilMin: null,
+        sealedDoorImage: null,
         images: [],
         processSteps: [],
         relatedItems: []
     };
+
+    // Showing window ("the house wakes"): stored as minutes-from-midnight, edited
+    // as a HH:MM clock. Empty input → null. Both null → always open (ungated).
+    function minToTime(min: number | null | undefined): string {
+        if (min == null) return '';
+        const m = ((Math.round(min) % 1440) + 1440) % 1440;
+        return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+    }
+    function timeToMin(value: string): number | null {
+        if (!value) return null;
+        const [h, m] = value.split(':').map(Number);
+        if (Number.isNaN(h) || Number.isNaN(m)) return null;
+        return h * 60 + m;
+    }
+
+    // === Showing rooms (named shared windows) ===
+    let showingRoomsList = $state<ShowingRoom[]>([]);
+
+    async function loadShowingRooms() {
+        try { showingRoomsList = await api.getShowingRooms(); } catch {}
+    }
+
+    // The figurine's window mode: '' = always open, 'custom' = own hours, else a room id.
+    function figWindowMode(f: Figurine | null): string {
+        if (!f) return '';
+        if (f.showingRoomId) return f.showingRoomId;
+        if (f.openFromMin != null && f.openUntilMin != null) return 'custom';
+        return '';
+    }
+
+    // Room and custom hours are mutually exclusive: switching mode clears the other.
+    function setFigWindowMode(value: string) {
+        if (!selectedFigurine) return;
+        if (value === '') {
+            selectedFigurine.showingRoomId = null;
+            selectedFigurine.openFromMin = null;
+            selectedFigurine.openUntilMin = null;
+        } else if (value === 'custom') {
+            selectedFigurine.showingRoomId = null;
+            if (selectedFigurine.openFromMin == null) selectedFigurine.openFromMin = 0;
+            if (selectedFigurine.openUntilMin == null) selectedFigurine.openUntilMin = 4 * 60;
+        } else {
+            selectedFigurine.showingRoomId = value;
+            selectedFigurine.openFromMin = null;
+            selectedFigurine.openUntilMin = null;
+        }
+    }
+
+    function addShowingRoom() {
+        showingRoomsList = [
+            ...showingRoomsList,
+            { id: crypto.randomUUID(), name: '', openFromMin: 23 * 60, openUntilMin: 4 * 60 },
+        ];
+    }
+
+    async function saveShowingRoom(room: ShowingRoom) {
+        await api.saveShowingRoom(room);
+        await loadShowingRooms();
+    }
+
+    async function deleteShowingRoom(id: string) {
+        await api.deleteShowingRoom(id);
+        // A work pointing at the deleted room falls back to always-open.
+        if (selectedFigurine?.showingRoomId === id) selectedFigurine.showingRoomId = null;
+        await loadShowingRooms();
+    }
+
+    // --- Room schedule: weekday mask + date mode (Task B) ---
+    let roomLocale = $derived($lang === 'ru' ? 'ru-RU' : 'en-US');
+    // Mon..Sun short labels (2024-01-01 was a Monday).
+    let weekdayLabels = $derived(
+        Array.from({ length: 7 }, (_, i) =>
+            new Intl.DateTimeFormat(roomLocale, { weekday: 'short' }).format(new Date(2024, 0, 1 + i))
+        )
+    );
+    const dayBit = (mask: number | null | undefined, i: number) => (((mask ?? 0) >> i) & 1) === 1;
+    function toggleDay(room: ShowingRoom, i: number) {
+        const next = (room.openDaysMask ?? 0) ^ (1 << i);
+        room.openDaysMask = next === 0 ? null : next; // no days set → every day
+    }
+
+    function roomDateMode(room: ShowingRoom): 'none' | 'annual' | 'range' {
+        if (room.openMonthDay) return 'annual';
+        if (room.openDateFrom || room.openDateUntil) return 'range';
+        return 'none';
+    }
+    function setRoomDateMode(room: ShowingRoom, mode: string) {
+        room.openMonthDay = null;
+        room.openDateFrom = null;
+        room.openDateUntil = null;
+        if (mode === 'annual') {
+            const now = new Date();
+            room.openMonthDay = `${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        } else if (mode === 'range') {
+            room.openDateFrom = new Date().toISOString().slice(0, 10);
+        }
+    }
+    // Annual date <-> "MM-DD": a date input wants YYYY-MM-DD, so pad/strip the year.
+    const annualToInput = (md: string | null | undefined) => (md ? `2000-${md}` : '');
+    const inputToAnnual = (v: string) => (v ? v.slice(5) : null);
+
+    // --- Preview clock (Task E): see a window "as a guest would" at any moment,
+    // without touching the system clock or saving anything. ---
+    let previewAt = $state<Date>(new Date());
+    function toLocalInput(d: Date): string {
+        const p = (n: number) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+    }
+    // A room's full window (hours + days + date) for preview evaluation.
+    function roomToWindow(room: ShowingRoom): ShowingWindow {
+        return {
+            openFromMin: room.openFromMin,
+            openUntilMin: room.openUntilMin,
+            daysMask: room.openDaysMask,
+            monthDay: room.openMonthDay,
+            dateFrom: room.openDateFrom,
+            dateUntil: room.openDateUntil,
+        };
+    }
+    // The selected figurine's effective window (room or own hours).
+    let previewFigWindow = $derived(
+        selectedFigurine
+            ? resolveWindow(
+                  { openFromMin: selectedFigurine.openFromMin, openUntilMin: selectedFigurine.openUntilMin, showingRoomId: selectedFigurine.showingRoomId },
+                  showingRoomsList
+              )
+            : {}
+    );
+    let previewFigOpen = $derived(isShowingOpen(previewFigWindow, previewAt));
 
     async function loadFigurines() {
         try {
@@ -297,7 +434,11 @@
                     thumbUrl: imported.thumbUrl ?? variants.thumbUrl,
                     altText: '',
                     depthUrl: null,
-                    parallaxIntensity: null
+                    parallaxIntensity: null,
+                    focalX: null,
+                    focalY: null,
+                    revealRadius: null,
+                    darkness: null
                 }];
             }
             showMessage($t('adminMsgFileUploaded'), 'success');
@@ -390,6 +531,74 @@
         return Math.max(0, Math.min(1, value));
     }
 
+    // "Keyhole" reveal — the focal fragment shown on the archive/home card while
+    // the work is still sealed (unseen). Frame-relative 0..1, edited over a 4/3
+    // `contain` preview that mirrors the live card exactly.
+    function setFocalPoint(imgIdx: number, x: number, y: number) {
+        if (!selectedFigurine) return;
+        selectedFigurine.images[imgIdx].focalX = Math.round(x * 1000) / 1000;
+        selectedFigurine.images[imgIdx].focalY = Math.round(y * 1000) / 1000;
+        selectedFigurine.images = [...selectedFigurine.images];
+    }
+
+    function setRevealRadius(imgIdx: number, value: string) {
+        if (!selectedFigurine) return;
+        const parsed = Number(value);
+        selectedFigurine.images[imgIdx].revealRadius = Number.isFinite(parsed)
+            ? Math.max(0.08, Math.min(1, parsed))
+            : null;
+        selectedFigurine.images = [...selectedFigurine.images];
+    }
+
+    function resetReveal(imgIdx: number) {
+        if (!selectedFigurine) return;
+        selectedFigurine.images[imgIdx].focalX = null;
+        selectedFigurine.images[imgIdx].focalY = null;
+        selectedFigurine.images[imgIdx].revealRadius = null;
+        selectedFigurine.images[imgIdx].darkness = null;
+        selectedFigurine.images = [...selectedFigurine.images];
+    }
+
+    function revealRadiusValue(value: number | null | undefined): number {
+        if (typeof value !== 'number' || !Number.isFinite(value)) return 0.3;
+        return Math.max(0.08, Math.min(1, value));
+    }
+
+    // Per-image darkness override. Empty/non-finite → null = inherit the global
+    // keyhole darkness (theme setting). Mirrors the renderer's 0.88 default.
+    function setDarkness(imgIdx: number, value: string) {
+        if (!selectedFigurine) return;
+        const parsed = Number(value);
+        selectedFigurine.images[imgIdx].darkness = Number.isFinite(parsed)
+            ? Math.max(0, Math.min(1, parsed))
+            : null;
+        selectedFigurine.images = [...selectedFigurine.images];
+    }
+
+    // The global keyhole darkness shows through when no per-image override is set,
+    // so the stepper lands on it rather than a bare default.
+    function darknessValue(value: number | null | undefined): number {
+        if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.min(1, value));
+        const global = $themeConfig.effects?.keyholeDarkness;
+        return typeof global === 'number' && Number.isFinite(global) ? global : 0.88;
+    }
+
+    // "Window" / "Shadow" are stepper buttons, not sliders: a range input cannot
+    // shrink below its intrinsic width, so it overflowed and went dead in the
+    // narrow per-image column. Each tap nudges by a fixed step, clamped to the
+    // same bounds the renderer enforces.
+    const REVEAL_MIN = 0.08, REVEAL_MAX = 1, DARK_MIN = 0.4, DARK_MAX = 1, KEYHOLE_STEP = 0.05;
+    function nudgeRevealRadius(imgIdx: number, delta: number) {
+        if (!selectedFigurine) return;
+        const next = revealRadiusValue(selectedFigurine.images[imgIdx].revealRadius) + delta;
+        setRevealRadius(imgIdx, String(Math.round(next * 100) / 100));
+    }
+    function nudgeDarkness(imgIdx: number, delta: number) {
+        if (!selectedFigurine) return;
+        const next = Math.max(DARK_MIN, Math.min(DARK_MAX, darknessValue(selectedFigurine.images[imgIdx].darkness) + delta));
+        setDarkness(imgIdx, String(Math.round(next * 100) / 100));
+    }
+
     function deriveImageVariants(url: string): { originalUrl: string | null; thumbUrl: string | null } {
         const marker = 'images/preview/';
         const idx = url.indexOf(marker);
@@ -470,13 +679,15 @@
         if (isTauri) {
             isAuthenticated = true;
             loadFigurines();
+            loadShowingRooms();
         } else if ((session === '1' || persisted === '1') && hasKey) {
             isAuthenticated = true;
             loadFigurines();
+            loadShowingRooms();
         }
         // Hash-based tab routing (e.g. Telegram notification links)
         const hash = window.location.hash.replace('#', '');
-        const validTabs = ['registry','home','workshop-feature','zones','author','workshop','media','releases','orders','commissions','showings','bookings','waitlist','analytics','users','comments','messages','server','booking-rules','contact'];
+        const validTabs = ['registry','rooms','home','workshop-feature','zones','author','workshop','media','releases','orders','commissions','showings','bookings','waitlist','analytics','users','comments','messages','server','booking-rules','contact'];
         if (validTabs.includes(hash)) {
             activeTab = hash as typeof activeTab;
         }
@@ -560,6 +771,7 @@
                 label: $t('adminGroupFigurines'),
                 tabs: [
                   ['registry', $t('adminTabRegistry')],
+                  ['rooms',    $t('adminTabShowingRooms')],
                   ['zones',    $t('adminTabZones')],
                   ['releases', $t('adminTabReleases')],
                 ]
@@ -799,6 +1011,92 @@
                                         <span class="text-xs text-[#34251c]">{$t('adminFieldFeatured')}</span>
                                     </label>
                                 </div>
+
+                                <!-- "The house wakes": showing window. A work is either always
+                                     open, has its own hours, or belongs to a named room (shared
+                                     window). Room and custom hours are mutually exclusive. -->
+                                <div class="border-t border-[#34251c]/10 pt-3 mt-1">
+                                    <span class="label">{$t('adminFieldShowingWindow')}</span>
+                                    <label class="block">
+                                        <select
+                                            value={figWindowMode(selectedFigurine)}
+                                            onchange={(e) => setFigWindowMode(e.currentTarget.value)}
+                                            class="input-gothic"
+                                        >
+                                            <option value="">{$t('adminShowingModeAlways')}</option>
+                                            <option value="custom">{$t('adminShowingModeCustom')}</option>
+                                            {#each showingRoomsList as room (room.id)}
+                                                {#if room.name}
+                                                    <option value={room.id}>{room.name} ({minToTime(room.openFromMin)}–{minToTime(room.openUntilMin)})</option>
+                                                {/if}
+                                            {/each}
+                                        </select>
+                                    </label>
+
+                                    {#if figWindowMode(selectedFigurine) === 'custom'}
+                                        <div class="flex gap-4 items-end mt-2">
+                                            <label class="block flex-1">
+                                                <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminFieldShowingFrom')}</span>
+                                                <input
+                                                    type="time"
+                                                    value={minToTime(selectedFigurine.openFromMin)}
+                                                    oninput={(e) => selectedFigurine!.openFromMin = timeToMin(e.currentTarget.value)}
+                                                    class="input-gothic"
+                                                />
+                                            </label>
+                                            <label class="block flex-1">
+                                                <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminFieldShowingUntil')}</span>
+                                                <input
+                                                    type="time"
+                                                    value={minToTime(selectedFigurine.openUntilMin)}
+                                                    oninput={(e) => selectedFigurine!.openUntilMin = timeToMin(e.currentTarget.value)}
+                                                    class="input-gothic"
+                                                />
+                                            </label>
+                                        </div>
+                                        <p class="text-[10px] text-[#7c6554] mt-1 leading-snug">{$t('adminFieldShowingHint')}</p>
+                                    {/if}
+
+                                    <label class="block mt-2">
+                                        <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminFieldSealedDoorImage')}</span>
+                                        <input
+                                            bind:value={selectedFigurine.sealedDoorImage}
+                                            placeholder="https://…"
+                                            class="input-gothic"
+                                        />
+                                    </label>
+                                    <p class="text-[10px] text-[#7c6554] mt-2 leading-snug">{$t('adminShowingRoomsManageHint')}</p>
+
+                                    <!-- Preview: this work as a guest would see it at a chosen moment. -->
+                                    <div class="mt-3 border-t border-[#34251c]/10 pt-3">
+                                        <div class="flex flex-wrap items-end gap-3">
+                                            <label class="block">
+                                                <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminPreviewAt')}</span>
+                                                <input type="datetime-local" value={toLocalInput(previewAt)} oninput={(e) => { if (e.currentTarget.value) previewAt = new Date(e.currentTarget.value); }} class="input-gothic" />
+                                            </label>
+                                            <button type="button" class="text-[11px] uppercase tracking-wide text-[#6f3b24] pb-2" onclick={() => previewAt = new Date()}>{$t('adminPreviewNow')}</button>
+                                            <span class="text-[10px] uppercase tracking-wide px-2 py-1 rounded pb-1 {previewFigOpen ? 'bg-emerald-600/15 text-emerald-700' : 'bg-[#6f3b24]/12 text-[#6f3b24]'}">
+                                                {previewFigOpen ? $t('adminPreviewOpen') : $t('adminPreviewClosed')}
+                                            </span>
+                                        </div>
+                                        {#if !previewFigOpen}
+                                            <div class="relative w-40 aspect-[3/4] mt-3 rounded-[3px] overflow-hidden border border-[#34251c]/15">
+                                                <SealedDoor
+                                                    openFromMin={previewFigWindow.openFromMin}
+                                                    openUntilMin={previewFigWindow.openUntilMin}
+                                                    daysMask={previewFigWindow.daysMask}
+                                                    monthDay={previewFigWindow.monthDay}
+                                                    dateFrom={previewFigWindow.dateFrom}
+                                                    dateUntil={previewFigWindow.dateUntil}
+                                                    doorImageUrl={selectedFigurine.sealedDoorImage}
+                                                    name={selectedFigurine.name}
+                                                    now={previewAt}
+                                                    compact
+                                                />
+                                            </div>
+                                        {/if}
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -1029,6 +1327,64 @@
                                                     </span>
                                                 </div>
                                             </div>
+                                            {#if img.imageType === 'face'}
+                                                <!-- Keyhole reveal — only the cover image is teased on the card -->
+                                                <div class="w-28 space-y-1" title={$t('adminMediaKeyholeHint')}>
+                                                    <div class="flex items-center justify-between gap-1">
+                                                        <span class="text-[8px] uppercase tracking-[0.08em] text-[#5f4636]">{$t('adminMediaKeyhole')}</span>
+                                                        <button
+                                                            type="button"
+                                                            onclick={() => resetReveal(imgIdx)}
+                                                            class="text-[8px] text-[#5f4636] hover:text-[#34251c]"
+                                                            disabled={img.focalX == null && img.focalY == null && img.revealRadius == null && img.darkness == null}
+                                                        >
+                                                            {$t('adminMediaParallaxReset')}
+                                                        </button>
+                                                    </div>
+                                                    <!-- 4/3 contain preview mirrors the live card; click/drag to place focus -->
+                                                    <div class="relative w-28 border border-[#34251c]/20 overflow-hidden bg-[#f1e3d1]" style="aspect-ratio: 4 / 3;">
+                                                        <img src={resolveUrl(img.thumbUrl ?? img.url)} alt="" class="w-full h-full object-contain" />
+                                                        <KeyholeVeil
+                                                            focalX={img.focalX}
+                                                            focalY={img.focalY}
+                                                            revealRadius={img.revealRadius}
+                                                            darkness={darknessValue(img.darkness)}
+                                                            editable
+                                                            onpick={(x, y) => setFocalPoint(imgIdx, x, y)}
+                                                        />
+                                                    </div>
+                                                    <!-- Window size — stepper (−/+); a range input is unusable in this narrow column -->
+                                                    <div class="flex items-center gap-1" title={$t('adminMediaKeyholeRadiusHint')}>
+                                                        <span class="text-[7px] uppercase tracking-[0.06em] text-[#5f4636] w-9 shrink-0">{$t('adminMediaKeyholeRadius')}</span>
+                                                        <div class="flex items-center flex-1 border border-[#34251c]/20 bg-[#f8f1e7] rounded-sm overflow-hidden">
+                                                            <button type="button" aria-label="−"
+                                                                onclick={() => nudgeRevealRadius(imgIdx, -KEYHOLE_STEP)}
+                                                                disabled={revealRadiusValue(img.revealRadius) <= REVEAL_MIN}
+                                                                class="px-1.5 py-0.5 text-[11px] leading-none text-[#5f4636] hover:bg-[#34251c]/10 disabled:opacity-30 disabled:hover:bg-transparent">−</button>
+                                                            <span class="flex-1 text-center text-[8px] tabular-nums text-[#5f4636]">{revealRadiusValue(img.revealRadius).toFixed(2)}</span>
+                                                            <button type="button" aria-label="+"
+                                                                onclick={() => nudgeRevealRadius(imgIdx, KEYHOLE_STEP)}
+                                                                disabled={revealRadiusValue(img.revealRadius) >= REVEAL_MAX}
+                                                                class="px-1.5 py-0.5 text-[11px] leading-none text-[#5f4636] hover:bg-[#34251c]/10 disabled:opacity-30 disabled:hover:bg-transparent">+</button>
+                                                        </div>
+                                                    </div>
+                                                    <!-- Shadow depth — overrides the global darkness for this work -->
+                                                    <div class="flex items-center gap-1" title={$t('adminMediaDarknessHint')}>
+                                                        <span class="text-[7px] uppercase tracking-[0.06em] text-[#5f4636] w-9 shrink-0">{$t('adminMediaDarkness')}</span>
+                                                        <div class="flex items-center flex-1 border border-[#34251c]/20 bg-[#f8f1e7] rounded-sm overflow-hidden">
+                                                            <button type="button" aria-label="−"
+                                                                onclick={() => nudgeDarkness(imgIdx, -KEYHOLE_STEP)}
+                                                                disabled={darknessValue(img.darkness) <= DARK_MIN}
+                                                                class="px-1.5 py-0.5 text-[11px] leading-none text-[#5f4636] hover:bg-[#34251c]/10 disabled:opacity-30 disabled:hover:bg-transparent">−</button>
+                                                            <span class="flex-1 text-center text-[8px] tabular-nums {img.darkness == null ? 'text-[#5f4636]/45 italic' : 'text-[#5f4636]'}">{darknessValue(img.darkness).toFixed(2)}</span>
+                                                            <button type="button" aria-label="+"
+                                                                onclick={() => nudgeDarkness(imgIdx, KEYHOLE_STEP)}
+                                                                disabled={darknessValue(img.darkness) >= DARK_MAX}
+                                                                class="px-1.5 py-0.5 text-[11px] leading-none text-[#5f4636] hover:bg-[#34251c]/10 disabled:opacity-30 disabled:hover:bg-transparent">+</button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            {/if}
                                         </div>
                                     {/each}
                                 </div>
@@ -1107,6 +1463,96 @@
                 {/if}
             </main>
         </div>
+
+        {:else if activeTab === 'rooms'}
+            <div in:fade class="h-full overflow-auto p-6 sm:p-8 max-w-3xl mx-auto w-full">
+                <h2 class="font-['Fraunces'] text-2xl text-[#34251c] mb-1">{$t('adminTabShowingRooms')}</h2>
+                <p class="text-[12px] text-[#7c6554] mb-4 leading-snug max-w-prose">{$t('adminShowingRoomsIntro')}</p>
+
+                <!-- Preview clock: evaluate every room "as a guest would" at this moment. -->
+                <div class="flex flex-wrap items-end gap-3 mb-5 p-3 border border-[#34251c]/12 rounded-md bg-[#f3ead9]">
+                    <label class="block">
+                        <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminPreviewAt')}</span>
+                        <input type="datetime-local" value={toLocalInput(previewAt)} oninput={(e) => { if (e.currentTarget.value) previewAt = new Date(e.currentTarget.value); }} class="input-gothic" />
+                    </label>
+                    <button type="button" class="text-[11px] uppercase tracking-wide text-[#6f3b24] pb-2" onclick={() => previewAt = new Date()}>{$t('adminPreviewNow')}</button>
+                </div>
+
+                <div class="space-y-3">
+                    {#each showingRoomsList as room (room.id)}
+                        <div class="border border-[#34251c]/12 rounded-md p-3 bg-[#fff9f0] space-y-3">
+                            <div class="flex flex-wrap gap-3 items-end">
+                                <label class="block flex-1 min-w-[160px]">
+                                    <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminShowingRoomName')}</span>
+                                    <input bind:value={room.name} class="input-gothic" placeholder={$t('adminShowingRoomNamePlaceholder')} />
+                                </label>
+                                <label class="block w-28">
+                                    <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminFieldShowingFrom')}</span>
+                                    <input type="time" value={minToTime(room.openFromMin)} oninput={(e) => room.openFromMin = timeToMin(e.currentTarget.value) ?? 0} class="input-gothic" />
+                                </label>
+                                <label class="block w-28">
+                                    <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminFieldShowingUntil')}</span>
+                                    <input type="time" value={minToTime(room.openUntilMin)} oninput={(e) => room.openUntilMin = timeToMin(e.currentTarget.value) ?? 0} class="input-gothic" />
+                                </label>
+                                <div class="flex items-center gap-3 pb-2 ml-auto">
+                                    <span class="text-[10px] uppercase tracking-wide px-2 py-1 rounded {isShowingOpen(roomToWindow(room), previewAt) ? 'bg-emerald-600/15 text-emerald-700' : 'bg-[#6f3b24]/12 text-[#6f3b24]'}">
+                                        {isShowingOpen(roomToWindow(room), previewAt) ? $t('adminPreviewOpen') : $t('adminPreviewClosed')}
+                                    </span>
+                                    <button type="button" class="text-[11px] uppercase tracking-wide text-[#c65f3c]" onclick={() => saveShowingRoom(room)}>{$t('adminSave')}</button>
+                                    <button type="button" class="text-[11px] uppercase tracking-wide text-[#7c6554]" onclick={() => deleteShowingRoom(room.id)}>{$t('adminDelete')}</button>
+                                </div>
+                            </div>
+
+                            <!-- Weekdays: empty = every day, pick e.g. Sat+Sun for weekends. -->
+                            <div>
+                                <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminShowingRoomDays')}</span>
+                                <div class="flex flex-wrap gap-1.5 mt-1">
+                                    {#each weekdayLabels as label, i}
+                                        <button
+                                            type="button"
+                                            class="px-2.5 py-1 rounded text-[11px] border transition-colors {dayBit(room.openDaysMask, i) ? 'bg-[#6f3b24] text-[#f8f1e7] border-[#6f3b24]' : 'border-[#34251c]/20 text-[#7c6554] hover:border-[#6f3b24]/40'}"
+                                            onclick={() => toggleDay(room, i)}
+                                        >{label}</button>
+                                    {/each}
+                                </div>
+                            </div>
+
+                            <!-- Calendar date: none / annual (MM-DD) / one-off range. -->
+                            <div class="flex flex-wrap gap-3 items-end">
+                                <label class="block">
+                                    <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminShowingRoomDate')}</span>
+                                    <select value={roomDateMode(room)} onchange={(e) => setRoomDateMode(room, e.currentTarget.value)} class="input-gothic">
+                                        <option value="none">{$t('adminShowingDateNone')}</option>
+                                        <option value="annual">{$t('adminShowingDateAnnual')}</option>
+                                        <option value="range">{$t('adminShowingDateRange')}</option>
+                                    </select>
+                                </label>
+                                {#if roomDateMode(room) === 'annual'}
+                                    <label class="block">
+                                        <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminShowingDateAnnual')}</span>
+                                        <input type="date" value={annualToInput(room.openMonthDay)} oninput={(e) => room.openMonthDay = inputToAnnual(e.currentTarget.value)} class="input-gothic" />
+                                    </label>
+                                {:else if roomDateMode(room) === 'range'}
+                                    <label class="block">
+                                        <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminFieldShowingFrom')}</span>
+                                        <input type="date" bind:value={room.openDateFrom} class="input-gothic" />
+                                    </label>
+                                    <label class="block">
+                                        <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminFieldShowingUntil')}</span>
+                                        <input type="date" bind:value={room.openDateUntil} class="input-gothic" />
+                                    </label>
+                                {/if}
+                            </div>
+                        </div>
+                    {/each}
+                    {#if showingRoomsList.length === 0}
+                        <p class="text-[12px] italic text-[#7c6554]">{$t('adminShowingRoomsEmpty')}</p>
+                    {/if}
+                </div>
+
+                <button type="button" class="mt-5 px-4 py-2 border border-[#6f3b24]/30 rounded-md text-[11px] uppercase tracking-wide text-[#6f3b24] hover:bg-[#6f3b24]/5" onclick={addShowingRoom}>+ {$t('adminShowingRoomAdd')}</button>
+                <p class="text-[10px] text-[#7c6554] mt-3 leading-snug">{$t('adminFieldShowingHint')}</p>
+            </div>
 
         {:else if activeTab === 'home'}
             <HomeContentEditor />

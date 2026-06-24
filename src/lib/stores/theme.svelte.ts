@@ -48,11 +48,19 @@ export const DEFAULT_MOTION = {
     durationGlacial: '1000ms',
 };
 
+// Global "keyhole" darkness — depth of the shadow over sealed cards (0..1).
+// Mirrors the hard-coded fallback in KeyholeVeil so an unset theme looks the same.
+export const DEFAULT_EFFECTS = {
+    keyholeDarkness: 0.88,
+    keyholeDwellReveal: 0, // seconds of hover before a sealed card self-reveals; 0 = off
+};
+
 export function makeDefaultConfig(): ThemeConfig {
     return {
         colors: { ...DEFAULT_COLORS },
         fonts: { ...DEFAULT_FONTS } as ThemeConfig['fonts'],
         motion: { ...DEFAULT_MOTION } as ThemeConfig['motion'],
+        effects: { ...DEFAULT_EFFECTS } as ThemeConfig['effects'],
     };
 }
 
@@ -61,6 +69,7 @@ export function toPlainThemeConfig(config: ThemeConfig): ThemeConfig {
         colors: { ...(config.colors ?? {}) },
         fonts: { ...(config.fonts ?? {}) } as ThemeConfig['fonts'],
         motion: { ...(config.motion ?? {}) } as ThemeConfig['motion'],
+        effects: { ...DEFAULT_EFFECTS, ...(config.effects ?? {}) } as ThemeConfig['effects'],
     };
 }
 
@@ -112,6 +121,11 @@ export function generateThemeCSS(config: ThemeConfig): string {
         if (val && val !== def) {
             lines.push(`  --${cssName}: ${val};`);
         }
+    }
+
+    const darkness = config.effects?.keyholeDarkness;
+    if (typeof darkness === 'number' && Number.isFinite(darkness) && darkness !== DEFAULT_EFFECTS.keyholeDarkness) {
+        lines.push(`  --kh-darkness: ${darkness};`);
     }
 
     lines.push('}');
@@ -204,6 +218,11 @@ export function applyConfigToElement(config: ThemeConfig, root: HTMLElement): vo
     for (const [key, cssName] of Object.entries(motionMap)) {
         const val = (motion as unknown as Record<string, string | null>)[key];
         if (val) root.style.setProperty(`--${cssName}`, val);
+    }
+
+    const darkness = config.effects?.keyholeDarkness;
+    if (typeof darkness === 'number' && Number.isFinite(darkness)) {
+        root.style.setProperty('--kh-darkness', String(darkness));
     }
 }
 

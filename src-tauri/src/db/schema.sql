@@ -23,6 +23,10 @@ CREATE TABLE IF NOT EXISTS figurines (
     is_visible BOOLEAN NOT NULL DEFAULT 1,
     status TEXT NOT NULL DEFAULT 'available'
         CHECK (status IN ('available', 'sold', 'reserved', 'in_progress')),
+    open_from_min INTEGER,  -- "Дом просыпается": окно показа, минуты от полуночи (NULL = всегда открыто)
+    open_until_min INTEGER, -- конец окна; until < from = окно через полночь (ночной зал)
+    sealed_door_image TEXT, -- URL картины двери; NULL = резная дверь рисуется кодом
+    showing_room_id TEXT,   -- зал показа (FK showing_rooms.id); NULL = своё окно
     sort_order INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT (datetime('now'))
@@ -43,6 +47,10 @@ CREATE TABLE IF NOT EXISTS images (
     thumb_path TEXT,
     depth_path TEXT, -- Карта глубины для 2.5D-параллакса (LivingDaguerreotype)
     parallax_intensity REAL, -- NULL = дефолт renderer-а
+    focal_x REAL, -- "Замочная скважина": фокус-точка превью (0..1), NULL = центр
+    focal_y REAL,
+    reveal_radius REAL, -- радиус видимой области (0..1 кадра), NULL = дефолт
+    darkness REAL, -- глубина затемнения (0..1), NULL = глобальная настройка темы
     data BLOB, -- Встроенное изображение
     original_data BLOB, -- Встроенный оригинал
     thumb_data BLOB, -- Встроенный thumbnail
@@ -75,6 +83,19 @@ CREATE TABLE IF NOT EXISTS texts (
 -- Индекс для текстов
 CREATE INDEX IF NOT EXISTS idx_texts_category
     ON texts(category, sort_order);
+
+-- Залы показа: общее окно, на которое ссылается группа фигурок ("Дом просыпается")
+CREATE TABLE IF NOT EXISTS showing_rooms (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    open_from_min INTEGER NOT NULL,
+    open_until_min INTEGER NOT NULL,
+    open_days_mask INTEGER, -- биты Пн..Вс; NULL = каждый день
+    open_month_day TEXT,    -- "MM-DD": ежегодно в эту дату
+    open_date_from TEXT,    -- "YYYY-MM-DD": разовый интервал (начало)
+    open_date_until TEXT,   -- "YYYY-MM-DD": разовый интервал (конец)
+    sort_order INTEGER NOT NULL DEFAULT 0
+);
 
 -- Таблица зон кабинета (интерактивные области)
 CREATE TABLE IF NOT EXISTS cabinet_zones (

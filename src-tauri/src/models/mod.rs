@@ -42,6 +42,60 @@ pub struct Figurine {
     pub updated_at: String,
     pub is_visible: bool,
     pub is_featured: bool,
+    /// "The house wakes" — daily showing window in minutes from midnight (0..1439),
+    /// guest-local. Both NULL → always open. `until < from` wraps past midnight.
+    pub open_from_min: Option<i32>,
+    pub open_until_min: Option<i32>,
+    /// Optional sealed-door asset URL. NULL → procedural carved door on the client.
+    pub sealed_door_image: Option<String>,
+    /// Optional "showing room" (FK showing_rooms.id). When set, the room's window
+    /// is used instead of the per-figurine open_from/until. NULL → own window.
+    pub showing_room_id: Option<String>,
+}
+
+/// A named, shared showing window several works can point at (e.g. "Night hall").
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShowingRoom {
+    pub id: String,
+    pub name: String,
+    pub open_from_min: i32,
+    pub open_until_min: i32,
+    pub open_days_mask: Option<i32>,
+    pub open_month_day: Option<String>,
+    pub open_date_from: Option<String>,
+    pub open_date_until: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShowingRoomDto {
+    pub id: String,
+    pub name: String,
+    pub open_from_min: i32,
+    pub open_until_min: i32,
+    #[serde(default)]
+    pub open_days_mask: Option<i32>,
+    #[serde(default)]
+    pub open_month_day: Option<String>,
+    #[serde(default)]
+    pub open_date_from: Option<String>,
+    #[serde(default)]
+    pub open_date_until: Option<String>,
+}
+
+impl From<ShowingRoom> for ShowingRoomDto {
+    fn from(r: ShowingRoom) -> Self {
+        Self {
+            id: r.id,
+            name: r.name,
+            open_from_min: r.open_from_min,
+            open_until_min: r.open_until_min,
+            open_days_mask: r.open_days_mask,
+            open_month_day: r.open_month_day,
+            open_date_from: r.open_date_from,
+            open_date_until: r.open_date_until,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -82,6 +136,12 @@ pub struct Image {
     pub thumb_path: Option<String>,
     pub depth_path: Option<String>,
     pub parallax_intensity: Option<f32>,
+    /// "Keyhole" reveal focus (0..1) + radius (0..1). NULL = centre + default.
+    pub focal_x: Option<f32>,
+    pub focal_y: Option<f32>,
+    pub reveal_radius: Option<f32>,
+    /// Per-image darkness override (0..1). NULL → global keyhole darkness.
+    pub darkness: Option<f32>,
     pub alt_text: Option<String>,
     pub sort_order: i32,
     pub updated_at: String,
@@ -230,6 +290,13 @@ pub struct FigurineDto {
     pub sort_order: i32,
     pub is_visible: bool,
     pub is_featured: bool,
+    /// Showing window (minutes from midnight); both NULL → always open.
+    pub open_from_min: Option<i32>,
+    pub open_until_min: Option<i32>,
+    /// Optional sealed-door asset; null → procedural carved door.
+    pub sealed_door_image: Option<String>,
+    /// Showing room this work belongs to (null → uses its own window).
+    pub showing_room_id: Option<String>,
     pub images: Vec<ImageDto>,
     pub process_steps: Vec<ProcessStepDto>,
     pub related_items: Vec<FigurineListItemDto>,
@@ -275,6 +342,10 @@ impl FigurineDto {
             sort_order: figurine.sort_order,
             is_visible: figurine.is_visible,
             is_featured: figurine.is_featured,
+            open_from_min: figurine.open_from_min,
+            open_until_min: figurine.open_until_min,
+            sealed_door_image: figurine.sealed_door_image,
+            showing_room_id: figurine.showing_room_id,
             images: images
                 .into_iter()
                 .map(|i| ImageDto::from_image(i, base_path))
@@ -298,6 +369,10 @@ pub struct ImageDto {
     pub thumb_url: Option<String>,
     pub depth_url: Option<String>,
     pub parallax_intensity: Option<f32>,
+    pub focal_x: Option<f32>,
+    pub focal_y: Option<f32>,
+    pub reveal_radius: Option<f32>,
+    pub darkness: Option<f32>,
     pub alt_text: Option<String>,
 }
 
@@ -312,6 +387,10 @@ impl ImageDto {
             thumb_url: image.thumb_path.map(resolve),
             depth_url: image.depth_path.map(resolve),
             parallax_intensity: image.parallax_intensity,
+            focal_x: image.focal_x,
+            focal_y: image.focal_y,
+            reveal_radius: image.reveal_radius,
+            darkness: image.darkness,
             alt_text: image.alt_text,
         }
     }
@@ -348,6 +427,18 @@ pub struct FigurineListItemDto {
     pub sort_order: i32,
     pub series: Option<String>,
     pub is_featured: bool,
+    /// Face-image "keyhole" reveal focus + radius + darkness, surfaced on the card.
+    pub focal_x: Option<f32>,
+    pub focal_y: Option<f32>,
+    pub reveal_radius: Option<f32>,
+    pub darkness: Option<f32>,
+    /// Showing window (minutes from midnight); both NULL → always open.
+    pub open_from_min: Option<i32>,
+    pub open_until_min: Option<i32>,
+    /// Optional sealed-door asset; null → procedural carved door.
+    pub sealed_door_image: Option<String>,
+    /// Showing room this work belongs to (null → uses its own window).
+    pub showing_room_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -40,6 +40,10 @@ impl Database {
         add_column_if_missing(&conn, "images", "thumb_path", "TEXT")?;
         add_column_if_missing(&conn, "images", "depth_path", "TEXT")?;
         add_column_if_missing(&conn, "images", "parallax_intensity", "REAL")?;
+        add_column_if_missing(&conn, "images", "focal_x", "REAL")?;
+        add_column_if_missing(&conn, "images", "focal_y", "REAL")?;
+        add_column_if_missing(&conn, "images", "reveal_radius", "REAL")?;
+        add_column_if_missing(&conn, "images", "darkness", "REAL")?;
         add_column_if_missing(&conn, "images", "original_data", "BLOB")?;
         add_column_if_missing(&conn, "images", "thumb_data", "BLOB")?;
         add_column_if_missing(
@@ -56,6 +60,10 @@ impl Database {
         add_column_if_missing(&conn, "figurines", "authenticity_note", "TEXT")?;
         add_column_if_missing(&conn, "figurines", "included_items", "TEXT")?;
         migrate_figurines_status_constraint(&conn)?;
+        // After the (legacy, one-shot) table rebuild — which would otherwise drop
+        // freshly-added columns — so the showing window survives that migration.
+        add_column_if_missing(&conn, "figurines", "open_from_min", "INTEGER")?;
+        add_column_if_missing(&conn, "figurines", "open_until_min", "INTEGER")?;
 
         Ok(())
     }

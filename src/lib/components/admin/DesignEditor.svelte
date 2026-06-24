@@ -7,6 +7,7 @@
         DEFAULT_COLORS,
         DEFAULT_FONTS,
         DEFAULT_MOTION,
+        DEFAULT_EFFECTS,
         FONT_FALLBACKS,
         makeDefaultConfig,
         applyLivePreview,
@@ -22,7 +23,7 @@
     let saving = $state(false);
     let savedOk = $state(false);
     let errorMsg = $state('');
-    let activeSection = $state<'colors' | 'fonts' | 'motion'>('colors');
+    let activeSection = $state<'colors' | 'fonts' | 'motion' | 'effects'>('colors');
     let colorEditMode = $state<'simple' | 'advanced'>('simple');
     let highlightedToken = $state<string | null>(null);
 
@@ -397,6 +398,10 @@
                 durationSlow:    remote.motion?.durationSlow    ?? DEFAULT_MOTION.durationSlow,
                 durationGlacial: remote.motion?.durationGlacial ?? DEFAULT_MOTION.durationGlacial,
             },
+            effects: {
+                keyholeDarkness: remote.effects?.keyholeDarkness ?? DEFAULT_EFFECTS.keyholeDarkness,
+                keyholeDwellReveal: remote.effects?.keyholeDwellReveal ?? DEFAULT_EFFECTS.keyholeDwellReveal,
+            },
         };
     }
 
@@ -559,6 +564,32 @@
         applyAll(draft);
     }
 
+    function keyholeDarkness(): number {
+        const v = draft.effects?.keyholeDarkness;
+        return typeof v === 'number' && Number.isFinite(v) ? v : DEFAULT_EFFECTS.keyholeDarkness;
+    }
+
+    function setKeyholeDarkness(v: number) {
+        draft = {
+            ...draft,
+            effects: { ...draft.effects, keyholeDarkness: v },
+        };
+        applyAll(draft);
+    }
+
+    function keyholeDwell(): number {
+        const v = draft.effects?.keyholeDwellReveal;
+        return typeof v === 'number' && Number.isFinite(v) ? v : DEFAULT_EFFECTS.keyholeDwellReveal;
+    }
+
+    function setKeyholeDwell(v: number) {
+        draft = {
+            ...draft,
+            effects: { ...draft.effects, keyholeDwellReveal: v },
+        };
+        applyAll(draft);
+    }
+
     async function handleSave() {
         saving = true; errorMsg = ''; savedOk = false;
         try {
@@ -626,6 +657,7 @@
                 ['colors', $t('adminDesignColorsSection')],
                 ['fonts',  $t('adminDesignFontsSection')],
                 ['motion', $t('adminDesignMotionSection')],
+                ['effects', $t('adminDesignEffectsSection')],
             ] as [s, label]}
                 <button
                     onclick={() => {
@@ -951,6 +983,55 @@
                             </div>
                         </div>
                     {/each}
+                </div>
+            {:else if activeSection === 'effects'}
+                {@const dark = keyholeDarkness()}
+                {@const modified = dark !== DEFAULT_EFFECTS.keyholeDarkness}
+                {@const dwell = keyholeDwell()}
+                <div class="flex flex-col gap-5">
+                    <div>
+                        <div class="flex items-center justify-between mb-1.5">
+                            <label class="label !mb-0" for="kh-darkness">{$t('adminDesignKeyholeDarkness')}</label>
+                            <div class="flex items-center gap-1.5">
+                                <span class="text-[10px] font-mono text-[#34251c] tabular-nums">{dark.toFixed(2)}</span>
+                                {#if modified}
+                                    <button onclick={() => setKeyholeDarkness(DEFAULT_EFFECTS.keyholeDarkness)}
+                                        class="text-[#5f4636]/40 hover:text-[#c65f3c] text-[10px]"
+                                        title="Reset to {DEFAULT_EFFECTS.keyholeDarkness}">↩</button>
+                                {/if}
+                            </div>
+                        </div>
+                        <p class="text-[10px] text-[#5f4636]/70 mb-2">{$t('adminDesignKeyholeDarknessHint')}</p>
+                        <input id="kh-darkness" type="range" min="0.4" max="1" step="0.02"
+                            value={dark}
+                            oninput={(e) => setKeyholeDarkness(parseFloat((e.target as HTMLInputElement).value))}
+                            class="w-full accent-[#c65f3c]"
+                        />
+                        <div class="flex justify-between text-[7.5px] text-[#5f4636]/30 mt-0.5">
+                            <span>{$t('adminDesignKeyholeDarknessLight')}</span>
+                            <span>default: {DEFAULT_EFFECTS.keyholeDarkness}</span>
+                            <span>{$t('adminDesignKeyholeDarknessDeep')}</span>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="flex items-center justify-between mb-1.5">
+                            <label class="label !mb-0" for="kh-dwell">{$t('adminDesignKeyholeDwell')}</label>
+                            <span class="text-[10px] font-mono text-[#34251c] tabular-nums">
+                                {dwell > 0 ? `${dwell.toFixed(1)}${$t('adminDesignKeyholeDwellSec')}` : $t('adminDesignKeyholeDwellOff')}
+                            </span>
+                        </div>
+                        <p class="text-[10px] text-[#5f4636]/70 mb-2">{$t('adminDesignKeyholeDwellHint')}</p>
+                        <input id="kh-dwell" type="range" min="0" max="10" step="0.5"
+                            value={dwell}
+                            oninput={(e) => setKeyholeDwell(parseFloat((e.target as HTMLInputElement).value))}
+                            class="w-full accent-[#c65f3c]"
+                        />
+                        <div class="flex justify-between text-[7.5px] text-[#5f4636]/30 mt-0.5">
+                            <span>{$t('adminDesignKeyholeDwellOff')}</span>
+                            <span>10{$t('adminDesignKeyholeDwellSec')}</span>
+                        </div>
+                    </div>
                 </div>
             {/if}
 

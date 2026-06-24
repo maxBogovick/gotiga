@@ -135,7 +135,35 @@ pub struct Figurine {
     pub secret_text: Option<String>,
     pub is_visible: bool,
     pub is_featured: bool,
+    /// "The house wakes" — daily showing window in minutes from midnight (0..1439),
+    /// guest-local. Both NULL → always open. `until < from` wraps past midnight.
+    pub open_from_min: Option<i32>,
+    pub open_until_min: Option<i32>,
+    /// Optional sealed-door asset URL. NULL → procedural carved door on the client.
+    pub sealed_door_image: Option<String>,
+    /// Optional "showing room" this work belongs to. When set, the room's window
+    /// is used instead of the per-figurine open_from/until. NULL → use own window.
+    pub showing_room_id: Option<Uuid>,
     pub status: FigurineStatus,
+    pub sort_order: i32,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// A named, shared showing window several works can point at (e.g. "Night hall").
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
+pub struct ShowingRoom {
+    pub id: Uuid,
+    pub name: String,
+    pub open_from_min: i32,
+    pub open_until_min: i32,
+    /// Allowed weekdays bitmask (bit0=Mon … bit6=Sun). NULL → every day.
+    pub open_days_mask: Option<i32>,
+    /// "MM-DD" — opens every year on that date. NULL → unused.
+    pub open_month_day: Option<String>,
+    /// One-off inclusive date range "YYYY-MM-DD". NULL → unused.
+    pub open_date_from: Option<String>,
+    pub open_date_until: Option<String>,
     pub sort_order: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -151,6 +179,13 @@ pub struct Image {
     pub thumb_path: Option<String>,
     pub depth_path: Option<String>,
     pub parallax_intensity: Option<f32>,
+    /// "Keyhole" reveal focus (normalised 0..1) and radius (0..1 of the frame).
+    /// NULL = unset → renderer falls back to centre + default radius.
+    pub focal_x: Option<f32>,
+    pub focal_y: Option<f32>,
+    pub reveal_radius: Option<f32>,
+    /// Per-image darkness override (0..1). NULL → global keyhole darkness.
+    pub darkness: Option<f32>,
     pub alt_text: Option<String>,
     pub sort_order: i32,
     pub created_at: DateTime<Utc>,
@@ -212,6 +247,49 @@ pub struct FigurineListItemDto {
     pub is_featured: bool,
     /// When the piece was catalogued — lets the showcase mark recently added works.
     pub created_at: DateTime<Utc>,
+    /// Face-image "keyhole" reveal focus + radius + darkness, surfaced on the card.
+    pub focal_x: Option<f32>,
+    pub focal_y: Option<f32>,
+    pub reveal_radius: Option<f32>,
+    pub darkness: Option<f32>,
+    /// Showing window (minutes from midnight); both NULL → always open. The card
+    /// shows a sealed door while the guest's local clock is outside the window.
+    pub open_from_min: Option<i32>,
+    pub open_until_min: Option<i32>,
+    /// Optional sealed-door asset; null → procedural carved door.
+    pub sealed_door_image: Option<String>,
+    /// Showing room this work belongs to (null → uses its own window).
+    pub showing_room_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShowingRoomDto {
+    pub id: String,
+    pub name: String,
+    pub open_from_min: i32,
+    pub open_until_min: i32,
+    pub open_days_mask: Option<i32>,
+    pub open_month_day: Option<String>,
+    pub open_date_from: Option<String>,
+    pub open_date_until: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveShowingRoomRequest {
+    pub id: String,
+    pub name: String,
+    pub open_from_min: i32,
+    pub open_until_min: i32,
+    #[serde(default)]
+    pub open_days_mask: Option<i32>,
+    #[serde(default)]
+    pub open_month_day: Option<String>,
+    #[serde(default)]
+    pub open_date_from: Option<String>,
+    #[serde(default)]
+    pub open_date_until: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -224,6 +302,10 @@ pub struct ImageDto {
     pub thumb_url: Option<String>,
     pub depth_url: Option<String>,
     pub parallax_intensity: Option<f32>,
+    pub focal_x: Option<f32>,
+    pub focal_y: Option<f32>,
+    pub reveal_radius: Option<f32>,
+    pub darkness: Option<f32>,
     pub alt_text: Option<String>,
 }
 
@@ -279,6 +361,13 @@ pub struct FigurineDto {
     pub sort_order: i32,
     pub is_visible: bool,
     pub is_featured: bool,
+    /// Showing window (minutes from midnight); both NULL → always open.
+    pub open_from_min: Option<i32>,
+    pub open_until_min: Option<i32>,
+    /// Optional sealed-door asset; null → procedural carved door.
+    pub sealed_door_image: Option<String>,
+    /// Showing room this work belongs to (null → uses its own window).
+    pub showing_room_id: Option<String>,
 
     #[serde(default)]
     pub images: Vec<ImageDto>,
@@ -526,6 +615,17 @@ pub struct SaveFigurineRequest {
     pub sort_order: i32,
     pub is_visible: bool,
     pub is_featured: bool,
+    /// Showing window (minutes from midnight); both NULL → always open.
+    #[serde(default)]
+    pub open_from_min: Option<i32>,
+    #[serde(default)]
+    pub open_until_min: Option<i32>,
+    /// Optional sealed-door asset; null → procedural carved door.
+    #[serde(default)]
+    pub sealed_door_image: Option<String>,
+    /// Showing room id (string UUID) this work belongs to; null → own window.
+    #[serde(default)]
+    pub showing_room_id: Option<String>,
     #[serde(default)]
     pub images: Vec<SaveImageRequest>,
     #[serde(default)]
@@ -542,6 +642,10 @@ pub struct SaveImageRequest {
     pub thumb_url: Option<String>,
     pub depth_url: Option<String>,
     pub parallax_intensity: Option<f32>,
+    pub focal_x: Option<f32>,
+    pub focal_y: Option<f32>,
+    pub reveal_radius: Option<f32>,
+    pub darkness: Option<f32>,
     pub alt_text: Option<String>,
     pub sort_order: Option<i32>,
 }
@@ -1795,6 +1899,17 @@ pub struct ThemeConfig {
     pub fonts: ThemeFonts,
     #[serde(default)]
     pub motion: ThemeMotion,
+    #[serde(default)]
+    pub effects: ThemeEffects,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThemeEffects {
+    /// Global "keyhole" darkness (0..1); None falls back to the renderer default.
+    pub keyhole_darkness: Option<f32>,
+    /// Seconds of hover before a sealed card self-reveals; None/0 disables it.
+    pub keyhole_dwell_reveal: Option<f32>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

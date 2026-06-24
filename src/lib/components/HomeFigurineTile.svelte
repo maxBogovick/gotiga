@@ -3,8 +3,16 @@
     import type { FigurineListItem } from '$lib/types/api';
     import { t } from '$lib/i18n';
     import AppImage from '$lib/components/AppImage.svelte';
+    import KeyholeVeil from '$lib/components/KeyholeVeil.svelte';
+    import SealedDoor from '$lib/components/SealedDoor.svelte';
     import OrderModal from '$lib/components/OrderModal.svelte';
     import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
+    import { revealedFigurines } from '$lib/stores/revealed-figurines.svelte';
+    import { themeConfig } from '$lib/stores/theme.svelte';
+    import { dwellReveal } from '$lib/actions/dwell-reveal';
+    import { houseClock } from '$lib/stores/house-clock.svelte';
+    import { showingRooms } from '$lib/stores/showing-rooms.svelte';
+    import { isGated, isShowingOpen, resolveWindow } from '$lib/showing-window';
 
     let {
         fig,
@@ -27,6 +35,36 @@
 
     let href = $derived(`/figurines/${fig.id}`);
     let archiveNumber = $derived(`No ${String(index + 1).padStart(3, '0')}`);
+
+    // "The house wakes": a gated work is sealed behind a carved door while the
+    // visitor's local clock sits outside its showing window. The effective window
+    // is the work's own hours OR its showing room's (resolveWindow). houseClock.now
+    // ticks by the minute, so a door dissolves live the moment its window opens.
+    let win = $derived(resolveWindow(
+        { openFromMin: fig.openFromMin, openUntilMin: fig.openUntilMin, showingRoomId: fig.showingRoomId },
+        showingRooms.list
+    ));
+    let doorClosed = $derived(isGated(win) && !isShowingOpen(win, houseClock.nowDate));
+
+    // "Keyhole" seal: a piece stays in shadow (only its lit fragment shown) until
+    // the visitor steps into its file. The reveal is forgetful — only the last
+    // few opened works stay unsealed (gotiga_revealed); open more and the older
+    // ones settle back into shadow, so the archive never gives itself away.
+    // Loaded synchronously at init (SPA — localStorage is available in the
+    // browser) so an already-revealed card never flashes dark before unsealing.
+    revealedFigurines.load();
+    // The seal lifts only while a work is in the rolling "recently opened" window
+    // (gotiga_revealed) — not forever. See revealed-figurines.svelte.ts.
+    let sealed = $derived(!revealedFigurines.has(fig.id) && !!fig.faceImageUrl);
+
+    // Dwell-to-reveal: a sustained look (hover) thins the shadow over the globally
+    // configured number of seconds, settling on a "half-lit" glance — never fully
+    // clear (only opening the work does that). Armed only while still sealed and
+    // not already glanced.
+    let dwellSec = $derived(Number($themeConfig.effects?.keyholeDwellReveal ?? 0));
+    let glanced = $state(false);   // a completed look — hold the shadow half-lit
+    let dwelling = $state(false);  // a look in progress — thinning toward half-lit
+    let dwellMs = $derived(sealed && !glanced && dwellSec > 0 ? dwellSec * 1000 : 0);
 
     // Recently catalogued — surfaced as a quiet wax mark, not a sales badge.
     let isNew = $derived.by(() => {
@@ -66,6 +104,8 @@
 
     onMount(() => {
         savedFigurines.load();
+        houseClock.start();
+        showingRooms.load();
         return () => {
             clearTimeout(copyTimer);
             clearTimeout(pulseTimer);
@@ -125,14 +165,36 @@
         {/if}
     </div>
 
-    <div class="tile-media-wrap" style="view-transition-name: figurine-{fig.id}">
+    <div class="tile-media-wrap" style={doorClosed ? '' : `view-transition-name: figurine-${fig.id}`}>
+        {#if doorClosed}
+            <!-- Showing window shut: a carved door, not a link. No view-transition
+                 (there is no detail to morph into) and no dwell-reveal. -->
+            <div class="tile-media tile-media-sealed">
+                <SealedDoor
+                    openFromMin={win.openFromMin}
+                    openUntilMin={win.openUntilMin}
+                    daysMask={win.daysMask}
+                    monthDay={win.monthDay}
+                    dateFrom={win.dateFrom}
+                    dateUntil={win.dateUntil}
+                    doorImageUrl={fig.sealedDoorImage}
+                    name={fig.name}
+                />
+                <span class="corner corner-tl"></span>
+                <span class="corner corner-tr"></span>
+                <span class="corner corner-bl"></span>
+                <span class="corner corner-br"></span>
+            </div>
+        {:else}
         <a
             {href}
             class="tile-media"
             aria-label="{$t('homeViewFigurine')}: {fig.name}"
+            use:dwellReveal={{ ms: dwellMs, onStart: () => dwelling = true, onStop: () => dwelling = false, onReveal: () => { glanced = true; dwelling = false; } }}
         >
             {#if fig.faceImageUrl}
                 <AppImage src={fig.faceImageUrl} thumbUrl={fig.thumbUrl} alt={fig.name} class="tile-img" loading="lazy" />
+                <KeyholeVeil show={sealed} {dwelling} partial={glanced} {dwellMs} focalX={fig.focalX} focalY={fig.focalY} revealRadius={fig.revealRadius} darkness={fig.darkness} />
             {:else}
                 <div class="tile-placeholder">?</div>
             {/if}
@@ -141,6 +203,7 @@
             <span class="corner corner-bl"></span>
             <span class="corner corner-br"></span>
         </a>
+        {/if}
 
         {#if isNew}
             <span class="tile-seal" title={$t('archiveCardNew')}>{$t('archiveCardNew')}</span>
@@ -201,7 +264,11 @@
     <div class="tile-body">
         <div class="tile-head">
             <h3>
-                <a {href}>{fig.name}</a>
+                {#if doorClosed}
+                    {fig.name}
+                {:else}
+                    <a {href}>{fig.name}</a>
+                {/if}
             </h3>
         </div>
 
@@ -209,7 +276,9 @@
 
         <div class="tile-actions">
             <span class="tile-file-hint">{archiveNumber}</span>
-            {#if action.kind === 'request'}
+            {#if doorClosed}
+                <span class="tile-door-hint">{$t('doorSealedHint')}</span>
+            {:else if action.kind === 'request'}
                 <button class="tile-cta tile-cta-primary" type="button" onclick={openOrder}>
                     {action.label}
                     <svg width="14" height="7" viewBox="0 0 14 7" fill="none" aria-hidden="true">
@@ -665,6 +734,19 @@
     .tile-file-hint {
         color: var(--color-ink-tertiary);
         font-variant-numeric: tabular-nums;
+    }
+
+    /* quiet closed-door note in place of a CTA — never a countdown */
+    .tile-door-hint {
+        min-height: 30px;
+        display: inline-flex;
+        align-items: center;
+        font-family: 'Cormorant Garamond', Georgia, serif;
+        font-size: 14px;
+        font-style: italic;
+        letter-spacing: 0.02em;
+        color: var(--color-ink-tertiary);
+        text-transform: none;
     }
 
     .tile-cta {

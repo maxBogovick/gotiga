@@ -7,19 +7,39 @@
   import FigurineDetailView from '$lib/components/FigurineDetailView.svelte';
   import NotFound from '$lib/components/NotFound.svelte';
   import { t , brandName } from '$lib/i18n';
+  import { revealedFigurines } from '$lib/stores/revealed-figurines.svelte';
+  import SealedDoor from '$lib/components/SealedDoor.svelte';
+  import { houseClock } from '$lib/stores/house-clock.svelte';
+  import { showingRooms } from '$lib/stores/showing-rooms.svelte';
+  import { isGated, isShowingOpen, resolveWindow } from '$lib/showing-window';
 
   let { data } = $props();
   let figurine = $derived(data.figurine);
 
+  // "The house wakes": if this work is gated and the visitor's local clock is
+  // outside its window, the whole leaf is a sealed door — no content revealed,
+  // not even to a deep link. Effective window = own hours OR its showing room's.
+  // The door lifts live on the minute it opens.
+  let win = $derived(figurine ? resolveWindow(figurine, showingRooms.list) : {});
+  let doorClosed = $derived(!!figurine && isGated(win) && !isShowingOpen(win, houseClock.nowDate));
+
   onMount(() => {
+    houseClock.start();
+    showingRooms.load();
     const fid = data.figurine?.id;
-    if (!fid) return;
+    // While the door is shut the visitor never entered — don't mark it viewed
+    // or lift its keyhole seal.
+    if (!fid || doorClosed) return;
+    // Permanent ledger (drives the archive's "viewed" filter).
     try {
       const VIEWED_KEY = 'gotiga_viewed';
       const viewed: string[] = JSON.parse(localStorage.getItem(VIEWED_KEY) ?? '[]');
       const next = [fid, ...viewed.filter((id) => id !== fid)].slice(0, 50);
       localStorage.setItem(VIEWED_KEY, JSON.stringify(next));
     } catch {}
+    // Keyhole memory: stepping in lifts this work's seal (and lets an older one
+    // settle back into shadow).
+    revealedFigurines.reveal(fid);
   });
   let id = $derived(page.params.id ?? '');
 
@@ -205,6 +225,27 @@
   <!-- No such work (404) — load() resolves before render, so a null figurine here
        means the backend returned not-found, not a loading state. -->
   <NotFound backHref="/figurines" backLabel={$t('figurineBackToArchive')} />
+{:else if doorClosed}
+  <!-- Showing window shut: a sealed door even for a deep link. The window
+       repeats daily — the door opens again at its hour, nothing is lost. -->
+  <div class="min-h-screen flex flex-col items-center justify-center p-8" in:fade>
+    <h1 class="font-['Fraunces'] text-3xl sm:text-4xl text-[#6f3b24] mb-6 opacity-85 text-center">{figurine.name}</h1>
+    <div class="relative w-full max-w-md aspect-[3/4] rounded-[3px] overflow-hidden border border-[#34251c]/15 shadow-2xl">
+      <SealedDoor
+        openFromMin={win.openFromMin}
+        openUntilMin={win.openUntilMin}
+        daysMask={win.daysMask}
+        monthDay={win.monthDay}
+        dateFrom={win.dateFrom}
+        dateUntil={win.dateUntil}
+        doorImageUrl={figurine.sealedDoorImage}
+        name={figurine.name}
+      />
+    </div>
+    <a href="/figurines" class="mt-8 text-xs tracking-[0.08em] uppercase text-[#7c6554] hover:text-[#34251c] underline underline-offset-4 transition-colors">
+      {$t('figurineBackToArchive')}
+    </a>
+  </div>
 {:else}
   {#key id}
     <FigurineDetailView {figurine} {id} prev={data.prev ?? null} next={data.next ?? null} />

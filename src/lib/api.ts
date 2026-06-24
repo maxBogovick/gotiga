@@ -5,6 +5,7 @@ import type {
     AuthorText,
     WorkshopItem,
     CabinetZone,
+    ShowingRoom,
     AppSettings,
     ServerRelease,
     AuthorProfile,
@@ -347,6 +348,11 @@ export const api = {
         return webFetch('/cabinet/zones');
     },
 
+    async getShowingRooms(): Promise<ShowingRoom[]> {
+        if (isTauri) return invoke('get_showing_rooms');
+        return webFetch('/showing-rooms');
+    },
+
     // === WRITE (ADMIN) ===
     async saveFigurine(figurine: Figurine): Promise<void> {
         if (isTauri) return invoke('save_figurine', { figurine });
@@ -459,6 +465,24 @@ export const api = {
     async deleteCabinetZone(id: string): Promise<void> {
         if (isTauri) return invoke('delete_cabinet_zone', { id });
         const res = await fetch(`${webApiBase()}/cabinet/zones/${id}`, {
+            method: 'DELETE',
+            headers: authHeaders(),
+        });
+        if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+    },
+
+    async saveShowingRoom(room: ShowingRoom): Promise<void> {
+        if (isTauri) return invoke('save_showing_room', { room });
+        await webFetch('/showing-rooms', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(room),
+        });
+    },
+
+    async deleteShowingRoom(id: string): Promise<void> {
+        if (isTauri) return invoke('delete_showing_room', { id });
+        const res = await fetch(`${webApiBase()}/showing-rooms/${id}`, {
             method: 'DELETE',
             headers: authHeaders(),
         });
