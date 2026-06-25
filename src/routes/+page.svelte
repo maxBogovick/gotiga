@@ -10,6 +10,7 @@
     import { t, brandName, lang } from '$lib/i18n';
     import AppImage from '$lib/components/AppImage.svelte';
     import HomeFigurineTile from '$lib/components/HomeFigurineTile.svelte';
+    import HouseNoticeBoard from '$lib/components/HouseNoticeBoard.svelte';
     import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
     import { SITE_URL } from '$lib/site';
 
@@ -483,6 +484,10 @@
             </div>
 
         </section>
+
+        <!-- The house notice board: rooms (showing rooms) waking within the week.
+             Hides itself when nothing is opening soon. -->
+        <HouseNoticeBoard figurines={collectionFigurines} />
 
         <section id="available-works" class="context-section work-hub" aria-labelledby="context-title">
             <div class="context-hd work-hd">

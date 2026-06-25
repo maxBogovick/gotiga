@@ -3239,6 +3239,22 @@ impl AppService {
 
     // === WORKSHOP FEATURE (home page) ===
 
+    pub async fn get_programme_settings(&self) -> Result<ProgrammeSettings> {
+        parse_json_setting(
+            "programme_settings",
+            self.repo.get_setting("programme_settings").await?,
+        )
+    }
+
+    pub async fn save_programme_settings(&self, settings: ProgrammeSettings) -> Result<()> {
+        let json =
+            serde_json::to_string(&settings).map_err(|e| AppError::Internal(e.to_string()))?;
+        if json.len() > 8 * 1024 {
+            return Err(AppError::BadRequest("Programme settings too large".into()));
+        }
+        self.repo.upsert_setting("programme_settings", &json).await
+    }
+
     pub async fn get_workshop_feature(&self) -> Result<WorkshopFeature> {
         parse_json_setting(
             "workshop_feature",

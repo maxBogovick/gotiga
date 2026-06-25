@@ -40,7 +40,20 @@ export const load = async ({ params }: { params: { id: string } }) => {
     const sorted = [...all].sort(
       (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.name.localeCompare(b.name)
     );
-    const idx = sorted.findIndex(f => f.id === params.id);
+    let idx = sorted.findIndex(f => f.id === params.id);
+    // A gated work (showing window currently shut) is absent from the visible list,
+    // so findIndex misses it. Splice it into its rightful sort slot using the work's
+    // own sortOrder/name so prev/next still resolve — the sealed door must stay
+    // pageable, not become a dead end.
+    if (idx === -1 && figurine) {
+      const f = figurine;
+      const at = sorted.findIndex(
+        s => (s.sortOrder ?? 0) > (f.sortOrder ?? 0) ||
+          ((s.sortOrder ?? 0) === (f.sortOrder ?? 0) && s.name.localeCompare(f.name) > 0)
+      );
+      idx = at === -1 ? sorted.length : at;
+      sorted.splice(idx, 0, f as unknown as FigurineListItem);
+    }
     prev = idx > 0 ? sorted[idx - 1] : null;
     next = idx >= 0 && idx < sorted.length - 1 ? sorted[idx + 1] : null;
   }

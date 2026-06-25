@@ -41,6 +41,7 @@ import type {
     AdminLogsQuery,
     SmtpSettings,
     ContactSettings,
+    ProgrammeSettings,
     WorkshopFeature,
     BookingRules,
     RescheduleBookingRequest,
@@ -1262,6 +1263,18 @@ export const api = {
     },
 
     // === WORKSHOP FEATURE (home page) ===
+
+    async getProgrammeSettings(): Promise<ProgrammeSettings> {
+        return webFetch('/settings/programme');
+    },
+
+    async saveProgrammeSettings(settings: ProgrammeSettings): Promise<ProgrammeSettings> {
+        return webFetch('/admin/settings/programme', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(settings),
+        });
+    },
 
     async getWorkshopFeature(): Promise<WorkshopFeature> {
         return webFetch('/settings/workshop-feature');

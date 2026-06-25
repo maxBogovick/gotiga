@@ -1437,6 +1437,48 @@ pub struct ContactSettings {
     pub phone: Option<String>,
 }
 
+/// Customisable Programme / Notice-Board section settings.
+/// `max_showings = 0` means "show all". `case_bg = None` falls back to the
+/// built-in Deep-Vellum gradient. Text fields fall back to i18n defaults when blank.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProgrammeSettings {
+    pub max_showings: u32,
+    pub case_bg: Option<String>,
+    pub curator_note_en: Option<String>,
+    pub curator_note_ru: Option<String>,
+    pub curator_sign_en: Option<String>,
+    pub curator_sign_ru: Option<String>,
+    /// Base bronze hex for the case's cast-metal molding (e.g. `#caa45f`).
+    /// `None` falls back to the built-in bronze. Frontend derives the light→dark
+    /// bevel gradient from this single colour.
+    #[serde(default)]
+    pub frame_tone: Option<String>,
+    /// Molding thickness in px. `None` falls back to the built-in clamp.
+    #[serde(default)]
+    pub frame_thickness: Option<u32>,
+    /// Molding render mode: `"gradient"` (beveled, default), `"flat"` (solid
+    /// tone, no bevel) or `"none"` (no molding at all). `None` = gradient.
+    #[serde(default)]
+    pub frame_mode: Option<String>,
+}
+
+impl Default for ProgrammeSettings {
+    fn default() -> Self {
+        Self {
+            max_showings: 0,
+            case_bg: None,
+            curator_note_en: None,
+            curator_note_ru: None,
+            curator_sign_en: None,
+            curator_sign_ru: None,
+            frame_tone: None,
+            frame_thickness: None,
+            frame_mode: None,
+        }
+    }
+}
+
 /// Customizable "Workshop" feature block on the home page.
 /// All text fields are bilingual; `None`/blank values fall back to the i18n
 /// defaults on the client. `visible = true` by default so the section shows

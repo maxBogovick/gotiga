@@ -121,6 +121,10 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             .route("/booking-rules", get(handlers::get_booking_rules))
             .route("/settings/contact", get(handlers::get_contact_settings))
             .route(
+                "/settings/programme",
+                get(handlers::get_programme_settings),
+            )
+            .route(
                 "/settings/workshop-feature",
                 get(handlers::get_workshop_feature),
             )
@@ -279,6 +283,12 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             .route(
                 "/admin/settings/contact",
                 put(handlers::admin_save_contact_settings).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/settings/programme",
+                put(handlers::save_programme_settings).route_layer(
                     middleware::from_fn_with_state(config.clone(), auth_middleware),
                 ),
             )

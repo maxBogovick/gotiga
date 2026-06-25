@@ -27,6 +27,10 @@
   import TurnSoundSwitcher from '$lib/components/TurnSoundSwitcher.svelte';
   import { focusTrap } from '$lib/actions/focusTrap';
   import '$lib/styles/figurine-detail.css';
+  import SealedDoor from '$lib/components/SealedDoor.svelte';
+  import { houseClock } from '$lib/stores/house-clock.svelte';
+  import { showingRooms } from '$lib/stores/showing-rooms.svelte';
+  import { isGated, isShowingOpen, resolveWindow } from '$lib/showing-window';
 
   import type { FigurineListItem } from '$lib/types/api';
 
@@ -41,6 +45,9 @@
     prev?: FigurineListItem | null;
     next?: FigurineListItem | null;
   } = $props();
+
+  let win = $derived(resolveWindow(figurine, showingRooms.list));
+  let doorClosed = $derived(isGated(win) && !isShowingOpen(win, houseClock.nowDate));
 
   let selectedImageIndex = $state(0);
   let isGrimoireOpen = $state(false);
@@ -942,6 +949,8 @@
   }
 
   onMount(() => {
+    houseClock.start();
+    showingRooms.load();
     analyticsClient = createFigurineAnalytics(id);
     analyticsMountedAt = Date.now();
     analyticsClient.view();
@@ -1274,6 +1283,24 @@
     </nav>
 
     <!-- ── MAIN GRID ── -->
+    {#if doorClosed}
+      <div class="sealed-body">
+        <h1 class="sealed-title">{figurine.name}</h1>
+        <div class="sealed-door-wrap">
+          <SealedDoor
+            openFromMin={win.openFromMin}
+            openUntilMin={win.openUntilMin}
+            daysMask={win.daysMask}
+            monthDay={win.monthDay}
+            dateFrom={win.dateFrom}
+            dateUntil={win.dateUntil}
+            doorImageUrl={figurine.sealedDoorImage}
+            name={figurine.name}
+          />
+        </div>
+      </div>
+    {:else}
+
     {#if storyError}
       <p class="detail-inline-alert" role="alert">{storyError}</p>
     {/if}
@@ -1905,6 +1932,7 @@
 
       </div>
     </div>
+    {/if}<!-- end {#if doorClosed} {:else} -->
   </div>
 </div>
 

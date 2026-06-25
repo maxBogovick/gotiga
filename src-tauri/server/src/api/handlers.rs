@@ -1721,6 +1721,20 @@ pub async fn admin_save_contact_settings(
 
 // === WORKSHOP FEATURE ===
 
+pub async fn get_programme_settings(
+    State(service): State<AppService>,
+) -> Result<Json<ProgrammeSettings>> {
+    Ok(Json(service.get_programme_settings().await?))
+}
+
+pub async fn save_programme_settings(
+    State(service): State<AppService>,
+    Json(body): Json<ProgrammeSettings>,
+) -> Result<Json<ProgrammeSettings>> {
+    service.save_programme_settings(body.clone()).await?;
+    Ok(Json(body))
+}
+
 pub async fn get_workshop_feature(
     State(service): State<AppService>,
 ) -> Result<Json<WorkshopFeature>> {

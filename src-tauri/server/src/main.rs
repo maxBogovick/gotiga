@@ -122,7 +122,7 @@ async fn main() -> anyhow::Result<()> {
         .expect("Invalid address");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, router)
+    axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     service.shutdown_analytics().await;

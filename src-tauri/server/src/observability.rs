@@ -208,6 +208,7 @@ impl ObservabilityState {
 
 pub async fn request_observability_middleware(
     State(observability): State<ObservabilityState>,
+    axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
     mut request: Request,
     next: Next,
 ) -> Response {
@@ -224,6 +225,14 @@ pub async fn request_observability_middleware(
         .get::<MatchedPath>()
         .map(|p| p.as_str().to_string())
         .unwrap_or_else(|| normalize_route(request.uri().path()));
+
+    let ip = addr.ip().to_string();
+    let user_agent = request
+        .headers()
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("unknown")
+        .to_string();
 
     observability.request_started();
     let started = Instant::now();
@@ -243,6 +252,8 @@ pub async fn request_observability_middleware(
         route = %route,
         status = status.as_u16(),
         latency_ms = elapsed.as_millis(),
+        ip_address = %ip,
+        user_agent = %user_agent,
         "request completed"
     );
 

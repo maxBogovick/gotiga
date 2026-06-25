@@ -861,6 +861,21 @@ export interface ContactSettings {
 
 /** Customizable "Workshop" feature block on the home page. Blank text fields
  *  fall back to the i18n defaults; blank photos fall back to the bundled ones. */
+export interface ProgrammeSettings {
+    maxShowings: number;
+    caseBg: string | null;
+    curatorNoteEn: string | null;
+    curatorNoteRu: string | null;
+    curatorSignEn: string | null;
+    curatorSignRu: string | null;
+    /** Base bronze hex for the case molding; null = built-in bronze. */
+    frameTone: string | null;
+    /** Molding thickness in px; null = built-in clamp. */
+    frameThickness: number | null;
+    /** Molding mode: 'gradient' (default) | 'flat' | 'none'; null = gradient. */
+    frameMode: string | null;
+}
+
 export interface WorkshopFeature {
     visible: boolean;
     photoBack: string | null;

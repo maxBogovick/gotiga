@@ -111,8 +111,19 @@
 
 <header class="site-header">
   <a href="/" class="brand" aria-label={$brandName}>
-    <span class="brand-name">{$brandName}</span>
-    <span class="brand-sub">Cabinet of Gothic Miniatures</span>
+    <img
+      src="/images/raven-emblem.png"
+      alt=""
+      class="brand-emblem"
+      width="40"
+      height="40"
+      decoding="async"
+      fetchpriority="high"
+    />
+    <span class="brand-text">
+      <span class="brand-name">{$brandName}</span>
+      <span class="brand-sub">Cabinet of Gothic Miniatures</span>
+    </span>
   </a>
 
   <button
@@ -342,11 +353,37 @@
 
   .brand {
     display: flex;
-    flex-direction: column;
-    gap: 3px;
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
     text-decoration: none;
     color: inherit;
     flex-shrink: 0;
+  }
+
+  .brand-emblem {
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    /* Engraved seat: subtle ring + lift, matched to the parchment/ledger aesthetic */
+    border-radius: 50%;
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--color-ink-primary) 14%, transparent),
+      0 1px 4px rgba(52,37,28,0.16);
+    transition: transform 0.4s var(--ease), box-shadow 0.4s var(--ease);
+  }
+
+  .brand:hover .brand-emblem {
+    transform: rotate(-4deg) scale(1.04);
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--color-ember) 45%, transparent),
+      0 2px 8px rgba(52,37,28,0.22);
+  }
+
+  .brand-text {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
   }
 
   .brand-name {
@@ -812,6 +849,10 @@
       height: 58px;
       padding: 0 16px;
     }
+
+    .brand { gap: 9px; }
+
+    .brand-emblem { width: 32px; height: 32px; }
 
     .brand-name { font-size: 17px; }
 

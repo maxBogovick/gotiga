@@ -23,12 +23,21 @@
 
   let loaded  = $state(false);
   let failed  = $state(false);
+  let mainImg = $state<HTMLImageElement | undefined>();
 
-  // Reset on src change
+  // Reset whenever the source changes. If the (possibly cached) image is already
+  // complete, mark it loaded right away: browsers don't re-fire `load` for an
+  // already-decoded src, so without this a re-run of this effect — e.g. a parent
+  // that re-passes props on a timer — would leave a cached image stuck invisible.
   $effect(() => {
     void src;
-    loaded = false;
-    failed = false;
+    if (mainImg?.complete && mainImg.naturalWidth > 0) {
+      loaded = true;
+      failed = false;
+    } else {
+      loaded = false;
+      failed = false;
+    }
   });
 
   function onLoad() { loaded = true; }
@@ -50,6 +59,7 @@
 
     <picture class="app-image-picture" class:app-image-picture--loaded={loaded || failed}>
       <img
+        bind:this={mainImg}
         {src}
         {alt}
         {loading}

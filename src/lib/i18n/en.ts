@@ -158,6 +158,31 @@ export const en = {
   doorPhraseNight: 'The house wakes after dark',
   doorPhraseDay: 'Open only in daylight',
   doorSealedHint: 'This door opens later',
+
+  // "The house wakes" — notice board of rooms opening soon + hall page
+  boardEyebrow: 'Programme',
+  boardTitle: 'Opening soon',
+  boardNoteEnter: 'Enter',
+  boardCuratorNote: 'The museum is preparing a few showings. None can be hurried — each opens in its own hour.',
+  boardCuratorSign: '— the keeper',
+  boardNoteOpenNow: 'On view · enter',
+  posterSoon: 'Soon',
+  posterOnView: 'On view',
+  posterStampOpen: 'On view',
+  boardWhenToday: 'today, in daylight',
+  boardWhenTonight: 'after dark',
+  boardWhenTomorrow: 'tomorrow, by daylight',
+  boardWhenTomorrowNight: 'tomorrow, after dark',
+  hallBack: 'Back to the house',
+  hallEyebrow: 'A room of the house',
+  hallOpenNow: 'Open now',
+  hallOpensWhen: 'Opens {when}',
+  hallSealedNote: 'The works gather behind sealed doors until the room wakes.',
+  hallOpenNote: 'The room is open. Step in.',
+  hallEmpty: 'No works are kept in this room yet.',
+  hallNotFound: 'No such room',
+  hallNotFoundText: 'This room is not part of the house.',
+
   archiveStatusAvailableLabel: 'Available',
   archiveStatusReservedLabel: 'Reserved',
   archiveStatusSoldLabel: 'Lost',
@@ -1396,6 +1421,8 @@ export const en = {
   adminContactSave: 'Save',
   adminContactSaved: 'Saved',
   adminContactError: 'Save failed',
+
+  adminTabProgramme: 'Programme',
 
   // === DESIGN EDITOR ===
   adminGroupDesign: 'Design',

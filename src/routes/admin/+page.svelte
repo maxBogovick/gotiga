@@ -28,10 +28,11 @@
     import DesignEditor from '$lib/components/admin/DesignEditor.svelte';
     import CopyEditor from '$lib/components/admin/CopyEditor.svelte';
     import WorkshopFeaturePanel from '$lib/components/admin/WorkshopFeaturePanel.svelte';
+    import ProgrammePanel from '$lib/components/admin/ProgrammePanel.svelte';
     import LogsPanel from '$lib/components/admin/LogsPanel.svelte';
     import { t, lang } from '$lib/i18n';
     import SealedDoor from '$lib/components/SealedDoor.svelte';
-    import { resolveWindow, isShowingOpen, type ShowingWindow } from '$lib/showing-window';
+    import { resolveWindow, isShowingOpen, roomToWindow } from '$lib/showing-window';
     import LangSwitcher from '$lib/components/LangSwitcher.svelte';
 
     // === AUTH ===
@@ -82,7 +83,7 @@
     let showingsEditor = $state<FigurineShowingsEditor | null>(null);
     let showSettings = $state(false);
     let message = $state({ text: '', type: 'info' });
-    let activeTab = $state<'registry' | 'rooms' | 'home' | 'workshop-feature' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'commissions' | 'showings' | 'bookings' | 'waitlist' | 'analytics' | 'users' | 'comments' | 'messages' | 'server' | 'logs' | 'booking-rules' | 'contact' | 'design' | 'copy'>('registry');
+    let activeTab = $state<'registry' | 'rooms' | 'home' | 'workshop-feature' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'commissions' | 'showings' | 'bookings' | 'waitlist' | 'analytics' | 'users' | 'comments' | 'messages' | 'server' | 'logs' | 'booking-rules' | 'contact' | 'design' | 'copy' | 'programme'>('registry');
     let activeAuthorSubTab = $state<'profile' | 'texts'>('profile');
     let newOrdersCount = $state(0);
     let newCommissionsCount = $state(0);
@@ -281,16 +282,6 @@
         return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
     }
     // A room's full window (hours + days + date) for preview evaluation.
-    function roomToWindow(room: ShowingRoom): ShowingWindow {
-        return {
-            openFromMin: room.openFromMin,
-            openUntilMin: room.openUntilMin,
-            daysMask: room.openDaysMask,
-            monthDay: room.openMonthDay,
-            dateFrom: room.openDateFrom,
-            dateUntil: room.openDateUntil,
-        };
-    }
     // The selected figurine's effective window (room or own hours).
     let previewFigWindow = $derived(
         selectedFigurine
@@ -780,6 +771,7 @@
                 label: $t('adminGroupShowcase'),
                 tabs: [
                   ['home',     'Home'],
+                  ['programme', $t('adminTabProgramme')],
                   ['workshop-feature', $t('adminTabWorkshopFeature')],
                   ['author',   $t('adminTabAuthor')],
                   ['workshop', $t('adminTabWorkshop')],
@@ -1556,6 +1548,9 @@
 
         {:else if activeTab === 'home'}
             <HomeContentEditor />
+
+        {:else if activeTab === 'programme'}
+            <div in:fade class="h-full overflow-auto"><ProgrammePanel /></div>
 
         {:else if activeTab === 'workshop-feature'}
             <div in:fade class="h-full"><WorkshopFeaturePanel /></div>

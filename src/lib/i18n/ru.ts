@@ -158,6 +158,31 @@ export const ru: Record<TranslationKey, string> = {
   doorPhraseNight:       'Дом просыпается, когда стемнеет',
   doorPhraseDay:         'Открыто лишь при свете дня',
   doorSealedHint:        'Эта дверь откроется позже',
+
+  // «Дом просыпается» — доска залов, открывающихся скоро + страница зала
+  boardEyebrow:          'Афиша',
+  boardTitle:            'Скоро открывается',
+  boardNoteEnter:        'Войти',
+  boardCuratorNote:      'Музей готовит несколько показов. Их нельзя поторопить — каждый откроется в свой час.',
+  boardCuratorSign:      '— смотритель',
+  boardNoteOpenNow:      'Открыто · войти',
+  posterSoon:            'Скоро',
+  posterOnView:          'Открыто',
+  posterStampOpen:       'Открыто',
+  boardWhenToday:        'сегодня, при свете',
+  boardWhenTonight:      'когда стемнеет',
+  boardWhenTomorrow:     'завтра, при свете',
+  boardWhenTomorrowNight: 'завтра, когда стемнеет',
+  hallBack:              'Назад в дом',
+  hallEyebrow:           'Зал дома',
+  hallOpenNow:           'Открыто сейчас',
+  hallOpensWhen:         'Откроется {when}',
+  hallSealedNote:        'Работы ждут за запертыми дверями, пока зал не проснётся.',
+  hallOpenNote:          'Зал открыт. Войдите.',
+  hallEmpty:             'В этом зале пока нет работ.',
+  hallNotFound:          'Такого зала нет',
+  hallNotFoundText:      'Этот зал не входит в дом.',
+
   archiveStatusAvailableLabel: 'В наличии',
   archiveStatusReservedLabel:  'Бронь',
   archiveStatusSoldLabel:      'Утрачено',
@@ -1398,6 +1423,8 @@ export const ru: Record<TranslationKey, string> = {
   adminContactSave:        'Сохранить',
   adminContactSaved:       'Сохранено',
   adminContactError:       'Ошибка сохранения',
+
+  adminTabProgramme:           'Афиша',
 
   // === DESIGN EDITOR ===
   adminGroupDesign:            'Дизайн',

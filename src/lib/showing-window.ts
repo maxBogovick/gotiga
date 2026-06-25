@@ -18,6 +18,8 @@
  * in the house-clock store, not here.
  */
 
+import type { TranslationKey } from '$lib/i18n';
+
 export interface ShowingWindow {
   openFromMin?: number | null;
   openUntilMin?: number | null;
@@ -70,6 +72,18 @@ export function resolveWindow(fig: WindowSource, rooms: ShowingRoomLike[]): Show
   }
   // Figurine "own hours" mode carries no day/date restriction (rooms only).
   return { openFromMin: fig.openFromMin, openUntilMin: fig.openUntilMin };
+}
+
+/** A room's stored fields → a plain ShowingWindow (the schedule it imposes). */
+export function roomToWindow(room: ShowingRoomLike): ShowingWindow {
+  return {
+    openFromMin: room.openFromMin,
+    openUntilMin: room.openUntilMin,
+    daysMask: room.openDaysMask,
+    monthDay: room.openMonthDay,
+    dateFrom: room.openDateFrom,
+    dateUntil: room.openDateUntil,
+  };
 }
 
 export const MINUTES_IN_DAY = 24 * 60;
@@ -179,6 +193,106 @@ export function minutesUntilOpen(
   // A minute into the candidate window: confirms day/date actually allow it.
   if (!isShowingOpen(w, new Date(candidate.getTime() + 60000))) return null;
   return mins;
+}
+
+/**
+ * The next moment this (currently closed) window opens, or null if it never opens
+ * within `horizonDays` — or is ungated / already open. Walks forward day by day:
+ * each candidate is that day's opening edge (its `openFromMin`, or midnight for a
+ * days/date-only room), confirmed real by probing `isShowingOpen` a minute in (so
+ * the right weekday/date is honoured, wrap-past-midnight included). This is what
+ * the house notice board reads to know when a room next wakes.
+ */
+export function nextOpening(
+  w: ShowingWindow,
+  now: Date = new Date(),
+  horizonDays = 7
+): Date | null {
+  if (!isGated(w) || isShowingOpen(w, now)) return null;
+  const startMin = hasTimeWindow(w) ? (w.openFromMin as number) : 0;
+  for (let d = 0; d <= horizonDays; d++) {
+    const cand = new Date(now);
+    cand.setHours(0, 0, 0, 0);
+    cand.setDate(cand.getDate() + d);
+    cand.setMinutes(startMin);
+    if (cand.getTime() <= now.getTime()) continue;
+    // A minute past the edge: confirms this day actually allows the showing.
+    if (isShowingOpen(w, new Date(cand.getTime() + 60000))) return cand;
+  }
+  return null;
+}
+
+/** How the next opening reads relative to now — drives the board's atmospheric "when". */
+export type OpeningTone =
+  | 'today' // a day room opening later today
+  | 'tonight' // a night room waking after dark today
+  | 'tomorrow'
+  | 'tomorrowNight'
+  | 'weekday' // 2..6 days out — name the day plainly
+  | 'date'; // a week or more out — name the date
+
+export interface OpeningDescriptor {
+  /** The exact moment it opens. */
+  at: Date;
+  tone: OpeningTone;
+  /** Whole calendar days from today (0 = today, 1 = tomorrow). */
+  dayOffset: number;
+  /** Weekday of the opening, Monday = 0 … Sunday = 6. */
+  weekday: number;
+}
+
+/**
+ * Describe when a closed window next opens, in human, relative terms — without a
+ * countdown. Returns null when ungated, already open, or not opening within the
+ * horizon (the board then simply omits the room). The phrasing is left to the
+ * caller (i18n + Intl); this only classifies.
+ */
+export function describeOpening(
+  w: ShowingWindow,
+  now: Date = new Date(),
+  horizonDays = 7
+): OpeningDescriptor | null {
+  const at = nextOpening(w, now, horizonDays);
+  if (!at) return null;
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  const day = new Date(at);
+  day.setHours(0, 0, 0, 0);
+  const dayOffset = Math.round((day.getTime() - today.getTime()) / 86_400_000);
+  const night = windowKind(w) === 'night';
+  let tone: OpeningTone;
+  if (dayOffset <= 0) tone = night ? 'tonight' : 'today';
+  else if (dayOffset === 1) tone = night ? 'tomorrowNight' : 'tomorrow';
+  else if (dayOffset < 7) tone = 'weekday';
+  else tone = 'date';
+  return { at, tone, dayOffset, weekday: mondayIndex(at) };
+}
+
+/**
+ * Render an opening as an atmospheric, relative phrase — "when it gets dark",
+ * "tomorrow", "Saturday", "3 Aug" — never a countdown. Near days read poetically
+ * (i18n strings); 2–6 days out name the weekday, a week or more out the date
+ * (Intl, in the visitor's language). `tr` is the i18n lookup, `locale` an Intl tag.
+ */
+export function openingWhenLabel(
+  desc: OpeningDescriptor,
+  tr: (key: TranslationKey) => string,
+  locale: string
+): string {
+  switch (desc.tone) {
+    case 'today':
+      return tr('boardWhenToday');
+    case 'tonight':
+      return tr('boardWhenTonight');
+    case 'tomorrow':
+      return tr('boardWhenTomorrow');
+    case 'tomorrowNight':
+      return tr('boardWhenTomorrowNight');
+    case 'weekday':
+      return new Intl.DateTimeFormat(locale, { weekday: 'long' }).format(desc.at);
+    default:
+      return new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'long' }).format(desc.at);
+  }
 }
 
 /**

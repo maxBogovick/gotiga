@@ -34,14 +34,14 @@
     to: '',
   });
 
-  const COLUMNS: { key: AdminLogsSortBy; label: string }[] = [
-    { key: 'time', label: 'Time' },
-    { key: 'level', label: 'Level' },
-    { key: 'request', label: 'Request' },
-    { key: 'route', label: 'Route' },
-    { key: 'status', label: 'Status' },
-    { key: 'latency', label: 'Latency' },
-    { key: 'message', label: 'Message' },
+  const COLUMNS: { key: AdminLogsSortBy | 'ip'; label: string; sortable: boolean }[] = [
+    { key: 'time', label: 'Time', sortable: true },
+    { key: 'level', label: 'Level', sortable: true },
+    { key: 'route', label: 'Route', sortable: true },
+    { key: 'status', label: 'Status', sortable: true },
+    { key: 'latency', label: 'Latency', sortable: true },
+    { key: 'ip', label: 'IP Address', sortable: false },
+    { key: 'message', label: 'Message', sortable: true },
   ];
 
   function query(offset?: number | null): AdminLogsQuery {
@@ -78,10 +78,6 @@
       const page = await api.adminListLogs(query(reset ? null : nextOffset));
       droppedTotal = page.droppedTotal;
       nextOffset = page.nextOffset;
-      // Offset pagination over a live-growing table can re-return rows already on
-      // screen (the live stream prepends newer logs, shifting the offset window).
-      // Duplicate ids here would produce duplicate keys in the keyed {#each},
-      // which crashes Svelte's reconciler with "Invalid array length".
       items = dedupeById(reset ? page.items : [...items, ...page.items]).slice(0, MAX_ROWS);
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to load logs';
@@ -142,7 +138,8 @@
     return out;
   }
 
-  function changeSort(column: AdminLogsSortBy) {
+  function changeSort(column: AdminLogsSortBy | 'ip') {
+    if (column === 'ip') return;
     if (sortBy === column) {
       sortDir = sortDir === 'asc' ? 'desc' : 'asc';
     } else {
@@ -269,6 +266,12 @@
     if (value) navigator.clipboard?.writeText(value);
   }
 
+  function searchFor(query: string) {
+    filters.q = query;
+    load(true);
+    selected = null;
+  }
+
   function exportJsonl() {
     const blob = new Blob(items.map((item) => JSON.stringify(item) + '\n'), { type: 'application/x-ndjson' });
     const url = URL.createObjectURL(blob);
@@ -277,10 +280,6 @@
     a.download = `gotiga-logs-${new Date().toISOString()}.jsonl`;
     a.click();
     URL.revokeObjectURL(url);
-  }
-
-  function levelClass(level: string) {
-    return level === 'ERROR' ? 'level-error' : level === 'WARN' ? 'level-warn' : level === 'INFO' ? 'level-info' : 'level-debug';
   }
 
   onMount(async () => {
@@ -343,24 +342,34 @@
         <button
           type="button"
           class:sorted={sortBy === column.key}
-          aria-label={`Sort by ${column.label}${sortLabel(column.key)}`}
-          title={`Sort by ${column.label}${sortLabel(column.key)}`}
-          onclick={() => changeSort(column.key)}
+          aria-label={column.sortable ? `Sort by ${column.label}${sortLabel(column.key as AdminLogsSortBy)}` : column.label}
+          title={column.sortable ? `Sort by ${column.label}${sortLabel(column.key as AdminLogsSortBy)}` : column.label}
+          onclick={() => column.sortable && changeSort(column.key as AdminLogsSortBy)}
+          style={!column.sortable ? 'cursor: default;' : ''}
         >
           <span>{column.label}</span>
-          {#if sortBy === column.key}<span aria-hidden="true">{sortDir === 'asc' ? '↑' : '↓'}</span>{/if}
+          {#if column.sortable && sortBy === column.key}<span aria-hidden="true">{sortDir === 'asc' ? '↑' : '↓'}</span>{/if}
         </button>
       {/each}
     </div>
     {#each items as item (item.id)}
       <button class="row" onclick={() => selected = item}>
         <span>{new Date(item.ts).toLocaleTimeString()}</span>
-        <span class={levelClass(item.level)}>{item.level}</span>
-        <span class="mono" title={item.requestId ?? ''}>{item.requestId ? item.requestId.slice(0, 10) : '—'}</span>
-        <span class="mono" title={item.route ?? item.target}>{item.route ?? item.target}</span>
-        <span>{item.status ?? '—'}</span>
-        <span>{item.latencyMs != null ? `${item.latencyMs}ms` : '—'}</span>
-        <span class="message">{item.message || JSON.stringify(item.fields)}</span>
+        <span class="badge level-{item.level.toLowerCase()}">{item.level}</span>
+        <span class="mono route-col">
+          {#if item.method}<span class="method method-{item.method.toLowerCase()}">{item.method}</span>{/if}
+          <span title={item.route ?? item.target}>{item.route ?? item.target}</span>
+        </span>
+        <span>
+          {#if item.status}
+            <span class="badge status-{Math.floor(item.status/100)*100}">{item.status}</span>
+          {:else}—{/if}
+        </span>
+        <span class={item.latencyMs != null && item.latencyMs > 500 ? 'text-warn' : item.latencyMs != null && item.latencyMs > 1500 ? 'text-err' : ''}>
+          {item.latencyMs != null ? `${item.latencyMs}ms` : '—'}
+        </span>
+        <span class="mono">{item.fields?.ip_address ?? '—'}</span>
+        <span class="message" title={item.message}>{item.message || JSON.stringify(item.fields)}</span>
       </button>
     {/each}
   </div>
@@ -373,19 +382,65 @@
     <aside class="drawer">
       <div class="drawer-head">
         <div>
-          <strong>{selected.level}</strong>
+          <div class="drawer-title">
+             <span class="badge level-{selected.level.toLowerCase()}">{selected.level}</span>
+             <strong>{selected.method || ''} {selected.route || selected.target}</strong>
+          </div>
           <span>{new Date(selected.ts).toLocaleString()}</span>
         </div>
         <button onclick={() => selected = null}>Close</button>
       </div>
-      <dl>
-        <dt>Request ID</dt><dd><button onclick={() => copy(selected?.requestId)}>{selected.requestId ?? '—'}</button></dd>
-        <dt>Route</dt><dd>{selected.route ?? '—'}</dd>
-        <dt>Target</dt><dd>{selected.target}</dd>
-        <dt>Status</dt><dd>{selected.status ?? '—'}</dd>
-        <dt>Latency</dt><dd>{selected.latencyMs != null ? `${selected.latencyMs}ms` : '—'}</dd>
-      </dl>
-      <pre>{JSON.stringify(selected, null, 2)}</pre>
+      
+      <div class="drawer-body">
+        <section>
+          <h3>Request</h3>
+          <dl>
+            <dt>Request ID</dt><dd><button class="action-btn mono" onclick={() => copy(selected?.requestId)} title="Copy ID">{selected.requestId ?? '—'}</button></dd>
+            <dt>Status</dt><dd><span class="badge status-{selected.status ? Math.floor(selected.status/100)*100 : 'none'}">{selected.status ?? '—'}</span></dd>
+            <dt>Latency</dt><dd>{selected.latencyMs != null ? `${selected.latencyMs}ms` : '—'}</dd>
+            <dt>Target</dt><dd>{selected.target}</dd>
+          </dl>
+        </section>
+
+        <section>
+          <h3>Context</h3>
+          <dl>
+            <dt>IP Address</dt>
+            <dd>
+              {#if selected?.fields?.ip_address}
+                <button class="action-btn mono" onclick={() => searchFor(String(selected?.fields?.ip_address))} title="Filter by this IP">{selected.fields.ip_address}</button>
+              {:else}
+                —
+              {/if}
+            </dd>
+            <dt>User Agent</dt><dd>{selected.fields?.user_agent ?? '—'}</dd>
+          </dl>
+        </section>
+
+        <section>
+          <h3>Message</h3>
+          <div class="message-box">{selected.message || '—'}</div>
+        </section>
+
+        {#if Object.keys(selected.fields).filter(k => k !== 'ip_address' && k !== 'user_agent').length > 0}
+        <section>
+          <h3>Additional Fields</h3>
+          <div class="fields-grid">
+            {#each Object.entries(selected.fields).filter(([k]) => k !== 'ip_address' && k !== 'user_agent') as [key, val]}
+              <div class="field-item">
+                <span class="field-key">{key}</span>
+                <span class="field-val">{typeof val === 'object' ? JSON.stringify(val) : String(val)}</span>
+              </div>
+            {/each}
+          </div>
+        </section>
+        {/if}
+
+        <section>
+          <h3>Raw JSON</h3>
+          <pre>{JSON.stringify(selected, null, 2)}</pre>
+        </section>
+      </div>
     </aside>
   {/if}
 </section>
@@ -405,29 +460,69 @@
   .filters input, .filters select { min-width: 0; }
   .error { margin: 0 1rem .75rem; color: #b42318; }
   .logs-table { flex: 1; overflow: auto; font-family: Inter, system-ui, sans-serif; }
-  .row { width: 100%; display: grid; grid-template-columns: 90px 70px 96px minmax(160px, 1fr) 70px 80px minmax(220px, 1.5fr); gap: .55rem; align-items: center; border: 0; border-bottom: 1px solid #e3e8ef; text-align: left; background: transparent; min-height: 2.15rem; }
+  .row { width: 100%; display: grid; grid-template-columns: 80px 70px minmax(180px, 1.5fr) 60px 70px 110px minmax(200px, 2fr); gap: .55rem; align-items: center; border: 0; border-bottom: 1px solid #e3e8ef; text-align: left; background: transparent; min-height: 2.15rem; padding: 0 0.5rem; }
   .row:hover { background: #edf4ff; }
   .row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .row-head { position: sticky; top: 0; z-index: 2; background: #e8edf4; font-size: .68rem; font-weight: 700; text-transform: uppercase; color: #4f5d6f; }
   .row-head button { min-height: 2.15rem; display: inline-flex; align-items: center; gap: .25rem; justify-content: flex-start; border: 0; background: transparent; color: inherit; padding: 0; font: inherit; text-align: left; }
   .row-head button:hover, .row-head button.sorted { color: #111827; }
   .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-  .level-error { color: #b42318; font-weight: 800; }
-  .level-warn { color: #a15c08; font-weight: 800; }
-  .level-info { color: #256353; font-weight: 700; }
-  .level-debug { color: #526173; }
+
+  .badge { display: inline-flex; align-items: center; justify-content: center; padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.65rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
+  .level-error { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+  .level-warn { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
+  .level-info { background: #e0e7ff; color: #3730a3; border: 1px solid #c7d2fe; }
+  .level-debug { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
+
+  .status-200 { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+  .status-300 { background: #e0f2fe; color: #075985; border: 1px solid #bae6fd; }
+  .status-400 { background: #ffedd5; color: #9a3412; border: 1px solid #fed7aa; }
+  .status-500 { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+  .status-none { background: #f1f5f9; color: #64748b; }
+
+  .method { font-size: 0.65rem; font-weight: 800; padding-right: 0.4rem; }
+  .method-get { color: #2563eb; }
+  .method-post { color: #16a34a; }
+  .method-put, .method-patch { color: #d97706; }
+  .method-delete { color: #dc2626; }
+  
+  .route-col { display: flex; align-items: center; overflow: hidden; }
+  .route-col > span:last-child { overflow: hidden; text-overflow: ellipsis; }
+
+  .text-warn { color: #d97706; font-weight: 600; }
+  .text-err { color: #dc2626; font-weight: 700; }
+
   .message { color: #283444; }
   .logs-footer { padding: .75rem 1rem; border-top: 1px solid #d8dee7; }
   .drawer { position: fixed; top: 0; right: 0; width: min(620px, 94vw); height: 100vh; z-index: 60; background: #ffffff; border-left: 1px solid #cfd7e3; box-shadow: -20px 0 50px rgba(15,23,42,.18); padding: 1rem; overflow: auto; }
+  
   .drawer-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; border-bottom: 1px solid #d8dee7; padding-bottom: .75rem; }
   .drawer-head span { display: block; font-size: .75rem; color: #637083; margin-top: .25rem; }
+  
+  .drawer-title { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.25rem; }
+  .drawer-title strong { font-size: 1rem; color: #0f172a; font-family: ui-monospace, monospace; }
+  .drawer-body { display: flex; flex-direction: column; gap: 1.5rem; padding-top: 1rem; }
+  .drawer-body section h3 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; margin: 0 0 0.5rem 0; border-bottom: 1px solid #e2e8f0; padding-bottom: 0.25rem; }
+  
   dl { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: .45rem .75rem; font-size: .8rem; }
   dt { color: #637083; text-transform: uppercase; font-size: .65rem; }
   dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
-  pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #111827; color: #f8fafc; padding: .9rem; font-size: .72rem; }
+  
+  .action-btn { background: transparent; border: 1px dashed #cbd5e1; padding: 0.15rem 0.35rem; border-radius: 4px; color: #334155; cursor: pointer; transition: all 0.2s; text-align: left; }
+  .action-btn:hover { background: #f1f5f9; border-color: #94a3b8; color: #0f172a; }
+  
+  .message-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 0.75rem; font-size: 0.8rem; color: #334155; white-space: pre-wrap; word-break: break-word; }
+  
+  .fields-grid { display: flex; flex-direction: column; gap: 0.35rem; }
+  .field-item { display: grid; grid-template-columns: 140px 1fr; gap: 1rem; padding: 0.35rem 0.5rem; background: #f8fafc; border-radius: 4px; align-items: baseline; }
+  .field-key { font-size: 0.7rem; font-family: ui-monospace, monospace; color: #475569; font-weight: 600; }
+  .field-val { font-size: 0.8rem; color: #0f172a; word-break: break-all; }
+
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #111827; color: #f8fafc; padding: .9rem; font-size: .72rem; border-radius: 6px; }
+  
   @media (max-width: 1100px) {
     .filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .row { grid-template-columns: 80px 62px 1fr 64px; }
-    .row span:nth-child(3), .row span:nth-child(4), .row span:nth-child(6), .row-head button:nth-child(3), .row-head button:nth-child(4), .row-head button:nth-child(6) { display: none; }
+    .row { grid-template-columns: 80px 70px 1fr 60px; }
+    .row span:nth-child(5), .row span:nth-child(6), .row span:nth-child(7), .row-head button:nth-child(5), .row-head button:nth-child(6), .row-head button:nth-child(7) { display: none; }
   }
 </style>
