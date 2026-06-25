@@ -277,7 +277,7 @@
                     {/if}
 
                     <div class="text-center mt-6">
-                        <button onclick={close} type="button" class="text-xs font-['Inter'] text-[#5f4636]/90 hover:text-[#c65f3c] tracking-wide uppercase border-b border-transparent hover:border-[#c65f3c]/30 transition-all">
+                        <button onclick={close} type="button" class="inline-flex items-center justify-center min-h-[44px] px-4 text-xs font-['Inter'] text-[#5f4636]/90 hover:text-[#c65f3c] active:text-[#c65f3c] tracking-wide uppercase border-b border-transparent hover:border-[#c65f3c]/30 transition-all">
                             {$t('orderCancel')}
                         </button>
                     </div>

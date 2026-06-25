@@ -913,8 +913,35 @@
     }
   }
 
+  @media (pointer: coarse) {
+    /* iOS Safari auto-zooms on any input with font-size < 16px */
+    .filter-bar__search-input {
+      font-size: 16px;
+      letter-spacing: 0.04em;
+      text-transform: none;
+    }
+    /* Larger filter chip tap targets */
+    .fchip {
+      padding: 9px 12px;
+    }
+    .fchip--sm {
+      padding: 7px 10px;
+    }
+    /* Increase back-link hit area */
+    .filter-bar__back {
+      min-height: 44px;
+      align-items: center;
+    }
+  }
+
   .bg-noise {
     background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  }
+
+  /* Skip rendering offscreen cards — major FCP improvement on long lists */
+  :global(.perspective-container) {
+    content-visibility: auto;
+    contain-intrinsic-size: 0 380px;
   }
 
   /* ── FILTER BAR LAYOUT ─────────────────────────────────────────── */
@@ -1018,14 +1045,14 @@
 
   .filter-bar__search-clear {
     position: absolute;
-    right: 9px;
+    right: 4px;
     top: 50%;
     transform: translateY(-50%);
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 18px;
-    height: 18px;
+    width: 32px;
+    height: 32px;
     color: rgba(95,70,54,0.50);
     background: none;
     border: none;

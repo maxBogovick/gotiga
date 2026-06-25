@@ -463,4 +463,17 @@
     @media (max-width: 640px) {
         .grid { grid-template-columns: 1fr; }
     }
+
+    @media (pointer: coarse) {
+        .grain { animation: none; }
+        .book-btn { height: 44px; }
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            min-height: 44px;
+        }
+        /* Remove the hover gap-expand on touch — no hover event fires */
+        .book-btn:hover { gap: 12px; }
+        .book-btn:active { background: var(--mid); }
+    }
 </style>

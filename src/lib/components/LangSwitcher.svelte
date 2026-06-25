@@ -4,7 +4,7 @@
   // optional: a variant for the dark top-bar vs a light page context
   let { variant = 'light' }: { variant?: 'dark' | 'light' } = $props();
 
-  const baseClass = 'text-[10px] tracking-[0.15em] uppercase transition-colors duration-200 px-1.5 py-0.5';
+  const baseClass = 'text-[10px] tracking-[0.15em] uppercase transition-colors duration-200 px-2 min-h-[44px] inline-flex items-center justify-center';
   const activeClass = $derived(variant === 'dark' ? 'text-[#fff9f0]' : 'text-[#34251c]');
   const inactiveClass = $derived(variant === 'dark' ? 'text-[#fff9f0]/65 hover:text-[#fff9f0]/90' : 'text-[#7c6554]/72 hover:text-[#5f4636]');
   const sepClass = $derived(variant === 'dark' ? 'text-[#fff9f0]/40' : 'text-[#7c6554]/48');

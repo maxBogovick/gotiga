@@ -1013,17 +1013,30 @@ impl Repository {
 
     // === CONTENT (Postgres) ===
 
-    pub async fn get_all_figurines(&self, visible_only: bool) -> Result<Vec<Figurine>> {
-        let figurines = if visible_only {
-            sqlx::query_as::<_, Figurine>(
+    pub async fn get_all_figurines(&self, visible_only: bool, limit: Option<i64>) -> Result<Vec<Figurine>> {
+        let figurines = match (visible_only, limit) {
+            (true, Some(n)) => sqlx::query_as::<_, Figurine>(
+                "SELECT * FROM figurines WHERE is_visible = true ORDER BY sort_order LIMIT $1",
+            )
+            .bind(n)
+            .fetch_all(&self.pg_pool)
+            .await?,
+            (true, None) => sqlx::query_as::<_, Figurine>(
                 "SELECT * FROM figurines WHERE is_visible = true ORDER BY sort_order",
             )
             .fetch_all(&self.pg_pool)
-            .await?
-        } else {
-            sqlx::query_as::<_, Figurine>("SELECT * FROM figurines ORDER BY sort_order")
-                .fetch_all(&self.pg_pool)
-                .await?
+            .await?,
+            (false, Some(n)) => sqlx::query_as::<_, Figurine>(
+                "SELECT * FROM figurines ORDER BY sort_order LIMIT $1",
+            )
+            .bind(n)
+            .fetch_all(&self.pg_pool)
+            .await?,
+            (false, None) => sqlx::query_as::<_, Figurine>(
+                "SELECT * FROM figurines ORDER BY sort_order",
+            )
+            .fetch_all(&self.pg_pool)
+            .await?,
         };
         Ok(figurines)
     }

@@ -226,7 +226,20 @@ pub async fn request_observability_middleware(
         .map(|p| p.as_str().to_string())
         .unwrap_or_else(|| normalize_route(request.uri().path()));
 
-    let ip = addr.ip().to_string();
+    let ip = request
+        .headers()
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .map(|s| s.trim().to_string())
+        .or_else(|| {
+            request
+                .headers()
+                .get("x-real-ip")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.trim().to_string())
+        })
+        .unwrap_or_else(|| addr.ip().to_string());
     let user_agent = request
         .headers()
         .get(header::USER_AGENT)

@@ -184,11 +184,14 @@
     if (filters.target.trim() && item.target !== filters.target.trim()) return false;
     if (filters.requestId.trim() && item.requestId !== filters.requestId.trim()) return false;
     const status = numberFilter(filters.status);
-    const statusClass = numberFilter(filters.statusClass);
     const minLatencyMs = numberFilter(filters.minLatencyMs);
     const maxLatencyMs = numberFilter(filters.maxLatencyMs);
     if (status != null && item.status !== status) return false;
-    if (statusClass != null && Math.floor((item.status ?? 0) / 100) * 100 !== statusClass) return false;
+    if (filters.statusClass && item.status) {
+      let val = Number(filters.statusClass);
+      let klass = val >= 1 && val <= 5 ? val : Math.floor(val / 100);
+      if (Math.floor(item.status / 100) !== klass) return false;
+    }
     if (minLatencyMs != null && (item.latencyMs ?? -1) < minLatencyMs) return false;
     if (maxLatencyMs != null && (item.latencyMs ?? Number.MAX_SAFE_INTEGER) > maxLatencyMs) return false;
     const q = filters.q.trim().toLowerCase();

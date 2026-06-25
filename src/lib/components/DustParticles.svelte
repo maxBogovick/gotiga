@@ -8,6 +8,9 @@
   let animationFrameId: number;
   let particles: Particle[] = [];
   let mouse = { x: -1000, y: -1000 };
+  let lastFrameTime = 0;
+  const TARGET_FPS = 15;
+  const FRAME_INTERVAL = 1000 / TARGET_FPS;
 
   const PARTICLE_COUNT = 80;
   const CONNECTION_DISTANCE = 100;
@@ -94,19 +97,18 @@
     }
   }
 
-  function animate() {
+  function animate(timestamp: number) {
     if (!ctx || !canvas) return;
+    animationFrameId = requestAnimationFrame(animate);
+
+    if (timestamp - lastFrameTime < FRAME_INTERVAL) return;
+    lastFrameTime = timestamp;
+
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
     for (let i = 0; i < particles.length; i++) {
       particles[i].update(canvas.width, canvas.height);
       particles[i].draw(ctx);
     }
-    
-    // Optional: Draw subtle connections for "web" feel, but very faint
-    // Keeping it simple "dust" for now is better for performance and atmosphere.
-    
-    animationFrameId = requestAnimationFrame(animate);
   }
 
   function handleResize() {
@@ -133,8 +135,18 @@
       mouse.y = -1000;
   }
 
+  function handleVisibilityChange() {
+    if (document.hidden) {
+      cancelAnimationFrame(animationFrameId);
+    } else {
+      animationFrameId = requestAnimationFrame(animate);
+    }
+  }
+
   onMount(() => {
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (window.matchMedia('(pointer: coarse)').matches) return;
+    if (window.innerWidth < 768) return;
 
     ctx = canvas.getContext('2d');
     canvas.width = window.innerWidth;
@@ -144,24 +156,26 @@
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('touchmove', handleTouchMove, { passive: true });
     window.addEventListener('touchend', handleTouchEnd);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     init();
-    animate();
+    animationFrameId = requestAnimationFrame(animate);
   });
 
   onDestroy(() => {
     if (typeof window !== 'undefined') {
-        window.removeEventListener('resize', handleResize);
-        window.removeEventListener('mousemove', handleMouseMove);
-        window.removeEventListener('touchmove', handleTouchMove);
-        window.removeEventListener('touchend', handleTouchEnd);
-        cancelAnimationFrame(animationFrameId);
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('touchmove', handleTouchMove);
+      window.removeEventListener('touchend', handleTouchEnd);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      cancelAnimationFrame(animationFrameId);
     }
   });
 </script>
 
 <canvas
   bind:this={canvas}
-  class="fixed inset-0 pointer-events-none z-50 mix-blend-screen"
+  class="fixed inset-0 pointer-events-none z-50 hidden md:block"
   style="opacity: {opacity}"
 ></canvas>

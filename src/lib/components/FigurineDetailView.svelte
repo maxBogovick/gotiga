@@ -1379,7 +1379,7 @@
                   </div>
                 {:else}
                   {#key currentImage?.id}
-                    <div class="image-layer" in:fade={{ duration: 220 }}>
+                    <div class="image-layer" transition:fade={{ duration: 220 }}>
                       <BrassLens
                         src={resolveUrl(currentImage?.url)}
                         alt={currentImage?.altText ?? figurine.name}
@@ -1388,6 +1388,8 @@
                         objectPosition="center center"
                         lensEnabled={isLensEnabled}
                         onOpenLightbox={() => canOpenLightbox && openLightbox(activeImageIndex)}
+                        onSwipeLeft={() => sortedImages.length > 1 && selectImage(activeImageIndex + 1)}
+                        onSwipeRight={() => sortedImages.length > 1 && selectImage(activeImageIndex - 1)}
                       />
                     </div>
                   {/key}

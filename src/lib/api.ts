@@ -306,9 +306,10 @@ export const api = {
     },
 
     // === READ (public) ===
-    async getAllFigurines(): Promise<FigurineListItem[]> {
+    async getAllFigurines(limit?: number): Promise<FigurineListItem[]> {
         if (isTauri) return invoke('get_all_figurines');
-        return webFetch('/figurines?visible=true');
+        const url = limit != null ? `/figurines?visible=true&limit=${limit}` : '/figurines?visible=true';
+        return webFetch(url);
     },
 
     async getInProgressFigurines(): Promise<FigurineListItem[]> {

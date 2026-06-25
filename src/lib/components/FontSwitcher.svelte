@@ -277,4 +277,16 @@
       right: -8px;
     }
   }
+
+  @media (pointer: coarse) {
+    .aa-trigger {
+      min-height: 44px;
+      min-width: 44px;
+      padding: 0 8px;
+      align-items: center;
+    }
+    .menu-item {
+      padding: 12px 14px;
+    }
+  }
 </style>

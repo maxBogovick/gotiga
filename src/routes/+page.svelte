@@ -4,7 +4,7 @@
     import { page } from '$app/state';
     import { fade, fly } from 'svelte/transition';
     import { cubicOut } from 'svelte/easing';
-    import { spring } from 'svelte/motion';
+    import { spring, type Spring } from 'svelte/motion';
     import { api } from '$lib/api';
     import type { CabinetZone, FigurineListItem, HomeContent, WorkshopFeature } from '$lib/types/api';
     import { t, brandName, lang } from '$lib/i18n';
@@ -12,6 +12,8 @@
     import HomeFigurineTile from '$lib/components/HomeFigurineTile.svelte';
     import HouseNoticeBoard from '$lib/components/HouseNoticeBoard.svelte';
     import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
+    import { houseClock } from '$lib/stores/house-clock.svelte';
+    import { showingRooms } from '$lib/stores/showing-rooms.svelte';
     import { SITE_URL } from '$lib/site';
 
     let { data } = $props();
@@ -45,7 +47,6 @@
 
     let zones = $state<CabinetZone[]>([]);
     let isLoaded = $state(false);
-    let imageLoaded = $state(false);
     let hoveredZone = $state<CabinetZone | null>(null);
     let isNavigating = $state(false);
     let availableFigurines = $state<FigurineListItem[]>([]);
@@ -100,7 +101,10 @@
     let wfLink2Label = $derived(wfLoc($lang, workshopFeature.link2LabelEn, workshopFeature.link2LabelRu) || $t('navAuthor'));
     let wfLink2Href = $derived(workshopFeature.link2Href?.trim() || '/author');
 
-    const parallaxSpring = spring({ x: 0, y: 0 }, { stiffness: 0.04, damping: 0.45 });
+    let parallaxX = $state(0);
+    let parallaxY = $state(0);
+    let _tiltSpring: Spring<{ x: number; y: number }> | null = null;
+    let _tiltUnsub: (() => void) | null = null;
 
     type HeroMode = 'showcase' | 'release';
     type WorkFilter = 'available' | 'saved' | 'upcoming' | 'archive';
@@ -257,7 +261,7 @@
             const [dbZones, bgPath, figurines, inProgress, content, workshop] = await Promise.all([
                 api.getCabinetZones().catch(() => DEFAULT_ZONES),
                 api.getMainBackground().catch(() => null),
-                api.getAllFigurines().catch(() => [] as FigurineListItem[]),
+                api.getAllFigurines(30).catch(() => [] as FigurineListItem[]),
                 api.getInProgressFigurines().catch(() => [] as FigurineListItem[]),
                 api.getHomeContent().catch(() => ({
                     title: null,
@@ -274,7 +278,6 @@
             if (bgPath) imageUrl = bgPath;
             homeContent = content;
             if (workshop) workshopFeature = workshop;
-            await preloadImage(imageUrl);
             zones = dbZones && dbZones.length > 0 ? dbZones : DEFAULT_ZONES;
             const visibleFigurines = figurines.filter(f => f.status !== 'in_progress');
             collectionFigurines = sortFeaturedFigurines(visibleFigurines);
@@ -298,21 +301,12 @@
         }
     }
 
-    function preloadImage(url: string): Promise<void> {
-        return new Promise((resolve) => {
-            const img = new Image();
-            img.onload = () => { imageLoaded = true; resolve(); };
-            img.onerror = () => { imageLoaded = true; resolve(); };
-            img.src = url;
-        });
-    }
-
     function handleMouseMove(e: MouseEvent) {
         if (!canUseHeroTilt) return;
         const { innerWidth, innerHeight } = window;
         mouseX = e.clientX / innerWidth;
         mouseY = e.clientY / innerHeight;
-        parallaxSpring.set({ x: (mouseX - 0.5) * 2, y: (mouseY - 0.5) * 2 });
+        _tiltSpring?.set({ x: (mouseX - 0.5) * 2, y: (mouseY - 0.5) * 2 });
     }
 
     async function handleZoneInteraction(zone: CabinetZone) {
@@ -326,15 +320,22 @@
 
     onMount(() => {
         savedFigurines.load();
+        houseClock.start();
+        showingRooms.load();
         init();
         const reduceMq = window.matchMedia('(prefers-reduced-motion: reduce)');
         const pointerMq = window.matchMedia('(pointer: fine)');
         const syncTiltPreference = () => {
             canUseHeroTilt = pointerMq.matches && !reduceMq.matches;
-            if (!canUseHeroTilt) {
+            if (canUseHeroTilt && !_tiltSpring) {
+                _tiltSpring = spring({ x: 0, y: 0 }, { stiffness: 0.04, damping: 0.45 });
+                _tiltUnsub = _tiltSpring.subscribe(v => { parallaxX = v.x; parallaxY = v.y; });
+            } else if (!canUseHeroTilt) {
                 mouseX = 0.5;
                 mouseY = 0.5;
-                parallaxSpring.set({ x: 0, y: 0 });
+                _tiltSpring?.set({ x: 0, y: 0 });
+                parallaxX = 0;
+                parallaxY = 0;
             }
         };
         syncTiltPreference();
@@ -345,6 +346,7 @@
             clearTimeout(hintTimer);
             reduceMq.removeEventListener('change', syncTiltPreference);
             pointerMq.removeEventListener('change', syncTiltPreference);
+            _tiltUnsub?.();
         };
     });
 </script>
@@ -370,11 +372,10 @@
 <svelte:window onmousemove={handleMouseMove} />
 
 <div class="root">
-    <div class="cursor-glow" style="left:{mouseX*100}%;top:{mouseY*100}%"></div>
+    <div class="cursor-glow" style="transform:translate(calc({mouseX*100}vw - 250px),calc({mouseY*100}vh - 250px))"></div>
     <div class="grain" aria-hidden="true"></div>
 
-    {#if imageLoaded}
-    <main in:fade={{ duration: 1600, delay: 100 }}>
+    <main in:fade={{ duration: 700, delay: 40 }}>
 
         <!-- HERO -->
         <section class="hero" aria-labelledby="home-title">
@@ -438,12 +439,13 @@
                     style="
                         transform:
                             perspective(2200px)
-                            rotateY({canUseHeroTilt ? $parallaxSpring.x * -1.2 : 0}deg)
-                            rotateX({canUseHeroTilt ? $parallaxSpring.y * 1.2 : 0}deg)
+                            rotateY({canUseHeroTilt ? parallaxX * -1.2 : 0}deg)
+                            rotateX({canUseHeroTilt ? parallaxY * 1.2 : 0}deg)
                             scale(1.02);
                     "
                 >
-                    <img src={imageUrl} alt="Gothic Cabinet Interior" class="hero-img" draggable="false" />
+                    <img src={imageUrl} alt="Gothic Cabinet Interior" class="hero-img"
+                         fetchpriority="high" decoding="async" draggable="false" />
                     <div class="img-vignette"></div>
                     <div class="img-grade"></div>
                     <div class="img-noise"></div>
@@ -670,7 +672,6 @@
         {/if}
 
     </main>
-    {/if}
 </div>
 
 {#snippet zoneBtn(zone: CabinetZone, index: number)}
@@ -748,15 +749,15 @@
     /* ── CURSOR GLOW ─────────────────────────────── */
     .cursor-glow {
         position: fixed;
+        top: 0; left: 0;
         width: 500px;
         height: 500px;
         border-radius: 50%;
         background: radial-gradient(circle, rgba(198,95,60,0.07) 0%, transparent 70%);
-        transform: translate(-50%, -50%);
         pointer-events: none;
         z-index: 0;
-        transition: left 0.8s ease, top 0.8s ease;
-        will-change: left, top;
+        transition: transform 0.8s ease;
+        will-change: transform;
     }
 
     /* ── GRAIN ───────────────────────────────────── */
@@ -1467,6 +1468,11 @@
         gap: clamp(10px, 1.2vw, 16px);
     }
 
+    .work-grid > :global(*) {
+        content-visibility: auto;
+        contain-intrinsic-size: 0 360px;
+    }
+
     .work-grid-short {
         grid-template-columns: repeat(auto-fit, minmax(250px, 320px));
     }
@@ -2074,6 +2080,18 @@
         .cta-primary,
         .cta-ghost {
             transform: none !important;
+        }
+    }
+
+    @media (pointer: coarse) {
+        /* Suppress compositing-heavy animations on touch devices */
+        .grain { animation: none; }
+        .fog-a, .fog-b { animation: none; }
+        .zone-pulse { animation: none; }
+        /* No 3D tilt on mobile — don't pay for the compositing layer */
+        .img-frame {
+            transform-style: flat;
+            will-change: auto;
         }
     }
 

@@ -441,8 +441,8 @@ impl AppService {
         }
     }
 
-    pub async fn list_figurines(&self, visible_only: bool) -> Result<Vec<FigurineListItemDto>> {
-        let figurines = self.repo.get_all_figurines(visible_only).await?;
+    pub async fn list_figurines(&self, visible_only: bool, limit: Option<i64>) -> Result<Vec<FigurineListItemDto>> {
+        let figurines = self.repo.get_all_figurines(visible_only, limit).await?;
         let ids: Vec<Uuid> = figurines.iter().map(|f| f.id).collect();
         let faces = self.repo.get_face_images_for_figurines(&ids).await?;
         Ok(figurines
@@ -455,7 +455,7 @@ impl AppService {
     }
 
     pub async fn list_in_progress_figurines(&self) -> Result<Vec<FigurineListItemDto>> {
-        let all = self.repo.get_all_figurines(true).await?;
+        let all = self.repo.get_all_figurines(true, None).await?;
         let figurines: Vec<Figurine> = all
             .into_iter()
             .filter(|f| f.status == crate::models::FigurineStatus::InProgress)

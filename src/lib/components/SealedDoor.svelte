@@ -400,4 +400,10 @@
       animation: none;
     }
   }
+
+  @media (pointer: coarse) {
+    .glow-near .door-glow {
+      animation: none;
+    }
+  }
 </style>

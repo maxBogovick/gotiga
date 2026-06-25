@@ -1433,6 +1433,28 @@ html.gt-backward::view-transition-new(root) {
   }
 }
 
+/* Mobile (coarse pointer): 3D perspective on ::view-transition-image-pair is
+   unreliable on iOS Safari. Replace the book-page rotation with a simple
+   directional cross-fade so the animation always looks correct on touch devices. */
+@media (pointer: coarse) {
+  html.gt-page-turn::view-transition-image-pair(root) {
+    perspective: none;
+    transform-style: flat;
+  }
+
+  html.gt-forward::view-transition-old(root),
+  html.gt-backward::view-transition-old(root) {
+    transform-origin: center center;
+    animation: vt-out 380ms var(--ease-atelier) both;
+  }
+
+  html.gt-forward::view-transition-new(root),
+  html.gt-backward::view-transition-new(root) {
+    transform-origin: center center;
+    animation: vt-in 420ms var(--ease-atelier) 60ms both;
+  }
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    REDUCED MOTION
    ═══════════════════════════════════════════════════════════════════════════ */

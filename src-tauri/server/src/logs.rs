@@ -312,15 +312,16 @@ async fn writer_task(
         tokio::select! {
             item = receiver.recv() => {
                 let Some(item) = item else { break; };
+                if batch.is_empty() {
+                    flush_at = Instant::now() + BATCH_MAX_WAIT;
+                }
                 batch.push(item);
                 if batch.len() >= BATCH_MAX {
                     flush_batch(&pool, &broadcaster, &dropped, &mut batch).await;
-                    flush_at = Instant::now() + BATCH_MAX_WAIT;
                 }
             }
             _ = tokio::time::sleep_until(flush_at), if !batch.is_empty() => {
                 flush_batch(&pool, &broadcaster, &dropped, &mut batch).await;
-                flush_at = Instant::now() + BATCH_MAX_WAIT;
             }
         }
     }
@@ -461,13 +462,16 @@ struct EventVisitor {
 impl EventVisitor {
     fn take_string(&mut self, key: &str, max: usize) -> Option<String> {
         self.fields
-            .get(key)
-            .and_then(|v| v.as_str())
-            .map(|s| truncate(s, max))
+            .remove(key)
+            .and_then(|v| match v {
+                serde_json::Value::String(s) => Some(s),
+                _ => None,
+            })
+            .map(|s| truncate(&s, max))
     }
 
     fn take_i64(&mut self, key: &str) -> Option<i64> {
-        self.fields.get(key).and_then(|v| {
+        self.fields.remove(key).and_then(|v| {
             v.as_i64()
                 .or_else(|| v.as_u64().and_then(|n| i64::try_from(n).ok()))
                 .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))

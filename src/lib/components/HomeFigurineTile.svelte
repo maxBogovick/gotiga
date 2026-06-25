@@ -1,5 +1,6 @@
 <script lang="ts">
     import { onMount } from 'svelte';
+    import { goto } from '$app/navigation';
     import type { FigurineListItem } from '$lib/types/api';
     import { t } from '$lib/i18n';
     import AppImage from '$lib/components/AppImage.svelte';
@@ -146,6 +147,12 @@
         e.stopPropagation();
         showOrder = true;
     }
+
+    function openSimilarCommission(e: MouseEvent) {
+        e.preventDefault();
+        e.stopPropagation();
+        goto(`/commission?source=${encodeURIComponent(fig.id)}`);
+    }
 </script>
 
 <article
@@ -279,10 +286,18 @@
             {#if doorClosed}
                 <span class="tile-door-hint">{$t('doorSealedHint')}</span>
             {:else if action.kind === 'request'}
-                <button class="tile-cta tile-cta-primary" type="button" onclick={openOrder}>
-                    {action.label}
-                    <svg width="14" height="7" viewBox="0 0 14 7" fill="none" aria-hidden="true">
-                        <path d="M0 3.5H13M13 3.5L9.5 1M13 3.5L9.5 6" stroke="currentColor" stroke-width="1"/>
+                <button class="tile-cta tile-cta-similar" type="button" onclick={openSimilarCommission} title={$t('commissionCreateSimilarCta')} aria-label={$t('commissionCreateSimilarCta')}>
+                    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <!-- scroll body -->
+                        <path d="M5 2h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H5"/>
+                        <!-- left rolled edge: three bumps -->
+                        <path d="M5 2a2 2 0 0 0 0 4"/>
+                        <path d="M5 6a2 2 0 0 1 0 4"/>
+                        <path d="M5 10a2 2 0 0 0 0 4"/>
+                        <!-- text lines -->
+                        <line x1="8" y1="5.5" x2="12" y2="5.5"/>
+                        <line x1="8" y1="8" x2="12" y2="8"/>
+                        <line x1="8" y1="10.5" x2="10.5" y2="10.5"/>
                     </svg>
                 </button>
             {:else}
@@ -759,21 +774,90 @@
     }
 
     .tile-cta svg { transition: transform 0.2s ease; }
-    .tile-cta:hover svg { transform: translateX(2px); }
+    .tile-cta-ghost:hover svg { transform: translateX(2px); }
 
-    .tile-cta-primary {
-        border: 1px solid rgba(198,95,60,0.32);
-        background:
-            linear-gradient(180deg, rgba(255,246,239,0.92), rgba(255,238,228,0.78));
-        color: var(--copper, #c65f3c);
+    /*
+     * @property lets the browser interpolate --glow as a <number>,
+     * making the radial gradient in ::after actually transition.
+     * Without this, gradients with var() can't be animated.
+     */
+    @property --glow {
+        syntax: '<number>';
+        inherits: false;
+        initial-value: 0;
     }
 
-    .tile-cta-primary:hover {
-        transform: translateY(-1px);
-        border-color: rgba(198,95,60,0.55);
-        background: linear-gradient(180deg, rgba(198,95,60,0.96), rgba(111,59,36,0.96));
-        color: #fff7ea;
-        box-shadow: 0 6px 16px rgba(111,59,36,0.22);
+    .tile-cta-similar {
+        --glow: 0;
+        width: 34px;
+        padding: 0;
+        position: relative;
+        isolation: isolate;
+        border-radius: 4px;
+        /* oklch: perceptual color space — hue stays true as lightness shifts */
+        border: 1.5px solid oklch(38% 0.06 42 / 0.32);
+        background:
+            radial-gradient(ellipse 110% 55% at 50% 0%,
+                oklch(100% 0 0 / 0.24) 0%,
+                transparent 100%),
+            oklch(94% 0.02 78 / 0.82);
+        color: oklch(30% 0.055 42);
+        /* frosted glass — floats above the card grain texture */
+        backdrop-filter: blur(4px) saturate(1.3);
+        box-shadow:
+            inset 0 1px 0 oklch(100% 0 0 / 0.42),
+            inset 0 -1px 0 oklch(30% 0.055 42 / 0.1);
+        transition:
+            border-color 0.28s,
+            color 0.28s,
+            background 0.28s,
+            box-shadow 0.28s,
+            /* @property enables smooth number interpolation */
+            --glow 0.38s,
+            /* linear() spring — physical bounce without JS */
+            transform 0.55s linear(
+                0, 0.43 4.7%, 0.74 9.4%, 0.86 12.1%,
+                0.96 14.9%, 1.01 17.7%, 1.04 20.6%,
+                1.05 23.5%, 1.04 26.5%, 1.01 30.6%,
+                0.98 35.3%, 0.99 42.3%, 1 53%
+            );
+    }
+
+    /* ember halo: only renderable because --glow is a typed <number> */
+    .tile-cta-similar::after {
+        content: '';
+        position: absolute;
+        inset: -5px;
+        border-radius: 8px;
+        background: radial-gradient(ellipse at 50% 60%,
+            oklch(68% 0.23 48 / calc(var(--glow) * 0.5)),
+            transparent 68%);
+        z-index: -1;
+        pointer-events: none;
+    }
+
+    .tile-cta-similar:hover {
+        --glow: 1;
+        border-color: oklch(58% 0.24 50 / 0.8);
+        color: oklch(36% 0.22 42);
+        background:
+            radial-gradient(ellipse 110% 55% at 50% 0%,
+                oklch(100% 0 0 / 0.14) 0%,
+                transparent 100%),
+            oklch(87% 0.1 55 / 0.38);
+        box-shadow:
+            inset 0 1px 0 oklch(100% 0 0 / 0.26),
+            inset 0 -1px 0 oklch(36% 0.22 42 / 0.14),
+            0 0 0 2px oklch(65% 0.23 48 / 0.22);
+        transform: scale(1.12);
+    }
+
+    /* CSS entry animation — no JS, no library */
+    @starting-style {
+        .tile-cta-similar {
+            opacity: 0;
+            transform: scale(0.72);
+        }
     }
 
     .tile-cta-ghost {
@@ -811,7 +895,7 @@
 
     @media (max-width: 680px) {
         /* on touch, tools and CTA should always be reachable */
-        .tile-tool { opacity: 1; transform: none; }
+        .tile-tool { opacity: 1; transform: none; backdrop-filter: none; }
 
         .tile-actions {
             align-items: stretch;

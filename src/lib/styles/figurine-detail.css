@@ -3156,6 +3156,69 @@
   }
 }
 
+/* ── Touch-device overrides ──────────────────────────────────────────── */
+@media (pointer: coarse) {
+  /* Expand gallery action buttons to 44px hit target */
+  .gallery-heart,
+  .gallery-lens {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+  /* Recalculate lens position after size increase (0.75 + 2.75 + 0.35 gap) */
+  .gallery-lens {
+    bottom: 3.85rem;
+  }
+
+  /* Always show image controls — no hover needed on touch */
+  .image-view-tools {
+    opacity: 1;
+  }
+  .image-view-tool {
+    min-height: 2.2rem;
+    padding: 0 0.65rem;
+  }
+  .expand-btn {
+    opacity: 0.82;
+  }
+
+  /* Story modal close button */
+  .story-close {
+    width: 2.75rem;
+    height: 2.75rem;
+    top: 0.2rem;
+    right: 0.2rem;
+  }
+
+  /* Mobile CTA button minimum height */
+  .mobile-cta-btn,
+  .mobile-cta-link {
+    min-height: 2.75rem;
+  }
+
+  /* Topnav dot: expand hit area with transparent padding */
+  .topnav-dot {
+    padding: 0.55rem;
+    margin: -0.55rem;
+  }
+
+  /* Reduce expensive backdrop blurs — they fire on every scroll frame */
+  .mobile-cta {
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+  .topnav--scrolled::before {
+    backdrop-filter: blur(8px) saturate(1.1);
+    -webkit-backdrop-filter: blur(8px) saturate(1.1);
+  }
+  .img-counter,
+  .expand-btn,
+  .gallery-heart,
+  .gallery-lens,
+  .image-view-tools {
+    backdrop-filter: blur(3px);
+  }
+}
+
 .control-btn:focus-visible,
 .fig-nav-pill:focus-visible,
 .topnav-mini-img:focus-visible,

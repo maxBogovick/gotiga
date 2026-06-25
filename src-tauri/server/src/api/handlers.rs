@@ -286,6 +286,7 @@ pub async fn admin_get_figurine_analytics(
 #[derive(serde::Deserialize)]
 pub struct ListParams {
     visible: Option<bool>,
+    limit: Option<i64>,
 }
 
 pub async fn list_figurines(
@@ -293,7 +294,7 @@ pub async fn list_figurines(
     Query(params): Query<ListParams>,
 ) -> Result<Json<Vec<FigurineListItemDto>>> {
     let visible_only = params.visible.unwrap_or(true);
-    let list = service.list_figurines(visible_only).await?;
+    let list = service.list_figurines(visible_only, params.limit).await?;
     Ok(Json(list))
 }
 
@@ -1149,7 +1150,7 @@ pub async fn sitemap_xml(
         .unwrap_or("https");
     let base = format!("{proto}://{host}");
 
-    let figurines = service.list_figurines(true).await?;
+    let figurines = service.list_figurines(true, None).await?;
 
     let mut urls = String::new();
     for path in ["/", "/figurines", "/author", "/workshop", "/upcoming"] {

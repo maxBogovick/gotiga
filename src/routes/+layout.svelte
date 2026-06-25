@@ -54,6 +54,12 @@
   }
 
   onMount(() => {
+    if ('serviceWorker' in navigator && import.meta.env.VITE_BUILD_TARGET === 'web') {
+      import('virtual:pwa-register').then(({ registerSW }) => {
+        registerSW({ immediate: false });
+      }).catch(() => {});
+    }
+
     // Load theme and copy overrides
     Promise.all([
       api.getThemeConfig().catch(() => null),

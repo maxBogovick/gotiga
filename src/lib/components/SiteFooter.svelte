@@ -260,7 +260,7 @@
     display: flex;
     align-items: baseline;
     gap: 12px;
-    padding: 11px 0;
+    padding: 13px 0;
     border-bottom: 1px solid rgba(216,198,177,0.10);
     text-decoration: none;
     color: #d8c6b1;
@@ -406,9 +406,19 @@
     .colophon-dot { display: none; }
   }
 
+  .contact-row:active {
+    border-color: rgba(198,95,60,0.55);
+    background: rgba(198,95,60,0.07);
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .contact-row,
     .contact-row:hover,
     .nav-arrow { transition: none; transform: none; }
+  }
+
+  @media (pointer: coarse) {
+    .contact-row:hover { transform: none; }
+    .contact-row:hover .contact-icon { transform: none; }
   }
 </style>

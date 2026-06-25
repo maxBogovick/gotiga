@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { fade } from 'svelte/transition';
 
   let {
@@ -10,6 +10,8 @@
     objectPosition = 'center 20%',
     lensEnabled = false,
     onOpenLightbox = () => {},
+    onSwipeLeft = () => {},
+    onSwipeRight = () => {},
   }: {
     src?: string | null;
     alt?: string;
@@ -18,6 +20,8 @@
     objectPosition?: string;
     lensEnabled?: boolean;
     onOpenLightbox?: () => void;
+    onSwipeLeft?: () => void;
+    onSwipeRight?: () => void;
   } = $props();
 
   let container: HTMLDivElement;
@@ -54,14 +58,17 @@
   let scale       = $state(1);
   let panX        = $state(0);
   let panY        = $state(0);
-  let isPanning   = false;
-  let pinchStartD = 0;
-  let pinchStartS = 1;
-  let panStartX   = 0, panStartY = 0;
-  let panOriginX  = 0, panOriginY = 0;
-  let lastTap     = 0;
-  let tapTimer:   ReturnType<typeof setTimeout>;
+  let isPanning    = false;
+  let pinchStartD  = 0;
+  let pinchStartS  = 1;
+  let panStartX    = 0, panStartY = 0;
+  let panOriginX   = 0, panOriginY = 0;
+  let swipeStartX  = 0, swipeStartY = 0;
+  let lastTap      = 0;
+  let tapTimer:    ReturnType<typeof setTimeout>;
   let transitioning = $state(false);
+
+  onDestroy(() => { clearTimeout(tapTimer); });
 
   function dist(t: TouchList) {
     return Math.hypot(t[1].clientX - t[0].clientX, t[1].clientY - t[0].clientY);
@@ -93,6 +100,9 @@
       pinchStartS = scale;
       isPanning = false;
     } else if (e.touches.length === 1) {
+      swipeStartX = e.touches[0].clientX;
+      swipeStartY = e.touches[0].clientY;
+
       if (scale > 1.05) {
         // Pan mode
         isPanning = true;
@@ -148,8 +158,22 @@
     if (isPointerFine) return;
     if (e.touches.length === 0) {
       isPanning = false;
-      // Snap back if scale < 1.1
       if (scale < 1.1) resetZoom(true);
+
+      // Detect horizontal swipe for gallery navigation (when not zoomed in).
+      if (scale <= 1.05 && e.changedTouches.length > 0) {
+        const dx = e.changedTouches[0].clientX - swipeStartX;
+        const dy = e.changedTouches[0].clientY - swipeStartY;
+        const absX = Math.abs(dx);
+        const absY = Math.abs(dy);
+        // Require at least 48px horizontal movement and mostly horizontal direction.
+        if (absX >= 48 && absX > absY * 1.4) {
+          clearTimeout(tapTimer);
+          if (dx < 0) onSwipeLeft();
+          else onSwipeRight();
+          return;
+        }
+      }
     }
   }
 </script>

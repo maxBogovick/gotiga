@@ -111,15 +111,18 @@
 
 <header class="site-header">
   <a href="/" class="brand" aria-label={$brandName}>
-    <img
-      src="/images/raven-emblem.png"
-      alt=""
-      class="brand-emblem"
-      width="40"
-      height="40"
-      decoding="async"
-      fetchpriority="high"
-    />
+    <picture>
+      <source srcset="/images/raven-emblem.webp" type="image/webp" />
+      <img
+        src="/images/raven-emblem.png"
+        alt=""
+        class="brand-emblem"
+        width="40"
+        height="40"
+        decoding="async"
+        fetchpriority="high"
+      />
+    </picture>
     <span class="brand-text">
       <span class="brand-name">{$brandName}</span>
       <span class="brand-sub">Cabinet of Gothic Miniatures</span>
@@ -284,6 +287,7 @@
       {/if}
     </div>
 
+<!--
     <a href="/admin" class="key-link" aria-label={$t('navAdmin')} title={$t('navAdmin')}>
       <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true">
         <circle cx="4.5" cy="4.5" r="2.7" stroke="currentColor" stroke-width="1"/>
@@ -292,6 +296,7 @@
         <path d="M10.6 10.6L12 9.2" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
       </svg>
     </a>
+    -->
   </div>
 </header>
 
@@ -413,8 +418,8 @@
 
   .mobile-menu-btn {
     display: none;
-    width: 34px;
-    height: 34px;
+    width: 44px;
+    height: 44px;
     margin-left: auto;
     align-items: center;
     justify-content: center;
@@ -886,7 +891,7 @@
     }
 
     .nav-link {
-      height: 42px;
+      height: 44px;
       padding: 0;
       border-bottom: 1px solid color-mix(in srgb, var(--color-ink-primary) 8%, transparent);
     }
@@ -907,6 +912,20 @@
       right: -16px;
       width: calc(100vw - 32px);
       max-width: 300px;
+    }
+
+    /* Expand icon-only buttons to 44px hit area */
+    .bookings-btn,
+    .user-btn,
+    .key-link {
+      width: 44px;
+      height: 44px;
+    }
+
+    /* Reduce header backdrop cost on mobile */
+    .site-header {
+      backdrop-filter: blur(10px) saturate(1.1);
+      -webkit-backdrop-filter: blur(10px) saturate(1.1);
     }
   }
 
@@ -993,7 +1012,8 @@
     cursor: pointer;
     font-size: 10px;
     color: rgba(95,70,54,0.35);
-    padding: 0;
+    padding: 8px;
+    margin: -8px;
     line-height: 1;
     transition: color 0.15s;
   }
