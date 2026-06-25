@@ -70,30 +70,9 @@
     return d.toISOString().split('T')[0];
   });
 
-  let canRequestWork = $derived(status === 'available');
-  let canReserve = $derived(status === 'available');
-  let canWaitlist = $derived(status === 'reserved');
-  // Exhibition-loan ("viewing" with dates) is retired from the public flow — it is the
-  // returnable model (ship out → return, risk of loss/breakage) the showcase no longer offers.
-  // The booking code is kept for a possible museum/gallery channel later. See plan.
-  let canViewing = $derived(false);
-  let canNotify = $derived(status === 'in_progress' || status === 'sold');
-
-  let intentOptions = $derived.by(() => {
-    const options: { value: RequestIntent; label: string; hint: string }[] = [];
-    if (canRequestWork) options.push({ value: 'request', label: $t('unifiedIntentRequest'), hint: $t('unifiedIntentRequestHint') });
-    if (canReserve) options.push({ value: 'reserve', label: $t('unifiedIntentReserve'), hint: $t('unifiedIntentReserveHint') });
-    if (canWaitlist) options.push({ value: 'waitlist', label: $t('unifiedIntentWaitlist'), hint: $t('unifiedIntentWaitlistHint') });
-    if (canViewing) options.push({ value: 'viewing', label: $t('unifiedIntentViewing'), hint: $t('unifiedIntentViewingHint') });
-    options.push({ value: 'similar', label: $t('unifiedIntentSimilar'), hint: $t('unifiedIntentSimilarHint') });
-    if (canNotify) options.unshift({ value: 'notify', label: $t('unifiedIntentNotify'), hint: $t('unifiedIntentNotifyHint') });
-    return options;
-  });
-
   $effect(() => {
     if (!isOpen) return;
-    const allowed = intentOptions.some(opt => opt.value === initialIntent) ? initialIntent : intentOptions[0]?.value;
-    if (allowed) intent = allowed;
+    intent = 'similar';
   });
 
   $effect(() => {
@@ -103,33 +82,8 @@
     }
   });
 
-  let modalTitle = $derived(
-    intent === 'reserve'
-      ? $t('unifiedReserveTitle')
-      : status === 'reserved'
-      ? $t('unifiedReservedTitle')
-      : status === 'in_progress'
-        ? $t('unifiedProgressTitle')
-        : status === 'sold'
-          ? $t('unifiedSoldTitle')
-          : $t('unifiedAvailableTitle')
-  );
-
-  let submitLabel = $derived(
-    intent === 'waitlist'
-      ? $t('unifiedSubmitWaitlist')
-      : intent === 'viewing'
-        ? $t('unifiedSubmitViewing')
-        : intent === 'similar'
-          ? $t('unifiedSubmitSimilar')
-          : intent === 'question'
-            ? $t('unifiedSubmitQuestion')
-            : intent === 'notify'
-              ? $t('unifiedSubmitNotify')
-              : intent === 'reserve'
-                ? $t('unifiedSubmitReserve')
-                : $t('unifiedSubmitRequest')
-  );
+  let modalTitle = $derived($t('unifiedIntentSimilar'));
+  let submitLabel = $derived($t('unifiedSubmitSimilar'));
 
   function reset() {
     name = '';
@@ -334,17 +288,6 @@
             <h3 id="unified-request-title">{modalTitle}</h3>
             <p>{figurineName}</p>
           </div>
-
-          <fieldset class="unified-intents">
-            <legend>{$t('unifiedIntentLegend')}</legend>
-            {#each intentOptions as opt (opt.value)}
-              <label class="unified-intent" class:unified-intent--active={intent === opt.value}>
-                <input type="radio" name="request-intent" value={opt.value} bind:group={intent} />
-                <span>{opt.label}</span>
-                <small>{opt.hint}</small>
-              </label>
-            {/each}
-          </fieldset>
 
           {#if intent === 'viewing'}
             <div class="unified-dates">

@@ -1401,11 +1401,13 @@ export const en = {
   detailQueueLeave: 'Leave the queue',
   detailQueueLeaving: 'Leaving…',
   detailQueueLeft: 'You have left the queue.',
+  detailQueueLeaveError: 'Could not leave the queue. Please try again.',
   detailNotifyPanelTitle: 'You will be notified',
   detailNotifyNote: 'When this work — or one close in spirit — appears, the author writes to you personally.',
   detailNotifyStop: 'Stop notifications',
   detailNotifyStopping: 'Stopping…',
   detailNotifyStopped: 'Notifications stopped.',
+  detailNotifyStopError: 'Could not stop notifications. Please try again.',
   detailReceiptStale: 'Could not refresh this record. The saved token is kept; please try again later.',
   detailScheduleLoadStale: 'Schedule could not be refreshed. Availability may be outdated.',
 

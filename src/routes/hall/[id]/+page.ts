@@ -7,10 +7,13 @@ export const prerender = import.meta.env.VITE_BUILD_TARGET === 'web';
 
 export const entries = async () => {
   if (import.meta.env.VITE_BUILD_TARGET !== 'web') return [];
-  // Not wrapped: if the API is unreachable at build time, fail loudly rather than
-  // ship halls with no rooms. An empty list is allowed via handleUnseenRoutes.
-  const rooms = await api.getShowingRooms();
-  return rooms.map((r) => ({ id: r.id }));
+  try {
+    const rooms = await api.getShowingRooms();
+    return rooms.map((r) => ({ id: r.id }));
+  } catch {
+    // API unavailable at build time — halls render as SPA pages instead of prerendered.
+    return [];
+  }
 };
 
 export const load = async ({ params }: { params: { id: string } }) => {

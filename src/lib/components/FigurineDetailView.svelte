@@ -85,6 +85,7 @@
   let queueLeaving = $state(false);
   let queueLeft = $state(false);
   let queueLookupStale = $state(false);
+  let queueLeaveError = $state(false);
 
   async function loadQueue() {
     const token = readStoredToken(queueKey);
@@ -111,18 +112,22 @@
     queuePosition = position;
     queueLeft = false;
     queueLookupStale = false;
+    queueLeaveError = false;
   }
 
   async function leaveQueue() {
     const token = readStoredToken(queueKey);
     if (!token || queueLeaving) return;
     queueLeaving = true;
+    queueLeaveError = false;
     try {
       await api.leaveWaitlistByToken(token);
       removeStoredToken(queueKey);
       queuePosition = 0;
       queueLeft = true;
       queueLookupStale = false;
+    } catch {
+      queueLeaveError = true;
     } finally {
       queueLeaving = false;
     }
@@ -134,6 +139,7 @@
   let notifyStopping = $state(false);
   let notifyStopped = $state(false);
   let notifyLookupStale = $state(false);
+  let notifyStopError = $state(false);
 
   async function loadNotify() {
     const token = readStoredToken(notifyKey);
@@ -159,18 +165,22 @@
     notifyActive = true;
     notifyStopped = false;
     notifyLookupStale = false;
+    notifyStopError = false;
   }
 
   async function stopNotify() {
     const token = readStoredToken(notifyKey);
     if (!token || notifyStopping) return;
     notifyStopping = true;
+    notifyStopError = false;
     try {
       await api.cancelNotifyByToken(token);
       removeStoredToken(notifyKey);
       notifyActive = false;
       notifyStopped = true;
       notifyLookupStale = false;
+    } catch {
+      notifyStopError = true;
     } finally {
       notifyStopping = false;
     }
@@ -456,7 +466,7 @@
     const slug = figurine.name
       .trim()
       .toLowerCase()
-      .replace(/[^a-z0-9]+/gi, '-')
+      .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '') || 'figurine';
     return `gotiga-${slug}-story.jpg`;
   }
@@ -481,6 +491,7 @@
 
   function closeStoryModal() {
     showStoryModal = false;
+    storyError = '';
     if (storyObjectUrl) { URL.revokeObjectURL(storyObjectUrl); storyObjectUrl = ''; }
     storyBlob = null;
   }
@@ -507,7 +518,7 @@
   });
 
   function buildInkHtml(text: string): string {
-    const words = text.split(' ');
+    const words = text.split(/\s+/).filter(Boolean);
     return words.map((word, i) => {
       const esc = word.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
       const delay = Math.min(i, 80) * 25;
@@ -664,7 +675,7 @@
   let hasScheduleSection = $derived(figurineSchedule.entries.length > 0);
   let hasFactsSection = $derived(hasScheduleSection);
   let canShowPersonalRecord = $derived(figurine.status === 'available' || figurine.status === 'reserved');
-  let hasClaimRecords = $derived(cs.claims.length > 0 || (cs.cancelledTokens.size > 0 && cs.claims.length === 0));
+  let hasClaimRecords = $derived(cs.claims.length > 0 || cs.cancelledTokens.size > 0);
   let hasClaimLookupState = $derived(cs.showTokenForm || Boolean(cs.tokenLookupInfo) || Boolean(cs.tokenLookupErr));
   let hasPersonalRecord = $derived(
     canShowPersonalRecord && (hasClaimRecords || hasClaimLookupState)
@@ -864,7 +875,7 @@
       closeStoryModal();
       return;
     }
-    if (showLightbox || showRequestModal || showStoryModal) return;
+    if (showLightbox || showRequestModal || showStoryModal || isGrimoireOpen) return;
     const target = e.target as HTMLElement | null;
     if (target?.closest('input, textarea, select, button, a, [contenteditable="true"]')) return;
     if (sortedImages.length <= 1) return;
@@ -933,6 +944,7 @@
     const depth = Math.round((window.scrollY / maxScroll) * 100);
     if (depth >= 50) {
       analyticsScrollSent = true;
+      if (analyticsEngagedTimer) { clearTimeout(analyticsEngagedTimer); analyticsEngagedTimer = null; }
       analyticsClient.engaged({
         durationMs: Math.max(0, Date.now() - analyticsMountedAt),
         scrollDepth: Math.min(100, depth),
@@ -955,6 +967,8 @@
     analyticsMountedAt = Date.now();
     analyticsClient.view();
     analyticsEngagedTimer = setTimeout(() => {
+      if (analyticsScrollSent) return;
+      analyticsScrollSent = true;
       analyticsClient?.engaged({
         durationMs: Math.max(0, Date.now() - analyticsMountedAt),
         scrollDepth: Math.min(
@@ -1302,7 +1316,10 @@
     {:else}
 
     {#if storyError}
-      <p class="detail-inline-alert" role="alert">{storyError}</p>
+      <p class="detail-inline-alert" role="alert">
+        {storyError}
+        <button type="button" class="detail-inline-alert-dismiss" onclick={() => (storyError = '')} aria-label={$t('lightboxClose')}>×</button>
+      </p>
     {/if}
 
     <div class="main-grid">
@@ -1550,23 +1567,16 @@
               </p>
             </div>
 
-            <div class="entry-action-stack">
-              <button type="button" onclick={() => openRequestModal()} class="entry-action">
-                {$t('unifiedOpenRequest')} →
-              </button>
-              {#if figurine.status === 'available'}
-                <button type="button" class="entry-action entry-action--secondary" onclick={() => openRequestModal('reserve')}>
-                  {$t('unifiedReserveShort')} →
-                </button>
-              {:else}
-                <a href={createSimilarHref} class="entry-action entry-action--secondary" onclick={() => analyticsClient?.cta('create_similar')}>
-                  {$t('commissionCreateSimilarCta')} →
-                </a>
-              {/if}
-              <p class="entry-action-note">
-                {statusUi.note}
-              </p>
-            </div>
+            <button
+              type="button"
+              class="commission-similar-btn"
+              onclick={() => openRequestModal('similar')}
+            >
+              {$t('commissionCreateSimilarCta')}
+              <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M1.5 6h9M7 2.5L10.5 6 7 9.5"/>
+              </svg>
+            </button>
           </div>
 
           <div class="entry-status-facts" aria-label={$t('detailRegistryFacts')}>
@@ -1615,6 +1625,8 @@
                 busy={queueLeaving}
                 onAction={leaveQueue}
               />
+            {:else if queueLeaveError}
+              <p class="queue-receipt-left queue-receipt-left--warning">{$t('detailQueueLeaveError')}</p>
             {:else if queueLookupStale}
               <p class="queue-receipt-left queue-receipt-left--warning">{$t('detailReceiptStale')}</p>
             {:else if queueLeft}
@@ -1632,6 +1644,8 @@
                 variant="notify"
                 onAction={stopNotify}
               />
+            {:else if notifyStopError}
+              <p class="queue-receipt-left queue-receipt-left--warning">{$t('detailNotifyStopError')}</p>
             {:else if notifyLookupStale}
               <p class="queue-receipt-left queue-receipt-left--warning">{$t('detailReceiptStale')}</p>
             {:else if notifyStopped}
@@ -1958,10 +1972,6 @@
         </svg>
       {/if}
     </button>
-    {#if figurine.status === 'available'}
-      <button type="button" onclick={() => openRequestModal('reserve')} class="mobile-cta-link">{$t('unifiedReserveShort')}</button>
-    {:else}
-      <a href={createSimilarHref} class="mobile-cta-link" onclick={() => analyticsClient?.cta('create_similar')}>{$t('commissionCreateSimilarShort')}</a>
-    {/if}
+    <a href={createSimilarHref} class="mobile-cta-link" onclick={() => analyticsClient?.cta('create_similar')}>{$t('commissionCreateSimilarShort')}</a>
   </div>
 {/if}
