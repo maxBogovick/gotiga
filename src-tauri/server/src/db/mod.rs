@@ -1257,6 +1257,14 @@ impl Repository {
         Ok(())
     }
 
+    pub async fn delete_analytics_events_by_figurine(&self, id: Uuid) -> Result<()> {
+        sqlx::query("DELETE FROM figurine_analytics_events WHERE figurine_id = $1")
+            .bind(id)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn upsert_zone(
         &self,
         z: &crate::models::SaveZoneRequest,
