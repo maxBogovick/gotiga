@@ -401,6 +401,8 @@
             effects: {
                 keyholeDarkness: remote.effects?.keyholeDarkness ?? DEFAULT_EFFECTS.keyholeDarkness,
                 keyholeDwellReveal: remote.effects?.keyholeDwellReveal ?? DEFAULT_EFFECTS.keyholeDwellReveal,
+                birdCircleColor: remote.effects?.birdCircleColor ?? DEFAULT_EFFECTS.birdCircleColor,
+                birdWalkInterval: remote.effects?.birdWalkInterval ?? DEFAULT_EFFECTS.birdWalkInterval,
             },
         };
     }
@@ -586,6 +588,31 @@
         draft = {
             ...draft,
             effects: { ...draft.effects, keyholeDwellReveal: v },
+        };
+        applyAll(draft);
+    }
+
+    function birdCircleColor(): string {
+        return draft.effects?.birdCircleColor ?? DEFAULT_EFFECTS.birdCircleColor;
+    }
+
+    function setBirdCircleColor(v: string) {
+        draft = {
+            ...draft,
+            effects: { ...draft.effects, birdCircleColor: v },
+        };
+        applyAll(draft);
+    }
+
+    function birdWalkInterval(): number {
+        const v = draft.effects?.birdWalkInterval;
+        return typeof v === 'number' && v > 0 ? v : DEFAULT_EFFECTS.birdWalkInterval;
+    }
+
+    function setBirdWalkInterval(v: number) {
+        draft = {
+            ...draft,
+            effects: { ...draft.effects, birdWalkInterval: v },
         };
         applyAll(draft);
     }
@@ -1030,6 +1057,65 @@
                         <div class="flex justify-between text-[7.5px] text-[#5f4636]/30 mt-0.5">
                             <span>{$t('adminDesignKeyholeDwellOff')}</span>
                             <span>10{$t('adminDesignKeyholeDwellSec')}</span>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="flex items-center justify-between mb-1.5">
+                            <label class="label !mb-0" for="bird-walk-interval">{$t('adminDesignBirdWalkInterval')}</label>
+                            <div class="flex items-center gap-1.5">
+                                <span class="text-[10px] font-mono text-[#34251c] tabular-nums">
+                                    {birdWalkInterval() >= 60 ? `${Math.round(birdWalkInterval() / 60)} ${$t('adminDesignBirdWalkMin')}` : `${birdWalkInterval()} ${$t('adminDesignBirdWalkSec')}`}
+                                </span>
+                                {#if birdWalkInterval() !== DEFAULT_EFFECTS.birdWalkInterval}
+                                    <button onclick={() => setBirdWalkInterval(DEFAULT_EFFECTS.birdWalkInterval)}
+                                        class="text-[#5f4636]/40 hover:text-[#c65f3c] text-[10px]"
+                                        title="Reset to {DEFAULT_EFFECTS.birdWalkInterval}s">↩</button>
+                                {/if}
+                            </div>
+                        </div>
+                        <p class="text-[10px] text-[#5f4636]/70 mb-2">{$t('adminDesignBirdWalkIntervalHint')}</p>
+                        <input id="bird-walk-interval" type="range" min="5" max="300" step="5"
+                            value={birdWalkInterval()}
+                            oninput={(e) => setBirdWalkInterval(parseInt((e.target as HTMLInputElement).value))}
+                            class="w-full accent-[#c65f3c]"
+                        />
+                        <div class="flex justify-between text-[7.5px] text-[#5f4636]/30 mt-0.5">
+                            <span>5{$t('adminDesignBirdWalkSec')}</span>
+                            <span>{$t('adminDesignBirdWalkDefault')} {DEFAULT_EFFECTS.birdWalkInterval}{$t('adminDesignBirdWalkSec')}</span>
+                            <span>5{$t('adminDesignBirdWalkMin')}</span>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="flex items-center justify-between mb-1.5">
+                            <label class="label !mb-0" for="bird-circle-color">{$t('adminDesignBirdCircleColor')}</label>
+                            <div class="flex items-center gap-2">
+                                <span class="text-[10px] font-mono text-[#34251c] tabular-nums">{birdCircleColor()}</span>
+                                {#if birdCircleColor() !== DEFAULT_EFFECTS.birdCircleColor}
+                                    <button onclick={() => setBirdCircleColor(DEFAULT_EFFECTS.birdCircleColor)}
+                                        class="text-[#5f4636]/40 hover:text-[#c65f3c] text-[10px]"
+                                        title="Reset to {DEFAULT_EFFECTS.birdCircleColor}">↩</button>
+                                {/if}
+                            </div>
+                        </div>
+                        <p class="text-[10px] text-[#5f4636]/70 mb-2">{$t('adminDesignBirdCircleColorHint')}</p>
+                        <div class="flex items-center gap-3">
+                            <input id="bird-circle-color" type="color"
+                                value={birdCircleColor()}
+                                oninput={(e) => setBirdCircleColor((e.target as HTMLInputElement).value)}
+                                class="w-10 h-8 cursor-pointer rounded border border-[#d8c6b1] bg-transparent"
+                            />
+                            <div class="flex gap-1.5 flex-wrap">
+                                {#each ['#D4860A','#C65F3C','#6B8A56','#5A7A9A','#8B5A8B','#2C1710','#8B6914','#B05A2A'] as preset}
+                                    <button
+                                        onclick={() => setBirdCircleColor(preset)}
+                                        class="w-5 h-5 rounded-full border border-[#d8c6b1] transition-transform hover:scale-110"
+                                        style="background:{preset}"
+                                        title={preset}
+                                    ></button>
+                                {/each}
+                            </div>
                         </div>
                     </div>
                 </div>

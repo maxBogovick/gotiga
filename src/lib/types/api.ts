@@ -979,6 +979,10 @@ export interface ThemeEffects {
      * own — no need to open the work. 0 / null disables the behaviour.
      */
     keyholeDwellReveal: number | null;
+    /** Background circle color behind the raven watcher emblem. Null = default. */
+    birdCircleColor: string | null;
+    /** Seconds between walking-bird cameos. Null = default. */
+    birdWalkInterval: number | null;
 }
 
 export interface ThemeConfig {

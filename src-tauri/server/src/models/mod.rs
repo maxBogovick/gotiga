@@ -1952,6 +1952,10 @@ pub struct ThemeEffects {
     pub keyhole_darkness: Option<f32>,
     /// Seconds of hover before a sealed card self-reveals; None/0 disables it.
     pub keyhole_dwell_reveal: Option<f32>,
+    /// Background circle colour behind the raven emblem in the header.
+    pub bird_circle_color: Option<String>,
+    /// Seconds between walking-bird cameos across the header.
+    pub bird_walk_interval: Option<f32>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

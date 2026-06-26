@@ -10,6 +10,8 @@
   import { t, brandName } from '$lib/i18n';
   import { fade, fly } from 'svelte/transition';
   import { api, resolveMediaUrl } from '$lib/api';
+  import RavenWatcher from '$lib/components/RavenWatcher.svelte';
+  import HeaderBirdWalk from '$lib/components/HeaderBirdWalk.svelte';
 
   let leftLinks = $derived([
     { href: '/figurines', label: $t('navArchive') },
@@ -128,6 +130,7 @@
 </script>
 
 <header class="site-header" class:is-scrolled={isScrolled}>
+  <HeaderBirdWalk />
   <div class="header-inner">
 
     <!-- ① Ghost-left: muted utilities pinned to left edge -->
@@ -151,18 +154,7 @@
     <!-- ③ Brand: proscenium centerpiece -->
     <a href="/" class="brand" aria-label={$brandName}>
       <span class="brand-inner">
-        <picture>
-          <source srcset="/images/raven-emblem.webp" type="image/webp" />
-          <img
-            src="/images/raven-emblem.png"
-            alt=""
-            class="brand-emblem"
-            width="40"
-            height="40"
-            decoding="async"
-            fetchpriority="high"
-          />
-        </picture>
+        <RavenWatcher />
         <span class="brand-name">{$brandName}</span>
       </span>
       <span class="brand-sub">Cabinet of Gothic Miniatures</span>
@@ -537,23 +529,6 @@
     gap: 11px;
   }
 
-  .brand-emblem {
-    width: 36px;
-    height: 36px;
-    flex-shrink: 0;
-    border-radius: 50%;
-    box-shadow:
-      0 0 0 1px color-mix(in srgb, var(--color-ink-primary) 14%, transparent),
-      0 1px 4px rgba(52, 37, 28, 0.16);
-    transition: transform 0.4s var(--ease), box-shadow 0.4s var(--ease);
-  }
-
-  .brand:hover .brand-emblem {
-    transform: rotate(-4deg) scale(1.05);
-    box-shadow:
-      0 0 0 1px color-mix(in srgb, var(--color-ember) 45%, transparent),
-      0 2px 8px rgba(52, 37, 28, 0.22);
-  }
 
   .brand-name {
     font-family: var(--font-display);
@@ -952,7 +927,6 @@
 
     .brand-inner { gap: 9px; }
 
-    .brand-emblem { width: 32px; height: 32px; }
 
     .brand-name { font-size: 18px; }
 

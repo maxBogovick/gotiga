@@ -53,6 +53,8 @@ export const DEFAULT_MOTION = {
 export const DEFAULT_EFFECTS = {
     keyholeDarkness: 0.88,
     keyholeDwellReveal: 0, // seconds of hover before a sealed card self-reveals; 0 = off
+    birdCircleColor: '#D4860A',
+    birdWalkInterval: 60, // seconds between walking-bird cameos
 };
 
 export function makeDefaultConfig(): ThemeConfig {
@@ -60,7 +62,7 @@ export function makeDefaultConfig(): ThemeConfig {
         colors: { ...DEFAULT_COLORS },
         fonts: { ...DEFAULT_FONTS } as ThemeConfig['fonts'],
         motion: { ...DEFAULT_MOTION } as ThemeConfig['motion'],
-        effects: { ...DEFAULT_EFFECTS } as ThemeConfig['effects'],
+        effects: { ...DEFAULT_EFFECTS, birdCircleColor: DEFAULT_EFFECTS.birdCircleColor } as ThemeConfig['effects'],
     };
 }
 
@@ -126,6 +128,11 @@ export function generateThemeCSS(config: ThemeConfig): string {
     const darkness = config.effects?.keyholeDarkness;
     if (typeof darkness === 'number' && Number.isFinite(darkness) && darkness !== DEFAULT_EFFECTS.keyholeDarkness) {
         lines.push(`  --kh-darkness: ${darkness};`);
+    }
+
+    const birdColor = config.effects?.birdCircleColor;
+    if (birdColor && birdColor !== DEFAULT_EFFECTS.birdCircleColor) {
+        lines.push(`  --bird-circle-color: ${birdColor};`);
     }
 
     lines.push('}');
@@ -224,6 +231,9 @@ export function applyConfigToElement(config: ThemeConfig, root: HTMLElement): vo
     if (typeof darkness === 'number' && Number.isFinite(darkness)) {
         root.style.setProperty('--kh-darkness', String(darkness));
     }
+
+    const birdColor = config.effects?.birdCircleColor;
+    if (birdColor) root.style.setProperty('--bird-circle-color', birdColor);
 }
 
 function applyConfigToRoot(config: ThemeConfig): void {
@@ -242,6 +252,7 @@ function clearRootInlineStyles(): void {
     for (const n of ['duration-fast', 'duration-default', 'duration-slow', 'duration-glacial']) {
         root.style.removeProperty(`--${n}`);
     }
+    root.style.removeProperty('--bird-circle-color');
 }
 
 // ── BroadcastChannel — single shared instance ────────────────────────────────
