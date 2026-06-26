@@ -10,12 +10,12 @@
     let message = $state('');
     let bgImage = $state('/images/cabinet-room.jpg');
 
-    const zoneTypes = [
-        { value: 'showcase', label: 'Showcase', defaultRoute: '/figurines' },
-        { value: 'desk',     label: 'Desk',     defaultRoute: '/workshop' },
-        { value: 'shelf',    label: 'Shelf',    defaultRoute: '/figurines' },
-        { value: 'note',     label: 'Note',     defaultRoute: '/author' },
-    ];
+    let zoneTypes = $derived([
+        { value: 'showcase', label: $t('adminZoneTypeShowcase'), defaultRoute: '/figurines' },
+        { value: 'desk',     label: $t('adminZoneTypeDesk'),     defaultRoute: '/workshop' },
+        { value: 'shelf',    label: $t('adminZoneTypeShelf'),    defaultRoute: '/figurines' },
+        { value: 'note',     label: $t('adminZoneTypeNote'),     defaultRoute: '/author' },
+    ]);
 
     // === Drag/resize state ===
     let canvasEl = $state<HTMLDivElement | null>(null);

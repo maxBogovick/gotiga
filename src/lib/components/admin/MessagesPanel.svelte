@@ -127,7 +127,7 @@
     const map: Record<string, string> = {
       booking: $t('adminMessagesBooking'),
       order: $t('adminMessagesOrder'),
-      commission: 'Commissions',
+      commission: $t('adminMsgCategoryCommission'),
       waitlist: $t('adminMessagesWaitlist'),
       general: $t('adminMessagesGeneral'),
       system: $t('adminMessagesSystem'),

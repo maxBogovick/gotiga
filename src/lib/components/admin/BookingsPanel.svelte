@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
-  import { brandName } from '$lib/i18n';
+  import { t, brandName } from '$lib/i18n';
   import type { BookingDto, FigurineListItem } from '$lib/types/api';
 
   let { onPendingCount = (_n: number) => {} } = $props();
@@ -86,8 +86,8 @@
     calSelected = null;
   }
 
-  const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const DOW = ['Mo','Tu','We','Th','Fr','Sa','Su'];
+  const MONTH_NAMES = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+  const DOW = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
   let calSelectedBookings = $derived(calSelected ? (calByDay.get(calSelected) ?? []) : []);
   const todayKey = new Date().toISOString().slice(0, 10);
 
@@ -113,7 +113,7 @@
       pendingCount = res.pendingCount;
       onPendingCount(res.pendingCount);
     } catch {
-      error = 'Failed to load bookings';
+      error = $t('adminBookingsLoadError');
     } finally {
       loading = false;
     }
@@ -133,7 +133,7 @@
       const raw = err instanceof Error ? err.message : '';
       // Extract JSON error body from "API 409: {\"error\":\"...\"}"
       const match = raw.match(/API \d+: (.+)$/s);
-      let msg = 'Failed to update status';
+      let msg = $t('adminBookingsUpdateError');
       if (match) {
         try { msg = JSON.parse(match[1]).error ?? msg; } catch { /* keep default */ }
       }
@@ -148,9 +148,9 @@
     load();
   });
 
-  const statusLabel: Record<string, string> = {
-    pending: 'New', confirmed: 'Confirmed', rejected: 'Rejected', cancelled: 'Cancelled', completed: 'Returned',
-  };
+  let statusLabel = $derived<Record<string, string>>({
+    pending: $t('adminBookingsPending'), confirmed: $t('adminBookingsConfirmed'), rejected: $t('adminBookingsRejected'), cancelled: $t('adminBookingsCancelled'), completed: $t('adminBookingsReturned'),
+  });
   const statusColor: Record<string, string> = {
     pending:   'bg-amber-100 text-amber-800 border-amber-200',
     confirmed: 'bg-green-100 text-green-800 border-green-200',
@@ -175,12 +175,12 @@
   }
 
   function formatDate(iso: string) {
-    return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', {
+    return new Date(iso + 'T00:00:00').toLocaleDateString('ru-RU', {
       day: '2-digit', month: 'short', year: 'numeric'
     });
   }
   function formatTs(iso: string) {
-    return new Date(iso).toLocaleString('en-US', {
+    return new Date(iso).toLocaleString('ru-RU', {
       day: '2-digit', month: '2-digit', year: '2-digit',
       hour: '2-digit', minute: '2-digit',
     });
@@ -203,7 +203,7 @@
   <!-- Toolbar -->
   <div class="flex items-center gap-3 px-6 py-3 border-b border-[#34251c]/10 flex-shrink-0 bg-[#fff9f0]">
     <h2 class="font-['Fraunces'] text-lg text-[#34251c]">
-      Bookings
+      {$t('adminTabBookings')}
       {#if pendingCount > 0}
         <span class="ml-2 inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-500 text-white text-[10px] font-bold">{pendingCount}</span>
       {/if}
@@ -216,7 +216,7 @@
         onchange={(e) => { figurineFilter = (e.target as HTMLSelectElement).value; load(true); }}
         class="ml-auto text-[10px] border border-[#34251c]/20 text-[#5f4636] bg-[#fff9f0] px-2 py-1 focus:outline-none focus:border-[#34251c]/50 max-w-[180px] truncate"
       >
-        <option value="">All figures</option>
+        <option value="">{$t('adminBookingsAllFigurines')}</option>
         {#each figurines as f}
           <option value={f.id}>{f.name}</option>
         {/each}
@@ -224,7 +224,7 @@
     {/if}
 
     <div class="flex gap-1 flex-wrap">
-      {#each [['', 'All'], ['pending', 'New'], ['confirmed', 'Confirmed'], ['rejected', 'Rejected'], ['cancelled', 'Cancelled'], ['completed', 'Returned']] as [val, label]}
+      {#each [['', $t('adminBookingsAll')], ['pending', $t('adminBookingsPending')], ['confirmed', $t('adminBookingsConfirmed')], ['rejected', $t('adminBookingsRejected')], ['cancelled', $t('adminBookingsCancelled')], ['completed', $t('adminBookingsReturned')]] as [val, label]}
         <button
           onclick={() => { statusFilter = val; load(true); }}
           class="px-3 py-1 text-[10px] uppercase tracking-wide border transition-colors
@@ -235,15 +235,14 @@
       {/each}
     </div>
 
-    <button onclick={() => load()} class="text-xs text-[#5f4636] hover:text-[#34251c] border border-[#34251c]/20 px-2 py-1 transition-colors" title="Refresh">↺</button>
+    <button onclick={() => load()} class="text-xs text-[#5f4636] hover:text-[#34251c] border border-[#34251c]/20 px-2 py-1 transition-colors" title={$t('adminRefresh')}>↺</button>
 
     <button
       onclick={toggleCalMode}
       class="ml-auto text-[10px] uppercase tracking-wide border px-3 py-1 transition-colors
         {calMode ? 'bg-[#34251c] text-[#fff9f0] border-[#34251c]' : 'border-[#34251c]/20 text-[#5f4636] hover:border-[#34251c]/50'}"
-      title={calMode ? 'List' : 'Calendar'}
     >
-      {calMode ? '≡ List' : '⊞ Calendar'}
+      {calMode ? $t('adminBookingsList') : $t('adminBookingsCalendar')}
     </button>
   </div>
 
@@ -306,8 +305,8 @@
 
         <!-- Legend -->
         <div class="flex gap-4 mt-3 text-[9px] text-[#5f4636]/60 uppercase tracking-wide">
-          <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-amber-500 inline-block"></span>Pending</span>
-          <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-green-600 inline-block"></span>Confirmed</span>
+          <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-amber-500 inline-block"></span>{$t('adminBookingsPending')}</span>
+          <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-green-600 inline-block"></span>{$t('adminBookingsConfirmed')}</span>
         </div>
       {/if}
     </div>
@@ -316,7 +315,7 @@
     <div class="flex-1 min-w-0">
       {#if calSelected && calSelectedBookings.length > 0}
         <p class="text-[10px] uppercase tracking-wide text-[#5f4636]/60 mb-3">
-          {new Date(calSelected + 'T00:00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' })}
+          {new Date(calSelected + 'T00:00:00').toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })}
         </p>
         <div class="space-y-2">
           {#each calSelectedBookings as b (b.id)}
@@ -334,9 +333,9 @@
           {/each}
         </div>
       {:else if calSelected}
-        <p class="text-sm text-[#5f4636]/50 font-['Fraunces'] italic mt-6">No bookings</p>
+        <p class="text-sm text-[#5f4636]/50 font-['Fraunces'] italic mt-6">{$t('adminBookingsEmpty')}</p>
       {:else}
-        <p class="text-sm text-[#5f4636]/40 font-['Fraunces'] italic mt-6">Select a day</p>
+        <p class="text-sm text-[#5f4636]/40 font-['Fraunces'] italic mt-6">{$t('adminBookingsSelectDay')}</p>
       {/if}
     </div>
   </div>
@@ -346,11 +345,11 @@
   <!-- Content -->
   <div class="flex-1 overflow-y-auto px-6 py-4">
     {#if loading}
-      <div class="text-center text-[#5f4636] py-12 text-sm">Loading…</div>
+      <div class="text-center text-[#5f4636] py-12 text-sm">{$t('adminLoading')}</div>
     {:else if error}
       <div class="text-center text-red-700 py-12 text-sm">{error}</div>
     {:else if items.length === 0}
-      <div class="text-center text-[#5f4636]/60 py-12 font-['Fraunces'] text-lg">No requests</div>
+      <div class="text-center text-[#5f4636]/60 py-12 font-['Fraunces'] text-lg">{$t('adminBookingsNoRequests')}</div>
     {:else}
       <div class="space-y-3">
         {#each items as booking (booking.id)}
@@ -378,7 +377,7 @@
                     {formatDate(booking.startsAt)} — {formatDate(booking.endsAt)}
                   </span>
                   {#if isStale(booking)}
-                    <span class="text-[9px] px-1.5 py-0.5 bg-orange-100 text-orange-700 border border-orange-300 rounded font-['Inter'] uppercase tracking-wide">overdue</span>
+                    <span class="text-[9px] px-1.5 py-0.5 bg-orange-100 text-orange-700 border border-orange-300 rounded font-['Inter'] uppercase tracking-wide">{$t('adminBookingsOverdue')}</span>
                   {/if}
                 </div>
                 <div class="text-xs text-[#5f4636]/60 mt-0.5">{formatTs(booking.createdAt)}</div>
@@ -402,7 +401,7 @@
               <div class="mt-2 flex flex-wrap gap-2 text-[10px] font-['Inter']">
                 {#if booking.displayType}
                   <span class="px-1.5 py-0.5 bg-[#f8f1e7] border border-[#d8c6b1] text-[#5f4636]">
-                    {booking.displayType === 'private' ? 'Private' : booking.displayType === 'exhibition' ? 'Exhibition' : 'Photo/video'}
+                    {booking.displayType === 'private' ? $t('adminShowingsPrivate') : booking.displayType === 'exhibition' ? $t('adminShowingsExhibition') : $t('adminBookingsPhotoVideo')}
                   </span>
                 {/if}
                 {#if booking.venue}
@@ -419,14 +418,14 @@
               <div class="mt-3 space-y-2">
                 <input
                   type="text"
-                  placeholder="Note (reason for rejection, optional)…"
+                  placeholder={$t('adminBookingsNotesPH')}
                   value={notesMap[booking.id] ?? booking.adminNotes ?? ''}
                   oninput={(e) => { notesMap[booking.id] = (e.target as HTMLInputElement).value; notesMap = {...notesMap}; }}
                   class="w-full border-b border-[#d8c6b1] bg-transparent text-xs py-1 text-[#34251c] font-['Inter'] focus:outline-none focus:border-[#c65f3c] placeholder-[#5f4636]/40"
                 />
                 <input
                   type="text"
-                  placeholder="Curator conditions (shown to the client on confirmation)…"
+                  placeholder={$t('adminBookingsCuratorPH')}
                   value={curatorMap[booking.id] ?? booking.curatorConditions ?? ''}
                   oninput={(e) => { curatorMap[booking.id] = (e.target as HTMLInputElement).value; curatorMap = {...curatorMap}; }}
                   class="w-full border-b border-[#d8c6b1] bg-transparent text-xs py-1 text-[#34251c] font-['Inter'] focus:outline-none focus:border-[#c65f3c] placeholder-[#5f4636]/40"
@@ -434,10 +433,10 @@
               </div>
             {:else}
               {#if booking.adminNotes}
-                <p class="text-xs text-[#5f4636]/70 font-['Inter'] mt-2 italic">Note: {booking.adminNotes}</p>
+                <p class="text-xs text-[#5f4636]/70 font-['Inter'] mt-2 italic">{$t('adminBookingsNoteLabel')} {booking.adminNotes}</p>
               {/if}
               {#if booking.curatorConditions}
-                <p class="text-xs text-[#34251c] font-['Inter'] mt-1.5 border-l-2 border-green-500/50 pl-2">Curator conditions: {booking.curatorConditions}</p>
+                <p class="text-xs text-[#34251c] font-['Inter'] mt-1.5 border-l-2 border-green-500/50 pl-2">{$t('adminBookingsCuratorLabel')} {booking.curatorConditions}</p>
               {/if}
             {/if}
 
@@ -456,23 +455,23 @@
                   onclick={() => setStatus(booking, 'confirmed')}
                   disabled={updatingId === booking.id}
                   class="text-[10px] px-3 py-1 bg-green-700 text-white border border-green-700 hover:bg-green-800 transition-colors disabled:opacity-40 font-['Inter'] uppercase tracking-wide"
-                >✓ Confirm</button>
+                >✓ {$t('adminBookingsConfirm')}</button>
                 <button
                   onclick={() => setStatus(booking, 'rejected')}
                   disabled={updatingId === booking.id}
                   class="text-[10px] px-3 py-1 border border-red-300 text-red-700 hover:bg-red-50 transition-colors disabled:opacity-40 font-['Inter'] uppercase tracking-wide"
-                >✕ Reject</button>
+                >✕ {$t('adminBookingsReject')}</button>
               {:else if booking.status === 'confirmed'}
                 <button
                   onclick={() => setStatus(booking, 'completed')}
                   disabled={updatingId === booking.id}
                   class="text-[10px] px-3 py-1 bg-teal-700 text-white border border-teal-700 hover:bg-teal-800 transition-colors disabled:opacity-40 font-['Inter'] uppercase tracking-wide"
-                >↩ Returned</button>
+                >↩ {$t('adminBookingsReturned')}</button>
                 <button
                   onclick={() => setStatus(booking, 'cancelled')}
                   disabled={updatingId === booking.id}
                   class="text-[10px] px-3 py-1 border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-40 font-['Inter'] uppercase tracking-wide"
-                >Cancel</button>
+                >{$t('adminFormCancel')}</button>
               {/if}
               <div class="ml-auto flex gap-1">
                 {#if booking.status === 'confirmed'}
@@ -480,18 +479,18 @@
                     href={makeMailtoLink(booking, 'confirm')}
                     class="text-[10px] px-2 py-1 border border-green-600/40 text-green-700 hover:bg-green-50 transition-colors"
                     title="Email about confirmation"
-                  >✉ Confirmed</a>
+                  >{$t('adminBookingsEmailConfirm')}</a>
                 {:else if booking.status === 'rejected'}
                   <a
                     href={makeMailtoLink(booking, 'reject')}
                     class="text-[10px] px-2 py-1 border border-red-300/60 text-red-700 hover:bg-red-50 transition-colors"
                     title="Email about rejection"
-                  >✉ Rejection</a>
+                  >{$t('adminBookingsEmailReject')}</a>
                 {:else}
                   <a
                     href="mailto:{booking.requesterEmail}?subject=Re: viewing request {booking.figurineName}"
                     class="text-[10px] px-2 py-1 border border-[#c65f3c]/30 text-[#c65f3c] hover:bg-[#c65f3c]/5 transition-colors"
-                  >✉ Email</a>
+                  >{$t('adminBookingsEmailLink')}</a>
                 {/if}
               </div>
             </div>
@@ -506,7 +505,7 @@
   {#if !calMode && (totalPages > 1 || total > 0)}
     <div class="flex items-center justify-between px-6 py-3 border-t border-[#34251c]/10 flex-shrink-0 bg-[#fff9f0]">
       <span class="text-[11px] text-[#5f4636]/70">
-        {#if total > 0}{(page - 1) * PER_PAGE + 1}–{Math.min(page * PER_PAGE, total)} of {total}{/if}
+        {#if total > 0}{(page - 1) * PER_PAGE + 1}–{Math.min(page * PER_PAGE, total)} {$t('authOf')} {total}{/if}
       </span>
       {#if totalPages > 1}
         <div class="flex items-center gap-1">
