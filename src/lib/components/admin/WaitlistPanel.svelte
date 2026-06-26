@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
+  import { t } from '$lib/i18n';
   import type { WaitlistEntryDto } from '$lib/types/api';
 
   let items      = $state<WaitlistEntryDto[]>([]);
@@ -8,14 +9,14 @@
   let error      = $state('');
   let figurineFilter = $state('');
   let removingId  = $state<string | null>(null);
-  let notifyingId = $state<string | null>(null);  // figurine_id being notified
+  let notifyingId = $state<string | null>(null);
   let notifyResult = $state<Record<string, { notified: number; total: number } | null>>({});
 
   async function load() {
     loading = true; error = '';
     try {
       items = await api.adminListWaitlist(figurineFilter || undefined);
-    } catch { error = 'Failed to load the list'; }
+    } catch { error = $t('adminWaitlistLoadError'); }
     finally { loading = false; }
   }
 
@@ -31,7 +32,6 @@
     try {
       const res = await api.adminNotifyWaitlist(figurineId);
       notifyResult = { ...notifyResult, [figurineId]: res };
-      // Remove notified entries from local state
       items = items.filter(i => i.figurineId !== figurineId);
     } catch { /* ignore */ }
     finally { notifyingId = null; }
@@ -40,10 +40,9 @@
   onMount(load);
 
   function formatTs(iso: string) {
-    return new Date(iso).toLocaleString('en-US', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+    return new Date(iso).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
   }
 
-  // Group by figurine for readability
   let grouped = $derived.by(() => {
     const map = new Map<string, { figurineName: string; figurineId: string; entries: WaitlistEntryDto[] }>();
     for (const e of items) {
@@ -58,21 +57,21 @@
   <!-- Toolbar -->
   <div class="flex items-center gap-3 px-6 py-3 border-b border-[#34251c]/10 flex-shrink-0 bg-[#fff9f0]">
     <h2 class="font-['Fraunces'] text-lg text-[#34251c]">
-      Waitlist
+      {$t('adminWaitlistHeading')}
       {#if items.length > 0}
         <span class="ml-2 inline-flex items-center justify-center w-5 h-5 rounded-full bg-[#6f3b24] text-white text-[10px] font-bold">{items.length}</span>
       {/if}
     </h2>
-    <button onclick={load} class="ml-auto text-xs text-[#5f4636] hover:text-[#34251c] border border-[#34251c]/20 px-2 py-1 transition-colors" title="Refresh">↺</button>
+    <button onclick={load} class="ml-auto text-xs text-[#5f4636] hover:text-[#34251c] border border-[#34251c]/20 px-2 py-1 transition-colors" title={$t('adminRefresh')}>↺</button>
   </div>
 
   <div class="flex-1 overflow-y-auto px-6 py-4">
     {#if loading}
-      <div class="text-center text-[#5f4636] py-12 text-sm">Loading…</div>
+      <div class="text-center text-[#5f4636] py-12 text-sm">{$t('adminLoading')}</div>
     {:else if error}
       <div class="text-center text-red-700 py-12 text-sm">{error}</div>
     {:else if items.length === 0}
-      <div class="text-center text-[#5f4636]/60 py-12 font-['Fraunces'] text-lg">List is empty</div>
+      <div class="text-center text-[#5f4636]/60 py-12 font-['Fraunces'] text-lg">{$t('adminWaitlistEmpty')}</div>
     {:else}
       <div class="space-y-6">
         {#each grouped as group}
@@ -83,17 +82,16 @@
                 class="font-['Fraunces'] text-base text-[#34251c] hover:text-[#c65f3c] hover:underline transition-colors">
                 {group.figurineName} ↗
               </a>
-              <span class="text-[10px] text-[#5f4636]/50 uppercase tracking-wide">{group.entries.length} ppl</span>
+              <span class="text-[10px] text-[#5f4636]/50 uppercase tracking-wide">{group.entries.length} {$t('adminWaitlistPeople')}</span>
               {#if registered > 0}
-                <span class="text-[10px] text-[#6a9e5a] uppercase tracking-wide">· {registered} w/ acct</span>
+                <span class="text-[10px] text-[#6a9e5a] uppercase tracking-wide">· {registered} {$t('adminWaitlistWithAcct')}</span>
               {/if}
               <button
                 onclick={() => notifyAll(group.figurineId)}
                 disabled={notifyingId === group.figurineId}
                 class="ml-auto text-[10px] px-2 py-1 border border-[#6a9e5a]/50 text-[#6a9e5a] hover:bg-[#6a9e5a]/8 transition-colors disabled:opacity-40"
-                title="Send a message to all registered users in the waitlist"
               >
-                {notifyingId === group.figurineId ? '…' : '✉ Notify all'}
+                {notifyingId === group.figurineId ? '…' : $t('adminWaitlistNotifyAll')}
               </button>
               {#if notifyResult[group.figurineId]}
                 <span class="text-[10px] text-[#6a9e5a]">
@@ -109,7 +107,7 @@
                     <div class="flex items-center gap-1.5">
                       <p class="text-sm font-medium text-[#34251c]">{entry.requesterName}</p>
                       {#if entry.userId}
-                        <span class="text-[9px] bg-[#e8f4e8] text-[#2d6a3f] px-1.5 py-0.5 rounded" title="Registered user">acct</span>
+                        <span class="text-[9px] bg-[#e8f4e8] text-[#2d6a3f] px-1.5 py-0.5 rounded">{$t('adminWaitlistAcctBadge')}</span>
                       {/if}
                     </div>
                     <p class="text-xs text-[#5f4636]">

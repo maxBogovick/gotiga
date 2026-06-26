@@ -113,7 +113,7 @@
     <div class="flex justify-between items-center mb-6">
         <div>
             <h2 class="text-xl font-gothic text-[#34251c]">{$t('adminReleaseHeading')}</h2>
-            <p class="text-[10px] text-[#5f4636] uppercase tracking-wider mt-1">Version management</p>
+            <p class="text-[10px] text-[#5f4636] uppercase tracking-wider mt-1">{$t('adminReleaseVersionMgmt')}</p>
         </div>
         <div class="flex gap-4 items-center">
             {#if message}
@@ -121,7 +121,7 @@
             {/if}
             {#if isTauri}
                 <button onclick={handleCleanupMedia} class="btn-gothic border-red-900/40 text-red-700">
-                    Cleanup media
+                    {$t('adminReleaseCleanupMedia')}
                 </button>
                 <button onclick={handlePull} class="btn-gothic border-blue-900/40 text-blue-700">
                     {$t('adminReleaseDownloadActive')}
@@ -130,7 +130,7 @@
                     {isExporting ? $t('adminReleaseCreating') : $t('adminReleaseCreate')}
                 </button>
             {:else}
-                <span class="text-[10px] text-[#5f4636] italic">Upload a .db file via the button below</span>
+                <span class="text-[10px] text-[#5f4636] italic">{$t('adminReleaseUploadHint')}</span>
                 <label class="btn-gothic border-amber-900/40 text-amber-600 cursor-pointer">
                     {$t('adminReleaseUpload')}
                     <input type="file" accept=".db,.sqlite" class="hidden" onchange={handleUpload} />
@@ -141,11 +141,11 @@
 
     <div class="flex-1 bg-[#fff9f0]/50 border border-[#34251c]/10 overflow-hidden flex flex-col">
         <div class="grid grid-cols-12 bg-[#f8f1e7] border-b border-[#34251c]/20 p-3 text-[10px] uppercase tracking-wide text-[#5f4636] font-bold">
-            <div class="col-span-1">Ver.</div>
-            <div class="col-span-1">Status</div>
-            <div class="col-span-3">Description / ID</div>
-            <div class="col-span-3">Created</div>
-            <div class="col-span-4 text-right">Actions</div>
+            <div class="col-span-1">{$t('adminReleaseVer')}</div>
+            <div class="col-span-1">{$t('adminReleaseColStatus')}</div>
+            <div class="col-span-3">{$t('adminReleaseDescId')}</div>
+            <div class="col-span-3">{$t('adminReleaseCreatedAt')}</div>
+            <div class="col-span-4 text-right">{$t('adminReleaseColActions')}</div>
         </div>
 
         <div class="overflow-y-auto flex-1 p-2 space-y-1">
@@ -162,7 +162,7 @@
                         <div class="col-span-1 text-[#34251c] font-bold">{release.version}</div>
                         <div class="col-span-1">
                             {#if release.isActive}
-                                <span class="text-[9px] bg-green-50 text-green-800 border border-green-700/30 px-1 py-0.5 rounded">ACTIVE</span>
+                                <span class="text-[9px] bg-green-50 text-green-800 border border-green-700/30 px-1 py-0.5 rounded">{$t('adminReleaseActiveLabel')}</span>
                             {/if}
                         </div>
                         <div class="col-span-3 text-xs text-[#34251c] truncate pr-2" title={release.id}>
@@ -177,7 +177,7 @@
                                     class="btn-xs border border-[#34251c]/20 hover:bg-[#34251c]/10 text-[#34251c]"
                                     title={$t('adminReleaseMakeActive')}
                                 >
-                                    Activate
+                                    {$t('adminReleaseActivate')}
                                 </button>
                             {/if}
                         </div>
@@ -188,7 +188,7 @@
     </div>
 
     <div class="mt-4 p-4 border border-[#34251c]/10 bg-[#fff9f0]/30 text-xs text-[#5f4636]">
-        <h4 class="font-bold mb-2 uppercase tracking-wide text-[#34251c]">Curator's Guide</h4>
+        <h4 class="font-bold mb-2 uppercase tracking-wide text-[#34251c]">{$t('adminReleaseCuratorsGuide')}</h4>
         <ul class="list-disc pl-4 space-y-1">
             <li><strong class="text-[#34251c]">Create release:</strong> {$t('adminReleaseInfoCreate')}</li>
             <li><strong class="text-[#34251c]">Download active:</strong> {$t('adminReleaseInfoDownload')}</li>

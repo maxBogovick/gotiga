@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
+  import { t } from '$lib/i18n';
   import type { ShowingDto, SaveShowingRequest, FigurineListItem } from '$lib/types/api';
 
   let showings = $state<ShowingDto[]>([]);
@@ -34,7 +35,7 @@
         api.getAllFigurinesAdmin(),
       ]);
     } catch {
-      error = 'Failed to load data';
+      error = $t('adminShowingsLoadError');
     } finally {
       loading = false;
     }
@@ -77,26 +78,26 @@
         notes: form.notes || null,
       };
       const saved = await api.saveShowing(req);
-      saveMsg = 'Saved ✓';
+      saveMsg = $t('adminShowingsSaved');
       await load();
       selectedId = saved.id;
       form = { ...req, id: saved.id };
     } catch {
-      saveMsg = 'Save error';
+      saveMsg = $t('adminShowingsSaveError');
     } finally {
       saving = false;
     }
   }
 
   async function remove() {
-    if (!selected || !confirm('Delete this showing?')) return;
+    if (!selected || !confirm($t('adminShowingsDeleteConfirm'))) return;
     try {
       await api.deleteShowing(selected.id);
       selectedId = null;
       form = { ...empty };
       await load();
     } catch {
-      error = 'Delete error';
+      error = $t('adminShowingsDelError');
     }
   }
 
@@ -105,7 +106,7 @@
   }
 
   function formatDate(iso: string) {
-    return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', {
+    return new Date(iso + 'T00:00:00').toLocaleDateString('ru-RU', {
       day: '2-digit', month: 'short', year: 'numeric'
     });
   }
@@ -116,12 +117,12 @@
 <div class="h-full flex flex-col overflow-hidden">
   <!-- Toolbar -->
   <div class="flex items-center gap-3 px-6 py-3 border-b border-[#34251c]/10 flex-shrink-0 bg-[#fff9f0]">
-    <h2 class="font-['Fraunces'] text-lg text-[#34251c]">Showings schedule</h2>
+    <h2 class="font-['Fraunces'] text-lg text-[#34251c]">{$t('adminShowingsHeading')}</h2>
     <button
       onclick={createNew}
       class="ml-auto px-3 py-1.5 text-[11px] uppercase tracking-wide border border-[#34251c]/30 text-[#34251c] hover:bg-[#34251c]/5 transition-colors"
-    >✚ New showing</button>
-    <button onclick={() => load()} class="text-xs text-[#5f4636] hover:text-[#34251c] border border-[#34251c]/20 px-2 py-1 transition-colors" title="Refresh">↺</button>
+    >{$t('adminShowingsNew')}</button>
+    <button onclick={() => load()} class="text-xs text-[#5f4636] hover:text-[#34251c] border border-[#34251c]/20 px-2 py-1 transition-colors" title={$t('adminRefresh')}>↺</button>
   </div>
 
   {#if error}
@@ -132,9 +133,9 @@
     <!-- List -->
     <div class="w-72 flex-shrink-0 border-r border-[#34251c]/10 overflow-y-auto bg-white/40">
       {#if loading}
-        <div class="p-6 text-center text-sm text-[#5f4636]">Loading…</div>
+        <div class="p-6 text-center text-sm text-[#5f4636]">{$t('adminLoading')}</div>
       {:else if showings.length === 0}
-        <div class="p-6 text-center text-[#5f4636]/60 font-['Fraunces'] text-base">No showings</div>
+        <div class="p-6 text-center text-[#5f4636]/60 font-['Fraunces'] text-base">{$t('adminShowingsEmpty')}</div>
       {:else}
         {#each showings as s}
           <button
@@ -145,7 +146,7 @@
             <div class="flex items-center gap-2 mb-0.5">
               <span class="text-[9px] uppercase tracking-wide font-bold font-['Inter'] px-1.5 py-0.5 rounded-sm
                 {s.showingType === 'exhibition' ? 'bg-amber-100 text-amber-800' : 'bg-purple-100 text-purple-800'}">
-                {s.showingType === 'exhibition' ? 'Exhibition' : 'Private'}
+                {s.showingType === 'exhibition' ? $t('adminShowingsExhibition') : $t('adminShowingsPrivate')}
               </span>
             </div>
             <div class="text-sm font-['Fraunces'] text-[#34251c] truncate">{s.title}</div>
@@ -160,21 +161,21 @@
     <div class="flex-1 overflow-y-auto px-6 py-5">
       {#if selectedId === null}
         <div class="flex items-center justify-center h-full text-[#5f4636]/50 font-['Fraunces'] text-base">
-          Select a showing or create a new one
+          {$t('adminShowingsSelectPrompt')}
         </div>
       {:else}
         <form class="space-y-5 max-w-lg" onsubmit={(e) => { e.preventDefault(); save(); }}>
 
           <!-- Figurine -->
           <div>
-            <label for="sp-figurine" class="block text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">Figure *</label>
+            <label for="sp-figurine" class="block text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">{$t('adminShowingsFigureLabel')}</label>
             <select
               id="sp-figurine"
               bind:value={form.figurineId}
               required
               class="w-full border border-[#d8c6b1] bg-[#fff9f0] text-sm text-[#34251c] px-3 py-2 focus:outline-none focus:border-[#c65f3c]/50"
             >
-              <option value="">— Select a figure —</option>
+              <option value="">{$t('adminShowingsSelectFigure')}</option>
               {#each figurines as f}
                 <option value={f.id}>{f.name}</option>
               {/each}
@@ -183,9 +184,9 @@
 
           <!-- Type -->
           <div>
-            <span class="block text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">Type *</span>
+            <span class="block text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">{$t('adminShowingsTypeLabel')}</span>
             <div class="flex gap-3">
-              {#each [['exhibition', 'Exhibition'], ['private', 'Private showing']] as [val, lbl]}
+              {#each [['exhibition', $t('adminShowingsExhibition')], ['private', $t('adminShowingsPrivateLabel')]] as [val, lbl]}
                 <label class="flex items-center gap-2 cursor-pointer">
                   <input
                     type="radio"
@@ -202,13 +203,13 @@
 
           <!-- Title -->
           <div>
-            <label for="showing-title" class="block text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">Title *</label>
+            <label for="showing-title" class="block text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">{$t('adminShowingsTitleLabel')}</label>
             <input
               id="showing-title"
               type="text"
               bind:value={form.title}
               required
-              placeholder="e.g. Autumn vernissage 2024"
+              placeholder={$t('adminShowingsTitlePH')}
               class="w-full border-b border-[#d8c6b1] bg-transparent py-1.5 text-sm text-[#34251c] font-['Fraunces'] focus:outline-none focus:border-[#c65f3c] transition-colors"
             />
           </div>
@@ -216,7 +217,7 @@
           <!-- Dates -->
           <div class="grid grid-cols-2 gap-4">
             <div>
-              <label for="showing-starts" class="block text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">From *</label>
+              <label for="showing-starts" class="block text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">{$t('adminShowingsFromLabel')}</label>
               <input
                 id="showing-starts"
                 type="date"
@@ -226,7 +227,7 @@
               />
             </div>
             <div>
-              <label for="showing-ends" class="block text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">To *</label>
+              <label for="showing-ends" class="block text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">{$t('adminShowingsToLabel')}</label>
               <input
                 id="showing-ends"
                 type="date"
@@ -240,24 +241,24 @@
 
           <!-- Venue -->
           <div>
-            <label for="showing-venue" class="block text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">Venue</label>
+            <label for="showing-venue" class="block text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">{$t('adminShowingsVenue')}</label>
             <input
               id="showing-venue"
               type="text"
               bind:value={form.venue}
-              placeholder="Gallery, address…"
+              placeholder={$t('adminFigShowingsVenuePlaceholder')}
               class="w-full border-b border-[#d8c6b1] bg-transparent py-1.5 text-sm text-[#34251c] font-['Inter'] focus:outline-none focus:border-[#c65f3c] transition-colors"
             />
           </div>
 
           <!-- Notes -->
           <div>
-            <label for="showing-notes" class="block text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">Notes</label>
+            <label for="showing-notes" class="block text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">{$t('adminShowingsNotes')}</label>
             <textarea
               id="showing-notes"
               bind:value={form.notes}
               rows="2"
-              placeholder="Additional information…"
+              placeholder={$t('adminShowingsNotesPH')}
               class="w-full border border-[#d8c6b1] bg-[#f8f1e7] px-3 py-2 text-sm text-[#34251c] font-['Inter'] focus:outline-none focus:border-[#c65f3c]/50 resize-none"
             ></textarea>
           </div>
@@ -268,18 +269,18 @@
               type="submit"
               disabled={saving}
               class="px-6 py-2 bg-[#34251c] text-[#fff9f0] text-xs font-['Inter'] uppercase tracking-wide hover:bg-[#6f3b24] transition-colors disabled:opacity-50"
-            >{saving ? 'Saving…' : 'Save'}</button>
+            >{saving ? $t('adminFormSaving') : $t('adminShowingsSave')}</button>
 
             {#if selected}
               <button
                 type="button"
                 onclick={remove}
                 class="px-4 py-2 border border-red-300 text-red-700 text-xs font-['Inter'] uppercase tracking-wide hover:bg-red-50 transition-colors"
-              >Delete</button>
+              >{$t('adminShowingsDelete')}</button>
             {/if}
 
             {#if saveMsg}
-              <span class="text-xs font-['Inter'] {saveMsg.includes('error') ? 'text-red-700' : 'text-green-700'}">{saveMsg}</span>
+              <span class="text-xs font-['Inter'] {saveMsg === $t('adminShowingsSaveError') ? 'text-red-700' : 'text-green-700'}">{saveMsg}</span>
             {/if}
           </div>
 

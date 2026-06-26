@@ -865,19 +865,19 @@
               {
                 label: $t('adminGroupShowcase'),
                 tabs: [
-                  ['home',     'Home'],
+                  ['home',     $t('adminTabHome')],
                   ['programme', $t('adminTabProgramme')],
                   ['workshop-feature', $t('adminTabWorkshopFeature')],
                   ['author',   $t('adminTabAuthor')],
                   ['workshop', $t('adminTabWorkshop')],
-                  ['media',    'Media'],
+                  ['media',    $t('adminTabMedia')],
                 ]
               },
               {
                 label: $t('adminGroupActivity'),
                 tabs: [
-                  ['orders',    'Orders'],
-                  ['commissions', 'Commissions'],
+                  ['orders',    $t('adminTabOrders')],
+                  ['commissions', $t('adminTabCommissions')],
                   ['showings',  $t('adminTabShowings')],
                   ['bookings',      $t('adminTabBookings')],
                   ['waitlist',      $t('adminTabWaitlist')],
@@ -891,7 +891,7 @@
                 label: $t('adminGroupSystem'),
                 tabs: [
                   ['server',        $t('adminTabServer')],
-                  ['logs',          'Logs'],
+                  ['logs',          $t('adminTabLogs')],
                   ['booking-rules', $t('adminTabBookingRules')],
                   ['contact',       $t('adminTabContact')],
                 ]
@@ -1541,6 +1541,10 @@
 
                         <!-- Action bar -->
                         <div class="flex justify-end gap-3 pb-10">
+                            <button onclick={() => deleteFigurine(selectedFigurine!)} disabled={isDeleting}
+                                class="btn-gothic mr-auto border-red-900/30 text-red-800/70 hover:bg-red-50 hover:text-red-800 hover:border-red-700/40">
+                                {$t('adminFormDeleteWork')}
+                            </button>
                             <button onclick={cancelEdit} class="btn-gothic opacity-75">{$t('adminFormCancel')}</button>
                             {#if isTauri}
                                 <button
