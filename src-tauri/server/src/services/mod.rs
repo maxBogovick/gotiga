@@ -441,25 +441,28 @@ impl AppService {
         }
     }
 
-    pub async fn list_figurines(&self, visible_only: bool, limit: Option<i64>) -> Result<Vec<FigurineListItemDto>> {
-        let figurines = self.repo.get_all_figurines(visible_only, limit).await?;
+    pub async fn list_figurines(&self, visible_only: bool, query: crate::models::FigurineQuery) -> Result<crate::models::FigurinesPage> {
+        let page = query.page.unwrap_or(1).max(1);
+        let per_page = query.per_page.unwrap_or(i64::MAX);
+        let (figurines, total) = self.repo.get_all_figurines(visible_only, &query).await?;
         let ids: Vec<Uuid> = figurines.iter().map(|f| f.id).collect();
         let faces = self.repo.get_face_images_for_figurines(&ids).await?;
-        Ok(figurines
+        let items = figurines
             .into_iter()
             .map(|f| {
                 let face = faces.get(&f.id);
                 self.to_list_item(f, face)
             })
-            .collect())
+            .collect();
+        Ok(crate::models::FigurinesPage { items, total, page, per_page })
     }
 
     pub async fn list_in_progress_figurines(&self) -> Result<Vec<FigurineListItemDto>> {
-        let all = self.repo.get_all_figurines(true, None).await?;
-        let figurines: Vec<Figurine> = all
-            .into_iter()
-            .filter(|f| f.status == crate::models::FigurineStatus::InProgress)
-            .collect();
+        let q = crate::models::FigurineQuery {
+            status: Some("in_progress".into()),
+            ..Default::default()
+        };
+        let (figurines, _) = self.repo.get_all_figurines(true, &q).await?;
         let ids: Vec<Uuid> = figurines.iter().map(|f| f.id).collect();
         let faces = self.repo.get_face_images_for_figurines(&ids).await?;
         Ok(figurines
@@ -786,7 +789,40 @@ impl AppService {
 
     pub async fn delete_figurine(&self, id: String) -> Result<()> {
         let uuid = Self::parse_uuid(&id)?;
+
+        // Collect image paths before CASCADE removes the rows.
+        let images = self.repo.get_images_by_figurine(uuid).await?;
+
+        // figurine_analytics_events has no FK (by design), so delete manually.
+        self.repo.delete_analytics_events_by_figurine(uuid).await?;
+
+        // DELETE cascades to: images, process_steps, figurine_showings,
+        // figurine_bookings, figurine_comments, figurine_waitlist,
+        // figurine_analytics_daily, figurine_analytics_sources_daily.
         self.repo.delete_figurine(uuid).await?;
+
+        // Remove physical files from disk (skip remote http URLs).
+        for img in &images {
+            for rel in [
+                Some(img.file_path.as_str()),
+                img.original_path.as_deref(),
+                img.thumb_path.as_deref(),
+                img.depth_path.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if rel.starts_with("http") {
+                    continue;
+                }
+                let path = Path::new(&self.config.upload_dir)
+                    .join(rel.trim_start_matches('/'));
+                if path.is_file() {
+                    let _ = fs::remove_file(&path);
+                }
+            }
+        }
+
         Self::log_domain_event("figurine_deleted", "figurine", uuid, "ok");
         Ok(())
     }

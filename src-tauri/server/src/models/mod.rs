@@ -110,6 +110,30 @@ pub enum BookingStatus {
 }
 
 // ============================================================
+// QUERIES
+// ============================================================
+
+/// Filter + sort + pagination parameters for the figurine listing endpoint.
+#[derive(Debug, Default, Deserialize)]
+pub struct FigurineQuery {
+    pub status: Option<String>,
+    pub search: Option<String>,
+    pub sort: Option<String>,
+    /// Page number (1-based). None → no pagination, return everything.
+    pub page: Option<i64>,
+    pub per_page: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FigurinesPage {
+    pub items: Vec<crate::models::FigurineListItemDto>,
+    pub total: i64,
+    pub page: i64,
+    pub per_page: i64,
+}
+
+// ============================================================
 // ENTITIES (DB MAPPING)
 // ============================================================
 

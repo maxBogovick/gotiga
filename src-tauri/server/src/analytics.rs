@@ -537,6 +537,7 @@ mod tests {
                 headers: &headers,
                 admin_api_key: "admin-token",
                 hash_secret: "analytics-secret-for-tests",
+                country_code: None,
             },
         )
         .unwrap()

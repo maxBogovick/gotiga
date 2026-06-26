@@ -20,3 +20,4 @@ build-and-push.sh
 planning/
 src-tauri/server/data
 /.idea/
+/src-tauri/server/data/
