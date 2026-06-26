@@ -7,6 +7,7 @@ use sqlx::PgPool;
 use std::path::PathBuf;
 use tokio::fs;
 use tokio::net::TcpListener;
+use uuid::Uuid;
 
 // Spin up the real router against a test Postgres pool on a random port.
 async fn spawn_app(pool: PgPool) -> (String, String, PathBuf) {
@@ -181,6 +182,156 @@ async fn analytics_accepts_text_plain_and_exposes_admin_page(pool: PgPool) {
     let body: serde_json::Value = page.json().await.unwrap();
     assert_eq!(body["total"], 1);
     assert_eq!(body["items"][0]["figurineId"], figurine_id.to_string());
+
+    let _ = fs::remove_dir_all(upload_dir).await;
+}
+
+// ── delete_figurine ──────────────────────────────────────────────────────────
+
+/// Deleting a figurine removes its row, all cascade-linked rows, **and** the
+/// `figurine_analytics_events` rows that have no FK (manual delete).
+#[sqlx::test]
+#[ignore = "requires a reachable PostgreSQL test database"]
+async fn delete_figurine_cascades_rows_and_analytics_events(pool: PgPool) {
+    sqlx::migrate!("./migrations/").run(&pool).await.unwrap();
+    let (addr, api_key, upload_dir) = spawn_app(pool.clone()).await;
+    let client = reqwest::Client::new();
+
+    let fig_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO figurines (id, name) VALUES ($1, $2)")
+        .bind(fig_id)
+        .bind("Delete Cascade Test")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Insert a raw analytics event (no FK — the code must delete this manually).
+    sqlx::query(
+        "INSERT INTO figurine_analytics_events \
+         (figurine_id, event_date, event_type, path, source) \
+         VALUES ($1, CURRENT_DATE, 'figurine_view', '/figurines/x', 'direct')",
+    )
+    .bind(fig_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Insert a child images row so we can verify cascade-delete too.
+    let img_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO images (id, figurine_id, image_type, file_path, sort_order) \
+         VALUES ($1, $2, 'face', 'images/dummy.jpg', 0)",
+    )
+    .bind(img_id)
+    .bind(fig_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Call DELETE via the admin HTTP endpoint.
+    let resp = client
+        .delete(format!("{}/api/v1/figurines/{}", addr, fig_id))
+        .bearer_auth(&api_key)
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success(), "delete returned {}", resp.status());
+
+    // Figurine row must be gone.
+    let count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM figurines WHERE id = $1")
+            .bind(fig_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count.0, 0, "figurine row should be deleted");
+
+    // Cascade: images row must be gone.
+    let count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM images WHERE figurine_id = $1")
+            .bind(fig_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count.0, 0, "images rows should cascade-delete");
+
+    // Manual: analytics events must be gone.
+    let count: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM figurine_analytics_events WHERE figurine_id = $1",
+    )
+    .bind(fig_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(count.0, 0, "analytics events should be manually deleted");
+
+    let _ = fs::remove_dir_all(upload_dir).await;
+}
+
+/// Image files on disk (all variants: main, original, thumb, depth) are
+/// removed when the figurine is deleted; http URLs are left untouched.
+#[sqlx::test]
+#[ignore = "requires a reachable PostgreSQL test database"]
+async fn delete_figurine_removes_image_files_from_disk(pool: PgPool) {
+    sqlx::migrate!("./migrations/").run(&pool).await.unwrap();
+    let (addr, api_key, upload_dir) = spawn_app(pool.clone()).await;
+    let client = reqwest::Client::new();
+
+    let fig_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO figurines (id, name) VALUES ($1, $2)")
+        .bind(fig_id)
+        .bind("File Cleanup Test")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Create real files in the upload dir for each path variant.
+    let make_file = |rel: &str| {
+        let base = upload_dir.clone();
+        let rel = rel.to_string();
+        async move {
+            let p = base.join(&rel);
+            fs::create_dir_all(p.parent().unwrap()).await.unwrap();
+            fs::write(&p, b"dummy").await.unwrap();
+            rel
+        }
+    };
+    let main_path  = make_file("images/face_main.jpg").await;
+    let orig_path  = make_file("images/original/face_orig.jpg").await;
+    let thumb_path = make_file("images/thumb/face_thumb.jpg").await;
+    let depth_path = make_file("images/depth/face_depth.png").await;
+
+    let img_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO images \
+         (id, figurine_id, image_type, file_path, original_path, thumb_path, depth_path, sort_order) \
+         VALUES ($1, $2, 'face', $3, $4, $5, $6, 0)",
+    )
+    .bind(img_id)
+    .bind(fig_id)
+    .bind(&main_path)
+    .bind(&orig_path)
+    .bind(&thumb_path)
+    .bind(&depth_path)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let resp = client
+        .delete(format!("{}/api/v1/figurines/{}", addr, fig_id))
+        .bearer_auth(&api_key)
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+
+    // All four file variants must have been removed.
+    for rel in [&main_path, &orig_path, &thumb_path, &depth_path] {
+        assert!(
+            !upload_dir.join(rel).exists(),
+            "file should be deleted: {rel}"
+        );
+    }
 
     let _ = fs::remove_dir_all(upload_dir).await;
 }

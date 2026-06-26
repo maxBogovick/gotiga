@@ -441,25 +441,28 @@ impl AppService {
         }
     }
 
-    pub async fn list_figurines(&self, visible_only: bool, limit: Option<i64>) -> Result<Vec<FigurineListItemDto>> {
-        let figurines = self.repo.get_all_figurines(visible_only, limit).await?;
+    pub async fn list_figurines(&self, visible_only: bool, query: crate::models::FigurineQuery) -> Result<crate::models::FigurinesPage> {
+        let page = query.page.unwrap_or(1).max(1);
+        let per_page = query.per_page.unwrap_or(i64::MAX);
+        let (figurines, total) = self.repo.get_all_figurines(visible_only, &query).await?;
         let ids: Vec<Uuid> = figurines.iter().map(|f| f.id).collect();
         let faces = self.repo.get_face_images_for_figurines(&ids).await?;
-        Ok(figurines
+        let items = figurines
             .into_iter()
             .map(|f| {
                 let face = faces.get(&f.id);
                 self.to_list_item(f, face)
             })
-            .collect())
+            .collect();
+        Ok(crate::models::FigurinesPage { items, total, page, per_page })
     }
 
     pub async fn list_in_progress_figurines(&self) -> Result<Vec<FigurineListItemDto>> {
-        let all = self.repo.get_all_figurines(true, None).await?;
-        let figurines: Vec<Figurine> = all
-            .into_iter()
-            .filter(|f| f.status == crate::models::FigurineStatus::InProgress)
-            .collect();
+        let q = crate::models::FigurineQuery {
+            status: Some("in_progress".into()),
+            ..Default::default()
+        };
+        let (figurines, _) = self.repo.get_all_figurines(true, &q).await?;
         let ids: Vec<Uuid> = figurines.iter().map(|f| f.id).collect();
         let faces = self.repo.get_face_images_for_figurines(&ids).await?;
         Ok(figurines

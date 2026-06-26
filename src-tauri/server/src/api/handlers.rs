@@ -286,16 +286,28 @@ pub async fn admin_get_figurine_analytics(
 #[derive(serde::Deserialize)]
 pub struct ListParams {
     visible: Option<bool>,
-    limit: Option<i64>,
+    status: Option<String>,
+    search: Option<String>,
+    sort: Option<String>,
+    page: Option<i64>,
+    #[serde(rename = "perPage")]
+    per_page: Option<i64>,
 }
 
 pub async fn list_figurines(
     State(service): State<AppService>,
     Query(params): Query<ListParams>,
-) -> Result<Json<Vec<FigurineListItemDto>>> {
+) -> Result<Json<crate::models::FigurinesPage>> {
     let visible_only = params.visible.unwrap_or(true);
-    let list = service.list_figurines(visible_only, params.limit).await?;
-    Ok(Json(list))
+    let query = crate::models::FigurineQuery {
+        status: params.status,
+        search: params.search,
+        sort: params.sort,
+        page: params.page,
+        per_page: params.per_page.map(|n| n.clamp(1, 200)),
+    };
+    let page = service.list_figurines(visible_only, query).await?;
+    Ok(Json(page))
 }
 
 pub async fn get_figurine(
@@ -1150,7 +1162,7 @@ pub async fn sitemap_xml(
         .unwrap_or("https");
     let base = format!("{proto}://{host}");
 
-    let figurines = service.list_figurines(true, None).await?;
+    let figurines = service.list_figurines(true, crate::models::FigurineQuery::default()).await?.items;
 
     let mut urls = String::new();
     for path in ["/", "/figurines", "/author", "/workshop", "/upcoming"] {

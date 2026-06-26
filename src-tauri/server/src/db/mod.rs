@@ -1013,32 +1013,60 @@ impl Repository {
 
     // === CONTENT (Postgres) ===
 
-    pub async fn get_all_figurines(&self, visible_only: bool, limit: Option<i64>) -> Result<Vec<Figurine>> {
-        let figurines = match (visible_only, limit) {
-            (true, Some(n)) => sqlx::query_as::<_, Figurine>(
-                "SELECT * FROM figurines WHERE is_visible = true ORDER BY sort_order LIMIT $1",
-            )
-            .bind(n)
-            .fetch_all(&self.pg_pool)
-            .await?,
-            (true, None) => sqlx::query_as::<_, Figurine>(
-                "SELECT * FROM figurines WHERE is_visible = true ORDER BY sort_order",
-            )
-            .fetch_all(&self.pg_pool)
-            .await?,
-            (false, Some(n)) => sqlx::query_as::<_, Figurine>(
-                "SELECT * FROM figurines ORDER BY sort_order LIMIT $1",
-            )
-            .bind(n)
-            .fetch_all(&self.pg_pool)
-            .await?,
-            (false, None) => sqlx::query_as::<_, Figurine>(
-                "SELECT * FROM figurines ORDER BY sort_order",
-            )
-            .fetch_all(&self.pg_pool)
-            .await?,
+    /// Returns `(items, total_count)`. When `q.per_page` is None — no LIMIT/OFFSET,
+    /// all matching rows are returned (used by sitemap and admin calls).
+    pub async fn get_all_figurines(&self, visible_only: bool, q: &crate::models::FigurineQuery) -> Result<(Vec<Figurine>, i64)> {
+        // Clone filter values upfront so binds own their data ('static).
+        let status = q.status.clone();
+        let search = q.search.clone();
+
+        let mut count_builder: QueryBuilder<Postgres> =
+            QueryBuilder::new("SELECT COUNT(*) FROM figurines WHERE 1=1");
+        if visible_only {
+            count_builder.push(" AND is_visible = true");
+        }
+        if let Some(ref s) = status {
+            count_builder.push(" AND status::text = ").push_bind(s.clone());
+        }
+        if let Some(ref s) = search {
+            count_builder.push(" AND name ILIKE '%' || ").push_bind(s.clone()).push(" || '%'");
+        }
+        let total: i64 = count_builder
+            .build_query_scalar()
+            .fetch_one(&self.pg_pool)
+            .await?;
+
+        let order_clause = match q.sort.as_deref() {
+            Some("newest") => " ORDER BY created_at DESC",
+            Some("oldest") => " ORDER BY created_at ASC",
+            Some("name")   => " ORDER BY name ASC",
+            _              => " ORDER BY sort_order",
         };
-        Ok(figurines)
+
+        let mut items_builder: QueryBuilder<Postgres> =
+            QueryBuilder::new("SELECT * FROM figurines WHERE 1=1");
+        if visible_only {
+            items_builder.push(" AND is_visible = true");
+        }
+        if let Some(s) = status {
+            items_builder.push(" AND status::text = ").push_bind(s);
+        }
+        if let Some(s) = search {
+            items_builder.push(" AND name ILIKE '%' || ").push_bind(s).push(" || '%'");
+        }
+        items_builder.push(order_clause);
+        if let Some(per_page) = q.per_page {
+            let page = q.page.unwrap_or(1).max(1);
+            let offset = (page - 1) * per_page;
+            items_builder.push(" LIMIT ").push_bind(per_page);
+            items_builder.push(" OFFSET ").push_bind(offset);
+        }
+        let figurines = items_builder
+            .build_query_as::<Figurine>()
+            .fetch_all(&self.pg_pool)
+            .await?;
+
+        Ok((figurines, total))
     }
 
     pub async fn get_figurine_by_id(&self, id: Uuid) -> Result<Option<Figurine>> {
