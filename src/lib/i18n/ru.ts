@@ -852,6 +852,8 @@ export const ru: Record<TranslationKey, string> = {
   adminMediaPickMp3:     'Выбрать MP3',
   adminMediaPhotos:      'Фотографии',
   adminMediaAddPhoto:    '+ Добавить',
+  adminMediaAddFolder:   '+ Папка',
+  adminMediaFolderProgress: 'Загрузка {done} / {total}…',
   adminMediaDeletePhoto: '✕ Удалить',
   adminMediaCover:       '★ Обложка',
   adminMediaCoverBadge:  'ОБЛОЖКА',

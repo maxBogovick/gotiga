@@ -852,6 +852,8 @@ export const en = {
   adminMediaPickMp3: 'Pick MP3',
   adminMediaPhotos: 'Photos',
   adminMediaAddPhoto: '+ Add',
+  adminMediaAddFolder: '+ Folder',
+  adminMediaFolderProgress: 'Uploading {done} / {total}…',
   adminMediaDeletePhoto: '✕ Delete',
   adminMediaCover: '★ Cover',
   adminMediaCoverBadge: 'COVER',

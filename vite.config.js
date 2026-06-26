@@ -30,6 +30,8 @@ export default defineConfig(async () => ({
       workbox: isWebBuild
         ? {
             globPatterns: ["**/*.{js,css,html,ico,png,webp,svg,woff2}"],
+            globIgnores: ["**/bg-main.png"],
+            maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
             navigateFallback: null,
             runtimeCaching: [
               {

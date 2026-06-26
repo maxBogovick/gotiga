@@ -877,11 +877,11 @@
   :global(.fig-vignette--reserved) { opacity: 0.52; }
   :global(.group:hover .fig-vignette--reserved) { opacity: 0.35; }
 
-  /* Sold: серое и приглушённое — ушло навсегда, даже ховер не оживляет полностью */
-  :global(.fig-img--sold) { opacity: 0.72; filter: grayscale(0.68) saturate(0.52); }
-  :global(.group:hover .fig-img--sold) { opacity: 0.88; filter: grayscale(0.30) saturate(0.78); }
-  :global(.fig-vignette--sold) { opacity: 0.68; }
-  :global(.group:hover .fig-vignette--sold) { opacity: 0.52; }
+  /* Sold: полный цвет — это часть архива, не могила */
+  :global(.fig-img--sold) { opacity: 1; filter: none; }
+  :global(.group:hover .fig-img--sold) { opacity: 1; filter: none; }
+  :global(.fig-vignette--sold) { opacity: 0.30; }
+  :global(.group:hover .fig-vignette--sold) { opacity: 0.18; }
 
   /* In progress: приглушённее available, но не серое */
   :global(.fig-img--in_progress) { opacity: 0.82; filter: saturate(0.80); }

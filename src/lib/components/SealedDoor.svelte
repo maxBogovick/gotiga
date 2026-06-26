@@ -169,14 +169,6 @@
 </div>
 
 <style>
-  /* Registered so the unlatch transition interpolates the leaf parting smoothly
-     (inherits → the leaves read it). Where @property is unsupported it steps. */
-  @property --open {
-    syntax: '<number>';
-    inherits: true;
-    initial-value: 1;
-  }
-
   .sealed-door {
     position: absolute;
     inset: 0;

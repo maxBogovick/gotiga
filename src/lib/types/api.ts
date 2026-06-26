@@ -12,6 +12,7 @@ export interface FigurineListItem {
     series?: string | null;
     technique?: string | null;
     material?: string | null;
+    dimensions?: string | null;
     isFeatured?: boolean;
     createdAt?: string | null;
     thumbUrl?: string | null;

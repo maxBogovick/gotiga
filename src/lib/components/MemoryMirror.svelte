@@ -139,14 +139,21 @@
 
   onMount(() => {
     reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (!reduced) restoreInterval = setInterval(restoreFog, 80);
     window.addEventListener('keydown', handleKey);
   });
 
   onDestroy(() => {
-    // onDestroy runs during SSR teardown in Svelte 5 — guard the browser-only cleanup.
     clearInterval(restoreInterval);
     if (typeof window !== 'undefined') window.removeEventListener('keydown', handleKey);
+  });
+
+  $effect(() => {
+    if (!isOpen || reduced) {
+      clearInterval(restoreInterval);
+      return;
+    }
+    restoreInterval = setInterval(restoreFog, 80);
+    return () => clearInterval(restoreInterval);
   });
 
   $effect(() => {

@@ -8,20 +8,35 @@
   let y = $state(-100);
   let reduced = $state(false);
 
+  let rawX = -100;
+  let rawY = -100;
+  let rafId: number | null = null;
+
   onMount(() => {
     reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   });
 
+  function scheduleUpdate() {
+    if (rafId !== null) return;
+    rafId = requestAnimationFrame(() => {
+      x = rawX;
+      y = rawY;
+      rafId = null;
+    });
+  }
+
   function handleMouseMove(e: MouseEvent) {
     if (!isActive) return;
-    x = e.clientX;
-    y = e.clientY;
+    rawX = e.clientX;
+    rawY = e.clientY;
+    scheduleUpdate();
   }
 
   function handleTouchMove(e: TouchEvent) {
     if (!isActive || e.touches.length === 0) return;
-    x = e.touches[0].clientX;
-    y = e.touches[0].clientY;
+    rawX = e.touches[0].clientX;
+    rawY = e.touches[0].clientY;
+    scheduleUpdate();
   }
 
   onMount(() => {
@@ -30,10 +45,11 @@
   });
 
   onDestroy(() => {
-      if (typeof window !== 'undefined') {
-          window.removeEventListener('mousemove', handleMouseMove);
-          window.removeEventListener('touchmove', handleTouchMove);
-      }
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('touchmove', handleTouchMove);
+    }
+    if (rafId !== null) cancelAnimationFrame(rafId);
   });
 </script>
 

@@ -266,6 +266,7 @@ pub fn run() {
             commands::get_workshop_content,
             commands::get_cabinet_zones,
             commands::import_media,
+            commands::list_image_files,
             commands::delete_figurine,
             commands::cleanup_unused_media,
             commands::get_media_inventory,

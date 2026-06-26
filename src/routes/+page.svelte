@@ -223,13 +223,11 @@
     );
 
     function sortFeaturedFigurines(items: FigurineListItem[]) {
-        const statusRank: Record<import('$lib/types/api').FigurineStatus, number> =
-            { available: 0, reserved: 1, sold: 2, in_progress: 3 };
+        const byYear = (b: FigurineListItem, a: FigurineListItem) =>
+            (b.year ?? -Infinity) - (a.year ?? -Infinity);
         return items.slice().sort((a, b) => {
-            const byStatus = statusRank[a.status] - statusRank[b.status];
-            const byYear = (b.year ?? -Infinity) - (a.year ?? -Infinity);
             const byOrder = (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
-            return byStatus || byYear || byOrder || a.name.localeCompare(b.name);
+            return byOrder;
         });
     }
 
@@ -382,10 +380,23 @@
 
             <!-- Left: text -->
             <div class="hero-text" in:fly={{ x: -20, duration: 900, delay: 350, easing: cubicOut }}>
-                <p class="eyebrow">
-                    <span class="eyebrow-rule"></span>
-                    {homeContent.kicker?.trim() || $t('homeKicker')}
-                </p>
+                <div class="hero-orn" aria-hidden="true">
+                    <svg class="hero-orn-svg" viewBox="0 0 280 22" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <line x1="0" y1="11" x2="96" y2="11" stroke="currentColor" stroke-width="0.5" opacity="0.65"/>
+                        <polygon points="96,11 102,7 108,11 102,15" fill="currentColor" opacity="0.52"/>
+                        <circle cx="140" cy="11" r="10" stroke="currentColor" stroke-width="0.65" opacity="0.68"/>
+                        <circle cx="140" cy="11" r="4.5" stroke="currentColor" stroke-width="0.5" opacity="0.46"/>
+                        <line x1="140" y1="1" x2="140" y2="21" stroke="currentColor" stroke-width="0.4" opacity="0.42"/>
+                        <line x1="130" y1="11" x2="150" y2="11" stroke="currentColor" stroke-width="0.4" opacity="0.42"/>
+                        <circle cx="140" cy="1" r="1.2" fill="currentColor" opacity="0.52"/>
+                        <circle cx="140" cy="21" r="1.2" fill="currentColor" opacity="0.52"/>
+                        <circle cx="130" cy="11" r="1.2" fill="currentColor" opacity="0.52"/>
+                        <circle cx="150" cy="11" r="1.2" fill="currentColor" opacity="0.52"/>
+                        <circle cx="140" cy="11" r="1.8" fill="currentColor" opacity="0.36"/>
+                        <polygon points="172,11 178,7 184,11 178,15" fill="currentColor" opacity="0.52"/>
+                        <line x1="184" y1="11" x2="280" y2="11" stroke="currentColor" stroke-width="0.5" opacity="0.65"/>
+                    </svg>
+                </div>
 
                 <h1 id="home-title" class="hero-title" aria-label={titleText}>
                     {#each titleLines as line}
@@ -833,6 +844,23 @@
         flex-shrink: 0;
     }
 
+    .hero-orn {
+        margin-bottom: 18px;
+        color: var(--copper);
+    }
+
+    .hero-orn-svg {
+        display: block;
+        width: clamp(180px, 20vw, 280px);
+        height: auto;
+        animation: orn-breathe 11s ease-in-out infinite;
+    }
+
+    @keyframes orn-breathe {
+        0%, 100% { opacity: 0.62; }
+        50% { opacity: 0.38; }
+    }
+
     /* ── H1: word-based reveal, so Russian titles wrap like typography ─────── */
     .hero-title {
         font-family: 'Cormorant Garamond', serif;
@@ -889,7 +917,8 @@
         .fog-b,
         .grain,
         .sc-line,
-        .zone-pulse {
+        .zone-pulse,
+        .hero-orn-svg {
             animation: none;
             transform: none;
             opacity: 1;

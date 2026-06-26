@@ -94,6 +94,7 @@
     let uploadingVideo = $state(false);
     let uploadingAudio = $state(false);
     let externalVideoUrl = $state('');
+    let folderUploadProgress = $state<{ done: number; total: number } | null>(null);
 
     let hasUnsaved = $derived(
         selectedFigurine !== null && JSON.stringify(selectedFigurine) !== savedSnapshot
@@ -103,6 +104,16 @@
         searchQuery.trim()
             ? figurines.filter(f => f.name.toLowerCase().includes(searchQuery.toLowerCase()))
             : figurines
+    );
+
+    let materialSuggestions = $derived(
+        [...new Set(figurines.map(f => f.material).filter((v): v is string => !!v))].sort()
+    );
+    let techniqueSuggestions = $derived(
+        [...new Set(figurines.map(f => f.technique).filter((v): v is string => !!v))].sort()
+    );
+    let dimensionsSuggestions = $derived(
+        [...new Set(figurines.map(f => f.dimensions).filter((v): v is string => !!v))].sort()
     );
 
     function resolveUrl(path: string | null): string {
@@ -439,6 +450,90 @@
         } finally {
             if (type === 'videos') uploadingVideo = false;
             if (type === 'audio') uploadingAudio = false;
+        }
+    }
+
+    async function handleFolderUpload() {
+        if (!selectedFigurine) return;
+        if (isTauri) {
+            const { open } = await import('@tauri-apps/plugin-dialog');
+            const { invoke: inv } = await import('@tauri-apps/api/core');
+            const dir = await open({ directory: true, multiple: false });
+            if (!dir || typeof dir !== 'string') return;
+            let imagePaths: string[] = [];
+            try {
+                imagePaths = await inv<string[]>('list_image_files', { dirPath: dir });
+            } catch (e) {
+                showMessage($t('adminMsgError') + e, 'error');
+                return;
+            }
+            if (imagePaths.length === 0) return;
+            folderUploadProgress = { done: 0, total: imagePaths.length };
+            for (const filePath of imagePaths) {
+                try {
+                    const imported = await api.importMediaWithVariants(filePath, 'images');
+                    const variants = deriveImageVariants(imported.url);
+                    selectedFigurine.images = [...selectedFigurine.images, {
+                        id: crypto.randomUUID(),
+                        imageType: 'full',
+                        url: imported.url,
+                        originalUrl: imported.originalUrl ?? variants.originalUrl,
+                        thumbUrl: imported.thumbUrl ?? variants.thumbUrl,
+                        altText: '',
+                        depthUrl: null,
+                        parallaxIntensity: null,
+                        focalX: null,
+                        focalY: null,
+                        revealRadius: null,
+                        darkness: null
+                    }];
+                } catch (e) {
+                    showMessage($t('adminMsgError') + String(e), 'error');
+                }
+                folderUploadProgress = { done: (folderUploadProgress?.done ?? 0) + 1, total: imagePaths.length };
+            }
+            folderUploadProgress = null;
+            showMessage($t('adminMsgFileUploaded'), 'success');
+        } else {
+            // Web mode: native folder picker via webkitdirectory
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'image/jpeg,image/png,image/webp';
+            input.multiple = true;
+            (input as HTMLInputElement & { webkitdirectory: boolean }).webkitdirectory = true;
+            input.onchange = async () => {
+                const files = Array.from(input.files ?? [])
+                    .filter(f => /\.(jpe?g|png|webp)$/i.test(f.name))
+                    .sort((a, b) => a.name.localeCompare(b.name));
+                if (files.length === 0) return;
+                folderUploadProgress = { done: 0, total: files.length };
+                for (const file of files) {
+                    try {
+                        const imported = await api.importMediaWithVariants(file, 'images');
+                        const variants = deriveImageVariants(imported.url);
+                        selectedFigurine!.images = [...selectedFigurine!.images, {
+                            id: crypto.randomUUID(),
+                            imageType: 'full',
+                            url: imported.url,
+                            originalUrl: imported.originalUrl ?? variants.originalUrl,
+                            thumbUrl: imported.thumbUrl ?? variants.thumbUrl,
+                            altText: '',
+                            depthUrl: null,
+                            parallaxIntensity: null,
+                            focalX: null,
+                            focalY: null,
+                            revealRadius: null,
+                            darkness: null
+                        }];
+                    } catch (e) {
+                        showMessage($t('adminMsgError') + String(e), 'error');
+                    }
+                    folderUploadProgress = { done: (folderUploadProgress?.done ?? 0) + 1, total: files.length };
+                }
+                folderUploadProgress = null;
+                showMessage($t('adminMsgFileUploaded'), 'success');
+            };
+            input.click();
         }
     }
 
@@ -979,15 +1074,30 @@
                             <div class="space-y-4">
                                 <label class="block">
                                     <span class="label">{$t('adminFieldDimensions')}</span>
-                                    <input bind:value={selectedFigurine.dimensions} class="input-gothic" placeholder="20×15×10 cm" />
+                                    <input bind:value={selectedFigurine.dimensions} class="input-gothic" placeholder="20×15×10 cm" list="suggest-dimensions" autocomplete="off" />
+                                    <datalist id="suggest-dimensions">
+                                        {#each dimensionsSuggestions as s}
+                                            <option value={s} />
+                                        {/each}
+                                    </datalist>
                                 </label>
                                 <label class="block">
                                     <span class="label">{$t('adminFieldMaterial')}</span>
-                                    <input bind:value={selectedFigurine.material} class="input-gothic" />
+                                    <input bind:value={selectedFigurine.material} class="input-gothic" list="suggest-material" autocomplete="off" />
+                                    <datalist id="suggest-material">
+                                        {#each materialSuggestions as s}
+                                            <option value={s} />
+                                        {/each}
+                                    </datalist>
                                 </label>
                                 <label class="block">
                                     <span class="label">{$t('adminFieldTechnique')}</span>
-                                    <input bind:value={selectedFigurine.technique} class="input-gothic" />
+                                    <input bind:value={selectedFigurine.technique} class="input-gothic" list="suggest-technique" autocomplete="off" />
+                                    <datalist id="suggest-technique">
+                                        {#each techniqueSuggestions as s}
+                                            <option value={s} />
+                                        {/each}
+                                    </datalist>
                                 </label>
                                 <div class="flex gap-4">
                                     <label class="block flex-1">
@@ -1236,7 +1346,12 @@
                                                 class="btn-gothic text-[10px] disabled:opacity-60 disabled:cursor-wait">
                                                 {generatingDepth ? $t('adminMediaDepthGenRunning') : $t('adminMediaDepthGen')}</button>
                                         {/if}
-                                        <button onclick={() => handlePickFile('images')} class="btn-gothic text-[10px]">{$t('adminMediaAddPhoto')}</button>
+                                        <button onclick={() => handlePickFile('images')} class="btn-gothic text-[10px]" disabled={!!folderUploadProgress}>{$t('adminMediaAddPhoto')}</button>
+                                        <button onclick={handleFolderUpload} class="btn-gothic text-[10px]" disabled={!!folderUploadProgress}>
+                                            {folderUploadProgress
+                                                ? $t('adminMediaFolderProgress').replace('{done}', String(folderUploadProgress.done)).replace('{total}', String(folderUploadProgress.total))
+                                                : $t('adminMediaAddFolder')}
+                                        </button>
                                     </div>
                                 </div>
                                 <div class="flex flex-wrap gap-3">

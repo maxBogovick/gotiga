@@ -4,7 +4,7 @@
   import type { Figurine, FigurineSchedule, FigurineStatus } from '$lib/types/api';
   import UnifiedRequestModal from '$lib/components/UnifiedRequestModal.svelte';
   import FigurineClaimRow from '$lib/components/FigurineClaimRow.svelte';
-  import FigurineReceiptPanel from '$lib/components/FigurineReceiptPanel.svelte';
+  import FigurineStatusPanel from '$lib/components/FigurineStatusPanel.svelte';
   import BrassLens from '$lib/components/BrassLens.svelte';
   import LivingDaguerreotype from '$lib/components/LivingDaguerreotype.svelte';
   import CandleReveal from '$lib/components/CandleReveal.svelte';
@@ -13,6 +13,7 @@
   import SecretText from '$lib/components/SecretText.svelte';
   import Lightbox from '$lib/components/Lightbox.svelte';
   import FontSwitcher from '$lib/components/FontSwitcher.svelte';
+  import { goto } from '$app/navigation';
   import { api, resolveMediaUrl } from '$lib/api';
   import { createFigurineAnalytics } from '$lib/analytics';
   import { t } from '$lib/i18n';
@@ -67,124 +68,8 @@
   let analyticsEngagedTimer: ReturnType<typeof setTimeout> | null = null;
   let analyticsScrollSent = false;
 
-  function readStoredToken(key: string): string | null {
-    try { return localStorage.getItem(key); } catch { return null; }
-  }
-
-  function writeStoredToken(key: string, token: string) {
-    try { localStorage.setItem(key, token); } catch {}
-  }
-
-  function removeStoredToken(key: string) {
-    try { localStorage.removeItem(key); } catch {}
-  }
-
-  // ── Queue (waitlist) receipt: persisted per-figurine token, like booking claims ──
-  let queueKey = $derived(`gotiga_queue_${id}`);
-  let queuePosition = $state(0);
-  let queueLeaving = $state(false);
-  let queueLeft = $state(false);
-  let queueLookupStale = $state(false);
-  let queueLeaveError = $state(false);
-
-  async function loadQueue() {
-    const token = readStoredToken(queueKey);
-    if (!token) return;
-    try {
-      const info = await api.getWaitlistByToken(token);
-      queueLookupStale = false;
-      if (info) {
-        queuePosition = info.position;
-        queueLeft = false;
-      } else {
-        // Token no longer valid (notified/removed) - clear it.
-        removeStoredToken(queueKey);
-        queuePosition = 0;
-      }
-    } catch {
-      // Keep the local token; this can be a transient network/backend error.
-      queueLookupStale = true;
-    }
-  }
-
-  function onQueueJoined(token: string, position: number) {
-    writeStoredToken(queueKey, token);
-    queuePosition = position;
-    queueLeft = false;
-    queueLookupStale = false;
-    queueLeaveError = false;
-  }
-
-  async function leaveQueue() {
-    const token = readStoredToken(queueKey);
-    if (!token || queueLeaving) return;
-    queueLeaving = true;
-    queueLeaveError = false;
-    try {
-      await api.leaveWaitlistByToken(token);
-      removeStoredToken(queueKey);
-      queuePosition = 0;
-      queueLeft = true;
-      queueLookupStale = false;
-    } catch {
-      queueLeaveError = true;
-    } finally {
-      queueLeaving = false;
-    }
-  }
-
-  // ── Notify-me subscription receipt: same pattern as the queue ──
-  let notifyKey = $derived(`gotiga_notify_${id}`);
-  let notifyActive = $state(false);
-  let notifyStopping = $state(false);
-  let notifyStopped = $state(false);
-  let notifyLookupStale = $state(false);
-  let notifyStopError = $state(false);
-
-  async function loadNotify() {
-    const token = readStoredToken(notifyKey);
-    if (!token) return;
-    try {
-      const info = await api.getNotifyByToken(token);
-      notifyLookupStale = false;
-      if (info) {
-        notifyActive = true;
-        notifyStopped = false;
-      } else {
-        removeStoredToken(notifyKey);
-        notifyActive = false;
-      }
-    } catch {
-      // Keep the local token; this can be a transient network/backend error.
-      notifyLookupStale = true;
-    }
-  }
-
-  function onNotifySubscribed(token: string) {
-    writeStoredToken(notifyKey, token);
-    notifyActive = true;
-    notifyStopped = false;
-    notifyLookupStale = false;
-    notifyStopError = false;
-  }
-
-  async function stopNotify() {
-    const token = readStoredToken(notifyKey);
-    if (!token || notifyStopping) return;
-    notifyStopping = true;
-    notifyStopError = false;
-    try {
-      await api.cancelNotifyByToken(token);
-      removeStoredToken(notifyKey);
-      notifyActive = false;
-      notifyStopped = true;
-      notifyLookupStale = false;
-    } catch {
-      notifyStopError = true;
-    } finally {
-      notifyStopping = false;
-    }
-  }
+  let queueJoin = $state<{ token: string; position: number } | null>(null);
+  let notifyJoin = $state<string | null>(null);
 
   let showings = $derived(figurineSchedule.entries.filter(e => e.entryType === 'showing'));
 
@@ -845,6 +730,7 @@
   // current plate's morph name.
   function armPageTurn(e: MouseEvent, direction: 'forward' | 'backward') {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    if (!isPointerFine) return;
     pageTurn.arm(direction);
     const sound = turnSound.value;
     if (sound !== 'off') playTurnSound(sound, direction);
@@ -868,6 +754,32 @@
   $effect(() => {
     if (bleedDir && bleedImage) lastBleed = { dir: bleedDir, img: bleedImage };
   });
+
+  // ── Mobile swipe navigation (page-level: prev/next figurine) ────────────
+  let swipeTouchStartX = 0;
+  let swipeTouchStartY = 0;
+  let swipeTouchTarget: EventTarget | null = null;
+
+  function handlePageTouchStart(e: TouchEvent) {
+    if (e.touches.length !== 1) return;
+    swipeTouchStartX = e.touches[0].clientX;
+    swipeTouchStartY = e.touches[0].clientY;
+    swipeTouchTarget = e.target;
+  }
+
+  function handlePageTouchEnd(e: TouchEvent) {
+    if (showLightbox || showRequestModal || showStoryModal || isGrimoireOpen) return;
+    if (e.changedTouches.length !== 1) return;
+    const dx = e.changedTouches[0].clientX - swipeTouchStartX;
+    const dy = e.changedTouches[0].clientY - swipeTouchStartY;
+    if (Math.abs(dx) < 72 || Math.abs(dx) < Math.abs(dy) * 1.6) return;
+    if (swipeTouchTarget instanceof Element && swipeTouchTarget.closest('.gallery-col')) return;
+    if (dx > 0 && prev) {
+      void goto(`/figurines/${prev.id}`);
+    } else if (dx < 0 && next) {
+      void goto(`/figurines/${next.id}`);
+    }
+  }
 
   // ── Keyboard gallery navigation ───────────────────────────────────────────
   function handleKeydown(e: KeyboardEvent) {
@@ -991,8 +903,6 @@
     cs.verify();
     cs.startPolling();
     turnSound.load();
-    void loadQueue();
-    void loadNotify();
     if (galleryRef) {
       // The observer reports the gallery's geometry in its own callback (no reflow on
       // our side) and also refires on layout/resize changes — e.g. when the image
@@ -1032,7 +942,10 @@
 
 <CandleReveal isActive={isCandleLit} />
 
-<div class="page-root" class:page-root--has-cta={scrollY > 300} class:page-root--candle={isCandleLit}>
+<div class="page-root" class:page-root--has-cta={scrollY > 300} class:page-root--candle={isCandleLit}
+  ontouchstart={handlePageTouchStart}
+  ontouchend={handlePageTouchEnd}
+>
   <UnifiedRequestModal
     isOpen={showRequestModal}
     figurineName={figurine.name}
@@ -1040,8 +953,8 @@
     status={figurine.status}
     schedule={figurineSchedule}
     initialIntent={requestInitialIntent}
-    onJoined={onQueueJoined}
-    onNotified={onNotifySubscribed}
+    onJoined={(tok: string, pos: number) => { queueJoin = { token: tok, position: pos }; }}
+    onNotified={(tok: string) => { notifyJoin = tok; }}
     onBookingCreated={(claim: ClaimData) => cs.onBookingCreated(claim)}
     onClose={() => (showRequestModal = false)}
   />
@@ -1535,126 +1448,18 @@
           </div>
         {/if}
 
-        <!-- ── Status & enquiry: commerce collapsed to one quiet marginal line ── -->
-        <div class="entry-status entry-status--{figurine.status}">
-          <div class="entry-status-head">
-              <span class="entry-status-marque">
-                <span class="entry-status-kind">
-                  {statusUi.label}
-                </span>
-                <span class="entry-wax" aria-hidden="true">GT</span>
-              </span>
-            <span class="entry-registry">{$t('detailRegistryNo')} {id.slice(0, 3).toUpperCase()}</span>
-          </div>
-
-          <div class="entry-status-body">
-            <div class="entry-status-copy">
-              <h2 class="entry-status-title">
-                {statusUi.title}
-              </h2>
-
-              <p class="entry-status-line">
-                <span class="entry-price">{$t('figurinePriceOnRequest')}</span>
-                {#if figurine.status === 'available'}
-                  {#if hasActiveShowing}
-                    <span class="entry-sep">·</span>{$t('detailPresenceOnExhibition')}{#if nextAvailableDate} <span class="entry-sep">·</span>{$t('figurineAvailableFrom')} {nextAvailableDate.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}{/if}
-                  {:else if nextAvailableDate}
-                    <span class="entry-sep">·</span>{$t('figurineAvailableFrom')} {nextAvailableDate.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}
-                  {:else}
-                    <span class="entry-sep">·</span>{$t('detailPresenceAvailableNow')}
-                  {/if}
-                {:else if figurine.status === 'reserved'}
-                  <span class="entry-sep">·</span>{#if nextAvailableDate}{$t('detailPresenceMayFree')} {nextAvailableDate.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}{:else}{$t('figurineReserved')}{/if}
-                {/if}
-              </p>
-            </div>
-
-            <button
-              type="button"
-              class="commission-similar-btn"
-              onclick={() => openRequestModal('similar')}
-            >
-              {$t('commissionCreateSimilarCta')}
-              <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M1.5 6h9M7 2.5L10.5 6 7 9.5"/>
-              </svg>
-            </button>
-          </div>
-
-          <div class="entry-status-facts" aria-label={$t('detailRegistryFacts')}>
-            <span>{$t('detailReplyWindow')}</span>
-            <span>{$t('detailNoObligation')}</span>
-            <span>{$t('detailPersonalTransfer')}</span>
-          </div>
-
-          <section class="trust-ledger" aria-label={$t('detailTrustBlockLabel')}>
-            <p class="trust-ledger-mark">
-              <span class="trust-ledger-lozenge" aria-hidden="true"></span>
-              {$t('detailTrustUnique')}
-            </p>
-            <div class="trust-ledger-next">
-              {#if figurine.status === 'available'}
-                <p>{$t('detailTrustNextAvailable')}</p>
-              {:else}
-                <p>
-                  {figurine.status === 'reserved'
-                    ? $t('detailTrustNextReserved')
-                    : figurine.status === 'in_progress'
-                      ? $t('detailTrustNextProgress')
-                      : $t('detailTrustNextSold')}
-                </p>
-              {/if}
-              <a class="trust-ledger-link" href="/figurines/{id}/passport" onclick={() => analyticsClient?.cta('passport')}>
-                {$t('detailOpenPassport')} →
-              </a>
-            </div>
-          </section>
-
-          {#if scheduleLoadFailed}
-            <p class="queue-receipt-left queue-receipt-left--warning">{$t('detailScheduleLoadStale')}</p>
-          {/if}
-
-          {#if figurine.status === 'reserved'}
-            {#if queuePosition > 0}
-              <FigurineReceiptPanel
-                title={$t('detailQueuePanelTitle')}
-                note={$t('detailQueueNote')}
-                stale={queueLookupStale}
-                position={queuePosition}
-                positionLabel={$t('detailQueuePositionLabel')}
-                actionLabel={$t('detailQueueLeave')}
-                actionBusyLabel={$t('detailQueueLeaving')}
-                busy={queueLeaving}
-                onAction={leaveQueue}
-              />
-            {:else if queueLeaveError}
-              <p class="queue-receipt-left queue-receipt-left--warning">{$t('detailQueueLeaveError')}</p>
-            {:else if queueLookupStale}
-              <p class="queue-receipt-left queue-receipt-left--warning">{$t('detailReceiptStale')}</p>
-            {:else if queueLeft}
-              <p class="queue-receipt-left">{$t('detailQueueLeft')}</p>
-            {/if}
-          {:else if figurine.status === 'in_progress' || figurine.status === 'sold'}
-            {#if notifyActive}
-              <FigurineReceiptPanel
-                title={$t('detailNotifyPanelTitle')}
-                note={$t('detailNotifyNote')}
-                stale={notifyLookupStale}
-                actionLabel={$t('detailNotifyStop')}
-                actionBusyLabel={$t('detailNotifyStopping')}
-                busy={notifyStopping}
-                variant="notify"
-                onAction={stopNotify}
-              />
-            {:else if notifyStopError}
-              <p class="queue-receipt-left queue-receipt-left--warning">{$t('detailNotifyStopError')}</p>
-            {:else if notifyLookupStale}
-              <p class="queue-receipt-left queue-receipt-left--warning">{$t('detailReceiptStale')}</p>
-            {:else if notifyStopped}
-              <p class="queue-receipt-left">{$t('detailNotifyStopped')}</p>
-            {/if}
-          {/if}
-        </div>
+        <!-- ── Status & enquiry ── -->
+        <FigurineStatusPanel
+          {figurine}
+          {id}
+          {hasActiveShowing}
+          {nextAvailableDate}
+          {scheduleLoadFailed}
+          onOpenModal={openRequestModal}
+          {analyticsClient}
+          {queueJoin}
+          {notifyJoin}
+        />
 
         <!-- Personal record for this work: folded into a disclosure, not a dashboard on the leaf. -->
         {#if canShowPersonalRecord}
@@ -1951,6 +1756,34 @@
     {/if}<!-- end {#if doorClosed} {:else} -->
   </div>
 </div>
+
+<!-- Mobile swipe edge indicators — only on touch devices, only when prev/next exist -->
+{#if prev && !showLightbox && !showRequestModal && !showStoryModal && !isGrimoireOpen}
+  <a
+    href="/figurines/{prev.id}"
+    class="swipe-edge swipe-edge--prev"
+    aria-label="{$t('figurineNavPrev')}: {prev.name}"
+    data-sveltekit-preload-data="hover"
+  >
+    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+      <path d="M6.5 2L3.5 5 6.5 8" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <span class="swipe-edge-name">{prev.name}</span>
+  </a>
+{/if}
+{#if next && !showLightbox && !showRequestModal && !showStoryModal && !isGrimoireOpen}
+  <a
+    href="/figurines/{next.id}"
+    class="swipe-edge swipe-edge--next"
+    aria-label="{$t('figurineNavNext')}: {next.name}"
+    data-sveltekit-preload-data="hover"
+  >
+    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+      <path d="M3.5 2l3 3L3.5 8" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <span class="swipe-edge-name">{next.name}</span>
+  </a>
+{/if}
 
 <!-- Mobile sticky CTA after the first screen — present for every status. -->
 {#if scrollY > 300 && !showRequestModal}

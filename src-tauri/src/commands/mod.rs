@@ -354,6 +354,24 @@ pub async fn import_media(
 }
 
 #[tauri::command]
+pub async fn list_image_files(dir_path: String) -> Result<Vec<String>, String> {
+    use std::fs;
+    let entries = fs::read_dir(&dir_path).map_err(|e| e.to_string())?;
+    let mut paths: Vec<String> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let p = e.path();
+            if !p.is_file() { return false; }
+            let ext = p.extension().and_then(|x| x.to_str()).unwrap_or("").to_lowercase();
+            matches!(ext.as_str(), "jpg" | "jpeg" | "png" | "webp")
+        })
+        .filter_map(|e| e.path().to_str().map(|s| s.to_string()))
+        .collect();
+    paths.sort();
+    Ok(paths)
+}
+
+#[tauri::command]
 pub async fn delete_figurine(id: String, db: State<'_, Database>) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let repo = Repository::new(&conn);

@@ -585,9 +585,8 @@
         place-items: center;
         border: 1px solid rgba(52,37,28,0.16);
         border-radius: 999px;
-        background: rgba(255,249,240,0.72);
+        background: rgba(255,249,240,0.92);
         color: var(--color-ink-tertiary);
-        backdrop-filter: blur(8px);
         cursor: pointer;
         opacity: 0.82;
         transition: color 0.2s, background 0.2s, border-color 0.2s, transform 0.2s, opacity 0.2s;
@@ -659,14 +658,13 @@
         z-index: 3;
         max-width: calc(100% - 20px);
         padding: 7px 9px;
-        background: rgba(43,27,19,0.78);
+        background: rgba(43,27,19,0.88);
         color: #fff7ea;
         font-size: 8px;
         font-weight: 600;
         letter-spacing: 0.14em;
         line-height: 1;
         text-transform: uppercase;
-        backdrop-filter: blur(8px);
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
@@ -776,17 +774,6 @@
     .tile-cta svg { transition: transform 0.2s ease; }
     .tile-cta-ghost:hover svg { transform: translateX(2px); }
 
-    /*
-     * @property lets the browser interpolate --glow as a <number>,
-     * making the radial gradient in ::after actually transition.
-     * Without this, gradients with var() can't be animated.
-     */
-    @property --glow {
-        syntax: '<number>';
-        inherits: false;
-        initial-value: 0;
-    }
-
     .tile-cta-similar {
         --glow: 0;
         width: 34px;
@@ -802,8 +789,7 @@
                 transparent 100%),
             oklch(94% 0.02 78 / 0.82);
         color: oklch(30% 0.055 42);
-        /* frosted glass — floats above the card grain texture */
-        backdrop-filter: blur(4px) saturate(1.3);
+        /* floats above the card grain texture */
         box-shadow:
             inset 0 1px 0 oklch(100% 0 0 / 0.42),
             inset 0 -1px 0 oklch(30% 0.055 42 / 0.1);

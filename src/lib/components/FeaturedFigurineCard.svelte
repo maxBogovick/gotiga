@@ -555,7 +555,7 @@
     }
 
     .card.is-sold :global(.card-img .app-image-main) {
-        filter: grayscale(0.58) saturate(0.74);
+        filter: none;
     }
 
     @keyframes card-in {

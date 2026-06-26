@@ -113,25 +113,6 @@
 {/if}
 
 <style>
-  /* Registered so the spread (hover / breathing) can animate smoothly.
-     Where @property is unsupported the value simply changes instantly. */
-  @property --kh-spread {
-    syntax: '<number>';
-    inherits: true;
-    initial-value: 0;
-  }
-  @property --kh-breathe {
-    syntax: '<number>';
-    inherits: false;
-    initial-value: 0;
-  }
-  /* Registered so shadow depth can ease smoothly while dwelling. */
-  @property --kh-dark {
-    syntax: '<number>';
-    inherits: false;
-    initial-value: 0.88;
-  }
-
   .keyhole-veil {
     position: absolute;
     inset: 0;

@@ -11,9 +11,12 @@
   import { fade, fly } from 'svelte/transition';
   import { api, resolveMediaUrl } from '$lib/api';
 
-  let links = $derived([
+  let leftLinks = $derived([
     { href: '/figurines', label: $t('navArchive') },
     { href: '/upcoming', label: $t('navUpcoming') },
+  ]);
+
+  let rightLinks = $derived([
     { href: '/workshop', label: $t('navWorkshop') },
     { href: '/author',   label: $t('navAuthor') },
   ]);
@@ -22,6 +25,7 @@
   let panelOpen = $state(false);
   let panelRef = $state<HTMLElement | null>(null);
   let mobileNavOpen = $state(false);
+  let isScrolled = $state(false);
 
   function isActive(href: string) {
     return pathname === href || pathname.startsWith(`${href}/`);
@@ -31,6 +35,20 @@
   function closeMobileNav() { mobileNavOpen = false; }
   function togglePanel() { panelOpen = !panelOpen; }
   function closePanel()  { panelOpen = false; }
+
+  function handleScroll() {
+    isScrolled = window.scrollY > 48;
+  }
+
+  // Keep --site-header-h in sync so sticky sub-headers on detail/archive pages
+  // track the main header height without JS coupling between components.
+  $effect(() => {
+    if (typeof document === 'undefined') return;
+    document.documentElement.style.setProperty(
+      '--site-header-h',
+      isScrolled ? '54px' : '78px'
+    );
+  });
 
   function fmtDate(iso: string) {
     return new Date(iso).toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
@@ -44,7 +62,6 @@
 
   let count = $derived(allClaims.pendingCount);
 
-  // User dropdown
   let userMenuOpen = $state(false);
   let userMenuRef = $state<HTMLElement | null>(null);
 
@@ -58,6 +75,7 @@
 
   async function handleLogout() {
     userMenuOpen = false;
+    mobileNavOpen = false;
     const token = authStore.token;
     if (token) {
       try { await api.userLogout(token); } catch { /* ok */ }
@@ -74,8 +92,9 @@
     allClaims.startPolling();
     document.addEventListener('click', handleOutside, { capture: true });
     document.addEventListener('click', handleUserOutside, { capture: true });
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    handleScroll();
 
-    // Restore user session from stored token
     if (!authStore.isLoggedIn && authStore.token) {
       try {
         const user = await api.userMe(authStore.token);
@@ -85,8 +104,6 @@
       }
     }
 
-    // Once a session is confirmed, reconcile the wishlist with the server copy so
-    // saved figurines follow the account across devices.
     if (authStore.token) {
       savedFigurines.load();
       savedFigurines.syncWithServer({ importLocal: false });
@@ -94,12 +111,13 @@
   });
 
   onDestroy(() => {
-    // onDestroy runs during SSR teardown in Svelte 5; the listeners were only added
-    // in onMount (client), so guard the browser-only cleanup.
     allClaims.stopPolling();
     if (typeof document !== 'undefined') {
       document.removeEventListener('click', handleOutside, { capture: true });
       document.removeEventListener('click', handleUserOutside, { capture: true });
+    }
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('scroll', handleScroll);
     }
   });
 
@@ -109,146 +127,189 @@
   });
 </script>
 
-<header class="site-header">
-  <a href="/" class="brand" aria-label={$brandName}>
-    <picture>
-      <source srcset="/images/raven-emblem.webp" type="image/webp" />
-      <img
-        src="/images/raven-emblem.png"
-        alt=""
-        class="brand-emblem"
-        width="40"
-        height="40"
-        decoding="async"
-        fetchpriority="high"
-      />
-    </picture>
-    <span class="brand-text">
-      <span class="brand-name">{$brandName}</span>
-      <span class="brand-sub">Cabinet of Gothic Miniatures</span>
-    </span>
-  </a>
+<header class="site-header" class:is-scrolled={isScrolled}>
+  <div class="header-inner">
 
-  <button
-    class="mobile-menu-btn"
-    class:is-open={mobileNavOpen}
-    type="button"
-    onclick={toggleMobileNav}
-    aria-label={$t('navMenu')}
-    aria-expanded={mobileNavOpen}
-    aria-controls="site-primary-nav"
-  >
-    <span></span>
-    <span></span>
-    <span></span>
-  </button>
-
-  <nav id="site-primary-nav" class="nav" class:is-open={mobileNavOpen} aria-label="Primary">
-    {#each links as link}
-      <a
-        href={link.href}
-        class="nav-link"
-        class:is-active={isActive(link.href)}
-        aria-current={isActive(link.href) ? 'page' : undefined}
-        onclick={closeMobileNav}
-      >
-        {link.label}
-      </a>
-    {/each}
-  </nav>
-
-  <div class="header-end">
-    <LangSwitcher variant="light" />
-    <FontSwitcher variant="header" />
-
-    <!-- Bookings (exhibition-loan) indicator — retired from the public flow.
-         Kept only for legacy claim-holders so they can still track/cancel an existing
-         booking; new visitors never see it since bookings can no longer be created. -->
-    {#if allClaims.claims.length > 0}
-    <div class="bookings-anchor" bind:this={panelRef}>
-      <button
-        class="bookings-btn"
-        class:has-claims={count > 0}
-        class:is-open={panelOpen}
-        onclick={togglePanel}
-        aria-label={$t('bookingsHeaderTitle')}
-        title={$t('bookingsHeaderTitle')}
-      >
-        <!-- Scroll/bookmark icon -->
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-          <rect x="1" y="1" width="12" height="12" rx="1" stroke="currentColor" stroke-width="1"/>
-          <path d="M4 5h6M4 7.5h6M4 10h4" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
-        </svg>
-        {#if count > 0}
-          <span class="badge">{count}</span>
-        {/if}
-      </button>
-
-      {#if panelOpen}
-        <div class="bookings-panel" transition:fade={{ duration: 150 }}>
-          <div class="panel-head">
-            <span class="panel-title">{$t('bookingsHeaderTitle')}</span>
-            <button class="panel-close" onclick={closePanel} aria-label="Close">✕</button>
-          </div>
-
-          {#if allClaims.claims.length === 0}
-            <div class="panel-empty">
-              <p>{$t('bookingsEmpty')}</p>
-            </div>
-          {:else}
-            <ul class="panel-list">
-              {#each allClaims.claims as c (c.token)}
-                <li class="panel-item">
-                  <div class="panel-item-top">
-                    <a
-                      href="/figurines/{c.figurineId}"
-                      class="panel-figurine-name"
-                      onclick={closePanel}
-                    >{c.figurineName}</a>
-                    <span class="panel-status panel-status--{c.status ?? 'pending'}">
-                      {c.status === 'confirmed' ? $t('bookingsConfirmed')
-                      : c.status === 'rejected'  ? $t('bookingsRejected')
-                      : c.status === 'completed' ? $t('bookingsCompleted')
-                      : $t('bookingsPending')}
-                    </span>
-                  </div>
-                  <p class="panel-dates">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</p>
-                  {#if !c.status || c.status === 'pending'}
-                    <button
-                      class="panel-cancel-btn"
-                      onclick={() => allClaims.cancel(c)}
-                      disabled={allClaims.cancellingToken === c.token}
-                    >
-                      {allClaims.cancellingToken === c.token ? $t('claimCancelling') : $t('claimCancelBtn')}
-                    </button>
-                    {#if allClaims.errors[c.token]}
-                      <p class="panel-err">{allClaims.errors[c.token]}</p>
-                    {/if}
-                  {/if}
-                </li>
-              {/each}
-            </ul>
-          {/if}
-
-          <div class="panel-footer">
-            <a href={authStore.isLoggedIn ? '/profile' : '/bookings'} class="panel-view-all" onclick={closePanel}>
-              {$t('bookingsViewAll')} →
-            </a>
-          </div>
-        </div>
-      {/if}
+    <!-- ① Ghost-left: muted utilities pinned to left edge -->
+    <div class="ghost-left">
+      <LangSwitcher variant="light" />
+      <FontSwitcher variant="header" />
     </div>
-    {/if}
 
-    <!-- User button -->
-    <div class="user-anchor" bind:this={userMenuRef}>
+    <!-- ② Left nav -->
+    <nav class="nav-side nav-left" aria-label="Primary left">
+      {#each leftLinks as link}
+        <a
+          href={link.href}
+          class="nav-link"
+          class:is-active={isActive(link.href)}
+          aria-current={isActive(link.href) ? 'page' : undefined}
+        >{link.label}</a>
+      {/each}
+    </nav>
+
+    <!-- ③ Brand: proscenium centerpiece -->
+    <a href="/" class="brand" aria-label={$brandName}>
+      <span class="brand-inner">
+        <picture>
+          <source srcset="/images/raven-emblem.webp" type="image/webp" />
+          <img
+            src="/images/raven-emblem.png"
+            alt=""
+            class="brand-emblem"
+            width="40"
+            height="40"
+            decoding="async"
+            fetchpriority="high"
+          />
+        </picture>
+        <span class="brand-name">{$brandName}</span>
+      </span>
+      <span class="brand-sub">Cabinet of Gothic Miniatures</span>
+    </a>
+
+    <!-- ④ Right nav -->
+    <nav class="nav-side nav-right" aria-label="Primary right">
+      {#each rightLinks as link}
+        <a
+          href={link.href}
+          class="nav-link"
+          class:is-active={isActive(link.href)}
+          aria-current={isActive(link.href) ? 'page' : undefined}
+        >{link.label}</a>
+      {/each}
+    </nav>
+
+    <!-- ⑤ Ghost-right: muted utilities pinned to right edge -->
+    <div class="ghost-right">
+      {#if allClaims.claims.length > 0}
+      <div class="bookings-anchor" bind:this={panelRef}>
+        <button
+          class="bookings-btn"
+          class:has-claims={count > 0}
+          class:is-open={panelOpen}
+          onclick={togglePanel}
+          aria-label={$t('bookingsHeaderTitle')}
+          title={$t('bookingsHeaderTitle')}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+            <rect x="1" y="1" width="12" height="12" rx="1" stroke="currentColor" stroke-width="1"/>
+            <path d="M4 5h6M4 7.5h6M4 10h4" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+          </svg>
+          {#if count > 0}
+            <span class="badge">{count}</span>
+          {/if}
+        </button>
+
+        {#if panelOpen}
+          <div class="bookings-panel" transition:fade={{ duration: 150 }}>
+            <div class="panel-head">
+              <span class="panel-title">{$t('bookingsHeaderTitle')}</span>
+              <button class="panel-close" onclick={closePanel} aria-label="Close">✕</button>
+            </div>
+
+            {#if allClaims.claims.length === 0}
+              <div class="panel-empty">
+                <p>{$t('bookingsEmpty')}</p>
+              </div>
+            {:else}
+              <ul class="panel-list">
+                {#each allClaims.claims as c (c.token)}
+                  <li class="panel-item">
+                    <div class="panel-item-top">
+                      <a
+                        href="/figurines/{c.figurineId}"
+                        class="panel-figurine-name"
+                        onclick={closePanel}
+                      >{c.figurineName}</a>
+                      <span class="panel-status panel-status--{c.status ?? 'pending'}">
+                        {c.status === 'confirmed' ? $t('bookingsConfirmed')
+                        : c.status === 'rejected'  ? $t('bookingsRejected')
+                        : c.status === 'completed' ? $t('bookingsCompleted')
+                        : $t('bookingsPending')}
+                      </span>
+                    </div>
+                    <p class="panel-dates">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</p>
+                    {#if !c.status || c.status === 'pending'}
+                      <button
+                        class="panel-cancel-btn"
+                        onclick={() => allClaims.cancel(c)}
+                        disabled={allClaims.cancellingToken === c.token}
+                      >
+                        {allClaims.cancellingToken === c.token ? $t('claimCancelling') : $t('claimCancelBtn')}
+                      </button>
+                      {#if allClaims.errors[c.token]}
+                        <p class="panel-err">{allClaims.errors[c.token]}</p>
+                      {/if}
+                    {/if}
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+
+            <div class="panel-footer">
+              <a href={authStore.isLoggedIn ? '/profile' : '/bookings'} class="panel-view-all" onclick={closePanel}>
+                {$t('bookingsViewAll')} →
+              </a>
+            </div>
+          </div>
+        {/if}
+      </div>
+      {/if}
+
+      <div class="user-anchor" bind:this={userMenuRef}>
+        <button
+          class="user-btn"
+          class:logged-in={authStore.isLoggedIn}
+          class:is-open={userMenuOpen}
+          onclick={authStore.isLoggedIn ? toggleUserMenu : () => goto('/login')}
+          aria-label={authStore.isLoggedIn ? authStore.user?.displayName : $t('authLogin')}
+          title={authStore.isLoggedIn ? authStore.user?.displayName : $t('authLogin')}
+        >
+          {#if authStore.isLoggedIn}
+            {#if avatarUrl}
+              <img src={avatarUrl} alt="" class="user-avatar" />
+            {:else}
+              <span class="user-initial">{(authStore.user?.displayName ?? '?')[0].toUpperCase()}</span>
+            {/if}
+          {:else}
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <circle cx="7" cy="4.5" r="2.5" stroke="currentColor" stroke-width="1"/>
+              <path d="M1.5 13c0-3 2.5-4.5 5.5-4.5S12 10 12 13" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+            </svg>
+          {/if}
+        </button>
+
+        {#if userMenuOpen && authStore.isLoggedIn}
+          <div class="user-panel" transition:fade={{ duration: 150 }}>
+            <div class="user-panel-head">
+              {#if avatarUrl}
+                <img src={avatarUrl} alt="" class="user-panel-avatar" />
+              {:else}
+                <span class="user-panel-initial">{(authStore.user?.displayName ?? '?')[0].toUpperCase()}</span>
+              {/if}
+              <div class="user-panel-info">
+                <span class="user-panel-name">{authStore.user?.displayName}</span>
+                <span class="user-panel-email">{authStore.user?.email}</span>
+              </div>
+            </div>
+            <a href="/profile" class="user-panel-link" onclick={() => userMenuOpen = false}>
+              {$t('profileTitle')} →
+            </a>
+            <button class="user-panel-logout" onclick={handleLogout}>
+              {$t('profileLogout')}
+            </button>
+          </div>
+        {/if}
+      </div>
+    </div>
+
+    <!-- ⑥ Mobile-only controls -->
+    <div class="mobile-controls">
       <button
-        class="user-btn"
-        class:logged-in={authStore.isLoggedIn}
-        class:is-open={userMenuOpen}
-        onclick={authStore.isLoggedIn ? toggleUserMenu : () => goto('/login')}
+        class="mobile-user-btn"
+        onclick={authStore.isLoggedIn ? () => { closeMobileNav(); goto('/profile'); } : () => goto('/login')}
         aria-label={authStore.isLoggedIn ? authStore.user?.displayName : $t('authLogin')}
-        title={authStore.isLoggedIn ? authStore.user?.displayName : $t('authLogin')}
       >
         {#if authStore.isLoggedIn}
           {#if avatarUrl}
@@ -263,41 +324,39 @@
           </svg>
         {/if}
       </button>
-
-      {#if userMenuOpen && authStore.isLoggedIn}
-        <div class="user-panel" transition:fade={{ duration: 150 }}>
-          <div class="user-panel-head">
-            {#if avatarUrl}
-              <img src={avatarUrl} alt="" class="user-panel-avatar" />
-            {:else}
-              <span class="user-panel-initial">{(authStore.user?.displayName ?? '?')[0].toUpperCase()}</span>
-            {/if}
-            <div class="user-panel-info">
-              <span class="user-panel-name">{authStore.user?.displayName}</span>
-              <span class="user-panel-email">{authStore.user?.email}</span>
-            </div>
-          </div>
-          <a href="/profile" class="user-panel-link" onclick={() => userMenuOpen = false}>
-            {$t('profileTitle')} →
-          </a>
-          <button class="user-panel-logout" onclick={handleLogout}>
-            {$t('profileLogout')}
-          </button>
-        </div>
-      {/if}
+      <button
+        class="mobile-menu-btn"
+        class:is-open={mobileNavOpen}
+        type="button"
+        onclick={toggleMobileNav}
+        aria-label={$t('navMenu')}
+        aria-expanded={mobileNavOpen}
+        aria-controls="site-mobile-nav"
+      >
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
     </div>
 
-<!--
-    <a href="/admin" class="key-link" aria-label={$t('navAdmin')} title={$t('navAdmin')}>
-      <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true">
-        <circle cx="4.5" cy="4.5" r="2.7" stroke="currentColor" stroke-width="1"/>
-        <path d="M6.6 6.6L11.5 11.5" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
-        <path d="M9.1 9.1L10.6 7.6" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
-        <path d="M10.6 10.6L12 9.2" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
-      </svg>
-    </a>
-    -->
   </div>
+
+  <!-- Mobile nav dropdown -->
+  <nav id="site-mobile-nav" class="mobile-nav" class:is-open={mobileNavOpen} aria-label="Primary">
+    {#each [...leftLinks, ...rightLinks] as link}
+      <a
+        href={link.href}
+        class="mobile-nav-link"
+        class:is-active={isActive(link.href)}
+        aria-current={isActive(link.href) ? 'page' : undefined}
+        onclick={closeMobileNav}
+      >{link.label}</a>
+    {/each}
+    <div class="mobile-nav-footer">
+      <LangSwitcher variant="light" />
+      <FontSwitcher variant="header" />
+    </div>
+  </nav>
 </header>
 
 <!-- Status change notifications -->
@@ -331,137 +390,95 @@
 </div>
 
 <style>
+  /* ── Tokens ─────────────────────────────────────────────────── */
   .site-header {
-    --cream: var(--color-canvas-base);
-    --ink: var(--color-ink-primary);
-    --mid: var(--color-ember-deep);
+    --ink:    var(--color-ink-primary);
+    --mid:    var(--color-ember-deep);
     --copper: var(--color-ember);
-    --muted: var(--color-ink-tertiary);
-    --muted2: var(--color-ink-tertiary);
     --border: color-mix(in srgb, var(--color-ink-primary) 10%, transparent);
-    --ease: cubic-bezier(0.16,1,0.3,1);
+    --ease:   cubic-bezier(0.16, 1, 0.3, 1);
 
     position: fixed;
     top: 0;
     left: 0;
     width: 100%;
-    height: 68px;
-    display: flex;
-    align-items: center;
-    padding: 0 clamp(20px, 4.5vw, 64px);
-    background: rgba(248,241,231,0.92);
-    backdrop-filter: blur(20px) saturate(1.3);
-    -webkit-backdrop-filter: blur(20px) saturate(1.3);
+    /* tallest state: room for brand name row + subtitle */
+    height: 78px;
+    background: rgba(248, 241, 231, 0.97);
     border-bottom: 1px solid var(--border);
     z-index: 200;
+    transition: height 0.4s var(--ease), background 0.3s ease;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
   }
 
-  .brand {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 12px;
-    text-decoration: none;
-    color: inherit;
-    flex-shrink: 0;
+  .site-header.is-scrolled {
+    height: 54px;
+    background: rgba(248, 241, 231, 0.99);
   }
 
-  .brand-emblem {
-    width: 40px;
-    height: 40px;
-    flex-shrink: 0;
-    /* Engraved seat: subtle ring + lift, matched to the parchment/ledger aesthetic */
-    border-radius: 50%;
-    box-shadow:
-      0 0 0 1px color-mix(in srgb, var(--color-ink-primary) 14%, transparent),
-      0 1px 4px rgba(52,37,28,0.16);
-    transition: transform 0.4s var(--ease), box-shadow 0.4s var(--ease);
+  /* ── 5-column proscenium grid ────────────────────────────────
+     ghost-l | nav-l | brand | nav-r | ghost-r
+     The two outer minmax(0,1fr) columns absorb remaining space
+     symmetrically so the brand stays perfectly centered even on
+     ultrawide monitors. max-width caps at 1380px so nav links
+     never fly too far from the raven.
+  ──────────────────────────────────────────────────────────── */
+  .header-inner {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto auto minmax(0, 1fr);
+    grid-template-rows: 1fr;
+    /* stretch so nav-links can fill the full header height */
+    align-items: stretch;
+    width: 100%;
+    max-width: 1380px;
+    margin: 0 auto;
+    padding: 0 clamp(20px, 4vw, 52px);
+    height: 100%;
   }
 
-  .brand:hover .brand-emblem {
-    transform: rotate(-4deg) scale(1.04);
-    box-shadow:
-      0 0 0 1px color-mix(in srgb, var(--color-ember) 45%, transparent),
-      0 2px 8px rgba(52,37,28,0.22);
-  }
-
-  .brand-text {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-  }
-
-  .brand-name {
-    font-family: var(--font-display);
-    font-size: 20px;
-    font-weight: 400;
-    letter-spacing: 0.3em;
-    text-transform: uppercase;
-    color: var(--ink);
-    line-height: 1;
-  }
-
-  .brand-sub {
-    font-family: var(--font-body);
-    font-size: 11px;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--color-ink-tertiary);
-    line-height: 1;
-  }
-
-  .nav {
+  /* ── Ghost zones ──────────────────────────────────────────── */
+  .ghost-left,
+  .ghost-right {
     display: flex;
     align-items: center;
-    margin-left: auto;
-  }
-
-  .mobile-menu-btn {
-    display: none;
-    width: 44px;
-    height: 44px;
-    margin-left: auto;
-    align-items: center;
-    justify-content: center;
-    flex-direction: column;
     gap: 4px;
-    border: 1px solid color-mix(in srgb, var(--color-ink-primary) 12%, transparent);
-    background: rgba(255,249,240,0.58);
-    color: var(--color-ink-secondary);
-    cursor: pointer;
+    /* muted until hovered — they shouldn't compete with nav */
+    opacity: 0.42;
+    transition: opacity 0.3s ease;
   }
 
-  .mobile-menu-btn span {
-    width: 15px;
-    height: 1px;
-    background: currentColor;
-    transform-origin: center;
-    transition: transform 0.2s ease, opacity 0.2s ease;
+  .ghost-left:hover,
+  .ghost-right:hover,
+  .ghost-left:focus-within,
+  .ghost-right:focus-within {
+    opacity: 0.78;
   }
 
-  .mobile-menu-btn.is-open span:nth-child(1) {
-    transform: translateY(5px) rotate(45deg);
+  .ghost-left  { grid-column: 1; justify-content: flex-start; }
+  .ghost-right { grid-column: 5; justify-content: flex-end; }
+
+  /* bookings & user sit at normal opacity inside ghost-right
+     when they have active state */
+  .ghost-right:has(.bookings-btn.has-claims),
+  .ghost-right:has(.user-btn.logged-in) {
+    opacity: 0.68;
   }
 
-  .mobile-menu-btn.is-open span:nth-child(2) {
-    opacity: 0;
+  /* ── Nav sides ────────────────────────────────────────────── */
+  .nav-side {
+    display: flex;
+    align-items: stretch;
   }
 
-  .mobile-menu-btn.is-open span:nth-child(3) {
-    transform: translateY(-5px) rotate(-45deg);
-  }
-
-  .mobile-menu-btn:focus-visible {
-    outline: 2px solid rgba(198,95,60,0.52);
-    outline-offset: 3px;
-  }
+  .nav-left  { grid-column: 2; justify-content: flex-end;   padding-right: 4px; }
+  .nav-right { grid-column: 4; justify-content: flex-start; padding-left: 4px; }
 
   .nav-link {
     position: relative;
     display: flex;
     align-items: center;
-    height: 68px;
-    padding: 0 18px;
+    padding: 0 17px;
     font-family: var(--font-body);
     font-size: 12px;
     font-weight: 500;
@@ -473,12 +490,13 @@
     overflow: hidden;
   }
 
+  /* copper underline slides in from left */
   .nav-link::after {
     content: '';
     position: absolute;
     bottom: 0;
-    left: 22px;
-    right: 22px;
+    left: 19px;
+    right: 19px;
     height: 1px;
     background: var(--copper);
     transform: scaleX(0);
@@ -496,19 +514,89 @@
     transform: scaleX(1);
   }
 
-  .header-end {
+  /* ── Brand: theatrical centerpiece ───────────────────────── */
+  .brand {
+    grid-column: 3;
+    align-self: center;
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 10px;
-    margin-left: 16px;
-    padding-left: 14px;
-    border-left: 1px solid color-mix(in srgb, var(--color-ink-primary) 14%, transparent);
+    gap: 5px;
+    padding: 0 clamp(14px, 2.2vw, 34px);
+    text-decoration: none;
+    color: inherit;
+    transition: opacity 0.3s;
   }
 
-  /* ── Bookings button ── */
-  .bookings-anchor {
-    position: relative;
+  .brand:hover { opacity: 0.82; }
+
+  /* inner row: emblem + wordmark side by side */
+  .brand-inner {
+    display: flex;
+    align-items: center;
+    gap: 11px;
   }
+
+  .brand-emblem {
+    width: 36px;
+    height: 36px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--color-ink-primary) 14%, transparent),
+      0 1px 4px rgba(52, 37, 28, 0.16);
+    transition: transform 0.4s var(--ease), box-shadow 0.4s var(--ease);
+  }
+
+  .brand:hover .brand-emblem {
+    transform: rotate(-4deg) scale(1.05);
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--color-ember) 45%, transparent),
+      0 2px 8px rgba(52, 37, 28, 0.22);
+  }
+
+  .brand-name {
+    font-family: var(--font-display);
+    font-size: 20px;
+    font-weight: 400;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--ink);
+    line-height: 1;
+  }
+
+  /* subtitle: fades out on scroll */
+  .brand-sub {
+    font-family: var(--font-body);
+    font-size: 9px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--color-ink-tertiary);
+    line-height: 1;
+    white-space: nowrap;
+    /* scroll transition */
+    opacity: 1;
+    max-height: 14px;
+    transform: translateY(0);
+    transition:
+      opacity 0.38s var(--ease),
+      transform 0.38s var(--ease),
+      max-height 0.38s var(--ease);
+  }
+
+  .site-header.is-scrolled .brand-sub {
+    opacity: 0;
+    max-height: 0;
+    transform: translateY(-5px);
+    pointer-events: none;
+  }
+
+  /* ── Mobile controls + nav (hidden on desktop) ───────────── */
+  .mobile-controls { display: none; }
+  .mobile-nav { display: none; }
+
+  /* ── Bookings button ─────────────────────────────────────── */
+  .bookings-anchor { position: relative; }
 
   .bookings-btn {
     position: relative;
@@ -526,13 +614,9 @@
   }
 
   .bookings-btn:hover,
-  .bookings-btn.is-open {
-    color: var(--mid);
-  }
+  .bookings-btn.is-open { color: var(--mid); }
 
-  .bookings-btn.has-claims {
-    color: var(--copper);
-  }
+  .bookings-btn.has-claims { color: var(--copper); }
 
   .badge {
     position: absolute;
@@ -546,7 +630,6 @@
     font-family: 'Instrument Sans', system-ui, sans-serif;
     font-size: 7.5px;
     font-weight: 600;
-    letter-spacing: 0;
     border-radius: 7px;
     display: flex;
     align-items: center;
@@ -554,7 +637,7 @@
     line-height: 1;
   }
 
-  /* ── Dropdown panel ── */
+  /* ── Bookings dropdown panel ─────────────────────────────── */
   .bookings-panel {
     position: absolute;
     top: calc(100% + 10px);
@@ -562,7 +645,7 @@
     width: 300px;
     background: #f2e8d9;
     border: 1px solid #d8c6b1;
-    box-shadow: 0 8px 32px rgba(52,37,28,0.12);
+    box-shadow: 0 8px 32px rgba(52, 37, 28, 0.12);
     z-index: 300;
     font-family: Georgia, serif;
     color: #34251c;
@@ -573,7 +656,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 12px 16px 10px;
-    border-bottom: 1px solid rgba(52,37,28,0.08);
+    border-bottom: 1px solid rgba(52, 37, 28, 0.08);
   }
 
   .panel-title {
@@ -581,7 +664,7 @@
     font-size: 9px;
     letter-spacing: 0.18em;
     text-transform: uppercase;
-    color: rgba(95,70,54,0.6);
+    color: rgba(95, 70, 54, 0.6);
   }
 
   .panel-close {
@@ -589,7 +672,7 @@
     border: none;
     cursor: pointer;
     font-size: 11px;
-    color: rgba(95,70,54,0.4);
+    color: rgba(95, 70, 54, 0.4);
     padding: 2px 4px;
     line-height: 1;
     transition: color 0.2s;
@@ -600,7 +683,7 @@
     padding: 20px 16px;
     text-align: center;
     font-size: 0.8rem;
-    color: rgba(95,70,54,0.5);
+    color: rgba(95, 70, 54, 0.5);
     font-style: italic;
   }
 
@@ -614,7 +697,7 @@
 
   .panel-item {
     padding: 10px 16px;
-    border-bottom: 1px solid rgba(52,37,28,0.06);
+    border-bottom: 1px solid rgba(52, 37, 28, 0.06);
   }
   .panel-item:last-child { border-bottom: none; }
 
@@ -652,13 +735,13 @@
   .panel-dates {
     margin: 0 0 6px;
     font-size: 0.72rem;
-    color: rgba(95,70,54,0.6);
+    color: rgba(95, 70, 54, 0.6);
     font-style: italic;
   }
 
   .panel-cancel-btn {
     background: none;
-    border: 1px solid rgba(198,95,60,0.4);
+    border: 1px solid rgba(198, 95, 60, 0.4);
     color: #c65f3c;
     font-family: 'Instrument Sans', system-ui, sans-serif;
     font-size: 8px;
@@ -668,7 +751,7 @@
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s;
   }
-  .panel-cancel-btn:hover:not(:disabled) { background: rgba(198,95,60,0.08); border-color: #c65f3c; }
+  .panel-cancel-btn:hover:not(:disabled) { background: rgba(198, 95, 60, 0.08); border-color: #c65f3c; }
   .panel-cancel-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
   .panel-err {
@@ -680,7 +763,7 @@
 
   .panel-footer {
     padding: 10px 16px;
-    border-top: 1px solid rgba(52,37,28,0.08);
+    border-top: 1px solid rgba(52, 37, 28, 0.08);
     text-align: right;
   }
 
@@ -689,13 +772,13 @@
     font-size: 8.5px;
     letter-spacing: 0.14em;
     text-transform: uppercase;
-    color: rgba(95,70,54,0.55);
+    color: rgba(95, 70, 54, 0.55);
     text-decoration: none;
     transition: color 0.2s;
   }
   .panel-view-all:hover { color: #c65f3c; }
 
-  /* ── User button ── */
+  /* ── User button ─────────────────────────────────────────── */
   .user-anchor { position: relative; }
 
   .user-btn {
@@ -709,15 +792,19 @@
     border-radius: 50%;
     padding: 0;
     cursor: pointer;
-    color: var(--muted2);
+    color: var(--color-ink-tertiary);
     transition: color 0.25s, border-color 0.25s;
   }
-  .user-btn:hover, .user-btn.is-open { color: var(--mid); }
+
+  .user-btn:hover,
+  .user-btn.is-open { color: var(--mid); }
+
   .user-btn.logged-in {
     border-color: var(--border);
     color: var(--mid);
   }
-  .user-btn.logged-in:hover, .user-btn.logged-in.is-open {
+  .user-btn.logged-in:hover,
+  .user-btn.logged-in.is-open {
     border-color: var(--copper);
     color: var(--copper);
   }
@@ -744,7 +831,7 @@
     width: 220px;
     background: #f2e8d9;
     border: 1px solid #d8c6b1;
-    box-shadow: 0 8px 32px rgba(52,37,28,0.12);
+    box-shadow: 0 8px 32px rgba(52, 37, 28, 0.12);
     z-index: 300;
     font-family: Georgia, serif;
     color: #34251c;
@@ -752,7 +839,7 @@
 
   .user-panel-head {
     padding: 12px 14px 10px;
-    border-bottom: 1px solid rgba(52,37,28,0.08);
+    border-bottom: 1px solid rgba(52, 37, 28, 0.08);
     display: flex;
     align-items: center;
     gap: 10px;
@@ -764,7 +851,7 @@
     border-radius: 50%;
     object-fit: cover;
     flex-shrink: 0;
-    border: 1px solid rgba(52,37,28,0.10);
+    border: 1px solid rgba(52, 37, 28, 0.10);
   }
 
   .user-panel-initial {
@@ -772,7 +859,7 @@
     height: 36px;
     border-radius: 50%;
     background: #efe6d6;
-    border: 1px solid rgba(52,37,28,0.10);
+    border: 1px solid rgba(52, 37, 28, 0.10);
     flex-shrink: 0;
     display: flex;
     align-items: center;
@@ -799,7 +886,7 @@
   .user-panel-email {
     font-family: Inter, sans-serif;
     font-size: 0.7rem;
-    color: rgba(95,70,54,0.55);
+    color: rgba(95, 70, 54, 0.55);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -812,9 +899,9 @@
     font-size: 0.78rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: rgba(95,70,54,0.7);
+    color: rgba(95, 70, 54, 0.7);
     text-decoration: none;
-    border-bottom: 1px solid rgba(52,37,28,0.06);
+    border-bottom: 1px solid rgba(52, 37, 28, 0.06);
     transition: color 0.2s;
   }
   .user-panel-link:hover { color: #c65f3c; }
@@ -830,106 +917,158 @@
     font-size: 0.78rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: rgba(95,70,54,0.5);
+    color: rgba(95, 70, 54, 0.5);
     cursor: pointer;
     transition: color 0.2s;
   }
   .user-panel-logout:hover { color: #c65f3c; }
 
-  /* ── Admin key ── */
-  .key-link {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    color: var(--muted2);
-    text-decoration: none;
-    transition: color 0.25s;
-  }
-  .key-link:hover { color: var(--mid); }
-
-  @media (max-width: 680px) {
+  /* ── Mobile breakpoint ───────────────────────────────────── */
+  @media (max-width: 720px) {
     .site-header {
       height: 58px;
+    }
+
+    /* On mobile, override the 5-col grid with a simple flex row */
+    .header-inner {
+      display: flex;
+      align-items: center;
       padding: 0 16px;
     }
 
-    .brand { gap: 9px; }
+    /* Hide desktop-only zones */
+    .ghost-left,
+    .ghost-right,
+    .nav-side { display: none; }
+
+    /* Brand: move to flex-start, horizontal layout */
+    .brand {
+      flex-direction: row;
+      align-items: center;
+      gap: 9px;
+      padding: 0;
+      align-self: auto;
+    }
+
+    .brand-inner { gap: 9px; }
 
     .brand-emblem { width: 32px; height: 32px; }
 
-    .brand-name { font-size: 17px; }
+    .brand-name { font-size: 18px; }
 
+    /* subtitle always hidden on mobile */
     .brand-sub { display: none; }
+
+    /* Show mobile controls */
+    .mobile-controls {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: auto;
+    }
+
+    .mobile-user-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 36px;
+      height: 36px;
+      background: none;
+      border: 1px solid transparent;
+      border-radius: 50%;
+      padding: 0;
+      cursor: pointer;
+      color: var(--color-ink-tertiary);
+      transition: color 0.25s;
+    }
+
+    .mobile-user-btn:has(.user-avatar) {
+      border-color: var(--border);
+    }
 
     .mobile-menu-btn {
       display: flex;
+      width: 44px;
+      height: 44px;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 4px;
+      border: none;
+      background: none;
+      cursor: pointer;
+      color: var(--color-ink-secondary);
+      padding: 0;
     }
 
-    .nav {
+    .mobile-menu-btn span {
+      width: 16px;
+      height: 1px;
+      background: currentColor;
+      transform-origin: center;
+      transition: transform 0.22s ease, opacity 0.22s ease;
+    }
+
+    .mobile-menu-btn.is-open span:nth-child(1) { transform: translateY(5px) rotate(45deg); }
+    .mobile-menu-btn.is-open span:nth-child(2) { opacity: 0; }
+    .mobile-menu-btn.is-open span:nth-child(3) { transform: translateY(-5px) rotate(-45deg); }
+
+    .mobile-menu-btn:focus-visible {
+      outline: 2px solid rgba(198, 95, 60, 0.52);
+      outline-offset: 3px;
+    }
+
+    /* Mobile nav dropdown */
+    .mobile-nav {
+      display: grid;
       position: fixed;
+      top: 58px;
       left: 0;
       right: 0;
-      top: 58px;
-      display: grid;
-      margin-left: 0;
-      padding: 8px 16px 14px;
-      background: rgba(248,241,231,0.98);
+      padding: 6px 16px 16px;
+      background: rgba(248, 241, 231, 0.99);
       border-bottom: 1px solid var(--border);
-      box-shadow: 0 18px 34px rgba(52,37,28,0.10);
-      transform: translateY(-8px);
+      box-shadow: 0 18px 34px rgba(52, 37, 28, 0.10);
+      transform: translateY(-6px);
       opacity: 0;
       pointer-events: none;
-      transition: opacity 0.2s ease, transform 0.2s ease;
+      transition: opacity 0.22s ease, transform 0.22s ease;
     }
 
-    .nav.is-open {
+    .mobile-nav.is-open {
       transform: translateY(0);
       opacity: 1;
       pointer-events: auto;
     }
 
-    .nav-link {
+    .mobile-nav-link {
+      display: flex;
+      align-items: center;
       height: 44px;
-      padding: 0;
+      font-family: var(--font-body);
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
+      color: var(--color-ink-secondary);
+      text-decoration: none;
       border-bottom: 1px solid color-mix(in srgb, var(--color-ink-primary) 8%, transparent);
+      transition: color 0.2s;
     }
 
-    .nav-link::after {
-      left: 0;
-      right: auto;
-      width: 38px;
-    }
+    .mobile-nav-link.is-active,
+    .mobile-nav-link:hover { color: var(--ink); }
 
-    .header-end {
-      margin-left: 12px;
-      padding-left: 14px;
+    .mobile-nav-footer {
+      display: flex;
+      align-items: center;
       gap: 10px;
-    }
-
-    .bookings-panel {
-      right: -16px;
-      width: calc(100vw - 32px);
-      max-width: 300px;
-    }
-
-    /* Expand icon-only buttons to 44px hit area */
-    .bookings-btn,
-    .user-btn,
-    .key-link {
-      width: 44px;
-      height: 44px;
-    }
-
-    /* Reduce header backdrop cost on mobile */
-    .site-header {
-      backdrop-filter: blur(10px) saturate(1.1);
-      -webkit-backdrop-filter: blur(10px) saturate(1.1);
+      padding-top: 12px;
+      opacity: 0.55;
     }
   }
 
-  /* ── Status-change toasts ── */
+  /* ── Notifications ───────────────────────────────────────── */
   .notif-stack {
     position: fixed;
     bottom: 20px;
@@ -950,7 +1089,7 @@
     background: #f2e8d9;
     border: 1px solid #d8c6b1;
     border-left-width: 3px;
-    box-shadow: 0 4px 18px rgba(52,37,28,0.13);
+    box-shadow: 0 4px 18px rgba(52, 37, 28, 0.13);
     font-family: Georgia, serif;
     color: #34251c;
     pointer-events: all;
@@ -961,10 +1100,7 @@
   .notif--cancelled { border-left-color: #9a8070; }
   .notif--completed { border-left-color: #3a7060; }
 
-  .notif-body {
-    flex: 1;
-    min-width: 0;
-  }
+  .notif-body { flex: 1; min-width: 0; }
 
   .notif-name {
     display: block;
@@ -983,7 +1119,7 @@
     font-size: 0.68rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: rgba(95,70,54,0.7);
+    color: rgba(95, 70, 54, 0.7);
   }
 
   .notif-actions {
@@ -1011,7 +1147,7 @@
     border: none;
     cursor: pointer;
     font-size: 10px;
-    color: rgba(95,70,54,0.35);
+    color: rgba(95, 70, 54, 0.35);
     padding: 8px;
     margin: -8px;
     line-height: 1;
@@ -1019,7 +1155,7 @@
   }
   .notif-dismiss:hover { color: #c65f3c; }
 
-  @media (max-width: 680px) {
+  @media (max-width: 720px) {
     .notif-stack { right: 12px; bottom: 12px; }
     .notif { width: calc(100vw - 24px); max-width: 280px; }
   }

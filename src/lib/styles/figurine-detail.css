@@ -98,7 +98,7 @@
 /* Top navigation */
 .topnav {
   position: sticky;
-  top: 68px;
+  top: var(--site-header-h, 78px);
   z-index: 40;
   isolation: isolate;
   display: grid;
@@ -107,7 +107,9 @@
   gap: 0.75rem;
   margin-bottom: 1.15rem;
   padding: 0.5rem 0;
-  transition: color var(--duration-default) var(--ease-atelier);
+  transition:
+    top 0.4s cubic-bezier(0.16, 1, 0.3, 1),
+    color var(--duration-default) var(--ease-atelier);
 }
 
 .topnav::before {
@@ -124,6 +126,12 @@
     box-shadow var(--duration-default) var(--ease-atelier);
 }
 
+@media (max-width: 1023px) {
+  .topnav {
+    display: none;
+  }
+}
+
 @media (max-width: 680px) {
   .topnav {
     top: 58px;
@@ -134,8 +142,8 @@
   border-bottom: 1px solid var(--color-border-subtle);
   background: color-mix(in srgb, var(--color-canvas-base) 92%, transparent);
   box-shadow: 0 10px 26px color-mix(in srgb, var(--color-ink-primary) 7%, transparent);
-  backdrop-filter: blur(18px) saturate(1.25);
-  -webkit-backdrop-filter: blur(18px) saturate(1.25);
+  backdrop-filter: blur(8px) saturate(1.15);
+  -webkit-backdrop-filter: blur(8px) saturate(1.15);
 }
 
 @media (min-width: 1024px) {
@@ -597,7 +605,7 @@
 
   .gallery-col {
     position: sticky;
-    top: calc(68px + 54px + 1rem);
+    top: calc(var(--site-header-h, 78px) + 54px + 1rem);
   }
 }
 
@@ -1281,201 +1289,6 @@
   text-shadow: 0 1px 0 rgba(255, 246, 232, 0.48);
 }
 
-/* Status and primary actions */
-.entry-status {
-  position: relative;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0.85rem;
-  margin: 1.2rem 0 0.9rem;
-  padding: 1.15rem 1.15rem 1rem;
-  border: 1px solid color-mix(in srgb, var(--color-ink-primary) 14%, transparent);
-  border-radius: 3px;
-  /* Letterpress: pressed into the parchment, no floating drop-shadow */
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--color-canvas-raised) 34%, transparent),
-      color-mix(in srgb, var(--color-canvas-base) 22%, transparent)
-    );
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--color-canvas-raised) 70%, transparent),
-    inset 0 24px 42px -22px color-mix(in srgb, var(--color-ink-primary) 65%, transparent);
-  text-align: left;
-}
-
-.entry-status-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  min-width: 0;
-  padding-bottom: 0.75rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--color-ink-primary) 8%, transparent);
-}
-
-.entry-status-kind {
-  width: fit-content;
-  padding: 0.25rem 0.5rem;
-  border-radius: 999px;
-  color: var(--color-sage-ink);
-  background: var(--color-sage-subtle);
-  font-family: var(--font-body);
-  font-size: 0.58rem;
-  font-weight: 800;
-  letter-spacing: 0.1em;
-  line-height: 1.2;
-  text-transform: uppercase;
-}
-
-.entry-registry {
-  min-width: 0;
-  color: color-mix(in srgb, var(--color-ink-secondary) 58%, transparent);
-  font-family: var(--font-body);
-  font-size: 0.56rem;
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  line-height: 1.2;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.entry-status-marque {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.55rem;
-  min-width: 0;
-}
-
-/* House wax seal — ties the registry card to the modal wax-seal motif */
-.entry-wax {
-  display: inline-grid;
-  place-items: center;
-  width: 1.55rem;
-  height: 1.55rem;
-  flex: none;
-  border-radius: 50%;
-  transform: rotate(-5deg);
-  color: color-mix(in srgb, var(--color-canvas-raised) 88%, white);
-  font-family: var(--font-display);
-  font-size: 0.56rem;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  background:
-    radial-gradient(
-      circle at 34% 30%,
-      color-mix(in srgb, var(--color-ember-deep) 60%, var(--color-accent, #c65f3c)) 0%,
-      var(--color-ember-deep) 56%,
-      color-mix(in srgb, var(--color-ember-deep) 65%, black) 100%
-    );
-  box-shadow:
-    inset 0 1px 1px color-mix(in srgb, white 32%, transparent),
-    inset 0 -2px 3px color-mix(in srgb, black 38%, transparent),
-    0 1px 2px color-mix(in srgb, var(--color-ink-primary) 42%, transparent);
-  text-shadow: 0 1px 0 color-mix(in srgb, black 35%, transparent);
-}
-
-.entry-status--reserved .entry-status-kind {
-  color: var(--color-ochre-ink);
-  background: var(--color-ochre-subtle);
-}
-
-.entry-status--sold .entry-status-kind {
-  color: color-mix(in srgb, var(--color-ink-primary) 66%, transparent);
-  background: color-mix(in srgb, var(--color-ink-primary) 7%, transparent);
-}
-
-.entry-status--in_progress .entry-status-kind {
-  color: var(--color-ember-deep);
-  background: color-mix(in srgb, var(--color-ember-subtle) 78%, transparent);
-}
-
-.entry-status-body {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.entry-status-copy {
-  display: grid;
-  gap: 0.45rem;
-  min-width: 0;
-}
-
-.commission-similar-btn {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  align-self: stretch;
-  min-height: 2.85rem;
-  padding: 0 1.2rem;
-  border: 1.5px solid color-mix(in srgb, var(--color-ink-primary) 20%, transparent);
-  border-radius: 3px;
-  color: var(--color-ink-primary);
-  background: color-mix(in srgb, var(--color-canvas-raised) 55%, transparent);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, white 32%, transparent),
-    inset 0 -1px 0 color-mix(in srgb, var(--color-ink-primary) 7%, transparent),
-    inset 0 14px 28px -20px color-mix(in srgb, var(--color-ink-primary) 6%, transparent);
-  cursor: pointer;
-  font-family: var(--font-body);
-  font-size: 0.64rem;
-  font-weight: 800;
-  letter-spacing: 0.1em;
-  line-height: 1.1;
-  text-decoration: none;
-  text-transform: uppercase;
-  transition:
-    border-color var(--duration-fast) var(--ease-atelier),
-    color var(--duration-fast) var(--ease-atelier),
-    background var(--duration-fast) var(--ease-atelier),
-    box-shadow var(--duration-fast) var(--ease-atelier);
-}
-
-.commission-similar-btn:hover {
-  border-color: color-mix(in srgb, var(--color-ember-deep) 50%, transparent);
-  color: var(--color-ember-deep);
-  background: color-mix(in srgb, var(--color-ember) 8%, color-mix(in srgb, var(--color-canvas-raised) 50%, transparent));
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, white 28%, transparent),
-    inset 0 -1px 0 color-mix(in srgb, var(--color-ember-deep) 10%, transparent),
-    inset 0 14px 28px -20px color-mix(in srgb, var(--color-ember) 8%, transparent);
-}
-
-.entry-status-title {
-  margin: 0;
-  color: var(--color-ink-primary);
-  font-family: var(--font-display);
-  font-size: 1.54rem;
-  font-weight: 460;
-  letter-spacing: -0.01em;
-  line-height: 1.08;
-  text-wrap: balance;
-}
-
-.entry-status-line {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.25rem 0.5rem;
-  color: color-mix(in srgb, var(--color-ink-primary) 78%, transparent);
-  font-family: var(--font-body);
-  font-size: 0.82rem;
-  line-height: 1.45;
-  margin: 0;
-}
-
-.entry-price {
-  color: var(--color-ink-primary);
-  font-weight: 700;
-}
-
-.entry-status-line .entry-sep {
-  color: color-mix(in srgb, var(--color-ink-primary) 34%, transparent);
-}
-
 .entry-action {
   justify-self: start;
   display: inline-flex;
@@ -1544,99 +1357,6 @@
   line-height: 1.45;
 }
 
-.entry-status-facts {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  column-gap: 0.58rem;
-  row-gap: 0.25rem;
-  color: color-mix(in srgb, var(--color-ink-secondary) 48%, transparent);
-  font-family: var(--font-body);
-  font-size: 0.54rem;
-  font-weight: 700;
-  letter-spacing: 0.11em;
-  line-height: 1.4;
-  text-transform: uppercase;
-}
-
-.entry-status-facts span {
-  min-width: 0;
-}
-
-/* middot between facts — a ledger footnote, not separate trust-badges */
-.entry-status-facts span + span::before {
-  content: "·";
-  margin-right: 0.7rem;
-  color: color-mix(in srgb, var(--color-ink-primary) 32%, transparent);
-}
-
-.trust-ledger {
-  display: grid;
-  gap: 0.85rem;
-  padding-top: 0.95rem;
-  border-top: 1px solid color-mix(in srgb, var(--color-ink-primary) 8%, transparent);
-}
-
-/* The house assurance — author-made, one-of-a-kind, set as a colophon line */
-.trust-ledger-mark {
-  display: flex;
-  align-items: baseline;
-  gap: 0.6rem;
-  margin: 0;
-  color: var(--color-ink-primary);
-  font-family: var(--font-display);
-  font-size: 1.04rem;
-  font-style: italic;
-  font-weight: 500;
-  line-height: 1.25;
-}
-
-/* Ember lozenge — old-book section mark, rhymes with the act divider */
-.trust-ledger-lozenge {
-  flex: none;
-  width: 0.42rem;
-  height: 0.42rem;
-  transform: rotate(45deg) translateY(-0.05rem);
-  background: var(--color-ember);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-ember) 14%, transparent);
-}
-
-.trust-ledger-next {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.8rem;
-  padding-top: 0.15rem;
-}
-
-.trust-ledger-next p {
-  margin: 0;
-  color: color-mix(in srgb, var(--color-ink-secondary) 82%, transparent);
-  font-family: var(--font-body);
-  font-size: 0.76rem;
-  line-height: 1.45;
-}
-
-.trust-ledger-link {
-  flex: 0 0 auto;
-  border: 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--color-ember) 42%, transparent);
-  background: transparent;
-  color: var(--color-ember-deep);
-  cursor: pointer;
-  font-family: var(--font-body);
-  font-size: 0.62rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  line-height: 1.2;
-  text-decoration: none;
-  text-transform: uppercase;
-}
-
-.trust-ledger-link:hover {
-  color: var(--color-ink-primary);
-}
-
 .queue-receipt,
 .entry-record,
 .details-col .video-frame {
@@ -1694,8 +1414,8 @@
   line-height: 1;
 }
 
-.queue-receipt-note,
-.queue-receipt-left {
+.queue-receipt-note {
+  margin: 0.5rem 0 0;
   color: color-mix(in srgb, var(--color-ink-secondary) 78%, transparent);
   font-family: var(--font-body);
   font-size: 0.72rem;
@@ -1703,16 +1423,7 @@
   line-height: 1.45;
 }
 
-.queue-receipt-note {
-  margin: 0.5rem 0 0;
-}
-
-.queue-receipt-left {
-  margin: 0.25rem 0 0;
-}
-
-.queue-receipt-note--warning,
-.queue-receipt-left--warning {
+.queue-receipt-note--warning {
   color: var(--color-ember-deep);
 }
 
@@ -2924,10 +2635,8 @@
   min-height: 72px;
   padding: 0.72rem 1rem calc(0.72rem + env(safe-area-inset-bottom, 0px));
   border-top: 1px solid color-mix(in srgb, var(--color-border-default) 70%, transparent);
-  background: color-mix(in srgb, var(--color-canvas-base) 94%, transparent);
+  background: color-mix(in srgb, var(--color-canvas-base) 98%, transparent);
   box-shadow: 0 -2px 14px color-mix(in srgb, var(--color-ink-primary) 6%, transparent);
-  backdrop-filter: blur(16px) saturate(1.25);
-  -webkit-backdrop-filter: blur(16px) saturate(1.25);
 }
 
 @media (min-width: 1024px) {
@@ -3056,22 +2765,6 @@
     font-size: 0.96rem;
   }
 
-  .entry-status {
-    padding: 0.82rem;
-  }
-
-  .entry-status-head {
-    align-items: flex-start;
-  }
-
-  .commission-similar-btn {
-    justify-content: center;
-  }
-
-  .entry-status-title {
-    font-size: 1.18rem;
-  }
-
   .entry-action-stack {
     justify-items: stretch;
   }
@@ -3079,20 +2772,6 @@
   .entry-action {
     justify-self: stretch;
     width: 100%;
-  }
-
-  .entry-status-facts {
-    flex-direction: column;
-    gap: 0.3rem;
-  }
-
-  .entry-status-facts span + span::before {
-    content: none;
-  }
-
-  .trust-ledger-next {
-    align-items: flex-start;
-    flex-direction: column;
   }
 
   .making-strip,
@@ -3241,4 +2920,74 @@
 .mobile-cta-btn:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--color-ember) 55%, transparent);
   outline-offset: 3px;
+}
+
+/* ── Mobile swipe navigation edge indicators ─────────────────────────────── */
+.swipe-edge {
+  display: none;
+}
+
+@media (max-width: 1023px) {
+  .swipe-edge {
+    display: flex;
+    position: fixed;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 35;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.75rem 0.5rem;
+    text-decoration: none;
+    color: var(--color-ink-tertiary);
+    background: color-mix(in srgb, var(--color-canvas-base) 80%, transparent);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    border: 1px solid var(--color-border-subtle);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    pointer-events: auto;
+    opacity: 0.55;
+  }
+
+  .swipe-edge:active {
+    opacity: 0.85;
+  }
+
+  .swipe-edge--prev {
+    left: 0;
+    border-left: none;
+    border-radius: 0 2px 2px 0;
+    flex-direction: column;
+    transform: translateY(-50%) translateX(-2px);
+  }
+
+  .swipe-edge--next {
+    right: 0;
+    border-right: none;
+    border-radius: 2px 0 0 2px;
+    flex-direction: column;
+    transform: translateY(-50%) translateX(2px);
+  }
+
+  .swipe-edge svg {
+    flex: 0 0 auto;
+  }
+
+  .swipe-edge-name {
+    writing-mode: vertical-rl;
+    font-family: var(--font-body);
+    font-size: 0.52rem;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    max-height: 5rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: 0.8;
+  }
+
+  .swipe-edge--prev .swipe-edge-name {
+    text-orientation: mixed;
+    transform: rotate(180deg);
+  }
 }

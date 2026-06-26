@@ -86,8 +86,8 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
-    filter: blur(12px);
-    transform: scale(1.05); /* hide blur edges */
+    filter: blur(6px);
+    transform: scale(1.03); /* hide blur edges */
     transition: opacity 0.3s ease;
   }
 

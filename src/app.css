@@ -117,6 +117,8 @@
 }
 
 :root {
+  /* Updated by SiteHeader on scroll; read by sticky sub-headers site-wide */
+  --site-header-h: 78px;
   --cream: var(--color-canvas-base);
   --cream2: var(--color-canvas-raised);
   --ink: var(--color-ink-primary);
@@ -129,6 +131,36 @@
   --muted2: color-mix(in srgb, var(--color-ink-secondary) 40%, transparent);
   --border: color-mix(in srgb, var(--color-ink-primary) 10%, transparent);
   --border2: color-mix(in srgb, var(--color-ink-primary) 18%, transparent);
+}
+
+/* ── Typed CSS custom properties (must live in global CSS to survive bundling)
+   @property declarations inside Svelte <style> blocks are lost or deduplicated
+   in the production build; moving them here ensures they're always present. ── */
+
+@property --kh-spread {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+@property --kh-breathe {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 0;
+}
+@property --kh-dark {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 0.88;
+}
+@property --glow {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 0;
+}
+@property --open {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 1;
 }
 
 /*
@@ -1223,23 +1255,25 @@
 }
 
 /* Graceful fallback where scroll-driven animations are unsupported
-   (e.g. Firefox without the flag): keep a quiet, intentional static vignette
-   instead of a broken always-dark overlay. */
+   (e.g. Firefox < 129, Safari < 18): hold the "top of page" value (0.12) from
+   the keyframe so the vignette is barely-there rather than a heavy dark overlay
+   that blocks card hover effects. 0.5 was the original value but it rendered a
+   fixed z-150 dim layer over the whole page, making KeyholeVeil hover changes
+   invisible in Firefox. */
 @supports not (animation-timeline: scroll()) {
   .house-descent {
     animation: none;
-    opacity: 0.5;
+    opacity: 0.12;
   }
 }
 
-/* Reduced motion: never couple the dimmer to scroll. The global reduce rule
-   collapses animation-duration, which would otherwise snap a scroll timeline to
-   its dark end-state — so we explicitly drop the animation and hold a gentle,
-   constant haze. */
+/* Reduced motion: never couple the dimmer to scroll. Hold the same quiet
+   "top-of-page" haze (0.12) — heavy values (0.4) read as intentional darkness
+   which conflicts with card hover effects. */
 @media (prefers-reduced-motion: reduce) {
   .house-descent {
     animation: none !important;
-    opacity: 0.4;
+    opacity: 0.12;
   }
 }
 
