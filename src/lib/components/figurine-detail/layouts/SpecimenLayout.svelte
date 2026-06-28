@@ -11,7 +11,7 @@
   import ShowingsTimeline from '$lib/components/ShowingsTimeline.svelte';
   import FigurineComments from '$lib/components/FigurineComments.svelte';
 
-  import { computeSectionOrderStyle, isBlockVisible, computeBlockStyle, computeElementStyle } from '$lib/components/figurine-detail/display-config';
+  import { computeSectionOrderStyle, isBlockVisible, computeBlockStyle, computeElementStyle, computeAttrsStyle, computeEyebrowStyle } from '$lib/components/figurine-detail/display-config';
 
   const ctx = getContext<App.FigurineDetailContext>('figurine-detail');
   let sectionStyle = $derived(computeSectionOrderStyle(ctx.displayConfig));
@@ -61,7 +61,7 @@
     <FigurineImageViewer />
   </div>
 
-  <div class="details-col">
+  <div class="details-col" style={computeEyebrowStyle(ctx.displayConfig)}>
     <div class="d-eyebrow">
       <div class="eyebrow-tags">
         <span class="colophon-ref">ARC-{ctx.id.slice(0, 8).toUpperCase()}</span>
@@ -81,7 +81,7 @@
     {/if}
 
     {#if ctx.hasAttributesSection}
-      <dl class="hero-facts" aria-label={$t('figurineAttributes')}>
+      <dl class="hero-facts" aria-label={$t('figurineAttributes')} style={computeAttrsStyle(ctx.displayConfig)}>
         {#each ctx.attributes as attr (attr.kind)}
           <div><dt>{attr.label}</dt><dd>{attr.value}</dd></div>
         {/each}

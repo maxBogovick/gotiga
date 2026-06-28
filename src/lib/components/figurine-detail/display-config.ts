@@ -7,7 +7,7 @@ export const BLOCK_IDS = ['description', 'making', 'video', 'showings', 'related
 export type BlockId = typeof BLOCK_IDS[number];
 
 // Upper page elements — styleable only, never ordered or hidden
-export const UPPER_ZONE_IDS = ['name', 'shortText'] as const;
+export const UPPER_ZONE_IDS = ['name', 'shortText', 'attrs', 'eyebrow'] as const;
 export type UpperZoneId = typeof UPPER_ZONE_IDS[number];
 
 export type ZoneId = UpperZoneId | BlockId;
@@ -56,6 +56,32 @@ export function computeElementStyle(config: DisplayConfig | null, zoneId: ZoneId
   const s = config?.blockStyles?.[zoneId];
   if (!s) return '';
   return styleForZone(s);
+}
+
+/**
+ * For the eyebrow/subtitle chrome (ARC ref, year stamp, technique subtitle,
+ * colophon-kind): outputs --dc-eyebrow-color CSS custom property on the
+ * container so that child elements can pick it up via var(--dc-eyebrow-color, fallback).
+ */
+export function computeEyebrowStyle(config: DisplayConfig | null): string {
+  const s = config?.blockStyles?.['eyebrow'];
+  if (!s) return '';
+  if (s.color) return `--dc-eyebrow-color:${s.color}`;
+  return '';
+}
+
+/**
+ * For the attributes block (DIMENSIONS/MATERIAL/TECHNIQUE): outputs
+ * --dc-attrs-color and --dc-attrs-bg CSS custom properties on the container.
+ * Child elements (label, value, tile bg) consume these with their own fallbacks.
+ */
+export function computeAttrsStyle(config: DisplayConfig | null): string {
+  const s = config?.blockStyles?.['attrs'];
+  if (!s) return '';
+  const parts: string[] = [];
+  if (s.color) parts.push(`--dc-attrs-color:${s.color}`);
+  if (s.background) parts.push(`--dc-attrs-bg:${s.background}`);
+  return parts.join(';');
 }
 
 export function isBlockVisible(config: DisplayConfig | null, blockId: BlockId): boolean {

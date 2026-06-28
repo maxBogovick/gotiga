@@ -223,7 +223,7 @@
     font-family: 'Fraunces', Georgia, serif;
     font-size: 1.25rem;
     font-weight: 500;
-    color: #34251c;
+    color: var(--dc-block-color, #34251c);
     letter-spacing: 0.02em;
     margin: 0;
   }

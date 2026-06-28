@@ -3337,6 +3337,28 @@ impl AppService {
         self.repo.upsert_setting("theme_config", &json).await
     }
 
+    // === DISPLAY CONFIG PRESETS ===
+
+    pub async fn get_display_presets(&self) -> Result<Vec<crate::models::DisplayConfigPreset>> {
+        match self.repo.get_setting("display_config_presets").await? {
+            Some(j) => serde_json::from_str(&j)
+                .map_err(|e| AppError::Internal(format!("Corrupt display presets: {e}"))),
+            None => Ok(vec![]),
+        }
+    }
+
+    pub async fn save_display_presets(
+        &self,
+        presets: Vec<crate::models::DisplayConfigPreset>,
+    ) -> Result<()> {
+        let json =
+            serde_json::to_string(&presets).map_err(|e| AppError::Internal(e.to_string()))?;
+        if json.len() > 200 * 1024 {
+            return Err(AppError::BadRequest("Display presets payload is too large".into()));
+        }
+        self.repo.upsert_setting("display_config_presets", &json).await
+    }
+
     // === COPY OVERRIDES ===
 
     pub async fn get_copy_overrides(&self) -> Result<CopyOverrides> {

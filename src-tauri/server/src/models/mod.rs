@@ -2015,6 +2015,20 @@ pub struct ThemeMotion {
 }
 
 // ============================================================
+// DISPLAY CONFIG PRESETS
+// ============================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DisplayConfigPreset {
+    pub id: String,
+    pub name: String,
+    /// Opaque JSON blob — the frontend's DisplayConfig object.
+    pub config: serde_json::Value,
+    pub saved_at: String,
+}
+
+// ============================================================
 // COPY OVERRIDES
 // ============================================================
 

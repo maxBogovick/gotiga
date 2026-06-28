@@ -52,6 +52,7 @@ import type {
     ThreadDetailDto,
     ThemeConfig,
     CopyOverrides,
+    DisplayConfigPreset,
     CommissionRequest,
     CommissionDto,
     CommissionCreatedResponse,
@@ -309,7 +310,8 @@ export const api = {
     async getAllFigurines(limit?: number): Promise<FigurineListItem[]> {
         if (isTauri) return invoke('get_all_figurines');
         const url = limit != null ? `/figurines?visible=true&limit=${limit}` : '/figurines?visible=true';
-        return webFetch(url);
+        const res = await webFetch<{ items: FigurineListItem[] } | FigurineListItem[]>(url);
+        return Array.isArray(res) ? res : res.items;
     },
 
     async getInProgressFigurines(): Promise<FigurineListItem[]> {
@@ -320,9 +322,10 @@ export const api = {
 
     async getAllFigurinesAdmin(): Promise<FigurineListItem[]> {
         if (isTauri) return invoke('get_all_figurines');
-        return webFetch('/figurines?visible=false', {
+        const res = await webFetch<{ items: FigurineListItem[] } | FigurineListItem[]>('/figurines?visible=false', {
             headers: authHeaders(),
         });
+        return Array.isArray(res) ? res : res.items;
     },
 
     async getFigurine(id: string): Promise<Figurine | null> {
@@ -1314,6 +1317,20 @@ export const api = {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify(overrides),
+        });
+    },
+
+    // === DISPLAY CONFIG PRESETS ===
+
+    async getDisplayPresets(): Promise<DisplayConfigPreset[]> {
+        return webFetch('/admin/settings/display-presets', { headers: authHeaders() });
+    },
+
+    async saveDisplayPresets(presets: DisplayConfigPreset[]): Promise<DisplayConfigPreset[]> {
+        return webFetch('/admin/settings/display-presets', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(presets),
         });
     },
 };

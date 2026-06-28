@@ -154,14 +154,22 @@ export type DisplayConfigBackground =
 
 export interface BlockStyle {
     color?: string;
+    background?: string;
     fontSize?: 'sm' | 'base' | 'lg' | 'xl';
     /** Font ID from READING_FONTS (e.g. 'garamond', 'spectral'). */
     font?: string;
 }
 
 type _ContentBlockId = 'description' | 'making' | 'video' | 'showings' | 'related' | 'comments';
-type _UpperZoneId = 'name' | 'shortText';
+type _UpperZoneId = 'name' | 'shortText' | 'attrs' | 'eyebrow';
 type _StyleableZoneId = _UpperZoneId | _ContentBlockId;
+
+export interface DisplayConfigPreset {
+    id: string;
+    name: string;
+    config: DisplayConfig;
+    savedAt: string;
+}
 
 export interface DisplayConfig {
     background?: {

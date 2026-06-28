@@ -317,6 +317,16 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                     auth_middleware,
                 )),
             )
+            // === DISPLAY CONFIG PRESETS ===
+            .route(
+                "/admin/settings/display-presets",
+                get(handlers::admin_get_display_presets)
+                    .put(handlers::admin_save_display_presets)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
             // === COMMENTS (ADMIN) ===
             .route(
                 "/admin/comments",

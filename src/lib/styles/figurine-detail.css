@@ -85,6 +85,14 @@
   color:       var(--dc-block-color, color-mix(in srgb, var(--color-ink-secondary) 70%, transparent));
 }
 
+/* Section label (roman numeral + heading) inside any dc-block responds to --dc-block-color */
+[class*="dc-block--"] .sec-label {
+  color: var(--dc-block-color, var(--color-ember));
+}
+[class*="dc-block--"] .sec-label::before {
+  color: var(--dc-block-color, color-mix(in srgb, var(--color-ember) 90%, var(--color-ember-deep)));
+}
+
 /* ── Display-config: upper-zone elements (inline style applied directly) ─────
    These elements receive `style` with direct CSS properties (color, font-family,
    font-size) — inline styles always win regardless of selector specificity. */
@@ -130,6 +138,17 @@
   .page-root--has-cta {
     padding-bottom: calc(3rem + 76px + env(safe-area-inset-bottom, 0px));
   }
+}
+
+/* All figurine-detail layouts: remove SiteFooter's gap so the global parchment
+   wrapper doesn't bleed through between content and footer. */
+main:has(.page-root) ~ .site-footer {
+  margin-top: 0;
+}
+
+/* SpecimenLayout: remove 3rem bottom padding so no bare gap shows below main-grid. */
+.page-root:has(.main-grid) {
+  padding-bottom: 0;
 }
 
 .page-container {
@@ -1221,19 +1240,19 @@
 }
 
 .colophon-ref {
-  color: color-mix(in srgb, var(--color-ink-secondary) 62%, transparent);
+  color: color-mix(in srgb, var(--dc-eyebrow-color, var(--color-ink-secondary)) 62%, transparent);
   font-size: 0.66rem;
   letter-spacing: 0.14em;
 }
 
 .eyebrow-year {
-  color: color-mix(in srgb, var(--color-ink-secondary) 68%, transparent);
+  color: color-mix(in srgb, var(--dc-eyebrow-color, var(--color-ink-secondary)) 68%, transparent);
   font-size: 0.66rem;
   letter-spacing: 0.1em;
 }
 
 .eyebrow-sep {
-  color: color-mix(in srgb, var(--color-ink-primary) 26%, transparent);
+  color: color-mix(in srgb, var(--dc-eyebrow-color, var(--color-ink-primary)) 26%, transparent);
   font-size: 0.75rem;
 }
 
@@ -1263,7 +1282,7 @@
   align-items: center;
   gap: 0.5rem;
   margin: 0 0 0.75rem;
-  color: color-mix(in srgb, var(--color-ink-secondary) 58%, transparent);
+  color: color-mix(in srgb, var(--dc-eyebrow-color, var(--color-ink-secondary)) 58%, transparent);
   font-size: 0.62rem;
   letter-spacing: 0.12em;
 }
@@ -1300,13 +1319,13 @@
   padding: 0.62rem 0.65rem;
   border: 1px solid color-mix(in srgb, var(--color-ink-primary) 8%, transparent);
   border-radius: 3px;
-  background: color-mix(in srgb, var(--color-canvas-raised) 38%, transparent);
+  background: var(--dc-attrs-bg, color-mix(in srgb, var(--color-canvas-raised) 38%, transparent));
 }
 
 .hero-facts dt {
   overflow: hidden;
   margin: 0 0 0.28rem;
-  color: color-mix(in srgb, var(--color-ink-secondary) 58%, transparent);
+  color: color-mix(in srgb, var(--dc-attrs-color, var(--color-ink-secondary)) 58%, transparent);
   font-family: var(--font-body);
   font-size: 0.54rem;
   font-weight: 800;
@@ -1319,7 +1338,7 @@
 
 .hero-facts dd {
   margin: 0;
-  color: var(--color-ink-primary);
+  color: var(--dc-attrs-color, var(--color-ink-primary));
   font-family: var(--font-body);
   font-size: 0.72rem;
   line-height: 1.25;

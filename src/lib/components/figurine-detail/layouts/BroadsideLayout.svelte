@@ -13,7 +13,7 @@
   import '$lib/styles/figurine-detail/layout-broadside.css';
 
   import type { DisplayConfig } from '$lib/types/api';
-  import { computeSectionOrderStyle, isBlockVisible, computeBlockStyle, computeElementStyle } from '$lib/components/figurine-detail/display-config';
+  import { computeSectionOrderStyle, isBlockVisible, computeBlockStyle, computeElementStyle, computeAttrsStyle, computeEyebrowStyle } from '$lib/components/figurine-detail/display-config';
 
   const ctx = getContext<App.FigurineDetailContext>('figurine-detail');
   let sectionStyle = $derived(computeSectionOrderStyle(ctx.displayConfig));
@@ -220,7 +220,7 @@
 
   <!-- RIGHT: scrollable content — the reader walks around the specimen -->
   <div class="bd-content-col">
-    <div class="bd-inner">
+    <div class="bd-inner" style={computeEyebrowStyle(ctx.displayConfig)}>
 
       <!-- Eyebrow: archive reference + year -->
       <p class="bd-eyebrow">
@@ -243,7 +243,7 @@
 
       <!-- Attribute tiles: 3 in a row with vertical dividers -->
       {#if ctx.hasAttributesSection}
-        <dl class="bd-attrs" aria-label={$t('figurineAttributes')}>
+        <dl class="bd-attrs" aria-label={$t('figurineAttributes')} style={computeAttrsStyle(ctx.displayConfig)}>
           {#each ctx.attributes as attr, i (attr.kind)}
             {#if i > 0}<div class="bd-attr-sep" aria-hidden="true"></div>{/if}
             <div class="bd-attr">

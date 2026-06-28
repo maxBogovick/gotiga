@@ -1,8 +1,10 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { t } from '$lib/i18n';
-  import type { DisplayConfig, DisplayConfigBackground, BlockStyle } from '$lib/types/api';
+  import type { DisplayConfig, DisplayConfigBackground, BlockStyle, DisplayConfigPreset } from '$lib/types/api';
   import { BLOCK_IDS, UPPER_ZONE_IDS, isBlockVisible, type BlockId, type UpperZoneId, type ZoneId } from '$lib/components/figurine-detail/display-config';
   import { READING_FONTS } from '$lib/stores/reading-font.svelte';
+  import { api } from '$lib/api';
 
   let {
     value = $bindable<string | null>(null),
@@ -107,7 +109,7 @@
 
   // ── Block styles ──────────────────────────────────────────────────────────
 
-  let expandedBlock = $state<BlockId | null>(null);
+  let expandedBlock = $state<ZoneId | null>(null);
 
   const FONT_OPTIONS = [
     { id: '',  label: $t('adminDisplayConfigFontDefault'), family: 'inherit' },
@@ -129,6 +131,7 @@
     const current = cfg.blockStyles?.[zoneId] ?? {};
     const updated: BlockStyle = { ...current, ...patch };
     if (!updated.color) delete updated.color;
+    if (!updated.background) delete updated.background;
     if (!updated.fontSize || updated.fontSize === 'base') delete updated.fontSize;
     if (!updated.font) delete updated.font;
 
@@ -170,6 +173,61 @@
     value = null;
   }
 
+  // ── Presets ───────────────────────────────────────────────────────────────
+
+  let presets = $state<DisplayConfigPreset[]>([]);
+  let presetsLoading = $state(false);
+  let showSaveForm = $state(false);
+  let presetNameInput = $state('');
+  let applyConfirmId = $state<string | null>(null);
+
+  onMount(async () => {
+    presetsLoading = true;
+    try { presets = await api.getDisplayPresets(); } catch { /* not critical */ }
+    finally { presetsLoading = false; }
+  });
+
+  async function persistPresets(list: DisplayConfigPreset[]) {
+    presets = list;
+    try { await api.saveDisplayPresets(list); } catch { /* ignore, local state stays */ }
+  }
+
+  function openSaveForm() {
+    presetNameInput = '';
+    showSaveForm = true;
+  }
+
+  function cancelSaveForm() {
+    showSaveForm = false;
+    presetNameInput = '';
+  }
+
+  async function saveAsPreset() {
+    const name = presetNameInput.trim();
+    if (!name) return;
+    await persistPresets([
+      ...presets,
+      { id: crypto.randomUUID(), name, config: { ...cfg } as DisplayConfig, savedAt: new Date().toISOString() },
+    ]);
+    showSaveForm = false;
+    presetNameInput = '';
+  }
+
+  function applyPreset(p: DisplayConfigPreset) {
+    if (applyConfirmId !== p.id) {
+      applyConfirmId = p.id;
+      return;
+    }
+    cfg = { ...p.config };
+    commit();
+    applyConfirmId = null;
+  }
+
+  async function deletePreset(id: string) {
+    if (applyConfirmId === id) applyConfirmId = null;
+    await persistPresets(presets.filter(p => p.id !== id));
+  }
+
   // ── Preview ───────────────────────────────────────────────────────────────
 
   let bgColor = $derived(resolvePreviewColor(selectedPreset));
@@ -179,7 +237,7 @@
   const BLOCK_GAP = 4;
 </script>
 
-{#snippet stylePanel(zoneId: ZoneId, bst: BlockStyle, hasStyle: boolean)}
+{#snippet stylePanel(zoneId: ZoneId, bst: BlockStyle, hasStyle: boolean, showBg: boolean = false, showTypography: boolean = true)}
   <li class="dce-style-panel">
     <div class="dce-style-row">
       <span class="dce-style-label">{$t('adminDisplayConfigTextColor')}</span>
@@ -198,33 +256,54 @@
         {/if}
       </div>
     </div>
-    <div class="dce-style-row">
-      <span class="dce-style-label">{$t('adminDisplayConfigTextSize')}</span>
-      <div class="dce-btn-group">
-        {#each SIZE_OPTIONS as sz}
-          <button
-            type="button"
-            class="dce-choice-btn"
-            class:dce-choice-btn--active={(bst.fontSize ?? 'base') === sz.id}
-            onclick={() => setZoneStyle(zoneId, { fontSize: sz.id })}
-          >{sz.label}</button>
-        {/each}
+    {#if showBg}
+      <div class="dce-style-row">
+        <span class="dce-style-label">{$t('adminDisplayConfigBgColor')}</span>
+        <div class="dce-color-row">
+          <input
+            type="color"
+            value={bst.background ?? '#f8f1e7'}
+            onchange={e => setZoneStyle(zoneId, { background: (e.target as HTMLInputElement).value })}
+            class="dce-color-picker dce-color-picker--sm"
+          />
+          {#if bst.background}
+            <span class="dce-color-hex-small">{bst.background}</span>
+            <button type="button" class="dce-clear-btn" onclick={() => setZoneStyle(zoneId, { background: undefined })} title="Reset">×</button>
+          {:else}
+            <span class="dce-style-hint">{$t('adminDisplayConfigFontDefault')}</span>
+          {/if}
+        </div>
       </div>
-    </div>
-    <div class="dce-style-row">
-      <span class="dce-style-label">{$t('adminDisplayConfigTextFont')}</span>
-      <div class="dce-btn-group">
-        {#each FONT_OPTIONS as f}
-          <button
-            type="button"
-            class="dce-choice-btn"
-            class:dce-choice-btn--active={(bst.font ?? '') === f.id}
-            style="font-family:{f.family}"
-            onclick={() => setZoneStyle(zoneId, { font: f.id || undefined })}
-          >{f.label}</button>
-        {/each}
+    {/if}
+    {#if showTypography}
+      <div class="dce-style-row">
+        <span class="dce-style-label">{$t('adminDisplayConfigTextSize')}</span>
+        <div class="dce-btn-group">
+          {#each SIZE_OPTIONS as sz}
+            <button
+              type="button"
+              class="dce-choice-btn"
+              class:dce-choice-btn--active={(bst.fontSize ?? 'base') === sz.id}
+              onclick={() => setZoneStyle(zoneId, { fontSize: sz.id })}
+            >{sz.label}</button>
+          {/each}
+        </div>
       </div>
-    </div>
+      <div class="dce-style-row">
+        <span class="dce-style-label">{$t('adminDisplayConfigTextFont')}</span>
+        <div class="dce-btn-group">
+          {#each FONT_OPTIONS as f}
+            <button
+              type="button"
+              class="dce-choice-btn"
+              class:dce-choice-btn--active={(bst.font ?? '') === f.id}
+              style="font-family:{f.family}"
+              onclick={() => setZoneStyle(zoneId, { font: f.id || undefined })}
+            >{f.label}</button>
+          {/each}
+        </div>
+      </div>
+    {/if}
     {#if hasStyle}
       <button type="button" class="dce-reset-btn" onclick={() => clearZoneStyle(zoneId)}>
         {$t('adminDisplayConfigReset')}
@@ -238,6 +317,74 @@
 
     <!-- ── Left: controls ── -->
     <div class="dce-controls">
+
+      <!-- Presets -->
+      <div class="dce-section dce-section--presets">
+        <div class="dce-presets-header">
+          <p class="dce-section-label">{$t('adminDisplayConfigPresets')}</p>
+          {#if !showSaveForm}
+            <button type="button" class="dce-preset-save-btn" onclick={openSaveForm}>
+              + {$t('adminDisplayConfigPresetSave')}
+            </button>
+          {/if}
+        </div>
+
+        {#if presetsLoading}
+          <p class="dce-preset-empty">…</p>
+        {:else if presets.length > 0}
+          <ul class="dce-preset-list">
+            {#each presets as p (p.id)}
+              <li class="dce-preset-item" class:dce-preset-item--confirm={applyConfirmId === p.id}>
+                <span class="dce-preset-name" title={p.name}>{p.name}</span>
+                <div class="dce-preset-actions">
+                  <button
+                    type="button"
+                    class="dce-preset-apply-btn"
+                    class:dce-preset-apply-btn--confirm={applyConfirmId === p.id}
+                    onclick={() => applyPreset(p)}
+                    title={applyConfirmId === p.id ? $t('adminDisplayConfigPresetConfirm') : $t('adminDisplayConfigPresetApply')}
+                  >
+                    {#if applyConfirmId === p.id}
+                      {$t('adminDisplayConfigPresetConfirm')}
+                    {:else}
+                      <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                        <path d="M2 6h8M6 2l4 4-4 4"/>
+                      </svg>
+                    {/if}
+                  </button>
+                  <button
+                    type="button"
+                    class="dce-preset-del-btn"
+                    onclick={() => deletePreset(p.id)}
+                    title={$t('adminDisplayConfigPresetDelete')}
+                    aria-label={$t('adminDisplayConfigPresetDelete')}
+                  >×</button>
+                </div>
+              </li>
+            {/each}
+          </ul>
+        {:else if !showSaveForm}
+          <p class="dce-preset-empty">{$t('adminDisplayConfigPresetEmpty')}</p>
+        {/if}
+
+        {#if showSaveForm}
+          <div class="dce-preset-form">
+            <input
+              type="text"
+              bind:value={presetNameInput}
+              placeholder={$t('adminDisplayConfigPresetNamePlaceholder')}
+              class="dce-preset-input input-gothic"
+              onkeydown={e => { if (e.key === 'Enter') saveAsPreset(); if (e.key === 'Escape') cancelSaveForm(); }}
+            />
+            <div class="dce-preset-form-btns">
+              <button type="button" class="dce-preset-cancel" onclick={cancelSaveForm}>{$t('adminDisplayConfigPresetCancel')}</button>
+              <button type="button" class="dce-preset-confirm-save" onclick={saveAsPreset} disabled={!presetNameInput.trim()}>
+                {$t('adminDisplayConfigPresetSaveBtn')}
+              </button>
+            </div>
+          </div>
+        {/if}
+      </div>
 
       <!-- Background -->
       <div class="dce-section">
@@ -293,10 +440,13 @@
           {#each UPPER_ZONE_IDS as zoneId (zoneId)}
             {@const bst = getZoneStyle(zoneId)}
             {@const isExpanded = expandedBlock === zoneId}
-            {@const hasStyle = !!(bst.color || bst.fontSize || bst.font)}
+            {@const isAttrs = zoneId === 'attrs'}
+            {@const hasStyle = !!(bst.color || bst.fontSize || bst.font || bst.background)}
+            {@const zoneLabel = zoneId === 'name' ? 'adminDisplayConfigZoneName' : zoneId === 'shortText' ? 'adminDisplayConfigZoneShortText' : zoneId === 'attrs' ? 'adminDisplayConfigZoneAttrs' : 'adminDisplayConfigZoneEyebrow'}
+            {@const zoneColor = zoneId === 'name' ? '#6f3b24' : zoneId === 'shortText' ? '#c65f3c' : zoneId === 'attrs' ? '#8b6a45' : '#5a7a6a'}
             <li class="dce-block-item">
-              <span class="dce-block-color" style="background:{zoneId === 'name' ? '#6f3b24' : '#c65f3c'}"></span>
-              <span class="dce-block-name">{$t(zoneId === 'name' ? 'adminDisplayConfigZoneName' : 'adminDisplayConfigZoneShortText')}</span>
+              <span class="dce-block-color" style="background:{zoneColor}"></span>
+              <span class="dce-block-name">{$t(zoneLabel)}</span>
               <button
                 type="button"
                 class="dce-style-btn"
@@ -311,7 +461,7 @@
               </button>
             </li>
             {#if isExpanded}
-              {@render stylePanel(zoneId, bst, hasStyle)}
+              {@render stylePanel(zoneId, bst, hasStyle, isAttrs, zoneId !== 'attrs' && zoneId !== 'eyebrow')}
             {/if}
           {/each}
         </ol>
@@ -633,6 +783,148 @@
     text-underline-offset: 2px;
   }
   .dce-reset-all-btn { display: block; margin-top: .75rem; }
+
+  /* ── Presets ── */
+  .dce-section--presets {
+    border-bottom: 1px solid var(--color-border, #d8c6b1);
+    padding-bottom: .75rem;
+    margin-bottom: .75rem;
+  }
+  .dce-presets-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: .35rem;
+  }
+  .dce-presets-header .dce-section-label { margin: 0; }
+  .dce-preset-save-btn {
+    font-size: .65rem;
+    color: var(--color-accent, #c65f3c);
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    letter-spacing: .04em;
+    line-height: 1;
+  }
+  .dce-preset-save-btn:hover { text-decoration: underline; text-underline-offset: 2px; }
+
+  .dce-preset-list {
+    list-style: none;
+    margin: 0 0 .35rem;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .dce-preset-item {
+    display: flex;
+    align-items: center;
+    gap: .35rem;
+    padding: .2rem .4rem;
+    border: 1px solid var(--color-border, #d8c6b1);
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--color-canvas-base) 70%, white);
+    transition: border-color .1s;
+  }
+  .dce-preset-item--confirm {
+    border-color: var(--color-accent, #c65f3c);
+  }
+  .dce-preset-name {
+    flex: 1;
+    font-size: .72rem;
+    color: var(--color-ink-primary, #34251c);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .dce-preset-actions {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
+  }
+  .dce-preset-apply-btn {
+    display: flex;
+    align-items: center;
+    padding: 1px 5px;
+    font-size: .62rem;
+    border: 1px solid var(--color-border, #d8c6b1);
+    border-radius: 2px;
+    background: none;
+    cursor: pointer;
+    color: var(--color-ink-secondary, #6f3b24);
+    line-height: 1.5;
+    transition: background .1s, color .1s, border-color .1s;
+  }
+  .dce-preset-apply-btn:hover { background: var(--color-canvas-sunken, #e8ddd0); }
+  .dce-preset-apply-btn--confirm {
+    background: var(--color-accent, #c65f3c);
+    border-color: var(--color-accent, #c65f3c);
+    color: #fff;
+    font-weight: 600;
+  }
+  .dce-preset-apply-btn--confirm:hover { background: #b05535; }
+  .dce-preset-del-btn {
+    padding: 1px 4px;
+    font-size: .72rem;
+    line-height: 1.4;
+    border: 1px solid transparent;
+    border-radius: 2px;
+    background: none;
+    cursor: pointer;
+    color: var(--color-ink-secondary, #6f3b24);
+    opacity: .45;
+    transition: opacity .1s, color .1s;
+  }
+  .dce-preset-del-btn:hover { opacity: 1; color: #c0392b; }
+
+  .dce-preset-empty {
+    font-size: .68rem;
+    color: var(--color-ink-secondary, #6f3b24);
+    opacity: .5;
+    font-style: italic;
+    margin: 0 0 .25rem;
+  }
+
+  .dce-preset-form {
+    display: flex;
+    flex-direction: column;
+    gap: .3rem;
+    margin-top: .35rem;
+  }
+  .dce-preset-input {
+    width: 100%;
+    font-size: .75rem;
+    padding: .25rem .4rem;
+  }
+  .dce-preset-form-btns {
+    display: flex;
+    justify-content: flex-end;
+    gap: .35rem;
+  }
+  .dce-preset-cancel {
+    font-size: .68rem;
+    color: var(--color-ink-secondary, #6f3b24);
+    background: none;
+    border: none;
+    padding: 2px 5px;
+    cursor: pointer;
+    opacity: .7;
+  }
+  .dce-preset-cancel:hover { opacity: 1; }
+  .dce-preset-confirm-save {
+    font-size: .68rem;
+    padding: 2px 8px;
+    border: 1px solid var(--color-accent, #c65f3c);
+    border-radius: 2px;
+    background: var(--color-accent, #c65f3c);
+    color: #fff;
+    cursor: pointer;
+    font-weight: 600;
+    transition: background .1s;
+  }
+  .dce-preset-confirm-save:hover:not(:disabled) { background: #b05535; }
+  .dce-preset-confirm-save:disabled { opacity: .4; cursor: default; }
 
   .dce-preview-svg {
     width: 100%;

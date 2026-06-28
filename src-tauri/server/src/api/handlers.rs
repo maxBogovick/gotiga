@@ -1790,6 +1790,22 @@ pub async fn save_copy_overrides(
     Ok(Json(body))
 }
 
+// === DISPLAY CONFIG PRESETS ===
+
+pub async fn admin_get_display_presets(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<crate::models::DisplayConfigPreset>>> {
+    Ok(Json(service.get_display_presets().await?))
+}
+
+pub async fn admin_save_display_presets(
+    State(service): State<AppService>,
+    Json(body): Json<Vec<crate::models::DisplayConfigPreset>>,
+) -> Result<Json<Vec<crate::models::DisplayConfigPreset>>> {
+    service.save_display_presets(body.clone()).await?;
+    Ok(Json(body))
+}
+
 pub async fn user_update_profile(
     State(service): State<AppService>,
     headers: HeaderMap,

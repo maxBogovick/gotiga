@@ -429,7 +429,8 @@
                 {#each columns as column}
                   <th class:right={column.align !== 'left'}>
                     {#if column.key}
-                      <button type="button" onclick={() => setSort(column.key)}>
+                      {@const key = column.key}
+                      <button type="button" onclick={() => setSort(key)}>
                         {column.label}
                         {#if sort === column.key}<span>{dir === 'asc' ? 'Asc' : 'Desc'}</span>{/if}
                       </button>

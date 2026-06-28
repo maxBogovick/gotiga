@@ -93,6 +93,9 @@
     let searchQuery = $state('');
     let isDeleting = $state(false);
     let uploadingVideo = $state(false);
+    let activeFormTab = $state<'media' | 'text' | 'object' | 'passport' | 'vitrina'>('media');
+    let selectedImageIdx = $state<number | null>(null);
+    let sidebarCollapsed = $state(false);
     let uploadingAudio = $state(false);
     let externalVideoUrl = $state('');
     let folderUploadProgress = $state<{ done: number; total: number } | null>(null);
@@ -337,6 +340,7 @@
         if (full) {
             selectedFigurine = { ...full };
             savedSnapshot = JSON.stringify(selectedFigurine);
+            selectedImageIdx = null;
         }
     }
 
@@ -344,6 +348,8 @@
         if (hasUnsaved && !confirm($t('adminMsgUnsavedLeave'))) return;
         selectedFigurine = { ...emptyFigurine, id: crypto.randomUUID(), sortOrder: figurines.length };
         savedSnapshot = '';
+        activeFormTab = 'media';
+        selectedImageIdx = null;
     }
 
     function duplicateFigurine(fig: FigurineListItem) {
@@ -358,10 +364,12 @@
                 isVisible: false,
             };
             savedSnapshot = '';
+            activeFormTab = 'media';
+            selectedImageIdx = null;
         });
     }
 
-    async function deleteFigurine(fig: FigurineListItem) {
+    async function deleteFigurine(fig: { id: string }) {
         if (!confirm($t('adminRegistryDeleteConfirm'))) return;
         isDeleting = true;
         try {
@@ -774,9 +782,11 @@
             loadFigurines();
             loadShowingRooms();
         }
+        // Restore sidebar collapsed state
+        sidebarCollapsed = localStorage.getItem('gotiga_admin_sidebar_collapsed') === '1';
         // Hash-based tab routing (e.g. Telegram notification links)
         const hash = window.location.hash.replace('#', '');
-        const validTabs = ['registry','rooms','home','workshop-feature','zones','author','workshop','media','releases','orders','commissions','showings','bookings','waitlist','analytics','users','comments','messages','server','booking-rules','contact'];
+        const validTabs = ['registry','rooms','home','workshop-feature','zones','author','workshop','media','releases','orders','commissions','showings','bookings','waitlist','analytics','users','comments','messages','server','logs','booking-rules','contact','design','copy','programme'];
         if (validTabs.includes(hash)) {
             activeTab = hash as typeof activeTab;
         }
@@ -845,65 +855,76 @@
 <div class="h-screen bg-[#f8f1e7] text-[#34251c] font-cinzel flex flex-row overflow-hidden">
 
     <!-- Sidebar -->
-    <aside class="w-52 shrink-0 flex flex-col border-r border-[#34251c]/20 bg-[#f2e8da] overflow-y-auto">
+    <aside class="shrink-0 flex flex-col border-r border-[#34251c]/20 bg-[#f2e8da] overflow-hidden transition-[width] duration-200 {sidebarCollapsed ? 'w-0 border-r-0' : 'w-52'}">
+      <div class="w-52 flex flex-col h-full overflow-hidden">
 
         <!-- Branding -->
-        <div class="px-4 pt-5 pb-4 border-b border-[#34251c]/15">
-            <h1 class="text-lg font-gothic leading-tight">{$t('adminTitle')}</h1>
-            <p class="text-[9px] tracking-[0.1em] text-[#5f4636] uppercase mt-1">{$t('adminSubtitle')}</p>
+        <div class="px-4 pt-5 pb-4 border-b border-[#34251c]/15 flex items-start justify-between">
+            <div>
+                <h1 class="text-lg font-gothic leading-tight">{$t('adminTitle')}</h1>
+                <p class="text-[9px] tracking-[0.1em] text-[#5f4636] uppercase mt-1">{$t('adminSubtitle')}</p>
+            </div>
+            <button
+                onclick={() => { sidebarCollapsed = true; localStorage.setItem('gotiga_admin_sidebar_collapsed', '1'); }}
+                class="mt-1.5 shrink-0 w-5 h-5 flex items-center justify-center text-[#5f4636]/40 hover:text-[#34251c] hover:bg-[#34251c]/8 rounded transition-colors text-sm leading-none"
+                title="Collapse sidebar">‹</button>
         </div>
 
         <!-- Nav -->
-        <nav class="flex-1 px-3 py-4 flex flex-col gap-5">
+        <nav class="flex-1 px-3 py-4 flex flex-col gap-5 overflow-y-auto">
             {#each [
               {
-                label: $t('adminGroupFigurines'),
+                label: $t('adminGroupDaily'),
                 tabs: [
-                  ['registry', $t('adminTabRegistry')],
-                  ['rooms',    $t('adminTabShowingRooms')],
-                  ['zones',    $t('adminTabZones')],
-                  ['releases', $t('adminTabReleases')],
+                  ['registry',   $t('adminTabRegistry')],
+                  ['comments',   $t('adminTabComments')],
+                  ['messages',   $t('adminTabMessages')],
                 ]
               },
               {
-                label: $t('adminGroupShowcase'),
+                label: $t('adminGroupRequests'),
                 tabs: [
-                  ['home',     $t('adminTabHome')],
-                  ['programme', $t('adminTabProgramme')],
-                  ['workshop-feature', $t('adminTabWorkshopFeature')],
-                  ['author',   $t('adminTabAuthor')],
-                  ['workshop', $t('adminTabWorkshop')],
-                  ['media',    $t('adminTabMedia')],
+                  ['orders',       $t('adminTabOrders')],
+                  ['commissions',  $t('adminTabCommissions')],
+                  ['waitlist',     $t('adminTabWaitlist')],
                 ]
               },
               {
-                label: $t('adminGroupActivity'),
+                label: $t('adminGroupContent'),
                 tabs: [
-                  ['orders',    $t('adminTabOrders')],
-                  ['commissions', $t('adminTabCommissions')],
-                  ['showings',  $t('adminTabShowings')],
-                  ['bookings',      $t('adminTabBookings')],
-                  ['waitlist',      $t('adminTabWaitlist')],
-                  ['comments',      $t('adminTabComments')],
-                  ['messages',      $t('adminTabMessages')],
-                  ['analytics',     $t('adminTabAnalytics')],
-                  ['users',         $t('adminUsersTab')],
+                  ['home',       $t('adminTabHome')],
+                  ['programme',  $t('adminTabProgramme')],
+                  ['author',     $t('adminTabAuthor')],
+                  ['workshop',   $t('adminTabWorkshop')],
+                  ['media',      $t('adminTabMedia')],
+                ]
+              },
+              {
+                label: $t('adminGroupWorks'),
+                tabs: [
+                  ['rooms',     $t('adminTabShowingRooms')],
+                  ['zones',     $t('adminTabZones')],
+                  ['releases',  $t('adminTabReleases')],
+                ]
+              },
+              {
+                label: $t('adminGroupTools'),
+                tabs: [
+                  ['analytics', $t('adminTabAnalytics')],
+                  ['users',     $t('adminUsersTab')],
                 ]
               },
               {
                 label: $t('adminGroupSystem'),
                 tabs: [
-                  ['server',        $t('adminTabServer')],
-                  ['logs',          $t('adminTabLogs')],
-                  ['booking-rules', $t('adminTabBookingRules')],
-                  ['contact',       $t('adminTabContact')],
-                ]
-              },
-              {
-                label: $t('adminGroupDesign'),
-                tabs: [
-                  ['design', $t('adminTabDesign')],
-                  ['copy',   $t('adminTabCopy')],
+                  ['server',           $t('adminTabServer')],
+                  ['logs',             $t('adminTabLogs')],
+                  ['booking-rules',    $t('adminTabBookingRules')],
+                  ['contact',          $t('adminTabContact')],
+                  ['showings',         $t('adminTabShowings')],
+                  ['workshop-feature', $t('adminTabWorkshopFeature')],
+                  ['design',           $t('adminTabDesign')],
+                  ['copy',             $t('adminTabCopy')],
                 ]
               },
             ] as group}
@@ -928,11 +949,6 @@
                         {newCommissionsCount > 99 ? '99+' : newCommissionsCount}
                       </span>
                     {/if}
-                    {#if tab === 'bookings' && newBookingsCount > 0 && activeTab !== 'bookings'}
-                      <span class="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-amber-500 text-white text-[9px] font-bold leading-none">
-                        {newBookingsCount > 99 ? '99+' : newBookingsCount}
-                      </span>
-                    {/if}
                     {#if tab === 'comments' && pendingCommentsCount > 0 && activeTab !== 'comments'}
                       <span class="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-orange-600 text-white text-[9px] font-bold leading-none">
                         {pendingCommentsCount > 99 ? '99+' : pendingCommentsCount}
@@ -953,12 +969,21 @@
             {/if}
             <a href="/" class="btn-gothic text-[10px] opacity-60 hover:opacity-100">{$t('adminToMuseum')}</a>
         </div>
+
+      </div><!-- /inner w-52 -->
     </aside>
 
     <SettingsModal isOpen={showSettings} onClose={() => showSettings = false} />
 
     <!-- Content -->
     <div class="flex-1 overflow-hidden p-6 relative">
+
+        {#if sidebarCollapsed}
+        <button
+            onclick={() => { sidebarCollapsed = false; localStorage.setItem('gotiga_admin_sidebar_collapsed', '0'); }}
+            class="absolute top-3 left-1 z-20 w-6 h-6 flex items-center justify-center bg-[#f2e8da] border border-[#34251c]/20 text-[#5f4636] hover:text-[#34251c] hover:bg-[#e8dece] transition-colors text-sm leading-none"
+            title="Expand sidebar">›</button>
+        {/if}
 
         {#if activeTab === 'registry'}
         <div class="grid grid-cols-12 gap-6 h-full" in:fade>
@@ -1039,23 +1064,366 @@
             </aside>
 
             <!-- Editor -->
-            <main class="col-span-9 bg-[#fff9f0]/50 border border-[#34251c]/10 relative h-full overflow-y-auto">
+            <main class="col-span-9 bg-[#fff9f0]/50 border border-[#34251c]/10 relative h-full flex flex-col overflow-hidden">
                 {#if selectedFigurine}
-                    <div class="p-8">
-                        <!-- Unsaved indicator bar -->
+
+                    <!-- ── TOP BAR ──────────────────────────────────────────── -->
+                    <div class="shrink-0 px-5 py-3 border-b border-[#34251c]/10 bg-[#f2e8da] flex items-center gap-3 min-w-0">
+                        <!-- Delete (far left, subtle) -->
+                        <button
+                            onclick={() => deleteFigurine(selectedFigurine!)}
+                            disabled={isDeleting}
+                            class="shrink-0 text-[10px] uppercase tracking-wide text-[#5f4636]/40 hover:text-red-700 transition-colors"
+                            title={$t('adminFormDeleteWork')}>✕</button>
+
+                        <!-- Name -->
+                        <input
+                            bind:value={selectedFigurine.name}
+                            class="flex-1 min-w-0 bg-transparent border-0 border-b border-[#34251c]/20 focus:border-[#c65f3c]/50 outline-none text-sm font-bold text-[#34251c] px-1 py-0.5 transition-colors"
+                            placeholder={$t('adminFieldName')} />
+
+                        <!-- Status -->
+                        <select bind:value={selectedFigurine.status}
+                            class="shrink-0 text-[10px] uppercase tracking-wide bg-[#f8f1e7] border border-[#34251c]/15 px-2 py-1.5 text-[#34251c] outline-none focus:border-[#c65f3c]/40 transition-colors">
+                            <option value="available">{$t('adminFieldStatusAvail')}</option>
+                            <option value="reserved">{$t('adminFieldStatusRes')}</option>
+                            <option value="in_progress">{$t('adminFieldStatusWip')}</option>
+                            <option value="sold">{$t('adminFieldStatusSold')}</option>
+                        </select>
+
+                        <!-- Visible -->
+                        <label class="flex items-center gap-1.5 shrink-0 cursor-pointer select-none">
+                            <input type="checkbox" bind:checked={selectedFigurine.isVisible} class="accent-[#34251c] w-3.5 h-3.5" />
+                            <span class="text-[10px] uppercase tracking-wide text-[#5f4636]">{$t('adminFieldVisible')}</span>
+                        </label>
+
+                        <!-- Featured -->
+                        <label class="flex items-center gap-1.5 shrink-0 cursor-pointer select-none">
+                            <input type="checkbox" bind:checked={selectedFigurine.isFeatured} class="accent-[#c65f3c] w-3.5 h-3.5" />
+                            <span class="text-[10px] uppercase tracking-wide text-[#5f4636]">{$t('adminFieldFeatured')}</span>
+                        </label>
+
+                        <!-- Unsaved pulse dot -->
                         {#if hasUnsaved}
-                            <div class="mb-6 px-4 py-2 bg-amber-50 border border-amber-700/30 text-amber-800 text-[10px] uppercase tracking-wide flex items-center gap-2" in:fade>
-                                <span class="w-1.5 h-1.5 rounded-full bg-amber-700 animate-pulse"></span>
-                                {$t('adminRegistryUnsaved')}
-                            </div>
+                            <span class="w-1.5 h-1.5 rounded-full bg-amber-600 animate-pulse shrink-0" title={$t('adminRegistryUnsaved')}></span>
                         {/if}
 
-                        <div class="grid grid-cols-2 gap-6 mb-8">
-                            <div class="space-y-4">
-                                <label class="block">
-                                    <span class="label">{$t('adminFieldName')}</span>
-                                    <input bind:value={selectedFigurine.name} class="input-gothic" />
-                                </label>
+                        <!-- Cancel -->
+                        <button onclick={cancelEdit} class="btn-gothic text-[10px] shrink-0 opacity-70">{$t('adminFormCancel')}</button>
+
+                        <!-- Push to cloud (Tauri only) -->
+                        {#if isTauri}
+                            <button
+                                onclick={async () => {
+                                    try {
+                                        await api.pushFigurine(selectedFigurine!);
+                                        savedSnapshot = JSON.stringify(selectedFigurine);
+                                        showMessage($t('adminFormSentToCloud'), 'success');
+                                    } catch(e) { showMessage($t('adminMsgError') + e, 'error'); }
+                                }}
+                                class="btn-gothic text-[10px] border-blue-900/40 text-blue-700 shrink-0"
+                            >{$t('adminFormToCloud')}</button>
+                        {/if}
+
+                        <!-- Save -->
+                        <button onclick={save} disabled={isSaving}
+                            class="btn-gothic text-[10px] shrink-0 min-w-[90px] transition-colors
+                                {hasUnsaved ? 'bg-amber-50 border-amber-700/40 text-amber-900 hover:bg-amber-100' : 'bg-[#34251c]/10'}">
+                            {isSaving ? $t('adminFormSaving') : hasUnsaved ? $t('adminFormSaveChanges') : $t('adminFormSaved')}
+                        </button>
+                    </div>
+
+                    <!-- ── TAB STRIP ─────────────────────────────────────────── -->
+                    <div class="shrink-0 flex border-b border-[#34251c]/10 bg-[#f8f1e7] px-1">
+                        {#each [
+                            ['media',    $t('adminFormTabMedia')],
+                            ['text',     $t('adminFormTabText')],
+                            ['object',   $t('adminFormTabObject')],
+                            ['passport', $t('adminFormTabPassport')],
+                            ['vitrina',  $t('adminFormTabVitrina')],
+                        ] as tab}
+                            <button
+                                onclick={() => activeFormTab = tab[0] as typeof activeFormTab}
+                                class="px-5 py-2.5 text-[10px] uppercase tracking-wide border-b-2 -mb-px transition-colors
+                                    {activeFormTab === tab[0]
+                                        ? 'border-[#c65f3c] text-[#34251c]'
+                                        : 'border-transparent text-[#5f4636] hover:text-[#34251c]'}"
+                            >{tab[1]}</button>
+                        {/each}
+                    </div>
+
+                    <!-- ── TAB CONTENT (scrollable) ──────────────────────────── -->
+                    <div class="flex-1 overflow-y-auto">
+
+                        <!-- ╔═ MEDIA ════════════════════════════════════════════ -->
+                        {#if activeFormTab === 'media'}
+                        <div class="p-6 space-y-8" in:fade={{ duration: 120 }}>
+
+                            <!-- Gallery header -->
+                            <div>
+                                <div class="flex items-center justify-between mb-4">
+                                    <span class="label">{$t('adminMediaPhotos')} ({selectedFigurine.images.length})</span>
+                                    <div class="flex gap-2 flex-wrap justify-end">
+                                        {#if !isTauri && selectedFigurine.images.length > 0}
+                                            <button onclick={generateDepth} disabled={generatingDepth}
+                                                title={$t('adminMediaDepthHint')}
+                                                class="btn-gothic text-[10px] disabled:opacity-60 disabled:cursor-wait">
+                                                {generatingDepth ? $t('adminMediaDepthGenRunning') : $t('adminMediaDepthGen')}
+                                            </button>
+                                        {/if}
+                                        <button onclick={() => handlePickFile('images')} class="btn-gothic text-[10px]" disabled={!!folderUploadProgress}>{$t('adminMediaAddPhoto')}</button>
+                                        <button onclick={handleFolderUpload} class="btn-gothic text-[10px]" disabled={!!folderUploadProgress}>
+                                            {folderUploadProgress
+                                                ? $t('adminMediaFolderProgress').replace('{done}', String(folderUploadProgress.done)).replace('{total}', String(folderUploadProgress.total))
+                                                : $t('adminMediaAddFolder')}
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- Thumbnails — 144px, click to expand -->
+                                <div class="flex flex-wrap gap-3 mb-4">
+                                    {#each selectedFigurine.images as img, imgIdx (img.id)}
+                                        <div
+                                            role="button"
+                                            tabindex="0"
+                                            onclick={() => selectedImageIdx = selectedImageIdx === imgIdx ? null : imgIdx}
+                                            onkeydown={(e) => e.key === 'Enter' && (selectedImageIdx = selectedImageIdx === imgIdx ? null : imgIdx)}
+                                            class="relative w-36 h-36 border-2 overflow-hidden transition-all group/thumb shrink-0 cursor-pointer
+                                                {selectedImageIdx === imgIdx
+                                                    ? 'border-[#c65f3c] shadow-[0_0_0_2px_rgba(198,95,60,0.2)]'
+                                                    : img.imageType === 'face'
+                                                        ? 'border-amber-500 hover:border-amber-600'
+                                                        : 'border-[#34251c]/20 hover:border-[#34251c]/50'}">
+                                            <img src={resolveUrl(img.thumbUrl ?? img.url)} alt={img.altText ?? ''} class="w-full h-full object-cover pointer-events-none" />
+
+                                            <!-- Move arrows on hover -->
+                                            <div class="absolute bottom-1 inset-x-0 flex justify-center gap-1 opacity-0 group-hover/thumb:opacity-100 transition-opacity">
+                                                <button
+                                                    onclick={(e) => { e.stopPropagation(); moveImage(imgIdx, -1); }}
+                                                    disabled={imgIdx === 0}
+                                                    class="bg-[#fff9f0]/90 text-[#34251c] text-[10px] px-2 py-0.5 border border-[#34251c]/20 disabled:opacity-30 hover:bg-[#f8f1e7]">←</button>
+                                                <button
+                                                    onclick={(e) => { e.stopPropagation(); moveImage(imgIdx, 1); }}
+                                                    disabled={imgIdx === selectedFigurine.images.length - 1}
+                                                    class="bg-[#fff9f0]/90 text-[#34251c] text-[10px] px-2 py-0.5 border border-[#34251c]/20 disabled:opacity-30 hover:bg-[#f8f1e7]">→</button>
+                                            </div>
+
+                                            {#if img.imageType === 'face'}
+                                                <div class="absolute bottom-0 left-0 right-0 bg-amber-500/80 text-black text-[8px] text-center py-0.5 font-bold pointer-events-none">{$t('adminMediaCoverBadge')}</div>
+                                            {/if}
+                                            {#if img.depthUrl}
+                                                <div class="absolute top-0 left-0 bg-[#34251c]/85 text-[#f3e9d8] text-[8px] px-1 py-0.5 leading-none tracking-wider font-bold pointer-events-none">{$t('adminMediaDepthBadge')}</div>
+                                            {/if}
+                                        </div>
+                                    {/each}
+
+                                    {#if selectedFigurine.images.length === 0}
+                                        <p class="text-xs text-[#5f4636]/50 italic py-6 w-full text-center">{$t('adminGrimoireEmpty')}</p>
+                                    {/if}
+                                </div>
+
+                                <!-- Per-image expanded panel (full width) -->
+                                {#if selectedImageIdx !== null && selectedFigurine.images[selectedImageIdx]}
+                                    {@const img = selectedFigurine.images[selectedImageIdx]}
+                                    {@const imgIdx = selectedImageIdx}
+                                    <div class="border border-[#c65f3c]/25 bg-[#f8f1e7] p-5" in:slide={{ duration: 160 }}>
+
+                                        <!-- Panel header -->
+                                        <div class="flex items-center justify-between mb-5">
+                                            <span class="text-[10px] uppercase tracking-wide text-[#5f4636]">
+                                                {$t('adminMediaPhotoN').replace('{n}', String(imgIdx + 1)).replace('{total}', String(selectedFigurine.images.length))}
+                                            </span>
+                                            <div class="flex items-center gap-4">
+                                                {#if img.imageType !== 'face'}
+                                                    <button onclick={() => setFaceImage(img.id)}
+                                                        class="text-[10px] uppercase tracking-wide text-[#5f4636] hover:text-amber-800 transition-colors">{$t('adminMediaCover')}</button>
+                                                {:else}
+                                                    <span class="text-[10px] uppercase tracking-wide text-amber-700">{$t('adminMediaCover')} ✓</span>
+                                                {/if}
+                                                <button onclick={() => {
+                                                        selectedFigurine!.images = selectedFigurine!.images.filter(i => i.id !== img.id);
+                                                        selectedImageIdx = null;
+                                                    }}
+                                                    class="text-[10px] uppercase tracking-wide text-red-700 hover:text-red-900 transition-colors">{$t('adminMediaDeleteFile')}</button>
+                                                <button onclick={() => selectedImageIdx = null}
+                                                    class="text-[10px] text-[#5f4636] hover:text-[#34251c] transition-colors">✕</button>
+                                            </div>
+                                        </div>
+
+                                        <div class="grid grid-cols-2 gap-8">
+                                            <!-- Left: preview + alt + depth -->
+                                            <div class="space-y-4">
+                                                <div class="border border-[#34251c]/15 overflow-hidden bg-[#f1e3d1] aspect-square">
+                                                    <img src={resolveUrl(img.url)} alt={img.altText ?? ''} class="w-full h-full object-contain" />
+                                                </div>
+                                                <label class="block">
+                                                    <span class="label">{$t('adminMediaAltPlaceholder')}</span>
+                                                    <input bind:value={img.altText} type="text" class="input-gothic text-xs" />
+                                                </label>
+                                                <!-- Depth map -->
+                                                <div>
+                                                    <span class="label">{$t('adminMediaDepthAdd')}</span>
+                                                    {#if img.depthUrl}
+                                                        <div class="flex items-center gap-2 mt-1">
+                                                            <img src={resolveUrl(img.depthUrl)} alt="" class="w-10 h-10 object-cover border border-[#34251c]/20 shrink-0" />
+                                                            <button onclick={() => handlePickDepth(imgIdx)} class="btn-gothic text-[10px]">{$t('adminMediaDepthReplace')}</button>
+                                                            <button onclick={() => clearDepth(imgIdx)} class="text-[10px] uppercase text-red-700 hover:text-red-900">✕</button>
+                                                        </div>
+                                                    {:else}
+                                                        <button onclick={() => handlePickDepth(imgIdx)}
+                                                            class="mt-1 w-full btn-gothic text-[10px] border-dashed">{$t('adminMediaDepthAdd')}</button>
+                                                    {/if}
+                                                </div>
+                                            </div>
+
+                                            <!-- Right: parallax + keyhole -->
+                                            <div class="space-y-6">
+                                                <!-- Parallax -->
+                                                <div>
+                                                    <div class="flex items-center justify-between mb-2">
+                                                        <span class="label">{$t('adminMediaParallax')}</span>
+                                                        <button onclick={() => resetParallaxIntensity(imgIdx)}
+                                                            disabled={img.parallaxIntensity == null}
+                                                            class="text-[9px] uppercase text-[#5f4636] hover:text-[#34251c] disabled:opacity-30 transition-colors">{$t('adminMediaParallaxReset')}</button>
+                                                    </div>
+                                                    <div class="flex items-center gap-3">
+                                                        <input type="range" min="0" max="1" step="0.05"
+                                                            value={parallaxValue(img.parallaxIntensity)}
+                                                            oninput={(e) => setParallaxIntensity(imgIdx, (e.currentTarget as HTMLInputElement).value)}
+                                                            class="flex-1 accent-[#6f3b24]" />
+                                                        <span class="w-10 text-right text-xs tabular-nums text-[#5f4636]">{parallaxValue(img.parallaxIntensity).toFixed(2)}</span>
+                                                    </div>
+                                                </div>
+
+                                                <!-- Keyhole (cover image only) -->
+                                                {#if img.imageType === 'face'}
+                                                    <div>
+                                                        <div class="flex items-center justify-between mb-3">
+                                                            <span class="label">{$t('adminMediaKeyhole')}</span>
+                                                            <button onclick={() => resetReveal(imgIdx)}
+                                                                disabled={img.focalX == null && img.focalY == null && img.revealRadius == null && img.darkness == null}
+                                                                class="text-[9px] uppercase text-[#5f4636] hover:text-[#34251c] disabled:opacity-30 transition-colors">{$t('adminMediaParallaxReset')}</button>
+                                                        </div>
+                                                        <!-- Focal point picker — 280×210, much more usable than 112×84 -->
+                                                        <div class="relative border border-[#34251c]/20 overflow-hidden bg-[#f1e3d1] mb-4" style="width: 280px; aspect-ratio: 4/3;">
+                                                            <img src={resolveUrl(img.thumbUrl ?? img.url)} alt="" class="w-full h-full object-contain" />
+                                                            <KeyholeVeil
+                                                                focalX={img.focalX}
+                                                                focalY={img.focalY}
+                                                                revealRadius={img.revealRadius}
+                                                                darkness={darknessValue(img.darkness)}
+                                                                editable
+                                                                onpick={(x, y) => setFocalPoint(imgIdx, x, y)}
+                                                            />
+                                                        </div>
+                                                        <!-- Window size stepper -->
+                                                        <div class="flex items-center gap-3 mb-3">
+                                                            <span class="text-[10px] uppercase tracking-wide text-[#5f4636] w-16 shrink-0">{$t('adminMediaKeyholeRadius')}</span>
+                                                            <div class="flex items-center flex-1 border border-[#34251c]/20 bg-[#fff9f0]">
+                                                                <button type="button" onclick={() => nudgeRevealRadius(imgIdx, -KEYHOLE_STEP)}
+                                                                    disabled={revealRadiusValue(img.revealRadius) <= REVEAL_MIN}
+                                                                    class="px-3 py-1.5 text-sm text-[#5f4636] hover:bg-[#34251c]/10 disabled:opacity-30">−</button>
+                                                                <span class="flex-1 text-center text-xs tabular-nums text-[#5f4636]">{revealRadiusValue(img.revealRadius).toFixed(2)}</span>
+                                                                <button type="button" onclick={() => nudgeRevealRadius(imgIdx, KEYHOLE_STEP)}
+                                                                    disabled={revealRadiusValue(img.revealRadius) >= REVEAL_MAX}
+                                                                    class="px-3 py-1.5 text-sm text-[#5f4636] hover:bg-[#34251c]/10 disabled:opacity-30">+</button>
+                                                            </div>
+                                                        </div>
+                                                        <!-- Darkness stepper -->
+                                                        <div class="flex items-center gap-3">
+                                                            <span class="text-[10px] uppercase tracking-wide text-[#5f4636] w-16 shrink-0">{$t('adminMediaDarkness')}</span>
+                                                            <div class="flex items-center flex-1 border border-[#34251c]/20 bg-[#fff9f0]">
+                                                                <button type="button" onclick={() => nudgeDarkness(imgIdx, -KEYHOLE_STEP)}
+                                                                    disabled={darknessValue(img.darkness) <= DARK_MIN}
+                                                                    class="px-3 py-1.5 text-sm text-[#5f4636] hover:bg-[#34251c]/10 disabled:opacity-30">−</button>
+                                                                <span class="flex-1 text-center text-xs tabular-nums {img.darkness == null ? 'text-[#5f4636]/45 italic' : 'text-[#5f4636]'}">{darknessValue(img.darkness).toFixed(2)}</span>
+                                                                <button type="button" onclick={() => nudgeDarkness(imgIdx, KEYHOLE_STEP)}
+                                                                    disabled={darknessValue(img.darkness) >= DARK_MAX}
+                                                                    class="px-3 py-1.5 text-sm text-[#5f4636] hover:bg-[#34251c]/10 disabled:opacity-30">+</button>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                {/if}
+                                            </div>
+                                        </div>
+                                    </div>
+                                {/if}
+                            </div>
+
+                            <!-- Video + Audio -->
+                            <div class="grid grid-cols-2 gap-6">
+                                <!-- Video -->
+                                <div class="p-4 border border-dashed border-[#34251c]/20 flex flex-col gap-2">
+                                    <span class="label block">{$t('adminMediaVideo')}</span>
+                                    {#if selectedFigurine.videoUrl}
+                                        <video src={resolveUrl(selectedFigurine.videoUrl)} controls class="w-full max-h-36 bg-[#2f2117]" preload="metadata">
+                                            <track kind="captions" />
+                                        </video>
+                                        <div class="flex gap-2">
+                                            <button onclick={() => handlePickFile('videos')} disabled={uploadingVideo}
+                                                class="text-[10px] text-[#34251c]/85 hover:text-[#6f3b24] uppercase disabled:opacity-70">{$t('adminMediaReplace')}</button>
+                                            <button onclick={() => { selectedFigurine!.videoUrl = null; externalVideoUrl = ''; }}
+                                                class="text-[10px] text-red-700 hover:text-red-900 uppercase">{$t('adminMediaDeleteFile')}</button>
+                                        </div>
+                                    {:else}
+                                        <div class="flex flex-col gap-2">
+                                            <input type="url" bind:value={externalVideoUrl} placeholder="https://... external link" class="input-gothic text-xs" />
+                                            {#if externalVideoUrl.trim()}
+                                                <button onclick={() => { selectedFigurine!.videoUrl = externalVideoUrl.trim(); externalVideoUrl = ''; }}
+                                                    class="btn-gothic text-xs w-full">{$t('adminMediaUseLink')}</button>
+                                            {:else}
+                                                <button onclick={() => handlePickFile('videos')} disabled={uploadingVideo}
+                                                    class="btn-gothic text-xs w-full disabled:opacity-70">{uploadingVideo ? '…' : $t('adminMediaPickMp4')}</button>
+                                            {/if}
+                                        </div>
+                                    {/if}
+                                </div>
+                                <!-- Audio -->
+                                <div class="p-4 border border-dashed border-[#34251c]/20 flex flex-col gap-2">
+                                    <span class="label block">{$t('adminMediaAudio')}</span>
+                                    {#if selectedFigurine.ambiencePath}
+                                        <audio src={resolveUrl(selectedFigurine.ambiencePath)} controls class="w-full" preload="metadata"></audio>
+                                        <div class="flex gap-2">
+                                            <button onclick={() => handlePickFile('audio')} disabled={uploadingAudio}
+                                                class="text-[10px] text-[#34251c]/85 hover:text-[#6f3b24] uppercase disabled:opacity-70">{$t('adminMediaReplace')}</button>
+                                            <button onclick={() => selectedFigurine!.ambiencePath = null}
+                                                class="text-[10px] text-red-700 hover:text-red-900 uppercase">{$t('adminMediaDeleteFile')}</button>
+                                        </div>
+                                    {:else}
+                                        <button onclick={() => handlePickFile('audio')} disabled={uploadingAudio}
+                                            class="btn-gothic text-xs w-full disabled:opacity-70">{uploadingAudio ? '…' : $t('adminMediaPickMp3')}</button>
+                                    {/if}
+                                </div>
+                            </div>
+
+                        </div>
+
+                        <!-- ╔═ TEXT ═════════════════════════════════════════════ -->
+                        {:else if activeFormTab === 'text'}
+                        <div class="p-8 max-w-3xl space-y-6" in:fade={{ duration: 120 }}>
+
+                            <label class="block">
+                                <span class="label">{$t('adminFieldQuote')}</span>
+                                <textarea bind:value={selectedFigurine.shortText} class="input-gothic h-24"></textarea>
+                            </label>
+
+                            <label class="block">
+                                <span class="label">{$t('adminFieldHistory')}</span>
+                                <textarea bind:value={selectedFigurine.fullDescription} class="input-gothic h-56"></textarea>
+                            </label>
+
+                            <label class="block opacity-70">
+                                <span class="label">{$t('adminFieldSecret')}</span>
+                                <textarea bind:value={selectedFigurine.secretText} class="input-gothic h-20"></textarea>
+                            </label>
+
+                        </div>
+
+                        <!-- ╔═ OBJECT ═══════════════════════════════════════════ -->
+                        {:else if activeFormTab === 'object'}
+                        <div class="p-8 max-w-2xl space-y-5" in:fade={{ duration: 120 }}>
+
+                            <div class="grid grid-cols-3 gap-4">
                                 <label class="block">
                                     <span class="label">{$t('adminFieldYear')}</span>
                                     <input type="number" bind:value={selectedFigurine.year} class="input-gothic" />
@@ -1065,179 +1433,43 @@
                                     <input bind:value={selectedFigurine.series} class="input-gothic" placeholder="—" />
                                 </label>
                                 <label class="block">
-                                    <span class="label">{$t('adminFieldStatus')}</span>
-                                    <select bind:value={selectedFigurine.status} class="input-gothic">
-                                        <option value="available">{$t('adminFieldStatusAvail')}</option>
-                                        <option value="reserved">{$t('adminFieldStatusRes')}</option>
-                                        <option value="in_progress">{$t('adminFieldStatusWip')}</option>
-                                        <option value="sold">{$t('adminFieldStatusSold')}</option>
-                                    </select>
-                                </label>
-                                <label class="block">
-                                    <span class="label">{$t('adminFieldLayout')}</span>
-                                    <select bind:value={selectedFigurine.displayLayout} class="input-gothic">
-                                        <option value={null}>{$t('adminFieldLayoutSpecimen')}</option>
-                                        <option value="showcase">{$t('adminFieldLayoutShowcase')}</option>
-                                        <option value="codex">{$t('adminFieldLayoutCodex')}</option>
-                                        <option value="diptych">{$t('adminFieldLayoutDiptych')}</option>
-                                        <option value="broadside">{$t('adminFieldLayoutBroadside')}</option>
-                                    </select>
+                                    <span class="label">{$t('adminFieldSortOrder')}</span>
+                                    <input type="number" bind:value={selectedFigurine.sortOrder} class="input-gothic" />
                                 </label>
                             </div>
-                            <div class="block" style="grid-column: 1 / -1">
-                                <span class="label">{$t('adminDisplayConfig')}</span>
-                                <DisplayConfigEditor bind:value={selectedFigurine.displayConfig as (string | null)} />
-                            </div>
-                            <div class="space-y-4">
-                                <label class="block">
-                                    <span class="label">{$t('adminFieldDimensions')}</span>
-                                    <input bind:value={selectedFigurine.dimensions} class="input-gothic" placeholder="20×15×10 cm" list="suggest-dimensions" autocomplete="off" />
-                                    <datalist id="suggest-dimensions">
-                                        {#each dimensionsSuggestions as s}
-                                            <option value={s} />
-                                        {/each}
-                                    </datalist>
-                                </label>
-                                <label class="block">
-                                    <span class="label">{$t('adminFieldMaterial')}</span>
-                                    <input bind:value={selectedFigurine.material} class="input-gothic" list="suggest-material" autocomplete="off" />
-                                    <datalist id="suggest-material">
-                                        {#each materialSuggestions as s}
-                                            <option value={s} />
-                                        {/each}
-                                    </datalist>
-                                </label>
-                                <label class="block">
-                                    <span class="label">{$t('adminFieldTechnique')}</span>
-                                    <input bind:value={selectedFigurine.technique} class="input-gothic" list="suggest-technique" autocomplete="off" />
-                                    <datalist id="suggest-technique">
-                                        {#each techniqueSuggestions as s}
-                                            <option value={s} />
-                                        {/each}
-                                    </datalist>
-                                </label>
-                                <div class="flex gap-4">
-                                    <label class="block flex-1">
-                                        <span class="label">{$t('adminFieldSortOrder')}</span>
-                                        <input type="number" bind:value={selectedFigurine.sortOrder} class="input-gothic" />
-                                    </label>
-                                    <label class="flex items-end gap-2 pb-3">
-                                        <input type="checkbox" bind:checked={selectedFigurine.isVisible} class="accent-[#34251c] w-4 h-4" />
-                                        <span class="text-xs text-[#34251c]">{$t('adminFieldVisible')}</span>
-                                    </label>
-                                    <label class="flex items-end gap-2 pb-3">
-                                        <input type="checkbox" bind:checked={selectedFigurine.isFeatured} class="accent-[#c65f3c] w-4 h-4" />
-                                        <span class="text-xs text-[#34251c]">{$t('adminFieldFeatured')}</span>
-                                    </label>
-                                </div>
 
-                                <!-- "The house wakes": showing window. A work is either always
-                                     open, has its own hours, or belongs to a named room (shared
-                                     window). Room and custom hours are mutually exclusive. -->
-                                <div class="border-t border-[#34251c]/10 pt-3 mt-1">
-                                    <span class="label">{$t('adminFieldShowingWindow')}</span>
-                                    <label class="block">
-                                        <select
-                                            value={figWindowMode(selectedFigurine)}
-                                            onchange={(e) => setFigWindowMode(e.currentTarget.value)}
-                                            class="input-gothic"
-                                        >
-                                            <option value="">{$t('adminShowingModeAlways')}</option>
-                                            <option value="custom">{$t('adminShowingModeCustom')}</option>
-                                            {#each showingRoomsList as room (room.id)}
-                                                {#if room.name}
-                                                    <option value={room.id}>{room.name} ({minToTime(room.openFromMin)}–{minToTime(room.openUntilMin)})</option>
-                                                {/if}
-                                            {/each}
-                                        </select>
-                                    </label>
+                            <label class="block">
+                                <span class="label">{$t('adminFieldMaterial')}</span>
+                                <input bind:value={selectedFigurine.material} class="input-gothic" list="suggest-material" autocomplete="off" />
+                                <datalist id="suggest-material">
+                                    {#each materialSuggestions as s}<option value={s} />{/each}
+                                </datalist>
+                            </label>
 
-                                    {#if figWindowMode(selectedFigurine) === 'custom'}
-                                        <div class="flex gap-4 items-end mt-2">
-                                            <label class="block flex-1">
-                                                <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminFieldShowingFrom')}</span>
-                                                <input
-                                                    type="time"
-                                                    value={minToTime(selectedFigurine.openFromMin)}
-                                                    oninput={(e) => selectedFigurine!.openFromMin = timeToMin(e.currentTarget.value)}
-                                                    class="input-gothic"
-                                                />
-                                            </label>
-                                            <label class="block flex-1">
-                                                <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminFieldShowingUntil')}</span>
-                                                <input
-                                                    type="time"
-                                                    value={minToTime(selectedFigurine.openUntilMin)}
-                                                    oninput={(e) => selectedFigurine!.openUntilMin = timeToMin(e.currentTarget.value)}
-                                                    class="input-gothic"
-                                                />
-                                            </label>
-                                        </div>
-                                        <p class="text-[10px] text-[#7c6554] mt-1 leading-snug">{$t('adminFieldShowingHint')}</p>
-                                    {/if}
+                            <label class="block">
+                                <span class="label">{$t('adminFieldTechnique')}</span>
+                                <input bind:value={selectedFigurine.technique} class="input-gothic" list="suggest-technique" autocomplete="off" />
+                                <datalist id="suggest-technique">
+                                    {#each techniqueSuggestions as s}<option value={s} />{/each}
+                                </datalist>
+                            </label>
 
-                                    <label class="block mt-2">
-                                        <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminFieldSealedDoorImage')}</span>
-                                        <input
-                                            bind:value={selectedFigurine.sealedDoorImage}
-                                            placeholder="https://…"
-                                            class="input-gothic"
-                                        />
-                                    </label>
-                                    <p class="text-[10px] text-[#7c6554] mt-2 leading-snug">{$t('adminShowingRoomsManageHint')}</p>
+                            <label class="block">
+                                <span class="label">{$t('adminFieldDimensions')}</span>
+                                <input bind:value={selectedFigurine.dimensions} class="input-gothic" placeholder="20×15×10 cm" list="suggest-dimensions" autocomplete="off" />
+                                <datalist id="suggest-dimensions">
+                                    {#each dimensionsSuggestions as s}<option value={s} />{/each}
+                                </datalist>
+                            </label>
 
-                                    <!-- Preview: this work as a guest would see it at a chosen moment. -->
-                                    <div class="mt-3 border-t border-[#34251c]/10 pt-3">
-                                        <div class="flex flex-wrap items-end gap-3">
-                                            <label class="block">
-                                                <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminPreviewAt')}</span>
-                                                <input type="datetime-local" value={toLocalInput(previewAt)} oninput={(e) => { if (e.currentTarget.value) previewAt = new Date(e.currentTarget.value); }} class="input-gothic" />
-                                            </label>
-                                            <button type="button" class="text-[11px] uppercase tracking-wide text-[#6f3b24] pb-2" onclick={() => previewAt = new Date()}>{$t('adminPreviewNow')}</button>
-                                            <span class="text-[10px] uppercase tracking-wide px-2 py-1 rounded pb-1 {previewFigOpen ? 'bg-emerald-600/15 text-emerald-700' : 'bg-[#6f3b24]/12 text-[#6f3b24]'}">
-                                                {previewFigOpen ? $t('adminPreviewOpen') : $t('adminPreviewClosed')}
-                                            </span>
-                                        </div>
-                                        {#if !previewFigOpen}
-                                            <div class="relative w-40 aspect-[3/4] mt-3 rounded-[3px] overflow-hidden border border-[#34251c]/15">
-                                                <SealedDoor
-                                                    openFromMin={previewFigWindow.openFromMin}
-                                                    openUntilMin={previewFigWindow.openUntilMin}
-                                                    daysMask={previewFigWindow.daysMask}
-                                                    monthDay={previewFigWindow.monthDay}
-                                                    dateFrom={previewFigWindow.dateFrom}
-                                                    dateUntil={previewFigWindow.dateUntil}
-                                                    doorImageUrl={selectedFigurine.sealedDoorImage}
-                                                    name={selectedFigurine.name}
-                                                    now={previewAt}
-                                                    compact
-                                                />
-                                            </div>
-                                        {/if}
-                                    </div>
-                                </div>
-                            </div>
                         </div>
 
-                        <label class="block mb-6">
-                            <span class="label">{$t('adminFieldQuote')}</span>
-                            <textarea bind:value={selectedFigurine.shortText} class="input-gothic h-20"></textarea>
-                        </label>
+                        <!-- ╔═ PASSPORT ══════════════════════════════════════════ -->
+                        {:else if activeFormTab === 'passport'}
+                        <div class="p-8 max-w-3xl" in:fade={{ duration: 120 }}>
+                            <p class="text-xs text-[#5f4636]/70 mb-6 max-w-prose leading-relaxed">{$t('adminPassportHint')}</p>
 
-                        <label class="block mb-6">
-                            <span class="label">{$t('adminFieldSecret')}</span>
-                            <textarea bind:value={selectedFigurine.secretText} class="input-gothic h-16 opacity-70"></textarea>
-                        </label>
-
-                        <label class="block mb-8">
-                            <span class="label">{$t('adminFieldHistory')}</span>
-                            <textarea bind:value={selectedFigurine.fullDescription} class="input-gothic h-40"></textarea>
-                        </label>
-
-                        <div class="border-t border-[#34251c]/10 pt-8 mb-8">
-                            <h3 class="text-xl font-gothic mb-2">{$t('adminPassportHeading')}</h3>
-                            <p class="text-xs text-[#5f4636]/75 mb-5 max-w-2xl">{$t('adminPassportHint')}</p>
-                            <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
+                            <div class="grid grid-cols-3 gap-4 mb-6">
                                 <label class="block">
                                     <span class="label">{$t('passportNumber')}</span>
                                     <input bind:value={selectedFigurine.passportNumber} class="input-gothic" placeholder="RTN-2026-001" />
@@ -1251,338 +1483,170 @@
                                     <input bind:value={selectedFigurine.createdPeriod} class="input-gothic" placeholder="Spring 2026" />
                                 </label>
                             </div>
-                            <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+
+                            <div class="grid grid-cols-2 gap-5">
                                 <label class="block">
                                     <span class="label">{$t('passportProvenance')}</span>
-                                    <textarea bind:value={selectedFigurine.provenanceNote} class="input-gothic h-24"></textarea>
+                                    <textarea bind:value={selectedFigurine.provenanceNote} class="input-gothic h-28"></textarea>
                                 </label>
                                 <label class="block">
                                     <span class="label">{$t('passportAuthenticity')}</span>
-                                    <textarea bind:value={selectedFigurine.authenticityNote} class="input-gothic h-24"></textarea>
+                                    <textarea bind:value={selectedFigurine.authenticityNote} class="input-gothic h-28"></textarea>
                                 </label>
                                 <label class="block">
                                     <span class="label">{$t('passportCare')}</span>
-                                    <textarea bind:value={selectedFigurine.careInstructions} class="input-gothic h-24"></textarea>
+                                    <textarea bind:value={selectedFigurine.careInstructions} class="input-gothic h-28"></textarea>
                                 </label>
                                 <label class="block">
                                     <span class="label">{$t('passportIncluded')}</span>
-                                    <textarea bind:value={selectedFigurine.includedItems} class="input-gothic h-24"></textarea>
+                                    <textarea bind:value={selectedFigurine.includedItems} class="input-gothic h-28"></textarea>
                                 </label>
                             </div>
                         </div>
 
-                        <!-- Media -->
-                        <div class="border-t border-[#34251c]/10 pt-8 mb-8">
-                            <h3 class="text-xl font-gothic mb-6">{$t('adminMediaHeading')}</h3>
-                            <div class="grid grid-cols-2 gap-6 mb-6">
-                                <!-- Video -->
-                                <div class="p-4 border border-dashed border-[#34251c]/20 flex flex-col gap-2">
-                                    <span class="label block">{$t('adminMediaVideo')}</span>
-                                    {#if selectedFigurine.videoUrl}
-                                        <video
-                                            src={resolveUrl(selectedFigurine.videoUrl)}
-                                            controls
-                                            class="w-full max-h-36 bg-[#2f2117]"
-                                            preload="metadata"
-                                        >
-                                            <track kind="captions" />
-                                        </video>
-                                        <div class="flex gap-2">
-                                            <button
-                                                onclick={() => handlePickFile('videos')}
-                                                disabled={uploadingVideo}
-                                                class="text-[10px] text-[#34251c]/85 hover:text-[#6f3b24] uppercase disabled:opacity-70"
-                                            >{$t('adminMediaReplace')}</button>
-                                            <button
-                                                onclick={() => { selectedFigurine!.videoUrl = null; externalVideoUrl = ''; }}
-                                                class="text-[10px] text-red-700 hover:text-red-900 uppercase"
-                                            >{$t('adminMediaDeleteFile')}</button>
-                                        </div>
-                                    {:else}
-                                        <div class="flex flex-col gap-2">
-                                            <input
-                                                type="url"
-                                                bind:value={externalVideoUrl}
-                                                placeholder="https://... external link"
-                                                class="input-gothic text-xs"
+                        <!-- ╔═ VITRINA ═══════════════════════════════════════════ -->
+                        {:else if activeFormTab === 'vitrina'}
+                        <div class="p-8 max-w-3xl space-y-8" in:fade={{ duration: 120 }}>
+
+                            <!-- Display layout -->
+                            <label class="block max-w-xs">
+                                <span class="label">{$t('adminFieldLayout')}</span>
+                                <select bind:value={selectedFigurine.displayLayout} class="input-gothic">
+                                    <option value={null}>{$t('adminFieldLayoutSpecimen')}</option>
+                                    <option value="showcase">{$t('adminFieldLayoutShowcase')}</option>
+                                    <option value="codex">{$t('adminFieldLayoutCodex')}</option>
+                                    <option value="diptych">{$t('adminFieldLayoutDiptych')}</option>
+                                    <option value="broadside">{$t('adminFieldLayoutBroadside')}</option>
+                                </select>
+                            </label>
+
+                            <!-- Display config -->
+                            <div>
+                                <span class="label">{$t('adminDisplayConfig')}</span>
+                                <DisplayConfigEditor bind:value={selectedFigurine.displayConfig as (string | null)} />
+                            </div>
+
+                            <!-- Showing window -->
+                            <div class="border-t border-[#34251c]/10 pt-6">
+                                <span class="label block mb-3">{$t('adminFieldShowingWindow')}</span>
+                                <select
+                                    value={figWindowMode(selectedFigurine)}
+                                    onchange={(e) => setFigWindowMode(e.currentTarget.value)}
+                                    class="input-gothic max-w-sm mb-3">
+                                    <option value="">{$t('adminShowingModeAlways')}</option>
+                                    <option value="custom">{$t('adminShowingModeCustom')}</option>
+                                    {#each showingRoomsList as room (room.id)}
+                                        {#if room.name}
+                                            <option value={room.id}>{room.name} ({minToTime(room.openFromMin)}–{minToTime(room.openUntilMin)})</option>
+                                        {/if}
+                                    {/each}
+                                </select>
+
+                                {#if figWindowMode(selectedFigurine) === 'custom'}
+                                    <div class="flex gap-4 mb-3 max-w-sm">
+                                        <label class="block flex-1">
+                                            <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminFieldShowingFrom')}</span>
+                                            <input type="time" value={minToTime(selectedFigurine.openFromMin)}
+                                                oninput={(e) => selectedFigurine!.openFromMin = timeToMin(e.currentTarget.value)}
+                                                class="input-gothic" />
+                                        </label>
+                                        <label class="block flex-1">
+                                            <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminFieldShowingUntil')}</span>
+                                            <input type="time" value={minToTime(selectedFigurine.openUntilMin)}
+                                                oninput={(e) => selectedFigurine!.openUntilMin = timeToMin(e.currentTarget.value)}
+                                                class="input-gothic" />
+                                        </label>
+                                    </div>
+                                    <p class="text-[10px] text-[#7c6554] mb-3 leading-snug">{$t('adminFieldShowingHint')}</p>
+                                {/if}
+
+                                <label class="block max-w-sm mb-2">
+                                    <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminFieldSealedDoorImage')}</span>
+                                    <input bind:value={selectedFigurine.sealedDoorImage} placeholder="https://…" class="input-gothic" />
+                                </label>
+                                <p class="text-[10px] text-[#7c6554] mb-4 leading-snug">{$t('adminShowingRoomsManageHint')}</p>
+
+                                <!-- Preview clock -->
+                                <div class="border-t border-[#34251c]/10 pt-4">
+                                    <div class="flex flex-wrap items-end gap-3">
+                                        <label class="block">
+                                            <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminPreviewAt')}</span>
+                                            <input type="datetime-local" value={toLocalInput(previewAt)}
+                                                oninput={(e) => { if (e.currentTarget.value) previewAt = new Date(e.currentTarget.value); }}
+                                                class="input-gothic" />
+                                        </label>
+                                        <button type="button" class="text-[11px] uppercase tracking-wide text-[#6f3b24] pb-2" onclick={() => previewAt = new Date()}>{$t('adminPreviewNow')}</button>
+                                        <span class="text-[10px] uppercase tracking-wide px-2 py-1 rounded pb-1 {previewFigOpen ? 'bg-emerald-600/15 text-emerald-700' : 'bg-[#6f3b24]/12 text-[#6f3b24]'}">
+                                            {previewFigOpen ? $t('adminPreviewOpen') : $t('adminPreviewClosed')}
+                                        </span>
+                                    </div>
+                                    {#if !previewFigOpen}
+                                        <div class="relative w-40 aspect-[3/4] mt-3 rounded-[3px] overflow-hidden border border-[#34251c]/15">
+                                            <SealedDoor
+                                                openFromMin={previewFigWindow.openFromMin}
+                                                openUntilMin={previewFigWindow.openUntilMin}
+                                                daysMask={previewFigWindow.daysMask}
+                                                monthDay={previewFigWindow.monthDay}
+                                                dateFrom={previewFigWindow.dateFrom}
+                                                dateUntil={previewFigWindow.dateUntil}
+                                                doorImageUrl={selectedFigurine.sealedDoorImage}
+                                                name={selectedFigurine.name}
+                                                now={previewAt}
+                                                compact
                                             />
-                                            {#if externalVideoUrl.trim()}
-                                                <button
-                                                    onclick={() => { selectedFigurine!.videoUrl = externalVideoUrl.trim(); externalVideoUrl = ''; }}
-                                                    class="btn-gothic text-xs w-full"
-                                                >{$t('adminMediaUseLink')}</button>
-                                            {:else}
-                                                <button
-                                                    onclick={() => handlePickFile('videos')}
-                                                    disabled={uploadingVideo}
-                                                    class="btn-gothic text-xs w-full disabled:opacity-70"
-                                                >{uploadingVideo ? '…' : $t('adminMediaPickMp4')}</button>
-                                            {/if}
                                         </div>
-                                    {/if}
-                                </div>
-                                <!-- Audio -->
-                                <div class="p-4 border border-dashed border-[#34251c]/20 flex flex-col gap-2">
-                                    <span class="label block">{$t('adminMediaAudio')}</span>
-                                    {#if selectedFigurine.ambiencePath}
-                                        <audio
-                                            src={resolveUrl(selectedFigurine.ambiencePath)}
-                                            controls
-                                            class="w-full"
-                                            preload="metadata"
-                                        ></audio>
-                                        <div class="flex gap-2">
-                                            <button
-                                                onclick={() => handlePickFile('audio')}
-                                                disabled={uploadingAudio}
-                                                class="text-[10px] text-[#34251c]/85 hover:text-[#6f3b24] uppercase disabled:opacity-70"
-                                            >{$t('adminMediaReplace')}</button>
-                                            <button
-                                                onclick={() => selectedFigurine!.ambiencePath = null}
-                                                class="text-[10px] text-red-700 hover:text-red-900 uppercase"
-                                            >{$t('adminMediaDeleteFile')}</button>
-                                        </div>
-                                    {:else}
-                                        <button
-                                            onclick={() => handlePickFile('audio')}
-                                            disabled={uploadingAudio}
-                                            class="btn-gothic text-xs w-full disabled:opacity-70"
-                                        >{uploadingAudio ? '…' : $t('adminMediaPickMp3')}</button>
                                     {/if}
                                 </div>
                             </div>
 
-                            <!-- Images gallery -->
-                            <div class="p-4 border border-dashed border-[#34251c]/20">
-                                <div class="flex justify-between items-center mb-4">
-                                    <span class="label">{$t('adminMediaPhotos')} ({selectedFigurine.images.length})</span>
-                                    <div class="flex gap-2">
-                                        {#if !isTauri && selectedFigurine.images.length > 0}
-                                            <button onclick={generateDepth} disabled={generatingDepth}
-                                                title={$t('adminMediaDepthHint')}
-                                                class="btn-gothic text-[10px] disabled:opacity-60 disabled:cursor-wait">
-                                                {generatingDepth ? $t('adminMediaDepthGenRunning') : $t('adminMediaDepthGen')}</button>
-                                        {/if}
-                                        <button onclick={() => handlePickFile('images')} class="btn-gothic text-[10px]" disabled={!!folderUploadProgress}>{$t('adminMediaAddPhoto')}</button>
-                                        <button onclick={handleFolderUpload} class="btn-gothic text-[10px]" disabled={!!folderUploadProgress}>
-                                            {folderUploadProgress
-                                                ? $t('adminMediaFolderProgress').replace('{done}', String(folderUploadProgress.done)).replace('{total}', String(folderUploadProgress.total))
-                                                : $t('adminMediaAddFolder')}
-                                        </button>
-                                    </div>
+                            <!-- Grimoire (process steps) -->
+                            <div class="border-t border-[#34251c]/10 pt-6">
+                                <div class="flex items-center justify-between mb-4">
+                                    <h3 class="text-sm font-gothic">{$t('adminGrimoireHeading')}</h3>
+                                    <button onclick={addProcessStep} class="btn-gothic text-[10px]">{$t('adminGrimoireAddStep')}</button>
                                 </div>
-                                <div class="flex flex-wrap gap-3">
-                                    {#each selectedFigurine.images as img, imgIdx}
-                                        <div class="flex flex-col gap-1">
-                                            <div class="w-28 h-28 border overflow-hidden relative group transition-colors
-                                                {img.imageType === 'face' ? 'border-amber-500' : 'border-[#34251c]/20'}">
-                                                <img src={resolveUrl(img.thumbUrl ?? img.url)} alt={img.altText ?? ''} class="w-full h-full object-cover" />
-
-                                                <!-- Overlay controls -->
-                                                <div class="absolute inset-0 bg-[#6f3b24]/40 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1">
-                                                    <button onclick={() => selectedFigurine!.images = selectedFigurine!.images.filter(i => i.id !== img.id)}
-                                                        class="text-[10px] text-red-800 hover:text-red-950 uppercase px-2 py-0.5 border border-red-800/30 bg-[#fff9f0]/90 hover:bg-red-50">{$t('adminMediaDeleteFile')}</button>
-                                                    {#if img.imageType !== 'face'}
-                                                        <button onclick={() => setFaceImage(img.id)}
-                                                            class="text-[9px] text-[#34251c] hover:text-amber-800 uppercase px-2 py-0.5 border border-[#34251c]/20 bg-[#fff9f0]/90">{$t('adminMediaCover')}</button>
-                                                    {:else}
-                                                        <span class="text-[9px] text-amber-900 bg-[#fff9f0]/90 px-2 py-0.5 uppercase">{$t('adminMediaCover')}</span>
-                                                    {/if}
-                                                    <div class="flex gap-1">
-                                                        <button onclick={() => moveImage(imgIdx, -1)} disabled={imgIdx === 0}
-                                                            class="text-[10px] text-[#34251c] hover:text-[#6f3b24] px-1.5 border border-[#34251c]/20 disabled:opacity-60">←</button>
-                                                        <button onclick={() => moveImage(imgIdx, 1)} disabled={imgIdx === selectedFigurine.images.length - 1}
-                                                            class="text-[10px] text-[#34251c] hover:text-[#6f3b24] px-1.5 border border-[#34251c]/20 disabled:opacity-60">→</button>
-                                                    </div>
-                                                </div>
-
-                                                {#if img.imageType === 'face'}
-                                                    <div class="absolute bottom-0 left-0 right-0 bg-amber-500/80 text-black text-[8px] text-center py-0.5 font-bold">{$t('adminMediaCoverBadge')}</div>
-                                                {/if}
-                                                {#if img.depthUrl}
-                                                    <div class="absolute top-0 left-0 bg-[#34251c]/85 text-[#f3e9d8] text-[8px] px-1 py-0.5 leading-none tracking-wider font-bold pointer-events-none"
-                                                        title={$t('adminMediaDepthHint')}>{$t('adminMediaDepthBadge')}</div>
-                                                {/if}
-                                            </div>
-                                            <!-- Alt text -->
-                                            <input
-                                                bind:value={img.altText}
-                                                type="text"
-                                                placeholder={$t('adminMediaAltPlaceholder')}
-                                                class="w-28 bg-[#f8f1e7] border border-[#34251c]/10 px-1.5 py-1 text-[9px] text-[#5f4636] focus:border-[#34251c]/30 outline-none"
-                                            />
-                                            <!-- Depth map (2.5D parallax) -->
-                                            <div class="w-28 flex items-center gap-1" title={$t('adminMediaDepthHint')}>
-                                                {#if img.depthUrl}
-                                                    <img src={resolveUrl(img.depthUrl)} alt="" class="w-6 h-6 object-cover border border-[#34251c]/20 shrink-0" />
-                                                    <button onclick={() => handlePickDepth(imgIdx)}
-                                                        class="flex-1 text-[8px] uppercase text-[#5f4636] hover:text-[#34251c] px-1 py-0.5 border border-[#34251c]/15">{$t('adminMediaDepthReplace')}</button>
-                                                    <button onclick={() => clearDepth(imgIdx)}
-                                                        class="text-[8px] text-red-800/70 hover:text-red-900 px-1 py-0.5 border border-red-800/20 shrink-0">✕</button>
+                                <div class="space-y-3">
+                                    {#each selectedFigurine.processSteps as step, i}
+                                        <div class="p-4 bg-[#f8f1e7] border border-[#34251c]/10 flex gap-4 items-start">
+                                            <div class="w-20 h-20 bg-[#f1e3d1] flex items-center justify-center border border-[#34251c]/20 relative group shrink-0">
+                                                {#if step.imageUrl}
+                                                    <img src={resolveUrl(step.imageUrl)} alt="" class="w-full h-full object-cover" />
+                                                    <button onclick={() => step.imageUrl = ''} class="absolute top-0 right-0 bg-[#6f3b24]/30 text-[#fff9f0] p-0.5 text-[9px] opacity-0 group-hover:opacity-100">✕</button>
                                                 {:else}
-                                                    <button onclick={() => handlePickDepth(imgIdx)}
-                                                        class="w-full text-[8px] uppercase text-[#5f4636] hover:text-[#34251c] px-1 py-0.5 border border-dashed border-[#34251c]/20">{$t('adminMediaDepthAdd')}</button>
+                                                    <button onclick={() => handlePickFile('images', i)} class="text-[10px] uppercase text-[#5f4636] hover:text-[#34251c]">{$t('adminGrimoirePhoto')}</button>
                                                 {/if}
                                             </div>
-                                            <div class="w-28 space-y-1" title={$t('adminMediaParallaxHint')}>
-                                                <div class="flex items-center justify-between gap-1">
-                                                    <span class="text-[8px] uppercase tracking-[0.08em] text-[#5f4636]">{$t('adminMediaParallax')}</span>
-                                                    <button
-                                                        type="button"
-                                                        onclick={() => resetParallaxIntensity(imgIdx)}
-                                                        class="text-[8px] text-[#5f4636] hover:text-[#34251c]"
-                                                        disabled={img.parallaxIntensity == null}
-                                                    >
-                                                        {$t('adminMediaParallaxReset')}
-                                                    </button>
-                                                </div>
-                                                <div class="flex items-center gap-1">
-                                                    <input
-                                                        type="range"
-                                                        min="0"
-                                                        max="1"
-                                                        step="0.05"
-                                                        value={parallaxValue(img.parallaxIntensity)}
-                                                        oninput={(e) => setParallaxIntensity(imgIdx, (e.currentTarget as HTMLInputElement).value)}
-                                                        class="w-full accent-[#6f3b24]"
-                                                    />
-                                                    <span class="w-7 text-right text-[8px] tabular-nums text-[#5f4636]">
-                                                        {parallaxValue(img.parallaxIntensity).toFixed(2)}
-                                                    </span>
-                                                </div>
+                                            <div class="flex-1 grid gap-2">
+                                                <select bind:value={step.stepType} class="input-gothic text-xs py-1.5">
+                                                    <option value="sketch">Sketch</option>
+                                                    <option value="prototype">Prototype</option>
+                                                    <option value="modeling">Modeling</option>
+                                                    <option value="painting">Painting</option>
+                                                    <option value="finish">Finish</option>
+                                                </select>
+                                                <textarea bind:value={step.description} class="input-gothic h-14 text-xs" placeholder={$t('adminGrimoireStepDesc')}></textarea>
                                             </div>
-                                            {#if img.imageType === 'face'}
-                                                <!-- Keyhole reveal — only the cover image is teased on the card -->
-                                                <div class="w-28 space-y-1" title={$t('adminMediaKeyholeHint')}>
-                                                    <div class="flex items-center justify-between gap-1">
-                                                        <span class="text-[8px] uppercase tracking-[0.08em] text-[#5f4636]">{$t('adminMediaKeyhole')}</span>
-                                                        <button
-                                                            type="button"
-                                                            onclick={() => resetReveal(imgIdx)}
-                                                            class="text-[8px] text-[#5f4636] hover:text-[#34251c]"
-                                                            disabled={img.focalX == null && img.focalY == null && img.revealRadius == null && img.darkness == null}
-                                                        >
-                                                            {$t('adminMediaParallaxReset')}
-                                                        </button>
-                                                    </div>
-                                                    <!-- 4/3 contain preview mirrors the live card; click/drag to place focus -->
-                                                    <div class="relative w-28 border border-[#34251c]/20 overflow-hidden bg-[#f1e3d1]" style="aspect-ratio: 4 / 3;">
-                                                        <img src={resolveUrl(img.thumbUrl ?? img.url)} alt="" class="w-full h-full object-contain" />
-                                                        <KeyholeVeil
-                                                            focalX={img.focalX}
-                                                            focalY={img.focalY}
-                                                            revealRadius={img.revealRadius}
-                                                            darkness={darknessValue(img.darkness)}
-                                                            editable
-                                                            onpick={(x, y) => setFocalPoint(imgIdx, x, y)}
-                                                        />
-                                                    </div>
-                                                    <!-- Window size — stepper (−/+); a range input is unusable in this narrow column -->
-                                                    <div class="flex items-center gap-1" title={$t('adminMediaKeyholeRadiusHint')}>
-                                                        <span class="text-[7px] uppercase tracking-[0.06em] text-[#5f4636] w-9 shrink-0">{$t('adminMediaKeyholeRadius')}</span>
-                                                        <div class="flex items-center flex-1 border border-[#34251c]/20 bg-[#f8f1e7] rounded-sm overflow-hidden">
-                                                            <button type="button" aria-label="−"
-                                                                onclick={() => nudgeRevealRadius(imgIdx, -KEYHOLE_STEP)}
-                                                                disabled={revealRadiusValue(img.revealRadius) <= REVEAL_MIN}
-                                                                class="px-1.5 py-0.5 text-[11px] leading-none text-[#5f4636] hover:bg-[#34251c]/10 disabled:opacity-30 disabled:hover:bg-transparent">−</button>
-                                                            <span class="flex-1 text-center text-[8px] tabular-nums text-[#5f4636]">{revealRadiusValue(img.revealRadius).toFixed(2)}</span>
-                                                            <button type="button" aria-label="+"
-                                                                onclick={() => nudgeRevealRadius(imgIdx, KEYHOLE_STEP)}
-                                                                disabled={revealRadiusValue(img.revealRadius) >= REVEAL_MAX}
-                                                                class="px-1.5 py-0.5 text-[11px] leading-none text-[#5f4636] hover:bg-[#34251c]/10 disabled:opacity-30 disabled:hover:bg-transparent">+</button>
-                                                        </div>
-                                                    </div>
-                                                    <!-- Shadow depth — overrides the global darkness for this work -->
-                                                    <div class="flex items-center gap-1" title={$t('adminMediaDarknessHint')}>
-                                                        <span class="text-[7px] uppercase tracking-[0.06em] text-[#5f4636] w-9 shrink-0">{$t('adminMediaDarkness')}</span>
-                                                        <div class="flex items-center flex-1 border border-[#34251c]/20 bg-[#f8f1e7] rounded-sm overflow-hidden">
-                                                            <button type="button" aria-label="−"
-                                                                onclick={() => nudgeDarkness(imgIdx, -KEYHOLE_STEP)}
-                                                                disabled={darknessValue(img.darkness) <= DARK_MIN}
-                                                                class="px-1.5 py-0.5 text-[11px] leading-none text-[#5f4636] hover:bg-[#34251c]/10 disabled:opacity-30 disabled:hover:bg-transparent">−</button>
-                                                            <span class="flex-1 text-center text-[8px] tabular-nums {img.darkness == null ? 'text-[#5f4636]/45 italic' : 'text-[#5f4636]'}">{darknessValue(img.darkness).toFixed(2)}</span>
-                                                            <button type="button" aria-label="+"
-                                                                onclick={() => nudgeDarkness(imgIdx, KEYHOLE_STEP)}
-                                                                disabled={darknessValue(img.darkness) >= DARK_MAX}
-                                                                class="px-1.5 py-0.5 text-[11px] leading-none text-[#5f4636] hover:bg-[#34251c]/10 disabled:opacity-30 disabled:hover:bg-transparent">+</button>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            {/if}
+                                            <button onclick={() => removeProcessStep(i)} class="text-[#5f4636] hover:text-red-500 self-center text-sm">✕</button>
                                         </div>
                                     {/each}
+                                    {#if selectedFigurine.processSteps.length === 0}
+                                        <div class="text-center text-[#5f4636] text-xs py-4 opacity-70">{$t('adminGrimoireEmpty')}</div>
+                                    {/if}
                                 </div>
                             </div>
-                        </div>
 
-                        <!-- Process Steps -->
-                        <div class="border-t border-[#34251c]/10 pt-8 mb-8">
-                            <div class="flex justify-between items-center mb-6">
-                                <h3 class="text-xl font-gothic">{$t('adminGrimoireHeading')}</h3>
-                                <button onclick={addProcessStep} class="btn-gothic text-xs">{$t('adminGrimoireAddStep')}</button>
-                            </div>
-                            <div class="space-y-3">
-                                {#each selectedFigurine.processSteps as step, i}
-                                    <div class="p-4 bg-[#f8f1e7] border border-[#34251c]/10 flex gap-4 items-start">
-                                        <div class="w-20 h-20 bg-[#f1e3d1] flex items-center justify-center border border-[#34251c]/20 relative group shrink-0">
-                                            {#if step.imageUrl}
-                                                <img src={resolveUrl(step.imageUrl)} alt="" class="w-full h-full object-cover" />
-                                                <button onclick={() => step.imageUrl = ''} class="absolute top-0 right-0 bg-[#6f3b24]/30 text-[#fff9f0] p-0.5 text-[9px] opacity-0 group-hover:opacity-100">✕</button>
-                                            {:else}
-                                                <button onclick={() => handlePickFile('images', i)} class="text-[10px] uppercase text-[#5f4636] hover:text-[#34251c]">{$t('adminGrimoirePhoto')}</button>
-                                            {/if}
-                                        </div>
-                                        <div class="flex-1 grid gap-2">
-                                            <select bind:value={step.stepType} class="input-gothic text-xs py-1.5">
-                                                <option value="sketch">Sketch</option>
-                                                <option value="prototype">Prototype</option>
-                                                <option value="modeling">Modeling</option>
-                                                <option value="painting">Painting</option>
-                                                <option value="finish">Finish</option>
-                                            </select>
-                                            <textarea bind:value={step.description} class="input-gothic h-14 text-xs" placeholder={$t('adminGrimoireStepDesc')}></textarea>
-                                        </div>
-                                        <button onclick={() => removeProcessStep(i)} class="text-[#5f4636] hover:text-red-500 self-center text-sm">✕</button>
-                                    </div>
-                                {/each}
-                                {#if selectedFigurine.processSteps.length === 0}
-                                    <div class="text-center text-[#5f4636] text-xs py-4 opacity-70">{$t('adminGrimoireEmpty')}</div>
-                                {/if}
-                            </div>
-                        </div>
+                            <!-- Showings for this figurine -->
+                            {#if selectedFigurine.id}
+                                <div class="border-t border-[#34251c]/10 pt-6">
+                                    <FigurineShowingsEditor bind:this={showingsEditor} figurineId={selectedFigurine.id} />
+                                </div>
+                            {/if}
 
-                        <!-- Showings for this figurine -->
-                        {#if selectedFigurine.id}
-                          <FigurineShowingsEditor bind:this={showingsEditor} figurineId={selectedFigurine.id} />
+                        </div>
                         {/if}
 
-                        <!-- Action bar -->
-                        <div class="flex justify-end gap-3 pb-10">
-                            <button onclick={() => deleteFigurine(selectedFigurine!)} disabled={isDeleting}
-                                class="btn-gothic mr-auto border-red-900/30 text-red-800/70 hover:bg-red-50 hover:text-red-800 hover:border-red-700/40">
-                                {$t('adminFormDeleteWork')}
-                            </button>
-                            <button onclick={cancelEdit} class="btn-gothic opacity-75">{$t('adminFormCancel')}</button>
-                            {#if isTauri}
-                                <button
-                                    onclick={async () => {
-                                        const isPushing = true;
-                                        try {
-                                            await api.pushFigurine(selectedFigurine!);
-                                            savedSnapshot = JSON.stringify(selectedFigurine);
-                                            showMessage($t('adminFormSentToCloud'), 'success');
-                                        } catch(e) { showMessage($t('adminMsgError') + e, 'error'); }
-                                    }}
-                                    class="btn-gothic border-blue-900/40 text-blue-700 min-w-[160px]"
-                                >{$t('adminFormToCloud')}</button>
-                            {/if}
-                            <button onclick={save} disabled={isSaving}
-                                class="btn-gothic min-w-[200px] transition-colors
-                                    {hasUnsaved ? 'bg-amber-50 border-amber-700/40 text-amber-900 hover:bg-amber-100' : 'bg-[#34251c]/10'}">
-                                {isSaving ? $t('adminFormSaving') : hasUnsaved ? $t('adminFormSaveChanges') : $t('adminFormSaved')}
-                            </button>
-                        </div>
                     </div>
+
                 {:else}
                     <div class="h-full flex flex-col items-center justify-center text-[#5f4636] opacity-60">
                         <span class="text-5xl mb-4">📜</span>
