@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS figurines (
     open_until_min INTEGER, -- конец окна; until < from = окно через полночь (ночной зал)
     sealed_door_image TEXT, -- URL картины двери; NULL = резная дверь рисуется кодом
     showing_room_id TEXT,   -- зал показа (FK showing_rooms.id); NULL = своё окно
+    display_layout TEXT,    -- раскладка страницы: specimen|showcase|codex|diptych|broadside; NULL = specimen
+    display_config TEXT,    -- JSON: {background,blockOrder} для кастомизации витрины
     sort_order INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT (datetime('now'))

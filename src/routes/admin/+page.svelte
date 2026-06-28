@@ -25,6 +25,7 @@
     import BookingRulesPanel from '$lib/components/admin/BookingRulesPanel.svelte';
     import MessagesPanel from '$lib/components/admin/MessagesPanel.svelte';
     import FigurineShowingsEditor from '$lib/components/admin/FigurineShowingsEditor.svelte';
+    import DisplayConfigEditor from '$lib/components/admin/DisplayConfigEditor.svelte';
     import DesignEditor from '$lib/components/admin/DesignEditor.svelte';
     import CopyEditor from '$lib/components/admin/CopyEditor.svelte';
     import WorkshopFeaturePanel from '$lib/components/admin/WorkshopFeaturePanel.svelte';
@@ -177,6 +178,8 @@
         isVisible: true,
         isFeatured: false,
         series: null,
+        displayLayout: null,
+        displayConfig: null,
         openFromMin: null,
         openUntilMin: null,
         sealedDoorImage: null,
@@ -1070,6 +1073,20 @@
                                         <option value="sold">{$t('adminFieldStatusSold')}</option>
                                     </select>
                                 </label>
+                                <label class="block">
+                                    <span class="label">{$t('adminFieldLayout')}</span>
+                                    <select bind:value={selectedFigurine.displayLayout} class="input-gothic">
+                                        <option value={null}>{$t('adminFieldLayoutSpecimen')}</option>
+                                        <option value="showcase">{$t('adminFieldLayoutShowcase')}</option>
+                                        <option value="codex">{$t('adminFieldLayoutCodex')}</option>
+                                        <option value="diptych">{$t('adminFieldLayoutDiptych')}</option>
+                                        <option value="broadside">{$t('adminFieldLayoutBroadside')}</option>
+                                    </select>
+                                </label>
+                            </div>
+                            <div class="block" style="grid-column: 1 / -1">
+                                <span class="label">{$t('adminDisplayConfig')}</span>
+                                <DisplayConfigEditor bind:value={selectedFigurine.displayConfig as (string | null)} />
                             </div>
                             <div class="space-y-4">
                                 <label class="block">

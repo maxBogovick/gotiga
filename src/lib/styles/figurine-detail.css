@@ -36,9 +36,59 @@
   padding-bottom: 3rem;
   color: var(--color-ink-primary);
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-canvas-raised) 72%, white) 0%, var(--color-canvas-base) 32rem),
-    var(--color-canvas-base);
+    linear-gradient(180deg, color-mix(in srgb, var(--color-canvas-raised) 72%, white) 0%, var(--dc-bg, var(--color-canvas-base)) 32rem),
+    var(--dc-bg, var(--color-canvas-base));
 }
+
+
+
+/* ── Display-config: per-figurine block ordering ── */
+.dc-sections {
+  display: flex;
+  flex-direction: column;
+}
+.dc-block--description { order: var(--order-description, 0); }
+.dc-block--making      { order: var(--order-making, 1); }
+.dc-block--video       { order: var(--order-video, 2); }
+.dc-block--showings    { order: var(--order-showings, 3); }
+.dc-block--related     { order: var(--order-related, 4); }
+.dc-block--comments    { order: var(--order-comments, 5); }
+.dc-block--hidden      { display: none; }
+
+/* ── Display-config: per-block text style overrides ──────────────────────────
+   CSS custom properties set as inline style on the .dc-block--* wrapper;
+   targeted rules below pick them up for the descendant text elements.
+   Fallbacks restore the element's original design-system value. */
+
+.dc-block--description .history-body {
+  color:       var(--dc-block-color, color-mix(in srgb, var(--color-ink-primary) 88%, transparent));
+  font-family: var(--dc-block-font, var(--font-reading));
+  font-size:   var(--dc-block-size, 1rem);
+}
+.dc-block--making .making-title {
+  color:       var(--dc-block-color, var(--color-ink-primary));
+  font-family: var(--dc-block-font, var(--font-display));
+}
+.dc-block--making .making-card-copy h3,
+.dc-block--making .making-card-copy p {
+  color:       var(--dc-block-color, inherit);
+  font-family: var(--dc-block-font, inherit);
+}
+.dc-block--video .video-caption {
+  color:       var(--dc-block-color, color-mix(in srgb, var(--color-ink-secondary) 62%, transparent));
+}
+.dc-block--related .related-name {
+  color:       var(--dc-block-color, var(--color-ink-primary));
+  font-family: var(--dc-block-font, var(--font-display));
+}
+.dc-block--related .related-line {
+  color:       var(--dc-block-color, color-mix(in srgb, var(--color-ink-secondary) 70%, transparent));
+}
+
+/* ── Display-config: upper-zone elements (inline style applied directly) ─────
+   These elements receive `style` with direct CSS properties (color, font-family,
+   font-size) — inline styles always win regardless of selector specificity. */
+/* No rules needed here — the style attribute handles it. */
 
 /* Aged-paper atmosphere — dust grain + old-house vignette, behind all content */
 .page-root::before,
@@ -926,6 +976,7 @@
 .expand-btn,
 .gallery-heart,
 .gallery-lens,
+.gallery-rake,
 .image-view-tools {
   position: absolute;
   z-index: 10;
@@ -991,7 +1042,8 @@
 }
 
 .gallery-heart,
-.gallery-lens {
+.gallery-lens,
+.gallery-rake {
   left: 0.75rem;
   justify-content: center;
   width: 2.35rem;
@@ -1016,8 +1068,13 @@
   bottom: 3.45rem;
 }
 
+.gallery-rake {
+  bottom: 6.15rem;
+}
+
 .gallery-heart:hover,
-.gallery-lens:hover {
+.gallery-lens:hover,
+.gallery-rake:hover {
   color: var(--color-canvas-raised);
   background: color-mix(in srgb, var(--color-ember) 42%, var(--color-ink-primary));
   border-color: color-mix(in srgb, var(--color-ember) 56%, transparent);
@@ -1025,14 +1082,16 @@
 }
 
 .gallery-heart--saved,
-.gallery-lens--active {
+.gallery-lens--active,
+.gallery-rake--active {
   color: var(--color-canvas-raised);
   background: color-mix(in srgb, var(--color-ember) 52%, var(--color-ink-primary));
   border-color: color-mix(in srgb, var(--color-ember) 64%, transparent);
 }
 
 .gallery-heart--saved:hover,
-.gallery-lens--active:hover {
+.gallery-lens--active:hover,
+.gallery-rake--active:hover {
   background: color-mix(in srgb, var(--color-ember) 62%, var(--color-ink-primary));
 }
 
@@ -2991,3 +3050,4 @@
     transform: rotate(180deg);
   }
 }
+

@@ -26,7 +26,7 @@
   });
 
   onDestroy(() => {
-    window.removeEventListener('scroll', onScroll);
+    if (typeof window !== 'undefined') window.removeEventListener('scroll', onScroll);
     ravenCircleEl.set(null);
   });
 </script>

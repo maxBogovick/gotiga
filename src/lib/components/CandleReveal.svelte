@@ -48,8 +48,8 @@
     if (typeof window !== 'undefined') {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('touchmove', handleTouchMove);
+      if (rafId !== null) cancelAnimationFrame(rafId);
     }
-    if (rafId !== null) cancelAnimationFrame(rafId);
   });
 </script>
 

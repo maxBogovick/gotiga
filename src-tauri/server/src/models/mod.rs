@@ -168,6 +168,10 @@ pub struct Figurine {
     /// Optional "showing room" this work belongs to. When set, the room's window
     /// is used instead of the per-figurine open_from/until. NULL → use own window.
     pub showing_room_id: Option<Uuid>,
+    /// Which detail-page layout to use. NULL → 'specimen' (default).
+    pub display_layout: Option<String>,
+    /// JSON blob for per-figurine display customisation ({background, blockOrder}).
+    pub display_config: Option<String>,
     pub status: FigurineStatus,
     pub sort_order: i32,
     pub created_at: DateTime<Utc>,
@@ -392,6 +396,10 @@ pub struct FigurineDto {
     pub sealed_door_image: Option<String>,
     /// Showing room this work belongs to (null → uses its own window).
     pub showing_room_id: Option<String>,
+    /// Which detail-page layout to use. null → 'specimen' (default).
+    pub display_layout: Option<String>,
+    /// JSON blob for per-figurine display customisation ({background, blockOrder}).
+    pub display_config: Option<String>,
 
     #[serde(default)]
     pub images: Vec<ImageDto>,
@@ -650,6 +658,12 @@ pub struct SaveFigurineRequest {
     /// Showing room id (string UUID) this work belongs to; null → own window.
     #[serde(default)]
     pub showing_room_id: Option<String>,
+    /// Which detail-page layout to use. null → 'specimen' (default).
+    #[serde(default)]
+    pub display_layout: Option<String>,
+    /// JSON blob for per-figurine display customisation ({background, blockOrder}).
+    #[serde(default)]
+    pub display_config: Option<String>,
     #[serde(default)]
     pub images: Vec<SaveImageRequest>,
     #[serde(default)]

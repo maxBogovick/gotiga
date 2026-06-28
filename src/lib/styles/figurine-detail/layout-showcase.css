@@ -1,0 +1,581 @@
+/* ══════════════════════════════════════════════════════════════════════
+   Layout: Showcase — разворот глянцевого журнала
+   Кино-кадр на всю ширину. Editorial заголовок на снимке.
+   Тело = элитная редакция: lead-сетка 2 колонки, film strip, related grid.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* ──────────────────────────────────────────────────────────────────────
+   ROOT
+   ────────────────────────────────────────────────────────────────────── */
+
+.sc-root {
+  max-width: 100%;
+  counter-reset: act;
+  padding-bottom: 6rem;
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   HERO — кино-кадр на всю ширину
+   ────────────────────────────────────────────────────────────────────── */
+
+.sc-hero {
+  position: relative;
+  width: 100%;
+  /* svh = small viewport height — не меняется при скрытии тулбара браузера */
+  height: clamp(480px, 82svh, 960px);
+  overflow: hidden;
+  background: var(--color-canvas-sunken);
+  border-radius: 3px;
+  border: none;
+  box-shadow: none;
+}
+
+/* Отключаем transform-transition из shared CSS — в hero нет image-stage--detail,
+   поэтому transform 420ms только провоцирует артефакты при смене кадра */
+.sc-hero .image-layer {
+  transition: none;
+}
+
+/* Изображение заполняет весь кадр */
+.sc-hero .image-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+.sc-hero .image-layer img,
+.sc-hero .image-layer [class*="brass-lens"],
+.sc-hero .image-layer canvas,
+.sc-hero .image-layer video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top;
+  display: block;
+}
+
+.sc-hero .leaf-bleed {
+  z-index: 3;
+}
+
+/* ── Cinematic overlay ── */
+
+.sc-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  background:
+    linear-gradient(
+      to top,
+      rgba(10, 5, 2, 0.82) 0%,
+      rgba(10, 5, 2, 0.44) 28%,
+      rgba(10, 5, 2, 0.08) 56%,
+      transparent 100%
+    ),
+    linear-gradient(
+      to right,
+      rgba(10, 5, 2, 0.24) 0%,
+      transparent 42%
+    );
+  pointer-events: none;
+}
+
+/* ── Editorial identity bar ── */
+
+.sc-editorial {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  padding: 2rem 4rem 1.8rem 2.4rem;
+}
+
+.sc-ed-kicker {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0 0 0.55rem;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.58rem;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.52);
+  line-height: 1;
+}
+
+.sc-ed-kind {
+  color: color-mix(in srgb, var(--color-ember) 82%, white);
+}
+
+.sc-ed-sep {
+  color: rgba(255, 255, 255, 0.28);
+}
+
+.sc-ed-year {
+  font-family: 'Georgia', serif;
+  font-style: italic;
+  letter-spacing: 0.08em;
+  text-transform: none;
+}
+
+.sc-ed-title {
+  font-family: 'Fraunces', 'Georgia', serif;
+  font-size: clamp(2rem, 3.8vw, 3.4rem);
+  font-weight: 400;
+  font-style: italic;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  color: rgba(255, 248, 238, 0.96);
+  margin: 0;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.42);
+  max-width: 22ch;
+  text-wrap: pretty;
+}
+
+/* ── Dot nav: inside the hero, bottom-centre ── */
+
+.sc-dots {
+  position: absolute;
+  bottom: 1.1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  gap: 0.42rem;
+}
+
+.sc-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.35);
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  transition: background 200ms ease, transform 200ms ease;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.sc-dot--on {
+  background: rgba(255, 255, 255, 0.9);
+  transform: scale(1.4);
+}
+
+.sc-dot:hover:not(.sc-dot--on) {
+  background: rgba(255, 255, 255, 0.6);
+}
+
+/* ── Gallery buttons — правая кромка hero, вертикальный стек ── */
+
+.sc-hero .expand-btn {
+  top: 1rem;
+  right: 1rem;
+  left: auto;
+  bottom: auto;
+}
+
+.sc-hero .gallery-heart { right: 1rem; left: auto; bottom: calc(1rem + 3 * (28px + 0.3rem)); top: auto; }
+.sc-hero .gallery-lens  { right: 1rem; left: auto; bottom: calc(1rem + 2 * (28px + 0.3rem)); top: auto; }
+.sc-hero .gallery-rake  { right: 1rem; left: auto; bottom: calc(1rem + 1 * (28px + 0.3rem)); top: auto; }
+
+.sc-hero .gallery-heart,
+.sc-hero .gallery-lens,
+.sc-hero .gallery-rake,
+.sc-hero .expand-btn {
+  color: rgba(255, 255, 255, 0.78);
+  background: rgba(0, 0, 0, 0.36);
+  border-color: rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  opacity: 1;
+}
+
+.sc-hero .gallery-heart:hover,
+.sc-hero .gallery-lens:hover,
+.sc-hero .gallery-rake:hover,
+.sc-hero .expand-btn:hover {
+  color: rgba(255, 255, 255, 0.96);
+  background: rgba(0, 0, 0, 0.54);
+  border-color: rgba(255, 255, 255, 0.32);
+}
+
+.sc-hero .gallery-heart--saved {
+  color: var(--color-ember);
+}
+
+.sc-hero .gallery-lens--active,
+.sc-hero .gallery-rake--active {
+  color: var(--color-ember);
+  border-color: color-mix(in srgb, var(--color-ember) 42%, transparent);
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   BODY — редакционный контент
+   ────────────────────────────────────────────────────────────────────── */
+
+.sc-body {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 0 1.4rem;
+  counter-reset: act;
+}
+
+.sc-section {
+  margin-top: 3.6rem;
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   SPECS BAR — горизонтальная полоса атрибутов под hero
+   ────────────────────────────────────────────────────────────────────── */
+
+.sc-specs-bar {
+  display: flex;
+  align-items: stretch;
+  flex-wrap: wrap;
+  margin-top: 1.6rem;
+  border-top: 1px solid color-mix(in srgb, var(--color-ink-primary) 9%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-ink-primary) 9%, transparent);
+}
+
+.sc-spec {
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+  padding: 0.75rem 1.6rem;
+  border-right: 1px solid color-mix(in srgb, var(--color-ink-primary) 8%, transparent);
+}
+
+.sc-spec:first-child {
+  padding-left: 0;
+}
+
+.sc-spec:last-child {
+  border-right: none;
+}
+
+.sc-spec-label {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.5rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-ink-primary) 34%, transparent);
+  line-height: 1;
+}
+
+.sc-spec-value {
+  font-family: 'Georgia', serif;
+  font-size: 0.92rem;
+  color: var(--color-ink-primary);
+  line-height: 1.2;
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   LEAD — только текст-вступление, одна колонка
+   ────────────────────────────────────────────────────────────────────── */
+
+.sc-lead {
+  margin-top: 2.2rem;
+  max-width: 66ch;
+}
+
+.sc-deck {
+  font-family: 'Fraunces', 'Georgia', serif;
+  font-size: clamp(1.1rem, 1.8vw, 1.38rem);
+  font-style: italic;
+  font-weight: 300;
+  line-height: 1.74;
+  color: color-mix(in srgb, var(--color-ink-primary) 72%, transparent);
+  margin: 0;
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   ACQUIRE — editorial статус-секция
+   ────────────────────────────────────────────────────────────────────── */
+
+.sc-acquire {
+  margin-top: 2.6rem;
+  padding-top: 1.8rem;
+  /* Ember-черта сверху: 2.4rem акцентной линии, далее обычная граница */
+  border-top: 1px solid color-mix(in srgb, var(--color-ink-primary) 9%, transparent);
+  background:
+    linear-gradient(90deg,
+      color-mix(in srgb, var(--color-ember) 60%, transparent) 0,
+      color-mix(in srgb, var(--color-ember) 60%, transparent) 2.4rem,
+      transparent 2.4rem
+    ) top / 100% 2px no-repeat;
+  display: flex;
+  gap: 3rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.sc-acquire-panel {
+  flex: 0 0 auto;
+}
+
+.sc-acquire-record {
+  flex: 1 1 280px;
+  min-width: 0;
+  padding-top: 0.25rem;
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   FILM STRIP — контактные отпечатки процесса
+   ────────────────────────────────────────────────────────────────────── */
+
+.sc-film-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(clamp(140px, 18vw, 200px), 1fr));
+  gap: 0.65rem;
+}
+
+.sc-frame {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.sc-frame-img {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: 2px;
+  border: 1px solid var(--color-border-default);
+  background: var(--color-canvas-sunken);
+  transition: border-color 200ms ease;
+}
+
+.sc-frame:hover .sc-frame-img {
+  border-color: var(--color-border-strong);
+}
+
+.sc-frame-photo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: grayscale(0.12) saturate(0.9);
+  transition: transform 320ms ease, filter 280ms ease;
+  display: block;
+}
+
+.sc-frame:hover .sc-frame-photo {
+  transform: scale(1.04);
+  filter: grayscale(0) saturate(1);
+}
+
+.sc-frame-blank {
+  width: 100%;
+  height: 100%;
+  background: var(--color-canvas-sunken);
+}
+
+.sc-frame-num {
+  position: absolute;
+  bottom: 0.35rem;
+  left: 0.4rem;
+  font-family: 'Inter', monospace;
+  font-size: 0.5rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.56);
+  line-height: 1;
+  pointer-events: none;
+}
+
+.sc-frame-caption {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.68rem;
+  line-height: 1.45;
+  color: color-mix(in srgb, var(--color-ink-primary) 52%, transparent);
+  margin: 0;
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   RELATED — редакционная сетка
+   ────────────────────────────────────────────────────────────────────── */
+
+.sc-related-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(clamp(140px, 19vw, 190px), 1fr));
+  gap: 1rem 0.85rem;
+}
+
+.sc-related-card {
+  text-decoration: none;
+  color: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  transition: opacity 200ms ease;
+}
+
+.sc-related-card:hover { opacity: 0.88; }
+
+.sc-related-img {
+  position: relative;
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
+  border-radius: 3px;
+  border: 1px solid var(--color-border-default);
+  background: var(--color-canvas-sunken);
+  transition: border-color 200ms ease, box-shadow 200ms ease;
+}
+
+.sc-related-card:hover .sc-related-img {
+  border-color: var(--color-border-strong);
+  box-shadow: 0 4px 18px color-mix(in srgb, var(--color-ink-primary) 10%, transparent);
+}
+
+.sc-related-photo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top;
+  transition: transform 320ms ease;
+  display: block;
+}
+
+.sc-related-card:hover .sc-related-photo {
+  transform: scale(1.04);
+}
+
+.sc-related-blank {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Fraunces', serif;
+  font-size: 2rem;
+  color: color-mix(in srgb, var(--color-ink-primary) 14%, transparent);
+}
+
+.sc-related-badge {
+  position: absolute;
+  bottom: 0.42rem;
+  left: 0.42rem;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.5rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 0.14em 0.5em;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--color-canvas-base) 82%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  color: color-mix(in srgb, var(--color-ink-primary) 52%, transparent);
+  line-height: 1.6;
+}
+
+.sc-related-badge--available  { color: color-mix(in srgb, #5a9048 92%, transparent); }
+.sc-related-badge--sold       { color: color-mix(in srgb, var(--color-ink-primary) 32%, transparent); }
+.sc-related-badge--reserved   { color: color-mix(in srgb, #8b6a1f 88%, transparent); }
+.sc-related-badge--in_progress{ color: color-mix(in srgb, var(--color-ember) 88%, transparent); }
+
+.sc-related-name {
+  font-family: 'Georgia', serif;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  color: color-mix(in srgb, var(--color-ink-primary) 72%, transparent);
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.sc-related-year {
+  display: block;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.56rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-ink-primary) 32%, transparent);
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   ТИПОГРАФИКА СЕКЦИЙ
+   ────────────────────────────────────────────────────────────────────── */
+
+.sc-body-text {
+  font-family: 'Georgia', serif;
+  font-size: 1rem;
+  line-height: 1.88;
+  color: color-mix(in srgb, var(--color-ink-primary) 78%, transparent);
+  margin: 0;
+  max-width: 72ch;
+}
+
+.sc-body .video-caption {
+  margin-top: 0.55rem;
+  text-align: center;
+  font-size: 0.62rem;
+  color: color-mix(in srgb, var(--color-ink-primary) 36%, transparent);
+}
+
+.sc-body .presence-note {
+  margin-top: 0.75rem;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.7rem;
+  color: color-mix(in srgb, var(--color-ink-primary) 42%, transparent);
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   MOBILE
+   ────────────────────────────────────────────────────────────────────── */
+
+@media (max-width: 720px) {
+  .sc-specs-bar {
+    gap: 0;
+  }
+
+  .sc-spec {
+    padding: 0.6rem 1.1rem;
+  }
+
+  .sc-acquire {
+    flex-direction: column;
+    gap: 1.8rem;
+  }
+
+  .sc-editorial {
+    padding: 1.4rem 1rem 4rem;
+  }
+
+  .sc-ed-title {
+    font-size: clamp(1.5rem, 6.5vw, 2.4rem);
+  }
+
+  .sc-dots {
+    bottom: 1.6rem;
+  }
+
+  /* Кнопки галереи: на мобиле сбрасываются к дефолтным позициям shared CSS */
+  .sc-hero .gallery-heart { bottom: auto; top: 0.6rem; right: 0.6rem; }
+  .sc-hero .gallery-lens  { bottom: auto; top: calc(0.6rem + 28px + 0.3rem); right: 0.6rem; }
+  .sc-hero .gallery-rake  { bottom: auto; top: calc(0.6rem + 2 * (28px + 0.3rem)); right: 0.6rem; }
+}
+
+@media (max-width: 520px) {
+  .sc-hero {
+    height: clamp(320px, 70svh, 520px);
+    border-radius: 0;
+  }
+
+  .sc-body {
+    padding: 0 1rem;
+  }
+
+  .sc-film-strip {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .sc-related-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

@@ -1,39 +1,33 @@
 <script lang="ts">
-  import { onMount, onDestroy, tick } from 'svelte';
+  import { onMount, onDestroy, tick, setContext } from 'svelte';
   import { fade } from 'svelte/transition';
-  import type { Figurine, FigurineSchedule, FigurineStatus } from '$lib/types/api';
+  import type { Figurine, FigurineSchedule, FigurineStatus, DisplayConfig } from '$lib/types/api';
+  import type { FigurineListItem } from '$lib/types/api';
   import UnifiedRequestModal from '$lib/components/UnifiedRequestModal.svelte';
-  import FigurineClaimRow from '$lib/components/FigurineClaimRow.svelte';
-  import FigurineStatusPanel from '$lib/components/FigurineStatusPanel.svelte';
-  import BrassLens from '$lib/components/BrassLens.svelte';
-  import LivingDaguerreotype from '$lib/components/LivingDaguerreotype.svelte';
   import CandleReveal from '$lib/components/CandleReveal.svelte';
   import MemoryMirror from '$lib/components/MemoryMirror.svelte';
-  import BecomingReveal from '$lib/components/BecomingReveal.svelte';
-  import SecretText from '$lib/components/SecretText.svelte';
   import Lightbox from '$lib/components/Lightbox.svelte';
-  import FontSwitcher from '$lib/components/FontSwitcher.svelte';
+  import TurnSoundSwitcher from '$lib/components/TurnSoundSwitcher.svelte';
+  import SealedDoor from '$lib/components/SealedDoor.svelte';
+  import SpecimenLayout from '$lib/components/figurine-detail/layouts/SpecimenLayout.svelte';
+  import ShowcaseLayout from '$lib/components/figurine-detail/layouts/ShowcaseLayout.svelte';
+  import CodexLayout from '$lib/components/figurine-detail/layouts/CodexLayout.svelte';
+  import DiptychLayout from '$lib/components/figurine-detail/layouts/DiptychLayout.svelte';
+  import BroadsideLayout from '$lib/components/figurine-detail/layouts/BroadsideLayout.svelte';
   import { goto } from '$app/navigation';
   import { api, resolveMediaUrl } from '$lib/api';
   import { createFigurineAnalytics } from '$lib/analytics';
   import { t } from '$lib/i18n';
-  import { authStore } from '$lib/stores/auth.svelte';
-  import ShowingsTimeline from '$lib/components/ShowingsTimeline.svelte';
-  import FigurineComments from '$lib/components/FigurineComments.svelte';
   import { FigurineClaimsStore, type ClaimData } from '$lib/stores/figurine-claims.svelte';
   import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
   import { pageTurn } from '$lib/stores/page-turn.svelte';
   import { turnSound } from '$lib/stores/page-turn-sound.svelte';
   import { playTurnSound } from '$lib/audio/page-turn-sounds';
-  import TurnSoundSwitcher from '$lib/components/TurnSoundSwitcher.svelte';
   import { focusTrap } from '$lib/actions/focusTrap';
   import '$lib/styles/figurine-detail.css';
-  import SealedDoor from '$lib/components/SealedDoor.svelte';
   import { houseClock } from '$lib/stores/house-clock.svelte';
   import { showingRooms } from '$lib/stores/showing-rooms.svelte';
   import { isGated, isShowingOpen, resolveWindow } from '$lib/showing-window';
-
-  import type { FigurineListItem } from '$lib/types/api';
 
   let {
     figurine,
@@ -49,6 +43,28 @@
 
   let win = $derived(resolveWindow(figurine, showingRooms.list));
   let doorClosed = $derived(isGated(win) && !isShowingOpen(win, houseClock.nowDate));
+  let layout = $derived(figurine.displayLayout ?? 'specimen');
+
+  function parseDisplayConfig(raw: string | null | undefined): DisplayConfig | null {
+    if (!raw) return null;
+    try { return JSON.parse(raw) as DisplayConfig; } catch { return null; }
+  }
+  let displayConfig = $derived(parseDisplayConfig(figurine.displayConfig));
+
+  const BG_PRESETS: Record<string, string> = {
+    parchment: '#f8f1e7',
+    aged: '#ede3cf',
+    linen: '#f4efe8',
+    dark: '#181210',
+    slate: '#dce0e4',
+  };
+  function getBgStyle(config: DisplayConfig | null): string {
+    const bg = config?.background;
+    if (!bg?.preset) return '';
+    const color = bg.preset === 'custom' ? (bg.customColor ?? '') : (BG_PRESETS[bg.preset] ?? '');
+    return color ? `--dc-bg:${color};` : '';
+  }
+  let pageRootBgStyle = $derived(getBgStyle(displayConfig));
 
   let selectedImageIndex = $state(0);
   let isGrimoireOpen = $state(false);
@@ -62,7 +78,6 @@
   let showLightbox = $state(false);
   let lightboxStartIndex = $state(0);
   let audioRef = $state<HTMLAudioElement | null>(null);
-  let videoRef = $state<HTMLVideoElement | null>(null);
   let analyticsClient: ReturnType<typeof createFigurineAnalytics> | null = null;
   let analyticsMountedAt = 0;
   let analyticsEngagedTimer: ReturnType<typeof setTimeout> | null = null;
@@ -386,31 +401,6 @@
     void tick().then(() => storyModalRef?.focus());
   });
 
-  // ── Ink reveal ───────────────────────────────────────────────────────────
-  let historyRef = $state<HTMLElement | null>(null);
-  let inkReady   = $state(false);
-
-  $effect(() => {
-    if (!historyRef || inkReady) return;
-    if (typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      inkReady = true; return;
-    }
-    const io = new IntersectionObserver((entries) => {
-      if (entries[0].isIntersecting) { inkReady = true; io.disconnect(); }
-    }, { threshold: 0.05 });
-    io.observe(historyRef);
-    return () => io.disconnect();
-  });
-
-  function buildInkHtml(text: string): string {
-    const words = text.split(/\s+/).filter(Boolean);
-    return words.map((word, i) => {
-      const esc = word.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      const delay = Math.min(i, 80) * 25;
-      return `<span class="ink-word" style="animation-delay:${delay}ms">${esc}</span>`;
-    }).join(' ');
-  }
-
   function imagePriority(type: string | undefined | null): number {
     switch (type) {
       case 'face': return 0;
@@ -450,9 +440,22 @@
   // cleanly, and the daguerreotype re-mounts once the leaf has settled.
   let isPointerFine = $state(false);
   let prefersReducedMotion = $state(false);
-  let useDaguerreotype = $derived(
-    isPointerFine && !prefersReducedMotion && !isLensEnabled && imageViewMode === 'fit'
+
+  // Raking-light examination ("осмотр под косым светом"): a conservator's mode,
+  // mutually exclusive with the lens and the resting daguerreotype — all three
+  // contend for the same pointer over the same plate. Same desktop/motion/fit
+  // and page-turn guards as the daguerreotype (a WebGL canvas can't survive a
+  // view-transition snapshot, so it yields to the plain <img> during a turn).
+  let isRakingEnabled = $state(false);
+  let showRakingButton = $derived(isPointerFine && !prefersReducedMotion);
+  function setImageViewMode(mode: 'fit' | 'detail') { imageViewMode = mode; }
+  let useRaking = $derived(
+    isPointerFine && !prefersReducedMotion && isRakingEnabled && imageViewMode === 'fit'
       && !pageTurn.direction
+  );
+  let useDaguerreotype = $derived(
+    isPointerFine && !prefersReducedMotion && !isLensEnabled && !isRakingEnabled
+      && imageViewMode === 'fit' && !pageTurn.direction
   );
 
   // Stage adapts to the work's real proportion. The gallery grid itself stays
@@ -604,6 +607,7 @@
       selectedImageIndex = nextIndex;
       imageViewMode = 'fit';
       isLensEnabled = false;
+      isRakingEnabled = false;
     }
   }
   function openLightbox(index: number) {
@@ -617,6 +621,14 @@
   }
   function toggleLens() {
     isLensEnabled = !isLensEnabled;
+    if (isLensEnabled) isRakingEnabled = false; // one examination tool at a time
+  }
+  function toggleRaking() {
+    isRakingEnabled = !isRakingEnabled;
+    if (isRakingEnabled) {
+      isLensEnabled = false;     // mutually exclusive with the magnifier
+      imageViewMode = 'fit';     // raking light reads the whole plate, not a crop
+    }
   }
   let lastGrimoireCloseAt = $state(0);
 
@@ -631,11 +643,6 @@
   }
 
   function toggleCandle() { isCandleLit = !isCandleLit; }
-
-  function toggleFullscreen() {
-    if (!videoRef) return;
-    document.fullscreenElement ? document.exitFullscreen() : videoRef.requestFullscreen().catch(() => {});
-  }
 
   let audioFadeTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -803,14 +810,29 @@
 
   // ── Sticky condensed nav — три фазы ─────────────────────────────────────
   let scrollY = $state(0);
-  let scrolled    = $derived(scrollY > 80);
+  let scrolled = $derived(scrollY > 80);
 
-  // DOM anchor for the sticky navigation identity.
-  let galleryRef:  HTMLElement | undefined = $state();
+  // Gallery element is registered by the active layout component via setGalleryEl.
+  let galleryEl = $state<HTMLElement | undefined>(undefined);
   let galleryObserver: IntersectionObserver | null = null;
-  const TOPNAV_THRESHOLD = 130; // высота SiteHeader + topnav
+  const TOPNAV_THRESHOLD = 130;
 
-  let galleryExited  = $state(false); // Phase 2: галерея ушла за экран
+  let galleryExited = $state(false);
+
+  function setGalleryEl(el: HTMLElement | undefined) { galleryEl = el; }
+
+  $effect(() => {
+    if (!galleryEl) { galleryObserver?.disconnect(); return; }
+    galleryObserver?.disconnect();
+    galleryObserver = new IntersectionObserver(
+      ([entry]) => {
+        galleryExited = !entry.isIntersecting && entry.boundingClientRect.bottom < TOPNAV_THRESHOLD;
+      },
+      { rootMargin: `-${TOPNAV_THRESHOLD}px 0px 0px 0px`, threshold: 0 }
+    );
+    galleryObserver.observe(galleryEl);
+    return () => { galleryObserver?.disconnect(); galleryObserver = null; };
+  });
 
   function defaultRequestIntent(): RequestIntent {
     return statusUi.defaultIntent;
@@ -903,18 +925,6 @@
     cs.verify();
     cs.startPolling();
     turnSound.load();
-    if (galleryRef) {
-      // The observer reports the gallery's geometry in its own callback (no reflow on
-      // our side) and also refires on layout/resize changes — e.g. when the image
-      // aspect probe resolves — so it replaces the old ResizeObserver+rect combo.
-      galleryObserver = new IntersectionObserver(
-        ([entry]) => {
-          galleryExited = !entry.isIntersecting && entry.boundingClientRect.bottom < TOPNAV_THRESHOLD;
-        },
-        { rootMargin: `-${TOPNAV_THRESHOLD}px 0px 0px 0px`, threshold: 0 }
-      );
-      galleryObserver.observe(galleryRef);
-    }
   });
 
   onDestroy(() => {
@@ -934,6 +944,84 @@
     if (audioRef) { audioRef.pause(); audioRef = null; }
     cs.stopPolling();
   });
+
+  setContext<App.FigurineDetailContext>('figurine-detail', {
+    get figurine() { return figurine; },
+    get id() { return id; },
+    get prev() { return prev; },
+    get next() { return next; },
+    get sortedImages() { return sortedImages; },
+    get attributes() { return attributes; },
+    get visibleProcessSteps() { return visibleProcessSteps; },
+    get visibleRelatedItems() { return visibleRelatedItems; },
+    get figurineSchedule() { return figurineSchedule; },
+    get activeImageIndex() { return activeImageIndex; },
+    get currentImage() { return currentImage; },
+    get currentImageFit() { return currentImageFit; },
+    get imageViewMode() { return imageViewMode; },
+    get isLensEnabled() { return isLensEnabled; },
+    get isRakingEnabled() { return isRakingEnabled; },
+    get useDaguerreotype() { return useDaguerreotype; },
+    get useRaking() { return useRaking; },
+    get showRakingButton() { return showRakingButton; },
+    get isSaved() { return isSaved; },
+    get canOpenLightbox() { return canOpenLightbox; },
+    get bleedDir() { return bleedDir; },
+    get lastBleed() { return lastBleed; },
+    get plateStyle() { return plateStyle; },
+    get viewTransitionName() { return viewTransitionName; },
+    get isCandleLit() { return isCandleLit; },
+    get hasHistorySection() { return hasHistorySection; },
+    get hasMakingSection() { return hasMakingSection; },
+    get hasVideoSection() { return hasVideoSection; },
+    get hasWorkStorySection() { return hasWorkStorySection; },
+    get hasAttributesSection() { return hasAttributesSection; },
+    get hasScheduleSection() { return hasScheduleSection; },
+    get hasFactsSection() { return hasFactsSection; },
+    get hasPersonalRecord() { return hasPersonalRecord; },
+    get hasClaimRecords() { return hasClaimRecords; },
+    get hasClaimLookupState() { return hasClaimLookupState; },
+    get canShowPersonalRecord() { return canShowPersonalRecord; },
+    get hasBecoming() { return hasBecoming; },
+    get showMirrorLink() { return showMirrorLink; },
+    get becomingBefore() { return becomingBefore; },
+    get becomingAfter() { return becomingAfter; },
+    get firstStep() { return firstStep; },
+    get lastStep() { return lastStep; },
+    get queueJoin() { return queueJoin; },
+    get notifyJoin() { return notifyJoin; },
+    get hasActiveShowing() { return hasActiveShowing; },
+    get nextAvailableDate() { return nextAvailableDate; },
+    get scheduleLoadFailed() { return scheduleLoadFailed; },
+    get displayConfig() { return displayConfig; },
+    get isGrimoireOpen() { return isGrimoireOpen; },
+    get cs() { return cs; },
+    get analyticsClient() { return analyticsClient; },
+    get statusUi() { return statusUi; },
+    selectImage,
+    openLightbox,
+    toggleSaved,
+    toggleLens,
+    toggleRaking,
+    setImageViewMode,
+    openRequestModal,
+    openGrimoire,
+    closeGrimoire,
+    handlePersonalRecordToggle,
+    openClaimLookup,
+    closeClaimLookup,
+    armPageTurn,
+    setGalleryEl,
+    resolveUrl,
+    imageTypeLabel,
+    imageRoleNote,
+    processStepLabel,
+    fmtDate,
+    lookupStatusLabel,
+    toRoman,
+    hasText,
+    statusLabel,
+  });
 </script>
 
 {#if figurine.ambiencePath}
@@ -943,6 +1031,7 @@
 <CandleReveal isActive={isCandleLit} />
 
 <div class="page-root" class:page-root--has-cta={scrollY > 300} class:page-root--candle={isCandleLit}
+  style={pageRootBgStyle}
   ontouchstart={handlePageTouchStart}
   ontouchend={handlePageTouchEnd}
 >
@@ -1235,525 +1324,19 @@
       </p>
     {/if}
 
-    <div class="main-grid">
-
-      <!-- LEFT: Gallery with vertical thumbnail strip -->
-      <div class="gallery-col" bind:this={galleryRef}>
-	        <div
-	          class="gallery-layout"
-	          class:gallery-layout--solo={sortedImages.length <= 1}
-	          style={plateStyle}
-	        >
-
-          {#if sortedImages.length > 1}
-            <nav class="thumbs-strip" aria-label={$t('figurineShowView')}>
-              {#each sortedImages as img, i}
-                <button
-                  type="button"
-                  class="thumb-v {activeImageIndex === i ? 'thumb-v--active' : ''}"
-                  onclick={() => selectImage(i)}
-                  aria-label="{imageTypeLabel(img.imageType)}: {imageRoleNote(img.imageType)}"
-                  aria-current={activeImageIndex === i ? 'true' : undefined}
-                >
-                  <span class="thumb-v-media">
-                    <img src={resolveUrl(img.thumbUrl ?? img.url)} alt="" class="thumb-v-img" loading="lazy" />
-                  </span>
-                  <span class="thumb-v-copy">
-                    <span class="thumb-v-label">{imageTypeLabel(img.imageType)}</span>
-                    <span class="thumb-v-note">{imageRoleNote(img.imageType)}</span>
-                  </span>
-                  <div class="thumb-v-bar" aria-hidden="true"></div>
-                </button>
-              {/each}
-            </nav>
-          {/if}
-
-	          <figure class="image-col">
-            <div class="image-frame">
-              <div
-                class="image-stage"
-                class:image-stage--detail={imageViewMode === 'detail'}
-                data-figurine-plate
-                style="view-transition-name: {viewTransitionName};"
-              >
-                {#if useDaguerreotype}
-                  <!-- Persistent across image switches (NO {#key}) so the WebGL
-                       context/shaders survive ←/→ paging; the component reloads
-                       only its textures and crossfades them internally. -->
-                  <div class="image-layer">
-                    <LivingDaguerreotype
-                      src={resolveUrl(currentImage?.url)}
-                      depthSrc={resolveUrl(currentImage?.depthUrl) || null}
-                      intensity={currentImage?.parallaxIntensity ?? undefined}
-                      alt={currentImage?.altText ?? figurine.name}
-                      class="w-full h-full"
-                      onActivate={() => canOpenLightbox && openLightbox(activeImageIndex)}
-                    />
-                  </div>
-                {:else}
-                  {#key currentImage?.id}
-                    <div class="image-layer" transition:fade={{ duration: 220 }}>
-                      <BrassLens
-                        src={resolveUrl(currentImage?.url)}
-                        alt={currentImage?.altText ?? figurine.name}
-                        class="w-full h-full"
-                        imageFit={currentImageFit}
-                        objectPosition="center center"
-                        lensEnabled={isLensEnabled}
-                        onOpenLightbox={() => canOpenLightbox && openLightbox(activeImageIndex)}
-                        onSwipeLeft={() => sortedImages.length > 1 && selectImage(activeImageIndex + 1)}
-                        onSwipeRight={() => sortedImages.length > 1 && selectImage(activeImageIndex - 1)}
-                      />
-                    </div>
-                  {/key}
-                {/if}
-
-                {#if lastBleed}
-                  <div
-                    class="leaf-bleed leaf-bleed--{lastBleed.dir}"
-                    class:leaf-bleed--on={bleedDir}
-                    aria-hidden="true"
-                    style="background-image: url('{lastBleed.img}');"
-                  ></div>
-                {/if}
-
-                {#if sortedImages.length > 1}
-                  <div class="img-counter" aria-hidden="true">
-                    <span class="img-counter-type">{imageTypeLabel(currentImage?.imageType)}</span>
-                    <span class="img-counter-num">{activeImageIndex + 1}<span class="img-counter-sep">/</span>{sortedImages.length}</span>
-                  </div>
-                {/if}
-
-                <button
-                  type="button"
-                  class="gallery-heart"
-                  class:gallery-heart--saved={isSaved}
-                  onclick={toggleSaved}
-                  aria-label={isSaved ? $t('cardSaved') : $t('cardSave')}
-                  title={isSaved ? $t('cardSaved') : $t('cardSave')}
-                  aria-pressed={isSaved}
-                >
-                  <svg width="15" height="15" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-                    <path
-                      d="M7 12.5C7 12.5 1 8.5 1 4.5C1 2.5 2.5 1 4.5 1C5.5 1 6.5 1.8 7 3C7.5 1.8 8.5 1 9.5 1C11.5 1 13 2.5 13 4.5C13 8.5 7 12.5 7 12.5Z"
-                      fill={isSaved ? 'currentColor' : 'none'}
-                      stroke="currentColor"
-                      stroke-width="1.15"
-                      stroke-linejoin="round"
-                    />
-                  </svg>
-                </button>
-
-                <button
-                  type="button"
-                  class="gallery-lens"
-                  class:gallery-lens--active={isLensEnabled}
-                  onclick={toggleLens}
-                  aria-label={isLensEnabled ? $t('detailImageLensOff') : $t('detailImageLensOn')}
-                  title={isLensEnabled ? $t('detailImageLensOff') : $t('detailImageLensOn')}
-                  aria-pressed={isLensEnabled}
-                >
-                  <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" aria-hidden="true">
-                    <circle cx="6" cy="6" r="3.7" />
-                    <path d="M8.8 8.8L12 12" />
-                  </svg>
-                </button>
-
-                <div class="image-view-tools" aria-label={$t('detailImageViewMode')}>
-                  <button
-                    type="button"
-                    class="image-view-tool {imageViewMode === 'fit' ? 'image-view-tool--active' : ''}"
-                    onclick={() => (imageViewMode = 'fit')}
-                    aria-pressed={imageViewMode === 'fit'}
-                  >
-                    {$t('detailImageFit')}
-                  </button>
-                  <button
-                    type="button"
-                    class="image-view-tool {imageViewMode === 'detail' ? 'image-view-tool--active' : ''}"
-                    onclick={() => (imageViewMode = 'detail')}
-                    aria-pressed={imageViewMode === 'detail'}
-                  >
-                    {$t('detailImageDetailView')}
-                  </button>
-                </div>
-
-                {#if canOpenLightbox}
-                  <button
-                    type="button"
-                    onclick={() => openLightbox(activeImageIndex)}
-                    class="expand-btn"
-                    aria-label={$t('figurineFullscreen')}
-                  >
-                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-                      <path d="M1 4V1h3M6 1h3v3M9 6v3H6M4 9H1V6"/>
-                    </svg>
-                    {$t('figurineFullscreen')}
-                  </button>
-                {/if}
-
-                <div class="image-vignette"></div>
-              </div>
-            </div>
-
-            {#if currentImage}
-              <figcaption class="plate-caption">
-                <span class="plate-caption-label">{imageTypeLabel(currentImage.imageType)}</span>
-                <span class="plate-caption-note">{imageRoleNote(currentImage.imageType)}</span>
-                {#if hasText(figurine.dimensions)}
-                  <span class="plate-caption-dim">{figurine.dimensions}</span>
-                {/if}
-              </figcaption>
-            {/if}
-          </figure>
-        </div>
-      </div>
-
-      <!-- RIGHT: Details — on warm page bg, no card wrapper -->
-      <div class="details-col">
-
-        <!-- Colophon: specimen ref + year, centered above the name -->
-        <div class="d-eyebrow">
-          <div class="eyebrow-tags">
-            <span class="colophon-ref">ARC-{id.slice(0, 8).toUpperCase()}</span>
-            {#if figurine.year}
-              <span class="eyebrow-sep">·</span>
-              <span class="eyebrow-year">Anno {figurine.year}</span>
-            {/if}
-          </div>
-        </div>
-
-        <h1 class="figurine-title {figurine.name.length > 60 ? 'figurine-title--long' : figurine.name.length > 30 ? 'figurine-title--medium' : ''}">{figurine.name}</h1>
-
-        <span class="colophon-kind">{$t('detailKind')}</span>
-
-        {#if hasText(figurine.shortText)}
-          <p class="lore-short">{figurine.shortText}</p>
-        {/if}
-
-        {#if hasAttributesSection}
-          <dl class="hero-facts" aria-label={$t('figurineAttributes')}>
-            {#each attributes as attr (attr.kind)}
-              <div>
-                <dt>{attr.label}</dt>
-                <dd>{attr.value}</dd>
-              </div>
-            {/each}
-          </dl>
-        {/if}
-
-        {#if hasText(figurine.secretText) && isCandleLit}
-          <div class="secret-anchor">
-            <SecretText text={figurine.secretText} isCandleLit={isCandleLit} />
-          </div>
-        {/if}
-
-        <!-- ── Status & enquiry ── -->
-        <FigurineStatusPanel
-          {figurine}
-          {id}
-          {hasActiveShowing}
-          {nextAvailableDate}
-          {scheduleLoadFailed}
-          onOpenModal={openRequestModal}
-          {analyticsClient}
-          {queueJoin}
-          {notifyJoin}
-        />
-
-        <!-- Personal record for this work: folded into a disclosure, not a dashboard on the leaf. -->
-        {#if canShowPersonalRecord}
-          <details class="entry-record" class:entry-record--empty={!hasPersonalRecord} ontoggle={handlePersonalRecordToggle}>
-            <summary>{hasPersonalRecord ? $t('detailYourRecord') : $t('claimHaveCode')}</summary>
-            <div class="entry-record-body">
-              {#if hasClaimRecords}
-                <section class="entry-record-section entry-record-section--claims" aria-label={$t('detailYourRecord')}>
-                  <div class="claims-panel {cs.claims.some(c => c.status === 'confirmed') ? 'claims-panel--has-confirmed' : ''}">
-                    <div class="claims-panel-header">
-                      {cs.claims.some(c => c.status === 'confirmed') ? $t('claimsYours') : $t('claimsPending')}
-                    </div>
-                    {#if cs.cancelledTokens.size > 0 && cs.claims.length === 0}
-                      <div class="cp-row cp-row--done">
-                        <p class="cp-done">{$t('claimCancelDone')}</p>
-                      </div>
-                    {/if}
-                    {#each cs.claims as c (c.token)}
-                      <FigurineClaimRow
-                        claim={c}
-                        isLoggedIn={authStore.isLoggedIn}
-                        isCancelling={cs.cancellingToken === c.token}
-                        error={cs.claimErrors[c.token]}
-                        formatDate={fmtDate}
-                        onCancel={(claim) => cs.cancel(claim)}
-                      />
-                    {/each}
-                  </div>
-                </section>
-              {/if}
-
-              <section class="entry-record-section entry-record-section--lookup" aria-label={$t('claimHaveCode')}>
-                <div class="claim-lookup">
-                  {#if !cs.showTokenForm}
-                    <button type="button" onclick={openClaimLookup} class="claim-lookup-link">{$t('claimHaveCode')}</button>
-                  {:else}
-                    <div class="claim-lookup-form">
-                      <input type="text" bind:value={cs.tokenInput} placeholder="XXXX-XXXX" maxlength="9"
-                        class="claim-lookup-input" oninput={() => { cs.tokenLookupInfo = null; cs.tokenLookupErr = ''; }} />
-                      <button type="button" onclick={() => cs.lookupToken()} disabled={cs.tokenLooking} class="claim-lookup-btn">
-                        {cs.tokenLooking ? '...' : $t('claimLookupBtn')}
-                      </button>
-                      <button type="button" onclick={closeClaimLookup} class="claim-lookup-close" aria-label={$t('lightboxClose')}>
-                        <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-                          <path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke-linecap="round" />
-                        </svg>
-                      </button>
-                    </div>
-                    {#if cs.tokenLookupErr}<p class="claim-err">{cs.tokenLookupErr}</p>{/if}
-                    {#if cs.tokenLookupInfo}
-                      <div class="claim-lookup-result">
-                        <p class="claim-dates">{fmtDate(cs.tokenLookupInfo.startsAt)} - {fmtDate(cs.tokenLookupInfo.endsAt)}</p>
-                        {#if cs.tokenLookupInfo.status === 'pending'}
-                          <button type="button" onclick={() => cs.cancelFromLookup()} disabled={cs.lookupCancelling} class="claim-cancel-btn">
-                            {cs.lookupCancelling ? $t('claimCancelling') : $t('claimCancelBtn')}
-                          </button>
-                        {:else}
-                          <p class="claim-status">{$t('claimStatus')}: {lookupStatusLabel(cs.tokenLookupInfo.status)}</p>
-                        {/if}
-                      </div>
-                    {/if}
-                  {/if}
-                </div>
-              </section>
-            </div>
-          </details>
-        {/if}
-
-        {#if hasWorkStorySection}
-          <div class="act-divider" aria-hidden="true"></div>
-        {/if}
-
-        <!-- ACT II — THE WORK: story → making → motion -->
-        {#if hasHistorySection}
-          <div class="d-history">
-            <header class="d-section-header">
-              <span class="sec-label">{$t('figurineHistory')}</span>
-              <div class="sec-rule" aria-hidden="true"></div>
-              <FontSwitcher variant="colophon" />
-            </header>
-            <p bind:this={historyRef} class="history-body drop-cap">
-              {#if inkReady}
-                {@html buildInkHtml(figurine.fullDescription ?? '')}
-              {:else}
-                {figurine.fullDescription}
-              {/if}
-            </p>
-          </div>
-        {/if}
-
-        <!-- ── MAKING RECORD ── -->
-        {#if hasMakingSection}
-          <div class="grimoire-section {figurine.status === 'in_progress' ? 'grimoire-section--live' : ''}">
-            <div class="making-record">
-              <div class="making-copy">
-                <span class="making-kicker">
-                  {#if figurine.status === 'in_progress'}
-                    <span class="making-live" aria-hidden="true"></span>{$t('detailMakingProgressKicker')}
-                  {:else}
-                    {$t('detailMakingRecordKicker')}
-                  {/if}
-                </span>
-                <h2 class="making-title">
-                  {figurine.status === 'in_progress' ? $t('detailMakingProgressTitle') : $t('detailMakingRecordTitle')}
-                </h2>
-                <p class="making-colophon">
-                  {toRoman(visibleProcessSteps.length)} {$t('detailMakingStages')}<span class="mc-sep">·</span>{processStepLabel(firstStep?.stepType)} → {#if figurine.status === 'in_progress'}{$t('detailMakingLive')}{:else}{processStepLabel(lastStep?.stepType)}<span class="mc-sep">·</span>{$t('detailMakingByOneHand')}{/if}
-                </p>
-              </div>
-
-              {#if hasBecoming}
-                <BecomingReveal
-                  beforeSrc={becomingBefore}
-                  afterSrc={becomingAfter}
-                  beforeLabel={processStepLabel(firstStep?.stepType)}
-                  afterLabel={$t('detailBecomingFinished')}
-                  hint={$t('detailBecomingHint')}
-                />
-              {:else}
-              <div class="making-strip" aria-label={$t('detailMakingRecordTitle')}>
-                {#each visibleProcessSteps.slice(0, 4) as step, i (step.id)}
-                  <article class="making-card">
-                    <div class="making-img-wrap">
-                      {#if hasText(step.imageUrl)}
-                        <img src={resolveUrl(step.imageUrl)} alt="" class="making-img" loading="lazy" />
-                      {:else}
-                        <div class="making-img-placeholder" aria-hidden="true"></div>
-                      {/if}
-                      <span class="making-count">{String(i + 1).padStart(2, '0')}</span>
-                    </div>
-                    <div class="making-card-copy">
-                      <h3>{processStepLabel(step.stepType)}</h3>
-                      {#if step.description}
-                        <p>{step.description}</p>
-                      {/if}
-                    </div>
-                  </article>
-                {/each}
-              </div>
-              {/if}
-
-            </div>
-
-            <!-- Memory Mirror demoted to a quiet continuation of this same act —
-                 with the reveal as teaser, it leads to every in-between stage. -->
-            {#if showMirrorLink}
-              <button type="button" onclick={openGrimoire} class="mirror-link" aria-expanded={isGrimoireOpen}>
-                <span class="mirror-link-mark" aria-hidden="true"></span>
-                <span class="mirror-link-label">{$t('figurineGrimoire')}</span>
-                <span class="mirror-link-count">{visibleProcessSteps.length} {$t('figurineGrimoireSub')}</span>
-                <svg
-                  class="mirror-link-arrow"
-                  class:mirror-link-arrow--open={isGrimoireOpen}
-                  width="15"
-                  height="15"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.5"
-                  aria-hidden="true"
-                >
-                  <path d="M3 8h10M9 4l4 4-4 4"/>
-                </svg>
-              </button>
-            {/if}
-          </div>
-        {/if}
-
-        <!-- ── VIDEO ── -->
-        {#if hasVideoSection}
-          <section class="video-section">
-            <header class="section-row">
-              <span class="sec-label">{$t('figurineVideo')}</span>
-              <div class="sec-rule" aria-hidden="true"></div>
-            </header>
-            <div class="video-wrap">
-              <div class="video-frame">
-                <div class="video-stage">
-                  <video bind:this={videoRef} controls class="video-el"
-                    poster={resolveUrl(currentImage?.url)} preload="metadata">
-                    <source src={resolveUrl(figurine.videoUrl)} type="video/mp4" />
-                    {$t('figurineBrowserNoVideo')}
-                  </video>
-                  <button type="button" onclick={toggleFullscreen} class="video-fs-btn" title={$t('figurineFullscreen')} aria-label={$t('figurineFullscreen')}>
-                    <svg width="14" height="14" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-                      <path d="M1 4V1h3M6 1h3v3M9 6v3H6M4 9H1V6"/>
-                    </svg>
-                  </button>
-                </div>
-              </div>
-            </div>
-            <p class="video-caption text-label">{$t('figurineVideoFilm')}{id.slice(-3)}</p>
-          </section>
-        {/if}
-
-    <!-- ── PRESENCE & SCHEDULE (Act III — logistics only; attributes already live near the title) ── -->
-    {#if hasFactsSection}
-      <div class="act-divider" aria-hidden="true"></div>
-
-      {#if hasScheduleSection}
-        <section id="presence" class="presence-section">
-          <header class="section-row">
-            <span class="sec-label">{$t('detailPresenceLabel')}</span>
-            <div class="sec-rule" aria-hidden="true"></div>
-          </header>
-          <ShowingsTimeline schedule={figurineSchedule} />
-          {#if hasActiveShowing}
-            <p class="presence-note">{$t('figurineTransferBlocked')}</p>
-          {/if}
-        </section>
-      {/if}
+    {#if layout === 'specimen'}
+      <SpecimenLayout />
+    {:else if layout === 'showcase'}
+      <ShowcaseLayout />
+    {:else if layout === 'codex'}
+      <CodexLayout />
+    {:else if layout === 'diptych'}
+      <DiptychLayout />
+    {:else if layout === 'broadside'}
+      <BroadsideLayout />
     {/if}
 
-    <!-- ── RELATED NEXT CHOICES ── -->
-    {#if visibleRelatedItems.length > 0}
-      <div class="act-divider" aria-hidden="true"></div>
-      <section id="related-works" class="related-section">
-        <header class="related-head">
-          <div>
-            <span class="sec-label">{$t('figurineRelated')}</span>
-            <h2 class="related-title">{$t('detailRelatedTitle')}</h2>
-          </div>
-          <p class="related-intro">{$t('detailRelatedText')}</p>
-        </header>
-
-        <div class="related-strip">
-          {#each visibleRelatedItems as item}
-            {@const relatedImageUrl = resolveUrl(item.faceImageUrl ?? item.thumbUrl)}
-            <a
-              href="/figurines/{item.id}"
-              onclick={() => analyticsClient?.cta('related_figurine')}
-              class="related-card"
-              data-sveltekit-preload-data="hover"
-            >
-              <div class="related-img-wrap">
-                {#if relatedImageUrl}
-                  <img
-                    src={relatedImageUrl}
-                    alt={item.name}
-                    class="related-img"
-                    loading="lazy"
-                  />
-                {:else}
-                  <div class="related-placeholder" aria-hidden="true">
-                    <span>{item.name.slice(0, 1)}</span>
-                  </div>
-                {/if}
-                <div class="related-overlay" aria-hidden="true">
-                  <span class="related-cta-hint">
-                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
-                      <path d="M1 6h10M7 2l4 4-4 4"/>
-                    </svg>
-                  </span>
-                </div>
-                <span class="related-status-badge related-status-badge--{item.status}">
-                  {statusLabel(item.status)}
-                </span>
-              </div>
-              <div class="related-meta">
-                <h4 class="related-name">{item.name}</h4>
-                <p class="related-line">
-                  {#if item.material}
-                    {item.material}
-                  {:else if item.technique}
-                    {item.technique}
-                  {:else if item.series}
-                    {item.series}
-                  {:else}
-                    {$t('detailRelatedArchivePiece')}
-                  {/if}
-                </p>
-                <div class="related-foot">
-                  {#if item.year}
-                    <span>Anno {item.year}</span>
-                  {/if}
-                  <span class="related-action">
-                    {item.status === 'available' ? $t('detailRelatedRequestable') : $t('detailRelatedOpen')}
-                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-                      <path d="M1.5 6h9M7 2.5L10.5 6 7 9.5"/>
-                    </svg>
-                  </span>
-                </div>
-              </div>
-            </a>
-          {/each}
-        </div>
-      </section>
     {/if}
-
-    <FigurineComments figurineId={id} />
-
-      </div>
-    </div>
-    {/if}<!-- end {#if doorClosed} {:else} -->
   </div>
 </div>
 

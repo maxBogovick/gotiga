@@ -1,0 +1,481 @@
+/* ══════════════════════════════════════════════════════════════════════
+   Layout: Кодекс — рукопись
+   Одна колонка. Иллюминация плавает в тексте. Никаких сеток и карточек.
+   ══════════════════════════════════════════════════════════════════════ */
+
+.cx-root {
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 2.5rem 0 6rem;
+  counter-reset: act;
+}
+
+/* ── Рубрика (eyebrow) ── */
+
+.cx-rubric {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin-bottom: 0.9rem;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.6rem;
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-ink-primary) 38%, transparent);
+}
+
+.cx-rubric-kind {
+  color: color-mix(in srgb, var(--color-ember) 78%, transparent);
+}
+
+.cx-rubric-sep {
+  color: color-mix(in srgb, var(--color-ink-primary) 24%, transparent);
+}
+
+/* ── Заголовок ── */
+
+.cx-root .figurine-title.cx-title {
+  line-height: 1.12;
+  margin-bottom: 1rem;
+}
+
+.cx-root .figurine-title.figurine-title--long.cx-title {
+  max-width: none;
+  text-wrap: pretty;
+}
+
+/* Двойная горизонтальная черта под заголовком — архивный стиль */
+.cx-head-rule {
+  height: 3px;
+  margin-bottom: 2.25rem;
+  border-top: 1px solid color-mix(in srgb, var(--color-ink-primary) 14%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-ink-primary) 7%, transparent);
+  background: transparent;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   OPENING: двухколонный grid — текст слева, пластина справа
+   ══════════════════════════════════════════════════════════════════════ */
+
+.cx-opening {
+  display: grid;
+  grid-template-columns: 1fr min(46%, 340px);
+  gap: 0 2.5rem;
+  align-items: stretch;
+  margin-bottom: 0;
+}
+
+/* Левая колонка — текст, атрибуты, статус */
+.cx-opening-left {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* Статус-панель прижимается ко дну: остаток пространства уходит в разрыв сверху */
+.cx-opening-left .cx-section-rule {
+  margin-top: auto;
+}
+
+/* Правая колонка — иллюминированная пластина */
+.cx-illum {
+  position: relative;
+  align-self: start;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  margin: 0;
+  border-radius: 2px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-ink-primary) 14%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    0 2px 0 rgba(255, 255, 255, 0.42),
+    0 4px 12px color-mix(in srgb, var(--color-ink-primary) 9%, transparent),
+    0 14px 42px color-mix(in srgb, var(--color-ink-primary) 15%, transparent);
+}
+
+/* Лор-текст */
+.cx-lore {
+  font-family: 'Georgia', serif;
+  font-style: italic;
+  font-size: 1rem;
+  line-height: 1.84;
+  color: color-mix(in srgb, var(--color-ink-primary) 70%, transparent);
+  margin: 0 0 1.75rem;
+}
+
+/* ── Ledger: вертикальный реестр с dotted leaders ── */
+
+.cx-ledger {
+  display: grid;
+  gap: 0;
+  margin: 0 0 1.75rem;
+  border-top: 1px solid color-mix(in srgb, var(--color-ink-primary) 12%, transparent);
+}
+
+.cx-ledger-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: end;
+  gap: 0 0.5rem;
+  padding: 0.5rem 0 0.45rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-ink-primary) 7%, transparent);
+}
+
+/* Leader dots между меткой и значением */
+.cx-ledger-dots {
+  min-width: 1rem;
+  border-bottom: 1px dotted color-mix(in srgb, var(--color-ink-primary) 22%, transparent);
+  margin-bottom: 0.22em;
+}
+
+.cx-ledger-label {
+  display: block;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.55rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-ink-primary) 38%, transparent);
+  margin: 0;
+  white-space: nowrap;
+}
+
+.cx-ledger-value {
+  display: block;
+  font-family: 'Georgia', serif;
+  font-size: 0.88rem;
+  color: var(--color-ink-primary);
+  margin: 0;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Миниатюры ── */
+
+.cx-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 1.5rem;
+}
+
+.cx-thumb {
+  position: relative;
+  display: block;
+  width: 52px;
+  aspect-ratio: 3 / 4;
+  border-radius: 1px;
+  overflow: hidden;
+  border: 1px solid var(--color-border-default);
+  cursor: pointer;
+  opacity: 0.46;
+  transition: opacity 160ms ease, border-color 160ms ease;
+}
+
+.cx-thumb:hover { opacity: 0.76; }
+
+.cx-thumb--on {
+  opacity: 1;
+  border-color: var(--color-border-ember);
+}
+
+/* Ember-черта под активным тюмбнейлом */
+.cx-thumb--on::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 0;
+  height: 2px;
+  background: var(--color-ember);
+}
+
+.cx-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top;
+}
+
+/* Черта перед статус-панелью */
+.cx-section-rule {
+  height: 1px;
+  background: color-mix(in srgb, var(--color-ink-primary) 9%, transparent);
+  margin-bottom: 1.5rem;
+  /* margin-top: auto приходит от .cx-opening-left .cx-section-rule */
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   РАЗДЕЛИТЕЛЬ СЕКЦИЙ: ромб-диамант с расходящимися чертами
+   ══════════════════════════════════════════════════════════════════════ */
+
+.cx-div {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 1rem;
+  margin: 3rem 0;
+  clear: both;
+}
+
+/* Левая черта — градиент от прозрачного к центру */
+.cx-div::before {
+  content: '';
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--color-ink-primary) 14%, transparent) 100%
+  );
+}
+
+/* Правая черта — от центра к прозрачному */
+.cx-div::after {
+  content: '';
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-ink-primary) 14%, transparent) 0%,
+    transparent 100%
+  );
+}
+
+/* Ember-ромб в центре */
+.cx-div span {
+  display: block;
+  width: 9px;
+  height: 9px;
+  font-size: 0;
+  border: 1px solid color-mix(in srgb, var(--color-ember) 52%, transparent);
+  transform: rotate(45deg);
+  background: var(--color-canvas-base);
+  flex-shrink: 0;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   ПРОЦЕСС
+   ══════════════════════════════════════════════════════════════════════ */
+
+.cx-making-kicker {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.58rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-ink-primary) 38%, transparent);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 1rem;
+}
+
+.cx-making--live .making-live {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-ember);
+  animation: cx-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes cx-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%       { transform: scale(0.65); opacity: 0.72; }
+}
+
+/* 3×2 сетка — контактные отпечатки вместо горизонтального скролла */
+.cx-making-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+  margin-bottom: 1rem;
+}
+
+.cx-making-card { }
+
+.cx-making-img-wrap {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: 2px;
+  border: 1px solid var(--color-border-default);
+  background: var(--color-canvas-sunken);
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.cx-making-card:hover .cx-making-img-wrap {
+  border-color: var(--color-border-ember);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-ember) 14%, transparent);
+}
+
+.cx-making-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: grayscale(0.22) saturate(0.88);
+  transition: transform 320ms ease, filter 320ms ease;
+}
+
+.cx-making-card:hover .cx-making-img {
+  transform: scale(1.04);
+  filter: grayscale(0) saturate(1);
+}
+
+.cx-making-placeholder {
+  width: 100%;
+  height: 100%;
+  background: var(--color-canvas-sunken);
+}
+
+.cx-making-num {
+  position: absolute;
+  bottom: 0.38rem;
+  left: 0.42rem;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.52rem;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   СВЯЗАННЫЕ РАБОТЫ
+   ══════════════════════════════════════════════════════════════════════ */
+
+.cx-related-label {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.58rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-ink-primary) 38%, transparent);
+  margin: 0 0 0.9rem;
+}
+
+.cx-related-strip {
+  display: flex;
+  gap: 0.65rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-bottom: 0.25rem;
+  counter-reset: cx-filed;
+}
+.cx-related-strip::-webkit-scrollbar { display: none; }
+
+.cx-related-card {
+  flex: 0 0 130px;
+  text-decoration: none;
+  color: inherit;
+  counter-increment: cx-filed;
+}
+
+.cx-related-img-wrap {
+  position: relative;
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
+  border-radius: 2px;
+  border: 1px solid var(--color-border-default);
+  background: var(--color-canvas-sunken);
+  margin-bottom: 0.48rem;
+  transition: border-color 200ms ease;
+}
+
+/* Каталожный номер — как карточка из ящика */
+.cx-related-img-wrap::before {
+  content: "№ " counter(cx-filed, decimal-leading-zero);
+  position: absolute;
+  top: 0.42rem;
+  left: 0.42rem;
+  z-index: 2;
+  padding: 0.12rem 0.4rem;
+  border-radius: 2px;
+  color: color-mix(in srgb, var(--color-canvas-raised) 92%, white);
+  background: color-mix(in srgb, var(--color-ink-primary) 46%, transparent);
+  backdrop-filter: blur(4px);
+  font-family: 'Georgia', serif;
+  font-size: 0.58rem;
+  letter-spacing: 0.03em;
+  line-height: 1.2;
+}
+
+.cx-related-card:hover .cx-related-img-wrap {
+  border-color: var(--color-border-ember);
+}
+
+.cx-related-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top;
+  transition: transform 320ms ease;
+}
+.cx-related-card:hover .cx-related-img { transform: scale(1.04); }
+
+.cx-related-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Fraunces', serif;
+  font-size: 1.4rem;
+  color: color-mix(in srgb, var(--color-ink-primary) 18%, transparent);
+}
+
+.cx-related-status {
+  position: absolute;
+  bottom: 0.38rem;
+  left: 0.38rem;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.52rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  padding: 0.1em 0.4em;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--color-canvas-base) 80%, transparent);
+  backdrop-filter: blur(4px);
+  color: color-mix(in srgb, var(--color-ink-primary) 52%, transparent);
+}
+
+.cx-related-status--available { color: color-mix(in srgb, #5a9048 88%, transparent); }
+.cx-related-status--sold      { color: color-mix(in srgb, var(--color-ink-primary) 32%, transparent); }
+
+.cx-related-name {
+  font-family: 'Georgia', serif;
+  font-size: 0.8rem;
+  line-height: 1.3;
+  color: color-mix(in srgb, var(--color-ink-primary) 65%, transparent);
+  margin: 0;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   MOBILE
+   ══════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 600px) {
+  .cx-opening {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  /* Пластина выходит первой на мобиле (как в текущем float-поведении) */
+  .cx-illum {
+    order: -1;
+    width: 100%;
+    max-height: 72svh;
+    margin-bottom: 1.75rem;
+  }
+
+  .cx-making-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cx-thumbs { flex-wrap: nowrap; overflow-x: auto; }
+  .cx-thumb  { flex-shrink: 0; }
+}
+
+@media (max-width: 400px) {
+  .cx-illum {
+    max-height: 60svh;
+  }
+}

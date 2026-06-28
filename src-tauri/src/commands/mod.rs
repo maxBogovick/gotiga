@@ -523,6 +523,8 @@ pub async fn save_figurine(
         open_until_min: figurine.open_until_min,
         sealed_door_image: figurine.sealed_door_image,
         showing_room_id: figurine.showing_room_id,
+        display_layout: figurine.display_layout,
+        display_config: figurine.display_config,
     };
 
     repo.upsert_figurine(&model)

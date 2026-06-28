@@ -144,6 +144,34 @@ export interface Figurine {
     images: FigurineImage[];
     processSteps: ProcessStep[];
     relatedItems: FigurineListItem[];
+    displayLayout?: 'specimen' | 'showcase' | 'codex' | 'diptych' | 'broadside' | null;
+    /** JSON string — parsed by the frontend into DisplayConfig. */
+    displayConfig?: string | null;
+}
+
+export type DisplayConfigBackground =
+    | 'parchment' | 'aged' | 'dark' | 'linen' | 'slate' | 'custom';
+
+export interface BlockStyle {
+    color?: string;
+    fontSize?: 'sm' | 'base' | 'lg' | 'xl';
+    /** Font ID from READING_FONTS (e.g. 'garamond', 'spectral'). */
+    font?: string;
+}
+
+type _ContentBlockId = 'description' | 'making' | 'video' | 'showings' | 'related' | 'comments';
+type _UpperZoneId = 'name' | 'shortText';
+type _StyleableZoneId = _UpperZoneId | _ContentBlockId;
+
+export interface DisplayConfig {
+    background?: {
+        preset?: DisplayConfigBackground;
+        customColor?: string;
+        textureUrl?: string;
+    };
+    blockOrder?: Array<_ContentBlockId>;
+    hiddenBlocks?: Array<_ContentBlockId>;
+    blockStyles?: Partial<Record<_StyleableZoneId, BlockStyle>>;
 }
 
 export interface AuthorText {

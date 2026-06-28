@@ -1,0 +1,118 @@
+/* ── Layout: Диптих (Diptych) — two equal panels like an open book / altarpiece ── */
+
+.diptych-root {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-height: calc(100vh - 90px);
+  position: relative;
+}
+
+/* Spine: vertical rule at the centre fold */
+.diptych-spine {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: color-mix(in srgb, var(--color-border) 80%, transparent);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.diptych-spine::before,
+.diptych-spine::after {
+  content: "";
+  position: absolute;
+  left: -2px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--color-ember) 45%, var(--color-border));
+}
+
+.diptych-spine::before { top: 8%; }
+.diptych-spine::after  { bottom: 8%; }
+
+/* Wings */
+.diptych-wing {
+  display: flex;
+  flex-direction: column;
+  min-height: inherit;
+}
+
+.diptych-wing--left {
+  position: sticky;
+  top: 90px;
+  height: calc(100vh - 90px);
+  overflow: hidden;
+}
+
+.diptych-wing--right {
+  padding: 2.5rem 2.75rem 4rem 2.75rem;
+  overflow-y: auto;
+  counter-reset: act;
+}
+
+/* Left plate: fills the full wing */
+.diptych-plate {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 38%, color-mix(in srgb, var(--color-canvas-raised) 82%, white), transparent 46%),
+    var(--color-canvas-sunken);
+}
+
+/* Small thumbnail strip at the bottom of the left wing */
+.diptych-thumbs {
+  display: flex;
+  gap: 0.4rem;
+  padding: 0.6rem 0.75rem;
+  background: color-mix(in srgb, var(--color-canvas-base) 92%, var(--color-border));
+  border-top: 1px solid color-mix(in srgb, var(--color-border) 55%, transparent);
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.diptych-thumb {
+  flex: 0 0 48px;
+  height: 48px;
+  border-radius: 2px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+  cursor: pointer;
+  opacity: 0.65;
+  transition: opacity var(--duration-fast) var(--ease-atelier), border-color var(--duration-fast) var(--ease-atelier);
+}
+
+.diptych-thumb:hover,
+.diptych-thumb--on {
+  opacity: 1;
+  border-color: color-mix(in srgb, var(--color-ember) 55%, transparent);
+}
+
+.diptych-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+@media (max-width: 860px) {
+  .diptych-root {
+    grid-template-columns: 1fr;
+    min-height: auto;
+  }
+
+  .diptych-spine {
+    display: none;
+  }
+
+  .diptych-wing--left {
+    position: static;
+    height: clamp(280px, 55vw, 520px);
+  }
+
+  .diptych-wing--right {
+    padding: 1.75rem 1.25rem 3rem;
+  }
+}

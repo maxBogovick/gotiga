@@ -51,6 +51,10 @@ pub struct Figurine {
     /// Optional "showing room" (FK showing_rooms.id). When set, the room's window
     /// is used instead of the per-figurine open_from/until. NULL → own window.
     pub showing_room_id: Option<String>,
+    /// Which detail-page layout to use. NULL → 'specimen' (default).
+    pub display_layout: Option<String>,
+    /// JSON blob for per-figurine display customisation ({background, blockOrder}).
+    pub display_config: Option<String>,
 }
 
 /// A named, shared showing window several works can point at (e.g. "Night hall").
@@ -297,6 +301,10 @@ pub struct FigurineDto {
     pub sealed_door_image: Option<String>,
     /// Showing room this work belongs to (null → uses its own window).
     pub showing_room_id: Option<String>,
+    /// Which detail-page layout to use. null → 'specimen' (default).
+    pub display_layout: Option<String>,
+    /// JSON blob for per-figurine display customisation ({background, blockOrder}).
+    pub display_config: Option<String>,
     pub images: Vec<ImageDto>,
     pub process_steps: Vec<ProcessStepDto>,
     pub related_items: Vec<FigurineListItemDto>,
@@ -346,6 +354,8 @@ impl FigurineDto {
             open_until_min: figurine.open_until_min,
             sealed_door_image: figurine.sealed_door_image,
             showing_room_id: figurine.showing_room_id,
+            display_layout: figurine.display_layout,
+            display_config: figurine.display_config,
             images: images
                 .into_iter()
                 .map(|i| ImageDto::from_image(i, base_path))

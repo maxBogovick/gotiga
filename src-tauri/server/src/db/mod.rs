@@ -1216,8 +1216,8 @@ impl Repository {
         let mut tx = self.pg_pool.begin().await?;
 
         sqlx::query(
-            "INSERT INTO figurines (id, name, short_text, full_description, dimensions, material, technique, year, passport_number, edition, created_period, care_instructions, provenance_note, authenticity_note, included_items, ambience_path, video_url, secret_text, is_visible, is_featured, status, sort_order, open_from_min, open_until_min, sealed_door_image, showing_room_id, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, NOW())
+            "INSERT INTO figurines (id, name, short_text, full_description, dimensions, material, technique, year, passport_number, edition, created_period, care_instructions, provenance_note, authenticity_note, included_items, ambience_path, video_url, secret_text, is_visible, is_featured, status, sort_order, open_from_min, open_until_min, sealed_door_image, showing_room_id, display_layout, display_config, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, NOW())
              ON CONFLICT (id) DO UPDATE SET
                name=EXCLUDED.name, short_text=EXCLUDED.short_text, full_description=EXCLUDED.full_description,
                dimensions=EXCLUDED.dimensions, material=EXCLUDED.material, technique=EXCLUDED.technique,
@@ -1229,7 +1229,8 @@ impl Repository {
                status=EXCLUDED.status, sort_order=EXCLUDED.sort_order,
                open_from_min=EXCLUDED.open_from_min, open_until_min=EXCLUDED.open_until_min,
                sealed_door_image=EXCLUDED.sealed_door_image,
-               showing_room_id=EXCLUDED.showing_room_id, updated_at=NOW()"
+               showing_room_id=EXCLUDED.showing_room_id,
+               display_layout=EXCLUDED.display_layout, display_config=EXCLUDED.display_config, updated_at=NOW()"
         )
         .bind(id).bind(&f.name).bind(&f.short_text).bind(&f.full_description)
         .bind(&f.dimensions).bind(&f.material).bind(&f.technique).bind(f.year)
@@ -1239,7 +1240,7 @@ impl Repository {
         .bind(&f.ambience_path).bind(&f.video_url).bind(&f.secret_text)
         .bind(f.is_visible).bind(f.is_featured).bind(&f.status).bind(f.sort_order)
         .bind(f.open_from_min).bind(f.open_until_min).bind(&f.sealed_door_image)
-        .bind(showing_room_uuid)
+        .bind(showing_room_uuid).bind(&f.display_layout).bind(&f.display_config)
         .execute(&mut *tx).await?;
 
         sqlx::query("DELETE FROM images WHERE figurine_id = $1")

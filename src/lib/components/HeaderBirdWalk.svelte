@@ -107,8 +107,10 @@
 
   onMount(schedule);
   onDestroy(() => {
-    clearTimeout(timerId);
-    cancelAnimationFrame(rafId);
+    if (typeof window !== 'undefined') {
+      clearTimeout(timerId);
+      cancelAnimationFrame(rafId);
+    }
   });
 </script>
 

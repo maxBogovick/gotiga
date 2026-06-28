@@ -1,0 +1,553 @@
+/* ── Layout: Broadside — dark split-screen (photo fixed left, content scrolls right) ── */
+
+/* Warm near-black ground — figurines were photographed for exactly this dark */
+/* --dc-bg is set by FigurineDetailView when display_config overrides the background */
+.bd-root {
+  --bd-bg-default: color-mix(in srgb, var(--color-ink-primary) 96%, var(--color-ember));
+  --bd-bg:    var(--dc-bg, var(--bd-bg-default));
+  --bd-paper: #f0e4cc;
+
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: start;    /* lets left col stay sticky while right column grows */
+  background: var(--bd-bg);
+  color: var(--bd-paper);
+}
+
+/* Pull the dark background behind the topnav and page-root decorations */
+/* --dc-bg is set on .page-root via inline style; fall back to the default dark */
+.page-root:has(.bd-root) {
+  background: var(--dc-bg, color-mix(in srgb, var(--color-ink-primary) 96%, var(--color-ember)));
+}
+.page-root:has(.bd-root)::before,
+.page-root:has(.bd-root)::after {
+  opacity: 0.015;
+}
+
+/* ── Left: sticky photo column ──────────────────────────────────────── */
+
+.bd-photo-col {
+  position: sticky;
+  top: var(--site-header-h, 78px);
+  height: calc(100vh - var(--site-header-h, 78px));
+  overflow: hidden;
+}
+
+.bd-plate {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  /* Darker mat behind the image while it loads */
+  background: color-mix(in srgb, var(--bd-bg) 92%, var(--color-ember));
+}
+
+/* Bottom gradient so dot-nav and plate buttons read against the image */
+.bd-photo-fade {
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 180px;
+  background: linear-gradient(to top, var(--bd-bg) 0%, transparent 100%);
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* Dot navigation: active = ember horizontal pill, inactive = dim circle
+   Positioned inside bd-plate so it sits above the fade gradient */
+.bd-dots {
+  position: absolute;
+  bottom: 1.25rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  z-index: 8;
+}
+
+.bd-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bd-paper) 28%, transparent);
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  transition:
+    width 200ms cubic-bezier(0.25, 1, 0.5, 1),
+    background 200ms ease;
+}
+
+.bd-dot:hover {
+  background: color-mix(in srgb, var(--bd-paper) 52%, transparent);
+}
+
+.bd-dot--on {
+  width: 18px;
+  background: var(--color-ember);
+}
+
+/* ── Right: scrollable content column ───────────────────────────────── */
+
+.bd-content-col {
+  min-height: calc(100vh - var(--site-header-h, 78px));
+}
+
+.bd-inner {
+  padding: 3rem 3.5rem 7rem 3rem;
+}
+
+/* Eyebrow */
+.bd-eyebrow {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.58rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--bd-paper) 36%, transparent);
+  margin: 0 0 1rem;
+}
+
+.bd-eye-sep {
+  display: inline-block;
+  margin: 0 0.35em;
+  opacity: 0.45;
+}
+
+/* ── Title: dark-mode override of the shared figurine-title class ── */
+.bd-root .figurine-title {
+  font-weight: 300;
+  color: var(--bd-paper);
+  letter-spacing: -0.015em;
+  margin-bottom: 0.5rem;
+  /* do not set max-width here — let each --medium / --long variant control it */
+}
+
+/* Long names: fill the column width and use tighter leading */
+.bd-root .figurine-title.figurine-title--long {
+  max-width: none;
+  line-height: 1.22;
+  letter-spacing: -0.01em;
+  text-wrap: pretty;
+}
+
+/* Subtitle: technique · series */
+.bd-subtitle {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--bd-paper) 34%, transparent);
+  margin: 0 0 1.5rem;
+}
+
+/* Short lore */
+.bd-lore {
+  font-family: 'Georgia', serif;
+  font-style: italic;
+  font-size: 0.95rem;
+  line-height: 1.82;
+  color: color-mix(in srgb, var(--bd-paper) 68%, transparent);
+  margin: 0 0 1.75rem;
+  max-width: 52ch;
+}
+
+/* ── Attribute tiles ─────────────────────────────────────────────────── */
+
+.bd-attrs {
+  display: flex;
+  align-items: stretch;
+  background: color-mix(in srgb, var(--bd-paper) 4%, transparent);
+  border: 1px solid color-mix(in srgb, var(--bd-paper) 7%, transparent);
+  border-radius: 6px;
+  overflow: hidden;
+  margin: 0 0 2rem;
+}
+
+.bd-attr {
+  flex: 1;
+  padding: 0.7rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+}
+
+.bd-attr-sep {
+  width: 1px;
+  background: color-mix(in srgb, var(--bd-paper) 7%, transparent);
+  flex-shrink: 0;
+  align-self: stretch;
+}
+
+.bd-attr-label {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.58rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--bd-paper) 34%, transparent);
+  margin: 0;
+}
+
+.bd-attr-value {
+  font-family: 'Georgia', serif;
+  font-size: 0.83rem;
+  color: color-mix(in srgb, var(--bd-paper) 75%, transparent);
+  margin: 0;
+}
+
+/* ── Section divider: 1px rule + centred ◆ ──────────────────────────── */
+
+.bd-div {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 2rem 0;
+}
+
+.bd-div::before {
+  content: '';
+  position: absolute;
+  inset: 50% 0 auto;
+  height: 1px;
+  background: color-mix(in srgb, var(--bd-paper) 9%, transparent);
+}
+
+.bd-div span {
+  position: relative;
+  font-size: 0.38rem;
+  line-height: 1;
+  color: color-mix(in srgb, var(--color-ember) 45%, transparent);
+  background: var(--bd-bg);
+  padding: 0 0.65rem;
+  letter-spacing: 0;
+}
+
+/* ── История ─────────────────────────────────────────────────────────── */
+
+.bd-history {
+  position: relative;
+}
+
+/* History text: dark-mode colour override */
+.bd-root .history-body {
+  font-family: 'Georgia', serif;
+  font-style: italic;
+  font-size: 0.94rem;
+  line-height: 1.88;
+  color: color-mix(in srgb, var(--bd-paper) 68%, transparent);
+  margin: 0;
+  max-width: 58ch;
+}
+
+/* Drop-cap: Fraunces, ember accent */
+.bd-root .bd-drop-cap::first-letter {
+  font-family: 'Fraunces', 'Georgia', serif;
+  font-size: 3.5em;
+  font-weight: 300;
+  font-style: normal;
+  float: left;
+  line-height: 0.82;
+  margin: 0.05em 0.12em 0 0;
+  color: var(--color-ember);
+}
+
+/* Ink-reveal words */
+.bd-root .ink-word {
+  color: color-mix(in srgb, var(--bd-paper) 68%, transparent);
+}
+
+/* ── Процесс (making) ────────────────────────────────────────────────── */
+
+.bd-making {
+  margin-bottom: 0.25rem;
+}
+
+.bd-making-kicker {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.58rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--bd-paper) 34%, transparent);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 0.9rem;
+}
+
+/* Live pulse dot for in_progress */
+.bd-root .making-live {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-ember);
+  animation: bd-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes bd-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%       { transform: scale(0.6); opacity: 0.7; }
+}
+
+/* Horizontal strip of process cards, no scrollbar */
+.bd-making-strip {
+  display: flex;
+  gap: 0.65rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+  margin-bottom: 1rem;
+  padding-bottom: 0.2rem;
+}
+.bd-making-strip::-webkit-scrollbar { display: none; }
+
+.bd-making-card {
+  flex: 0 0 auto;
+  width: 154px;
+}
+
+.bd-making-img-wrap {
+  position: relative;
+  aspect-ratio: 3 / 2;
+  overflow: hidden;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--bd-paper) 5%, transparent);
+}
+
+.bd-making-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.bd-making-placeholder {
+  width: 100%;
+  height: 100%;
+}
+
+/* Step number: lower-left, very small, dim */
+.bd-making-num {
+  position: absolute;
+  bottom: 0.38rem;
+  left: 0.42rem;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.55rem;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  color: color-mix(in srgb, var(--bd-paper) 55%, transparent);
+}
+
+/* Mirror-link for dark context */
+.bd-root .mirror-link {
+  color: color-mix(in srgb, var(--bd-paper) 50%, transparent);
+  border-color: color-mix(in srgb, var(--bd-paper) 10%, transparent);
+}
+.bd-root .mirror-link:hover {
+  color: color-mix(in srgb, var(--bd-paper) 78%, transparent);
+  border-color: color-mix(in srgb, var(--bd-paper) 20%, transparent);
+}
+.bd-root .mirror-link-label,
+.bd-root .mirror-link-count {
+  color: inherit;
+}
+
+/* ── Связанные работы ────────────────────────────────────────────────── */
+
+.bd-related-label {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.58rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--bd-paper) 34%, transparent);
+  margin: 0 0 0.9rem;
+}
+
+/* Horizontal scroll, no scrollbar */
+.bd-related-strip {
+  display: flex;
+  gap: 0.65rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-bottom: 0.2rem;
+}
+.bd-related-strip::-webkit-scrollbar { display: none; }
+
+.bd-related-card {
+  flex: 0 0 160px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.bd-related-img-wrap {
+  position: relative;
+  aspect-ratio: 2 / 3;
+  overflow: hidden;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--bd-paper) 5%, transparent);
+  margin-bottom: 0.45rem;
+  transition: box-shadow 200ms ease;
+}
+
+/* Ember outline on hover */
+.bd-related-card:hover .bd-related-img-wrap {
+  box-shadow: 0 0 0 1px var(--color-ember);
+}
+
+.bd-related-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 340ms ease;
+}
+.bd-related-card:hover .bd-related-img {
+  transform: scale(1.04);
+}
+
+.bd-related-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Fraunces', serif;
+  font-size: 1.4rem;
+  color: color-mix(in srgb, var(--bd-paper) 16%, transparent);
+}
+
+/* Status badge: lower-left */
+.bd-related-status {
+  position: absolute;
+  bottom: 0.38rem;
+  left: 0.38rem;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.54rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  padding: 0.12em 0.45em;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--bd-bg) 70%, transparent);
+  backdrop-filter: blur(6px);
+  color: color-mix(in srgb, var(--bd-paper) 60%, transparent);
+}
+
+.bd-related-status--available { color: #8db87e; }
+.bd-related-status--sold      { color: color-mix(in srgb, var(--bd-paper) 30%, transparent); }
+
+.bd-related-name {
+  font-family: 'Georgia', serif;
+  font-size: 0.78rem;
+  line-height: 1.32;
+  color: color-mix(in srgb, var(--bd-paper) 55%, transparent);
+  margin: 0;
+}
+
+/* ── Shared component colour overrides for dark ground ───────────────── */
+
+/* figurine-status-panel, misc labels */
+.bd-root .sec-label {
+  color: color-mix(in srgb, var(--bd-paper) 38%, transparent);
+}
+.bd-root .sec-rule {
+  background: color-mix(in srgb, var(--bd-paper) 9%, transparent);
+}
+
+/* Claims / entry-record */
+.bd-root .entry-record {
+  background: color-mix(in srgb, var(--bd-paper) 3%, transparent);
+  border-color: color-mix(in srgb, var(--bd-paper) 7%, transparent);
+  color: color-mix(in srgb, var(--bd-paper) 68%, transparent);
+}
+.bd-root .entry-record > summary {
+  color: color-mix(in srgb, var(--bd-paper) 50%, transparent);
+}
+.bd-root .entry-record > summary:hover {
+  color: color-mix(in srgb, var(--bd-paper) 80%, transparent);
+}
+
+.bd-root .claims-panel {
+  background: color-mix(in srgb, var(--bd-paper) 3%, transparent);
+  border-color: color-mix(in srgb, var(--bd-paper) 7%, transparent);
+}
+.bd-root .claims-panel-header {
+  color: color-mix(in srgb, var(--bd-paper) 40%, transparent);
+}
+
+.bd-root .claim-lookup-link,
+.bd-root .claim-lookup-btn {
+  color: color-mix(in srgb, var(--bd-paper) 50%, transparent);
+  border-color: color-mix(in srgb, var(--bd-paper) 12%, transparent);
+}
+.bd-root .claim-lookup-link:hover,
+.bd-root .claim-lookup-btn:hover {
+  color: color-mix(in srgb, var(--bd-paper) 80%, transparent);
+}
+.bd-root .claim-lookup-input {
+  background: color-mix(in srgb, var(--bd-paper) 5%, transparent);
+  color: var(--bd-paper);
+  border-color: color-mix(in srgb, var(--bd-paper) 12%, transparent);
+}
+.bd-root .claim-lookup-close {
+  color: color-mix(in srgb, var(--bd-paper) 40%, transparent);
+}
+.bd-root .claim-lookup-close:hover {
+  color: color-mix(in srgb, var(--bd-paper) 75%, transparent);
+}
+.bd-root .claim-err {
+  color: color-mix(in srgb, var(--color-ember) 78%, transparent);
+}
+
+/* Schedule / presence */
+.bd-root .presence-note {
+  color: color-mix(in srgb, var(--bd-paper) 44%, transparent);
+}
+
+/* Video */
+.bd-root .video-frame {
+  border-color: color-mix(in srgb, var(--bd-paper) 9%, transparent);
+  background: color-mix(in srgb, var(--bd-paper) 3%, transparent);
+}
+.bd-root .video-caption {
+  color: color-mix(in srgb, var(--bd-paper) 30%, transparent);
+}
+.bd-root .video-fs-btn {
+  color: color-mix(in srgb, var(--bd-paper) 48%, transparent);
+  border-color: color-mix(in srgb, var(--bd-paper) 12%, transparent);
+}
+.bd-root .video-fs-btn:hover {
+  color: color-mix(in srgb, var(--bd-paper) 80%, transparent);
+}
+
+/* ── Mobile: photo top 55vh, content below ───────────────────────────── */
+
+@media (max-width: 768px) {
+  .bd-root {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .bd-photo-col {
+    position: relative;
+    top: 0;
+    height: 55vh;
+    width: 100%;
+  }
+
+  .bd-content-col {
+    min-height: auto;
+  }
+
+  .bd-inner {
+    padding: 1.75rem 1.25rem 5rem;
+  }
+
+  .bd-root .figurine-title {
+    font-size: clamp(1.65rem, 6.5vw, 2.4rem);
+    max-width: none;
+  }
+
+  .bd-attrs {
+    flex-wrap: wrap;
+  }
+  .bd-attr {
+    min-width: 33%;
+  }
+}
