@@ -172,6 +172,10 @@ pub struct Figurine {
     pub display_layout: Option<String>,
     /// JSON blob for per-figurine display customisation ({background, blockOrder}).
     pub display_config: Option<String>,
+    /// "First look" early-release window. While now < this, the work is held back
+    /// from the public archive and shown only on the book-holders' shelf. NULL →
+    /// no window (ordinary public work).
+    pub first_look_until: Option<DateTime<Utc>>,
     pub status: FigurineStatus,
     pub sort_order: i32,
     pub created_at: DateTime<Utc>,
@@ -292,6 +296,9 @@ pub struct FigurineListItemDto {
     pub sealed_door_image: Option<String>,
     /// Showing room this work belongs to (null → uses its own window).
     pub showing_room_id: Option<String>,
+    /// "First look" early-release window — set while the work is a book-holders'
+    /// preview; null once public. Lets the shelf note when it opens to all.
+    pub first_look_until: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -404,6 +411,8 @@ pub struct FigurineDto {
     pub display_layout: Option<String>,
     /// JSON blob for per-figurine display customisation ({background, blockOrder}).
     pub display_config: Option<String>,
+    /// "First look" early-release window (null once public).
+    pub first_look_until: Option<DateTime<Utc>>,
 
     #[serde(default)]
     pub images: Vec<ImageDto>,
@@ -668,6 +677,10 @@ pub struct SaveFigurineRequest {
     /// JSON blob for per-figurine display customisation ({background, blockOrder}).
     #[serde(default)]
     pub display_config: Option<String>,
+    /// "First look" early-release window as an RFC-3339 / ISO-8601 string (or
+    /// null to clear). Parsed to a timestamptz on save.
+    #[serde(default)]
+    pub first_look_until: Option<String>,
     #[serde(default)]
     pub images: Vec<SaveImageRequest>,
     #[serde(default)]
@@ -1648,6 +1661,61 @@ pub struct WaitlistCancelInfo {
     pub figurine_id: String,
     pub figurine_name: String,
     pub position: i64,
+    pub created_at: String,
+}
+
+// ============================================================
+// NEWSLETTER — the house "visitor book"
+// ============================================================
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct Subscriber {
+    pub id: Uuid,
+    pub email: String,
+    pub name: Option<String>,
+    pub source: String,
+    pub lang: String,
+    pub unsubscribe_token: String,
+    pub ip: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub unsubscribed_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateSubscriptionRequest {
+    pub email: String,
+    pub name: Option<String>,
+    pub source: Option<String>,
+    pub lang: Option<String>,
+}
+
+/// Returned to the visitor right after signing the book — their receipt and
+/// the unguessable token that backs the unsubscribe link.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscriptionCreatedResponse {
+    pub unsubscribe_token: String,
+    /// True when this email was already an active subscriber (idempotent re-sign).
+    pub already_subscribed: bool,
+}
+
+/// Looked up by unsubscribe token so a visitor can confirm leaving the book.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscriberInfo {
+    pub email: String,
+}
+
+/// Admin view of one active subscriber.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscriberDto {
+    pub id: String,
+    pub email: String,
+    pub name: Option<String>,
+    pub source: String,
+    pub lang: String,
     pub created_at: String,
 }
 

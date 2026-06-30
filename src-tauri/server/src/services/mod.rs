@@ -439,6 +439,7 @@ impl AppService {
             open_until_min: f.open_until_min,
             sealed_door_image: f.sealed_door_image,
             showing_room_id: f.showing_room_id.map(|u| u.to_string()),
+            first_look_until: f.first_look_until,
         }
     }
 
@@ -456,6 +457,22 @@ impl AppService {
             })
             .collect();
         Ok(crate::models::FigurinesPage { items, total, page, per_page })
+    }
+
+    /// Works inside their "first look" window — the book-holders' shelf. Public
+    /// endpoint (membership is device-local, not an auth boundary); the home page
+    /// renders these only for a signed visitor.
+    pub async fn list_first_look_figurines(&self) -> Result<Vec<FigurineListItemDto>> {
+        let figurines = self.repo.get_first_look_figurines().await?;
+        let ids: Vec<Uuid> = figurines.iter().map(|f| f.id).collect();
+        let faces = self.repo.get_face_images_for_figurines(&ids).await?;
+        Ok(figurines
+            .into_iter()
+            .map(|f| {
+                let face = faces.get(&f.id);
+                self.to_list_item(f, face)
+            })
+            .collect())
     }
 
     pub async fn list_in_progress_figurines(&self) -> Result<Vec<FigurineListItemDto>> {
@@ -578,6 +595,7 @@ impl AppService {
             showing_room_id: figurine.showing_room_id.map(|u| u.to_string()),
             display_layout: figurine.display_layout,
             display_config: figurine.display_config,
+            first_look_until: figurine.first_look_until,
             images: image_dtos,
             process_steps: step_dtos,
             related_items,
@@ -3568,6 +3586,169 @@ impl AppService {
                 }
             })
             .collect())
+    }
+
+    // === NEWSLETTER ("visitor book") ===
+
+    /// Sign the visitor book (single opt-in — active immediately). Sends a
+    /// welcome letter only for a genuinely new signature, so a re-sign doesn't
+    /// re-mail an existing subscriber.
+    pub async fn subscribe(
+        &self,
+        req: crate::models::CreateSubscriptionRequest,
+        ip: Option<String>,
+    ) -> Result<crate::models::SubscriptionCreatedResponse> {
+        let email = req.email.trim().to_string();
+        if !email.contains('@') || email.len() > 200 {
+            return Err(AppError::BadRequest("Valid email is required".to_string()));
+        }
+        if let Some(name) = &req.name
+            && name.chars().count() > 100
+        {
+            return Err(AppError::BadRequest(
+                "Name is too long (max 100 characters)".to_string(),
+            ));
+        }
+        let normalized = crate::models::CreateSubscriptionRequest {
+            email,
+            name: req
+                .name
+                .as_ref()
+                .map(|n| n.trim().to_string())
+                .filter(|n| !n.is_empty()),
+            source: req.source.clone(),
+            lang: req.lang.clone(),
+        };
+        let (sub, already) = self.repo.subscribe(&normalized, ip.as_deref()).await?;
+        self.observability
+            .record_business_event("newsletter_subscribed", "ok");
+        Self::log_domain_event("newsletter_subscribed", "subscriber", sub.id, "ok");
+        if !already {
+            let _ = self.send_welcome_email(&sub).await;
+        }
+        Ok(crate::models::SubscriptionCreatedResponse {
+            unsubscribe_token: sub.unsubscribe_token,
+            already_subscribed: already,
+        })
+    }
+
+    /// View a subscription by its unsubscribe token (the unsubscribe page).
+    pub async fn get_subscriber_by_token(
+        &self,
+        token: &str,
+    ) -> Result<Option<crate::models::SubscriberInfo>> {
+        Ok(self
+            .repo
+            .get_subscriber_by_token(token)
+            .await?
+            .map(|s| crate::models::SubscriberInfo { email: s.email }))
+    }
+
+    /// Leave the book by token. Idempotent.
+    pub async fn unsubscribe_by_token(&self, token: &str) -> Result<()> {
+        match self.repo.unsubscribe_by_token(token).await? {
+            Some(s) => Self::log_domain_event("newsletter_unsubscribed", "subscriber", s.id, "ok"),
+            None => {
+                Self::log_domain_event("newsletter_unsubscribed", "subscriber", "unknown", "noop")
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn list_subscribers_admin(&self) -> Result<Vec<crate::models::SubscriberDto>> {
+        let subs = self.repo.list_subscribers_admin().await?;
+        Ok(subs
+            .into_iter()
+            .map(|s| crate::models::SubscriberDto {
+                id: s.id.to_string(),
+                email: s.email,
+                name: s.name,
+                source: s.source,
+                lang: s.lang,
+                created_at: s.created_at.to_rfc3339(),
+            })
+            .collect())
+    }
+
+    pub async fn remove_subscriber(&self, id: Uuid) -> Result<()> {
+        self.repo.remove_subscriber(id).await?;
+        Self::log_domain_event("newsletter_removed", "subscriber", id, "ok");
+        Ok(())
+    }
+
+    /// A quiet welcome letter — confirms the signature and carries the
+    /// unsubscribe door. Fire-and-forget: no SMTP configured → logged and skipped
+    /// (the subscription is already active either way).
+    async fn send_welcome_email(&self, sub: &crate::models::Subscriber) -> Result<()> {
+        use lettre::message::header::ContentType;
+        use lettre::transport::smtp::authentication::Credentials;
+        use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
+
+        let db = self.get_smtp_settings().await.unwrap_or_default();
+        let host = db.host.as_deref().or(self.config.smtp_host.as_deref());
+        let user = db.user.as_deref().or(self.config.smtp_user.as_deref());
+        let pass = db.pass.as_deref().or(self.config.smtp_pass.as_deref());
+        let from = db.from.as_deref().or(self.config.smtp_from.as_deref());
+        let port = db.port.or(self.config.smtp_port).unwrap_or(587);
+
+        let (Some(host), Some(user), Some(pass), Some(from)) = (host, user, pass, from) else {
+            tracing::warn!(
+                "SMTP not configured — welcome letter not sent to {}",
+                sub.email
+            );
+            return Ok(());
+        };
+
+        let base = self.config.public_url.trim_end_matches('/');
+        let unsub = format!("{}/unsubscribe/{}", base, sub.unsubscribe_token);
+        let ru = sub.lang == "ru";
+        let subject = if ru {
+            "Ваше имя вписано в книгу дома"
+        } else {
+            "Your name is in the house book"
+        };
+        let body_text = if ru {
+            format!(
+                "Дом запомнил вас.\n\n\
+                 Теперь вести из мастерской — новые работы, открытие показов — будут находить \
+                 вас первыми. Без шума и спешки.\n\n\
+                 Если захотите, чтобы дом забыл ваше имя, эта дверь всегда открыта:\n{unsub}",
+            )
+        } else {
+            format!(
+                "The house has remembered you.\n\n\
+                 Letters from the workshop — new works, the opening of showings — will now \
+                 reach you first. No noise, no haste.\n\n\
+                 Should you ever wish the house to forget your name, this door stays open:\n{unsub}",
+            )
+        };
+
+        let email = Message::builder()
+            .from(
+                from.parse()
+                    .map_err(|_| AppError::Internal("Invalid SMTP from address".into()))?,
+            )
+            .to(sub
+                .email
+                .parse()
+                .map_err(|_| AppError::Internal("Invalid recipient address".into()))?)
+            .subject(subject)
+            .header(ContentType::TEXT_PLAIN)
+            .body(body_text)
+            .map_err(|e| AppError::Internal(format!("Email build error: {e}")))?;
+
+        let creds = Credentials::new(user.to_string(), pass.to_string());
+        let mailer = AsyncSmtpTransport::<Tokio1Executor>::relay(host)
+            .map_err(|e| AppError::Internal(format!("SMTP relay error: {e}")))?
+            .port(port)
+            .credentials(creds)
+            .build();
+
+        mailer
+            .send(email)
+            .await
+            .map_err(|e| AppError::Internal(format!("SMTP send error: {e}")))?;
+        Ok(())
     }
 
     pub async fn remove_waitlist_entry(&self, id: uuid::Uuid) -> Result<()> {

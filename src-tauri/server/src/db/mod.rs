@@ -1024,6 +1024,8 @@ impl Repository {
             QueryBuilder::new("SELECT COUNT(*) FROM figurines WHERE 1=1");
         if visible_only {
             count_builder.push(" AND is_visible = true");
+            // Hold first-look works out of the public archive until their hour.
+            count_builder.push(" AND (first_look_until IS NULL OR first_look_until <= NOW())");
         }
         if let Some(ref s) = status {
             count_builder.push(" AND status::text = ").push_bind(s.clone());
@@ -1047,6 +1049,7 @@ impl Repository {
             QueryBuilder::new("SELECT * FROM figurines WHERE 1=1");
         if visible_only {
             items_builder.push(" AND is_visible = true");
+            items_builder.push(" AND (first_look_until IS NULL OR first_look_until <= NOW())");
         }
         if let Some(s) = status {
             items_builder.push(" AND status::text = ").push_bind(s);
@@ -1075,6 +1078,22 @@ impl Repository {
             .fetch_optional(&self.pg_pool)
             .await?;
         Ok(figurine)
+    }
+
+    /// Works currently inside their "first look" window — visible, with a release
+    /// time still in the future. Soonest to open first. These are deliberately
+    /// excluded from the public archive (see `get_all_figurines`) and surfaced
+    /// only on the book-holders' shelf.
+    pub async fn get_first_look_figurines(&self) -> Result<Vec<Figurine>> {
+        Ok(sqlx::query_as::<_, Figurine>(
+            "SELECT * FROM figurines
+             WHERE is_visible = true
+               AND first_look_until IS NOT NULL
+               AND first_look_until > NOW()
+             ORDER BY first_look_until ASC",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?)
     }
 
     pub async fn get_images_by_figurine(&self, figurine_id: Uuid) -> Result<Vec<Image>> {
@@ -1213,11 +1232,31 @@ impl Repository {
         let showing_room_uuid =
             f.showing_room_id.as_deref().and_then(|s| Uuid::parse_str(s).ok());
 
+        // Strict parse: a malformed first-look date aborts the save (it gates
+        // archive visibility, so a silent NULL could expose a work early).
+        let first_look_until = match f
+            .first_look_until
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            Some(s) => Some(
+                chrono::DateTime::parse_from_rfc3339(s)
+                    .map_err(|_| {
+                        AppError::BadRequest(
+                            "Invalid first_look_until (expected ISO-8601)".into(),
+                        )
+                    })?
+                    .with_timezone(&chrono::Utc),
+            ),
+            None => None,
+        };
+
         let mut tx = self.pg_pool.begin().await?;
 
         sqlx::query(
-            "INSERT INTO figurines (id, name, short_text, full_description, dimensions, material, technique, year, passport_number, edition, created_period, care_instructions, provenance_note, authenticity_note, included_items, ambience_path, video_url, secret_text, is_visible, is_featured, status, sort_order, open_from_min, open_until_min, sealed_door_image, showing_room_id, display_layout, display_config, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, NOW())
+            "INSERT INTO figurines (id, name, short_text, full_description, dimensions, material, technique, year, passport_number, edition, created_period, care_instructions, provenance_note, authenticity_note, included_items, ambience_path, video_url, secret_text, is_visible, is_featured, status, sort_order, open_from_min, open_until_min, sealed_door_image, showing_room_id, display_layout, display_config, first_look_until, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, NOW())
              ON CONFLICT (id) DO UPDATE SET
                name=EXCLUDED.name, short_text=EXCLUDED.short_text, full_description=EXCLUDED.full_description,
                dimensions=EXCLUDED.dimensions, material=EXCLUDED.material, technique=EXCLUDED.technique,
@@ -1230,7 +1269,8 @@ impl Repository {
                open_from_min=EXCLUDED.open_from_min, open_until_min=EXCLUDED.open_until_min,
                sealed_door_image=EXCLUDED.sealed_door_image,
                showing_room_id=EXCLUDED.showing_room_id,
-               display_layout=EXCLUDED.display_layout, display_config=EXCLUDED.display_config, updated_at=NOW()"
+               display_layout=EXCLUDED.display_layout, display_config=EXCLUDED.display_config,
+               first_look_until=EXCLUDED.first_look_until, updated_at=NOW()"
         )
         .bind(id).bind(&f.name).bind(&f.short_text).bind(&f.full_description)
         .bind(&f.dimensions).bind(&f.material).bind(&f.technique).bind(f.year)
@@ -1241,6 +1281,7 @@ impl Repository {
         .bind(f.is_visible).bind(f.is_featured).bind(&f.status).bind(f.sort_order)
         .bind(f.open_from_min).bind(f.open_until_min).bind(&f.sealed_door_image)
         .bind(showing_room_uuid).bind(&f.display_layout).bind(&f.display_config)
+        .bind(first_look_until)
         .execute(&mut *tx).await?;
 
         sqlx::query("DELETE FROM images WHERE figurine_id = $1")
@@ -2981,6 +3022,96 @@ impl Repository {
 
     pub async fn remove_from_waitlist(&self, id: Uuid) -> Result<()> {
         sqlx::query("DELETE FROM figurine_waitlist WHERE id = $1")
+            .bind(id)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
+    // === NEWSLETTER ("visitor book") ===
+
+    /// Sign the book. Idempotent: a repeat sign-up of the same email updates the
+    /// row in place and clears any prior unsubscribe (so the unique email index
+    /// can't be violated by a race). Returns the row and whether the address was
+    /// already an active subscriber — used only to vary the visitor's wording.
+    pub async fn subscribe(
+        &self,
+        req: &crate::models::CreateSubscriptionRequest,
+        ip: Option<&str>,
+    ) -> Result<(crate::models::Subscriber, bool)> {
+        // Cosmetic "already in the book" flag; the unique index is what actually
+        // guarantees no duplicates, so a race here is harmless.
+        let (existed,): (bool,) = sqlx::query_as(
+            "SELECT EXISTS(SELECT 1 FROM newsletter_subscribers WHERE lower(email) = lower($1) AND unsubscribed_at IS NULL)",
+        )
+        .bind(&req.email)
+        .fetch_one(&self.pg_pool)
+        .await?;
+
+        let token = Self::generate_cancel_token();
+        let source = req.source.as_deref().unwrap_or("home");
+        let lang = req.lang.as_deref().unwrap_or("en");
+        let sub = sqlx::query_as::<_, crate::models::Subscriber>(
+            "INSERT INTO newsletter_subscribers (email, name, source, lang, unsubscribe_token, ip)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (lower(email)) DO UPDATE SET
+               name = COALESCE(EXCLUDED.name, newsletter_subscribers.name),
+               lang = EXCLUDED.lang,
+               unsubscribed_at = NULL
+             RETURNING *",
+        )
+        .bind(&req.email)
+        .bind(&req.name)
+        .bind(source)
+        .bind(lang)
+        .bind(&token)
+        .bind(ip)
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok((sub, existed))
+    }
+
+    /// Look up a subscriber by unsubscribe token (the unsubscribe page's receipt
+    /// lookup). Returns the row even if already unsubscribed, so the page is
+    /// idempotent.
+    pub async fn get_subscriber_by_token(
+        &self,
+        token: &str,
+    ) -> Result<Option<crate::models::Subscriber>> {
+        Ok(sqlx::query_as::<_, crate::models::Subscriber>(
+            "SELECT * FROM newsletter_subscribers WHERE unsubscribe_token = $1",
+        )
+        .bind(token)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    /// Soft-unsubscribe by token. Idempotent — returns the row only on the first
+    /// call that actually flips it (already-unsubscribed rows return None).
+    pub async fn unsubscribe_by_token(
+        &self,
+        token: &str,
+    ) -> Result<Option<crate::models::Subscriber>> {
+        Ok(sqlx::query_as::<_, crate::models::Subscriber>(
+            "UPDATE newsletter_subscribers SET unsubscribed_at = NOW()
+             WHERE unsubscribe_token = $1 AND unsubscribed_at IS NULL
+             RETURNING *",
+        )
+        .bind(token)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn list_subscribers_admin(&self) -> Result<Vec<crate::models::Subscriber>> {
+        Ok(sqlx::query_as::<_, crate::models::Subscriber>(
+            "SELECT * FROM newsletter_subscribers WHERE unsubscribed_at IS NULL ORDER BY created_at DESC",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn remove_subscriber(&self, id: Uuid) -> Result<()> {
+        sqlx::query("DELETE FROM newsletter_subscribers WHERE id = $1")
             .bind(id)
             .execute(&self.pg_pool)
             .await?;

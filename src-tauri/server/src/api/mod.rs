@@ -94,6 +94,10 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 "/figurines/in-progress",
                 get(handlers::list_in_progress_figurines),
             )
+            .route(
+                "/figurines/first-look",
+                get(handlers::list_first_look_figurines),
+            )
             .route("/figurines/:id", get(handlers::get_figurine))
             .route("/content/texts/:param", get(handlers::get_texts_by_param))
             .route("/cabinet/zones", get(handlers::get_cabinet_zones))
@@ -147,6 +151,12 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             .route(
                 "/orders/notify/:token",
                 get(handlers::get_notify_by_token).post(handlers::cancel_notify_by_token),
+            )
+            // === NEWSLETTER ("visitor book") ===
+            .route("/subscribe", post(handlers::subscribe))
+            .route(
+                "/subscribe/leave/:token",
+                get(handlers::get_subscription_by_token).post(handlers::unsubscribe_by_token),
             )
             // === PUBLIC LOGIN ===
             .route("/admin/login", post(handlers::admin_login))
@@ -466,6 +476,18 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                     config.clone(),
                     auth_middleware,
                 )),
+            )
+            .route(
+                "/admin/subscribers",
+                get(handlers::admin_list_subscribers).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/subscribers/:id",
+                delete(handlers::admin_remove_subscriber).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
             )
             // === USER AUTH ===
             .route("/auth/register", post(handlers::user_register))

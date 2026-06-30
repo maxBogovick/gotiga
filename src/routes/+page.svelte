@@ -12,6 +12,9 @@
     import HomeFigurineTile from '$lib/components/HomeFigurineTile.svelte';
     import HouseNoticeBoard from '$lib/components/HouseNoticeBoard.svelte';
     import VisitLedger from '$lib/components/VisitLedger.svelte';
+    import VisitorBook from '$lib/components/VisitorBook.svelte';
+    import FirstLook from '$lib/components/FirstLook.svelte';
+    import { visitorBook } from '$lib/stores/visitor-book.svelte';
     import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
     import { houseClock } from '$lib/stores/house-clock.svelte';
     import { showingRooms } from '$lib/stores/showing-rooms.svelte';
@@ -155,6 +158,11 @@
                     : availableFigurines
     );
     let visibleWorkFigurines = $derived(activeWorkFigurines.slice(0, 8));
+
+    // The book-holders' "first look" shelf: works genuinely inside their timed
+    // early-release window (held out of the public archive by the server until
+    // their hour). Rendered only when signed (see template guard).
+    let firstLookFigurines = $state<FigurineListItem[]>([]);
     let activeWorkHref = $derived(
         activeWorkFilter === 'saved'
             ? '/profile'
@@ -279,11 +287,12 @@
 
     async function init() {
         try {
-            const [dbZones, bgPath, figurines, inProgress, content, workshop] = await Promise.all([
+            const [dbZones, bgPath, figurines, inProgress, firstLook, content, workshop] = await Promise.all([
                 api.getCabinetZones().catch(() => DEFAULT_ZONES),
                 api.getMainBackground().catch(() => null),
                 api.getAllFigurines(30).catch(() => [] as FigurineListItem[]),
                 api.getInProgressFigurines().catch(() => [] as FigurineListItem[]),
+                api.getFirstLookFigurines().catch(() => [] as FigurineListItem[]),
                 api.getHomeContent().catch(() => ({
                     title: null,
                     kicker: null,
@@ -306,6 +315,7 @@
             availableTotal = figurines.filter((item) => item.status === 'available').length;
             availableFigurines = sortFeaturedFigurines(visibleFigurines.filter((item) => item.status === 'available'));
             inProgressFigurines = sortFeaturedFigurines(inProgress);
+            firstLookFigurines = firstLook;
             archivePreviewFigurines = sortFeaturedFigurines(visibleFigurines);
             heroFigurine = content.heroFigurineId
                 ? visibleFigurines.find((item) => item.id === content.heroFigurineId) ?? null
@@ -343,6 +353,7 @@
         savedFigurines.load();
         houseClock.start();
         showingRooms.load();
+        visitorBook.load();
         init();
         const reduceMq = window.matchMedia('(prefers-reduced-motion: reduce)');
         const pointerMq = window.matchMedia('(pointer: fine)');
@@ -533,6 +544,12 @@
              Hides itself when nothing is opening soon. -->
         <HouseNoticeBoard figurines={collectionFigurines} />
 
+        <!-- First look: the book-holders' privilege made visible — shown only to a
+             signed visitor, set above the general grid as a recognised courtesy. -->
+        {#if visitorBook.signed}
+            <FirstLook works={firstLookFigurines} greetName={visitorBook.name} />
+        {/if}
+
         <section id="available-works" class="context-section work-hub" aria-labelledby="context-title">
             <div class="context-hd work-hd">
                 <div>
@@ -712,6 +729,10 @@
             </div>
         </section>
         {/if}
+
+        <!-- The house guest book at the exit: sign it to receive the workshop's
+             letters first. Quiet email capture — the one channel the house owns. -->
+        <VisitorBook figurines={collectionFigurines} />
 
     </main>
 </div>

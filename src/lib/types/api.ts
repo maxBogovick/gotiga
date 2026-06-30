@@ -48,6 +48,12 @@ export interface FigurineListItem {
      * used instead of openFromMin/openUntilMin (mutually exclusive). null → own window.
      */
     showingRoomId?: string | null;
+    /**
+     * "First look" early-release window (ISO-8601). While now < this, the work is
+     * held out of the public archive and shown only on the book-holders' shelf.
+     * null → ordinary public work.
+     */
+    firstLookUntil?: string | null;
 }
 
 /** A named, shared showing window several works can point at (e.g. "Night hall"). */
@@ -151,6 +157,8 @@ export interface Figurine {
     displayLayout?: 'specimen' | 'showcase' | 'codex' | 'diptych' | 'broadside' | null;
     /** JSON string — parsed by the frontend into DisplayConfig. */
     displayConfig?: string | null;
+    /** "First look" early-release window (ISO-8601); null → ordinary public work. */
+    firstLookUntil?: string | null;
 }
 
 export type DisplayConfigBackground =
@@ -990,6 +998,33 @@ export interface WaitlistCancelInfo {
     figurineId: string;
     figurineName: string;
     position: number;
+    createdAt: string;
+}
+
+// Newsletter — the house "visitor book".
+export interface CreateSubscriptionRequest {
+    email: string;
+    name?: string | null;
+    source?: string | null;
+    lang?: string | null;
+}
+
+export interface SubscriptionCreatedResponse {
+    unsubscribeToken: string;
+    /** True when this email was already an active subscriber. */
+    alreadySubscribed: boolean;
+}
+
+export interface SubscriberInfo {
+    email: string;
+}
+
+export interface SubscriberDto {
+    id: string;
+    email: string;
+    name: string | null;
+    source: string;
+    lang: string;
     createdAt: string;
 }
 

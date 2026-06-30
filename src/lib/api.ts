@@ -47,6 +47,8 @@ import type {
     RescheduleBookingRequest,
     CreateWaitlistRequest,
     WaitlistEntryDto,
+    CreateSubscriptionRequest,
+    SubscriberDto,
     MessageThreadDto,
     ThreadMessageDto,
     ThreadDetailDto,
@@ -318,6 +320,14 @@ export const api = {
         if (isTauri) return invoke<FigurineListItem[]>('get_all_figurines')
             .then(all => all.filter(f => f.status === 'in_progress'));
         return webFetch('/figurines/in-progress');
+    },
+
+    // Works inside their "first look" early-release window — the book-holders'
+    // shelf. The home page renders these only for a signed visitor.
+    async getFirstLookFigurines(): Promise<FigurineListItem[]> {
+        if (isTauri) return invoke<FigurineListItem[]>('get_all_figurines')
+            .then(all => all.filter(f => f.firstLookUntil && new Date(f.firstLookUntil).getTime() > Date.now()));
+        return webFetch('/figurines/first-look');
     },
 
     async getAllFigurinesAdmin(): Promise<FigurineListItem[]> {
@@ -798,6 +808,41 @@ export const api = {
             method: 'POST',
             headers: authHeaders(),
         });
+    },
+
+    // === NEWSLETTER ("visitor book") ===
+
+    async subscribe(req: CreateSubscriptionRequest): Promise<import('./types/api').SubscriptionCreatedResponse> {
+        return webFetch('/subscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(req),
+        });
+    },
+
+    async getSubscriptionByToken(token: string): Promise<import('./types/api').SubscriberInfo | null> {
+        try {
+            return await webFetch(`/subscribe/leave/${token}`);
+        } catch (err) {
+            if (isNotFoundError(err)) return null;
+            throw err;
+        }
+    },
+
+    async unsubscribeByToken(token: string): Promise<void> {
+        await webFetch(`/subscribe/leave/${token}`, { method: 'POST' });
+    },
+
+    async adminListSubscribers(): Promise<SubscriberDto[]> {
+        return webFetch('/admin/subscribers', { headers: authHeaders() });
+    },
+
+    async adminRemoveSubscriber(id: string): Promise<void> {
+        const res = await fetch(`${webApiBase()}/admin/subscribers/${id}`, {
+            method: 'DELETE',
+            headers: authHeaders(),
+        });
+        if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
     },
 
     // === SHOWINGS (ADMIN) ===

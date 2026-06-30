@@ -325,6 +325,13 @@ pub async fn list_in_progress_figurines(
     Ok(Json(list))
 }
 
+pub async fn list_first_look_figurines(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<FigurineListItemDto>>> {
+    let list = service.list_first_look_figurines().await?;
+    Ok(Json(list))
+}
+
 // Combined GET dispatcher: /content/texts/:param (author | workshop)
 pub async fn get_texts_by_param(
     State(service): State<AppService>,
@@ -2119,5 +2126,58 @@ pub async fn admin_remove_from_waitlist(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode> {
     service.remove_waitlist_entry(id).await?;
+    Ok(StatusCode::OK)
+}
+
+// === NEWSLETTER ("visitor book") ===
+
+pub async fn subscribe(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(body): Json<CreateSubscriptionRequest>,
+) -> Result<Json<SubscriptionCreatedResponse>> {
+    let ip = extract_ip(&headers);
+    service.check_rate_limit("subscribe", &ip, 10, 3600).await?;
+    Ok(Json(service.subscribe(body, Some(ip)).await?))
+}
+
+pub async fn get_subscription_by_token(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(token): Path<String>,
+) -> Result<Json<SubscriberInfo>> {
+    service
+        .check_rate_limit("token", &extract_ip(&headers), 60, 3600)
+        .await?;
+    service
+        .get_subscriber_by_token(&token)
+        .await?
+        .map(Json)
+        .ok_or_else(|| crate::error::AppError::NotFound("Subscription not found".to_string()))
+}
+
+pub async fn unsubscribe_by_token(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(token): Path<String>,
+) -> Result<StatusCode> {
+    service
+        .check_rate_limit("token", &extract_ip(&headers), 60, 3600)
+        .await?;
+    service.unsubscribe_by_token(&token).await?;
+    Ok(StatusCode::OK)
+}
+
+pub async fn admin_list_subscribers(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<SubscriberDto>>> {
+    Ok(Json(service.list_subscribers_admin().await?))
+}
+
+pub async fn admin_remove_subscriber(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    service.remove_subscriber(id).await?;
     Ok(StatusCode::OK)
 }

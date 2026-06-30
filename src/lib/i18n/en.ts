@@ -1708,6 +1708,66 @@ export const en = {
   adminHomeCaptionTitleLabel:  'Caption title',
   adminHomeMetaLabel:          'Meta line',
   adminHomeCaptionCtaLabel:    'Caption CTA',
+
+  // Visitor book (home email capture)
+  visitorBookEyebrow:        'The house book',
+  visitorBookTitle:          'Sign the house book',
+  visitorBookLead:           'Leave your name, and the workshop’s letters will find you first — quietly, the way a museum sends word of what it is about to unveil.',
+  visitorBookValue1:         'New works, the day they enter the archive',
+  visitorBookValue2:         'When a showing is about to open its doors',
+  visitorBookValue3:         'A word from the workshop — no noise, no haste',
+  visitorBookNameLabel:      'Your name (if you wish)',
+  visitorBookNamePlaceholder:'How the house should know you',
+  visitorBookEmailLabel:     'Where to send word',
+  visitorBookEmailPlaceholder:'you@example.com',
+  visitorBookSubmit:         'Sign the book',
+  visitorBookSubmitting:     'Pressing the seal…',
+  visitorBookPrivacy:        'No noise. You may leave the book at any time.',
+  visitorBookAlreadyTitle:   'Your name is in the book',
+  visitorBookAlreadyText:    'The house will remember you. Its letters will find you first.',
+  visitorBookSignedAs:       'Signed as',
+  visitorBookLeave:          'Leave the book',
+  visitorBookLeaving:        'Letting go…',
+  visitorBookLeftText:       'The house has forgotten your name. The door is always open, should you return.',
+  visitorBookErrorEmail:     'A real address, so the letters can reach you.',
+  visitorBookError:          'The ink would not take. Try once more.',
+  // Returning, signed — recognition
+  visitorBookWelcomeBack:    'With us again',
+  visitorBookSignedLead:     'Your name is in the book. The house remembers you — and shows you first.',
+  visitorBookInBookSince:    'In the book since',
+  visitorBookNewSince:       'New works since you signed',
+  visitorBookFirstLookCta:   'See what the house opened first',
+
+  // First look (book-holders’ shelf)
+  firstLookEyebrow:          'First look',
+  firstLookTitle:            'The house shows you first',
+  firstLookLead:             'gathered for those in the book — works set out a step ahead of the open archive, yours to see before the house unveils them to all.',
+  firstLookNote:             'A quiet courtesy of the house to those who signed its book.',
+  firstLookOpens:            'Opens to all',
+  adminFirstLookLabel:       'First look — early release',
+  adminFirstLookHint:        'While this is a future date, the work is held out of the public archive and shown only to book-holders. Clear it to publish to everyone.',
+  adminFirstLookClear:       'Clear',
+
+  // Unsubscribe page
+  unsubscribeTitle:          'Leave the house book',
+  unsubscribeText:           'You are about to ask the house to forget your name. No more letters will be sent.',
+  unsubscribeConfirm:        'Forget my name',
+  unsubscribeStay:           'Stay in the book',
+  unsubscribeLoading:        'Turning to your page…',
+  unsubscribeNotFoundTitle:  'No such page',
+  unsubscribeNotFound:       'This page is not in the book — perhaps your name was already let go.',
+  unsubscribeErrorTitle:     'A draught caught the page',
+  unsubscribeDoneTitle:      'The house has forgotten you',
+  unsubscribeDone:           'Your name has left the book. No more letters will be sent. The door stays open, should you return.',
+  unsubscribeBack:           'Back to the house',
+
+  // Admin — subscribers
+  adminTabSubscribers:       'House book',
+  adminSubscribersHeading:   'House book',
+  adminSubscribersEmpty:     'No names in the book yet.',
+  adminSubscribersHint:      'Export to send letters through your mail service (the house only collects names here).',
+  adminSubscribersLoadError: 'Failed to load subscribers',
+  adminSubscribersExport:    'Export CSV',
 } as const;
 
 export type TranslationKey = keyof typeof en;

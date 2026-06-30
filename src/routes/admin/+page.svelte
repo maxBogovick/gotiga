@@ -22,6 +22,7 @@
     import SmtpSettingsPanel from '$lib/components/admin/SmtpSettingsPanel.svelte';
     import ContactSettingsPanel from '$lib/components/admin/ContactSettingsPanel.svelte';
     import WaitlistPanel from '$lib/components/admin/WaitlistPanel.svelte';
+    import SubscribersPanel from '$lib/components/admin/SubscribersPanel.svelte';
     import BookingRulesPanel from '$lib/components/admin/BookingRulesPanel.svelte';
     import MessagesPanel from '$lib/components/admin/MessagesPanel.svelte';
     import FigurineShowingsEditor from '$lib/components/admin/FigurineShowingsEditor.svelte';
@@ -84,7 +85,7 @@
     let showingsEditor = $state<FigurineShowingsEditor | null>(null);
     let showSettings = $state(false);
     let message = $state({ text: '', type: 'info' });
-    let activeTab = $state<'registry' | 'rooms' | 'home' | 'workshop-feature' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'commissions' | 'showings' | 'bookings' | 'waitlist' | 'analytics' | 'users' | 'comments' | 'messages' | 'server' | 'logs' | 'booking-rules' | 'contact' | 'design' | 'copy' | 'programme'>('registry');
+    let activeTab = $state<'registry' | 'rooms' | 'home' | 'workshop-feature' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'commissions' | 'showings' | 'bookings' | 'waitlist' | 'subscribers' | 'analytics' | 'users' | 'comments' | 'messages' | 'server' | 'logs' | 'booking-rules' | 'contact' | 'design' | 'copy' | 'programme'>('registry');
     let activeAuthorSubTab = $state<'profile' | 'texts'>('profile');
     let newOrdersCount = $state(0);
     let newCommissionsCount = $state(0);
@@ -186,6 +187,7 @@
         openFromMin: null,
         openUntilMin: null,
         sealedDoorImage: null,
+        firstLookUntil: null,
         images: [],
         processSteps: [],
         relatedItems: []
@@ -786,7 +788,7 @@
         sidebarCollapsed = localStorage.getItem('gotiga_admin_sidebar_collapsed') === '1';
         // Hash-based tab routing (e.g. Telegram notification links)
         const hash = window.location.hash.replace('#', '');
-        const validTabs = ['registry','rooms','home','workshop-feature','zones','author','workshop','media','releases','orders','commissions','showings','bookings','waitlist','analytics','users','comments','messages','server','logs','booking-rules','contact','design','copy','programme'];
+        const validTabs = ['registry','rooms','home','workshop-feature','zones','author','workshop','media','releases','orders','commissions','showings','bookings','waitlist','subscribers','analytics','users','comments','messages','server','logs','booking-rules','contact','design','copy','programme'];
         if (validTabs.includes(hash)) {
             activeTab = hash as typeof activeTab;
         }
@@ -887,6 +889,7 @@
                   ['orders',       $t('adminTabOrders')],
                   ['commissions',  $t('adminTabCommissions')],
                   ['waitlist',     $t('adminTabWaitlist')],
+                  ['subscribers',  $t('adminTabSubscribers')],
                 ]
               },
               {
@@ -1566,6 +1569,21 @@
                                 </label>
                                 <p class="text-[10px] text-[#7c6554] mb-4 leading-snug">{$t('adminShowingRoomsManageHint')}</p>
 
+                                <!-- First look: timed early-release for book-holders -->
+                                <label class="block max-w-sm mb-1">
+                                    <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminFirstLookLabel')}</span>
+                                    <div class="flex items-center gap-2">
+                                        <input type="datetime-local"
+                                            value={selectedFigurine.firstLookUntil ? toLocalInput(new Date(selectedFigurine.firstLookUntil)) : ''}
+                                            oninput={(e) => selectedFigurine!.firstLookUntil = e.currentTarget.value ? new Date(e.currentTarget.value).toISOString() : null}
+                                            class="input-gothic" />
+                                        {#if selectedFigurine.firstLookUntil}
+                                            <button type="button" class="text-[11px] uppercase tracking-wide text-[#6f3b24] whitespace-nowrap" onclick={() => selectedFigurine!.firstLookUntil = null}>{$t('adminFirstLookClear')}</button>
+                                        {/if}
+                                    </div>
+                                </label>
+                                <p class="text-[10px] text-[#7c6554] mb-4 leading-snug">{$t('adminFirstLookHint')}</p>
+
                                 <!-- Preview clock -->
                                 <div class="border-t border-[#34251c]/10 pt-4">
                                     <div class="flex flex-wrap items-end gap-3">
@@ -1806,6 +1824,8 @@
             <div in:fade class="h-full overflow-hidden"><LogsPanel /></div>
         {:else if activeTab === 'waitlist'}
             <div in:fade class="h-full"><WaitlistPanel /></div>
+        {:else if activeTab === 'subscribers'}
+            <div in:fade class="h-full"><SubscribersPanel /></div>
         {:else if activeTab === 'messages'}
             <div in:fade class="h-full overflow-y-auto"><MessagesPanel /></div>
         {:else if activeTab === 'booking-rules'}
