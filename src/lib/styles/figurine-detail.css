@@ -1367,74 +1367,6 @@ main:has(.page-root) ~ .site-footer {
   text-shadow: 0 1px 0 rgba(255, 246, 232, 0.48);
 }
 
-.entry-action {
-  justify-self: start;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 2.5rem;
-  max-width: 100%;
-  padding: 0 1.2rem;
-  border: 1.5px solid color-mix(in srgb, var(--color-ink-primary) 72%, transparent);
-  border-radius: 3px;
-  color: var(--color-canvas-raised);
-  background: color-mix(in srgb, var(--color-ink-primary) 88%, black);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, white 12%, transparent),
-    0 10px 22px color-mix(in srgb, var(--color-ink-primary) 10%, transparent);
-  cursor: pointer;
-  font-family: var(--font-body);
-  font-size: 0.66rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  line-height: 1.1;
-  text-align: center;
-  text-decoration: none;
-  text-transform: uppercase;
-  white-space: normal;
-  transition:
-    background var(--duration-fast) var(--ease-atelier),
-    border-color var(--duration-fast) var(--ease-atelier),
-    box-shadow var(--duration-fast) var(--ease-atelier),
-    transform var(--duration-fast) var(--ease-atelier);
-}
-
-.entry-action:hover {
-  transform: translateY(-1px);
-  border-color: var(--color-ember-deep);
-  color: var(--color-canvas-raised);
-  background: var(--color-ember-deep);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, white 14%, transparent),
-    0 14px 26px color-mix(in srgb, var(--color-ember-deep) 18%, transparent);
-}
-
-.entry-action--secondary {
-  color: var(--color-ink-primary);
-  background: color-mix(in srgb, var(--color-canvas-raised) 64%, transparent);
-  box-shadow: none;
-}
-
-.entry-action--secondary:hover {
-  color: var(--color-canvas-raised);
-}
-
-.entry-action-stack {
-  display: grid;
-  gap: 0.65rem;
-  justify-items: start;
-  min-width: min(100%, 11.5rem);
-}
-
-.entry-action-note {
-  max-width: 16rem;
-  margin: 0;
-  color: color-mix(in srgb, var(--color-ink-secondary) 78%, transparent);
-  font-family: var(--font-body);
-  font-size: 0.76rem;
-  line-height: 1.45;
-}
-
 .queue-receipt,
 .entry-record,
 .details-col .video-frame {
@@ -2843,15 +2775,6 @@ main:has(.page-root) ~ .site-footer {
     font-size: 0.96rem;
   }
 
-  .entry-action-stack {
-    justify-items: stretch;
-  }
-
-  .entry-action {
-    justify-self: stretch;
-    width: 100%;
-  }
-
   .making-strip,
   .details-col .cal-grid {
     grid-template-columns: 1fr;
@@ -2982,7 +2905,6 @@ main:has(.page-root) ~ .site-footer {
 .topnav-dot:focus-visible,
 .thumb-v:focus-visible,
 .expand-btn:focus-visible,
-.entry-action:focus-visible,
 .queue-receipt-leave:focus-visible,
 .entry-record > summary:focus-visible,
 .claim-lookup-link:focus-visible,
