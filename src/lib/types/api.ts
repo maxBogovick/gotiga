@@ -15,6 +15,10 @@ export interface FigurineListItem {
     dimensions?: string | null;
     isFeatured?: boolean;
     createdAt?: string | null;
+    /** When the work was last edited (status, photo, text). Drives the home
+     *  "since your visit" ledger's "refreshed" signal. May be absent on the
+     *  Tauri build's leaner payload. */
+    updatedAt?: string | null;
     thumbUrl?: string | null;
     /**
      * "Keyhole" reveal of the face image on the card: focus point and radius,

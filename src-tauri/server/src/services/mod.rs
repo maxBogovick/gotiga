@@ -430,6 +430,7 @@ impl AppService {
             material: f.material,
             is_featured: f.is_featured,
             created_at: f.created_at,
+            updated_at: f.updated_at,
             focal_x: face.and_then(|i| i.focal_x),
             focal_y: face.and_then(|i| i.focal_y),
             reveal_radius: face.and_then(|i| i.reveal_radius),

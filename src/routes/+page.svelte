@@ -11,6 +11,7 @@
     import AppImage from '$lib/components/AppImage.svelte';
     import HomeFigurineTile from '$lib/components/HomeFigurineTile.svelte';
     import HouseNoticeBoard from '$lib/components/HouseNoticeBoard.svelte';
+    import VisitLedger from '$lib/components/VisitLedger.svelte';
     import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
     import { houseClock } from '$lib/stores/house-clock.svelte';
     import { showingRooms } from '$lib/stores/showing-rooms.svelte';
@@ -222,13 +223,35 @@
         ) as Record<string, { label: string; description: string; icon: string; accent: string }>
     );
 
+    // Daily "re-hang" index: advances once per calendar day. Every visitor on
+    // the same day sees the same arrangement (no layout-shift noise on refresh),
+    // but returning the next day finds a freshly rotated wall.
+    function dayIndex(d = new Date()): number {
+        return Math.floor(d.getTime() / 86_400_000);
+    }
+
+    function dailyRotate<T>(items: T[]): T[] {
+        if (items.length < 2) return items;
+        const offset = ((dayIndex() % items.length) + items.length) % items.length;
+        return [...items.slice(offset), ...items.slice(0, offset)];
+    }
+
+    // Pin the 2 newest works (by createdAt) at the front so a returning visitor
+    // immediately sees the latest additions. The remaining works rotate daily.
+    const PINNED_NEWEST = 2;
+
     function sortFeaturedFigurines(items: FigurineListItem[]) {
-        const byYear = (b: FigurineListItem, a: FigurineListItem) =>
-            (b.year ?? -Infinity) - (a.year ?? -Infinity);
-        return items.slice().sort((a, b) => {
-            const byOrder = (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
-            return byOrder;
+        const byDate = items.slice().sort((a, b) => {
+            const da = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const db = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return db - da;
         });
+        const pinned = byDate.slice(0, PINNED_NEWEST);
+        const pinnedIds = new Set(pinned.map((f) => f.id));
+        const rest = items
+            .filter((f) => !pinnedIds.has(f.id))
+            .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+        return [...pinned, ...dailyRotate(rest)];
     }
 
     function parseWorkFilter(value: string | null): WorkFilter | null {
@@ -497,6 +520,14 @@
             </div>
 
         </section>
+
+        <!-- "Since your visit": a noticeable ledger band that answers the returning
+             visitor's question — has anything changed since I was last here? -->
+        <VisitLedger
+            figurines={collectionFigurines}
+            rooms={showingRooms.list.map((r) => ({ id: r.id, name: r.name }))}
+            inProgressCount={inProgressFigurines.length}
+        />
 
         <!-- The house notice board: rooms (showing rooms) waking within the week.
              Hides itself when nothing is opening soon. -->

@@ -275,6 +275,10 @@ pub struct FigurineListItemDto {
     pub is_featured: bool,
     /// When the piece was catalogued — lets the showcase mark recently added works.
     pub created_at: DateTime<Utc>,
+    /// When the piece was last edited — lets the home "since your visit" ledger
+    /// surface updated works (new photo, edited text, status change), not just
+    /// brand-new arrivals.
+    pub updated_at: DateTime<Utc>,
     /// Face-image "keyhole" reveal focus + radius + darkness, surfaced on the card.
     pub focal_x: Option<f32>,
     pub focal_y: Option<f32>,

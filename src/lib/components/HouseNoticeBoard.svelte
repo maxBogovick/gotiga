@@ -247,6 +247,40 @@
       .slice(0, maxNotes > 0 ? maxNotes : undefined);
   });
 
+  // Does the museum run a showing programme at all — any gated work, or a
+  // populated gated room — regardless of the 7-day horizon? This distinguishes a
+  // quiet week (a programme exists, but nothing opens this week → we post a calm
+  // "between showings" bill so the wall doesn't simply vanish) from the feature
+  // being unused entirely (→ the wall stays hidden, as before).
+  const hasProgramme = $derived.by(() => {
+    const counts = new Map<string, number>();
+    for (const f of figurines) {
+      if (f.showingRoomId) counts.set(f.showingRoomId, (counts.get(f.showingRoomId) ?? 0) + 1);
+    }
+    const roomGated = showingRooms.list.some(
+      (room) => (counts.get(room.id) ?? 0) > 0 && isGated(roomToWindow(room))
+    );
+    if (roomGated) return true;
+    return figurines.some(
+      (f) =>
+        !f.showingRoomId &&
+        f.status !== 'in_progress' &&
+        isGated({ openFromMin: f.openFromMin, openUntilMin: f.openUntilMin })
+    );
+  });
+
+  // Show the editorial fallback only once settings have loaded (no flash) and a
+  // programme genuinely exists but is between openings.
+  const betweenShowings = $derived(
+    notes.length === 0 && programmeSettings != null && hasProgramme
+  );
+
+  // No showing programme configured at all — still surface something so the
+  // wall never silently disappears for a returning visitor.
+  const noProgramme = $derived(
+    notes.length === 0 && programmeSettings != null && !hasProgramme
+  );
+
   // ── Pagination derived (after notes) ────────────────────────────────────────
   const secondaryAll = $derived(notes.slice(1));
   const totalSecondaryPages = $derived(
@@ -457,6 +491,75 @@
 
       <!-- the keeper's note: lets the open field beside the case carry the
            museum's voice instead of sitting empty. A state of calm, not a CTA. -->
+      <aside class="curator">
+        <span class="curator-orn" aria-hidden="true">❦</span>
+        <p class="curator-note">{curatorNote ?? $t('boardCuratorNote')}</p>
+        <p class="curator-sign">{curatorSign ?? $t('boardCuratorSign')}</p>
+      </aside>
+    </div>
+  </section>
+{:else if betweenShowings}
+  <!-- A quiet week: a programme exists but nothing opens within the horizon. The
+       wall does not vanish — it posts a calm "between showings" bill, so a
+       returning visitor still finds the museum facing its next hour, not frozen.
+       A state of calm, not a countdown. -->
+  <section class="wall wall-between" aria-labelledby="wall-title">
+    <div class="programme">
+      <div class="case" class:no-frame={frameMode === 'none'} style={caseStyle}>
+        <span class="case-screw tl" aria-hidden="true"></span>
+        <span class="case-screw tr" aria-hidden="true"></span>
+        <span class="case-screw bl" aria-hidden="true"></span>
+        <span class="case-screw br" aria-hidden="true"></span>
+        <div class="case-plate">
+          <p class="eyebrow"><span class="eyebrow-rule"></span>{$t('boardBetweenEyebrow')}</p>
+          <h2 id="wall-title" class="wall-title">{$t('boardBetweenTitle')}</h2>
+        </div>
+        <div class="case-inner case-between">
+          <p class="between-text">{$t('boardBetweenText')}</p>
+          <a class="between-cta" href="/upcoming">
+            {$t('boardBetweenCta')}
+            <svg width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
+              <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
+            </svg>
+          </a>
+          <span class="case-glass" aria-hidden="true"></span>
+        </div>
+      </div>
+
+      <aside class="curator">
+        <span class="curator-orn" aria-hidden="true">❦</span>
+        <p class="curator-note">{curatorNote ?? $t('boardCuratorNote')}</p>
+        <p class="curator-sign">{curatorSign ?? $t('boardCuratorSign')}</p>
+      </aside>
+    </div>
+  </section>
+{:else if noProgramme}
+  <!-- No showing programme configured at all — the wall still surfaces a quiet
+       signal so a returning visitor never finds a void. An invitation, not an
+       announcement. -->
+  <section class="wall wall-between wall-noprog" aria-label={$t('boardNoProgTitle')}>
+    <div class="programme">
+      <div class="case case-noprog" class:no-frame={frameMode === 'none'} style={caseStyle}>
+        <span class="case-screw tl" aria-hidden="true"></span>
+        <span class="case-screw tr" aria-hidden="true"></span>
+        <span class="case-screw bl" aria-hidden="true"></span>
+        <span class="case-screw br" aria-hidden="true"></span>
+        <div class="case-plate">
+          <p class="eyebrow"><span class="eyebrow-rule"></span>{$t('boardNoProgEyebrow')}</p>
+          <h2 class="wall-title">{$t('boardNoProgTitle')}</h2>
+        </div>
+        <div class="case-inner case-between">
+          <p class="between-text">{$t('boardNoProgText')}</p>
+          <a class="between-cta" href="/commission">
+            {$t('boardNoProgCta')}
+            <svg width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
+              <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
+            </svg>
+          </a>
+          <span class="case-glass" aria-hidden="true"></span>
+        </div>
+      </div>
+
       <aside class="curator">
         <span class="curator-orn" aria-hidden="true">❦</span>
         <p class="curator-note">{curatorNote ?? $t('boardCuratorNote')}</p>
@@ -1173,5 +1276,55 @@
     .poster-peel {
       transition: none;
     }
+  }
+
+  /* ── "Between showings" fallback ──────────────────────────────────────────── */
+  .case-between {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 18px;
+    padding: clamp(22px, 3vw, 38px) clamp(20px, 3vw, 40px);
+  }
+
+  .between-text {
+    margin: 0;
+    max-width: 46ch;
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: clamp(18px, 1.7vw, 23px);
+    font-style: italic;
+    font-weight: 300;
+    line-height: 1.4;
+    color: var(--color-ink-secondary);
+  }
+
+  .between-cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    text-decoration: none;
+    color: var(--color-ember-deep);
+    border-bottom: 1px solid color-mix(in srgb, var(--color-ember) 42%, transparent);
+    padding-bottom: 3px;
+    transition: color 0.2s ease, border-color 0.2s ease;
+  }
+
+  .between-cta:hover {
+    color: var(--color-ember);
+    border-color: var(--color-ember);
+  }
+
+  /* noProgramme: same shell, case background a touch warmer/lighter — an
+     invitation rather than an intermission. */
+  .case-noprog {
+    background:
+      radial-gradient(ellipse at 30% 15%, rgba(198, 160, 80, 0.10) 0%, transparent 55%),
+      radial-gradient(ellipse at 75% 85%, rgba(120, 70, 20, 0.14) 0%, transparent 50%),
+      linear-gradient(170deg, #332316 0%, #281a0f 55%, #1e1009 100%);
   }
 </style>

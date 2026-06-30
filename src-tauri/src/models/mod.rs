@@ -437,6 +437,9 @@ pub struct FigurineListItemDto {
     pub sort_order: i32,
     pub series: Option<String>,
     pub is_featured: bool,
+    /// When the piece was last edited — lets the home "since your visit" ledger
+    /// surface updated works, matching the server build's list payload.
+    pub updated_at: String,
     /// Face-image "keyhole" reveal focus + radius + darkness, surfaced on the card.
     pub focal_x: Option<f32>,
     pub focal_y: Option<f32>,
