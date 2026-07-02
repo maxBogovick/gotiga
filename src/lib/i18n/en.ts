@@ -224,6 +224,8 @@ export const en = {
   figurineFullscreen: 'Full screen',
   figurineShare: 'Share',
   figurineCopied: 'Link copied',
+  figurineMarkOn: 'Leave a mark',
+  figurineMarkedOff: 'Marked — click to remove',
   turnSoundLabel: 'Turning sound',
   turnSoundOff: 'Silent',
   turnSoundThin: 'Thin leaf',

@@ -224,6 +224,8 @@ export const ru: Record<TranslationKey, string> = {
   figurineFullscreen:  'Полный экран',
   figurineShare:       'Поделиться',
   figurineCopied:      'Ссылка скопирована',
+  figurineMarkOn:      'Оставить знак',
+  figurineMarkedOff:   'Отмечено — нажмите, чтобы убрать',
   turnSoundLabel:      'Звук перелистывания',
   turnSoundOff:        'Без звука',
   turnSoundThin:       'Тонкий лист',

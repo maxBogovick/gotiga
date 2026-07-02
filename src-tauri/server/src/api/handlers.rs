@@ -1119,6 +1119,31 @@ pub async fn create_booking(
     }))
 }
 
+/// Toggle the visitor's wax-seal mark on a figurine. Anonymous, idempotent,
+/// rate-limited by IP like the other public write endpoints — the response
+/// deliberately carries no count, only whether *this* visitor is now marked.
+pub async fn toggle_figurine_mark(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(figurine_id): Path<Uuid>,
+    Json(req): Json<crate::models::MarkToggleRequest>,
+) -> Result<Json<crate::models::MarkToggleResponse>> {
+    service
+        .check_rate_limit("mark", &extract_ip(&headers), 60, 3600)
+        .await?;
+    let marked = service
+        .toggle_figurine_mark(figurine_id, &req.visitor_token)
+        .await?;
+    Ok(Json(crate::models::MarkToggleResponse { marked }))
+}
+
+/// Admin-only ranking of every figurine by mark count. Never exposed publicly.
+pub async fn admin_get_mark_stats(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<crate::models::AdminFigurineMarkStat>>> {
+    Ok(Json(service.get_admin_mark_stats().await?))
+}
+
 pub async fn get_booking_by_token(
     State(service): State<AppService>,
     headers: HeaderMap,

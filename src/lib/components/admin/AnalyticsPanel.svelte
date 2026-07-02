@@ -6,6 +6,7 @@
     AdminFigurineAnalyticsListPage,
     AnalyticsSignal,
   } from '$lib/types/api';
+  import AttentionMarksPanel from './AttentionMarksPanel.svelte';
 
   type Period = '7d' | '30d' | '90d';
   type PerformanceFilter = 'all' | 'active' | 'with_submissions' | 'no_submissions' | 'high_cta';
@@ -294,6 +295,8 @@
       </button>
     </div>
   </header>
+
+  <AttentionMarksPanel />
 
   {#if loading}
     <div class="state">Loading analytics...</div>

@@ -651,6 +651,22 @@ export interface BookingCancelInfo {
     curatorConditions: string | null;
 }
 
+/** A single quiet wax-seal gesture a visitor can leave on a figurine. Not a rating —
+ *  no numeric value is ever sent to or shown on the public site. */
+export interface MarkToggleResponse {
+    marked: boolean;
+}
+
+/** Admin-only ranking row — never rendered on the public site. */
+export interface AdminFigurineMarkStat {
+    figurineId: string;
+    figurineName: string;
+    status: FigurineStatus;
+    isVisible: boolean;
+    markCount: number;
+    lastMarkedAt: string | null;
+}
+
 export interface CreateBookingRequest {
     figurineId: string;
     figurineName: string;

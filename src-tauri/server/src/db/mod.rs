@@ -1832,6 +1832,54 @@ impl Repository {
         .await?)
     }
 
+    /// Toggle a visitor's wax-seal mark on a figurine. Returns the new state
+    /// (`true` = just marked, `false` = just unmarked). Idempotent per
+    /// (figurine, visitor_token) pair via the unique constraint — a plain
+    /// select-then-write is safe here since the worst race just flips the
+    /// toggle an extra time, which is harmless for a non-numeric UI gesture.
+    pub async fn toggle_figurine_mark(&self, figurine_id: Uuid, visitor_token: &str) -> Result<bool> {
+        let existing: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM figurine_marks WHERE figurine_id = $1 AND visitor_token = $2",
+        )
+        .bind(figurine_id)
+        .bind(visitor_token)
+        .fetch_optional(&self.pg_pool)
+        .await?;
+
+        if let Some(id) = existing {
+            sqlx::query("DELETE FROM figurine_marks WHERE id = $1")
+                .bind(id)
+                .execute(&self.pg_pool)
+                .await?;
+            Ok(false)
+        } else {
+            sqlx::query(
+                "INSERT INTO figurine_marks (figurine_id, visitor_token) VALUES ($1, $2)
+                 ON CONFLICT (figurine_id, visitor_token) DO NOTHING",
+            )
+            .bind(figurine_id)
+            .bind(visitor_token)
+            .execute(&self.pg_pool)
+            .await?;
+            Ok(true)
+        }
+    }
+
+    /// Admin-only ranking of every figurine by mark count, including sold/gone
+    /// pieces — this is a curation signal for the artisan, never rendered publicly.
+    pub async fn get_admin_mark_stats(&self) -> Result<Vec<AdminFigurineMarkStat>> {
+        Ok(sqlx::query_as::<_, AdminFigurineMarkStat>(
+            "SELECT f.id AS figurine_id, f.name AS figurine_name, f.status, f.is_visible,
+                    COUNT(m.id) AS mark_count, MAX(m.created_at) AS last_marked_at
+             FROM figurines f
+             LEFT JOIN figurine_marks m ON m.figurine_id = f.id
+             GROUP BY f.id, f.name, f.status, f.is_visible
+             ORDER BY mark_count DESC, last_marked_at DESC NULLS LAST, f.name ASC",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
     pub async fn get_bookings_page(
         &self,
         status_filter: Option<&str>,

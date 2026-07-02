@@ -300,6 +300,11 @@ export const api = {
         return webFetch(`/admin/analytics/figurines/${id}${qs}`, { headers: authHeaders() });
     },
 
+    // Admin-only ranking by mark count (incl. sold/gone pieces). Never rendered publicly.
+    async getFigurineMarkStats(): Promise<import('./types/api').AdminFigurineMarkStat[]> {
+        return webFetch('/admin/figurine-marks', { headers: authHeaders() });
+    },
+
     async sendAnalyticsEvent(payload: AnalyticsEventPayload): Promise<void> {
         if (isTauri) return;
         await fetch(`${webApiBase()}/analytics/events`, {
@@ -757,6 +762,15 @@ export const api = {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(req),
+        });
+    },
+
+    // A single quiet wax-seal gesture, not a rating — no count is ever returned here.
+    async toggleFigurineMark(figurineId: string, visitorToken: string): Promise<import('./types/api').MarkToggleResponse> {
+        return webFetch(`/figurines/${figurineId}/mark`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ visitorToken }),
         });
     },
 

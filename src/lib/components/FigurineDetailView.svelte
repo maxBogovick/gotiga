@@ -27,6 +27,7 @@
   import '$lib/styles/figurine-detail.css';
   import { houseClock } from '$lib/stores/house-clock.svelte';
   import { showingRooms } from '$lib/stores/showing-rooms.svelte';
+  import { visitorMarks } from '$lib/stores/visitor-marks.svelte';
   import { isGated, isShowingOpen, resolveWindow } from '$lib/showing-window';
 
   let {
@@ -648,6 +649,30 @@
 
   function toggleCandle() { isCandleLit = !isCandleLit; }
 
+  // "Mark of attention" — a single quiet wax-seal gesture. No count is ever shown
+  // here; the seal just confirms this visitor has marked this piece.
+  let isMarked = $derived(visitorMarks.has(figurine.id));
+  let markToggling = $state(false);
+  let markPressing = $state(false);
+  let markPressTimer: ReturnType<typeof setTimeout> | null = null;
+
+  async function toggleMark() {
+    if (markToggling) return;
+    const nowMarked = !isMarked;
+    if (nowMarked) {
+      markPressing = false;
+      requestAnimationFrame(() => { markPressing = true; });
+      if (markPressTimer) clearTimeout(markPressTimer);
+      markPressTimer = setTimeout(() => { markPressing = false; }, 520);
+    }
+    markToggling = true;
+    try {
+      await visitorMarks.toggle(figurine.id);
+    } finally {
+      markToggling = false;
+    }
+  }
+
   let audioFadeTimer: ReturnType<typeof setInterval> | null = null;
 
   function clearAudioFade() {
@@ -926,6 +951,7 @@
     void loadSchedule();
     cs.load();
     savedFigurines.load();
+    visitorMarks.load();
     cs.verify();
     cs.startPolling();
     turnSound.load();
@@ -941,6 +967,7 @@
     }
     if (copiedTimer) clearTimeout(copiedTimer);
     if (analyticsEngagedTimer) clearTimeout(analyticsEngagedTimer);
+    if (markPressTimer) clearTimeout(markPressTimer);
     galleryObserver?.disconnect();
     clearTodayRefresh();
     clearAudioFade();
@@ -1243,6 +1270,21 @@
             <path d="M4.25 12.2h5.5M5.15 9.6h3.7M7 1.3c1.1 1.15 2.5 2.88 2.5 5.05a2.5 2.5 0 0 1-5 0C4.5 4.8 5.42 3.72 6.2 2.8c.32-.38.6-.72.8-1.5z"/>
           </svg>
           <span class="btn-label">{isCandleLit ? $t('figurineExtinguish') : $t('figurineCandle')}</span>
+        </button>
+
+        <button
+          type="button"
+          onclick={toggleMark}
+          disabled={markToggling}
+          class="control-btn control-btn--utility control-btn--mark {isMarked ? 'control-btn--marked' : ''}"
+          aria-label={isMarked ? $t('figurineMarkedOff') : $t('figurineMarkOn')}
+          aria-pressed={isMarked}
+          title={isMarked ? $t('figurineMarkedOff') : $t('figurineMarkOn')}
+        >
+          <span class="mark-seal {markPressing ? 'mark-seal--pressing' : ''}" aria-hidden="true">
+            <span class="mark-seal-mark">❧</span>
+          </span>
+          <span class="btn-label">{isMarked ? $t('figurineMarkedOff') : $t('figurineMarkOn')}</span>
         </button>
 
         {#if figurine.ambiencePath}

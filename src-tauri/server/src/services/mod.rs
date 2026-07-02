@@ -1763,6 +1763,27 @@ impl AppService {
         Ok(())
     }
 
+    /// Toggle a visitor's wax-seal mark. The token is opaque client state, not a
+    /// credential, but we still bound its length to keep the column and any
+    /// future index sane against a malicious/broken client.
+    pub async fn toggle_figurine_mark(
+        &self,
+        figurine_id: Uuid,
+        visitor_token: &str,
+    ) -> Result<bool> {
+        let token = visitor_token.trim();
+        if token.is_empty() || token.len() > 64 {
+            return Err(crate::error::AppError::BadRequest(
+                "Invalid visitor token".to_string(),
+            ));
+        }
+        self.repo.toggle_figurine_mark(figurine_id, token).await
+    }
+
+    pub async fn get_admin_mark_stats(&self) -> Result<Vec<AdminFigurineMarkStat>> {
+        self.repo.get_admin_mark_stats().await
+    }
+
     pub async fn create_booking(
         &self,
         req: CreateBookingRequest,

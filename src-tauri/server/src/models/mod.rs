@@ -977,6 +977,35 @@ pub struct BookingCancelInfo {
     pub curator_conditions: Option<String>,
 }
 
+/// Toggle request for a "mark of attention" — a single quiet wax-seal gesture a
+/// visitor can leave on a figurine. `visitor_token` is a client-generated opaque
+/// id persisted in localStorage (not a login), used purely for idempotency —
+/// it carries no PII and is never linked to an account.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarkToggleRequest {
+    pub visitor_token: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarkToggleResponse {
+    pub marked: bool,
+}
+
+/// Admin-only ranking row. Deliberately never exposed on the public site — see
+/// migration comment on `figurine_marks` for why counts stay private.
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminFigurineMarkStat {
+    pub figurine_id: Uuid,
+    pub figurine_name: String,
+    pub status: FigurineStatus,
+    pub is_visible: bool,
+    pub mark_count: i64,
+    pub last_marked_at: Option<DateTime<Utc>>,
+}
+
 /// Batch token lookup — clients poll several claim tokens at once.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]

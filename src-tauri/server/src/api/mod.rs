@@ -121,6 +121,7 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 get(handlers::get_figurine_comments).post(handlers::submit_comment),
             )
             .route("/figurines/:id/book", post(handlers::create_booking))
+            .route("/figurines/:id/mark", post(handlers::toggle_figurine_mark))
             .route("/figurines/:id/waitlist", post(handlers::join_waitlist))
             .route("/booking-rules", get(handlers::get_booking_rules))
             .route("/settings/contact", get(handlers::get_contact_settings))
@@ -366,6 +367,13 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 get(handlers::admin_get_figurine_analytics).route_layer(
                     middleware::from_fn_with_state(config.clone(), auth_middleware),
                 ),
+            )
+            .route(
+                "/admin/figurine-marks",
+                get(handlers::admin_get_mark_stats).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
             )
             .route(
                 "/admin/orders",
