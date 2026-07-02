@@ -36,6 +36,9 @@ export const en = {
   homeTrustHandmade: 'Handmade',
   homeTrustAuthorReply: 'Reply from the author',
   homeReleaseNote: 'New pieces appear rarely. You can view the archive or follow the next release.',
+  vitrineEyebrow: 'Exhibit of the day',
+  vitrineUnderGlass: 'Under glass',
+  vitrineEnter: 'Enter the work',
   homeHeroObjectLabel: 'Selected work',
   homeHeroMapLabel: 'Interactive cabinet',
   homeHeroObjectMeta: 'Author-made figure · one-of-a-kind',
@@ -67,6 +70,9 @@ export const en = {
   homeWorkshopCta: 'Workshop',
   homeStudioTitle: 'Made by hand, one at a time',
   homeStudioText: 'Each figure is shaped, painted, and finished by the author. The workshop keeps the process, materials, and traces behind the archive.',
+  homeWorkshopReelCaption: 'A moment at the workbench, looped in silence',
+  homeWorkshopTeaserLabel: 'Watch the hands that make these',
+  homeWorkshopBringForward: 'Bring this clip to the front',
   homeAvailableStat: 'available',
   homeArchiveStat: 'archive entries',
   homeScrollCue: 'Available works',
@@ -169,7 +175,6 @@ export const en = {
   // "The house wakes" — sealed showing-window door
   doorPhraseNight: 'The house wakes after dark',
   doorPhraseDay: 'Open only in daylight',
-  doorSealedHint: 'This door opens later',
 
   // "The house wakes" — notice board of rooms opening soon + hall page
   boardEyebrow: 'Programme',
@@ -885,7 +890,6 @@ export const en = {
   adminFieldShowingFrom: 'Opens',
   adminFieldShowingUntil: 'Closes',
   adminFieldShowingHint: 'Guest-local hours. Leave both blank to always show. Closing earlier than opening wraps past midnight (e.g. 23:00 → 04:00 = a night-only piece).',
-  adminFieldSealedDoorImage: 'Sealed-door image URL (optional — blank = carved door)',
   adminShowingModeAlways: 'Always open',
   adminShowingModeCustom: 'Own hours',
   adminShowingRoomsManage: 'Manage showing rooms',

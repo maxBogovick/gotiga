@@ -43,6 +43,10 @@
 
   let win = $derived(resolveWindow(figurine, showingRooms.list));
   let doorClosed = $derived(isGated(win) && !isShowingOpen(win, houseClock.nowDate));
+  let sealedFace = $derived.by(() => {
+    const images = figurine.images ?? [];
+    return images.find(i => i.imageType === 'face') ?? images[0] ?? null;
+  });
   let layout = $derived(figurine.displayLayout ?? 'specimen');
 
   function parseDisplayConfig(raw: string | null | undefined): DisplayConfig | null {
@@ -1310,7 +1314,8 @@
             monthDay={win.monthDay}
             dateFrom={win.dateFrom}
             dateUntil={win.dateUntil}
-            doorImageUrl={figurine.sealedDoorImage}
+            imageUrl={sealedFace?.url}
+            thumbUrl={sealedFace?.thumbUrl}
             name={figurine.name}
           />
         </div>

@@ -11,6 +11,8 @@ pub struct HomeContent {
     pub hero_caption_meta: Option<String>,
     pub hero_caption_cta: Option<String>,
     pub hero_mode: Option<String>,
+    #[serde(default)]
+    pub vitrine_figurine_id: Option<String>,
 }
 
 // ============================================================

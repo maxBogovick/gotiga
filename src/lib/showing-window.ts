@@ -328,3 +328,28 @@ export function windowKind(w: ShowingWindow): 'night' | 'day' {
   // Opens between 20:00 and 06:00 → a night room.
   return from >= 20 * 60 || from < 6 * 60 ? 'night' : 'day';
 }
+
+/**
+ * A single, concrete "opens X" line for a sealed piece — relative day (today,
+ * tomorrow, Saturday, 3 Aug) plus the exact clock time when the window has one.
+ * This is the one line meant to read as a plain fact, not atmosphere: a visitor
+ * glancing at a sealed work should walk away knowing exactly when to come back.
+ */
+export function openingHeadline(
+  w: ShowingWindow,
+  tr: (key: TranslationKey) => string,
+  locale: string,
+  now: Date = new Date()
+): string {
+  const desc = describeOpening(w, now);
+  const hours =
+    w.openFromMin != null && w.openUntilMin != null && w.openFromMin !== w.openUntilMin
+      ? formatMinutes(w.openFromMin)
+      : '';
+  if (desc) {
+    const when = openingWhenLabel(desc, tr, locale);
+    return hours ? `${when} · ${hours}` : when;
+  }
+  if (hours) return hours;
+  return windowKind(w) === 'night' ? tr('doorPhraseNight') : tr('doorPhraseDay');
+}

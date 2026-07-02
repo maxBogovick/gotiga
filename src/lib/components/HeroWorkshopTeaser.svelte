@@ -1,0 +1,121 @@
+<script lang="ts">
+  /**
+   * A small looping locket in the hero, hinting at the workshop reel further
+   * down the page. Starts playing only after the hero's own entrance settles,
+   * so it never competes with the hero photo for bandwidth or attention.
+   */
+  import { onMount } from 'svelte';
+
+  let {
+    webm = '/images/workshop/atelier-reel-tiny.webm',
+    mp4 = '/images/workshop/atelier-reel-tiny.mp4',
+    poster = '/images/workshop/atelier-reel-tiny-poster.jpg',
+    label,
+    delayMs = 1300,
+    onSelect,
+  }: {
+    webm?: string;
+    mp4?: string;
+    poster?: string;
+    label: string;
+    delayMs?: number;
+    onSelect?: (e: MouseEvent) => void;
+  } = $props();
+
+  let videoEl = $state<HTMLVideoElement>();
+  const reducedMotion =
+    typeof window !== 'undefined' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  onMount(() => {
+    if (reducedMotion || !videoEl) return;
+    const el = videoEl;
+
+    const startTimer = setTimeout(() => el.play().catch(() => {}), delayMs);
+
+    function onVisibility() {
+      if (document.hidden) el.pause();
+      else el.play().catch(() => {});
+    }
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      clearTimeout(startTimer);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  });
+</script>
+
+<button type="button" class="hw-teaser" aria-label={label} onclick={(e) => onSelect?.(e)}>
+  <span class="hw-ring" aria-hidden="true"></span>
+  <video
+    bind:this={videoEl}
+    class="hw-video"
+    {poster}
+    muted
+    loop
+    playsinline
+    preload="none"
+    aria-hidden="true"
+  >
+    <source src={webm} type="video/webm" />
+    <source src={mp4} type="video/mp4" />
+  </video>
+</button>
+
+<style>
+  .hw-teaser {
+    position: relative;
+    display: block;
+    width: 46px;
+    height: 46px;
+    flex-shrink: 0;
+    padding: 0;
+    border: none;
+    background: none;
+    cursor: pointer;
+    border-radius: 50%;
+    overflow: hidden;
+    box-shadow: 0 6px 16px rgba(52,37,28,0.22);
+  }
+
+  .hw-video {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    filter: saturate(0.85) contrast(1.03);
+  }
+
+  .hw-ring {
+    position: absolute;
+    inset: -1px;
+    z-index: 1;
+    border-radius: 50%;
+    border: 1px solid rgba(198,95,60,0.5);
+    pointer-events: none;
+  }
+
+  .hw-ring::after {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border-radius: 50%;
+    border: 1px solid rgba(198,95,60,0.32);
+    animation: hw-pulse 3.6s ease-out infinite;
+  }
+
+  @keyframes hw-pulse {
+    0%   { transform: scale(1);   opacity: 0.55; }
+    70%  { transform: scale(1.35); opacity: 0; }
+    100% { transform: scale(1.35); opacity: 0; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hw-ring::after {
+      animation: none;
+      opacity: 0;
+    }
+  }
+</style>

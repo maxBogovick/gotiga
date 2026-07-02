@@ -109,6 +109,7 @@ function getWebHomeContent(): HomeContent {
             heroCaptionMeta: null,
             heroCaptionCta: null,
             heroMode: null,
+            vitrineFigurineId: null,
         };
     }
     return {
@@ -120,6 +121,7 @@ function getWebHomeContent(): HomeContent {
         heroCaptionMeta: localStorage.getItem('gotiga_home_hero_caption_meta'),
         heroCaptionCta: localStorage.getItem('gotiga_home_hero_caption_cta'),
         heroMode: (localStorage.getItem('gotiga_home_hero_mode') as HomeContent['heroMode']) || null,
+        vitrineFigurineId: localStorage.getItem('gotiga_home_vitrine_figurine_id'),
     };
 }
 
@@ -565,6 +567,7 @@ export const api = {
             localStorage.setItem('gotiga_home_hero_caption_meta', content.heroCaptionMeta ?? '');
             localStorage.setItem('gotiga_home_hero_caption_cta', content.heroCaptionCta ?? '');
             localStorage.setItem('gotiga_home_hero_mode', content.heroMode ?? '');
+            localStorage.setItem('gotiga_home_vitrine_figurine_id', content.vitrineFigurineId ?? '');
         }
     },
 

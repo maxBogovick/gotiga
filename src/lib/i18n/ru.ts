@@ -36,6 +36,9 @@ export const ru: Record<TranslationKey, string> = {
   homeTrustHandmade:    'Ручная работа',
   homeTrustAuthorReply: 'Ответ автора',
   homeReleaseNote:      'Новые работы появляются редко. Можно посмотреть архив или следить за следующим выпуском.',
+  vitrineEyebrow:       'Экспонат дня',
+  vitrineUnderGlass:    'Под стеклом',
+  vitrineEnter:         'Войти к работе',
   homeHeroObjectLabel:  'Выбранная работа',
   homeHeroMapLabel:     'Интерактивный кабинет',
   homeHeroObjectMeta:   'Авторская фигурка · единственный экземпляр',
@@ -67,6 +70,9 @@ export const ru: Record<TranslationKey, string> = {
   homeWorkshopCta:     'Мастерская',
   homeStudioTitle:     'Ручная работа, по одной фигурке за раз',
   homeStudioText:      'Каждая фигурка создаётся, расписывается и доводится автором вручную. В мастерской остаются процесс, материалы и следы, стоящие за архивом.',
+  homeWorkshopReelCaption: 'Мгновение за рабочим столом, повторённое в тишине',
+  homeWorkshopTeaserLabel: 'Смотреть на руки, которые это создают',
+  homeWorkshopBringForward: 'Показать это видео поверх другого',
   homeAvailableStat:   'доступно',
   homeArchiveStat:     'записей в архиве',
   homeScrollCue:       'Доступные работы',
@@ -169,7 +175,6 @@ export const ru: Record<TranslationKey, string> = {
   // «Дом просыпается» — запертая дверь окна показа
   doorPhraseNight:       'Дом просыпается, когда стемнеет',
   doorPhraseDay:         'Открыто лишь при свете дня',
-  doorSealedHint:        'Эта дверь откроется позже',
 
   // «Дом просыпается» — доска залов, открывающихся скоро + страница зала
   boardEyebrow:          'Афиша',
@@ -885,7 +890,6 @@ export const ru: Record<TranslationKey, string> = {
   adminFieldShowingFrom:   'Открывается',
   adminFieldShowingUntil:  'Закрывается',
   adminFieldShowingHint:   'Часы по времени гостя. Оставьте оба пустыми — показывать всегда. Если закрытие раньше открытия — окно переходит через полночь (напр. 23:00 → 04:00 = только ночью).',
-  adminFieldSealedDoorImage: 'URL картины двери (необязательно — пусто = резная дверь)',
   adminShowingModeAlways:  'Всегда открыто',
   adminShowingModeCustom:  'Своё время',
   adminShowingRoomsManage: 'Управление залами показа',

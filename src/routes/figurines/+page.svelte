@@ -611,7 +611,8 @@
                       monthDay={winOf(figurine).monthDay}
                       dateFrom={winOf(figurine).dateFrom}
                       dateUntil={winOf(figurine).dateUntil}
-                      doorImageUrl={figurine.sealedDoorImage}
+                      imageUrl={figurine.faceImageUrl}
+                      thumbUrl={figurine.thumbUrl}
                       name={figurine.name}
                     />
                   {:else}

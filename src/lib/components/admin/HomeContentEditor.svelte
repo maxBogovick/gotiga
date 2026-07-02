@@ -13,6 +13,7 @@
     heroCaptionMeta: '',
     heroCaptionCta: '',
     heroMode: 'auto',
+    vitrineFigurineId: null,
   });
   let figurines = $state<FigurineListItem[]>([]);
   let bgImage = $state<string | null>(null);
@@ -28,6 +29,18 @@
       ? figurines.find((item) => item.id === content.heroFigurineId) ?? null
       : null
   );
+  let selectedVitrineFigurine = $derived(
+    content.vitrineFigurineId
+      ? figurines.find((item) => item.id === content.vitrineFigurineId) ?? null
+      : null
+  );
+
+  let vitrineSearch = $state('');
+  let filteredVitrineFigurines = $derived(
+    vitrineSearch.trim()
+      ? figurines.filter((item) => item.name.toLowerCase().includes(vitrineSearch.trim().toLowerCase()))
+      : figurines
+  );
 
   function normalizeHomeContent(loaded: HomeContent): HomeContent {
     const legacyCaption = loaded.heroCaptionTitle ?? loaded.title ?? '';
@@ -40,6 +53,7 @@
       heroCaptionMeta: loaded.heroCaptionMeta ?? '',
       heroCaptionCta: loaded.heroCaptionCta ?? '',
       heroMode: loaded.heroMode ?? 'auto',
+      vitrineFigurineId: loaded.vitrineFigurineId ?? null,
     };
   }
 
@@ -67,6 +81,14 @@
 
   function clearHeroFigurine() {
     content.heroFigurineId = null;
+  }
+
+  function selectVitrineFigurine(id: string) {
+    content.vitrineFigurineId = id || null;
+  }
+
+  function clearVitrineFigurine() {
+    content.vitrineFigurineId = null;
   }
 
   function useSelectedName() {
@@ -121,6 +143,7 @@
         heroCaptionMeta: content.heroCaptionMeta?.trim() || null,
         heroCaptionCta: content.heroCaptionCta?.trim() || null,
         heroMode: content.heroMode ?? 'auto',
+        vitrineFigurineId: content.vitrineFigurineId || null,
       };
       await api.saveHomeContent(payload);
       content = {
@@ -132,6 +155,7 @@
         heroCaptionMeta: payload.heroCaptionMeta ?? '',
         heroCaptionCta: payload.heroCaptionCta ?? '',
         heroMode: payload.heroMode,
+        vitrineFigurineId: payload.vitrineFigurineId,
       };
       savedSnapshot = JSON.stringify(content);
       message = 'Home page updated';
@@ -153,6 +177,7 @@
       heroCaptionMeta: '',
       heroCaptionCta: '',
       heroMode: 'auto',
+      vitrineFigurineId: null,
     };
   }
 </script>
@@ -282,6 +307,97 @@
             <p class="warning">
               If no work is selected, the caption will not link to a random featured figure. A click opens the archive.
             </p>
+          {/if}
+        </div>
+
+        <div class="border border-[#34251c]/10 bg-[#f8f1e7]/70 p-6 space-y-5">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <p class="text-[10px] uppercase tracking-[0.14em] text-[#5f4636] mb-2">Vitrine</p>
+              <h3 class="font-gothic text-2xl text-[#6f3b24]">"Exhibit of the day" pin</h3>
+              <p class="mt-2 text-sm leading-6 text-[#5f4636] max-w-2xl">
+                Pin a specific work to the home vitrine, independent of the hero figure above. Leave unset to let it rotate daily. If the pinned work is currently sealed behind its showing window, the vitrine falls back to rotation on its own.
+              </p>
+            </div>
+            {#if selectedVitrineFigurine}
+              <span class="shrink-0 px-3 py-1.5 text-[10px] uppercase tracking-[0.1em] border border-emerald-700/25 bg-emerald-50 text-emerald-800">
+                Pinned
+              </span>
+            {:else}
+              <span class="shrink-0 px-3 py-1.5 text-[10px] uppercase tracking-[0.1em] border border-amber-700/30 bg-amber-50 text-amber-800">
+                Daily rotation
+              </span>
+            {/if}
+          </div>
+
+          <div>
+            <span class="label">Vitrine figure</span>
+            <div class="relative mb-3">
+              <input
+                bind:value={vitrineSearch}
+                type="text"
+                placeholder="Search works by name…"
+                class="input-gothic pr-8"
+              />
+              {#if vitrineSearch}
+                <button
+                  type="button"
+                  onclick={() => (vitrineSearch = '')}
+                  class="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#5f4636] hover:text-[#34251c] text-xs"
+                >✕</button>
+              {/if}
+            </div>
+
+            <div class="picker-grid">
+              <button
+                type="button"
+                class="picker-tile picker-tile--rotate"
+                class:is-selected={!content.vitrineFigurineId}
+                onclick={clearVitrineFigurine}
+              >
+                <span class="picker-tile-rotate-icon" aria-hidden="true">↻</span>
+                <span class="picker-tile-name">Rotate daily</span>
+              </button>
+
+              {#each filteredVitrineFigurines as fig (fig.id)}
+                <button
+                  type="button"
+                  class="picker-tile"
+                  class:is-selected={content.vitrineFigurineId === fig.id}
+                  onclick={() => selectVitrineFigurine(fig.id)}
+                >
+                  {#if fig.faceImageUrl}
+                    <img src={fig.faceImageUrl} alt="" class="picker-tile-img" />
+                  {:else}
+                    <span class="picker-tile-img picker-tile-img--empty"></span>
+                  {/if}
+                  <span class="picker-tile-name" title={fig.name}>{fig.name}</span>
+                  <span class="picker-tile-meta">{fig.status}{fig.year ? ` · ${fig.year}` : ''}</span>
+                </button>
+              {/each}
+
+              {#if filteredVitrineFigurines.length === 0}
+                <p class="col-span-full text-center text-xs italic text-[#5f4636] py-6">No works match "{vitrineSearch}"</p>
+              {/if}
+            </div>
+          </div>
+
+          {#if selectedVitrineFigurine}
+            <div class="selected-work">
+              {#if selectedVitrineFigurine.faceImageUrl}
+                <img src={selectedVitrineFigurine.faceImageUrl} alt={selectedVitrineFigurine.name} />
+              {/if}
+              <div>
+                <p class="text-[10px] uppercase tracking-[0.14em] text-[#5f4636] mb-1">Under glass</p>
+                <p class="font-gothic text-2xl text-[#2c1710]">{selectedVitrineFigurine.name}</p>
+                <p class="mt-1 text-xs uppercase tracking-[0.12em] text-[#5f4636]">
+                  /figurines/{selectedVitrineFigurine.id}
+                </p>
+              </div>
+              <div class="ml-auto flex gap-2">
+                <button type="button" onclick={clearVitrineFigurine} class="btn-small">Clear</button>
+              </div>
+            </div>
           {/if}
         </div>
 
@@ -438,6 +554,83 @@
     height: 4.5rem;
     object-fit: cover;
     border: 1px solid rgba(52, 37, 28, 0.12);
+  }
+
+  .picker-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr));
+    gap: 0.6rem;
+    max-height: 19rem;
+    overflow-y: auto;
+    padding: 0.15rem;
+  }
+
+  .picker-tile {
+    display: grid;
+    justify-items: center;
+    gap: 0.3rem;
+    padding: 0.5rem;
+    border: 1px solid rgba(52, 37, 28, 0.14);
+    background: rgba(255, 249, 240, 0.55);
+    cursor: pointer;
+    text-align: center;
+    transition: border-color 0.18s, background-color 0.18s;
+  }
+
+  .picker-tile:hover {
+    border-color: rgba(198, 95, 60, 0.4);
+    background: rgba(255, 249, 240, 0.9);
+  }
+
+  .picker-tile.is-selected {
+    border-color: rgba(198, 95, 60, 0.75);
+    background: rgba(255, 249, 240, 0.98);
+    box-shadow: 0 0 0 1px rgba(198, 95, 60, 0.35);
+  }
+
+  .picker-tile-img {
+    width: 4.5rem;
+    height: 4.5rem;
+    object-fit: cover;
+    border: 1px solid rgba(52, 37, 28, 0.12);
+  }
+
+  .picker-tile-img--empty {
+    background: repeating-linear-gradient(
+      45deg,
+      rgba(52, 37, 28, 0.06),
+      rgba(52, 37, 28, 0.06) 4px,
+      transparent 4px,
+      transparent 8px
+    );
+  }
+
+  .picker-tile-rotate-icon {
+    display: grid;
+    place-items: center;
+    width: 4.5rem;
+    height: 4.5rem;
+    font-size: 1.6rem;
+    color: #6f3b24;
+    border: 1px dashed rgba(111, 59, 36, 0.4);
+    background: rgba(111, 59, 36, 0.05);
+  }
+
+  .picker-tile-name {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #34251c;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .picker-tile-meta {
+    font-size: 0.62rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #5f4636;
   }
 
   .hero-image-preview {

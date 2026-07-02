@@ -1563,12 +1563,6 @@
                                     <p class="text-[10px] text-[#7c6554] mb-3 leading-snug">{$t('adminFieldShowingHint')}</p>
                                 {/if}
 
-                                <label class="block max-w-sm mb-2">
-                                    <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminFieldSealedDoorImage')}</span>
-                                    <input bind:value={selectedFigurine.sealedDoorImage} placeholder="https://…" class="input-gothic" />
-                                </label>
-                                <p class="text-[10px] text-[#7c6554] mb-4 leading-snug">{$t('adminShowingRoomsManageHint')}</p>
-
                                 <!-- First look: timed early-release for book-holders -->
                                 <label class="block max-w-sm mb-1">
                                     <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminFirstLookLabel')}</span>
@@ -1607,7 +1601,8 @@
                                                 monthDay={previewFigWindow.monthDay}
                                                 dateFrom={previewFigWindow.dateFrom}
                                                 dateUntil={previewFigWindow.dateUntil}
-                                                doorImageUrl={selectedFigurine.sealedDoorImage}
+                                                imageUrl={(selectedFigurine.images?.find(i => i.imageType === 'face') ?? selectedFigurine.images?.[0])?.url}
+                                                thumbUrl={(selectedFigurine.images?.find(i => i.imageType === 'face') ?? selectedFigurine.images?.[0])?.thumbUrl}
                                                 name={selectedFigurine.name}
                                                 now={previewAt}
                                                 compact

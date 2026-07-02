@@ -238,6 +238,8 @@ export interface HomeContent {
     heroCaptionMeta: string | null;
     heroCaptionCta: string | null;
     heroMode: 'auto' | 'showcase' | 'release' | null;
+    /** Admin-pinned figurine for the "exhibit of the day" vitrine — independent of heroFigurineId. null → daily rotation. */
+    vitrineFigurineId: string | null;
 }
 
 export interface AuthorProfile {

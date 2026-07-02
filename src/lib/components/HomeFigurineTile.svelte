@@ -2,7 +2,7 @@
     import { onMount } from 'svelte';
     import { goto } from '$app/navigation';
     import type { FigurineListItem } from '$lib/types/api';
-    import { t } from '$lib/i18n';
+    import { t, lang } from '$lib/i18n';
     import AppImage from '$lib/components/AppImage.svelte';
     import KeyholeVeil from '$lib/components/KeyholeVeil.svelte';
     import SealedDoor from '$lib/components/SealedDoor.svelte';
@@ -13,7 +13,7 @@
     import { dwellReveal } from '$lib/actions/dwell-reveal';
     import { houseClock } from '$lib/stores/house-clock.svelte';
     import { showingRooms } from '$lib/stores/showing-rooms.svelte';
-    import { isGated, isShowingOpen, resolveWindow } from '$lib/showing-window';
+    import { isGated, isShowingOpen, resolveWindow, openingHeadline } from '$lib/showing-window';
 
     let {
         fig,
@@ -46,6 +46,8 @@
         showingRooms.list
     ));
     let doorClosed = $derived(isGated(win) && !isShowingOpen(win, houseClock.nowDate));
+    let doorLocale = $derived($lang === 'ru' ? 'ru-RU' : 'en-US');
+    let doorHeadline = $derived(doorClosed ? openingHeadline(win, $t, doorLocale, houseClock.nowDate) : '');
 
     // "Keyhole" seal: a piece stays in shadow (only its lit fragment shown) until
     // the visitor steps into its file. The reveal is forgetful — only the last
@@ -184,8 +186,10 @@
                     monthDay={win.monthDay}
                     dateFrom={win.dateFrom}
                     dateUntil={win.dateUntil}
-                    doorImageUrl={fig.sealedDoorImage}
+                    imageUrl={fig.faceImageUrl}
+                    thumbUrl={fig.thumbUrl}
                     name={fig.name}
+                    showSchedule={false}
                 />
                 <span class="corner corner-tl"></span>
                 <span class="corner corner-tr"></span>
@@ -284,7 +288,7 @@
         <div class="tile-actions">
             <span class="tile-file-hint">{archiveNumber}</span>
             {#if doorClosed}
-                <span class="tile-door-hint">{$t('doorSealedHint')}</span>
+                <span class="tile-door-hint">{doorHeadline}</span>
             {:else if action.kind === 'request'}
                 <button class="tile-cta tile-cta-similar" type="button" onclick={openSimilarCommission} title={$t('commissionCreateSimilarCta')} aria-label={$t('commissionCreateSimilarCta')}>
                     <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -749,16 +753,16 @@
         font-variant-numeric: tabular-nums;
     }
 
-    /* quiet closed-door note in place of a CTA — never a countdown */
+    /* the concrete reopening time, in place of a CTA — plain fact, not a tease */
     .tile-door-hint {
         min-height: 30px;
         display: inline-flex;
         align-items: center;
         font-family: 'Cormorant Garamond', Georgia, serif;
-        font-size: 14px;
-        font-style: italic;
+        font-size: 15px;
+        font-weight: 600;
         letter-spacing: 0.02em;
-        color: var(--color-ink-tertiary);
+        color: var(--color-ember, #c65f3c);
         text-transform: none;
     }
 

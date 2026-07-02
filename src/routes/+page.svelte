@@ -11,13 +11,18 @@
     import AppImage from '$lib/components/AppImage.svelte';
     import HomeFigurineTile from '$lib/components/HomeFigurineTile.svelte';
     import HouseNoticeBoard from '$lib/components/HouseNoticeBoard.svelte';
+    import DailyVitrine from '$lib/components/DailyVitrine.svelte';
     import VisitLedger from '$lib/components/VisitLedger.svelte';
     import VisitorBook from '$lib/components/VisitorBook.svelte';
     import FirstLook from '$lib/components/FirstLook.svelte';
+    import AtelierReel from '$lib/components/AtelierReel.svelte';
+    import HeroWorkshopTeaser from '$lib/components/HeroWorkshopTeaser.svelte';
+    import WorkshopReelModal from '$lib/components/WorkshopReelModal.svelte';
     import { visitorBook } from '$lib/stores/visitor-book.svelte';
     import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
     import { houseClock } from '$lib/stores/house-clock.svelte';
     import { showingRooms } from '$lib/stores/showing-rooms.svelte';
+    import { isShowingOpen, resolveWindow } from '$lib/showing-window';
     import { SITE_URL } from '$lib/site';
 
     let { data } = $props();
@@ -58,6 +63,11 @@
     let archivePreviewFigurines = $state<FigurineListItem[]>([]);
     let collectionFigurines = $state<FigurineListItem[]>([]);
     let heroFigurine = $state<FigurineListItem | null>(null);
+    // "Exhibit of the day" vitrine: admin-pinned hero, else daily rotation. Its
+    // note + catalogue mark come from the full detail, fetched after the pick.
+    let vitrineFig = $state<FigurineListItem | null>(null);
+    let vitrineNote = $state<string | null>(null);
+    let vitrineCatalogNo = $state<string | null>(null);
     let collectionTotal = $state(0);
     let availableTotal = $state(0);
     let homeContent = $state<HomeContent>({
@@ -69,6 +79,7 @@
         heroCaptionMeta: null,
         heroCaptionCta: null,
         heroMode: null,
+        vitrineFigurineId: null,
     });
     let workshopFeature = $state<WorkshopFeature>({
         visible: true,
@@ -98,12 +109,46 @@
     let wfEyebrow = $derived(wfLoc($lang, workshopFeature.eyebrowEn, workshopFeature.eyebrowRu) || $t('homeWorkshopCta'));
     let wfTitle = $derived(wfLoc($lang, workshopFeature.titleEn, workshopFeature.titleRu) || $t('homeStudioTitle'));
     let wfText = $derived(wfLoc($lang, workshopFeature.textEn, workshopFeature.textRu) || $t('homeStudioText'));
-    let wfPhotoBack = $derived(workshopFeature.photoBack?.trim() || '/images/workshop/master-1.jpg');
-    let wfPhotoFront = $derived(workshopFeature.photoFront?.trim() || '/images/workshop/master-2.jpg');
     let wfLink1Label = $derived(wfLoc($lang, workshopFeature.link1LabelEn, workshopFeature.link1LabelRu) || $t('homeWorkshopCta'));
     let wfLink1Href = $derived(workshopFeature.link1Href?.trim() || '/workshop');
     let wfLink2Label = $derived(wfLoc($lang, workshopFeature.link2LabelEn, workshopFeature.link2LabelRu) || $t('navAuthor'));
     let wfLink2Href = $derived(workshopFeature.link2Href?.trim() || '/author');
+
+    // Which workshop reel sits on top of the overlapping pair — whichever the
+    // visitor last clicked.
+    let frontReel = $state<'a' | 'b'>('a');
+
+    // The workshop reels themselves mount (and start fetching video) only once
+    // asked for — a hero locket click, or the section physically scrolling
+    // into view. Until then the section shows its static poster frames.
+    let workshopActivated = $state(false);
+    let workshopSectionEl = $state<HTMLElement>();
+
+    onMount(() => {
+        if (typeof IntersectionObserver === 'undefined') { workshopActivated = true; return; }
+        if (!workshopSectionEl) return;
+        const io = new IntersectionObserver(
+            ([entry]) => { if (entry.isIntersecting) { workshopActivated = true; io.disconnect(); } },
+            { rootMargin: '600px 0px' },
+        );
+        io.observe(workshopSectionEl);
+        return () => io.disconnect();
+    });
+
+    // Clicking a hero locket reveals its clip full-size, growing out of the
+    // locket's own screen position rather than a plain fade.
+    let reelModalOpen = $state(false);
+    let reelModalClip = $state<'a' | 'b'>('a');
+    let reelModalOrigin = $state<{ x: number; y: number; width: number; height: number } | null>(null);
+
+    function openReelModal(which: 'a' | 'b', e: MouseEvent) {
+        frontReel = which;
+        workshopActivated = true;
+        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        reelModalOrigin = { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
+        reelModalClip = which;
+        reelModalOpen = true;
+    }
 
     let parallaxX = $state(0);
     let parallaxY = $state(0);
@@ -244,6 +289,41 @@
         return [...items.slice(offset), ...items.slice(0, offset)];
     }
 
+    // Pick a single element that advances once per calendar day — the vitrine's
+    // "today" exhibit, stable through refreshes, freshly turned tomorrow.
+    function dailyPick<T>(items: T[]): T | null {
+        if (items.length === 0) return null;
+        return items[((dayIndex() % items.length) + items.length) % items.length];
+    }
+
+    // Whether a work's showing door is currently open — the vitrine must never
+    // spotlight a piece that the rest of the site keeps sealed behind its door.
+    function isOpenNow(fig: FigurineListItem): boolean {
+        return isShowingOpen(
+            resolveWindow({ openFromMin: fig.openFromMin, openUntilMin: fig.openUntilMin, showingRoomId: fig.showingRoomId }, showingRooms.list),
+            houseClock.nowDate
+        );
+    }
+
+    // Fallback catalogue mark when a work carries no passport number: a roman
+    // numeral of the day-of-year (1..366), so the plate still reads like a ledger.
+    function toRoman(n: number): string {
+        const table: [number, string][] = [
+            [1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'], [100, 'C'],
+            [90, 'XC'], [50, 'L'], [40, 'XL'], [10, 'X'], [9, 'IX'],
+            [5, 'V'], [4, 'IV'], [1, 'I'],
+        ];
+        let out = '';
+        let rem = Math.max(1, n);
+        for (const [v, sym] of table) { while (rem >= v) { out += sym; rem -= v; } }
+        return out;
+    }
+
+    function dayOfYear(d = new Date()): number {
+        const start = Date.UTC(d.getFullYear(), 0, 0);
+        return Math.floor((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - start) / 86_400_000);
+    }
+
     // Pin the 2 newest works (by createdAt) at the front so a returning visitor
     // immediately sees the latest additions. The remaining works rotate daily.
     const PINNED_NEWEST = 2;
@@ -302,6 +382,7 @@
                     heroCaptionMeta: null,
                     heroCaptionCta: null,
                     heroMode: null,
+                    vitrineFigurineId: null,
                 } satisfies HomeContent)),
                 api.getWorkshopFeature().catch(() => null)
             ]);
@@ -320,6 +401,27 @@
             heroFigurine = content.heroFigurineId
                 ? visibleFigurines.find((item) => item.id === content.heroFigurineId) ?? null
                 : null;
+            // Today's vitrine: the admin-pinned vitrine figure if set (independent
+            // of the hero banner's own pin), else a daily-rotating available work
+            // (falling back to the wider collection when none are available). Its
+            // note + catalogue mark arrive with the full detail. A sealed work is
+            // skipped in favour of the next candidate — the vitrine never
+            // spotlights a piece the rest of the house keeps behind a closed door.
+            const pinnedVitrineFigurine = content.vitrineFigurineId
+                ? visibleFigurines.find((item) => item.id === content.vitrineFigurineId) ?? null
+                : null;
+            vitrineFig = (pinnedVitrineFigurine && isOpenNow(pinnedVitrineFigurine) ? pinnedVitrineFigurine : null)
+                ?? dailyPick(availableFigurines.filter(isOpenNow))
+                ?? dailyPick(collectionFigurines.filter(isOpenNow));
+            vitrineCatalogNo = toRoman(dayOfYear());
+            if (vitrineFig) {
+                const pickedId = vitrineFig.id;
+                api.getFigurine(pickedId).then((full) => {
+                    if (!full || vitrineFig?.id !== pickedId) return;
+                    vitrineNote = full.shortText?.trim() || full.fullDescription?.trim() || null;
+                    if (full.passportNumber?.trim()) vitrineCatalogNo = full.passportNumber.trim();
+                }).catch(() => {});
+            }
             activeWorkFilter = parseWorkFilter(page.url.searchParams.get('view')) ?? (!isReleaseMode && availableFigurines.length > 0
                 ? 'available'
                 : inProgressFigurines.length > 0
@@ -464,6 +566,29 @@
                     <span>{$t('homeTrustAuthorReply')}</span>
                 </div>
 
+                <!-- Independent of workshopFeature.visible on purpose: that flag only
+                     gates the big workshop-feature section further down (currently
+                     disabled), while these lockets + the reel modal are a separate,
+                     always-on feature. -->
+                <div class="hw-teasers">
+                    <HeroWorkshopTeaser
+                        webm="/images/workshop/atelier-reel-tiny.webm"
+                        mp4="/images/workshop/atelier-reel-tiny.mp4"
+                        poster="/images/workshop/atelier-reel-tiny-poster.jpg"
+                        label={$t('homeWorkshopTeaserLabel')}
+                        onSelect={(e) => openReelModal('a', e)}
+                    />
+                    <HeroWorkshopTeaser
+                        webm="/images/workshop/atelier-reel-2-tiny.webm"
+                        mp4="/images/workshop/atelier-reel-2-tiny.mp4"
+                        poster="/images/workshop/atelier-reel-2-tiny-poster.jpg"
+                        label={$t('homeWorkshopTeaserLabel')}
+                        delayMs={1700}
+                        onSelect={(e) => openReelModal('b', e)}
+                    />
+                    <span class="hw-teasers-label">{$t('homeWorkshopTeaserLabel')}</span>
+                </div>
+
                 <!-- Быстрая полоска available убрана: дублировала грид «Works» ниже. -->
                 {#if availableFigurines.length === 0}
                     <p class="release-note">{$t('homeReleaseNote')}</p>
@@ -531,6 +656,12 @@
             </div>
 
         </section>
+
+        <!-- "Exhibit of the day": one work set under glass in a cone of candlelight,
+             with the curator's own note — a daily-turned reason to return. -->
+        {#if isLoaded}
+            <DailyVitrine fig={vitrineFig} note={vitrineNote} catalogNo={vitrineCatalogNo} />
+        {/if}
 
         <!-- "Since your visit": a noticeable ledger band that answers the returning
              visitor's question — has anything changed since I was last here? -->
@@ -694,11 +825,46 @@
             </div>
         </section>
 
+        <!-- WORKSHOP section — disabled for now, kept here to restore easily later.
         {#if workshopFeature.visible}
-        <section class="workshop-feature" aria-labelledby="workshop-feature-title">
-            <div class="workshop-photos" aria-hidden="true">
-                <img src={wfPhotoBack} alt="" class="workshop-photo workshop-photo-back" loading="lazy" />
-                <img src={wfPhotoFront} alt="" class="workshop-photo workshop-photo-front" loading="lazy" />
+        <section class="workshop-feature" aria-labelledby="workshop-feature-title" bind:this={workshopSectionEl}>
+            <div class="workshop-photos">
+                <div class="workshop-stage">
+                    <button
+                        type="button"
+                        class="workshop-plate workshop-plate-a"
+                        class:is-front={frontReel === 'a'}
+                        onclick={() => { frontReel = 'a'; workshopActivated = true; }}
+                        aria-label={$t('homeWorkshopBringForward')}
+                    >
+                        {#if workshopActivated}
+                            <AtelierReel />
+                        {:else}
+                            <img src="/images/workshop/atelier-reel-poster.jpg" alt="" class="workshop-plate-poster" loading="lazy" />
+                        {/if}
+                    </button>
+                    <button
+                        type="button"
+                        class="workshop-plate workshop-plate-b"
+                        class:is-front={frontReel === 'b'}
+                        onclick={() => { frontReel = 'b'; workshopActivated = true; }}
+                        aria-label={$t('homeWorkshopBringForward')}
+                    >
+                        {#if workshopActivated}
+                            <AtelierReel
+                                webm="/images/workshop/atelier-reel-2.webm"
+                                mp4="/images/workshop/atelier-reel-2.mp4"
+                                poster="/images/workshop/atelier-reel-2-poster.jpg"
+                            />
+                        {:else}
+                            <img src="/images/workshop/atelier-reel-2-poster.jpg" alt="" class="workshop-plate-poster" loading="lazy" />
+                        {/if}
+                    </button>
+                </div>
+                <p class="workshop-plate-label" aria-hidden="true">
+                    <span class="wpl-rule"></span>
+                    {$t('homeWorkshopReelCaption')}
+                </p>
             </div>
 
             <div class="workshop-copy">
@@ -729,12 +895,25 @@
             </div>
         </section>
         {/if}
+        -->
 
         <!-- The house guest book at the exit: sign it to receive the workshop's
              letters first. Quiet email capture — the one channel the house owns. -->
         <VisitorBook figurines={collectionFigurines} />
 
     </main>
+
+    {#if reelModalOpen}
+        <WorkshopReelModal
+            webm={reelModalClip === 'a' ? '/images/workshop/atelier-reel.webm' : '/images/workshop/atelier-reel-2.webm'}
+            mp4={reelModalClip === 'a' ? '/images/workshop/atelier-reel.mp4' : '/images/workshop/atelier-reel-2.mp4'}
+            poster={reelModalClip === 'a' ? '/images/workshop/atelier-reel-poster.jpg' : '/images/workshop/atelier-reel-2-poster.jpg'}
+            caption={$t('homeWorkshopReelCaption')}
+            closeLabel={$t('figurineGrimoireClose')}
+            origin={reelModalOrigin}
+            onClose={() => reelModalOpen = false}
+        />
+    {/if}
 </div>
 
 {#snippet zoneBtn(zone: CabinetZone, index: number)}
@@ -1091,6 +1270,26 @@
         width: 6px;
         height: 1px;
         background: rgba(198,95,60,0.58);
+    }
+
+    .hw-teasers {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        width: fit-content;
+        margin-top: 22px;
+    }
+
+    .hw-teasers-label {
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.1em;
+        line-height: 1.3;
+        text-transform: uppercase;
+        max-width: 130px;
+        color: var(--mid);
+        border-bottom: 1px solid rgba(198,95,60,0.25);
+        padding-bottom: 2px;
     }
 
     .release-note {
@@ -1883,33 +2082,74 @@
     }
 
     .workshop-photos {
+        display: grid;
+        justify-items: center;
+        width: 100%;
+    }
+
+    .workshop-stage {
         position: relative;
+        width: 100%;
         min-height: clamp(420px, 42vw, 680px);
     }
 
-    .workshop-photo {
+    .workshop-plate {
         position: absolute;
         display: block;
-        object-fit: cover;
+        width: 69%;
+        height: 74%;
+        padding: 0;
+        background: none;
         border: 1px solid rgba(52,37,28,0.08);
         box-shadow: 0 28px 76px rgba(52,37,28,0.14);
-        filter: saturate(0.9) contrast(1.02);
+        overflow: hidden;
+        cursor: pointer;
+        transition: transform 0.4s cubic-bezier(0.16,1,0.3,1), box-shadow 0.4s ease, filter 0.4s ease;
     }
 
-    .workshop-photo-back {
-        left: 0;
-        top: 0;
-        width: 69%;
-        height: 74%;
-        object-position: center;
+    .workshop-plate-a { left: 0; top: 0; }
+    .workshop-plate-b { right: 0; bottom: 0; }
+
+    .workshop-plate.is-front {
+        z-index: 2;
+        box-shadow: 0 34px 92px rgba(52,37,28,0.22);
     }
 
-    .workshop-photo-front {
-        right: 0;
-        bottom: 0;
-        width: 69%;
-        height: 74%;
-        object-position: center;
+    .workshop-plate:not(.is-front) {
+        z-index: 1;
+        transform: scale(0.96);
+        filter: saturate(0.8);
+    }
+
+    .workshop-plate:focus-visible {
+        outline: 2px solid rgba(198,95,60,0.6);
+        outline-offset: 3px;
+    }
+
+    .workshop-plate-poster {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+
+    .workshop-plate-label {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 18px;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--mid);
+    }
+
+    .wpl-rule {
+        width: 22px;
+        height: 1px;
+        background: rgba(198,95,60,0.4);
     }
 
     .workshop-copy {
@@ -2018,7 +2258,7 @@
             gap: 34px;
         }
 
-        .workshop-photos {
+        .workshop-stage {
             min-height: min(72vw, 560px);
         }
     }
@@ -2123,12 +2363,11 @@
             padding: 36px 16px 74px;
         }
 
-        .workshop-photos {
+        .workshop-stage {
             min-height: 360px;
         }
 
-        .workshop-photo-back,
-        .workshop-photo-front {
+        .workshop-plate {
             width: 78%;
             height: 67%;
         }
