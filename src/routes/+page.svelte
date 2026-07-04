@@ -20,6 +20,9 @@
     import WorkshopReelModal from '$lib/components/WorkshopReelModal.svelte';
     import { visitorBook } from '$lib/stores/visitor-book.svelte';
     import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
+    import { visitorMarks } from '$lib/stores/visitor-marks.svelte';
+    import MarkedByYou from '$lib/components/MarkedByYou.svelte';
+    import NoticedByGuests from '$lib/components/NoticedByGuests.svelte';
     import { houseClock } from '$lib/stores/house-clock.svelte';
     import { showingRooms } from '$lib/stores/showing-rooms.svelte';
     import { isShowingOpen, resolveWindow } from '$lib/showing-window';
@@ -175,6 +178,13 @@
     let secondaryCtaHref = $derived(isReleaseMode ? '/upcoming' : '#request-path');
     let secondaryCtaText = $derived(isReleaseMode ? $t('homeReleaseSecondaryCta') : $t('homeOrderCta'));
     let activeWorkFilter = $state<WorkFilter>('available');
+    // The book-holders' "first look" shelf: works genuinely inside their timed
+    // early-release window (held out of the public archive by the server until
+    // their hour). Rendered only when signed (see template guard).
+    let firstLookFigurines = $state<FigurineListItem[]>([]);
+    // Hybrid editorial+algorithmic shelf resolved entirely server-side (admin
+    // pins + top of the private mark ranking) — see /figurines/noticed.
+    let noticedByGuestsFigurines = $state<FigurineListItem[]>([]);
     let heroObjectName = $derived(homeContent.heroCaptionTitle?.trim() || heroFigurine?.name || homeContent.title?.trim() || '');
     let heroObjectMeta = $derived(homeContent.heroCaptionMeta?.trim() || $t('homeHeroObjectMeta'));
     let heroObjectCta = $derived(heroObjectName ? $t('homeHeroObjectOpen') : $t('homeSecondaryCta'));
@@ -193,6 +203,46 @@
             .map((id) => collectionFigurines.find((item) => item.id === id))
             .filter((item): item is FigurineListItem => Boolean(item))
     );
+    // "Отмеченное вами" — the visitor's own private marks, resolved against the
+    // same in-memory list as the saved/wishlist tab (see its comment above for
+    // the same "first 30 fetched" cap). Never touches the server for counts —
+    // this only ever reads the visitor's own localStorage-backed tone map.
+    let markedWorkFigurines = $derived(
+        Object.keys(visitorMarks.marks)
+            .map((id) => collectionFigurines.find((item) => item.id === id))
+            .filter((item): item is FigurineListItem => Boolean(item))
+    );
+    // The home page fans the same small catalog out into several shelves
+    // (vitrine, first look, marked-by-you, noticed-by-guests, the default grid) —
+    // with a catalog this small, showing the same card twice reads as broken,
+    // not as generous curation (even Netflix, with a vastly larger catalog,
+    // explicitly deduplicates the same title across recommendation rows).
+    // Each shelf claims cards from its own candidate list in order of
+    // specificity — the most tailored placement (today's single vitrine pick,
+    // then this one visitor's own marks) gets first claim; broader shelves
+    // fill from what's left. Only the DEFAULT "available" tab of the main grid
+    // is deduped this way — Saved/Archive/Upcoming stay exhaustive, since
+    // opening one of those tabs is a deliberate browse action, not passive
+    // scroll-through, and items shouldn't seem to vanish from a list the
+    // visitor asked to see in full.
+    let homeShelves = $derived.by(() => {
+        const used = new Set<string>();
+        const claim = (list: FigurineListItem[]) => {
+            const picked = list.filter((f) => !used.has(f.id));
+            for (const f of picked) used.add(f.id);
+            return picked;
+        };
+
+        if (vitrineFig) used.add(vitrineFig.id);
+
+        const marked = claim(markedWorkFigurines);
+        const firstLook = claim(firstLookFigurines);
+        const noticed = claim(noticedByGuestsFigurines);
+        const available = claim(availableFigurines);
+
+        return { marked, firstLook, noticed, available };
+    });
+
     let activeWorkFigurines = $derived(
         activeWorkFilter === 'saved'
             ? savedWorkFigurines
@@ -200,14 +250,10 @@
                 ? inProgressFigurines
                 : activeWorkFilter === 'archive'
                     ? archivePreviewFigurines
-                    : availableFigurines
+                    : homeShelves.available
     );
     let visibleWorkFigurines = $derived(activeWorkFigurines.slice(0, 8));
 
-    // The book-holders' "first look" shelf: works genuinely inside their timed
-    // early-release window (held out of the public archive by the server until
-    // their hour). Rendered only when signed (see template guard).
-    let firstLookFigurines = $state<FigurineListItem[]>([]);
     let activeWorkHref = $derived(
         activeWorkFilter === 'saved'
             ? '/profile'
@@ -367,12 +413,13 @@
 
     async function init() {
         try {
-            const [dbZones, bgPath, figurines, inProgress, firstLook, content, workshop] = await Promise.all([
+            const [dbZones, bgPath, figurines, inProgress, firstLook, noticedByGuests, content, workshop] = await Promise.all([
                 api.getCabinetZones().catch(() => DEFAULT_ZONES),
                 api.getMainBackground().catch(() => null),
                 api.getAllFigurines(30).catch(() => [] as FigurineListItem[]),
                 api.getInProgressFigurines().catch(() => [] as FigurineListItem[]),
                 api.getFirstLookFigurines().catch(() => [] as FigurineListItem[]),
+                api.getNoticedByGuests().catch(() => [] as FigurineListItem[]),
                 api.getHomeContent().catch(() => ({
                     title: null,
                     kicker: null,
@@ -397,6 +444,7 @@
             availableFigurines = sortFeaturedFigurines(visibleFigurines.filter((item) => item.status === 'available'));
             inProgressFigurines = sortFeaturedFigurines(inProgress);
             firstLookFigurines = firstLook;
+            noticedByGuestsFigurines = noticedByGuests;
             archivePreviewFigurines = sortFeaturedFigurines(visibleFigurines);
             heroFigurine = content.heroFigurineId
                 ? visibleFigurines.find((item) => item.id === content.heroFigurineId) ?? null
@@ -453,6 +501,7 @@
 
     onMount(() => {
         savedFigurines.load();
+        visitorMarks.load();
         houseClock.start();
         showingRooms.load();
         visitorBook.load();
@@ -676,10 +725,20 @@
         <HouseNoticeBoard figurines={collectionFigurines} />
 
         <!-- First look: the book-holders' privilege made visible — shown only to a
-             signed visitor, set above the general grid as a recognised courtesy. -->
+             signed visitor, set above the general grid as a recognised courtesy.
+             Cards already claimed above (vitrine, marked-by-you) are excluded —
+             see homeShelves. -->
         {#if visitorBook.signed}
-            <FirstLook works={firstLookFigurines} greetName={visitorBook.name} />
+            <FirstLook works={homeShelves.firstLook} greetName={visitorBook.name} />
         {/if}
+
+        <!-- The visitor's own private marks, resolved locally — never a public
+             ranking, just their own quiet collecting ritual coming back to them. -->
+        <MarkedByYou figurines={homeShelves.marked} />
+
+        <!-- Hybrid editorial+algorithmic shelf: admin pins + top of the private
+             mark ranking, resolved server-side. No counts, no visible order logic. -->
+        <NoticedByGuests figurines={homeShelves.noticed} />
 
         <section id="available-works" class="context-section work-hub" aria-labelledby="context-title">
             <div class="context-hd work-hd">

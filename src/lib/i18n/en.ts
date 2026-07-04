@@ -224,8 +224,14 @@ export const en = {
   figurineFullscreen: 'Full screen',
   figurineShare: 'Share',
   figurineCopied: 'Link copied',
-  figurineMarkOn: 'Leave a mark',
-  figurineMarkedOff: 'Marked — click to remove',
+  figurineMarkNone: 'Leave a mark',
+  figurineMarkTouched: 'Touched',
+  figurineMarkMesmerized: 'Mesmerized',
+  figurineMarkDesired: 'Want one like this',
+  figurineMarkChangeHint: 'click to change',
+  figurineMarkThanks: 'Noted. The house remembers.',
+  figurineNoticedByOthers: 'Guests lingered here',
+  houseFavoriteBadge: 'House Favorite',
   turnSoundLabel: 'Turning sound',
   turnSoundOff: 'Silent',
   turnSoundThin: 'Thin leaf',
@@ -345,6 +351,8 @@ export const en = {
   detailImageLensOff: 'Turn magnifier off',
   detailImageRakeOn: 'Examine under raking light',
   detailImageRakeOff: 'Put the raking lamp away',
+  detailImagePrevPhoto: 'Previous photo',
+  detailImageNextPhoto: 'Next photo',
   detailMakingRecordKicker: 'Making record',
   detailMakingRecordTitle: 'How this figure took shape',
   detailMakingRecordText: 'Sketches, material tests, and workshop traces show that the work is made by hand, one step at a time.',
@@ -669,6 +677,8 @@ export const en = {
   lightboxPrevious: 'Previous',
   lightboxNext: 'Next',
   lightboxPhoto: 'Photo',
+  lightboxFullSize: 'Full size',
+  lightboxResetZoom: 'Reset zoom',
 
   // === ADMIN SHOWINGS & BOOKINGS ===
   adminTabShowings: 'Showings',
@@ -1750,6 +1760,17 @@ export const en = {
   firstLookLead:             'gathered for those in the book — works set out a step ahead of the open archive, yours to see before the house unveils them to all.',
   firstLookNote:             'A quiet courtesy of the house to those who signed its book.',
   firstLookOpens:            'Opens to all',
+
+  // Marked by you (private, visitor-local collecting shelf)
+  markedByYouEyebrow:        'Marked by you',
+  markedByYouTitle:          'What you\'ve marked',
+  markedByYouLead:           'the pieces you left a quiet sign on, gathered here for you alone — no one else can see this shelf.',
+  markedByYouNote:           'Kept only in this browser, on this device — nowhere else.',
+
+  // Noticed by guests (hybrid editorial + private-ranking shelf)
+  noticedByGuestsEyebrow:    'Noticed by guests',
+  noticedByGuestsTitle:      'What caught their eye',
+  noticedByGuestsLead:       'a small, quiet selection of works that visitors have lingered over — chosen with the house\'s own eye, not by a public vote.',
   adminFirstLookLabel:       'First look — early release',
   adminFirstLookHint:        'While this is a future date, the work is held out of the public archive and shown only to book-holders. Clear it to publish to everyone.',
   adminFirstLookClear:       'Clear',

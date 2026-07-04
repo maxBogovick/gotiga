@@ -198,6 +198,22 @@ export function resolveMediaUrl(url: string | null | undefined): string | null {
     return value;
 }
 
+/**
+ * Every uploaded figurine image is encoded server-side into a JPEG *and* a
+ * lossless WebP sibling at the same path (see `save_image_variants` in
+ * handlers.rs — images/preview/{id}.jpg + images/preview/{id}.webp, same for
+ * thumb/). Only the JPEG path is ever persisted on the image record, so the
+ * WebP variant is otherwise generated and written to disk for nothing. Since
+ * the id and directory are identical, the WebP path is always derivable by
+ * swapping the extension — no DB/API change needed to start serving it.
+ */
+export function resolveWebpUrl(url: string | null | undefined): string | null {
+    const resolved = resolveMediaUrl(url);
+    if (!resolved) return null;
+    if (!/\.jpe?g(\?.*)?$/i.test(resolved)) return null;
+    return resolved.replace(/\.jpe?g(\?.*)?$/i, (_m, q) => `.webp${q ?? ''}`);
+}
+
 function webPublicUrl(url: unknown): string | null {
     if (typeof url !== 'string') return null;
     return resolveMediaUrl(url);
@@ -305,6 +321,18 @@ export const api = {
         return webFetch('/admin/figurine-marks', { headers: authHeaders() });
     },
 
+    async getNoticedByGuestsSettings(): Promise<import('./types/api').NoticedByGuestsSettings> {
+        return webFetch('/admin/settings/noticed-by-guests', { headers: authHeaders() });
+    },
+
+    async saveNoticedByGuestsSettings(settings: import('./types/api').NoticedByGuestsSettings): Promise<import('./types/api').NoticedByGuestsSettings> {
+        return webFetch('/admin/settings/noticed-by-guests', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(settings),
+        });
+    },
+
     async sendAnalyticsEvent(payload: AnalyticsEventPayload): Promise<void> {
         if (isTauri) return;
         await fetch(`${webApiBase()}/analytics/events`, {
@@ -335,6 +363,13 @@ export const api = {
         if (isTauri) return invoke<FigurineListItem[]>('get_all_figurines')
             .then(all => all.filter(f => f.firstLookUntil && new Date(f.firstLookUntil).getTime() > Date.now()));
         return webFetch('/figurines/first-look');
+    },
+
+    // Hybrid curated shelf: admin pins first, remaining slots auto-fill from the
+    // private weighted mark ranking. Never carries counts — just the resolved list.
+    async getNoticedByGuests(): Promise<FigurineListItem[]> {
+        if (isTauri) return invoke<FigurineListItem[]>('get_all_figurines').then(all => all.slice(0, 8));
+        return webFetch('/figurines/noticed');
     },
 
     async getAllFigurinesAdmin(): Promise<FigurineListItem[]> {
@@ -766,11 +801,12 @@ export const api = {
     },
 
     // A single quiet wax-seal gesture, not a rating — no count is ever returned here.
-    async toggleFigurineMark(figurineId: string, visitorToken: string): Promise<import('./types/api').MarkToggleResponse> {
+    // `tone: null` clears the mark; the caller decides the target state explicitly.
+    async toggleFigurineMark(figurineId: string, visitorToken: string, tone: import('./types/api').MarkTone | null): Promise<import('./types/api').MarkToggleResponse> {
         return webFetch(`/figurines/${figurineId}/mark`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ visitorToken }),
+            body: JSON.stringify({ visitorToken, tone }),
         });
     },
 

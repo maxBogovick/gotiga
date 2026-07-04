@@ -539,42 +539,15 @@ main:has(.page-root) ~ .site-footer {
   animation: spin 0.75s linear infinite;
 }
 
-/* "Mark of attention" — a quiet wax-seal gesture, not a rating. No count is ever
-   rendered here or anywhere on the public site. */
-.control-btn--marked {
-  border-color: var(--color-border-ember);
-  color: var(--color-ember);
-  background: var(--color-ember-subtle);
-}
-
+/* "Mark of attention" — a quiet wax-seal gesture overlaid on the image itself
+   (see .gallery-mark below), not a rating. No count or tone is ever rendered
+   publicly. .mark-seal is just a centering wrapper for the press animation —
+   the icon itself (MarkIcon.svelte) is a plain line-icon like its neighbours
+   .gallery-heart/.gallery-lens, colored via .gallery-mark--marked. */
 .mark-seal {
-  position: relative;
-  flex: 0 0 auto;
-  width: 0.92rem;
-  height: 0.92rem;
-  border-radius: 50%;
-  background: color-mix(in srgb, currentColor 22%, transparent);
-  transition: background var(--duration-fast) var(--ease-atelier);
-}
-
-.control-btn--marked .mark-seal {
-  background: radial-gradient(circle at 38% 32%, #d2683f, #8a2f1c 62%, #5f2012);
-}
-
-.mark-seal-mark {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  font-size: 0.6rem;
-  line-height: 1;
-  color: rgba(40, 12, 6, 0.55);
-  opacity: 0;
-  transition: opacity var(--duration-fast) var(--ease-atelier);
-}
-
-.control-btn--marked .mark-seal-mark {
-  opacity: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .mark-seal--pressing {
@@ -870,6 +843,12 @@ main:has(.page-root) ~ .site-footer {
   background: var(--color-canvas-sunken);
 }
 
+.thumb-v-media picture {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 .thumb-v-img {
   display: block;
   width: 100%;
@@ -1048,6 +1027,12 @@ main:has(.page-root) ~ .site-footer {
 .gallery-heart,
 .gallery-lens,
 .gallery-rake,
+.gallery-mark,
+.gallery-mark-option,
+.gallery-nav-prev,
+.gallery-nav-next,
+.mark-thanks,
+.notice-badge,
 .image-view-tools {
   position: absolute;
   z-index: 10;
@@ -1114,7 +1099,8 @@ main:has(.page-root) ~ .site-footer {
 
 .gallery-heart,
 .gallery-lens,
-.gallery-rake {
+.gallery-rake,
+.gallery-mark {
   left: 0.75rem;
   justify-content: center;
   width: 2.35rem;
@@ -1143,18 +1129,72 @@ main:has(.page-root) ~ .site-footer {
   bottom: 6.15rem;
 }
 
+/* Always its own slot regardless of whether .gallery-rake is rendered for this
+   figurine (raking light is conditional) — a fixed offset keeps the mark seal
+   from jumping position between pieces. */
+.gallery-mark {
+  bottom: 8.85rem;
+}
+
 .gallery-heart:hover,
 .gallery-lens:hover,
-.gallery-rake:hover {
+.gallery-rake:hover,
+.gallery-mark:hover {
   color: var(--color-canvas-raised);
   background: color-mix(in srgb, var(--color-ember) 42%, var(--color-ink-primary));
   border-color: color-mix(in srgb, var(--color-ember) 56%, transparent);
   transform: scale(1.06);
 }
 
+/* Prev/next photo — a plain, unmissable pair of arrows either side of the
+   plate. Keyboard arrows and swipe already work, but neither is discoverable
+   without a visible affordance, so this is the primary way most visitors
+   will realise a piece has more than one photo. */
+.gallery-nav-prev,
+.gallery-nav-next {
+  top: 50%;
+  z-index: 12;
+  justify-content: center;
+  width: 2.35rem;
+  height: 2.35rem;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--color-canvas-raised) 22%, transparent);
+  color: color-mix(in srgb, var(--color-canvas-raised) 82%, transparent);
+  cursor: pointer;
+  opacity: 0.8;
+  transform: translateY(-50%);
+  transition:
+    background var(--duration-fast) var(--ease-atelier),
+    border-color var(--duration-fast) var(--ease-atelier),
+    color var(--duration-fast) var(--ease-atelier),
+    opacity var(--duration-fast) var(--ease-atelier),
+    transform var(--duration-fast) var(--ease-atelier);
+}
+
+.gallery-nav-prev { left: 0.6rem; }
+.gallery-nav-next { right: 0.6rem; }
+
+.gallery-nav-prev:hover,
+.gallery-nav-next:hover {
+  color: var(--color-canvas-raised);
+  background: color-mix(in srgb, var(--color-ember) 42%, var(--color-ink-primary));
+  border-color: color-mix(in srgb, var(--color-ember) 56%, transparent);
+  opacity: 1;
+}
+.gallery-nav-prev:hover { transform: translateY(-50%) translateX(-2px); }
+.gallery-nav-next:hover { transform: translateY(-50%) translateX(2px); }
+
+.gallery-nav-prev:disabled,
+.gallery-nav-next:disabled {
+  opacity: 0.22;
+  cursor: default;
+  pointer-events: none;
+}
+
 .gallery-heart--saved,
 .gallery-lens--active,
-.gallery-rake--active {
+.gallery-rake--active,
+.gallery-mark--marked {
   color: var(--color-canvas-raised);
   background: color-mix(in srgb, var(--color-ember) 52%, var(--color-ink-primary));
   border-color: color-mix(in srgb, var(--color-ember) 64%, transparent);
@@ -1162,8 +1202,150 @@ main:has(.page-root) ~ .site-footer {
 
 .gallery-heart--saved:hover,
 .gallery-lens--active:hover,
-.gallery-rake--active:hover {
+.gallery-rake--active:hover,
+.gallery-mark--marked:hover {
   background: color-mix(in srgb, var(--color-ember) 62%, var(--color-ink-primary));
+}
+
+/* Tone picker menu — opens upward above .gallery-mark as a small vertical
+   list (icon + visible label per row), the most familiar UI pattern for
+   "pick one of a few named things" — deliberately NOT icon-only circles:
+   research on custom/abstract icons (no pre-existing visual convention for
+   "mesmerized" etc.) shows label+icon is required for comprehension, icons
+   alone rarely work for non-standard concepts. `bottom` offset is set
+   per-row inline (see markup) so rows stack upward from .gallery-mark. */
+.gallery-mark-option {
+  left: 0.75rem;
+  justify-content: flex-start;
+  min-height: 2.1rem;
+  padding: 0.3rem 0.7rem 0.3rem 0.55rem;
+  border: 1px solid color-mix(in srgb, var(--color-canvas-raised) 22%, transparent);
+  color: color-mix(in srgb, var(--color-canvas-raised) 88%, transparent);
+  cursor: pointer;
+  opacity: 0.97;
+  font-size: 0.6rem;
+  white-space: nowrap;
+  transform-origin: left bottom;
+  animation: mark-option-in 0.16s var(--ease-atelier) both;
+  transition:
+    background var(--duration-fast) var(--ease-atelier),
+    border-color var(--duration-fast) var(--ease-atelier),
+    color var(--duration-fast) var(--ease-atelier);
+}
+
+.gallery-mark-option :global(svg) {
+  flex: 0 0 auto;
+}
+
+.gallery-mark-option:hover {
+  color: var(--color-canvas-raised);
+  background: color-mix(in srgb, var(--color-ember) 42%, var(--color-ink-primary));
+  border-color: color-mix(in srgb, var(--color-ember) 56%, transparent);
+}
+
+.gallery-mark-option--active {
+  color: var(--color-canvas-raised);
+  background: color-mix(in srgb, var(--color-ember) 58%, var(--color-ink-primary));
+  border-color: color-mix(in srgb, var(--color-ember) 68%, transparent);
+}
+
+@keyframes mark-option-in {
+  from { opacity: 0; transform: scale(0.92) translateY(4px); }
+  to { opacity: 0.97; transform: scale(1) translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gallery-mark-option { animation: none; }
+}
+
+/* Brief in-context acknowledgment right when a mark is set — reuses the first
+   picker-row slot (the picker is always closed by the time this shows). */
+.mark-thanks {
+  left: 0.75rem;
+  bottom: 11.55rem;
+  padding: 0.3rem 0.75rem;
+  color: color-mix(in srgb, var(--color-canvas-raised) 92%, transparent);
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 0.72rem;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: mark-thanks-in 0.25s var(--ease-atelier) both;
+}
+
+@keyframes mark-thanks-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mark-thanks { animation: none; }
+}
+
+/* The one public trace of the marks-of-attention system — a boolean, never a
+   count. A compact icon+word chip (not a sentence) — same small-caps badge
+   language as .img-counter/.tile-seal, not the italic-serif caption style. */
+.notice-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  top: 2.65rem;
+  left: 0.75rem;
+  margin: 0;
+  padding: 0.24rem 0.6rem;
+  color: color-mix(in srgb, var(--color-canvas-raised) 92%, transparent);
+  font-family: var(--font-body);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.notice-badge svg {
+  flex: 0 0 auto;
+}
+
+/* "House Favorite" — the rarer second tier, marked only by a warmer flat
+   fill (no gradient, no shadow — a museum label, not a marketplace medal).
+   Overrides the plain .notice-badge look; same slot, mutually exclusive with it. */
+.notice-badge--favorite {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: color-mix(in srgb, var(--color-ember-deep) 88%, transparent);
+  color: color-mix(in srgb, var(--color-canvas-raised) 96%, transparent);
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 0.6rem;
+}
+
+/* "Noticed" — the label stays always visible (readability over mystery: an
+   icon alone can't be understood without a hover/tap that many visitors will
+   never attempt); the dot in front is a static wax-red mark, not a live
+   notification glow. */
+.notice-badge--spark {
+  gap: 0.4rem;
+}
+
+.notice-spark-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 0.95rem;
+  height: 0.95rem;
+  border-radius: 999px;
+  background: var(--color-ember-deep);
+}
+
+.notice-spark-dot svg {
+  width: 58%;
+  height: 58%;
+  color: color-mix(in srgb, var(--color-canvas-raised) 96%, transparent);
 }
 
 .img-counter-type {
@@ -2892,7 +3074,9 @@ main:has(.page-root) ~ .site-footer {
 @media (pointer: coarse) {
   /* Expand gallery action buttons to 44px hit target */
   .gallery-heart,
-  .gallery-lens {
+  .gallery-lens,
+  .gallery-nav-prev,
+  .gallery-nav-next {
     width: 2.75rem;
     height: 2.75rem;
   }
@@ -2911,6 +3095,10 @@ main:has(.page-root) ~ .site-footer {
   }
   .expand-btn {
     opacity: 0.82;
+  }
+  .gallery-nav-prev,
+  .gallery-nav-next {
+    opacity: 0.85;
   }
 
   /* Story modal close button */

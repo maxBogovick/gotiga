@@ -306,7 +306,7 @@ impl AppService {
             submissions: summary.submissions,
         };
         Ok(AdminFigurineAnalyticsDetail {
-            figurine: self.to_list_item(figurine, face.as_ref()),
+            figurine: self.to_list_item(figurine, face.as_ref(), false),
             signal,
             summary,
             daily,
@@ -417,7 +417,7 @@ impl AppService {
             .unwrap_or_else(|| self.resolve_url(&img.file_path, "images", &i_id_str))
     }
 
-    fn to_list_item(&self, f: Figurine, face: Option<&Image>) -> FigurineListItemDto {
+    fn to_list_item(&self, f: Figurine, face: Option<&Image>, house_favorite: bool) -> FigurineListItemDto {
         FigurineListItemDto {
             id: f.id.to_string(),
             name: f.name,
@@ -440,7 +440,16 @@ impl AppService {
             sealed_door_image: f.sealed_door_image,
             showing_room_id: f.showing_room_id.map(|u| u.to_string()),
             first_look_until: f.first_look_until,
+            house_favorite,
         }
+    }
+
+    /// Batch "House Favorite" lookup for a list of figurines about to be
+    /// rendered as cards — computed once (percentile over the whole
+    /// collection) and intersected with the ids actually being rendered.
+    async fn house_favorite_ids(&self, ids: &[Uuid]) -> Result<std::collections::HashSet<Uuid>> {
+        let tiers = self.repo.get_favorite_tiers().await?;
+        Ok(ids.iter().filter(|id| tiers.house_favorite.contains(id)).copied().collect())
     }
 
     pub async fn list_figurines(&self, visible_only: bool, query: crate::models::FigurineQuery) -> Result<crate::models::FigurinesPage> {
@@ -449,11 +458,13 @@ impl AppService {
         let (figurines, total) = self.repo.get_all_figurines(visible_only, &query).await?;
         let ids: Vec<Uuid> = figurines.iter().map(|f| f.id).collect();
         let faces = self.repo.get_face_images_for_figurines(&ids).await?;
+        let favorites = self.house_favorite_ids(&ids).await?;
         let items = figurines
             .into_iter()
             .map(|f| {
                 let face = faces.get(&f.id);
-                self.to_list_item(f, face)
+                let favorite = favorites.contains(&f.id);
+                self.to_list_item(f, face, favorite)
             })
             .collect();
         Ok(crate::models::FigurinesPage { items, total, page, per_page })
@@ -466,11 +477,13 @@ impl AppService {
         let figurines = self.repo.get_first_look_figurines().await?;
         let ids: Vec<Uuid> = figurines.iter().map(|f| f.id).collect();
         let faces = self.repo.get_face_images_for_figurines(&ids).await?;
+        let favorites = self.house_favorite_ids(&ids).await?;
         Ok(figurines
             .into_iter()
             .map(|f| {
                 let face = faces.get(&f.id);
-                self.to_list_item(f, face)
+                let favorite = favorites.contains(&f.id);
+                self.to_list_item(f, face, favorite)
             })
             .collect())
     }
@@ -483,11 +496,13 @@ impl AppService {
         let (figurines, _) = self.repo.get_all_figurines(true, &q).await?;
         let ids: Vec<Uuid> = figurines.iter().map(|f| f.id).collect();
         let faces = self.repo.get_face_images_for_figurines(&ids).await?;
+        let favorites = self.house_favorite_ids(&ids).await?;
         Ok(figurines
             .into_iter()
             .map(|f| {
                 let face = faces.get(&f.id);
-                self.to_list_item(f, face)
+                let favorite = favorites.contains(&f.id);
+                self.to_list_item(f, face, favorite)
             })
             .collect())
     }
@@ -497,6 +512,16 @@ impl AppService {
         let figurine = self.repo.get_figurine_by_id(uuid).await?.ok_or_else(|| {
             crate::error::AppError::NotFound(format!("Figurine {} not found", id))
         })?;
+
+        // Percentile rank among marked figurines (see get_favorite_tiers) — a
+        // relative "deservedly in the top" signal, not an arbitrary fixed
+        // score. Below a minimum eligible pool size both tiers come back
+        // empty, and we say nothing at all (see project decision on negative
+        // social proof) rather than crown whichever piece happens to lead an
+        // almost-empty field.
+        let tiers = self.repo.get_favorite_tiers().await?;
+        let noticed_by_others = tiers.noticed.contains(&uuid);
+        let house_favorite = tiers.house_favorite.contains(&uuid);
 
         let images = self.repo.get_images_by_figurine(uuid).await?;
         let steps = self.repo.get_steps_by_figurine(uuid).await?;
@@ -509,11 +534,13 @@ impl AppService {
             .repo
             .get_face_images_for_figurines(&related_ids)
             .await?;
+        let related_favorites = self.house_favorite_ids(&related_ids).await?;
         let related_items: Vec<FigurineListItemDto> = related_entities
             .into_iter()
             .map(|r| {
                 let face = related_faces.get(&r.id);
-                self.to_list_item(r, face)
+                let favorite = related_favorites.contains(&r.id);
+                self.to_list_item(r, face, favorite)
             })
             .collect();
 
@@ -599,6 +626,8 @@ impl AppService {
             images: image_dtos,
             process_steps: step_dtos,
             related_items,
+            noticed_by_others,
+            house_favorite,
         })
     }
 
@@ -1763,25 +1792,111 @@ impl AppService {
         Ok(())
     }
 
-    /// Toggle a visitor's wax-seal mark. The token is opaque client state, not a
-    /// credential, but we still bound its length to keep the column and any
-    /// future index sane against a malicious/broken client.
-    pub async fn toggle_figurine_mark(
+    /// Set or clear a visitor's wax-seal mark. The token is opaque client
+    /// state, not a credential, but we still bound its length to keep the
+    /// column and any future index sane against a malicious/broken client.
+    /// Returns the tone that ended up applied (`None` if cleared).
+    pub async fn set_figurine_mark(
         &self,
         figurine_id: Uuid,
         visitor_token: &str,
-    ) -> Result<bool> {
+        tone: Option<&str>,
+    ) -> Result<Option<String>> {
         let token = visitor_token.trim();
         if token.is_empty() || token.len() > 64 {
             return Err(crate::error::AppError::BadRequest(
                 "Invalid visitor token".to_string(),
             ));
         }
-        self.repo.toggle_figurine_mark(figurine_id, token).await
+        let tone = match tone {
+            Some(t) if MARK_TONES.contains(&t) => Some(t),
+            Some(_) => {
+                return Err(crate::error::AppError::BadRequest(
+                    "Invalid mark tone".to_string(),
+                ));
+            }
+            None => None,
+        };
+        self.repo.set_figurine_mark(figurine_id, token, tone).await?;
+        Ok(tone.map(str::to_string))
     }
 
     pub async fn get_admin_mark_stats(&self) -> Result<Vec<AdminFigurineMarkStat>> {
         self.repo.get_admin_mark_stats().await
+    }
+
+    pub async fn get_noticed_by_guests_settings(&self) -> Result<NoticedByGuestsSettings> {
+        parse_json_setting(
+            "noticed_by_guests",
+            self.repo.get_setting("noticed_by_guests").await?,
+        )
+    }
+
+    pub async fn save_noticed_by_guests_settings(
+        &self,
+        settings: NoticedByGuestsSettings,
+    ) -> Result<()> {
+        let json = serde_json::to_string(&settings)
+            .map_err(|e| crate::error::AppError::Internal(e.to_string()))?;
+        if json.len() > 64 * 1024 {
+            return Err(crate::error::AppError::BadRequest(
+                "Noticed-by-guests settings are too large".to_string(),
+            ));
+        }
+        self.repo.upsert_setting("noticed_by_guests", &json).await
+    }
+
+    /// Hybrid public shelf: admin pins go first, in their chosen order; any
+    /// remaining slots fill from the private weighted mark ranking, excluding
+    /// pinned + explicitly-excluded pieces. Never exposes counts or tones —
+    /// only the resolved figurine list, same DTO as every other public listing.
+    pub async fn list_noticed_by_guests(&self) -> Result<Vec<FigurineListItemDto>> {
+        const MAX_SLOTS: usize = 8;
+        let settings = self.get_noticed_by_guests_settings().await?;
+
+        // An explicit pin always wins over a prior exclusion — exclusion only
+        // blocks the *automatic* fill below (see NoticedByGuestsSettings doc).
+        let mut ordered_ids: Vec<Uuid> = Vec::new();
+        for id in &settings.pinned_ids {
+            if !ordered_ids.contains(id) {
+                ordered_ids.push(*id);
+            }
+        }
+
+        if ordered_ids.len() < MAX_SLOTS {
+            let mut exclude = settings.excluded_ids.clone();
+            exclude.extend(ordered_ids.iter().copied());
+            let remaining = (MAX_SLOTS - ordered_ids.len()) as i64;
+            let auto = self
+                .repo
+                .get_top_marked_figurine_ids(&exclude, remaining)
+                .await?;
+            ordered_ids.extend(auto);
+        }
+
+        if ordered_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let figurines = self.repo.get_figurines_by_ids(&ordered_ids).await?;
+        let mut by_id: std::collections::HashMap<Uuid, Figurine> =
+            figurines.into_iter().map(|f| (f.id, f)).collect();
+        let present_ids: Vec<Uuid> = ordered_ids
+            .iter()
+            .filter(|id| by_id.contains_key(id))
+            .copied()
+            .collect();
+        let faces = self.repo.get_face_images_for_figurines(&present_ids).await?;
+        let favorites = self.house_favorite_ids(&present_ids).await?;
+        Ok(present_ids
+            .into_iter()
+            .filter_map(|id| by_id.remove(&id))
+            .map(|f| {
+                let face = faces.get(&f.id);
+                let favorite = favorites.contains(&f.id);
+                self.to_list_item(f, face, favorite)
+            })
+            .collect())
     }
 
     pub async fn create_booking(

@@ -8,6 +8,7 @@
   import BecomingReveal from '$lib/components/BecomingReveal.svelte';
   import SecretText from '$lib/components/SecretText.svelte';
   import FontSwitcher from '$lib/components/FontSwitcher.svelte';
+  import MarkIcon from '$lib/components/figurine-detail/MarkIcon.svelte';
   import ShowingsTimeline from '$lib/components/ShowingsTimeline.svelte';
   import FigurineComments from '$lib/components/FigurineComments.svelte';
   import '$lib/styles/figurine-detail/layout-showcase.css';
@@ -92,10 +93,14 @@
           {#await import('$lib/components/BrassLens.svelte') then { default: BrassLens }}
             <BrassLens
               src={ctx.resolveUrl(ctx.currentImage?.url)}
+              thumbSrc={ctx.resolveUrl(ctx.currentImage?.thumbUrl)}
+              sizes="100vw"
               alt={ctx.currentImage?.altText ?? ctx.figurine.name}
               class="w-full h-full"
               imageFit="cover"
-              objectPosition="center top"
+              objectPosition={ctx.currentImage?.focalX != null && ctx.currentImage?.focalY != null
+                ? `${ctx.currentImage.focalX * 100}% ${ctx.currentImage.focalY * 100}%`
+                : 'center top'}
               lensEnabled={ctx.isLensEnabled}
               onOpenLightbox={() => ctx.canOpenLightbox && ctx.openLightbox(ctx.activeImageIndex)}
               onSwipeLeft={() => ctx.sortedImages.length > 1 && ctx.selectImage(ctx.activeImageIndex + 1)}
@@ -104,6 +109,33 @@
           {/await}
         </div>
       {/key}
+    {/if}
+
+    {#if ctx.sortedImages.length > 1}
+      <button
+        type="button"
+        class="gallery-nav-prev"
+        onclick={() => ctx.selectImage(ctx.activeImageIndex - 1)}
+        disabled={ctx.activeImageIndex === 0}
+        aria-label={$t('detailImagePrevPhoto')}
+        title={$t('detailImagePrevPhoto')}
+      >
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <path d="M8 2L4 6l4 4"/>
+        </svg>
+      </button>
+      <button
+        type="button"
+        class="gallery-nav-next"
+        onclick={() => ctx.selectImage(ctx.activeImageIndex + 1)}
+        disabled={ctx.activeImageIndex === ctx.sortedImages.length - 1}
+        aria-label={$t('detailImageNextPhoto')}
+        title={$t('detailImageNextPhoto')}
+      >
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <path d="M4 2l4 4-4 4"/>
+        </svg>
+      </button>
     {/if}
 
     {#if ctx.lastBleed}
@@ -144,6 +176,24 @@
       </nav>
     {/if}
 
+    {#if ctx.houseFavorite}
+      <p class="notice-badge notice-badge--favorite">
+        <svg width="11" height="11" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+          <path d="M2 12C2 7 4 3 4 3M2 12L4 9.5M2 12L4.5 11" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
+          <path d="M12 12C12 7 10 3 10 3M12 12L10 9.5M12 12L9.5 11" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
+          <circle cx="7" cy="3" r="1.1" fill="currentColor"/>
+        </svg>
+        {$t('houseFavoriteBadge')}
+      </p>
+    {:else if ctx.noticedByOthers}
+      <p class="notice-badge notice-badge--spark">
+        <span class="notice-spark-dot" aria-hidden="true">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C12 6.6 6.6 12 0 12C6.6 12 12 17.4 12 24C12 17.4 17.4 12 24 12C17.4 12 12 6.6 12 0Z"/></svg>
+        </span>
+        {$t('figurineNoticedByOthers')}
+      </p>
+    {/if}
+
     <!-- Gallery buttons — direct children (требование shared CSS) -->
     <button
       type="button" class="gallery-heart" class:gallery-heart--saved={ctx.isSaved}
@@ -155,6 +205,34 @@
           fill={ctx.isSaved ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="1.15" stroke-linejoin="round"/>
       </svg>
     </button>
+
+    <button
+      type="button" class="gallery-mark" class:gallery-mark--marked={ctx.markTone}
+      onclick={ctx.toggleMarkPicker}
+      aria-label={ctx.markLabel} aria-expanded={ctx.markPickerOpen} title={ctx.markLabel}
+    >
+      <span class="mark-seal {ctx.markPressing ? 'mark-seal--pressing' : ''}" aria-hidden="true">
+        <MarkIcon tone={ctx.markIconTone} active={!!ctx.markTone} />
+      </span>
+    </button>
+
+    {#if ctx.markPickerOpen}
+      {#each ctx.markToneOptions as opt, i (opt.tone)}
+        <button
+          type="button" class="gallery-mark-option" class:gallery-mark-option--active={ctx.markTone === opt.tone}
+          style="bottom: {11.55 + i * 2.45}rem"
+          onclick={() => ctx.setMarkTone(opt.tone)}
+          aria-label={opt.label} title={opt.label}
+        >
+          <MarkIcon tone={opt.tone} active={ctx.markTone === opt.tone} />
+          <span>{opt.label}</span>
+        </button>
+      {/each}
+    {/if}
+
+    {#if ctx.markThanksVisible}
+      <p class="mark-thanks">{$t('figurineMarkThanks')}</p>
+    {/if}
 
     <button
       type="button" class="gallery-lens" class:gallery-lens--active={ctx.isLensEnabled}

@@ -299,6 +299,11 @@ pub struct FigurineListItemDto {
     /// "First look" early-release window — set while the work is a book-holders'
     /// preview; null once public. Lets the shelf note when it opens to all.
     pub first_look_until: Option<DateTime<Utc>>,
+    /// "House Favorite" — a rare, loud badge for pieces in the top percentile of
+    /// weighted mark score among marked figurines (see Repository::get_favorite_tiers).
+    /// Never a number, just a boolean.
+    #[serde(default)]
+    pub house_favorite: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -420,6 +425,17 @@ pub struct FigurineDto {
     pub process_steps: Vec<ProcessStepDto>,
     #[serde(default)]
     pub related_items: Vec<FigurineListItemDto>,
+    /// True once this piece has crossed a private mark-count threshold — the
+    /// ONLY public trace of the marks-of-attention system. Deliberately a
+    /// boolean, never a number: tells a new visitor "others paused here too"
+    /// without exposing a raw count (which would look weak below the
+    /// threshold and become a de facto public rating above it).
+    #[serde(default)]
+    pub noticed_by_others: bool,
+    /// "House Favorite" — the loud, rare second tier above `noticed_by_others`.
+    /// Same non-numeric principle: a boolean, never a count.
+    #[serde(default)]
+    pub house_favorite: bool,
 }
 
 // ============================================================
@@ -977,20 +993,32 @@ pub struct BookingCancelInfo {
     pub curator_conditions: Option<String>,
 }
 
-/// Toggle request for a "mark of attention" — a single quiet wax-seal gesture a
-/// visitor can leave on a figurine. `visitor_token` is a client-generated opaque
-/// id persisted in localStorage (not a login), used purely for idempotency —
-/// it carries no PII and is never linked to an account.
+/// The 3 private "tones" a mark of attention can carry. `desired` is the
+/// closest thing to purchase intent ("I'd commission something like this")
+/// so it's weighted highest in the admin ranking — see the weighted-score
+/// SQL in `Repository::get_favorite_tiers` / `get_admin_mark_stats`.
+pub const MARK_TONES: [&str; 3] = ["touched", "mesmerized", "desired"];
+
+/// Set (or clear) the visitor's wax-seal mark on a figurine. `visitor_token` is
+/// a client-generated opaque id persisted in localStorage (not a login), used
+/// purely for idempotency — it carries no PII and is never linked to an
+/// account. `tone: None` clears the mark; `Some(t)` sets/switches it — the
+/// client (which already tracks its own local state) decides the target
+/// state explicitly rather than the server inferring a toggle, so a
+/// double-submit or retry is naturally idempotent instead of flipping twice.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MarkToggleRequest {
     pub visitor_token: String,
+    #[serde(default)]
+    pub tone: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MarkToggleResponse {
     pub marked: bool,
+    pub tone: Option<String>,
 }
 
 /// Admin-only ranking row. Deliberately never exposed on the public site — see
@@ -1003,7 +1031,24 @@ pub struct AdminFigurineMarkStat {
     pub status: FigurineStatus,
     pub is_visible: bool,
     pub mark_count: i64,
+    pub touched_count: i64,
+    pub mesmerized_count: i64,
+    pub desired_count: i64,
+    pub weighted_score: i64,
     pub last_marked_at: Option<DateTime<Utc>>,
+}
+
+/// "Noticed by guests" home-page shelf — a hybrid of admin curation and the
+/// private mark ranking (research backs hybrid over pure-algorithmic or
+/// pure-editorial for exactly this kind of "surface what resonates" shelf).
+/// `pinned_ids` are shown first, in this order; `excluded_ids` are never
+/// auto-filled from the ranking (but an admin can still pin an excluded
+/// piece explicitly — exclusion only blocks the *automatic* fill).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct NoticedByGuestsSettings {
+    pub pinned_ids: Vec<Uuid>,
+    pub excluded_ids: Vec<Uuid>,
 }
 
 /// Batch token lookup — clients poll several claim tokens at once.

@@ -98,6 +98,10 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 "/figurines/first-look",
                 get(handlers::list_first_look_figurines),
             )
+            .route(
+                "/figurines/noticed",
+                get(handlers::list_noticed_by_guests),
+            )
             .route("/figurines/:id", get(handlers::get_figurine))
             .route("/content/texts/:param", get(handlers::get_texts_by_param))
             .route("/cabinet/zones", get(handlers::get_cabinet_zones))
@@ -121,7 +125,7 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 get(handlers::get_figurine_comments).post(handlers::submit_comment),
             )
             .route("/figurines/:id/book", post(handlers::create_booking))
-            .route("/figurines/:id/mark", post(handlers::toggle_figurine_mark))
+            .route("/figurines/:id/mark", post(handlers::set_figurine_mark))
             .route("/figurines/:id/waitlist", post(handlers::join_waitlist))
             .route("/booking-rules", get(handlers::get_booking_rules))
             .route("/settings/contact", get(handlers::get_contact_settings))
@@ -374,6 +378,15 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                     config.clone(),
                     auth_middleware,
                 )),
+            )
+            .route(
+                "/admin/settings/noticed-by-guests",
+                get(handlers::admin_get_noticed_by_guests_settings)
+                    .put(handlers::admin_save_noticed_by_guests_settings)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
             )
             .route(
                 "/admin/orders",

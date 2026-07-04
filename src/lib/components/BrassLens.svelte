@@ -1,9 +1,12 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { fade } from 'svelte/transition';
+  import { resolveWebpUrl } from '$lib/api';
 
   let {
     src,
+    thumbSrc = null,
+    sizes = '(min-width: 1280px) 860px, 96vw',
     alt,
     class: className = '',
     imageFit = 'cover',
@@ -14,6 +17,11 @@
     onSwipeRight = () => {},
   }: {
     src?: string | null;
+    /** Small (~420px) variant already generated server-side — doubles as the
+     * low-res width-descriptor candidate and the blur-up placeholder while
+     * the full image loads. */
+    thumbSrc?: string | null;
+    sizes?: string;
     alt?: string;
     class?: string;
     imageFit?: 'cover' | 'contain';
@@ -27,10 +35,12 @@
   let container: HTMLDivElement;
   let isPointerFine = $state(true);
   let imageFailed = $state(false);
+  let mainLoaded = $state(false);
 
   $effect(() => {
     void src;
     imageFailed = false;
+    mainLoaded = false;
   });
 
   onMount(() => {
@@ -190,21 +200,55 @@
   role="img"
   aria-label={alt}
 >
-  <!-- Main image -->
-  {#if src && !imageFailed}
+  <!-- Blur-up placeholder: the already-generated ~420px thumb, blurred and
+       slightly oversized to hide its own soft edge, visible only until the
+       full image has decoded. Reuses an asset that exists for every image
+       already, so this costs no extra request. -->
+  {#if thumbSrc && src && !imageFailed}
     <img
-      {src}
-      {alt}
-      class="w-full h-full pointer-events-none select-none {imageFit === 'contain' ? 'object-contain' : 'object-cover'}"
+      src={thumbSrc}
+      alt=""
+      aria-hidden="true"
+      class="absolute inset-0 w-full h-full pointer-events-none select-none {imageFit === 'contain' ? 'object-contain' : 'object-cover'}"
       style="
         object-position: {objectPosition};
-        transform: scale({scale}) translate({panX / scale}px, {panY / scale}px);
-        transition: {transitioning ? 'transform 0.28s cubic-bezier(0.22,0.1,0.2,1)' : 'none'};
-        touch-action: none;
-        will-change: transform;
+        filter: blur(18px) saturate(1.05);
+        transform: scale(1.08);
+        opacity: {mainLoaded ? 0 : 1};
+        transition: opacity 0.4s ease;
       "
-      onerror={() => (imageFailed = true)}
     />
+  {/if}
+
+  <!-- Main image -->
+  {#if src && !imageFailed}
+    <picture style="display: contents;">
+      {#if resolveWebpUrl(src)}
+        <source
+          type="image/webp"
+          srcset={thumbSrc && resolveWebpUrl(thumbSrc) ? `${resolveWebpUrl(thumbSrc)} 420w, ${resolveWebpUrl(src)} 1800w` : `${resolveWebpUrl(src)} 1800w`}
+          {sizes}
+        />
+      {/if}
+      <img
+        {src}
+        srcset={thumbSrc ? `${thumbSrc} 420w, ${src} 1800w` : undefined}
+        sizes={thumbSrc ? sizes : undefined}
+        {alt}
+        class="absolute inset-0 w-full h-full pointer-events-none select-none {imageFit === 'contain' ? 'object-contain' : 'object-cover'}"
+        style="
+          object-position: {objectPosition};
+          transform: scale({scale}) translate({panX / scale}px, {panY / scale}px);
+          opacity: {mainLoaded ? 1 : 0};
+          transition: {transitioning ? 'transform 0.28s cubic-bezier(0.22,0.1,0.2,1)' : 'none'}, opacity 0.35s ease;
+          touch-action: none;
+          will-change: transform;
+        "
+        decoding="async"
+        onload={() => (mainLoaded = true)}
+        onerror={() => (imageFailed = true)}
+      />
+    </picture>
   {:else}
     <div class="lens-fallback" aria-hidden="true"></div>
   {/if}

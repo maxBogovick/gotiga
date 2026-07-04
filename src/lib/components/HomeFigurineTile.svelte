@@ -216,9 +216,21 @@
         </a>
         {/if}
 
-        {#if isNew}
-            <span class="tile-seal" title={$t('archiveCardNew')}>{$t('archiveCardNew')}</span>
-        {/if}
+        <div class="tile-badges">
+            {#if fig.houseFavorite}
+                <span class="tile-favorite" title={$t('houseFavoriteBadge')}>
+                    <svg width="11" height="11" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                        <path d="M2 12C2 7 4 3 4 3M2 12L4 9.5M2 12L4.5 11" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
+                        <path d="M12 12C12 7 10 3 10 3M12 12L10 9.5M12 12L9.5 11" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
+                        <circle cx="7" cy="3" r="1.1" fill="currentColor"/>
+                    </svg>
+                    {$t('houseFavoriteBadge')}
+                </span>
+            {/if}
+            {#if isNew}
+                <span class="tile-seal" title={$t('archiveCardNew')}>{$t('archiveCardNew')}</span>
+            {/if}
+        </div>
 
         {#if selected}
             <span class="tile-selected">{$t('homeHeroObjectLabel')}</span>
@@ -550,12 +562,21 @@
         color: var(--color-ink-tertiary);
     }
 
-    /* wax-stamp "new" mark, top-left */
-    .tile-seal {
+    /* top-left badge stack: house-favorite medal (rare, loud) above the plain
+       "new" wax stamp when both apply */
+    .tile-badges {
         position: absolute;
         left: 10px;
         top: 10px;
         z-index: 3;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
+    }
+
+    /* wax-stamp "new" mark */
+    .tile-seal {
         padding: 5px 9px;
         border-radius: 4px;
         background: linear-gradient(150deg, rgba(198,95,60,0.94), rgba(111,59,36,0.94));
@@ -568,6 +589,25 @@
         text-transform: uppercase;
         box-shadow: 0 4px 12px rgba(111,59,36,0.34);
         transform: rotate(-2deg);
+    }
+
+    /* "House Favorite" — a rare, quiet badge: a non-numeric prestige mark
+       (never the count behind it), reading as a museum label, not a
+       marketplace medal — flat fill, no gloss, no drop shadow. */
+    .tile-favorite {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 5px 9px 5px 7px;
+        border-radius: 4px;
+        background: rgba(52,37,28,0.94);
+        color: #f6e6c8;
+        font-family: 'Instrument Sans', system-ui, sans-serif;
+        font-size: 8px;
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        line-height: 1;
+        text-transform: uppercase;
     }
 
     /* action cluster, top-right */

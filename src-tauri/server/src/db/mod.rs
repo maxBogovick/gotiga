@@ -41,6 +41,15 @@ pub struct Repository {
     pg_pool: PgPool,
 }
 
+/// Result of `Repository::get_favorite_tiers` — `house_favorite` is always a
+/// subset of `noticed` (same ranking, narrower percentile cutoff), so callers
+/// can check `house_favorite` first and fall back to `noticed`.
+#[derive(Debug, Default)]
+pub struct FavoriteTiers {
+    pub noticed: std::collections::HashSet<Uuid>,
+    pub house_favorite: std::collections::HashSet<Uuid>,
+}
+
 /// Result of attempting to attach a token-bearing guest request to a user.
 pub struct ClaimMatch {
     /// Whether the row's requester email matched the account's email.
@@ -1096,6 +1105,22 @@ impl Repository {
         .await?)
     }
 
+    /// Batch fetch by id, visible pieces only, in no particular order — callers
+    /// that need a specific order (e.g. pinned-first) reorder client-side.
+    pub async fn get_figurines_by_ids(&self, ids: &[Uuid]) -> Result<Vec<Figurine>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        Ok(
+            sqlx::query_as::<_, Figurine>(
+                "SELECT * FROM figurines WHERE id = ANY($1) AND is_visible = true",
+            )
+            .bind(ids)
+            .fetch_all(&self.pg_pool)
+            .await?,
+        )
+    }
+
     pub async fn get_images_by_figurine(&self, figurine_id: Uuid) -> Result<Vec<Image>> {
         let images = sqlx::query_as::<_, Image>(
             "SELECT * FROM images WHERE figurine_id = $1 ORDER BY sort_order",
@@ -1832,50 +1857,147 @@ impl Repository {
         .await?)
     }
 
-    /// Toggle a visitor's wax-seal mark on a figurine. Returns the new state
-    /// (`true` = just marked, `false` = just unmarked). Idempotent per
-    /// (figurine, visitor_token) pair via the unique constraint — a plain
-    /// select-then-write is safe here since the worst race just flips the
-    /// toggle an extra time, which is harmless for a non-numeric UI gesture.
-    pub async fn toggle_figurine_mark(&self, figurine_id: Uuid, visitor_token: &str) -> Result<bool> {
-        let existing: Option<Uuid> = sqlx::query_scalar(
-            "SELECT id FROM figurine_marks WHERE figurine_id = $1 AND visitor_token = $2",
-        )
-        .bind(figurine_id)
-        .bind(visitor_token)
-        .fetch_optional(&self.pg_pool)
-        .await?;
-
-        if let Some(id) = existing {
-            sqlx::query("DELETE FROM figurine_marks WHERE id = $1")
-                .bind(id)
+    /// Set or clear a visitor's wax-seal mark on a figurine. `tone: None`
+    /// deletes the row; `Some(t)` upserts it. Explicit-set rather than a
+    /// stateful toggle — the client already tracks its own local tone, so it
+    /// tells the server the target state directly, which makes a retry or a
+    /// duplicate submit naturally idempotent instead of flipping state twice.
+    pub async fn set_figurine_mark(
+        &self,
+        figurine_id: Uuid,
+        visitor_token: &str,
+        tone: Option<&str>,
+    ) -> Result<()> {
+        match tone {
+            Some(t) => {
+                sqlx::query(
+                    "INSERT INTO figurine_marks (figurine_id, visitor_token, tone)
+                     VALUES ($1, $2, $3)
+                     ON CONFLICT (figurine_id, visitor_token)
+                     DO UPDATE SET tone = EXCLUDED.tone, created_at = NOW()",
+                )
+                .bind(figurine_id)
+                .bind(visitor_token)
+                .bind(t)
                 .execute(&self.pg_pool)
                 .await?;
-            Ok(false)
-        } else {
-            sqlx::query(
-                "INSERT INTO figurine_marks (figurine_id, visitor_token) VALUES ($1, $2)
-                 ON CONFLICT (figurine_id, visitor_token) DO NOTHING",
-            )
-            .bind(figurine_id)
-            .bind(visitor_token)
-            .execute(&self.pg_pool)
-            .await?;
-            Ok(true)
+            }
+            None => {
+                sqlx::query(
+                    "DELETE FROM figurine_marks WHERE figurine_id = $1 AND visitor_token = $2",
+                )
+                .bind(figurine_id)
+                .bind(visitor_token)
+                .execute(&self.pg_pool)
+                .await?;
+            }
         }
+        Ok(())
     }
 
-    /// Admin-only ranking of every figurine by mark count, including sold/gone
-    /// pieces — this is a curation signal for the artisan, never rendered publicly.
+    /// The two public "noticed" tiers, computed as a percentile rank among
+    /// marked, visible figurines — not a fixed score threshold. "Deservedly
+    /// in the top" means relative to the rest of the collection (Airbnb
+    /// Guest Favorite works the same way: a percentile of eligible listings,
+    /// not an absolute review count). Figurines with zero marks are never
+    /// eligible — they're not "in the running" at all, same as an unreviewed
+    /// Airbnb listing can't be a Guest Favorite. Below MIN_ELIGIBLE marked
+    /// figurines, the collection is too young for "top X%" to mean anything,
+    /// so both tiers come back empty rather than crowning whichever single
+    /// piece happens to have 1 mark.
+    pub async fn get_favorite_tiers(&self) -> Result<FavoriteTiers> {
+        const MIN_ELIGIBLE: usize = 5;
+        const NOTICED_PERCENTILE: f64 = 0.30;
+        const HOUSE_FAVORITE_PERCENTILE: f64 = 0.10;
+
+        let mut scored: Vec<(Uuid, i64)> = sqlx::query_as(
+            "SELECT f.id,
+                    (COUNT(*) FILTER (WHERE m.tone = 'touched')
+                     + COUNT(*) FILTER (WHERE m.tone = 'mesmerized') * 2
+                     + COUNT(*) FILTER (WHERE m.tone = 'desired') * 3) AS score
+             FROM figurines f
+             JOIN figurine_marks m ON m.figurine_id = f.id
+             WHERE f.is_visible = true
+               AND (f.first_look_until IS NULL OR f.first_look_until <= NOW())
+             GROUP BY f.id
+             HAVING (COUNT(*) FILTER (WHERE m.tone = 'touched')
+                     + COUNT(*) FILTER (WHERE m.tone = 'mesmerized') * 2
+                     + COUNT(*) FILTER (WHERE m.tone = 'desired') * 3) > 0
+             ORDER BY score DESC, f.id ASC",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?;
+
+        if scored.len() < MIN_ELIGIBLE {
+            return Ok(FavoriteTiers::default());
+        }
+
+        scored.sort_by(|a, b| b.1.cmp(&a.1));
+        let noticed_cutoff = ((scored.len() as f64) * NOTICED_PERCENTILE).ceil().max(1.0) as usize;
+        let favorite_cutoff = ((scored.len() as f64) * HOUSE_FAVORITE_PERCENTILE).ceil().max(1.0) as usize;
+
+        Ok(FavoriteTiers {
+            noticed: scored.iter().take(noticed_cutoff).map(|(id, _)| *id).collect(),
+            house_favorite: scored.iter().take(favorite_cutoff).map(|(id, _)| *id).collect(),
+        })
+    }
+
+    /// Admin-only ranking of every figurine by weighted mark score, including
+    /// sold/gone pieces — this is a curation signal for the artisan, never
+    /// rendered publicly. `desired` (closest to commission intent) outweighs
+    /// `mesmerized`, which outweighs the base `touched`.
     pub async fn get_admin_mark_stats(&self) -> Result<Vec<AdminFigurineMarkStat>> {
         Ok(sqlx::query_as::<_, AdminFigurineMarkStat>(
             "SELECT f.id AS figurine_id, f.name AS figurine_name, f.status, f.is_visible,
-                    COUNT(m.id) AS mark_count, MAX(m.created_at) AS last_marked_at
+                    COUNT(m.id) AS mark_count,
+                    COUNT(*) FILTER (WHERE m.tone = 'touched') AS touched_count,
+                    COUNT(*) FILTER (WHERE m.tone = 'mesmerized') AS mesmerized_count,
+                    COUNT(*) FILTER (WHERE m.tone = 'desired') AS desired_count,
+                    (COUNT(*) FILTER (WHERE m.tone = 'touched')
+                     + COUNT(*) FILTER (WHERE m.tone = 'mesmerized') * 2
+                     + COUNT(*) FILTER (WHERE m.tone = 'desired') * 3) AS weighted_score,
+                    MAX(m.created_at) AS last_marked_at
              FROM figurines f
              LEFT JOIN figurine_marks m ON m.figurine_id = f.id
              GROUP BY f.id, f.name, f.status, f.is_visible
-             ORDER BY mark_count DESC, last_marked_at DESC NULLS LAST, f.name ASC",
+             ORDER BY weighted_score DESC, mark_count DESC, last_marked_at DESC NULLS LAST, f.name ASC",
         )
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Auto-fill candidates for the public "noticed by guests" shelf: visible
+    /// figurines with actual mark signal (score > 0), ranked by the same
+    /// weighted score as the admin view, excluding anything already pinned or
+    /// explicitly excluded by the admin. Never padded with zero-signal work —
+    /// callers get fewer than `limit` rows if there isn't enough signal yet.
+    pub async fn get_top_marked_figurine_ids(
+        &self,
+        exclude: &[Uuid],
+        limit: i64,
+    ) -> Result<Vec<Uuid>> {
+        if limit <= 0 {
+            return Ok(Vec::new());
+        }
+        Ok(sqlx::query_scalar::<_, Uuid>(
+            "SELECT f.id
+             FROM figurines f
+             JOIN figurine_marks m ON m.figurine_id = f.id
+             WHERE f.is_visible = true
+               AND (f.first_look_until IS NULL OR f.first_look_until <= NOW())
+               AND NOT (f.id = ANY($1))
+             GROUP BY f.id
+             HAVING (COUNT(*) FILTER (WHERE m.tone = 'touched')
+                     + COUNT(*) FILTER (WHERE m.tone = 'mesmerized') * 2
+                     + COUNT(*) FILTER (WHERE m.tone = 'desired') * 3) > 0
+             ORDER BY (COUNT(*) FILTER (WHERE m.tone = 'touched')
+                       + COUNT(*) FILTER (WHERE m.tone = 'mesmerized') * 2
+                       + COUNT(*) FILTER (WHERE m.tone = 'desired') * 3) DESC,
+                      MAX(m.created_at) DESC NULLS LAST
+             LIMIT $2",
+        )
+        .bind(exclude)
+        .bind(limit)
         .fetch_all(&self.pg_pool)
         .await?)
     }

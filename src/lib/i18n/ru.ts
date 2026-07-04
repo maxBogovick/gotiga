@@ -224,8 +224,14 @@ export const ru: Record<TranslationKey, string> = {
   figurineFullscreen:  'Полный экран',
   figurineShare:       'Поделиться',
   figurineCopied:      'Ссылка скопирована',
-  figurineMarkOn:      'Оставить знак',
-  figurineMarkedOff:   'Отмечено — нажмите, чтобы убрать',
+  figurineMarkNone:       'Оставить знак',
+  figurineMarkTouched:    'Тронуло',
+  figurineMarkMesmerized: 'Восхитило',
+  figurineMarkDesired:    'Хочу такую',
+  figurineMarkChangeHint: 'нажмите, чтобы изменить',
+  figurineMarkThanks: 'Замечено. Дом запомнит.',
+  figurineNoticedByOthers: 'Гости задержались',
+  houseFavoriteBadge: 'Любимица дома',
   turnSoundLabel:      'Звук перелистывания',
   turnSoundOff:        'Без звука',
   turnSoundThin:       'Тонкий лист',
@@ -344,6 +350,8 @@ export const ru: Record<TranslationKey, string> = {
   detailImageLensOff:      'Выключить лупу',
   detailImageRakeOn:       'Осмотреть под косым светом',
   detailImageRakeOff:      'Убрать косой свет',
+  detailImagePrevPhoto:    'Предыдущее фото',
+  detailImageNextPhoto:    'Следующее фото',
   detailMakingRecordKicker:'Запись создания',
   detailMakingRecordTitle: 'Как фигурка обрела форму',
   detailMakingRecordText:  'Эскизы, материалы и следы мастерской показывают, что работа создаётся вручную, шаг за шагом.',
@@ -669,6 +677,8 @@ export const ru: Record<TranslationKey, string> = {
   lightboxPrevious: 'Предыдущее',
   lightboxNext:     'Следующее',
   lightboxPhoto:    'Фото',
+  lightboxFullSize: 'Полный размер',
+  lightboxResetZoom: 'Сбросить масштаб',
 
   // === ADMIN SHOWINGS & BOOKINGS ===
   adminTabShowings:           'Показы',
@@ -1752,6 +1762,17 @@ export const ru: Record<TranslationKey, string> = {
   firstLookLead:             'собрано для тех, кто в книге, — работы на шаг раньше открытого архива, ваши, чтобы увидеть прежде, чем дом откроет их всем.',
   firstLookNote:             'Тихая любезность дома тем, кто вписал в него своё имя.',
   firstLookOpens:            'Открывается всем',
+
+  // Отмеченное вами (приватная полка визитёра)
+  markedByYouEyebrow:        'Отмеченное вами',
+  markedByYouTitle:          'То, что вы отметили',
+  markedByYouLead:           'работы, на которых вы оставили тихий знак, — собраны здесь только для вас, эту полку больше никто не видит.',
+  markedByYouNote:           'Хранится только в этом браузере, на этом устройстве — больше нигде.',
+
+  // Замечено гостями (гибридная полка: куратор + приватный рейтинг)
+  noticedByGuestsEyebrow:    'Замечено гостями',
+  noticedByGuestsTitle:      'То, что задержало взгляд',
+  noticedByGuestsLead:       'небольшая тихая подборка работ, на которых задерживались гости, — отобрана глазом дома, а не публичным голосованием.',
   adminFirstLookLabel:       'Первый взгляд — ранний релиз',
   adminFirstLookHint:        'Пока стоит будущая дата — работа скрыта из публичного архива и видна только держателям книги. Очистите, чтобы открыть всем.',
   adminFirstLookClear:       'Очистить',

@@ -1119,10 +1119,11 @@ pub async fn create_booking(
     }))
 }
 
-/// Toggle the visitor's wax-seal mark on a figurine. Anonymous, idempotent,
-/// rate-limited by IP like the other public write endpoints — the response
-/// deliberately carries no count, only whether *this* visitor is now marked.
-pub async fn toggle_figurine_mark(
+/// Set or clear the visitor's wax-seal mark on a figurine. Anonymous,
+/// idempotent (explicit-set, not a stateful toggle), rate-limited by IP like
+/// the other public write endpoints — the response deliberately carries no
+/// count, only this visitor's own resulting state.
+pub async fn set_figurine_mark(
     State(service): State<AppService>,
     headers: HeaderMap,
     Path(figurine_id): Path<Uuid>,
@@ -1131,10 +1132,13 @@ pub async fn toggle_figurine_mark(
     service
         .check_rate_limit("mark", &extract_ip(&headers), 60, 3600)
         .await?;
-    let marked = service
-        .toggle_figurine_mark(figurine_id, &req.visitor_token)
+    let tone = service
+        .set_figurine_mark(figurine_id, &req.visitor_token, req.tone.as_deref())
         .await?;
-    Ok(Json(crate::models::MarkToggleResponse { marked }))
+    Ok(Json(crate::models::MarkToggleResponse {
+        marked: tone.is_some(),
+        tone,
+    }))
 }
 
 /// Admin-only ranking of every figurine by mark count. Never exposed publicly.
@@ -1142,6 +1146,30 @@ pub async fn admin_get_mark_stats(
     State(service): State<AppService>,
 ) -> Result<Json<Vec<crate::models::AdminFigurineMarkStat>>> {
     Ok(Json(service.get_admin_mark_stats().await?))
+}
+
+/// Public "noticed by guests" shelf — admin pins + auto-ranked fill. Never
+/// carries counts/tones, only the resolved figurine list.
+pub async fn list_noticed_by_guests(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<crate::models::FigurineListItemDto>>> {
+    Ok(Json(service.list_noticed_by_guests().await?))
+}
+
+pub async fn admin_get_noticed_by_guests_settings(
+    State(service): State<AppService>,
+) -> Result<Json<crate::models::NoticedByGuestsSettings>> {
+    Ok(Json(service.get_noticed_by_guests_settings().await?))
+}
+
+pub async fn admin_save_noticed_by_guests_settings(
+    State(service): State<AppService>,
+    Json(settings): Json<crate::models::NoticedByGuestsSettings>,
+) -> Result<Json<crate::models::NoticedByGuestsSettings>> {
+    service
+        .save_noticed_by_guests_settings(settings.clone())
+        .await?;
+    Ok(Json(settings))
 }
 
 pub async fn get_booking_by_token(

@@ -91,6 +91,12 @@
   border-color: color-mix(in srgb, var(--color-ember) 55%, transparent);
 }
 
+.diptych-thumb picture {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 .diptych-thumb img {
   width: 100%;
   height: 100%;

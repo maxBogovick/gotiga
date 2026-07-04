@@ -190,6 +190,12 @@
   background: var(--color-ember);
 }
 
+.cx-thumb picture {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 .cx-thumb-img {
   width: 100%;
   height: 100%;

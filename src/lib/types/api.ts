@@ -54,6 +54,9 @@ export interface FigurineListItem {
      * null → ordinary public work.
      */
     firstLookUntil?: string | null;
+    /** "House Favorite" — rare, loud badge for pieces past a private mark-score
+     *  threshold. Never a number, just a boolean (see backend HOUSE_FAVORITE_THRESHOLD). */
+    houseFavorite?: boolean;
 }
 
 /** A named, shared showing window several works can point at (e.g. "Night hall"). */
@@ -159,6 +162,11 @@ export interface Figurine {
     displayConfig?: string | null;
     /** "First look" early-release window (ISO-8601); null → ordinary public work. */
     firstLookUntil?: string | null;
+    /** True once this piece crosses a private mark-count threshold. The only
+     *  public trace of the marks-of-attention system — never a raw number. */
+    noticedByOthers?: boolean;
+    /** "House Favorite" — the loud, rare second tier above noticedByOthers. */
+    houseFavorite?: boolean;
 }
 
 export type DisplayConfigBackground =
@@ -651,20 +659,37 @@ export interface BookingCancelInfo {
     curatorConditions: string | null;
 }
 
-/** A single quiet wax-seal gesture a visitor can leave on a figurine. Not a rating —
- *  no numeric value is ever sent to or shown on the public site. */
+/** A single quiet wax-seal gesture a visitor can leave on a figurine, in one of 3
+ *  private tones. Not a rating — no numeric value or tone is ever shown on the
+ *  public site; only whether *this* visitor has marked *this* piece. */
+export type MarkTone = 'touched' | 'mesmerized' | 'desired';
+
 export interface MarkToggleResponse {
     marked: boolean;
+    tone: MarkTone | null;
 }
 
-/** Admin-only ranking row — never rendered on the public site. */
+/** Admin-only ranking row — never rendered on the public site. `desired` (closest
+ *  to commission intent) is weighted highest in `weightedScore`. */
 export interface AdminFigurineMarkStat {
     figurineId: string;
     figurineName: string;
     status: FigurineStatus;
     isVisible: boolean;
     markCount: number;
+    touchedCount: number;
+    mesmerizedCount: number;
+    desiredCount: number;
+    weightedScore: number;
     lastMarkedAt: string | null;
+}
+
+/** Admin pin/exclude config for the public "noticed by guests" home shelf —
+ *  see NoticedByGuests.svelte for the hybrid resolution (pins first, then
+ *  auto-fill from the private mark ranking). */
+export interface NoticedByGuestsSettings {
+    pinnedIds: string[];
+    excludedIds: string[];
 }
 
 export interface CreateBookingRequest {

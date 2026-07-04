@@ -14,8 +14,10 @@
   import CodexLayout from '$lib/components/figurine-detail/layouts/CodexLayout.svelte';
   import DiptychLayout from '$lib/components/figurine-detail/layouts/DiptychLayout.svelte';
   import BroadsideLayout from '$lib/components/figurine-detail/layouts/BroadsideLayout.svelte';
-  import { goto } from '$app/navigation';
-  import { api, resolveMediaUrl } from '$lib/api';
+  import { goto, replaceState } from '$app/navigation';
+  import { page } from '$app/stores';
+  import { browser } from '$app/environment';
+  import { api, resolveMediaUrl, resolveWebpUrl } from '$lib/api';
   import { createFigurineAnalytics } from '$lib/analytics';
   import { t } from '$lib/i18n';
   import { FigurineClaimsStore, type ClaimData } from '$lib/stores/figurine-claims.svelte';
@@ -71,7 +73,16 @@
   }
   let pageRootBgStyle = $derived(getBgStyle(displayConfig));
 
-  let selectedImageIndex = $state(0);
+  // ?photo=N (1-indexed) lets a shared/reloaded link reopen on the photo the
+  // visitor was looking at, instead of always resetting to the first image.
+  function readInitialPhotoIndex(): number {
+    if (!browser) return 0;
+    const raw = $page.url.searchParams.get('photo');
+    if (!raw) return 0;
+    const n = parseInt(raw, 10);
+    return Number.isFinite(n) && n >= 1 ? n - 1 : 0;
+  }
+  let selectedImageIndex = $state(readInitialPhotoIndex());
   let isGrimoireOpen = $state(false);
   let showRequestModal = $state(false);
   let requestInitialIntent = $state<RequestIntent>('request');
@@ -430,6 +441,30 @@
 
   let activeImageIndex = $derived(clampImageIndex(selectedImageIndex, sortedImages.length));
   let currentImage = $derived(sortedImages[activeImageIndex]);
+
+  // Preload the neighbouring photos (preview + thumb, whichever format the
+  // <picture> elements would actually pick) so paging with the new arrow
+  // buttons / swipe feels instant instead of showing a fresh blur-up each
+  // time. Fire-and-forget Image() objects — the browser cache does the rest.
+  function preloadImage(path: string | null | undefined) {
+    if (typeof Image === 'undefined' || !path) return;
+    const url = resolveMediaUrl(path);
+    if (!url) return;
+    const img = new Image();
+    img.src = resolveWebpUrl(url) ?? url;
+  }
+
+  $effect(() => {
+    const idx = activeImageIndex;
+    const images = sortedImages;
+    const prevImg = images[idx - 1];
+    const nextImg = images[idx + 1];
+    preloadImage(prevImg?.url);
+    preloadImage(prevImg?.thumbUrl);
+    preloadImage(nextImg?.url);
+    preloadImage(nextImg?.thumbUrl);
+  });
+
   let imageViewMode = $state<'fit' | 'detail'>('fit');
   let isLensEnabled = $state(false);
   let currentImageFit = $derived<'cover' | 'contain'>(imageViewMode === 'detail' ? 'cover' : 'contain');
@@ -500,7 +535,13 @@
   let plateStyle = $derived(`--viewer-aspect-ratio: ${viewerAspect};`);
 
   let lightboxImages = $derived(
-    sortedImages.map((img) => ({ url: resolveUrl(img.originalUrl ?? img.url), alt: img.altText ?? '' }))
+    sortedImages.map((img) => ({
+      url: resolveUrl(img.originalUrl ?? img.url),
+      alt: img.altText ?? '',
+      thumbUrl: resolveUrl(img.thumbUrl ?? img.url) || undefined,
+      focalX: img.focalX,
+      focalY: img.focalY,
+    }))
   );
   let canOpenLightbox = $derived(lightboxImages.length > 0);
   let isSaved = $derived(savedFigurines.has(id));
@@ -601,6 +642,18 @@
       default: return $t('detailMakingRecordStep');
     }
   }
+  // Keep the open photo shareable/reloadable: ?photo=2 is 1-indexed for
+  // readability in a URL bar, omitted entirely for the first (default) photo
+  // so plain figurine links stay clean. replaceState avoids spamming browser
+  // history with one entry per swipe/arrow click.
+  function syncPhotoParam(index: number) {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    if (index > 0) url.searchParams.set('photo', String(index + 1));
+    else url.searchParams.delete('photo');
+    replaceState(url, {});
+  }
+
   function selectImage(index: number) {
     const maxIndex = sortedImages.length - 1;
     if (maxIndex < 0) {
@@ -613,6 +666,7 @@
       imageViewMode = 'fit';
       isLensEnabled = false;
       isRakingEnabled = false;
+      syncPhotoParam(nextIndex);
     }
   }
   function openLightbox(index: number) {
@@ -649,17 +703,44 @@
 
   function toggleCandle() { isCandleLit = !isCandleLit; }
 
-  // "Mark of attention" — a single quiet wax-seal gesture. No count is ever shown
-  // here; the seal just confirms this visitor has marked this piece.
-  let isMarked = $derived(visitorMarks.has(figurine.id));
+  // "Mark of attention" — a wax seal overlaid on the image itself (see the
+  // per-layout gallery-mark button). Clicking the seal opens a row of all 3
+  // tone icons at once so the visitor picks the one they mean directly,
+  // instead of blind-cycling through clicks. No count or tone is ever shown
+  // publicly; the seal just confirms this visitor's own state on this piece.
+  let markTone = $derived(visitorMarks.toneOf(figurine.id));
+  let markPickerOpen = $state(false);
   let markToggling = $state(false);
   let markPressing = $state(false);
   let markPressTimer: ReturnType<typeof setTimeout> | null = null;
+  // Brief in-context acknowledgment right when a mark is set — closes the
+  // reward loop at the moment of the action itself, rather than only ever
+  // paying off later on the home page's "Marked by you" shelf.
+  let markThanksVisible = $state(false);
+  let markThanksTimer: ReturnType<typeof setTimeout> | null = null;
 
-  async function toggleMark() {
+  function markToneText(tone: import('$lib/types/api').MarkTone) {
+    return tone === 'touched' ? $t('figurineMarkTouched')
+      : tone === 'mesmerized' ? $t('figurineMarkMesmerized')
+      : $t('figurineMarkDesired');
+  }
+  let markIconTone = $derived<import('$lib/types/api').MarkTone | 'bookmark'>(markTone ?? 'bookmark');
+  let markLabel = $derived(
+    markTone ? `${markToneText(markTone)} — ${$t('figurineMarkChangeHint')}` : $t('figurineMarkNone')
+  );
+  let markToneOptions = $derived(
+    (['touched', 'mesmerized', 'desired'] as const).map((tone) => ({ tone, label: markToneText(tone) }))
+  );
+
+  function toggleMarkPicker() {
+    markPickerOpen = !markPickerOpen;
+  }
+
+  async function setMarkTone(tone: import('$lib/types/api').MarkTone) {
     if (markToggling) return;
-    const nowMarked = !isMarked;
-    if (nowMarked) {
+    markPickerOpen = false;
+    const clearing = markTone === tone;
+    if (!clearing) {
       markPressing = false;
       requestAnimationFrame(() => { markPressing = true; });
       if (markPressTimer) clearTimeout(markPressTimer);
@@ -667,11 +748,39 @@
     }
     markToggling = true;
     try {
-      await visitorMarks.toggle(figurine.id);
+      const resolved = await visitorMarks.set(figurine.id, clearing ? null : tone);
+      if (!clearing && resolved === tone) {
+        markThanksVisible = true;
+        if (markThanksTimer) clearTimeout(markThanksTimer);
+        markThanksTimer = setTimeout(() => { markThanksVisible = false; }, 2200);
+      }
     } finally {
       markToggling = false;
     }
   }
+
+  // Close the tone picker on Escape or on any click outside it. Centralized
+  // here (rather than duplicated per layout) since only one layout renders
+  // at a time for a given figurine and all of them read markPickerOpen from
+  // this same context.
+  $effect(() => {
+    if (!markPickerOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') markPickerOpen = false;
+    }
+    function onClickAway(e: MouseEvent) {
+      const target = e.target as HTMLElement | null;
+      if (!target?.closest('.gallery-mark, .gallery-mark-option')) markPickerOpen = false;
+    }
+    window.addEventListener('keydown', onKey);
+    // Defer attaching so the click that opened the picker doesn't immediately close it.
+    const timer = setTimeout(() => window.addEventListener('click', onClickAway), 0);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('click', onClickAway);
+      clearTimeout(timer);
+    };
+  });
 
   let audioFadeTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -968,6 +1077,7 @@
     if (copiedTimer) clearTimeout(copiedTimer);
     if (analyticsEngagedTimer) clearTimeout(analyticsEngagedTimer);
     if (markPressTimer) clearTimeout(markPressTimer);
+    if (markThanksTimer) clearTimeout(markThanksTimer);
     galleryObserver?.disconnect();
     clearTodayRefresh();
     clearAudioFade();
@@ -996,6 +1106,15 @@
     get useRaking() { return useRaking; },
     get showRakingButton() { return showRakingButton; },
     get isSaved() { return isSaved; },
+    get markTone() { return markTone; },
+    get markIconTone() { return markIconTone; },
+    get markLabel() { return markLabel; },
+    get markPressing() { return markPressing; },
+    get markPickerOpen() { return markPickerOpen; },
+    get markToneOptions() { return markToneOptions; },
+    get markThanksVisible() { return markThanksVisible; },
+    get noticedByOthers() { return Boolean(figurine.noticedByOthers); },
+    get houseFavorite() { return Boolean(figurine.houseFavorite); },
     get canOpenLightbox() { return canOpenLightbox; },
     get bleedDir() { return bleedDir; },
     get lastBleed() { return lastBleed; },
@@ -1032,6 +1151,8 @@
     selectImage,
     openLightbox,
     toggleSaved,
+    toggleMarkPicker,
+    setMarkTone,
     toggleLens,
     toggleRaking,
     setImageViewMode,
@@ -1270,21 +1391,6 @@
             <path d="M4.25 12.2h5.5M5.15 9.6h3.7M7 1.3c1.1 1.15 2.5 2.88 2.5 5.05a2.5 2.5 0 0 1-5 0C4.5 4.8 5.42 3.72 6.2 2.8c.32-.38.6-.72.8-1.5z"/>
           </svg>
           <span class="btn-label">{isCandleLit ? $t('figurineExtinguish') : $t('figurineCandle')}</span>
-        </button>
-
-        <button
-          type="button"
-          onclick={toggleMark}
-          disabled={markToggling}
-          class="control-btn control-btn--utility control-btn--mark {isMarked ? 'control-btn--marked' : ''}"
-          aria-label={isMarked ? $t('figurineMarkedOff') : $t('figurineMarkOn')}
-          aria-pressed={isMarked}
-          title={isMarked ? $t('figurineMarkedOff') : $t('figurineMarkOn')}
-        >
-          <span class="mark-seal {markPressing ? 'mark-seal--pressing' : ''}" aria-hidden="true">
-            <span class="mark-seal-mark">❧</span>
-          </span>
-          <span class="btn-label">{isMarked ? $t('figurineMarkedOff') : $t('figurineMarkOn')}</span>
         </button>
 
         {#if figurine.ambiencePath}

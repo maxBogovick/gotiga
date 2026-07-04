@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
-  import type { AdminFigurineMarkStat } from '$lib/types/api';
+  import type { AdminFigurineMarkStat, NoticedByGuestsSettings } from '$lib/types/api';
 
   // Ranking by "marks of attention" — the quiet wax-seal gesture visitors can leave
   // on a figurine's page. This is a private curation signal for the artisan only:
@@ -10,6 +10,12 @@
   // visible ranking of unique, often one-off (and often already sold) pieces would
   // create. It also intentionally includes sold/gone work so past resonance can
   // inform future curation and commission direction, not just what's for sale now.
+  //
+  // The "Home shelf" column below drives the public "Замечено гостями" / "Noticed
+  // by guests" home-page section: pin figurines to force them onto that shelf (in
+  // pin order), or exclude one to keep it out of the automatic fill forever. Both
+  // are hybrid controls on top of the same private ranking — see project decision
+  // that a hybrid (editorial + algorithmic) shelf beats either pure approach.
 
   let loading = $state(true);
   let error = $state('');
@@ -17,6 +23,12 @@
   let search = $state('');
   let statusFilter = $state<'all' | 'available' | 'sold' | 'reserved' | 'in_progress'>('all');
   let expanded = $state(false);
+
+  let settings = $state<NoticedByGuestsSettings>({ pinnedIds: [], excludedIds: [] });
+  let savedSettingsJson = $state('');
+  let settingsSaving = $state(false);
+  let settingsError = $state('');
+  let settingsDirty = $derived(JSON.stringify(settings) !== savedSettingsJson);
 
   let filtered = $derived.by(() => {
     const q = search.trim().toLowerCase();
@@ -28,8 +40,15 @@
   });
 
   let totalMarks = $derived(stats.reduce((sum, s) => sum + s.markCount, 0));
+  let totalDesired = $derived(stats.reduce((sum, s) => sum + s.desiredCount, 0));
   let markedCount = $derived(stats.filter((s) => s.markCount > 0).length);
   let visibleRows = $derived(expanded ? filtered : filtered.slice(0, 8));
+
+  let pinnedRows = $derived(
+    settings.pinnedIds
+      .map((id) => stats.find((s) => s.figurineId === id))
+      .filter((s): s is AdminFigurineMarkStat => Boolean(s))
+  );
 
   onMount(() => {
     void load();
@@ -39,11 +58,55 @@
     loading = true;
     error = '';
     try {
-      stats = await api.getFigurineMarkStats();
+      const [markStats, shelfSettings] = await Promise.all([
+        api.getFigurineMarkStats(),
+        api.getNoticedByGuestsSettings(),
+      ]);
+      stats = markStats;
+      settings = shelfSettings;
+      savedSettingsJson = JSON.stringify(shelfSettings);
     } catch {
       error = 'Could not load marks.';
     } finally {
       loading = false;
+    }
+  }
+
+  function isPinned(id: string) {
+    return settings.pinnedIds.includes(id);
+  }
+  function isExcluded(id: string) {
+    return settings.excludedIds.includes(id);
+  }
+
+  // A piece can't be pinned and excluded at once — pinning always wins over a
+  // prior exclusion, and vice versa, since they're contradictory intents.
+  // Always rebuild with the same key order (pinnedIds, excludedIds) so
+  // `settingsDirty`'s JSON.stringify comparison isn't tripped up by key
+  // ordering alone.
+  function togglePin(id: string) {
+    settings = isPinned(id)
+      ? { pinnedIds: settings.pinnedIds.filter((x) => x !== id), excludedIds: settings.excludedIds }
+      : { pinnedIds: [...settings.pinnedIds, id], excludedIds: settings.excludedIds.filter((x) => x !== id) };
+  }
+
+  function toggleExclude(id: string) {
+    settings = isExcluded(id)
+      ? { pinnedIds: settings.pinnedIds, excludedIds: settings.excludedIds.filter((x) => x !== id) }
+      : { pinnedIds: settings.pinnedIds.filter((x) => x !== id), excludedIds: [...settings.excludedIds, id] };
+  }
+
+  async function saveShelf() {
+    settingsSaving = true;
+    settingsError = '';
+    try {
+      const saved = await api.saveNoticedByGuestsSettings(settings);
+      settings = saved;
+      savedSettingsJson = JSON.stringify(saved);
+    } catch {
+      settingsError = 'Could not save the home shelf.';
+    } finally {
+      settingsSaving = false;
     }
   }
 
@@ -67,6 +130,7 @@
     <div class="marks-summary">
       <span><strong>{totalMarks}</strong> marks total</span>
       <span><strong>{markedCount}</strong> of {stats.length} pieces marked</span>
+      <span title="Closest to commission intent"><strong>{totalDesired}</strong> ✒ want-one-like-this</span>
     </div>
   </header>
 
@@ -75,6 +139,26 @@
   {:else if error}
     <p class="state state--error">{error}</p>
   {:else}
+    <div class="shelf-bar">
+      <div class="shelf-pins">
+        <span class="shelf-pins-label">Home shelf order:</span>
+        {#if pinnedRows.length === 0}
+          <span class="muted-text">none pinned — auto-fills from ranking above</span>
+        {:else}
+          {#each pinnedRows as row (row.figurineId)}
+            <span class="pin-chip">
+              {row.figurineName}
+              <button type="button" onclick={() => togglePin(row.figurineId)} aria-label={`Unpin ${row.figurineName}`}>×</button>
+            </span>
+          {/each}
+        {/if}
+      </div>
+      <button type="button" class="shelf-save-btn" onclick={saveShelf} disabled={!settingsDirty || settingsSaving}>
+        {settingsSaving ? 'Saving…' : settingsDirty ? 'Save shelf changes' : 'Saved'}
+      </button>
+    </div>
+    {#if settingsError}<p class="state state--error">{settingsError}</p>{/if}
+
     <div class="marks-toolbar">
       <input
         class="marks-search"
@@ -100,8 +184,10 @@
             <th>#</th>
             <th>Figurine</th>
             <th>Status</th>
-            <th class="num">Marks</th>
+            <th title="❧ touched · ✺ mesmerized · ✒ want one like this">Tones</th>
+            <th class="num" title="touched×1 + mesmerized×2 + desired×3">Score</th>
             <th>Last mark</th>
+            <th title="Controls the public 'Noticed by guests' home shelf">Home shelf</th>
           </tr>
         </thead>
         <tbody>
@@ -113,8 +199,25 @@
                 {#if !row.isVisible}<span class="hidden-badge">hidden</span>{/if}
               </td>
               <td><span class="status-badge status-{row.status}">{row.status.replace('_', ' ')}</span></td>
-              <td class="num">{row.markCount}</td>
+              <td class="tones">
+                <span title="Touched">❧{row.touchedCount}</span>
+                <span title="Mesmerized">✺{row.mesmerizedCount}</span>
+                <span class="tone-desired" title="Want one like this">✒{row.desiredCount}</span>
+              </td>
+              <td class="num">{row.weightedScore}</td>
               <td class="muted-text">{relativeTime(row.lastMarkedAt)}</td>
+              <td class="shelf-actions">
+                <button
+                  type="button" class="shelf-btn" class:shelf-btn--on={isPinned(row.figurineId)}
+                  onclick={() => togglePin(row.figurineId)}
+                  title={isPinned(row.figurineId) ? 'Unpin from home shelf' : 'Pin to home shelf'}
+                >📌</button>
+                <button
+                  type="button" class="shelf-btn shelf-btn--exclude" class:shelf-btn--on={isExcluded(row.figurineId)}
+                  onclick={() => toggleExclude(row.figurineId)}
+                  title={isExcluded(row.figurineId) ? 'Allow back into auto-fill' : 'Exclude from auto-fill forever'}
+                >🚫</button>
+              </td>
             </tr>
           {/each}
         </tbody>
@@ -232,6 +335,19 @@
     font-variant-numeric: tabular-nums;
   }
 
+  .tones {
+    display: flex;
+    gap: 0.5rem;
+    color: #6b7280;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .tone-desired {
+    color: #92400e;
+    font-weight: 600;
+  }
+
   .rank {
     color: #9ca3af;
     width: 1.5rem;
@@ -293,5 +409,101 @@
 
   .expand-btn:hover {
     text-decoration: underline;
+  }
+
+  .shelf-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.6rem;
+    padding: 0.5rem 0.6rem;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.4rem;
+  }
+
+  .shelf-pins {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+    font-size: 0.76rem;
+  }
+
+  .shelf-pins-label {
+    color: #6b7280;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .pin-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.15rem 0.3rem 0.15rem 0.55rem;
+    background: #fef3c7;
+    color: #92400e;
+    border-radius: 999px;
+    font-weight: 600;
+  }
+
+  .pin-chip button {
+    border: none;
+    background: none;
+    color: inherit;
+    cursor: pointer;
+    font-size: 0.85rem;
+    line-height: 1;
+    padding: 0.1rem 0.3rem;
+  }
+
+  .shelf-save-btn {
+    border: 1px solid #d1d5db;
+    background: #fff;
+    color: #111827;
+    border-radius: 0.4rem;
+    padding: 0.32rem 0.7rem;
+    font-size: 0.76rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .shelf-save-btn:disabled {
+    color: #9ca3af;
+    cursor: default;
+  }
+
+  .shelf-actions {
+    display: flex;
+    gap: 0.3rem;
+    white-space: nowrap;
+  }
+
+  .shelf-btn {
+    border: 1px solid #e5e7eb;
+    background: #fff;
+    border-radius: 0.3rem;
+    padding: 0.15rem 0.4rem;
+    font-size: 0.78rem;
+    cursor: pointer;
+    opacity: 0.55;
+  }
+
+  .shelf-btn:hover {
+    opacity: 1;
+  }
+
+  .shelf-btn--on {
+    opacity: 1;
+    background: #fef3c7;
+    border-color: #fde68a;
+  }
+
+  .shelf-btn--exclude.shelf-btn--on {
+    background: #fee2e2;
+    border-color: #fecaca;
   }
 </style>
