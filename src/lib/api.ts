@@ -37,6 +37,11 @@ import type {
     SubmitCommentRequest,
     ModerateCommentRequest,
     AdminCommentDto,
+    ImpressionDto,
+    AdminImpressionDto,
+    AdminImpressionsPage,
+    SubmitImpressionRequest,
+    ModerateImpressionRequest,
     AdminLogsPage,
     AdminLogsQuery,
     SmtpSettings,
@@ -1330,6 +1335,50 @@ export const api = {
 
     async adminDeleteComment(id: string): Promise<void> {
         const res = await fetch(`${webApiBase()}/admin/comments/${id}`, {
+            method: 'DELETE',
+            headers: authHeaders(),
+        });
+        if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+    },
+
+    // === IMPRESSIONS ("Book of Impressions") ===
+
+    async submitImpression(req: SubmitImpressionRequest): Promise<void> {
+        await webFetch('/impressions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(req),
+        });
+    },
+
+    async getFeaturedImpressions(): Promise<ImpressionDto[]> {
+        try {
+            return await webFetch('/impressions/featured');
+        } catch {
+            return [];
+        }
+    },
+
+    async adminListImpressions(opts?: { pending?: boolean; sort?: 'newest' | 'oldest'; page?: number; perPage?: number }): Promise<AdminImpressionsPage> {
+        const p = new URLSearchParams();
+        if (opts?.pending) p.set('pending', 'true');
+        if (opts?.sort)    p.set('sort',    opts.sort);
+        if (opts?.page)    p.set('page',    String(opts.page));
+        if (opts?.perPage) p.set('perPage', String(opts.perPage));
+        const qs = p.toString() ? `?${p}` : '';
+        return webFetch(`/admin/impressions${qs}`, { headers: authHeaders() });
+    },
+
+    async adminModerateImpression(id: string, req: ModerateImpressionRequest): Promise<AdminImpressionDto> {
+        return webFetch(`/admin/impressions/${id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(req),
+        });
+    },
+
+    async adminDeleteImpression(id: string): Promise<void> {
+        const res = await fetch(`${webApiBase()}/admin/impressions/${id}`, {
             method: 'DELETE',
             headers: authHeaders(),
         });

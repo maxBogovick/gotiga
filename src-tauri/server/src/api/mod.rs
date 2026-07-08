@@ -163,6 +163,9 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 "/subscribe/leave/:token",
                 get(handlers::get_subscription_by_token).post(handlers::unsubscribe_by_token),
             )
+            // === VISITOR IMPRESSIONS ("book of impressions") ===
+            .route("/impressions", post(handlers::submit_impression))
+            .route("/impressions/featured", get(handlers::get_featured_impressions))
             // === PUBLIC LOGIN ===
             .route("/admin/login", post(handlers::admin_login))
             // === PROTECTED WRITE — use route_layer so auth only runs on matched routes ===
@@ -354,6 +357,22 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 "/admin/comments/:id",
                 patch(handlers::admin_moderate_comment)
                     .delete(handlers::admin_delete_comment)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            // === IMPRESSIONS (ADMIN) ===
+            .route(
+                "/admin/impressions",
+                get(handlers::admin_list_impressions).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/impressions/:id",
+                patch(handlers::admin_moderate_impression)
+                    .delete(handlers::admin_delete_impression)
                     .route_layer(middleware::from_fn_with_state(
                         config.clone(),
                         auth_middleware,

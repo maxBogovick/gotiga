@@ -4305,6 +4305,128 @@ impl AppService {
         Ok(())
     }
 
+    // === VISITOR IMPRESSIONS ===
+
+    pub async fn submit_impression(&self, req: &SubmitImpressionRequest, ip: &str) -> Result<()> {
+        // Honeypot: bots fill this hidden field, real visitors never do. Drop
+        // silently — no error, so a bot can't tell it "worked" or not.
+        if req.hp.as_deref().is_some_and(|v| !v.trim().is_empty()) {
+            return Ok(());
+        }
+
+        self.check_rate_limit("impression", ip, 10, 3600).await?;
+
+        let message = req.message.trim();
+        if message.is_empty() {
+            return Err(AppError::BadRequest("Impression cannot be empty".into()));
+        }
+        if message.chars().count() > 400 {
+            return Err(AppError::BadRequest(
+                "Impression is too long (max 400 characters)".into(),
+            ));
+        }
+        let author_name = req
+            .author_name
+            .as_deref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty());
+        if author_name.is_some_and(|s| s.chars().count() > 100) {
+            return Err(AppError::BadRequest(
+                "Name is too long (max 100 characters)".into(),
+            ));
+        }
+        let mood = req
+            .mood
+            .as_deref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty());
+
+        let rec = self
+            .repo
+            .insert_impression(message, author_name, mood, Some(ip))
+            .await?;
+        Self::log_domain_event("impression_submitted", "impression", rec.id, "ok");
+        Ok(())
+    }
+
+    pub async fn get_featured_impressions(&self) -> Result<Vec<ImpressionDto>> {
+        let rows = self.repo.get_featured_impressions().await?;
+        Ok(rows
+            .into_iter()
+            .map(|i| ImpressionDto {
+                id: i.id.to_string(),
+                message: i.message,
+                author_name: i.author_name,
+                mood: i.mood,
+                created_at: i.created_at.to_rfc3339(),
+            })
+            .collect())
+    }
+
+    pub async fn admin_list_impressions(
+        &self,
+        only_pending: bool,
+        newest_first: bool,
+        page: i64,
+        per_page: i64,
+    ) -> Result<AdminImpressionsPage> {
+        let offset = (page - 1) * per_page;
+        let (rows, total) = self
+            .repo
+            .get_impressions_admin_page(only_pending, newest_first, per_page, offset)
+            .await?;
+        let pending_count = self.repo.get_pending_impressions_count().await?;
+
+        let items = rows
+            .into_iter()
+            .map(|i| AdminImpressionDto {
+                id: i.id.to_string(),
+                message: i.message,
+                author_name: i.author_name,
+                mood: i.mood,
+                is_approved: i.is_approved,
+                is_featured: i.is_featured,
+                created_at: i.created_at.to_rfc3339(),
+            })
+            .collect();
+
+        Ok(AdminImpressionsPage {
+            items,
+            total,
+            pending_count,
+            page,
+            per_page,
+        })
+    }
+
+    pub async fn admin_moderate_impression(
+        &self,
+        id: Uuid,
+        is_approved: bool,
+        is_featured: bool,
+    ) -> Result<AdminImpressionDto> {
+        let rec = self
+            .repo
+            .moderate_impression(id, is_approved, is_featured)
+            .await?;
+        Self::log_domain_event("impression_moderated", "impression", id, "ok");
+        Ok(AdminImpressionDto {
+            id: rec.id.to_string(),
+            message: rec.message,
+            author_name: rec.author_name,
+            mood: rec.mood,
+            is_approved: rec.is_approved,
+            is_featured: rec.is_featured,
+            created_at: rec.created_at.to_rfc3339(),
+        })
+    }
+
+    pub async fn admin_delete_impression(&self, id: Uuid) -> Result<()> {
+        self.repo.delete_impression(id).await?;
+        Self::log_domain_event("impression_deleted", "impression", id, "ok");
+        Ok(())
+    }
+
     pub async fn update_profile(&self, user_id: Uuid, display_name: &str) -> Result<UserDto> {
         if display_name.trim().is_empty() {
             return Err(AppError::BadRequest("Display name required".into()));

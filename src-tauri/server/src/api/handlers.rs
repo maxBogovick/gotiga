@@ -1763,6 +1763,65 @@ pub async fn admin_delete_comment(
     Ok(StatusCode::NO_CONTENT)
 }
 
+// === VISITOR IMPRESSIONS ("Book of Impressions") ===
+
+pub async fn submit_impression(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(body): Json<SubmitImpressionRequest>,
+) -> Result<StatusCode> {
+    let ip = extract_ip(&headers);
+    service.submit_impression(&body, &ip).await?;
+    Ok(StatusCode::CREATED)
+}
+
+pub async fn get_featured_impressions(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<ImpressionDto>>> {
+    Ok(Json(service.get_featured_impressions().await?))
+}
+
+pub async fn admin_list_impressions(
+    State(service): State<AppService>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<AdminImpressionsPage>> {
+    let only_pending = params.get("pending").map(|v| v == "true").unwrap_or(false);
+    let newest_first = params.get("sort").map(|v| v == "newest").unwrap_or(true);
+    let page = params
+        .get("page")
+        .and_then(|p| p.parse::<i64>().ok())
+        .unwrap_or(1)
+        .max(1);
+    let per_page = params
+        .get("perPage")
+        .and_then(|p| p.parse::<i64>().ok())
+        .unwrap_or(20)
+        .clamp(1, 100);
+    let page_data = service
+        .admin_list_impressions(only_pending, newest_first, page, per_page)
+        .await?;
+    Ok(Json(page_data))
+}
+
+pub async fn admin_moderate_impression(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<ModerateImpressionRequest>,
+) -> Result<Json<AdminImpressionDto>> {
+    let impression = service
+        .admin_moderate_impression(id, body.is_approved, body.is_featured)
+        .await?;
+    Ok(Json(impression))
+}
+
+pub async fn admin_delete_impression(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    service.admin_delete_impression(id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub async fn admin_get_smtp_settings(
     State(service): State<AppService>,
 ) -> Result<Json<SmtpSettings>> {

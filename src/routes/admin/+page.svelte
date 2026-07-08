@@ -19,6 +19,7 @@
     import AnalyticsPanel from '$lib/components/admin/AnalyticsPanel.svelte';
     import UsersPanel from '$lib/components/admin/UsersPanel.svelte';
     import CommentsPanel from '$lib/components/admin/CommentsPanel.svelte';
+    import ImpressionsPanel from '$lib/components/admin/ImpressionsPanel.svelte';
     import SmtpSettingsPanel from '$lib/components/admin/SmtpSettingsPanel.svelte';
     import ContactSettingsPanel from '$lib/components/admin/ContactSettingsPanel.svelte';
     import WaitlistPanel from '$lib/components/admin/WaitlistPanel.svelte';
@@ -85,12 +86,13 @@
     let showingsEditor = $state<FigurineShowingsEditor | null>(null);
     let showSettings = $state(false);
     let message = $state({ text: '', type: 'info' });
-    let activeTab = $state<'registry' | 'rooms' | 'home' | 'workshop-feature' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'commissions' | 'showings' | 'bookings' | 'waitlist' | 'subscribers' | 'analytics' | 'users' | 'comments' | 'messages' | 'server' | 'logs' | 'booking-rules' | 'contact' | 'design' | 'copy' | 'programme'>('registry');
+    let activeTab = $state<'registry' | 'rooms' | 'home' | 'workshop-feature' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'commissions' | 'showings' | 'bookings' | 'waitlist' | 'subscribers' | 'analytics' | 'users' | 'comments' | 'impressions' | 'messages' | 'server' | 'logs' | 'booking-rules' | 'contact' | 'design' | 'copy' | 'programme'>('registry');
     let activeAuthorSubTab = $state<'profile' | 'texts'>('profile');
     let newOrdersCount = $state(0);
     let newCommissionsCount = $state(0);
     let newBookingsCount = $state(0);
     let pendingCommentsCount = $state(0);
+    let pendingImpressionsCount = $state(0);
     let searchQuery = $state('');
     let isDeleting = $state(false);
     let uploadingVideo = $state(false);
@@ -788,7 +790,7 @@
         sidebarCollapsed = localStorage.getItem('gotiga_admin_sidebar_collapsed') === '1';
         // Hash-based tab routing (e.g. Telegram notification links)
         const hash = window.location.hash.replace('#', '');
-        const validTabs = ['registry','rooms','home','workshop-feature','zones','author','workshop','media','releases','orders','commissions','showings','bookings','waitlist','subscribers','analytics','users','comments','messages','server','logs','booking-rules','contact','design','copy','programme'];
+        const validTabs = ['registry','rooms','home','workshop-feature','zones','author','workshop','media','releases','orders','commissions','showings','bookings','waitlist','subscribers','analytics','users','comments','impressions','messages','server','logs','booking-rules','contact','design','copy','programme'];
         if (validTabs.includes(hash)) {
             activeTab = hash as typeof activeTab;
         }
@@ -880,6 +882,7 @@
                 tabs: [
                   ['registry',   $t('adminTabRegistry')],
                   ['comments',   $t('adminTabComments')],
+                  ['impressions', $t('adminTabImpressions')],
                   ['messages',   $t('adminTabMessages')],
                 ]
               },
@@ -955,6 +958,11 @@
                     {#if tab === 'comments' && pendingCommentsCount > 0 && activeTab !== 'comments'}
                       <span class="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-orange-600 text-white text-[9px] font-bold leading-none">
                         {pendingCommentsCount > 99 ? '99+' : pendingCommentsCount}
+                      </span>
+                    {/if}
+                    {#if tab === 'impressions' && pendingImpressionsCount > 0 && activeTab !== 'impressions'}
+                      <span class="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-orange-600 text-white text-[9px] font-bold leading-none">
+                        {pendingImpressionsCount > 99 ? '99+' : pendingImpressionsCount}
                       </span>
                     {/if}
                   </button>
@@ -1813,6 +1821,8 @@
             <div in:fade class="h-full overflow-y-auto"><UsersPanel /></div>
         {:else if activeTab === 'comments'}
             <div in:fade class="h-full overflow-y-auto"><CommentsPanel onPendingCount={(n) => pendingCommentsCount = n} /></div>
+        {:else if activeTab === 'impressions'}
+            <div in:fade class="h-full overflow-y-auto"><ImpressionsPanel onPendingCount={(n) => pendingImpressionsCount = n} /></div>
         {:else if activeTab === 'server'}
             <div in:fade class="h-full overflow-y-auto"><SmtpSettingsPanel /></div>
         {:else if activeTab === 'logs'}

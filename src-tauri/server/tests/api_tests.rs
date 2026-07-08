@@ -186,6 +186,97 @@ async fn analytics_accepts_text_plain_and_exposes_admin_page(pool: PgPool) {
     let _ = fs::remove_dir_all(upload_dir).await;
 }
 
+// ── visitor impressions ("book of impressions") ─────────────────────────────
+
+/// Full cycle: submit → honeypot silently drops → rate limit kicks in →
+/// unapproved/unfeatured stays hidden → admin approve+feature makes it public.
+#[sqlx::test]
+#[ignore = "requires a reachable PostgreSQL test database"]
+async fn impressions_full_cycle(pool: PgPool) {
+    sqlx::migrate!("./migrations/").run(&pool).await.unwrap();
+    let (addr, api_key, upload_dir) = spawn_app(pool).await;
+    let client = reqwest::Client::new();
+
+    // Valid submission succeeds and is not public yet (pending approval).
+    let resp = client
+        .post(format!("{}/api/v1/impressions", addr))
+        .json(&serde_json::json!({ "message": "A hush like old parchment." }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::CREATED);
+
+    let featured = client
+        .get(format!("{}/api/v1/impressions/featured", addr))
+        .send()
+        .await
+        .unwrap();
+    let items: Vec<serde_json::Value> = featured.json().await.unwrap();
+    assert_eq!(items.len(), 0);
+
+    // Honeypot filled → silently dropped, no row created, no error surfaced.
+    let resp = client
+        .post(format!("{}/api/v1/impressions", addr))
+        .json(&serde_json::json!({ "message": "spam spam spam", "hp": "http://bot.example" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::CREATED);
+
+    let pending = client
+        .get(format!("{}/api/v1/admin/impressions", addr))
+        .bearer_auth(&api_key)
+        .send()
+        .await
+        .unwrap();
+    let pending_body: serde_json::Value = pending.json().await.unwrap();
+    // Only the one legitimate submission should have made it in.
+    assert_eq!(pending_body["total"], 1);
+    let impression_id = pending_body["items"][0]["id"].as_str().unwrap().to_string();
+
+    // Rate limit: 10/hour/IP. One legit + one honeypot-dropped attempt already
+    // made it through the handler; the honeypot one still doesn't count toward
+    // the rate limiter (it returns before the check), so 9 more succeed and the
+    // 10th is rejected.
+    for _ in 0..9 {
+        let resp = client
+            .post(format!("{}/api/v1/impressions", addr))
+            .json(&serde_json::json!({ "message": "Another quiet impression." }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), reqwest::StatusCode::CREATED);
+    }
+    let over_limit = client
+        .post(format!("{}/api/v1/impressions", addr))
+        .json(&serde_json::json!({ "message": "One too many." }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(over_limit.status(), reqwest::StatusCode::BAD_REQUEST);
+
+    // Admin approves + features the first impression → it becomes public.
+    let moderated = client
+        .patch(format!("{}/api/v1/admin/impressions/{}", addr, impression_id))
+        .bearer_auth(&api_key)
+        .json(&serde_json::json!({ "isApproved": true, "isFeatured": true }))
+        .send()
+        .await
+        .unwrap();
+    assert!(moderated.status().is_success());
+
+    let featured_after = client
+        .get(format!("{}/api/v1/impressions/featured", addr))
+        .send()
+        .await
+        .unwrap();
+    let items_after: Vec<serde_json::Value> = featured_after.json().await.unwrap();
+    assert_eq!(items_after.len(), 1);
+    assert_eq!(items_after[0]["message"], "A hush like old parchment.");
+
+    let _ = fs::remove_dir_all(upload_dir).await;
+}
+
 // ── delete_figurine ──────────────────────────────────────────────────────────
 
 /// Deleting a figurine removes its row, all cascade-linked rows, **and** the

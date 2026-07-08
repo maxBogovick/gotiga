@@ -137,17 +137,27 @@
       { '@type': 'ListItem', position: 3, name: figurine?.name ?? 'Miniature', item: page.url.href },
     ],
   }));
+
+  // Descriptive SEO title. The piece name alone ("Raven") competes for a huge,
+  // unrelated search demand we'll never rank for; appending a descriptive noun phrase
+  // captures the long-tail query ("handmade miniature sculpture") where an unknown
+  // brand can actually surface. Invisible on the page — only the browser tab, Google
+  // snippet and share previews consume it.
+  const SEO_DESCRIPTOR = 'Handmade Miniature Sculpture';
+  let seoTitle = $derived(
+    `${figurine?.name ?? $t('zoneShowcase')} — ${SEO_DESCRIPTOR} | ${$brandName}`
+  );
 </script>
 
 <svelte:head>
-  <title>{figurine?.name ?? $t('zoneShowcase')} — {$brandName}</title>
-  <meta name="description" content={figurine?.shortText ?? figurine?.fullDescription ?? 'Gothic handcrafted miniature'} />
+  <title>{seoTitle}</title>
+  <meta name="description" content={figurine?.shortText ?? figurine?.fullDescription ?? 'Handmade miniature sculpture — a one-of-a-kind handcrafted figure.'} />
 
   <!-- Open Graph -->
   <meta property="og:type"        content="article" />
   <meta property="og:site_name"   content={$brandName} />
   <meta property="og:locale"      content="en_US" />
-  <meta property="og:title"       content="{figurine?.name ?? 'Gothic Miniature'} — {$brandName}" />
+  <meta property="og:title"       content={seoTitle} />
   <meta property="og:description" content={figurine?.shortText ?? figurine?.fullDescription ?? ''} />
   {#if ogImage()}
     <meta property="og:image" content={ogImage()} />
@@ -160,7 +170,7 @@
 
   <!-- Twitter / X -->
   <meta name="twitter:card"        content="summary_large_image" />
-  <meta name="twitter:title"       content="{figurine?.name ?? 'Gothic Miniature'} — {$brandName}" />
+  <meta name="twitter:title"       content={seoTitle} />
   <meta name="twitter:description" content={figurine?.shortText ?? ''} />
   {#if ogImage()}
     <meta name="twitter:image" content={ogImage()} />

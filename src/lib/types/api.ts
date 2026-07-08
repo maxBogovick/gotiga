@@ -937,6 +937,47 @@ export interface ModerateCommentRequest {
     adminReply: string | null;
 }
 
+// ── Visitor impressions ("Book of Impressions") ─────────────
+
+export interface ImpressionDto {
+    id: string;
+    message: string;
+    authorName: string | null;
+    mood: string | null;
+    createdAt: string;
+}
+
+export interface AdminImpressionDto {
+    id: string;
+    message: string;
+    authorName: string | null;
+    mood: string | null;
+    isApproved: boolean;
+    isFeatured: boolean;
+    createdAt: string;
+}
+
+export interface AdminImpressionsPage {
+    items: AdminImpressionDto[];
+    total: number;
+    pendingCount: number;
+    page: number;
+    perPage: number;
+}
+
+export interface SubmitImpressionRequest {
+    message: string;
+    authorName?: string;
+    mood?: string;
+    /** Honeypot — leave empty. Any value drops the submission silently. */
+    hp?: string;
+}
+
+export interface ModerateImpressionRequest {
+    isApproved: boolean;
+    isFeatured: boolean;
+}
+
 export interface SmtpSettings {
     host: string | null;
     port: number | null;

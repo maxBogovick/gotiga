@@ -1550,6 +1550,74 @@ pub struct ModerateCommentRequest {
     pub admin_reply: Option<String>,
 }
 
+// ============================================================
+// VISITOR IMPRESSIONS ("Book of Impressions")
+// ============================================================
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
+pub struct Impression {
+    pub id: Uuid,
+    pub message: String,
+    pub author_name: Option<String>,
+    pub mood: Option<String>,
+    pub is_approved: bool,
+    pub is_featured: bool,
+    pub ip: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Public quote card — only what's safe to show a visitor.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImpressionDto {
+    pub id: String,
+    pub message: String,
+    pub author_name: Option<String>,
+    pub mood: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminImpressionDto {
+    pub id: String,
+    pub message: String,
+    pub author_name: Option<String>,
+    pub mood: Option<String>,
+    pub is_approved: bool,
+    pub is_featured: bool,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminImpressionsPage {
+    pub items: Vec<AdminImpressionDto>,
+    pub total: i64,
+    pub pending_count: i64,
+    pub page: i64,
+    pub per_page: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubmitImpressionRequest {
+    pub message: String,
+    pub author_name: Option<String>,
+    pub mood: Option<String>,
+    /// Honeypot: real visitors never fill this. Any non-empty value drops the
+    /// submission silently (handled in the service, not surfaced as an error).
+    #[serde(default)]
+    pub hp: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModerateImpressionRequest {
+    pub is_approved: bool,
+    pub is_featured: bool,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SmtpSettings {

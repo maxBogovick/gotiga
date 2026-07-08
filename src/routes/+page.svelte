@@ -14,6 +14,7 @@
     import DailyVitrine from '$lib/components/DailyVitrine.svelte';
     import VisitLedger from '$lib/components/VisitLedger.svelte';
     import VisitorBook from '$lib/components/VisitorBook.svelte';
+    import ImpressionsQuoteStrip from '$lib/components/ImpressionsQuoteStrip.svelte';
     import FirstLook from '$lib/components/FirstLook.svelte';
     import AtelierReel from '$lib/components/AtelierReel.svelte';
     import HeroWorkshopTeaser from '$lib/components/HeroWorkshopTeaser.svelte';
@@ -959,6 +960,9 @@
         <!-- The house guest book at the exit: sign it to receive the workshop's
              letters first. Quiet email capture — the one channel the house owns. -->
         <VisitorBook figurines={collectionFigurines} />
+
+        <!-- Curator-picked visitor reactions from the Book of Impressions. -->
+        <ImpressionsQuoteStrip />
 
     </main>
 

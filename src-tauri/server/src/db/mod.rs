@@ -2961,6 +2961,112 @@ impl Repository {
         Ok(())
     }
 
+    // === VISITOR IMPRESSIONS ===
+
+    pub async fn insert_impression(
+        &self,
+        message: &str,
+        author_name: Option<&str>,
+        mood: Option<&str>,
+        ip: Option<&str>,
+    ) -> Result<crate::models::Impression> {
+        let rec = sqlx::query_as::<_, crate::models::Impression>(
+            "INSERT INTO visitor_impressions (message, author_name, mood, ip)
+             VALUES ($1, $2, $3, $4)
+             RETURNING *",
+        )
+        .bind(message)
+        .bind(author_name)
+        .bind(mood)
+        .bind(ip)
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(rec)
+    }
+
+    pub async fn get_featured_impressions(&self) -> Result<Vec<crate::models::Impression>> {
+        let rows = sqlx::query_as::<_, crate::models::Impression>(
+            "SELECT * FROM visitor_impressions
+             WHERE is_approved = true AND is_featured = true
+             ORDER BY created_at DESC
+             LIMIT 24",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn get_pending_impressions_count(&self) -> Result<i64> {
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM visitor_impressions WHERE is_approved = false")
+                .fetch_one(&self.pg_pool)
+                .await?;
+        Ok(count)
+    }
+
+    pub async fn get_impressions_admin_page(
+        &self,
+        only_pending: bool,
+        newest_first: bool,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<crate::models::Impression>, i64)> {
+        let where_clause = if only_pending {
+            "WHERE is_approved = false"
+        } else {
+            ""
+        };
+        let order = if newest_first { "DESC" } else { "ASC" };
+
+        let items = sqlx::query_as::<_, crate::models::Impression>(&format!(
+            "SELECT * FROM visitor_impressions {where_clause}
+             ORDER BY created_at {order}
+             LIMIT $1 OFFSET $2"
+        ))
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pg_pool)
+        .await?;
+
+        let (total,): (i64,) = sqlx::query_as(&format!(
+            "SELECT COUNT(*) FROM visitor_impressions {where_clause}"
+        ))
+        .fetch_one(&self.pg_pool)
+        .await?;
+
+        Ok((items, total))
+    }
+
+    pub async fn moderate_impression(
+        &self,
+        id: Uuid,
+        is_approved: bool,
+        is_featured: bool,
+    ) -> Result<crate::models::Impression> {
+        let rec = sqlx::query_as::<_, crate::models::Impression>(
+            "UPDATE visitor_impressions SET is_approved = $1, is_featured = $2 WHERE id = $3 RETURNING *"
+        )
+        .bind(is_approved)
+        .bind(is_featured)
+        .bind(id)
+        .fetch_optional(&self.pg_pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Impression {} not found", id)))?;
+        Ok(rec)
+    }
+
+    pub async fn delete_impression(&self, id: Uuid) -> Result<()> {
+        let affected = sqlx::query("DELETE FROM visitor_impressions WHERE id = $1")
+            .bind(id)
+            .execute(&self.pg_pool)
+            .await?
+            .rows_affected();
+        if affected == 0 {
+            return Err(AppError::NotFound(format!("Impression {} not found", id)));
+        }
+        Ok(())
+    }
+
     // === SETTINGS ===
 
     pub async fn get_setting(&self, key: &str) -> Result<Option<String>> {
