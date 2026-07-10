@@ -15,6 +15,42 @@ pub struct HomeContent {
     pub vitrine_figurine_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthorProfile {
+    #[serde(default)]
+    pub name: String,
+    pub tagline: Option<String>,
+    pub bio: Option<String>,
+    pub photo_url: Option<String>,
+    /// Portrait for the site-header avatar — distinct from `photo_url`.
+    #[serde(default)]
+    pub hero_photo_url: Option<String>,
+    pub instagram: Option<String>,
+    pub telegram: Option<String>,
+    pub vk: Option<String>,
+    pub email: Option<String>,
+    #[serde(default)]
+    pub website: Option<String>,
+    #[serde(default)]
+    pub artstation: Option<String>,
+    #[serde(default)]
+    pub pinterest: Option<String>,
+    #[serde(default)]
+    pub youtube: Option<String>,
+    /// Header avatar frame styling — all optional, admin-editable.
+    #[serde(default)]
+    pub avatar_shape: Option<String>,
+    #[serde(default)]
+    pub avatar_radius: Option<i32>,
+    #[serde(default)]
+    pub avatar_border_width: Option<f32>,
+    #[serde(default)]
+    pub avatar_border_color: Option<String>,
+    #[serde(default)]
+    pub avatar_bg: Option<String>,
+}
+
 // ============================================================
 // ВНУТРЕННИЕ МОДЕЛИ (для работы с БД)
 // ============================================================

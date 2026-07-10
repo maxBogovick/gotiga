@@ -778,10 +778,34 @@ pub struct AuthorProfile {
     pub tagline: Option<String>,
     pub bio: Option<String>,
     pub photo_url: Option<String>,
+    /// Portrait for the site-header avatar — distinct from `photo_url` (used
+    /// by the bio/author page). `#[serde(default)]` so JSON blobs saved
+    /// before this field existed still deserialize.
+    #[serde(default)]
+    pub hero_photo_url: Option<String>,
     pub instagram: Option<String>,
     pub telegram: Option<String>,
     pub vk: Option<String>,
     pub email: Option<String>,
+    #[serde(default)]
+    pub website: Option<String>,
+    #[serde(default)]
+    pub artstation: Option<String>,
+    #[serde(default)]
+    pub pinterest: Option<String>,
+    #[serde(default)]
+    pub youtube: Option<String>,
+    /// Header avatar frame styling — all optional, admin-editable.
+    #[serde(default)]
+    pub avatar_shape: Option<String>,
+    #[serde(default)]
+    pub avatar_radius: Option<i32>,
+    #[serde(default)]
+    pub avatar_border_width: Option<f32>,
+    #[serde(default)]
+    pub avatar_border_color: Option<String>,
+    #[serde(default)]
+    pub avatar_bg: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2228,6 +2252,94 @@ pub struct ThemeMotion {
     pub duration_default: Option<String>,
     pub duration_slow: Option<String>,
     pub duration_glacial: Option<String>,
+}
+
+// ============================================================
+// HOME LAYOUT CONFIG
+// ============================================================
+
+/// Per-block style override on the home page (mirrors the frontend's BlockStyle).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HomeBlockStyle {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<String>,
+    /// 'sm' | 'base' | 'lg' | 'xl'
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_size: Option<String>,
+    /// Font ID from the frontend's READING_FONTS catalogue.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<String>,
+    /// 'tight' | 'base' | 'roomy' | 'spacious'
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub padding_y: Option<String>,
+    /// Letterpress rule above the block.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub divider: Option<bool>,
+    /// Device classes the block is hidden on: 'mobile' | 'tablet' | 'desktop'.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hide_on: Option<Vec<String>>,
+}
+
+/// Override of one element inside a home block (mirrors HomeElementStyle).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HomeElementStyle {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    /// Free-range font size in px for text elements.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_px: Option<f32>,
+    /// Free-range width in % of the parent for media elements.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width_pct: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hidden: Option<bool>,
+}
+
+/// Admin-arranged layout of the home page: block order per zone, visibility,
+/// width presets and per-block styles. Absent fields mean "hard-coded default".
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HomeLayoutConfig {
+    /// Main flow order (hero, returningBand, gallery, … latelyShelves).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block_order: Option<Vec<String>>,
+    /// Order inside the returning-visitor band (visitLedger, noticeBoard).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub band_order: Option<Vec<String>>,
+    /// Order inside the returning-visitor shelves (firstLook, markedByYou, noticedByGuests).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shelf_order: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hidden_blocks: Option<Vec<String>>,
+    /// Block ID → 'full' | 'contained' | 'compact'.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sizes: Option<std::collections::HashMap<String, String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block_styles: Option<std::collections::HashMap<String, HomeBlockStyle>>,
+    /// Per-element overrides, keyed "blockId.elementId".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elements: Option<std::collections::HashMap<String, HomeElementStyle>>,
+    /// Per-block order of orderable elements inside the block's column.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub element_order: Option<std::collections::HashMap<String, Vec<String>>>,
+    /// Background of the whole home page (hex); overrides the parchment default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_background: Option<String>,
+}
+
+/// Named, admin-saved home layout arrangement.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HomeLayoutPreset {
+    pub id: String,
+    pub name: String,
+    /// Opaque JSON blob — the frontend's HomeLayoutConfig object.
+    pub config: serde_json::Value,
+    pub saved_at: String,
 }
 
 // ============================================================

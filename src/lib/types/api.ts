@@ -250,11 +250,16 @@ export interface HomeContent {
     vitrineFigurineId: string | null;
 }
 
+export type AvatarShape = 'circle' | 'square';
+
 export interface AuthorProfile {
     name: string;
     tagline: string | null;
     bio: string | null;
     photoUrl: string | null;
+    /** Portrait for the site-header avatar — distinct from `photoUrl` (used
+     *  by the bio/author page). Falls back to a static asset when unset. */
+    heroPhotoUrl: string | null;
     instagram: string | null;
     telegram: string | null;
     vk: string | null;
@@ -263,6 +268,15 @@ export interface AuthorProfile {
     artstation: string | null;
     pinterest: string | null;
     youtube: string | null;
+    /** Header avatar frame styling — all optional, admin-editable. */
+    avatarShape: AvatarShape | null;
+    /** Corner radius in px, used only when avatarShape is 'square'. */
+    avatarRadius: number | null;
+    /** Ring thickness in px. */
+    avatarBorderWidth: number | null;
+    avatarBorderColor: string | null;
+    /** Matting colour shown behind the photo, inside the ring. */
+    avatarBg: string | null;
 }
 
 export type OrderMode = 'request' | 'question' | 'notify' | 'reserve';
@@ -1154,4 +1168,74 @@ export interface ThemeConfig {
 export interface CopyOverrides {
     en: Record<string, string>;
     ru: Record<string, string>;
+}
+
+// ============================================================
+// HOME LAYOUT CONFIG
+// ============================================================
+
+/** Blocks of the home page main flow. `returningBand` and `latelyShelves` are
+ *  compound blocks: they move as one unit and keep their isReturningVisitor
+ *  gate; their children are ordered by bandOrder / shelfOrder. */
+export type HomeMainBlockId =
+    | 'hero' | 'returningBand' | 'gallery' | 'authorStory'
+    | 'impressions' | 'requestSteps' | 'visitorBook' | 'latelyShelves';
+export type HomeBandBlockId = 'visitLedger' | 'noticeBoard';
+export type HomeShelfBlockId = 'firstLook' | 'markedByYou' | 'noticedByGuests';
+export type HomeBlockId = HomeMainBlockId | HomeBandBlockId | HomeShelfBlockId;
+
+/** Width preset: full-bleed background, standard container, or narrow column. */
+export type HomeBlockSize = 'full' | 'contained' | 'compact';
+
+/** Extra vertical breathing room around a block ('base' = as designed;
+ *  'tight' pulls neighbours closer with a small negative margin). */
+export type HomeBlockPadding = 'tight' | 'base' | 'roomy' | 'spacious';
+
+export type HomeDevice = 'mobile' | 'tablet' | 'desktop';
+
+/** Per-block home overrides: DisplayConfig's BlockStyle plus layout-only knobs. */
+export interface HomeBlockStyle extends BlockStyle {
+    paddingY?: HomeBlockPadding;
+    /** Letterpress rule drawn above the block. */
+    divider?: boolean;
+    /** Device classes this block is hidden on (mobile ≤680, tablet 681–1080, desktop >1080). */
+    hideOn?: HomeDevice[];
+}
+
+/** Fine-grained override of ONE element inside a block (a title, a lead
+ *  paragraph, the CTA row, the hero photo…). Keyed `blockId.elementId`;
+ *  the element registry lives in `src/lib/home-layout.ts`. */
+export interface HomeElementStyle {
+    /** Text colour (cascades into the element's descendants). */
+    color?: string;
+    /** Free-range font size in px (text/group elements), e.g. 8–120. */
+    sizePx?: number;
+    /** Free-range width in % of the parent (media elements), e.g. 20–100. */
+    widthPct?: number;
+    hidden?: boolean;
+}
+
+/** Admin-arranged home page layout, stored as JSON in settings (`home_layout`).
+ *  Absent fields mean the hard-coded default. Hidden = admin's veto; blocks
+ *  that hide themselves at runtime (noticeBoard, firstLook) keep doing so. */
+export interface HomeLayoutConfig {
+    blockOrder?: HomeMainBlockId[];
+    bandOrder?: HomeBandBlockId[];
+    shelfOrder?: HomeShelfBlockId[];
+    hiddenBlocks?: HomeBlockId[];
+    sizes?: Partial<Record<HomeBlockId, HomeBlockSize>>;
+    blockStyles?: Partial<Record<HomeBlockId, HomeBlockStyle>>;
+    /** Per-element overrides, keyed `blockId.elementId`. */
+    elements?: Record<string, HomeElementStyle>;
+    /** Per-block order of the orderable elements inside the block's column. */
+    elementOrder?: Partial<Record<HomeBlockId, string[]>>;
+    /** Background of the whole home page (hex); overrides the parchment default. */
+    pageBackground?: string;
+}
+
+export interface HomeLayoutPreset {
+    id: string;
+    name: string;
+    config: HomeLayoutConfig;
+    savedAt: string;
 }

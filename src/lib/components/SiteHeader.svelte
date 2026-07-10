@@ -12,6 +12,17 @@
   import { api, resolveMediaUrl } from '$lib/api';
   import RavenWatcher from '$lib/components/RavenWatcher.svelte';
   import HeaderBirdWalk from '$lib/components/HeaderBirdWalk.svelte';
+  import type { AuthorProfile } from '$lib/types/api';
+
+  // Header-left maker avatar — admin-editable photo + frame styling.
+  let authorProfile = $state<AuthorProfile | null>(null);
+  let headerAvatarUrl = $derived(authorProfile?.heroPhotoUrl?.trim() || '/images/avatar.jpg');
+  let headerAuthorName = $derived(authorProfile?.name?.trim() || $brandName);
+  let avatarShape = $derived(authorProfile?.avatarShape ?? 'circle');
+  let avatarRadiusCss = $derived(avatarShape === 'square' ? `${authorProfile?.avatarRadius ?? 12}px` : '50%');
+  let avatarBorderWidthCss = $derived(`${authorProfile?.avatarBorderWidth ?? 3.5}px`);
+  let avatarBorderColor = $derived(authorProfile?.avatarBorderColor?.trim() || 'var(--copper)');
+  let avatarBg = $derived(authorProfile?.avatarBg?.trim() || 'transparent');
 
   let leftLinks = $derived([
     { href: '/figurines', label: $t('navArchive') },
@@ -24,6 +35,16 @@
   ]);
 
   let pathname = $derived(page.url.pathname);
+
+  function jumpToWorkshopStory(event: MouseEvent) {
+    if (pathname === '/') {
+      event.preventDefault();
+      document.getElementById('in-the-workshop')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    // Elsewhere: let the link navigate to "/#in-the-workshop" normally —
+    // the browser scrolls there once the home page has mounted.
+  }
+
   let panelOpen = $state(false);
   let panelRef = $state<HTMLElement | null>(null);
   let mobileNavOpen = $state(false);
@@ -97,6 +118,8 @@
     window.addEventListener('scroll', handleScroll, { passive: true });
     handleScroll();
 
+    api.getAuthorProfile().then((p) => { authorProfile = p; }).catch(() => {});
+
     if (!authStore.isLoggedIn && authStore.token) {
       try {
         const user = await api.userMe(authStore.token);
@@ -135,8 +158,27 @@
 
     <!-- ① Ghost-left: muted utilities pinned to left edge -->
     <div class="ghost-left">
-      <LangSwitcher variant="light" />
-      <FontSwitcher variant="header" />
+      <!-- Maker avatar: large, full colour, fills the header's height —
+           a real face, not a muted icon. -->
+      <a
+        class="header-avatar"
+        href="/#in-the-workshop"
+        onclick={jumpToWorkshopStory}
+        aria-label={headerAuthorName}
+        style="
+          --avatar-radius: {avatarRadiusCss};
+          --avatar-border-w: {avatarBorderWidthCss};
+          --avatar-border-color: {avatarBorderColor};
+          --avatar-bg: {avatarBg};
+        "
+      >
+        <img src={headerAvatarUrl} alt="" class="header-avatar-img" loading="eager" decoding="async" />
+        <span class="header-avatar-tip">{headerAuthorName}</span>
+      </a>
+      <span class="ghost-left-utils">
+        <LangSwitcher variant="light" />
+        <FontSwitcher variant="header" />
+      </span>
     </div>
 
     <!-- ② Left nav -->
@@ -435,20 +477,125 @@
     display: flex;
     align-items: center;
     gap: 4px;
-    /* muted until hovered — they shouldn't compete with nav */
+  }
+
+  /* .ghost-left itself stays at full opacity now that it carries the maker
+     avatar — that must never look grey/dimmed. Only the lang/font switchers
+     (wrapped below in .ghost-left-utils) keep the old muted-until-hovered
+     behaviour; .ghost-right (bookings/account icons) is unaffected. */
+  .ghost-right {
     opacity: 0.42;
     transition: opacity 0.3s ease;
   }
-
-  .ghost-left:hover,
   .ghost-right:hover,
-  .ghost-left:focus-within,
   .ghost-right:focus-within {
+    opacity: 0.78;
+  }
+
+  .ghost-left-utils {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    opacity: 0.42;
+    transition: opacity 0.3s ease;
+  }
+  .ghost-left-utils:hover,
+  .ghost-left-utils:focus-within {
     opacity: 0.78;
   }
 
   .ghost-left  { grid-column: 1; justify-content: flex-start; }
   .ghost-right { grid-column: 5; justify-content: flex-end; }
+
+  /* ── Maker avatar — large, full colour, fills the header's height.
+     No sepia/grayscale filter: the face must read as a real photo, not a
+     muted icon. Sized off the header's own height so it scales down
+     automatically with the .is-scrolled 78px→54px shrink. ── */
+  .header-avatar {
+    /* Admin-editable, overridden inline via style="--avatar-*"; these are
+       just the defaults if the profile hasn't set anything yet. */
+    --avatar-radius: 50%;
+    --avatar-border-w: 3.5px;
+    --avatar-border-color: var(--copper);
+    --avatar-bg: transparent;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 62px;
+    height: 62px;
+    box-sizing: border-box;
+    padding: 3px;
+    flex-shrink: 0;
+    border-radius: var(--avatar-radius);
+    background: var(--avatar-bg);
+    text-decoration: none;
+    transition: width 0.25s ease, height 0.25s ease;
+  }
+
+  /* Shrink with the header's own 78px→54px scroll transition. */
+  .site-header.is-scrolled .header-avatar {
+    width: 44px;
+    height: 44px;
+  }
+
+  .header-avatar-img {
+    width: 100%;
+    height: 100%;
+    border-radius: var(--avatar-radius);
+    object-fit: cover;
+    object-position: center 20%;
+    display: block;
+    box-shadow:
+      0 0 0 var(--avatar-border-w) var(--avatar-border-color),
+      0 4px 14px rgba(52, 37, 28, 0.3);
+    transition: box-shadow 0.22s ease, transform 0.22s ease;
+  }
+
+  .header-avatar:hover .header-avatar-img,
+  .header-avatar:focus-visible .header-avatar-img {
+    box-shadow:
+      0 0 0 var(--avatar-border-w) var(--avatar-border-color),
+      0 6px 20px rgba(52, 37, 28, 0.38);
+    transform: scale(1.06);
+  }
+
+  .header-avatar:focus-visible {
+    outline: 2px solid var(--copper);
+    outline-offset: 3px;
+  }
+
+  .header-avatar-tip {
+    position: absolute;
+    top: calc(100% + 10px);
+    left: 50%;
+    transform: translateX(-50%) translateY(-4px);
+    z-index: 20;
+    white-space: nowrap;
+    padding: 4px 10px;
+    font-family: 'Fraunces', Georgia, serif;
+    font-size: 12px;
+    font-style: italic;
+    color: #f8f1e7;
+    background: rgba(28, 16, 10, 0.85);
+    backdrop-filter: blur(6px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease, transform 0.18s ease;
+  }
+
+  .header-avatar:hover .header-avatar-tip,
+  .header-avatar:focus-visible .header-avatar-tip {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .header-avatar:hover .header-avatar-img,
+    .header-avatar:focus-visible .header-avatar-img {
+      transform: none;
+    }
+  }
 
   /* bookings & user sit at normal opacity inside ghost-right
      when they have active state */

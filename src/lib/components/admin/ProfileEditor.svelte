@@ -10,6 +10,7 @@
     tagline: null,
     bio: null,
     photoUrl: null,
+    heroPhotoUrl: null,
     instagram: null,
     telegram: null,
     vk: null,
@@ -18,11 +19,17 @@
     artstation: null,
     pinterest: null,
     youtube: null,
+    avatarShape: null,
+    avatarRadius: null,
+    avatarBorderWidth: null,
+    avatarBorderColor: null,
+    avatarBg: null,
   });
 
   let isLoading = $state(true);
   let isSaving = $state(false);
   let isUploadingPhoto = $state(false);
+  let isUploadingHeroPhoto = $state(false);
   let message = $state('');
   let messageType = $state<'ok' | 'err'>('ok');
 
@@ -63,6 +70,33 @@
       // user cancelled or upload failed
     } finally {
       isUploadingPhoto = false;
+    }
+  }
+
+  async function uploadHeroPhoto() {
+    isUploadingHeroPhoto = true;
+    try {
+      let fileOrPath: string | File;
+      if (isTauri) {
+        const { open } = await import('@tauri-apps/plugin-dialog');
+        const selected = await open({ multiple: false, filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp'] }] });
+        if (!selected || typeof selected !== 'string') return;
+        fileOrPath = selected;
+      } else {
+        fileOrPath = await new Promise<File>((resolve, reject) => {
+          const input = document.createElement('input');
+          input.type = 'file';
+          input.accept = 'image/jpeg,image/png,image/webp';
+          input.onchange = () => { const f = input.files?.[0]; f ? resolve(f) : reject(); };
+          input.click();
+        });
+      }
+      const imported = await api.importMediaWithVariants(fileOrPath, 'images');
+      profile.heroPhotoUrl = imported.url;
+    } catch {
+      // user cancelled or upload failed
+    } finally {
+      isUploadingHeroPhoto = false;
     }
   }
 
@@ -170,6 +204,131 @@
                 placeholder="or paste a URL manually"
                 class="admin-input w-full text-[10px] opacity-60"
               />
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <label for="profile-hero-photo-upload" class="block text-[10px] tracking-[0.06em] uppercase text-[#5f4636] mb-1">{$t('adminProfileHeroPhoto')}</label>
+          <p class="text-[10px] text-[#5f4636]/70 mb-2">{$t('adminProfileHeroPhotoDesc')}</p>
+          <div class="flex items-start gap-3">
+            {#if profile.heroPhotoUrl}
+              <div
+                class="w-20 h-20 overflow-hidden border flex-shrink-0"
+                style="
+                  border-radius: {profile.avatarShape === 'square' ? `${profile.avatarRadius ?? 12}px` : '50%'};
+                  border-width: {profile.avatarBorderWidth ?? 3.5}px;
+                  border-color: {profile.avatarBorderColor?.trim() || '#c65f3c'};
+                  background: {profile.avatarBg?.trim() || 'transparent'};
+                "
+              >
+                <img src={profile.heroPhotoUrl} alt="preview" class="w-full h-full object-cover" />
+              </div>
+            {/if}
+            <div class="flex flex-col gap-2 flex-1">
+              <button
+                type="button"
+                onclick={uploadHeroPhoto}
+                id="profile-hero-photo-upload"
+                disabled={isUploadingHeroPhoto}
+                class="btn-gothic text-[10px] px-3 py-1.5 self-start disabled:opacity-60"
+              >
+                {isUploadingHeroPhoto ? '…' : profile.heroPhotoUrl ? $t('adminChangePhoto') : $t('adminUploadPhoto')}
+              </button>
+              <input
+                id="profile-hero-photo"
+                bind:value={profile.heroPhotoUrl}
+                type="text"
+                placeholder="or paste a URL manually"
+                class="admin-input w-full text-[10px] opacity-60"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div class="border-t border-[#34251c]/10 pt-5">
+          <p class="text-[10px] tracking-[0.08em] uppercase text-[#5f4636] mb-4">{$t('adminProfileAvatarFrame')}</p>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <span class="block text-[10px] tracking-wide text-[#5f4636] mb-1">{$t('adminProfileAvatarShape')}</span>
+              <div class="flex gap-2">
+                <button
+                  type="button"
+                  onclick={() => profile.avatarShape = 'circle'}
+                  class="admin-input flex-1 text-[10px] uppercase tracking-wide {(profile.avatarShape ?? 'circle') === 'circle' ? 'bg-[#34251c]/5 border-[#c65f3c]/50' : ''}"
+                >
+                  {$t('adminProfileAvatarCircle')}
+                </button>
+                <button
+                  type="button"
+                  onclick={() => profile.avatarShape = 'square'}
+                  class="admin-input flex-1 text-[10px] uppercase tracking-wide {profile.avatarShape === 'square' ? 'bg-[#34251c]/5 border-[#c65f3c]/50' : ''}"
+                >
+                  {$t('adminProfileAvatarSquare')}
+                </button>
+              </div>
+            </div>
+            <div>
+              <label for="profile-avatar-radius" class="block text-[10px] tracking-wide text-[#5f4636] mb-1">{$t('adminProfileAvatarRadius')}</label>
+              <input
+                id="profile-avatar-radius"
+                type="number"
+                min="0"
+                max="40"
+                disabled={(profile.avatarShape ?? 'circle') === 'circle'}
+                value={profile.avatarRadius ?? 12}
+                oninput={(e) => profile.avatarRadius = Number((e.currentTarget as HTMLInputElement).value)}
+                class="admin-input w-full disabled:opacity-40"
+              />
+            </div>
+            <div>
+              <label for="profile-avatar-border-width" class="block text-[10px] tracking-wide text-[#5f4636] mb-1">{$t('adminProfileAvatarBorderWidth')}</label>
+              <input
+                id="profile-avatar-border-width"
+                type="number"
+                min="0"
+                max="12"
+                step="0.5"
+                value={profile.avatarBorderWidth ?? 3.5}
+                oninput={(e) => profile.avatarBorderWidth = Number((e.currentTarget as HTMLInputElement).value)}
+                class="admin-input w-full"
+              />
+            </div>
+            <div>
+              <label for="profile-avatar-border-color" class="block text-[10px] tracking-wide text-[#5f4636] mb-1">{$t('adminProfileAvatarBorderColor')}</label>
+              <div class="flex items-center gap-2">
+                <input
+                  id="profile-avatar-border-color"
+                  type="color"
+                  value={profile.avatarBorderColor?.trim() || '#c65f3c'}
+                  oninput={(e) => profile.avatarBorderColor = (e.currentTarget as HTMLInputElement).value}
+                  class="h-8 w-10 border border-[#34251c]/15 bg-transparent p-0.5"
+                />
+                <input
+                  bind:value={profile.avatarBorderColor}
+                  type="text"
+                  placeholder="#c65f3c"
+                  class="admin-input flex-1 text-[10px] opacity-60"
+                />
+              </div>
+            </div>
+            <div>
+              <label for="profile-avatar-bg" class="block text-[10px] tracking-wide text-[#5f4636] mb-1">{$t('adminProfileAvatarBg')}</label>
+              <div class="flex items-center gap-2">
+                <input
+                  id="profile-avatar-bg"
+                  type="color"
+                  value={profile.avatarBg?.trim() || '#f8f1e7'}
+                  oninput={(e) => profile.avatarBg = (e.currentTarget as HTMLInputElement).value}
+                  class="h-8 w-10 border border-[#34251c]/15 bg-transparent p-0.5"
+                />
+                <input
+                  bind:value={profile.avatarBg}
+                  type="text"
+                  placeholder="transparent"
+                  class="admin-input flex-1 text-[10px] opacity-60"
+                />
+              </div>
             </div>
           </div>
         </div>

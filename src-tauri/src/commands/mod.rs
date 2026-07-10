@@ -777,6 +777,32 @@ pub async fn save_home_content(
 }
 
 #[tauri::command]
+pub async fn get_author_profile(db: State<'_, Database>) -> Result<AuthorProfile, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let repo = Repository::new(&conn);
+
+    match repo
+        .get_app_resource("author_profile")
+        .map_err(|e| e.to_string())?
+    {
+        Some(json) => serde_json::from_str(&json).map_err(|e| e.to_string()),
+        None => Ok(AuthorProfile::default()),
+    }
+}
+
+#[tauri::command]
+pub async fn save_author_profile(
+    profile: AuthorProfile,
+    db: State<'_, Database>,
+) -> Result<(), String> {
+    let json = serde_json::to_string(&profile).map_err(|e| e.to_string())?;
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let repo = Repository::new(&conn);
+    repo.upsert_app_resource("author_profile", &json, None)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn export_release(
     db: State<'_, Database>,
     sync: State<'_, SyncService>,

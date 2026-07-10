@@ -326,6 +326,24 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                     auth_middleware,
                 )),
             )
+            // === HOME LAYOUT CONFIG ===
+            .route("/settings/home-layout", get(handlers::get_home_layout))
+            .route(
+                "/admin/settings/home-layout",
+                put(handlers::save_home_layout).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/admin/settings/home-layout-presets",
+                get(handlers::admin_get_home_layout_presets)
+                    .put(handlers::admin_save_home_layout_presets)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
             // === COPY OVERRIDES ===
             .route("/settings/copy", get(handlers::get_copy_overrides))
             .route(

@@ -29,6 +29,7 @@
     import FigurineShowingsEditor from '$lib/components/admin/FigurineShowingsEditor.svelte';
     import DisplayConfigEditor from '$lib/components/admin/DisplayConfigEditor.svelte';
     import DesignEditor from '$lib/components/admin/DesignEditor.svelte';
+    import HomeLayoutEditor from '$lib/components/admin/HomeLayoutEditor.svelte';
     import CopyEditor from '$lib/components/admin/CopyEditor.svelte';
     import WorkshopFeaturePanel from '$lib/components/admin/WorkshopFeaturePanel.svelte';
     import ProgrammePanel from '$lib/components/admin/ProgrammePanel.svelte';
@@ -86,7 +87,7 @@
     let showingsEditor = $state<FigurineShowingsEditor | null>(null);
     let showSettings = $state(false);
     let message = $state({ text: '', type: 'info' });
-    let activeTab = $state<'registry' | 'rooms' | 'home' | 'workshop-feature' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'commissions' | 'showings' | 'bookings' | 'waitlist' | 'subscribers' | 'analytics' | 'users' | 'comments' | 'impressions' | 'messages' | 'server' | 'logs' | 'booking-rules' | 'contact' | 'design' | 'copy' | 'programme'>('registry');
+    let activeTab = $state<'registry' | 'rooms' | 'home' | 'home-layout' | 'workshop-feature' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'commissions' | 'showings' | 'bookings' | 'waitlist' | 'subscribers' | 'analytics' | 'users' | 'comments' | 'impressions' | 'messages' | 'server' | 'logs' | 'booking-rules' | 'contact' | 'design' | 'copy' | 'programme'>('registry');
     let activeAuthorSubTab = $state<'profile' | 'texts'>('profile');
     let newOrdersCount = $state(0);
     let newCommissionsCount = $state(0);
@@ -899,6 +900,7 @@
                 label: $t('adminGroupContent'),
                 tabs: [
                   ['home',       $t('adminTabHome')],
+                  ['home-layout', $t('adminTabHomeLayout')],
                   ['programme',  $t('adminTabProgramme')],
                   ['author',     $t('adminTabAuthor')],
                   ['workshop',   $t('adminTabWorkshop')],
@@ -1769,6 +1771,9 @@
 
         {:else if activeTab === 'home'}
             <HomeContentEditor />
+
+        {:else if activeTab === 'home-layout'}
+            <div in:fade class="h-full overflow-y-auto"><HomeLayoutEditor /></div>
 
         {:else if activeTab === 'programme'}
             <div in:fade class="h-full overflow-auto"><ProgrammePanel /></div>

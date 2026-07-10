@@ -16,12 +16,22 @@
   import { t } from '$lib/i18n';
   import type { FigurineListItem } from '$lib/types/api';
   import { diffVisit, commitVisit, type RoomRef, type VisitChanges } from '$lib/visit-ledger';
+  import AppImage from '$lib/components/AppImage.svelte';
 
   let {
     figurines = [],
     rooms = [],
     inProgressCount = 0,
-  }: { figurines?: FigurineListItem[]; rooms?: RoomRef[]; inProgressCount?: number } = $props();
+    vitrineFig = null,
+  }: {
+    figurines?: FigurineListItem[];
+    rooms?: RoomRef[];
+    inProgressCount?: number;
+    /** Today's single curated pick — folded into this ledger as one more
+     *  quiet fact ("today's exhibit"), not its own monument. A daily habit
+     *  needs a light, fast glance, not a full ceremony every 24 hours. */
+    vitrineFig?: FigurineListItem | null;
+  } = $props();
 
   let changes = $state<VisitChanges | null>(null);
   let settled = false;
@@ -36,6 +46,10 @@
   });
 
   let show = $derived(changes != null && !changes.firstVisit);
+  // Today's pick shows regardless of the diff engine's own baseline state —
+  // it's an independent daily fact, not conditioned on there being a prior
+  // visit snapshot to compare against.
+  let showLedger = $derived(Boolean(vitrineFig) || show);
   let homed = $derived(changes?.homed.slice(0, 2) ?? []);
   let newRooms = $derived(changes?.newRooms.slice(0, 2) ?? []);
   let arrivals = $derived(changes?.arrivals.length ?? 0);
@@ -48,20 +62,39 @@
   );
 </script>
 
-{#if show && changes}
+{#if showLedger}
   <aside class="ledger" aria-label={$t('homeLedgerEyebrow')}>
     <div class="ledger-rule" aria-hidden="true"></div>
 
     <p class="ledger-eyebrow">
       <span class="ledger-fleuron" aria-hidden="true">❧</span>
-      {$t('homeLedgerEyebrow')}
-      {#if changes.daysSince && changes.daysSince > 0}
+      {show ? $t('homeLedgerEyebrow') : $t('vitrineEyebrow')}
+      {#if show && changes?.daysSince && changes.daysSince > 0}
         <span class="ledger-days">{changes.daysSince} {$t('homeLedgerDays')}</span>
       {/if}
     </p>
 
-    {#if changes.hasAny}
-      <div class="ledger-marks">
+    <div class="ledger-marks">
+      <!-- Today's single curated pick — a fast, light glance (thumbnail +
+           name), not the full theatrical vitrine it used to be. A daily
+           habit has to be cheap to check, every single day. -->
+      {#if vitrineFig}
+        <a
+          class="mark mark-link mark-vitrine"
+          href={`/figurines/${vitrineFig.id}`}
+          aria-label="{$t('vitrineEyebrow')}: {vitrineFig.name}"
+        >
+          <span class="mark-vitrine-thumb">
+            <AppImage src={vitrineFig.faceImageUrl} thumbUrl={vitrineFig.thumbUrl} alt="" loading="eager" />
+          </span>
+          <span class="mark-vitrine-text">
+            <span class="mark-label">{$t('vitrineEyebrow')}</span>
+            <span class="mark-named">«{vitrineFig.name}»</span>
+          </span>
+        </a>
+      {/if}
+
+      {#if show && changes?.hasAny}
         {#if arrivals > 0}
           <a class="mark mark-link" href={arrivalsHref}>
             <span class="mark-num">{arrivals}</span>
@@ -93,25 +126,26 @@
             <span class="mark-label">{$t('homeLedgerRoomWaking')}</span>
           </a>
         {/each}
-      </div>
-    {:else}
+      {/if}
+
+      {#if show && !changes?.hasAny && inProgressCount > 0}
+        <a class="mark mark-link mark-inprogress" href="/upcoming">
+          <span class="mark-num">{inProgressCount}</span>
+          <span class="mark-label">{$t('homeLedgerInProgress')}</span>
+          <span class="mark-cta">{$t('homeLedgerInProgressCta')} →</span>
+        </a>
+      {/if}
+    </div>
+
+    {#if show && !changes?.hasAny}
       <div class="ledger-quiet">
         <p class="quiet-line">{$t('homeLedgerQuiet')}</p>
-        <div class="quiet-actions">
-          <a class="quiet-cta" href="/workshop">
-            {$t('homeLedgerQuietCta')}
-            <svg width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
-              <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1" />
-            </svg>
-          </a>
-          {#if inProgressCount > 0}
-            <a class="mark mark-link mark-inprogress" href="/?view=upcoming#available-works">
-              <span class="mark-num">{inProgressCount}</span>
-              <span class="mark-label">{$t('homeLedgerInProgress')}</span>
-              <span class="mark-cta">{$t('homeLedgerInProgressCta')} →</span>
-            </a>
-          {/if}
-        </div>
+        <a class="quiet-cta" href="/workshop">
+          {$t('homeLedgerQuietCta')}
+          <svg width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
+            <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1" />
+          </svg>
+        </a>
       </div>
     {/if}
   </aside>
@@ -239,19 +273,45 @@
     color: var(--color-ember-deep);
   }
 
+  /* Today's exhibit — the one mark that carries a thumbnail, so it still
+     reads as a small, precious glimpse rather than plain text, without the
+     full glass-case ceremony a daily-changing pick shouldn't have to pay. */
+  .mark-vitrine {
+    padding: 7px 16px 7px 7px;
+    gap: 12px;
+    border-left-color: color-mix(in srgb, var(--color-ember) 80%, transparent);
+  }
+
+  .mark-vitrine-thumb {
+    position: relative;
+    width: 42px;
+    height: 42px;
+    flex-shrink: 0;
+    border-radius: 3px;
+    overflow: hidden;
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--color-ember) 34%, transparent),
+      0 2px 8px rgba(28, 16, 10, 0.22);
+  }
+
+  .mark-vitrine-thumb :global(img) {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center 20%;
+  }
+
+  .mark-vitrine-text {
+    display: grid;
+    gap: 3px;
+  }
+
   /* Quiet fallback — nothing changed, but time still passed. */
   .ledger-quiet {
     display: flex;
     align-items: baseline;
     flex-wrap: wrap;
     gap: 8px 20px;
-  }
-
-  .quiet-actions {
-    display: flex;
-    align-items: baseline;
-    flex-wrap: wrap;
-    gap: 8px 16px;
   }
 
   .mark-inprogress {

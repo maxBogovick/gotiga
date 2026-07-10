@@ -3492,6 +3492,40 @@ impl AppService {
         self.repo.upsert_setting("theme_config", &json).await
     }
 
+    // === HOME LAYOUT CONFIG ===
+
+    pub async fn get_home_layout(&self) -> Result<HomeLayoutConfig> {
+        parse_json_setting("home_layout", self.repo.get_setting("home_layout").await?)
+    }
+
+    pub async fn save_home_layout(&self, config: HomeLayoutConfig) -> Result<()> {
+        let json = serde_json::to_string(&config).map_err(|e| AppError::Internal(e.to_string()))?;
+        if json.len() > 100 * 1024 {
+            return Err(AppError::BadRequest("Home layout config is too large".into()));
+        }
+        self.repo.upsert_setting("home_layout", &json).await
+    }
+
+    pub async fn get_home_layout_presets(&self) -> Result<Vec<crate::models::HomeLayoutPreset>> {
+        match self.repo.get_setting("home_layout_presets").await? {
+            Some(j) => serde_json::from_str(&j)
+                .map_err(|e| AppError::Internal(format!("Corrupt home layout presets: {e}"))),
+            None => Ok(vec![]),
+        }
+    }
+
+    pub async fn save_home_layout_presets(
+        &self,
+        presets: Vec<crate::models::HomeLayoutPreset>,
+    ) -> Result<()> {
+        let json =
+            serde_json::to_string(&presets).map_err(|e| AppError::Internal(e.to_string()))?;
+        if json.len() > 200 * 1024 {
+            return Err(AppError::BadRequest("Home layout presets payload is too large".into()));
+        }
+        self.repo.upsert_setting("home_layout_presets", &json).await
+    }
+
     // === DISPLAY CONFIG PRESETS ===
 
     pub async fn get_display_presets(&self) -> Result<Vec<crate::models::DisplayConfigPreset>> {

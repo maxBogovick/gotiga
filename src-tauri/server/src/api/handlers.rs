@@ -1909,6 +1909,34 @@ pub async fn save_copy_overrides(
     Ok(Json(body))
 }
 
+// === HOME LAYOUT CONFIG ===
+
+pub async fn get_home_layout(State(service): State<AppService>) -> Result<Json<HomeLayoutConfig>> {
+    Ok(Json(service.get_home_layout().await?))
+}
+
+pub async fn save_home_layout(
+    State(service): State<AppService>,
+    Json(body): Json<HomeLayoutConfig>,
+) -> Result<Json<HomeLayoutConfig>> {
+    service.save_home_layout(body.clone()).await?;
+    Ok(Json(body))
+}
+
+pub async fn admin_get_home_layout_presets(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<HomeLayoutPreset>>> {
+    Ok(Json(service.get_home_layout_presets().await?))
+}
+
+pub async fn admin_save_home_layout_presets(
+    State(service): State<AppService>,
+    Json(body): Json<Vec<HomeLayoutPreset>>,
+) -> Result<Json<Vec<HomeLayoutPreset>>> {
+    service.save_home_layout_presets(body.clone()).await?;
+    Ok(Json(body))
+}
+
 // === DISPLAY CONFIG PRESETS ===
 
 pub async fn admin_get_display_presets(

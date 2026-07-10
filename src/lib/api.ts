@@ -59,6 +59,8 @@ import type {
     ThreadDetailDto,
     ThemeConfig,
     CopyOverrides,
+    HomeLayoutConfig,
+    HomeLayoutPreset,
     DisplayConfigPreset,
     CommissionRequest,
     CommissionDto,
@@ -1450,6 +1452,32 @@ export const api = {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify(config),
+        });
+    },
+
+    // === HOME LAYOUT CONFIG ===
+
+    async getHomeLayout(): Promise<HomeLayoutConfig> {
+        return webFetch('/settings/home-layout');
+    },
+
+    async saveHomeLayout(config: HomeLayoutConfig): Promise<HomeLayoutConfig> {
+        return webFetch('/admin/settings/home-layout', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(config),
+        });
+    },
+
+    async getHomeLayoutPresets(): Promise<HomeLayoutPreset[]> {
+        return webFetch('/admin/settings/home-layout-presets', { headers: authHeaders() });
+    },
+
+    async saveHomeLayoutPresets(presets: HomeLayoutPreset[]): Promise<HomeLayoutPreset[]> {
+        return webFetch('/admin/settings/home-layout-presets', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(presets),
         });
     },
 
