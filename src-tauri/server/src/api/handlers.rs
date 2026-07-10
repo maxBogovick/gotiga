@@ -1313,6 +1313,39 @@ pub async fn delete_showing(
     Ok(StatusCode::OK)
 }
 
+pub async fn bulk_clear_showings(
+    State(service): State<AppService>,
+) -> Result<impl IntoResponse> {
+    Ok(Json(service.bulk_clear_showings().await?))
+}
+
+// === BULK FIGURINE OPS (ADMIN) ===
+
+pub async fn bulk_clear_darkness(State(service): State<AppService>) -> Result<impl IntoResponse> {
+    Ok(Json(service.bulk_clear_darkness().await?))
+}
+
+pub async fn bulk_reset_parallax(State(service): State<AppService>) -> Result<impl IntoResponse> {
+    Ok(Json(service.bulk_reset_parallax_intensity().await?))
+}
+
+pub async fn bulk_set_parallax(
+    State(service): State<AppService>,
+    Json(req): Json<crate::models::BulkSetParallaxRequest>,
+) -> Result<impl IntoResponse> {
+    Ok(Json(service.bulk_set_parallax_intensity(req.intensity).await?))
+}
+
+pub async fn bulk_recalculate_parallax(
+    State(service): State<AppService>,
+) -> Result<impl IntoResponse> {
+    Ok(Json(service.bulk_recalculate_parallax().await?))
+}
+
+pub async fn bulk_set_second_angle(State(service): State<AppService>) -> Result<impl IntoResponse> {
+    Ok(Json(service.bulk_set_second_angle().await?))
+}
+
 // === BOOKINGS (ADMIN) ===
 
 pub async fn list_bookings(

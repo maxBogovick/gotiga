@@ -7,6 +7,9 @@ export interface FigurineListItem {
     name: string;
     status: FigurineStatus;
     faceImageUrl: string | null;
+    /** Second-angle image for the home gallery's hover reveal; null/absent
+     *  when the piece has no dedicated "detail" image. */
+    detailImageUrl?: string | null;
     year?: number | null;
     sortOrder?: number;
     series?: string | null;
@@ -114,6 +117,10 @@ export interface DepthGenSummary {
     skipped: number;
     failed: number;
     results: DepthGenItem[];
+}
+
+export interface BulkOpResult {
+    affected: number;
 }
 
 export interface ProcessStep {
@@ -1231,7 +1238,12 @@ export interface HomeLayoutConfig {
     elementOrder?: Partial<Record<HomeBlockId, string[]>>;
     /** Background of the whole home page (hex); overrides the parchment default. */
     pageBackground?: string;
+    /** THE COLLECTION gallery card scroll-reveal treatment. Absent → 'rise'. */
+    cardEffect?: HomeCardEffect;
 }
+
+/** THE COLLECTION gallery card scroll-reveal treatments, admin-selectable. */
+export type HomeCardEffect = 'rise' | 'fog' | 'hoist' | 'drift' | 'unfold' | 'shadow';
 
 export interface HomeLayoutPreset {
     id: string;

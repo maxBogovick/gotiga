@@ -201,8 +201,10 @@
     display: block;
     object-fit: cover;
     object-position: center;
-    /* sealed: blurred silhouette — the work is not yet on view */
-    filter: saturate(0.45) contrast(0.92) brightness(0.92) blur(3px);
+    /* sealed: dimmed, unlit silhouette — the work is not yet on view.
+       No blur: the photo stays crisp, only shaded (door-shade/door-grade
+       overlays below do the "in darkness" work). */
+    filter: saturate(0.45) contrast(0.92) brightness(0.92);
   }
 
   /* no image: a dark engraved sheet with a printed emblem */

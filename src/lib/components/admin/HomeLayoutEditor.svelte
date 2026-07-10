@@ -15,6 +15,7 @@
     HomeDevice,
     HomeElementStyle,
     BlockStyle,
+    HomeCardEffect,
   } from '$lib/types/api';
   import {
     HOME_MAIN_BLOCK_IDS,
@@ -315,6 +316,22 @@
     touch();
   }
 
+  // ── THE COLLECTION card scroll-reveal effect ──────────────────────────────
+
+  const CARD_EFFECT_OPTIONS: { id: HomeCardEffect; label: string }[] = [
+    { id: 'rise', label: 'Восстаёт со дна' },
+    { id: 'fog', label: 'Всплывает из тумана' },
+    { id: 'hoist', label: 'Поднимается с рывком' },
+    { id: 'drift', label: 'Всплывает наискось' },
+    { id: 'unfold', label: 'Раскрывается снизу' },
+    { id: 'shadow', label: 'Всплывает из тени' },
+  ];
+
+  function setCardEffect(id: HomeCardEffect) {
+    cfg.cardEffect = id;
+    touch();
+  }
+
   // ── Named layout presets ───────────────────────────────────────────────────
 
   let presets = $state<HomeLayoutPreset[]>([]);
@@ -374,6 +391,7 @@
     if (cfg.elements && Object.keys(cfg.elements).length) out.elements = cfg.elements;
     if (cfg.elementOrder && Object.keys(cfg.elementOrder).length) out.elementOrder = cfg.elementOrder;
     if (cfg.pageBackground) out.pageBackground = cfg.pageBackground;
+    if (cfg.cardEffect) out.cardEffect = cfg.cardEffect;
     return $state.snapshot(out);
   }
 
@@ -885,6 +903,21 @@
           </div>
         </div>
 
+        <!-- THE COLLECTION card scroll-reveal effect -->
+        <div class="hle-section">
+          <p class="hle-section-label">Эффект карточек THE COLLECTION</p>
+          <div class="hle-color-row">
+            {#each CARD_EFFECT_OPTIONS as opt (opt.id)}
+              <button
+                type="button"
+                class="hle-effect-btn"
+                class:hle-effect-btn--active={(cfg.cardEffect ?? 'rise') === opt.id}
+                onclick={() => setCardEffect(opt.id)}
+              >{opt.label}</button>
+            {/each}
+          </div>
+        </div>
+
         <p class="hle-note">{$t('adminHomeLayoutRuntimeNoteLegend')}</p>
         <ol class="hle-list">
           {#each mainOrder as blockId, i (blockId)}
@@ -1173,6 +1206,25 @@
     color: #6f3b24;
     font-size: 0.7rem;
     line-height: 1;
+  }
+
+  .hle-effect-btn {
+    padding: 5px 11px;
+    border: 1px solid rgba(52, 37, 28, 0.25);
+    border-radius: 999px;
+    background: transparent;
+    color: #6f3b24;
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+  }
+  .hle-effect-btn:hover { border-color: #c65f3c; color: #c65f3c; }
+  .hle-effect-btn--active {
+    background: #c65f3c;
+    border-color: #c65f3c;
+    color: #fff7ea;
   }
 
   .hle-section { margin-bottom: 0.9rem; }

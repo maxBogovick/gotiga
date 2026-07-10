@@ -180,12 +180,20 @@ pub async fn get_all_figurines(
                 img.thumb_path.as_deref().unwrap_or(&img.file_path),
             )
         });
+        let detail = images.iter().find(|img| img.image_type == ImageType::Detail);
+        let detail_image = detail.map(|img| {
+            resolve_path(
+                &base_path,
+                img.thumb_path.as_deref().unwrap_or(&img.file_path),
+            )
+        });
 
         result.push(FigurineListItemDto {
             id: fig.id,
             name: fig.name,
             status: fig.status.as_str().to_string(),
             face_image_url: face_image,
+            detail_image_url: detail_image,
             year: fig.year,
             sort_order: fig.sort_order,
             series: None,
@@ -247,12 +255,20 @@ pub async fn get_figurine(
                         img.thumb_path.as_deref().unwrap_or(&img.file_path),
                     )
                 });
+                let r_detail = r_images.iter().find(|img| img.image_type == ImageType::Detail);
+                let r_detail_image = r_detail.map(|img| {
+                    resolve_path(
+                        &base_path,
+                        img.thumb_path.as_deref().unwrap_or(&img.file_path),
+                    )
+                });
 
                 related_items.push(FigurineListItemDto {
                     id: r_fig.id,
                     name: r_fig.name,
                     status: r_fig.status.as_str().to_string(),
                     face_image_url: r_face_image,
+                    detail_image_url: r_detail_image,
                     year: r_fig.year,
                     sort_order: r_fig.sort_order,
                     series: None,
@@ -379,6 +395,52 @@ pub async fn delete_figurine(id: String, db: State<'_, Database>) -> Result<(), 
     let repo = Repository::new(&conn);
     repo.delete_figurine(&id)
         .map_err(|e| format!("Database error: {}", e))
+}
+
+#[tauri::command]
+pub async fn bulk_clear_darkness(db: State<'_, Database>) -> Result<BulkOpResultDto, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let repo = Repository::new(&conn);
+    let affected = repo
+        .bulk_clear_darkness()
+        .map_err(|e| format!("Database error: {}", e))?;
+    Ok(BulkOpResultDto { affected })
+}
+
+#[tauri::command]
+pub async fn bulk_reset_parallax(db: State<'_, Database>) -> Result<BulkOpResultDto, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let repo = Repository::new(&conn);
+    let affected = repo
+        .bulk_reset_parallax()
+        .map_err(|e| format!("Database error: {}", e))?;
+    Ok(BulkOpResultDto { affected })
+}
+
+#[tauri::command]
+pub async fn bulk_set_parallax(
+    intensity: f32,
+    db: State<'_, Database>,
+) -> Result<BulkOpResultDto, String> {
+    if !(0.0..=1.0).contains(&intensity) {
+        return Err("Parallax intensity must be between 0 and 1".to_string());
+    }
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let repo = Repository::new(&conn);
+    let affected = repo
+        .bulk_set_parallax(intensity)
+        .map_err(|e| format!("Database error: {}", e))?;
+    Ok(BulkOpResultDto { affected })
+}
+
+#[tauri::command]
+pub async fn bulk_set_second_angle(db: State<'_, Database>) -> Result<BulkOpResultDto, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let repo = Repository::new(&conn);
+    let affected = repo
+        .bulk_set_second_angle()
+        .map_err(|e| format!("Database error: {}", e))?;
+    Ok(BulkOpResultDto { affected })
 }
 
 #[tauri::command]

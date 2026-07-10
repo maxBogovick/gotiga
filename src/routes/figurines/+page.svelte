@@ -5,19 +5,14 @@
   import { t, brandName } from '$lib/i18n';
   import { SITE_URL } from '$lib/site';
   import AppImage from '$lib/components/AppImage.svelte';
-  import KeyholeVeil from '$lib/components/KeyholeVeil.svelte';
   import SealedDoor from '$lib/components/SealedDoor.svelte';
   import Lightbox from '$lib/components/Lightbox.svelte';
   import OrderModal from '$lib/components/OrderModal.svelte';
   import FilterPopover from '$lib/components/FilterPopover.svelte';
   import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
-  import { revealedFigurines } from '$lib/stores/revealed-figurines.svelte';
-  import { themeConfig } from '$lib/stores/theme.svelte';
-  import { dwellReveal } from '$lib/actions/dwell-reveal';
   import { houseClock } from '$lib/stores/house-clock.svelte';
   import { showingRooms } from '$lib/stores/showing-rooms.svelte';
   import { isGated, isShowingOpen, resolveWindow } from '$lib/showing-window';
-  import { SvelteSet } from 'svelte/reactivity';
   import type { FigurineListItem } from '$lib/types/api';
 
   // "The house wakes": a gated work is sealed behind a carved door while the
@@ -54,13 +49,6 @@
   // $derived blocks below reference it. Under SSR/prerender deriveds evaluate
   // eagerly in source order, so a later `let` would be in the temporal dead zone.
   let viewedIds = $state(new Set<string>());
-
-  // Dwell-to-reveal: a sustained look thins a sealed card's shadow to "half-lit"
-  // over `dwellSec` seconds (never fully — only opening clears it). `glancedIds`
-  // holds completed glances; `dwellingId` is the card currently being looked at.
-  let dwellSec = $derived(Number($themeConfig.effects?.keyholeDwellReveal ?? 0));
-  let glancedIds = new SvelteSet<string>();
-  let dwellingId = $state<string | null>(null);
 
   // ── Derived filter data ────────────────────────────────────────
   type FigItem = import('$lib/types/api').FigurineListItem;
@@ -213,7 +201,6 @@
 
   onMount(() => {
     savedFigurines.load();
-    revealedFigurines.load();
     houseClock.start();
     showingRooms.load();
     try {
@@ -245,9 +232,6 @@
   }
 
   function markViewed(id: string) {
-    // Keyhole memory: lift this work's seal now (and let an older one settle back).
-    // Always runs, even for works already in the permanent ledger.
-    revealedFigurines.reveal(id);
     if (viewedIds.has(id)) return;
     const next = new Set(viewedIds);
     next.add(id);
@@ -591,12 +575,6 @@
                 aria-label="{figurine.name}"
                 data-sveltekit-preload-data="hover"
                 onclick={(e) => { if (doorShut(figurine)) { e.preventDefault(); return; } markViewed(figurine.id); }}
-                use:dwellReveal={{
-                  ms: !revealedFigurines.has(figurine.id) && !glancedIds.has(figurine.id) && dwellSec > 0 ? dwellSec * 1000 : 0,
-                  onStart: () => dwellingId = figurine.id,
-                  onStop: () => { if (dwellingId === figurine.id) dwellingId = null; },
-                  onReveal: () => { glancedIds.add(figurine.id); if (dwellingId === figurine.id) dwellingId = null; },
-                }}
               >
                 <div
                   class="relative aspect-[3/4] mb-6 overflow-hidden bg-[#fff9f0] border border-[#34251c]/10 shadow-2xl transition-all duration-700 group-hover:border-[#34251c]/30 group-hover:shadow-[0_0_30px_-10px_rgba(198,95,60,0.15)] group-hover:-translate-y-2"
@@ -630,14 +608,6 @@
                     </div>
                   {/if}
 
-                  {#if figurine.faceImageUrl}
-                    <KeyholeVeil
-                      show={!revealedFigurines.has(figurine.id)}
-                      dwelling={dwellingId === figurine.id}
-                      partial={glancedIds.has(figurine.id)}
-                      dwellMs={dwellSec * 1000}
-                      focalX={figurine.focalX} focalY={figurine.focalY} revealRadius={figurine.revealRadius} darkness={figurine.darkness} />
-                  {/if}
                   {/if}
 
                   <div class="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,rgba(111,59,36,0.8)_100%)] pointer-events-none transition-opacity duration-500 fig-vignette--{figurine.status}"></div>

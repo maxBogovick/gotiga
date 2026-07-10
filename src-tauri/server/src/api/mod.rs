@@ -491,6 +491,47 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                     auth_middleware,
                 )),
             )
+            .route(
+                "/admin/showings/bulk-clear",
+                post(handlers::bulk_clear_showings).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            // === BULK FIGURINE OPS (ADMIN) ===
+            .route(
+                "/admin/figurines/bulk/clear-darkness",
+                post(handlers::bulk_clear_darkness).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/admin/figurines/bulk/reset-parallax",
+                post(handlers::bulk_reset_parallax).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/admin/figurines/bulk/set-parallax",
+                post(handlers::bulk_set_parallax).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/admin/figurines/bulk/recalculate-parallax",
+                post(handlers::bulk_recalculate_parallax).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/figurines/bulk/set-second-angle",
+                post(handlers::bulk_set_second_angle).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
             // === BOOKINGS (ADMIN) ===
             .route(
                 "/admin/bookings",

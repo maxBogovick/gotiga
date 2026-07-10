@@ -7,7 +7,6 @@
   import FigurineDetailView from '$lib/components/FigurineDetailView.svelte';
   import NotFound from '$lib/components/NotFound.svelte';
   import { t , brandName } from '$lib/i18n';
-  import { revealedFigurines } from '$lib/stores/revealed-figurines.svelte';
   import '$lib/styles/figurine-detail.css';
 
   let { data } = $props();
@@ -24,7 +23,6 @@
       const next = [fid, ...viewed.filter((id) => id !== fid)].slice(0, 50);
       localStorage.setItem(VIEWED_KEY, JSON.stringify(next));
     } catch {}
-    revealedFigurines.reveal(fid);
   });
   let id = $derived(page.params.id ?? '');
 

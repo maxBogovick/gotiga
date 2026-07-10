@@ -570,6 +570,62 @@ impl<'a> Repository<'a> {
         iter.collect()
     }
 
+    // === BULK FIGURINE OPS (ADMIN) ===
+
+    /// Set every image's darkness to 0, fully dissolving the keyhole shadow
+    /// (the CSS gradient collapses to zero alpha at 0), rather than reverting
+    /// to the global default darkness, which is still dark.
+    pub fn bulk_clear_darkness(&self) -> Result<usize> {
+        self.conn.execute(
+            "UPDATE images SET darkness = 0 WHERE darkness IS NULL OR darkness != 0",
+            [],
+        )
+    }
+
+    pub fn bulk_reset_parallax(&self) -> Result<usize> {
+        self.conn.execute(
+            "UPDATE images SET parallax_intensity = NULL WHERE parallax_intensity IS NOT NULL",
+            [],
+        )
+    }
+
+    pub fn bulk_set_parallax(&self, value: f32) -> Result<usize> {
+        self.conn
+            .execute("UPDATE images SET parallax_intensity = ?1", params![value])
+    }
+
+    /// For every figurine with at least two images, mark the second image
+    /// (by display order) as the "detail" (second angle) image, clearing any
+    /// previous detail mark on that figurine. The face image is never
+    /// overwritten this way.
+    pub fn bulk_set_second_angle(&self) -> Result<usize> {
+        let mut stmt = self.conn.prepare("SELECT id FROM figurines")?;
+        let ids: Vec<String> = stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<_>>()?;
+        drop(stmt);
+        let mut affected = 0usize;
+        for figurine_id in ids {
+            let images = self.get_images_for_figurine(&figurine_id)?;
+            let Some(second) = images.get(1) else {
+                continue;
+            };
+            if second.image_type == ImageType::Face || second.image_type == ImageType::Detail {
+                continue;
+            }
+            self.conn.execute(
+                "UPDATE images SET image_type = 'full' WHERE figurine_id = ?1 AND image_type = 'detail'",
+                params![figurine_id],
+            )?;
+            self.conn.execute(
+                "UPDATE images SET image_type = 'detail' WHERE id = ?1",
+                params![second.id],
+            )?;
+            affected += 1;
+        }
+        Ok(affected)
+    }
+
     pub fn get_cabinet_zones(&self) -> Result<Vec<CabinetZone>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, zone_type, x_percent, y_percent, width_percent, height_percent, target_route

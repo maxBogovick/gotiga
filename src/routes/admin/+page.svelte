@@ -86,6 +86,9 @@
     let isSaving = $state(false);
     let showingsEditor = $state<FigurineShowingsEditor | null>(null);
     let showSettings = $state(false);
+    let bulkPanelOpen = $state(false);
+    let bulkBusy = $state(false);
+    let bulkParallaxValue = $state(0.5);
     let message = $state({ text: '', type: 'info' });
     let activeTab = $state<'registry' | 'rooms' | 'home' | 'home-layout' | 'workshop-feature' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'commissions' | 'showings' | 'bookings' | 'waitlist' | 'subscribers' | 'analytics' | 'users' | 'comments' | 'impressions' | 'messages' | 'server' | 'logs' | 'booking-rules' | 'contact' | 'design' | 'copy' | 'programme'>('registry');
     let activeAuthorSubTab = $state<'profile' | 'texts'>('profile');
@@ -613,6 +616,69 @@
         }
     }
 
+    // === BULK OPS (ADMIN — apply across every figurine at once) ===
+
+    async function refreshAfterBulkOp() {
+        await loadFigurines();
+        if (selectedFigurine) {
+            const fresh = await api.getFigurine(selectedFigurine.id);
+            if (fresh) {
+                selectedFigurine = { ...fresh };
+                savedSnapshot = JSON.stringify(selectedFigurine);
+            }
+        }
+    }
+
+    async function runBulkOp(confirmMsg: string, action: () => Promise<{ affected: number }>) {
+        if (!confirm(confirmMsg)) return;
+        bulkBusy = true;
+        try {
+            const res = await action();
+            await refreshAfterBulkOp();
+            showMessage(`${$t('adminBulkDone')}: ${res.affected}`, 'success');
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e);
+            showMessage($t('adminMsgError') + msg, 'error');
+        } finally {
+            bulkBusy = false;
+        }
+    }
+
+    async function bulkClearDarkness() {
+        await runBulkOp($t('adminBulkClearDarknessConfirm'), () => api.bulkClearDarkness());
+    }
+
+    async function bulkClearShowings() {
+        await runBulkOp($t('adminBulkClearShowingsConfirm'), () => api.bulkClearShowings());
+    }
+
+    async function bulkResetParallax() {
+        await runBulkOp($t('adminBulkResetParallaxConfirm'), () => api.bulkResetParallax());
+    }
+
+    async function bulkSetParallax() {
+        await runBulkOp($t('adminBulkSetParallaxConfirm'), () => api.bulkSetParallax(bulkParallaxValue));
+    }
+
+    async function bulkRecalculateParallax() {
+        if (!confirm($t('adminBulkRecalculateParallaxConfirm'))) return;
+        bulkBusy = true;
+        try {
+            const res = await api.bulkRecalculateParallax();
+            await refreshAfterBulkOp();
+            showMessage(`${$t('adminBulkDone')}: ${res.generated}/${res.results.length}`, 'success');
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e);
+            showMessage($t('adminMsgError') + msg, 'error');
+        } finally {
+            bulkBusy = false;
+        }
+    }
+
+    async function bulkSetSecondAngle() {
+        await runBulkOp($t('adminBulkSetSecondAngleConfirm'), () => api.bulkSetSecondAngle());
+    }
+
     function setParallaxIntensity(imgIdx: number, value: string) {
         if (!selectedFigurine) return;
         const parsed = Number(value);
@@ -739,6 +805,26 @@
         selectedFigurine.images = selectedFigurine.images.map(img => ({
             ...img, imageType: img.id === imageId ? 'face' : 'full'
         }));
+    }
+
+    // "Second angle" — the home gallery card's hover reveal. Independent of
+    // the cover/face image: exactly one image may carry it, any previous
+    // holder demotes to 'full', and the cover image itself can't double as it
+    // (the keyhole reveal already owns the face image).
+    function setDetailImage(imageId: string) {
+        if (!selectedFigurine) return;
+        selectedFigurine.images = selectedFigurine.images.map(img => {
+            if (img.id === imageId) return { ...img, imageType: 'detail' };
+            if (img.imageType === 'detail') return { ...img, imageType: 'full' };
+            return img;
+        });
+    }
+
+    function clearDetailImage(imageId: string) {
+        if (!selectedFigurine) return;
+        selectedFigurine.images = selectedFigurine.images.map(img =>
+            img.id === imageId ? { ...img, imageType: 'full' } : img
+        );
     }
 
     async function save() {
@@ -1005,8 +1091,59 @@
             <aside class="col-span-3 flex flex-col gap-3 border-r border-[#34251c]/10 pr-5 overflow-hidden">
                 <div class="flex justify-between items-center shrink-0">
                     <h2 class="text-xs uppercase tracking-wide text-[#5f4636]">{$t('adminRegistryHeading')}</h2>
-                    <button onclick={createNew} class="btn-gothic text-[10px]">{$t('adminRegistryNew')}</button>
+                    <div class="flex items-center gap-1.5">
+                        <button onclick={() => bulkPanelOpen = !bulkPanelOpen}
+                            class="text-[10px] uppercase tracking-wide px-2 py-1 border transition-colors
+                                {bulkPanelOpen ? 'bg-[#34251c]/10 border-[#34251c]/30 text-[#34251c]' : 'border-[#34251c]/15 text-[#5f4636] hover:border-[#34251c]/30'}"
+                            title={$t('adminBulkHeading')}>⚙ {$t('adminBulkHeading')}</button>
+                        <button onclick={createNew} class="btn-gothic text-[10px]">{$t('adminRegistryNew')}</button>
+                    </div>
                 </div>
+
+                {#if bulkPanelOpen}
+                <div class="shrink-0 border border-[#34251c]/15 bg-[#f2e8da] p-3 space-y-2 text-[10px]">
+                    <div class="uppercase tracking-wide text-[#5f4636] opacity-75">{$t('adminBulkScope')}</div>
+
+                    <button onclick={bulkClearDarkness} disabled={bulkBusy}
+                        class="w-full text-left px-2 py-1.5 border border-[#34251c]/15 hover:border-[#34251c]/40 hover:bg-[#34251c]/5 disabled:opacity-40 transition-colors">
+                        {$t('adminBulkClearDarkness')}
+                    </button>
+
+                    <button onclick={bulkResetParallax} disabled={bulkBusy}
+                        class="w-full text-left px-2 py-1.5 border border-[#34251c]/15 hover:border-[#34251c]/40 hover:bg-[#34251c]/5 disabled:opacity-40 transition-colors">
+                        {$t('adminBulkResetParallax')}
+                    </button>
+
+                    <div class="flex items-center gap-2 px-2 py-1.5 border border-[#34251c]/15">
+                        <input type="range" min="0" max="1" step="0.01" bind:value={bulkParallaxValue}
+                            class="flex-1" disabled={bulkBusy} />
+                        <span class="w-8 text-right tabular-nums">{bulkParallaxValue.toFixed(2)}</span>
+                        <button onclick={bulkSetParallax} disabled={bulkBusy}
+                            class="uppercase text-[#5f4636] hover:text-[#34251c] disabled:opacity-40 transition-colors shrink-0">
+                            {$t('adminBulkApply')}
+                        </button>
+                    </div>
+
+                    <button onclick={bulkSetSecondAngle} disabled={bulkBusy}
+                        class="w-full text-left px-2 py-1.5 border border-[#34251c]/15 hover:border-[#34251c]/40 hover:bg-[#34251c]/5 disabled:opacity-40 transition-colors">
+                        {$t('adminBulkSetSecondAngle')}
+                    </button>
+
+                    {#if !isTauri}
+                    <button onclick={bulkRecalculateParallax} disabled={bulkBusy}
+                        class="w-full text-left px-2 py-1.5 border border-[#34251c]/15 hover:border-[#34251c]/40 hover:bg-[#34251c]/5 disabled:opacity-40 transition-colors">
+                        {$t('adminBulkRecalculateParallax')}
+                    </button>
+
+                    <button onclick={bulkClearShowings} disabled={bulkBusy}
+                        class="w-full text-left px-2 py-1.5 border border-[#34251c]/15 hover:border-red-700/40 hover:bg-red-50 disabled:opacity-40 transition-colors">
+                        {$t('adminBulkClearShowings')}
+                    </button>
+                    {:else}
+                    <div class="opacity-60 italic">{$t('adminBulkServerOnly')}</div>
+                    {/if}
+                </div>
+                {/if}
 
                 <!-- Search -->
                 <div class="shrink-0 relative">
@@ -1223,6 +1360,8 @@
 
                                             {#if img.imageType === 'face'}
                                                 <div class="absolute bottom-0 left-0 right-0 bg-amber-500/80 text-black text-[8px] text-center py-0.5 font-bold pointer-events-none">{$t('adminMediaCoverBadge')}</div>
+                                            {:else if img.imageType === 'detail'}
+                                                <div class="absolute bottom-0 left-0 right-0 bg-[#c65f3c]/85 text-[#fff7ea] text-[8px] text-center py-0.5 font-bold pointer-events-none">{$t('adminMediaDetailBadge')}</div>
                                             {/if}
                                             {#if img.depthUrl}
                                                 <div class="absolute top-0 left-0 bg-[#34251c]/85 text-[#f3e9d8] text-[8px] px-1 py-0.5 leading-none tracking-wider font-bold pointer-events-none">{$t('adminMediaDepthBadge')}</div>
@@ -1252,6 +1391,13 @@
                                                         class="text-[10px] uppercase tracking-wide text-[#5f4636] hover:text-amber-800 transition-colors">{$t('adminMediaCover')}</button>
                                                 {:else}
                                                     <span class="text-[10px] uppercase tracking-wide text-amber-700">{$t('adminMediaCover')} ✓</span>
+                                                {/if}
+                                                {#if img.imageType === 'detail'}
+                                                    <button onclick={() => clearDetailImage(img.id)}
+                                                        class="text-[10px] uppercase tracking-wide text-[#c65f3c]">{$t('adminMediaDetail')} ✓ · {$t('adminMediaDetailClear')}</button>
+                                                {:else if img.imageType !== 'face'}
+                                                    <button onclick={() => setDetailImage(img.id)} title={$t('adminMediaDetailHint')}
+                                                        class="text-[10px] uppercase tracking-wide text-[#5f4636] hover:text-[#c65f3c] transition-colors">{$t('adminMediaDetail')}</button>
                                                 {/if}
                                                 <button onclick={() => {
                                                         selectedFigurine!.images = selectedFigurine!.images.filter(i => i.id !== img.id);

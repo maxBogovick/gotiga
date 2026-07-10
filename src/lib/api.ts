@@ -69,6 +69,7 @@ import type {
     EditCommissionRequest,
     AttachmentInput,
     DepthGenSummary,
+    BulkOpResult,
     AdminFigurineAnalyticsListPage,
     AdminFigurineAnalyticsDetail,
     AdminAnalyticsQuery,
@@ -447,6 +448,70 @@ export const api = {
             headers: authHeaders(),
         });
         if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+    },
+
+    // === BULK FIGURINE OPS (ADMIN) ===
+
+    /** Clear the manual per-image darkness override for every image, across every figurine. */
+    async bulkClearDarkness(): Promise<BulkOpResult> {
+        if (isTauri) return invoke('bulk_clear_darkness');
+        return webFetch('/admin/figurines/bulk/clear-darkness', {
+            method: 'POST',
+            headers: authHeaders(),
+        });
+    },
+
+    /** Reset the manual parallax intensity override for every image, across every figurine. */
+    async bulkResetParallax(): Promise<BulkOpResult> {
+        if (isTauri) return invoke('bulk_reset_parallax');
+        return webFetch('/admin/figurines/bulk/reset-parallax', {
+            method: 'POST',
+            headers: authHeaders(),
+        });
+    },
+
+    /** Set the same parallax intensity (0..1) on every image, across every figurine. */
+    async bulkSetParallax(intensity: number): Promise<BulkOpResult> {
+        if (isTauri) return invoke('bulk_set_parallax', { intensity });
+        return webFetch('/admin/figurines/bulk/set-parallax', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ intensity }),
+        });
+    },
+
+    /**
+     * Regenerate depth maps for every image across the whole collection that
+     * doesn't have one yet. Server build only, same restriction as
+     * `generateFigurineDepth`.
+     */
+    async bulkRecalculateParallax(): Promise<DepthGenSummary> {
+        if (isTauri) throw new Error('Depth generation is only available on the server build.');
+        return webFetch('/admin/figurines/bulk/recalculate-parallax', {
+            method: 'POST',
+            headers: authHeaders(),
+        });
+    },
+
+    /**
+     * For every figurine with at least two images, mark the second image
+     * (by display order) as the "detail" (second angle) image.
+     */
+    async bulkSetSecondAngle(): Promise<BulkOpResult> {
+        if (isTauri) return invoke('bulk_set_second_angle');
+        return webFetch('/admin/figurines/bulk/set-second-angle', {
+            method: 'POST',
+            headers: authHeaders(),
+        });
+    },
+
+    /** Un-feature every figurine on the home page and delete every scheduled showing entry. Server build only (Tauri has no showings CRUD). */
+    async bulkClearShowings(): Promise<BulkOpResult> {
+        if (isTauri) throw new Error('Showings are only available on the server build.');
+        return webFetch('/admin/showings/bulk-clear', {
+            method: 'POST',
+            headers: authHeaders(),
+        });
     },
 
     async cleanupUnusedMedia(): Promise<string[]> {

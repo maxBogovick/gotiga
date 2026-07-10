@@ -271,6 +271,10 @@ pub struct FigurineListItemDto {
     pub name: String,
     pub status: FigurineStatus,
     pub face_image_url: Option<String>,
+    /// Second-angle image for the home gallery's hover reveal; null when the
+    /// piece has no dedicated "detail" image.
+    #[serde(default)]
+    pub detail_image_url: Option<String>,
     pub year: Option<i32>,
     pub sort_order: i32,
     pub series: Option<String>,
@@ -369,6 +373,19 @@ pub struct DepthGenItem {
     pub image_id: String,
     pub status: String, // "done" | "skip" | "fail"
     pub detail: Option<String>,
+}
+
+/// Result of a bulk admin operation applied across every figurine/image.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkOpSummary {
+    pub affected: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkSetParallaxRequest {
+    pub intensity: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2329,6 +2346,10 @@ pub struct HomeLayoutConfig {
     /// Background of the whole home page (hex); overrides the parchment default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_background: Option<String>,
+    /// THE COLLECTION gallery card scroll-reveal treatment (e.g. "rise", "fog").
+    /// Absent/unknown → the "rise" default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card_effect: Option<String>,
 }
 
 /// Named, admin-saved home layout arrangement.

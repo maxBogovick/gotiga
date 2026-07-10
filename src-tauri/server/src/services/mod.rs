@@ -251,6 +251,12 @@ impl AppService {
             .await?
             .get(&figurine_id)
             .cloned();
+        let detail = self
+            .repo
+            .get_detail_images_for_figurines(&[figurine_id])
+            .await?
+            .get(&figurine_id)
+            .cloned();
         let daily = self
             .repo
             .get_admin_figurine_analytics_daily(figurine_id, from, to)
@@ -306,7 +312,7 @@ impl AppService {
             submissions: summary.submissions,
         };
         Ok(AdminFigurineAnalyticsDetail {
-            figurine: self.to_list_item(figurine, face.as_ref(), false),
+            figurine: self.to_list_item(figurine, face.as_ref(), detail.as_ref(), false),
             signal,
             summary,
             daily,
@@ -417,12 +423,19 @@ impl AppService {
             .unwrap_or_else(|| self.resolve_url(&img.file_path, "images", &i_id_str))
     }
 
-    fn to_list_item(&self, f: Figurine, face: Option<&Image>, house_favorite: bool) -> FigurineListItemDto {
+    fn to_list_item(
+        &self,
+        f: Figurine,
+        face: Option<&Image>,
+        detail: Option<&Image>,
+        house_favorite: bool,
+    ) -> FigurineListItemDto {
         FigurineListItemDto {
             id: f.id.to_string(),
             name: f.name,
             status: f.status,
             face_image_url: face.map(|i| self.face_image_url(i)),
+            detail_image_url: detail.map(|i| self.face_image_url(i)),
             year: f.year,
             sort_order: f.sort_order,
             series: None,
@@ -458,13 +471,15 @@ impl AppService {
         let (figurines, total) = self.repo.get_all_figurines(visible_only, &query).await?;
         let ids: Vec<Uuid> = figurines.iter().map(|f| f.id).collect();
         let faces = self.repo.get_face_images_for_figurines(&ids).await?;
+        let details = self.repo.get_detail_images_for_figurines(&ids).await?;
         let favorites = self.house_favorite_ids(&ids).await?;
         let items = figurines
             .into_iter()
             .map(|f| {
                 let face = faces.get(&f.id);
+                let detail = details.get(&f.id);
                 let favorite = favorites.contains(&f.id);
-                self.to_list_item(f, face, favorite)
+                self.to_list_item(f, face, detail, favorite)
             })
             .collect();
         Ok(crate::models::FigurinesPage { items, total, page, per_page })
@@ -477,13 +492,15 @@ impl AppService {
         let figurines = self.repo.get_first_look_figurines().await?;
         let ids: Vec<Uuid> = figurines.iter().map(|f| f.id).collect();
         let faces = self.repo.get_face_images_for_figurines(&ids).await?;
+        let details = self.repo.get_detail_images_for_figurines(&ids).await?;
         let favorites = self.house_favorite_ids(&ids).await?;
         Ok(figurines
             .into_iter()
             .map(|f| {
                 let face = faces.get(&f.id);
+                let detail = details.get(&f.id);
                 let favorite = favorites.contains(&f.id);
-                self.to_list_item(f, face, favorite)
+                self.to_list_item(f, face, detail, favorite)
             })
             .collect())
     }
@@ -496,13 +513,15 @@ impl AppService {
         let (figurines, _) = self.repo.get_all_figurines(true, &q).await?;
         let ids: Vec<Uuid> = figurines.iter().map(|f| f.id).collect();
         let faces = self.repo.get_face_images_for_figurines(&ids).await?;
+        let details = self.repo.get_detail_images_for_figurines(&ids).await?;
         let favorites = self.house_favorite_ids(&ids).await?;
         Ok(figurines
             .into_iter()
             .map(|f| {
                 let face = faces.get(&f.id);
+                let detail = details.get(&f.id);
                 let favorite = favorites.contains(&f.id);
-                self.to_list_item(f, face, favorite)
+                self.to_list_item(f, face, detail, favorite)
             })
             .collect())
     }
@@ -534,13 +553,18 @@ impl AppService {
             .repo
             .get_face_images_for_figurines(&related_ids)
             .await?;
+        let related_details = self
+            .repo
+            .get_detail_images_for_figurines(&related_ids)
+            .await?;
         let related_favorites = self.house_favorite_ids(&related_ids).await?;
         let related_items: Vec<FigurineListItemDto> = related_entities
             .into_iter()
             .map(|r| {
                 let face = related_faces.get(&r.id);
+                let detail = related_details.get(&r.id);
                 let favorite = related_favorites.contains(&r.id);
-                self.to_list_item(r, face, favorite)
+                self.to_list_item(r, face, detail, favorite)
             })
             .collect();
 
@@ -718,6 +742,112 @@ impl AppService {
             failed,
             results,
         })
+    }
+
+    /// Bulk admin action: regenerate depth maps for every image across the
+    /// whole collection that doesn't have one yet. Thin wrapper around
+    /// `generate_figurine_depth`, run figurine-by-figurine.
+    pub async fn bulk_recalculate_parallax(&self) -> Result<DepthGenSummary> {
+        let ids: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM figurines")
+            .fetch_all(self.repo.pg_pool())
+            .await?;
+        let (mut generated, mut skipped, mut failed) = (0usize, 0usize, 0usize);
+        let mut results = Vec::new();
+        for id in ids {
+            let summary = self.generate_figurine_depth(id.to_string()).await?;
+            generated += summary.generated;
+            skipped += summary.skipped;
+            failed += summary.failed;
+            results.extend(summary.results);
+        }
+        Self::log_domain_event("bulk_parallax_recalculated", "figurine", generated, "ok");
+        Ok(DepthGenSummary {
+            generated,
+            skipped,
+            failed,
+            results,
+        })
+    }
+
+    /// Bulk admin action: set every image's darkness to 0, fully dissolving
+    /// the keyhole shadow (the CSS gradient collapses to zero alpha at 0, so
+    /// this switches the veil off entirely rather than reverting to the
+    /// global default, which is still dark).
+    pub async fn bulk_clear_darkness(&self) -> Result<crate::models::BulkOpSummary> {
+        let affected = sqlx::query("UPDATE images SET darkness = 0 WHERE darkness IS DISTINCT FROM 0")
+            .execute(self.repo.pg_pool())
+            .await?
+            .rows_affected();
+        Self::log_domain_event("bulk_darkness_cleared", "image", affected, "ok");
+        Ok(crate::models::BulkOpSummary { affected })
+    }
+
+    /// Bulk admin action: reset the manual parallax intensity override for
+    /// every image back to the default.
+    pub async fn bulk_reset_parallax_intensity(&self) -> Result<crate::models::BulkOpSummary> {
+        let affected = sqlx::query(
+            "UPDATE images SET parallax_intensity = NULL WHERE parallax_intensity IS NOT NULL",
+        )
+        .execute(self.repo.pg_pool())
+        .await?
+        .rows_affected();
+        Self::log_domain_event("bulk_parallax_reset", "image", affected, "ok");
+        Ok(crate::models::BulkOpSummary { affected })
+    }
+
+    /// Bulk admin action: set the same parallax intensity on every image.
+    pub async fn bulk_set_parallax_intensity(
+        &self,
+        intensity: f32,
+    ) -> Result<crate::models::BulkOpSummary> {
+        if !(0.0..=1.0).contains(&intensity) {
+            return Err(AppError::BadRequest(
+                "Parallax intensity must be between 0 and 1".into(),
+            ));
+        }
+        let affected = sqlx::query("UPDATE images SET parallax_intensity = $1")
+            .bind(intensity)
+            .execute(self.repo.pg_pool())
+            .await?
+            .rows_affected();
+        Self::log_domain_event("bulk_parallax_set", "image", affected, "ok");
+        Ok(crate::models::BulkOpSummary { affected })
+    }
+
+    /// Bulk admin action: for every figurine that has at least two images,
+    /// mark the second image (by display order) as the "detail" (second
+    /// angle) image, clearing any previous detail mark on that figurine.
+    /// The face image is never overwritten this way, so a figurine whose
+    /// second image is its face image is left untouched.
+    pub async fn bulk_set_second_angle(&self) -> Result<crate::models::BulkOpSummary> {
+        let ids: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM figurines")
+            .fetch_all(self.repo.pg_pool())
+            .await?;
+        let mut affected = 0u64;
+        for figurine_id in ids {
+            let images = self.repo.get_images_by_figurine(figurine_id).await?;
+            let Some(second) = images.get(1) else {
+                continue;
+            };
+            if second.image_type == crate::models::ImageType::Face
+                || second.image_type == crate::models::ImageType::Detail
+            {
+                continue;
+            }
+            sqlx::query(
+                "UPDATE images SET image_type = 'full' WHERE figurine_id = $1 AND image_type = 'detail'",
+            )
+            .bind(figurine_id)
+            .execute(self.repo.pg_pool())
+            .await?;
+            sqlx::query("UPDATE images SET image_type = 'detail' WHERE id = $1")
+                .bind(second.id)
+                .execute(self.repo.pg_pool())
+                .await?;
+            affected += 1;
+        }
+        Self::log_domain_event("bulk_second_angle_set", "figurine", affected, "ok");
+        Ok(crate::models::BulkOpSummary { affected })
     }
 
     pub async fn get_author_texts(&self) -> Result<Vec<TextDto>> {
@@ -1887,14 +2017,16 @@ impl AppService {
             .copied()
             .collect();
         let faces = self.repo.get_face_images_for_figurines(&present_ids).await?;
+        let details = self.repo.get_detail_images_for_figurines(&present_ids).await?;
         let favorites = self.house_favorite_ids(&present_ids).await?;
         Ok(present_ids
             .into_iter()
             .filter_map(|id| by_id.remove(&id))
             .map(|f| {
                 let face = faces.get(&f.id);
+                let detail = details.get(&f.id);
                 let favorite = favorites.contains(&f.id);
-                self.to_list_item(f, face, favorite)
+                self.to_list_item(f, face, detail, favorite)
             })
             .collect())
     }
@@ -2020,6 +2152,24 @@ impl AppService {
         self.repo.delete_showing(uuid).await?;
         Self::log_domain_event("showing_deleted", "showing", uuid, "ok");
         Ok(())
+    }
+
+    /// Bulk admin action: un-feature every figurine on the home page and
+    /// wipe every scheduled showing entry across the whole collection.
+    pub async fn bulk_clear_showings(&self) -> Result<crate::models::BulkOpSummary> {
+        let unfeatured = sqlx::query(
+            "UPDATE figurines SET is_featured = false WHERE is_featured = true",
+        )
+        .execute(self.repo.pg_pool())
+        .await?
+        .rows_affected();
+        let deleted = sqlx::query("DELETE FROM figurine_showings")
+            .execute(self.repo.pg_pool())
+            .await?
+            .rows_affected();
+        let affected = unfeatured + deleted;
+        Self::log_domain_event("bulk_showings_cleared", "figurine", affected, "ok");
+        Ok(crate::models::BulkOpSummary { affected })
     }
 
     // === BOOKINGS (ADMIN) ===

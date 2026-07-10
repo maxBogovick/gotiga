@@ -287,6 +287,12 @@
     let visibleGalleryFigurines = $derived(galleryFigurines.slice(0, GALLERY_LIMIT));
     let galleryRemaining = $derived(Math.max(0, galleryFigurines.length - GALLERY_LIMIT));
 
+    // THE COLLECTION card scroll-reveal treatment — admin-selectable (Home
+    // Layout Editor → "Эффект карточек"), persisted in HomeLayoutConfig.
+    // Each card triggers its own reveal via a live IntersectionObserver (see
+    // revealOnEnter in HomeFigurineTile.svelte) as it crosses into view.
+    let cardEffectVariant = $derived(homeLayout?.cardEffect ?? 'rise');
+
     // Daily "re-hang" index: advances once per calendar day. Every visitor on
     // the same day sees the same arrangement (no layout-shift noise on refresh),
     // but returning the next day finds a freshly rotated wall.
@@ -828,7 +834,11 @@
 
             <div class="work-content">
                 {#if visibleGalleryFigurines.length > 0}
-                    <div class="work-grid" use:masonryGrid>
+                    <div
+                        class="work-grid"
+                        use:masonryGrid
+                        data-card-fx={cardEffectVariant}
+                    >
                         {#each visibleGalleryFigurines as fig, i (fig.id)}
                             <HomeFigurineTile {fig} index={i} selected={heroFigurine?.id === fig.id} masonry />
                         {/each}

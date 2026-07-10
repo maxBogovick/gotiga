@@ -1,5 +1,12 @@
 use serde::{Deserialize, Serialize};
 
+/// Result of a bulk admin operation applied across every figurine/image.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkOpResultDto {
+    pub affected: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct HomeContent {
@@ -471,6 +478,10 @@ pub struct FigurineListItemDto {
     pub name: String,
     pub status: String,
     pub face_image_url: Option<String>,
+    /// Second-angle image for the home gallery's hover reveal; null when the
+    /// piece has no dedicated "detail" image.
+    #[serde(default)]
+    pub detail_image_url: Option<String>,
     pub year: Option<i32>,
     pub sort_order: i32,
     pub series: Option<String>,

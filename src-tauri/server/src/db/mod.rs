@@ -1152,6 +1152,28 @@ impl Repository {
         Ok(rows.into_iter().map(|i| (i.figurine_id, i)).collect())
     }
 
+    /// Batch-load one "detail" (second-angle) image per figurine, for the
+    /// home gallery's hover reveal. Same batching rationale as
+    /// get_face_images_for_figurines; a figurine with no detail image is
+    /// simply absent from the map.
+    pub async fn get_detail_images_for_figurines(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Image>> {
+        if ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let rows = sqlx::query_as::<_, Image>(
+            "SELECT DISTINCT ON (figurine_id) * FROM images
+             WHERE figurine_id = ANY($1) AND image_type = 'detail'
+             ORDER BY figurine_id, sort_order",
+        )
+        .bind(ids)
+        .fetch_all(&self.pg_pool)
+        .await?;
+        Ok(rows.into_iter().map(|i| (i.figurine_id, i)).collect())
+    }
+
     pub async fn get_steps_by_figurine(&self, figurine_id: Uuid) -> Result<Vec<ProcessStep>> {
         let steps = sqlx::query_as::<_, ProcessStep>(
             "SELECT * FROM process_steps WHERE figurine_id = $1 ORDER BY sort_order",
