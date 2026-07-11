@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { beforeNavigate, afterNavigate, invalidateAll, goto } from '$app/navigation';
   import { fade, slide } from 'svelte/transition';
-  import { t, brandName } from '$lib/i18n';
+  import { t, lang, brandName } from '$lib/i18n';
   import { SITE_URL } from '$lib/site';
   import AppImage from '$lib/components/AppImage.svelte';
   import SealedDoor from '$lib/components/SealedDoor.svelte';
@@ -12,7 +12,7 @@
   import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
   import { houseClock } from '$lib/stores/house-clock.svelte';
   import { showingRooms } from '$lib/stores/showing-rooms.svelte';
-  import { isGated, isShowingOpen, resolveWindow } from '$lib/showing-window';
+  import { isGated, isShowingOpen, resolveWindow, openingHeadline } from '$lib/showing-window';
   import type { FigurineListItem } from '$lib/types/api';
 
   // "The house wakes": a gated work is sealed behind a carved door while the
@@ -25,6 +25,10 @@
   function doorShut(f: FigurineListItem): boolean {
     const w = winOf(f);
     return isGated(w) && !isShowingOpen(w, houseClock.nowDate);
+  }
+  let doorLocale = $derived($lang === 'ru' ? 'ru-RU' : 'en-US');
+  function doorHeadlineOf(f: FigurineListItem): string {
+    return openingHeadline(winOf(f), $t, doorLocale, houseClock.nowDate);
   }
 
   type MainFilter = 'all' | 'available' | 'reserved' | 'sold' | 'saved' | 'viewed';
@@ -43,7 +47,6 @@
 
   const PAGE_SIZE = 12;
   let displayLimit = $state(PAGE_SIZE);
-  let batchOffset  = $state(0);
 
   // Declared up here (not next to its onMount loader) because the filter/count
   // $derived blocks below reference it. Under SSR/prerender deriveds evaluate
@@ -166,11 +169,9 @@
     void mainFilter; void searchQuery; void sortMode; void yearFilter; void techniqueFilter;
     void seriesFilter; void materialFilter;
     displayLimit = PAGE_SIZE;
-    batchOffset  = 0;
   });
 
   function loadMore() {
-    batchOffset  = displayLimit;
     displayLimit += PAGE_SIZE;
   }
 
@@ -209,10 +210,31 @@
     } catch {}
   });
 
+  let justSavedId = $state('');
   function toggleLike(e: MouseEvent, id: string) {
     e.preventDefault();
     e.stopPropagation();
     savedFigurines.toggle(id);
+    if (savedFigurines.has(id)) {
+      justSavedId = id;
+      setTimeout(() => { if (justSavedId === id) justSavedId = ''; }, 650);
+    }
+  }
+
+  function isNewArrival(f: FigurineListItem): boolean {
+    if (!f.createdAt) return false;
+    return Date.now() - new Date(f.createdAt).getTime() < 21 * 86400_000;
+  }
+
+  // Scroll-reveal: same live IntersectionObserver used by the home gallery's
+  // "rise" card-fx — a card climbs into place as it crosses ~65% up into view.
+  function revealOnEnter(node: HTMLElement) {
+    if (typeof IntersectionObserver === 'undefined') { node.classList.add('fx-revealed'); return; }
+    const io = new IntersectionObserver(([entry]) => {
+      node.classList.toggle('fx-revealed', entry.isIntersecting);
+    }, { rootMargin: '0px 0px -35% 0px', threshold: 0 });
+    io.observe(node);
+    return { destroy() { io.disconnect(); } };
   }
 
   // ── 3D tilt ────────────────────────────────────────────────────
@@ -565,9 +587,9 @@
       </div>
 
       {#if filtered.length > 0}
-        <ul class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-8 gap-y-16">
+        <ul class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-8 gap-y-10">
           {#each visible as figurine, i (figurine.id)}
-            <li class="group perspective-container" in:fade={{ delay: Math.max(0, i - batchOffset) * 40, duration: 600 }}
+            <li class="group perspective-container fig-tile" use:revealOnEnter
                 onmousemove={onTiltMove} onmouseleave={onTiltLeave}>
               <a
                 href={doorShut(figurine) ? undefined : `/figurines/${figurine.id}`}
@@ -577,11 +599,14 @@
                 onclick={(e) => { if (doorShut(figurine)) { e.preventDefault(); return; } markViewed(figurine.id); }}
               >
                 <div
-                  class="relative aspect-[3/4] mb-6 overflow-hidden bg-[#fff9f0] border border-[#34251c]/10 shadow-2xl transition-all duration-700 group-hover:border-[#34251c]/30 group-hover:shadow-[0_0_30px_-10px_rgba(198,95,60,0.15)] group-hover:-translate-y-2"
+                  class="fig-media relative aspect-[3/4] transition-shadow duration-500"
                   style={doorShut(figurine) ? '' : `view-transition-name: figurine-${figurine.id}`}
                 >
 
                   {#if doorShut(figurine)}
+                    <!-- The sealed-door plate is its own bespoke design (eyebrow,
+                         wax seal, schedule) — left unmasked so its edge text
+                         doesn't fade with the "impressed figure" mask below. -->
                     <SealedDoor
                       openFromMin={winOf(figurine).openFromMin}
                       openUntilMin={winOf(figurine).openUntilMin}
@@ -592,22 +617,43 @@
                       imageUrl={figurine.faceImageUrl}
                       thumbUrl={figurine.thumbUrl}
                       name={figurine.name}
+                      showSchedule={false}
                     />
                   {:else}
-                  {#if figurine.faceImageUrl}
-                    <AppImage
-                            src={figurine.faceImageUrl}
-                            thumbUrl={figurine.thumbUrl}
-                            alt={figurine.name}
-                            class="w-full h-full object-cover transition-all duration-700 ease-out group-hover:scale-105 fig-img--{figurine.status}"
-                            loading="lazy"
-                    />
-                  {:else}
-                    <div class="w-full h-full flex items-center justify-center opacity-20">
-                      <span class="font-['Fraunces'] text-2xl text-[#34251c]">?</span>
+                    <!-- The figure itself, masked to a soft irregular fade + carved
+                         drop-shadow — reads as pressed INTO the parchment rather
+                         than a photo pasted on top of it. Badges/plaque/buttons
+                         stay outside this wrapper so they stay crisp on top. -->
+                    <div class="fig-photo">
+                    {#if figurine.faceImageUrl}
+                      <AppImage
+                              src={figurine.faceImageUrl}
+                              thumbUrl={figurine.thumbUrl}
+                              alt={figurine.name}
+                              class="fig-img-main w-full h-full object-cover transition-all duration-700 ease-out group-hover:scale-105 fig-img--{figurine.status}"
+                              loading="lazy"
+                      />
+                      {#if figurine.detailImageUrl}
+                        <!-- a second angle, held in reserve for a lingering look -->
+                        <AppImage src={figurine.detailImageUrl} alt="" class="fig-img-alt" loading="lazy" />
+                      {/if}
+                    {:else}
+                      <div class="w-full h-full flex items-center justify-center opacity-20">
+                        <span class="font-['Fraunces'] text-2xl text-[#34251c]">?</span>
+                      </div>
+                    {/if}
                     </div>
                   {/if}
 
+                  {#if doorShut(figurine)}
+                    <div class="fig-glass fig-glass-sealed">
+                      <span class="fig-cap-meta">
+                        <span class="fig-cap-status status-soon">{$t('posterSoon')}</span>
+                        <span class="fig-cap-dot" aria-hidden="true">·</span>
+                        <span class="fig-cap-soon">{doorHeadlineOf(figurine)}</span>
+                      </span>
+                      <h2 class="fig-cap-name"><span class="fig-cap-name-text">{figurine.name}</span></h2>
+                    </div>
                   {/if}
 
                   <div class="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,rgba(111,59,36,0.8)_100%)] pointer-events-none transition-opacity duration-500 fig-vignette--{figurine.status}"></div>
@@ -615,12 +661,22 @@
                   <div class="absolute top-2 left-2 w-4 h-4 border-t border-l border-[#34251c]/20 group-hover:border-[#34251c]/60 transition-colors pointer-events-none"></div>
                   <div class="absolute bottom-2 right-2 w-4 h-4 border-b border-r border-[#34251c]/20 group-hover:border-[#34251c]/60 transition-colors pointer-events-none"></div>
 
-                  <!-- New arrival badge — top-left, only if created within 21 days -->
-                  {#if figurine.createdAt && (Date.now() - new Date(figurine.createdAt).getTime()) < 21 * 86400_000}
-                    <span class="absolute top-3 left-3 z-10 px-1.5 py-0.5 bg-[#c65f3c] text-[#f8f1e7] font-['Instrument_Sans',system-ui,sans-serif] text-[7px] uppercase tracking-[0.14em] pointer-events-none select-none">
-                      {$t('archiveCardNew')}
-                    </span>
-                  {/if}
+                  <!-- Badge stack — top-left: house-favorite medal, then "new" wax seal -->
+                  <div class="fig-badges">
+                    {#if figurine.houseFavorite}
+                      <span class="fig-favorite" title={$t('houseFavoriteBadge')}>
+                        <svg width="11" height="11" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                          <path d="M2 12C2 7 4 3 4 3M2 12L4 9.5M2 12L4.5 11" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
+                          <path d="M12 12C12 7 10 3 10 3M12 12L10 9.5M12 12L9.5 11" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
+                          <circle cx="7" cy="3" r="1.1" fill="currentColor"/>
+                        </svg>
+                        {$t('houseFavoriteBadge')}
+                      </span>
+                    {/if}
+                    {#if isNewArrival(figurine)}
+                      <span class="fig-seal">{$t('archiveCardNew')}</span>
+                    {/if}
+                  </div>
 
                   <!-- Heart button — always visible, top-right -->
                   <button
@@ -628,6 +684,7 @@
                       {savedFigurines.has(figurine.id)
                         ? 'bg-[rgba(198,95,60,0.12)] border border-[rgba(198,95,60,0.32)] text-[#c65f3c]'
                         : 'bg-[rgba(255,249,240,0.65)] border border-[rgba(52,37,28,0.13)] text-[rgba(95,70,54,0.55)] hover:bg-[rgba(255,249,240,0.92)] hover:text-[#c65f3c] hover:border-[rgba(198,95,60,0.25)]'}"
+                    class:fig-just-saved={justSavedId === figurine.id}
                     onclick={(e) => toggleLike(e, figurine.id)}
                     aria-label={savedFigurines.has(figurine.id) ? $t('cardSaved') : $t('cardSave')}
                     title={savedFigurines.has(figurine.id) ? $t('cardSaved') : $t('cardSave')}
@@ -642,6 +699,28 @@
                       />
                     </svg>
                   </button>
+
+                  {#if !doorShut(figurine)}
+                  <!-- Frosted glass caption plaque — status · year · roman + hover-arrow -->
+                  <div class="fig-glass">
+                    <span class="fig-cap-meta">
+                      <span class="fig-cap-status status-{figurine.status}">
+                        {figurine.status === 'available' ? $t('archiveStatusAvailableLabel') : figurine.status === 'reserved' ? $t('archiveStatusReservedLabel') : figurine.status === 'in_progress' ? $t('profileWishInProgress') : $t('archiveStatusSoldLabel')}
+                      </span>
+                      {#if figurine.year}
+                        <span class="fig-cap-dot" aria-hidden="true">·</span>
+                        <span class="fig-cap-year">{figurine.year}</span>
+                      {/if}
+                      <span class="fig-cap-roman">{toRoman(figurine.sortOrder ?? i + 1)}</span>
+                    </span>
+                    <h2 class="fig-cap-name">
+                      <span class="fig-cap-name-text">{figurine.name}</span>
+                      <svg class="fig-cap-arrow" width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
+                        <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
+                      </svg>
+                    </h2>
+                  </div>
+                  {/if}
 
                   <!-- Slide-up action bar — appears on hover (and stays open on touch, see <style>) -->
                   <div class="card-actions-bar absolute bottom-0 left-0 right-0 z-10 flex items-center justify-between px-3.5 py-2.5
@@ -743,31 +822,6 @@
                     </div>
                   </div>
                 </div>
-
-                <div class="pl-2 border-l border-transparent group-hover:border-[#34251c]/40 transition-all duration-500">
-                  <h2 class="font-['Fraunces'] text-xl sm:text-2xl text-[#34251c] mb-1 group-hover:text-[#6f3b24] transition-colors tracking-wide line-clamp-2 leading-snug">
-                    {figurine.name}
-                  </h2>
-                  <div class="flex flex-wrap items-center gap-2">
-                    <p class="text-[10px] tracking-[0.06em] uppercase text-[#5f4636] group-hover:text-[#34251c]/70 transition-colors">
-                      {$t('archiveExhibit')}{figurine.sortOrder ?? i + 1}
-                    </p>
-                    {#if figurine.year}
-                      <span class="text-[#5f4636]/30">·</span>
-                      <span class="text-[10px] tracking-[0.10em] uppercase text-[#7c6554]">
-                        {figurine.year}
-                      </span>
-                    {/if}
-                    <span class="text-[#5f4636]/30">·</span>
-                    <span class="flex items-center gap-1 text-[10px] tracking-[0.15em] uppercase
-                      {figurine.status === 'available' ? 'text-emerald-600/70' : figurine.status === 'reserved' ? 'text-amber-600/70' : 'text-[#7c6554]'}">
-                      <span class="w-1 h-1 rounded-full flex-shrink-0
-                        {figurine.status === 'available' ? 'bg-emerald-500/60' : figurine.status === 'reserved' ? 'bg-amber-500/60' : 'bg-[#7c6554]'}
-                      "></span>
-                      {figurine.status === 'available' ? $t('archiveStatusAvailableLabel') : figurine.status === 'reserved' ? $t('archiveStatusReservedLabel') : $t('archiveStatusSoldLabel')}
-                    </span>
-                  </div>
-                </div>
               </a>
             </li>
           {/each}
@@ -832,6 +886,262 @@
 <style>
   @keyframes shimmer {
     100% { transform: translateX(200%); }
+  }
+
+  /* ── SCROLL-REVEAL: same live IntersectionObserver "rise" card-fx used by
+     the home gallery — a plate climbs into place as it crosses into view. ── */
+  .fig-tile {
+    opacity: 0;
+    transform: translateY(52px) rotate(-2.2deg) scale(0.95);
+    transition: transform 0.8s cubic-bezier(0.22, 0.9, 0.3, 1.28), opacity 0.55s ease;
+  }
+  .fig-tile.fx-revealed {
+    opacity: 1;
+    transform: none;
+  }
+
+  /* ── SECOND ANGLE: cross-fades in over the face photo on a sustained hover ── */
+  .fig-media :global(.fig-img-alt) {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.55s ease;
+  }
+  .fig-media :global(.fig-img-alt .app-image-thumb),
+  .fig-media :global(.fig-img-alt .app-image-main) {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: cover;
+  }
+  .group:hover .fig-media :global(.fig-img-alt),
+  .group:focus-within .fig-media :global(.fig-img-alt) {
+    opacity: 1;
+  }
+  @media (hover: none) {
+    .fig-media :global(.fig-img-alt) { display: none; }
+  }
+
+  /* ── GLASS PLATE: frosted caption plaque over the photo's foot ──────────── */
+  .fig-glass {
+    position: absolute;
+    left: 10px;
+    right: 10px;
+    bottom: 46px;
+    z-index: 3;
+    display: grid;
+    gap: 5px;
+    padding: 12px 14px 11px;
+    border-radius: 3px;
+    background: linear-gradient(165deg, rgba(52,37,28,0.4), rgba(14,9,6,0.62));
+    backdrop-filter: blur(14px) saturate(150%);
+    -webkit-backdrop-filter: blur(14px) saturate(150%);
+    border: 1px solid rgba(255,247,234,0.28);
+    box-shadow:
+        0 10px 26px rgba(12,7,4,0.28),
+        inset 0 1px 0 rgba(255,255,255,0.2);
+    pointer-events: none;
+    transition: background 0.3s ease, border-color 0.3s ease;
+  }
+  .group:hover .fig-glass {
+    background: linear-gradient(165deg, rgba(52,37,28,0.48), rgba(14,9,6,0.7));
+    border-color: rgba(255,247,234,0.4);
+  }
+
+  .fig-cap-meta {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 7px;
+    font-family: 'Instrument Sans', system-ui, sans-serif;
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    line-height: 1.2;
+    text-transform: uppercase;
+    color: rgba(255,247,234,0.86);
+  }
+  .fig-cap-dot { opacity: 0.5; }
+  .fig-cap-status::before {
+    content: '';
+    display: inline-block;
+    width: 5px;
+    height: 5px;
+    margin-right: 5px;
+    border-radius: 50%;
+    border: 1px solid currentColor;
+    vertical-align: middle;
+  }
+  .fig-cap-status.status-available::before,
+  .fig-cap-status.status-sold::before { background: currentColor; }
+  .fig-cap-status.status-reserved::before,
+  .fig-cap-status.status-in_progress::before { background: transparent; }
+  .fig-cap-status.status-sold { color: rgba(255,247,234,0.6); }
+  .fig-cap-status.status-sold::before { opacity: 0.4; }
+  .fig-cap-status.status-soon { color: #f0b48c; }
+  .fig-cap-status.status-soon::before { background: currentColor; }
+  .fig-cap-soon {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: none;
+    color: #f0b48c;
+  }
+  .fig-glass-sealed {
+    background: linear-gradient(165deg, rgba(84,58,40,0.55), rgba(38,24,15,0.62));
+    border-color: rgba(255,247,234,0.4);
+    box-shadow:
+        0 10px 26px rgba(12,7,4,0.4),
+        inset 0 1px 0 rgba(255,255,255,0.24);
+  }
+  .fig-cap-year { font-variant-numeric: tabular-nums; }
+  .fig-cap-roman {
+    margin-left: auto;
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-style: italic;
+    font-size: 14px;
+    font-weight: 400;
+    letter-spacing: 0.01em;
+    text-transform: none;
+    color: rgba(255,247,234,0.85);
+  }
+  .fig-cap-name {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin: 0;
+    min-width: 0;
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: clamp(19px, 1.4vw, 26px);
+    font-weight: 400;
+    line-height: 0.98;
+    color: #fdf5e8;
+    text-shadow: 0 1px 10px rgba(12,7,4,0.5);
+  }
+  .fig-cap-name-text {
+    display: -webkit-box;
+    line-clamp: 2;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .fig-cap-arrow {
+    flex-shrink: 0;
+    align-self: center;
+    color: rgba(255,247,234,0.82);
+    opacity: 0;
+    transform: translateX(-4px);
+    transition: opacity 0.28s ease, transform 0.28s ease;
+  }
+  .group:hover .fig-cap-arrow,
+  .group:focus-within .fig-cap-arrow {
+    opacity: 1;
+    transform: none;
+  }
+  @media (hover: none) {
+    .fig-cap-arrow { opacity: 1; transform: none; }
+  }
+
+  /* ── BADGES (top-left) ───────────────────────────────────────────────── */
+  .fig-badges {
+    position: absolute;
+    left: 8px;
+    top: 8px;
+    z-index: 4;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    max-width: calc(100% - 74px);
+  }
+  .fig-seal {
+    padding: 5px 9px;
+    border-radius: 4px;
+    background: linear-gradient(150deg, rgba(198,95,60,0.94), rgba(111,59,36,0.94));
+    color: #fff7ea;
+    font-family: 'Instrument Sans', system-ui, sans-serif;
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    line-height: 1;
+    text-transform: uppercase;
+    transform: rotate(-2deg);
+  }
+  .fig-favorite {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 9px 5px 7px;
+    border-radius: 4px;
+    background: rgba(52,37,28,0.94);
+    color: #f6e6c8;
+    font-family: 'Instrument Sans', system-ui, sans-serif;
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    line-height: 1;
+    text-transform: uppercase;
+  }
+
+  /* ── Heart "just saved" pop ──────────────────────────────────────────── */
+  .fig-just-saved {
+    animation: fig-heart-pop 0.62s cubic-bezier(0.34,1.56,0.64,1);
+  }
+  @keyframes fig-heart-pop {
+    0% { transform: scale(1); }
+    35% { transform: scale(1.32); }
+    60% { transform: scale(0.92); }
+    100% { transform: scale(1); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .fig-tile,
+    .fig-just-saved,
+    .fig-cap-arrow {
+      animation: none !important;
+      transition: opacity 0.2s ease, color 0.2s ease, background 0.2s ease, border-color 0.2s ease !important;
+    }
+    .fig-tile { opacity: 1 !important; transform: none !important; }
+    .fig-media :global(.fig-img-alt) { display: none !important; }
+    .fig-photo { filter: none !important; }
+  }
+
+  /* ── IMPRESSED INTO THE PARCHMENT: the figure itself — not a card behind
+     it — carries the depth. No rectangle, no plate: the photo's edges fade
+     to nothing on a soft irregular mask (revealing the page's own parchment
+     underneath, unbroken), and a dark, close drop-shadow gathers around
+     whatever's left visible, as though it had been pressed down into the
+     paper. Badges/plaque/buttons live outside this wrapper so they stay
+     crisp, unmasked, sitting "above" the impression. */
+  .fig-media {
+    background: transparent;
+  }
+  .fig-photo {
+    position: absolute;
+    inset: 0;
+    /* radial-gradient <size> percentages are the ellipse's RADIUS as a share
+       of the box (so 50%/50% just reaches the edges) — the previous 72%/78%
+       pushed the whole fade band past the box entirely, so nothing visibly
+       faded. Radius must stay ≤50% for the fade to land inside the box. */
+    -webkit-mask-image: radial-gradient(ellipse 50% 54% at 50% 46%, #000 52%, transparent 100%);
+    mask-image: radial-gradient(ellipse 50% 54% at 50% 46%, #000 52%, transparent 100%);
+    filter:
+      drop-shadow(0 3px 5px rgba(20,13,9,0.4))
+      drop-shadow(0 -1px 2px rgba(255,250,240,0.22))
+      drop-shadow(2px 0 4px rgba(20,13,9,0.22));
+    transition: filter 0.5s ease;
+  }
+  .group:hover .fig-photo,
+  .group:focus-within .fig-photo {
+    filter:
+      drop-shadow(0 4px 7px rgba(20,13,9,0.48))
+      drop-shadow(0 -1px 2px rgba(255,250,240,0.26))
+      drop-shadow(2px 0 5px rgba(20,13,9,0.26));
   }
 
   /* ── STATUS-BASED IMAGE TREATMENT ──────────────────────────────── */
