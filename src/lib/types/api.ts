@@ -6,10 +6,17 @@ export interface FigurineListItem {
     id: string;
     name: string;
     status: FigurineStatus;
+    /** 420px thumbnail — sized for the archive's dense grid. */
     faceImageUrl: string | null;
     /** Second-angle image for the home gallery's hover reveal; null/absent
      *  when the piece has no dedicated "detail" image. */
     detailImageUrl?: string | null;
+    /** The same two images at preview size (1800px). Use these wherever a list
+     *  item is rendered large — the home hero, the home reel plates — or the
+     *  420px thumb gets upscaled 2-3x and goes soft. Absent on the Tauri
+     *  build's leaner payload; fall back to faceImageUrl. */
+    faceImageLargeUrl?: string | null;
+    detailImageLargeUrl?: string | null;
     year?: number | null;
     sortOrder?: number;
     series?: string | null;
@@ -1244,6 +1251,152 @@ export interface HomeLayoutConfig {
 
 /** THE COLLECTION gallery card scroll-reveal treatments, admin-selectable. */
 export type HomeCardEffect = 'rise' | 'fog' | 'hoist' | 'drift' | 'unfold' | 'shadow';
+
+// === REEL THEME — appearance of the home reel ===
+
+export type BackdropKind = 'image' | 'color' | 'gradient';
+export type OverlayKind = 'none' | 'solid' | 'gradient';
+export type GradientType = 'linear' | 'radial' | 'conic';
+export type TextTone = 'light' | 'dark';
+
+export interface GradientStop {
+    color: string;
+    /** 0..100 — position along the gradient. */
+    position: number;
+    /** 0..1 */
+    opacity: number;
+}
+
+/** Which pane a CardStyle belongs to. */
+export type CardTarget = 'hero' | 'work';
+
+/**
+ * One pane's look: its glass, its type, its buttons. The opening pane and the
+ * work panes carry the same fields but are set independently — they do different
+ * jobs (one sells the maker, the others show the pieces).
+ */
+export interface CardStyle {
+    // Glass
+    /**
+     * What the pane is filled with. 'solid' → glassTint at glassOpacity (the
+     * original behaviour, and what an older saved theme with no fillKind means).
+     * 'gradient' → fillStops, each stop's own alpha still scaled by glassOpacity
+     * so the transparency slider keeps working in both modes.
+     */
+    fillKind?: CardFillKind;
+    fillType?: GradientType;
+    /** deg — linear only; the conic sweep also starts here. */
+    fillAngle?: number;
+    fillStops?: GradientStop[];
+    glassTint?: string;
+    glassOpacity?: number;
+    /** backdrop-filter blur in px; 0 turns the frosting off. */
+    glassBlur?: number;
+    glassSaturation?: number;
+    glassRadius?: number;
+    glassSheen?: number;
+    glassShadow?: number;
+    shadowColor?: string;
+
+    // Type
+    titleColor?: string;
+    /** rem */
+    titleSize?: number;
+    bodyColor?: string;
+    bodySize?: number;
+    /** The "01 ——" kicker on work panes; the caption line on the hero. */
+    metaColor?: string;
+    metaSize?: number;
+
+    // Edge
+    /**
+     * The pane's hairline border, and what it becomes under the pointer. Kept as
+     * plain hex (the admin uses a colour input) with the alpha as its own slider,
+     * because an edge is nearly always a translucent hairline, not a solid line.
+     */
+    edgeColor?: string;
+    edgeHoverColor?: string;
+    /** 0..1 — applied to edgeColor; the hover edge gets a fixed lift above it. */
+    edgeOpacity?: number;
+
+    // Buttons
+    btnFill?: string;
+    btnText?: string;
+    btnRadius?: number;
+    btnSize?: number;
+    /** Outline of the secondary (glass) button. */
+    btnBorder?: string;
+}
+
+export type CardFillKind = 'solid' | 'gradient';
+
+/**
+ * Everything the admin can tune about the home reel. Every field is optional:
+ * the DEFAULTS live in `$lib/stores/reel-theme.svelte.ts` and nowhere else, so
+ * an empty config (a fresh install) renders exactly the designed page.
+ */
+export interface ReelTheme {
+    // Backdrop
+    backdropKind?: BackdropKind;
+    backgroundImage?: string;
+    /** Narrow screens get their own image — a landscape room crops to mush on a phone. */
+    backgroundImageMobile?: string;
+    backgroundFit?: 'cover' | 'contain';
+    /** CSS object-position, e.g. "center top". */
+    backgroundPosition?: string;
+    backgroundBlur?: number;
+    backgroundBrightness?: number;
+    backgroundSaturation?: number;
+    backdropColor?: string;
+    /** Colour the panes' shadows are cast in — deliberately independent of the backdrop. */
+    shadowColor?: string;
+
+    // Overlay (the dimming veil)
+    overlayKind?: OverlayKind;
+    overlayColor?: string;
+    overlayOpacity?: number;
+    gradientType?: GradientType;
+    gradientAngle?: number;
+    gradientStops?: GradientStop[];
+    vignette?: number;
+    grain?: number;
+
+    /** Drops backdrop-filter everywhere — the escape hatch for weak machines. */
+    performanceMode?: boolean;
+
+    /** Drives the rails, rules and ghost buttons. Per-card type has its own colours. */
+    textTone?: TextTone;
+
+    /** The opening pane (the house photo + manifesto), styled on its own. */
+    hero?: CardStyle;
+    /** Every work pane, and the closing archive pane. */
+    work?: CardStyle;
+
+    // ── Legacy flat glass/button fields ──────────────────────────────────────
+    // Written by the first version of this panel, before hero and work panes were
+    // separable. `resolveReelTheme` folds them into BOTH cards so an already-saved
+    // theme keeps rendering as it did; nothing writes them any more.
+    glassTint?: string;
+    glassOpacity?: number;
+    glassBlur?: number;
+    glassSaturation?: number;
+    glassRadius?: number;
+    glassSheen?: number;
+    glassShadow?: number;
+    buttonFill?: string;
+    buttonText?: string;
+
+    // Density
+    cardGap?: number;
+    cardWidth?: number;
+}
+
+export interface ReelThemePreset {
+    id: string;
+    name: string;
+    config: ReelTheme;
+    savedAt: string;
+}
 
 export interface HomeLayoutPreset {
     id: string;

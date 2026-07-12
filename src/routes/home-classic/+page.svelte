@@ -2,12 +2,12 @@
     import { onMount } from 'svelte';
     import { fade, fly } from 'svelte/transition';
     import { cubicOut } from 'svelte/easing';
+    import { spring, type Spring } from 'svelte/motion';
     import { api } from '$lib/api';
-    import AppImage from '$lib/components/AppImage.svelte';
     import type { AuthorProfile, FigurineListItem, HomeContent, WorkshopFeature } from '$lib/types/api';
     import { t, brandName, lang } from '$lib/i18n';
-    import ReelWorkCard from '$lib/components/ReelWorkCard.svelte';
-    import WorkMarginIndex from '$lib/components/WorkMarginIndex.svelte';
+    import AppImage from '$lib/components/AppImage.svelte';
+    import HomeFigurineTile from '$lib/components/HomeFigurineTile.svelte';
     import HouseNoticeBoard from '$lib/components/HouseNoticeBoard.svelte';
     import VisitLedger from '$lib/components/VisitLedger.svelte';
     import VisitorBook from '$lib/components/VisitorBook.svelte';
@@ -37,8 +37,7 @@
         homePageStyle,
         generateHomeElementCSS,
     } from '$lib/home-layout';
-    import type { HomeLayoutConfig, HomeBlockId, ReelTheme } from '$lib/types/api';
-    import { generateReelCSS, startListeningForReelPreview } from '$lib/stores/reel-theme.svelte';
+    import type { HomeLayoutConfig, HomeBlockId } from '$lib/types/api';
 
     let { data } = $props();
 
@@ -203,6 +202,11 @@
         reelModalOpen = true;
     }
 
+    let parallaxX = $state(0);
+    let parallaxY = $state(0);
+    let _tiltSpring: Spring<{ x: number; y: number }> | null = null;
+    let _tiltUnsub: (() => void) | null = null;
+
     // Works-first hero: the maker's name frames the headline, but the image
     // is a real piece, not a scene to explore — the goal is to show and
     // enchant with the work itself, first thing.
@@ -242,18 +246,9 @@
     );
     // An admin-uploaded hero photo (Replace Photo in the admin) always wins over
     // the figurine-driven picks below — it's an explicit override, not a fallback.
-    // The hero fills the fold, so it takes the preview-sized photo — the 420px
-    // thumbnail behind faceImageUrl is built for the archive's small cards and
-    // goes to mush at this size.
     let heroDisplayImage = $derived(
-        hasCustomHeroPhoto
-            ? imageUrl
-            : (heroDisplayFigurine?.faceImageLargeUrl?.trim()
-                || heroDisplayFigurine?.faceImageUrl?.trim()
-                || imageUrl)
+        hasCustomHeroPhoto ? imageUrl : (heroDisplayFigurine?.faceImageUrl?.trim() || imageUrl)
     );
-    // Today's vitrine pick gets its own pinned specimen card beside the lead text.
-    let pinnedSpecimenFig = $derived(vitrineFig);
     // "Отмеченное вами" — the visitor's own private marks, resolved against the
     // same in-memory list as the saved/wishlist tab (see its comment above for
     // the same "first 30 fetched" cap). Never touches the server for counts —
@@ -296,62 +291,12 @@
     });
     let visibleGalleryFigurines = $derived(galleryFigurines.slice(0, GALLERY_LIMIT));
     let galleryRemaining = $derived(Math.max(0, galleryFigurines.length - GALLERY_LIMIT));
-    // The first works the reel did NOT reach — shown as edges of plates sticking
-    // out of the drawer on the closing card, so the way into the archive is the
-    // work itself, not the word "archive".
-    let archivePeek = $derived(galleryFigurines.slice(GALLERY_LIMIT, GALLERY_LIMIT + 4));
 
-    // ── The margin index ────────────────────────────────────────────────
-    // A long single-column reel gives no sense of place: how far down am I, and
-    // how do I get back to the piece I passed two screens ago? So the works that
-    // leave the top of the screen are entered, silently, in the left margin —
-    // marginalia in a catalogue, not a sticky thumbnail rail. `reelEl` is the
-    // observed container; `passedCount` is how many panes are now above the fold.
-    let reelEl = $state<HTMLElement | undefined>();
-    let passedCount = $state(0);
-
-    $effect(() => {
-        // Re-observe whenever the reel's contents change.
-        const el = reelEl;
-        const n = visibleGalleryFigurines.length;
-        if (!el || n === 0) {
-            passedCount = 0;
-            return;
-        }
-
-        const passed = new Set<number>();
-        const io = new IntersectionObserver(
-            (entries) => {
-                for (const entry of entries) {
-                    const i = Number((entry.target as HTMLElement).dataset.reelSlot);
-                    // Gone, and gone off the TOP — a pane below the fold has not
-                    // been read yet and must not be indexed.
-                    if (!entry.isIntersecting && entry.boundingClientRect.top < 0) passed.add(i);
-                    else passed.delete(i);
-                }
-                // The high-water mark, so scrolling back up empties the margin again
-                // in the same order it filled.
-                passedCount = passed.size > 0 ? Math.max(...passed) + 1 : 0;
-            },
-            // Matches the sticky header's height: a pane still tucked under the
-            // header is not yet "passed".
-            { rootMargin: '-72px 0px 0px 0px', threshold: 0 }
-        );
-
-        for (const slot of el.querySelectorAll<HTMLElement>('[data-reel-slot]')) io.observe(slot);
-        return () => io.disconnect();
-    });
-
-    // The gallery's works are shown as glass panes (ReelWorkCard). Their whole
-    // look — glass, type, buttons — is the "work panes" half of the admin's reel
-    // theme, which arrives as one block of CSS variables. The backdrop half of
-    // that theme does not apply here: this page keeps its own parchment.
-    let reelTheme = $state<ReelTheme>({});
-    let reelCSSBlock = $derived(generateReelCSS(reelTheme));
-
-    // Each pane's paragraph is the work's own short text, which the list payload
-    // doesn't carry — fetched only for the works actually on the wall.
-    let galleryStories = $state<Record<string, string>>({});
+    // THE COLLECTION card scroll-reveal treatment — admin-selectable (Home
+    // Layout Editor → "Эффект карточек"), persisted in HomeLayoutConfig.
+    // Each card triggers its own reveal via a live IntersectionObserver (see
+    // revealOnEnter in HomeFigurineTile.svelte) as it crosses into view.
+    let cardEffectVariant = $derived(homeLayout?.cardEffect ?? 'rise');
 
     // Daily "re-hang" index: advances once per calendar day. Every visitor on
     // the same day sees the same arrangement (no layout-shift noise on refresh),
@@ -400,10 +345,140 @@
         return [...pinned, ...dailyRotate(rest)];
     }
 
+    // Pinterest-style masonry for the gallery. Rather than a dense CSS grid —
+    // which places row-by-row and leaves dead vertical gaps whenever a tall card
+    // (e.g. a sealed door) can't be backfilled — we run the real shortest-column
+    // algorithm: measure every card and drop it into whichever column is
+    // currently shortest, positioning it absolutely so columns stay flush. Wide
+    // isFeatured cards span two columns (placed on the adjacent pair whose taller
+    // side is lowest). A ResizeObserver on the container reflows on viewport
+    // change, a second one on each card reflows as images load, and a
+    // MutationObserver re-observes children when the gallery list re-renders.
+    function masonryGrid(grid: HTMLElement) {
+        // Take over from the CSS multi-column fallback (which the prerendered HTML
+        // renders before hydration so cards never pile at the origin) and drive
+        // absolute placement ourselves.
+        grid.classList.add('is-js-masonry');
+
+        let raf = 0;
+        let lastWidth = -1;
+
+        const columnsFor = (width: number): number =>
+            width >= 1100 ? 4 : width >= 760 ? 3 : 2;
+
+        const layout = () => {
+            const children = Array.from(grid.children) as HTMLElement[];
+            if (children.length === 0) { grid.style.height = ''; return; }
+
+            const cs = getComputedStyle(grid);
+            const colGap = parseFloat(cs.columnGap) || 0;
+            const rowGap = parseFloat(cs.rowGap) || 0;
+            const width = grid.clientWidth;
+            if (!width) return;
+            lastWidth = width;
+
+            const fullCols = columnsFor(width);
+            const cols = Math.max(1, Math.min(fullCols, children.length));
+            let colW = (width - colGap * (cols - 1)) / cols;
+            // A near-empty gallery must not balloon its few cards to fill the whole
+            // width — hold them to the width they'd have at the full column count
+            // and let them left-align.
+            if (cols < fullCols) {
+                colW = Math.min(colW, (width - colGap * (fullCols - 1)) / fullCols);
+            }
+
+            const isWide = (el: HTMLElement) => cols > 1 && el.classList.contains('tile-feature');
+
+            // Pass 1 — set every width up front so the height reads in pass 2 cost
+            // a single reflow rather than one per card (no write/read interleave).
+            for (const el of children) {
+                el.style.width = isWide(el) ? `${colW * 2 + colGap}px` : `${colW}px`;
+            }
+            // Pass 2 — measure all heights (reads only) …
+            const measured = children.map((el) => el.offsetHeight);
+
+            // … then place (writes only).
+            const heights: number[] = new Array(cols).fill(0);
+            const xOf = (c: number) => c * (colW + colGap);
+
+            children.forEach((el, idx) => {
+                const h = measured[idx];
+                if (!isWide(el)) {
+                    let c = 0;
+                    for (let i = 1; i < cols; i++) if (heights[i] < heights[c]) c = i;
+                    el.style.left = `${xOf(c)}px`;
+                    el.style.top = `${heights[c]}px`;
+                    heights[c] += h + rowGap;
+                } else {
+                    // A wide card spans an adjacent pair. Two forces pull against
+                    // each other: keep the wall low (small `top`) but don't strand
+                    // a tall empty "ledge" above the shorter of the two columns
+                    // (small `waste`). Scoring `top + waste` together both spreads
+                    // wide cards across the wall AND steers them onto level pairs,
+                    // so neither failure mode (piling / ledges) wins.
+                    let best = 0;
+                    let bestScore = Infinity;
+                    let bestTop = Infinity;
+                    for (let i = 0; i < cols - 1; i++) {
+                        const top = Math.max(heights[i], heights[i + 1]);
+                        const waste = (top - heights[i]) + (top - heights[i + 1]);
+                        const score = top + waste;
+                        if (score < bestScore - 0.5 ||
+                            (score <= bestScore + 0.5 && top < bestTop)) {
+                            bestScore = score; bestTop = top; best = i;
+                        }
+                    }
+                    const top = Math.max(heights[best], heights[best + 1]);
+                    el.style.left = `${xOf(best)}px`;
+                    el.style.top = `${top}px`;
+                    heights[best] = heights[best + 1] = top + h + rowGap;
+                }
+            });
+
+            // Trim the trailing rowGap baked into each column's running height so
+            // the gallery doesn't leave an empty band before the next section.
+            grid.style.height = `${Math.max(...heights) - rowGap}px`;
+        };
+
+        const schedule = () => {
+            cancelAnimationFrame(raf);
+            raf = requestAnimationFrame(layout);
+        };
+
+        // Width-only observer: relayout when the container's *width* changes
+        // (viewport resize). Height-only changes are ignored — layout() writes the
+        // container height itself, so reacting to it would relayout for nothing
+        // (and risk a feedback cycle).
+        const containerRO = new ResizeObserver(() => {
+            if (grid.clientWidth !== lastWidth) schedule();
+        });
+        containerRO.observe(grid);
+
+        // Each card's height changes as its image loads; re-pack when it does.
+        const cardRO = new ResizeObserver(schedule);
+        const observeChildren = () => {
+            cardRO.disconnect();
+            for (const child of Array.from(grid.children)) cardRO.observe(child as HTMLElement);
+            schedule();
+        };
+        observeChildren();
+
+        const mo = new MutationObserver(observeChildren);
+        mo.observe(grid, { childList: true });
+
+        return {
+            destroy() {
+                containerRO.disconnect();
+                cardRO.disconnect();
+                mo.disconnect();
+                cancelAnimationFrame(raf);
+            },
+        };
+    }
 
     async function init() {
         try {
-            const [bgPath, figurines, inProgress, firstLook, noticedByGuests, content, workshop, author, layout, savedReelTheme] = await Promise.all([
+            const [bgPath, figurines, inProgress, firstLook, noticedByGuests, content, workshop, author, layout] = await Promise.all([
                 api.getMainBackground().catch(() => null),
                 api.getAllFigurines(30).catch(() => [] as FigurineListItem[]),
                 api.getInProgressFigurines().catch(() => [] as FigurineListItem[]),
@@ -422,11 +497,9 @@
                 } satisfies HomeContent)),
                 api.getWorkshopFeature().catch(() => null),
                 api.getAuthorProfile().catch(() => null),
-                api.getHomeLayout().catch(() => null),
-                api.getReelTheme().catch(() => null)
+                api.getHomeLayout().catch(() => null)
             ]);
             if (author) authorProfile = author;
-            if (savedReelTheme) reelTheme = savedReelTheme;
             // Editor preview (postMessage) wins over the saved config.
             if (layout && !hlPreviewDriven) homeLayout = layout;
             if (bgPath) { imageUrl = bgPath; hasCustomHeroPhoto = true; }
@@ -466,22 +539,8 @@
         const { innerWidth, innerHeight } = window;
         mouseX = e.clientX / innerWidth;
         mouseY = e.clientY / innerHeight;
+        _tiltSpring?.set({ x: (mouseX - 0.5) * 2, y: (mouseY - 0.5) * 2 });
     }
-
-    // Hero photo: the frame keeps pushing in as the page scrolls away. It feeds
-    // one transform on .hero-lens; the Ken Burns drift stays on the <img>
-    // underneath so the two never fight over the same property.
-    // The dwell push-in: the frame keeps creeping toward the viewer for as long
-    // as it is on screen. It is not a loop — a loop would have to snap back, and
-    // any dissolve across that snap shows the photo twice at once. Instead it
-    // eases asymptotically toward its cap, so it is always still moving and
-    // never resets.
-    let heroDwellZoom = $state(0);
-    let heroPhotoEl = $state<HTMLElement | null>(null);
-    let heroLensScale = $derived((1 + heroDwellZoom).toFixed(4));
-
-    const HERO_DWELL_CAP = 0.22;   // how far the dwell push can ever go
-    const HERO_DWELL_TAU = 26000;  // ms to reach ~63% of the cap
 
     let showHint = $state(false);
     let hintDismissed = $state(false);
@@ -516,93 +575,28 @@
         const pointerMq = window.matchMedia('(pointer: fine)');
         const syncTiltPreference = () => {
             canUseHeroTilt = pointerMq.matches && !reduceMq.matches;
-            if (!canUseHeroTilt) {
+            if (canUseHeroTilt && !_tiltSpring) {
+                _tiltSpring = spring({ x: 0, y: 0 }, { stiffness: 0.04, damping: 0.45 });
+                _tiltUnsub = _tiltSpring.subscribe(v => { parallaxX = v.x; parallaxY = v.y; });
+            } else if (!canUseHeroTilt) {
                 mouseX = 0.5;
                 mouseY = 0.5;
+                _tiltSpring?.set({ x: 0, y: 0 });
+                parallaxX = 0;
+                parallaxY = 0;
             }
         };
         syncTiltPreference();
         reduceMq.addEventListener('change', syncTiltPreference);
         pointerMq.addEventListener('change', syncTiltPreference);
-
-        // Dwell push-in: only accumulates while the photo is actually on screen,
-        // and the rAF loop is torn down entirely when it leaves.
-        let dwellRaf = 0;
-        let dwellMs = 0;
-        let lastTick = 0;
-        const tickDwell = (now: number) => {
-            const dt = lastTick ? Math.min(now - lastTick, 100) : 0;
-            lastTick = now;
-            dwellMs += dt;
-            heroDwellZoom = HERO_DWELL_CAP * (1 - Math.exp(-dwellMs / HERO_DWELL_TAU));
-            dwellRaf = requestAnimationFrame(tickDwell);
-        };
-        const startDwell = () => {
-            if (dwellRaf || reduceMq.matches) return;
-            lastTick = 0;
-            dwellRaf = requestAnimationFrame(tickDwell);
-        };
-        const stopDwell = () => {
-            if (dwellRaf) cancelAnimationFrame(dwellRaf);
-            dwellRaf = 0;
-        };
-
-        let heroObserver: IntersectionObserver | null = null;
-        if (heroPhotoEl) {
-            heroObserver = new IntersectionObserver(
-                ([entry]) => { entry.isIntersecting ? startDwell() : stopDwell(); },
-                { threshold: 0 }
-            );
-            heroObserver.observe(heroPhotoEl);
-        }
-
         const hintTimer = setTimeout(() => { showHint = true; }, 3000);
         return () => {
             clearTimeout(hintTimer);
-            stopDwell();
-            heroObserver?.disconnect();
             reduceMq.removeEventListener('change', syncTiltPreference);
             pointerMq.removeEventListener('change', syncTiltPreference);
             window.removeEventListener('message', onHlMessage);
+            _tiltUnsub?.();
         };
-    });
-
-    // The admin's reel-theme panel drives this page live over BroadcastChannel.
-    onMount(() => startListeningForReelPreview());
-
-    // The theme block is injected imperatively rather than through <svelte:head>:
-    // an {@html} block in the head is rendered once and does not re-run when the
-    // theme arrives from the server, so the panes kept their default look.
-    $effect(() => {
-        const css = reelCSSBlock;
-        if (typeof document === 'undefined') return;
-        const id = 'reel-theme';
-        const existing = document.getElementById(id);
-        const style = existing instanceof HTMLStyleElement ? existing : document.createElement('style');
-        style.id = id;
-        style.textContent = css;
-        if (!style.parentNode) document.head.appendChild(style);
-        return () => style.remove();
-    });
-
-    // Pull each shown work's short text — the list payload doesn't carry it, and
-    // without it a pane falls back to a dry run of its attributes.
-    $effect(() => {
-        const wanted = visibleGalleryFigurines.filter((f) => !(f.id in galleryStories));
-        if (wanted.length === 0) return;
-        let cancelled = false;
-        void (async () => {
-            const details = await Promise.all(
-                wanted.map((f) => api.getFigurine(f.id).catch(() => null))
-            );
-            if (cancelled) return;
-            const next = { ...galleryStories };
-            wanted.forEach((f, i) => {
-                next[f.id] = details[i]?.shortText?.trim() ?? '';
-            });
-            galleryStories = next;
-        })();
-        return () => { cancelled = true; };
     });
 </script>
 
@@ -638,10 +632,28 @@
         <!-- HERO -->
         {#if hlVisible('hero')}
         <div class={hlClasses('hero')} style={hlStyle('hero')} data-hl="hero">
-        <section class="hero hero-cine" aria-labelledby="home-title">
+        <section class="hero" aria-labelledby="home-title">
 
-            <!-- Text, left column -->
-            <div class="hero-text" in:fly={{ y: 20, duration: 900, delay: 350, easing: cubicOut }}>
+            <!-- Left: text -->
+            <div class="hero-text" in:fly={{ x: -20, duration: 900, delay: 350, easing: cubicOut }}>
+                <div class="hero-orn" aria-hidden="true">
+                    <svg class="hero-orn-svg" viewBox="0 0 280 22" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <line x1="0" y1="11" x2="96" y2="11" stroke="currentColor" stroke-width="0.5" opacity="0.65"/>
+                        <polygon points="96,11 102,7 108,11 102,15" fill="currentColor" opacity="0.52"/>
+                        <circle cx="140" cy="11" r="10" stroke="currentColor" stroke-width="0.65" opacity="0.68"/>
+                        <circle cx="140" cy="11" r="4.5" stroke="currentColor" stroke-width="0.5" opacity="0.46"/>
+                        <line x1="140" y1="1" x2="140" y2="21" stroke="currentColor" stroke-width="0.4" opacity="0.42"/>
+                        <line x1="130" y1="11" x2="150" y2="11" stroke="currentColor" stroke-width="0.4" opacity="0.42"/>
+                        <circle cx="140" cy="1" r="1.2" fill="currentColor" opacity="0.52"/>
+                        <circle cx="140" cy="21" r="1.2" fill="currentColor" opacity="0.52"/>
+                        <circle cx="130" cy="11" r="1.2" fill="currentColor" opacity="0.52"/>
+                        <circle cx="150" cy="11" r="1.2" fill="currentColor" opacity="0.52"/>
+                        <circle cx="140" cy="11" r="1.8" fill="currentColor" opacity="0.36"/>
+                        <polygon points="172,11 178,7 184,11 178,15" fill="currentColor" opacity="0.52"/>
+                        <line x1="184" y1="11" x2="280" y2="11" stroke="currentColor" stroke-width="0.5" opacity="0.65"/>
+                    </svg>
+                </div>
+
                 <h1 id="home-title" class="hero-title" aria-label={titleText}>
                     {#each titleLines as line}
                         <span class="title-line" aria-hidden="true">
@@ -656,88 +668,70 @@
                     {/each}
                 </h1>
 
-                <div class="hero-body">
-                    <div class="hero-main">
-                        <p class="hero-lead">{leadText}</p>
+                <p class="hero-lead">{leadText}</p>
 
-                        <div class="hero-ctas">
-                            <a href={primaryCtaHref} class="cta-primary">
-                                {primaryCtaText}
-                                <svg class="cta-arrow" width="18" height="9" viewBox="0 0 18 9" fill="none">
-                                    <path d="M0 4.5H17M17 4.5L12.5 1M17 4.5L12.5 8" stroke="currentColor" stroke-width="1"/>
-                                </svg>
-                            </a>
-                            <a href={secondaryCtaHref} class="cta-ghost">{secondaryCtaText}</a>
-                        </div>
-
-                        <div class="hero-proof" aria-label={$brandName}>
-                            <span>{$t('homeTrustUnique')}</span>
-                            <span>{$t('homeTrustHandmade')}</span>
-                            <span>{$t('homeTrustAuthorReply')}</span>
-                        </div>
-
-                        <!-- Process footage, right under the trust line — a quiet second
-                             layer of proof, not competing with title/CTA for the eye. -->
-                        <div class="hw-teasers">
-                            <HeroWorkshopTeaser
-                                webm="/images/workshop/atelier-reel-tiny.webm"
-                                mp4="/images/workshop/atelier-reel-tiny.mp4"
-                                poster="/images/workshop/atelier-reel-tiny-poster.jpg"
-                                label={$t('homeWorkshopTeaserLabel')}
-                                onSelect={(e) => openReelModal('a', e)}
-                            />
-                            <HeroWorkshopTeaser
-                                webm="/images/workshop/atelier-reel-2-tiny.webm"
-                                mp4="/images/workshop/atelier-reel-2-tiny.mp4"
-                                poster="/images/workshop/atelier-reel-2-tiny-poster.jpg"
-                                label={$t('homeWorkshopTeaserLabel')}
-                                delayMs={1700}
-                                onSelect={(e) => openReelModal('b', e)}
-                            />
-                            <span class="hw-teasers-label">{$t('homeWorkshopTeaserLabel')}</span>
-                        </div>
-                        {#if availableFigurines.length === 0}
-                            <p class="release-note">{$t('homeReleaseNote')}</p>
-                        {/if}
-
-                        {#if collectionTotal > 0}
-                            <div class="hero-stats">
-                                <a class="hero-stat" href="#gallery">
-                                    <b>{collectionTotal}</b>
-                                    <span>{$t('homeHeroCountSuffix')}<svg class="hero-stat-arrow" width="10" height="8" viewBox="0 0 10 8" fill="none" aria-hidden="true"><path d="M0 4H9M9 4L6 1M9 4L6 7" stroke="currentColor" stroke-width="1"/></svg></span>
-                                </a>
-                                {#if inProgressFigurines.length > 0}
-                                    <a class="hero-stat" href="/upcoming">
-                                        <b>{inProgressFigurines.length}</b>
-                                        <span>{$t('homeLedgerInProgress')}<svg class="hero-stat-arrow" width="10" height="8" viewBox="0 0 10 8" fill="none" aria-hidden="true"><path d="M0 4H9M9 4L6 1M9 4L6 7" stroke="currentColor" stroke-width="1"/></svg></span>
-                                    </a>
-                                {/if}
-                                {#if homeShelves.marked.length > 0}
-                                    <a class="hero-stat" href="#marked-by-you">
-                                        <b>{homeShelves.marked.length}</b>
-                                        <span>{$t('markedByYouEyebrow')}<svg class="hero-stat-arrow" width="10" height="8" viewBox="0 0 10 8" fill="none" aria-hidden="true"><path d="M0 4H9M9 4L6 1M9 4L6 7" stroke="currentColor" stroke-width="1"/></svg></span>
-                                    </a>
-                                {/if}
-                            </div>
-                        {/if}
-                    </div>
-
+                <div class="hero-ctas">
+                    <a href={primaryCtaHref} class="cta-primary">
+                        {primaryCtaText}
+                        <svg class="cta-arrow" width="18" height="9" viewBox="0 0 18 9" fill="none">
+                            <path d="M0 4.5H17M17 4.5L12.5 1M17 4.5L12.5 8" stroke="currentColor" stroke-width="1"/>
+                        </svg>
+                    </a>
+                    <a href={secondaryCtaHref} class="cta-ghost">{secondaryCtaText}</a>
                 </div>
 
+                <div class="hero-proof" aria-label={$brandName}>
+                    <span>{$t('homeTrustUnique')}</span>
+                    <span>{$t('homeTrustHandmade')}</span>
+                    <span>{$t('homeTrustAuthorReply')}</span>
+                </div>
+
+                <!-- Process footage, right under the trust line — a quiet second
+                     layer of proof, not competing with title/CTA for the eye. -->
+                <div class="hw-teasers">
+                    <HeroWorkshopTeaser
+                        webm="/images/workshop/atelier-reel-tiny.webm"
+                        mp4="/images/workshop/atelier-reel-tiny.mp4"
+                        poster="/images/workshop/atelier-reel-tiny-poster.jpg"
+                        label={$t('homeWorkshopTeaserLabel')}
+                        onSelect={(e) => openReelModal('a', e)}
+                    />
+                    <HeroWorkshopTeaser
+                        webm="/images/workshop/atelier-reel-2-tiny.webm"
+                        mp4="/images/workshop/atelier-reel-2-tiny.mp4"
+                        poster="/images/workshop/atelier-reel-2-tiny-poster.jpg"
+                        label={$t('homeWorkshopTeaserLabel')}
+                        delayMs={1700}
+                        onSelect={(e) => openReelModal('b', e)}
+                    />
+                    <span class="hw-teasers-label">{$t('homeWorkshopTeaserLabel')}</span>
+                </div>
+                {#if availableFigurines.length === 0}
+                    <p class="release-note">{$t('homeReleaseNote')}</p>
+                {/if}
             </div>
 
-            <!-- Photo, right column: a slow drift stands in for the pointer-tilt
-                 this layout replaced, and a HUD strip carries the "live" read
-                 instead of a decorative ornament. -->
-            <div class="cine-frame">
-                <div class="cine-photo" style="--lens-scale:{heroLensScale}">
-                    <div class="hero-lens" bind:this={heroPhotoEl}>
-                        <img src={heroDisplayImage} alt={heroDisplayFigurine?.name ?? 'Gothic Cabinet'} class="hero-img"
-                             fetchpriority="high" decoding="async" draggable="false" />
-                    </div>
+            <!-- Right: the work itself — a real piece, not a room to explore.
+                 The goal of this page is to show and enchant with the work, so
+                 the very first thing on screen is a large photograph of one. -->
+            <div class="hero-visual">
+                <div
+                    class="img-frame"
+                    style="
+                        transform:
+                            perspective(2200px)
+                            rotateY({canUseHeroTilt ? parallaxX * -1.2 : 0}deg)
+                            rotateX({canUseHeroTilt ? parallaxY * 1.2 : 0}deg)
+                            scale(1.02);
+                    "
+                >
+                    <img src={heroDisplayImage} alt={heroDisplayFigurine?.name ?? 'Gothic Cabinet'} class="hero-img"
+                         fetchpriority="high" decoding="async" draggable="false" />
                     <div class="img-vignette"></div>
                     <div class="img-grade"></div>
                     <div class="img-noise"></div>
+                    <div class="fog fog-a"></div>
+                    <div class="fog fog-b"></div>
 
                     {#if showHeroCaption}
                     <a class="art-caption" href={heroObjectHref} aria-label="{heroObjectCta}: {heroObjectName}">
@@ -749,15 +743,20 @@
                     {/if}
                 </div>
 
+                <!-- Decorative frame corners -->
+                <span class="fc fc-tl"></span>
+                <span class="fc fc-tr"></span>
+                <span class="fc fc-bl"></span>
+                <span class="fc fc-br"></span>
+
                 {#if showHint && !hintDismissed}
                     <a href="#gallery" class="scroll-cue" in:fade={{ duration: 400 }}>
                         <span class="sc-line"></span>
                         <span>{$t('homeScrollCue')}</span>
                     </a>
                 {/if}
-            </div>
 
-        
+            </div>
 
         </section>
         </div>
@@ -813,20 +812,20 @@
                     <h2 id="context-title" class="context-title">{$t('homeGalleryTitle')}</h2>
                 </div>
                 <div class="context-side">
-                    <div class="context-side-main">
+                    <div class="context-side-row">
                         <p class="context-desc">{$t('homeGalleryText')}</p>
-                        <p class="context-meta">
-                            <span class="context-meta-kicker">{$t('homeHowEyebrow')}</span>
-                            {$t('homeWorksGuideTitle')}
-                        </p>
-                    </div>
-                    <div class="context-side-links">
                         <a href="/figurines" class="all-link">
                             {$t('homeGalleryCta')}
                             <svg width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
                                 <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
                             </svg>
                         </a>
+                    </div>
+                    <div class="context-side-row context-side-row--guide">
+                        <p class="context-desc context-desc--guide">
+                            <span class="context-desc-kicker">{$t('homeHowEyebrow')}</span>
+                            {$t('homeWorksGuideTitle')}
+                        </p>
                         <a href="/commission" class="all-link">
                             {$t('commissionInvite')}
                             <svg width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
@@ -839,62 +838,14 @@
 
             <div class="work-content">
                 {#if visibleGalleryFigurines.length > 0}
-                    <!-- The works, one pane per row, alternating sides. They sit on
-                         the page's own parchment — no band of their own — so they are
-                         paper, not glass: a warm card with a real edge and a real
-                         shadow. See ReelWorkCard. -->
-                    <div class="work-spread">
-                        <!-- The margin: works already passed, entered as small
-                             plates. Pure orientation — it links back up the reel,
-                             never out to a detail page. -->
-                        <WorkMarginIndex figurines={visibleGalleryFigurines} count={passedCount} />
-
-                        <div class="work-reel" bind:this={reelEl}>
-                            {#each visibleGalleryFigurines as fig, i (fig.id)}
-                                <div class="reel-slot" id="work-{fig.id}" data-reel-slot={i}>
-                                    <ReelWorkCard
-                                        {fig}
-                                        index={i + 1}
-                                        story={galleryStories[fig.id]}
-                                        flip={i % 2 === 1}
-                                    />
-                                </div>
-                            {/each}
-
-                            <!-- The reel does not trail off into a caption: its last
-                                 pane IS the archive. Same paper, same width, same
-                                 rhythm — so the eye that read sixteen plates cannot
-                                 miss the seventeenth. -->
-                            {#if galleryRemaining > 0}
-                                <a href="/figurines" class="archive-end">
-                                    <div class="archive-end__text">
-                                        <span class="archive-end__count">{galleryRemaining}</span>
-                                        <span class="archive-end__label">{$t('homeMoreInArchive')}</span>
-                                    </div>
-
-                                    {#if archivePeek.length > 0}
-                                        <div class="archive-end__drawer" aria-hidden="true">
-                                            {#each archivePeek as peek, i (peek.id)}
-                                                <span class="archive-end__plate" style="--peek-i: {i}">
-                                                    <AppImage
-                                                        src={peek.thumbUrl ?? peek.faceImageUrl}
-                                                        alt=""
-                                                        class="archive-end__plate-img"
-                                                    />
-                                                </span>
-                                            {/each}
-                                        </div>
-                                    {/if}
-
-                                    <span class="archive-end__cta">
-                                        {$t('homeGalleryCta')}
-                                        <svg width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
-                                            <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
-                                        </svg>
-                                    </span>
-                                </a>
-                            {/if}
-                        </div>
+                    <div
+                        class="work-grid"
+                        use:masonryGrid
+                        data-card-fx={cardEffectVariant}
+                    >
+                        {#each visibleGalleryFigurines as fig, i (fig.id)}
+                            <HomeFigurineTile {fig} index={i} selected={heroFigurine?.id === fig.id} masonry />
+                        {/each}
                     </div>
                 {:else}
                     <div class="work-empty">
@@ -908,6 +859,20 @@
                     </div>
                 {/if}
             </div>
+
+            {#if galleryRemaining > 0}
+                <a href="/figurines" class="work-more-ledger">
+                    <span class="work-more-ledger__rule"></span>
+                    <span class="work-more-ledger__label">
+                        <span class="work-more-ledger__count">{galleryRemaining}</span>
+                        {$t('homeMoreInArchive')}
+                    </span>
+                    <span class="work-more-ledger__rule"></span>
+                    <svg class="work-more-ledger__arrow" width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
+                        <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
+                    </svg>
+                </a>
+            {/if}
 
         </section>
         </div>
@@ -1265,23 +1230,20 @@
         .hl-hide-desktop { display: none; }
     }
 
-    /* ── HERO LAYOUT (split: text left, letterboxed frame right) ───
-       The frame used to run full-width with the text stacked under it,
-       which left the pillarboxed side-bars (from object-fit: contain)
-       doing nothing. Side by side, that same width goes to the text
-       column instead of sitting empty. */
-    .hero-cine {
+    /* ── HERO LAYOUT ─────────────────────────────── */
+    .hero {
         display: grid;
-        grid-template-columns: minmax(340px, 0.86fr) minmax(420px, 1.14fr);
-        align-items: start;
-        gap: clamp(28px, 4vw, 64px);
+        grid-template-columns: minmax(420px, 0.72fr) minmax(520px, 1.28fr);
+        gap: clamp(28px, 3.8vw, 62px);
+        align-items: center;
+        min-height: auto;
         /* Главная без header-offset — добавляем верхний воздух, чтобы фото и мета-строка
            не уходили под фиксированную шапку. */
         padding:
             calc(var(--site-header-height) + clamp(18px, 2.4vw, 34px))
             clamp(20px, 4.5vw, 64px)
             clamp(28px, 3.2vw, 44px);
-        max-width: 1320px;
+        max-width: 1520px;
         margin: 0 auto;
     }
 
@@ -1289,7 +1251,6 @@
     .hero-text {
         position: relative;
         z-index: 10;
-        min-width: 0;
     }
 
     .eyebrow {
@@ -1313,16 +1274,33 @@
         flex-shrink: 0;
     }
 
+    .hero-orn {
+        margin-bottom: 18px;
+        color: var(--copper);
+    }
+
+    .hero-orn-svg {
+        display: block;
+        width: clamp(180px, 20vw, 280px);
+        height: auto;
+        animation: orn-breathe 11s ease-in-out infinite;
+    }
+
+    @keyframes orn-breathe {
+        0%, 100% { opacity: 0.62; }
+        50% { opacity: 0.38; }
+    }
+
     /* ── H1: word-based reveal, so Russian titles wrap like typography ─────── */
     .hero-title {
         font-family: 'Cormorant Garamond', serif;
-        font-size: clamp(48px, 7vw, 108px);
+        font-size: clamp(42px, 3.8vw, 64px);
         font-weight: 300;
-        line-height: 0.9;
+        line-height: 0.94;
         letter-spacing: 0;
         color: var(--ink);
-        max-width: 100%;
-        margin: 0 0 22px;
+        max-width: min(620px, 100%);
+        margin: 0 0 14px;
         word-break: keep-all;
         overflow-wrap: normal;
         hyphens: none;
@@ -1333,7 +1311,7 @@
     }
 
     .hero-title:lang(ru) {
-        font-size: clamp(44px, 6.4vw, 96px);
+        font-size: clamp(40px, 3.6vw, 60px);
     }
 
     .title-line {
@@ -1365,8 +1343,11 @@
 
     @media (prefers-reduced-motion: reduce) {
         .title-word,
+        .fog-a,
+        .fog-b,
         .grain,
-        .sc-line {
+        .sc-line,
+        .hero-orn-svg {
             animation: none;
             transform: none;
             opacity: 1;
@@ -1375,37 +1356,17 @@
         .cursor-glow {
             display: none;
         }
-
-        .hero-img {
-            animation: none;
-        }
-
-        .hero-lens {
-            transform: none;
-        }
-
-        .cine-rec i,
-        .cine-scrub i {
-            animation: none;
-        }
-    }
-
-    /* Now that the text sits in its own (narrower) column beside the photo,
-       there's no spare width for the pinned specimen card to sit side by
-       side with the lead copy — it stacks underneath instead. */
-    .hero-body {
-        max-width: 480px;
     }
 
     .hero-lead {
         font-family: 'Cormorant Garamond', serif;
-        font-size: clamp(16px, 1.5vw, 20px);
+        font-size: clamp(15px, 1.35vw, 18px);
         font-weight: 300;
         font-style: italic;
         line-height: 1.42;
         color: var(--color-ink-secondary);
-        max-width: 420px;
-        margin: 0 0 22px;
+        max-width: 390px;
+        margin-bottom: 14px;
     }
 
     /* ── CTAs ────────────────────────────────────── */
@@ -1414,7 +1375,7 @@
         align-items: center;
         gap: 14px;
         flex-wrap: wrap;
-        margin-bottom: 22px;
+        margin-bottom: 12px;
     }
 
     .cta-primary {
@@ -1422,7 +1383,7 @@
         align-items: center;
         gap: 12px;
         height: 40px;
-        padding: 0 22px;
+        padding: 0 19px;
         background: var(--ink);
         color: var(--cream2);
         font-size: 12px;
@@ -1430,11 +1391,11 @@
         letter-spacing: 0.09em;
         text-transform: uppercase;
         text-decoration: none;
-        border-radius: 999px;
         transition:
             background 0.22s ease,
             box-shadow 0.22s ease,
-            transform 0.18s ease;
+            transform 0.12s ease;
+        clip-path: polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 7px 100%, 0 calc(100% - 7px));
     }
 
     .cta-arrow {
@@ -1444,8 +1405,7 @@
 
     .cta-primary:hover {
         background: var(--mid);
-        box-shadow: 0 12px 22px -8px rgba(68,37,20,0.4);
-        transform: translateY(-2px);
+        box-shadow: 0 10px 24px rgba(68,37,20,0.14);
     }
 
     .cta-primary:hover .cta-arrow {
@@ -1453,7 +1413,7 @@
     }
 
     .cta-primary:active {
-        transform: translateY(0);
+        transform: translateY(1px);
     }
 
     .cta-ghost {
@@ -1487,7 +1447,7 @@
         display: flex;
         align-items: center;
         flex-wrap: wrap;
-        gap: 6px 14px;
+        gap: 6px 12px;
         max-width: 520px;
         color: var(--muted);
         font-size: 12.5px;
@@ -1497,17 +1457,17 @@
 
     .hero-proof span {
         position: relative;
-        padding-left: 13px;
+        padding-left: 15px;
     }
 
     .hero-proof span::before {
-        content: "\00b7";
+        content: "";
         position: absolute;
         left: 0;
-        top: -0.2em;
-        font-size: 16px;
-        line-height: 1;
-        color: var(--copper);
+        top: 0.62em;
+        width: 6px;
+        height: 1px;
+        background: rgba(198,95,60,0.58);
     }
 
     .hw-teasers {
@@ -1543,272 +1503,36 @@
         color: var(--muted);
     }
 
-    /* Honest facts doubling as quick jumps — only shown alongside the pin
-       (otherwise the tightened single column above is already complete). */
-    .hero-stats {
-        display: flex;
-        gap: 30px;
-        margin-top: 30px;
-        padding-top: 20px;
-        border-top: 1px solid var(--border);
-    }
-
-    .hero-stat {
-        display: block;
-        text-decoration: none;
-        cursor: pointer;
-        transition: transform 0.16s ease;
-    }
-
-    .hero-stat:hover,
-    .hero-stat:focus-visible {
-        transform: translateY(-2px);
-    }
-
-    .hero-stat:focus-visible {
-        outline: 2px solid rgba(198,95,60,0.56);
-        outline-offset: 3px;
-    }
-
-    .hero-stat b {
-        display: block;
-        font-family: 'Cormorant Garamond', serif;
-        font-weight: 300;
-        font-size: 26px;
-        line-height: 1;
-        color: var(--mid);
-        margin-bottom: 5px;
-        transition: color 0.16s ease;
-    }
-
-    .hero-stat:hover b,
-    .hero-stat:focus-visible b {
-        color: var(--copper);
-    }
-
-    /* Underline is always faintly present (this is a link), and the
-       arrow only becomes legible on interaction so the row stays quiet
-       until someone's pointer actually lands on it. */
-    .hero-stat span {
-        display: inline-flex;
-        align-items: center;
-        gap: 5px;
-        font-size: 10.5px;
-        font-weight: 600;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: var(--muted);
-        border-bottom: 1px solid rgba(198,95,60,0.28);
-        padding-bottom: 2px;
-        transition: border-color 0.16s ease, color 0.16s ease;
-    }
-
-    .hero-stat:hover span,
-    .hero-stat:focus-visible span {
-        color: var(--copper);
-        border-color: rgba(198,95,60,0.7);
-    }
-
-    .hero-stat-arrow {
-        flex-shrink: 0;
-        opacity: 0;
-        transform: translateX(-3px);
-        transition: opacity 0.18s ease, transform 0.18s ease;
-    }
-
-    .hero-stat:hover .hero-stat-arrow,
-    .hero-stat:focus-visible .hero-stat-arrow {
-        opacity: 1;
-        transform: translateX(0);
-    }
-
-    /* ── PINNED SPECIMEN: today's vitrine pick, tilted like a specimen
-       card pinned under the lead column. ────────────────────────────── */
-    /* Full-width row under both hero columns. */
-    .hero-pin-wrap {
-        grid-column: 1 / -1;
-        display: flex;
-        justify-content: stretch;
-        padding-top: clamp(26px, 3vw, 44px);
-    }
-
-    /* A mounted plate rather than a snapshot: the whole diorama is shown
-       uncropped on its own card stock, with the label set beside it. */
-    .hero-pin {
+    /* ── HERO VISUAL ─────────────────────────────── */
+    .hero-visual {
         position: relative;
-        display: grid;
-        grid-template-columns: minmax(220px, 30%) 1fr;
-        align-items: center;
-        gap: clamp(24px, 4vw, 56px);
-        width: 100%;
-        max-width: 100%;
-        background: var(--cream2, #fff9ee);
-        padding: clamp(18px, 2vw, 26px) clamp(24px, 4vw, 56px) clamp(18px, 2vw, 26px) clamp(18px, 2vw, 26px);
-        text-decoration: none;
-        box-shadow:
-            0 22px 40px -18px rgba(20,11,7,0.35),
-            0 4px 10px -4px rgba(20,11,7,0.2);
-        transform: rotate(-0.8deg);
-        transition: transform 0.3s ease, box-shadow 0.3s ease;
     }
 
-    .hero-pin:hover,
-    .hero-pin:focus-visible {
-        transform: rotate(-0.2deg) translateY(-4px);
-        box-shadow:
-            0 30px 54px -18px rgba(20,11,7,0.4),
-            0 6px 14px -6px rgba(20,11,7,0.24);
-    }
-
-    .hero-pin:focus-visible {
-        outline: 2px solid rgba(198,95,60,0.56);
-        outline-offset: 3px;
-    }
-
-    /* Thin engraved keyline around the photo — the piece sits *in* the plate. */
-    .hero-pin-plate {
-        display: block;
+    .img-frame {
         position: relative;
-        box-shadow: inset 0 0 0 1px rgba(20,11,7,0.28);
-    }
-
-    .hero-pin-img {
-        display: block;
         width: 100%;
-        aspect-ratio: 1 / 1;
-        object-fit: cover;
-        object-position: center;
-    }
-
-    .hero-pin-seal {
-        position: absolute;
-        top: -13px;
-        left: clamp(60px, 20%, 110px);
-        transform: rotate(-2deg);
-        width: 26px;
-        height: 26px;
-        border-radius: 50%;
-        background: radial-gradient(circle at 34% 30%, #d8734c, #96351c 72%);
-        box-shadow: 0 4px 10px rgba(20,11,7,0.4);
-    }
-
-    .hero-pin-cap {
-        display: grid;
-        gap: 8px;
-        align-content: center;
-        min-width: 0;
-    }
-
-    .hero-pin-k {
-        font-size: 10.5px;
-        font-weight: 700;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        color: var(--muted);
-    }
-
-    .hero-pin-v {
-        font-family: 'Cormorant Garamond', serif;
-        font-style: italic;
-        font-size: clamp(28px, 3.6vw, 48px);
-        line-height: 1.1;
-        color: var(--ink);
-    }
-
-    /* Leader rule runs out to the edge of the plate — a ledger line, not a dash. */
-    .hero-pin-rule {
-        display: block;
-        height: 1px;
-        width: 100%;
-        margin: 10px 0 6px;
-        background: linear-gradient(to right, rgba(111,59,36,0.5), rgba(111,59,36,0.08));
-    }
-
-    .hero-pin-m {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px 28px;
-        font-size: 12px;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        color: var(--muted);
-    }
-
-    @media (max-width: 560px) {
-        .hero-pin {
-            grid-template-columns: 1fr;
-            gap: 12px;
-            padding: 12px 12px 16px;
-            max-width: 300px;
-        }
-
-        .hero-pin-seal {
-            left: 50%;
-            transform: translateX(-50%) rotate(-2deg);
-        }
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-        .hero-pin,
-        .hero-pin:hover,
-        .hero-pin:focus-visible {
-            transition: none;
-        }
-    }
-
-    /* ── HERO VISUAL: cinematic letterboxed frame ─────────────────
-       Site palette throughout (no near-black cinema ground) — the
-       "cinema" comes from the letterbox proportions, the HUD strip,
-       and the slow drift on the photo, not from a foreign color world. */
-    .cine-frame {
-         position: relative;
-        border-radius: clamp(10px, 1.2vw, 16px);
+        height: clamp(340px, 46svh, 520px);
         overflow: hidden;
-        background: var(--ink);
-        box-shadow:
-            0 44px 84px -34px rgba(20,11,7,0.4),
-            0 16px 30px -18px rgba(20,11,7,0.3);
-    }
-
-    .cine-photo {
-        position: relative;
-        width: 100%;
-        /* Matches the current hero photo's own aspect ratio (1509×822). Now
-           that the frame lives in its own flexible-width column instead of
-           spanning the full page, it can just take the photo's real shape —
-           no more dark contain-bars filling in a mismatched box. */
-        aspect-ratio: 1509 / 822;
-        max-height: 460px;
-        overflow: hidden;
-    }
-
-    /* Lens layer: carries the dwell push-in, written every frame from rAF — no
-       transition, it would only add lag on top of motion that is already smooth. */
-    .hero-lens {
-        position: absolute;
-        inset: 0;
-        z-index: 1;
-        transform: scale(var(--lens-scale, 1));
-        transform-origin: center center;
+        transform-style: preserve-3d;
+        transition: filter 0.3s;
         will-change: transform;
     }
 
     .hero-img {
-        position: absolute;
-        inset: 0;
         width: 100%;
         height: 100%;
         object-fit: cover;
-        object-position: center center;
+        object-position: 58% 45%;
         display: block;
-        filter: saturate(0.94) contrast(1.12) brightness(1.02);
-        backface-visibility: hidden;
+        position: relative;
+        z-index: 1;
+        filter: saturate(0.78) contrast(1.06);
     }
 
     .img-vignette {
         position: absolute;
         inset: 0; z-index: 2;
-        background: radial-gradient(ellipse at center, transparent 46%, rgba(20,11,7,0.28) 100%);
+        background: radial-gradient(ellipse at center, transparent 32%, rgba(44,23,16,0.38) 100%);
         pointer-events: none;
     }
 
@@ -1823,78 +1547,50 @@
     .img-noise {
         position: absolute;
         inset: 0; z-index: 4;
-        opacity: 0.03;
+        opacity: 0.06;
         mix-blend-mode: overlay;
         pointer-events: none;
         background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
     }
 
-    /* HUD strip — the letterbox bar doubling as a status readout */
-    .cine-hud {
-        display: flex;
-        align-items: center;
-        gap: clamp(16px, 2.2vw, 26px);
-        padding: 13px clamp(18px, 2.3vw, 28px);
-        background: var(--ink);
-        color: #fff7ea;
-    }
-
-    .cine-rec {
-        display: inline-flex;
-        align-items: center;
-        gap: 9px;
-        font-size: 11px;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        color: #fff7ea;
-        flex-shrink: 0;
-    }
-
-    .cine-rec i {
-        width: 7px; height: 7px;
-        border-radius: 50%;
-        background: var(--copper);
-        display: block;
-        animation: cine-blink 1.8s ease-in-out infinite;
-    }
-
-    @keyframes cine-blink {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.28; }
-    }
-
-    .cine-scrub {
-        flex: 1;
-        height: 2px;
-        border-radius: 2px;
-        background: rgba(255,247,234,0.16);
-        position: relative;
-        overflow: hidden;
-    }
-
-    .cine-scrub i {
+    .fog {
         position: absolute;
-        inset: 0;
-        width: 40%;
-        background: var(--copper);
-        display: block;
-        animation: cine-scrub-move 7s ease-in-out infinite;
+        inset: 0; z-index: 5;
+        pointer-events: none;
     }
 
-    @keyframes cine-scrub-move {
-        0%   { transform: translateX(-120%); }
-        50%  { transform: translateX(60%); }
-        100% { transform: translateX(240%); }
+    .fog-a {
+        background: radial-gradient(ellipse 55% 40% at 22% 58%, rgba(155,135,120,0.07) 0%, transparent 70%);
+        animation: fog-a 30s ease-in-out infinite;
     }
 
-    .cine-count {
-        font-size: 11px;
-        letter-spacing: 0.1em;
-        text-transform: uppercase;
-        color: rgba(255,247,234,0.68);
-        white-space: nowrap;
-        flex-shrink: 0;
+    .fog-b {
+        background: radial-gradient(ellipse 48% 48% at 78% 30%, rgba(135,115,105,0.05) 0%, transparent 65%);
+        animation: fog-b 38s ease-in-out infinite;
     }
+
+    @keyframes fog-a {
+        0%,100% { transform: translate(0,0) scale(1); opacity: 0.6; }
+        50% { transform: translate(18px,-10px) scale(1.09); opacity: 1; }
+    }
+    @keyframes fog-b {
+        0%,100% { transform: translate(0,0) scale(1); opacity: 0.5; }
+        50% { transform: translate(-22px,16px) scale(1.11); opacity: 0.85; }
+    }
+
+    /* Frame deco corners */
+    .fc {
+        position: absolute;
+        width: 16px; height: 16px;
+        pointer-events: none;
+        z-index: 10;
+        opacity: 0.24;
+    }
+
+    .fc-tl { top: 30px; left: 0; border-top: 1px solid var(--copper); border-left: 1px solid var(--copper); }
+    .fc-tr { top: 30px; right: 0; border-top: 1px solid var(--copper); border-right: 1px solid var(--copper); }
+    .fc-bl { bottom: 0; left: 0; border-bottom: 1px solid var(--copper); border-left: 1px solid var(--copper); }
+    .fc-br { bottom: 0; right: 0; border-bottom: 1px solid var(--copper); border-right: 1px solid var(--copper); }
 
     /* Scroll cue */
     .scroll-cue {
@@ -2002,14 +1698,13 @@
         padding: clamp(14px, 2vw, 26px) clamp(20px, 4.5vw, 64px) clamp(42px, 5.5vw, 72px);
         max-width: 1520px;
         margin: 0 auto;
-        scroll-margin-top: calc(var(--site-header-height) + 12px);
     }
 
     .context-hd {
         display: grid;
         grid-template-columns: minmax(220px, 0.42fr) minmax(420px, 0.58fr);
         gap: clamp(18px, 2.4vw, 36px);
-        align-items: end;
+        align-items: center;
         margin-bottom: 12px;
         padding-bottom: 12px;
         border-bottom: 1px solid var(--border);
@@ -2023,26 +1718,7 @@
         position: sticky;
         top: 54px;
         z-index: 3;
-        /* No fill of its own — see ::before. A solid --cream here painted a strip
-           that was both the wrong colour (--cream is #FAF6EE; the page is #F8F1E7)
-           and the wrong width (it stopped at the section's padding), so it read as
-           a pale band with cut edges. The old tile grid hid it; a single column of
-           cards does not. */
-        background: transparent;
-    }
-
-    /* The bar the header pins against: the page's own colour, bled to the full
-       window width so it has no edges to see. */
-    .context-hd::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        bottom: 0;
-        left: 50%;
-        width: 100vw;
-        transform: translateX(-50%);
-        background: #f8f1e7;
-        z-index: -1;
+        background: var(--cream);
     }
 
     .context-title {
@@ -2056,17 +1732,21 @@
 
     .context-side {
         display: flex;
-        align-items: flex-end;
-        justify-content: space-between;
-        gap: 24px;
+        flex-direction: column;
+        gap: 8px;
         padding-bottom: 0;
     }
 
-    .context-side-main {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-        min-width: 0;
+    .context-side-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: end;
+        gap: 18px;
+    }
+
+    .context-side-row--guide {
+        padding-top: 8px;
+        border-top: 1px solid rgba(52,37,28,0.10);
     }
 
     .context-desc {
@@ -2079,19 +1759,14 @@
         max-width: 520px;
     }
 
-    .context-meta {
+    .context-desc--guide {
         display: flex;
         align-items: baseline;
         flex-wrap: wrap;
         gap: 8px;
-        font-family: 'Cormorant Garamond', serif;
-        font-size: 14px;
-        font-style: italic;
-        font-weight: 300;
-        color: var(--muted2);
     }
 
-    .context-meta-kicker {
+    .context-desc-kicker {
         font-family: 'Inter', sans-serif;
         font-size: 10px;
         font-weight: 600;
@@ -2101,56 +1776,51 @@
         color: var(--copper);
     }
 
-    .context-side-links {
-        display: flex;
-        flex-direction: column;
-        align-items: flex-end;
-        gap: 10px;
-        flex-shrink: 0;
-    }
-
     .work-content {
         display: grid;
         grid-template-columns: 1fr;
     }
 
-    /* The reel and its margin, as one spread. On a narrow screen there is no
-       margin to write in, so the reel simply takes the whole page — the index is
-       not rendered at all. */
-    .work-spread {
+    /* Pinterest masonry. Before hydration (and in the prerendered web build) the
+       grid renders as a plain CSS multi-column flow, so cards never pile at the
+       origin and the page keeps a real height — no overlap flash, no layout
+       shift. Once the masonryGrid action mounts it adds `.is-js-masonry` and takes
+       over: the container becomes a positioning context whose children it places
+       absolutely into the shortest column — flush, no gaps. Gaps live in custom
+       properties so the mobile overrides win regardless of selector specificity;
+       `display: grid` in JS mode exists only so those gaps resolve to px for the
+       action to read back via getComputedStyle. */
+    .work-grid {
+        --wg-col-gap: clamp(10px, 1.2vw, 16px);
+        --wg-row-gap: clamp(12px, 1.4vw, 18px);
+        column-count: 4;
+        column-gap: var(--wg-col-gap);
+    }
+
+    .work-grid > :global(*) {
+        width: 100%;
+        margin: 0 0 var(--wg-row-gap);
+        break-inside: avoid;
+    }
+
+    @media (max-width: 1100px) { .work-grid { column-count: 3; } }
+    @media (max-width: 760px)  { .work-grid { column-count: 2; } }
+
+    .work-grid.is-js-masonry {
+        position: relative;
         display: grid;
-        grid-template-columns: minmax(0, 1fr);
-        max-width: var(--reel-card-width, 64rem);
-        /* The old masonry got its breathing room under the section rule from the
-           tiles' own margins. A grid has none, so the spread states it. */
-        margin: clamp(2rem, 4vw, 3.5rem) auto 0;
+        column-count: initial;
+        column-gap: var(--wg-col-gap);
+        row-gap: var(--wg-row-gap);
     }
 
-    .work-spread > :global(.margin-index) { display: none; }
-
-    @media (min-width: 1280px) {
-        .work-spread {
-            grid-template-columns: 5.5rem minmax(0, 1fr);
-            gap: clamp(1.5rem, 3vw, 3rem);
-            /* Widened by exactly the margin column, so the reel itself stays
-               where it was on the page. */
-            max-width: calc(var(--reel-card-width, 64rem) + 8.5rem);
-        }
-
-        .work-spread > :global(.margin-index) { display: block; }
-    }
-
-    /* A vertical reel of panes, one per row. Their own look lives in
-       ReelWorkCard; this only spaces them. */
-    .work-reel {
-        display: grid;
-        gap: var(--reel-card-gap, 2.25rem);
-        min-width: 0;
-    }
-
-    /* The observed unit, and the anchor the margin index scrolls back to. */
-    .reel-slot {
-        scroll-margin-top: 96px;
+    .work-grid.is-js-masonry > :global(*) {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: auto;
+        margin: 0;
+        break-inside: auto;
     }
 
     .work-empty {
@@ -2185,122 +1855,55 @@
 
     .all-link:hover { color: var(--copper); gap: 16px; }
 
-    /* ── ARCHIVE: THE REEL'S CLOSING PLATE ───────── */
-    .archive-end {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr);
-        gap: clamp(20px, 2.6vw, 30px);
-        align-items: center;
-        padding: clamp(26px, 3.4vw, 40px) clamp(24px, 3.2vw, 40px);
-        border: 1px solid var(--border2);
-        /* Double rule — the drawer's own edge, as on the modals. */
-        box-shadow: inset 0 0 0 4px var(--cream), inset 0 0 0 5px var(--border);
-        border-radius: 3px;
-        background: var(--cream2);
-        text-decoration: none;
-        color: var(--ink);
-        transition: border-color 0.32s ease, background 0.32s ease;
-    }
-    .archive-end:hover { border-color: var(--copper); background: var(--cream); }
-
-    @media (min-width: 760px) {
-        .archive-end {
-            grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
-            grid-template-areas: 'text drawer' 'cta drawer';
-            gap: clamp(18px, 2.4vw, 26px) clamp(28px, 4vw, 56px);
-            align-content: center;
-        }
-        .archive-end__text   { grid-area: text; align-self: end; }
-        .archive-end__cta    { grid-area: cta; align-self: start; }
-        .archive-end__drawer { grid-area: drawer; }
-    }
-
-    .archive-end__count {
-        display: block;
-        font-family: 'Cormorant Garamond', serif;
-        font-size: clamp(52px, 6.5vw, 82px);
-        font-weight: 400;
-        line-height: 0.9;
-        color: var(--ink);
-    }
-
-    .archive-end__label {
-        display: block;
-        margin-top: 10px;
-        font-size: 11px;
-        font-weight: 600;
-        letter-spacing: 0.16em;
-        text-transform: uppercase;
-        color: var(--muted);
-    }
-
-    /* The drawer: plates of the next works, each sliding a little further out of
-       the box, the last one cut by the frame — there is more behind it. */
-    .archive-end__drawer {
+    /* ── ARCHIVE LEDGER LINE ────────────────────── */
+    .work-more-ledger {
         display: flex;
-        min-width: 0;
-        overflow: hidden;
-    }
-
-    .archive-end__plate {
-        position: relative;
-        flex: 0 0 auto;
-        width: clamp(72px, 9vw, 108px);
-        aspect-ratio: 3 / 4;
-        border: 1px solid var(--border2);
-        border-radius: 3px;
-        overflow: hidden;
-        background: var(--cream);
-        /* Overlapped like sheets pulled from a drawer; the later ones lift. */
-        margin-left: calc(var(--peek-i) * -0.5px);
-        transform: translateY(calc(var(--peek-i) * -3px)) rotate(calc(var(--peek-i) * 0.6deg));
-        transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1);
-    }
-    .archive-end__plate + .archive-end__plate { margin-left: clamp(-22px, -1.4vw, -10px); }
-
-    .archive-end:hover .archive-end__plate {
-        transform: translateY(calc(var(--peek-i) * -5px)) rotate(calc(var(--peek-i) * 0.9deg));
-    }
-
-    .archive-end__plate :global(.archive-end__plate-img),
-    .archive-end__plate :global(img) {
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-        object-position: center top;
-        display: block;
-        /* The archive is remembered, not lit — colour returns on approach. */
-        filter: grayscale(0.35) contrast(0.96);
-        transition: filter 0.4s ease;
-    }
-    .archive-end:hover .archive-end__plate :global(img) { filter: none; }
-
-    .archive-end__cta {
-        display: inline-flex;
         align-items: center;
-        justify-self: start;
-        gap: 10px;
-        padding: 12px 22px;
-        border: 1px solid var(--copper);
-        border-radius: 3px;
-        font-size: 11px;
-        font-weight: 600;
-        letter-spacing: 0.16em;
-        text-transform: uppercase;
-        color: var(--copper);
-        transition: background 0.28s ease, color 0.28s ease, gap 0.28s ease;
-    }
-    .archive-end:hover .archive-end__cta {
-        background: var(--copper);
-        color: var(--cream);
         gap: 14px;
+        margin-top: 24px;
+        text-decoration: none;
+        color: var(--mid);
+        transition: color 0.32s ease;
+    }
+    .work-more-ledger:hover { color: var(--copper); }
+
+    .work-more-ledger__rule {
+        flex: 1;
+        height: 1px;
+        background: currentColor;
+        opacity: 0.15;
+        transition: opacity 0.32s ease;
+    }
+    .work-more-ledger:hover .work-more-ledger__rule { opacity: 0.30; }
+
+    .work-more-ledger__label {
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        white-space: nowrap;
+        flex-shrink: 0;
     }
 
-    @media (prefers-reduced-motion: reduce) {
-        .archive-end__plate,
-        .archive-end__cta,
-        .archive-end__plate :global(img) { transition: none; }
-        .archive-end:hover .archive-end__plate { transform: none; }
+    .work-more-ledger__count {
+        font-family: 'Cormorant Garamond', serif;
+        font-size: 18px;
+        font-weight: 400;
+        letter-spacing: 0;
+        line-height: 1;
+    }
+
+    .work-more-ledger__arrow {
+        flex-shrink: 0;
+        opacity: 0.55;
+        transition: transform 0.28s ease, opacity 0.28s ease;
+    }
+    .work-more-ledger:hover .work-more-ledger__arrow {
+        transform: translateX(4px);
+        opacity: 1;
     }
 
     /* ── REQUEST PATH ───────────────────────────── */
@@ -2529,22 +2132,22 @@
 
     /* ── RESPONSIVE ──────────────────────────────── */
     @media (max-width: 1080px) {
-        .hero-cine {
+        .hero {
             grid-template-columns: 1fr;
+            min-height: auto;
             padding-top: calc(var(--site-header-height) + 24px);
             gap: 22px;
         }
 
-        /* Stacked, the photo leads: it is the thing worth seeing first, and the
-           copy reads as its caption rather than as a wall to scroll past. */
-        .cine-frame { order: -1; }
+        .hero-visual { order: 2; }
+        .hero-text { order: 1; max-width: 580px; }
 
-        /* Stacked, the text has the whole page width to itself — the 580px cap
-           belonged to the two-column layout and here it just walls off the
-           right half of the screen. */
-        .hero-text { max-width: none; }
+        .img-frame { height: min(40svh, 420px); }
 
-        .cine-photo { max-height: 420px; }
+        .context-hd,
+        .context-side-row {
+            grid-template-columns: 1fr;
+        }
 
         .request-path {
             grid-template-columns: 1fr;
@@ -2565,83 +2168,12 @@
         }
     }
 
-    /* Tablet band: the hero has stacked, so the copy suddenly has ~1000px of
-       width and nothing to do with it. Split it in two — the pitch (lead + CTAs)
-       reads left, the evidence (trust line, process clips) sits right, and the
-       ledger figures run the full width underneath as a footer rule. */
-    @media (min-width: 781px) and (max-width: 1080px) {
-        .hero-body {
-            max-width: none;
-        }
-
-        .hero-main {
-            display: grid;
-            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-            column-gap: clamp(32px, 5vw, 64px);
-            align-items: start;
-        }
-
-        .hero-lead {
-            grid-column: 1;
-            grid-row: 1;
-            max-width: none;
-        }
-
-        .hero-ctas {
-            grid-column: 1;
-            grid-row: 2;
-            align-self: end;
-            margin-bottom: 0;
-        }
-
-        .hero-proof {
-            grid-column: 2;
-            grid-row: 1;
-            margin-top: 4px;
-        }
-
-        .hw-teasers {
-            grid-column: 2;
-            grid-row: 2;
-            margin-top: 0;
-        }
-
-        .release-note {
-            grid-column: 2;
-            grid-row: 3;
-        }
-
-        .hero-stats {
-            grid-column: 1 / -1;
-            justify-content: flex-start;
-            gap: clamp(40px, 8vw, 96px);
-        }
-    }
-
-    /* Below the tablet band the side-by-side context header genuinely runs out
-       of room and has to stack. */
-    @media (max-width: 780px) {
-        .context-hd {
-            grid-template-columns: 1fr;
-        }
-
-        .context-side {
-            flex-direction: column;
-            align-items: flex-start;
-            gap: 14px;
-        }
-
-        .context-side-links {
-            align-items: flex-start;
-        }
-    }
-
     @media (max-width: 680px) {
         :root {
             --site-header-height: 58px;
         }
 
-        .hero-cine {
+        .hero {
             padding: calc(var(--site-header-height) + 18px) 16px 22px;
             gap: 18px;
         }
@@ -2672,10 +2204,7 @@
             font-size: 16px;
         }
 
-        .cine-photo { min-height: 230px; max-height: 320px; }
-
-        .cine-hud { gap: 12px; }
-        .cine-count { display: none; }
+        .img-frame { height: 30svh; min-height: 230px; }
 
         .scroll-cue { display: none; }
 
@@ -2763,6 +2292,12 @@
     @media (pointer: coarse) {
         /* Suppress compositing-heavy animations on touch devices */
         .grain { animation: none; }
+        .fog-a, .fog-b { animation: none; }
+        /* No 3D tilt on mobile — don't pay for the compositing layer */
+        .img-frame {
+            transform-style: flat;
+            will-change: auto;
+        }
     }
 
     @media (max-width: 460px) {

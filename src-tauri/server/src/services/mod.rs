@@ -423,6 +423,12 @@ impl AppService {
             .unwrap_or_else(|| self.resolve_url(&img.file_path, "images", &i_id_str))
     }
 
+    /// The preview-sized (1800px) URL for the same image — what the detail page
+    /// shows. `file_path` is the preview variant; the thumb lives in thumb_path.
+    fn face_image_large_url(&self, img: &Image) -> String {
+        self.resolve_url(&img.file_path, "images", &img.id.to_string())
+    }
+
     fn to_list_item(
         &self,
         f: Figurine,
@@ -436,6 +442,8 @@ impl AppService {
             status: f.status,
             face_image_url: face.map(|i| self.face_image_url(i)),
             detail_image_url: detail.map(|i| self.face_image_url(i)),
+            face_image_large_url: face.map(|i| self.face_image_large_url(i)),
+            detail_image_large_url: detail.map(|i| self.face_image_large_url(i)),
             year: f.year,
             sort_order: f.sort_order,
             series: None,
@@ -3674,6 +3682,40 @@ impl AppService {
             return Err(AppError::BadRequest("Home layout presets payload is too large".into()));
         }
         self.repo.upsert_setting("home_layout_presets", &json).await
+    }
+
+    // === REEL THEME ===
+
+    pub async fn get_reel_theme(&self) -> Result<crate::models::ReelTheme> {
+        parse_json_setting("reel_theme", self.repo.get_setting("reel_theme").await?)
+    }
+
+    pub async fn save_reel_theme(&self, config: crate::models::ReelTheme) -> Result<()> {
+        let json = serde_json::to_string(&config).map_err(|e| AppError::Internal(e.to_string()))?;
+        if json.len() > 64 * 1024 {
+            return Err(AppError::BadRequest("Reel theme is too large".into()));
+        }
+        self.repo.upsert_setting("reel_theme", &json).await
+    }
+
+    pub async fn get_reel_theme_presets(&self) -> Result<Vec<crate::models::ReelThemePreset>> {
+        match self.repo.get_setting("reel_theme_presets").await? {
+            Some(j) => serde_json::from_str(&j)
+                .map_err(|e| AppError::Internal(format!("Corrupt reel theme presets: {e}"))),
+            None => Ok(vec![]),
+        }
+    }
+
+    pub async fn save_reel_theme_presets(
+        &self,
+        presets: Vec<crate::models::ReelThemePreset>,
+    ) -> Result<()> {
+        let json =
+            serde_json::to_string(&presets).map_err(|e| AppError::Internal(e.to_string()))?;
+        if json.len() > 200 * 1024 {
+            return Err(AppError::BadRequest("Reel theme presets payload is too large".into()));
+        }
+        self.repo.upsert_setting("reel_theme_presets", &json).await
     }
 
     // === DISPLAY CONFIG PRESETS ===

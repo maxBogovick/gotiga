@@ -1956,6 +1956,34 @@ pub async fn save_home_layout(
     Ok(Json(body))
 }
 
+// === REEL THEME ===
+
+pub async fn get_reel_theme(State(service): State<AppService>) -> Result<Json<ReelTheme>> {
+    Ok(Json(service.get_reel_theme().await?))
+}
+
+pub async fn save_reel_theme(
+    State(service): State<AppService>,
+    Json(body): Json<ReelTheme>,
+) -> Result<Json<ReelTheme>> {
+    service.save_reel_theme(body.clone()).await?;
+    Ok(Json(body))
+}
+
+pub async fn admin_get_reel_theme_presets(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<ReelThemePreset>>> {
+    Ok(Json(service.get_reel_theme_presets().await?))
+}
+
+pub async fn admin_save_reel_theme_presets(
+    State(service): State<AppService>,
+    Json(body): Json<Vec<ReelThemePreset>>,
+) -> Result<Json<Vec<ReelThemePreset>>> {
+    service.save_reel_theme_presets(body.clone()).await?;
+    Ok(Json(body))
+}
+
 pub async fn admin_get_home_layout_presets(
     State(service): State<AppService>,
 ) -> Result<Json<Vec<HomeLayoutPreset>>> {

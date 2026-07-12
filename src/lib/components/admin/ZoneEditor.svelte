@@ -8,7 +8,7 @@
     let zones = $state<CabinetZone[]>([]);
     let selectedZone = $state<CabinetZone | null>(null);
     let message = $state('');
-    let bgImage = $state('/images/cabinet-room.jpg');
+    let bgImage = $state('/images/cabinet-bg.jpeg');
 
     let zoneTypes = $derived([
         { value: 'showcase', label: $t('adminZoneTypeShowcase'), defaultRoute: '/figurines' },

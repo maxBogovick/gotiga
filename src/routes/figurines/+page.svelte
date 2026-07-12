@@ -230,11 +230,24 @@
   // "rise" card-fx — a card climbs into place as it crosses ~65% up into view.
   function revealOnEnter(node: HTMLElement) {
     if (typeof IntersectionObserver === 'undefined') { node.classList.add('fx-revealed'); return; }
+
+    const reveal = () => node.classList.add('fx-revealed');
+
+    // A plate never hides again once it has climbed into place: the reveal is a
+    // one-way door. Anything already inside the viewport is shown right away —
+    // otherwise a first callback that lands before the images give the row its
+    // height would leave the whole grid at opacity 0 until something nudges it.
     const io = new IntersectionObserver(([entry]) => {
-      node.classList.toggle('fx-revealed', entry.isIntersecting);
-    }, { rootMargin: '0px 0px -35% 0px', threshold: 0 });
+      if (entry.isIntersecting) { reveal(); io.disconnect(); }
+    }, { rootMargin: '0px 0px -12% 0px', threshold: 0 });
     io.observe(node);
-    return { destroy() { io.disconnect(); } };
+
+    // Safety net: nothing above the fold may stay invisible.
+    const t = setTimeout(() => {
+      if (node.getBoundingClientRect().top < window.innerHeight) { reveal(); io.disconnect(); }
+    }, 400);
+
+    return { destroy() { clearTimeout(t); io.disconnect(); } };
   }
 
   // ── 3D tilt ────────────────────────────────────────────────────
@@ -344,11 +357,11 @@
   <meta property="og:type" content="website" />
   <meta property="og:title" content="Archive — Gothic Miniatures Collection — {$brandName}" />
   <meta property="og:description" content={$t('archiveMetaDescription')} />
-  <meta property="og:image" content="{SITE_URL}/images/cabinet-room.jpg" />
+  <meta property="og:image" content="{SITE_URL}/images/cabinet-bg.jpeg" />
   <meta property="og:url" content="{SITE_URL}/figurines" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Archive — Gothic Miniatures Collection — {$brandName}" />
-  <meta name="twitter:image" content="{SITE_URL}/images/cabinet-room.jpg" />
+  <meta name="twitter:image" content="{SITE_URL}/images/cabinet-bg.jpeg" />
   {@html `<script type="application/ld+json">${JSON.stringify({ '@context': 'https://schema.org', '@type': 'BreadcrumbList', itemListElement: [ { '@type': 'ListItem', position: 1, name: $brandName, item: SITE_URL }, { '@type': 'ListItem', position: 2, name: 'Archive', item: `${SITE_URL}/figurines` } ] })}<\/script>`}
   <!-- Fonts loaded once globally in app.html -->
 </svelte:head>

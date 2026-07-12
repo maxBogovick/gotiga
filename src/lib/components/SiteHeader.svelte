@@ -49,6 +49,25 @@
   let panelRef = $state<HTMLElement | null>(null);
   let mobileNavOpen = $state(false);
   let isScrolled = $state(false);
+  // Reserved for pages that open on a full-bleed dark plate. The home page is
+  // parchment again, so nothing turns this on today.
+  let isOverPlate = $state(false);
+
+  // On the home page, the maker avatar stays out of sight until the visitor
+  // has scrolled past the hero photograph — it shouldn't compete with that
+  // first image. Everywhere else it's just always there. Seeded from the
+  // pathname (not just `true`) so a home-page load doesn't flash the avatar
+  // in before the first scroll check hides it again.
+  let avatarVisible = $state(pathname !== '/');
+
+  function updateAvatarVisibility() {
+    if (pathname !== '/') {
+      avatarVisible = true;
+      return;
+    }
+    const heroFrame = document.querySelector('.cine-frame');
+    avatarVisible = heroFrame ? heroFrame.getBoundingClientRect().bottom <= 0 : true;
+  }
 
   function isActive(href: string) {
     return pathname === href || pathname.startsWith(`${href}/`);
@@ -61,6 +80,7 @@
 
   function handleScroll() {
     isScrolled = window.scrollY > 48;
+    updateAvatarVisibility();
   }
 
   // Keep --site-header-h in sync so sticky sub-headers on detail/archive pages
@@ -149,10 +169,13 @@
   $effect(() => {
     void pathname;
     mobileNavOpen = false;
+    // Wait a tick so the new page's markup (and its .cine-frame, if any)
+    // has mounted before we measure it.
+    requestAnimationFrame(updateAvatarVisibility);
   });
 </script>
 
-<header class="site-header" class:is-scrolled={isScrolled}>
+<header class="site-header" class:is-scrolled={isScrolled} class:over-plate={isOverPlate}>
   <HeaderBirdWalk />
   <div class="header-inner">
 
@@ -162,9 +185,12 @@
            a real face, not a muted icon. -->
       <a
         class="header-avatar"
+        class:is-hidden={!avatarVisible}
         href="/#in-the-workshop"
         onclick={jumpToWorkshopStory}
         aria-label={headerAuthorName}
+        aria-hidden={!avatarVisible}
+        tabindex={avatarVisible ? 0 : -1}
         style="
           --avatar-radius: {avatarRadiusCss};
           --avatar-border-w: {avatarBorderWidthCss};
@@ -451,6 +477,90 @@
     background: rgba(248, 241, 231, 0.99);
   }
 
+  /* ── Floating over the home room photograph ──────────────────
+     No bar, no rule: just type on the picture. The whole palette inverts —
+     parchment where ink used to be — and the header leans on a soft gradient
+     rather than a fill, so the photograph runs right up under it.
+  ──────────────────────────────────────────────────────────── */
+  .site-header.over-plate {
+    /* The reel theme decides these: on a pale backdrop (the daylight themes) the
+       header's ink flips to dark and its scrim to light, or the nav vanishes. */
+    --plate-ink: var(--reel-header-ink, 250 246 238);
+    --plate-scrim: var(--reel-header-scrim, 20 11 7);
+
+    --ink: rgb(var(--plate-ink));
+    --mid: rgb(var(--plate-ink) / 0.72);
+    --copper: rgb(var(--plate-ink));
+    --border: transparent;
+    background: linear-gradient(
+      180deg,
+      rgb(var(--plate-scrim) / 0.72) 0%,
+      rgb(var(--plate-scrim) / 0.38) 55%,
+      transparent 100%
+    );
+    border-bottom-color: transparent;
+    color: rgb(var(--plate-ink));
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  /* The nav links, the subtitle and the avatar tip pin their colour straight to
+     the ink tokens rather than to --ink, so swapping --ink above never reached
+     them — over a dark photograph they stayed brown-on-brown. State them here. */
+  .site-header.over-plate .nav-link,
+  .site-header.over-plate .brand-name,
+  .site-header.over-plate .brand-sub {
+    color: rgb(var(--plate-ink) / 0.78);
+    text-shadow: 0 1px 14px rgb(var(--plate-scrim) / 0.75);
+  }
+
+  .site-header.over-plate .nav-link:hover,
+  .site-header.over-plate .nav-link.is-active,
+  .site-header.over-plate .brand-name {
+    color: rgb(var(--plate-ink));
+  }
+
+  .site-header.over-plate .brand-sub {
+    color: rgb(var(--plate-ink) / 0.55);
+  }
+
+  /* 0.42 opacity is a discreet grey on parchment; on a photograph it is simply
+     gone. The utilities need real presence here — still quiet, but legible. */
+  .site-header.over-plate .ghost-left-utils,
+  .site-header.over-plate .ghost-right {
+    opacity: 0.72;
+  }
+
+  .site-header.over-plate .ghost-left-utils:hover,
+  .site-header.over-plate .ghost-left-utils:focus-within,
+  .site-header.over-plate .ghost-right:hover,
+  .site-header.over-plate .ghost-right:focus-within {
+    opacity: 1;
+  }
+
+  /* The lang and font switchers are separate components that hard-code their ink
+     as Tailwind literals (text-[#34251c] …), so no variable of ours can reach
+     them. Over the photograph they have to be repainted from the outside. */
+  .site-header.over-plate .ghost-left-utils :global(button),
+  .site-header.over-plate .ghost-left-utils :global(span),
+  .site-header.over-plate .ghost-left-utils :global(a) {
+    color: rgb(var(--plate-ink) / 0.9);
+    text-shadow: 0 1px 10px rgb(var(--plate-scrim) / 0.8);
+  }
+
+  /* Same for the bookings/account icons on the right — they draw with
+     currentColor, so one colour here repaints the SVGs too. */
+  .site-header.over-plate .ghost-right :global(button),
+  .site-header.over-plate .ghost-right :global(a) {
+    color: rgb(var(--plate-ink) / 0.9);
+  }
+
+  /* The avatar is the one thing already bright enough; it only needs separating
+     from whatever happens to be behind it. */
+  .site-header.over-plate .header-avatar {
+    box-shadow: 0 4px 20px rgba(20, 11, 7, 0.55);
+  }
+
   /* ── 5-column proscenium grid ────────────────────────────────
      ghost-l | nav-l | brand | nav-r | ghost-r
      The two outer minmax(0,1fr) columns absorb remaining space
@@ -530,13 +640,29 @@
     border-radius: var(--avatar-radius);
     background: var(--avatar-bg);
     text-decoration: none;
-    transition: width 0.25s ease, height 0.25s ease;
+    opacity: 1;
+    transform: scale(1);
+    transition: width 0.25s ease, height 0.25s ease, opacity 0.35s var(--ease), transform 0.35s var(--ease);
   }
 
   /* Shrink with the header's own 78px→54px scroll transition. */
   .site-header.is-scrolled .header-avatar {
     width: 44px;
     height: 44px;
+  }
+
+  /* Held out of sight on the home page until the hero photograph has
+     scrolled past — see updateAvatarVisibility() in the script. */
+  .header-avatar.is-hidden {
+    opacity: 0;
+    transform: scale(0.7);
+    pointer-events: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .header-avatar {
+      transition: width 0.25s ease, height 0.25s ease;
+    }
   }
 
   .header-avatar-img {

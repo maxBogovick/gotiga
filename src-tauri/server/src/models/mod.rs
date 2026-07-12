@@ -270,11 +270,19 @@ pub struct FigurineListItemDto {
     pub id: String,
     pub name: String,
     pub status: FigurineStatus,
+    /// 420px thumbnail — sized for the archive's dense grid of cards.
     pub face_image_url: Option<String>,
     /// Second-angle image for the home gallery's hover reveal; null when the
     /// piece has no dedicated "detail" image.
     #[serde(default)]
     pub detail_image_url: Option<String>,
+    /// The same two images at preview size (1800px). Surfaces where a list item
+    /// is rendered LARGE — the home hero and the home reel plates — which would
+    /// otherwise upscale the 420px thumbnail two to three times over.
+    #[serde(default)]
+    pub face_image_large_url: Option<String>,
+    #[serde(default)]
+    pub detail_image_large_url: Option<String>,
     pub year: Option<i32>,
     pub sort_order: i32,
     pub series: Option<String>,
@@ -2359,6 +2367,202 @@ pub struct HomeLayoutPreset {
     pub id: String,
     pub name: String,
     /// Opaque JSON blob — the frontend's HomeLayoutConfig object.
+    pub config: serde_json::Value,
+    pub saved_at: String,
+}
+
+// ============================================================
+// REEL THEME — appearance of the home reel (room photo + glass panes)
+// ============================================================
+
+/// One stop of an admin-built gradient overlay.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GradientStop {
+    /// Hex colour, e.g. "#140b07".
+    pub color: String,
+    /// 0..100, position along the gradient.
+    pub position: f32,
+    /// 0..1.
+    pub opacity: f32,
+}
+
+/// One pane's look — glass, type, buttons. The hero pane and the work panes
+/// carry the same fields and are set independently.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CardStyle {
+    /// 'solid' | 'gradient' — what the pane is filled with. Absent on themes
+    /// saved before the pane could carry a gradient of its own; the frontend
+    /// reads that as 'solid', which is exactly how those themes used to render.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill_kind: Option<String>,
+    /// 'linear' | 'radial' | 'conic'.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill_angle: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill_stops: Option<Vec<GradientStop>>,
+    /// The pane's hairline border, its alpha, and what it becomes under the pointer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edge_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edge_opacity: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edge_hover_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glass_tint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glass_opacity: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glass_blur: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glass_saturation: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glass_radius: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glass_sheen: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glass_shadow: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadow_color: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_size: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_size: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta_size: Option<f32>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub btn_fill: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub btn_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub btn_radius: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub btn_size: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub btn_border: Option<String>,
+}
+
+/// Everything the admin can tune about the home reel's look. Every field is
+/// optional and the FRONTEND owns the defaults (see `reel-theme.svelte.ts`) —
+/// the server is storage, not a second source of truth for the design.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReelTheme {
+    /// The opening pane, styled on its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hero: Option<CardStyle>,
+    /// Every work pane, and the closing archive pane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work: Option<CardStyle>,
+    // ── Backdrop ─────────────────────────────────────────────
+    /// 'image' | 'color' | 'gradient' — what sits behind the panes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backdrop_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_image: Option<String>,
+    /// Separate image for narrow screens; a landscape room crops to mush on a phone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_image_mobile: Option<String>,
+    /// 'cover' | 'contain'.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_fit: Option<String>,
+    /// CSS object-position, e.g. "center top" or "50% 20%".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_position: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_blur: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_brightness: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_saturation: Option<f32>,
+    /// Flat colour used when backdrop_kind is 'color' (and as the letterbox fill).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backdrop_color: Option<String>,
+    /// Colour the panes' shadows are cast in. Its own field on purpose: deriving
+    /// it from backdrop_color meant that picking a background colour silently
+    /// recoloured every shadow on the page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadow_color: Option<String>,
+
+    // ── Overlay (the dimming veil) ───────────────────────────
+    /// 'none' | 'solid' | 'gradient'.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overlay_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overlay_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overlay_opacity: Option<f32>,
+    /// 'linear' | 'radial' | 'conic'.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gradient_type: Option<String>,
+    /// Degrees, for linear/conic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gradient_angle: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gradient_stops: Option<Vec<GradientStop>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vignette: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grain: Option<f32>,
+
+    // ── Glass panes ──────────────────────────────────────────
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glass_tint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glass_opacity: Option<f32>,
+    /// backdrop-filter blur, in px. 0 disables the frosting entirely.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glass_blur: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glass_saturation: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glass_radius: Option<f32>,
+    /// Strength of the lit edge + specular streak, 0..1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glass_sheen: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glass_shadow: Option<f32>,
+    /// Drops backdrop-filter everywhere — the escape hatch for weak machines,
+    /// where frosting two dozen panes is what makes the reel stutter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub performance_mode: Option<bool>,
+
+    // ── Type & buttons ───────────────────────────────────────
+    /// 'light' | 'dark' — ink on the panes. A light backdrop with light type is
+    /// the one setting here that can render the page unreadable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_tone: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub button_fill: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub button_text: Option<String>,
+
+    // ── Reel density ─────────────────────────────────────────
+    /// Vertical gap between panes, in rem.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card_gap: Option<f32>,
+    /// Max width of a work pane, in rem.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card_width: Option<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReelThemePreset {
+    pub id: String,
+    pub name: String,
+    /// Opaque JSON blob — the frontend's ReelTheme object.
     pub config: serde_json::Value,
     pub saved_at: String,
 }

@@ -11,26 +11,23 @@
    * the passing of time ("the collection rests, but the workshop's dust never
    * settles"), so the museum always feels alive rather than frozen.
    *
-   * Shows nothing on a first visit (no baseline to compare against).
+   * Shows nothing on a first visit (no baseline to compare against). Today's
+   * vitrine pick used to ride along here as a compact mark, but now gets its
+   * own pinned specimen card in the hero (visible to every visitor, not just
+   * returning ones) — see `pinnedSpecimenFig` in `routes/+page.svelte`.
    */
   import { t } from '$lib/i18n';
   import type { FigurineListItem } from '$lib/types/api';
   import { diffVisit, commitVisit, type RoomRef, type VisitChanges } from '$lib/visit-ledger';
-  import AppImage from '$lib/components/AppImage.svelte';
 
   let {
     figurines = [],
     rooms = [],
     inProgressCount = 0,
-    vitrineFig = null,
   }: {
     figurines?: FigurineListItem[];
     rooms?: RoomRef[];
     inProgressCount?: number;
-    /** Today's single curated pick — folded into this ledger as one more
-     *  quiet fact ("today's exhibit"), not its own monument. A daily habit
-     *  needs a light, fast glance, not a full ceremony every 24 hours. */
-    vitrineFig?: FigurineListItem | null;
   } = $props();
 
   let changes = $state<VisitChanges | null>(null);
@@ -46,10 +43,7 @@
   });
 
   let show = $derived(changes != null && !changes.firstVisit);
-  // Today's pick shows regardless of the diff engine's own baseline state —
-  // it's an independent daily fact, not conditioned on there being a prior
-  // visit snapshot to compare against.
-  let showLedger = $derived(Boolean(vitrineFig) || show);
+  let showLedger = $derived(show);
   let homed = $derived(changes?.homed.slice(0, 2) ?? []);
   let newRooms = $derived(changes?.newRooms.slice(0, 2) ?? []);
   let arrivals = $derived(changes?.arrivals.length ?? 0);
@@ -68,31 +62,13 @@
 
     <p class="ledger-eyebrow">
       <span class="ledger-fleuron" aria-hidden="true">❧</span>
-      {show ? $t('homeLedgerEyebrow') : $t('vitrineEyebrow')}
-      {#if show && changes?.daysSince && changes.daysSince > 0}
+      {$t('homeLedgerEyebrow')}
+      {#if changes?.daysSince && changes.daysSince > 0}
         <span class="ledger-days">{changes.daysSince} {$t('homeLedgerDays')}</span>
       {/if}
     </p>
 
     <div class="ledger-marks">
-      <!-- Today's single curated pick — a fast, light glance (thumbnail +
-           name), not the full theatrical vitrine it used to be. A daily
-           habit has to be cheap to check, every single day. -->
-      {#if vitrineFig}
-        <a
-          class="mark mark-link mark-vitrine"
-          href={`/figurines/${vitrineFig.id}`}
-          aria-label="{$t('vitrineEyebrow')}: {vitrineFig.name}"
-        >
-          <span class="mark-vitrine-thumb">
-            <AppImage src={vitrineFig.faceImageUrl} thumbUrl={vitrineFig.thumbUrl} alt="" loading="eager" />
-          </span>
-          <span class="mark-vitrine-text">
-            <span class="mark-label">{$t('vitrineEyebrow')}</span>
-            <span class="mark-named">«{vitrineFig.name}»</span>
-          </span>
-        </a>
-      {/if}
 
       {#if show && changes?.hasAny}
         {#if arrivals > 0}
@@ -271,39 +247,6 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--color-ember-deep);
-  }
-
-  /* Today's exhibit — the one mark that carries a thumbnail, so it still
-     reads as a small, precious glimpse rather than plain text, without the
-     full glass-case ceremony a daily-changing pick shouldn't have to pay. */
-  .mark-vitrine {
-    padding: 7px 16px 7px 7px;
-    gap: 12px;
-    border-left-color: color-mix(in srgb, var(--color-ember) 80%, transparent);
-  }
-
-  .mark-vitrine-thumb {
-    position: relative;
-    width: 42px;
-    height: 42px;
-    flex-shrink: 0;
-    border-radius: 3px;
-    overflow: hidden;
-    box-shadow:
-      0 0 0 1px color-mix(in srgb, var(--color-ember) 34%, transparent),
-      0 2px 8px rgba(28, 16, 10, 0.22);
-  }
-
-  .mark-vitrine-thumb :global(img) {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    object-position: center 20%;
-  }
-
-  .mark-vitrine-text {
-    display: grid;
-    gap: 3px;
   }
 
   /* Quiet fallback — nothing changed, but time still passed. */

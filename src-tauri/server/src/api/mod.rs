@@ -326,6 +326,24 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                     auth_middleware,
                 )),
             )
+            // === REEL THEME ===
+            .route("/settings/reel-theme", get(handlers::get_reel_theme))
+            .route(
+                "/admin/settings/reel-theme",
+                put(handlers::save_reel_theme).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/admin/settings/reel-theme-presets",
+                get(handlers::admin_get_reel_theme_presets)
+                    .put(handlers::admin_save_reel_theme_presets)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
             // === HOME LAYOUT CONFIG ===
             .route("/settings/home-layout", get(handlers::get_home_layout))
             .route(

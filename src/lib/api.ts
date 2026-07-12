@@ -61,6 +61,8 @@ import type {
     CopyOverrides,
     HomeLayoutConfig,
     HomeLayoutPreset,
+    ReelTheme,
+    ReelThemePreset,
     DisplayConfigPreset,
     CommissionRequest,
     CommissionDto,
@@ -1517,6 +1519,32 @@ export const api = {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify(config),
+        });
+    },
+
+    // === REEL THEME ===
+
+    async getReelTheme(): Promise<ReelTheme> {
+        return webFetch('/settings/reel-theme');
+    },
+
+    async saveReelTheme(config: ReelTheme): Promise<ReelTheme> {
+        return webFetch('/admin/settings/reel-theme', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(config),
+        });
+    },
+
+    async getReelThemePresets(): Promise<ReelThemePreset[]> {
+        return webFetch('/admin/settings/reel-theme-presets', { headers: authHeaders() });
+    },
+
+    async saveReelThemePresets(presets: ReelThemePreset[]): Promise<ReelThemePreset[]> {
+        return webFetch('/admin/settings/reel-theme-presets', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(presets),
         });
     },
 

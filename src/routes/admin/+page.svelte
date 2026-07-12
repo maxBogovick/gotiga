@@ -30,6 +30,7 @@
     import DisplayConfigEditor from '$lib/components/admin/DisplayConfigEditor.svelte';
     import DesignEditor from '$lib/components/admin/DesignEditor.svelte';
     import HomeLayoutEditor from '$lib/components/admin/HomeLayoutEditor.svelte';
+    import ReelThemePanel from '$lib/components/admin/ReelThemePanel.svelte';
     import CopyEditor from '$lib/components/admin/CopyEditor.svelte';
     import WorkshopFeaturePanel from '$lib/components/admin/WorkshopFeaturePanel.svelte';
     import ProgrammePanel from '$lib/components/admin/ProgrammePanel.svelte';
@@ -90,7 +91,7 @@
     let bulkBusy = $state(false);
     let bulkParallaxValue = $state(0.5);
     let message = $state({ text: '', type: 'info' });
-    let activeTab = $state<'registry' | 'rooms' | 'home' | 'home-layout' | 'workshop-feature' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'commissions' | 'showings' | 'bookings' | 'waitlist' | 'subscribers' | 'analytics' | 'users' | 'comments' | 'impressions' | 'messages' | 'server' | 'logs' | 'booking-rules' | 'contact' | 'design' | 'copy' | 'programme'>('registry');
+    let activeTab = $state<'registry' | 'rooms' | 'home' | 'reel-theme' | 'home-layout' | 'workshop-feature' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'commissions' | 'showings' | 'bookings' | 'waitlist' | 'subscribers' | 'analytics' | 'users' | 'comments' | 'impressions' | 'messages' | 'server' | 'logs' | 'booking-rules' | 'contact' | 'design' | 'copy' | 'programme'>('registry');
     let activeAuthorSubTab = $state<'profile' | 'texts'>('profile');
     let newOrdersCount = $state(0);
     let newCommissionsCount = $state(0);
@@ -986,6 +987,7 @@
                 label: $t('adminGroupContent'),
                 tabs: [
                   ['home',       $t('adminTabHome')],
+                  ['reel-theme', $t('adminTabReelTheme')],
                   ['home-layout', $t('adminTabHomeLayout')],
                   ['programme',  $t('adminTabProgramme')],
                   ['author',     $t('adminTabAuthor')],
@@ -1917,6 +1919,9 @@
 
         {:else if activeTab === 'home'}
             <HomeContentEditor />
+
+        {:else if activeTab === 'reel-theme'}
+            <div in:fade class="h-full overflow-hidden"><ReelThemePanel /></div>
 
         {:else if activeTab === 'home-layout'}
             <div in:fade class="h-full overflow-y-auto"><HomeLayoutEditor /></div>

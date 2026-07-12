@@ -21,7 +21,7 @@
 </script>
 
 {#if figurines.length > 0}
-  <section class="marked-by-you" aria-labelledby="marked-by-you-title">
+  <section id="marked-by-you" class="marked-by-you" aria-labelledby="marked-by-you-title">
     <div class="mby-head">
       <div>
         <p class="eyebrow"><span class="eyebrow-rule"></span>{$t('markedByYouEyebrow')}</p>
@@ -45,6 +45,7 @@
     max-width: 1520px;
     margin: 0 auto;
     padding: clamp(20px, 3vw, 40px) clamp(20px, 4.5vw, 64px) clamp(8px, 1.5vw, 16px);
+    scroll-margin-top: calc(var(--site-header-height, 68px) + 12px);
   }
 
   .mby-head {
