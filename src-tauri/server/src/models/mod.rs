@@ -270,6 +270,15 @@ pub struct FigurineListItemDto {
     pub id: String,
     pub name: String,
     pub status: FigurineStatus,
+    /// The work's one-line note. Carried on the LIST item on purpose: the home page
+    /// renders it under each plate, and without it here the client had to fire one
+    /// extra full `GET /figurines/{id}` per visible work just to read this one string
+    /// — a dozen round-trips, each pulling the entire record and its image array, to
+    /// populate a single caption. It costs nothing to include: `to_list_item` already
+    /// receives the whole `Figurine` row, so this is a field that was already fetched
+    /// and then thrown away. No new query, no migration.
+    #[serde(default)]
+    pub short_text: Option<String>,
     /// 420px thumbnail — sized for the archive's dense grid of cards.
     pub face_image_url: Option<String>,
     /// Second-angle image for the home gallery's hover reveal; null when the

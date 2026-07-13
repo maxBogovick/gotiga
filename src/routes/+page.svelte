@@ -2,7 +2,7 @@
     import { onMount } from 'svelte';
     import { fade, fly } from 'svelte/transition';
     import { cubicOut } from 'svelte/easing';
-    import { api } from '$lib/api';
+    import { api, resolveSrcset } from '$lib/api';
     import AppImage from '$lib/components/AppImage.svelte';
     import type { AuthorProfile, FigurineListItem, HomeContent, WorkshopFeature } from '$lib/types/api';
     import { t, brandName, lang } from '$lib/i18n';
@@ -70,7 +70,15 @@
     }));
 
     let isLoaded = $state(false);
-    let imageUrl = $state('/images/cabinet-bg.jpeg');
+    // Starts EMPTY, not at the bundled cabinet-bg. It used to hold that bundled path as
+    // its initial value, so the hero rendered it on first paint, the browser fetched it
+    // (268 KB), and then the real background arrived from the API a moment later and the
+    // hero swapped to it — fetching another 268 KB. Both were downloaded, every visit, and
+    // the wasted one was competing for bandwidth with the LCP image itself. The bundled
+    // file is a *fallback*, so it is now only assigned when the API gives us nothing
+    // (see init()); it also remains the OG fallback in +page.ts, which costs no download.
+    const FALLBACK_HERO = '/images/cabinet-bg.jpeg';
+    let imageUrl = $state('');
     let hasCustomHeroPhoto = $state(false);
     let availableFigurines = $state<FigurineListItem[]>([]);
     let inProgressFigurines = $state<FigurineListItem[]>([]);
@@ -252,6 +260,9 @@
                 || heroDisplayFigurine?.faceImageUrl?.trim()
                 || imageUrl)
     );
+    const HERO_SIZES = '(max-width: 900px) 100vw, 50vw';
+    let heroSrcset = $derived(resolveSrcset(heroDisplayImage));
+
     // Today's vitrine pick gets its own pinned specimen card beside the lead text.
     let pinnedSpecimenFig = $derived(vitrineFig);
     // "Отмеченное вами" — the visitor's own private marks, resolved against the
@@ -349,9 +360,17 @@
     let reelTheme = $state<ReelTheme>({});
     let reelCSSBlock = $derived(generateReelCSS(reelTheme));
 
-    // Each pane's paragraph is the work's own short text, which the list payload
-    // doesn't carry — fetched only for the works actually on the wall.
-    let galleryStories = $state<Record<string, string>>({});
+    // Each pane's paragraph is the work's own short text. The list payload now carries
+    // it (FigurineListItemDto.short_text), so this is a plain projection of data we
+    // already have — no network at all. It used to be a $state map filled by an effect
+    // that fired one full `getFigurine(id)` per pane on the wall, i.e. a dozen extra
+    // round-trips (each pulling the complete record and its image array) to read one
+    // string apiece. The field was already being SELECTed server-side and discarded.
+    let galleryStories = $derived(
+        Object.fromEntries(
+            visibleGalleryFigurines.map((f) => [f.id, f.shortText?.trim() ?? ''])
+        ) as Record<string, string>
+    );
 
     // Daily "re-hang" index: advances once per calendar day. Every visitor on
     // the same day sees the same arrangement (no layout-shift noise on refresh),
@@ -429,7 +448,10 @@
             if (savedReelTheme) reelTheme = savedReelTheme;
             // Editor preview (postMessage) wins over the saved config.
             if (layout && !hlPreviewDriven) homeLayout = layout;
+            // Only fall back to the bundled image when the server has no background of its
+            // own — otherwise it would be a second, redundant download of the same hero.
             if (bgPath) { imageUrl = bgPath; hasCustomHeroPhoto = true; }
+            else { imageUrl = FALLBACK_HERO; }
             homeContent = content;
             if (workshop) workshopFeature = workshop;
             const visibleFigurines = figurines.filter(f => f.status !== 'in_progress');
@@ -585,25 +607,6 @@
         return () => style.remove();
     });
 
-    // Pull each shown work's short text — the list payload doesn't carry it, and
-    // without it a pane falls back to a dry run of its attributes.
-    $effect(() => {
-        const wanted = visibleGalleryFigurines.filter((f) => !(f.id in galleryStories));
-        if (wanted.length === 0) return;
-        let cancelled = false;
-        void (async () => {
-            const details = await Promise.all(
-                wanted.map((f) => api.getFigurine(f.id).catch(() => null))
-            );
-            if (cancelled) return;
-            const next = { ...galleryStories };
-            wanted.forEach((f, i) => {
-                next[f.id] = details[i]?.shortText?.trim() ?? '';
-            });
-            galleryStories = next;
-        })();
-        return () => { cancelled = true; };
-    });
 </script>
 
 <svelte:head>
@@ -732,8 +735,20 @@
             <div class="cine-frame">
                 <div class="cine-photo" style="--lens-scale:{heroLensScale}">
                     <div class="hero-lens" bind:this={heroPhotoEl}>
-                        <img src={heroDisplayImage} alt={heroDisplayFigurine?.name ?? 'Gothic Cabinet'} class="hero-img"
-                             fetchpriority="high" decoding="async" draggable="false" />
+                        <!-- The hero is the LCP element, so what the browser picks here sets
+                             the page's headline number. It fills the fold on a phone and about
+                             half the width on a wide screen; with the 420/900/1800 renditions
+                             offered, that resolves to the 900px medium on mobile instead of
+                             the 1800px preview it used to pull down. -->
+                        <picture>
+                            {#if heroSrcset?.webp}
+                                <source type="image/webp" srcset={heroSrcset.webp} sizes={HERO_SIZES} />
+                            {/if}
+                            <img src={heroDisplayImage} srcset={heroSrcset?.jpeg}
+                                 sizes={heroSrcset ? HERO_SIZES : undefined}
+                                 alt={heroDisplayFigurine?.name ?? 'Gothic Cabinet'} class="hero-img"
+                                 fetchpriority="high" decoding="async" draggable="false" />
+                        </picture>
                     </div>
                     <div class="img-vignette"></div>
                     <div class="img-grade"></div>

@@ -63,6 +63,17 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
+    // Background: rebuild image renditions that predate the current pipeline — the 900px
+    // `medium` variant (new) and every `.webp` (previously encoded lossless, i.e. 6-7x
+    // LARGER than its JPEG). Rebuilt from images/original, idempotent, and detached so it
+    // never delays the listener.
+    {
+        let upload_dir = config.upload_dir.clone();
+        tokio::spawn(async move {
+            api::backfill_image_variants(upload_dir).await;
+        });
+    }
+
     // Background: prune login attempts past the retention window (runs now, then daily).
     {
         let svc = service.clone();

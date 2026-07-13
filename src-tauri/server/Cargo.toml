@@ -34,6 +34,7 @@ lettre = { version = "0.11", features = ["tokio1-rustls-tls", "smtp-transport", 
 candle-core = "0.9"
 candle-nn = "0.9"
 candle-transformers = "0.9"
+webp = "0.3"
 
 [dev-dependencies]
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "migrate"] }

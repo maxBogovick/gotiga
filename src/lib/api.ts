@@ -209,19 +209,63 @@ export function resolveMediaUrl(url: string | null | undefined): string | null {
 }
 
 /**
- * Every uploaded figurine image is encoded server-side into a JPEG *and* a
- * lossless WebP sibling at the same path (see `save_image_variants` in
- * handlers.rs — images/preview/{id}.jpg + images/preview/{id}.webp, same for
- * thumb/). Only the JPEG path is ever persisted on the image record, so the
- * WebP variant is otherwise generated and written to disk for nothing. Since
- * the id and directory are identical, the WebP path is always derivable by
- * swapping the extension — no DB/API change needed to start serving it.
+ * Every uploaded image is written out at three widths — thumb (420px), medium (900px) and
+ * preview (1800px) — each as a JPEG and a lossy WebP, all under the SAME uuid
+ * (`save_image_variants` in handlers.rs). Only the preview and thumb JPEG paths are ever
+ * persisted on the image record, so the rest are derived here by rewriting the directory
+ * segment and the extension. That is deliberate: it means adding a rendition costs a
+ * directory, not a database migration.
+ *
+ * The medium rendition is the one that matters on a phone. With only 420 and 1800 to pick
+ * from, a device at DPR 2-3 needs ~500-1200 physical pixels, so srcset rightly rejected the
+ * 420 thumb as too small and pulled the full 1800 preview — ~390 KB to paint a 390 px-wide
+ * screen. 900px lands in that gap.
+ */
+const VARIANT_DIRS = ['thumb', 'medium', 'preview'] as const;
+type Variant = (typeof VARIANT_DIRS)[number];
+
+/** Rewrite an images/{thumb,medium,preview}/{id}.jpg URL to another rendition. */
+function resolveVariantUrl(url: string | null | undefined, variant: Variant): string | null {
+    const resolved = resolveMediaUrl(url);
+    if (!resolved) return null;
+    // Only figurine renditions live under images/<variant>/. Anything else (bundled art,
+    // avatars, backgrounds, remote URLs) has no siblings and must be left alone.
+    const re = new RegExp(`/images/(${VARIANT_DIRS.join('|')})/`);
+    if (!re.test(resolved)) return null;
+    return resolved.replace(re, `/images/${variant}/`);
+}
+
+/**
+ * WebP sibling of a JPEG rendition. These are now encoded LOSSY (q80) via libwebp and
+ * come in ~25-30% under the JPEG.
+ *
+ * They were previously encoded losslessly (`WebPEncoder::new_lossless` — the only mode
+ * `image` can do), which made them 6-7x LARGER than the JPEG they were meant to undercut:
+ * 2480 KB vs 392 KB for a preview, measured on this server's own uploads. Serving those
+ * was handing phones megabytes per photograph.
  */
 export function resolveWebpUrl(url: string | null | undefined): string | null {
     const resolved = resolveMediaUrl(url);
     if (!resolved) return null;
     if (!/\.jpe?g(\?.*)?$/i.test(resolved)) return null;
     return resolved.replace(/\.jpe?g(\?.*)?$/i, (_m, q) => `.webp${q ?? ''}`);
+}
+
+/**
+ * The full responsive candidate set for an image, or null when the URL is not a figurine
+ * rendition (bundled art, avatars, remote) and therefore has no siblings to offer.
+ * Widths must match the encoder's constants in handlers.rs.
+ */
+export function resolveSrcset(url: string | null | undefined): { jpeg: string; webp: string } | null {
+    const thumb = resolveVariantUrl(url, 'thumb');
+    const medium = resolveVariantUrl(url, 'medium');
+    const preview = resolveVariantUrl(url, 'preview');
+    if (!thumb || !medium || !preview) return null;
+
+    const jpeg = `${thumb} 420w, ${medium} 900w, ${preview} 1800w`;
+    const w = [thumb, medium, preview].map(resolveWebpUrl);
+    const webp = w.every(Boolean) ? `${w[0]} 420w, ${w[1]} 900w, ${w[2]} 1800w` : '';
+    return { jpeg, webp };
 }
 
 function webPublicUrl(url: unknown): string | null {

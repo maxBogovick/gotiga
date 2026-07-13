@@ -22,6 +22,10 @@ const MEDIA_UPLOAD_LIMIT: usize = 256 * 1024 * 1024; // 256 MB
 
 pub(crate) mod handlers;
 
+/// Re-exported for main.rs (a separate binary crate, so it cannot reach into the
+/// crate-private `handlers` module directly).
+pub use handlers::backfill_image_variants;
+
 #[derive(Clone)]
 pub struct AppState {
     pub service: AppService,

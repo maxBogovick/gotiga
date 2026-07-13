@@ -440,6 +440,7 @@ impl AppService {
             id: f.id.to_string(),
             name: f.name,
             status: f.status,
+            short_text: f.short_text,
             face_image_url: face.map(|i| self.face_image_url(i)),
             detail_image_url: detail.map(|i| self.face_image_url(i)),
             face_image_large_url: face.map(|i| self.face_image_large_url(i)),

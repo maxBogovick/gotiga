@@ -477,6 +477,11 @@ pub struct FigurineListItemDto {
     pub id: String,
     pub name: String,
     pub status: String,
+    /// Mirrors the web server's list DTO: the home gallery renders this under each
+    /// plate. Carried on the list item so the client never has to fetch a full
+    /// figurine per pane just to read one caption. The row is already loaded here.
+    #[serde(default)]
+    pub short_text: Option<String>,
     pub face_image_url: Option<String>,
     /// Second-angle image for the home gallery's hover reveal; null when the
     /// piece has no dedicated "detail" image.

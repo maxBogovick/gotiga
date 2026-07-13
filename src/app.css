@@ -1,4 +1,9 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,300;1,9..40,400&family=EB+Garamond:ital,wght@0,400;0,500;1,400;1,500&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;1,9..144,300;1,9..144,400&display=swap');
+/* NOTE: the Google Fonts @import that used to sit on this line is gone on purpose.
+   DM Sans / EB Garamond / Fraunces (the families behind --font-body, --font-serif and
+   --font-display below) are now part of the single consolidated, non-blocking <link>
+   in app.html. Do not reintroduce an @import here: it is only discovered after this
+   whole stylesheet has been fetched and parsed, and it blocks rendering — see the
+   comment in app.html. Same rule as the one in CLAUDE.md for route <svelte:head> blocks. */
 @import "tailwindcss";
 @source "../src/**/*.{svelte,ts,js,html}";
 

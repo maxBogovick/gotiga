@@ -6,6 +6,10 @@ export interface FigurineListItem {
     id: string;
     name: string;
     status: FigurineStatus;
+    /** The work's one-line note, carried on the list payload. The home gallery used to
+     *  fetch a full `getFigurine(id)` per visible work just to read this one string.
+     *  Optional because the Tauri build's leaner payload may omit it. */
+    shortText?: string | null;
     /** 420px thumbnail — sized for the archive's dense grid. */
     faceImageUrl: string | null;
     /** Second-angle image for the home gallery's hover reveal; null/absent

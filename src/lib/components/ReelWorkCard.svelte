@@ -211,21 +211,28 @@
     style="--focal:{focalPos}"
     aria-label="{$t('homeViewFigurine')}: {fig.name}"
   >
-    <!-- The plate is ~536 CSS px wide (over 1000 real pixels on a retina screen),
-         so it must have the preview-sized photo: the 420px thumb only survives
-         the archive's small cards. The thumb still earns its keep underneath,
-         as the blurred placeholder AppImage fades the real photo in over. -->
+    <!-- The plate is ~536 CSS px wide on a wide screen and full-bleed on a phone. `sizes`
+         says exactly that, and AppImage offers the 420/900/1800 renditions, so the browser
+         resolves the right one itself: the 900px medium on a phone (where the 1800px
+         preview used to be pulled — ~390 KB to paint a 390 px-wide screen), the 1800px
+         preview on a retina desktop, where the plate really is over 1000 real pixels. -->
     <AppImage
       src={fig.faceImageLargeUrl ?? fig.faceImageUrl}
       thumbUrl={fig.thumbUrl ?? fig.faceImageUrl}
       alt={fig.name}
       class="photo-img"
+      sizes="(max-width: 680px) 100vw, 536px"
     />
 
     {#if fig.detailImageUrl}
       <!-- A second angle, held in reserve for a lingering look — not a product
            swatch swap, a closer look at the same piece. -->
-      <AppImage src={fig.detailImageLargeUrl ?? fig.detailImageUrl} alt="" class="photo-img-alt" />
+      <AppImage
+        src={fig.detailImageLargeUrl ?? fig.detailImageUrl}
+        alt=""
+        class="photo-img-alt"
+        sizes="(max-width: 680px) 100vw, 536px"
+      />
     {/if}
 
     <!-- Raking light: a slow sheen travelling across the plate on hover, the way

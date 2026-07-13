@@ -639,16 +639,26 @@
                          stay outside this wrapper so they stay crisp on top. -->
                     <div class="fig-photo">
                     {#if figurine.faceImageUrl}
+                      <!-- Dense archive grid: two cards across on a phone, up to four on a
+                           wide screen. Told to the browser so it can pick the 420px thumb
+                           here rather than a rendition sized for a full-width hero. -->
                       <AppImage
                               src={figurine.faceImageUrl}
                               thumbUrl={figurine.thumbUrl}
                               alt={figurine.name}
                               class="fig-img-main w-full h-full object-cover transition-all duration-700 ease-out group-hover:scale-105 fig-img--{figurine.status}"
                               loading="lazy"
+                              sizes="(max-width: 680px) 50vw, (max-width: 1024px) 33vw, 25vw"
                       />
                       {#if figurine.detailImageUrl}
                         <!-- a second angle, held in reserve for a lingering look -->
-                        <AppImage src={figurine.detailImageUrl} alt="" class="fig-img-alt" loading="lazy" />
+                        <AppImage
+                          src={figurine.detailImageUrl}
+                          alt=""
+                          class="fig-img-alt"
+                          loading="lazy"
+                          sizes="(max-width: 680px) 50vw, (max-width: 1024px) 33vw, 25vw"
+                        />
                       {/if}
                     {:else}
                       <div class="w-full h-full flex items-center justify-center opacity-20">

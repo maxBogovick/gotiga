@@ -31,6 +31,7 @@ export class FigurineClaimsStore {
   #figurineId: string;
   #refreshSchedule: () => void;
   #pollTimer: ReturnType<typeof setInterval> | null = null;
+  #visibilityBound = false;
 
   get #key() { return `gotiga_claims_${this.#figurineId}`; }
 
@@ -93,8 +94,12 @@ export class FigurineClaimsStore {
     return this.claims.some(c => c.status === 'pending' || c.status == null);
   }
 
+  // Suspended while the tab is hidden: a backgrounded page learns nothing from polling,
+  // and on a phone each tick still costs a radio wake-up. Freshness is preserved because
+  // becoming visible re-verifies at once (see #bindVisibility).
   #syncPollTimer() {
-    if (this.#hasPendingClaims()) {
+    const hidden = typeof document !== 'undefined' && document.hidden;
+    if (this.#hasPendingClaims() && !hidden) {
       if (!this.#pollTimer) {
         this.#pollTimer = setInterval(() => this.verify(), POLL_INTERVAL_MS);
       }
@@ -103,7 +108,17 @@ export class FigurineClaimsStore {
     }
   }
 
+  #bindVisibility() {
+    if (this.#visibilityBound || typeof document === 'undefined') return;
+    this.#visibilityBound = true;
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) void this.verify(); // verify() ends by calling #syncPollTimer
+      else this.#syncPollTimer();
+    });
+  }
+
   startPolling() {
+    this.#bindVisibility();
     this.#syncPollTimer();
   }
 

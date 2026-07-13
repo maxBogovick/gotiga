@@ -34,6 +34,7 @@ class AllClaimsStore {
   #pollTimer: ReturnType<typeof setInterval> | null = null;
   #pollRefs = 0;
   #loaded = false;
+  #visibilityBound = false;
 
   get activeCount() {
     return this.claims.filter(c => c.status !== 'cancelled' && c.status !== 'rejected').length;
@@ -116,7 +117,26 @@ class AllClaimsStore {
 
   startPolling() {
     this.#pollRefs++;
+    this.#bindVisibility();
     this.#syncTimer();
+  }
+
+  // This store is held by SiteHeader, so its 30s poll runs on every public page — and it
+  // used to keep running against a tab the visitor had walked away from, waking the
+  // radio on a phone every half minute for a status nobody was looking at. A hidden tab
+  // learns nothing from polling: the moment it comes back we re-verify immediately, so
+  // suspending it costs no freshness whatsoever.
+  #bindVisibility() {
+    if (this.#visibilityBound || typeof document === 'undefined') return;
+    this.#visibilityBound = true;
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        this.#syncTimer(); // now false → clears the interval
+      } else {
+        void this.verify(); // catch up on whatever changed while we were away
+        this.#syncTimer();  // and resume the cadence
+      }
+    });
   }
 
   stopPolling() {
@@ -159,10 +179,18 @@ class AllClaimsStore {
     );
   }
 
+  // Single source of truth for "should the interval be running right now". The previous
+  // shape (`if (want) start; else if (!hasPollable()) stop;`) could only ever stop the
+  // timer for one of its own reasons, so a new reason — such as the tab being hidden —
+  // would have been unable to switch it off. Deriving one boolean and reconciling against
+  // it means every condition, present and future, both starts and stops the poll.
   #syncTimer() {
-    if (this.#hasPollable() && this.#pollRefs > 0) {
-      if (!this.#pollTimer) this.#pollTimer = setInterval(() => this.verify(), POLL_MS);
-    } else if (!this.#hasPollable() && this.#pollTimer) {
+    const hidden = typeof document !== 'undefined' && document.hidden;
+    const shouldPoll = this.#hasPollable() && this.#pollRefs > 0 && !hidden;
+
+    if (shouldPoll && !this.#pollTimer) {
+      this.#pollTimer = setInterval(() => this.verify(), POLL_MS);
+    } else if (!shouldPoll && this.#pollTimer) {
       clearInterval(this.#pollTimer);
       this.#pollTimer = null;
     }

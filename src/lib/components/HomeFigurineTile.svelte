@@ -220,11 +220,28 @@
                 aria-label="{$t('homeViewFigurine')}: {fig.name}"
             >
                 {#if fig.faceImageUrl}
-                    <AppImage src={fig.faceImageUrl} thumbUrl={fig.thumbUrl} alt={fig.name} class="tile-img" loading="lazy" />
+                    <!-- The home grid is 4 columns on a wide screen and narrows down to one
+                         on a phone; a wide (isFeatured) tile spans two of those columns.
+                         `sizes` describes that so the browser can choose among the 420/900/
+                         1800 renditions instead of assuming the tile fills the viewport. -->
+                    <AppImage
+                        src={fig.faceImageUrl}
+                        thumbUrl={fig.thumbUrl}
+                        alt={fig.name}
+                        class="tile-img"
+                        loading="lazy"
+                        sizes="(max-width: 680px) 100vw, (max-width: 1024px) 50vw, 25vw"
+                    />
                     {#if fig.detailImageUrl}
                         <!-- a second angle, held in reserve for a lingering look — not a
                              product-swatch swap, a closer look at the same piece. -->
-                        <AppImage src={fig.detailImageUrl} alt="" class="tile-img-alt" loading="lazy" />
+                        <AppImage
+                            src={fig.detailImageUrl}
+                            alt=""
+                            class="tile-img-alt"
+                            loading="lazy"
+                            sizes="(max-width: 680px) 100vw, (max-width: 1024px) 50vw, 25vw"
+                        />
                     {/if}
                 {:else}
                     <div class="tile-placeholder">?</div>

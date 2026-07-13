@@ -18,7 +18,6 @@ fn bearer_token(headers: &HeaderMap) -> Option<&str> {
         .and_then(|v| v.strip_prefix("Bearer "))
 }
 use image::codecs::jpeg::JpegEncoder;
-use image::codecs::webp::WebPEncoder;
 use image::imageops::FilterType;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
@@ -63,12 +62,27 @@ const MAX_IMAGE_BYTES: usize = 40 * 1024 * 1024; // 40 MB
 /// Max decoded pixel count (guards against decompression bombs).
 const MAX_IMAGE_PIXELS: u64 = 50_000_000; // 50 MP
 
+/// Widths of the three served variants. `MEDIUM` is the one that makes phones cheap:
+/// with only 420 and 1800 to choose from, a phone at DPR 2–3 needs ~500–1200 physical
+/// pixels, so `srcset` correctly rejected the 420 thumb as too small and pulled the
+/// full 1800 preview — a ~390 KB download to paint a 390 px-wide screen. 900 lands in
+/// the gap, and the browser picks it.
+const PREVIEW_PX: u32 = 1800;
+const MEDIUM_PX: u32 = 900;
+const THUMB_PX: u32 = 420;
+
+/// Lossy WebP quality. WebP is only worth serving if it is *smaller* than the JPEG
+/// beside it (see encode_webp_bytes).
+const WEBP_QUALITY: f32 = 80.0;
+
 /// All encoded representations of one uploaded image.
 struct EncodedImageVariants {
     original_jpeg: Vec<u8>,
     preview_jpeg: Vec<u8>,
+    medium_jpeg: Vec<u8>,
     thumb_jpeg: Vec<u8>,
     preview_webp: Vec<u8>,
+    medium_webp: Vec<u8>,
     thumb_webp: Vec<u8>,
 }
 
@@ -81,18 +95,21 @@ fn encode_jpeg_bytes(image: &image::RgbImage, quality: u8) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// LOSSY WebP, via libwebp.
+///
+/// This used to be `image`'s `WebPEncoder::new_lossless`, which is the only mode that
+/// crate can encode — and lossless WebP of a photograph is not a saving, it is a
+/// disaster. Measured on this server's own uploads before the change:
+///
+///     preview (1800px)   JPEG  392 KB   WebP  2480 KB    6.3x LARGER
+///     thumb   (420px)    JPEG   31 KB   WebP   230 KB    7.2x LARGER
+///
+/// Anything that offered those files to a browser was handing mobile visitors megabytes
+/// per photograph. Lossy q80 is what WebP is actually for: it comes out roughly 25-30%
+/// *below* the equivalent JPEG, which is the whole reason to encode it at all.
 fn encode_webp_bytes(image: &image::RgbImage) -> Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    let encoder = WebPEncoder::new_lossless(&mut bytes);
-    encoder
-        .encode(
-            image.as_raw(),
-            image.width(),
-            image.height(),
-            image::ExtendedColorType::Rgb8,
-        )
-        .map_err(|e| AppError::Internal(format!("Failed to encode WebP: {}", e)))?;
-    Ok(bytes)
+    let encoder = webp::Encoder::from_rgb(image.as_raw(), image.width(), image.height());
+    Ok(encoder.encode(WEBP_QUALITY).to_vec())
 }
 
 /// CPU-bound: decode + resize + encode. Runs inside spawn_blocking so it never
@@ -108,14 +125,23 @@ fn build_image_variants(data: &[u8]) -> Result<EncodedImageVariants> {
     }
 
     let original = image.to_rgb8();
-    let preview = image.resize(1800, 1800, FilterType::Lanczos3).to_rgb8();
-    let thumb = image.resize(420, 420, FilterType::Lanczos3).to_rgb8();
+    let preview = image
+        .resize(PREVIEW_PX, PREVIEW_PX, FilterType::Lanczos3)
+        .to_rgb8();
+    let medium = image
+        .resize(MEDIUM_PX, MEDIUM_PX, FilterType::Lanczos3)
+        .to_rgb8();
+    let thumb = image
+        .resize(THUMB_PX, THUMB_PX, FilterType::Lanczos3)
+        .to_rgb8();
 
     Ok(EncodedImageVariants {
         original_jpeg: encode_jpeg_bytes(&original, 95)?,
         preview_jpeg: encode_jpeg_bytes(&preview, 86)?,
+        medium_jpeg: encode_jpeg_bytes(&medium, 82)?,
         thumb_jpeg: encode_jpeg_bytes(&thumb, 78)?,
         preview_webp: encode_webp_bytes(&preview)?,
+        medium_webp: encode_webp_bytes(&medium)?,
         thumb_webp: encode_webp_bytes(&thumb)?,
     })
 }
@@ -138,8 +164,10 @@ async fn save_image_variants(upload_dir: &str, data: &[u8]) -> Result<serde_json
     let id = Uuid::new_v4().to_string();
     let original_relative = format!("images/original/{}.jpg", id);
     let preview_relative = format!("images/preview/{}.jpg", id);
+    let medium_relative = format!("images/medium/{}.jpg", id);
     let thumb_relative = format!("images/thumb/{}.jpg", id);
     let preview_webp = format!("images/preview/{}.webp", id);
+    let medium_webp = format!("images/medium/{}.webp", id);
     let thumb_webp = format!("images/thumb/{}.webp", id);
 
     let data_owned = data.to_vec();
@@ -149,20 +177,115 @@ async fn save_image_variants(upload_dir: &str, data: &[u8]) -> Result<serde_json
 
     write_bytes(upload_dir, &original_relative, &variants.original_jpeg).await?;
     write_bytes(upload_dir, &preview_relative, &variants.preview_jpeg).await?;
+    write_bytes(upload_dir, &medium_relative, &variants.medium_jpeg).await?;
     write_bytes(upload_dir, &thumb_relative, &variants.thumb_jpeg).await?;
     write_bytes(upload_dir, &preview_webp, &variants.preview_webp).await?;
+    write_bytes(upload_dir, &medium_webp, &variants.medium_webp).await?;
     write_bytes(upload_dir, &thumb_webp, &variants.thumb_webp).await?;
 
+    // NB: only `relativePath` (the preview) and `thumbRelativePath` are persisted on the
+    // image record. The medium and WebP siblings are deliberately NOT new DB columns —
+    // they live at the same id under a different directory/extension, so the client
+    // derives their URLs by rewriting the path (resolveMediumUrl / resolveWebpUrl in
+    // api.ts). That keeps a new rendition from costing a migration every time.
     Ok(serde_json::json!({
         "url":                  public_static_url(&preview_relative),
         "relativePath":         preview_relative,
         "webpUrl":              public_static_url(&preview_webp),
+        "mediumUrl":            public_static_url(&medium_relative),
+        "mediumWebpUrl":        public_static_url(&medium_webp),
         "originalUrl":          public_static_url(&original_relative),
         "originalRelativePath": original_relative,
         "thumbUrl":             public_static_url(&thumb_relative),
         "thumbRelativePath":    thumb_relative,
         "thumbWebpUrl":         public_static_url(&thumb_webp)
     }))
+}
+
+/// Regenerate every derived rendition for images that predate the current pipeline.
+///
+/// Two things need backfilling on an existing install:
+///   • the `medium` (900px) variant, which simply did not exist before;
+///   • every `.webp`, which was written LOSSLESS and is therefore 6-7x larger than the
+///     JPEG it was supposed to undercut.
+///
+/// Both are recoverable because `images/original/{id}.jpg` is kept for every upload, so
+/// the renditions are rebuilt from the original rather than from an already-compressed
+/// copy. An image is considered done when its medium JPEG exists, which makes this
+/// idempotent and cheap to re-run on every boot.
+///
+/// Runs detached in a background task: it is pure CPU on spawn_blocking, must never hold
+/// up the listener, and a failure here degrades quality, not correctness (the client
+/// falls back to the preview when a medium is missing).
+pub async fn backfill_image_variants(upload_dir: String) {
+    let original_dir = std::path::Path::new(&upload_dir).join("images/original");
+    let mut entries = match fs::read_dir(&original_dir).await {
+        Ok(e) => e,
+        Err(_) => return, // no uploads yet — nothing to do
+    };
+
+    let (mut done, mut failed) = (0u32, 0u32);
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("jpg") {
+            continue;
+        }
+        let Some(id) = path.file_stem().and_then(|s| s.to_str()).map(String::from) else {
+            continue;
+        };
+
+        let medium_relative = format!("images/medium/{}.jpg", id);
+        if std::path::Path::new(&upload_dir)
+            .join(&medium_relative)
+            .exists()
+        {
+            continue; // already migrated
+        }
+
+        let Ok(data) = fs::read(&path).await else {
+            failed += 1;
+            continue;
+        };
+        let variants =
+            match tokio::task::spawn_blocking(move || build_image_variants(&data)).await {
+                Ok(Ok(v)) => v,
+                _ => {
+                    failed += 1;
+                    continue;
+                }
+            };
+
+        // The original is left exactly as it is — it is the source of truth and
+        // re-encoding it would only degrade it.
+        let writes = [
+            (format!("images/preview/{}.jpg", id), &variants.preview_jpeg),
+            (medium_relative.clone(), &variants.medium_jpeg),
+            (format!("images/thumb/{}.jpg", id), &variants.thumb_jpeg),
+            (format!("images/preview/{}.webp", id), &variants.preview_webp),
+            (format!("images/medium/{}.webp", id), &variants.medium_webp),
+            (format!("images/thumb/{}.webp", id), &variants.thumb_webp),
+        ];
+        let mut ok = true;
+        for (rel, bytes) in writes {
+            if write_bytes(&upload_dir, &rel, bytes).await.is_err() {
+                ok = false;
+                break;
+            }
+        }
+        if ok {
+            done += 1;
+        } else {
+            failed += 1;
+        }
+    }
+
+    if done > 0 || failed > 0 {
+        tracing::info!(
+            "image variant backfill: {} rebuilt, {} failed (medium 900px + lossy WebP)",
+            done,
+            failed
+        );
+    }
 }
 
 async fn save_regular_media_file(
