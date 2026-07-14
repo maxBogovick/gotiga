@@ -30,7 +30,16 @@ pub struct AppService {
     observability: ObservabilityState,
     analytics: crate::analytics::AnalyticsRuntime,
     analytics_refresh_gate: Arc<Mutex<Option<Instant>>>,
+    /// Cached "house favorite" / "noticed" tiers. Computing them is an aggregating JOIN
+    /// over every mark in the collection plus a percentile cut — and every figurine LIST
+    /// (the home page, the archive, every filter change) needs them, so it ran on
+    /// essentially every public read. The value is a percentile over the WHOLE collection:
+    /// it moves slowly by construction, and a minute of staleness is invisible.
+    favorite_tiers_cache: Arc<Mutex<Option<(Instant, crate::db::FavoriteTiers)>>>,
 }
+
+/// How long a computed set of favorite tiers stays good.
+const FAVORITE_TIERS_TTL: Duration = Duration::from_secs(60);
 
 impl AppService {
     pub fn new(repo: Repository, config: Config) -> Self {
@@ -46,6 +55,7 @@ impl AppService {
             observability: ObservabilityState::default(),
             analytics,
             analytics_refresh_gate: Arc::new(Mutex::new(None)),
+            favorite_tiers_cache: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -470,8 +480,21 @@ impl AppService {
     /// rendered as cards — computed once (percentile over the whole
     /// collection) and intersected with the ids actually being rendered.
     async fn house_favorite_ids(&self, ids: &[Uuid]) -> Result<std::collections::HashSet<Uuid>> {
-        let tiers = self.repo.get_favorite_tiers().await?;
+        let tiers = self.favorite_tiers().await?;
         Ok(ids.iter().filter(|id| tiers.house_favorite.contains(id)).copied().collect())
+    }
+
+    /// The favorite tiers, recomputed at most once a minute (see favorite_tiers_cache).
+    async fn favorite_tiers(&self) -> Result<crate::db::FavoriteTiers> {
+        let mut cache = self.favorite_tiers_cache.lock().await;
+        if let Some((computed_at, tiers)) = cache.as_ref() {
+            if computed_at.elapsed() < FAVORITE_TIERS_TTL {
+                return Ok(tiers.clone());
+            }
+        }
+        let tiers = self.repo.get_favorite_tiers().await?;
+        *cache = Some((Instant::now(), tiers.clone()));
+        Ok(tiers)
     }
 
     pub async fn list_figurines(&self, visible_only: bool, query: crate::models::FigurineQuery) -> Result<crate::models::FigurinesPage> {
@@ -547,7 +570,7 @@ impl AppService {
         // empty, and we say nothing at all (see project decision on negative
         // social proof) rather than crown whichever piece happens to lead an
         // almost-empty field.
-        let tiers = self.repo.get_favorite_tiers().await?;
+        let tiers = self.favorite_tiers().await?;
         let noticed_by_others = tiers.noticed.contains(&uuid);
         let house_favorite = tiers.house_favorite.contains(&uuid);
 

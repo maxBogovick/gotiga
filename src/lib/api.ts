@@ -342,6 +342,33 @@ function invalidateRead(key: string): void {
     readCache.delete(key);
 }
 
+/** Drop every deduped read whose key starts with `prefix` (e.g. all figurine pages). */
+function invalidateReadPrefix(prefix: string): void {
+    for (const key of readCache.keys()) {
+        if (key.startsWith(prefix)) readCache.delete(key);
+    }
+}
+
+/**
+ * One page of the visible collection, plus the honest `total` behind it. Module-level
+ * so the `api` object's own methods can reuse it without going through `this` (callers
+ * do destructure `api`).
+ */
+async function fetchFigurinesPage(perPage?: number): Promise<{ items: FigurineListItem[]; total: number }> {
+    return dedupeRead(`figurines:${perPage ?? 'all'}`, 4000, async () => {
+        if (isTauri) {
+            const all = await invoke<FigurineListItem[]>('get_all_figurines');
+            return { items: perPage != null ? all.slice(0, perPage) : all, total: all.length };
+        }
+        const url = perPage != null
+            ? `/figurines?visible=true&perPage=${perPage}`
+            : '/figurines?visible=true';
+        const res = await webFetch<{ items: FigurineListItem[]; total?: number } | FigurineListItem[]>(url);
+        if (Array.isArray(res)) return { items: res, total: res.length };
+        return { items: res.items, total: res.total ?? res.items.length };
+    });
+}
+
 export function authenticatedApiUrl(path: string): string {
     return `${webApiBase()}${path}`;
 }
@@ -435,11 +462,23 @@ export const api = {
     },
 
     // === READ (public) ===
+
+    /**
+     * One page of the visible collection, plus the honest `total` behind it.
+     *
+     * The cap goes out as `perPage` — the name the server's ListParams actually
+     * deserializes. It used to be sent as `limit`, which serde silently dropped,
+     * leaving `per_page` unset; the service defaults that to `i64::MAX`, so every
+     * "limited" read was in fact pulling the ENTIRE catalogue and throwing the
+     * tail away on the client. Callers that show a count ("42 pieces catalogued",
+     * "26 more in the archive") must read it from `total`, not from `items.length`
+     * — the latter is now capped, as it always claimed to be.
+     */
+    getFigurinesPage: fetchFigurinesPage,
+
     async getAllFigurines(limit?: number): Promise<FigurineListItem[]> {
-        if (isTauri) return invoke('get_all_figurines');
-        const url = limit != null ? `/figurines?visible=true&limit=${limit}` : '/figurines?visible=true';
-        const res = await webFetch<{ items: FigurineListItem[] } | FigurineListItem[]>(url);
-        return Array.isArray(res) ? res : res.items;
+        const { items } = await fetchFigurinesPage(limit);
+        return items;
     },
 
     async getInProgressFigurines(): Promise<FigurineListItem[]> {
@@ -503,6 +542,7 @@ export const api = {
 
     // === WRITE (ADMIN) ===
     async saveFigurine(figurine: Figurine): Promise<void> {
+        invalidateReadPrefix('figurines:');
         if (isTauri) return invoke('save_figurine', { figurine });
         await webFetch('/figurines', {
             method: 'POST',
@@ -525,6 +565,7 @@ export const api = {
     },
 
     async deleteFigurine(id: string): Promise<void> {
+        invalidateReadPrefix('figurines:');
         if (isTauri) return invoke('delete_figurine', { id });
         const res = await fetch(`${webApiBase()}/figurines/${id}`, {
             method: 'DELETE',
@@ -725,28 +766,40 @@ export const api = {
         if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
     },
 
+    /**
+     * The admin-uploaded hero background, or `null` when there is none.
+     *
+     * It THROWS when the request fails, and that distinction is load-bearing: this used to
+     * swallow the error and return `null`, so "there is no background" and "I could not ask"
+     * were the same answer. The home page re-reads this after hydration (an admin's new
+     * background must not wait for a redeploy), and a caller that cannot tell the two apart
+     * responds to one flaky request by clearing the background the page is already showing.
+     * Callers that just want a fallback still write `.catch(() => null)`.
+     */
     async getMainBackground(): Promise<string | null> {
         return dedupeRead('main-background', 4000, async () => {
-            if (isTauri) return invoke('get_main_background');
+            if (isTauri) return invoke<string | null>('get_main_background');
+            const data = await webFetch<{ url: string | null }>('/main-background');
+            return data.url;
+        });
+    },
+
+    // Deduped: the home page's load() and its init() both read this (load() to resolve the
+    // hero and the <head> meta, init() so an admin's edit shows up without a rebuild), and
+    // without this that is the same GET twice per page view.
+    async getHomeContent(): Promise<HomeContent> {
+        return dedupeRead('home-content', 4000, async () => {
+            if (isTauri) return invoke<HomeContent>('get_home_content');
             try {
-                const data = await webFetch<{ url: string | null }>('/main-background');
-                return data.url;
+                return await webFetch<HomeContent>('/home-content');
             } catch {
-                return null;
+                return getWebHomeContent();
             }
         });
     },
 
-    async getHomeContent(): Promise<HomeContent> {
-        if (isTauri) return invoke('get_home_content');
-        try {
-            return await webFetch('/home-content');
-        } catch {
-            return getWebHomeContent();
-        }
-    },
-
     async saveHomeContent(content: HomeContent): Promise<void> {
+        invalidateRead('home-content');
         if (isTauri) return invoke('save_home_content', { content });
         try {
             await webFetch('/home-content', {

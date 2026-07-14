@@ -14,21 +14,47 @@ import type { ShowingRoom } from '$lib/types/api';
 class ShowingRoomsStore {
   list = $state<ShowingRoom[]>([]);
   #loaded = false;
+  #inflight: Promise<void> | null = null;
+  /** Bumped by refresh(); an in-flight load from an older generation must not write. */
+  #generation = 0;
 
-  /** Fetch rooms once. Idempotent — many tiles call this on mount. */
+  /**
+   * Fetch rooms once. Idempotent — many tiles call this on mount — and, importantly,
+   * every caller AWAITS THE SAME FETCH.
+   *
+   * This used to guard with a plain `#loaded` flag set before the request went out, so a
+   * second caller arriving while the first was still in flight was told "already loaded"
+   * and returned immediately — with `list` still empty. That is not a theoretical race:
+   * the home page awaits this to decide which work the vitrine may spotlight (a sealed
+   * piece must never be picked), and HouseNoticeBoard, mounted on the same page, calls
+   * load() too. Whoever lost got an empty room list and gated against nothing.
+   */
   async load() {
     if (!browser || this.#loaded) return;
-    this.#loaded = true;
-    try {
-      this.list = await api.getShowingRooms();
-    } catch {
-      this.#loaded = false; // allow a later retry
-    }
+    this.#inflight ??= (async () => {
+      // A refresh() that lands while this request is in the air supersedes it. Without the
+      // generation check the older, slower response would still write its (now stale) rooms
+      // over the newer ones, and its `finally` would clear the NEW request's registration.
+      const generation = this.#generation;
+      try {
+        const rooms = await api.getShowingRooms();
+        if (generation !== this.#generation) return;
+        this.list = rooms;
+        this.#loaded = true;
+      } catch {
+        // Leave #loaded false so a later caller can retry.
+      } finally {
+        if (generation === this.#generation) this.#inflight = null;
+      }
+    })();
+    return this.#inflight;
   }
 
   /** Force a refresh (admin saved/deleted a room). */
   async refresh() {
+    this.#generation += 1;
     this.#loaded = false;
+    this.#inflight = null;
     await this.load();
   }
 }

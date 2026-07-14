@@ -1,12 +1,13 @@
 import { api, resolveMediaUrl } from '$lib/api';
 import { SITE_URL, toAbsoluteUrl } from '$lib/site';
-import type { HomeContent } from '$lib/types/api';
+import { heroImageUrl, pickHeroFigurine, sortWorks, visibleWorks } from '$lib/home-hero';
+import type { FigurineListItem, HomeContent } from '$lib/types/api';
 
 // Prerendered to static HTML in the web build so crawlers get real <head> meta
 // (incl. the OG image). Matches the figurines archive page. Tauri stays SPA.
 export const prerender = import.meta.env.VITE_BUILD_TARGET === 'web';
 
-const FALLBACK_OG = `${SITE_URL}/images/cabinet-bg.jpeg`;
+const FALLBACK_HERO = '/images/cabinet-bg.jpeg';
 
 const DEFAULT_HOME_CONTENT: HomeContent = {
     title: null,
@@ -20,36 +21,65 @@ const DEFAULT_HOME_CONTENT: HomeContent = {
     vitrineFigurineId: null,
 };
 
-// The background and the editable home copy are fetched here so the hero — the
-// LCP element — is ready the moment the page component exists, instead of waiting
-// on a client fetch that only starts once the whole tree has mounted.
+// Everything the page's first screen is made of is resolved HERE: the background, the
+// editable copy, the work the hero shows, and the works of the reel. So the static HTML
+// carries the page — the headline photo the browser should fetch first, and a wall of real
+// work with real names for anything that doesn't run JavaScript.
 //
-// The list of works is deliberately NOT fetched here. This page is PRERENDERED in
-// the web build, so anything load() returns is frozen into static HTML at build
-// time: the reel's cards, and with them their <img srcset>, would be a snapshot of
-// the collection as it stood on the day of the deploy. Svelte does not re-set an
-// image's src/srcset during hydration, and the reel's order is date-dependent
-// (dailyRotate), so the live data would land on DOM nodes carrying the build's
-// photos — a card titled "Gnome" wearing the photo of whatever work occupied that
-// slot at build time. The works are therefore loaded on the client (see init() in
-// +page.svelte), where every change reaches the DOM normally.
+// This used to return no works at all, on the reasoning that a prerendered page bakes
+// whatever load() returns and "Svelte does not re-set an image's src/srcset during
+// hydration", so a seeded reel would wear the build day's photos. The first half is true;
+// the conclusion was not. That exact problem is what AppImage repairs after hydration
+// (see hydrate-image.ts) — and the rest of the site had been relying on it all along: the
+// /figurines archive prerenders twenty photographs into its HTML, and all 39 figurine pages
+// prerender their own. Only the home page abstained, and paid for it by shipping a hero
+// with nothing behind it: no works, no names, nothing for a crawler to read on the site's
+// front door, and a visible pop as the reel filled in after hydration.
 //
-// The same reasoning does NOT bite the background or the copy: the background's URL
-// is a fixed name (cabinet-bg.{ext}, served no-cache), and text nodes ARE updated on
-// hydration — homeContent is re-fetched in init() anyway.
+// The freshness cost is the same one the archive already accepts: the HTML is a snapshot of
+// the collection on the day of the deploy, and the browser corrects it on hydration (load()
+// re-runs against the live API; text updates, and AppImage writes the right photos through).
+// A crawler that never runs JS sees the build's collection — which is the whole catalogue,
+// minus whatever was added since. That is strictly more than nothing.
 export const load = async () => {
-    const [bg, homeContent] = await Promise.all([
+    const [bg, homeContent, page, author] = await Promise.all([
         api.getMainBackground().catch(() => null as string | null),
         api.getHomeContent().catch(() => DEFAULT_HOME_CONTENT),
+        // Uncapped, on purpose — see the note at the top of home-hero.ts.
+        api.getFigurinesPage().catch(() => ({ items: [] as FigurineListItem[], total: 0 })),
+        // The maker's own section: it was rendered only after the client had fetched the
+        // profile, so the page's one piece of authored prose — the thing that says who made
+        // all this — reached no crawler at all. (Deduped: SiteHeader asks for it too.)
+        api.getAuthorProfile().catch(() => null),
     ]);
 
-    let ogImage = FALLBACK_OG;
+    const works = sortWorks(visibleWorks(page.items));
+    // The in-progress works are in the payload already (the list is the whole visible
+    // collection; visibleWorks() is what holds them out of the reel), so the "N in the
+    // making" figure needs no request of its own — and it now reaches the static HTML.
+    const inProgress = sortWorks(page.items.filter((f) => f.status === 'in_progress'));
+    const heroFig = pickHeroFigurine(works, homeContent);
+    const heroImage = heroImageUrl(bg, heroFig, FALLBACK_HERO);
+
+    // The exhibit of the day, as far as it can be known without a browser: the admin's PIN.
+    // The page excludes the vitrine's work from the reel (a piece must not appear twice), and
+    // that exclusion used to happen on the client only — so the prerendered reel showed one
+    // card that hydration then yanked out from under the reader, resequencing the rest. The
+    // daily rotation and the showing-window gate still need the clock and the rooms, so the
+    // client refines this (see computeVitrineFig); seeding the pin makes the common case
+    // agree with itself.
+    const vitrineFig = homeContent.vitrineFigurineId
+        ? works.find((w) => w.id === homeContent.vitrineFigurineId) ?? null
+        : null;
+
+    // The OG card shows what the page shows.
+    let ogImage = `${SITE_URL}${FALLBACK_HERO}`;
     try {
-        const resolved = resolveMediaUrl(bg);
-        const absolute = toAbsoluteUrl(resolved);
+        const absolute = toAbsoluteUrl(resolveMediaUrl(heroImage));
         if (absolute) ogImage = absolute;
     } catch {
         // Keep the bundled fallback image.
     }
-    return { ogImage, bg, homeContent };
+
+    return { ogImage, bg, homeContent, heroFig, vitrineFig, author, works, inProgress };
 };

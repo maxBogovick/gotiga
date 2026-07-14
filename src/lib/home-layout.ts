@@ -76,8 +76,12 @@ export function homeBlockWrapperStyle(
 ): string {
     const parts: string[] = [`order:${order}`];
     const s = config?.blockStyles?.[blockId];
-    if (s?.background) parts.push(`--hl-bg:${s.background}`);
-    if (s?.color) parts.push(`--hl-color:${s.color}`);
+    // Same reason as safeColor's own comment: a value holding `;` would smuggle extra
+    // declarations into this style attribute.
+    const background = safeColor(s?.background);
+    const color = safeColor(s?.color);
+    if (background) parts.push(`--hl-bg:${background}`);
+    if (color) parts.push(`--hl-color:${color}`);
     if (s?.font) parts.push(`--hl-font:${FONT_STACK[s.font] ?? 'inherit'}`);
     if (s?.fontSize && s.fontSize !== 'base') parts.push(`--hl-size:${FONT_SIZES[s.fontSize]}`);
     return parts.join(';');
@@ -99,7 +103,8 @@ export function homeBlockClasses(config: HomeLayoutConfig | null, blockId: HomeB
 
 /** Inline style for the page container: the whole-page background override. */
 export function homePageStyle(config: HomeLayoutConfig | null): string {
-    return config?.pageBackground ? `background:${config.pageBackground}` : '';
+    const background = safeColor(config?.pageBackground);
+    return background ? `background:${background}` : '';
 }
 
 // ── Element registry ─────────────────────────────────────────────────────────
@@ -125,23 +130,34 @@ export const HOME_BLOCK_BOXES: Partial<Record<HomeBlockId, string>> = {
 };
 
 export const HOME_BLOCK_ELEMENTS: Partial<Record<HomeBlockId, HomeElementDef[]>> = {
+    // Every selector here must exist in the rendered markup. Four of them did not:
+    // `.hero-orn`, `.hero-visual`, `.work-more-ledger` and `.context-side-row--guide` were
+    // left behind by earlier redesigns, so the editor kept offering their controls and the
+    // generated CSS kept targeting nothing — the admin moved a slider and the page did not
+    // move. The hero's media is `.cine-frame` now.
     hero: [
-        { id: 'orn',     sel: '.hero-orn',    kind: 'media', orderable: true },
         { id: 'title',   sel: '.hero-title',  kind: 'text',  orderable: true },
         { id: 'lead',    sel: '.hero-lead',   kind: 'text',  orderable: true },
         { id: 'ctas',    sel: '.hero-ctas',   kind: 'group', orderable: true },
         { id: 'proof',   sel: '.hero-proof',  kind: 'text',  orderable: true },
         { id: 'teasers', sel: '.hw-teasers',  kind: 'group', orderable: true },
-        { id: 'visual',  sel: '.hero-visual', kind: 'media' },
+        // Deliberately renamed from `visual` while its selector was being repointed from the
+        // long-dead `.hero-visual` to the live `.cine-frame`. Keeping the id would have
+        // ARMED every override an admin ever saved for it: the control has been generating
+        // CSS that matched nothing for as long as it has existed, so anyone who toggled it
+        // off (saw nothing happen) or dragged its width slider left a `hero.visual` entry
+        // behind — and the moment the selector started resolving, that entry would hide or
+        // shrink the hero photograph, i.e. the page's LCP element, with no admin action.
+        // A new id makes those stale entries unresolvable (elementDef returns undefined and
+        // generateHomeElementCSS skips them), which is the migration.
+        { id: 'photo',   sel: '.cine-frame',  kind: 'media' },
     ],
     gallery: [
         { id: 'header',  sel: '.context-hd',       kind: 'group', orderable: true },
         { id: 'content', sel: '.work-content',     kind: 'group', orderable: true },
-        { id: 'more',    sel: '.work-more-ledger', kind: 'group', orderable: true },
         { id: 'eyebrow', sel: '.eyebrow',          kind: 'text' },
         { id: 'title',   sel: '.context-title',    kind: 'text' },
         { id: 'desc',    sel: '.context-desc',     kind: 'text' },
-        { id: 'guideRow', sel: '.context-side-row--guide', kind: 'group' },
     ],
     authorStory: [
         { id: 'eyebrow',  sel: '.eyebrow',     kind: 'text',  orderable: true },
@@ -205,6 +221,29 @@ export const ELEMENT_FONT_RANGE = { min: 8, max: 120 } as const;
 export const ELEMENT_WIDTH_RANGE = { min: 15, max: 100 } as const;
 
 /**
+ * A colour safe to interpolate into a CSS declaration.
+ *
+ * Everything in the generated stylesheet below is a literal from the saved config, and a
+ * value carrying `}` closes the rule early: `red}html{display:none` would take the whole
+ * page down, from a field meant to hold `#c65f3c`. The numeric knobs are already pinned by
+ * `typeof === 'number'`; the colour is the one free-text value, so it gets checked here.
+ * Anything the browser itself doesn't recognise as a colour is dropped.
+ */
+function safeColor(value: string | null | undefined): string | null {
+    if (typeof value !== 'string') return null;
+    const v = value.trim();
+    // Parentheses stay legal — rgb()/hsl()/color-mix() need them; the rule-breaking
+    // characters do not appear in any colour syntax.
+    if (!v || /[;{}<>\\"']/.test(v)) return null;
+    // CSS.supports is the browser's own parser — no colour syntax to keep in sync here.
+    if (typeof CSS !== 'undefined' && typeof CSS.supports === 'function') {
+        return CSS.supports('color', v) ? v : null;
+    }
+    // No DOM (SSR / prerender): fall back to the shapes the admin editor can actually emit.
+    return /^(#[0-9a-f]{3,8}|[a-z]+|(rgb|rgba|hsl|hsla)\([\d\s.,%/-]+\))$/i.test(v) ? v : null;
+}
+
+/**
  * Global CSS applying element-level overrides (colour / free-range size /
  * visibility / in-block order). Injected on the home page as a <style> tag —
  * `!important` beats the components' scoped styles, so they stay untouched.
@@ -225,8 +264,9 @@ export function generateHomeElementCSS(config: HomeLayoutConfig | null): string 
             out.push(`${sel}{display:none !important}`);
             continue;
         }
-        if (s.color) {
-            out.push(`${sel},${sel} *{color:${s.color} !important}`);
+        const color = safeColor(s.color);
+        if (color) {
+            out.push(`${sel},${sel} *{color:${color} !important}`);
         }
         if (typeof s.sizePx === 'number' && s.sizePx > 0 && def.kind !== 'media') {
             // Groups force the size into descendants (their children set their

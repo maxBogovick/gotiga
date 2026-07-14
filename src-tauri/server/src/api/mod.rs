@@ -748,6 +748,7 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 get(handlers::validate_reset_token),
             )
             .route("/auth/reset-password", post(handlers::apply_password_reset))
+            .layer(middleware::from_fn(public_cache_middleware))
             .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT));
 
     // Serve only known media subdirectories — never the whole UPLOAD_DIR (which can
@@ -795,6 +796,121 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             request_observability_middleware,
         ))
         .with_state(state)
+}
+
+/// Public content that is the same for every visitor, and so may be cached for a beat.
+///
+/// An allowlist rather than "anything that isn't /admin": some unauthenticated GETs return
+/// per-visitor material behind an unguessable token (a booking, a reset link), and those
+/// must never land in a shared cache. Paths here are the ones nested under /api/v1, i.e.
+/// with that prefix already stripped by `nest`.
+fn is_public_cacheable(path: &str) -> bool {
+    const EXACT: &[&str] = &[
+        "/figurines",
+        "/figurines/in-progress",
+        "/figurines/first-look",
+        "/figurines/noticed",
+        "/cabinet/zones",
+        "/showing-rooms",
+        "/main-background",
+        "/home-content",
+        "/author/profile",
+        "/booking-rules",
+        "/impressions/featured",
+    ];
+
+    if EXACT.contains(&path) {
+        return true;
+    }
+    // Read-only site settings: theme, reel theme, home layout, copy overrides, contacts.
+    // (The admin's writable twins live under /admin/settings/… and are not matched here.)
+    if path.starts_with("/settings/") || path.starts_with("/content/texts/") {
+        return true;
+    }
+    // A single figurine: /figurines/<id>, but not its sub-resources.
+    if let Some(rest) = path.strip_prefix("/figurines/") {
+        return !rest.is_empty() && !rest.contains('/');
+    }
+    false
+}
+
+/// Give the public reads a short shared-cache lifetime.
+///
+/// Nothing on this API sent `Cache-Control` at all, so every visitor — and Cloudflare in
+/// front of us — re-fetched the same unchanged catalogue on every view. A minute is short
+/// enough that an admin's edit is never stale for more than a beat, and `stale-while-
+/// revalidate` means the refresh happens behind the visitor rather than in front of them.
+///
+/// Requests carrying an `Authorization` header are left alone: the very same path can be an
+/// admin read (`/figurines?visible=false` returns hidden work), and that must not be stored
+/// in a shared cache. `Vary: Authorization` makes that explicit to any cache in between.
+async fn public_cache_middleware(req: Request, next: Next) -> Response {
+    let cacheable = req.method() == Method::GET
+        && req.headers().get(header::AUTHORIZATION).is_none()
+        && is_public_cacheable(req.uri().path());
+
+    let mut res = next.run(req).await;
+
+    if cacheable
+        && res.status() == StatusCode::OK
+        && !res.headers().contains_key(header::CACHE_CONTROL)
+    {
+        res.headers_mut().insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=60, stale-while-revalidate=600"),
+        );
+        res.headers_mut().insert(
+            header::VARY,
+            HeaderValue::from_static("Authorization, Accept-Encoding"),
+        );
+    }
+
+    res
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::is_public_cacheable;
+
+    #[test]
+    fn caches_the_public_catalogue_and_settings() {
+        for path in [
+            "/figurines",
+            "/figurines/in-progress",
+            "/figurines/first-look",
+            "/figurines/noticed",
+            "/figurines/2dc46e41-2645-59af-88b5-1fe9c31a463f",
+            "/home-content",
+            "/author/profile",
+            "/showing-rooms",
+            "/main-background",
+            "/impressions/featured",
+            "/settings/theme",
+            "/settings/home-layout",
+            "/content/texts/author",
+        ] {
+            assert!(is_public_cacheable(path), "{path} should be cacheable");
+        }
+    }
+
+    #[test]
+    fn never_caches_personal_or_admin_reads() {
+        // Anything reached with a secret token, anything per-visitor, anything admin: a
+        // shared cache holding these is the whole reason this is an allowlist.
+        for path in [
+            "/admin/settings/theme",
+            "/admin/logs",
+            "/auth/me",
+            "/profile/bookings",
+            "/profile/orders",
+            "/profile/threads/2dc46e41-2645-59af-88b5-1fe9c31a463f",
+            "/auth/reset-token/secret-token",
+            "/figurines/2dc46e41-2645-59af-88b5-1fe9c31a463f/comments",
+            "/bookings/some-cancel-token",
+        ] {
+            assert!(!is_public_cacheable(path), "{path} must NOT be cacheable");
+        }
+    }
 }
 
 async fn auth_middleware(

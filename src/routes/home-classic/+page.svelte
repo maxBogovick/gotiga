@@ -478,9 +478,12 @@
 
     async function init() {
         try {
-            const [bgPath, figurines, inProgress, firstLook, noticedByGuests, content, workshop, author, layout] = await Promise.all([
+            const [bgPath, page, inProgress, firstLook, noticedByGuests, content, workshop, author, layout] = await Promise.all([
                 api.getMainBackground().catch(() => null),
-                api.getAllFigurines(30).catch(() => [] as FigurineListItem[]),
+                // Uncapped: this page resolves the admin's pinned hero/vitrine, the visitor's
+                // marks and the notice board's showings against this list, so a page-sized
+                // slice silently drops whichever of them falls outside it (see home-hero.ts).
+                api.getFigurinesPage().catch(() => ({ items: [] as FigurineListItem[], total: 0 })),
                 api.getInProgressFigurines().catch(() => [] as FigurineListItem[]),
                 api.getFirstLookFigurines().catch(() => [] as FigurineListItem[]),
                 api.getNoticedByGuests().catch(() => [] as FigurineListItem[]),
@@ -505,6 +508,7 @@
             if (bgPath) { imageUrl = bgPath; hasCustomHeroPhoto = true; }
             homeContent = content;
             if (workshop) workshopFeature = workshop;
+            const figurines = page.items;
             const visibleFigurines = figurines.filter(f => f.status !== 'in_progress');
             collectionFigurines = sortFeaturedFigurines(visibleFigurines);
             collectionTotal = visibleFigurines.length;
@@ -560,6 +564,9 @@
             if (!inHlPreview) localStorage.setItem('gotiga_visited', String(Date.now()));
         } catch { /* storage blocked (private mode) → treat as a new visitor */ }
         function onHlMessage(e: MessageEvent) {
+            // Only the admin editor, running on this very origin, may drive the page —
+            // otherwise any site that embeds this one in an iframe can rearrange it.
+            if (e.origin !== window.location.origin) return;
             if (e.data?.type !== 'gotiga-home-layout') return;
             hlPreviewDriven = true;
             if ('config' in e.data) homeLayout = e.data.config ?? null;
@@ -1058,30 +1065,11 @@
 
 <style>
     /* ── TOKENS ──────────────────────────────────── */
-    :root {
-        --cream:   var(--color-canvas-base);
-        --cream2:  var(--color-canvas-raised);
-        --ink:     var(--color-ink-primary);
-        --brown:   var(--color-ink-primary);
-        --mid:     var(--color-ember-deep);
-        --tan:     var(--color-ember-ink);
-        --copper:  var(--color-ember);
-        --gold:    var(--color-ochre);
-        /* Сплошные приглушённые чернила (≥ 4.5:1 над фоном по WCAG AA),
-           вместо opacity-over-cream, который давал ~1.7–2.9:1. */
-        --muted:   var(--color-ink-tertiary);  /* ~6.45:1 */
-        --muted2:  var(--color-ink-tertiary);  /* ~6.45:1 — мелкие лейблы */
-        --border:  color-mix(in srgb, var(--color-ink-primary) 10%, transparent);
-        --border2: color-mix(in srgb, var(--color-ink-primary) 18%, transparent);
-        --ease:    cubic-bezier(0.16,1,0.3,1);
-        --site-header-height: 68px;
-    }
+    /* Tokens live in app.css. Declaring them in a component's `:root` makes them GLOBAL
+       (Svelte cannot scope `:root`), so this one route was silently redefining the whole
+       site's palette — including the AA-contrast inks — for every page visited after it. */
 
     * { margin: 0; padding: 0; box-sizing: border-box; }
-
-    @media (prefers-reduced-motion: no-preference) {
-        :global(html) { scroll-behavior: smooth; }
-    }
 
     /* Divider opening the returning-visitor appendix ("Lately at the cabinet"). */
     .house-lately-divider {
@@ -1107,16 +1095,14 @@
         white-space: nowrap;
     }
 
-    :global(body) {
-        background: var(--cream);
+    /* ── ROOT ────────────────────────────────────── */
+    /* The page's own ground and typography. This was a `:global(body)` rule — i.e. one route
+       setting the whole site's body font, for the rest of the session. */
+    .root {
         color: var(--brown);
         font-family: 'Instrument Sans', sans-serif;
         -webkit-font-smoothing: antialiased;
-    }
-
-    /* ── ROOT ────────────────────────────────────── */
-    .root {
-        width: 100vw;
+        width: 100%;
         min-height: 100svh;
         /* `clip` (not `hidden`) — `hidden` forces the paired overflow-y to
            `auto` per spec, silently turning .root into its own scroll
@@ -2169,9 +2155,7 @@
     }
 
     @media (max-width: 680px) {
-        :root {
-            --site-header-height: 58px;
-        }
+        /* (--site-header-height drops to 58px here — in app.css, with the token itself.) */
 
         .hero {
             padding: calc(var(--site-header-height) + 18px) 16px 22px;

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { resolveWebpUrl, resolveSrcset } from '$lib/api';
+  import { syncAttr } from '$lib/hydrate-image';
 
   type Props = {
     src: string | undefined | null;
@@ -62,33 +63,9 @@
   let thumbImg = $state<HTMLImageElement | undefined>();
   let thumbPicture = $state<HTMLElement | undefined>();
 
-  /**
-   * Repair the photo after hydration.
-   *
-   * Svelte's `set_attribute` deliberately SKIPS `src` and `srcset` while hydrating
-   * (internal/client/dom/elements/attributes.js) — resetting them would fire a second
-   * network request for a picture the server already pointed at, so it assumes the
-   * server's markup is right. On a page that is PRERENDERED (the home page, the archive,
-   * every /figurines/[id]) that assumption is false: the HTML is a snapshot of the
-   * collection as it stood at BUILD time, while the load functions re-run in the browser
-   * against the live API. Text nodes and hrefs get updated; the photo does not. A card
-   * then wears whichever photo occupied its slot on the day of the deploy — a work titled
-   * "Gnome" showing the monkey.
-   *
-   * So once hydration is over, compare what the DOM actually holds against what this
-   * component was asked to show, and write the difference through by hand. In a pure
-   * client render (CSR, Tauri) the two already agree and every branch below is a no-op.
-   */
-  function syncAttr(el: Element | null | undefined, name: string, want: string | null): void {
-    if (!el) return;
-    const have = el.getAttribute(name);
-    if (want) {
-      if (have !== want) el.setAttribute(name, want);
-    } else if (have !== null) {
-      el.removeAttribute(name);
-    }
-  }
-
+  // Repair the photo after hydration — Svelte skips src/srcset there, and on a
+  // prerendered page the DOM's photo is the build's, not today's. See hydrate-image.ts;
+  // the home page's hero does the same for its own <img>.
   onMount(() => {
     // The <source> first: the browser re-runs its selection when the <img>'s own
     // src/srcset is touched, so the sources must already be correct by then.

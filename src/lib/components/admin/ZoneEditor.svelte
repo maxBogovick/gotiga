@@ -83,7 +83,10 @@
     async function loadData() {
         const [loadedZones, loadedBg] = await Promise.all([
             api.getCabinetZones(),
-            api.getMainBackground()
+            // getMainBackground now throws on a failed request (it used to return null for
+            // both "no background" and "request failed"); the editor only wants a picture to
+            // show, so a failure is simply no picture.
+            api.getMainBackground().catch(() => null)
         ]);
         zones = loadedZones;
         if (loadedBg) bgImage = loadedBg;

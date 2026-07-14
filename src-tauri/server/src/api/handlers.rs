@@ -487,19 +487,52 @@ pub struct ListParams {
     page: Option<i64>,
     #[serde(rename = "perPage")]
     per_page: Option<i64>,
+    /// Accepted as an alias for `perPage`. The web client asked for `?limit=N` for a
+    /// long time; serde dropped the unknown key without a word, `per_page` stayed None,
+    /// and the service's `unwrap_or(i64::MAX)` then served the whole catalogue to a
+    /// caller that had explicitly asked for thirty rows. The client now sends `perPage`,
+    /// but a page cap silently meaning "no cap" is the kind of trap that should not be
+    /// left armed for the next caller — or for a stale bundle still in someone's cache.
+    limit: Option<i64>,
 }
 
 pub async fn list_figurines(
     State(service): State<AppService>,
+    State(config): State<Config>,
+    headers: HeaderMap,
     Query(params): Query<ListParams>,
 ) -> Result<Json<crate::models::FigurinesPage>> {
     let visible_only = params.visible.unwrap_or(true);
+
+    // `visible=false` does not mean "show me the hidden ones" to the repository — it means
+    // "drop the visibility filter ENTIRELY", and with it the first-look gate that holds a
+    // work out of the public archive until its hour (see get_all_figurines). This route
+    // carries no auth layer, so until now `GET /figurines?visible=false` handed any
+    // anonymous caller the unpublished work and the not-yet-released work, and the client
+    // was the only thing pretending otherwise (getAllFigurinesAdmin attaches a token). The
+    // admin already sends that token; require it.
+    if !visible_only {
+        let authorized = bearer_token(&headers).is_some_and(|t| t == config.admin_api_key);
+        if !authorized {
+            tracing::warn!(
+                target: "gotiga_server::auth",
+                event = "list_figurines_unfiltered",
+                outcome = "rejected",
+                "anonymous request for the unfiltered figurine list"
+            );
+            return Err(AppError::Unauthorized);
+        }
+    }
+
     let query = crate::models::FigurineQuery {
         status: params.status,
         search: params.search,
         sort: params.sort,
         page: params.page,
-        per_page: params.per_page.map(|n| n.clamp(1, 200)),
+        per_page: params
+            .per_page
+            .or(params.limit)
+            .map(|n| n.clamp(1, 200)),
     };
     let page = service.list_figurines(visible_only, query).await?;
     Ok(Json(page))

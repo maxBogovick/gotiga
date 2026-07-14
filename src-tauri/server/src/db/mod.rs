@@ -44,7 +44,7 @@ pub struct Repository {
 /// Result of `Repository::get_favorite_tiers` — `house_favorite` is always a
 /// subset of `noticed` (same ranking, narrower percentile cutoff), so callers
 /// can check `house_favorite` first and fall back to `noticed`.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct FavoriteTiers {
     pub noticed: std::collections::HashSet<Uuid>,
     pub house_favorite: std::collections::HashSet<Uuid>,
@@ -1047,11 +1047,20 @@ impl Repository {
             .fetch_one(&self.pg_pool)
             .await?;
 
+        // Every ordering ends in `id` — a total order, so the sort is deterministic.
+        //
+        // Without it these clauses only PARTIALLY order the rows: `sort_order` is NOT NULL
+        // DEFAULT 0, so most of a young collection ties on it, and `created_at`/`name` can
+        // tie too. Postgres is then free to return tied rows in any order it likes, and it
+        // does change its mind — an UPDATE rewrites the tuple and moves it in a seq scan. On
+        // an unpaginated read that only reshuffles equals; with LIMIT/OFFSET it decides WHICH
+        // rows you get, so two identical requests can return overlapping-but-different pages,
+        // and a work can sit in the gap between page 1 and page 2 forever.
         let order_clause = match q.sort.as_deref() {
-            Some("newest") => " ORDER BY created_at DESC",
-            Some("oldest") => " ORDER BY created_at ASC",
-            Some("name")   => " ORDER BY name ASC",
-            _              => " ORDER BY sort_order",
+            Some("newest") => " ORDER BY created_at DESC, id",
+            Some("oldest") => " ORDER BY created_at ASC, id",
+            Some("name")   => " ORDER BY name ASC, id",
+            _              => " ORDER BY sort_order, created_at DESC, id",
         };
 
         let mut items_builder: QueryBuilder<Postgres> =

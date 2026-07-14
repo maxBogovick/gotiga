@@ -4,8 +4,8 @@
     import { cubicOut } from 'svelte/easing';
     import { api, resolveSrcset, resolveWebpUrl } from '$lib/api';
     import AppImage from '$lib/components/AppImage.svelte';
-    import type { AuthorProfile, FigurineListItem, HomeContent, WorkshopFeature } from '$lib/types/api';
-    import { t, brandName, lang } from '$lib/i18n';
+    import type { AuthorProfile, FigurineListItem, HomeContent } from '$lib/types/api';
+    import { t, brandName } from '$lib/i18n';
     import ReelWorkCard from '$lib/components/ReelWorkCard.svelte';
     import WorkMarginIndex from '$lib/components/WorkMarginIndex.svelte';
     import HouseNoticeBoard from '$lib/components/HouseNoticeBoard.svelte';
@@ -14,9 +14,10 @@
     import ImpressionsQuoteStrip from '$lib/components/ImpressionsQuoteStrip.svelte';
     import AuthorStory from '$lib/components/AuthorStory.svelte';
     import FirstLook from '$lib/components/FirstLook.svelte';
-    import AtelierReel from '$lib/components/AtelierReel.svelte';
     import HeroWorkshopTeaser from '$lib/components/HeroWorkshopTeaser.svelte';
     import WorkshopReelModal from '$lib/components/WorkshopReelModal.svelte';
+    import { heroImageUrl, pickHeroFigurine, sortWorks, visibleWorks } from '$lib/home-hero';
+    import { syncAttr } from '$lib/hydrate-image';
     import { visitorBook } from '$lib/stores/visitor-book.svelte';
     import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
     import { visitorMarks } from '$lib/stores/visitor-marks.svelte';
@@ -39,13 +40,25 @@
     } from '$lib/home-layout';
     import type { HomeLayoutConfig, HomeBlockId, ReelTheme } from '$lib/types/api';
     import { generateReelCSS, startListeningForReelPreview } from '$lib/stores/reel-theme.svelte';
+    import { injectStyle } from '$lib/inject-style';
 
     let { data } = $props();
+
+    // JSON.stringify escapes quotes and backslashes but NOT the forward slash, so a brand
+    // name carrying a closing script tag would end the JSON-LD block early and everything
+    // after it would be parsed as HTML. The value is admin-authored, not visitor-authored,
+    // so this guards against a compromised (or careless) admin rather than a public hole —
+    // but it is one line, and the alternative is script injection on the site's front door.
+    // Escaping every `<` is enough: JSON has no other way to spell one.
+    // (The literal tag is not written out even in this comment — an HTML tokenizer ends a
+    //  script block on sight of it, comment or not, which is exactly the flaw at issue.)
+    const jsonLdSafe = (value: unknown) =>
+        JSON.stringify(value).replaceAll('<', '\\u003c');
 
     // WebSite + Organization graph — anchors the brand for search engines and LLMs and
     // ties every other JSON-LD node (figurines, the author) back to one named entity.
     // The Organization carries a logo so Google can show it in brand/knowledge panels.
-    let websiteJsonLd = $derived(JSON.stringify({
+    let websiteJsonLd = $derived(jsonLdSafe({
         '@context': 'https://schema.org',
         '@graph': [
             {
@@ -91,53 +104,24 @@
         );
     }
 
-    /**
-     * The reel's order: the author's own, and nothing else.
-     *
-     * This used to pin the 2 newest works by createdAt and then rotate the rest by a
-     * daily offset. Both overrode `sortOrder`, and the rotation did so destructively:
-     * the offset is (day number % list length), so on a day when it came out to 16, the
-     * reel started at the sixteenth work and everything the author had deliberately put
-     * FIRST — the low sortOrder values — was rotated onto the tail, past the 16 the home
-     * page shows. Setting a work to sortOrder 1 was the surest way to hide it. The field
-     * looked broken; it was being outvoted by the calendar.
-     *
-     * The daily turn survives where it belongs: on the vitrine's single exhibit of the
-     * day (dailyPick), which is a pick, not an ordering.
-     */
-    function sortFeaturedFigurines(items: FigurineListItem[]) {
-        return items.slice().sort((a, b) => {
-            const order = (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
-            if (order !== 0) return order;
-            // Same sortOrder (the admin form lets that happen freely): newest first, so a
-            // fresh work at least leads its own tie instead of landing arbitrarily.
-            const da = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-            const db = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-            return db - da;
-        });
-    }
-
     let isLoaded = $state(false);
-    // The bundled photo is a *fallback* — only used when the API has no background of
-    // its own — so it must never be the initial value while a real one is still in
-    // flight (that used to render the bundled 268 KB, fetch it, then swap to the real
-    // background a moment later and fetch that too — both downloaded, every visit).
-    // Now imageUrl is seeded directly from +page.ts's load(), which has already
-    // resolved data.bg (or not) by the time this component exists, so there's no
-    // "in flight" moment here to render a placeholder for. It also remains the OG
-    // fallback in +page.ts, which costs no download.
+    // The hero's own inputs (the background, and the work it shows) are resolved in
+    // load() and seeded here, so the <img> in the prerendered HTML is already the one
+    // this component wants — see the note in +page.ts. The bundled photo is only the
+    // last resort, for a house with neither a background nor a single catalogued work.
     const FALLBACK_HERO = '/images/cabinet-bg.jpeg';
-    let imageUrl = $state(data.bg || FALLBACK_HERO);
-    let hasCustomHeroPhoto = $state(Boolean(data.bg));
-    // The works start EMPTY and are filled in init(), on the client. They must not be
-    // seeded from load(): this page is prerendered, so a seeded reel is baked into the
-    // static HTML and its photos never refresh on hydration (see the note in +page.ts).
-    let availableFigurines = $state<FigurineListItem[]>([]);
-    let inProgressFigurines = $state<FigurineListItem[]>([]);
-    let collectionFigurines = $state<FigurineListItem[]>([]);
-    let heroFigurine = $state<FigurineListItem | null>(null);
+    let backgroundUrl = $state<string | null>(data.bg);
+    // Seeded from load(), so the reel is IN the prerendered HTML — see the note in +page.ts
+    // (the archive has always done this; the home page used to start empty and pop in).
+    // init() then refreshes them against the live API, sharing load()'s deduped request.
+    let collectionFigurines = $state<FigurineListItem[]>(data.works);
+    let availableFigurines = $state<FigurineListItem[]>(
+        data.works.filter((f) => f.status === 'available')
+    );
+    let inProgressFigurines = $state<FigurineListItem[]>(data.inProgress);
+    let heroFigurine = $state<FigurineListItem | null>(data.heroFig ?? null);
     // Author-led hero + story content, reused from the admin-editable profile.
-    let authorProfile = $state<AuthorProfile | null>(null);
+    let authorProfile = $state<AuthorProfile | null>(data.author ?? null);
     // First-time vs returning visitor. The retention hooks (today's exhibit,
     // opening soon, "since your visit") are shown HIGH only to people who already
     // know the house — that is who they are for, and burying them kills them. A
@@ -178,65 +162,19 @@
     // styles, so the block components themselves stay untouched.
     let hlElementCSS = $derived(generateHomeElementCSS(homeLayout));
 
-    // "Exhibit of the day": admin-pinned pick, else daily rotation. Rendered
-    // as a compact mark inside VisitLedger, not its own section.
-    let vitrineFig = $state<FigurineListItem | null>(null);
-    let collectionTotal = $state(0);
-    let availableTotal = $state(0);
+    // "Exhibit of the day": admin-pinned pick, else daily rotation. Rendered as a compact
+    // mark inside VisitLedger, not its own section. Seeded with the pin from load() so the
+    // prerendered reel already leaves its slot out (see the note in +page.ts); the daily
+    // rotation and the showing-window gate are added by computeVitrineFig on the client.
+    let vitrineFig = $state<FigurineListItem | null>(data.vitrineFig ?? null);
+    // The list IS the whole visible collection (see home-hero.ts), so its length is the
+    // honest count — and, because the works are seeded from load(), it is already right in
+    // the prerendered HTML rather than snapping into place after hydration.
+    let collectionTotal = $derived(collectionFigurines.length);
     let homeContent = $state<HomeContent>(data.homeContent);
-    let workshopFeature = $state<WorkshopFeature>({
-        visible: true,
-        photoBack: null,
-        photoFront: null,
-        eyebrowEn: null,
-        eyebrowRu: null,
-        titleEn: null,
-        titleRu: null,
-        textEn: null,
-        textRu: null,
-        link1LabelEn: null,
-        link1LabelRu: null,
-        link1Href: null,
-        link2LabelEn: null,
-        link2LabelRu: null,
-        link2Href: null,
-    });
     let mouseX = $state(0.5);
     let mouseY = $state(0.5);
     let canUseHeroTilt = $state(false);
-
-    // Pick the field for the current language, falling back to the other language.
-    const wfLoc = (l: string, en?: string | null, ru?: string | null): string =>
-        ((l === 'ru' ? (ru || en) : (en || ru)) ?? '').trim();
-
-    let wfEyebrow = $derived(wfLoc($lang, workshopFeature.eyebrowEn, workshopFeature.eyebrowRu) || $t('homeWorkshopCta'));
-    let wfTitle = $derived(wfLoc($lang, workshopFeature.titleEn, workshopFeature.titleRu) || $t('homeStudioTitle'));
-    let wfText = $derived(wfLoc($lang, workshopFeature.textEn, workshopFeature.textRu) || $t('homeStudioText'));
-    let wfLink1Label = $derived(wfLoc($lang, workshopFeature.link1LabelEn, workshopFeature.link1LabelRu) || $t('homeWorkshopCta'));
-    let wfLink1Href = $derived(workshopFeature.link1Href?.trim() || '/workshop');
-    let wfLink2Label = $derived(wfLoc($lang, workshopFeature.link2LabelEn, workshopFeature.link2LabelRu) || $t('navAuthor'));
-    let wfLink2Href = $derived(workshopFeature.link2Href?.trim() || '/author');
-
-    // Which workshop reel sits on top of the overlapping pair — whichever the
-    // visitor last clicked.
-    let frontReel = $state<'a' | 'b'>('a');
-
-    // The workshop reels themselves mount (and start fetching video) only once
-    // asked for — a hero locket click, or the section physically scrolling
-    // into view. Until then the section shows its static poster frames.
-    let workshopActivated = $state(false);
-    let workshopSectionEl = $state<HTMLElement>();
-
-    onMount(() => {
-        if (typeof IntersectionObserver === 'undefined') { workshopActivated = true; return; }
-        if (!workshopSectionEl) return;
-        const io = new IntersectionObserver(
-            ([entry]) => { if (entry.isIntersecting) { workshopActivated = true; io.disconnect(); } },
-            { rootMargin: '600px 0px' },
-        );
-        io.observe(workshopSectionEl);
-        return () => io.disconnect();
-    });
 
     // Clicking a hero locket reveals its clip full-size, growing out of the
     // locket's own screen position rather than a plain fade.
@@ -245,8 +183,6 @@
     let reelModalOrigin = $state<{ x: number; y: number; width: number; height: number } | null>(null);
 
     function openReelModal(which: 'a' | 'b', e: MouseEvent) {
-        frontReel = which;
-        workshopActivated = true;
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
         reelModalOrigin = { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
         reelModalClip = which;
@@ -270,7 +206,13 @@
     // Hybrid editorial+algorithmic shelf resolved entirely server-side (admin
     // pins + top of the private mark ranking) — see /figurines/noticed.
     let noticedByGuestsFigurines = $state<FigurineListItem[]>([]);
-    let heroObjectName = $derived(homeContent.heroCaptionTitle?.trim() || heroFigurine?.name || homeContent.title?.trim() || '');
+    // The work ACTUALLY IN the hero photograph — which is nobody when an admin-uploaded
+    // background has overridden it. The caption ("Selected work: <name> → Open work") and
+    // the alt text hang off this, not off heroFigurine: the latter is only the pick for the
+    // photo, and when the background wins, naming a piece the visitor cannot see in the
+    // frame — and linking to it — is a caption that lies.
+    let heroPhotoFigurine = $derived(backgroundUrl ? null : heroFigurine);
+    let heroObjectName = $derived(homeContent.heroCaptionTitle?.trim() || heroPhotoFigurine?.name || homeContent.title?.trim() || '');
     let heroObjectMeta = $derived(homeContent.heroCaptionMeta?.trim() || $t('homeHeroObjectMeta'));
     let heroObjectCta = $derived(heroObjectName ? $t('homeHeroObjectOpen') : $t('homeSecondaryCta'));
     let titleWords = $derived(titleText.split(/\s+/).filter(Boolean));
@@ -281,40 +223,28 @@
             { words: titleWords.slice(1), offset: 1 },
         ];
     })());
-    let heroObjectHref = $derived(heroFigurine ? `/figurines/${heroFigurine.id}` : '/figurines');
+    let heroObjectHref = $derived(heroPhotoFigurine ? `/figurines/${heroPhotoFigurine.id}` : '/figurines');
     let showHeroCaption = $derived(Boolean(heroObjectName));
-    // The hero photo itself: the admin-pinned piece if set, else today's
-    // vitrine pick, else simply the first work on hand — always a real
-    // figure, never a static room render (that only remains as the very
-    // last resort, e.g. an empty catalogue).
-    let heroDisplayFigurine = $derived(
-        heroFigurine ?? vitrineFig ?? availableFigurines[0] ?? collectionFigurines[0] ?? null
-    );
-    // An admin-uploaded hero photo (Replace Photo in the admin) always wins over
-    // the figurine-driven picks below — it's an explicit override, not a fallback.
-    // The hero fills the fold, so it takes the preview-sized photo — the 420px
-    // thumbnail behind faceImageUrl is built for the archive's small cards and
-    // goes to mush at this size.
-    let heroDisplayImage = $derived(
-        hasCustomHeroPhoto
-            ? imageUrl
-            : (heroDisplayFigurine?.faceImageLargeUrl?.trim()
-                || heroDisplayFigurine?.faceImageUrl?.trim()
-                || imageUrl)
-    );
+    // The hero photo. `heroFigurine` is the deterministic pick made by pickHeroFigurine —
+    // the same function load() ran at build time, over the same data — so this string is
+    // normally IDENTICAL to the one already baked into the prerendered <img>, and no
+    // second photograph is downloaded. An admin-uploaded background (Replace Photo) still
+    // overrides it: that is an explicit choice, not a fallback.
+    //
+    // The hero fills the fold, so it takes the preview-sized photo — the 420px thumbnail
+    // behind faceImageUrl is built for the archive's small cards and goes to mush here.
+    let heroDisplayImage = $derived(heroImageUrl(backgroundUrl, heroFigurine, FALLBACK_HERO));
     const HERO_SIZES = '(max-width: 900px) 100vw, 50vw';
     let heroSrcset = $derived(resolveSrcset(heroDisplayImage));
     // The format-only fallback, for a hero that has no size siblings to offer: a custom
     // background (one file by design — see resolveSrcset's comment in api.ts). It is
-    // derived from heroDisplayImage, NOT from imageUrl: those are the same string only
-    // while no hero figurine is pinned, and reading the background's URL here while the
-    // <img> below points at a figurine would hand the browser a WebP <source> from a
-    // different photograph entirely. resolveWebpUrl returns null unless a sibling is
-    // actually written for that path, so a hero with no WebP simply gets no <source>.
+    // derived from heroDisplayImage, so it always describes the photograph actually on
+    // screen — handing the browser a WebP <source> from a different picture than the
+    // <img> beneath it is exactly the bug this guards against. resolveWebpUrl returns
+    // null unless a sibling is actually written for that path, so a hero with no WebP
+    // simply gets no <source>.
     let heroBackgroundWebp = $derived(heroSrcset ? null : resolveWebpUrl(heroDisplayImage));
 
-    // Today's vitrine pick gets its own pinned specimen card beside the lead text.
-    let pinnedSpecimenFig = $derived(vitrineFig);
     // "Отмеченное вами" — the visitor's own private marks, resolved against the
     // same in-memory list as the saved/wishlist tab (see its comment above for
     // the same "first 30 fetched" cap). Never touches the server for counts —
@@ -410,18 +340,6 @@
     let reelTheme = $state<ReelTheme>({});
     let reelCSSBlock = $derived(generateReelCSS(reelTheme));
 
-    // Each pane's paragraph is the work's own short text. The list payload now carries
-    // it (FigurineListItemDto.short_text), so this is a plain projection of data we
-    // already have — no network at all. It used to be a $state map filled by an effect
-    // that fired one full `getFigurine(id)` per pane on the wall, i.e. a dozen extra
-    // round-trips (each pulling the complete record and its image array) to read one
-    // string apiece. The field was already being SELECTed server-side and discarded.
-    let galleryStories = $derived(
-        Object.fromEntries(
-            visibleGalleryFigurines.map((f) => [f.id, f.shortText?.trim() ?? ''])
-        ) as Record<string, string>
-    );
-
     // Today's vitrine: the admin-pinned vitrine figure if set (independent of the
     // hero banner's own pin), else a daily-rotating available work (falling back
     // to the wider collection when none are available). A sealed work is skipped
@@ -437,58 +355,68 @@
             ?? dailyPick(collectionFigurines.filter(isOpenNow));
     }
 
-    // The hero image is seeded from +page.ts's load(), so it paints without waiting on
-    // this. Everything that varies with the collection — the works reel above all — is
-    // fetched HERE, on the client, and never from load(): this page is prerendered, and
-    // a work's photo that was rendered at build time is not replaced during hydration
-    // (see the note in +page.ts). homeContent is re-fetched too, so an admin's edit shows
-    // up without a rebuild.
+    // The hero is seeded from +page.ts's load(), so it paints without waiting on this.
+    // Everything that varies with the collection — the works reel above all — is fetched
+    // HERE, on the client, and never from load(): this page is prerendered, and a work's
+    // photo that was rendered at build time is not replaced during hydration (see the note
+    // in +page.ts). homeContent is re-fetched too, so an admin's edit shows up without a
+    // rebuild — and so is the background: its URL is baked into the static HTML like every
+    // other load() value, so without re-reading it here a new background stays invisible
+    // until the next deploy. The works page and the background are the same deduped reads
+    // load() already made, so re-asking for them costs no extra request.
     async function init() {
         try {
-            const [figurines, inProgress, firstLook, noticedByGuests, content, workshop, author, layout, savedReelTheme] = await Promise.all([
-                api.getAllFigurines(30).catch(() => [] as FigurineListItem[]),
-                api.getInProgressFigurines().catch(() => [] as FigurineListItem[]),
+            const [page, firstLook, noticedByGuests, content, author, layout, savedReelTheme, bg] = await Promise.all([
+                api.getFigurinesPage().catch(() => null),
                 api.getFirstLookFigurines().catch(() => [] as FigurineListItem[]),
                 api.getNoticedByGuests().catch(() => [] as FigurineListItem[]),
                 api.getHomeContent().catch(() => null),
-                api.getWorkshopFeature().catch(() => null),
                 api.getAuthorProfile().catch(() => null),
                 api.getHomeLayout().catch(() => null),
-                api.getReelTheme().catch(() => null)
+                api.getReelTheme().catch(() => null),
+                // `undefined` = the request failed; `null` = there genuinely is no background.
+                // Only the second may clear the one load() already resolved — otherwise a
+                // single flaky request would drop the admin's hero photo mid-session and pull
+                // down a second large image in its place.
+                api.getMainBackground().catch(() => undefined)
             ]);
             if (author) authorProfile = author;
             if (savedReelTheme) reelTheme = savedReelTheme;
             // Editor preview (postMessage) wins over the saved config.
             if (layout && !hlPreviewDriven) homeLayout = layout;
             if (content) homeContent = content;
-            if (workshop) workshopFeature = workshop;
-            const visibleFigurines = figurines.filter((f) => f.status !== 'in_progress');
-            collectionFigurines = sortFeaturedFigurines(visibleFigurines);
-            collectionTotal = visibleFigurines.length;
-            availableTotal = figurines.filter((item) => item.status === 'available').length;
-            availableFigurines = sortFeaturedFigurines(
-                visibleFigurines.filter((item) => item.status === 'available')
-            );
-            inProgressFigurines = sortFeaturedFigurines(inProgress);
+            if (bg !== undefined) backgroundUrl = bg;
+
+            if (page) {
+                const works = sortWorks(visibleWorks(page.items));
+                collectionFigurines = works;
+                availableFigurines = works.filter((item) => item.status === 'available');
+                inProgressFigurines = sortWorks(page.items.filter((f) => f.status === 'in_progress'));
+                // The same deterministic pick load() made at build time — normally the same
+                // work, and therefore the same <img src>, so the hero is not re-downloaded.
+                heroFigurine = pickHeroFigurine(works, content ?? homeContent);
+            }
             firstLookFigurines = firstLook;
             noticedByGuestsFigurines = noticedByGuests;
-            heroFigurine = homeContent.heroFigurineId
-                ? visibleFigurines.find((item) => item.id === homeContent.heroFigurineId) ?? null
-                : null;
-            // The vitrine needs both the works and the doors; onMount also calls this once
-            // the rooms are in, whichever of the two lands last.
-            vitrineFig = computeVitrineFig();
             isLoaded = true;
         } catch (e) {
             isLoaded = true;
         }
     }
 
+    // The pointer glow follows the cursor. Coalesced onto the next animation frame: the
+    // handler used to write two pieces of reactive state on EVERY mousemove event — 60–120
+    // times a second, each one flushing an update and a style write for a single 500px
+    // gradient. The screen cannot show more than one position per frame anyway.
+    let mouseRaf = 0;
     function handleMouseMove(e: MouseEvent) {
-        if (!canUseHeroTilt) return;
-        const { innerWidth, innerHeight } = window;
-        mouseX = e.clientX / innerWidth;
-        mouseY = e.clientY / innerHeight;
+        if (!canUseHeroTilt || mouseRaf) return;
+        const { clientX, clientY } = e;
+        mouseRaf = requestAnimationFrame(() => {
+            mouseRaf = 0;
+            mouseX = clientX / window.innerWidth;
+            mouseY = clientY / window.innerHeight;
+        });
     }
 
     // Hero photo: the frame keeps pushing in as the page scrolls away. It feeds
@@ -501,21 +429,33 @@
     // never resets.
     let heroDwellZoom = $state(0);
     let heroPhotoEl = $state<HTMLElement | null>(null);
+    // The hero's own <picture>/<img>, so the post-hydration repair can reach them.
+    let heroPictureEl = $state<HTMLElement | null>(null);
+    let heroImgEl = $state<HTMLImageElement | null>(null);
     let heroLensScale = $derived((1 + heroDwellZoom).toFixed(4));
 
     const HERO_DWELL_CAP = 0.22;   // how far the dwell push can ever go
     const HERO_DWELL_TAU = 26000;  // ms to reach ~63% of the cap
 
+    // The scroll cue, shown once the hero has settled. It needs no dismissal flag: it is
+    // positioned inside the hero frame, so it leaves with it the moment the visitor does
+    // the very thing it asks for. (There was such a flag; nothing ever set it.)
     let showHint = $state(false);
-    let hintDismissed = $state(false);
 
     onMount(() => {
+        // Hydration does not touch src/srcset (see hydrate-image.ts): on this prerendered
+        // page the hero <img> holds whatever the BUILD resolved, and load() has since
+        // re-run against the live API. Usually the two agree — the pick is deterministic —
+        // and every line here is a no-op. When they don't (the admin changed the pinned
+        // work, or replaced the background) this is what puts the right photograph on
+        // screen instead of leaving the build's one there until the next deploy.
+        syncAttr(heroPictureEl?.querySelector('source'), 'srcset', heroSrcset?.webp || heroBackgroundWebp);
+        syncAttr(heroImgEl, 'srcset', heroSrcset?.jpeg ?? null);
+        syncAttr(heroImgEl, 'src', heroDisplayImage);
+
         savedFigurines.load();
         visitorMarks.load();
         houseClock.start();
-        // vitrineFig needs real door data to gate against — compute it once rooms
-        // are in, instead of racing the unrelated calls inside init().
-        showingRooms.load().then(() => { vitrineFig = computeVitrineFig(); });
         visitorBook.load();
         // Inside the admin editor's preview iframe: don't pollute the shared
         // localStorage visit flag, and listen for live layout drafts.
@@ -526,6 +466,11 @@
             if (!inHlPreview) localStorage.setItem('gotiga_visited', String(Date.now()));
         } catch { /* storage blocked (private mode) → treat as a new visitor */ }
         function onHlMessage(e: MessageEvent) {
+            // Only the admin editor, running on this very origin, may drive the page.
+            // Without this check ANY site that embeds the home page in an iframe can post
+            // this message and rearrange, recolour or hide the blocks of the real site —
+            // the listener is on the public page, not on the admin one.
+            if (e.origin !== window.location.origin) return;
             if (e.data?.type !== 'gotiga-home-layout') return;
             hlPreviewDriven = true;
             if ('config' in e.data) homeLayout = e.data.config ?? null;
@@ -536,7 +481,14 @@
             }
         }
         window.addEventListener('message', onHlMessage);
-        init();
+        // The vitrine's exhibit of the day needs BOTH halves of its answer: the works, and
+        // the doors it must not spotlight a sealed piece through. It used to be computed
+        // twice — once at the end of init(), where the rooms had not necessarily landed and
+        // isOpenNow() was therefore gating against an empty room list, and once more when
+        // the rooms arrived. Whichever finished last won. Compute it once, when both are in.
+        Promise.all([init(), showingRooms.load()]).then(() => {
+            vitrineFig = computeVitrineFig();
+        });
         const reduceMq = window.matchMedia('(prefers-reduced-motion: reduce)');
         const pointerMq = window.matchMedia('(pointer: fine)');
         const syncTiltPreference = () => {
@@ -584,6 +536,7 @@
         const hintTimer = setTimeout(() => { showHint = true; }, 3000);
         return () => {
             clearTimeout(hintTimer);
+            if (mouseRaf) cancelAnimationFrame(mouseRaf);
             stopDwell();
             heroObserver?.disconnect();
             reduceMq.removeEventListener('change', syncTiltPreference);
@@ -595,20 +548,12 @@
     // The admin's reel-theme panel drives this page live over BroadcastChannel.
     onMount(() => startListeningForReelPreview());
 
-    // The theme block is injected imperatively rather than through <svelte:head>:
-    // an {@html} block in the head is rendered once and does not re-run when the
-    // theme arrives from the server, so the panes kept their default look.
-    $effect(() => {
-        const css = reelCSSBlock;
-        if (typeof document === 'undefined') return;
-        const id = 'reel-theme';
-        const existing = document.getElementById(id);
-        const style = existing instanceof HTMLStyleElement ? existing : document.createElement('style');
-        style.id = id;
-        style.textContent = css;
-        if (!style.parentNode) document.head.appendChild(style);
-        return () => style.remove();
-    });
+    // The two stylesheets the admin drives (the reel theme, and the layout's element-level
+    // overrides) both arrive from the API after the first render, and again — live — from
+    // the editor's preview. They used to be injected two different ways for no reason that
+    // survives inspection; see injectStyle.
+    $effect(() => injectStyle('reel-theme', reelCSSBlock));
+    $effect(() => injectStyle('hl-element-overrides', hlElementCSS));
 
 </script>
 
@@ -627,9 +572,7 @@
     <meta name="twitter:image" content={data.ogImage} />
     <meta name="theme-color" content="#f8f1e7" />
     {@html `<script type="application/ld+json">${websiteJsonLd}<\/script>`}
-    {#if hlElementCSS}
-        {@html `<style id="hl-element-overrides">${hlElementCSS}</style>`}
-    {/if}
+    <!-- The admin's theme/layout CSS is NOT emitted here — see the injectStyle effects. -->
     <!-- Fonts loaded once globally in app.html -->
 </svelte:head>
 
@@ -743,15 +686,16 @@
                              half the width on a wide screen; with the 420/900/1800 renditions
                              offered, that resolves to the 900px medium on mobile instead of
                              the 1800px preview it used to pull down. -->
-                        <picture>
+                        <picture bind:this={heroPictureEl}>
                             {#if heroSrcset?.webp}
                                 <source type="image/webp" srcset={heroSrcset.webp} sizes={HERO_SIZES} />
                             {:else if heroBackgroundWebp}
                                 <source type="image/webp" srcset={heroBackgroundWebp} />
                             {/if}
-                            <img src={heroDisplayImage} srcset={heroSrcset?.jpeg}
+                            <img bind:this={heroImgEl}
+                                 src={heroDisplayImage} srcset={heroSrcset?.jpeg}
                                  sizes={heroSrcset ? HERO_SIZES : undefined}
-                                 alt={heroDisplayFigurine?.name ?? 'Gothic Cabinet'} class="hero-img"
+                                 alt={heroPhotoFigurine?.name ?? 'Gothic Cabinet'} class="hero-img"
                                  fetchpriority="high" decoding="async" draggable="false" />
                         </picture>
                     </div>
@@ -769,7 +713,7 @@
                     {/if}
                 </div>
 
-                {#if showHint && !hintDismissed}
+                {#if showHint}
                     <a href="#gallery" class="scroll-cue" in:fade={{ duration: 400 }}>
                         <span class="sc-line"></span>
                         <span>{$t('homeScrollCue')}</span>
@@ -872,10 +816,14 @@
                         <div class="work-reel" bind:this={reelEl}>
                             {#each visibleGalleryFigurines as fig, i (fig.id)}
                                 <div class="reel-slot" id="work-{fig.id}" data-reel-slot={i}>
+                                    <!-- The pane's paragraph is the work's own short text,
+                                         which the list payload already carries — no lookup
+                                         table in between (there was one; it rebuilt an
+                                         id→text map out of the very objects being passed). -->
                                     <ReelWorkCard
                                         {fig}
                                         index={i + 1}
-                                        story={galleryStories[fig.id]}
+                                        story={fig.shortText}
                                         flip={i % 2 === 1}
                                     />
                                 </div>
@@ -938,7 +886,10 @@
              from the admin-editable AuthorProfile. -->
         {#if hlVisible('authorStory')}
         <div class={hlClasses('authorStory')} style={hlStyle('authorStory')} data-hl="authorStory">
-        {#if isLoaded}
+        <!-- Rendered as soon as there IS a profile — which, since load() now resolves it,
+             means in the prerendered HTML. It used to wait for isLoaded, i.e. for a client
+             fetch, so this section simply did not exist for anything that doesn't run JS. -->
+        {#if authorProfile || isLoaded}
             <AuthorStory name={authorName} bio={authorProfile?.bio ?? null} photoUrl={authorProfile?.photoUrl ?? null} />
         {/if}
         </div>
@@ -1030,78 +981,6 @@
             </div>
         {/if}
 
-        <!-- WORKSHOP section — disabled for now, kept here to restore easily later.
-        {#if workshopFeature.visible}
-        <section class="workshop-feature" aria-labelledby="workshop-feature-title" bind:this={workshopSectionEl}>
-            <div class="workshop-photos">
-                <div class="workshop-stage">
-                    <button
-                        type="button"
-                        class="workshop-plate workshop-plate-a"
-                        class:is-front={frontReel === 'a'}
-                        onclick={() => { frontReel = 'a'; workshopActivated = true; }}
-                        aria-label={$t('homeWorkshopBringForward')}
-                    >
-                        {#if workshopActivated}
-                            <AtelierReel />
-                        {:else}
-                            <img src="/images/workshop/atelier-reel-poster.jpg" alt="" class="workshop-plate-poster" loading="lazy" />
-                        {/if}
-                    </button>
-                    <button
-                        type="button"
-                        class="workshop-plate workshop-plate-b"
-                        class:is-front={frontReel === 'b'}
-                        onclick={() => { frontReel = 'b'; workshopActivated = true; }}
-                        aria-label={$t('homeWorkshopBringForward')}
-                    >
-                        {#if workshopActivated}
-                            <AtelierReel
-                                webm="/images/workshop/atelier-reel-2.webm"
-                                mp4="/images/workshop/atelier-reel-2.mp4"
-                                poster="/images/workshop/atelier-reel-2-poster.jpg"
-                            />
-                        {:else}
-                            <img src="/images/workshop/atelier-reel-2-poster.jpg" alt="" class="workshop-plate-poster" loading="lazy" />
-                        {/if}
-                    </button>
-                </div>
-                <p class="workshop-plate-label" aria-hidden="true">
-                    <span class="wpl-rule"></span>
-                    {$t('homeWorkshopReelCaption')}
-                </p>
-            </div>
-
-            <div class="workshop-copy">
-                <p class="eyebrow">
-                    <span class="eyebrow-rule"></span>
-                    {wfEyebrow}
-                </p>
-                <h2 id="workshop-feature-title" class="workshop-title">{wfTitle}</h2>
-                <p class="workshop-text">{wfText}</p>
-                <div class="workshop-actions">
-                    {#if wfLink1Label}
-                    <a href={wfLink1Href} class="workshop-link">
-                        {wfLink1Label}
-                        <svg width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
-                            <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
-                        </svg>
-                    </a>
-                    {/if}
-                    {#if wfLink2Label}
-                    <a href={wfLink2Href} class="workshop-link">
-                        {wfLink2Label}
-                        <svg width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
-                            <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
-                        </svg>
-                    </a>
-                    {/if}
-                </div>
-            </div>
-        </section>
-        {/if}
-        -->
-
     </main>
 
     {#if reelModalOpen}
@@ -1118,31 +997,14 @@
 </div>
 
 <style>
-    /* ── TOKENS ──────────────────────────────────── */
-    :root {
-        --cream:   var(--color-canvas-base);
-        --cream2:  var(--color-canvas-raised);
-        --ink:     var(--color-ink-primary);
-        --brown:   var(--color-ink-primary);
-        --mid:     var(--color-ember-deep);
-        --tan:     var(--color-ember-ink);
-        --copper:  var(--color-ember);
-        --gold:    var(--color-ochre);
-        /* Сплошные приглушённые чернила (≥ 4.5:1 над фоном по WCAG AA),
-           вместо opacity-over-cream, который давал ~1.7–2.9:1. */
-        --muted:   var(--color-ink-tertiary);  /* ~6.45:1 */
-        --muted2:  var(--color-ink-tertiary);  /* ~6.45:1 — мелкие лейблы */
-        --border:  color-mix(in srgb, var(--color-ink-primary) 10%, transparent);
-        --border2: color-mix(in srgb, var(--color-ink-primary) 18%, transparent);
-        --ease:    cubic-bezier(0.16,1,0.3,1);
-        --site-header-height: 68px;
-    }
+    /* Tokens (--cream, --ink, --muted, --site-header-height, --ease …) now live in
+       app.css. They were declared here, in a `:root` block — which Svelte cannot scope,
+       so they were global variables owned by a single route: the rest of the site saw
+       them, or didn't, depending on whether this page's CSS chunk happened to be loaded.
+       Same for the page's `scroll-behavior` and its `body` typography, which are now the
+       site's (app.css) and this page's own (.root) respectively. */
 
     * { margin: 0; padding: 0; box-sizing: border-box; }
-
-    @media (prefers-reduced-motion: no-preference) {
-        :global(html) { scroll-behavior: smooth; }
-    }
 
     /* Divider opening the returning-visitor appendix ("Lately at the cabinet"). */
     .house-lately-divider {
@@ -1168,16 +1030,19 @@
         white-space: nowrap;
     }
 
-    :global(body) {
-        background: var(--cream);
+    /* ── ROOT ────────────────────────────────────── */
+    /* The page's own ground and typography. This was a `:global(body)` rule, which set the
+       whole site's body font to Instrument Sans from inside one route's stylesheet. The
+       page wraps everything it renders, so it can simply say it here — and `body` keeps
+       app.css's canvas colour underneath for the overscroll area. */
+    .root {
         color: var(--brown);
         font-family: 'Instrument Sans', sans-serif;
         -webkit-font-smoothing: antialiased;
-    }
-
-    /* ── ROOT ────────────────────────────────────── */
-    .root {
-        width: 100vw;
+        /* 100vw includes the scrollbar's width, so on any desktop browser that reserves
+           one this box was ~15px wider than the viewport — overflow that `overflow-x: clip`
+           then hid, after the layout had already been computed against the wrong width. */
+        width: 100%;
         min-height: 100svh;
         /* `clip` (not `hidden`) — `hidden` forces the paired overflow-y to
            `auto` per spec, silently turning .root into its own scroll
@@ -1408,11 +1273,6 @@
 
         .hero-lens {
             transform: none;
-        }
-
-        .cine-rec i,
-        .cine-scrub i {
-            animation: none;
         }
     }
 
@@ -1648,140 +1508,6 @@
         transform: translateX(0);
     }
 
-    /* ── PINNED SPECIMEN: today's vitrine pick, tilted like a specimen
-       card pinned under the lead column. ────────────────────────────── */
-    /* Full-width row under both hero columns. */
-    .hero-pin-wrap {
-        grid-column: 1 / -1;
-        display: flex;
-        justify-content: stretch;
-        padding-top: clamp(26px, 3vw, 44px);
-    }
-
-    /* A mounted plate rather than a snapshot: the whole diorama is shown
-       uncropped on its own card stock, with the label set beside it. */
-    .hero-pin {
-        position: relative;
-        display: grid;
-        grid-template-columns: minmax(220px, 30%) 1fr;
-        align-items: center;
-        gap: clamp(24px, 4vw, 56px);
-        width: 100%;
-        max-width: 100%;
-        background: var(--cream2, #fff9ee);
-        padding: clamp(18px, 2vw, 26px) clamp(24px, 4vw, 56px) clamp(18px, 2vw, 26px) clamp(18px, 2vw, 26px);
-        text-decoration: none;
-        box-shadow:
-            0 22px 40px -18px rgba(20,11,7,0.35),
-            0 4px 10px -4px rgba(20,11,7,0.2);
-        transform: rotate(-0.8deg);
-        transition: transform 0.3s ease, box-shadow 0.3s ease;
-    }
-
-    .hero-pin:hover,
-    .hero-pin:focus-visible {
-        transform: rotate(-0.2deg) translateY(-4px);
-        box-shadow:
-            0 30px 54px -18px rgba(20,11,7,0.4),
-            0 6px 14px -6px rgba(20,11,7,0.24);
-    }
-
-    .hero-pin:focus-visible {
-        outline: 2px solid rgba(198,95,60,0.56);
-        outline-offset: 3px;
-    }
-
-    /* Thin engraved keyline around the photo — the piece sits *in* the plate. */
-    .hero-pin-plate {
-        display: block;
-        position: relative;
-        box-shadow: inset 0 0 0 1px rgba(20,11,7,0.28);
-    }
-
-    .hero-pin-img {
-        display: block;
-        width: 100%;
-        aspect-ratio: 1 / 1;
-        object-fit: cover;
-        object-position: center;
-    }
-
-    .hero-pin-seal {
-        position: absolute;
-        top: -13px;
-        left: clamp(60px, 20%, 110px);
-        transform: rotate(-2deg);
-        width: 26px;
-        height: 26px;
-        border-radius: 50%;
-        background: radial-gradient(circle at 34% 30%, #d8734c, #96351c 72%);
-        box-shadow: 0 4px 10px rgba(20,11,7,0.4);
-    }
-
-    .hero-pin-cap {
-        display: grid;
-        gap: 8px;
-        align-content: center;
-        min-width: 0;
-    }
-
-    .hero-pin-k {
-        font-size: 10.5px;
-        font-weight: 700;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        color: var(--muted);
-    }
-
-    .hero-pin-v {
-        font-family: 'Cormorant Garamond', serif;
-        font-style: italic;
-        font-size: clamp(28px, 3.6vw, 48px);
-        line-height: 1.1;
-        color: var(--ink);
-    }
-
-    /* Leader rule runs out to the edge of the plate — a ledger line, not a dash. */
-    .hero-pin-rule {
-        display: block;
-        height: 1px;
-        width: 100%;
-        margin: 10px 0 6px;
-        background: linear-gradient(to right, rgba(111,59,36,0.5), rgba(111,59,36,0.08));
-    }
-
-    .hero-pin-m {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px 28px;
-        font-size: 12px;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        color: var(--muted);
-    }
-
-    @media (max-width: 560px) {
-        .hero-pin {
-            grid-template-columns: 1fr;
-            gap: 12px;
-            padding: 12px 12px 16px;
-            max-width: 300px;
-        }
-
-        .hero-pin-seal {
-            left: 50%;
-            transform: translateX(-50%) rotate(-2deg);
-        }
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-        .hero-pin,
-        .hero-pin:hover,
-        .hero-pin:focus-visible {
-            transition: none;
-        }
-    }
-
     /* ── HERO VISUAL: cinematic letterboxed frame ─────────────────
        Site palette throughout (no near-black cinema ground) — the
        "cinema" comes from the letterbox proportions, the HUD strip,
@@ -1853,73 +1579,6 @@
         mix-blend-mode: overlay;
         pointer-events: none;
         background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-    }
-
-    /* HUD strip — the letterbox bar doubling as a status readout */
-    .cine-hud {
-        display: flex;
-        align-items: center;
-        gap: clamp(16px, 2.2vw, 26px);
-        padding: 13px clamp(18px, 2.3vw, 28px);
-        background: var(--ink);
-        color: #fff7ea;
-    }
-
-    .cine-rec {
-        display: inline-flex;
-        align-items: center;
-        gap: 9px;
-        font-size: 11px;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        color: #fff7ea;
-        flex-shrink: 0;
-    }
-
-    .cine-rec i {
-        width: 7px; height: 7px;
-        border-radius: 50%;
-        background: var(--copper);
-        display: block;
-        animation: cine-blink 1.8s ease-in-out infinite;
-    }
-
-    @keyframes cine-blink {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.28; }
-    }
-
-    .cine-scrub {
-        flex: 1;
-        height: 2px;
-        border-radius: 2px;
-        background: rgba(255,247,234,0.16);
-        position: relative;
-        overflow: hidden;
-    }
-
-    .cine-scrub i {
-        position: absolute;
-        inset: 0;
-        width: 40%;
-        background: var(--copper);
-        display: block;
-        animation: cine-scrub-move 7s ease-in-out infinite;
-    }
-
-    @keyframes cine-scrub-move {
-        0%   { transform: translateX(-120%); }
-        50%  { transform: translateX(60%); }
-        100% { transform: translateX(240%); }
-    }
-
-    .cine-count {
-        font-size: 11px;
-        letter-spacing: 0.1em;
-        text-transform: uppercase;
-        color: rgba(255,247,234,0.68);
-        white-space: nowrap;
-        flex-shrink: 0;
     }
 
     /* Scroll cue */
@@ -2065,9 +1724,15 @@
         top: 0;
         bottom: 0;
         left: 50%;
+        /* Deliberately 100vw here: this bar is meant to bleed past the section's padding
+           to the window's edge. It is centred and clipped by .root, so the scrollbar's
+           width costs nothing. */
         width: 100vw;
         transform: translateX(-50%);
-        background: #f8f1e7;
+        /* The page's own canvas, from the token — it was hardcoded to #f8f1e7, which is
+           the default parchment and nothing else: an admin who re-themed the site got a
+           pale strip of the OLD colour sliding under the sticky header. */
+        background: var(--color-canvas-base);
         z-index: -1;
     }
 
@@ -2414,149 +2079,6 @@
         color: var(--muted);
     }
 
-    /* ── WORKSHOP FEATURE ───────────────────────── */
-    .workshop-feature {
-        display: grid;
-        grid-template-columns: minmax(430px, 0.92fr) minmax(420px, 1.08fr);
-        gap: clamp(42px, 5.4vw, 92px);
-        align-items: center;
-        max-width: 1680px;
-        margin: 0 auto;
-        padding: clamp(56px, 7vw, 112px) clamp(20px, 4.5vw, 72px) clamp(70px, 8vw, 128px);
-    }
-
-    .workshop-photos {
-        display: grid;
-        justify-items: center;
-        width: 100%;
-    }
-
-    .workshop-stage {
-        position: relative;
-        width: 100%;
-        min-height: clamp(420px, 42vw, 680px);
-    }
-
-    .workshop-plate {
-        position: absolute;
-        display: block;
-        width: 69%;
-        height: 74%;
-        padding: 0;
-        background: none;
-        border: 1px solid rgba(52,37,28,0.08);
-        box-shadow: 0 28px 76px rgba(52,37,28,0.14);
-        overflow: hidden;
-        cursor: pointer;
-        transition: transform 0.4s cubic-bezier(0.16,1,0.3,1), box-shadow 0.4s ease, filter 0.4s ease;
-    }
-
-    .workshop-plate-a { left: 0; top: 0; }
-    .workshop-plate-b { right: 0; bottom: 0; }
-
-    .workshop-plate.is-front {
-        z-index: 2;
-        box-shadow: 0 34px 92px rgba(52,37,28,0.22);
-    }
-
-    .workshop-plate:not(.is-front) {
-        z-index: 1;
-        transform: scale(0.96);
-        filter: saturate(0.8);
-    }
-
-    .workshop-plate:focus-visible {
-        outline: 2px solid rgba(198,95,60,0.6);
-        outline-offset: 3px;
-    }
-
-    .workshop-plate-poster {
-        position: absolute;
-        inset: 0;
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-    }
-
-    .workshop-plate-label {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        margin-top: 18px;
-        font-size: 11px;
-        font-weight: 600;
-        letter-spacing: 0.14em;
-        text-transform: uppercase;
-        color: var(--mid);
-    }
-
-    .wpl-rule {
-        width: 22px;
-        height: 1px;
-        background: rgba(198,95,60,0.4);
-    }
-
-    .workshop-copy {
-        max-width: 760px;
-        padding-top: clamp(0px, 3vw, 34px);
-    }
-
-    .workshop-title {
-        margin: 0;
-        color: var(--ink);
-        font-family: 'Cormorant Garamond', serif;
-        font-size: clamp(48px, 5.4vw, 92px);
-        font-weight: 300;
-        letter-spacing: 0;
-        line-height: 0.92;
-    }
-
-    .workshop-text {
-        max-width: 720px;
-        margin: 26px 0 0;
-        color: var(--muted);
-        font-family: 'Cormorant Garamond', serif;
-        font-size: clamp(20px, 1.45vw, 27px);
-        font-style: italic;
-        line-height: 1.42;
-    }
-
-    .workshop-actions {
-        display: flex;
-        align-items: center;
-        flex-wrap: wrap;
-        gap: 22px;
-        margin-top: 54px;
-    }
-
-    .workshop-link {
-        display: inline-flex;
-        align-items: center;
-        gap: 10px;
-        width: fit-content;
-        padding-bottom: 5px;
-        color: var(--mid);
-        font-size: 12px;
-        font-weight: 600;
-        letter-spacing: 0.1em;
-        line-height: 1.2;
-        text-transform: uppercase;
-        text-decoration: none;
-        border-bottom: 1px solid rgba(198,95,60,0.25);
-        transition: gap 0.24s ease, color 0.24s ease, border-color 0.24s ease;
-    }
-
-    .workshop-link:hover {
-        gap: 15px;
-        color: var(--copper);
-        border-color: rgba(198,95,60,0.52);
-    }
-
-    .workshop-link:focus-visible {
-        outline: 2px solid rgba(198,95,60,0.52);
-        outline-offset: 3px;
-    }
-
     /* ── RESPONSIVE ──────────────────────────────── */
     @media (max-width: 1080px) {
         .hero-cine {
@@ -2583,15 +2105,6 @@
 
         .request-steps {
             grid-template-columns: repeat(3, minmax(0, 1fr));
-        }
-
-        .workshop-feature {
-            grid-template-columns: 1fr;
-            gap: 34px;
-        }
-
-        .workshop-stage {
-            min-height: min(72vw, 560px);
         }
     }
 
@@ -2667,9 +2180,7 @@
     }
 
     @media (max-width: 680px) {
-        :root {
-            --site-header-height: 58px;
-        }
+        /* (--site-header-height drops to 58px here — in app.css, with the token itself.) */
 
         .hero-cine {
             padding: calc(var(--site-header-height) + 18px) 16px 22px;
@@ -2704,9 +2215,6 @@
 
         .cine-photo { min-height: 230px; max-height: 320px; }
 
-        .cine-hud { gap: 12px; }
-        .cine-count { display: none; }
-
         .scroll-cue { display: none; }
 
         .art-caption {
@@ -2733,12 +2241,6 @@
         .context-title { font-size: clamp(30px, 8vw, 44px); }
         .context-desc { font-size: 16px; }
 
-        /* the action reads these gaps back; column count is chosen by width */
-        .work-grid {
-            --wg-col-gap: 12px;
-            --wg-row-gap: 12px;
-        }
-
         .request-path {
             padding: 24px 16px 70px;
         }
@@ -2746,40 +2248,6 @@
         .request-steps {
             grid-template-columns: 1fr;
         }
-
-        .workshop-feature {
-            padding: 36px 16px 74px;
-        }
-
-        .workshop-stage {
-            min-height: 360px;
-        }
-
-        .workshop-plate {
-            width: 78%;
-            height: 67%;
-        }
-
-        .workshop-copy {
-            padding-top: 0;
-        }
-
-        .workshop-title {
-            font-size: clamp(42px, 12vw, 60px);
-        }
-
-        .workshop-text {
-            margin-top: 18px;
-            font-size: 18px;
-        }
-
-        .workshop-actions {
-            align-items: flex-start;
-            flex-direction: column;
-            gap: 14px;
-            margin-top: 30px;
-        }
-
     }
 
     @media (hover: none) {
@@ -2795,13 +2263,4 @@
         .grain { animation: none; }
     }
 
-    @media (max-width: 460px) {
-        /* keep two columns even on the smallest phones — a single-column stack
-           reads as a shop list, not a mosaic wall. Feature plates still span
-           both (full width) as a deliberate spread. */
-        .work-grid {
-            --wg-col-gap: 8px;
-            --wg-row-gap: 8px;
-        }
-    }
 </style>
