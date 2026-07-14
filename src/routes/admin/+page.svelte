@@ -101,6 +101,7 @@
     let searchQuery = $state('');
     let isDeleting = $state(false);
     let uploadingVideo = $state(false);
+    let uploadingImage = $state(false);
     let activeFormTab = $state<'media' | 'text' | 'object' | 'passport' | 'vitrina'>('media');
     let selectedImageIdx = $state<number | null>(null);
     let sidebarCollapsed = $state(false);
@@ -343,7 +344,20 @@
         } catch { /* silent */ }
     }
 
+    // True while a photo/video/audio/folder upload for the CURRENTLY selected figurine
+    // is in flight. Switching selectedFigurine mid-upload used to be how a photo could
+    // end up attached to the wrong figurine: handlePickFile/handleFolderUpload await the
+    // file picker and the upload, then write into `selectedFigurine.images` — if the admin
+    // clicked a different figurine in the list during that wait, that write landed on
+    // whichever figurine was current by the time the upload finished, not the one the
+    // upload was started for. Blocking the switch here is simpler and safer than trying
+    // to retarget an in-flight upload to its original figurine.
+    function uploadBusy(): boolean {
+        return uploadingVideo || uploadingAudio || uploadingImage || folderUploadProgress !== null;
+    }
+
     async function editFigurine(id: string) {
+        if (uploadBusy()) { showMessage($t('adminMsgUploadInProgress'), 'error'); return; }
         if (hasUnsaved && !confirm($t('adminMsgUnsavedLeave'))) return;
         const full = await api.getFigurine(id);
         if (full) {
@@ -354,6 +368,7 @@
     }
 
     function createNew() {
+        if (uploadBusy()) { showMessage($t('adminMsgUploadInProgress'), 'error'); return; }
         if (hasUnsaved && !confirm($t('adminMsgUnsavedLeave'))) return;
         selectedFigurine = { ...emptyFigurine, id: crypto.randomUUID(), sortOrder: figurines.length };
         savedSnapshot = '';
@@ -362,6 +377,7 @@
     }
 
     function duplicateFigurine(fig: FigurineListItem) {
+        if (uploadBusy()) { showMessage($t('adminMsgUploadInProgress'), 'error'); return; }
         if (hasUnsaved && !confirm($t('adminMsgUnsavedLeave'))) return;
         api.getFigurine(fig.id).then(full => {
             if (!full) return;
@@ -431,14 +447,42 @@
 
     async function handlePickFile(type: 'images' | 'videos' | 'audio', stepIndex?: number) {
         if (!selectedFigurine) return;
+        // Captured before the awaits below (file picker, then upload) so the result can be
+        // checked against whatever selectedFigurine points to once they resolve — see
+        // uploadBusy()'s comment for why that check matters.
+        const targetId = selectedFigurine.id;
+
+        // The picker sits OUTSIDE the busy window on purpose: while its dialog is open
+        // nothing is in flight, so raising the flag here would tell an admin who opened it,
+        // changed their mind and clicked another figurine to "wait for the upload to finish"
+        // when there is no upload. Switching away during the dialog is allowed — the file
+        // that comes back is simply dropped, since it was picked for a figurine that is no
+        // longer open and attaching it to the new one would be a guess.
+        const fileOrPath = await pickMediaSource(type).catch((e: unknown) => {
+            const msg = e instanceof Error ? e.message : String(e);
+            if (msg !== 'no file') showMessage($t('adminMsgError') + msg, 'error');
+            return null;
+        });
+        if (fileOrPath === null) return;
+
+        if (!selectedFigurine || selectedFigurine.id !== targetId) {
+            showMessage($t('adminMsgUploadTargetChanged'), 'error');
+            return;
+        }
+
+        // From here on there IS a transfer to protect: the flag blocks a figurine switch
+        // until it lands (editFigurine/createNew/duplicateFigurine consult uploadBusy).
         if (type === 'videos') uploadingVideo = true;
         if (type === 'audio') uploadingAudio = true;
+        if (type === 'images') uploadingImage = true;
         try {
-            const fileOrPath = await pickMediaSource(type);
-            if (fileOrPath === null) return;
-
             const imported = await api.importMediaWithVariants(fileOrPath, type === 'videos' ? 'videos' : type === 'audio' ? 'audio' : 'images');
             const localUrl = imported.url;
+
+            if (!selectedFigurine || selectedFigurine.id !== targetId) {
+                showMessage($t('adminMsgUploadTargetChanged'), 'error');
+                return;
+            }
 
             if (type === 'videos') {
                 selectedFigurine.videoUrl = localUrl;
@@ -470,11 +514,17 @@
         } finally {
             if (type === 'videos') uploadingVideo = false;
             if (type === 'audio') uploadingAudio = false;
+            if (type === 'images') uploadingImage = false;
         }
     }
 
     async function handleFolderUpload() {
         if (!selectedFigurine) return;
+        // See uploadBusy()'s comment: captured once, checked before every write into
+        // selectedFigurine.images so a figurine switch mid-batch (blocked at the entry
+        // points by folderUploadProgress, but checked again here too) can never attach
+        // a photo from this batch to a different figurine.
+        const targetId = selectedFigurine.id;
         if (isTauri) {
             const { open } = await import('@tauri-apps/plugin-dialog');
             const { invoke: inv } = await import('@tauri-apps/api/core');
@@ -492,6 +542,10 @@
             for (const filePath of imagePaths) {
                 try {
                     const imported = await api.importMediaWithVariants(filePath, 'images');
+                    if (!selectedFigurine || selectedFigurine.id !== targetId) {
+                        showMessage($t('adminMsgUploadTargetChanged'), 'error');
+                        break;
+                    }
                     const variants = deriveImageVariants(imported.url);
                     selectedFigurine.images = [...selectedFigurine.images, {
                         id: crypto.randomUUID(),
@@ -530,6 +584,10 @@
                 for (const file of files) {
                     try {
                         const imported = await api.importMediaWithVariants(file, 'images');
+                        if (!selectedFigurine || selectedFigurine.id !== targetId) {
+                            showMessage($t('adminMsgUploadTargetChanged'), 'error');
+                            break;
+                        }
                         const variants = deriveImageVariants(imported.url);
                         selectedFigurine!.images = [...selectedFigurine!.images, {
                             id: crypto.randomUUID(),
@@ -562,13 +620,36 @@
     // higher-fidelity maps, this is the manual path. NULL falls back to luminance.
     async function handlePickDepth(imgIdx: number) {
         if (!selectedFigurine) return;
+        const targetId = selectedFigurine.id;
+
+        // Same shape as handlePickFile: the picker's dialog is not a transfer, so it must
+        // not raise the busy flag and block a figurine switch behind it.
+        const fileOrPath = await pickMediaSource('images').catch((e: unknown) => {
+            const msg = e instanceof Error ? e.message : String(e);
+            if (msg !== 'no file') showMessage($t('adminMsgError') + msg, 'error');
+            return null;
+        });
+        if (fileOrPath === null) return;
+
+        if (!selectedFigurine || selectedFigurine.id !== targetId) {
+            showMessage($t('adminMsgUploadTargetChanged'), 'error');
+            return;
+        }
+
+        uploadingImage = true;
         try {
-            const fileOrPath = await pickMediaSource('images');
-            if (fileOrPath === null) return;
             const imported = await api.importMediaWithVariants(fileOrPath, 'images');
+            if (!selectedFigurine || selectedFigurine.id !== targetId) {
+                showMessage($t('adminMsgUploadTargetChanged'), 'error');
+                return;
+            }
             const targetImage = selectedFigurine.images[imgIdx];
             if (targetImage && !(await confirmDepthAspectMatches(targetImage.url, imported.url))) {
                 showMessage($t('adminMediaDepthCancelled'), 'info');
+                return;
+            }
+            if (!selectedFigurine || selectedFigurine.id !== targetId) {
+                showMessage($t('adminMsgUploadTargetChanged'), 'error');
                 return;
             }
             selectedFigurine.images[imgIdx].depthUrl = imported.url;
@@ -577,6 +658,8 @@
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : String(e);
             if (msg !== 'no file') showMessage($t('adminMsgError') + msg, 'error');
+        } finally {
+            uploadingImage = false;
         }
     }
 

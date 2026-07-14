@@ -45,13 +45,13 @@
   <title>Collector Certificate</title>
   <meta
     name="description"
-    content="Public collector certificate verification for an authenticated Gotiga reserve."
+    content="Public collector certificate verification for an authenticated Ritunia reserve."
   />
 </svelte:head>
 
 <main class="min-h-screen bg-[#fff9f0] px-5 py-10 text-[#34251c]">
   <section class="mx-auto max-w-3xl">
-    <a href="/" class="text-xs uppercase tracking-[0.18em] text-[#6f3b24] hover:underline">Gotiga</a>
+    <a href="/" class="text-xs uppercase tracking-[0.18em] text-[#6f3b24] hover:underline">Ritunia</a>
 
     {#if loading}
       <div class="mt-12 border border-[#34251c]/10 bg-white p-8">

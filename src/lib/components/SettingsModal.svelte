@@ -102,7 +102,7 @@
                 <input
                     bind:value={settings.serverUrl}
                     type="text"
-                    placeholder="https://api.gotiga.com"
+                    placeholder="https://api.ritunia.com"
                     class="w-full bg-[#fff9f0] border border-[#34251c]/20 p-3 text-sm focus:border-[#34251c]/60 outline-none transition-colors"
                 />
             </label>
@@ -122,7 +122,7 @@
                 <input
                     bind:value={contactEmail}
                     type="email"
-                    placeholder="info@gotiga.art"
+                    placeholder="info@ritunia.art"
                     class="w-full bg-[#fff9f0] border border-[#34251c]/20 p-3 text-sm focus:border-[#34251c]/60 outline-none transition-colors"
                 />
             </label>

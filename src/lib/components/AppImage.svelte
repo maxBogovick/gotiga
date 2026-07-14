@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { resolveWebpUrl, resolveSrcset } from '$lib/api';
 
   type Props = {
@@ -57,6 +58,52 @@
   let loaded  = $state(false);
   let failed  = $state(false);
   let mainImg = $state<HTMLImageElement | undefined>();
+  let mainPicture = $state<HTMLElement | undefined>();
+  let thumbImg = $state<HTMLImageElement | undefined>();
+  let thumbPicture = $state<HTMLElement | undefined>();
+
+  /**
+   * Repair the photo after hydration.
+   *
+   * Svelte's `set_attribute` deliberately SKIPS `src` and `srcset` while hydrating
+   * (internal/client/dom/elements/attributes.js) — resetting them would fire a second
+   * network request for a picture the server already pointed at, so it assumes the
+   * server's markup is right. On a page that is PRERENDERED (the home page, the archive,
+   * every /figurines/[id]) that assumption is false: the HTML is a snapshot of the
+   * collection as it stood at BUILD time, while the load functions re-run in the browser
+   * against the live API. Text nodes and hrefs get updated; the photo does not. A card
+   * then wears whichever photo occupied its slot on the day of the deploy — a work titled
+   * "Gnome" showing the monkey.
+   *
+   * So once hydration is over, compare what the DOM actually holds against what this
+   * component was asked to show, and write the difference through by hand. In a pure
+   * client render (CSR, Tauri) the two already agree and every branch below is a no-op.
+   */
+  function syncAttr(el: Element | null | undefined, name: string, want: string | null): void {
+    if (!el) return;
+    const have = el.getAttribute(name);
+    if (want) {
+      if (have !== want) el.setAttribute(name, want);
+    } else if (have !== null) {
+      el.removeAttribute(name);
+    }
+  }
+
+  onMount(() => {
+    // The <source> first: the browser re-runs its selection when the <img>'s own
+    // src/srcset is touched, so the sources must already be correct by then.
+    syncAttr(thumbPicture?.querySelector('source'), 'srcset', thumbWebp);
+    syncAttr(thumbImg, 'src', thumbUrl);
+
+    syncAttr(mainPicture?.querySelector('source'), 'srcset', candidates?.webp || srcWebp);
+    syncAttr(mainImg, 'srcset', candidates?.jpeg ?? null);
+    syncAttr(mainImg, 'src', src ?? null);
+
+    // A repaired image starts loading from scratch, and the stale one it replaces may
+    // have finished already (marking us `loaded`, which fades the blur-up out). Re-read
+    // the element's real state so the fade follows the photo actually on screen.
+    if (mainImg && !(mainImg.complete && mainImg.naturalWidth > 0)) loaded = false;
+  });
 
   // Reset whenever the source changes. If the (possibly cached) image is already
   // complete, mark it loaded right away: browsers don't re-fire `load` for an
@@ -86,11 +133,12 @@
            full screenful of images nobody had scrolled to yet. Inheriting the caller's
            loading mode keeps the blur-up for what's actually on screen and lets the rest
            stay off the network until it's near the viewport. -->
-      <picture>
+      <picture bind:this={thumbPicture}>
         {#if thumbWebp}
           <source type="image/webp" srcset={thumbWebp} />
         {/if}
         <img
+          bind:this={thumbImg}
           src={thumbUrl}
           {alt}
           aria-hidden="true"
@@ -101,7 +149,11 @@
       </picture>
     {/if}
 
-    <picture class="app-image-picture" class:app-image-picture--loaded={loaded || failed}>
+    <picture
+      bind:this={mainPicture}
+      class="app-image-picture"
+      class:app-image-picture--loaded={loaded || failed}
+    >
       {#if candidates?.webp}
         <source type="image/webp" srcset={candidates.webp} {sizes} />
       {:else if srcWebp}

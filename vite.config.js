@@ -69,6 +69,20 @@ export default defineConfig(async () => ({
               expiration: { maxAgeSeconds: 60 * 5 },
             },
           },
+          // Backgrounds must come BEFORE the /static/ rule below (workbox takes the
+          // first matching route) and must NOT be CacheFirst. Every other file under
+          // /static/ is content-addressed — a fresh uuid per upload — so caching it
+          // hard is free. The background is the one exception: the handler overwrites
+          // cabinet-bg.jpg in place, so the URL is stable while the bytes change.
+          // CacheFirst would pin the old photo in the service worker for a week, and
+          // the SW answers before the network, so nginx's `no-cache` on this path
+          // would never even be consulted. StaleWhileRevalidate paints instantly from
+          // cache and picks the new background up on the very next view.
+          {
+            urlPattern: /\/static\/backgrounds\//,
+            handler: "StaleWhileRevalidate",
+            options: { cacheName: "backend-background" },
+          },
           {
             urlPattern: /\/static\//,
             handler: "CacheFirst",

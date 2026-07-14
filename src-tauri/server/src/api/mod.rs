@@ -24,6 +24,7 @@ pub(crate) mod handlers;
 
 /// Re-exported for main.rs (a separate binary crate, so it cannot reach into the
 /// crate-private `handlers` module directly).
+pub use handlers::backfill_background_image;
 pub use handlers::backfill_image_variants;
 
 #[derive(Clone)]

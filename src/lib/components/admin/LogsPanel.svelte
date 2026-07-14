@@ -280,7 +280,7 @@
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `gotiga-logs-${new Date().toISOString()}.jsonl`;
+    a.download = `ritunia-logs-${new Date().toISOString()}.jsonl`;
     a.click();
     URL.revokeObjectURL(url);
   }

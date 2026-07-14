@@ -248,8 +248,23 @@ export function resolveWebpUrl(url: string | null | undefined): string | null {
     const resolved = resolveMediaUrl(url);
     if (!resolved) return null;
     if (!/\.jpe?g(\?.*)?$/i.test(resolved)) return null;
+    if (!WEBP_SIBLING_PATHS.test(resolved)) return null;
     return resolved.replace(/\.jpe?g(\?.*)?$/i, (_m, q) => `.webp${q ?? ''}`);
 }
+
+/**
+ * Where a WebP sibling is actually GUARANTEED to exist on disk: the three figurine
+ * renditions (save_image_variants) and the main background (process_background_image /
+ * backfill_background_image). Nothing else.
+ *
+ * This guard is not belt-and-braces, it is load-bearing. A `<source type="image/webp">`
+ * inside a `<picture>` is chosen on type alone — if the file behind it 404s, the browser
+ * does NOT fall back to the `<img>`, it renders a broken image. So a rewrite that guesses
+ * at a sibling which was never written (a legacy flat `images/{uuid}.jpg` predating the
+ * variant pipeline, a raw file under uploads/, a bundled asset in static/) does not
+ * degrade gracefully — it blanks the photo outright.
+ */
+const WEBP_SIBLING_PATHS = /\/(images\/(thumb|medium|preview)|backgrounds)\//;
 
 /**
  * The full responsive candidate set for an image, or null when the URL is not a figurine
@@ -303,6 +318,28 @@ async function webFetch<T>(path: string, options?: RequestInit): Promise<T> {
 function authHeaders(): Record<string, string> {
     const { apiKey } = getWebSettings();
     return apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
+}
+
+// A handful of read endpoints (main background, author profile) get called
+// independently by more than one component on the same page — e.g. SiteHeader
+// and the page's own init() both want the author profile. Without this, a
+// single page view fires the same GET twice, back-to-back. Short TTL: long
+// enough to absorb near-simultaneous callers, short enough that an admin edit
+// is never stale for more than a beat.
+const readCache = new Map<string, { promise: Promise<unknown>; expires: number }>();
+
+function dedupeRead<T>(key: string, ttlMs: number, fetcher: () => Promise<T>): Promise<T> {
+    const cached = readCache.get(key);
+    if (cached && cached.expires > Date.now()) return cached.promise as Promise<T>;
+
+    const promise = fetcher();
+    readCache.set(key, { promise, expires: Date.now() + ttlMs });
+    promise.catch(() => readCache.delete(key));
+    return promise;
+}
+
+function invalidateRead(key: string): void {
+    readCache.delete(key);
 }
 
 export function authenticatedApiUrl(path: string): string {
@@ -689,13 +726,15 @@ export const api = {
     },
 
     async getMainBackground(): Promise<string | null> {
-        if (isTauri) return invoke('get_main_background');
-        try {
-            const data = await webFetch<{ url: string | null }>('/main-background');
-            return data.url;
-        } catch {
-            return null;
-        }
+        return dedupeRead('main-background', 4000, async () => {
+            if (isTauri) return invoke('get_main_background');
+            try {
+                const data = await webFetch<{ url: string | null }>('/main-background');
+                return data.url;
+            } catch {
+                return null;
+            }
+        });
     },
 
     async getHomeContent(): Promise<HomeContent> {
@@ -730,18 +769,22 @@ export const api = {
     },
 
     async setMainBackground(fileOrPath: string | File): Promise<string> {
-        if (isTauri) return invoke('set_main_background', { filePath: fileOrPath as string });
-        const file = fileOrPath as File;
-        const form = new FormData();
-        form.append('file', file);
-        const res = await fetch(`${webApiBase()}/main-background`, {
-            method: 'POST',
-            headers: authHeaders(),
-            body: form,
-        });
-        if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
-        const data = await res.json();
-        return data.url as string;
+        try {
+            if (isTauri) return await invoke('set_main_background', { filePath: fileOrPath as string });
+            const file = fileOrPath as File;
+            const form = new FormData();
+            form.append('file', file);
+            const res = await fetch(`${webApiBase()}/main-background`, {
+                method: 'POST',
+                headers: authHeaders(),
+                body: form,
+            });
+            if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+            const data = await res.json();
+            return data.url as string;
+        } finally {
+            invalidateRead('main-background');
+        }
     },
 
     // === SYNC & SETTINGS ===
@@ -790,17 +833,23 @@ export const api = {
     },
 
     async getAuthorProfile(): Promise<AuthorProfile> {
-        if (isTauri) return invoke('get_author_profile');
-        return webFetch('/author/profile');
+        return dedupeRead('author-profile', 4000, async () => {
+            if (isTauri) return invoke('get_author_profile');
+            return webFetch('/author/profile');
+        });
     },
 
     async saveAuthorProfile(profile: AuthorProfile): Promise<void> {
-        if (isTauri) return invoke('save_author_profile', { profile });
-        await webFetch('/author/profile', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...authHeaders() },
-            body: JSON.stringify(profile),
-        });
+        try {
+            if (isTauri) return await invoke('save_author_profile', { profile });
+            await webFetch('/author/profile', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...authHeaders() },
+                body: JSON.stringify(profile),
+            });
+        } finally {
+            invalidateRead('author-profile');
+        }
     },
 
     async submitOrder(order: OrderRequest, sessionToken?: string | null): Promise<import('./types/api').OrderCreatedResponse> {

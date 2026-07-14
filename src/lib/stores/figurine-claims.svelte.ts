@@ -31,7 +31,12 @@ export class FigurineClaimsStore {
   #figurineId: string;
   #refreshSchedule: () => void;
   #pollTimer: ReturnType<typeof setInterval> | null = null;
-  #visibilityBound = false;
+  // Kept as a field, not an inline closure, so it can actually be removed again. Unlike
+  // the app-wide allClaims singleton, ONE OF THESE STORES EXISTS PER FIGURINE PAGE: an
+  // anonymous listener here would outlive its page, so ten works browsed would leave ten
+  // dead stores wired to `visibilitychange`, each firing its own verify() every time the
+  // visitor came back to the tab.
+  #onVisibility: (() => void) | null = null;
 
   get #key() { return `gotiga_claims_${this.#figurineId}`; }
 
@@ -109,12 +114,12 @@ export class FigurineClaimsStore {
   }
 
   #bindVisibility() {
-    if (this.#visibilityBound || typeof document === 'undefined') return;
-    this.#visibilityBound = true;
-    document.addEventListener('visibilitychange', () => {
+    if (this.#onVisibility || typeof document === 'undefined') return;
+    this.#onVisibility = () => {
       if (!document.hidden) void this.verify(); // verify() ends by calling #syncPollTimer
       else this.#syncPollTimer();
-    });
+    };
+    document.addEventListener('visibilitychange', this.#onVisibility);
   }
 
   startPolling() {
@@ -122,11 +127,24 @@ export class FigurineClaimsStore {
     this.#syncPollTimer();
   }
 
+  /** Stop the interval only. #syncPollTimer calls this whenever nothing is pending, so it
+   *  must leave the visibility listener in place — a claim created a moment later still
+   *  needs it. Tearing that down is the page's job, on destroy: see dispose(). */
   stopPolling() {
     if (this.#pollTimer) {
       clearInterval(this.#pollTimer);
       this.#pollTimer = null;
     }
+  }
+
+  /** Release everything this store holds on the document. Call from the owning
+   *  component's onDestroy — the store instance dies with the page it belongs to. */
+  dispose() {
+    this.stopPolling();
+    if (this.#onVisibility && typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', this.#onVisibility);
+    }
+    this.#onVisibility = null;
   }
 
   onBookingCreated(claim: ClaimData) {

@@ -384,7 +384,7 @@
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '') || 'figurine';
-    return `gotiga-${slug}-story.jpg`;
+    return `ritunia-${slug}-story.jpg`;
   }
 
   function downloadStory() {
@@ -398,7 +398,7 @@
 
   async function nativeShareStory() {
     if (!storyBlob) return;
-    const file = new File([storyBlob], 'gotiga-story.jpg', { type: 'image/jpeg' });
+    const file = new File([storyBlob], 'ritunia-story.jpg', { type: 'image/jpeg' });
     try {
       await navigator.share({ files: [file], title: figurine.name });
       closeStoryModal();
@@ -1083,7 +1083,7 @@
     clearAudioFade();
     if (storyObjectUrl) URL.revokeObjectURL(storyObjectUrl);
     if (audioRef) { audioRef.pause(); audioRef = null; }
-    cs.stopPolling();
+    cs.dispose();
   });
 
   setContext<App.FigurineDetailContext>('figurine-detail', {

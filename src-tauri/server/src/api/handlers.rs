@@ -325,6 +325,78 @@ mod tests {
             "/static/images/preview/abc.jpg"
         );
     }
+
+    #[test]
+    fn downsizes_and_recompresses_oversized_background() {
+        // A synthetic 3000x2000 image, well above BACKGROUND_MAX_PX, encoded at
+        // quality 100 — stands in for an unedited camera JPEG an admin might upload.
+        let big = image::RgbImage::from_fn(3000, 2000, |x, y| {
+            image::Rgb([(x % 256) as u8, (y % 256) as u8, ((x + y) % 256) as u8])
+        });
+        let raw = encode_jpeg_bytes(&big, 100).expect("encode source fixture");
+
+        let variant = process_background_image(&raw).expect("process background");
+        let decoded_jpeg =
+            image::load_from_memory(&variant.jpeg).expect("decode processed jpeg background");
+        let decoded_webp =
+            image::load_from_memory(&variant.webp).expect("decode processed webp background");
+
+        assert!(decoded_jpeg.width() <= BACKGROUND_MAX_PX);
+        assert!(decoded_jpeg.height() <= BACKGROUND_MAX_PX);
+        assert_eq!(decoded_webp.width(), decoded_jpeg.width());
+        assert_eq!(decoded_webp.height(), decoded_jpeg.height());
+        assert!(
+            variant.jpeg.len() < raw.len(),
+            "expected recompression to shrink the file: {} -> {}",
+            raw.len(),
+            variant.jpeg.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn backfills_webp_sibling_for_a_pre_pipeline_background_and_then_stops() {
+        let dir = std::env::temp_dir().join(format!(
+            "gotiga-bg-backfill-test-{}",
+            Uuid::new_v4()
+        ));
+        let bg_dir = dir.join("backgrounds");
+        fs::create_dir_all(&bg_dir).await.unwrap();
+
+        // Stands in for a background written by the *old* handler, which preserved
+        // the uploaded file's original extension — hence .jpeg here, not .jpg, and
+        // deliberately the extension the live site's current background actually has.
+        // Raw bytes, no WebP sibling, not yet capped to BACKGROUND_MAX_PX.
+        let big = image::RgbImage::from_fn(3000, 2000, |x, y| {
+            image::Rgb([(x % 256) as u8, (y % 256) as u8, ((x + y) % 256) as u8])
+        });
+        let raw = encode_jpeg_bytes(&big, 100).unwrap();
+        fs::write(bg_dir.join("cabinet-bg.jpeg"), &raw).await.unwrap();
+
+        backfill_background_image(dir.to_string_lossy().to_string()).await;
+
+        // The .jpeg path must be left as-is (no rename to .jpg) since renaming would
+        // orphan the URL already stored in settings.
+        let webp_path = bg_dir.join("cabinet-bg.webp");
+        let webp_bytes = fs::read(&webp_path)
+            .await
+            .expect("backfill should have written a webp sibling next to the .jpeg");
+        let jpeg_bytes = fs::read(bg_dir.join("cabinet-bg.jpeg")).await.unwrap();
+        assert!(jpeg_bytes.len() < raw.len());
+
+        let decoded = image::load_from_memory(&webp_bytes).expect("decode backfilled webp");
+        assert!(decoded.width() <= BACKGROUND_MAX_PX);
+
+        // Second run must be a no-op: touch cabinet-bg.jpeg with obviously-wrong bytes
+        // and confirm backfill leaves it alone because the webp sibling already exists.
+        fs::write(bg_dir.join("cabinet-bg.jpeg"), b"not a real image")
+            .await
+            .unwrap();
+        backfill_background_image(dir.to_string_lossy().to_string()).await;
+        let untouched = fs::read(bg_dir.join("cabinet-bg.jpeg")).await.unwrap();
+        assert_eq!(untouched, b"not a real image");
+
+        fs::remove_dir_all(&dir).await.ok();
+    }
 }
 
 // === PUBLIC READ-ONLY HANDLERS ===
@@ -792,6 +864,123 @@ pub async fn get_main_background(
     Ok(Json(serde_json::json!({ "url": url })))
 }
 
+/// Cap + recompress an admin-uploaded main background so an unedited camera
+/// JPEG or a lossless PNG export never ships to every visitor at whatever
+/// size/quality it happened to be uploaded at — this was previously written
+/// to disk byte-for-byte, which is exactly how a 275 KB background ended up
+/// as the page's LCP element. Stays a single file, unlike figurine photos:
+/// see resolveSrcset's doc comment in api.ts on why backgrounds deliberately
+/// have no responsive thumb/medium/preview siblings.
+const BACKGROUND_MAX_PX: u32 = 1800;
+const BACKGROUND_JPEG_QUALITY: u8 = 86;
+
+struct BackgroundVariant {
+    jpeg: Vec<u8>,
+    webp: Vec<u8>,
+}
+
+fn process_background_image(data: &[u8]) -> Result<BackgroundVariant> {
+    if data.len() > MAX_IMAGE_BYTES {
+        return Err(AppError::BadRequest("Image file is too large".into()));
+    }
+    let image = image::load_from_memory(data)
+        .map_err(|e| AppError::BadRequest(format!("Invalid image file: {}", e)))?;
+    if (image.width() as u64) * (image.height() as u64) > MAX_IMAGE_PIXELS {
+        return Err(AppError::BadRequest(
+            "Image dimensions are too large".into(),
+        ));
+    }
+    // Never upscale: this same function reprocesses an already-capped background on
+    // every server boot (see backfill_background_image below), and `resize` scales
+    // *to fit* the box, which would blow up a smaller image back up to it.
+    let fits_already = image.width() <= BACKGROUND_MAX_PX && image.height() <= BACKGROUND_MAX_PX;
+    let sized = if fits_already {
+        image.to_rgb8()
+    } else {
+        image
+            .resize(BACKGROUND_MAX_PX, BACKGROUND_MAX_PX, FilterType::Lanczos3)
+            .to_rgb8()
+    };
+    Ok(BackgroundVariant {
+        jpeg: encode_jpeg_bytes(&sized, BACKGROUND_JPEG_QUALITY)?,
+        webp: encode_webp_bytes(&sized)?,
+    })
+}
+
+/// One-time startup fixup for a main background that predates this pipeline (i.e.
+/// was written byte-for-byte by the old upload handler, with no WebP sibling).
+/// Idempotent the same way backfill_image_variants is: presence of cabinet-bg.webp
+/// means it's already done, so this only ever does real work once. Detached and
+/// silent on failure — a missing WebP sibling degrades the format savings, not
+/// correctness, and must never hold up the listener.
+pub async fn backfill_background_image(upload_dir: String) {
+    let bg_dir = std::path::Path::new(&upload_dir).join("backgrounds");
+
+    // Find whatever cabinet-bg.* is already on disk. The *old* upload handler kept
+    // the uploaded file's original extension (so this may be .jpeg, not .jpg — a
+    // fresh upload today always writes .jpg, but this backfill is precisely for
+    // whatever predates that). The path is left as-is rather than renamed to .jpg:
+    // renaming would require updating the URL stored in settings too, and there is
+    // no reason to touch that when recompressing in place works just as well.
+    let mut entries = match fs::read_dir(&bg_dir).await {
+        Ok(e) => e,
+        Err(_) => return, // no backgrounds dir — nothing has ever been uploaded
+    };
+    let mut jpg_path = None;
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        let is_cabinet_bg = path.file_stem().and_then(|s| s.to_str()) == Some("cabinet-bg");
+        let is_jpeg = matches!(
+            path.extension().and_then(|e| e.to_str()),
+            Some("jpg") | Some("jpeg")
+        );
+        if is_cabinet_bg && is_jpeg {
+            jpg_path = Some(path);
+            break;
+        }
+    }
+    let Some(jpg_path) = jpg_path else {
+        return; // no background uploaded yet (or it's some other format — leave it)
+    };
+
+    let webp_path = jpg_path.with_extension("webp");
+    if fs::metadata(&webp_path).await.is_ok() {
+        return; // already has a WebP sibling — uploaded (or backfilled) since this shipped
+    }
+
+    let Ok(data) = fs::read(&jpg_path).await else {
+        return;
+    };
+
+    let variant = match tokio::task::spawn_blocking(move || process_background_image(&data)).await
+    {
+        Ok(Ok(v)) => v,
+        _ => {
+            tracing::warn!(
+                "background backfill: failed to process {}",
+                jpg_path.display()
+            );
+            return;
+        }
+    };
+
+    if let Err(e) = fs::write(&jpg_path, &variant.jpeg).await {
+        tracing::warn!(
+            "background backfill: failed to write {}: {}",
+            jpg_path.display(),
+            e
+        );
+        return;
+    }
+    if let Err(e) = fs::write(&webp_path, &variant.webp).await {
+        tracing::warn!(
+            "background backfill: failed to write {}: {}",
+            webp_path.display(),
+            e
+        );
+    }
+}
+
 pub async fn upload_main_background(
     State(service): State<AppService>,
     State(config): State<Config>,
@@ -821,13 +1010,57 @@ pub async fn upload_main_background(
                 .await
                 .map_err(|e| AppError::Io(std::io::Error::other(e)))?;
 
+            // Always re-encoded to JPEG+WebP below, so the files on disk are always
+            // cabinet-bg.jpg/.webp regardless of what format was uploaded — this also
+            // stops old uploads in a different format piling up as orphaned files.
+            // The WebP sibling is found by the client via resolveWebpUrl's plain
+            // .jpg→.webp rewrite (api.ts) — same trick as the figurine renditions,
+            // just without the thumb/medium/preview multiplication (see the doc
+            // comment on process_background_image above for why backgrounds stay
+            // single-size).
+            let data_owned = data.to_vec();
+            let variant =
+                tokio::task::spawn_blocking(move || process_background_image(&data_owned))
+                    .await
+                    .map_err(|e| {
+                        AppError::Internal(format!("Image processing task failed: {}", e))
+                    })??;
+
             let bg_dir = format!("{}/backgrounds", config.upload_dir);
             fs::create_dir_all(&bg_dir).await.map_err(AppError::Io)?;
 
-            let file_name = format!("cabinet-bg.{}", ext);
+            let file_name = "cabinet-bg.jpg".to_string();
             let full_path = format!("{}/{}", bg_dir, file_name);
             let mut file = fs::File::create(&full_path).await.map_err(AppError::Io)?;
-            file.write_all(&data).await.map_err(AppError::Io)?;
+            file.write_all(&variant.jpeg).await.map_err(AppError::Io)?;
+
+            let webp_path = format!("{}/cabinet-bg.webp", bg_dir);
+            let mut webp_file = fs::File::create(&webp_path).await.map_err(AppError::Io)?;
+            webp_file
+                .write_all(&variant.webp)
+                .await
+                .map_err(AppError::Io)?;
+
+            // Sweep any cabinet-bg.* left by an older upload — the handler used to keep
+            // the uploaded file's own extension, so a .jpeg (or .png) from before this
+            // pipeline would otherwise sit here forever, unreferenced by settings yet
+            // still served: the prerendered pages built while it was current still carry
+            // its URL in their og:image, so leaving it behind means the site keeps
+            // advertising last month's background to every link preview.
+            if let Ok(mut entries) = fs::read_dir(&bg_dir).await {
+                while let Ok(Some(entry)) = entries.next_entry().await {
+                    let path = entry.path();
+                    let is_cabinet_bg =
+                        path.file_stem().and_then(|s| s.to_str()) == Some("cabinet-bg");
+                    let is_current = matches!(
+                        path.extension().and_then(|e| e.to_str()),
+                        Some("jpg") | Some("webp")
+                    );
+                    if is_cabinet_bg && !is_current {
+                        let _ = fs::remove_file(&path).await;
+                    }
+                }
+            }
 
             let relative = format!("/static/backgrounds/{}", file_name);
             service.set_background(relative.clone()).await?;

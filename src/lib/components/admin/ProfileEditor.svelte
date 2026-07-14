@@ -359,7 +359,7 @@
             </div>
             <div>
               <label for="profile-email" class="block text-[10px] tracking-wide text-[#5f4636] mb-1">Email</label>
-              <input id="profile-email" bind:value={profile.email} type="email" placeholder="master@gotiga.art" class="admin-input w-full" />
+              <input id="profile-email" bind:value={profile.email} type="email" placeholder="master@ritunia.art" class="admin-input w-full" />
             </div>
             <div>
               <label for="profile-website" class="block text-[10px] tracking-wide text-[#5f4636] mb-1">Website</label>

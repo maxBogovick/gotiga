@@ -2,7 +2,7 @@
     import { onMount } from 'svelte';
     import { fade, fly } from 'svelte/transition';
     import { cubicOut } from 'svelte/easing';
-    import { api, resolveSrcset } from '$lib/api';
+    import { api, resolveSrcset, resolveWebpUrl } from '$lib/api';
     import AppImage from '$lib/components/AppImage.svelte';
     import type { AuthorProfile, FigurineListItem, HomeContent, WorkshopFeature } from '$lib/types/api';
     import { t, brandName, lang } from '$lib/i18n';
@@ -69,17 +69,69 @@
         ],
     }));
 
+    // Advances once per calendar day. Still used to turn the vitrine's single "today"
+    // exhibit (see dailyPick); it no longer touches the reel — see sortFeaturedFigurines.
+    function dayIndex(d = new Date()): number {
+        return Math.floor(d.getTime() / 86_400_000);
+    }
+
+    // Pick a single element that advances once per calendar day — the vitrine's
+    // "today" exhibit, stable through refreshes, freshly turned tomorrow.
+    function dailyPick<T>(items: T[]): T | null {
+        if (items.length === 0) return null;
+        return items[((dayIndex() % items.length) + items.length) % items.length];
+    }
+
+    // Whether a work's showing door is currently open — the vitrine must never
+    // spotlight a piece that the rest of the site keeps sealed behind its door.
+    function isOpenNow(fig: FigurineListItem): boolean {
+        return isShowingOpen(
+            resolveWindow({ openFromMin: fig.openFromMin, openUntilMin: fig.openUntilMin, showingRoomId: fig.showingRoomId }, showingRooms.list),
+            houseClock.nowDate
+        );
+    }
+
+    /**
+     * The reel's order: the author's own, and nothing else.
+     *
+     * This used to pin the 2 newest works by createdAt and then rotate the rest by a
+     * daily offset. Both overrode `sortOrder`, and the rotation did so destructively:
+     * the offset is (day number % list length), so on a day when it came out to 16, the
+     * reel started at the sixteenth work and everything the author had deliberately put
+     * FIRST — the low sortOrder values — was rotated onto the tail, past the 16 the home
+     * page shows. Setting a work to sortOrder 1 was the surest way to hide it. The field
+     * looked broken; it was being outvoted by the calendar.
+     *
+     * The daily turn survives where it belongs: on the vitrine's single exhibit of the
+     * day (dailyPick), which is a pick, not an ordering.
+     */
+    function sortFeaturedFigurines(items: FigurineListItem[]) {
+        return items.slice().sort((a, b) => {
+            const order = (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+            if (order !== 0) return order;
+            // Same sortOrder (the admin form lets that happen freely): newest first, so a
+            // fresh work at least leads its own tie instead of landing arbitrarily.
+            const da = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const db = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return db - da;
+        });
+    }
+
     let isLoaded = $state(false);
-    // Starts EMPTY, not at the bundled cabinet-bg. It used to hold that bundled path as
-    // its initial value, so the hero rendered it on first paint, the browser fetched it
-    // (268 KB), and then the real background arrived from the API a moment later and the
-    // hero swapped to it — fetching another 268 KB. Both were downloaded, every visit, and
-    // the wasted one was competing for bandwidth with the LCP image itself. The bundled
-    // file is a *fallback*, so it is now only assigned when the API gives us nothing
-    // (see init()); it also remains the OG fallback in +page.ts, which costs no download.
+    // The bundled photo is a *fallback* — only used when the API has no background of
+    // its own — so it must never be the initial value while a real one is still in
+    // flight (that used to render the bundled 268 KB, fetch it, then swap to the real
+    // background a moment later and fetch that too — both downloaded, every visit).
+    // Now imageUrl is seeded directly from +page.ts's load(), which has already
+    // resolved data.bg (or not) by the time this component exists, so there's no
+    // "in flight" moment here to render a placeholder for. It also remains the OG
+    // fallback in +page.ts, which costs no download.
     const FALLBACK_HERO = '/images/cabinet-bg.jpeg';
-    let imageUrl = $state('');
-    let hasCustomHeroPhoto = $state(false);
+    let imageUrl = $state(data.bg || FALLBACK_HERO);
+    let hasCustomHeroPhoto = $state(Boolean(data.bg));
+    // The works start EMPTY and are filled in init(), on the client. They must not be
+    // seeded from load(): this page is prerendered, so a seeded reel is baked into the
+    // static HTML and its photos never refresh on hydration (see the note in +page.ts).
     let availableFigurines = $state<FigurineListItem[]>([]);
     let inProgressFigurines = $state<FigurineListItem[]>([]);
     let collectionFigurines = $state<FigurineListItem[]>([]);
@@ -131,17 +183,7 @@
     let vitrineFig = $state<FigurineListItem | null>(null);
     let collectionTotal = $state(0);
     let availableTotal = $state(0);
-    let homeContent = $state<HomeContent>({
-        title: null,
-        kicker: null,
-        lead: null,
-        heroFigurineId: null,
-        heroCaptionTitle: null,
-        heroCaptionMeta: null,
-        heroCaptionCta: null,
-        heroMode: null,
-        vitrineFigurineId: null,
-    });
+    let homeContent = $state<HomeContent>(data.homeContent);
     let workshopFeature = $state<WorkshopFeature>({
         visible: true,
         photoBack: null,
@@ -262,6 +304,14 @@
     );
     const HERO_SIZES = '(max-width: 900px) 100vw, 50vw';
     let heroSrcset = $derived(resolveSrcset(heroDisplayImage));
+    // The format-only fallback, for a hero that has no size siblings to offer: a custom
+    // background (one file by design — see resolveSrcset's comment in api.ts). It is
+    // derived from heroDisplayImage, NOT from imageUrl: those are the same string only
+    // while no hero figurine is pinned, and reading the background's URL here while the
+    // <img> below points at a figurine would hand the browser a WebP <source> from a
+    // different photograph entirely. resolveWebpUrl returns null unless a sibling is
+    // actually written for that path, so a hero with no WebP simply gets no <source>.
+    let heroBackgroundWebp = $derived(heroSrcset ? null : resolveWebpUrl(heroDisplayImage));
 
     // Today's vitrine pick gets its own pinned specimen card beside the lead text.
     let pinnedSpecimenFig = $derived(vitrineFig);
@@ -372,73 +422,35 @@
         ) as Record<string, string>
     );
 
-    // Daily "re-hang" index: advances once per calendar day. Every visitor on
-    // the same day sees the same arrangement (no layout-shift noise on refresh),
-    // but returning the next day finds a freshly rotated wall.
-    function dayIndex(d = new Date()): number {
-        return Math.floor(d.getTime() / 86_400_000);
+    // Today's vitrine: the admin-pinned vitrine figure if set (independent of the
+    // hero banner's own pin), else a daily-rotating available work (falling back
+    // to the wider collection when none are available). A sealed work is skipped
+    // in favour of the next candidate — the vitrine never spotlights a piece the
+    // rest of the house keeps behind a closed door. Called once showingRooms has
+    // loaded (see onMount) so isOpenNow has real door data to gate against.
+    function computeVitrineFig(): FigurineListItem | null {
+        const pinnedVitrineFigurine = homeContent.vitrineFigurineId
+            ? collectionFigurines.find((item) => item.id === homeContent.vitrineFigurineId) ?? null
+            : null;
+        return (pinnedVitrineFigurine && isOpenNow(pinnedVitrineFigurine) ? pinnedVitrineFigurine : null)
+            ?? dailyPick(availableFigurines.filter(isOpenNow))
+            ?? dailyPick(collectionFigurines.filter(isOpenNow));
     }
 
-    function dailyRotate<T>(items: T[]): T[] {
-        if (items.length < 2) return items;
-        const offset = ((dayIndex() % items.length) + items.length) % items.length;
-        return [...items.slice(offset), ...items.slice(0, offset)];
-    }
-
-    // Pick a single element that advances once per calendar day — the vitrine's
-    // "today" exhibit, stable through refreshes, freshly turned tomorrow.
-    function dailyPick<T>(items: T[]): T | null {
-        if (items.length === 0) return null;
-        return items[((dayIndex() % items.length) + items.length) % items.length];
-    }
-
-    // Whether a work's showing door is currently open — the vitrine must never
-    // spotlight a piece that the rest of the site keeps sealed behind its door.
-    function isOpenNow(fig: FigurineListItem): boolean {
-        return isShowingOpen(
-            resolveWindow({ openFromMin: fig.openFromMin, openUntilMin: fig.openUntilMin, showingRoomId: fig.showingRoomId }, showingRooms.list),
-            houseClock.nowDate
-        );
-    }
-
-    // Pin the 2 newest works (by createdAt) at the front so a returning visitor
-    // immediately sees the latest additions. The remaining works rotate daily.
-    const PINNED_NEWEST = 2;
-
-    function sortFeaturedFigurines(items: FigurineListItem[]) {
-        const byDate = items.slice().sort((a, b) => {
-            const da = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-            const db = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-            return db - da;
-        });
-        const pinned = byDate.slice(0, PINNED_NEWEST);
-        const pinnedIds = new Set(pinned.map((f) => f.id));
-        const rest = items
-            .filter((f) => !pinnedIds.has(f.id))
-            .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
-        return [...pinned, ...dailyRotate(rest)];
-    }
-
-
+    // The hero image is seeded from +page.ts's load(), so it paints without waiting on
+    // this. Everything that varies with the collection — the works reel above all — is
+    // fetched HERE, on the client, and never from load(): this page is prerendered, and
+    // a work's photo that was rendered at build time is not replaced during hydration
+    // (see the note in +page.ts). homeContent is re-fetched too, so an admin's edit shows
+    // up without a rebuild.
     async function init() {
         try {
-            const [bgPath, figurines, inProgress, firstLook, noticedByGuests, content, workshop, author, layout, savedReelTheme] = await Promise.all([
-                api.getMainBackground().catch(() => null),
+            const [figurines, inProgress, firstLook, noticedByGuests, content, workshop, author, layout, savedReelTheme] = await Promise.all([
                 api.getAllFigurines(30).catch(() => [] as FigurineListItem[]),
                 api.getInProgressFigurines().catch(() => [] as FigurineListItem[]),
                 api.getFirstLookFigurines().catch(() => [] as FigurineListItem[]),
                 api.getNoticedByGuests().catch(() => [] as FigurineListItem[]),
-                api.getHomeContent().catch(() => ({
-                    title: null,
-                    kicker: null,
-                    lead: null,
-                    heroFigurineId: null,
-                    heroCaptionTitle: null,
-                    heroCaptionMeta: null,
-                    heroCaptionCta: null,
-                    heroMode: null,
-                    vitrineFigurineId: null,
-                } satisfies HomeContent)),
+                api.getHomeContent().catch(() => null),
                 api.getWorkshopFeature().catch(() => null),
                 api.getAuthorProfile().catch(() => null),
                 api.getHomeLayout().catch(() => null),
@@ -448,35 +460,24 @@
             if (savedReelTheme) reelTheme = savedReelTheme;
             // Editor preview (postMessage) wins over the saved config.
             if (layout && !hlPreviewDriven) homeLayout = layout;
-            // Only fall back to the bundled image when the server has no background of its
-            // own — otherwise it would be a second, redundant download of the same hero.
-            if (bgPath) { imageUrl = bgPath; hasCustomHeroPhoto = true; }
-            else { imageUrl = FALLBACK_HERO; }
-            homeContent = content;
+            if (content) homeContent = content;
             if (workshop) workshopFeature = workshop;
-            const visibleFigurines = figurines.filter(f => f.status !== 'in_progress');
+            const visibleFigurines = figurines.filter((f) => f.status !== 'in_progress');
             collectionFigurines = sortFeaturedFigurines(visibleFigurines);
             collectionTotal = visibleFigurines.length;
             availableTotal = figurines.filter((item) => item.status === 'available').length;
-            availableFigurines = sortFeaturedFigurines(visibleFigurines.filter((item) => item.status === 'available'));
+            availableFigurines = sortFeaturedFigurines(
+                visibleFigurines.filter((item) => item.status === 'available')
+            );
             inProgressFigurines = sortFeaturedFigurines(inProgress);
             firstLookFigurines = firstLook;
             noticedByGuestsFigurines = noticedByGuests;
-            heroFigurine = content.heroFigurineId
-                ? visibleFigurines.find((item) => item.id === content.heroFigurineId) ?? null
+            heroFigurine = homeContent.heroFigurineId
+                ? visibleFigurines.find((item) => item.id === homeContent.heroFigurineId) ?? null
                 : null;
-            // Today's vitrine: the admin-pinned vitrine figure if set (independent
-            // of the hero banner's own pin), else a daily-rotating available work
-            // (falling back to the wider collection when none are available). A
-            // sealed work is skipped in favour of the next candidate — the vitrine
-            // never spotlights a piece the rest of the house keeps behind a closed
-            // door.
-            const pinnedVitrineFigurine = content.vitrineFigurineId
-                ? visibleFigurines.find((item) => item.id === content.vitrineFigurineId) ?? null
-                : null;
-            vitrineFig = (pinnedVitrineFigurine && isOpenNow(pinnedVitrineFigurine) ? pinnedVitrineFigurine : null)
-                ?? dailyPick(availableFigurines.filter(isOpenNow))
-                ?? dailyPick(collectionFigurines.filter(isOpenNow));
+            // The vitrine needs both the works and the doors; onMount also calls this once
+            // the rooms are in, whichever of the two lands last.
+            vitrineFig = computeVitrineFig();
             isLoaded = true;
         } catch (e) {
             isLoaded = true;
@@ -512,7 +513,9 @@
         savedFigurines.load();
         visitorMarks.load();
         houseClock.start();
-        showingRooms.load();
+        // vitrineFig needs real door data to gate against — compute it once rooms
+        // are in, instead of racing the unrelated calls inside init().
+        showingRooms.load().then(() => { vitrineFig = computeVitrineFig(); });
         visitorBook.load();
         // Inside the admin editor's preview iframe: don't pollute the shared
         // localStorage visit flag, and listen for live layout drafts.
@@ -743,6 +746,8 @@
                         <picture>
                             {#if heroSrcset?.webp}
                                 <source type="image/webp" srcset={heroSrcset.webp} sizes={HERO_SIZES} />
+                            {:else if heroBackgroundWebp}
+                                <source type="image/webp" srcset={heroBackgroundWebp} />
                             {/if}
                             <img src={heroDisplayImage} srcset={heroSrcset?.jpeg}
                                  sizes={heroSrcset ? HERO_SIZES : undefined}
@@ -957,6 +962,12 @@
                     {$t('homeHowEyebrow')}
                 </p>
                 <h2 id="request-steps-title" class="request-title">{$t('homeHowTitle')}</h2>
+                <a href="/commission" class="all-link request-cta">
+                    {$t('homeHowCta')}
+                    <svg width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
+                        <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
+                    </svg>
+                </a>
             </div>
 
             <div class="request-steps" aria-label={$t('homeHowTitle')}>
@@ -2341,6 +2352,10 @@
         font-weight: 300;
         line-height: 0.96;
         color: var(--ink);
+    }
+
+    .request-cta {
+        margin-top: clamp(14px, 2vw, 22px);
     }
 
     .request-steps {

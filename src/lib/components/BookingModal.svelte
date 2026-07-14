@@ -221,7 +221,7 @@
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a');
     a.href     = url;
-    a.download = `gotiga-claim-${cancelToken}.txt`;
+    a.download = `ritunia-claim-${cancelToken}.txt`;
     a.click();
     URL.revokeObjectURL(url);
   }

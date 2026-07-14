@@ -2,7 +2,7 @@ import type { TranslationKey } from './en';
 
 export const ru: Record<TranslationKey, string> = {
   // === BRAND ===
-  brandName:           'Gotiga',
+  brandName:           'Ritunia',
 
   // === HOME / CABINET ===
   zoneShowcase:        'АРХИВЪ',
@@ -62,6 +62,7 @@ export const ru: Record<TranslationKey, string> = {
   homeHowStep1Text:     'Откройте доступную фигурку или сохраните работы, к которым хотите вернуться.',
   homeHowStep2Title:    'Отправьте заявку',
   homeHowStep2Text:     'Оставьте контакт и короткое сообщение на странице фигурки.',
+  homeHowCta:           'Отправить заявку',
   homeHowStep3Title:    'Получите ответ',
   homeHowStep3Text:     'Автор лично подтвердит детали, сроки и условия передачи.',
   homeWorkshopCta:     'Мастерская',
@@ -1057,6 +1058,8 @@ export const ru: Record<TranslationKey, string> = {
   adminMsgDeleteSuccess: 'Запись удалена',
   adminMsgDeleteError:   'Ошибка удаления: ',
   adminMsgFileUploaded:  'Файл загружен',
+  adminMsgUploadInProgress: 'Дождитесь окончания загрузки, прежде чем переключаться на другую фигурку',
+  adminMsgUploadTargetChanged: 'Загрузка отменена — открыта другая фигурка, файл никуда не прикреплён',
   adminMsgSavedArchive:  'Сохранено в архив',
   adminMsgSavedServer:   'Сохранено на сервере',
   adminMsgError:         'Ошибка: ',
@@ -1673,7 +1676,7 @@ export const ru: Record<TranslationKey, string> = {
   passportIncluded:            'В комплекте',
   passportBackToWork:          'Назад к работе',
   passportPrint:               'Печать паспорта',
-  passportFooterVerified:      'Проверенная запись объекта от Gotiga',
+  passportFooterVerified:      'Проверенная запись объекта от Ritunia',
   adminPassportHeading:        'Паспорт работы',
   adminPassportHint:           'Публичные музейные факты для происхождения, ухода и доверия коллекционера. Неизвестные поля оставьте пустыми.',
 

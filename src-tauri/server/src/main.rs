@@ -74,6 +74,16 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // Background: give an existing main background (uploaded before the resize/
+    // WebP pipeline existed) the same treatment a fresh upload gets now. Idempotent
+    // and detached — see backfill_background_image's doc comment.
+    {
+        let upload_dir = config.upload_dir.clone();
+        tokio::spawn(async move {
+            api::backfill_background_image(upload_dir).await;
+        });
+    }
+
     // Background: prune login attempts past the retention window (runs now, then daily).
     {
         let svc = service.clone();
