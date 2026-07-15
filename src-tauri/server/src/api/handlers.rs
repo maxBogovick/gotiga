@@ -1635,9 +1635,12 @@ pub async fn sitemap_xml(
             .or(f.face_image_url.as_deref());
         let image = image_sitemap_entry(image_url);
 
+        // Prefer the pretty slug — it is the canonical handle the detail pages
+        // advertise; the UUID is only the fallback for works not yet re-saved.
+        let handle = f.slug.as_deref().unwrap_or(&f.id);
         urls.push_str(&format!(
             "  <url><loc>{base}/figurines/{}</loc><lastmod>{}</lastmod>{image}</url>\n",
-            xml_escape(&f.id),
+            xml_escape(handle),
             f.created_at.format("%Y-%m-%d")
         ));
     }
