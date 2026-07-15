@@ -5,6 +5,7 @@
   import { t } from '$lib/i18n';
   import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
   import type { FigurineListItem } from '$lib/types/api';
+  import { figurineHref } from '$lib/figurineHref';
 
   type Props = {
     fig: FigurineListItem;
@@ -207,7 +208,7 @@
 
   <a
     class="photo"
-    href="/figurines/{fig.id}"
+    href={figurineHref(fig)}
     style="--focal:{focalPos}"
     aria-label="{$t('homeViewFigurine')}: {fig.name}"
   >
@@ -645,7 +646,11 @@
   }
 
   .mark-new {
-    background: #c0582c;
+    /* Tracks the accent token (was a hardcoded #c0582c): cream-on-copper at the old
+       value was 4.17:1 — the same WCAG-AA miss the token itself carried — and this "new"
+       wax mark rides every freshly catalogued card on the home reel. The token is now
+       #B44E24, which lifts it to 4.80:1. */
+    background: var(--color-ember);
     color: #faf6ee;
   }
 

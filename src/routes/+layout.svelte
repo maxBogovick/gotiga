@@ -18,7 +18,11 @@
     startViewTransition(cb: () => void | Promise<void>): ViewTransition;
   };
 
-  let canonicalUrl = $derived(`${page.url.origin}${page.url.pathname}`);
+  // A page may override the canonical path via its load data (e.g. a figurine
+  // reached by UUID canonicalises to its slug URL); otherwise use the live path.
+  let canonicalUrl = $derived(
+    `${page.url.origin}${page.data?.canonicalPath ?? page.url.pathname}`
+  );
   let { children } = $props();
   let showSiteHeader = $derived(!page.url.pathname.startsWith('/admin'));
   let hasHeaderOffset = $derived(showSiteHeader && page.url.pathname !== '/');

@@ -4,6 +4,7 @@
   import { fade, slide } from 'svelte/transition';
   import { t, lang, brandName } from '$lib/i18n';
   import { SITE_URL } from '$lib/site';
+  import { figurineHref } from '$lib/figurineHref';
   import AppImage from '$lib/components/AppImage.svelte';
   import SealedDoor from '$lib/components/SealedDoor.svelte';
   import Lightbox from '$lib/components/Lightbox.svelte';
@@ -283,7 +284,7 @@
   async function handleShare(e: MouseEvent, fig: FigurineListItem) {
     e.preventDefault();
     e.stopPropagation();
-    const url = `${window.location.origin}/figurines/${fig.id}`;
+    const url = `${window.location.origin}${figurineHref(fig)}`;
     try {
       if (navigator.share) {
         await navigator.share({ title: fig.name, url });
@@ -605,7 +606,7 @@
             <li class="group perspective-container fig-tile" use:revealOnEnter
                 onmousemove={onTiltMove} onmouseleave={onTiltLeave}>
               <a
-                href={doorShut(figurine) ? undefined : `/figurines/${figurine.id}`}
+                href={doorShut(figurine) ? undefined : figurineHref(figurine)}
                 class="block w-full text-left relative focus:outline-none"
                 aria-label="{figurine.name}"
                 data-sveltekit-preload-data="hover"

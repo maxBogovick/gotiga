@@ -29,7 +29,7 @@ export async function GET() {
                 .map((v) => oneLine(v))
                 .filter(Boolean)
                 .join(', ');
-            const line = `- [${oneLine(f.name)}](${SITE_URL}/figurines/${f.id})`;
+            const line = `- [${oneLine(f.name)}](${SITE_URL}/figurines/${f.slug ?? f.id})`;
             return facets ? `${line}: ${facets}` : line;
         })
         .join('\n');

@@ -3,6 +3,7 @@
     import { fade, fly } from 'svelte/transition';
     import { cubicOut } from 'svelte/easing';
     import { api, resolveSrcset, resolveWebpUrl } from '$lib/api';
+    import { figurineHref } from '$lib/figurineHref';
     import AppImage from '$lib/components/AppImage.svelte';
     import type { AuthorProfile, FigurineListItem, HomeContent } from '$lib/types/api';
     import { t, brandName } from '$lib/i18n';
@@ -223,7 +224,7 @@
             { words: titleWords.slice(1), offset: 1 },
         ];
     })());
-    let heroObjectHref = $derived(heroPhotoFigurine ? `/figurines/${heroPhotoFigurine.id}` : '/figurines');
+    let heroObjectHref = $derived(heroPhotoFigurine ? figurineHref(heroPhotoFigurine) : '/figurines');
     let showHeroCaption = $derived(Boolean(heroObjectName));
     // The hero photo. `heroFigurine` is the deterministic pick made by pickHeroFigurine —
     // the same function load() ran at build time, over the same data — so this string is
@@ -582,7 +583,12 @@
     <div class="cursor-glow" style="transform:translate(calc({mouseX*100}vw - 250px),calc({mouseY*100}vh - 250px))"></div>
     <div class="grain" aria-hidden="true"></div>
 
-    <main in:fade={{ duration: 700, delay: 40 }} style={homePageStyle(homeLayout)}>
+    <!-- Not a <main>: the layout (+layout.svelte) already renders the page's single
+         <main> landmark around {@render children()}. A second <main> here nested one
+         inside it is invalid (there must be exactly one per document) and hands screen
+         readers two "main" landmarks to choose between. This is the page's own ground and
+         block-ordering container; the landmark role stays with the layout. -->
+    <div class="home-main" in:fade={{ duration: 700, delay: 40 }} style={homePageStyle(homeLayout)}>
 
         <!-- HERO -->
         {#if hlVisible('hero')}
@@ -981,7 +987,7 @@
             </div>
         {/if}
 
-    </main>
+    </div>
 
     {#if reelModalOpen}
         <WorkshopReelModal
@@ -1092,7 +1098,9 @@
         100% { transform: translate(0,0); }
     }
 
-    main {
+    /* Was a bare `main {}` selector; renamed with the element (see the markup note) so
+       it still matches after the tag became a <div class="home-main">. */
+    .home-main {
         width: 100%;
         min-height: 100svh;
         position: relative;

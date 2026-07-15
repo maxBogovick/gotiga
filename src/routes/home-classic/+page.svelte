@@ -4,6 +4,7 @@
     import { cubicOut } from 'svelte/easing';
     import { spring, type Spring } from 'svelte/motion';
     import { api } from '$lib/api';
+    import { figurineHref } from '$lib/figurineHref';
     import type { AuthorProfile, FigurineListItem, HomeContent, WorkshopFeature } from '$lib/types/api';
     import { t, brandName, lang } from '$lib/i18n';
     import AppImage from '$lib/components/AppImage.svelte';
@@ -235,7 +236,7 @@
             { words: titleWords.slice(1), offset: 1 },
         ];
     })());
-    let heroObjectHref = $derived(heroFigurine ? `/figurines/${heroFigurine.id}` : '/figurines');
+    let heroObjectHref = $derived(heroFigurine ? figurineHref(heroFigurine) : '/figurines');
     let showHeroCaption = $derived(Boolean(heroObjectName));
     // The hero photo itself: the admin-pinned piece if set, else today's
     // vitrine pick, else simply the first work on hand — always a real

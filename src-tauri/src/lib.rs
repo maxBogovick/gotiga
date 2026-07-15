@@ -2,6 +2,7 @@ mod commands;
 mod db;
 mod models;
 mod services;
+mod slug;
 
 use db::Database;
 use services::file_service::FileService;
@@ -274,6 +275,8 @@ pub fn run() {
             commands::cleanup_reported_unused_media,
             commands::replace_media_everywhere,
             commands::save_figurine,
+            commands::backfill_slugs,
+            commands::set_figurine_slug,
             commands::bulk_clear_darkness,
             commands::bulk_reset_parallax,
             commands::bulk_set_parallax,

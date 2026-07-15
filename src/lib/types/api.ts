@@ -4,6 +4,12 @@ export type FigurineStatus = 'available' | 'sold' | 'reserved' | 'in_progress';
 
 export interface FigurineListItem {
     id: string;
+    /** Transliterated URL slug; null for works not yet re-saved. Prefer over `id`
+     *  when building `/figurines/…` links (use `figurineHref`). */
+    slug?: string | null;
+    /** True when the slug was hand-typed by an admin (differs from the name-derived
+     *  auto slug); false/absent when auto-generated. Drives the «Work addresses» badge. */
+    slugManual?: boolean;
     name: string;
     status: FigurineStatus;
     /** The work's one-line note, carried on the list payload. The home gallery used to
@@ -143,6 +149,9 @@ export interface ProcessStep {
 
 export interface Figurine {
     id: string;
+    /** Transliterated URL slug; null for works not yet re-saved. Canonical URL is
+     *  `/figurines/{slug ?? id}`. */
+    slug?: string | null;
     name: string;
     shortText: string | null;
     fullDescription: string | null;

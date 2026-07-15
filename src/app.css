@@ -52,8 +52,14 @@
   /* hover fills */
   --color-ember-mid: #D97B52;
   /* secondary CTAs */
-  --color-ember: #C0582C;
-  /* primary accent */
+  --color-ember: #B44E24;
+  /* primary accent. Was #C0582C, which is only 4.17:1 on the #FAF6EE canvas — it fails
+     WCAG AA (4.5:1) for normal text, and the accent is used as small text in several
+     places (10–12px labels, link hovers, the request-step numerals). Darkened just enough
+     to clear AA at 4.80:1 while staying unmistakably copper and still lighter than
+     --color-ember-deep (#9A4120, 6.18:1), so every hover that shifts brown→ember keeps a
+     visible colour change. Large accents (the hero word, borders, buttons) only gain
+     contrast from this. */
   --color-ember-deep: #9A4120;
   /* pressed, dark variant */
   --color-ember-ink: #72300E;
@@ -1219,7 +1225,7 @@
 
   /* Cursor styles */
   .cursor-fancy {
-    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20'%3E%3Ccircle cx='10' cy='10' r='4' fill='%23C0582C' fill-opacity='0.7'/%3E%3C/svg%3E") 10 10, pointer;
+    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20'%3E%3Ccircle cx='10' cy='10' r='4' fill='%23B44E24' fill-opacity='0.7'/%3E%3C/svg%3E") 10 10, pointer;
   }
 }
 

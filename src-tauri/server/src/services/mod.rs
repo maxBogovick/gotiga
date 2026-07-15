@@ -449,6 +449,8 @@ impl AppService {
         FigurineListItemDto {
             id: f.id.to_string(),
             name: f.name,
+            slug: f.slug,
+            slug_manual: f.slug_manual,
             status: f.status,
             short_text: f.short_text,
             face_image_url: face.map(|i| self.face_image_url(i)),
@@ -559,10 +561,18 @@ impl AppService {
     }
 
     pub async fn get_figurine_details(&self, id: String) -> Result<FigurineDto> {
-        let uuid = Self::parse_uuid(&id)?;
-        let figurine = self.repo.get_figurine_by_id(uuid).await?.ok_or_else(|| {
+        // `id` is a handle: a UUID for legacy/canonical links, or a transliterated
+        // slug for the pretty URL. Try UUID first (cheap parse); anything else is a
+        // slug lookup. Either resolves to the same work.
+        let figurine = match Uuid::parse_str(&id) {
+            Ok(uuid) => self.repo.get_figurine_by_id(uuid).await?,
+            Err(_) => self.repo.get_figurine_by_slug(&id).await?,
+        }
+        .ok_or_else(|| {
             crate::error::AppError::NotFound(format!("Figurine {} not found", id))
         })?;
+
+        let uuid = figurine.id;
 
         // Percentile rank among marked figurines (see get_favorite_tiers) — a
         // relative "deservedly in the top" signal, not an arbitrary fixed
@@ -646,6 +656,7 @@ impl AppService {
         Ok(FigurineDto {
             id: fig_id_str.clone(),
             name: figurine.name,
+            slug: figurine.slug,
             short_text: figurine.short_text,
             full_description: figurine.full_description,
             dimensions: figurine.dimensions,
@@ -936,7 +947,7 @@ impl AppService {
 
     // === ADMIN WRITE ===
 
-    pub async fn save_figurine(&self, req: crate::models::SaveFigurineRequest) -> Result<()> {
+    pub async fn save_figurine(&self, mut req: crate::models::SaveFigurineRequest) -> Result<()> {
         let figurine_id = Self::parse_uuid(&req.id)?;
         validate_text("Name", &req.name, 200)?;
         if req.images.len() > 50 {
@@ -978,14 +989,59 @@ impl AppService {
                 ));
             }
         }
-        let prev_status = self
-            .repo
-            .get_figurine_by_id(figurine_id)
-            .await?
-            .map(|f| f.status);
-        self.repo
-            .save_figurine_full(&req, &req.images, &req.process_steps)
-            .await?;
+        // Resolve the URL slug: honour a non-blank admin override, otherwise
+        // transliterate the name (see slug_base).
+        let base = Self::slug_base(req.slug.as_deref(), &req.name, &req.id);
+        let prev = self.repo.get_figurine_by_id(figurine_id).await?;
+        let prev_status = prev.as_ref().map(|f| f.status.clone());
+        // Manual vs auto: the figurine form round-trips the stored slug on every
+        // save, so "override present" alone can't mean "hand-typed". A blank field
+        // is an explicit auto (regenerate from name); a value equal to what is
+        // already stored preserves the prior flag (the form just echoed it back);
+        // anything else is a fresh hand-typed slug → manual.
+        let incoming = req.slug.as_deref().map(str::trim).filter(|s| !s.is_empty());
+        let slug_manual = match (incoming, prev.as_ref()) {
+            (None, _) => false,
+            (Some(s), Some(p)) if Some(s) == p.slug.as_deref() => p.slug_manual,
+            (Some(_), _) => true,
+        };
+
+        // Enforce uniqueness — a slug must resolve to exactly one work. Append
+        // -2, -3, … past any collision with a *different* work.
+        //
+        // The check-then-insert is a TOCTOU window: two admins saving at once can
+        // both pick the same free candidate, and the partial UNIQUE(slug) index
+        // then rejects the loser's write with a raw unique-violation. Rather than
+        // surfacing that as a 500, catch it and resume the suffix search from where
+        // we left off, retrying the save with the next free candidate.
+        let mut n = 2;
+        loop {
+            let mut candidate = base.clone();
+            while let Some(existing) = self.repo.get_figurine_by_slug(&candidate).await? {
+                if existing.id == figurine_id {
+                    break; // already ours
+                }
+                candidate = format!("{base}-{n}");
+                n += 1;
+            }
+            req.slug = Some(candidate);
+
+            match self
+                .repo
+                .save_figurine_full(&req, &req.images, &req.process_steps, slug_manual)
+                .await
+            {
+                Ok(()) => break,
+                Err(AppError::Database(sqlx::Error::Database(db_err)))
+                    if db_err.is_unique_violation() && n <= 1000 =>
+                {
+                    // A concurrent save claimed our slug between check and insert.
+                    // Bump past it and try the next candidate.
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+        }
         // Just flipped to available → alert the author to everyone who was waiting
         // (queue + notify-me), so they can reach out personally.
         let became_available = req.status == crate::models::FigurineStatus::Available
@@ -997,6 +1053,92 @@ impl AppService {
         }
         Self::log_domain_event("figurine_saved", "figurine", figurine_id, "ok");
         Ok(())
+    }
+
+    /// Compute the slug *base* for a work (before uniqueness suffixing): a
+    /// sanitised non-blank admin override, else the transliterated name, else the
+    /// id's first block when the name has no usable characters. slugify() also
+    /// sanitises a hand-typed override down to `[a-z0-9-]`.
+    fn slug_base(override_opt: Option<&str>, name: &str, id: &str) -> String {
+        let base = override_opt
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(crate::slug::slugify)
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| crate::slug::slugify(name));
+        if base.is_empty() {
+            id.split('-').next().unwrap_or(id).to_string()
+        } else {
+            base
+        }
+    }
+
+    /// Resolve a collision-free slug from `base` and persist it on the work (with
+    /// its manual/auto flag), retrying past the check-then-write TOCTOU window if a
+    /// concurrent write claims the candidate first. Returns the slug actually stored.
+    async fn assign_unique_slug(
+        &self,
+        figurine_id: Uuid,
+        base: &str,
+        slug_manual: bool,
+    ) -> Result<String> {
+        let mut n = 2;
+        loop {
+            let mut candidate = base.to_string();
+            while let Some(existing) = self.repo.get_figurine_by_slug(&candidate).await? {
+                if existing.id == figurine_id {
+                    break; // already ours
+                }
+                candidate = format!("{base}-{n}");
+                n += 1;
+            }
+            match self
+                .repo
+                .update_figurine_slug(figurine_id, &candidate, slug_manual)
+                .await
+            {
+                Ok(()) => return Ok(candidate),
+                Err(AppError::Database(sqlx::Error::Database(db_err)))
+                    if db_err.is_unique_violation() && n <= 1000 =>
+                {
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    /// Backfill: give every work still missing a URL slug a transliterated one.
+    /// Idempotent — works that already have a slug are left untouched. Backfilled
+    /// slugs are auto (name-derived). Returns the number of works that got one.
+    pub async fn backfill_figurine_slugs(&self) -> Result<crate::models::BulkOpSummary> {
+        let works = self.repo.get_figurines_without_slug().await?;
+        let mut affected = 0u64;
+        for work in works {
+            let base = Self::slug_base(None, &work.name, &work.id.to_string());
+            self.assign_unique_slug(work.id, &base, false).await?;
+            affected += 1;
+        }
+        Self::log_domain_event("slugs_backfilled", "figurine", affected, "ok");
+        Ok(crate::models::BulkOpSummary { affected })
+    }
+
+    /// Set or regenerate a single work's URL slug. A non-blank `slug` is honoured
+    /// as a hand-typed override (sanitised) → flagged manual; a blank/None one
+    /// regenerates from the work's name → flagged auto. Uniqueness is enforced.
+    /// Returns the slug actually stored.
+    pub async fn set_figurine_slug(&self, id: String, slug: Option<String>) -> Result<String> {
+        let figurine_id = Self::parse_uuid(&id)?;
+        let work = self
+            .repo
+            .get_figurine_by_id(figurine_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("Figurine {} not found", id)))?;
+        let manual = slug.as_deref().map(str::trim).is_some_and(|s| !s.is_empty());
+        let base = Self::slug_base(slug.as_deref(), &work.name, &id);
+        let stored = self.assign_unique_slug(figurine_id, &base, manual).await?;
+        Self::log_domain_event("figurine_slug_set", "figurine", figurine_id, "ok");
+        Ok(stored)
     }
 
     pub async fn delete_figurine(&self, id: String) -> Result<()> {

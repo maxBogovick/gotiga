@@ -28,7 +28,7 @@ impl<'a> Repository<'a> {
 
     pub fn get_all_figurines(&self) -> Result<Vec<Figurine>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, short_text, full_description, dimensions, material, technique, year, passport_number, edition, created_period, care_instructions, provenance_note, authenticity_note, included_items, ambience_path, video_url, secret_text, status, sort_order, updated_at, is_visible, COALESCE(is_featured, 0), open_from_min, open_until_min, sealed_door_image, showing_room_id, display_layout, display_config
+            "SELECT id, name, short_text, full_description, dimensions, material, technique, year, passport_number, edition, created_period, care_instructions, provenance_note, authenticity_note, included_items, ambience_path, video_url, secret_text, status, sort_order, updated_at, is_visible, COALESCE(is_featured, 0), open_from_min, open_until_min, sealed_door_image, showing_room_id, display_layout, display_config, slug, COALESCE(slug_manual, 0)
              FROM figurines
              ORDER BY sort_order"
         )?;
@@ -64,6 +64,8 @@ impl<'a> Repository<'a> {
                 showing_room_id: row.get(26)?,
                 display_layout: row.get(27)?,
                 display_config: row.get(28)?,
+                slug: row.get(29)?,
+                slug_manual: row.get::<_, i32>(30).unwrap_or(0) != 0,
             })
         })?;
 
@@ -72,11 +74,18 @@ impl<'a> Repository<'a> {
 
     pub fn get_figurine_by_id(&self, id: &str) -> Result<Option<Figurine>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, short_text, full_description, dimensions, material, technique, year, passport_number, edition, created_period, care_instructions, provenance_note, authenticity_note, included_items, ambience_path, video_url, secret_text, status, sort_order, updated_at, is_visible, COALESCE(is_featured, 0), open_from_min, open_until_min, sealed_door_image, showing_room_id, display_layout, display_config
+            "SELECT id, name, short_text, full_description, dimensions, material, technique, year, passport_number, edition, created_period, care_instructions, provenance_note, authenticity_note, included_items, ambience_path, video_url, secret_text, status, sort_order, updated_at, is_visible, COALESCE(is_featured, 0), open_from_min, open_until_min, sealed_door_image, showing_room_id, display_layout, display_config, slug, COALESCE(slug_manual, 0)
              FROM figurines
-             WHERE id = ?"
+             WHERE id = ?1 OR slug = ?1
+             ORDER BY (id = ?1) DESC
+             LIMIT 1"
         )?;
 
+        // `id` is a handle: matched against both the id and slug columns so a UUID
+        // or a pretty slug resolves the same work. An exact id match wins over a
+        // slug match, mirroring the server's UUID-first resolution
+        // (services/mod.rs get_figurine_details) so a slug that happens to collide
+        // with another work's id can never shadow it.
         let mut rows = stmt.query(params![id])?;
 
         if let Some(row) = rows.next()? {
@@ -110,6 +119,8 @@ impl<'a> Repository<'a> {
                 showing_room_id: row.get(26)?,
                 display_layout: row.get(27)?,
                 display_config: row.get(28)?,
+                slug: row.get(29)?,
+                slug_manual: row.get::<_, i32>(30).unwrap_or(0) != 0,
             }))
         } else {
             Ok(None)
@@ -123,10 +134,12 @@ impl<'a> Repository<'a> {
             "INSERT INTO figurines (
                 id, name, short_text, full_description, dimensions, material, technique,
                 year, passport_number, edition, created_period, care_instructions, provenance_note, authenticity_note, included_items,
-                ambience_path, video_url, secret_text, status, sort_order, is_visible, is_featured, open_from_min, open_until_min, sealed_door_image, showing_room_id, display_layout, display_config, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29)
+                ambience_path, video_url, secret_text, status, sort_order, is_visible, is_featured, open_from_min, open_until_min, sealed_door_image, showing_room_id, display_layout, display_config, updated_at, slug, slug_manual
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31)
             ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name,
+                slug=excluded.slug,
+                slug_manual=excluded.slug_manual,
                 short_text=excluded.short_text,
                 full_description=excluded.full_description,
                 dimensions=excluded.dimensions,
@@ -185,7 +198,9 @@ impl<'a> Repository<'a> {
             f.showing_room_id,
             f.display_layout,
             f.display_config,
-            f.updated_at
+            f.updated_at,
+            f.slug,
+            f.slug_manual as i32
         ])?;
 
         Ok(())
@@ -582,6 +597,22 @@ impl<'a> Repository<'a> {
         )
     }
 
+    /// Overwrite a single work's URL slug and its manual/auto flag (used by slug
+    /// backfill / manual edit). Bumps updated_at so the sitemap reflects the new
+    /// address.
+    pub fn update_figurine_slug(
+        &self,
+        id: &str,
+        slug: &str,
+        slug_manual: bool,
+        updated_at: &str,
+    ) -> Result<usize> {
+        self.conn.execute(
+            "UPDATE figurines SET slug = ?1, slug_manual = ?2, updated_at = ?3 WHERE id = ?4",
+            rusqlite::params![slug, slug_manual as i32, updated_at, id],
+        )
+    }
+
     pub fn bulk_reset_parallax(&self) -> Result<usize> {
         self.conn.execute(
             "UPDATE images SET parallax_intensity = NULL WHERE parallax_intensity IS NOT NULL",
@@ -847,7 +878,7 @@ impl<'a> Repository<'a> {
 
     pub fn get_related_figurines(&self, id: &str) -> Result<Vec<Figurine>> {
         let mut stmt = self.conn.prepare(
-            "SELECT DISTINCT f.id, f.name, f.short_text, f.full_description, f.dimensions, f.material, f.technique, f.year, f.passport_number, f.edition, f.created_period, f.care_instructions, f.provenance_note, f.authenticity_note, f.included_items, f.ambience_path, f.video_url, f.secret_text, f.status, f.sort_order, f.updated_at, f.is_visible, COALESCE(f.is_featured, 0), f.open_from_min, f.open_until_min, f.sealed_door_image, f.showing_room_id, f.display_layout, f.display_config
+            "SELECT DISTINCT f.id, f.name, f.short_text, f.full_description, f.dimensions, f.material, f.technique, f.year, f.passport_number, f.edition, f.created_period, f.care_instructions, f.provenance_note, f.authenticity_note, f.included_items, f.ambience_path, f.video_url, f.secret_text, f.status, f.sort_order, f.updated_at, f.is_visible, COALESCE(f.is_featured, 0), f.open_from_min, f.open_until_min, f.sealed_door_image, f.showing_room_id, f.display_layout, f.display_config, f.slug, COALESCE(f.slug_manual, 0)
              FROM figurines f
              JOIN figurines current ON current.id = ?1
              WHERE f.id != ?1
@@ -891,6 +922,8 @@ impl<'a> Repository<'a> {
                 showing_room_id: row.get(26)?,
                 display_layout: row.get(27)?,
                 display_config: row.get(28)?,
+                slug: row.get(29)?,
+                slug_manual: row.get::<_, i32>(30).unwrap_or(0) != 0,
             })
         })?;
 

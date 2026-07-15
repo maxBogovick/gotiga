@@ -555,6 +555,20 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                     middleware::from_fn_with_state(config.clone(), auth_middleware),
                 ),
             )
+            // === SLUGS (ADMIN) ===
+            .route(
+                "/admin/figurines/slugs/backfill",
+                post(handlers::backfill_slugs).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/admin/figurines/:id/slug",
+                axum::routing::patch(handlers::set_figurine_slug).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
             // === BOOKINGS (ADMIN) ===
             .route(
                 "/admin/bookings",

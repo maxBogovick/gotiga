@@ -66,6 +66,11 @@ pub struct AuthorProfile {
 pub struct Figurine {
     pub id: String,
     pub name: String,
+    /// Transliterated URL slug (unique when set); NULL for rows not yet re-saved.
+    pub slug: Option<String>,
+    /// True when the slug was hand-typed by an admin (differs from the name-derived
+    /// auto slug); false when auto-generated. Mirrors the web server's column.
+    pub slug_manual: bool,
     pub short_text: Option<String>,
     pub full_description: Option<String>,
     pub dimensions: Option<String>,
@@ -319,6 +324,9 @@ pub struct ServerRelease {
 pub struct FigurineDto {
     pub id: String,
     pub name: String,
+    /// Transliterated URL slug; null for works not yet re-saved.
+    #[serde(default)]
+    pub slug: Option<String>,
     pub short_text: Option<String>,
     pub full_description: Option<String>,
     pub dimensions: Option<String>,
@@ -375,6 +383,7 @@ impl FigurineDto {
         Self {
             id: figurine.id,
             name: figurine.name,
+            slug: figurine.slug,
             short_text: figurine.short_text,
             full_description: figurine.full_description,
             dimensions: figurine.dimensions,
@@ -476,6 +485,12 @@ impl ProcessStepDto {
 pub struct FigurineListItemDto {
     pub id: String,
     pub name: String,
+    /// Transliterated URL slug; null for works not yet re-saved.
+    #[serde(default)]
+    pub slug: Option<String>,
+    /// True when the slug was hand-typed (differs from the name-derived auto slug).
+    #[serde(default)]
+    pub slug_manual: bool,
     pub status: String,
     /// Mirrors the web server's list DTO: the home gallery renders this under each
     /// plate. Carried on the list item so the client never has to fetch a full

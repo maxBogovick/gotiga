@@ -191,6 +191,8 @@ pub async fn get_all_figurines(
         result.push(FigurineListItemDto {
             id: fig.id,
             name: fig.name,
+            slug: fig.slug,
+            slug_manual: fig.slug_manual,
             status: fig.status.as_str().to_string(),
             short_text: fig.short_text,
             face_image_url: face_image,
@@ -267,6 +269,8 @@ pub async fn get_figurine(
                 related_items.push(FigurineListItemDto {
                     id: r_fig.id,
                     name: r_fig.name,
+                    slug: r_fig.slug,
+                    slug_manual: r_fig.slug_manual,
                     status: r_fig.status.as_str().to_string(),
                     short_text: r_fig.short_text,
                     face_image_url: r_face_image,
@@ -544,6 +548,101 @@ pub async fn replace_media_everywhere(
     })
 }
 
+/// Compute the slug *base* for a work (before uniqueness suffixing): a sanitised
+/// non-blank admin override, else the transliterated name, else the id's first
+/// block when the name has no usable characters. Mirrors the web server's
+/// `AppService::slug_base` so desktop and web agree.
+fn slug_base(override_opt: Option<&str>, name: &str, id: &str) -> String {
+    let base = override_opt
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(crate::slug::slugify)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| crate::slug::slugify(name));
+    if base.is_empty() {
+        id.split('-').next().unwrap_or(id).to_string()
+    } else {
+        base
+    }
+}
+
+/// Resolve a collision-free slug for `figurine_id` from `base`: append -2, -3, …
+/// past any slug already held by a *different* work.
+fn resolve_unique_slug(
+    repo: &Repository,
+    figurine_id: &str,
+    base: &str,
+) -> Result<String, String> {
+    let mut slug = base.to_string();
+    let mut n = 2;
+    while let Some(existing) = repo
+        .get_figurine_by_id(&slug)
+        .map_err(|e| format!("Database error: {}", e))?
+    {
+        if existing.id == figurine_id {
+            break; // already ours
+        }
+        slug = format!("{base}-{n}");
+        n += 1;
+    }
+    Ok(slug)
+}
+
+/// Backfill: generate a transliterated URL slug for every work still missing one.
+/// Idempotent — works that already have a slug are left untouched.
+#[tauri::command]
+pub async fn backfill_slugs(db: State<'_, Database>) -> Result<BulkOpResultDto, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let repo = Repository::new(&conn);
+    let now = Utc::now().to_rfc3339();
+    let works = repo
+        .get_all_figurines()
+        .map_err(|e| format!("Database error: {}", e))?;
+    let mut affected = 0usize;
+    for work in works {
+        if work
+            .slug
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|s| !s.is_empty())
+        {
+            continue; // already has one
+        }
+        let base = slug_base(None, &work.name, &work.id);
+        let slug = resolve_unique_slug(&repo, &work.id, &base)?;
+        // Backfilled slugs are auto (name-derived).
+        repo.update_figurine_slug(&work.id, &slug, false, &now)
+            .map_err(|e| format!("Database error: {}", e))?;
+        affected += 1;
+    }
+    Ok(BulkOpResultDto { affected })
+}
+
+/// Set or regenerate a single work's URL slug. A non-blank `slug` is honoured as a
+/// hand-typed override (sanitised); a blank/None one regenerates from the name.
+/// Returns the slug actually stored.
+#[tauri::command]
+pub async fn set_figurine_slug(
+    id: String,
+    slug: Option<String>,
+    db: State<'_, Database>,
+) -> Result<String, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let repo = Repository::new(&conn);
+    let work = repo
+        .get_figurine_by_id(&id)
+        .map_err(|e| format!("Database error: {}", e))?
+        .ok_or_else(|| format!("Figurine {} not found", id))?;
+    // Non-blank override → manual (hand-typed); blank/None → auto (regenerate).
+    let manual = slug.as_deref().map(str::trim).is_some_and(|s| !s.is_empty());
+    let base = slug_base(slug.as_deref(), &work.name, &id);
+    let stored = resolve_unique_slug(&repo, &id, &base)?;
+    let now = Utc::now().to_rfc3339();
+    repo.update_figurine_slug(&id, &stored, manual, &now)
+        .map_err(|e| format!("Database error: {}", e))?;
+    Ok(stored)
+}
+
 #[tauri::command]
 pub async fn save_figurine(
     mut figurine: FigurineDto,
@@ -561,9 +660,34 @@ pub async fn save_figurine(
     let figurine_id = figurine.id.clone();
     let now = Utc::now().to_rfc3339();
 
+    // Resolve the URL slug: honour a non-blank admin override, else transliterate
+    // the name. Unique across works (append -2, -3 past any collision with a
+    // different work).
+    let base = slug_base(figurine.slug.as_deref(), &figurine.name, &figurine_id);
+    let slug = resolve_unique_slug(&repo, &figurine_id, &base)?;
+
+    // Manual vs auto (mirrors the web server): the form round-trips the stored
+    // slug, so "override present" alone isn't "hand-typed". Blank → auto; a value
+    // equal to the stored slug preserves the prior flag; anything else → manual.
+    let prev = repo
+        .get_figurine_by_id(&figurine_id)
+        .map_err(|e| format!("Database error: {}", e))?;
+    let incoming = figurine
+        .slug
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let slug_manual = match (incoming, prev.as_ref()) {
+        (None, _) => false,
+        (Some(s), Some(p)) if Some(s) == p.slug.as_deref() => p.slug_manual,
+        (Some(_), _) => true,
+    };
+
     let model = Figurine {
         id: figurine.id,
         name: figurine.name,
+        slug: Some(slug),
+        slug_manual,
         short_text: figurine.short_text,
         full_description: figurine.full_description,
         dimensions: figurine.dimensions,

@@ -1735,6 +1735,24 @@ pub async fn bulk_set_second_angle(State(service): State<AppService>) -> Result<
     Ok(Json(service.bulk_set_second_angle().await?))
 }
 
+// === SLUGS (ADMIN) ===
+
+/// Backfill: generate a transliterated URL slug for every work still missing one.
+pub async fn backfill_slugs(State(service): State<AppService>) -> Result<impl IntoResponse> {
+    Ok(Json(service.backfill_figurine_slugs().await?))
+}
+
+/// Set/regenerate a single work's URL slug. Blank/absent `slug` → regenerate from
+/// the work's name. Returns `{ "slug": "<stored>" }`.
+pub async fn set_figurine_slug(
+    State(service): State<AppService>,
+    Path(id): Path<String>,
+    Json(req): Json<crate::models::SetSlugRequest>,
+) -> Result<impl IntoResponse> {
+    let slug = service.set_figurine_slug(id, req.slug).await?;
+    Ok(Json(serde_json::json!({ "slug": slug })))
+}
+
 // === BOOKINGS (ADMIN) ===
 
 pub async fn list_bookings(

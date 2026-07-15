@@ -2,9 +2,59 @@ import { defineConfig } from "vite";
 import { sveltekit } from "@sveltejs/kit/vite";
 import tailwindcss from "@tailwindcss/vite";
 import { VitePWA } from "vite-plugin-pwa";
+import fs from "node:fs";
+import path from "node:path";
 
 const host = process.env.TAURI_DEV_HOST;
 const isWebBuild = process.env.VITE_BUILD_TARGET === "web";
+
+// Resolve the /admin route's own emitted files (its JS node chunk + CSS) so the service
+// worker can drop them from its precache — the panel is SPA-only and behind auth, so
+// precaching ~0.5 MB of it for every public visitor is pure waste (see manifestTransforms
+// below). This is done WITHOUT a hardcoded hash or node index: SvelteKit keys build output
+// by node index, so we find which index is admin by scanning the generated node stubs for
+// the one that points at routes/admin, then read that node's real filenames out of Vite's
+// build manifest. Any failure returns [] — a precache optimisation must never break a build.
+function adminBuildFiles() {
+  try {
+    // The generated node stubs carry the route→index mapping. Prefer the optimized set
+    // (present in a production build); fall back to the plain one.
+    const genDir = [
+      ".svelte-kit/generated/client-optimized/nodes",
+      ".svelte-kit/generated/client/nodes",
+    ].find((d) => fs.existsSync(d));
+    if (!genDir) return [];
+    const stub = fs
+      .readdirSync(genDir)
+      .find((f) => /routes\/admin\/\+page/.test(fs.readFileSync(path.join(genDir, f), "utf8")));
+    if (!stub) return [];
+    const nodeIndex = stub.replace(/\.js$/, ""); // e.g. "4"
+
+    const manifest = JSON.parse(
+      fs.readFileSync(".svelte-kit/output/client/.vite/manifest.json", "utf8"),
+    );
+    const entry = Object.values(manifest).find(
+      (v) => v.file && v.file.includes(`nodes/${nodeIndex}.`),
+    );
+    if (!entry) return [];
+    // The admin panels are static imports, so Rollup inlines them into this one node
+    // chunk (its `imports` are shared vendor/i18n chunks the public pages need too, so
+    // those are deliberately NOT excluded). File paths are relative to the client outDir.
+    return [entry.file, ...(entry.css ?? [])];
+  } catch {
+    return [];
+  }
+}
+
+// A workbox manifestTransform: strip the admin route's own files from the precache list.
+/** @type {import('workbox-build').ManifestTransform} */
+const adminPrecacheExclusion = (entries) => {
+  const admin = adminBuildFiles();
+  const manifest = admin.length
+    ? entries.filter((e) => !admin.some((f) => e.url.endsWith(f)))
+    : entries;
+  return { manifest, warnings: [] };
+};
 
 const apiProxy = {
   "/api": {
@@ -41,10 +91,32 @@ export default defineConfig(async () => ({
       devOptions: { enabled: false },
       workbox: {
         globPatterns: ["**/*.{js,css,html,ico,png,webp,svg,woff2}"],
-        // (The `globIgnores: ["**/bg-main.png"]` that used to sit here is gone with the
-        // file: bg-main.png was a 2.4 MB PNG that nothing referenced. The ignore existed
-        // only to keep it out of the precache — deleting the asset makes the rule moot.)
+        // This ignore is BACK, because the premise of removing it was wrong. The note
+        // here used to say bg-main.png "is gone with the file" — it is not: the asset is
+        // still in static/images/ at 2.4 MB, and it is still referenced by nothing in
+        // src/. What got deleted was the ignore, i.e. the only thing holding a 2.4 MB
+        // dead PNG out of the precache manifest (it matches the `png` glob above and sits
+        // under the 3 MB cap, so workbox takes it).
+        //
+        // That went unnoticed because the service worker was not being built at all in
+        // production — VITE_BUILD_TARGET was empty, so `disable` above was true. Turning
+        // the web target back on (Dockerfile.frontend) makes the SW real, and with it
+        // this rule: without the ignore the precache is 5.5 MB, of which 2.4 MB is a file
+        // no one asked for, downloaded by every first-time visitor.
+        //
+        // The ignore is the safe half of the fix. The right half is deleting the asset.
+        globIgnores: ["**/bg-main.png"],
         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
+        // Drop the SPA-only /admin route from the precache. It is never prerendered and
+        // pulls in 27 panels — a ~0.5 MB JS chunk plus ~90 KB CSS that the service worker
+        // would otherwise precache for EVERY public visitor, none of whom can open the
+        // panel (it is behind auth). We do NOT do this with manualChunks: forcing admin
+        // into a named chunk also replaces Vite's default vendor splitting and merges the
+        // shared graph into one monolith, which regressed the HOME critical path from
+        // ~170 KB to ~300 KB gzip. Chunking is left exactly as Vite/SvelteKit produce it;
+        // we only edit the precache MANIFEST, resolving the admin route's own files from
+        // SvelteKit's build manifest so there is no hardcoded hash or node index.
+        manifestTransforms: [adminPrecacheExclusion],
         navigateFallback: null,
         runtimeCaching: [
           {

@@ -1098,6 +1098,40 @@ impl Repository {
         Ok(figurine)
     }
 
+    /// Resolve a work by its transliterated slug (the pretty-URL handle).
+    pub async fn get_figurine_by_slug(&self, slug: &str) -> Result<Option<Figurine>> {
+        let figurine = sqlx::query_as::<_, Figurine>("SELECT * FROM figurines WHERE slug = $1")
+            .bind(slug)
+            .fetch_optional(&self.pg_pool)
+            .await?;
+        Ok(figurine)
+    }
+
+    /// Every work still missing a URL slug (NULL or blank), for slug backfill.
+    /// Same ordering as the default archive so backfilled suffixes are stable.
+    pub async fn get_figurines_without_slug(&self) -> Result<Vec<Figurine>> {
+        Ok(sqlx::query_as::<_, Figurine>(
+            "SELECT * FROM figurines
+             WHERE slug IS NULL OR slug = ''
+             ORDER BY sort_order, created_at DESC, id",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Overwrite a single work's URL slug and its manual/auto flag. Bumps
+    /// updated_at so the sitemap reflects the new address. The caller guarantees
+    /// uniqueness; the partial UNIQUE(slug) index is the backstop.
+    pub async fn update_figurine_slug(&self, id: Uuid, slug: &str, slug_manual: bool) -> Result<()> {
+        sqlx::query("UPDATE figurines SET slug = $1, slug_manual = $2, updated_at = NOW() WHERE id = $3")
+            .bind(slug)
+            .bind(slug_manual)
+            .bind(id)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
     /// Works currently inside their "first look" window — visible, with a release
     /// time still in the future. Soonest to open first. These are deliberately
     /// excluded from the public archive (see `get_all_figurines`) and surfaced
@@ -1259,6 +1293,7 @@ impl Repository {
         f: &crate::models::SaveFigurineRequest,
         images: &[crate::models::SaveImageRequest],
         steps: &[crate::models::SaveStepRequest],
+        slug_manual: bool,
     ) -> Result<()> {
         let id = Uuid::parse_str(&f.id)
             .map_err(|_| AppError::BadRequest("Invalid figurine ID".to_string()))?;
@@ -1311,10 +1346,10 @@ impl Repository {
         let mut tx = self.pg_pool.begin().await?;
 
         sqlx::query(
-            "INSERT INTO figurines (id, name, short_text, full_description, dimensions, material, technique, year, passport_number, edition, created_period, care_instructions, provenance_note, authenticity_note, included_items, ambience_path, video_url, secret_text, is_visible, is_featured, status, sort_order, open_from_min, open_until_min, sealed_door_image, showing_room_id, display_layout, display_config, first_look_until, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, NOW())
+            "INSERT INTO figurines (id, name, short_text, full_description, dimensions, material, technique, year, passport_number, edition, created_period, care_instructions, provenance_note, authenticity_note, included_items, ambience_path, video_url, secret_text, is_visible, is_featured, status, sort_order, open_from_min, open_until_min, sealed_door_image, showing_room_id, display_layout, display_config, first_look_until, slug, slug_manual, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, NOW())
              ON CONFLICT (id) DO UPDATE SET
-               name=EXCLUDED.name, short_text=EXCLUDED.short_text, full_description=EXCLUDED.full_description,
+               name=EXCLUDED.name, slug=EXCLUDED.slug, slug_manual=EXCLUDED.slug_manual, short_text=EXCLUDED.short_text, full_description=EXCLUDED.full_description,
                dimensions=EXCLUDED.dimensions, material=EXCLUDED.material, technique=EXCLUDED.technique,
                passport_number=EXCLUDED.passport_number, edition=EXCLUDED.edition, created_period=EXCLUDED.created_period,
                care_instructions=EXCLUDED.care_instructions, provenance_note=EXCLUDED.provenance_note,
@@ -1337,7 +1372,7 @@ impl Repository {
         .bind(f.is_visible).bind(f.is_featured).bind(&f.status).bind(f.sort_order)
         .bind(f.open_from_min).bind(f.open_until_min).bind(&f.sealed_door_image)
         .bind(showing_room_uuid).bind(&f.display_layout).bind(&f.display_config)
-        .bind(first_look_until)
+        .bind(first_look_until).bind(&f.slug).bind(slug_manual)
         .execute(&mut *tx).await?;
 
         sqlx::query("DELETE FROM images WHERE figurine_id = $1")

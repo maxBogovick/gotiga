@@ -144,6 +144,18 @@ function webApiBase(): string {
     if (typeof window === 'undefined') {
         const buildBase = import.meta.env.VITE_API_BASE;
         if (buildBase) return `${buildBase.replace(/\/$/, '')}/api/v1`;
+        // Falling through to the relative path here cannot work: Node's fetch has no
+        // origin to resolve it against, so it dies with `Failed to parse URL from
+        // /api/v1/…` — thrown from inside undici, surfacing as an unhandled rejection
+        // with no hint of the actual cause. Prerender is the ONLY thing that reaches
+        // this line, so say what is missing instead.
+        throw new Error(
+            'VITE_API_BASE is not set. The web build prerenders routes in Node, which ' +
+            'needs an absolute API origin to read the catalogue from (a relative ' +
+            '/api/v1 path has nothing to resolve against). Set VITE_API_BASE to the ' +
+            'API origin, e.g. VITE_API_BASE=https://ritunia.com npm run build:web — or ' +
+            'build the SPA target (npm run build) if you did not want prerendering.'
+        );
     }
     return '/api/v1';
 }
@@ -602,6 +614,32 @@ export const api = {
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify({ intensity }),
         });
+    },
+
+    // === URL SLUGS (ADMIN) ===
+
+    /** Generate a transliterated URL slug for every work still missing one.
+     *  Idempotent — works that already have a slug are untouched. */
+    async backfillSlugs(): Promise<BulkOpResult> {
+        invalidateReadPrefix('figurines:');
+        if (isTauri) return invoke('backfill_slugs');
+        return webFetch('/admin/figurines/slugs/backfill', {
+            method: 'POST',
+            headers: authHeaders(),
+        });
+    },
+
+    /** Set/regenerate a single work's URL slug. A blank/omitted `slug` regenerates
+     *  from the work's name. Returns the slug actually stored (uniqueness-suffixed). */
+    async setFigurineSlug(id: string, slug: string | null): Promise<string> {
+        invalidateReadPrefix('figurines:');
+        if (isTauri) return invoke('set_figurine_slug', { id, slug });
+        const res = await webFetch<{ slug: string }>(`/admin/figurines/${id}/slug`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ slug }),
+        });
+        return res.slug;
     },
 
     /**

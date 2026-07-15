@@ -12,7 +12,12 @@ export const entries = async () => {
   // want the web build to FAIL loudly rather than silently ship a site with no works.
   // A genuinely empty catalog returns [] and is allowed via prerender.handleUnseenRoutes.
   const all = await api.getAllFigurines();
-  return all.map((f) => ({ id: f.id }));
+  // Emit a static page for BOTH handles: the pretty slug (canonical) and the raw
+  // UUID (so old share-links / bookmarks still resolve on the prerendered host).
+  // Dedupe when a work has no slug yet.
+  return all.flatMap((f) =>
+    f.slug && f.slug !== f.id ? [{ id: f.slug }, { id: f.id }] : [{ id: f.id }]
+  );
 };
 
 export const load = async ({ params }: { params: { id: string } }) => {
@@ -40,7 +45,9 @@ export const load = async ({ params }: { params: { id: string } }) => {
     const sorted = [...all].sort(
       (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.name.localeCompare(b.name)
     );
-    let idx = sorted.findIndex(f => f.id === params.id);
+    // params.id is a handle — match on either the UUID or the slug, since the
+    // page can be entered by either.
+    let idx = sorted.findIndex(f => f.id === params.id || f.slug === params.id);
     // A gated work (showing window currently shut) is absent from the visible list,
     // so findIndex misses it. Splice it into its rightful sort slot using the work's
     // own sortOrder/name so prev/next still resolve — the sealed door must stay
@@ -58,5 +65,9 @@ export const load = async ({ params }: { params: { id: string } }) => {
     next = idx >= 0 && idx < sorted.length - 1 ? sorted[idx + 1] : null;
   }
 
-  return { figurine, prev, next, loadError };
+  // Canonical path uses the slug when the work has one, so a UUID URL points
+  // search engines at the pretty URL. Falls back to whatever handle was used.
+  const canonicalPath = `/figurines/${figurine?.slug ?? params.id}`;
+
+  return { figurine, prev, next, loadError, canonicalPath };
 };

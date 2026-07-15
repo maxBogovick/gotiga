@@ -2,6 +2,7 @@
     import { onMount } from 'svelte';
     import { goto } from '$app/navigation';
     import type { FigurineListItem } from '$lib/types/api';
+    import { figurineHref } from '$lib/figurineHref';
     import { t, lang } from '$lib/i18n';
     import AppImage from '$lib/components/AppImage.svelte';
     import SealedDoor from '$lib/components/SealedDoor.svelte';
@@ -53,7 +54,7 @@
         return { destroy() { io.disconnect(); } };
     }
 
-    let href = $derived(`/figurines/${fig.id}`);
+    let href = $derived(figurineHref(fig));
 
     // Editorial plate number — a print-catalogue flourish, distinct from the
     // functional archive number (kept in the footer, used elsewhere for sharing).

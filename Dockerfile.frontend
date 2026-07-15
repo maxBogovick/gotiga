@@ -9,9 +9,26 @@ COPY . .
 
 # VITE_* values are baked in at build time. Vite exposes process.env vars that
 # start with VITE_, so passing them as ENV makes `vite build` pick them up.
+#
+# VITE_BUILD_TARGET defaults to `web` — NOT to the empty SPA target it used to.
+# This image is only ever the public web deploy: its output is what the nginx stage
+# below serves, and Tauri never builds through it. But the target was an opt-in, so a
+# caller that forgot `--build-arg VITE_BUILD_TARGET=web` (build-and-push.sh passed no
+# build args at all) got a plain SPA shell — no prerendered HTML for crawlers or share
+# previews, no service worker, and a hero <img> the browser cannot even discover until
+# the JS bundle has run and an API round-trip has come back. The whole prerender
+# machinery in +page.ts was dead in production. Defaulting it here means the image
+# cannot be built wrong by omission; the knob still exists for anyone who wants the
+# SPA on purpose (VITE_BUILD_TARGET="").
+#
+# Prerendering runs the load functions in Node, so it needs an absolute origin to read
+# the catalogue from — that is VITE_API_BASE, and it must be reachable FROM THE BUILD
+# (a container: not localhost). It is used at build time only; the browser always talks
+# to the same-origin /api proxy. If it is missing, webApiBase() in src/lib/api.ts fails
+# the build with an explicit message rather than an undici URL-parse stack trace.
 ARG VITE_BRAND_NAME=""
-ARG VITE_API_BASE=""
-ARG VITE_BUILD_TARGET=""
+ARG VITE_API_BASE="https://ritunia.com"
+ARG VITE_BUILD_TARGET="web"
 ENV VITE_BRAND_NAME=${VITE_BRAND_NAME}
 ENV VITE_API_BASE=${VITE_API_BASE}
 ENV VITE_BUILD_TARGET=${VITE_BUILD_TARGET}

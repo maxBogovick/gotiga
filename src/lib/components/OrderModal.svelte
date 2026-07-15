@@ -2,6 +2,7 @@
   import { fade, scale, fly } from 'svelte/transition';
   import { cubicOut, elasticOut } from 'svelte/easing';
   import { api, resolveMediaUrl } from '$lib/api';
+  import { figurineHref } from '$lib/figurineHref';
   import { t } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
   import { isValidEmail } from '$lib/validation';
@@ -318,7 +319,7 @@
                        <p class="notify-related-label">{$t('orderNotifyRelated')}</p>
                        <div class="notify-related-grid">
                          {#each relatedAvailable.slice(0, 3) as item (item.id)}
-                           <a href="/figurines/{item.id}" onclick={close} class="notify-related-card">
+                           <a href={figurineHref(item)} onclick={close} class="notify-related-card">
                              {#if item.faceImageUrl}
                                <img src={item.faceImageUrl} alt={item.name} class="notify-related-img" loading="lazy" />
                              {:else}

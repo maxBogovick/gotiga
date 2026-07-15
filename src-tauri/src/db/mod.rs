@@ -64,6 +64,15 @@ impl Database {
         // freshly-added columns — so the showing window survives that migration.
         add_column_if_missing(&conn, "figurines", "open_from_min", "INTEGER")?;
         add_column_if_missing(&conn, "figurines", "open_until_min", "INTEGER")?;
+        // Transliterated URL slug (share-links / SEO). Added after the legacy table
+        // rebuild so it survives. Partial unique index: many legacy rows share NULL.
+        add_column_if_missing(&conn, "figurines", "slug", "TEXT")?;
+        conn.execute_batch(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_figurines_slug
+                 ON figurines(slug) WHERE slug IS NOT NULL;",
+        )?;
+        // Whether the slug was hand-typed (manual) vs auto-generated from the name.
+        add_column_if_missing(&conn, "figurines", "slug_manual", "BOOLEAN NOT NULL DEFAULT 0")?;
 
         Ok(())
     }

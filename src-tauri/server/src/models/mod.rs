@@ -141,6 +141,12 @@ pub struct FigurinesPage {
 pub struct Figurine {
     pub id: Uuid,
     pub name: String,
+    /// Transliterated URL slug (unique when set); NULL for legacy rows not yet
+    /// re-saved. The detail route resolves either this or the UUID.
+    pub slug: Option<String>,
+    /// True when the slug was hand-typed by an admin (differs from the name-derived
+    /// auto slug); false when auto-generated. Drives the «Work addresses» badge.
+    pub slug_manual: bool,
     pub short_text: Option<String>,
     pub full_description: Option<String>,
     pub dimensions: Option<String>,
@@ -269,6 +275,13 @@ pub struct CabinetZone {
 pub struct FigurineListItemDto {
     pub id: String,
     pub name: String,
+    /// Transliterated URL slug; null for works not yet re-saved. Lets list
+    /// links point at `/figurines/{slug}` without a per-item detail fetch.
+    #[serde(default)]
+    pub slug: Option<String>,
+    /// True when the slug was hand-typed (differs from the name-derived auto slug).
+    #[serde(default)]
+    pub slug_manual: bool,
     pub status: FigurineStatus,
     /// The work's one-line note. Carried on the LIST item on purpose: the home page
     /// renders it under each plate, and without it here the client had to fire one
@@ -405,6 +418,14 @@ pub struct BulkSetParallaxRequest {
     pub intensity: f32,
 }
 
+/// Admin request to set/regenerate a single work's URL slug. `slug: None` or a
+/// blank string means "regenerate from the work's name".
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetSlugRequest {
+    pub slug: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProcessStepDto {
@@ -419,6 +440,10 @@ pub struct ProcessStepDto {
 pub struct FigurineDto {
     pub id: String,
     pub name: String,
+    /// Transliterated URL slug; null for works not yet re-saved. The client
+    /// builds `/figurines/{slug ?? id}` and canonicalises to the slug.
+    #[serde(default)]
+    pub slug: Option<String>,
     pub short_text: Option<String>,
     pub full_description: Option<String>,
     pub dimensions: Option<String>,
@@ -690,6 +715,10 @@ pub struct LoginRequest {
 pub struct SaveFigurineRequest {
     pub id: String,
     pub name: String,
+    /// Optional slug override from the admin form. Empty/blank → the service
+    /// auto-generates a unique transliterated slug from the name.
+    #[serde(default)]
+    pub slug: Option<String>,
     pub short_text: Option<String>,
     pub full_description: Option<String>,
     pub dimensions: Option<String>,

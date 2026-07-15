@@ -14,3 +14,4 @@ pub mod logs;
 pub mod models;
 pub mod observability;
 pub mod services;
+pub mod slug;

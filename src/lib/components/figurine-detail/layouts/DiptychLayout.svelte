@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getContext } from 'svelte';
+  import { figurineHref } from '$lib/figurineHref';
   import { fade } from 'svelte/transition';
   import { t } from '$lib/i18n';
   import { resolveWebpUrl } from '$lib/api';
@@ -541,7 +542,7 @@
         <div class="related-strip">
           {#each ctx.visibleRelatedItems as item}
             {@const relatedImageUrl = ctx.resolveUrl(item.faceImageUrl ?? item.thumbUrl)}
-            <a href="/figurines/{item.id}" onclick={() => ctx.analyticsClient?.cta('related_figurine')}
+            <a href={figurineHref(item)} onclick={() => ctx.analyticsClient?.cta('related_figurine')}
               class="related-card" data-sveltekit-preload-data="hover">
               <div class="related-img-wrap">
                 {#if relatedImageUrl}

@@ -1,6 +1,7 @@
 <script lang="ts">
     import { onMount } from 'svelte';
     import { api, isTauri } from '$lib/api';
+    import { figurineHref } from '$lib/figurineHref';
     import type { Figurine, FigurineListItem, ShowingRoom } from '$lib/types/api';
     import { fade, slide } from 'svelte/transition';
     import SettingsModal from '$lib/components/SettingsModal.svelte';
@@ -90,8 +91,12 @@
     let bulkPanelOpen = $state(false);
     let bulkBusy = $state(false);
     let bulkParallaxValue = $state(0.5);
+    // Slug editor («Адреса работ»): per-id draft text, in-flight ids, backfill flag.
+    let slugDrafts = $state<Record<string, string>>({});
+    let savingSlugId = $state<string | null>(null);
+    let backfilling = $state(false);
     let message = $state({ text: '', type: 'info' });
-    let activeTab = $state<'registry' | 'rooms' | 'home' | 'reel-theme' | 'home-layout' | 'workshop-feature' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'commissions' | 'showings' | 'bookings' | 'waitlist' | 'subscribers' | 'analytics' | 'users' | 'comments' | 'impressions' | 'messages' | 'server' | 'logs' | 'booking-rules' | 'contact' | 'design' | 'copy' | 'programme'>('registry');
+    let activeTab = $state<'registry' | 'slugs' | 'rooms' | 'home' | 'reel-theme' | 'home-layout' | 'workshop-feature' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'commissions' | 'showings' | 'bookings' | 'waitlist' | 'subscribers' | 'analytics' | 'users' | 'comments' | 'impressions' | 'messages' | 'server' | 'logs' | 'booking-rules' | 'contact' | 'design' | 'copy' | 'programme'>('registry');
     let activeAuthorSubTab = $state<'profile' | 'texts'>('profile');
     let newOrdersCount = $state(0);
     let newCommissionsCount = $state(0);
@@ -330,6 +335,52 @@
         }
     }
 
+    // === URL slugs («Адреса работ») ===
+    // Current draft for a row: an explicit edit if present, else the stored slug.
+    function slugDraft(fig: FigurineListItem): string {
+        return slugDrafts[fig.id] ?? fig.slug ?? '';
+    }
+    function slugChanged(fig: FigurineListItem): boolean {
+        return slugDraft(fig).trim() !== (fig.slug ?? '');
+    }
+
+    async function runSlugBackfill() {
+        if (backfilling) return;
+        backfilling = true;
+        try {
+            const res = await api.backfillSlugs();
+            await loadFigurines();
+            slugDrafts = {}; // stored values changed — drop stale drafts
+            showMessage($t('adminSlugBackfillDone').replace('{n}', String(res.affected)), 'success');
+        } catch (e) {
+            showMessage($t('adminSlugError') + e, 'error');
+        } finally {
+            backfilling = false;
+        }
+    }
+
+    // Persist one row. `regenerate` sends null so the backend rebuilds from the name.
+    async function saveSlug(fig: FigurineListItem, regenerate = false) {
+        if (savingSlugId) return;
+        savingSlugId = fig.id;
+        try {
+            const override = regenerate ? null : (slugDraft(fig).trim() || null);
+            const stored = await api.setFigurineSlug(fig.id, override);
+            const idx = figurines.findIndex(f => f.id === fig.id);
+            if (idx >= 0) {
+                figurines[idx].slug = stored;
+                // A blank/regenerate override is auto; an explicit value is manual.
+                figurines[idx].slugManual = override !== null;
+            }
+            delete slugDrafts[fig.id];
+            showMessage($t('adminSlugSaved').replace('{slug}', stored), 'success');
+        } catch (e) {
+            showMessage($t('adminSlugError') + e, 'error');
+        } finally {
+            savingSlugId = null;
+        }
+    }
+
     async function moveFigurine(id: string, direction: 1 | -1) {
         const full = await api.getFigurine(id);
         if (!full) return;
@@ -385,6 +436,9 @@
                 ...full,
                 id: crypto.randomUUID(),
                 name: full.name + $t('adminRegistryCopySuffix'),
+                // Drop the original's slug so the backend auto-generates one from
+                // the new copy name instead of appending -2 to the source slug.
+                slug: null,
                 sortOrder: figurines.length,
                 isVisible: false,
             };
@@ -1081,6 +1135,7 @@
               {
                 label: $t('adminGroupWorks'),
                 tabs: [
+                  ['slugs',     $t('adminTabSlugs')],
                   ['rooms',     $t('adminTabShowingRooms')],
                   ['zones',     $t('adminTabZones')],
                   ['releases',  $t('adminTabReleases')],
@@ -1683,6 +1738,12 @@
                             </div>
 
                             <label class="block">
+                                <span class="label">{$t('adminFieldSlug')}</span>
+                                <input bind:value={selectedFigurine.slug} class="input-gothic" placeholder={$t('adminFieldSlugPlaceholder')} autocomplete="off" spellcheck="false" />
+                                <span class="block mt-1 text-[10px] text-[#5f4636]/60">{$t('adminFieldSlugHint')}</span>
+                            </label>
+
+                            <label class="block">
                                 <span class="label">{$t('adminFieldMaterial')}</span>
                                 <input bind:value={selectedFigurine.material} class="input-gothic" list="suggest-material" autocomplete="off" />
                                 <datalist id="suggest-material">
@@ -1909,6 +1970,83 @@
                 {/if}
             </main>
         </div>
+
+        {:else if activeTab === 'slugs'}
+            {@const missingCount = figurines.filter(f => !f.slug).length}
+            <div in:fade class="h-full overflow-auto p-6 sm:p-8 max-w-3xl mx-auto w-full">
+                <h2 class="font-['Fraunces'] text-2xl text-[#34251c] mb-1">{$t('adminTabSlugs')}</h2>
+                <p class="text-[12px] text-[#7c6554] mb-4 leading-snug max-w-prose">{$t('adminSlugsIntro')}</p>
+
+                <div class="flex items-center gap-3 mb-5 flex-wrap">
+                    <button
+                        onclick={runSlugBackfill}
+                        disabled={backfilling || missingCount === 0}
+                        class="px-3 py-1.5 text-[12px] border border-[#6f3b24] text-[#6f3b24] rounded-[3px] hover:bg-[#6f3b24] hover:text-[#f8f1e7] transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-[#6f3b24]"
+                    >
+                        {backfilling ? $t('adminSlugBackfillBusy') : $t('adminSlugBackfillBtn')}
+                    </button>
+                    <span class="text-[11px] text-[#7c6554]">
+                        {missingCount === 0
+                            ? $t('adminSlugAllSet')
+                            : $t('adminSlugMissingCount').replace('{n}', String(missingCount))}
+                    </span>
+                </div>
+
+                <div class="overflow-x-auto border border-[#d8c6b1] rounded-[3px]">
+                    <table class="w-full text-[12px] border-collapse">
+                        <thead>
+                            <tr class="bg-[#efe4d3] text-left text-[#5f4636] uppercase tracking-[0.08em] text-[9px]">
+                                <th class="px-3 py-2 font-medium">{$t('adminSlugColName')}</th>
+                                <th class="px-3 py-2 font-medium">{$t('adminSlugColSlug')}</th>
+                                <th class="px-3 py-2 font-medium w-px whitespace-nowrap">{$t('adminSlugColType')}</th>
+                                <th class="px-3 py-2 font-medium w-px whitespace-nowrap">{$t('adminSlugColActions')}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {#each figurines as fig (fig.id)}
+                                <tr class="border-t border-[#e5d7c4] align-middle">
+                                    <td class="px-3 py-2 text-[#34251c]">
+                                        <a href={figurineHref(fig)} target="_blank" rel="noopener" class="hover:text-[#c65f3c] hover:underline">{fig.name}</a>
+                                    </td>
+                                    <td class="px-3 py-2">
+                                        <div class="flex items-center gap-1.5">
+                                            <span class="text-[#9a8571] select-none">/figurines/</span>
+                                            <input
+                                                value={slugDraft(fig)}
+                                                oninput={(e) => slugDrafts[fig.id] = e.currentTarget.value}
+                                                placeholder={fig.slug ?? $t('adminSlugMissingPlaceholder')}
+                                                class="flex-1 min-w-[8rem] bg-[#fdf9f2] border border-[#d8c6b1] rounded-[3px] px-2 py-1 font-mono text-[11px] text-[#34251c] focus:outline-none focus:border-[#c65f3c]"
+                                            />
+                                        </div>
+                                    </td>
+                                    <td class="px-3 py-2 whitespace-nowrap">
+                                        {#if !fig.slug}
+                                            <span class="inline-block px-1.5 py-0.5 text-[9px] uppercase tracking-[0.08em] rounded-[3px] border border-[#d8c6b1] text-[#9a8571]">{$t('adminSlugBadgeMissing')}</span>
+                                        {:else if fig.slugManual}
+                                            <span class="inline-block px-1.5 py-0.5 text-[9px] uppercase tracking-[0.08em] rounded-[3px] border border-[#c65f3c]/50 text-[#c65f3c] bg-[#c65f3c]/8">{$t('adminSlugBadgeManual')}</span>
+                                        {:else}
+                                            <span class="inline-block px-1.5 py-0.5 text-[9px] uppercase tracking-[0.08em] rounded-[3px] border border-[#6f3b24]/25 text-[#7c6554]">{$t('adminSlugBadgeAuto')}</span>
+                                        {/if}
+                                    </td>
+                                    <td class="px-3 py-2 whitespace-nowrap text-right">
+                                        <button
+                                            onclick={() => saveSlug(fig)}
+                                            disabled={savingSlugId !== null || !slugChanged(fig)}
+                                            class="px-2 py-1 text-[11px] border border-[#6f3b24] text-[#6f3b24] rounded-[3px] hover:bg-[#6f3b24] hover:text-[#f8f1e7] transition-colors disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-[#6f3b24]"
+                                        >{$t('adminSlugSaveBtn')}</button>
+                                        <button
+                                            onclick={() => saveSlug(fig, true)}
+                                            disabled={savingSlugId !== null}
+                                            title={$t('adminSlugRegenTitle')}
+                                            class="ml-1 px-2 py-1 text-[11px] border border-[#d8c6b1] text-[#7c6554] rounded-[3px] hover:border-[#6f3b24] hover:text-[#6f3b24] transition-colors disabled:opacity-30"
+                                        >⟳</button>
+                                    </td>
+                                </tr>
+                            {/each}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
 
         {:else if activeTab === 'rooms'}
             <div in:fade class="h-full overflow-auto p-6 sm:p-8 max-w-3xl mx-auto w-full">

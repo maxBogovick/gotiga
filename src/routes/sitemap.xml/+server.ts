@@ -63,7 +63,7 @@ export async function GET() {
     const entries: { loc: string; lastmod?: string; image?: string | null }[] = [
         ...STATIC_ROUTES.map((path) => ({ loc: `${SITE_URL}${path}` })),
         ...figurines.map((f) => ({
-            loc: `${SITE_URL}/figurines/${f.id}`,
+            loc: `${SITE_URL}/figurines/${f.slug ?? f.id}`,
             lastmod: isoDay(f.createdAt),
             image: imageLoc(detailById.get(f.id), f.faceImageUrl),
         })),

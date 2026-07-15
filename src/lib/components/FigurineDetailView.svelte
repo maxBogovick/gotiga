@@ -3,6 +3,7 @@
   import { fade } from 'svelte/transition';
   import type { Figurine, FigurineSchedule, FigurineStatus, DisplayConfig } from '$lib/types/api';
   import type { FigurineListItem } from '$lib/types/api';
+  import { figurineHref } from '$lib/figurineHref';
   import UnifiedRequestModal from '$lib/components/UnifiedRequestModal.svelte';
   import CandleReveal from '$lib/components/CandleReveal.svelte';
   import MemoryMirror from '$lib/components/MemoryMirror.svelte';
@@ -1276,7 +1277,7 @@
           <div class="topnav-fig-nav" role="group" aria-label="{$t('figurineNavPrev')} / {$t('figurineNavNext')}">
             {#if prev}
               <a
-                href="/figurines/{prev.id}"
+                href={figurineHref(prev)}
                 class="fig-nav-pill"
                 title={prev.name}
                 aria-label="{$t('figurineNavPrev')}: {prev.name}"
@@ -1301,7 +1302,7 @@
             {/if}
             {#if next}
               <a
-                href="/figurines/{next.id}"
+                href={figurineHref(next)}
                 class="fig-nav-pill fig-nav-pill--next"
                 title={next.name}
                 aria-label="{$t('figurineNavNext')}: {next.name}"
@@ -1496,7 +1497,7 @@
 <!-- Mobile swipe edge indicators — only on touch devices, only when prev/next exist -->
 {#if prev && !showLightbox && !showRequestModal && !showStoryModal && !isGrimoireOpen}
   <a
-    href="/figurines/{prev.id}"
+    href={figurineHref(prev)}
     class="swipe-edge swipe-edge--prev"
     aria-label="{$t('figurineNavPrev')}: {prev.name}"
     data-sveltekit-preload-data="hover"
@@ -1509,7 +1510,7 @@
 {/if}
 {#if next && !showLightbox && !showRequestModal && !showStoryModal && !isGrimoireOpen}
   <a
-    href="/figurines/{next.id}"
+    href={figurineHref(next)}
     class="swipe-edge swipe-edge--next"
     aria-label="{$t('figurineNavNext')}: {next.name}"
     data-sveltekit-preload-data="hover"

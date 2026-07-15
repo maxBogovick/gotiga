@@ -31,6 +31,7 @@
   import { playTurnSound } from '$lib/audio/page-turn-sounds';
 
   import { t, lang } from '$lib/i18n';
+  import { figurineHref } from '$lib/figurineHref';
   import type { FigurineListItem, ProgrammeSettings } from '$lib/types/api';
   import AppImage from '$lib/components/AppImage.svelte';
   import { houseClock } from '$lib/stores/house-clock.svelte';
@@ -234,7 +235,7 @@
         build(
           `work:${f.id}`,
           f.name,
-          `/figurines/${f.id}`,
+          figurineHref(f),
           false,
           { openFromMin: f.openFromMin, openUntilMin: f.openUntilMin },
           toArt(f)
