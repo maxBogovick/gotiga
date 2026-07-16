@@ -89,6 +89,19 @@ export default defineConfig(async () => ({
       injectRegister: null,
       manifest: false,
       devOptions: { enabled: false },
+      // SvelteKit's adapter-static sets Vite's own `base` to a relative "./" so
+      // prerendered pages can be deployed under any subpath (see the `../` asset
+      // hrefs it emits). vite-plugin-pwa inherits that same `base` by default and
+      // bakes it into the register script as `new Workbox("./sw.js", { scope: "./" })`.
+      // "./" is resolved by the browser relative to the CURRENT DOCUMENT URL, and
+      // SvelteKit's default trailingSlash ("never") means a nested route's URL has
+      // no trailing slash — e.g. /figurines/some-slug. Resolving "./sw.js" against
+      // that strips the last segment (treated as a filename) and lands one level up,
+      // at /figurines/sw.js — a 404, confirmed in production. The site is only ever
+      // deployed at the domain root, so force an absolute base here independent of
+      // SvelteKit's relative asset paths.
+      base: "/",
+      scope: "/",
       workbox: {
         globPatterns: ["**/*.{js,css,html,ico,png,webp,svg,woff2}"],
         // This ignore is BACK, because the premise of removing it was wrong. The note
