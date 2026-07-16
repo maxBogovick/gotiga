@@ -33,7 +33,16 @@ ENV VITE_BRAND_NAME=${VITE_BRAND_NAME}
 ENV VITE_API_BASE=${VITE_API_BASE}
 ENV VITE_BUILD_TARGET=${VITE_BUILD_TARGET}
 
-RUN npm run build
+# Prerender (+page.ts entries/load) fetches the live catalogue at build time, so the
+# build output depends on REMOTE API state that Docker's layer cache cannot see. With a
+# stable source + build-args, Docker happily reuses a stale `npm run build` layer even
+# after new works/slugs appear in the DB — shipping an image with missing or outdated
+# prerendered pages (this bit us: a slug rollout produced a sitemap of slug URLs while
+# the image still only had UUID pages). CACHEBUST is referenced by the build RUN so a
+# fresh value (build-frontend.sh passes `date +%s`) always invalidates JUST this step;
+# `npm ci` and `COPY . .` above stay cached, so the rebuild is still fast.
+ARG CACHEBUST=0
+RUN echo "cache-bust: ${CACHEBUST}" && npm run build
 
 # ── Runtime stage ──────────────────────────────────────────────────────────────
 FROM nginx:1.27-alpine

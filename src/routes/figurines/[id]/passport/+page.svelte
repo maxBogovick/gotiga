@@ -4,6 +4,7 @@
   import QRCode from 'qrcode';
   import NotFound from '$lib/components/NotFound.svelte';
   import { brandName, t } from '$lib/i18n';
+  import { formatFigurineAlt, altLabelsFrom, siblingPosition } from '$lib/figurine-alt';
   import type { Figurine, FigurineStatus } from '$lib/types/api';
 
   let { data } = $props();
@@ -36,18 +37,26 @@
   );
   let edition = $derived(oneLine(figurine?.edition) || $t('passportEditionUnique'));
   let created = $derived(oneLine(figurine?.createdPeriod) || (figurine?.year ? String(figurine.year) : ''));
-  let heroImage = $derived.by(() => {
+  let heroImageObj = $derived.by(() => {
     const images = figurine?.images ?? [];
-    const image = images.find((i) => i.imageType === 'face')
+    return images.find((i) => i.imageType === 'face')
       ?? images.find((i) => i.imageType === 'full')
       ?? images[0];
-    return image ? (image.originalUrl ?? image.url) : '';
   });
-  let heroAlt = $derived(
-    figurine?.images?.find((i) => (i.originalUrl ?? i.url) === heroImage)?.altText
-      ?? figurine?.name
-      ?? ''
-  );
+  let heroImage = $derived(heroImageObj ? (heroImageObj.originalUrl ?? heroImageObj.url) : '');
+  // Same [type]+[subject]+[material]+[context] formula the main detail page falls back
+  // to — this printable certificate used to get a bare figurine name (or an empty
+  // string) for the same photo instead.
+  let heroAlt = $derived.by(() => {
+    if (!figurine) return '';
+    if (heroImageObj?.altText?.trim()) return heroImageObj.altText.trim();
+    return formatFigurineAlt(
+      figurine,
+      heroImageObj?.imageType,
+      altLabelsFrom($t),
+      heroImageObj ? siblingPosition(figurine.images ?? [], heroImageObj) : undefined,
+    );
+  });
 
   let facts = $derived.by<Fact[]>(() => {
     if (!figurine) return [];

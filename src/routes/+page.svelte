@@ -28,6 +28,7 @@
     import { showingRooms } from '$lib/stores/showing-rooms.svelte';
     import { isShowingOpen, resolveWindow } from '$lib/showing-window';
     import { SITE_URL } from '$lib/site';
+    import { jsonLdSafe } from '$lib/jsonld';
     import {
         HOME_MAIN_BLOCK_IDS,
         HOME_BAND_BLOCK_IDS,
@@ -44,17 +45,6 @@
     import { injectStyle } from '$lib/inject-style';
 
     let { data } = $props();
-
-    // JSON.stringify escapes quotes and backslashes but NOT the forward slash, so a brand
-    // name carrying a closing script tag would end the JSON-LD block early and everything
-    // after it would be parsed as HTML. The value is admin-authored, not visitor-authored,
-    // so this guards against a compromised (or careless) admin rather than a public hole —
-    // but it is one line, and the alternative is script injection on the site's front door.
-    // Escaping every `<` is enough: JSON has no other way to spell one.
-    // (The literal tag is not written out even in this comment — an HTML tokenizer ends a
-    //  script block on sight of it, comment or not, which is exactly the flaw at issue.)
-    const jsonLdSafe = (value: unknown) =>
-        JSON.stringify(value).replaceAll('<', '\\u003c');
 
     // WebSite + Organization graph — anchors the brand for search engines and LLMs and
     // ties every other JSON-LD node (figurines, the author) back to one named entity.

@@ -357,6 +357,14 @@ export const ru: Record<TranslationKey, string> = {
   detailImageScaleNote:    'Полная форма',
   detailImageView:         'Вид',
   detailImageViewNote:     'Еще ракурс',
+  // Части формулы SEO alt-текста — см. formatFigurineAlt() в figurine-alt.ts.
+  // [тип] + [субъект] + [материал] + [контекст], собирается только когда админ
+  // не заполнил altText вручную.
+  altTypeFace:             'Авторская готическая миниатюра',
+  altTypeDetail:           'Крупный план авторской готической миниатюры',
+  altTypeFull:             'Миниатюра целиком — авторская готическая работа',
+  altTypeDefault:          'Авторская готическая миниатюра',
+  altContext:              'уникальная работа, {brand}',
   detailImageViewMode:     'Режим просмотра фото',
   detailImageFit:          'Целиком',
   detailImageDetailView:   'Деталь',
@@ -995,6 +1003,10 @@ export const ru: Record<TranslationKey, string> = {
   adminMediaDetailBadge: 'РАКУРС',
   adminMediaDetailHint:  'Показывается на карточке главной при наведении — уже после того, как работа открыта.',
   adminMediaAltPlaceholder: 'Alt текст…',
+  adminMediaAltFormulaHint: 'Формула: тип + субъект + материал + контекст. Ориентир: 50–125 символов.',
+  adminMediaAltAuto:     'Заполнить автоматически',
+  adminMediaAltTooShort: 'коротко',
+  adminMediaAltTooLong:  'длинно',
   adminMediaDepthBadge:  '◷ 2.5D',
   adminMediaDepthGen:    '◷ Сгенерировать глубину',
   adminMediaDepthGenRunning: 'Генерация глубины…',

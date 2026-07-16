@@ -7,6 +7,9 @@
   import FigurineDetailView from '$lib/components/FigurineDetailView.svelte';
   import NotFound from '$lib/components/NotFound.svelte';
   import { t , brandName } from '$lib/i18n';
+  import { formatFigurineAlt, altLabelsFrom, siblingPosition } from '$lib/figurine-alt';
+  import { jsonLdSafe } from '$lib/jsonld';
+  import type { FigurineImage } from '$lib/types/api';
   import '$lib/styles/figurine-detail.css';
 
   let { data } = $props();
@@ -57,25 +60,31 @@
     };
   });
 
-  // Absolute, public-origin URL for OG image. Crawlers fetch this from the static
-  // HTML, so it must point at the live site — never at the build-time API host
-  // (the backend returns absolute URLs bound to whatever host built the page, e.g.
-  // localhost). We keep only the asset path and re-root it on page.url.origin, which
-  // is the public origin at prerender time (kit.prerender.origin) and the real site
-  // origin in the browser. nginx serves /static + /api at the same origin.
+  // Re-roots a /static/... (or already-absolute) asset path onto the public origin.
+  // Crawlers fetch this from the static HTML, so it must point at the live site —
+  // never at the build-time API host (the backend returns absolute URLs bound to
+  // whatever host built the page, e.g. localhost). page.url.origin is the public
+  // origin at prerender time (kit.prerender.origin) and the real site origin in the
+  // browser; nginx serves /static + /api at the same origin. Shared by ogImage below
+  // and every ImageObject in the JSON-LD (imageObjectFor).
+  function toAbsoluteImageUrl(path: string | null | undefined): string {
+    if (!path) return '';
+    if (path.startsWith('http')) {
+      try {
+        const p = new URL(path);
+        return `${page.url.origin}${p.pathname}${p.search}`;
+      } catch {
+        return path;
+      }
+    }
+    return `${page.url.origin}${path}`;
+  }
+
+  // Absolute, public-origin URL for OG image.
   let ogImage = $derived(() => {
     const img = figurine?.images?.find((i: { imageType: string }) => i.imageType === 'face')?.url
       ?? figurine?.images?.[0]?.url ?? '';
-    if (!img) return '';
-    if (img.startsWith('http')) {
-      try {
-        const p = new URL(img);
-        return `${page.url.origin}${p.pathname}${p.search}`;
-      } catch {
-        return img;
-      }
-    }
-    return `${page.url.origin}${img}`;
+    return toAbsoluteImageUrl(img);
   });
 
   // Inject per-figurine view-transition timing via DOM (can't use {@html} with </style> in svelte:head)
@@ -97,6 +106,37 @@
     return text ? { '@type': 'PropertyValue', name, value: text } : null;
   }
 
+  // Reuses the exact formula the on-page <figcaption>/alt text falls back to
+  // (formatFigurineAlt) — an admin's own altText wins, so the structured data never
+  // disagrees with what a visitor actually reads next to the photo.
+  function captionFor(img: FigurineImage): string {
+    if (img.altText?.trim()) return img.altText.trim();
+    return formatFigurineAlt(
+      { name: figurine?.name ?? '', material: figurine?.material ?? null, technique: figurine?.technique ?? null },
+      img.imageType,
+      altLabelsFrom($t),
+      siblingPosition(figurine?.images ?? [], img),
+    );
+  }
+
+  // Full ImageObject (not a bare URL string) per Google's image-SEO guidance: creator/
+  // creditText/copyrightNotice are what let Google attribute the photo and surface it
+  // with licensing info in Image results. No `license` URL — these are one-of-a-kind
+  // pieces, not stock assets under a reuse license, and the site has no rights page to
+  // point at; a fabricated link would be worse than omitting the field.
+  function imageObjectFor(img: FigurineImage) {
+    const url = toAbsoluteImageUrl(img.url);
+    return {
+      '@type': 'ImageObject',
+      contentUrl: url,
+      url,
+      caption: captionFor(img),
+      creator: { '@type': 'Organization', name: $brandName, url: page.url.origin },
+      creditText: $brandName,
+      copyrightNotice: `© ${figurine?.year ?? new Date().getFullYear()} ${$brandName}`,
+    };
+  }
+
   // VisualArtwork (not Product/Offer) — this is a showcase, not a shop.
   let jsonLd = $derived(() => {
     const additionalProperty = [
@@ -108,12 +148,14 @@
       propertyValue('Included items', figurine?.includedItems),
     ].filter(Boolean);
 
-    return JSON.stringify({
+    const images = (figurine?.images ?? []).map(imageObjectFor);
+
+    return jsonLdSafe({
       '@context': 'https://schema.org',
       '@type': 'VisualArtwork',
       name: figurine?.name ?? '',
       description: figurine?.shortText ?? figurine?.fullDescription ?? '',
-      image: ogImage(),
+      image: images.length ? images : (ogImage() || undefined),
       url: page.url.href,
       creator: { '@type': 'Organization', name: $brandName, url: page.url.origin },
       ...(figurine?.material ? { artMedium: figurine.material } : {}),
@@ -126,7 +168,7 @@
   });
 
   // Breadcrumb trail — Google renders these in the result snippet (Home › Archive › name).
-  let breadcrumbJsonLd = $derived(() => JSON.stringify({
+  let breadcrumbJsonLd = $derived(() => jsonLdSafe({
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
     itemListElement: [

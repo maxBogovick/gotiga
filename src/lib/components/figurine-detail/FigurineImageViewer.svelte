@@ -31,7 +31,7 @@
               <source type="image/webp" srcset={resolveWebpUrl(img.thumbUrl ?? img.url) ?? undefined} />
               <img
                 src={ctx.resolveUrl(img.thumbUrl ?? img.url)}
-                alt={img.altText ?? `${ctx.imageTypeLabel(img.imageType)} — ${ctx.figurine.name}`}
+                alt={ctx.altTextFor(img)}
                 class="thumb-v-img"
                 loading="lazy"
                 decoding="async"
@@ -64,7 +64,7 @@
             <RakingLight
               src={ctx.resolveUrl(ctx.currentImage?.url)}
               heightSrc={ctx.resolveUrl(ctx.currentImage?.depthUrl) || null}
-              alt={ctx.currentImage?.altText ?? ctx.figurine.name}
+              alt={ctx.altTextFor(ctx.currentImage)}
               class="w-full h-full"
               onActivate={() => ctx.canOpenLightbox && ctx.openLightbox(ctx.activeImageIndex)}
             />
@@ -75,7 +75,7 @@
               src={ctx.resolveUrl(ctx.currentImage?.url)}
               depthSrc={ctx.resolveUrl(ctx.currentImage?.depthUrl) || null}
               intensity={ctx.currentImage?.parallaxIntensity ?? undefined}
-              alt={ctx.currentImage?.altText ?? ctx.figurine.name}
+              alt={ctx.altTextFor(ctx.currentImage)}
               class="w-full h-full"
               onActivate={() => ctx.canOpenLightbox && ctx.openLightbox(ctx.activeImageIndex)}
             />
@@ -86,7 +86,7 @@
               <BrassLens
                 src={ctx.resolveUrl(ctx.currentImage?.url)}
                 thumbSrc={ctx.resolveUrl(ctx.currentImage?.thumbUrl)}
-                alt={ctx.currentImage?.altText ?? ctx.figurine.name}
+                alt={ctx.altTextFor(ctx.currentImage)}
                 class="w-full h-full"
                 imageFit={ctx.currentImageFit}
                 objectPosition={ctx.currentImage?.focalX != null && ctx.currentImage?.focalY != null
@@ -292,9 +292,17 @@
     </div>
 
     {#if ctx.currentImage}
+      <!-- Museum object label: title first, so the photo is never just an
+           unlabelled picture to a crawler reading the page's visible text —
+           Google's image-SEO guidance weighs an on-page caption more heavily
+           than the (also present) alt attribute, since visitors read it too. -->
       <figcaption class="plate-caption">
+        <span class="plate-caption-title">{ctx.figurine.name}</span>
         <span class="plate-caption-label">{ctx.imageTypeLabel(ctx.currentImage.imageType)}</span>
         <span class="plate-caption-note">{ctx.imageRoleNote(ctx.currentImage.imageType)}</span>
+        {#if ctx.hasText(ctx.figurine.material)}
+          <span class="plate-caption-material">{ctx.figurine.material}</span>
+        {/if}
         {#if ctx.hasText(ctx.figurine.dimensions)}
           <span class="plate-caption-dim">{ctx.figurine.dimensions}</span>
         {/if}

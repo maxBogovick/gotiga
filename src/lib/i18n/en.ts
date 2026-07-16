@@ -358,6 +358,14 @@ export const en = {
   detailImageScaleNote: 'Full form',
   detailImageView: 'View',
   detailImageViewNote: 'Additional view',
+  // SEO alt-text formula pieces — see formatFigurineAlt() in figurine-alt.ts.
+  // [type] + [subject] + [material] + [context], composed only when an admin
+  // hasn't written a custom altText for a photo.
+  altTypeFace: 'Handmade gothic miniature figure',
+  altTypeDetail: 'Close-up detail of a handmade gothic miniature',
+  altTypeFull: 'Full-scale view of a handmade gothic miniature',
+  altTypeDefault: 'Handmade gothic miniature',
+  altContext: 'one-of-a-kind sculpture by {brand}',
   detailImageViewMode: 'Image view mode',
   detailImageFit: 'Fit',
   detailImageDetailView: 'Detail',
@@ -995,6 +1003,10 @@ export const en = {
   adminMediaDetailBadge: 'ANGLE',
   adminMediaDetailHint: 'Shown on the home gallery card on a sustained hover, once the piece is revealed.',
   adminMediaAltPlaceholder: 'Alt text…',
+  adminMediaAltFormulaHint: 'Formula: type + subject + material + context. Aim for 50–125 characters.',
+  adminMediaAltAuto: 'Auto-fill',
+  adminMediaAltTooShort: 'too short',
+  adminMediaAltTooLong: 'too long',
   adminMediaDepthBadge: '◷ 2.5D',
   adminMediaDepthGen: '◷ Generate depth',
   adminMediaDepthGenRunning: 'Generating depth…',

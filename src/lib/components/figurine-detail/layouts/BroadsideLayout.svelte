@@ -90,7 +90,7 @@
             <RakingLight
               src={ctx.resolveUrl(ctx.currentImage?.url)}
               heightSrc={ctx.resolveUrl(ctx.currentImage?.depthUrl) || null}
-              alt={ctx.currentImage?.altText ?? ctx.figurine.name}
+              alt={ctx.altTextFor(ctx.currentImage)}
               class="w-full h-full"
               onActivate={() => ctx.canOpenLightbox && ctx.openLightbox(ctx.activeImageIndex)}
             />
@@ -103,7 +103,7 @@
               src={ctx.resolveUrl(ctx.currentImage?.url)}
               depthSrc={ctx.resolveUrl(ctx.currentImage?.depthUrl) || null}
               intensity={ctx.currentImage?.parallaxIntensity ?? undefined}
-              alt={ctx.currentImage?.altText ?? ctx.figurine.name}
+              alt={ctx.altTextFor(ctx.currentImage)}
               class="w-full h-full"
               onActivate={() => ctx.canOpenLightbox && ctx.openLightbox(ctx.activeImageIndex)}
             />
@@ -117,7 +117,7 @@
                 src={ctx.resolveUrl(ctx.currentImage?.url)}
                 thumbSrc={ctx.resolveUrl(ctx.currentImage?.thumbUrl)}
                 sizes="(min-width: 1024px) 55vw, 100vw"
-                alt={ctx.currentImage?.altText ?? ctx.figurine.name}
+                alt={ctx.altTextFor(ctx.currentImage)}
                 class="w-full h-full"
                 imageFit={ctx.currentImageFit}
                 objectPosition={ctx.currentImage?.focalX != null && ctx.currentImage?.focalY != null
@@ -302,6 +302,16 @@
 
       <div class="image-vignette"></div>
     </div>
+
+    {#if ctx.currentImage}
+      <!-- Per-photo museum tag: which shot ("Detail — Craft close-up") this is. Name/
+           material already sit in .bd-attrs on the right — this only adds what that
+           static block can't: a caption that changes as the visitor browses. -->
+      <div class="plate-caption">
+        <span class="plate-caption-label">{ctx.imageTypeLabel(ctx.currentImage.imageType)}</span>
+        <span class="plate-caption-note">{ctx.imageRoleNote(ctx.currentImage.imageType)}</span>
+      </div>
+    {/if}
   </div>
 
   <!-- RIGHT: scrollable content — the reader walks around the specimen -->

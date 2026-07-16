@@ -69,7 +69,7 @@
           <RakingLight
             src={ctx.resolveUrl(ctx.currentImage?.url)}
             heightSrc={ctx.resolveUrl(ctx.currentImage?.depthUrl) || null}
-            alt={ctx.currentImage?.altText ?? ctx.figurine.name}
+            alt={ctx.altTextFor(ctx.currentImage)}
             class="w-full h-full"
             onActivate={() => ctx.canOpenLightbox && ctx.openLightbox(ctx.activeImageIndex)}
           />
@@ -82,7 +82,7 @@
             src={ctx.resolveUrl(ctx.currentImage?.url)}
             depthSrc={ctx.resolveUrl(ctx.currentImage?.depthUrl) || null}
             intensity={ctx.currentImage?.parallaxIntensity ?? undefined}
-            alt={ctx.currentImage?.altText ?? ctx.figurine.name}
+            alt={ctx.altTextFor(ctx.currentImage)}
             class="w-full h-full"
             onActivate={() => ctx.canOpenLightbox && ctx.openLightbox(ctx.activeImageIndex)}
           />
@@ -96,7 +96,7 @@
               src={ctx.resolveUrl(ctx.currentImage?.url)}
               thumbSrc={ctx.resolveUrl(ctx.currentImage?.thumbUrl)}
               sizes="100vw"
-              alt={ctx.currentImage?.altText ?? ctx.figurine.name}
+              alt={ctx.altTextFor(ctx.currentImage)}
               class="w-full h-full"
               imageFit="cover"
               objectPosition={ctx.currentImage?.focalX != null && ctx.currentImage?.focalY != null
@@ -270,6 +270,17 @@
     <div class="image-vignette"></div>
   </div>
   <!-- /sc-hero -->
+
+  {#if ctx.currentImage}
+    <!-- Per-photo museum tag: which shot ("Detail — Craft close-up") this is. Name/
+         material already sit in .sc-ed-title (overlaid on the hero) and .sc-specs-bar
+         below — this only adds what those static blocks can't: a caption that changes
+         as the visitor browses between photos. -->
+    <div class="plate-caption">
+      <span class="plate-caption-label">{ctx.imageTypeLabel(ctx.currentImage.imageType)}</span>
+      <span class="plate-caption-note">{ctx.imageRoleNote(ctx.currentImage.imageType)}</span>
+    </div>
+  {/if}
 
   <!-- ── РЕДАКЦИОННЫЙ БЛОК ── -->
   <div class="sc-body">

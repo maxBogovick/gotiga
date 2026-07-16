@@ -163,9 +163,17 @@ impl AppService {
 
     pub async fn enqueue_analytics_event(
         &self,
-        req: AnalyticsEventRequest,
+        mut req: AnalyticsEventRequest,
         headers: &axum::http::HeaderMap,
     ) -> Result<()> {
+        // A detail-page view fires with the URL handle, which may be a slug. Resolve it
+        // to the canonical UUID so slug- and UUID-visits of the same work aggregate onto
+        // one figurine_id. Only non-empty, non-UUID handles hit the DB; UUIDs and empty
+        // handles pass through untouched (build_event_record keeps its existing checks).
+        if !req.figurine_id.is_empty() && Uuid::parse_str(&req.figurine_id).is_err() {
+            req.figurine_id = self.resolve_figurine_uuid(&req.figurine_id).await?.to_string();
+        }
+
         let request_context = self.client_context(
             crate::api::handlers::client_ip_from_headers(headers),
             crate::api::handlers::extract_user_agent_from_headers(headers),
@@ -421,6 +429,24 @@ impl AppService {
     fn parse_uuid(s: &str) -> Result<Uuid> {
         Uuid::parse_str(s)
             .map_err(|_| crate::error::AppError::BadRequest(format!("Invalid ID: {}", s)))
+    }
+
+    /// Resolve a public figurine handle to its canonical UUID. The detail page (and
+    /// therefore every sub-resource call the client makes from it — comments, schedule,
+    /// marks, bookings, waitlist, analytics) can be reached by either a transliterated
+    /// slug or the raw UUID. A UUID passes straight through (no DB hit); anything else is
+    /// looked up as a slug. Keeps every entity keyed on the same UUID regardless of which
+    /// URL the visitor arrived by.
+    pub async fn resolve_figurine_uuid(&self, handle: &str) -> Result<Uuid> {
+        match Uuid::parse_str(handle) {
+            Ok(uuid) => Ok(uuid),
+            Err(_) => self
+                .repo
+                .get_figurine_by_slug(handle)
+                .await?
+                .map(|f| f.id)
+                .ok_or_else(|| AppError::NotFound(format!("Figurine {} not found", handle))),
+        }
     }
 
     /// Resolve the public URL for a figurine's face thumbnail (thumb if present,
@@ -1964,7 +1990,7 @@ impl AppService {
     // === SHOWINGS & BOOKINGS (PUBLIC) ===
 
     pub async fn get_figurine_schedule(&self, figurine_id: String) -> Result<FigurineScheduleDto> {
-        let uuid = Self::parse_uuid(&figurine_id)?;
+        let uuid = self.resolve_figurine_uuid(&figurine_id).await?;
         let (showings, confirmed, pending) = self.repo.get_figurine_schedule(uuid).await?;
 
         let mut entries: Vec<ScheduleEntryDto> = Vec::new();
@@ -2207,9 +2233,14 @@ impl AppService {
 
     pub async fn create_booking(
         &self,
-        req: CreateBookingRequest,
+        mut req: CreateBookingRequest,
         user_id: Option<Uuid>,
     ) -> Result<Booking> {
+        // The booking form on the detail page carries whatever handle is in the URL
+        // (slug or UUID). Normalise to the canonical UUID before create_booking_atomic,
+        // which binds figurine_id straight into SQL and cannot resolve a slug itself.
+        req.figurine_id = self.resolve_figurine_uuid(&req.figurine_id).await?.to_string();
+
         let starts_at =
             chrono::NaiveDate::parse_from_str(&req.starts_at, "%Y-%m-%d").map_err(|_| {
                 crate::error::AppError::BadRequest("Invalid starts_at date".to_string())
@@ -3997,7 +4028,7 @@ impl AppService {
         req: CreateWaitlistRequest,
         user_id: Option<Uuid>,
     ) -> Result<crate::models::WaitlistCreatedResponse> {
-        let uuid = Self::parse_uuid(&figurine_id)?;
+        let uuid = self.resolve_figurine_uuid(&figurine_id).await?;
         validate_text("Name", &req.requester_name, 100)?;
         if !req.requester_email.contains('@') || req.requester_email.len() > 200 {
             return Err(AppError::BadRequest("Valid email is required".to_string()));

@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount, onDestroy, tick, setContext } from 'svelte';
   import { fade } from 'svelte/transition';
-  import type { Figurine, FigurineSchedule, FigurineStatus, DisplayConfig } from '$lib/types/api';
+  import type { Figurine, FigurineSchedule, FigurineStatus, DisplayConfig, FigurineImage } from '$lib/types/api';
   import type { FigurineListItem } from '$lib/types/api';
   import { figurineHref } from '$lib/figurineHref';
+  import { formatFigurineAlt, altLabelsFrom, siblingPosition } from '$lib/figurine-alt';
   import UnifiedRequestModal from '$lib/components/UnifiedRequestModal.svelte';
   import CandleReveal from '$lib/components/CandleReveal.svelte';
   import MemoryMirror from '$lib/components/MemoryMirror.svelte';
@@ -535,10 +536,15 @@
   let viewerAspect = $derived(aspectNum < 0.9 ? '5 / 4' : '16 / 10');
   let plateStyle = $derived(`--viewer-aspect-ratio: ${viewerAspect};`);
 
+  // The fullscreen/zoomed rendition — the file most likely to actually be the one
+  // Google Images indexes — used to fall back to a bare '' when an admin left altText
+  // blank, even though the thumbnail/main viewer for the same photo already got the
+  // full SEO formula via altTextFor. Routed through the same function so every surface
+  // agrees on one photo's alt text.
   let lightboxImages = $derived(
     sortedImages.map((img) => ({
       url: resolveUrl(img.originalUrl ?? img.url),
-      alt: img.altText ?? '',
+      alt: altTextFor(img),
       thumbUrl: resolveUrl(img.thumbUrl ?? img.url) || undefined,
       focalX: img.focalX,
       focalY: img.focalY,
@@ -617,6 +623,24 @@
   );
 
   function resolveUrl(path: string | undefined | null) { return resolveMediaUrl(path) ?? ''; }
+
+  // The one place every gallery image's alt text is decided: an admin's own altText
+  // wins outright; otherwise compose one from the [type]+[subject]+[material]+[context]
+  // formula (formatFigurineAlt) instead of the old flat "type — name" repeated
+  // identically across every same-type photo. `sortedImages` gives the sibling count
+  // needed to keep same-type images distinguishable from each other.
+  //
+  // No image at all (a figurine mid-load with zero photos) still runs the formula
+  // rather than short-circuiting to a bare figurine.name — that used to skip the
+  // 50-125 char target and could return an empty string outright when the name itself
+  // was blank.
+  function altTextFor(image: FigurineImage | null | undefined): string {
+    const labels = altLabelsFrom($t);
+    if (!image) return formatFigurineAlt(figurine, undefined, labels);
+    if (image.altText?.trim()) return image.altText.trim();
+    return formatFigurineAlt(figurine, image.imageType, labels, siblingPosition(sortedImages, image));
+  }
+
   function imageTypeLabel(type: string | undefined | null) {
     switch (type) {
       case 'face': return $t('detailImageMain');
@@ -1166,6 +1190,7 @@
     armPageTurn,
     setGalleryEl,
     resolveUrl,
+    altTextFor,
     imageTypeLabel,
     imageRoleNote,
     processStepLabel,

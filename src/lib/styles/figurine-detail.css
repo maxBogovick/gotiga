@@ -759,6 +759,18 @@ main:has(.page-root) ~ .site-footer {
   font-family: var(--font-body);
 }
 
+/* Title runs the full width of the plate above the type/note/material row —
+   the object label's headline, same role a museum wall label gives the
+   work's name before its condition notes. */
+.plate-caption-title {
+  flex-basis: 100%;
+  font-family: var(--font-display);
+  font-size: 0.92rem;
+  font-style: italic;
+  line-height: 1.25;
+  color: var(--color-ink-primary);
+}
+
 .plate-caption-label {
   font-size: 0.6rem;
   font-weight: 800;
@@ -769,6 +781,12 @@ main:has(.page-root) ~ .site-footer {
 }
 
 .plate-caption-note {
+  font-size: 0.72rem;
+  line-height: 1.2;
+  color: var(--color-ink-secondary);
+}
+
+.plate-caption-material {
   font-size: 0.72rem;
   line-height: 1.2;
   color: var(--color-ink-secondary);

@@ -156,12 +156,57 @@ async fn write_bytes(upload_dir: &str, relative_path: &str, bytes: &[u8]) -> Res
     Ok(())
 }
 
-async fn save_image_variants(upload_dir: &str, data: &[u8]) -> Result<serde_json::Value> {
+/// Longest slug prefix kept in an image filename. `slugify` is otherwise unbounded, and
+/// figurine titles on this site run long and poetic — without a cap, a title alone can
+/// push the filename past a filesystem's ~255-byte component limit and turn an upload
+/// that always used to succeed into an ENAMETOOLONG failure. 60 bytes is generous for a
+/// filename prefix (every char here is pure ASCII, since `slugify` never emits anything
+/// else) while leaving headroom for the trailing `-{uuid}.jpg`.
+const MAX_SLUG_LEN: usize = 60;
+
+/// Cut `slug` to at most `max_len` bytes without splitting a word: back up to the last
+/// `-` inside the budget. Safe to byte-slice directly — `slugify`'s output is ASCII only.
+fn truncate_slug(slug: &str, max_len: usize) -> &str {
+    if slug.len() <= max_len {
+        return slug;
+    }
+    let cut = &slug[..max_len];
+    match cut.rfind('-') {
+        Some(i) if i > 0 => &slug[..i],
+        _ => cut,
+    }
+}
+
+/// Build the id segment of an uploaded image's on-disk filename.
+///
+/// Plain `Uuid::new_v4()` gives Google Images nothing to read (`3261c26a-…jpg`) — the
+/// "descriptive file names" signal in Google's image SEO guidance wants the file's own
+/// path to say what it depicts. When the caller supplies a name (the figurine's title,
+/// at upload time), prefix the uuid with its transliterated, length-capped slug — same
+/// `slugify` the figurine's own URL uses, so `"Хранительница порога"` yields
+/// `hranitelnica-poroga-3261c26a-….jpg` instead of a bare id. The full uuid is kept
+/// (not truncated) so collision-resistance is unchanged from before this existed; only
+/// the slug prefix is capped (see MAX_SLUG_LEN). No name → identical to the old
+/// bare-uuid behaviour, which is what every upload that isn't a figurine photo (avatars,
+/// backgrounds, admin media library drops with no figurine context) still gets.
+fn image_id_with_hint(name_hint: Option<&str>) -> String {
+    let uuid = Uuid::new_v4().to_string();
+    match name_hint.map(crate::slug::slugify).filter(|s| !s.is_empty()) {
+        Some(slug) => format!("{}-{}", truncate_slug(&slug, MAX_SLUG_LEN), uuid),
+        None => uuid,
+    }
+}
+
+async fn save_image_variants(
+    upload_dir: &str,
+    data: &[u8],
+    name_hint: Option<&str>,
+) -> Result<serde_json::Value> {
     if data.len() > MAX_IMAGE_BYTES {
         return Err(AppError::BadRequest("Image file is too large".into()));
     }
 
-    let id = Uuid::new_v4().to_string();
+    let id = image_id_with_hint(name_hint);
     let original_relative = format!("images/original/{}.jpg", id);
     let preview_relative = format!("images/preview/{}.jpg", id);
     let medium_relative = format!("images/medium/{}.jpg", id);
@@ -324,6 +369,36 @@ mod tests {
             public_static_url("images/preview/abc.jpg"),
             "/static/images/preview/abc.jpg"
         );
+    }
+
+    #[test]
+    fn image_id_with_hint_caps_a_long_slug_at_a_word_boundary() {
+        let long_name = "The Guardian of the Threshold Who Watches Over the Forgotten Gate at the Edge of Dreaming";
+        let id = image_id_with_hint(Some(long_name));
+        // A uuid is always exactly 36 chars; the slug prefix is everything before the
+        // trailing "-<uuid>".
+        let uuid_len = 36;
+        assert!(id.len() > uuid_len);
+        let slug_part = &id[..id.len() - uuid_len - 1];
+        assert!(
+            slug_part.len() <= MAX_SLUG_LEN,
+            "slug prefix {} bytes exceeds cap",
+            slug_part.len()
+        );
+        assert!(!slug_part.ends_with('-'), "truncation must not leave a trailing hyphen");
+        assert!(Uuid::parse_str(&id[id.len() - uuid_len..]).is_ok(), "trailing segment must still be a full, untruncated uuid");
+    }
+
+    #[test]
+    fn image_id_with_hint_leaves_a_short_slug_untouched() {
+        let id = image_id_with_hint(Some("Raven"));
+        assert!(id.starts_with("raven-"));
+    }
+
+    #[test]
+    fn image_id_with_hint_falls_back_to_a_bare_uuid_without_a_hint() {
+        let id = image_id_with_hint(None);
+        assert!(Uuid::parse_str(&id).is_ok());
     }
 
     #[test]
@@ -648,67 +723,82 @@ pub async fn upload_file(
     State(config): State<Config>,
     mut multipart: Multipart,
 ) -> Result<Json<serde_json::Value>> {
+    // Buffered first, acted on after the loop — same order-independent shape as
+    // replace_media_everywhere below. An earlier version acted on `file` the moment it
+    // saw it, which meant the optional `nameHint` field (the figurine's title, for
+    // image_id_with_hint) was silently dropped with no error if a client happened to
+    // send `file` first; buffering removes that footgun entirely rather than just
+    // documenting it.
+    let mut name_hint: Option<String> = None;
+    let mut file_name: Option<String> = None;
+    let mut file_data: Option<Bytes> = None;
+
     while let Some(field) = multipart
         .next_field()
         .await
         .map_err(|e| AppError::BadRequest(e.to_string()))?
     {
         let name = field.name().unwrap_or("").to_string();
-        if name == "file" {
-            let filename = field.file_name().unwrap_or("file").to_string();
-            let ext = std::path::Path::new(&filename)
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("bin")
-                .to_lowercase();
-            let data = field
-                .bytes()
-                .await
-                .map_err(|e| AppError::Io(std::io::Error::other(e)))?;
-
-            let subdir = media_subdir_for_ext(ext.as_str()).ok_or_else(|| {
-                AppError::BadRequest(format!("Unsupported media extension: {}", ext))
-            })?;
-            if subdir == "images" {
-                let payload = save_image_variants(&config.upload_dir, &data).await?;
-                tracing::info!(
-                    target: "gotiga_server::media",
-                    event = "media_uploaded",
-                    media_type = "images",
-                    bytes = data.len(),
-                    outcome = "ok",
-                    "media uploaded"
-                );
-                return Ok(Json(payload));
-            }
-
-            let media_dir = format!("{}/{}", config.upload_dir, subdir);
-            fs::create_dir_all(&media_dir).await.map_err(AppError::Io)?;
-
-            let file_id = Uuid::new_v4();
-            let file_name = format!("{}.{}", file_id, ext);
-            let full_path = format!("{}/{}", media_dir, file_name);
-            let mut file = fs::File::create(&full_path).await.map_err(AppError::Io)?;
-            file.write_all(&data).await.map_err(AppError::Io)?;
-
-            let relative_path = format!("{}/{}", subdir, file_name);
-            let url = public_static_url(&relative_path);
-            tracing::info!(
-                target: "gotiga_server::media",
-                event = "media_uploaded",
-                media_type = subdir,
-                path = %relative_path,
-                bytes = data.len(),
-                outcome = "ok",
-                "media uploaded"
+        if name == "nameHint" {
+            name_hint = field.text().await.ok().filter(|s| !s.trim().is_empty());
+        } else if name == "file" {
+            file_name = Some(field.file_name().unwrap_or("file").to_string());
+            file_data = Some(
+                field
+                    .bytes()
+                    .await
+                    .map_err(|e| AppError::Io(std::io::Error::other(e)))?,
             );
-            return Ok(Json(serde_json::json!({
-                "url": url,
-                "relativePath": relative_path
-            })));
         }
     }
-    Err(AppError::BadRequest("No file field found".to_string()))
+
+    let filename = file_name.ok_or_else(|| AppError::BadRequest("No file field found".to_string()))?;
+    let data = file_data.ok_or_else(|| AppError::BadRequest("No file field found".to_string()))?;
+    let ext = std::path::Path::new(&filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("bin")
+        .to_lowercase();
+
+    let subdir = media_subdir_for_ext(ext.as_str())
+        .ok_or_else(|| AppError::BadRequest(format!("Unsupported media extension: {}", ext)))?;
+    if subdir == "images" {
+        let payload = save_image_variants(&config.upload_dir, &data, name_hint.as_deref()).await?;
+        tracing::info!(
+            target: "gotiga_server::media",
+            event = "media_uploaded",
+            media_type = "images",
+            bytes = data.len(),
+            outcome = "ok",
+            "media uploaded"
+        );
+        return Ok(Json(payload));
+    }
+
+    let media_dir = format!("{}/{}", config.upload_dir, subdir);
+    fs::create_dir_all(&media_dir).await.map_err(AppError::Io)?;
+
+    let file_id = Uuid::new_v4();
+    let file_name = format!("{}.{}", file_id, ext);
+    let full_path = format!("{}/{}", media_dir, file_name);
+    let mut file = fs::File::create(&full_path).await.map_err(AppError::Io)?;
+    file.write_all(&data).await.map_err(AppError::Io)?;
+
+    let relative_path = format!("{}/{}", subdir, file_name);
+    let url = public_static_url(&relative_path);
+    tracing::info!(
+        target: "gotiga_server::media",
+        event = "media_uploaded",
+        media_type = subdir,
+        path = %relative_path,
+        bytes = data.len(),
+        outcome = "ok",
+        "media uploaded"
+    );
+    Ok(Json(serde_json::json!({
+        "url": url,
+        "relativePath": relative_path
+    })))
 }
 
 pub async fn get_media_inventory(
@@ -782,7 +872,7 @@ pub async fn replace_media_everywhere(
                 ext
             )));
         }
-        let payload = save_image_variants(&config.upload_dir, &data).await?;
+        let payload = save_image_variants(&config.upload_dir, &data, None).await?;
         let new_path = payload
             .get("relativePath")
             .and_then(|v| v.as_str())
@@ -1415,7 +1505,7 @@ pub async fn user_upload_file(
                     "Only image uploads are allowed.".into(),
                 ));
             }
-            let payload = save_image_variants(&config.upload_dir, &data).await?;
+            let payload = save_image_variants(&config.upload_dir, &data, None).await?;
             return Ok(Json(payload));
         }
     }
@@ -1515,12 +1605,13 @@ pub async fn create_booking(
 pub async fn set_figurine_mark(
     State(service): State<AppService>,
     headers: HeaderMap,
-    Path(figurine_id): Path<Uuid>,
+    Path(handle): Path<String>,
     Json(req): Json<crate::models::MarkToggleRequest>,
 ) -> Result<Json<crate::models::MarkToggleResponse>> {
     service
         .check_rate_limit("mark", &extract_ip(&headers), 60, 3600)
         .await?;
+    let figurine_id = service.resolve_figurine_uuid(&handle).await?;
     let tone = service
         .set_figurine_mark(figurine_id, &req.visitor_token, req.tone.as_deref())
         .await?;
@@ -2134,9 +2225,10 @@ pub(crate) fn extract_user_agent_from_headers(headers: &HeaderMap) -> Option<Str
 
 pub async fn get_figurine_comments(
     State(service): State<AppService>,
-    Path(figurine_id): Path<Uuid>,
+    Path(handle): Path<String>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<Vec<CommentDto>>> {
+    let figurine_id = service.resolve_figurine_uuid(&handle).await?;
     let newest_first = params.get("sort").map(|v| v == "newest").unwrap_or(false);
     let comments = service
         .get_figurine_comments(figurine_id, newest_first)
@@ -2147,9 +2239,10 @@ pub async fn get_figurine_comments(
 pub async fn submit_comment(
     State(service): State<AppService>,
     headers: HeaderMap,
-    Path(figurine_id): Path<Uuid>,
+    Path(handle): Path<String>,
     Json(body): Json<SubmitCommentRequest>,
 ) -> Result<StatusCode> {
+    let figurine_id = service.resolve_figurine_uuid(&handle).await?;
     let user = if let Some(token) = bearer_token(&headers) {
         service.get_user_from_session(token).await.ok()
     } else {

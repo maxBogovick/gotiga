@@ -2,6 +2,7 @@
     import { onMount } from 'svelte';
     import { api, isTauri } from '$lib/api';
     import { figurineHref } from '$lib/figurineHref';
+    import { formatFigurineAlt, altLabelsFrom, siblingPosition } from '$lib/figurine-alt';
     import type { Figurine, FigurineListItem, ShowingRoom } from '$lib/types/api';
     import { fade, slide } from 'svelte/transition';
     import SettingsModal from '$lib/components/SettingsModal.svelte';
@@ -530,7 +531,11 @@
         if (type === 'audio') uploadingAudio = true;
         if (type === 'images') uploadingImage = true;
         try {
-            const imported = await api.importMediaWithVariants(fileOrPath, type === 'videos' ? 'videos' : type === 'audio' ? 'audio' : 'images');
+            const imported = await api.importMediaWithVariants(
+                fileOrPath,
+                type === 'videos' ? 'videos' : type === 'audio' ? 'audio' : 'images',
+                type === 'images' ? selectedFigurine.name : undefined
+            );
             const localUrl = imported.url;
 
             if (!selectedFigurine || selectedFigurine.id !== targetId) {
@@ -579,6 +584,9 @@
         // points by folderUploadProgress, but checked again here too) can never attach
         // a photo from this batch to a different figurine.
         const targetId = selectedFigurine.id;
+        // Captured alongside targetId — selectedFigurine may go null mid-batch (see
+        // above), so reading .name off it later in the loop isn't safe.
+        const targetName = selectedFigurine.name;
         if (isTauri) {
             const { open } = await import('@tauri-apps/plugin-dialog');
             const { invoke: inv } = await import('@tauri-apps/api/core');
@@ -595,7 +603,7 @@
             folderUploadProgress = { done: 0, total: imagePaths.length };
             for (const filePath of imagePaths) {
                 try {
-                    const imported = await api.importMediaWithVariants(filePath, 'images');
+                    const imported = await api.importMediaWithVariants(filePath, 'images', targetName);
                     if (!selectedFigurine || selectedFigurine.id !== targetId) {
                         showMessage($t('adminMsgUploadTargetChanged'), 'error');
                         break;
@@ -637,7 +645,7 @@
                 folderUploadProgress = { done: 0, total: files.length };
                 for (const file of files) {
                     try {
-                        const imported = await api.importMediaWithVariants(file, 'images');
+                        const imported = await api.importMediaWithVariants(file, 'images', targetName);
                         if (!selectedFigurine || selectedFigurine.id !== targetId) {
                             showMessage($t('adminMsgUploadTargetChanged'), 'error');
                             break;
@@ -963,6 +971,29 @@
         selectedFigurine.images = selectedFigurine.images.map(img =>
             img.id === imageId ? { ...img, imageType: 'full' } : img
         );
+    }
+
+    function altTextLen(text: string | null | undefined): number {
+        return (text ?? '').trim().length;
+    }
+
+    // Fills the [type]+[subject]+[material]+[context] SEO formula (same one the public
+    // detail page falls back to automatically) into the alt text field, so an admin
+    // gets a solid starting point instead of a blank input — see figurine-alt.ts.
+    // Overwrites on purpose: it's an explicit click, not a silent fallback.
+    function autoFillAlt(imgIdx: number) {
+        if (!selectedFigurine) return;
+        const img = selectedFigurine.images[imgIdx];
+        if (!img) return;
+        selectedFigurine.images[imgIdx] = {
+            ...img,
+            altText: formatFigurineAlt(
+                selectedFigurine,
+                img.imageType,
+                altLabelsFrom($t),
+                siblingPosition(selectedFigurine.images, img),
+            ),
+        };
     }
 
     async function save() {
@@ -1556,8 +1587,20 @@
                                                     <img src={resolveUrl(img.url)} alt={img.altText ?? ''} class="w-full h-full object-contain" />
                                                 </div>
                                                 <label class="block">
-                                                    <span class="label">{$t('adminMediaAltPlaceholder')}</span>
+                                                    <div class="flex items-center justify-between gap-2">
+                                                        <span class="label">{$t('adminMediaAltPlaceholder')}</span>
+                                                        <button type="button" onclick={() => autoFillAlt(imgIdx)}
+                                                            class="text-[9px] uppercase tracking-wide text-[#5f4636] hover:text-[#c65f3c] transition-colors shrink-0">
+                                                            {$t('adminMediaAltAuto')}
+                                                        </button>
+                                                    </div>
                                                     <input bind:value={img.altText} type="text" class="input-gothic text-xs" />
+                                                    <div class="flex items-center justify-between mt-1">
+                                                        <span class="text-[9px] text-[#5f4636]/70 leading-snug">{$t('adminMediaAltFormulaHint')}</span>
+                                                        <span class="text-[9px] shrink-0 ml-2 {altTextLen(img.altText) === 0 ? 'text-[#5f4636]/50' : altTextLen(img.altText) < 50 || altTextLen(img.altText) > 125 ? 'text-[#c65f3c]' : 'text-emerald-700'}">
+                                                            {altTextLen(img.altText)}{altTextLen(img.altText) > 0 ? (altTextLen(img.altText) < 50 ? ` (${$t('adminMediaAltTooShort')})` : altTextLen(img.altText) > 125 ? ` (${$t('adminMediaAltTooLong')})` : '') : ''}
+                                                        </span>
+                                                    </div>
                                                 </label>
                                                 <!-- Depth map -->
                                                 <div>

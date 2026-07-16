@@ -110,7 +110,7 @@
                 <source type="image/webp" srcset={resolveWebpUrl(img.thumbUrl ?? img.url) ?? undefined} />
                 <img
                   src={ctx.resolveUrl(img.thumbUrl ?? img.url)}
-                  alt={img.altText ?? `${ctx.imageTypeLabel(img.imageType)} — ${ctx.figurine.name}`}
+                  alt={ctx.altTextFor(img)}
                   class="cx-thumb-img"
                   loading="lazy"
                   decoding="async"
@@ -223,7 +223,7 @@
             <RakingLight
               src={ctx.resolveUrl(ctx.currentImage?.url)}
               heightSrc={ctx.resolveUrl(ctx.currentImage?.depthUrl) || null}
-              alt={ctx.currentImage?.altText ?? ctx.figurine.name}
+              alt={ctx.altTextFor(ctx.currentImage)}
               class="w-full h-full"
               onActivate={() => ctx.canOpenLightbox && ctx.openLightbox(ctx.activeImageIndex)}
             />
@@ -236,7 +236,7 @@
               src={ctx.resolveUrl(ctx.currentImage?.url)}
               depthSrc={ctx.resolveUrl(ctx.currentImage?.depthUrl) || null}
               intensity={ctx.currentImage?.parallaxIntensity ?? undefined}
-              alt={ctx.currentImage?.altText ?? ctx.figurine.name}
+              alt={ctx.altTextFor(ctx.currentImage)}
               class="w-full h-full"
               onActivate={() => ctx.canOpenLightbox && ctx.openLightbox(ctx.activeImageIndex)}
             />
@@ -250,7 +250,7 @@
                 src={ctx.resolveUrl(ctx.currentImage?.url)}
                 thumbSrc={ctx.resolveUrl(ctx.currentImage?.thumbUrl)}
                 sizes="(min-width: 900px) 50vw, 100vw"
-                alt={ctx.currentImage?.altText ?? ctx.figurine.name}
+                alt={ctx.altTextFor(ctx.currentImage)}
                 class="w-full h-full"
                 imageFit="cover"
                 objectPosition={ctx.currentImage?.focalX != null && ctx.currentImage?.focalY != null
@@ -395,6 +395,16 @@
       <div class="image-vignette"></div>
     </div>
     <!-- /cx-illum -->
+
+    {#if ctx.currentImage}
+      <!-- Per-photo museum tag: which shot ("Detail — Craft close-up") this is. Name/
+           material already sit in the ledger above (.cx-ledger) — this only adds what
+           that static block can't: a caption that changes as the visitor browses. -->
+      <div class="plate-caption">
+        <span class="plate-caption-label">{ctx.imageTypeLabel(ctx.currentImage.imageType)}</span>
+        <span class="plate-caption-note">{ctx.imageRoleNote(ctx.currentImage.imageType)}</span>
+      </div>
+    {/if}
 
   </div>
   <!-- /cx-opening -->

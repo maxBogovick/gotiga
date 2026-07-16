@@ -26,6 +26,15 @@ function isoDay(value: string | null | undefined): string | undefined {
     return Number.isNaN(t) ? undefined : new Date(t).toISOString().slice(0, 10);
 }
 
+// <image:caption> is extra text Google's image sitemap extension accepts alongside
+// <image:loc> — one more place to say what the photo depicts, on top of the page's own
+// alt text/caption/JSON-LD. Title + material reads like a museum label ("Threshold
+// Guardian — polymer clay, resin") without duplicating the alt-text formula verbatim.
+function imageCaption(name: string, material: string | null | undefined): string {
+    const detail = material?.trim();
+    return detail ? `${name} — ${detail}` : name;
+}
+
 function imageLoc(figurine: Figurine | null | undefined, fallback: string | null | undefined): string | null {
     const image =
         figurine?.images?.find((i) => i.imageType === 'face')?.url ??
@@ -60,12 +69,14 @@ export async function GET() {
         figurines = [];
     }
 
-    const entries: { loc: string; lastmod?: string; image?: string | null }[] = [
+    const entries: { loc: string; lastmod?: string; image?: string | null; imageTitle?: string; imageCaption?: string }[] = [
         ...STATIC_ROUTES.map((path) => ({ loc: `${SITE_URL}${path}` })),
         ...figurines.map((f) => ({
             loc: `${SITE_URL}/figurines/${f.slug ?? f.id}`,
             lastmod: isoDay(f.createdAt),
             image: imageLoc(detailById.get(f.id), f.faceImageUrl),
+            imageTitle: f.name,
+            imageCaption: imageCaption(f.name, detailById.get(f.id)?.material),
         })),
     ];
 
@@ -73,8 +84,13 @@ export async function GET() {
         `<?xml version="1.0" encoding="UTF-8"?>\n` +
         `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">\n` +
         entries
-            .map(({ loc, lastmod, image }) => {
-                const imageXml = image ? `<image:image><image:loc>${xmlEscape(image)}</image:loc></image:image>` : '';
+            .map(({ loc, lastmod, image, imageTitle, imageCaption }) => {
+                const imageXml = image
+                    ? `<image:image><image:loc>${xmlEscape(image)}</image:loc>` +
+                      (imageTitle ? `<image:title>${xmlEscape(imageTitle)}</image:title>` : '') +
+                      (imageCaption ? `<image:caption>${xmlEscape(imageCaption)}</image:caption>` : '') +
+                      `</image:image>`
+                    : '';
                 return `  <url><loc>${xmlEscape(loc)}</loc>${lastmod ? `<lastmod>${lastmod}</lastmod>` : ''}${imageXml}</url>`;
             })
             .join('\n') +

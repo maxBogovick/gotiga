@@ -722,13 +722,21 @@ export const api = {
         return media.url;
     },
 
-    async importMediaWithVariants(fileOrPath: string | File, mediaType: 'images' | 'videos' | 'audio'): Promise<ImportedMedia> {
+    // nameHint (web only): for a figurine photo, pass the figurine's name so the
+    // server can give the file a readable, keyword-bearing filename instead of a
+    // bare UUID — see image_id_with_hint in handlers.rs. Ignored for non-image
+    // uploads and on Tauri (the desktop file pipeline isn't public/crawled, so a
+    // slugged filename buys nothing there).
+    async importMediaWithVariants(fileOrPath: string | File, mediaType: 'images' | 'videos' | 'audio', nameHint?: string): Promise<ImportedMedia> {
         if (isTauri) {
             const url = await invoke<string>('import_media', { filePath: fileOrPath as string, mediaType });
             return { url };
         }
         const file = fileOrPath as File;
         const form = new FormData();
+        // Must be appended before `file` — the server reads fields in arrival order
+        // and acts on `file` as soon as it sees it (see upload_file in handlers.rs).
+        if (nameHint?.trim()) form.append('nameHint', nameHint.trim());
         form.append('file', file);
         const res = await fetch(`${webApiBase()}/upload`, {
             method: 'POST',
