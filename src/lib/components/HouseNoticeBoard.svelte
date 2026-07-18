@@ -47,7 +47,17 @@
     type ShowingWindow,
   } from '$lib/showing-window';
 
-  let { figurines = [] }: { figurines?: FigurineListItem[] } = $props();
+  let {
+    figurines = [],
+    source,
+  }: {
+    figurines?: FigurineListItem[];
+    // Tags standalone-work bill links for admin analytics (e.g. "home_afisha").
+    // Room bills link to /hall/[id], not a figurine, so this only affects
+    // the standalone-work notes below. Optional — other callers (home-classic)
+    // simply omit it.
+    source?: string;
+  } = $props();
 
   const HORIZON_DAYS = 7;
   const GLOW_HORIZON = 60;
@@ -235,7 +245,7 @@
         build(
           `work:${f.id}`,
           f.name,
-          figurineHref(f),
+          figurineHref(f, source),
           false,
           { openFromMin: f.openFromMin, openUntilMin: f.openUntilMin },
           toArt(f)

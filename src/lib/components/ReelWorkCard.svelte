@@ -15,9 +15,13 @@
     story?: string | null;
     /** Odd cards mirror, so the eye zig-zags down the list. */
     flip?: boolean;
+    /** Which named home-page block rendered this card (e.g. "home_grid") —
+     * tags the outgoing link so admin analytics can attribute the click.
+     * Optional — this component is only used by the home page today. */
+    source?: string;
   };
 
-  let { fig, index, story = null, flip = false }: Props = $props();
+  let { fig, index, story = null, flip = false, source }: Props = $props();
 
   let text = $derived(
     story?.trim() ||
@@ -208,7 +212,7 @@
 
   <a
     class="photo"
-    href={figurineHref(fig)}
+    href={figurineHref(fig, source)}
     style="--focal:{focalPos}"
     aria-label="{$t('homeViewFigurine')}: {fig.name}"
   >

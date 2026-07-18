@@ -108,7 +108,7 @@ async fn main() -> anyhow::Result<()> {
     {
         let svc = service.clone();
         tokio::spawn(async move {
-            const RETENTION_DAYS: i64 = 30;
+            const RETENTION_DAYS: i64 = gotiga_server::analytics::RETENTION_DAYS;
             const BATCH_SIZE: i64 = 1000;
             let mut tick = tokio::time::interval(std::time::Duration::from_secs(24 * 3600));
             loop {

@@ -12,7 +12,15 @@
   import type { FigurineListItem } from '$lib/types/api';
   import HomeFigurineTile from '$lib/components/HomeFigurineTile.svelte';
 
-  let { figurines = [] }: { figurines?: FigurineListItem[] } = $props();
+  let {
+    figurines = [],
+    source,
+  }: {
+    figurines?: FigurineListItem[];
+    // Tags each tile's link for admin analytics (e.g. "home_noticed").
+    // Optional — other callers of this component simply omit it.
+    source?: string;
+  } = $props();
 </script>
 
 {#if figurines.length > 0}
@@ -27,7 +35,7 @@
 
     <div class="nbg-grid" class:nbg-grid-short={figurines.length <= 3}>
       {#each figurines as fig, i (fig.id)}
-        <HomeFigurineTile {fig} index={i} />
+        <HomeFigurineTile {fig} index={i} {source} />
       {/each}
     </div>
   </section>

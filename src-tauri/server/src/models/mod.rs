@@ -507,6 +507,9 @@ pub enum AnalyticsEventType {
     FigurineView,
     FigurineEngaged,
     FigurineCtaClick,
+    /// Site-wide page view (home/archive/author/workshop/commission) — the
+    /// only event type allowed a `None` figurine_id.
+    PageView,
 }
 
 impl AnalyticsEventType {
@@ -515,6 +518,7 @@ impl AnalyticsEventType {
             Self::FigurineView => "figurine_view",
             Self::FigurineEngaged => "figurine_engaged",
             Self::FigurineCtaClick => "figurine_cta_click",
+            Self::PageView => "page_view",
         }
     }
 }
@@ -523,7 +527,9 @@ impl AnalyticsEventType {
 #[serde(rename_all = "camelCase")]
 pub struct AnalyticsEventRequest {
     pub event_type: AnalyticsEventType,
-    pub figurine_id: String,
+    /// Required for figurine_view/figurine_engaged/figurine_cta_click; absent
+    /// (or blank) for site-wide `page_view` events.
+    pub figurine_id: Option<String>,
     pub path: String,
     pub referrer: Option<String>,
     pub utm_source: Option<String>,
@@ -534,6 +540,13 @@ pub struct AnalyticsEventRequest {
     pub cta_type: Option<String>,
     pub page_view_id: Option<String>,
     pub client_ts: Option<DateTime<Utc>>,
+    /// Visitor's UI language at the time of the event ('en' | 'ru'), from the
+    /// i18n store.
+    pub lang: Option<String>,
+    /// Which on-site block a figurine-card click came from (e.g.
+    /// "home_afisha"), read from a `?src=` link param — separate from
+    /// utm_source, which is for external campaigns.
+    pub internal_source: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -541,7 +554,7 @@ pub struct AnalyticsEventRecord {
     pub occurred_at: DateTime<Utc>,
     pub event_date: NaiveDate,
     pub event_type: &'static str,
-    pub figurine_id: Uuid,
+    pub figurine_id: Option<Uuid>,
     pub visitor_hash: Option<String>,
     pub page_view_id: Option<Uuid>,
     pub path: String,
@@ -557,6 +570,8 @@ pub struct AnalyticsEventRecord {
     pub scroll_depth: Option<i32>,
     pub cta_type: Option<String>,
     pub user_id: Option<Uuid>,
+    pub lang: Option<String>,
+    pub internal_source: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -617,24 +632,59 @@ pub struct AnalyticsFunnel {
     pub submissions: i64,
 }
 
+/// One row of the "starts -> submitted" CTA funnel for a single call-to-action
+/// family (request/reserve/booking/waitlist/commission). `starts` comes from the
+/// pre-aggregated daily table (client-side CTA clicks); `submitted` is counted
+/// straight from the real orders/bookings/waitlist/commissions tables, so the
+/// two sides can legitimately disagree (see `starts_are_client_side` on the
+/// funnel container) — starts undercount (DNT/bots/direct form links skip the
+/// client event) while submitted is authoritative.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CtaFunnelStep {
+    pub cta_type: String,
+    pub starts: i64,
+    pub submitted: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AdminFigurineAnalyticsListItem {
     pub figurine_id: String,
     pub name: String,
     pub status: FigurineStatus,
+    /// Editorial grouping (e.g. a named collection) — the same field the
+    /// archive page filters by; surfaced here so a series can be sized up as
+    /// a unit, not just piece by piece.
+    pub series: Option<String>,
     pub face_url: Option<String>,
     pub signal: AnalyticsSignal,
+    /// Week-over-week growth on its own, independent of `signal` — the
+    /// signal is a single priority-ordered pick (see `AppService::
+    /// analytics_signal`), so a work that's both growing *and*, say,
+    /// attention-worthy for having no submissions would only ever show the
+    /// higher-priority badge. This field keeps "is it growing" visible
+    /// regardless of which signal won.
+    pub is_growing: bool,
     pub top_source: Option<String>,
     pub top_country: Option<String>,
     pub top_device: Option<String>,
     pub top_browser: Option<String>,
+    /// Every country (ISO 3166-1 alpha-2) with at least one view in range —
+    /// not just the top one — from the permanent geo rollup. Drives the
+    /// Works table's country filter and the geography map's
+    /// country → figurines drilldown, both client-side (no extra request).
+    pub countries: Vec<String>,
     pub views: i64,
     pub unique_visitors: i64,
     pub engaged_views: i64,
     pub cta_clicks: i64,
     pub submissions: i64,
     pub conversion_rate: f64,
+    /// Daily view counts for the last 14 days ending at the query's `to` date,
+    /// zero-filled for missing days — independent of the selected range length
+    /// so row sparklines stay a fixed, comparable shape.
+    pub sparkline: Vec<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -643,6 +693,10 @@ pub struct AdminFigurineAnalyticsListPage {
     pub items: Vec<AdminFigurineAnalyticsListItem>,
     pub total: i64,
     pub summary: AnalyticsSummary,
+    /// Same-length, immediately-preceding period used for delta comparisons.
+    pub previous_summary: AnalyticsSummary,
+    pub previous_from: NaiveDate,
+    pub previous_to: NaiveDate,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -651,6 +705,9 @@ pub struct AdminFigurineAnalyticsDetail {
     pub figurine: FigurineListItemDto,
     pub signal: AnalyticsSignal,
     pub summary: AnalyticsSummary,
+    pub previous_summary: AnalyticsSummary,
+    pub previous_from: NaiveDate,
+    pub previous_to: NaiveDate,
     pub daily: Vec<AnalyticsDailyPoint>,
     pub sources: Vec<AnalyticsSourcePoint>,
     pub countries: Vec<AnalyticsBreakdownPoint>,
@@ -659,7 +716,21 @@ pub struct AdminFigurineAnalyticsDetail {
     pub referrers: Vec<AnalyticsBreakdownPoint>,
     pub utm_sources: Vec<AnalyticsBreakdownPoint>,
     pub visitor_cohorts: Vec<AnalyticsBreakdownPoint>,
+    pub languages: Vec<AnalyticsBreakdownPoint>,
+    pub internal_sources: Vec<AnalyticsBreakdownPoint>,
     pub funnel: AnalyticsFunnel,
+    pub cta_funnel: Vec<CtaFunnelStep>,
+    /// Median milliseconds spent engaged with the card. `None` when there are no
+    /// qualifying `figurine_engaged` events in range (not 0 — see medians never
+    /// counting NULL/absent samples as zero).
+    pub median_duration_ms: Option<f64>,
+    /// Median scroll depth (0-100) at engagement. `None` under the same rule.
+    pub median_scroll_depth: Option<f64>,
+    /// Earliest date for which raw-event-derived fields above (medians,
+    /// countries/devices/browsers/referrers/utmSources breakdowns) actually have
+    /// data — raw events are pruned after a retention window, so this can be
+    /// later than `from` when the selected range reaches further back than that.
+    pub raw_data_from: NaiveDate,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -669,6 +740,102 @@ pub struct AdminAnalyticsQuery {
     pub to: Option<NaiveDate>,
     pub sort: Option<String>,
     pub dir: Option<String>,
+}
+
+/// One-off admin operation: re-run figurine_analytics_daily /
+/// site_page_views_daily aggregation over a historical range (e.g. after a
+/// bugfix to the aggregation query itself — the hot-window job only ever
+/// recomputes yesterday+today). Idempotent (delete+reinsert per range).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackfillAnalyticsRequest {
+    /// Defaults to the earliest day already present in figurine_analytics_daily.
+    pub from: Option<NaiveDate>,
+    /// Defaults to today.
+    pub to: Option<NaiveDate>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackfillAnalyticsResponse {
+    pub from: NaiveDate,
+    pub to: NaiveDate,
+}
+
+/// Site-wide traffic overview (all figurines combined) built from the same
+/// pre-aggregated daily table — the "pulse of the house" screen (J1).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminAnalyticsOverview {
+    pub from: NaiveDate,
+    pub to: NaiveDate,
+    pub previous_from: NaiveDate,
+    pub previous_to: NaiveDate,
+    pub summary: AnalyticsSummary,
+    pub previous_summary: AnalyticsSummary,
+    pub daily: Vec<AnalyticsDailyPoint>,
+    pub sources: Vec<AnalyticsSourcePoint>,
+    /// Site-wide views by country (every page), for the geography map.
+    pub geo: Vec<AnalyticsBreakdownPoint>,
+}
+
+/// Site → works → /commission → started form → submitted. Every step but the
+/// last is a distinct-visitor count from raw events, so it's bound by
+/// analytics::RETENTION_DAYS (see raw_data_from) and undercounts under
+/// DNT/bots/direct links; `submitted` is exact (the real `commissions` table).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommissionFunnel {
+    pub from: NaiveDate,
+    pub to: NaiveDate,
+    pub raw_data_from: NaiveDate,
+    pub visited: i64,
+    pub viewed_works: i64,
+    pub opened_commission_page: i64,
+    pub started_form: i64,
+    pub submitted: i64,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyticsAnnotation {
+    pub id: Uuid,
+    pub day: NaiveDate,
+    pub label: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateAnnotationRequest {
+    pub day: NaiveDate,
+    pub label: String,
+}
+
+/// Daily counts of the site's quieter engagement signals — attention marks,
+/// "Book of the House" newsletter signups, comments — none of which are
+/// retention-pruned (full history), unlike the raw analytics events.
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LifeOfHouseDailyPoint {
+    pub day: NaiveDate,
+    pub marks: i64,
+    pub subscribers: i64,
+    pub comments: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LifeOfHouseTrend {
+    pub from: NaiveDate,
+    pub to: NaiveDate,
+    pub daily: Vec<LifeOfHouseDailyPoint>,
+    pub marks_total: i64,
+    pub subscribers_total: i64,
+    pub comments_total: i64,
+    pub previous_marks_total: i64,
+    pub previous_subscribers_total: i64,
+    pub previous_comments_total: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1947,6 +2114,47 @@ pub struct SubscriberDto {
     pub name: Option<String>,
     pub source: String,
     pub lang: String,
+    pub created_at: String,
+}
+
+// ============================================================
+// CONTACT MESSAGES — lightweight "write to the author" letters
+// ============================================================
+
+/// Anonymous, not tied to a figurine (unlike `Order`) or a logged-in
+/// account (unlike `MessageThread`) — a stranger reading the home page can
+/// send one without committing to a full commission or creating an account.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ContactMessage {
+    pub id: Uuid,
+    pub email: String,
+    pub message: String,
+    pub source: String,
+    pub lang: String,
+    pub ip: Option<String>,
+    pub is_read: bool,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateContactMessageRequest {
+    pub email: String,
+    pub message: String,
+    pub source: Option<String>,
+    pub lang: Option<String>,
+}
+
+/// Admin view of one letter.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactMessageDto {
+    pub id: String,
+    pub email: String,
+    pub message: String,
+    pub source: String,
+    pub lang: String,
+    pub is_read: bool,
     pub created_at: String,
 }
 

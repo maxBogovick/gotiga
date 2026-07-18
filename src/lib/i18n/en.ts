@@ -143,6 +143,30 @@ export const en = {
   homeStoryPortraitAlt: 'The author at work',
   homeHouseLatelyLabel: 'Lately at the cabinet',
 
+  // "Write to the author" — light letter card, right after the author's story
+  homeCorrespondenceEyebrow: 'Correspondence',
+  homeCorrespondenceTitle: 'Want to write?',
+  homeCorrespondenceNote: 'Tell me what caught your eye — I answer myself, usually within a day.',
+
+  // Shared "write to the author" form (home card + header panel)
+  contactFormEmailLabel: 'Your email',
+  contactFormEmailPlaceholder: 'you@example.com',
+  contactFormMessageLabel: 'Message',
+  contactFormMessagePlaceholder: 'What would you like to say?',
+  contactFormSubmit: 'Send letter',
+  contactFormSending: 'Sending…',
+  contactFormFillFields: 'Please fill in both fields.',
+  contactFormInvalidEmail: 'Please enter a valid email address.',
+  contactFormError: 'Could not send — please try again in a moment.',
+  contactFormSuccessTitle: 'Letter received',
+  contactFormSuccessText: 'Thank you — I read every letter myself and will write back soon.',
+  contactFormWriteAnother: 'Write another letter',
+
+  // Header quill icon
+  headerContactLabel: 'Write to the author',
+  headerContactShortLabel: 'Write',
+  headerContactNote: 'A short note, straight to me — no account needed.',
+
   // === ARCHIVE LIST (/figurines) ===
   archiveMetaDescription: 'A registry of gothic handmade miniatures — browse the full archive of creatures by status, year, and series.',
   archivePageTitle: 'Archive of Creatures',
@@ -754,6 +778,7 @@ export const en = {
   adminTabWorkshopFeature: 'Workshop block',
   adminTabReleases: 'Releases',
   adminTabAnalytics: 'Analytics',
+  adminTabMarks: 'Marks & Shelf',
   adminSubProfile: 'Profile',
   adminSubTexts: 'Notes',
   adminSettings: 'Settings',
@@ -1794,6 +1819,7 @@ export const en = {
   adminHomeLayoutBlockNoticeBoard: 'Notice board (openings)',
   adminHomeLayoutBlockGallery: 'Selected works',
   adminHomeLayoutBlockAuthorStory: 'The maker',
+  adminHomeLayoutBlockCorrespondence: 'Write to the author',
   adminHomeLayoutBlockImpressions: 'Impressions strip',
   adminHomeLayoutBlockRequestSteps: 'Process steps',
   adminHomeLayoutBlockVisitorBook: 'Visitor book',
@@ -1997,6 +2023,15 @@ export const en = {
   adminSubscribersHint: 'Export to send letters through your mail service (the house only collects names here).',
   adminSubscribersLoadError: 'Failed to load subscribers',
   adminSubscribersExport: 'Export CSV',
+
+  // Admin — contact messages ("write to the author" letters)
+  adminTabContactMessages: 'Letters',
+  adminContactMessagesHeading: 'Letters',
+  adminContactMessagesEmpty: 'No letters yet.',
+  adminContactMessagesHint: 'Reply directly to the sender\'s email — this is a read-only inbox.',
+  adminContactMessagesLoadError: 'Failed to load letters',
+  adminContactMessagesUnread: 'New',
+  adminContactMessagesMarkRead: 'Mark read',
 
   // Admin — reel theme (home appearance)
   adminTabReelTheme: 'Home look',

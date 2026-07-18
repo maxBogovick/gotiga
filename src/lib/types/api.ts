@@ -441,34 +441,64 @@ export interface AnalyticsFunnel {
     submissions: number;
 }
 
+/** One row of the starts -> submitted funnel for a single CTA family. `starts`
+ * is client-side event counts (undercounts under DNT/bots/direct links);
+ * `submitted` is authoritative (counted from the real orders/bookings/
+ * waitlist/commissions tables) — conversion can legitimately read over 100%. */
+export interface CtaFunnelStep {
+    ctaType: 'request' | 'reserve' | 'booking' | 'waitlist' | 'commission';
+    starts: number;
+    submitted: number;
+}
+
 export interface AdminFigurineAnalyticsListItem {
     figurineId: string;
     name: string;
     status: FigurineStatus;
+    /** Editorial grouping — same field the archive page filters by. */
+    series?: string | null;
     faceUrl: string | null;
     signal: AnalyticsSignal;
+    /** Week-over-week growth on its own, independent of `signal` — `signal`
+     * is a single priority-ordered pick, so a work that's both growing and,
+     * say, attention-worthy would only ever surface the higher-priority
+     * badge. Use this to show growth regardless of which signal won. */
+    isGrowing: boolean;
     topSource?: string | null;
     topCountry?: string | null;
     topDevice?: string | null;
     topBrowser?: string | null;
+    /** Every country (ISO 3166-1 alpha-2) with at least one view in range —
+     * not just the top one. Powers the Works table's country filter and the
+     * geography map's country → works drilldown, both client-side. */
+    countries: string[];
     views: number;
     uniqueVisitors: number;
     engagedViews: number;
     ctaClicks: number;
     submissions: number;
     conversionRate: number;
+    /** Daily views, last 14 days ending at the query's `to`, zero-filled. */
+    sparkline: number[];
 }
 
 export interface AdminFigurineAnalyticsListPage {
     items: AdminFigurineAnalyticsListItem[];
     total: number;
     summary: AnalyticsSummary;
+    /** Same-length, immediately-preceding period for delta comparisons. */
+    previousSummary: AnalyticsSummary;
+    previousFrom: string;
+    previousTo: string;
 }
 
 export interface AdminFigurineAnalyticsDetail {
     figurine: FigurineListItem;
     signal: AnalyticsSignal;
     summary: AnalyticsSummary;
+    previousSummary: AnalyticsSummary;
+    previousFrom: string;
+    previousTo: string;
     daily: AnalyticsDailyPoint[];
     sources: AnalyticsSourcePoint[];
     countries: AnalyticsBreakdownPoint[];
@@ -477,7 +507,19 @@ export interface AdminFigurineAnalyticsDetail {
     referrers: AnalyticsBreakdownPoint[];
     utmSources: AnalyticsBreakdownPoint[];
     visitorCohorts: AnalyticsBreakdownPoint[];
+    languages: AnalyticsBreakdownPoint[];
+    internalSources: AnalyticsBreakdownPoint[];
     funnel: AnalyticsFunnel;
+    ctaFunnel: CtaFunnelStep[];
+    /** Median ms engaged with the card. Null when there are no qualifying
+     * events in range — never coerced to 0. */
+    medianDurationMs: number | null;
+    /** Median scroll depth (0-100) at engagement. Same null rule. */
+    medianScrollDepth: number | null;
+    /** Earliest date the raw-event-derived fields above (medians, the
+     * breakdowns) actually have data for — later than `from` when the
+     * selected range reaches past raw-event retention. */
+    rawDataFrom: string;
 }
 
 export interface AdminAnalyticsQuery {
@@ -487,9 +529,87 @@ export interface AdminAnalyticsQuery {
     dir?: 'asc' | 'desc';
 }
 
+/** One-off admin action: re-run the daily aggregation over a historical
+ * range (e.g. after a fix to the aggregation query itself — the automatic
+ * hot-window refresh only ever recomputes yesterday+today). No UI trigger
+ * yet; call via `api.backfillAnalytics()` (e.g. from devtools) after
+ * deploying a fix that needs one. */
+export interface BackfillAnalyticsRequest {
+    from?: string;
+    to?: string;
+}
+
+export interface BackfillAnalyticsResponse {
+    from: string;
+    to: string;
+}
+
+/** Site-wide traffic overview (all figurines combined) — the "pulse of the
+ * house" screen. */
+export interface AdminAnalyticsOverview {
+    from: string;
+    to: string;
+    previousFrom: string;
+    previousTo: string;
+    summary: AnalyticsSummary;
+    previousSummary: AnalyticsSummary;
+    daily: AnalyticsDailyPoint[];
+    sources: AnalyticsSourcePoint[];
+    /** Site-wide views by country (every page), for the geography map. */
+    geo: AnalyticsBreakdownPoint[];
+}
+
+/** Site → works → /commission → started form → submitted. The first four
+ * counts are distinct visitors from raw events (retention-bound — see
+ * rawDataFrom); `submitted` is exact. */
+export interface CommissionFunnel {
+    from: string;
+    to: string;
+    rawDataFrom: string;
+    visited: number;
+    viewedWorks: number;
+    openedCommissionPage: number;
+    startedForm: number;
+    submitted: number;
+}
+
+export interface AnalyticsAnnotation {
+    id: string;
+    day: string;
+    label: string;
+    createdAt: string;
+}
+
+export interface CreateAnnotationRequest {
+    day: string;
+    label: string;
+}
+
+/** Daily marks/subscribers/comments — full history, no retention pruning. */
+export interface LifeOfHouseDailyPoint {
+    day: string;
+    marks: number;
+    subscribers: number;
+    comments: number;
+}
+
+export interface LifeOfHouseTrend {
+    from: string;
+    to: string;
+    daily: LifeOfHouseDailyPoint[];
+    marksTotal: number;
+    subscribersTotal: number;
+    commentsTotal: number;
+    previousMarksTotal: number;
+    previousSubscribersTotal: number;
+    previousCommentsTotal: number;
+}
+
 export interface AnalyticsEventPayload {
-    eventType: 'figurine_view' | 'figurine_engaged' | 'figurine_cta_click';
-    figurineId: string;
+    eventType: 'figurine_view' | 'figurine_engaged' | 'figurine_cta_click' | 'page_view';
+    /** Required for figurine_view/figurine_engaged/figurine_cta_click; absent
+     * for site-wide page_view events. */
+    figurineId?: string | null;
     path: string;
     referrer?: string | null;
     utmSource?: string | null;
@@ -500,6 +620,9 @@ export interface AnalyticsEventPayload {
     ctaType?: string | null;
     pageViewId?: string | null;
     clientTs?: string;
+    lang?: string | null;
+    /** Which on-site block a figurine-card click came from, e.g. "home_afisha". */
+    internalSource?: string | null;
 }
 
 // ── Commissions: a petition to the master to create a NEW figurine ──
@@ -1033,6 +1156,27 @@ export interface ContactSettings {
     phone: string | null;
 }
 
+// === CONTACT MESSAGES ("write to the author") — anonymous, two-field letters,
+// not tied to a figurine (unlike OrderRequest) or a logged-in account (unlike
+// MessageThreadDto). ===
+
+export interface CreateContactMessageRequest {
+    email: string;
+    message: string;
+    source?: string | null;
+    lang?: string | null;
+}
+
+export interface ContactMessageDto {
+    id: string;
+    email: string;
+    message: string;
+    source: string;
+    lang: string;
+    isRead: boolean;
+    createdAt: string;
+}
+
 /** Customizable "Workshop" feature block on the home page. Blank text fields
  *  fall back to the i18n defaults; blank photos fall back to the bundled ones. */
 export interface ProgrammeSettings {
@@ -1205,7 +1349,7 @@ export interface CopyOverrides {
  *  compound blocks: they move as one unit and keep their isReturningVisitor
  *  gate; their children are ordered by bandOrder / shelfOrder. */
 export type HomeMainBlockId =
-    | 'hero' | 'returningBand' | 'gallery' | 'authorStory'
+    | 'hero' | 'returningBand' | 'gallery' | 'authorStory' | 'correspondence'
     | 'impressions' | 'requestSteps' | 'visitorBook' | 'latelyShelves';
 export type HomeBandBlockId = 'visitLedger' | 'noticeBoard';
 export type HomeShelfBlockId = 'firstLook' | 'markedByYou' | 'noticedByGuests';

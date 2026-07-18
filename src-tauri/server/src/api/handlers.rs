@@ -529,6 +529,22 @@ pub async fn record_analytics_event(
     Ok(StatusCode::NO_CONTENT)
 }
 
+pub async fn admin_get_analytics_overview(
+    State(service): State<AppService>,
+    Query(query): Query<AdminAnalyticsQuery>,
+) -> Result<Json<AdminAnalyticsOverview>> {
+    service.refresh_analytics_hot_window_if_due().await?;
+    Ok(Json(service.admin_get_analytics_overview(query).await?))
+}
+
+pub async fn admin_get_commission_funnel(
+    State(service): State<AppService>,
+    Query(query): Query<AdminAnalyticsQuery>,
+) -> Result<Json<CommissionFunnel>> {
+    service.refresh_analytics_hot_window_if_due().await?;
+    Ok(Json(service.admin_get_commission_funnel(query).await?))
+}
+
 pub async fn admin_list_figurine_analytics(
     State(service): State<AppService>,
     Query(query): Query<AdminAnalyticsQuery>,
@@ -544,6 +560,50 @@ pub async fn admin_get_figurine_analytics(
 ) -> Result<Json<AdminFigurineAnalyticsDetail>> {
     service.refresh_analytics_hot_window_if_due().await?;
     Ok(Json(service.admin_get_figurine_analytics(id, query).await?))
+}
+
+pub async fn admin_backfill_analytics(
+    State(service): State<AppService>,
+    body: Bytes,
+) -> Result<Json<BackfillAnalyticsResponse>> {
+    let req: BackfillAnalyticsRequest = if body.is_empty() {
+        BackfillAnalyticsRequest::default()
+    } else {
+        serde_json::from_slice(&body)
+            .map_err(|_| AppError::BadRequest("Invalid backfill payload".into()))?
+    };
+    Ok(Json(service.admin_backfill_analytics(req).await?))
+}
+
+pub async fn admin_get_life_of_house_trend(
+    State(service): State<AppService>,
+    Query(query): Query<AdminAnalyticsQuery>,
+) -> Result<Json<LifeOfHouseTrend>> {
+    Ok(Json(service.admin_get_life_of_house_trend(query).await?))
+}
+
+pub async fn admin_list_analytics_annotations(
+    State(service): State<AppService>,
+    Query(query): Query<AdminAnalyticsQuery>,
+) -> Result<Json<Vec<AnalyticsAnnotation>>> {
+    Ok(Json(service.admin_list_analytics_annotations(query).await?))
+}
+
+pub async fn admin_create_analytics_annotation(
+    State(service): State<AppService>,
+    Json(req): Json<CreateAnnotationRequest>,
+) -> Result<Json<AnalyticsAnnotation>> {
+    Ok(Json(service.admin_create_analytics_annotation(req).await?))
+}
+
+pub async fn admin_delete_analytics_annotation(
+    State(service): State<AppService>,
+    Path(id): Path<String>,
+) -> Result<StatusCode> {
+    let id = uuid::Uuid::parse_str(&id)
+        .map_err(|_| AppError::BadRequest("Invalid annotation id".into()))?;
+    service.admin_delete_analytics_annotation(id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /*pub async fn get_sync_manifest(
@@ -2883,5 +2943,42 @@ pub async fn admin_remove_subscriber(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode> {
     service.remove_subscriber(id).await?;
+    Ok(StatusCode::OK)
+}
+
+// === CONTACT MESSAGES ("write to the author") ===
+
+pub async fn submit_contact_message(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(body): Json<CreateContactMessageRequest>,
+) -> Result<StatusCode> {
+    let ip = extract_ip(&headers);
+    service
+        .check_rate_limit("contact_message", &ip, 5, 3600)
+        .await?;
+    service.submit_contact_message(body, Some(ip)).await?;
+    Ok(StatusCode::OK)
+}
+
+pub async fn admin_list_contact_messages(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<ContactMessageDto>>> {
+    Ok(Json(service.list_contact_messages_admin().await?))
+}
+
+pub async fn admin_mark_contact_message_read(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    service.mark_contact_message_read(id).await?;
+    Ok(StatusCode::OK)
+}
+
+pub async fn admin_remove_contact_message(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    service.remove_contact_message(id).await?;
     Ok(StatusCode::OK)
 }

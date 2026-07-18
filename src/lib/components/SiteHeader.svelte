@@ -12,6 +12,7 @@
   import { api, resolveMediaUrl } from '$lib/api';
   import RavenWatcher from '$lib/components/RavenWatcher.svelte';
   import HeaderBirdWalk from '$lib/components/HeaderBirdWalk.svelte';
+  import ContactMessageForm from '$lib/components/ContactMessageForm.svelte';
   import type { AuthorProfile } from '$lib/types/api';
 
   // Header-left maker avatar — admin-editable photo + frame styling.
@@ -116,6 +117,21 @@
     }
   }
 
+  // "Write to the author" panel — a quill icon always in reach, so the
+  // lightweight contact form (see ContactMessageForm) is one click away
+  // from any page, not just the home correspondence card.
+  let contactPanelOpen = $state(false);
+  let contactPanelRef = $state<HTMLElement | null>(null);
+
+  function toggleContactPanel() { contactPanelOpen = !contactPanelOpen; }
+  function closeContactPanel() { contactPanelOpen = false; }
+
+  function handleContactOutside(e: MouseEvent) {
+    if (contactPanelOpen && contactPanelRef && !contactPanelRef.contains(e.target as Node)) {
+      contactPanelOpen = false;
+    }
+  }
+
   async function handleLogout() {
     userMenuOpen = false;
     mobileNavOpen = false;
@@ -135,6 +151,7 @@
     allClaims.startPolling();
     document.addEventListener('click', handleOutside, { capture: true });
     document.addEventListener('click', handleUserOutside, { capture: true });
+    document.addEventListener('click', handleContactOutside, { capture: true });
     window.addEventListener('scroll', handleScroll, { passive: true });
     handleScroll();
 
@@ -160,6 +177,7 @@
     if (typeof document !== 'undefined') {
       document.removeEventListener('click', handleOutside, { capture: true });
       document.removeEventListener('click', handleUserOutside, { capture: true });
+      document.removeEventListener('click', handleContactOutside, { capture: true });
     }
     if (typeof window !== 'undefined') {
       window.removeEventListener('scroll', handleScroll);
@@ -240,8 +258,43 @@
       {/each}
     </nav>
 
-    <!-- ⑤ Ghost-right: muted utilities pinned to right edge -->
-    <div class="ghost-right">
+    <!-- ⑤ Ghost-right: muted utilities pinned to right edge. The "Write"
+         button lives OUTSIDE .ghost-right on purpose: that container (and
+         its :has()/:hover states) dims itself down to as little as 0.42
+         opacity for the bookings/user icons, and CSS opacity on a parent
+         composites its whole subtree as one layer — nesting the accented
+         button (and its dropdown) in there made both render translucent no
+         matter how opaque their own backgrounds were. -->
+    <div class="ghost-right-group">
+      <div class="contact-anchor" bind:this={contactPanelRef}>
+        <button
+          class="contact-btn"
+          class:is-open={contactPanelOpen}
+          onclick={toggleContactPanel}
+          aria-label={$t('headerContactLabel')}
+          title={$t('headerContactLabel')}
+        >
+          <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+            <path d="M12.2 1.8c-3.6 0-8.4 3.4-9.9 7-.3.7.4 1.4 1.1 1.1l1.9-.8" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M12.2 1.8c0 3.6-3.4 8.4-7 9.9-.7.3-1.4-.4-1.1-1.1l.8-1.9" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M5.4 8.6L1.8 12.2" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+          </svg>
+          <span class="contact-btn-label">{$t('headerContactShortLabel')}</span>
+        </button>
+
+        {#if contactPanelOpen}
+          <div class="contact-panel" transition:fade={{ duration: 150 }}>
+            <div class="panel-head">
+              <span class="panel-title">{$t('headerContactLabel')}</span>
+              <button class="panel-close" onclick={closeContactPanel} aria-label="Close">✕</button>
+            </div>
+            <p class="contact-panel-note">{$t('headerContactNote')}</p>
+            <ContactMessageForm source="header" compact />
+          </div>
+        {/if}
+      </div>
+
+      <div class="ghost-right">
       {#if allClaims.claims.length > 0}
       <div class="bookings-anchor" bind:this={panelRef}>
         <button
@@ -361,6 +414,7 @@
             </button>
           </div>
         {/if}
+      </div>
       </div>
     </div>
 
@@ -525,16 +579,25 @@
   }
 
   /* 0.42 opacity is a discreet grey on parchment; on a photograph it is simply
-     gone. The utilities need real presence here — still quiet, but legible. */
+     gone. The utilities need real presence here — still quiet, but legible.
+     Scoped to the icon BUTTONS only (not `.ghost-right` as a whole): opacity
+     on an ancestor composites its entire subtree as one layer, and the
+     bookings/user/contact buttons each open a solid dropdown panel — nesting
+     those panels under a dimmed ancestor made them render half see-through
+     no matter how opaque their own background was. The always-accented
+     contact button is excluded — see its own rule below. */
   .site-header.over-plate .ghost-left-utils,
-  .site-header.over-plate .ghost-right {
+  .site-header.over-plate .ghost-right .bookings-btn,
+  .site-header.over-plate .ghost-right .user-btn {
     opacity: 0.72;
   }
 
   .site-header.over-plate .ghost-left-utils:hover,
   .site-header.over-plate .ghost-left-utils:focus-within,
-  .site-header.over-plate .ghost-right:hover,
-  .site-header.over-plate .ghost-right:focus-within {
+  .site-header.over-plate .ghost-right .bookings-anchor:hover .bookings-btn,
+  .site-header.over-plate .ghost-right .bookings-anchor:focus-within .bookings-btn,
+  .site-header.over-plate .ghost-right .user-anchor:hover .user-btn,
+  .site-header.over-plate .ghost-right .user-anchor:focus-within .user-btn {
     opacity: 1;
   }
 
@@ -589,6 +652,15 @@
     gap: 4px;
   }
 
+  /* Holds the always-accented "Write" button alongside the muted
+     bookings/user cluster without being subject to the latter's opacity
+     rules — see the markup comment by .ghost-right-group. */
+  .ghost-right-group {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
   /* .ghost-left itself stays at full opacity now that it carries the maker
      avatar — that must never look grey/dimmed. Only the lang/font switchers
      (wrapped below in .ghost-left-utils) keep the old muted-until-hovered
@@ -615,7 +687,7 @@
   }
 
   .ghost-left  { grid-column: 1; justify-content: flex-start; }
-  .ghost-right { grid-column: 5; justify-content: flex-end; }
+  .ghost-right-group { grid-column: 5; justify-content: flex-end; }
 
   /* ── Maker avatar — large, full colour, fills the header's height.
      No sepia/grayscale filter: the face must read as a real photo, not a
@@ -1026,6 +1098,63 @@
   }
   .panel-view-all:hover { color: #c65f3c; }
 
+  /* ── Contact ("write to the author") button ─────────────────
+     Deliberately NOT muted like the bookings/user icons — this is the
+     answer to "how do I reach the maker," so it carries a permanent
+     copper outline instead of blending in until hovered. Literal colour
+     (not the --copper token, which the .over-plate state repaints) so it
+     reads the same accent on parchment and over a photograph alike. */
+  .contact-anchor { position: relative; }
+
+  .contact-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    height: 30px;
+    padding: 0 13px 0 11px;
+    background: transparent;
+    border: 1px solid #c65f3c;
+    border-radius: 2px;
+    color: #c65f3c;
+    font-family: 'Instrument Sans', system-ui, sans-serif;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background 0.25s ease, color 0.25s ease, border-color 0.25s ease;
+  }
+  .contact-btn svg { flex-shrink: 0; }
+  .contact-btn:hover,
+  .contact-btn.is-open {
+    background: #c65f3c;
+    color: #fff9f0;
+  }
+
+  .contact-panel {
+    position: absolute;
+    top: calc(100% + 10px);
+    right: 0;
+    width: 300px;
+    padding: 4px 16px 18px;
+    background: #f2e8d9;
+    border: 1px solid #d8c6b1;
+    box-shadow: 0 8px 32px rgba(52, 37, 28, 0.12);
+    z-index: 300;
+    font-family: Georgia, serif;
+    color: #34251c;
+  }
+  .contact-panel .panel-head { margin: 0 -16px 14px; }
+  .contact-panel-note {
+    margin: 0 0 14px;
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-style: italic;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--color-ink-secondary, #5f4636);
+  }
+
   /* ── User button ─────────────────────────────────────────── */
   .user-anchor { position: relative; }
 
@@ -1186,7 +1315,7 @@
 
     /* Hide desktop-only zones */
     .ghost-left,
-    .ghost-right,
+    .ghost-right-group,
     .nav-side { display: none; }
 
     /* Brand: move to flex-start, horizontal layout */

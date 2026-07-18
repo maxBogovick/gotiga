@@ -17,7 +17,17 @@
   import type { FigurineListItem } from '$lib/types/api';
   import HomeFigurineTile from '$lib/components/HomeFigurineTile.svelte';
 
-  let { works = [], greetName = '' }: { works?: FigurineListItem[]; greetName?: string } = $props();
+  let {
+    works = [],
+    greetName = '',
+    source,
+  }: {
+    works?: FigurineListItem[];
+    greetName?: string;
+    // Tags each tile's link for admin analytics (e.g. "home_first_look").
+    // Optional — other callers of this component simply omit it.
+    source?: string;
+  } = $props();
 
   let locale = $derived($lang === 'ru' ? 'ru-RU' : 'en-US');
   function opensLabel(iso: string): string {
@@ -42,7 +52,7 @@
     <div class="fl-grid" class:fl-grid-short={works.length <= 3}>
       {#each works as fig, i (fig.id)}
         <div class="fl-item">
-          <HomeFigurineTile {fig} index={i} />
+          <HomeFigurineTile {fig} index={i} {source} />
           {#if fig.firstLookUntil}
             <p class="fl-opens">
               <span class="fl-opens-dot" aria-hidden="true"></span>

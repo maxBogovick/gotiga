@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import { page } from '$app/state';
@@ -6,10 +7,25 @@
   import { t, lang , brandName } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
   import { isValidEmail } from '$lib/validation';
+  import { createSiteAnalytics } from '$lib/analytics';
   import type { AttachmentInput, Figurine, FigurineListItem } from '$lib/types/api';
 
   const STORE_KEY = 'gotiga_commissions';
   const PENDING_CLAIM_KEY = 'gotiga_pending_claim';
+
+  const siteAnalytics = createSiteAnalytics();
+
+  onMount(() => {
+    siteAnalytics.pageView();
+  });
+
+  // Fired from the step-1 title/description fields' own input handler — not a
+  // reactive effect — so a programmatic value-set (e.g. the source-figurine
+  // effect below prefilling `title`) never counts as "the visitor started
+  // the form." cta() dedupes internally, so this is safe to call on every keystroke.
+  function markFormStarted() {
+    siteAnalytics.cta('commission_form_start');
+  }
 
   let step = $state(1);
   const TOTAL_STEPS = 3;
@@ -331,11 +347,11 @@
           <div class="step" in:fade={{ duration: 350 }}>
             <label class="field">
               <span class="field-label">{$t('commissionFieldTitle')}</span>
-              <input class="input" type="text" bind:value={title} placeholder={$t('commissionFieldTitlePh')} maxlength="120" />
+              <input class="input" type="text" bind:value={title} oninput={markFormStarted} placeholder={$t('commissionFieldTitlePh')} maxlength="120" />
             </label>
             <label class="field">
               <span class="field-label">{$t('commissionFieldIdea')} *</span>
-              <textarea class="input area" bind:value={description} rows="5" placeholder={$t('commissionFieldIdeaPh')} maxlength="5000"></textarea>
+              <textarea class="input area" bind:value={description} oninput={markFormStarted} rows="5" placeholder={$t('commissionFieldIdeaPh')} maxlength="5000"></textarea>
             </label>
             {#if sourceFigurineId}
               <div class="similar-fields">

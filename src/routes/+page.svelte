@@ -4,6 +4,7 @@
     import { cubicOut } from 'svelte/easing';
     import { api, resolveSrcset, resolveWebpUrl } from '$lib/api';
     import { figurineHref } from '$lib/figurineHref';
+    import { createSiteAnalytics } from '$lib/analytics';
     import AppImage from '$lib/components/AppImage.svelte';
     import type { AuthorProfile, FigurineListItem, HomeContent } from '$lib/types/api';
     import { t, brandName } from '$lib/i18n';
@@ -14,6 +15,7 @@
     import VisitorBook from '$lib/components/VisitorBook.svelte';
     import ImpressionsQuoteStrip from '$lib/components/ImpressionsQuoteStrip.svelte';
     import AuthorStory from '$lib/components/AuthorStory.svelte';
+    import CorrespondenceInvite from '$lib/components/CorrespondenceInvite.svelte';
     import FirstLook from '$lib/components/FirstLook.svelte';
     import HeroWorkshopTeaser from '$lib/components/HeroWorkshopTeaser.svelte';
     import WorkshopReelModal from '$lib/components/WorkshopReelModal.svelte';
@@ -214,7 +216,7 @@
             { words: titleWords.slice(1), offset: 1 },
         ];
     })());
-    let heroObjectHref = $derived(heroPhotoFigurine ? figurineHref(heroPhotoFigurine) : '/figurines');
+    let heroObjectHref = $derived(heroPhotoFigurine ? figurineHref(heroPhotoFigurine, 'home_featured') : '/figurines');
     let showHeroCaption = $derived(Boolean(heroObjectName));
     // The hero photo. `heroFigurine` is the deterministic pick made by pickHeroFigurine —
     // the same function load() ran at build time, over the same data — so this string is
@@ -434,6 +436,11 @@
     let showHint = $state(false);
 
     onMount(() => {
+        // Site-wide view, no figurine attached — respects the same DNT/admin/Tauri
+        // exclusions as the figurine-detail tracking automatically. Dedupes
+        // internally, so this stays a no-op if the component ever re-mounts.
+        createSiteAnalytics().pageView();
+
         // Hydration does not touch src/srcset (see hydrate-image.ts): on this prerendered
         // page the hero <img> holds whatever the BUILD resolved, and load() has since
         // re-run against the live API. Usually the two agree — the pick is deterministic —
@@ -751,7 +758,7 @@
                              real ceremony in the band — the showing programme runs regularly
                              and earns the theatre. -->
                         <div class={hlClasses('noticeBoard')} style={hlSubStyle('noticeBoard', hlBandOrder.indexOf('noticeBoard'))} data-hl="noticeBoard">
-                            <HouseNoticeBoard figurines={collectionFigurines} />
+                            <HouseNoticeBoard figurines={collectionFigurines} source="home_afisha" />
                         </div>
                     {/if}
                 </div>
@@ -821,6 +828,7 @@
                                         index={i + 1}
                                         story={fig.shortText}
                                         flip={i % 2 === 1}
+                                        source="home_grid"
                                     />
                                 </div>
                             {/each}
@@ -891,6 +899,16 @@
         </div>
         {/if}
 
+        <!-- "Write to the author": the low-commitment touchpoint the page was
+             missing between the author's story and the commission funnel — a
+             stranger who isn't ready for the full /commission wizard still
+             gets an obvious, immediate way to say something. -->
+        {#if hlVisible('correspondence')}
+        <div class={hlClasses('correspondence')} style={hlStyle('correspondence')} data-hl="correspondence">
+        <CorrespondenceInvite authorName={authorName} />
+        </div>
+        {/if}
+
         <!-- Social proof (Concept B, Variant A): curator-picked reactions from the
              Book of Impressions, lifted up to support the commission decision
              rather than sitting below it in the page's basement. -->
@@ -956,21 +974,21 @@
                          so the admin can actually see the shelf). -->
                     {#if hlVisible('firstLook') && (visitorBook.signed || previewVisitorMode === 'returning')}
                         <div class={hlClasses('firstLook')} style={hlSubStyle('firstLook', hlShelfOrder.indexOf('firstLook'))} data-hl="firstLook">
-                            <FirstLook works={homeShelves.firstLook} greetName={visitorBook.name} />
+                            <FirstLook works={homeShelves.firstLook} greetName={visitorBook.name} source="home_first_look" />
                         </div>
                     {/if}
 
                     <!-- The visitor's own private marks, resolved locally. -->
                     {#if hlVisible('markedByYou')}
                         <div class={hlClasses('markedByYou')} style={hlSubStyle('markedByYou', hlShelfOrder.indexOf('markedByYou'))} data-hl="markedByYou">
-                            <MarkedByYou figurines={homeShelves.marked} />
+                            <MarkedByYou figurines={homeShelves.marked} source="home_marked" />
                         </div>
                     {/if}
 
                     <!-- Hybrid editorial+algorithmic shelf: admin pins + top of the private mark ranking. -->
                     {#if hlVisible('noticedByGuests')}
                         <div class={hlClasses('noticedByGuests')} style={hlSubStyle('noticedByGuests', hlShelfOrder.indexOf('noticedByGuests'))} data-hl="noticedByGuests">
-                            <NoticedByGuests figurines={homeShelves.noticed} />
+                            <NoticedByGuests figurines={homeShelves.noticed} source="home_noticed" />
                         </div>
                     {/if}
                 </div>

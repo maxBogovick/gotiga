@@ -16,26 +16,6 @@ fn parse_optional_deadline(raw: Option<&str>) -> Result<Option<chrono::NaiveDate
     }
 }
 
-fn analytics_signal(
-    views: i64,
-    engaged_views: i64,
-    cta_clicks: i64,
-    submissions: i64,
-    conversion_rate: f64,
-) -> AnalyticsSignal {
-    if views < 10 {
-        AnalyticsSignal::LowData
-    } else if conversion_rate >= 12.0 && submissions >= 2 {
-        AnalyticsSignal::HighConversion
-    } else if submissions == 0 && (engaged_views >= 8 || cta_clicks >= 3) {
-        AnalyticsSignal::AttentionNoSubmissions
-    } else if views < 25 {
-        AnalyticsSignal::LowVisibility
-    } else {
-        AnalyticsSignal::Normal
-    }
-}
-
 #[derive(Clone)]
 pub struct Repository {
     pg_pool: PgPool,
@@ -89,7 +69,7 @@ impl Repository {
                 occurred_at, event_date, event_type, figurine_id, visitor_hash,
                 page_view_id, path, source, referrer_host, utm_source, utm_medium,
                 utm_campaign, device_class, browser_family, country_code,
-                duration_ms, scroll_depth, cta_type, user_id
+                duration_ms, scroll_depth, cta_type, user_id, lang, internal_source
             ) ",
         );
         builder.push_values(events, |mut b, event| {
@@ -111,7 +91,9 @@ impl Repository {
                 .push_bind(event.duration_ms)
                 .push_bind(event.scroll_depth)
                 .push_bind(&event.cta_type)
-                .push_bind(event.user_id);
+                .push_bind(event.user_id)
+                .push_bind(&event.lang)
+                .push_bind(&event.internal_source);
         });
 
         let result = builder.build().execute(&self.pg_pool).await?;
@@ -241,7 +223,7 @@ impl Repository {
                 UNION ALL
 
                 SELECT
-                    figurine_id::uuid,
+                    source_figurine_id::uuid,
                     created_at::date AS day,
                     0, 0, 0, 0,
                     0, 0, 0, 0, 0,
@@ -249,8 +231,13 @@ impl Repository {
                     COUNT(*) AS commissions_submitted
                 FROM commissions
                 WHERE created_at::date BETWEEN $1 AND $2
-                  AND figurine_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-                GROUP BY figurine_id::uuid, created_at::date
+                  -- Attribute to the work that inspired the "create similar" petition
+                  -- (set at submission time), not `figurine_id`, which is only filled
+                  -- in later if/when an admin accepts and links the commission to a
+                  -- real piece — using that column here silently undercounted this
+                  -- funnel step to near-zero.
+                  AND source_figurine_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                GROUP BY source_figurine_id::uuid, created_at::date
             ) rows
             GROUP BY figurine_id, day
             HAVING SUM(views) > 0
@@ -291,8 +278,117 @@ impl Repository {
         .execute(&mut *tx)
         .await?;
 
+        sqlx::query("DELETE FROM figurine_analytics_geo_daily WHERE day BETWEEN $1 AND $2")
+            .bind(from)
+            .bind(to)
+            .execute(&mut *tx)
+            .await?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO figurine_analytics_geo_daily (
+                figurine_id, day, country_code, views, unique_visitors, updated_at
+            )
+            SELECT
+                e.figurine_id,
+                e.event_date AS day,
+                COALESCE(e.country_code, 'unknown'),
+                COUNT(*)::int AS views,
+                COUNT(DISTINCT visitor_hash) FILTER (WHERE visitor_hash IS NOT NULL)::int AS unique_visitors,
+                NOW()
+            FROM figurine_analytics_events e
+            INNER JOIN figurines f ON f.id = e.figurine_id
+            WHERE e.event_date BETWEEN $1 AND $2
+              AND e.event_type = 'figurine_view'
+            GROUP BY e.figurine_id, e.event_date, COALESCE(e.country_code, 'unknown')
+            "#,
+        )
+        .bind(from)
+        .bind(to)
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query("DELETE FROM site_geo_daily WHERE day BETWEEN $1 AND $2")
+            .bind(from)
+            .bind(to)
+            .execute(&mut *tx)
+            .await?;
+
+        // Every page view site-wide (figurine detail pages + the generic
+        // pages), unlike figurine_analytics_geo_daily above which is
+        // figurine-detail-only — this is the total "where do visits come
+        // from" picture the admin geography map needs.
+        sqlx::query(
+            r#"
+            INSERT INTO site_geo_daily (day, country_code, views, unique_visitors, updated_at)
+            SELECT
+                event_date AS day,
+                COALESCE(country_code, 'unknown'),
+                COUNT(*)::int AS views,
+                COUNT(DISTINCT visitor_hash) FILTER (WHERE visitor_hash IS NOT NULL)::int AS unique_visitors,
+                NOW()
+            FROM figurine_analytics_events
+            WHERE event_date BETWEEN $1 AND $2
+              AND event_type IN ('page_view', 'figurine_view')
+            GROUP BY event_date, COALESCE(country_code, 'unknown')
+            "#,
+        )
+        .bind(from)
+        .bind(to)
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query("DELETE FROM site_page_views_daily WHERE day BETWEEN $1 AND $2")
+            .bind(from)
+            .bind(to)
+            .execute(&mut *tx)
+            .await?;
+
+        // Only figurine_id IS NULL 'page_view' events land here — figurine
+        // detail pages are tracked separately via 'figurine_view' above, so
+        // there's no overlap/double-count between this table and
+        // figurine_analytics_daily.
+        sqlx::query(
+            r#"
+            INSERT INTO site_page_views_daily (day, path_group, views, unique_visitors, updated_at)
+            SELECT
+                event_date AS day,
+                CASE
+                    WHEN path = '/' OR path LIKE '/?%' THEN 'home'
+                    WHEN path = '/figurines' OR path LIKE '/figurines?%' THEN 'archive'
+                    WHEN path LIKE '/author%' THEN 'author'
+                    WHEN path LIKE '/workshop%' THEN 'workshop'
+                    WHEN path LIKE '/commission%' THEN 'commission'
+                    ELSE 'other'
+                END AS path_group,
+                COUNT(*)::int AS views,
+                COUNT(DISTINCT visitor_hash) FILTER (WHERE visitor_hash IS NOT NULL)::int AS unique_visitors,
+                NOW()
+            FROM figurine_analytics_events
+            WHERE event_date BETWEEN $1 AND $2
+              AND event_type = 'page_view'
+              AND figurine_id IS NULL
+            GROUP BY event_date, path_group
+            "#,
+        )
+        .bind(from)
+        .bind(to)
+        .execute(&mut *tx)
+        .await?;
+
         tx.commit().await?;
         Ok(())
+    }
+
+    /// Earliest day already present in figurine_analytics_daily — the sensible
+    /// default start for a manual backfill (no point re-aggregating days
+    /// before analytics existed).
+    pub async fn get_earliest_analytics_day(&self) -> Result<Option<chrono::NaiveDate>> {
+        let row: (Option<chrono::NaiveDate>,) =
+            sqlx::query_as("SELECT MIN(day) FROM figurine_analytics_daily")
+                .fetch_one(&self.pg_pool)
+                .await?;
+        Ok(row.0)
     }
 
     pub async fn get_admin_figurine_analytics_list(
@@ -356,18 +452,31 @@ impl Repository {
                 WHERE rn = 1
             ),
             top_country AS (
+                -- Sourced from the permanent geo rollup, not raw events: raw
+                -- figurine_analytics_events are pruned after
+                -- analytics::RETENTION_DAYS, which would silently blank this
+                -- column for any range reaching further back than that.
                 SELECT figurine_id, country_code AS top_country
                 FROM (
                     SELECT
                         figurine_id,
-                        COALESCE(country_code, 'unknown') AS country_code,
-                        COUNT(*) AS views,
-                        ROW_NUMBER() OVER (PARTITION BY figurine_id ORDER BY COUNT(*) DESC, COALESCE(country_code, 'unknown') ASC) AS rn
-                    FROM figurine_analytics_events
-                    WHERE event_date BETWEEN $1 AND $2 AND event_type = 'figurine_view'
-                    GROUP BY figurine_id, COALESCE(country_code, 'unknown')
+                        country_code,
+                        SUM(views) AS views,
+                        ROW_NUMBER() OVER (PARTITION BY figurine_id ORDER BY SUM(views) DESC, country_code ASC) AS rn
+                    FROM figurine_analytics_geo_daily
+                    WHERE day BETWEEN $1 AND $2
+                    GROUP BY figurine_id, country_code
                 ) ranked
                 WHERE rn = 1
+            ),
+            all_countries AS (
+                SELECT
+                    figurine_id,
+                    array_agg(DISTINCT country_code ORDER BY country_code)
+                        FILTER (WHERE country_code <> 'unknown') AS countries
+                FROM figurine_analytics_geo_daily
+                WHERE day BETWEEN $1 AND $2
+                GROUP BY figurine_id
             ),
             top_device AS (
                 SELECT figurine_id, device_class AS top_device
@@ -406,6 +515,7 @@ impl Repository {
                 top_country.top_country,
                 top_device.top_device,
                 top_browser.top_browser,
+                COALESCE(all_countries.countries, ARRAY[]::text[]) AS countries,
                 COALESCE(stats.views, 0)::bigint AS views,
                 COALESCE(stats.unique_visitors, 0)::bigint AS unique_visitors,
                 COALESCE(stats.engaged_views, 0)::bigint AS engaged_views,
@@ -423,6 +533,7 @@ impl Repository {
             LEFT JOIN top_country ON top_country.figurine_id = f.id
             LEFT JOIN top_device ON top_device.figurine_id = f.id
             LEFT JOIN top_browser ON top_browser.figurine_id = f.id
+            LEFT JOIN all_countries ON all_countries.figurine_id = f.id
             ORDER BY {order_col} {order_dir}, f.name ASC
             "#
         );
@@ -438,6 +549,7 @@ impl Repository {
                 Option<String>,
                 Option<String>,
                 Option<String>,
+                Vec<String>,
                 i64,
                 i64,
                 i64,
@@ -463,6 +575,7 @@ impl Repository {
                     top_country,
                     top_device,
                     top_browser,
+                    countries,
                     views,
                     unique_visitors,
                     engaged_views,
@@ -470,33 +583,508 @@ impl Repository {
                     submissions,
                     conversion_rate,
                 )| {
-                    let signal = analytics_signal(
-                        views,
-                        engaged_views,
-                        cta_clicks,
-                        submissions,
-                        conversion_rate,
-                    );
                     AdminFigurineAnalyticsListItem {
                         figurine_id,
                         name,
                         status,
+                        // Not wired to a DB column anywhere in this codebase yet
+                        // (the admin form's series input isn't persisted server-side
+                        // — a pre-existing gap, not introduced here); left `None`
+                        // so the series filter degrades to "no options" instead of
+                        // querying a column that doesn't exist.
+                        series: None,
                         face_url,
-                        signal,
+                        // The service layer overwrites both of these once it has
+                        // merged in the growth-window query (signal/growth depend
+                        // on more than this one row can see — see
+                        // `AppService::analytics_signal`).
+                        signal: AnalyticsSignal::Normal,
+                        is_growing: false,
                         top_source,
                         top_country,
                         top_device,
                         top_browser,
+                        countries,
                         views,
                         unique_visitors,
                         engaged_views,
                         cta_clicks,
                         submissions,
                         conversion_rate,
+                        sparkline: Vec::new(),
                     }
                 },
             )
             .collect())
+    }
+
+    /// Last-14-days-ending-at-`to` daily view counts for every figurine, for the
+    /// works-table row sparklines. A fixed window regardless of the selected
+    /// range so sparklines stay a comparable shape.
+    pub async fn get_figurine_sparklines(
+        &self,
+        to: chrono::NaiveDate,
+    ) -> Result<std::collections::HashMap<Uuid, Vec<(chrono::NaiveDate, i64)>>> {
+        let from = to - chrono::Duration::days(13);
+        let rows: Vec<(Uuid, chrono::NaiveDate, i64)> = sqlx::query_as(
+            r#"
+            SELECT figurine_id, day, views::bigint
+            FROM figurine_analytics_daily
+            WHERE day BETWEEN $1 AND $2
+            "#,
+        )
+        .bind(from)
+        .bind(to)
+        .fetch_all(&self.pg_pool)
+        .await?;
+
+        let mut map: std::collections::HashMap<Uuid, Vec<(chrono::NaiveDate, i64)>> =
+            std::collections::HashMap::new();
+        for (figurine_id, day, views) in rows {
+            map.entry(figurine_id).or_default().push((day, views));
+        }
+        Ok(map)
+    }
+
+    /// Week-over-week view totals for every figurine, anchored at `anchor`
+    /// (typically the query's `to` date): `last7` = anchor-6..=anchor, `prior7`
+    /// = anchor-13..=anchor-7. Used to compute the `growing_interest` signal.
+    pub async fn get_admin_growth_window(
+        &self,
+        anchor: chrono::NaiveDate,
+    ) -> Result<std::collections::HashMap<Uuid, (i64, i64)>> {
+        let last7_from = anchor - chrono::Duration::days(6);
+        let prior7_from = anchor - chrono::Duration::days(13);
+        let prior7_to = anchor - chrono::Duration::days(7);
+        let rows: Vec<(Uuid, i64, i64)> = sqlx::query_as(
+            r#"
+            SELECT
+                figurine_id,
+                COALESCE(SUM(views) FILTER (WHERE day BETWEEN $2 AND $1), 0)::bigint AS last7,
+                COALESCE(SUM(views) FILTER (WHERE day BETWEEN $3 AND $4), 0)::bigint AS prior7
+            FROM figurine_analytics_daily
+            WHERE day BETWEEN $3 AND $1
+            GROUP BY figurine_id
+            "#,
+        )
+        .bind(anchor)
+        .bind(last7_from)
+        .bind(prior7_from)
+        .bind(prior7_to)
+        .fetch_all(&self.pg_pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, last7, prior7)| (id, (last7, prior7)))
+            .collect())
+    }
+
+    /// Single-figurine variant of `get_admin_growth_window`, for the detail view.
+    pub async fn get_figurine_growth_window(
+        &self,
+        figurine_id: Uuid,
+        anchor: chrono::NaiveDate,
+    ) -> Result<(i64, i64)> {
+        let last7_from = anchor - chrono::Duration::days(6);
+        let prior7_from = anchor - chrono::Duration::days(13);
+        let prior7_to = anchor - chrono::Duration::days(7);
+        let row: (i64, i64) = sqlx::query_as(
+            r#"
+            SELECT
+                COALESCE(SUM(views) FILTER (WHERE day BETWEEN $2 AND $1), 0)::bigint AS last7,
+                COALESCE(SUM(views) FILTER (WHERE day BETWEEN $3 AND $4), 0)::bigint AS prior7
+            FROM figurine_analytics_daily
+            WHERE figurine_id = $5 AND day BETWEEN $3 AND $1
+            "#,
+        )
+        .bind(anchor)
+        .bind(last7_from)
+        .bind(prior7_from)
+        .bind(prior7_to)
+        .bind(figurine_id)
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// The starts -> submitted funnel per CTA family for one figurine. Starts
+    /// come from the pre-aggregated daily table (client-side clicks, so subject
+    /// to DNT/bot/direct-link undercounting). Submitted is counted directly from
+    /// the real orders/bookings/waitlist/commissions tables — the source of
+    /// truth — not from the daily table's own submitted columns, since those
+    /// merge request+reserve into one column and (for commissions) previously
+    /// joined on the wrong figurine column; querying the source tables directly
+    /// sidesteps both issues without a schema migration.
+    pub async fn get_admin_figurine_cta_funnel(
+        &self,
+        figurine_id: Uuid,
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+    ) -> Result<Vec<CtaFunnelStep>> {
+        let starts: (i64, i64, i64, i64, i64) = sqlx::query_as(
+            r#"
+            SELECT
+                COALESCE(SUM(order_starts), 0)::bigint,
+                COALESCE(SUM(reserve_starts), 0)::bigint,
+                COALESCE(SUM(booking_starts), 0)::bigint,
+                COALESCE(SUM(waitlist_starts), 0)::bigint,
+                COALESCE(SUM(commission_starts), 0)::bigint
+            FROM figurine_analytics_daily
+            WHERE figurine_id = $1 AND day BETWEEN $2 AND $3
+            "#,
+        )
+        .bind(figurine_id)
+        .bind(from)
+        .bind(to)
+        .fetch_one(&self.pg_pool)
+        .await?;
+
+        let figurine_id_text = figurine_id.to_string();
+        let submitted: (i64, i64, i64, i64, i64) = sqlx::query_as(
+            r#"
+            SELECT
+                (SELECT COUNT(*) FROM orders
+                    WHERE figurine_id = $1 AND mode = 'request'
+                    AND created_at::date BETWEEN $2 AND $3)::bigint,
+                (SELECT COUNT(*) FROM orders
+                    WHERE figurine_id = $1 AND mode = 'reserve'
+                    AND created_at::date BETWEEN $2 AND $3)::bigint,
+                (SELECT COUNT(*) FROM figurine_bookings
+                    WHERE figurine_id = $4 AND status != 'cancelled'
+                    AND created_at::date BETWEEN $2 AND $3)::bigint,
+                (SELECT COUNT(*) FROM figurine_waitlist
+                    WHERE figurine_id = $4
+                    AND created_at::date BETWEEN $2 AND $3)::bigint,
+                (SELECT COUNT(*) FROM commissions
+                    WHERE source_figurine_id = $1
+                    AND created_at::date BETWEEN $2 AND $3)::bigint
+            "#,
+        )
+        .bind(&figurine_id_text)
+        .bind(from)
+        .bind(to)
+        .bind(figurine_id)
+        .fetch_one(&self.pg_pool)
+        .await?;
+
+        Ok(vec![
+            CtaFunnelStep {
+                cta_type: "request".into(),
+                starts: starts.0,
+                submitted: submitted.0,
+            },
+            CtaFunnelStep {
+                cta_type: "reserve".into(),
+                starts: starts.1,
+                submitted: submitted.1,
+            },
+            CtaFunnelStep {
+                cta_type: "booking".into(),
+                starts: starts.2,
+                submitted: submitted.2,
+            },
+            CtaFunnelStep {
+                cta_type: "waitlist".into(),
+                starts: starts.3,
+                submitted: submitted.3,
+            },
+            CtaFunnelStep {
+                cta_type: "commission".into(),
+                starts: starts.4,
+                submitted: submitted.4,
+            },
+        ])
+    }
+
+    /// Median engagement duration/scroll-depth for one figurine, from raw
+    /// `figurine_engaged` events. NULL samples are excluded before the
+    /// percentile is computed (never treated as 0); returns `None` for either
+    /// value when there are no qualifying events in range (e.g. the whole range
+    /// predates raw-event retention).
+    pub async fn get_admin_figurine_engagement_medians(
+        &self,
+        figurine_id: Uuid,
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+    ) -> Result<(Option<f64>, Option<f64>)> {
+        let row: (Option<f64>, Option<f64>) = sqlx::query_as(
+            r#"
+            SELECT
+                percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms)
+                    FILTER (WHERE duration_ms IS NOT NULL),
+                percentile_cont(0.5) WITHIN GROUP (ORDER BY scroll_depth)
+                    FILTER (WHERE scroll_depth IS NOT NULL)
+            FROM figurine_analytics_events
+            WHERE figurine_id = $1
+              AND event_type = 'figurine_engaged'
+              AND event_date BETWEEN $2 AND $3
+            "#,
+        )
+        .bind(figurine_id)
+        .bind(from)
+        .bind(to)
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Site-wide daily trend (all figurines summed) — the Overview screen's main
+    /// chart, built from the same pre-aggregated table so it isn't bound by raw
+    /// event retention.
+    pub async fn get_admin_site_overview_daily(
+        &self,
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+    ) -> Result<Vec<AnalyticsDailyPoint>> {
+        Ok(sqlx::query_as::<_, AnalyticsDailyPoint>(
+            r#"
+            SELECT
+                day,
+                SUM(views)::bigint AS views,
+                SUM(unique_visitors)::bigint AS unique_visitors,
+                SUM(engaged_views)::bigint AS engaged_views,
+                SUM(cta_clicks)::bigint AS cta_clicks,
+                SUM(orders_submitted + bookings_submitted + waitlist_submitted + commissions_submitted)::bigint AS submissions
+            FROM figurine_analytics_daily
+            WHERE day BETWEEN $1 AND $2
+            GROUP BY day
+            ORDER BY day ASC
+            "#,
+        )
+        .bind(from)
+        .bind(to)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Site-wide channel breakdown (all figurines summed) for the Sources screen.
+    pub async fn get_admin_site_analytics_sources(
+        &self,
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+    ) -> Result<Vec<AnalyticsSourcePoint>> {
+        Ok(sqlx::query_as::<_, AnalyticsSourcePoint>(
+            r#"
+            SELECT
+                source,
+                COALESCE(SUM(views), 0)::bigint AS views,
+                COALESCE(SUM(unique_visitors), 0)::bigint AS unique_visitors
+            FROM figurine_analytics_sources_daily
+            WHERE day BETWEEN $1 AND $2
+            GROUP BY source
+            ORDER BY views DESC, source ASC
+            "#,
+        )
+        .bind(from)
+        .bind(to)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Site-wide daily views by country (every page, not just figurine
+    /// detail pages) — the geography map's data source. Permanent, not
+    /// retention-bound, unlike a raw-event query would be.
+    pub async fn get_admin_site_geo(
+        &self,
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+    ) -> Result<Vec<AnalyticsBreakdownPoint>> {
+        Ok(sqlx::query_as::<_, AnalyticsBreakdownPoint>(
+            r#"
+            SELECT
+                country_code AS key,
+                COALESCE(SUM(views), 0)::bigint AS views,
+                COALESCE(SUM(unique_visitors), 0)::bigint AS unique_visitors
+            FROM site_geo_daily
+            WHERE day BETWEEN $1 AND $2
+            GROUP BY country_code
+            ORDER BY views DESC, country_code ASC
+            "#,
+        )
+        .bind(from)
+        .bind(to)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Daily views/uniques for the generic (non-figurine) pages, keyed by
+    /// coarse path_group. Permanent, not retention-bound.
+    pub async fn get_admin_site_page_views_daily(
+        &self,
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+    ) -> Result<Vec<(chrono::NaiveDate, i64, i64)>> {
+        Ok(sqlx::query_as(
+            r#"
+            SELECT day, SUM(views)::bigint, SUM(unique_visitors)::bigint
+            FROM site_page_views_daily
+            WHERE day BETWEEN $1 AND $2
+            GROUP BY day
+            ORDER BY day ASC
+            "#,
+        )
+        .bind(from)
+        .bind(to)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Every real submission site-wide by day, regardless of which figurine
+    /// (or none) it's attributed to — orders/bookings/waitlist/commissions
+    /// have full history (not retention-pruned), and a commission submitted
+    /// via the general /commission form has no figurine attribution at all,
+    /// so this is the only honest site-wide "submissions" total (the
+    /// per-figurine sum in figurine_analytics_daily necessarily excludes those).
+    pub async fn get_admin_site_submissions_daily(
+        &self,
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+    ) -> Result<Vec<(chrono::NaiveDate, i64)>> {
+        Ok(sqlx::query_as(
+            r#"
+            SELECT day, SUM(cnt)::bigint FROM (
+                SELECT created_at::date AS day, COUNT(*) AS cnt
+                FROM orders
+                WHERE mode IN ('request', 'reserve') AND created_at::date BETWEEN $1 AND $2
+                GROUP BY created_at::date
+
+                UNION ALL
+
+                SELECT created_at::date, COUNT(*)
+                FROM figurine_bookings
+                WHERE status != 'cancelled' AND created_at::date BETWEEN $1 AND $2
+                GROUP BY created_at::date
+
+                UNION ALL
+
+                SELECT created_at::date, COUNT(*)
+                FROM figurine_waitlist
+                WHERE created_at::date BETWEEN $1 AND $2
+                GROUP BY created_at::date
+
+                UNION ALL
+
+                SELECT created_at::date, COUNT(*)
+                FROM commissions
+                WHERE created_at::date BETWEEN $1 AND $2
+                GROUP BY created_at::date
+            ) x
+            GROUP BY day
+            ORDER BY day ASC
+            "#,
+        )
+        .bind(from)
+        .bind(to)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Site → works → /commission → started form → submitted. The first four
+    /// counts are distinct visitors from raw events (retention-bound —
+    /// callers must clamp `from`); `submitted` is exact.
+    pub async fn get_admin_commission_funnel(
+        &self,
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+    ) -> Result<(i64, i64, i64, i64, i64)> {
+        sqlx::query_as(
+            r#"
+            SELECT
+                (SELECT COUNT(DISTINCT visitor_hash) FROM figurine_analytics_events
+                    WHERE event_date BETWEEN $1 AND $2 AND visitor_hash IS NOT NULL)::bigint,
+                (SELECT COUNT(DISTINCT visitor_hash) FROM figurine_analytics_events
+                    WHERE event_date BETWEEN $1 AND $2 AND event_type = 'figurine_view'
+                    AND visitor_hash IS NOT NULL)::bigint,
+                (SELECT COUNT(DISTINCT visitor_hash) FROM figurine_analytics_events
+                    WHERE event_date BETWEEN $1 AND $2 AND event_type = 'page_view'
+                    AND path LIKE '/commission%' AND visitor_hash IS NOT NULL)::bigint,
+                (SELECT COUNT(DISTINCT visitor_hash) FROM figurine_analytics_events
+                    WHERE event_date BETWEEN $1 AND $2 AND event_type = 'figurine_cta_click'
+                    AND cta_type = 'commission_form_start' AND visitor_hash IS NOT NULL)::bigint,
+                (SELECT COUNT(*) FROM commissions
+                    WHERE created_at::date BETWEEN $1 AND $2)::bigint
+            "#,
+        )
+        .bind(from)
+        .bind(to)
+        .fetch_one(&self.pg_pool)
+        .await
+        .map_err(Into::into)
+    }
+
+    pub async fn create_analytics_annotation(
+        &self,
+        req: &CreateAnnotationRequest,
+    ) -> Result<AnalyticsAnnotation> {
+        Ok(sqlx::query_as::<_, AnalyticsAnnotation>(
+            "INSERT INTO analytics_annotations (day, label) VALUES ($1, $2) RETURNING *",
+        )
+        .bind(req.day)
+        .bind(&req.label)
+        .fetch_one(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn list_analytics_annotations(
+        &self,
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+    ) -> Result<Vec<AnalyticsAnnotation>> {
+        Ok(sqlx::query_as::<_, AnalyticsAnnotation>(
+            "SELECT * FROM analytics_annotations WHERE day BETWEEN $1 AND $2 ORDER BY day ASC",
+        )
+        .bind(from)
+        .bind(to)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn delete_analytics_annotation(&self, id: Uuid) -> Result<()> {
+        sqlx::query("DELETE FROM analytics_annotations WHERE id = $1")
+            .bind(id)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Daily marks/subscribers/comments — none retention-pruned, so a plain
+    /// date-range query is honest for any range (no raw_data_from clamp needed).
+    pub async fn get_admin_life_of_house_daily(
+        &self,
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+    ) -> Result<Vec<LifeOfHouseDailyPoint>> {
+        Ok(sqlx::query_as::<_, LifeOfHouseDailyPoint>(
+            r#"
+            SELECT day, SUM(marks)::bigint AS marks, SUM(subscribers)::bigint AS subscribers, SUM(comments)::bigint AS comments
+            FROM (
+                SELECT created_at::date AS day, COUNT(*) AS marks, 0::bigint AS subscribers, 0::bigint AS comments
+                FROM figurine_marks
+                WHERE created_at::date BETWEEN $1 AND $2
+                GROUP BY created_at::date
+
+                UNION ALL
+
+                SELECT created_at::date, 0::bigint, COUNT(*), 0::bigint
+                FROM newsletter_subscribers
+                WHERE created_at::date BETWEEN $1 AND $2
+                GROUP BY created_at::date
+
+                UNION ALL
+
+                SELECT created_at::date, 0::bigint, 0::bigint, COUNT(*)
+                FROM figurine_comments
+                WHERE created_at::date BETWEEN $1 AND $2
+                GROUP BY created_at::date
+            ) x
+            GROUP BY day
+            ORDER BY day ASC
+            "#,
+        )
+        .bind(from)
+        .bind(to)
+        .fetch_all(&self.pg_pool)
+        .await?)
     }
 
     pub async fn get_admin_figurine_analytics_daily(
@@ -566,6 +1154,8 @@ impl Repository {
             "referrer" => "COALESCE(referrer_host, 'direct')",
             "utm_source" => "COALESCE(utm_source, 'none')",
             "visitor" => "COALESCE(SUBSTRING(visitor_hash FROM 1 FOR 12), 'unknown')",
+            "lang" => "COALESCE(lang, 'unknown')",
+            "internal_source" => "COALESCE(internal_source, 'none')",
             _ => {
                 return Err(AppError::BadRequest(
                     "Invalid analytics breakdown".to_string(),
@@ -594,6 +1184,39 @@ impl Repository {
             .bind(limit)
             .fetch_all(&self.pg_pool)
             .await?)
+    }
+
+    /// Per-figurine country breakdown from the permanent geo rollup, not raw
+    /// events — unlike `get_admin_figurine_analytics_breakdown("country", ...)`,
+    /// this isn't bound by `analytics::RETENTION_DAYS`, so it's the one used
+    /// for the drilldown's country list (and the only one that stays correct
+    /// for a range older than the raw-event retention window).
+    pub async fn get_admin_figurine_geo_breakdown(
+        &self,
+        figurine_id: Uuid,
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+        limit: i64,
+    ) -> Result<Vec<AnalyticsBreakdownPoint>> {
+        Ok(sqlx::query_as::<_, AnalyticsBreakdownPoint>(
+            r#"
+            SELECT
+                country_code AS key,
+                COALESCE(SUM(views), 0)::bigint AS views,
+                COALESCE(SUM(unique_visitors), 0)::bigint AS unique_visitors
+            FROM figurine_analytics_geo_daily
+            WHERE figurine_id = $1 AND day BETWEEN $2 AND $3
+            GROUP BY country_code
+            ORDER BY views DESC, country_code ASC
+            LIMIT $4
+            "#,
+        )
+        .bind(figurine_id)
+        .bind(from)
+        .bind(to)
+        .bind(limit)
+        .fetch_all(&self.pg_pool)
+        .await?)
     }
 
     pub async fn prune_old_analytics_events_chunked(
@@ -3460,6 +4083,53 @@ impl Repository {
         Ok(())
     }
 
+    // === CONTACT MESSAGES ("write to the author") ===
+
+    pub async fn create_contact_message(
+        &self,
+        req: &crate::models::CreateContactMessageRequest,
+        ip: Option<&str>,
+    ) -> Result<crate::models::ContactMessage> {
+        let source = req.source.as_deref().unwrap_or("home");
+        let lang = req.lang.as_deref().unwrap_or("en");
+        Ok(sqlx::query_as::<_, crate::models::ContactMessage>(
+            "INSERT INTO contact_messages (email, message, source, lang, ip)
+             VALUES ($1, $2, $3, $4, $5)
+             RETURNING *",
+        )
+        .bind(&req.email)
+        .bind(&req.message)
+        .bind(source)
+        .bind(lang)
+        .bind(ip)
+        .fetch_one(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn list_contact_messages_admin(&self) -> Result<Vec<crate::models::ContactMessage>> {
+        Ok(sqlx::query_as::<_, crate::models::ContactMessage>(
+            "SELECT * FROM contact_messages ORDER BY created_at DESC",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn mark_contact_message_read(&self, id: Uuid) -> Result<()> {
+        sqlx::query("UPDATE contact_messages SET is_read = true WHERE id = $1")
+            .bind(id)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn remove_contact_message(&self, id: Uuid) -> Result<()> {
+        sqlx::query("DELETE FROM contact_messages WHERE id = $1")
+            .bind(id)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn get_waitlist_for_figurine(
         &self,
         figurine_id: Uuid,
@@ -3907,6 +4577,32 @@ impl Repository {
         )
         .bind(message_id)
         .fetch_all(&self.pg_pool).await?)
+    }
+
+    /// Batch-load attachments for many messages at once (avoids the N+1 of
+    /// querying attachments per message when building a thread's message list).
+    pub async fn get_attachments_for_messages(
+        &self,
+        message_ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Vec<crate::models::Attachment>>> {
+        if message_ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let rows = sqlx::query_as::<_, (Uuid, Uuid, String, Option<String>)>(
+            "SELECT message_id, id, url, thumb_url FROM thread_message_attachments
+             WHERE message_id = ANY($1) ORDER BY message_id, created_at ASC",
+        )
+        .bind(message_ids)
+        .fetch_all(&self.pg_pool)
+        .await?;
+        let mut out: std::collections::HashMap<Uuid, Vec<crate::models::Attachment>> =
+            std::collections::HashMap::new();
+        for (message_id, id, url, thumb_url) in rows {
+            out.entry(message_id)
+                .or_default()
+                .push(crate::models::Attachment { id, url, thumb_url });
+        }
+        Ok(out)
     }
 
     // === COMMISSIONS ===

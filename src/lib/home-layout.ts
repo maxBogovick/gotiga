@@ -23,7 +23,7 @@ import { READING_FONTS } from '$lib/stores/reading-font.svelte';
 // are compound blocks: they travel as one unit (keeping their isReturningVisitor
 // gate) and order their own children via bandOrder / shelfOrder.
 export const HOME_MAIN_BLOCK_IDS: readonly HomeMainBlockId[] = [
-    'hero', 'returningBand', 'gallery', 'authorStory',
+    'hero', 'returningBand', 'gallery', 'authorStory', 'correspondence',
     'impressions', 'requestSteps', 'visitorBook', 'latelyShelves',
 ] as const;
 export const HOME_BAND_BLOCK_IDS: readonly HomeBandBlockId[] = ['visitLedger', 'noticeBoard'] as const;

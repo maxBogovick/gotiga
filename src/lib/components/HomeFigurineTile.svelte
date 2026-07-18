@@ -17,6 +17,7 @@
         compact = false,
         selected = false,
         masonry = false,
+        source,
     }: {
         fig: FigurineListItem;
         index?: number;
@@ -26,6 +27,11 @@
         // measures that height into a grid row-span). Off elsewhere (shelves,
         // hall) so those tidy auto-fit rows keep a fixed crop.
         masonry?: boolean;
+        // Which named home-page block rendered this tile (e.g. "home_marked") —
+        // tags the outgoing link so admin analytics can attribute the click.
+        // Left undefined by every other caller (hall, home-classic), so their
+        // links stay untagged.
+        source?: string;
     } = $props();
 
     let saved = $derived(savedFigurines.has(fig.id));
@@ -54,7 +60,7 @@
         return { destroy() { io.disconnect(); } };
     }
 
-    let href = $derived(figurineHref(fig));
+    let href = $derived(figurineHref(fig, source));
 
     // Editorial plate number — a print-catalogue flourish, distinct from the
     // functional archive number (kept in the footer, used elsewhere for sharing).

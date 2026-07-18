@@ -9,7 +9,7 @@ use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, mpsc, watch};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
@@ -22,6 +22,14 @@ const FLUSH_INTERVAL: Duration = Duration::from_secs(10);
 const AGGREGATE_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const SHUTDOWN_FLUSH_DEADLINE: Duration = Duration::from_secs(5);
 
+/// How long raw `figurine_analytics_events` rows survive before
+/// `prune_old_analytics_events_chunked` deletes them. Single source of truth
+/// for both the prune job (main.rs) and any admin query that needs to know
+/// whether a requested date range still has raw events behind it (medians,
+/// breakdowns, top-sources) — those must report "no data", not a silent zero,
+/// for dates older than this.
+pub const RETENTION_DAYS: i64 = 30;
+
 #[derive(Clone)]
 pub struct AnalyticsRuntime {
     sender: Arc<Mutex<Option<mpsc::Sender<AnalyticsEventRecord>>>>,
@@ -29,6 +37,15 @@ pub struct AnalyticsRuntime {
     writer_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
     aggregate_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
     shutdown_tx: watch::Sender<bool>,
+    /// Single gate for every caller of `refresh_hot_window` — the background
+    /// aggregate_loop tick (which fires immediately on startup, then every
+    /// AGGREGATE_INTERVAL) AND any admin HTTP request via
+    /// `refresh_hot_window_if_due`. Without one shared gate, a server restart
+    /// followed immediately by opening the analytics panel let the
+    /// background tick and the panel's several parallel requests all pass a
+    /// "not due yet" check at once and run the DELETE+re-INSERT refresh
+    /// concurrently — Postgres throws a duplicate-key error for the losers.
+    refresh_gate: Arc<Mutex<Option<Instant>>>,
 }
 
 pub struct AnalyticsRequestContext<'a> {
@@ -36,6 +53,11 @@ pub struct AnalyticsRequestContext<'a> {
     pub admin_api_key: &'a str,
     pub hash_secret: &'a str,
     pub country_code: Option<String>,
+    /// The site's own host (from `PUBLIC_URL`) — lets `classify_source` tell
+    /// a same-origin referrer (internal navigation, e.g. archive → figurine
+    /// detail) from a genuine external referral, instead of dumping both into
+    /// "referral".
+    pub site_host: Option<String>,
 }
 
 impl AnalyticsRuntime {
@@ -44,12 +66,14 @@ impl AnalyticsRuntime {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let writer_repo = repo.clone();
         let aggregate_repo = repo;
+        let refresh_gate: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
+        let aggregate_gate = refresh_gate.clone();
 
         let writer_handle = tokio::spawn(async move {
             writer_loop(writer_repo, rx).await;
         });
         let aggregate_handle = tokio::spawn(async move {
-            aggregate_loop(aggregate_repo, shutdown_rx).await;
+            aggregate_loop(aggregate_repo, shutdown_rx, aggregate_gate).await;
         });
 
         Self {
@@ -58,7 +82,16 @@ impl AnalyticsRuntime {
             writer_handle: Arc::new(Mutex::new(Some(writer_handle))),
             aggregate_handle: Arc::new(Mutex::new(Some(aggregate_handle))),
             shutdown_tx,
+            refresh_gate,
         }
+    }
+
+    /// Refresh figurine_analytics_daily/site_page_views_daily for
+    /// yesterday+today, but only if the shared gate hasn't run in the last
+    /// 30s — called both by admin HTTP handlers and by the background
+    /// aggregate_loop tick, so every caller serializes through one lock.
+    pub async fn refresh_hot_window_if_due(&self, repo: &Repository) -> Result<()> {
+        refresh_hot_window_gated(repo, &self.refresh_gate).await
     }
 
     pub async fn try_enqueue(&self, event: AnalyticsEventRecord) -> bool {
@@ -118,7 +151,13 @@ pub fn build_event_record(
         return Ok(None);
     }
 
-    let figurine_id = Uuid::parse_str(&req.figurine_id)
+    let figurine_id = req
+        .figurine_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(Uuid::parse_str)
+        .transpose()
         .map_err(|_| crate::error::AppError::BadRequest("Invalid figurine ID".into()))?;
     let page_view_id = req
         .page_view_id
@@ -140,16 +179,18 @@ pub fn build_event_record(
         &hints,
         event_date,
     ));
-    let referrer_host = req.referrer.as_deref().and_then(referrer_host);
+    let referrer_host = req.referrer.as_deref().and_then(host_of);
     let source = classify_source(
         req.utm_source.as_deref(),
         req.utm_medium.as_deref(),
         referrer_host.as_deref(),
         req.path.as_str(),
+        ctx.site_host.as_deref(),
     );
     let user_agent = header_str(ctx.headers, "user-agent");
     let device_class = classify_device(ctx.headers, user_agent.as_deref());
     let browser_family = user_agent.as_deref().map(classify_browser);
+    let lang = req.lang.as_deref().and_then(normalize_lang);
 
     Ok(Some(AnalyticsEventRecord {
         occurred_at,
@@ -171,12 +212,34 @@ pub fn build_event_record(
         scroll_depth: req.scroll_depth,
         cta_type: clean_optional(req.cta_type, 80),
         user_id: None,
+        lang,
+        internal_source: clean_optional(req.internal_source, 60),
     }))
+}
+
+fn normalize_lang(raw: &str) -> Option<String> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "en" => Some("en".into()),
+        "ru" => Some("ru".into()),
+        _ => None,
+    }
 }
 
 fn validate_event(req: &AnalyticsEventRequest) -> Result<()> {
     if req.path.trim().is_empty() || req.path.len() > 512 {
         return Err(crate::error::AppError::BadRequest("Invalid path".into()));
+    }
+    if req.event_type != AnalyticsEventType::PageView
+        && req
+            .figurine_id
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("")
+            .is_empty()
+    {
+        return Err(crate::error::AppError::BadRequest(
+            "figurineId is required for this event type".into(),
+        ));
     }
     if let Some(duration) = req.duration_ms
         && duration < 0
@@ -241,7 +304,11 @@ async fn flush_batch(repo: &Repository, batch: &mut Vec<AnalyticsEventRecord>) {
     }
 }
 
-async fn aggregate_loop(repo: Repository, mut shutdown_rx: watch::Receiver<bool>) {
+async fn aggregate_loop(
+    repo: Repository,
+    mut shutdown_rx: watch::Receiver<bool>,
+    refresh_gate: Arc<Mutex<Option<Instant>>>,
+) {
     let mut tick = tokio::time::interval(AGGREGATE_INTERVAL);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
@@ -253,7 +320,10 @@ async fn aggregate_loop(repo: Repository, mut shutdown_rx: watch::Receiver<bool>
                 }
             }
             _ = tick.tick() => {
-                if let Err(e) = refresh_hot_window(&repo).await {
+                // tokio::time::interval fires its first tick immediately, so
+                // this runs right at startup — routed through the same gate
+                // an admin HTTP request would use, so it can't race one.
+                if let Err(e) = refresh_hot_window_gated(&repo, &refresh_gate).await {
                     tracing::warn!(error = %e, "analytics aggregate refresh failed");
                 }
             }
@@ -265,6 +335,19 @@ pub async fn refresh_hot_window(repo: &Repository) -> Result<()> {
     let today = Utc::now().date_naive();
     let from = today - ChronoDuration::days(1);
     repo.refresh_analytics_aggregates(from, today).await
+}
+
+async fn refresh_hot_window_gated(repo: &Repository, gate: &Mutex<Option<Instant>>) -> Result<()> {
+    const MIN_REFRESH_GAP: Duration = Duration::from_secs(30);
+    // Held across the refresh itself, not just the check, so concurrent
+    // callers serialize instead of racing (see AnalyticsRuntime::refresh_gate).
+    let mut last = gate.lock().await;
+    if last.is_some_and(|instant| instant.elapsed() < MIN_REFRESH_GAP) {
+        return Ok(());
+    }
+    refresh_hot_window(repo).await?;
+    *last = Some(Instant::now());
+    Ok(())
 }
 
 fn should_skip_request(headers: &axum::http::HeaderMap, admin_api_key: &str) -> bool {
@@ -343,9 +426,29 @@ fn visitor_hash(secret: &str, ip_prefix: &str, hints: &str, day: chrono::NaiveDa
     hex::encode(mac.finalize().into_bytes())
 }
 
-fn referrer_host(raw: &str) -> Option<String> {
+/// Parse a URL string down to its lowercased host. Used both for a request's
+/// `Referer` header and — via `AnalyticsRequestContext::site_host` — for the
+/// site's own `PUBLIC_URL`, so `classify_source` can recognize a same-origin
+/// referrer as internal navigation rather than an external referral.
+pub(crate) fn host_of(raw: &str) -> Option<String> {
     let parsed = raw.parse::<axum::http::Uri>().ok()?;
     parsed.host().map(|h| truncate(h.to_ascii_lowercase(), 180))
+}
+
+/// True when `host` is the site's own domain (a leading "www." on either side
+/// is ignored), so browsing from one page to another on the same site (e.g.
+/// the archive to a figurine's detail page) classifies as "internal", not a
+/// "referral" — which previously lumped genuine external referrals together
+/// with the site's own internal navigation.
+fn is_same_site(host: &str, site_host: Option<&str>) -> bool {
+    let Some(site) = site_host else {
+        return false;
+    };
+    strip_www(host) == strip_www(site)
+}
+
+fn strip_www(host: &str) -> &str {
+    host.strip_prefix("www.").unwrap_or(host)
 }
 
 fn classify_source(
@@ -353,6 +456,7 @@ fn classify_source(
     utm_medium: Option<&str>,
     referrer_host: Option<&str>,
     path: &str,
+    site_host: Option<&str>,
 ) -> String {
     let source = utm_source.unwrap_or("").trim().to_ascii_lowercase();
     let medium = utm_medium.unwrap_or("").trim().to_ascii_lowercase();
@@ -384,6 +488,9 @@ fn classify_source(
     let Some(host) = referrer_host else {
         return "direct".into();
     };
+    if is_same_site(host, site_host) {
+        return "internal".into();
+    }
     if host.contains("google.") || host.contains("yandex.") || host.contains("bing.") {
         "search".into()
     } else if host.contains("instagram.")
@@ -472,8 +579,47 @@ mod tests {
     #[test]
     fn source_uses_social_utm() {
         assert_eq!(
-            classify_source(Some("instagram"), Some("social"), None, "/figurines/x"),
+            classify_source(Some("instagram"), Some("social"), None, "/figurines/x", None),
             "social"
+        );
+    }
+
+    #[test]
+    fn source_classifies_same_site_referrer_as_internal() {
+        assert_eq!(
+            classify_source(
+                None,
+                None,
+                Some("gotiga.example"),
+                "/figurines/x",
+                Some("gotiga.example"),
+            ),
+            "internal"
+        );
+        // A leading "www." on either side shouldn't defeat the match.
+        assert_eq!(
+            classify_source(
+                None,
+                None,
+                Some("www.gotiga.example"),
+                "/figurines/x",
+                Some("gotiga.example"),
+            ),
+            "internal"
+        );
+    }
+
+    #[test]
+    fn source_classifies_other_domain_as_referral() {
+        assert_eq!(
+            classify_source(
+                None,
+                None,
+                Some("some-other-blog.example"),
+                "/figurines/x",
+                Some("gotiga.example"),
+            ),
+            "referral"
         );
     }
 
@@ -491,7 +637,7 @@ mod tests {
     fn rejects_invalid_scroll_depth() {
         let req = AnalyticsEventRequest {
             event_type: AnalyticsEventType::FigurineEngaged,
-            figurine_id: Uuid::new_v4().to_string(),
+            figurine_id: Some(Uuid::new_v4().to_string()),
             path: "/figurines/x".into(),
             referrer: None,
             utm_source: None,
@@ -502,8 +648,52 @@ mod tests {
             cta_type: None,
             page_view_id: Some(Uuid::new_v4().to_string()),
             client_ts: None,
+            lang: None,
+            internal_source: None,
         };
         assert!(validate_event(&req).is_err());
+    }
+
+    #[test]
+    fn rejects_missing_figurine_id_for_figurine_events() {
+        let req = AnalyticsEventRequest {
+            event_type: AnalyticsEventType::FigurineView,
+            figurine_id: None,
+            path: "/figurines/x".into(),
+            referrer: None,
+            utm_source: None,
+            utm_medium: None,
+            utm_campaign: None,
+            duration_ms: None,
+            scroll_depth: None,
+            cta_type: None,
+            page_view_id: None,
+            client_ts: None,
+            lang: None,
+            internal_source: None,
+        };
+        assert!(validate_event(&req).is_err());
+    }
+
+    #[test]
+    fn accepts_missing_figurine_id_for_page_view() {
+        let req = AnalyticsEventRequest {
+            event_type: AnalyticsEventType::PageView,
+            figurine_id: None,
+            path: "/".into(),
+            referrer: None,
+            utm_source: None,
+            utm_medium: None,
+            utm_campaign: None,
+            duration_ms: None,
+            scroll_depth: None,
+            cta_type: None,
+            page_view_id: None,
+            client_ts: None,
+            lang: Some("RU".into()),
+            internal_source: None,
+        };
+        assert!(validate_event(&req).is_ok());
     }
 
     #[test]
@@ -519,7 +709,7 @@ mod tests {
         let figurine_id = Uuid::new_v4();
         let req = AnalyticsEventRequest {
             event_type: AnalyticsEventType::FigurineView,
-            figurine_id: figurine_id.to_string(),
+            figurine_id: Some(figurine_id.to_string()),
             path: "/figurines/x?utm_source=instagram".into(),
             referrer: Some("https://instagram.com/some/path?private=1".into()),
             utm_source: Some("instagram".into()),
@@ -530,6 +720,8 @@ mod tests {
             cta_type: None,
             page_view_id: Some(Uuid::new_v4().to_string()),
             client_ts: None,
+            lang: Some("en".into()),
+            internal_source: Some("home_afisha".into()),
         };
         let record = build_event_record(
             req,
@@ -538,14 +730,17 @@ mod tests {
                 admin_api_key: "admin-token",
                 hash_secret: "analytics-secret-for-tests",
                 country_code: None,
+                site_host: None,
             },
         )
         .unwrap()
         .unwrap();
 
-        assert_eq!(record.figurine_id, figurine_id);
+        assert_eq!(record.figurine_id, Some(figurine_id));
         assert_eq!(record.source, "social");
         assert_eq!(record.referrer_host.as_deref(), Some("instagram.com"));
         assert_ne!(record.visitor_hash.as_deref(), Some("192.168.10.22"));
+        assert_eq!(record.lang.as_deref(), Some("en"));
+        assert_eq!(record.internal_source.as_deref(), Some("home_afisha"));
     }
 }

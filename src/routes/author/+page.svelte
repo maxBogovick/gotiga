@@ -5,6 +5,7 @@
   import { resolveMediaUrl } from '$lib/api';
   import { SITE_URL } from '$lib/site';
   import { t, brandName } from '$lib/i18n';
+  import { createSiteAnalytics } from '$lib/analytics';
 
   // Data comes from the universal load (+page.ts): real values at prerender time so
   // bots see the bio, and a fresh fetch on client-side navigation.
@@ -25,7 +26,10 @@
     };
   }
 
+  const siteAnalytics = createSiteAnalytics();
+
   onMount(() => {
+    siteAnalytics.pageView();
     prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   });
 

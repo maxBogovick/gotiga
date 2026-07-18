@@ -29,7 +29,6 @@ pub struct AppService {
     geoip: Arc<crate::geo::GeoIp>,
     observability: ObservabilityState,
     analytics: crate::analytics::AnalyticsRuntime,
-    analytics_refresh_gate: Arc<Mutex<Option<Instant>>>,
     /// Cached "house favorite" / "noticed" tiers. Computing them is an aggregating JOIN
     /// over every mark in the collection plus a percentile cut — and every figurine LIST
     /// (the home page, the archive, every filter change) needs them, so it ran on
@@ -54,7 +53,6 @@ impl AppService {
             geoip,
             observability: ObservabilityState::default(),
             analytics,
-            analytics_refresh_gate: Arc::new(Mutex::new(None)),
             favorite_tiers_cache: Arc::new(Mutex::new(None)),
         }
     }
@@ -168,10 +166,13 @@ impl AppService {
     ) -> Result<()> {
         // A detail-page view fires with the URL handle, which may be a slug. Resolve it
         // to the canonical UUID so slug- and UUID-visits of the same work aggregate onto
-        // one figurine_id. Only non-empty, non-UUID handles hit the DB; UUIDs and empty
-        // handles pass through untouched (build_event_record keeps its existing checks).
-        if !req.figurine_id.is_empty() && Uuid::parse_str(&req.figurine_id).is_err() {
-            req.figurine_id = self.resolve_figurine_uuid(&req.figurine_id).await?.to_string();
+        // one figurine_id. Only non-empty, non-UUID handles hit the DB; UUIDs, absent
+        // figurineId (site-wide page_view events), and empty strings pass through
+        // untouched (build_event_record/validate_event keep their existing checks).
+        if let Some(handle) = req.figurine_id.as_deref().filter(|s| !s.is_empty())
+            && Uuid::parse_str(handle).is_err()
+        {
+            req.figurine_id = Some(self.resolve_figurine_uuid(handle).await?.to_string());
         }
 
         let request_context = self.client_context(
@@ -183,6 +184,7 @@ impl AppService {
             admin_api_key: &self.config.admin_api_key,
             hash_secret: &self.config.analytics_hash_secret,
             country_code: request_context.country_code,
+            site_host: crate::analytics::host_of(&self.config.public_url),
         };
         let Some(event) = crate::analytics::build_event_record(req, ctx)? else {
             return Ok(());
@@ -196,17 +198,13 @@ impl AppService {
         Ok(())
     }
 
+    /// Delegates to AnalyticsRuntime's shared gate — the background
+    /// aggregate_loop tick and every admin HTTP request calling this all
+    /// serialize through the same lock, so they can't race each other into a
+    /// concurrent DELETE+re-INSERT on figurine_analytics_daily (see the
+    /// comment on AnalyticsRuntime::refresh_gate for the incident this fixes).
     pub async fn refresh_analytics_hot_window_if_due(&self) -> Result<()> {
-        const MIN_REFRESH_GAP: Duration = Duration::from_secs(30);
-        {
-            let last = self.analytics_refresh_gate.lock().await;
-            if last.is_some_and(|instant| instant.elapsed() < MIN_REFRESH_GAP) {
-                return Ok(());
-            }
-        }
-        crate::analytics::refresh_hot_window(&self.repo).await?;
-        *self.analytics_refresh_gate.lock().await = Some(Instant::now());
-        Ok(())
+        self.analytics.refresh_hot_window_if_due(&self.repo).await
     }
 
     pub async fn prune_analytics_events_chunked(
@@ -224,17 +222,37 @@ impl AppService {
         query: AdminAnalyticsQuery,
     ) -> Result<AdminFigurineAnalyticsListPage> {
         let (from, to) = Self::analytics_range(query.from, query.to)?;
+        let (prev_from, prev_to) = Self::previous_period(from, to);
         let sort = query.sort.as_deref().unwrap_or("views");
         let dir = query.dir.as_deref().unwrap_or("desc");
         let mut items = self
             .repo
             .get_admin_figurine_analytics_list(from, to, sort, dir)
             .await?;
+
+        let growth = self.repo.get_admin_growth_window(to).await?;
+        let sparklines = self.repo.get_figurine_sparklines(to).await?;
+
         for item in &mut items {
             if let Some(face) = item.face_url.clone() {
                 item.face_url = Some(self.resolve_url(&face, "images_thumb", &item.figurine_id));
             }
+            let Ok(id) = Self::parse_uuid(&item.figurine_id) else {
+                continue;
+            };
+            let (last7, prior7) = growth.get(&id).copied().unwrap_or((0, 0));
+            item.is_growing = Self::is_growing(last7, prior7);
+            item.signal = Self::analytics_signal(
+                item.views,
+                item.engaged_views,
+                item.cta_clicks,
+                item.submissions,
+                item.conversion_rate,
+                item.is_growing,
+            );
+            item.sparkline = Self::zero_filled_sparkline(sparklines.get(&id), to);
         }
+
         let summary = Self::analytics_summary(items.iter().map(|i| {
             (
                 i.views,
@@ -244,10 +262,32 @@ impl AppService {
                 i.submissions,
             )
         }));
+
+        // Previous-period totals for the delta comparison. Re-uses the same
+        // list query (unsorted/unfiltered doesn't matter — only the sum is
+        // kept) rather than a bespoke aggregate query, since figurine counts
+        // on this site are small.
+        let prev_items = self
+            .repo
+            .get_admin_figurine_analytics_list(prev_from, prev_to, "views", "desc")
+            .await?;
+        let previous_summary = Self::analytics_summary(prev_items.iter().map(|i| {
+            (
+                i.views,
+                i.unique_visitors,
+                i.engaged_views,
+                i.cta_clicks,
+                i.submissions,
+            )
+        }));
+
         Ok(AdminFigurineAnalyticsListPage {
             total: items.len() as i64,
             items,
             summary,
+            previous_summary,
+            previous_from: prev_from,
+            previous_to: prev_to,
         })
     }
 
@@ -258,6 +298,8 @@ impl AppService {
     ) -> Result<AdminFigurineAnalyticsDetail> {
         let figurine_id = Self::parse_uuid(&id)?;
         let (from, to) = Self::analytics_range(query.from, query.to)?;
+        let (prev_from, prev_to) = Self::previous_period(from, to);
+        let raw_data_from = Self::raw_data_floor().max(from);
         let figurine = self
             .repo
             .get_figurine_by_id(figurine_id)
@@ -279,35 +321,94 @@ impl AppService {
             .repo
             .get_admin_figurine_analytics_daily(figurine_id, from, to)
             .await?;
+        let prev_daily = self
+            .repo
+            .get_admin_figurine_analytics_daily(figurine_id, prev_from, prev_to)
+            .await?;
         let sources = self
             .repo
             .get_admin_figurine_analytics_sources(figurine_id, from, to)
             .await?;
+        // Breakdowns and medians below read raw events, which are pruned after
+        // `analytics::RETENTION_DAYS` — clamp their query floor to
+        // `raw_data_from` so we never silently report "no data" as if it were a
+        // real empty period when it's actually just pruned.
+        // Country is read from the permanent geo rollup (not raw events —
+        // see get_admin_figurine_geo_breakdown), so unlike the other
+        // breakdowns below it isn't clamped to raw_data_from.
         let countries = self
             .repo
-            .get_admin_figurine_analytics_breakdown(figurine_id, from, to, "country", 12)
+            .get_admin_figurine_geo_breakdown(figurine_id, from, to, 12)
             .await?;
         let devices = self
             .repo
-            .get_admin_figurine_analytics_breakdown(figurine_id, from, to, "device", 8)
+            .get_admin_figurine_analytics_breakdown(figurine_id, raw_data_from, to, "device", 8)
             .await?;
         let browsers = self
             .repo
-            .get_admin_figurine_analytics_breakdown(figurine_id, from, to, "browser", 8)
+            .get_admin_figurine_analytics_breakdown(figurine_id, raw_data_from, to, "browser", 8)
             .await?;
         let referrers = self
             .repo
-            .get_admin_figurine_analytics_breakdown(figurine_id, from, to, "referrer", 12)
+            .get_admin_figurine_analytics_breakdown(
+                figurine_id,
+                raw_data_from,
+                to,
+                "referrer",
+                12,
+            )
             .await?;
         let utm_sources = self
             .repo
-            .get_admin_figurine_analytics_breakdown(figurine_id, from, to, "utm_source", 12)
+            .get_admin_figurine_analytics_breakdown(
+                figurine_id,
+                raw_data_from,
+                to,
+                "utm_source",
+                12,
+            )
             .await?;
         let visitor_cohorts = self
             .repo
-            .get_admin_figurine_analytics_breakdown(figurine_id, from, to, "visitor", 12)
+            .get_admin_figurine_analytics_breakdown(figurine_id, raw_data_from, to, "visitor", 12)
             .await?;
+        let languages = self
+            .repo
+            .get_admin_figurine_analytics_breakdown(figurine_id, raw_data_from, to, "lang", 4)
+            .await?;
+        let internal_sources = self
+            .repo
+            .get_admin_figurine_analytics_breakdown(
+                figurine_id,
+                raw_data_from,
+                to,
+                "internal_source",
+                8,
+            )
+            .await?;
+        let (median_duration_ms, median_scroll_depth) = self
+            .repo
+            .get_admin_figurine_engagement_medians(figurine_id, raw_data_from, to)
+            .await?;
+        let cta_funnel = self
+            .repo
+            .get_admin_figurine_cta_funnel(figurine_id, from, to)
+            .await?;
+        let (last7, prior7) = self
+            .repo
+            .get_figurine_growth_window(figurine_id, to)
+            .await?;
+
         let summary = Self::analytics_summary(daily.iter().map(|d| {
+            (
+                d.views,
+                d.unique_visitors,
+                d.engaged_views,
+                d.cta_clicks,
+                d.submissions,
+            )
+        }));
+        let previous_summary = Self::analytics_summary(prev_daily.iter().map(|d| {
             (
                 d.views,
                 d.unique_visitors,
@@ -322,6 +423,7 @@ impl AppService {
             summary.cta_clicks,
             summary.submissions,
             summary.conversion_rate,
+            Self::is_growing(last7, prior7),
         );
         let funnel = AnalyticsFunnel {
             views: summary.views,
@@ -333,6 +435,9 @@ impl AppService {
             figurine: self.to_list_item(figurine, face.as_ref(), detail.as_ref(), false),
             signal,
             summary,
+            previous_summary,
+            previous_from: prev_from,
+            previous_to: prev_to,
             daily,
             sources,
             countries,
@@ -341,8 +446,219 @@ impl AppService {
             referrers,
             utm_sources,
             visitor_cohorts,
+            languages,
+            internal_sources,
             funnel,
+            cta_funnel,
+            median_duration_ms,
+            median_scroll_depth,
+            raw_data_from,
         })
+    }
+
+    /// Site-wide traffic overview (all figurines summed) — J1, "is interest in
+    /// the house growing overall". Built from the same pre-aggregated daily
+    /// table figurine pages already fill; once Phase 3's site-wide `page_view`
+    /// lands, non-figurine pages (home/archive/author/workshop/commission) will
+    /// add into the same rollup.
+    pub async fn admin_get_analytics_overview(
+        &self,
+        query: AdminAnalyticsQuery,
+    ) -> Result<AdminAnalyticsOverview> {
+        let (from, to) = Self::analytics_range(query.from, query.to)?;
+        let (prev_from, prev_to) = Self::previous_period(from, to);
+        let daily = self.merged_site_daily(from, to).await?;
+        let prev_daily = self.merged_site_daily(prev_from, prev_to).await?;
+        let figurine_sources = self.repo.get_admin_site_analytics_sources(from, to).await?;
+        let geo = self.repo.get_admin_site_geo(from, to).await?;
+        let summary = Self::analytics_summary(daily.iter().map(|d| {
+            (
+                d.views,
+                d.unique_visitors,
+                d.engaged_views,
+                d.cta_clicks,
+                d.submissions,
+            )
+        }));
+        let previous_summary = Self::analytics_summary(prev_daily.iter().map(|d| {
+            (
+                d.views,
+                d.unique_visitors,
+                d.engaged_views,
+                d.cta_clicks,
+                d.submissions,
+            )
+        }));
+        Ok(AdminAnalyticsOverview {
+            from,
+            to,
+            previous_from: prev_from,
+            previous_to: prev_to,
+            summary,
+            previous_summary,
+            daily,
+            sources: figurine_sources,
+            geo,
+        })
+    }
+
+    /// Site-wide daily trend: figurine-page views/engagement (from
+    /// figurine_analytics_daily) plus generic-page views (from
+    /// site_page_views_daily, figurine_id-IS-NULL page_view events — no
+    /// overlap with the former), with `submissions` replaced day-by-day by the
+    /// authoritative site-wide count (see get_admin_site_submissions_daily) so
+    /// commissions with no figurine attribution aren't silently dropped from
+    /// the headline total.
+    async fn merged_site_daily(
+        &self,
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+    ) -> Result<Vec<AnalyticsDailyPoint>> {
+        let figurine_daily = self.repo.get_admin_site_overview_daily(from, to).await?;
+        let page_views = self.repo.get_admin_site_page_views_daily(from, to).await?;
+        let submissions = self.repo.get_admin_site_submissions_daily(from, to).await?;
+
+        let mut by_day: std::collections::BTreeMap<chrono::NaiveDate, AnalyticsDailyPoint> =
+            std::collections::BTreeMap::new();
+        for d in figurine_daily {
+            by_day.insert(d.day, d);
+        }
+        let blank = |day: chrono::NaiveDate| AnalyticsDailyPoint {
+            day,
+            views: 0,
+            unique_visitors: 0,
+            engaged_views: 0,
+            cta_clicks: 0,
+            submissions: 0,
+        };
+        for (day, views, uniques) in page_views {
+            let entry = by_day.entry(day).or_insert_with(|| blank(day));
+            entry.views += views;
+            entry.unique_visitors += uniques;
+        }
+        for (day, subs) in submissions {
+            let entry = by_day.entry(day).or_insert_with(|| blank(day));
+            entry.submissions = subs;
+        }
+        Ok(by_day.into_values().collect())
+    }
+
+    /// Site → works → /commission → started form → submitted. Steps 1-4 are
+    /// distinct-visitor counts from raw events, so they're clamped to
+    /// analytics::RETENTION_DAYS just like medians/breakdowns.
+    pub async fn admin_get_commission_funnel(
+        &self,
+        query: AdminAnalyticsQuery,
+    ) -> Result<CommissionFunnel> {
+        let (from, to) = Self::analytics_range(query.from, query.to)?;
+        let raw_data_from = Self::raw_data_floor().max(from);
+        let (visited, viewed_works, opened_commission_page, started_form, submitted) = self
+            .repo
+            .get_admin_commission_funnel(raw_data_from, to)
+            .await?;
+        Ok(CommissionFunnel {
+            from,
+            to,
+            raw_data_from,
+            visited,
+            viewed_works,
+            opened_commission_page,
+            started_form,
+            submitted,
+        })
+    }
+
+    pub async fn admin_create_analytics_annotation(
+        &self,
+        req: CreateAnnotationRequest,
+    ) -> Result<AnalyticsAnnotation> {
+        let label = req.label.trim();
+        if label.is_empty() || label.chars().count() > 200 {
+            return Err(AppError::BadRequest(
+                "Annotation label must be 1-200 characters".into(),
+            ));
+        }
+        self.repo
+            .create_analytics_annotation(&CreateAnnotationRequest {
+                day: req.day,
+                label: label.to_string(),
+            })
+            .await
+    }
+
+    pub async fn admin_list_analytics_annotations(
+        &self,
+        query: AdminAnalyticsQuery,
+    ) -> Result<Vec<AnalyticsAnnotation>> {
+        let (from, to) = Self::analytics_range(query.from, query.to)?;
+        self.repo.list_analytics_annotations(from, to).await
+    }
+
+    pub async fn admin_delete_analytics_annotation(&self, id: Uuid) -> Result<()> {
+        self.repo.delete_analytics_annotation(id).await
+    }
+
+    pub async fn admin_get_life_of_house_trend(
+        &self,
+        query: AdminAnalyticsQuery,
+    ) -> Result<LifeOfHouseTrend> {
+        let (from, to) = Self::analytics_range(query.from, query.to)?;
+        let (prev_from, prev_to) = Self::previous_period(from, to);
+        let daily = self.repo.get_admin_life_of_house_daily(from, to).await?;
+        let prev_daily = self
+            .repo
+            .get_admin_life_of_house_daily(prev_from, prev_to)
+            .await?;
+        let sum = |points: &[LifeOfHouseDailyPoint]| -> (i64, i64, i64) {
+            points.iter().fold((0, 0, 0), |(m, s, c), p| {
+                (m + p.marks, s + p.subscribers, c + p.comments)
+            })
+        };
+        let (marks_total, subscribers_total, comments_total) = sum(&daily);
+        let (previous_marks_total, previous_subscribers_total, previous_comments_total) =
+            sum(&prev_daily);
+        Ok(LifeOfHouseTrend {
+            from,
+            to,
+            daily,
+            marks_total,
+            subscribers_total,
+            comments_total,
+            previous_marks_total,
+            previous_subscribers_total,
+            previous_comments_total,
+        })
+    }
+
+    /// One-off admin action: re-run the daily aggregation over a historical
+    /// range. Needed after a fix to `refresh_analytics_aggregates` itself
+    /// (e.g. the commissions attribution join) — the automatic hot-window job
+    /// only ever touches yesterday+today, so older days stay wrong until this
+    /// runs. Idempotent; safe to call more than once over overlapping ranges.
+    pub async fn admin_backfill_analytics(
+        &self,
+        req: BackfillAnalyticsRequest,
+    ) -> Result<BackfillAnalyticsResponse> {
+        const MAX_BACKFILL_DAYS: i64 = 800;
+        let to = req.to.unwrap_or_else(|| chrono::Utc::now().date_naive());
+        let from = match req.from {
+            Some(f) => f,
+            None => self
+                .repo
+                .get_earliest_analytics_day()
+                .await?
+                .unwrap_or(to),
+        };
+        if from > to {
+            return Err(AppError::BadRequest("Invalid backfill range".into()));
+        }
+        if (to - from).num_days() > MAX_BACKFILL_DAYS {
+            return Err(AppError::BadRequest(
+                "Backfill range is too large (max 800 days)".into(),
+            ));
+        }
+        self.repo.refresh_analytics_aggregates(from, to).await?;
+        Ok(BackfillAnalyticsResponse { from, to })
     }
 
     fn analytics_range(
@@ -361,6 +677,62 @@ impl AppService {
             ));
         }
         Ok((from, to))
+    }
+
+    /// The immediately-preceding period of identical length, for delta
+    /// comparisons: for `[from, to]` (inclusive, `len` days), the previous
+    /// period is `[from - len, from - 1]` — contiguous, same length, no overlap
+    /// and no gap.
+    fn previous_period(
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+    ) -> (chrono::NaiveDate, chrono::NaiveDate) {
+        let len_days = (to - from).num_days() + 1;
+        let prev_to = from - chrono::Duration::days(1);
+        let prev_from = prev_to - chrono::Duration::days(len_days - 1);
+        (prev_from, prev_to)
+    }
+
+    /// Earliest date raw `figurine_analytics_events` rows can still exist for.
+    /// The retention-prune job runs off real "now", not whatever range the
+    /// admin happens to be browsing, so this floor is anchored to today.
+    fn raw_data_floor() -> chrono::NaiveDate {
+        chrono::Utc::now().date_naive()
+            - chrono::Duration::days(crate::analytics::RETENTION_DAYS - 1)
+    }
+
+    /// `growing_interest` requires both a minimum-volume gate (so 1 -> 3 views
+    /// doesn't read as "+200%") and real week-over-week growth. A `prior7` of
+    /// zero can't produce a ratio, so it's treated as growth as long as the
+    /// current week alone clears the volume gate.
+    fn is_growing(last7: i64, prior7: i64) -> bool {
+        const MIN_VOLUME: i64 = 10;
+        const GROWTH_RATIO: f64 = 1.3;
+        if last7 < MIN_VOLUME {
+            return false;
+        }
+        if prior7 == 0 {
+            return true;
+        }
+        (last7 as f64) >= (prior7 as f64) * GROWTH_RATIO
+    }
+
+    /// Turn a sparse (day, views) list into a dense 14-point array ending at
+    /// `to`, zero-filling any day with no aggregate row.
+    fn zero_filled_sparkline(
+        points: Option<&Vec<(chrono::NaiveDate, i64)>>,
+        to: chrono::NaiveDate,
+    ) -> Vec<i64> {
+        let by_day: HashMap<chrono::NaiveDate, i64> = points
+            .map(|p| p.iter().cloned().collect())
+            .unwrap_or_default();
+        (0..14)
+            .rev()
+            .map(|offset| {
+                let day = to - chrono::Duration::days(offset);
+                by_day.get(&day).copied().unwrap_or(0)
+            })
+            .collect()
     }
 
     fn analytics_summary(
@@ -395,6 +767,7 @@ impl AppService {
         cta_clicks: i64,
         submissions: i64,
         conversion_rate: f64,
+        is_growing: bool,
     ) -> AnalyticsSignal {
         if views < 10 {
             AnalyticsSignal::LowData
@@ -402,6 +775,8 @@ impl AppService {
             AnalyticsSignal::HighConversion
         } else if submissions == 0 && (engaged_views >= 8 || cta_clicks >= 3) {
             AnalyticsSignal::AttentionNoSubmissions
+        } else if is_growing {
+            AnalyticsSignal::GrowingInterest
         } else if views < 25 {
             AnalyticsSignal::LowVisibility
         } else {
@@ -4235,6 +4610,109 @@ impl AppService {
         Ok(())
     }
 
+    // === CONTACT MESSAGES ("write to the author") ===
+
+    /// Send a letter — anonymous, not tied to a figurine or an account (see
+    /// [`crate::models::ContactMessage`]). Best-effort Telegram ping to the
+    /// admin; the letter is saved either way.
+    pub async fn submit_contact_message(
+        &self,
+        req: crate::models::CreateContactMessageRequest,
+        ip: Option<String>,
+    ) -> Result<()> {
+        let email = req.email.trim().to_string();
+        if !email.contains('@') || email.len() > 200 {
+            return Err(AppError::BadRequest("Valid email is required".to_string()));
+        }
+        let message = req.message.trim().to_string();
+        if message.is_empty() || message.chars().count() > 4000 {
+            return Err(AppError::BadRequest(
+                "Message must be between 1 and 4000 characters".to_string(),
+            ));
+        }
+        let normalized = crate::models::CreateContactMessageRequest {
+            email,
+            message,
+            source: req.source.clone(),
+            lang: req.lang.clone(),
+        };
+        let msg = self.repo.create_contact_message(&normalized, ip.as_deref()).await?;
+        self.observability
+            .record_business_event("contact_message_received", "ok");
+        Self::log_domain_event("contact_message_received", "contact_message", msg.id, "ok");
+        let _ = self.send_contact_message_notification(&msg).await;
+        Ok(())
+    }
+
+    pub async fn list_contact_messages_admin(&self) -> Result<Vec<crate::models::ContactMessageDto>> {
+        let msgs = self.repo.list_contact_messages_admin().await?;
+        Ok(msgs
+            .into_iter()
+            .map(|m| crate::models::ContactMessageDto {
+                id: m.id.to_string(),
+                email: m.email,
+                message: m.message,
+                source: m.source,
+                lang: m.lang,
+                is_read: m.is_read,
+                created_at: m.created_at.to_rfc3339(),
+            })
+            .collect())
+    }
+
+    pub async fn mark_contact_message_read(&self, id: Uuid) -> Result<()> {
+        self.repo.mark_contact_message_read(id).await?;
+        Self::log_domain_event("contact_message_read", "contact_message", id, "ok");
+        Ok(())
+    }
+
+    pub async fn remove_contact_message(&self, id: Uuid) -> Result<()> {
+        self.repo.remove_contact_message(id).await?;
+        Self::log_domain_event("contact_message_removed", "contact_message", id, "ok");
+        Ok(())
+    }
+
+    async fn send_contact_message_notification(
+        &self,
+        msg: &crate::models::ContactMessage,
+    ) -> Result<()> {
+        let (Some(token), Some(chat_id)) = (
+            self.config.telegram_bot_token.as_deref(),
+            self.config.telegram_chat_id.as_deref(),
+        ) else {
+            return Ok(());
+        };
+
+        let admin_link = format!(
+            "{}/admin#contactMessages",
+            self.config.public_url.trim_end_matches('/')
+        );
+
+        let text = format!(
+            "✉ Письмо с сайта\n\n\
+            📧 Email: {}\n\
+            💬 Сообщение: {}\n\n\
+            🔗 [Открыть в админке]({})",
+            escape_markdown(&msg.email),
+            escape_markdown(&msg.message),
+            admin_link,
+        );
+
+        let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+        let client = Client::new();
+        let _ = client
+            .post(&url)
+            .json(&serde_json::json!({
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": "MarkdownV2"
+            }))
+            .send()
+            .await;
+
+        Ok(())
+    }
+
     /// A quiet welcome letter — confirms the signature and carries the
     /// unsubscribe door. Fire-and-forget: no SMTP configured → logged and skipped
     /// (the subscription is already active either way).
@@ -4912,20 +5390,23 @@ impl AppService {
         self.repo.count_unread_threads(user_id).await
     }
 
-    /// Build message DTOs, loading per-message attachments.
+    /// Build message DTOs, batch-loading attachments for all messages at once.
     async fn messages_with_attachments(
         &self,
         messages: &[ThreadMessage],
     ) -> Result<Vec<ThreadMessageDto>> {
-        let mut out = Vec::with_capacity(messages.len());
-        for m in messages {
-            let atts = self.repo.get_message_attachments(m.id).await?;
-            out.push(ThreadMessageDto::from_with_attachments(
-                m,
-                atts.iter().map(AttachmentDto::from).collect(),
-            ));
-        }
-        Ok(out)
+        let ids: Vec<Uuid> = messages.iter().map(|m| m.id).collect();
+        let mut atts_by_message = self.repo.get_attachments_for_messages(&ids).await?;
+        Ok(messages
+            .iter()
+            .map(|m| {
+                let atts = atts_by_message.remove(&m.id).unwrap_or_default();
+                ThreadMessageDto::from_with_attachments(
+                    m,
+                    atts.iter().map(AttachmentDto::from).collect(),
+                )
+            })
+            .collect())
     }
 
     async fn message_dto_with_attachments(&self, msg: &ThreadMessage) -> Result<ThreadMessageDto> {

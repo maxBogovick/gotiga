@@ -53,6 +53,7 @@
     noticeBoard:     $t('adminHomeLayoutBlockNoticeBoard'),
     gallery:         $t('adminHomeLayoutBlockGallery'),
     authorStory:     $t('adminHomeLayoutBlockAuthorStory'),
+    correspondence:  $t('adminHomeLayoutBlockCorrespondence'),
     impressions:     $t('adminHomeLayoutBlockImpressions'),
     requestSteps:    $t('adminHomeLayoutBlockRequestSteps'),
     visitorBook:     $t('adminHomeLayoutBlockVisitorBook'),

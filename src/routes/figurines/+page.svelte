@@ -5,6 +5,7 @@
   import { t, lang, brandName } from '$lib/i18n';
   import { SITE_URL } from '$lib/site';
   import { figurineHref } from '$lib/figurineHref';
+  import { createSiteAnalytics } from '$lib/analytics';
   import AppImage from '$lib/components/AppImage.svelte';
   import SealedDoor from '$lib/components/SealedDoor.svelte';
   import Lightbox from '$lib/components/Lightbox.svelte';
@@ -201,7 +202,10 @@
   let orderFig = $state<FigurineListItem | null>(null);
   let shareCopiedId = $state('');
 
+  const siteAnalytics = createSiteAnalytics();
+
   onMount(() => {
+    siteAnalytics.pageView();
     savedFigurines.load();
     houseClock.start();
     showingRooms.load();

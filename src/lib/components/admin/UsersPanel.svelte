@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { api } from '$lib/api';
   import { t } from '$lib/i18n';
   import type { AdminUserListItem, AdminUserDetail } from '$lib/types/api';
@@ -169,7 +170,11 @@
   let totalPages    = $derived(Math.max(1, Math.ceil(total / PER_PAGE)));
   let activeSessions = $derived(detail?.sessions.filter(s => s.isActive) ?? []);
 
-  $effect(() => { load(); });
+  // Every call site that changes `search`/`page` already calls load() itself
+  // (onSearchInput's debounce, the pager buttons) — an $effect here would
+  // also fire on every keystroke via the `search` read inside load(),
+  // doubling requests and racing the debounce.
+  onMount(() => { load(); });
 </script>
 
 {#if detail || detailLoading}

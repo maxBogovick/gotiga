@@ -122,9 +122,24 @@
     return Number.isFinite(number) ? number : undefined;
   }
 
+  // items is always kept sorted per the active sortBy/sortDir, so a live line
+  // only needs a dedupe check + binary-search insert — not a full
+  // dedupe-everything + re-sort-everything pass. At MAX_ROWS that full pass
+  // ran on every single incoming log line, which is what pegged a CPU core
+  // when the dev server was chatty.
   function prepend(item: AdminLogEntry) {
     if (!matchesActiveFilters(item)) return;
-    items = sortRows(dedupeById([item, ...items])).slice(0, MAX_ROWS);
+    const dupeIdx = items.findIndex((r) => r.id === item.id);
+    const base = dupeIdx === -1 ? items : items.toSpliced(dupeIdx, 1);
+    let lo = 0;
+    let hi = base.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (compareRows(base[mid], item) <= 0) lo = mid + 1;
+      else hi = mid;
+    }
+    const next = base.toSpliced(lo, 0, item);
+    items = next.length > MAX_ROWS ? next.slice(0, MAX_ROWS) : next;
   }
 
   function dedupeById(rows: AdminLogEntry[]): AdminLogEntry[] {
@@ -159,17 +174,19 @@
     return item.message;
   }
 
-  function sortRows(rows: AdminLogEntry[]) {
+  function compareRows(a: AdminLogEntry, b: AdminLogEntry) {
     const direction = sortDir === 'asc' ? 1 : -1;
-    return [...rows].sort((a, b) => {
-      const av = sortValue(a, sortBy);
-      const bv = sortValue(b, sortBy);
-      if (av == null && bv == null) return (a.id - b.id) * direction;
-      if (av == null) return 1;
-      if (bv == null) return -1;
-      if (typeof av === 'number' && typeof bv === 'number') return (av - bv || a.id - b.id) * direction;
-      return (String(av).localeCompare(String(bv)) || a.id - b.id) * direction;
-    });
+    const av = sortValue(a, sortBy);
+    const bv = sortValue(b, sortBy);
+    if (av == null && bv == null) return (a.id - b.id) * direction;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    if (typeof av === 'number' && typeof bv === 'number') return (av - bv || a.id - b.id) * direction;
+    return (String(av).localeCompare(String(bv)) || a.id - b.id) * direction;
+  }
+
+  function sortRows(rows: AdminLogEntry[]) {
+    return [...rows].sort(compareRows);
   }
 
   function sortLabel(column: AdminLogsSortBy) {

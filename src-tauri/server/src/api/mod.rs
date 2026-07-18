@@ -168,6 +168,8 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 "/subscribe/leave/:token",
                 get(handlers::get_subscription_by_token).post(handlers::unsubscribe_by_token),
             )
+            // === CONTACT MESSAGES ("write to the author") ===
+            .route("/contact", post(handlers::submit_contact_message))
             // === VISITOR IMPRESSIONS ("book of impressions") ===
             .route("/impressions", post(handlers::submit_impression))
             .route("/impressions/featured", get(handlers::get_featured_impressions))
@@ -421,6 +423,45 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             )
             // === ORDERS (ADMIN) ===
             .route(
+                "/admin/analytics/overview",
+                get(handlers::admin_get_analytics_overview).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/analytics/commission-funnel",
+                get(handlers::admin_get_commission_funnel).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/analytics/backfill",
+                post(handlers::admin_backfill_analytics).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/analytics/life-of-the-house",
+                get(handlers::admin_get_life_of_house_trend).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/analytics/annotations",
+                get(handlers::admin_list_analytics_annotations)
+                    .post(handlers::admin_create_analytics_annotation)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            .route(
+                "/admin/analytics/annotations/:id",
+                delete(handlers::admin_delete_analytics_annotation).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
                 "/admin/analytics/figurines",
                 get(handlers::admin_list_figurine_analytics).route_layer(
                     middleware::from_fn_with_state(config.clone(), auth_middleware),
@@ -622,6 +663,24 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             .route(
                 "/admin/subscribers/:id",
                 delete(handlers::admin_remove_subscriber).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/contact-messages",
+                get(handlers::admin_list_contact_messages).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/contact-messages/:id/read",
+                post(handlers::admin_mark_contact_message_read).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/contact-messages/:id",
+                delete(handlers::admin_remove_contact_message).route_layer(
                     middleware::from_fn_with_state(config.clone(), auth_middleware),
                 ),
             )

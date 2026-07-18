@@ -54,6 +54,8 @@ import type {
     WaitlistEntryDto,
     CreateSubscriptionRequest,
     SubscriberDto,
+    CreateContactMessageRequest,
+    ContactMessageDto,
     MessageThreadDto,
     ThreadMessageDto,
     ThreadDetailDto,
@@ -74,6 +76,13 @@ import type {
     BulkOpResult,
     AdminFigurineAnalyticsListPage,
     AdminFigurineAnalyticsDetail,
+    AdminAnalyticsOverview,
+    CommissionFunnel,
+    AnalyticsAnnotation,
+    CreateAnnotationRequest,
+    LifeOfHouseTrend,
+    BackfillAnalyticsRequest,
+    BackfillAnalyticsResponse,
     AdminAnalyticsQuery,
     AnalyticsEventPayload,
 } from './types/api';
@@ -424,6 +433,61 @@ export const api = {
         setNumber('limit', opts?.limit);
         const qs = p.toString() ? `?${p}` : '';
         return webFetch(`/admin/logs${qs}`, { headers: authHeaders() });
+    },
+
+    async backfillAnalytics(req?: BackfillAnalyticsRequest): Promise<BackfillAnalyticsResponse> {
+        return webFetch('/admin/analytics/backfill', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(req ?? {}),
+        });
+    },
+
+    async getAnalyticsOverview(opts?: AdminAnalyticsQuery): Promise<AdminAnalyticsOverview> {
+        const p = new URLSearchParams();
+        if (opts?.from) p.set('from', opts.from);
+        if (opts?.to) p.set('to', opts.to);
+        const qs = p.toString() ? `?${p}` : '';
+        return webFetch(`/admin/analytics/overview${qs}`, { headers: authHeaders() });
+    },
+
+    async getLifeOfHouseTrend(opts?: AdminAnalyticsQuery): Promise<LifeOfHouseTrend> {
+        const p = new URLSearchParams();
+        if (opts?.from) p.set('from', opts.from);
+        if (opts?.to) p.set('to', opts.to);
+        const qs = p.toString() ? `?${p}` : '';
+        return webFetch(`/admin/analytics/life-of-the-house${qs}`, { headers: authHeaders() });
+    },
+
+    async listAnalyticsAnnotations(opts?: AdminAnalyticsQuery): Promise<AnalyticsAnnotation[]> {
+        const p = new URLSearchParams();
+        if (opts?.from) p.set('from', opts.from);
+        if (opts?.to) p.set('to', opts.to);
+        const qs = p.toString() ? `?${p}` : '';
+        return webFetch(`/admin/analytics/annotations${qs}`, { headers: authHeaders() });
+    },
+
+    async createAnalyticsAnnotation(req: CreateAnnotationRequest): Promise<AnalyticsAnnotation> {
+        return webFetch('/admin/analytics/annotations', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(req),
+        });
+    },
+
+    async deleteAnalyticsAnnotation(id: string): Promise<void> {
+        await webFetch(`/admin/analytics/annotations/${id}`, {
+            method: 'DELETE',
+            headers: authHeaders(),
+        });
+    },
+
+    async getCommissionFunnel(opts?: AdminAnalyticsQuery): Promise<CommissionFunnel> {
+        const p = new URLSearchParams();
+        if (opts?.from) p.set('from', opts.from);
+        if (opts?.to) p.set('to', opts.to);
+        const qs = p.toString() ? `?${p}` : '';
+        return webFetch(`/admin/analytics/commission-funnel${qs}`, { headers: authHeaders() });
     },
 
     async listFigurineAnalytics(opts?: AdminAnalyticsQuery): Promise<AdminFigurineAnalyticsListPage> {
@@ -1158,6 +1222,36 @@ export const api = {
 
     async adminRemoveSubscriber(id: string): Promise<void> {
         const res = await fetch(`${webApiBase()}/admin/subscribers/${id}`, {
+            method: 'DELETE',
+            headers: authHeaders(),
+        });
+        if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+    },
+
+    // === CONTACT MESSAGES ("write to the author") ===
+
+    async submitContactMessage(req: CreateContactMessageRequest): Promise<void> {
+        await webFetch('/contact', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(req),
+        });
+    },
+
+    async adminListContactMessages(): Promise<ContactMessageDto[]> {
+        return webFetch('/admin/contact-messages', { headers: authHeaders() });
+    },
+
+    async adminMarkContactMessageRead(id: string): Promise<void> {
+        const res = await fetch(`${webApiBase()}/admin/contact-messages/${id}/read`, {
+            method: 'POST',
+            headers: authHeaders(),
+        });
+        if (!res.ok) throw new Error(`Mark read failed: ${res.status}`);
+    },
+
+    async adminRemoveContactMessage(id: string): Promise<void> {
+        const res = await fetch(`${webApiBase()}/admin/contact-messages/${id}`, {
             method: 'DELETE',
             headers: authHeaders(),
         });

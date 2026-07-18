@@ -143,6 +143,30 @@ export const ru: Record<TranslationKey, string> = {
   homeStoryPortraitAlt: 'Автор за работой',
   homeHouseLatelyLabel: 'Недавнее в кабинете',
 
+  // «Написать автору» — лёгкая карточка-письмо сразу после рассказа об авторе
+  homeCorrespondenceEyebrow: 'Переписка',
+  homeCorrespondenceTitle: 'Хотите написать?',
+  homeCorrespondenceNote: 'Расскажите, что вас заинтересовало — отвечаю лично, обычно в течение дня.',
+
+  // Общая форма «написать автору» (карточка на главной + панель в шапке)
+  contactFormEmailLabel: 'Ваш email',
+  contactFormEmailPlaceholder: 'you@example.com',
+  contactFormMessageLabel: 'Сообщение',
+  contactFormMessagePlaceholder: 'Что бы вы хотели сказать?',
+  contactFormSubmit: 'Отправить письмо',
+  contactFormSending: 'Отправка…',
+  contactFormFillFields: 'Заполните оба поля.',
+  contactFormInvalidEmail: 'Введите корректный email.',
+  contactFormError: 'Не удалось отправить — попробуйте ещё раз через минуту.',
+  contactFormSuccessTitle: 'Письмо получено',
+  contactFormSuccessText: 'Спасибо — я сама читаю каждое письмо и скоро отвечу.',
+  contactFormWriteAnother: 'Написать ещё одно письмо',
+
+  // Значок-перо в шапке
+  headerContactLabel: 'Написать автору',
+  headerContactShortLabel: 'Написать',
+  headerContactNote: 'Короткая записка напрямую мне — без регистрации.',
+
   // === ARCHIVE LIST ===
   archiveMetaDescription: 'Реестръ готическихъ миниатюръ ручной работы — полный архивъ существъ по статусу, году и серіи.',
   archivePageTitle:  'Архивъ Существ',
@@ -754,6 +778,7 @@ export const ru: Record<TranslationKey, string> = {
   adminTabWorkshopFeature: 'Блок мастерской',
   adminTabReleases:    'Релизы',
   adminTabAnalytics:   'Аналитика',
+  adminTabMarks:       'Метки и полка',
   adminSubProfile:    'Профиль',
   adminSubTexts:      'Записи',
   adminSettings:      'Настройки',
@@ -1796,6 +1821,7 @@ export const ru: Record<TranslationKey, string> = {
   adminHomeLayoutBlockNoticeBoard:     'Афиши показов',
   adminHomeLayoutBlockGallery:         'Избранные работы',
   adminHomeLayoutBlockAuthorStory:     'Автор',
+  adminHomeLayoutBlockCorrespondence:  'Написать автору',
   adminHomeLayoutBlockImpressions:     'Лента впечатлений',
   adminHomeLayoutBlockRequestSteps:    'Шаги процесса',
   adminHomeLayoutBlockVisitorBook:     'Книга дома',
@@ -1999,6 +2025,15 @@ export const ru: Record<TranslationKey, string> = {
   adminSubscribersHint:      'Экспортируйте, чтобы рассылать письма через ваш почтовый сервис (дом здесь только собирает имена).',
   adminSubscribersLoadError: 'Не удалось загрузить подписчиков',
   adminSubscribersExport:    'Экспорт CSV',
+
+  // Админка — письма («написать автору»)
+  adminTabContactMessages:      'Письма',
+  adminContactMessagesHeading:  'Письма',
+  adminContactMessagesEmpty:    'Писем пока нет.',
+  adminContactMessagesHint:     'Отвечайте напрямую на email отправителя — это только просмотр входящих писем.',
+  adminContactMessagesLoadError: 'Не удалось загрузить письма',
+  adminContactMessagesUnread:   'Новое',
+  adminContactMessagesMarkRead: 'Отметить прочитанным',
 
   // Админка — вид главной
   adminTabReelTheme:         'Вид главной',

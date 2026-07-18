@@ -19,6 +19,7 @@
     import ShowingsPanel from '$lib/components/admin/ShowingsPanel.svelte';
     import BookingsPanel from '$lib/components/admin/BookingsPanel.svelte';
     import AnalyticsPanel from '$lib/components/admin/AnalyticsPanel.svelte';
+    import AttentionMarksPanel from '$lib/components/admin/AttentionMarksPanel.svelte';
     import UsersPanel from '$lib/components/admin/UsersPanel.svelte';
     import CommentsPanel from '$lib/components/admin/CommentsPanel.svelte';
     import ImpressionsPanel from '$lib/components/admin/ImpressionsPanel.svelte';
@@ -26,6 +27,7 @@
     import ContactSettingsPanel from '$lib/components/admin/ContactSettingsPanel.svelte';
     import WaitlistPanel from '$lib/components/admin/WaitlistPanel.svelte';
     import SubscribersPanel from '$lib/components/admin/SubscribersPanel.svelte';
+    import ContactMessagesPanel from '$lib/components/admin/ContactMessagesPanel.svelte';
     import BookingRulesPanel from '$lib/components/admin/BookingRulesPanel.svelte';
     import MessagesPanel from '$lib/components/admin/MessagesPanel.svelte';
     import FigurineShowingsEditor from '$lib/components/admin/FigurineShowingsEditor.svelte';
@@ -97,7 +99,7 @@
     let savingSlugId = $state<string | null>(null);
     let backfilling = $state(false);
     let message = $state({ text: '', type: 'info' });
-    let activeTab = $state<'registry' | 'slugs' | 'rooms' | 'home' | 'reel-theme' | 'home-layout' | 'workshop-feature' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'commissions' | 'showings' | 'bookings' | 'waitlist' | 'subscribers' | 'analytics' | 'users' | 'comments' | 'impressions' | 'messages' | 'server' | 'logs' | 'booking-rules' | 'contact' | 'design' | 'copy' | 'programme'>('registry');
+    let activeTab = $state<'registry' | 'slugs' | 'rooms' | 'home' | 'reel-theme' | 'home-layout' | 'workshop-feature' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'commissions' | 'showings' | 'bookings' | 'waitlist' | 'subscribers' | 'contactMessages' | 'analytics' | 'marks' | 'users' | 'comments' | 'impressions' | 'messages' | 'server' | 'logs' | 'booking-rules' | 'contact' | 'design' | 'copy' | 'programme'>('registry');
     let activeAuthorSubTab = $state<'profile' | 'texts'>('profile');
     let newOrdersCount = $state(0);
     let newCommissionsCount = $state(0);
@@ -1046,7 +1048,7 @@
         sidebarCollapsed = localStorage.getItem('gotiga_admin_sidebar_collapsed') === '1';
         // Hash-based tab routing (e.g. Telegram notification links)
         const hash = window.location.hash.replace('#', '');
-        const validTabs = ['registry','rooms','home','workshop-feature','zones','author','workshop','media','releases','orders','commissions','showings','bookings','waitlist','subscribers','analytics','users','comments','impressions','messages','server','logs','booking-rules','contact','design','copy','programme'];
+        const validTabs = ['registry','rooms','home','workshop-feature','zones','author','workshop','media','releases','orders','commissions','showings','bookings','waitlist','subscribers','contactMessages','analytics','marks','users','comments','impressions','messages','server','logs','booking-rules','contact','design','copy','programme'];
         if (validTabs.includes(hash)) {
             activeTab = hash as typeof activeTab;
         }
@@ -1149,6 +1151,7 @@
                   ['commissions',  $t('adminTabCommissions')],
                   ['waitlist',     $t('adminTabWaitlist')],
                   ['subscribers',  $t('adminTabSubscribers')],
+                  ['contactMessages', $t('adminTabContactMessages')],
                 ]
               },
               {
@@ -1176,6 +1179,7 @@
                 label: $t('adminGroupTools'),
                 tabs: [
                   ['analytics', $t('adminTabAnalytics')],
+                  ['marks',     $t('adminTabMarks')],
                   ['users',     $t('adminUsersTab')],
                 ]
               },
@@ -2237,6 +2241,8 @@
             <div in:fade class="h-full"><ReleaseManager /></div>
         {:else if activeTab === 'analytics'}
             <div in:fade class="h-full overflow-hidden"><AnalyticsPanel /></div>
+        {:else if activeTab === 'marks'}
+            <div in:fade class="h-full overflow-y-auto"><AttentionMarksPanel /></div>
         {:else if activeTab === 'users'}
             <div in:fade class="h-full overflow-y-auto"><UsersPanel /></div>
         {:else if activeTab === 'comments'}
@@ -2251,6 +2257,8 @@
             <div in:fade class="h-full"><WaitlistPanel /></div>
         {:else if activeTab === 'subscribers'}
             <div in:fade class="h-full"><SubscribersPanel /></div>
+        {:else if activeTab === 'contactMessages'}
+            <div in:fade class="h-full"><ContactMessagesPanel /></div>
         {:else if activeTab === 'messages'}
             <div in:fade class="h-full overflow-y-auto"><MessagesPanel /></div>
         {:else if activeTab === 'booking-rules'}
