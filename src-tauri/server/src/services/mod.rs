@@ -456,6 +456,19 @@ impl AppService {
         })
     }
 
+    /// Full (day, country) breakdown for one figurine — the geography map's
+    /// "one figurine" mode. See `admin_get_figurine_geo_daily` on the repo
+    /// for why this is a separate, lighter query than the full detail above.
+    pub async fn admin_get_figurine_geo_daily(
+        &self,
+        id: String,
+        query: AdminAnalyticsQuery,
+    ) -> Result<Vec<FigurineGeoDailyPoint>> {
+        let figurine_id = Self::parse_uuid(&id)?;
+        let (from, to) = Self::analytics_range(query.from, query.to)?;
+        self.repo.get_admin_figurine_geo_daily(figurine_id, from, to).await
+    }
+
     /// Site-wide traffic overview (all figurines summed) — J1, "is interest in
     /// the house growing overall". Built from the same pre-aggregated daily
     /// table figurine pages already fill; once Phase 3's site-wide `page_view`

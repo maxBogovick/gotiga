@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onMount } from 'svelte';
+    import { onMount, onDestroy } from 'svelte';
     import { api, isTauri } from '$lib/api';
     import type { CabinetZone } from '$lib/types/api';
     import { fade } from 'svelte/transition';
@@ -32,7 +32,27 @@
         };
     }
 
+    // Raw mousemove fires far faster than the display can paint. Writing
+    // selectedZone.x/y/width/height straight from the handler moves an
+    // absolutely-positioned element (layout, not just paint) on every event —
+    // coalesce to one commit per animation frame instead, same fix as the
+    // WorldMap pan/zoom CPU issue.
+    let rafId: number | null = null;
+    let pendingEvent: MouseEvent | null = null;
+
     function onCanvasMouseMove(e: MouseEvent) {
+        if (!dragMode || !selectedZone) return;
+        pendingEvent = e;
+        if (rafId == null) {
+            rafId = requestAnimationFrame(() => {
+                rafId = null;
+                if (pendingEvent) applyDrag(pendingEvent);
+                pendingEvent = null;
+            });
+        }
+    }
+
+    function applyDrag(e: MouseEvent) {
         if (!dragMode || !selectedZone) return;
         const pos = getCanvasRelative(e.clientX, e.clientY);
         const dx = pos.x - dragStart.x;
@@ -69,7 +89,15 @@
 
     function onCanvasMouseUp() {
         dragMode = null;
+        if (rafId != null) {
+            cancelAnimationFrame(rafId);
+            rafId = null;
+        }
     }
+
+    onDestroy(() => {
+        if (rafId != null) cancelAnimationFrame(rafId);
+    });
 
     function startDrag(e: MouseEvent, zone: CabinetZone, mode: DragMode) {
         e.stopPropagation();

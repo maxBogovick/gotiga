@@ -434,6 +434,16 @@ export interface AnalyticsBreakdownPoint {
     uniqueVisitors: number;
 }
 
+/** One (day, country) cell from the permanent geo rollup — the geography
+ * map's "one figurine" mode groups these by country for the choropleth, then
+ * filters by country to list the actual dates a visit was recorded. */
+export interface FigurineGeoDailyPoint {
+    day: string;
+    countryCode: string;
+    views: number;
+    uniqueVisitors: number;
+}
+
 export interface AnalyticsFunnel {
     views: number;
     engagedViews: number;

@@ -510,6 +510,14 @@ export const api = {
         return webFetch(`/admin/analytics/figurines/${id}${qs}`, { headers: authHeaders() });
     },
 
+    async getFigurineGeoDaily(id: string, opts?: AdminAnalyticsQuery): Promise<import('./types/api').FigurineGeoDailyPoint[]> {
+        const p = new URLSearchParams();
+        if (opts?.from) p.set('from', opts.from);
+        if (opts?.to) p.set('to', opts.to);
+        const qs = p.toString() ? `?${p}` : '';
+        return webFetch(`/admin/analytics/figurines/${id}/geo-daily${qs}`, { headers: authHeaders() });
+    },
+
     // Admin-only ranking by mark count (incl. sold/gone pieces). Never rendered publicly.
     async getFigurineMarkStats(): Promise<import('./types/api').AdminFigurineMarkStat[]> {
         return webFetch('/admin/figurine-marks', { headers: authHeaders() });

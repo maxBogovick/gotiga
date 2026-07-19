@@ -1,8 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { fade, scale } from 'svelte/transition';
+  import { cubicOut } from 'svelte/easing';
   import { api } from '$lib/api';
   import iso from 'iso-3166-1';
   import WorldMap from '$lib/components/admin/WorldMap.svelte';
+  import { focusTrap } from '$lib/actions/focusTrap';
   import type {
     AdminAnalyticsOverview,
     AdminFigurineAnalyticsDetail,
@@ -13,6 +16,7 @@
     CommissionFunnel,
     AnalyticsAnnotation,
     LifeOfHouseTrend,
+    FigurineGeoDailyPoint,
   } from '$lib/types/api';
 
   // ── Date range — everything below is computed in UTC on purpose. Mixing
@@ -147,6 +151,13 @@
    * why "growing" needs its own axis instead of living inside the signal enum. */
   let growingFilter = $state(persisted.growingFilter ?? false);
 
+  /** 'all' (site-wide) or a figurineId — which map the Geography tab shows.
+   * Not persisted on purpose: reopening the panel should default to the
+   * site-wide picture, not whichever single work was last inspected. */
+  let mapFigurineId = $state<string>('all');
+  let figurineGeoDaily = $state<FigurineGeoDailyPoint[]>([]);
+  let figurineGeoLoading = $state(false);
+
   let selectedId = $state<string | null>(null);
   let detail = $state<AdminFigurineAnalyticsDetail | null>(null);
   let detailLoading = $state(false);
@@ -178,6 +189,27 @@
     } catch {
       // Private browsing / storage full — losing persistence isn't fatal.
     }
+  });
+
+  // Fetch the per-figurine daily geo breakdown whenever the map's figurine
+  // selection or the date range changes. Token-guarded so a slow response
+  // for a selection the admin has since moved on from can't clobber a
+  // faster, more recent one.
+  let geoRequestToken = 0;
+  $effect(() => {
+    const id = mapFigurineId;
+    const r = range;
+    if (id === 'all') {
+      figurineGeoDaily = [];
+      figurineGeoLoading = false;
+      return;
+    }
+    const token = ++geoRequestToken;
+    figurineGeoLoading = true;
+    api.getFigurineGeoDaily(id, { from: r.from, to: r.to })
+      .then((rows) => { if (token === geoRequestToken) figurineGeoDaily = rows; })
+      .catch(() => { if (token === geoRequestToken) figurineGeoDaily = []; })
+      .finally(() => { if (token === geoRequestToken) figurineGeoLoading = false; });
   });
 
   // ── Data loading ────────────────────────────────────────────────────────
@@ -452,6 +484,43 @@
       .slice(0, 6);
   });
 
+  /** Works with any geography at all, for the map's figurine picker —
+   * alphabetical, since this is a lookup list, not a ranking. */
+  let mapFigurineOptions = $derived(
+    [...(page?.items ?? [])]
+      .filter((i) => i.countries.length > 0)
+      .sort((a, b) => a.name.localeCompare(b.name))
+  );
+
+  let mapFigurineName = $derived(
+    mapFigurineId === 'all' ? null : (page?.items.find((i) => i.figurineId === mapFigurineId)?.name ?? null)
+  );
+
+  /** The map's data source — site-wide totals, or one figurine's own daily
+   * rows collapsed to a per-country total for the choropleth. */
+  let mapData = $derived.by(() => {
+    if (mapFigurineId === 'all') return overview?.geo ?? [];
+    const byCountry = new Map<string, { views: number; uniqueVisitors: number }>();
+    for (const row of figurineGeoDaily) {
+      const existing = byCountry.get(row.countryCode) ?? { views: 0, uniqueVisitors: 0 };
+      existing.views += row.views;
+      existing.uniqueVisitors += row.uniqueVisitors;
+      byCountry.set(row.countryCode, existing);
+    }
+    return [...byCountry.entries()].map(([key, v]) => ({ key, views: v.views, uniqueVisitors: v.uniqueVisitors }));
+  });
+
+  /** Actual visit dates for the selected figurine + selected country — the
+   * "when did this piece get seen there" the map's figurine mode exists for.
+   * Most recent first. */
+  let figurineCountryDates = $derived.by(() => {
+    if (mapFigurineId === 'all' || countryFilter === 'all') return [];
+    return figurineGeoDaily
+      .filter((r) => r.countryCode.toUpperCase() === countryFilter)
+      .slice()
+      .sort((a, b) => b.day.localeCompare(a.day));
+  });
+
   /** Site-wide signal counts — the Pulse tab's digest and the Works tab's
    * badge both read from here. `growing` counts every work with positive
    * week-over-week growth, not just the ones whose *priority-picked* signal
@@ -483,6 +552,52 @@
 
   let overviewChart = $derived.by(() => bucketDaily(overview?.daily ?? [], range.from, range.to));
   let detailChart = $derived.by(() => bucketDaily(detail?.daily ?? [], range.from, range.to));
+  let overviewNiceMax = $derived(niceCeiling(Math.max(...overviewChart.map((b) => b.views), 1)));
+  let overviewTicks = $derived(tickIndices(overviewChart.length));
+  let detailNiceMax = $derived(niceCeiling(Math.max(...detailChart.map((b) => b.views), 1)));
+  let detailTicks = $derived(tickIndices(detailChart.length, 5));
+
+  /** Index of the tallest bar — the one thing on a spiky trend chart worth
+   * a direct number, per "label the extreme, not every point". -1 when
+   * every bar is zero (nothing to point at). */
+  function peakIndex(chart: ChartBar[]): number {
+    let idx = -1;
+    for (let i = 0; i < chart.length; i++) {
+      if (idx === -1 || chart[i].views > chart[idx].views) idx = i;
+    }
+    return idx >= 0 && chart[idx].views > 0 ? idx : -1;
+  }
+  let overviewPeakIndex = $derived(peakIndex(overviewChart));
+  let detailPeakIndex = $derived(peakIndex(detailChart));
+
+  /** Both trend charts bucket by the same shared `range`, so one flag covers
+   * whether "Daily trend" is currently showing daily or (past 45 days,
+   * per bucketDaily) weekly bars — the heading and units need to say which. */
+  let chartIsWeekly = $derived(daysBetween(range.from, range.to) > 45);
+  let chartUnitLabel = $derived(chartIsWeekly ? 'views/week' : 'views/day');
+
+  // ── Day/week detail popup — opened by clicking a bar on either trend
+  // chart. Reuses the annotation add/remove flow (same `newAnnotationDay` /
+  // `newAnnotationLabel` state as the Overview annotations panel) so there's
+  // one source of truth for annotation editing, not a second copy.
+  type DayDetailSource = 'overview' | 'detail';
+  let dayDetail = $state<{ bar: ChartBar; source: DayDetailSource } | null>(null);
+
+  function openDayDetail(bar: ChartBar, source: DayDetailSource) {
+    dayDetail = { bar, source };
+    newAnnotationDay = bar.days[0];
+    newAnnotationLabel = '';
+    annotationError = '';
+  }
+  function closeDayDetail() {
+    dayDetail = null;
+  }
+  let dayDetailAnnotations = $derived(dayDetail ? annotationsForDays(dayDetail.bar.days) : []);
+  let dayDetailRangeLabel = $derived.by(() => {
+    if (!dayDetail) return '';
+    const { days } = dayDetail.bar;
+    return days.length > 1 ? `${days[0]} – ${days[days.length - 1]}` : days[0];
+  });
 
   let viewsDelta = $derived(overview ? delta(overview.summary.views, overview.previousSummary.views) : null);
   let uniquesDelta = $derived(overview ? delta(overview.summary.uniqueVisitors, overview.previousSummary.uniqueVisitors) : null);
@@ -521,7 +636,14 @@
     return { text, tone, lowData: previous < MIN_RATE_SAMPLE };
   }
 
+  /** A true zero must render as nothing — flooring it to a visible sliver
+   * (the old behavior) turned every quiet day into a fake little bar, which
+   * on a chart with a long flat stretch reads as a dashed line running
+   * through empty space instead of "nothing happened here". The floor only
+   * exists so a genuinely nonzero-but-tiny value doesn't round down to an
+   * invisible 0% and get mistaken for zero. */
   function pct(value: number, max: number): number {
+    if (value <= 0) return 0;
     return max <= 0 ? 0 : Math.max(2, Math.round((value / max) * 100));
   }
 
@@ -562,13 +684,13 @@
       case 'low_data':
         return `Fewer than 10 views (${item.views}) in range — too little data to read.`;
       case 'high_conversion':
-        return `${item.conversionRate.toFixed(1)}% conversion (≥12%) on ${item.submissions} submission${item.submissions === 1 ? '' : 's'} (≥2).`;
+        return `${item.conversionRate.toFixed(1)}% conversion (12% or higher) on ${item.submissions} submission${item.submissions === 1 ? '' : 's'} (at least 2 required).`;
       case 'attention_no_submissions':
-        return `${item.engagedViews} engaged view${item.engagedViews === 1 ? '' : 's'} / ${item.ctaClicks} CTA click${item.ctaClicks === 1 ? '' : 's'}, 0 submissions.`;
+        return `Engaged (at least 8 engaged views, or at least 3 clicks on a call-to-action button) but 0 submissions — ${item.engagedViews} engaged view${item.engagedViews === 1 ? '' : 's'} and ${item.ctaClicks} call-to-action click${item.ctaClicks === 1 ? '' : 's'} here.`;
       case 'growing_interest':
         return 'Views this week are up at least 30% on the week before.';
       case 'low_visibility':
-        return `Only ${item.views} views in range (<25).`;
+        return `Only ${item.views} views in range — fewer than 25.`;
       default:
         return `${item.views} views, ${item.submissions} submissions — nothing notable either way.`;
     }
@@ -577,6 +699,39 @@
   function sourceLabel(value: string): string {
     return value.replace(/_/g, ' ');
   }
+
+  /** Hover text for an external-channel source value (Sources blocks, both
+   * site-wide and per-figurine) — the raw label ("referral", "direct") names
+   * the bucket but not what lands a visit in it. */
+  const SOURCE_EXPLAIN: Record<string, string> = {
+    direct: 'Typed the address directly, or arrived with no referring page at all — for instance from a bookmark, or a browser that hides it.',
+    referral: 'Followed a link in from another website.',
+    internal: 'Was already browsing this site and moved from one page to another — see "Language & entry block" below for which page.',
+    search: "Arrived from a search engine's results page.",
+    social: 'Arrived from a social media platform.',
+    newsletter: "Arrived from a link in the House's email newsletter.",
+  };
+  function sourceExplain(value: string): string {
+    return SOURCE_EXPLAIN[value] ?? `External channel: ${sourceLabel(value)}.`;
+  }
+
+  /** Full plain-language reference text, reused verbatim everywhere the
+   * concept surfaces (a badge/column lives on one tab, but the same term can
+   * appear on another — e.g. Signal badges are set on Works but summarized
+   * on Pulse) so the wording never drifts between two hand-written copies. */
+  const SOURCE_GLOSSARY =
+    "Which channel brought the visit in. Direct — typed the address directly, used a bookmark, or arrived with no referring page at all. " +
+    'Referral — followed a link from another website. Internal — was already browsing this site and moved from one page to another. ' +
+    "Search — came from a search engine's results page. Social — came from a social media platform. Newsletter — followed a link from the House's email newsletter.";
+
+  const SIGNAL_GLOSSARY =
+    "An automatic read of a work's numbers. Each work shows exactly one badge, picked by the first rule below that matches, in this order: " +
+    'Low data — fewer than 10 views in the selected range, too little to read anything into. ' +
+    'High conversion — a conversion rate of 12 percent or higher, on at least 2 submissions. ' +
+    'Attention, no submissions — visitors are engaging (at least 8 engaged views, or at least 3 clicks on a call-to-action button) but nobody has submitted a form yet. ' +
+    'Growing interest — views this week are up 30 percent or more compared to the week before. ' +
+    'Low visibility — fewer than 25 views in the selected range. ' +
+    'Normal — none of the above; nothing notable either way.';
 
   function shortText(value: string, max = 60): string {
     return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
@@ -588,17 +743,41 @@
    * zero-filled first so the x-axis stays continuous; otherwise a run of quiet
    * days would silently vanish and make unrelated bars look chronologically
    * adjacent. */
-  type ChartBar = { label: string; views: number; submissions: number; days: string[] };
+  type ChartBar = {
+    label: string;
+    views: number;
+    submissions: number;
+    uniqueVisitors: number;
+    engagedViews: number;
+    ctaClicks: number;
+    days: string[];
+  };
+
+  function daysBetween(from: string, to: string): number {
+    return Math.round((new Date(`${to}T00:00:00Z`).getTime() - new Date(`${from}T00:00:00Z`).getTime()) / 86_400_000) + 1;
+  }
+
   function bucketDaily(points: AnalyticsDailyPoint[], from: string, to: string): ChartBar[] {
     const byDay = new Map(points.map((p) => [p.day, p]));
-    const totalDays = Math.round((new Date(`${to}T00:00:00Z`).getTime() - new Date(`${from}T00:00:00Z`).getTime()) / 86_400_000) + 1;
+    const totalDays = daysBetween(from, to);
     const filled = Array.from({ length: totalDays }, (_, i) => {
       const day = shiftUtc(from, i);
       const p = byDay.get(day);
-      return { day, views: p?.views ?? 0, submissions: p?.submissions ?? 0 };
+      return {
+        day,
+        views: p?.views ?? 0,
+        submissions: p?.submissions ?? 0,
+        uniqueVisitors: p?.uniqueVisitors ?? 0,
+        engagedViews: p?.engagedViews ?? 0,
+        ctaClicks: p?.ctaClicks ?? 0,
+      };
     });
     if (totalDays <= 45) {
-      return filled.map((p) => ({ label: p.day.slice(5), views: p.views, submissions: p.submissions, days: [p.day] }));
+      return filled.map((p) => ({
+        label: p.day.slice(5), views: p.views, submissions: p.submissions,
+        uniqueVisitors: p.uniqueVisitors, engagedViews: p.engagedViews, ctaClicks: p.ctaClicks,
+        days: [p.day],
+      }));
     }
     const buckets = new Map<number, ChartBar>();
     filled.forEach((p, dayIndex) => {
@@ -607,9 +786,16 @@
       if (existing) {
         existing.views += p.views;
         existing.submissions += p.submissions;
+        existing.uniqueVisitors += p.uniqueVisitors;
+        existing.engagedViews += p.engagedViews;
+        existing.ctaClicks += p.ctaClicks;
         existing.days.push(p.day);
       } else {
-        buckets.set(bucketIndex, { label: p.day.slice(5), views: p.views, submissions: p.submissions, days: [p.day] });
+        buckets.set(bucketIndex, {
+          label: p.day.slice(5), views: p.views, submissions: p.submissions,
+          uniqueVisitors: p.uniqueVisitors, engagedViews: p.engagedViews, ctaClicks: p.ctaClicks,
+          days: [p.day],
+        });
       }
     });
     return [...buckets.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => v);
@@ -617,6 +803,31 @@
 
   function annotationsForDays(days: string[]): AnalyticsAnnotation[] {
     return annotations.filter((a) => days.includes(a.day));
+  }
+
+  /** Which bar indices get an x-axis label. Never one per bar — past a
+   * handful of columns, a label under every single day is what produced the
+   * unreadable wall of rotated text this replaces. Always the first and
+   * last bar (so the range's edges are legible), plus evenly spaced ticks
+   * between them, capped at `maxTicks` total regardless of how many bars
+   * there are. */
+  function tickIndices(n: number, maxTicks = 7): Set<number> {
+    if (n <= 0) return new Set();
+    if (n <= maxTicks) return new Set(Array.from({ length: n }, (_, i) => i));
+    const step = (n - 1) / (maxTicks - 1);
+    const idx = new Set<number>();
+    for (let i = 0; i < maxTicks; i++) idx.add(Math.round(i * step));
+    return idx;
+  }
+
+  /** Round a chart's peak value up to a clean 1/2/5×10ⁿ step — "up to 187"
+   * reads as an arbitrary sample; "up to 200" reads as a scale. */
+  function niceCeiling(value: number): number {
+    if (value <= 0) return 1;
+    const magnitude = 10 ** Math.floor(Math.log10(value));
+    const norm = value / magnitude;
+    const step = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10;
+    return step * magnitude;
   }
 
   /** Last-14-days-ending-at-`to`, zero-filled — the same shape as the Works
@@ -678,16 +889,60 @@
       {#if error}<span class="reload-note reload-note--error">· {error}</span>{/if}
     </p>
 
+    <!-- Shared bar-chart body for the Overview trend and each per-figurine
+    drilldown "Daily/Weekly trend" — both read the same ChartBar[] shape, so
+    one snippet keeps the legend, gridlines, click-for-detail and annotation
+    marker in sync instead of drifting into two copies. -->
+    {#snippet trendChart(chart: ChartBar[], niceMax: number, ticks: Set<number>, peakIdx: number, source: DayDetailSource, small: boolean, emptyMessage: string)}
+      <div class="trend" class:trend--small={small}>
+        {#if chart.length > 0}
+          <div class="trend-grid" aria-hidden="true">
+            <span class="grid-line" style="bottom:100%"><b>{fmt(niceMax)}</b></span>
+            <span class="grid-line" style="bottom:50%"><b>{fmt(Math.round(niceMax / 2))}</b></span>
+          </div>
+        {/if}
+        {#each chart as bar, i}
+          {@const marks = annotationsForDays(bar.days)}
+          <div
+            class="bar-col"
+            role="button"
+            tabindex="0"
+            title="{bar.label}: {fmt(bar.views)} views, {fmt(bar.submissions)} submissions{marks.length ? ' — ' + marks.map((m) => m.label).join('; ') : ''} — click for details"
+            onclick={() => openDayDetail(bar, source)}
+            onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDayDetail(bar, source); } }}
+          >
+            <div class="bar-stack">
+              <i class="bar bar--views" style="height:{pct(bar.views, niceMax)}%"></i>
+              {#if bar.submissions > 0}
+                <i class="submissions-dot" style="bottom:{pct(bar.submissions, niceMax)}%"></i>
+              {/if}
+              {#if marks.length}<i class="annotation-mark" style="bottom:calc({pct(bar.views, niceMax)}% + 0.3rem)"></i>{/if}
+              {#if i === peakIdx}<span class="peak-label" style="bottom:{pct(bar.views, niceMax)}%"><span class="peak-tag">peak</span>{fmt(bar.views)}</span>{/if}
+            </div>
+            <span class="tick-label" class:visible={ticks.has(i)}>{bar.label}</span>
+          </div>
+        {:else}
+          <div class="empty-plot">{emptyMessage}</div>
+        {/each}
+      </div>
+      <div class="legend">
+        <span><i class="legend-dot legend-dot--views"></i>Views</span>
+        <span><i class="legend-dot legend-dot--subs"></i>Submissions</span>
+        <span><i class="legend-dot legend-dot--mark"></i>Annotation</span>
+        {#if chart.length > 0}<span class="legend-peak muted">up to {fmt(niceMax)} {chartUnitLabel}</span>{/if}
+      </div>
+    {/snippet}
+
     {#if activeTab === 'pulse'}
     <div class="signal-digest">
       {#if signalCounts.attention > 0}
-        <button type="button" class="digest-chip digest-chip--warn" onclick={() => jumpToSignal('attention')}>⚠ {signalCounts.attention} need{signalCounts.attention === 1 ? 's' : ''} attention</button>
+        <button type="button" class="digest-chip digest-chip--warn" onclick={() => jumpToSignal('attention')} title="Visitors are engaging with these works (at least 8 engaged views, or at least 3 clicks on a call-to-action button) but nobody has submitted a form yet.">⚠ {signalCounts.attention} need{signalCounts.attention === 1 ? 's' : ''} attention</button>
       {/if}
       {#if signalCounts.growing > 0}
-        <button type="button" class="digest-chip digest-chip--info" onclick={() => jumpToSignal('growing')}>📈 {signalCounts.growing} growing</button>
+        <button type="button" class="digest-chip digest-chip--info" onclick={() => jumpToSignal('growing')} title="Views this week are up at least 30% on the week before.">📈 {signalCounts.growing} growing</button>
       {/if}
       {#if signalCounts.highConversion > 0}
-        <button type="button" class="digest-chip digest-chip--good" onclick={() => jumpToSignal('high_conversion')}>✓ {signalCounts.highConversion} converting well</button>
+        <button type="button" class="digest-chip digest-chip--good" onclick={() => jumpToSignal('high_conversion')} title="A conversion rate (submissions divided by engaged views) of 12% or higher, on at least 2 submissions.">✓ {signalCounts.highConversion} converting well</button>
       {/if}
       {#if signalCounts.attention === 0 && signalCounts.growing === 0 && signalCounts.highConversion === 0}
         <span class="muted">Nothing urgent right now — every work reads normal or low-data.</span>
@@ -697,11 +952,15 @@
     <details class="glossary">
       <summary>What do these terms mean?</summary>
       <dl>
-        <dt>Views / Daily uniques</dt><dd>A figurine page load; uniques are distinct visitors per day (privacy-preserving daily hash — the same person on two different days counts twice, by design, since visits aren't linked across days).</dd>
-        <dt>Engaged %</dt><dd>Share of views with meaningful time on the page or scroll depth.</dd>
-        <dt>Conversion</dt><dd>Submissions ÷ engaged views.</dd>
-        <dt>Signal</dt><dd>An automatic read of a work's numbers — High conversion (≥12% conversion, ≥2 submissions), Attention (engaged but 0 submissions), Growing interest (+30% week over week), Low visibility (&lt;25 views), Low data (&lt;10 views).</dd>
-        <dt>Funnel steps</dt><dd>Visited → Viewed works → Opened /commission → Started the form → Submitted. Only "Submitted" is exact; the rest are client-side events that undercount (missed by Do-Not-Track, bots, or a direct link to the form).</dd>
+        <dt>Views</dt><dd>One page load of a figurine's page.</dd>
+        <dt>Daily uniques</dt><dd>The number of distinct visitors, counted separately for each day. A visitor is never linked across two different days, to protect their privacy — so the same person visiting on two different days is counted twice, on purpose.</dd>
+        <dt>Engaged views</dt><dd>The share of views where the visitor spent a meaningful amount of time on the page, or scrolled a meaningful distance.</dd>
+        <dt>Submissions</dt><dd>A completed form tied to a work — an order request, a commission, a reserve, a loan booking, or a waitlist signup.</dd>
+        <dt>Conversion</dt><dd>Submissions divided by engaged views, shown as a percentage. Submissions are counted exactly, from the real order records, while engaged views are only an estimate from browser events — so this percentage can occasionally read above 100 percent.</dd>
+        <dt>Annotation</dt><dd>A short note an admin adds to a specific day — for example "posted to Instagram" — shown as a small marker on the trend chart below, so a spike or dip can be explained later.</dd>
+        <dt>Trend chart</dt><dd>The bold number above the tallest bar is that single day's (or week's) peak, not the total for the whole period — the period total is in the "Visits" card above. Click any bar to see that day's full numbers. Bars are daily for ranges up to 45 days; for longer ranges the chart switches to one bar per week, and the heading changes to say so.</dd>
+        <dt>Signal</dt><dd>{SIGNAL_GLOSSARY} Hover a badge in the Works tab to see that row's own numbers behind the badge.</dd>
+        <dt>Funnel steps</dt><dd>Visited — loaded any page on the site. Viewed works — looked at a figurine's page. Opened the commission page — opened the page where a commission request is filled in. Started the form — began filling it in. Submitted — completed and sent it. Only "Submitted" is exact, taken from the stored commissions; every earlier step is a browser-side event that can under-count when a visitor blocks tracking, is a bot, or arrives on a direct link straight to the form.</dd>
       </dl>
     </details>
 
@@ -710,32 +969,12 @@
       <h3 class="block-label"><span>Overview</span></h3>
       <div class="overview-grid">
         <div class="trend-card">
-          <div class="trend">
-            {#each overviewChart as bar}
-              {@const maxViews = Math.max(...overviewChart.map((b) => b.views), 1)}
-              {@const marks = annotationsForDays(bar.days)}
-              <div class="bar-col" title="{bar.label}: {fmt(bar.views)} views, {fmt(bar.submissions)} submissions{marks.length ? ' — ' + marks.map((m) => m.label).join('; ') : ''}">
-                <div class="bar-stack">
-                  <i class="bar bar--views" style="height:{pct(bar.views, maxViews)}%"></i>
-                  <i class="bar bar--subs" style="height:{pct(bar.submissions, maxViews)}%"></i>
-                  {#if marks.length}<i class="annotation-mark"></i>{/if}
-                </div>
-                <span>{bar.label}</span>
-              </div>
-            {:else}
-              <div class="empty-plot">No visits yet in this range.</div>
-            {/each}
-          </div>
-          <div class="legend">
-            <span><i class="legend-dot legend-dot--views"></i>Views</span>
-            <span><i class="legend-dot legend-dot--subs"></i>Submissions</span>
-            <span><i class="legend-dot legend-dot--mark"></i>Annotation</span>
-          </div>
+          {@render trendChart(overviewChart, overviewNiceMax, overviewTicks, overviewPeakIndex, 'overview', false, 'No visits yet in this range.')}
 
           <div class="annotations-panel">
             <div class="annotation-add">
               <input type="date" bind:value={newAnnotationDay} aria-label="Annotation date" />
-              <input type="text" placeholder="e.g. Posted to Instagram" bind:value={newAnnotationLabel} maxlength="200" aria-label="Annotation label" />
+              <input type="text" placeholder="For example: Posted to Instagram" bind:value={newAnnotationLabel} maxlength="200" aria-label="Annotation label" />
               <button type="button" onclick={addAnnotation} disabled={annotationSaving || !newAnnotationDay || !newAnnotationLabel.trim()}>Add</button>
             </div>
             {#if annotationError}<p class="state state--error state--compact">{annotationError}</p>{/if}
@@ -751,7 +990,7 @@
 
         <div class="kpi-grid">
           <div class="kpi">
-            <span>Visits</span>
+            <span title="A figurine page load — site-wide. Same metric as the Works tab's 'Views' column, summed across every work.">Visits</span>
             <strong>{fmt(overview.summary.views)}</strong>
             {#if compareEnabled && viewsDelta}<small class="delta delta--{viewsDelta.tone}" class:low-data={viewsDelta.lowData}>{viewsDelta.text}{#if viewsDelta.lowData} · low data{/if}</small>{/if}
           </div>
@@ -762,7 +1001,7 @@
             <small class="hint">Counted per day — the same visitor across two days counts twice, by design (privacy-preserving daily hash, no cross-day tracking).</small>
           </div>
           <div class="kpi">
-            <span>Submissions</span>
+            <span title="Completed forms site-wide — order request, commission, reserve, booking, or waitlist signup.">Submissions</span>
             <strong>{fmt(overview.summary.submissions)}</strong>
             {#if compareEnabled && submissionsDelta}<small class="delta delta--{submissionsDelta.tone}" class:low-data={submissionsDelta.lowData}>{submissionsDelta.text}{#if submissionsDelta.lowData} · low data{/if}</small>{/if}
           </div>
@@ -806,7 +1045,7 @@
         {#if commissionFunnel.rawDataFrom > commissionFunnel.from}
           <p class="section-note">Visited/viewed/opened/started counts only go back to {commissionFunnel.rawDataFrom} (raw event retention); "Submitted" covers the full selected range.</p>
         {/if}
-        <p class="section-note">Every step but "Submitted" is a distinct-visitor count from client-side events (missed by DNT, bots, or a direct link to the form) — "Submitted" is exact, from the commissions table.</p>
+        <p class="section-note">Every step but "Submitted" is a distinct-visitor count from browser-side events (missed by a Do-Not-Track browser setting, bots, or a direct link to the form) — "Submitted" is exact, from the commissions table.</p>
       {:else}
         <p class="muted">Loading…</p>
       {/if}
@@ -817,9 +1056,9 @@
     <details class="glossary">
       <summary>What do these terms mean?</summary>
       <dl>
-        <dt>Source</dt><dd>Search, social, newsletter — an external channel a visit is attributed to. Internal = browsing from one page on this site to another. Referral = linked in from another site. Direct = typed URL or no referrer at all.</dd>
-        <dt>Country</dt><dd>Resolved offline from the visitor's IP address via GeoIP — the IP itself is never stored, only the resolved country.</dd>
-        <dt>"—" / unknown</dt><dd>The visit couldn't be geolocated — no GeoIP database configured on the server, or an unresolvable/private IP.</dd>
+        <dt>Source</dt><dd>{SOURCE_GLOSSARY}</dd>
+        <dt>Country</dt><dd>Worked out from the visitor's IP address, using a lookup table stored on the server (no outside service is called). The IP address itself is never stored — only the country it resolved to.</dd>
+        <dt>"—" / unknown</dt><dd>The visit's country couldn't be worked out — either the server has no lookup table installed, or the address itself can't be resolved (for example, a private or local network address).</dd>
       </dl>
     </details>
 
@@ -834,7 +1073,7 @@
         <div class="source-table">
           {#each overview.sources as s}
             <div class="source-row">
-              <span class="source-name">{sourceLabel(s.source)}</span>
+              <span class="source-name" title={sourceExplain(s.source)}>{sourceLabel(s.source)}</span>
               <div class="source-bar"><i style="width:{pct(s.views, maxViews)}%"></i></div>
               <span class="source-views">{fmt(s.views)}</span>
               <span class="source-share muted">{rate(s.views, totalViews).toFixed(1)}%</span>
@@ -851,24 +1090,36 @@
       {#if overview.geo.length === 0}
         <p class="muted">No geography data yet.</p>
       {:else}
-        {@const known = overview.geo.filter((g) => g.key !== 'unknown')}
-        {@const totalGeoViews = overview.geo.reduce((sum, g) => sum + g.views, 0)}
+        {@const known = mapData.filter((g) => g.key !== 'unknown')}
+        {@const totalGeoViews = mapData.reduce((sum, g) => sum + g.views, 0)}
         {@const maxGeoViews = Math.max(...known.map((g) => g.views), 1)}
-        {@const unknownGeoViews = overview.geo.find((g) => g.key === 'unknown')?.views ?? 0}
+        {@const unknownGeoViews = mapData.find((g) => g.key === 'unknown')?.views ?? 0}
         <div class="geo-toolbar">
+          <select bind:value={mapFigurineId} aria-label="Show map for">
+            <option value="all">All figurines (site-wide)</option>
+            {#each mapFigurineOptions as item}
+              <option value={item.figurineId}>{shortText(item.name, 48)}</option>
+            {/each}
+          </select>
           <button type="button" class="csv-btn" onclick={exportGeoCsv}>↧ Export CSV</button>
         </div>
+        {#if mapFigurineId !== 'all'}
+          <p class="map-scope-note">
+            Showing <strong>{mapFigurineName}</strong> only{#if figurineGeoLoading} · loading…{/if}
+            <button type="button" class="clear-country" onclick={() => { mapFigurineId = 'all'; }}>Back to site-wide ×</button>
+          </p>
+        {/if}
         <div class="geo-grid">
           <div class="geo-map-card">
             <WorldMap
-              data={overview.geo}
+              data={mapData}
               selected={countryFilter === 'all' ? null : countryFilter}
               onSelect={(code) => { countryFilter = code ?? 'all'; }}
             />
           </div>
           <div class="geo-list-card">
             {#if known.length === 0}
-              <p class="muted">No visits with a resolved country yet{#if unknownGeoViews > 0} — {fmt(unknownGeoViews)} visit{unknownGeoViews === 1 ? '' : 's'} couldn't be geolocated{/if}. This needs a GeoIP database configured on the server (<code>GEOIP_DB_PATH</code>) — without one, every visit resolves to "unknown".</p>
+              <p class="muted">No visits with a resolved country yet{#if unknownGeoViews > 0} — {fmt(unknownGeoViews)} visit{unknownGeoViews === 1 ? '' : 's'} couldn't be resolved{/if}. This needs a country lookup database configured on the server (the <code>GEOIP_DB_PATH</code> setting) — without one, every visit resolves to "unknown".</p>
             {:else}
               <div class="country-table">
                 {#each known.slice(0, 12) as g}
@@ -889,24 +1140,40 @@
             {/if}
             {#if countryFilter !== 'all'}
               <div class="geo-drill">
-                <p class="drill-label">
-                  Top works viewed from {countryName(countryFilter)}
-                  <button type="button" class="clear-country" onclick={() => { countryFilter = 'all'; }}>Clear ×</button>
-                </p>
-                {#if topWorksForSelectedCountry.length === 0}
-                  <p class="muted">No works recorded a view from here yet.</p>
+                {#if mapFigurineId === 'all'}
+                  <p class="drill-label">
+                    Top works viewed from {countryName(countryFilter)}
+                    <button type="button" class="clear-country" onclick={() => { countryFilter = 'all'; }}>Clear ×</button>
+                  </p>
+                  {#if topWorksForSelectedCountry.length === 0}
+                    <p class="muted">No works recorded a view from here yet.</p>
+                  {:else}
+                    <ul class="drill-list">
+                      {#each topWorksForSelectedCountry as item}
+                        <li><span class="drill-name">{shortText(item.name, 34)}</span><span class="drill-views">{fmt(item.views)}</span></li>
+                      {/each}
+                    </ul>
+                  {/if}
                 {:else}
-                  <ul class="drill-list">
-                    {#each topWorksForSelectedCountry as item}
-                      <li><span class="drill-name">{shortText(item.name, 34)}</span><span class="drill-views">{fmt(item.views)}</span></li>
-                    {/each}
-                  </ul>
+                  <p class="drill-label">
+                    Dates seen from {countryName(countryFilter)}
+                    <button type="button" class="clear-country" onclick={() => { countryFilter = 'all'; }}>Clear ×</button>
+                  </p>
+                  {#if figurineCountryDates.length === 0}
+                    <p class="muted">No recorded visit from here on this work yet.</p>
+                  {:else}
+                    <ul class="drill-list">
+                      {#each figurineCountryDates as row}
+                        <li><span class="drill-name">{row.day}</span><span class="drill-views">{fmt(row.views)} view{row.views === 1 ? '' : 's'}</span></li>
+                      {/each}
+                    </ul>
+                  {/if}
                 {/if}
               </div>
             {/if}
           </div>
         </div>
-        <p class="section-note">Country is resolved offline from the visitor's IP (GeoIP), which is never stored — only the resolved country persists. Clicking a country also filters the Works tab to works viewed from there.</p>
+        <p class="section-note">Country is worked out offline from the visitor's IP address, which is never stored — only the resolved country persists. Clicking a country also filters the Works tab to works viewed from there. Scroll or drag the map to zoom/pan.</p>
       {/if}
     </section>
     {/if}
@@ -915,9 +1182,15 @@
     <details class="glossary">
       <summary>What do these terms mean?</summary>
       <dl>
-        <dt>Country / Source / Device filters</dt><dd>"Had at least one matching view" — an existence filter, not a metric recompute. Views, Engaged %, Submissions and Conv. shown stay totals across all countries/sources/devices even when one of these is active.</dd>
-        <dt>Trend (14d)</dt><dd>Always the last 14 days ending today, regardless of the selected date range above — a fixed, comparable shape for every row.</dd>
-        <dt>Low data</dt><dd>Italicized values are based on fewer than 10 samples and can swing sharply from a single visit.</dd>
+        <dt>Views</dt><dd>One page load of a figurine's page.</dd>
+        <dt>Uniques</dt><dd>Distinct visitors, counted separately for each day and never linked across days (to protect visitor privacy) — the same person visiting on two different days is counted twice, on purpose.</dd>
+        <dt>Engaged %</dt><dd>The share of views where the visitor spent a meaningful amount of time on the page, or scrolled a meaningful distance.</dd>
+        <dt>Submissions</dt><dd>A completed form tied to this work — an order request, a commission, a reserve, a loan booking, or a waitlist signup.</dd>
+        <dt>Conv. (conversion)</dt><dd>Submissions divided by engaged views, shown as a percentage. Because submissions are counted exactly and engaged views are only a browser-side estimate, this can occasionally read above 100 percent.</dd>
+        <dt>Signal</dt><dd>{SIGNAL_GLOSSARY} Hover a badge to see that row's own numbers behind it.</dd>
+        <dt>Country / Source / Device filters</dt><dd>These narrow the list to works with at least one matching view — they don't recalculate anything. Views, Engaged %, Submissions and Conv. shown always stay totals across every country, source and device, even while one of these filters is active.</dd>
+        <dt>Trend (14 days)</dt><dd>A small chart of daily views over the last 14 days ending today. This window is fixed and doesn't change with the date range selected above, so every row can be compared on the same scale.</dd>
+        <dt>Low data</dt><dd>Shown in italics — based on fewer than 10 samples, small enough that one extra visit could swing the number sharply. Read it as a rough signal, not a solid trend.</dd>
       </dl>
     </details>
 
@@ -960,7 +1233,7 @@
             <option value={c}>{countryName(c)}</option>
           {/each}
         </select>
-        <select bind:value={sourceFilter} aria-label="Filter by top source">
+        <select bind:value={sourceFilter} aria-label="Filter by top source" title="Direct = typed the address directly, or no referring page at all. Referral = followed a link from another site. Internal = browsed here from another page on this site. Search/social/newsletter = matched by the link's tracking parameters, or a known external site.">
           <option value="all">All sources</option>
           {#each sourceOptions as s}
             <option value={s}>{sourceLabel(s)}</option>
@@ -993,11 +1266,11 @@
             <tr>
               <th><button type="button" onclick={() => setSort('name')}>Work {#if sort === 'name'}<span>{dir === 'asc' ? '▲' : '▼'}</span>{/if}</button></th>
               <th><button type="button" onclick={() => setSort('status')}>Status {#if sort === 'status'}<span>{dir === 'asc' ? '▲' : '▼'}</span>{/if}</button></th>
-              <th class="right"><button type="button" onclick={() => setSort('views')}>Views {#if sort === 'views'}<span>{dir === 'asc' ? '▲' : '▼'}</span>{/if}</button></th>
+              <th class="right" title="A figurine page load."><button type="button" onclick={() => setSort('views')}>Views {#if sort === 'views'}<span>{dir === 'asc' ? '▲' : '▼'}</span>{/if}</button></th>
               <th class="right" title="Daily uniques — the same visitor across two days counts twice"><button type="button" onclick={() => setSort('uniqueVisitors')}>Uniques {#if sort === 'uniqueVisitors'}<span>{dir === 'asc' ? '▲' : '▼'}</span>{/if}</button></th>
-              <th class="right"><button type="button" onclick={() => setSort('engagedViews')}>Engaged % {#if sort === 'engagedViews'}<span>{dir === 'asc' ? '▲' : '▼'}</span>{/if}</button></th>
-              <th class="right"><button type="button" onclick={() => setSort('submissions')}>Submissions {#if sort === 'submissions'}<span>{dir === 'asc' ? '▲' : '▼'}</span>{/if}</button></th>
-              <th class="right"><button type="button" onclick={() => setSort('conversionRate')}>Conv. {#if sort === 'conversionRate'}<span>{dir === 'asc' ? '▲' : '▼'}</span>{/if}</button></th>
+              <th class="right" title="Share of views with meaningful time on the page or scroll depth."><button type="button" onclick={() => setSort('engagedViews')}>Engaged % {#if sort === 'engagedViews'}<span>{dir === 'asc' ? '▲' : '▼'}</span>{/if}</button></th>
+              <th class="right" title="Completed forms tied to this work — order request, commission, reserve, booking, or waitlist signup."><button type="button" onclick={() => setSort('submissions')}>Submissions {#if sort === 'submissions'}<span>{dir === 'asc' ? '▲' : '▼'}</span>{/if}</button></th>
+              <th class="right" title="Conversion: submissions ÷ engaged views. Can read over 100% since a returning visitor can submit without a fresh engaged view in range."><button type="button" onclick={() => setSort('conversionRate')}>Conv. {#if sort === 'conversionRate'}<span>{dir === 'asc' ? '▲' : '▼'}</span>{/if}</button></th>
               <th title="Most common country among this work's views">Country</th>
               <th title="Daily views, last 14 days — a fixed window, independent of the date range above">Trend (14d)</th>
               <th>Signal</th>
@@ -1055,20 +1328,8 @@
 
                         <div class="drilldown-grid">
                           <div class="panel">
-                            <h4>Daily trend</h4>
-                            <div class="trend trend--small">
-                              {#each detailChart as bar}
-                                {@const maxViews = Math.max(...detailChart.map((b) => b.views), 1)}
-                                <div class="bar-col" title="{bar.label}: {fmt(bar.views)} views">
-                                  <div class="bar-stack">
-                                    <i class="bar bar--views" style="height:{pct(bar.views, maxViews)}%"></i>
-                                  </div>
-                                  <span>{bar.label}</span>
-                                </div>
-                              {:else}
-                                <div class="empty-plot">No daily data.</div>
-                              {/each}
-                            </div>
+                            <h4>{chartIsWeekly ? 'Weekly trend' : 'Daily trend'}</h4>
+                            {@render trendChart(detailChart, detailNiceMax, detailTicks, detailPeakIndex, 'detail', true, 'No daily data.')}
                           </div>
 
                           <div class="panel">
@@ -1083,7 +1344,7 @@
                                   <span class:low-data={conv.lowData}>{conv.text}</span>
                                 </div>
                               {:else}
-                                <p class="muted">No CTA activity yet.</p>
+                                <p class="muted">No activity yet.</p>
                               {/each}
                             </div>
                             <p class="section-note">Starts are client-side clicks (missed by Do-Not-Track, bots, or direct links to a form); submitted is exact — conversion can read over 100%.</p>
@@ -1102,7 +1363,7 @@
                             <h4>Sources</h4>
                             <div class="compact-list">
                               {#each detail.sources as s}
-                                <span>{sourceLabel(s.source)} <strong>{fmt(s.views)}</strong></span>
+                                <span title={sourceExplain(s.source)}>{sourceLabel(s.source)} <strong>{fmt(s.views)}</strong></span>
                               {:else}
                                 <p class="muted">No source data.</p>
                               {/each}
@@ -1125,10 +1386,10 @@
                             <h4>Language &amp; entry block</h4>
                             <div class="compact-list">
                               {#each detail.languages as l}
-                                <span>{l.key.toUpperCase()} <strong>{fmt(l.views)}</strong></span>
+                                <span title="Site language active when the visit happened.">{l.key.toUpperCase()} <strong>{fmt(l.views)}</strong></span>
                               {/each}
                               {#each detail.internalSources as s}
-                                <span>{sourceLabel(s.key)} <strong>{fmt(s.views)}</strong></span>
+                                <span title="Which on-site block linked to this work — for example the home page grid or a featured shelf.">{sourceLabel(s.key)} <strong>{fmt(s.views)}</strong></span>
                               {:else}
                                 <p class="muted">No internal referral data.</p>
                               {/each}
@@ -1197,6 +1458,91 @@
     {/if}
   {/if}
 </div>
+
+<svelte:window onkeydown={(e) => { if (dayDetail && e.key === 'Escape') closeDayDetail(); }} />
+
+{#if dayDetail}
+  {@const bar = dayDetail.bar}
+  {@const marks = dayDetailAnnotations}
+  {@const engaged = rateLabel(bar.engagedViews, bar.views)}
+  <div
+    class="dd-backdrop"
+    role="button"
+    tabindex="0"
+    aria-label="Close day detail"
+    transition:fade={{ duration: 180 }}
+    onclick={(e) => { if (e.target === e.currentTarget) closeDayDetail(); }}
+    onkeydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) closeDayDetail(); }}
+  >
+    <div
+      class="dd-sheet"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Day detail"
+      use:focusTrap
+      transition:scale={{ duration: 220, start: 0.96, easing: cubicOut }}
+    >
+      <header class="drilldown-head">
+        <div>
+          <strong>{dayDetailRangeLabel}</strong>
+          {#if dayDetail.source === 'detail' && detail}<p class="dd-sub muted">{detail.figurine.name}</p>{/if}
+          {#if dayDetail.source === 'overview'}<p class="dd-sub muted">Site-wide</p>{/if}
+        </div>
+        <button type="button" class="close-btn" onclick={closeDayDetail}>Close ×</button>
+      </header>
+
+      <div class="kpi-grid dd-stats">
+        <div class="kpi">
+          <span title="A figurine page load.">Views</span>
+          <strong>{fmt(bar.views)}</strong>
+        </div>
+        <div class="kpi">
+          <span title="Distinct visitors this day (privacy-preserving daily hash — the same person on two different days counts twice, by design).">Unique visitors</span>
+          <strong>{fmt(bar.uniqueVisitors)}</strong>
+        </div>
+        <div class="kpi">
+          <span title="Views with meaningful time on the page or scroll depth.">Engaged views</span>
+          <strong>{fmt(bar.engagedViews)}</strong>
+          <small class="hint">{engaged.text}{#if engaged.lowData} · low data{/if}</small>
+        </div>
+        <div class="kpi">
+          <span title="Clicks on a call-to-action button (order request, reserve, booking, waitlist, create similar) — a browser-side event that can undercount under a Do-Not-Track browser setting, bots, or a direct link to the form.">Button clicks</span>
+          <strong>{fmt(bar.ctaClicks)}</strong>
+        </div>
+        <div class="kpi">
+          <span title="Completed forms — order request, commission, reserve, booking, or waitlist signup.">Submissions</span>
+          <strong>{fmt(bar.submissions)}</strong>
+        </div>
+      </div>
+
+      <div class="annotations-panel">
+        <h5 class="dd-annotations-title">Annotations</h5>
+        {#if marks.length > 0}
+          <ul class="annotation-list">
+            {#each marks as a}
+              <li><span class="muted">{a.day}</span> {a.label} <button type="button" class="annotation-remove" onclick={() => removeAnnotation(a.id)} aria-label="Remove annotation">×</button></li>
+            {/each}
+          </ul>
+        {:else}
+          <p class="muted">No annotation on {bar.days.length > 1 ? 'these days' : 'this day'}.</p>
+        {/if}
+        {#if bar.days.length === 1}
+          <div class="annotation-add">
+            <input type="text" placeholder="For example: Posted to Instagram" bind:value={newAnnotationLabel} maxlength="200" aria-label="Annotation label" />
+            <button
+              type="button"
+              onclick={() => { newAnnotationDay = bar.days[0]; void addAnnotation(); }}
+              disabled={annotationSaving || !newAnnotationLabel.trim()}
+            >Add</button>
+          </div>
+          {#if annotationError}<p class="state state--error state--compact">{annotationError}</p>{/if}
+        {:else}
+          <p class="section-note">Spans multiple days — open a single-day range to add an annotation here.</p>
+        {/if}
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   .dashboard {
@@ -1274,7 +1620,8 @@
 
   .custom-range input,
   .search-input,
-  .works-filters select {
+  .works-filters select,
+  .geo-toolbar select {
     border: 1px solid #d8c6b1;
     background: #fff;
     color: #34251c;
@@ -1471,7 +1818,10 @@
   }
 
   .trend {
+    position: relative;
+    z-index: 0;
     height: 9rem;
+    padding-right: 1.9rem;
     display: flex;
     align-items: end;
     gap: 0.25rem;
@@ -1479,6 +1829,35 @@
   }
 
   .trend--small { height: 7rem; }
+
+  /* Reference lines at the chart's max and half-max, drawn behind the bars
+   * (negative z-index inside the stacking context .trend establishes via
+   * position+z-index:0) so a tall bar visually crosses the line instead of
+   * painting over it. Numbers live in the padding-right gutter reserved on
+   * .trend, so they never sit on top of the rightmost bar. */
+  .trend-grid {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+  }
+
+  .grid-line {
+    position: absolute;
+    left: 0;
+    right: 0;
+    border-top: 1px dashed #e2d3bd;
+  }
+
+  .grid-line b {
+    position: absolute;
+    right: 0;
+    top: -0.65em;
+    font-weight: 400;
+    font-size: 0.6rem;
+    font-variant-numeric: tabular-nums;
+    color: #8a6f5c;
+  }
 
   .bar-col {
     flex: 1;
@@ -1489,7 +1868,12 @@
     justify-content: end;
     align-items: center;
     gap: 0.2rem;
+    cursor: pointer;
+    border-radius: 3px;
   }
+
+  .bar-col:hover { background: rgba(111, 59, 36, 0.06); }
+  .bar-col:focus-visible { outline: 2px solid #c65f3c; outline-offset: 1px; }
 
   .bar-stack {
     position: relative;
@@ -1497,30 +1881,97 @@
     height: 100%;
     display: flex;
     align-items: end;
+    justify-content: center;
   }
 
-  .bar { display: block; width: 100%; min-height: 2px; }
+  /* Capped thickness with air either side of the slot (never fill the
+   * column), rounded at the data end, square at the baseline. No min-height
+   * floor here — `pct()` already returns exactly 0 for a true zero (and
+   * floors a genuinely-nonzero-but-tiny value to stay visible); a CSS floor
+   * on top of that would draw every zero day as a fake little bar again. */
+  .bar {
+    display: block;
+    width: 100%;
+    max-width: 0.85rem;
+    border-radius: 2px 2px 0 0;
+  }
   .bar--views { background: #6f3b24; }
-  .bar--subs { position: absolute; right: 0; bottom: 0; width: 40%; background: #c65f3c; }
 
+  /* Submissions read as a marker riding the views bar at its own height,
+   * not a second bar competing for the same sliver of space — submissions
+   * are usually a small fraction of views, so an overlaid mini-bar was
+   * often just a couple of invisible pixels in the corner. */
+  .submissions-dot {
+    position: absolute;
+    left: 50%;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 999px;
+    background: #c65f3c;
+    border: 2px solid #fff;
+    transform: translate(-50%, 50%);
+    pointer-events: none;
+  }
+
+  /* `bottom` is set inline to the bar's own height% (plus a fixed offset) so
+   * the mark rides just above its own bar, not the top of the whole chart —
+   * it used to sit at a fixed `top` inside the full-height .bar-stack, which
+   * on a low-value day left it floating with no visible connection to its
+   * bar at all. */
   .annotation-mark {
     position: absolute;
     left: 50%;
-    top: -0.5rem;
     width: 0.4rem;
     height: 0.4rem;
     transform: translateX(-50%) rotate(45deg);
     background: #b08820;
+    pointer-events: none;
   }
 
-  .bar-col span {
-    font-size: 0.56rem;
-    color: #8a6f5c;
-    writing-mode: vertical-rl;
+  /* The one bar worth a direct number — "label the extreme, not every
+   * point". `bottom` matches the bar's own height% so the label sits right
+   * above its cap, `margin-bottom` opens a small gap. */
+  .peak-label {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    margin-bottom: 0.2rem;
+    color: #6f3b24;
+    font-size: 0.62rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    pointer-events: none;
   }
+
+  /* Distinguishes the peak number from a period total — without this word
+   * "60" alone reads as ambiguous next to the figurine row's own views
+   * total shown a moment ago in the table. */
+  .peak-tag {
+    color: #8a6f5c;
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.85em;
+    margin-right: 0.25em;
+  }
+
+  /* Hidden (not removed) on every bar but the chosen ticks, so every column
+   * still reserves the same layout height — only a handful of columns end
+   * up with visible text, horizontal and readable, instead of one rotated
+   * label per bar. */
+  .tick-label {
+    font-size: 0.62rem;
+    color: #8a6f5c;
+    white-space: nowrap;
+    visibility: hidden;
+  }
+
+  .tick-label.visible { visibility: visible; }
 
   .legend {
     display: flex;
+    flex-wrap: wrap;
+    align-items: center;
     gap: 0.85rem;
     margin-top: 0.55rem;
     color: #8a6f5c;
@@ -1535,8 +1986,13 @@
   }
 
   .legend-dot--views { background: #6f3b24; }
-  .legend-dot--subs { background: #c65f3c; }
+  .legend-dot--subs { background: #c65f3c; border-radius: 999px; }
   .legend-dot--mark { background: #b08820; transform: rotate(45deg); }
+
+  .legend-peak {
+    margin-left: auto;
+    font-style: italic;
+  }
 
   .annotations-panel {
     margin-top: 0.7rem;
@@ -1656,7 +2112,7 @@
 
   .geo-grid {
     display: grid;
-    grid-template-columns: minmax(0, 1.6fr) minmax(16rem, 1fr);
+    grid-template-columns: minmax(0, 2.2fr) minmax(16rem, 1fr);
     gap: 0.9rem;
     align-items: start;
   }
@@ -1845,8 +2301,20 @@
 
   .geo-toolbar {
     display: flex;
-    justify-content: flex-end;
+    align-items: center;
+    gap: 0.5rem;
     margin-bottom: 0.5rem;
+  }
+
+  .geo-toolbar .csv-btn { margin-left: auto; }
+
+  .map-scope-note {
+    margin: -0.15rem 0 0.6rem;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    color: #6f3b24;
+    font-size: 0.74rem;
   }
 
   .works-filters {
@@ -1967,7 +2435,7 @@
     width: 4.5rem;
   }
 
-  .spark i { flex: 1; display: block; background: #d8c6b1; min-height: 1px; }
+  .spark i { flex: 1; display: block; background: #d8c6b1; }
 
   .life-grid {
     display: grid;
@@ -2094,6 +2562,42 @@
   .state--compact { min-height: 4rem; }
   .state--error { color: #a3402b; }
 
+  /* ── Day/week detail popup, opened by clicking a bar on either trend
+  chart. Same backdrop+sheet+fade/scale pattern as the site's other modals
+  (see CommissionEditModal), kept in the admin panel's own parchment palette
+  rather than the public-facing gothic frame. */
+  .dd-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: grid;
+    place-items: center;
+    padding: 1.5rem;
+    background: rgba(52, 37, 28, 0.45);
+  }
+
+  .dd-sheet {
+    width: 100%;
+    max-width: 30rem;
+    max-height: 85vh;
+    overflow-y: auto;
+    background: #f8f1e7;
+    border: 1px solid #d8c6b1;
+    padding: 1rem 1.1rem 1.2rem;
+  }
+
+  .dd-sub { margin-top: 0.15rem; font-size: 0.74rem; }
+
+  .dd-stats { grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr)); margin-bottom: 0.9rem; }
+
+  .dd-annotations-title {
+    margin-bottom: 0.4rem;
+    color: #6f3b24;
+    font-size: 0.7rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+
   @media (max-width: 1100px) {
     .overview-grid { grid-template-columns: 1fr; }
     .kpi-grid { grid-template-columns: 1fr 1fr; }
@@ -2104,5 +2608,6 @@
   @media (max-width: 700px) {
     .kpi-grid { grid-template-columns: 1fr; }
     .drilldown-grid { grid-template-columns: 1fr; }
+    .dd-stats { grid-template-columns: 1fr 1fr; }
   }
 </style>

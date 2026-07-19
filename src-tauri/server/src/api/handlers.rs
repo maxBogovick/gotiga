@@ -562,6 +562,19 @@ pub async fn admin_get_figurine_analytics(
     Ok(Json(service.admin_get_figurine_analytics(id, query).await?))
 }
 
+/// Lightweight sibling of `admin_get_figurine_analytics`: just the permanent
+/// per-day-per-country rollup for the geography map's "one figurine" mode —
+/// the full detail endpoint does a lot of extra work (medians, CTA funnel,
+/// browsers…) that a map-only view doesn't need.
+pub async fn admin_get_figurine_geo_daily(
+    State(service): State<AppService>,
+    Path(id): Path<String>,
+    Query(query): Query<AdminAnalyticsQuery>,
+) -> Result<Json<Vec<FigurineGeoDailyPoint>>> {
+    service.refresh_analytics_hot_window_if_due().await?;
+    Ok(Json(service.admin_get_figurine_geo_daily(id, query).await?))
+}
+
 pub async fn admin_backfill_analytics(
     State(service): State<AppService>,
     body: Bytes,

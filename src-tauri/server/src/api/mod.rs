@@ -474,6 +474,12 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 ),
             )
             .route(
+                "/admin/analytics/figurines/:id/geo-daily",
+                get(handlers::admin_get_figurine_geo_daily).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
                 "/admin/figurine-marks",
                 get(handlers::admin_get_mark_stats).route_layer(middleware::from_fn_with_state(
                     config.clone(),

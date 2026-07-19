@@ -43,6 +43,8 @@
 <script lang="ts">
   export type GeoPoint = { key: string; views: number; uniqueVisitors: number };
 
+  import { onDestroy } from 'svelte';
+
   let {
     data,
     selected = null,
@@ -100,32 +102,171 @@
     const share = totalViews > 0 ? (views / totalViews) * 100 : 0;
     return `${name} — ${nf.format(views)} view${views === 1 ? '' : 's'} (${share.toFixed(1)}%)`;
   }
+
+  // ── Zoom / pan — plain viewBox manipulation, no extra dependency. Wheel
+  // zooms centered on the cursor; dragging pans; buttons cover the case
+  // scroll-zoom isn't discoverable (trackpad-less mice, touch).
+  const MAX_ZOOM = 8;
+  let svgEl = $state<SVGSVGElement | null>(null);
+  let vbX = $state(0);
+  let vbY = $state(0);
+  let vbW = $state(WIDTH);
+  let vbH = $state(HEIGHT);
+  let dragging = $state(false);
+  /** Set once a drag moves more than a couple pixels — suppresses the
+   * country click that would otherwise fire on pointerup after a pan. */
+  let dragMoved = $state(false);
+  let dragStartClientX = 0;
+  let dragStartClientY = 0;
+  let dragStartVbX = 0;
+  let dragStartVbY = 0;
+
+  // Raw pointermove/wheel events can fire far faster than the display can
+  // paint (trackpads especially). Writing vbX/vbY/vbW/vbH straight from the
+  // event handler forces a viewBox reflow + repaint of ~177 country paths
+  // per event, which pegs a CPU core while dragging. Coalesce to one commit
+  // per animation frame instead — every event still updates the pending
+  // target, but only the latest one per frame actually touches $state.
+  let rafId: number | null = null;
+  let pendingWrite: (() => void) | null = null;
+
+  function scheduleWrite(fn: () => void) {
+    pendingWrite = fn;
+    if (rafId == null) {
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        pendingWrite?.();
+        pendingWrite = null;
+      });
+    }
+  }
+
+  onDestroy(() => {
+    if (rafId != null) cancelAnimationFrame(rafId);
+  });
+
+  // Any time the data itself changes (a different figurine selected, or the
+  // date range moved), start from the full view again rather than leaving
+  // an old zoomed-in crop that may no longer be relevant.
+  $effect(() => {
+    void data;
+    resetView();
+  });
+
+  function clampView() {
+    vbW = Math.min(WIDTH, Math.max(WIDTH / MAX_ZOOM, vbW));
+    vbH = vbW * (HEIGHT / WIDTH);
+    vbX = Math.min(WIDTH - vbW, Math.max(0, vbX));
+    vbY = Math.min(HEIGHT - vbH, Math.max(0, vbY));
+  }
+
+  function resetView() {
+    vbX = 0;
+    vbY = 0;
+    vbW = WIDTH;
+    vbH = HEIGHT;
+  }
+
+  function zoomAtViewboxPoint(px: number, py: number, factor: number) {
+    const newW = vbW / factor;
+    const newH = vbH / factor;
+    vbX = px - ((px - vbX) / vbW) * newW;
+    vbY = py - ((py - vbY) / vbH) * newH;
+    vbW = newW;
+    vbH = newH;
+    clampView();
+  }
+
+  function onWheel(e: WheelEvent) {
+    e.preventDefault();
+    if (!svgEl) return;
+    const rect = svgEl.getBoundingClientRect();
+    const px = vbX + ((e.clientX - rect.left) / rect.width) * vbW;
+    const py = vbY + ((e.clientY - rect.top) / rect.height) * vbH;
+    const factor = e.deltaY < 0 ? 1.25 : 0.8;
+    scheduleWrite(() => zoomAtViewboxPoint(px, py, factor));
+  }
+
+  function zoomButton(factor: number) {
+    zoomAtViewboxPoint(vbX + vbW / 2, vbY + vbH / 2, factor);
+  }
+
+  function onPointerDown(e: PointerEvent) {
+    dragging = true;
+    dragMoved = false;
+    dragStartClientX = e.clientX;
+    dragStartClientY = e.clientY;
+    dragStartVbX = vbX;
+    dragStartVbY = vbY;
+    (e.currentTarget as Element).setPointerCapture(e.pointerId);
+  }
+
+  function onPointerMove(e: PointerEvent) {
+    if (!dragging || !svgEl) return;
+    const rect = svgEl.getBoundingClientRect();
+    const dx = e.clientX - dragStartClientX;
+    const dy = e.clientY - dragStartClientY;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragMoved = true;
+    scheduleWrite(() => {
+      vbX = dragStartVbX - (dx / rect.width) * vbW;
+      vbY = dragStartVbY - (dy / rect.height) * vbH;
+      clampView();
+    });
+  }
+
+  function onPointerUp() {
+    dragging = false;
+  }
+
+  function selectUnlessDragged(alpha2: string) {
+    if (dragMoved) return;
+    select(alpha2);
+  }
 </script>
 
 <div class="world-map">
-  <svg viewBox="0 0 {WIDTH} {HEIGHT}" role="img" aria-label="Site visits by country">
-    {#each shapes as shape (shape.alpha2 ?? shape.name)}
-      {#if shape.alpha2}
-        {@const point = byAlpha2.get(shape.alpha2)}
-        {@const views = point?.views ?? 0}
-        {@const name = countryName(shape.alpha2, shape.name)}
-        <path
-          d={shape.d}
-          class="country"
-          class:has-data={views > 0}
-          class:selected={selected === shape.alpha2}
-          style="fill:{bucketFill(views)}"
-          role="button"
-          tabindex={views > 0 ? 0 : -1}
-          aria-pressed={selected === shape.alpha2}
-          onclick={() => views > 0 && select(shape.alpha2!)}
-          onkeydown={(e) => views > 0 && onKey(e, shape.alpha2!)}
-        ><title>{tooltipFor(name, views)}</title></path>
-      {:else}
-        <path d={shape.d} class="country country--inert" style="fill:{NO_DATA_FILL}" />
-      {/if}
-    {/each}
-  </svg>
+  <div class="map-wrap">
+    <svg
+      bind:this={svgEl}
+      viewBox="{vbX} {vbY} {vbW} {vbH}"
+      role="img"
+      aria-label="Site visits by country"
+      class:dragging
+      onwheel={onWheel}
+      onpointerdown={onPointerDown}
+      onpointermove={onPointerMove}
+      onpointerup={onPointerUp}
+      onpointerleave={onPointerUp}
+    >
+      {#each shapes as shape (shape.alpha2 ?? shape.name)}
+        {#if shape.alpha2}
+          {@const point = byAlpha2.get(shape.alpha2)}
+          {@const views = point?.views ?? 0}
+          {@const name = countryName(shape.alpha2, shape.name)}
+          <path
+            d={shape.d}
+            class="country"
+            class:has-data={views > 0}
+            class:selected={selected === shape.alpha2}
+            style="fill:{bucketFill(views)}"
+            role="button"
+            tabindex={views > 0 ? 0 : -1}
+            aria-pressed={selected === shape.alpha2}
+            onclick={() => views > 0 && selectUnlessDragged(shape.alpha2!)}
+            onkeydown={(e) => views > 0 && onKey(e, shape.alpha2!)}
+          ><title>{tooltipFor(name, views)}</title></path>
+        {:else}
+          <path d={shape.d} class="country country--inert" style="fill:{NO_DATA_FILL}" />
+        {/if}
+      {/each}
+    </svg>
+
+    <div class="map-zoom-controls">
+      <button type="button" onclick={() => zoomButton(1.4)} aria-label="Zoom in" title="Zoom in">+</button>
+      <button type="button" onclick={() => zoomButton(1 / 1.4)} aria-label="Zoom out" title="Zoom out">−</button>
+      <button type="button" onclick={resetView} aria-label="Reset zoom" title="Reset zoom">⤾</button>
+    </div>
+  </div>
 
   <div class="map-foot">
     <div class="ramp-legend">
@@ -149,11 +290,41 @@
     gap: 0.5rem;
   }
 
+  .map-wrap {
+    position: relative;
+  }
+
   svg {
     width: 100%;
     height: auto;
     display: block;
+    touch-action: none;
+    cursor: grab;
   }
+
+  svg.dragging { cursor: grabbing; }
+
+  .map-zoom-controls {
+    position: absolute;
+    top: 0.6rem;
+    right: 0.6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .map-zoom-controls button {
+    width: 1.6rem;
+    height: 1.6rem;
+    border: 1px solid #d8c6b1;
+    background: #fff;
+    color: #6f3b24;
+    font-size: 0.9rem;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .map-zoom-controls button:hover { background: #fbf3e7; }
 
   .country {
     stroke: #f8f1e7;

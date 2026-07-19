@@ -1219,6 +1219,32 @@ impl Repository {
         .await?)
     }
 
+    /// Full (day, country) granularity for one figurine, from the permanent
+    /// geo rollup — unlike `get_admin_figurine_geo_breakdown` above (which
+    /// collapses to one row per country for the whole range), this keeps
+    /// every day so the map's "one figurine" mode can list actual visit
+    /// dates per country, not just a total.
+    pub async fn get_admin_figurine_geo_daily(
+        &self,
+        figurine_id: Uuid,
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+    ) -> Result<Vec<FigurineGeoDailyPoint>> {
+        Ok(sqlx::query_as::<_, FigurineGeoDailyPoint>(
+            r#"
+            SELECT day, country_code, views::bigint, unique_visitors::bigint
+            FROM figurine_analytics_geo_daily
+            WHERE figurine_id = $1 AND day BETWEEN $2 AND $3
+            ORDER BY day ASC, country_code ASC
+            "#,
+        )
+        .bind(figurine_id)
+        .bind(from)
+        .bind(to)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
     pub async fn prune_old_analytics_events_chunked(
         &self,
         retention_days: i64,

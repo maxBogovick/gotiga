@@ -623,6 +623,19 @@ pub struct AnalyticsBreakdownPoint {
     pub unique_visitors: i64,
 }
 
+/// One (day, country) cell from the permanent `figurine_analytics_geo_daily`
+/// rollup — the geography map's "one figurine" mode groups these by country
+/// for the choropleth, then filters by country to list the actual dates a
+/// visit from there was recorded.
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FigurineGeoDailyPoint {
+    pub day: NaiveDate,
+    pub country_code: String,
+    pub views: i64,
+    pub unique_visitors: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AnalyticsFunnel {
