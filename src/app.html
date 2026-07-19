@@ -1,20 +1,29 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <link rel="icon" href="%sveltekit.assets%/favicon.ico" sizes="any" />
-    <link rel="icon" href="%sveltekit.assets%/favicon-32x32.png" sizes="32x32" type="image/png" />
-    <link rel="icon" href="%sveltekit.assets%/favicon-16x16.png" sizes="16x16" type="image/png" />
-    <link rel="apple-touch-icon" href="%sveltekit.assets%/apple-touch-icon.png" />
-    <link rel="manifest" href="%sveltekit.assets%/site.webmanifest" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <!-- No default page description here on purpose: every prerendered route sets its
+
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" href="%sveltekit.assets%/favicon.ico" sizes="any" />
+  <link rel="icon" href="%sveltekit.assets%/favicon-32x32.png" sizes="32x32" type="image/png" />
+  <link rel="icon" href="%sveltekit.assets%/favicon-16x16.png" sizes="16x16" type="image/png" />
+  <link rel="apple-touch-icon" href="%sveltekit.assets%/apple-touch-icon.png" />
+  <link rel="manifest" href="%sveltekit.assets%/site.webmanifest" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- No default page description here on purpose: every prerendered route sets its
          own meta description in its head block, and a hardcoded default would duplicate
          it on every page. -->
-    <meta name="theme-color" content="#f8f1e7" />
-    <meta name="color-scheme" content="light" />
+  <meta name="theme-color" content="#f8f1e7" />
+  <meta name="color-scheme" content="light" />
 
-    <!-- Google Fonts: readable warm theme typography.
+  <!-- Pinterest domain verification -->
+  <meta name="p:domain_verify" content="66643aea03656a7643a697e69c62b766" />
+
+  <!-- RSS feed of new works — the URL connected to Pinterest's "Подключить RSS-канал";
+         also lets readers/aggregators auto-discover the gazette of new arrivals. -->
+  <link rel="alternate" type="application/rss+xml" title="Ritunia — new exclusive and one of a kind works"
+    href="/feed.xml" />
+
+  <!-- Google Fonts: readable warm theme typography.
          THE single static font request for the whole site. It is a superset of every
          family used statically across routes; reader-selectable and admin-preview fonts
          are still loaded on demand by their own stores.
@@ -37,21 +46,24 @@
 
          Google serves each family split by unicode-range, so a reader on the English site
          never downloads the Cyrillic subsets (and vice versa) despite this one URL. -->
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <!-- Non-blocking font load: preload as style, swap rel on load. Prevents render-blocking
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <!-- Non-blocking font load: preload as style, swap rel on load. Prevents render-blocking
          on slow mobile connections while keeping the swap behaviour identical. -->
-    <link rel="preload"
-          href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400;1,500&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,300;1,9..40,400&family=EB+Garamond:ital,wght@0,400;0,500;1,400;1,500&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;0,9..144,650;0,9..144,750;1,9..144,300;1,9..144,400&family=Inter:wght@400;500;600;700&family=Instrument+Sans:wght@400;500&display=swap"
-          as="style"
-          onload="this.onload=null;this.rel='stylesheet'" />
-    <noscript>
-      <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400;1,500&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,300;1,9..40,400&family=EB+Garamond:ital,wght@0,400;0,500;1,400;1,500&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;0,9..144,650;0,9..144,750;1,9..144,300;1,9..144,400&family=Inter:wght@400;500;600;700&family=Instrument+Sans:wght@400;500&display=swap" rel="stylesheet" />
-    </noscript>
+  <link rel="preload"
+    href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400;1,500&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,300;1,9..40,400&family=EB+Garamond:ital,wght@0,400;0,500;1,400;1,500&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;0,9..144,650;0,9..144,750;1,9..144,300;1,9..144,400&family=Inter:wght@400;500;600;700&family=Instrument+Sans:wght@400;500&display=swap"
+    as="style" onload="this.onload=null;this.rel='stylesheet'" />
+  <noscript>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400;1,500&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,300;1,9..40,400&family=EB+Garamond:ital,wght@0,400;0,500;1,400;1,500&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;0,9..144,650;0,9..144,750;1,9..144,300;1,9..144,400&family=Inter:wght@400;500;600;700&family=Instrument+Sans:wght@400;500&display=swap"
+      rel="stylesheet" />
+  </noscript>
 
-    %sveltekit.head%
-  </head>
-  <body>
-    <div style="display: contents">%sveltekit.body%</div>
-  </body>
+  %sveltekit.head%
+</head>
+
+<body>
+  <div style="display: contents">%sveltekit.body%</div>
+</body>
+
 </html>

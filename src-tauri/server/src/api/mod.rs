@@ -835,7 +835,9 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
     let upload_dir = std::path::Path::new(&config.upload_dir);
     let mut app = Router::new()
         .nest("/api/v1", api)
-        .route("/sitemap.xml", get(handlers::sitemap_xml));
+        .route("/sitemap.xml", get(handlers::sitemap_xml))
+        // Live RSS feed of new works — connected to Pinterest's "Подключить RSS-канал".
+        .route("/feed.xml", get(handlers::feed_rss));
     for subdir in ["images", "videos", "audio", "backgrounds", "avatars"] {
         app = app.nest_service(
             &format!("/static/{}", subdir),

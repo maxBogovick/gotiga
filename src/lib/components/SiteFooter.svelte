@@ -3,10 +3,10 @@
 
   // Single source of truth for the contact details. Phone doubles as the
   // Telegram handle (Telegram resolves +<number> links directly).
-  const EMAIL = 'ritabogovick@gmail.com';
-  const PHONE = '+380634153755';
-  const PHONE_DISPLAY = '+380 63 415 37 55';
-  const TELEGRAM = 'https://t.me/+380634153755';
+  const EMAIL = 'margoritunia@gmail.com';
+  const PHONE = '+37360326813';
+  const PHONE_DISPLAY = '+373 60 326 813';
+  const TELEGRAM = 'https://t.me/+37360326813';
 
   let links = $derived([
     { href: '/figurines', label: $t('navArchive') },

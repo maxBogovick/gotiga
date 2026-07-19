@@ -1741,11 +1741,30 @@ pub async fn get_booking_by_token(
 }
 
 fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('\'', "&apos;")
-        .replace('"', "&quot;")
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        // XML 1.0 forbids most C0 control chars even when numerically escaped (only
+        // tab/LF/CR are legal). A single stray one — a form-feed or NUL pasted from
+        // Word/PDF into an admin field — would otherwise make the whole document
+        // malformed and get the entire feed/sitemap rejected by every parser. Drop them.
+        let legal = matches!(c,
+            '\u{09}' | '\u{0A}' | '\u{0D}'
+            | '\u{20}'..='\u{D7FF}'
+            | '\u{E000}'..='\u{FFFD}'
+            | '\u{10000}'..='\u{10FFFF}');
+        if !legal {
+            continue;
+        }
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '\'' => out.push_str("&apos;"),
+            '"' => out.push_str("&quot;"),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 fn image_sitemap_entry(url: Option<&str>) -> String {
@@ -1757,6 +1776,36 @@ fn image_sitemap_entry(url: Option<&str>) -> String {
             )
         })
         .unwrap_or_default()
+}
+
+/// Turn a stored media path (`/static/…`) into an absolute URL on the public origin.
+/// Pinterest requires absolute image URLs on the claimed domain; already-absolute URLs
+/// pass through untouched. Empty/whitespace → None.
+fn absolute_media_url(base: &str, url: Option<&str>) -> Option<String> {
+    let u = url.map(str::trim).filter(|u| !u.is_empty())?;
+    if u.starts_with("http://") || u.starts_with("https://") {
+        Some(u.to_string())
+    } else if let Some(rest) = u.strip_prefix('/') {
+        Some(format!("{base}/{rest}"))
+    } else {
+        Some(format!("{base}/{u}"))
+    }
+}
+
+/// MIME guess for an image URL, for the RSS `<enclosure type="…">`. Defaults to JPEG.
+fn rss_image_mime(url: &str) -> &'static str {
+    let path = url.split('?').next().unwrap_or(url).to_ascii_lowercase();
+    if path.ends_with(".png") {
+        "image/png"
+    } else if path.ends_with(".webp") {
+        "image/webp"
+    } else if path.ends_with(".avif") {
+        "image/avif"
+    } else if path.ends_with(".gif") {
+        "image/gif"
+    } else {
+        "image/jpeg"
+    }
 }
 
 /// Public sitemap. Absolute URLs are built from the forwarded Host/proto headers so the
@@ -1817,6 +1866,173 @@ pub async fn sitemap_xml(
         [(
             axum::http::header::CONTENT_TYPE,
             "application/xml; charset=utf-8",
+        )],
+        body,
+    ))
+}
+
+/// Live RSS 2.0 feed of visible works — the URL connected to Pinterest's "Подключить
+/// RSS-канал". Pinterest polls it and auto-publishes one image Pin per new <item>
+/// (up to 200/day, within 24h of a change). Unlike the prerendered SvelteKit sibling,
+/// this reads the DB on every request, so a work added in the admin appears at once —
+/// no redeploy. nginx routes `/feed.xml` here, exactly like `/sitemap.xml`.
+///
+/// Only what Pinterest can act on is emitted: text from <title>/<description>, the
+/// image from <enclosure>/<media:content>, and each <link> on the claimed domain.
+pub async fn feed_rss(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse> {
+    let host = headers
+        .get("host")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("localhost");
+    let proto = headers
+        .get("x-forwarded-proto")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("https");
+    let base = format!("{proto}://{host}");
+
+    let mut figurines = service
+        .list_figurines(true, crate::models::FigurineQuery::default())
+        .await?
+        .items;
+    let now = chrono::Utc::now();
+    // In-progress pieces have no finished public page; first-look pieces are still
+    // held from the public archive — neither should be pinned yet. (Hidden drafts
+    // never reach here: list_figurines(true, …) returns only visible works.)
+    figurines.retain(|f| {
+        f.status != FigurineStatus::InProgress
+            && f.first_look_until.map_or(true, |t| t <= now)
+    });
+    // Newest first — conventional RSS order.
+    figurines.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+
+    // Pinterest caps Pin descriptions around 500 chars; stay under it (char-safe for
+    // the Cyrillic copy).
+    const MAX_DESCRIPTION: usize = 480;
+
+    let mut items = String::new();
+    for f in &figurines {
+        // The 1800px "large" list image is high enough quality for Pins and needs no
+        // extra per-item detail fetch; fall back to the 420px thumbnail.
+        let image = match absolute_media_url(
+            &base,
+            f.face_image_large_url
+                .as_deref()
+                .or(f.face_image_url.as_deref()),
+        ) {
+            Some(img) => img,
+            // No image → Pinterest can't build a Pin from the item, so skip it.
+            None => continue,
+        };
+
+        // Prefer the pretty slug (canonical handle the detail pages advertise). Build
+        // the raw URL, then escape the whole thing once at emission — escaping `base`
+        // (Host-derived) too, not just the handle.
+        let handle = f.slug.as_deref().unwrap_or(&f.id);
+        let link = format!("{base}/figurines/{handle}");
+
+        // Museum-label description: the work's own one-liner, then its attributes as
+        // keyword-rich trailing text. shortText only — never fullDescription (HTML/length)
+        // or secretText.
+        let lead = f
+            .short_text
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let mut attrs: Vec<String> = Vec::new();
+        for a in [f.material.as_deref(), f.technique.as_deref()]
+            .into_iter()
+            .flatten()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            attrs.push(a.to_string());
+        }
+        if let Some(y) = f.year {
+            attrs.push(y.to_string());
+        }
+        let attrs = attrs.join(", ");
+        let mut desc = match (lead, attrs.is_empty()) {
+            (Some(l), false) => format!("{l} — {attrs}"),
+            (Some(l), true) => l.to_string(),
+            (None, false) => attrs.clone(),
+            (None, true) => f.name.clone(),
+        };
+        if desc.chars().count() > MAX_DESCRIPTION {
+            desc = desc.chars().take(MAX_DESCRIPTION - 1).collect::<String>();
+            desc = desc.trim_end().to_string();
+            desc.push('…');
+        }
+
+        // Optional <category> from the work's series — a whole self-contained line (with
+        // its own indent + newline) so it slots in only when a series is set.
+        let category = f
+            .series
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| format!("      <category>{}</category>\n", xml_escape(s)))
+            .unwrap_or_default();
+
+        items.push_str(&format!(
+            "    <item>\n\
+             \x20     <title>{title}</title>\n\
+             \x20     <link>{link}</link>\n\
+             \x20     <guid isPermaLink=\"true\">{link}</guid>\n\
+             \x20     <pubDate>{pub_date}</pubDate>\n\
+             {category}\
+             \x20     <dc:creator>Ritunia</dc:creator>\n\
+             \x20     <description>{desc}</description>\n\
+             \x20     <enclosure url=\"{img}\" type=\"{mime}\" length=\"0\" />\n\
+             \x20     <media:content url=\"{img}\" type=\"{mime}\" medium=\"image\" />\n\
+             \x20   </item>\n",
+            title = xml_escape(&f.name),
+            link = xml_escape(&link),
+            pub_date = f.created_at.to_rfc2822(),
+            category = category,
+            desc = xml_escape(&desc),
+            img = xml_escape(&image),
+            mime = rss_image_mime(&image),
+        ));
+    }
+
+    let last_build = figurines
+        .first()
+        .map(|f| f.created_at.to_rfc2822())
+        .unwrap_or_else(|| now.to_rfc2822());
+
+    // Host-derived, so escape before it lands in the channel URLs too.
+    let base_esc = xml_escape(&base);
+    let year = now.format("%Y");
+    let body = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <rss version=\"2.0\" xmlns:media=\"http://search.yahoo.com/mrss/\" xmlns:atom=\"http://www.w3.org/2005/Atom\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\n\
+         \x20 <channel>\n\
+         \x20   <title>Ritunia — new exclusive and one of a kind works</title>\n\
+         \x20   <link>{base_esc}/figurines</link>\n\
+         \x20   <atom:link href=\"{base_esc}/feed.xml\" rel=\"self\" type=\"application/rss+xml\" />\n\
+         \x20   <description>New exclusive, one-of-a-kind miniatures by Ritunia, added as they enter the collection.</description>\n\
+         \x20   <language>en</language>\n\
+         \x20   <copyright>© {year} Ritunia</copyright>\n\
+         \x20   <generator>Ritunia</generator>\n\
+         \x20   <ttl>60</ttl>\n\
+         \x20   <lastBuildDate>{last_build}</lastBuildDate>\n\
+         \x20   <image>\n\
+         \x20     <url>{base_esc}/favicon-512x512.png</url>\n\
+         \x20     <title>Ritunia — new exclusive and one of a kind works</title>\n\
+         \x20     <link>{base_esc}/figurines</link>\n\
+         \x20   </image>\n\
+         {items}\
+         \x20 </channel>\n\
+         </rss>\n"
+    );
+
+    Ok((
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "application/rss+xml; charset=utf-8",
         )],
         body,
     ))
