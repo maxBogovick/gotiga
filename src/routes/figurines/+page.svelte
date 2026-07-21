@@ -3,7 +3,7 @@
   import { beforeNavigate, afterNavigate, invalidateAll, goto } from '$app/navigation';
   import { fade, slide } from 'svelte/transition';
   import { t, lang, brandName } from '$lib/i18n';
-  import { SITE_URL } from '$lib/site';
+  import { SITE_URL, toAbsoluteUrl } from '$lib/site';
   import { figurineHref } from '$lib/figurineHref';
   import { createSiteAnalytics } from '$lib/analytics';
   import AppImage from '$lib/components/AppImage.svelte';
@@ -236,46 +236,6 @@
     return Date.now() - new Date(f.createdAt).getTime() < 21 * 86400_000;
   }
 
-  // Scroll-reveal: same live IntersectionObserver used by the home gallery's
-  // "rise" card-fx — a card climbs into place as it crosses ~65% up into view.
-  function revealOnEnter(node: HTMLElement) {
-    if (typeof IntersectionObserver === 'undefined') { node.classList.add('fx-revealed'); return; }
-
-    const reveal = () => node.classList.add('fx-revealed');
-
-    // A plate never hides again once it has climbed into place: the reveal is a
-    // one-way door. Anything already inside the viewport is shown right away —
-    // otherwise a first callback that lands before the images give the row its
-    // height would leave the whole grid at opacity 0 until something nudges it.
-    const io = new IntersectionObserver(([entry]) => {
-      if (entry.isIntersecting) { reveal(); io.disconnect(); }
-    }, { rootMargin: '0px 0px -12% 0px', threshold: 0 });
-    io.observe(node);
-
-    // Safety net: nothing above the fold may stay invisible.
-    const t = setTimeout(() => {
-      if (node.getBoundingClientRect().top < window.innerHeight) { reveal(); io.disconnect(); }
-    }, 400);
-
-    return { destroy() { clearTimeout(t); io.disconnect(); } };
-  }
-
-  // ── 3D tilt ────────────────────────────────────────────────────
-  function onTiltMove(e: MouseEvent) {
-    const el = e.currentTarget as HTMLElement;
-    const r  = el.getBoundingClientRect();
-    const x  = (e.clientX - r.left)  / r.width  - 0.5;
-    const y  = (e.clientY - r.top)   / r.height - 0.5;
-    el.style.transition = 'none';
-    el.style.transform  = `perspective(900px) rotateX(${-y * 7}deg) rotateY(${x * 7}deg) translateZ(4px)`;
-  }
-
-  function onTiltLeave(e: MouseEvent) {
-    const el = e.currentTarget as HTMLElement;
-    el.style.transition = 'transform 0.55s cubic-bezier(0.16,1,0.3,1)';
-    el.style.transform  = '';
-  }
-
   function markViewed(id: string) {
     if (viewedIds.has(id)) return;
     const next = new Set(viewedIds);
@@ -303,6 +263,23 @@
         setTimeout(() => { shareCopiedId = ''; }, 2000);
       }
     } catch {}
+  }
+
+  // Pinterest "Pin it": opens the pin-create dialog pre-filled with this work's
+  // detail URL, its face image (absolute — Pinterest fetches the media server-side,
+  // so a relative path would fail) and a keyword-bearing description. Every visitor
+  // who pins becomes a distributor, which is the entire reason the archive is worth
+  // being on Pinterest. Opened in a small popup so the archive stays put behind it.
+  function pinterestPin(e: MouseEvent, fig: FigurineListItem) {
+    e.preventDefault();
+    e.stopPropagation();
+    const pageUrl = `${window.location.origin}${figurineHref(fig)}`;
+    const media = toAbsoluteUrl(fig.faceImageUrl ?? fig.detailImageUrl);
+    const description = `${fig.name} — handmade one-of-a-kind gothic art doll, sculpted and painted by hand. Ritunia.`;
+    const share = `https://www.pinterest.com/pin/create/button/?url=${encodeURIComponent(pageUrl)}`
+      + (media ? `&media=${encodeURIComponent(media)}` : '')
+      + `&description=${encodeURIComponent(description)}`;
+    window.open(share, 'pinterest', 'noopener,width=750,height=650');
   }
 
   function openOrder(e: MouseEvent, fig: FigurineListItem) {
@@ -612,9 +589,8 @@
       {#if filtered.length > 0}
         <ul class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-8 gap-y-10">
           {#each visible as figurine, i (figurine.id)}
-            <li class="group perspective-container fig-tile" use:revealOnEnter
-                use:siteAnalytics.observeWork={figurine.id}
-                onmousemove={onTiltMove} onmouseleave={onTiltLeave}>
+            <li class="group perspective-container fig-tile"
+                use:siteAnalytics.observeWork={figurine.id}>
               <a
                 href={doorShut(figurine) ? undefined : figurineHref(figurine)}
                 class="block w-full text-left relative focus:outline-none"
@@ -623,7 +599,7 @@
                 onclick={(e) => { if (doorShut(figurine)) { e.preventDefault(); return; } markViewed(figurine.id); }}
               >
                 <div
-                  class="fig-media relative aspect-[3/4] transition-shadow duration-500"
+                  class="fig-media relative aspect-[3/4]"
                   style={doorShut(figurine) ? '' : `view-transition-name: figurine-${figurine.id}`}
                 >
 
@@ -644,10 +620,8 @@
                       showSchedule={false}
                     />
                   {:else}
-                    <!-- The figure itself, masked to a soft irregular fade + carved
-                         drop-shadow — reads as pressed INTO the parchment rather
-                         than a photo pasted on top of it. Badges/plaque/buttons
-                         stay outside this wrapper so they stay crisp on top. -->
+                    <!-- The figure itself — a clean, full-colour photo filling the
+                         tile. Badges/plaque/buttons live outside this wrapper. -->
                     <div class="fig-photo">
                     {#if figurine.faceImageUrl}
                       <!-- Dense archive grid: two cards across on a phone, up to four on a
@@ -657,7 +631,7 @@
                               src={figurine.faceImageUrl}
                               thumbUrl={figurine.thumbUrl}
                               alt={figurine.name}
-                              class="fig-img-main w-full h-full object-cover transition-all duration-700 ease-out group-hover:scale-105 fig-img--{figurine.status}"
+                              class="fig-img-main w-full h-full object-cover"
                               loading="lazy"
                               sizes="(max-width: 680px) 50vw, (max-width: 1024px) 33vw, 25vw"
                       />
@@ -689,8 +663,6 @@
                       <h2 class="fig-cap-name"><span class="fig-cap-name-text">{figurine.name}</span></h2>
                     </div>
                   {/if}
-
-                  <div class="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,rgba(111,59,36,0.8)_100%)] pointer-events-none transition-opacity duration-500 fig-vignette--{figurine.status}"></div>
 
                   <div class="absolute top-2 left-2 w-4 h-4 border-t border-l border-[#34251c]/20 group-hover:border-[#34251c]/60 transition-colors pointer-events-none"></div>
                   <div class="absolute bottom-2 right-2 w-4 h-4 border-b border-r border-[#34251c]/20 group-hover:border-[#34251c]/60 transition-colors pointer-events-none"></div>
@@ -814,6 +786,25 @@
                         {/if}
                       </button>
 
+                      <!-- Pin it — turns every visitor into a distributor -->
+                      {#if (figurine.faceImageUrl || figurine.detailImageUrl) && !doorShut(figurine)}
+                      <button
+                        class="flex items-center justify-center w-7 h-7 rounded-full
+                               bg-[rgba(255,249,240,0.11)] border border-[rgba(255,249,240,0.20)]
+                               text-[rgba(255,249,240,0.62)] hover:text-white hover:bg-[rgba(255,249,240,0.22)] hover:border-[rgba(255,249,240,0.38)]
+                               cursor-pointer transition-all duration-200
+                               translate-y-1 opacity-0 group-hover:translate-y-0 group-hover:opacity-100
+                               [transition-delay:110ms]"
+                        onclick={(e) => pinterestPin(e, figurine)}
+                        title={$t('cardPinterest')}
+                        aria-label={$t('cardPinterest')}
+                      >
+                        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                          <path d="M5 12.6C4.6 11 4.4 9 4.9 7.1C4.9 7.1 4.6 6.4 4.6 5.5C4.6 4.1 5.4 3.1 6.4 3.1C7.3 3.1 7.7 3.8 7.7 4.6C7.7 5.5 7.1 6.8 6.8 8C6.6 9 7.3 9.8 8.3 9.8C10 9.8 11.3 7.6 11.3 5.4C11.3 3.4 9.9 2 7.6 2C5 2 3.4 3.9 3.4 6C3.4 6.9 3.7 7.6 4.1 8.1" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                      </button>
+                      {/if}
+
                       {#if figurine.status === 'available'}
                         <!-- Artifact Request -->
                         <button
@@ -922,17 +913,8 @@
     100% { transform: translateX(200%); }
   }
 
-  /* ── SCROLL-REVEAL: same live IntersectionObserver "rise" card-fx used by
-     the home gallery — a plate climbs into place as it crosses into view. ── */
-  .fig-tile {
-    opacity: 0;
-    transform: translateY(52px) rotate(-2.2deg) scale(0.95);
-    transition: transform 0.8s cubic-bezier(0.22, 0.9, 0.3, 1.28), opacity 0.55s ease;
-  }
-  .fig-tile.fx-revealed {
-    opacity: 1;
-    transform: none;
-  }
+  /* Cards render immediately — no scroll-reveal rise/rotate/scale effect. */
+  .fig-tile { opacity: 1; }
 
   /* ── SECOND ANGLE: cross-fades in over the face photo on a sustained hover ── */
   .fig-media :global(.fig-img-alt) {
@@ -1145,76 +1127,18 @@
     .fig-photo { filter: none !important; }
   }
 
-  /* ── IMPRESSED INTO THE PARCHMENT: the figure itself — not a card behind
-     it — carries the depth. No rectangle, no plate: the photo's edges fade
-     to nothing on a soft irregular mask (revealing the page's own parchment
-     underneath, unbroken), and a dark, close drop-shadow gathers around
-     whatever's left visible, as though it had been pressed down into the
-     paper. Badges/plaque/buttons live outside this wrapper so they stay
-     crisp, unmasked, sitting "above" the impression. */
+  /* The figure sits as a plain, crisp full-colour photo filling the tile.
+     Badges/plaque/buttons live outside .fig-photo so they stay above it. */
   .fig-media {
     background: transparent;
   }
   .fig-photo {
     position: absolute;
     inset: 0;
-    /* radial-gradient <size> percentages are the ellipse's RADIUS as a share
-       of the box (so 50%/50% just reaches the edges) — the previous 72%/78%
-       pushed the whole fade band past the box entirely, so nothing visibly
-       faded. Radius must stay ≤50% for the fade to land inside the box. */
-    -webkit-mask-image: radial-gradient(ellipse 50% 54% at 50% 46%, #000 52%, transparent 100%);
-    mask-image: radial-gradient(ellipse 50% 54% at 50% 46%, #000 52%, transparent 100%);
-    filter:
-      drop-shadow(0 3px 5px rgba(20,13,9,0.4))
-      drop-shadow(0 -1px 2px rgba(255,250,240,0.22))
-      drop-shadow(2px 0 4px rgba(20,13,9,0.22));
-    transition: filter 0.5s ease;
-  }
-  .group:hover .fig-photo,
-  .group:focus-within .fig-photo {
-    filter:
-      drop-shadow(0 4px 7px rgba(20,13,9,0.48))
-      drop-shadow(0 -1px 2px rgba(255,250,240,0.26))
-      drop-shadow(2px 0 5px rgba(20,13,9,0.26));
   }
 
-  /* ── STATUS-BASED IMAGE TREATMENT ──────────────────────────────── */
-
-  /* Available: full colour, light vignette — это доступные работы, они должны звать */
-  :global(.fig-img--available) { opacity: 1; filter: none; }
-  :global(.group:hover .fig-img--available) { opacity: 1; filter: none; }
-  :global(.fig-vignette--available) { opacity: 0.30; }
-  :global(.group:hover .fig-vignette--available) { opacity: 0.18; }
-
-  /* Reserved: лёгкий налёт — не мертво, но занято */
-  :global(.fig-img--reserved) { opacity: 0.88; filter: grayscale(0.40) saturate(0.72); }
-  :global(.group:hover .fig-img--reserved) { opacity: 1; filter: grayscale(0) saturate(1); }
-  :global(.fig-vignette--reserved) { opacity: 0.52; }
-  :global(.group:hover .fig-vignette--reserved) { opacity: 0.35; }
-
-  /* Sold: полный цвет — это часть архива, не могила */
-  :global(.fig-img--sold) { opacity: 1; filter: none; }
-  :global(.group:hover .fig-img--sold) { opacity: 1; filter: none; }
-  :global(.fig-vignette--sold) { opacity: 0.30; }
-  :global(.group:hover .fig-vignette--sold) { opacity: 0.18; }
-
-  /* In progress: приглушённее available, но не серое */
-  :global(.fig-img--in_progress) { opacity: 0.82; filter: saturate(0.80); }
-  :global(.group:hover .fig-img--in_progress) { opacity: 1; filter: saturate(1); }
-  :global(.fig-vignette--in_progress) { opacity: 0.48; }
-  :global(.group:hover .fig-vignette--in_progress) { opacity: 0.30; }
-
-  /* Mobile: без ховера — показываем всё в цвете */
-  @media (hover: none) {
-    :global(.fig-img--available),
-    :global(.fig-img--reserved),
-    :global(.fig-img--sold),
-    :global(.fig-img--in_progress) { opacity: 1; filter: none; }
-    :global(.fig-vignette--available),
-    :global(.fig-vignette--reserved),
-    :global(.fig-vignette--in_progress) { opacity: 0.25; }
-    :global(.fig-vignette--sold) { opacity: 0.50; }
-  }
+  /* Status-based image treatment removed — every work is shown in full colour,
+     no vignette, grayscale or opacity dimming. */
 
   /* Touch devices have no hover: keep the action bar (quick view / share / request)
      reachable instead of hidden off-screen. Scoped specificity beats the Tailwind utilities. */

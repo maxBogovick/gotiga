@@ -712,6 +712,7 @@ export const en = {
   cardSaved: 'Saved',
   cardQuickView: 'Quick view',
   cardShare: 'Share',
+  cardPinterest: 'Pin it',
   cardRequest: 'Request',
   cardLinkCopied: 'Copied!',
   cardViewWork: 'View work',

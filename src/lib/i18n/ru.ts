@@ -712,6 +712,7 @@ export const ru: Record<TranslationKey, string> = {
   cardSaved:      'Сохранено',
   cardQuickView:  'Просмотр',
   cardShare:      'Поделиться',
+  cardPinterest:  'В Pinterest',
   cardRequest:    'Заявка',
   cardLinkCopied: 'Скопировано!',
   cardViewWork:   'Открыть работу',
