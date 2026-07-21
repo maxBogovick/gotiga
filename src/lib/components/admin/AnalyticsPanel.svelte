@@ -17,6 +17,10 @@
     AnalyticsAnnotation,
     LifeOfHouseTrend,
     FigurineGeoDailyPoint,
+    SitePageEngagementResponse,
+    AdminVisitorSessionsPage,
+    AdminVisitorSession,
+    AdminVisitorEvent,
   } from '$lib/types/api';
 
   // ── Date range — everything below is computed in UTC on purpose. Mixing
@@ -67,7 +71,7 @@
 
   type SortKey = 'name' | 'status' | 'views' | 'uniqueVisitors' | 'engagedViews' | 'submissions' | 'conversionRate';
   type PerformanceFilter = 'all' | 'has_views' | 'has_submissions';
-  type Tab = 'pulse' | 'traffic' | 'works' | 'community';
+  type Tab = 'pulse' | 'traffic' | 'works' | 'visitors' | 'community';
 
   const CTA_LABELS: Record<string, string> = {
     request: 'Order request',
@@ -81,6 +85,7 @@
     pulse: 'Pulse',
     traffic: 'Traffic',
     works: 'Works',
+    visitors: 'Visitors',
     community: 'Community',
   };
 
@@ -128,6 +133,17 @@
   let commissionFunnel = $state<CommissionFunnel | null>(null);
   let annotations = $state<AnalyticsAnnotation[]>([]);
   let lifeOfHouse = $state<LifeOfHouseTrend | null>(null);
+  let pageEngagement = $state<SitePageEngagementResponse | null>(null);
+  // ── Visitors tab (loaded lazily when the tab is opened / range changes) ──
+  let visitorPage = $state<AdminVisitorSessionsPage | null>(null);
+  let visitorLoading = $state(false);
+  let visitorError = $state('');
+  let visitorOffset = $state(0);
+  let visitorOnlyActions = $state(false);
+  const VISITOR_PAGE_SIZE = 50;
+  let selectedVisitor = $state<string | null>(null);
+  let visitorTimeline = $state<AdminVisitorEvent[]>([]);
+  let visitorTimelineLoading = $state(false);
   let newAnnotationDay = $state('');
   let newAnnotationLabel = $state('');
   let annotationSaving = $state(false);
@@ -212,6 +228,56 @@
       .finally(() => { if (token === geoRequestToken) figurineGeoLoading = false; });
   });
 
+  // Visitor sessions are heavy (raw per-event scan), so they load only when the
+  // Visitors tab is open, and reload on any range/page change. Token-guarded so
+  // a stale response can't clobber a newer one; opening a session's timeline is
+  // reset whenever the underlying list reloads.
+  let visitorRequestToken = 0;
+  $effect(() => {
+    if (activeTab !== 'visitors') return;
+    const r = range;
+    const offset = visitorOffset;
+    const onlyActions = visitorOnlyActions;
+    const token = ++visitorRequestToken;
+    visitorLoading = true;
+    visitorError = '';
+    selectedVisitor = null;
+    visitorTimeline = [];
+    api.getVisitorSessions({ from: r.from, to: r.to, limit: VISITOR_PAGE_SIZE, offset, onlyActions })
+      .then((p) => { if (token === visitorRequestToken) visitorPage = p; })
+      .catch((e) => { if (token === visitorRequestToken) { visitorPage = null; visitorError = String(e); } })
+      .finally(() => { if (token === visitorRequestToken) visitorLoading = false; });
+  });
+
+  let visitorTimelineToken = 0;
+  function openVisitor(hash: string) {
+    if (selectedVisitor === hash) { selectedVisitor = null; visitorTimeline = []; return; }
+    selectedVisitor = hash;
+    visitorTimeline = [];
+    const token = ++visitorTimelineToken;
+    visitorTimelineLoading = true;
+    api.getVisitorTimeline(hash, { from: range.from, to: range.to })
+      .then((rows) => { if (token === visitorTimelineToken) visitorTimeline = rows; })
+      .catch(() => { if (token === visitorTimelineToken) visitorTimeline = []; })
+      .finally(() => { if (token === visitorTimelineToken) visitorTimelineLoading = false; });
+  }
+
+  // Reset paging to the first page whenever the range or the action filter
+  // changes, so an offset from a previous, longer list can't point past the
+  // new list's end.
+  $effect(() => { range; visitorOnlyActions; visitorOffset = 0; });
+
+  // Compact tag labels for the Visitors "Trace" column (the funnel's CTA_LABELS
+  // above is longer-form and only covers the funnel's five steps).
+  const TRACE_LABELS: Record<string, string> = {
+    request: 'request', reserve: 'reserve', booking: 'booking', waitlist: 'waitlist',
+    notify: 'notify', wishlist: 'wishlist', comment: 'comment', passport: 'passport',
+    create_similar: 'similar', related_figurine: 'related', commission_form_start: 'commission',
+  };
+  function ctaLabel(t: string): string {
+    return TRACE_LABELS[t] ?? t;
+  }
+
   // ── Data loading ────────────────────────────────────────────────────────
   onMount(() => {
     void loadAll();
@@ -221,18 +287,20 @@
     loading = true;
     error = '';
     try {
-      const [ov, lp, cf, ann, loh] = await Promise.all([
+      const [ov, lp, cf, ann, loh, pe] = await Promise.all([
         api.getAnalyticsOverview({ from: range.from, to: range.to }),
         api.listFigurineAnalytics({ from: range.from, to: range.to }),
         api.getCommissionFunnel({ from: range.from, to: range.to }),
         api.listAnalyticsAnnotations({ from: range.from, to: range.to }),
         api.getLifeOfHouseTrend({ from: range.from, to: range.to }),
+        api.getSitePageEngagement({ from: range.from, to: range.to }),
       ]);
       overview = ov;
       page = lp;
       commissionFunnel = cf;
       annotations = ann;
       lifeOfHouse = loh;
+      pageEngagement = pe;
       if (selectedId && !lp.items.some((i) => i.figurineId === selectedId)) {
         selectedId = null;
         detail = null;
@@ -621,6 +689,32 @@
     return { text: `${pct.toFixed(1)}%`, lowData: total < MIN_RATE_SAMPLE };
   }
 
+  /** Quick-exit threshold, in seconds — must match server `analytics::QUICK_EXIT_MS`. */
+  const QUICK_EXIT_SECONDS = 10;
+
+  /** Delta between two rates (fractions 0–1), in percentage points — the honest
+   * unit for a change between two percentages (40% → 50% is +10pp, not +25%).
+   * Trust is gated on the smaller sample size, not the rate value (delta()'s
+   * count-based lowData rule is wrong for a fraction). The tone is flipped for
+   * "lower is better" metrics (quick-exit) so a rise reads red, not green. */
+  function rateDelta(
+    current: number | null,
+    previous: number | null,
+    currentN: number,
+    previousN: number,
+    higherIsBetter: boolean,
+  ): { text: string; tone: 'up' | 'down' | 'flat'; lowData: boolean } | null {
+    if (current === null || previous === null) return null;
+    const ppt = Math.round((current - previous) * 100);
+    let tone: 'up' | 'down' | 'flat' = ppt > 0 ? 'up' : ppt < 0 ? 'down' : 'flat';
+    if (!higherIsBetter && tone !== 'flat') tone = tone === 'up' ? 'down' : 'up';
+    return {
+      text: `${ppt > 0 ? '+' : ''}${ppt}pp`,
+      tone,
+      lowData: Math.min(currentN, previousN) < MIN_RATE_SAMPLE,
+    };
+  }
+
   /** Delta vs the previous period. `previous === 0` has no baseline to compare
    * against — that's "new", not +Infinity% or NaN. */
   function delta(current: number, previous: number): { text: string; tone: 'up' | 'down' | 'flat' | 'new'; lowData: boolean } {
@@ -652,6 +746,33 @@
     const s = Math.round(ms / 1000);
     if (s < 60) return `${s}s`;
     return `${Math.floor(s / 60)}m ${s % 60}s`;
+  }
+
+  // ── Visitors tab formatting ──
+  /** Short, human-scannable stand-in for the long HMAC hash. */
+  function visitorShort(hash: string): string {
+    return hash.slice(0, 8);
+  }
+  /** UTC clock time HH:MM:SS — the whole panel buckets by UTC day, so timeline
+   * times stay in UTC too rather than drifting with the admin's timezone. */
+  function hms(iso: string): string {
+    return new Date(iso).toISOString().slice(11, 19);
+  }
+  const EVENT_LABELS: Record<string, string> = {
+    page_view: 'Opened page',
+    page_engaged: 'Left page',
+    figurine_view: 'Opened work',
+    figurine_engaged: 'Engaged with work',
+    figurine_cta_click: 'Clicked action',
+  };
+  function eventLabel(type: string): string {
+    return EVENT_LABELS[type] ?? type;
+  }
+  /** The path stripped of its query string — the timeline shows the page, the
+   * `?src=`/utm noise belongs in Traffic, not here. */
+  function cleanPath(path: string): string {
+    const q = path.indexOf('?');
+    return q === -1 ? path : path.slice(0, q);
   }
 
   function signalLabel(signal: AnalyticsSignal): string {
@@ -874,7 +995,7 @@
     <div class="state state--error">{error}</div>
   {:else if overview && page}
     <nav class="tab-bar">
-      {#each (['pulse', 'traffic', 'works', 'community'] as Tab[]) as t}
+      {#each (['pulse', 'traffic', 'works', 'visitors', 'community'] as Tab[]) as t}
         <button type="button" class:active={activeTab === t} onclick={() => { activeTab = t; }}>
           {TAB_LABELS[t]}
           {#if t === 'works' && signalCounts.attention > 0}<span class="tab-badge">{signalCounts.attention}</span>{/if}
@@ -1046,6 +1167,77 @@
           <p class="section-note">Visited/viewed/opened/started counts only go back to {commissionFunnel.rawDataFrom} (raw event retention); "Submitted" covers the full selected range.</p>
         {/if}
         <p class="section-note">Every step but "Submitted" is a distinct-visitor count from browser-side events (missed by a Do-Not-Track browser setting, bots, or a direct link to the form) — "Submitted" is exact, from the commissions table.</p>
+      {:else}
+        <p class="muted">Loading…</p>
+      {/if}
+    </section>
+
+    <!-- ── PAGE ENGAGEMENT ──────────────────────────────────────────── -->
+    <section class="a-block">
+      <h3 class="block-label"><span>Page engagement</span></h3>
+      {#if pageEngagement}
+        {@const pageRows = [
+          { key: 'home', label: 'Home', grid: true },
+          { key: 'archive', label: 'Archive', grid: true },
+          { key: 'author', label: 'Author', grid: false },
+          { key: 'workshop', label: 'Workshop', grid: false },
+          { key: 'commission', label: 'Commission', grid: false },
+        ]}
+        {@const cur = new Map(pageEngagement.pages.map((p) => [p.pathGroup, p]))}
+        {@const prev = new Map(pageEngagement.previousPages.map((p) => [p.pathGroup, p]))}
+        <div class="table-scroll">
+          <table class="pages-table">
+            <thead>
+              <tr>
+                <th>Page</th>
+                <th class="right" title="Visits to this page in range, from the permanent page-view rollup.">Visits</th>
+                <th class="right" title="Share of engaged visits that left in under {QUICK_EXIT_SECONDS}s — a near-instant bounce. Lower is better.">Quick exit</th>
+                <th class="right" title="Share of engaged visits that saw at least one work — did they reach the collection at all? Home & archive only. Higher is better.">Reached works</th>
+                <th class="right" title="Median time on the page before leaving or switching away.">Median time</th>
+                <th class="right" title="Median deepest scroll position, as a share of page height.">Median scroll</th>
+                <th class="right" title="Median number of distinct works seen before leaving. Home & archive only.">Works seen</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each pageRows as row}
+                {@const p = cur.get(row.key)}
+                {@const pp = prev.get(row.key)}
+                {@const engaged = p?.engagedEvents ?? 0}
+                {@const prevEngaged = pp?.engagedEvents ?? 0}
+                {@const quickRate = p && engaged > 0 ? p.quickExitEvents / engaged : null}
+                {@const prevQuickRate = pp && prevEngaged > 0 ? pp.quickExitEvents / prevEngaged : null}
+                {@const reachRate = row.grid && p && engaged > 0 ? p.reachedWorksEvents / engaged : null}
+                {@const prevReachRate = row.grid && pp && prevEngaged > 0 ? pp.reachedWorksEvents / prevEngaged : null}
+                {@const visitsD = compareEnabled ? delta(p?.views ?? 0, pp?.views ?? 0) : null}
+                {@const quickD = compareEnabled ? rateDelta(quickRate, prevQuickRate, engaged, prevEngaged, false) : null}
+                {@const reachD = compareEnabled ? rateDelta(reachRate, prevReachRate, engaged, prevEngaged, true) : null}
+                <tr>
+                  <td>{row.label}</td>
+                  <td class="right">
+                    {fmt(p?.views ?? 0)}
+                    {#if visitsD}<small class="delta delta--{visitsD.tone}" class:low-data={visitsD.lowData}>{visitsD.text}</small>{/if}
+                  </td>
+                  <td class="right">
+                    {quickRate === null ? 'No data' : `${Math.round(quickRate * 100)}%`}
+                    {#if quickD}<small class="delta delta--{quickD.tone}" class:low-data={quickD.lowData}>{quickD.text}</small>{/if}
+                  </td>
+                  <td class="right">
+                    {!row.grid ? '—' : reachRate === null ? 'No data' : `${Math.round(reachRate * 100)}%`}
+                    {#if reachD}<small class="delta delta--{reachD.tone}" class:low-data={reachD.lowData}>{reachD.text}</small>{/if}
+                  </td>
+                  <td class="right" title={engaged > 0 ? `median of ${fmt(engaged)} engaged visits` : ''}>{msLabel(p?.medianDurationMs ?? null)}</td>
+                  <td class="right">{p?.medianScrollDepth == null ? 'No data' : `${Math.round(p.medianScrollDepth)}%`}</td>
+                  <td class="right">{!row.grid ? '—' : p?.medianWorksSeen == null ? 'No data' : Math.round(p.medianWorksSeen)}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+        {#if compareEnabled}<p class="section-note">Deltas compare against {pageEngagement.previousFrom} – {pageEngagement.previousTo}; rate changes are in percentage points (pp). "low data" marks a period with fewer than {MIN_RATE_SAMPLE} engaged visits.</p>{/if}
+        {#if pageEngagement.rawDataFrom > pageEngagement.from}
+          <p class="section-note">Quick exit, Reached works and the medians only go back to {pageEngagement.rawDataFrom} (raw event retention); Visits covers the full range.</p>
+        {/if}
+        <p class="section-note"><strong>Quick exit</strong> and <strong>Reached works</strong> are shares of <em>engaged</em> visits — those that stayed long enough to report time/scroll. That count is smaller than Visits (a Do-Not-Track browser or an instant close never reports). A high Quick exit, or a low Reached works next to healthy Visits, is the signal that people arrive but the page turns them away before the collection unfolds.</p>
       {:else}
         <p class="muted">Loading…</p>
       {/if}
@@ -1407,6 +1599,104 @@
           </tbody>
         </table>
       </div>
+    </section>
+    {/if}
+
+    {#if activeTab === 'visitors'}
+    <section class="a-block">
+      <h3 class="block-label"><span>Visitor sessions</span></h3>
+      <p class="section-note">Each row is one anonymous visit — a daily-rotating, pseudonymous id (no IP address, no name, and it can't be followed across days, by design). Click a row to replay the full path through the site.</p>
+      <label class="visitor-filter">
+        <input type="checkbox" bind:checked={visitorOnlyActions} />
+        Only visits that took an action <span class="muted">(pressed reserve / booking / notify / comment / …)</span>
+      </label>
+      {#if visitorLoading && !visitorPage}
+        <p class="muted">Loading…</p>
+      {:else if visitorError}
+        <p class="muted">{visitorError}</p>
+      {:else if visitorPage}
+        {#if visitorPage.rawDataFrom > visitorPage.from}
+          <p class="section-note">Sessions only go back to {visitorPage.rawDataFrom} (raw event retention).</p>
+        {/if}
+        {#if visitorPage.sessions.length === 0}
+          <p class="muted">No visitors in this range.</p>
+        {:else}
+          {@const shown = visitorOffset + visitorPage.sessions.length}
+          <div class="table-scroll">
+            <table class="visitors-table">
+              <thead>
+                <tr>
+                  <th>Visitor</th>
+                  <th>When (UTC)</th>
+                  <th>Where / device</th>
+                  <th>Source</th>
+                  <th class="right">Pages</th>
+                  <th class="right" title="Distinct works opened (figurine detail pages).">Works opened</th>
+                  <th class="right" title="Most works seen on a single grid page (home / archive).">Works seen</th>
+                  <th class="right" title="Deepest scroll reached on any page.">Max scroll</th>
+                  <th title="Action buttons pressed during the visit — the visit's trace.">Trace</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each visitorPage.sessions as s (s.visitorHash)}
+                  <tr class="visitor-row" class:selected={selectedVisitor === s.visitorHash} class:has-trace={s.ctaTypes.length > 0} onclick={() => openVisitor(s.visitorHash)}>
+                    <td><code>{visitorShort(s.visitorHash)}</code></td>
+                    <td>{s.day} · {hms(s.firstSeen)}–{hms(s.lastSeen)}</td>
+                    <td>{[s.countryCode?.toUpperCase(), s.deviceClass, s.browserFamily, s.lang?.toUpperCase()].filter(Boolean).join(' · ') || '—'}</td>
+                    <td>{s.source ? sourceLabel(s.source) : '—'}</td>
+                    <td class="right">{fmt(s.pageViews)}</td>
+                    <td class="right">{fmt(s.figurineViews)}</td>
+                    <td class="right">{s.maxWorksSeen ?? '—'}</td>
+                    <td class="right">{s.maxScrollDepth == null ? '—' : `${s.maxScrollDepth}%`}</td>
+                    <td>
+                      {#if s.ctaTypes.length > 0}
+                        <span class="trace-tags">{#each s.ctaTypes as t}<span class="trace-tag" title="{s.ctaClicks} action click(s) this visit">{ctaLabel(t)}</span>{/each}</span>
+                      {:else}
+                        <span class="muted">—</span>
+                      {/if}
+                    </td>
+                  </tr>
+                  {#if selectedVisitor === s.visitorHash}
+                    <tr class="timeline-row">
+                      <td colspan="9">
+                        {#if visitorTimelineLoading}
+                          <p class="muted">Loading timeline…</p>
+                        {:else if visitorTimeline.length === 0}
+                          <p class="muted">No events recorded.</p>
+                        {:else}
+                          <ol class="timeline">
+                            {#each visitorTimeline as ev}
+                              <li>
+                                <span class="t-time">{hms(ev.occurredAt)}</span>
+                                <span class="t-what">
+                                  {eventLabel(ev.eventType)}
+                                  {#if ev.figurineName}<strong>«{ev.figurineName}»</strong>{:else if ev.eventType.startsWith('figurine') && ev.figurineId}<code>{ev.figurineId.slice(0, 8)}</code>{:else}<code>{cleanPath(ev.path)}</code>{/if}
+                                  {#if ev.ctaType}— {ev.ctaType}{/if}
+                                  {#if ev.internalSource}<span class="muted"> · from {ev.internalSource}</span>{/if}
+                                </span>
+                                <span class="t-meta">
+                                  {#if ev.durationMs != null}{msLabel(ev.durationMs)}{/if}
+                                  {#if ev.scrollDepth != null} · scroll {ev.scrollDepth}%{/if}
+                                  {#if ev.worksSeen != null} · {ev.worksSeen} works seen{/if}
+                                </span>
+                              </li>
+                            {/each}
+                          </ol>
+                        {/if}
+                      </td>
+                    </tr>
+                  {/if}
+                {/each}
+              </tbody>
+            </table>
+          </div>
+          <div class="visitor-pager">
+            <span class="muted">{visitorOffset + 1}–{shown} of {fmt(visitorPage.total)}</span>
+            <button type="button" disabled={visitorOffset === 0} onclick={() => (visitorOffset = Math.max(0, visitorOffset - VISITOR_PAGE_SIZE))}>← Newer</button>
+            <button type="button" disabled={shown >= visitorPage.total} onclick={() => (visitorOffset = visitorOffset + VISITOR_PAGE_SIZE)}>Older →</button>
+          </div>
+        {/if}
+      {/if}
     </section>
     {/if}
 
@@ -2384,6 +2674,86 @@
 
   tbody tr { cursor: pointer; }
   tbody tr:hover { background: #fbf3e7; }
+
+  /* The page-engagement table is a fixed five-row readout, not a clickable
+     list, and narrower than the sortable Works table. */
+  .pages-table { min-width: 44rem; }
+  .pages-table tbody tr { cursor: default; }
+  .pages-table tbody tr:hover { background: transparent; }
+  .pages-table th {
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #6f3b24;
+  }
+  /* Deltas sit inline after the value, a touch smaller and quieter. */
+  .pages-table .delta { margin-left: 0.4rem; font-size: 0.66rem; }
+
+  /* ── Visitors tab ── */
+  .visitors-table code { font-size: 0.72rem; color: #6f3b24; }
+  .visitor-row.selected { background: #f6ecdd; }
+  .timeline-row { cursor: default; }
+  .timeline-row:hover { background: transparent; }
+  .timeline-row td { background: #fbf5ea; }
+  .timeline {
+    margin: 0;
+    padding: 0.2rem 0 0.2rem 0;
+    list-style: none;
+    display: grid;
+    gap: 0.35rem;
+  }
+  .timeline li {
+    display: grid;
+    grid-template-columns: 4.5rem minmax(0, 1fr) auto;
+    gap: 0.75rem;
+    align-items: baseline;
+    white-space: normal;
+  }
+  .t-time { color: #8a6f5c; font-variant-numeric: tabular-nums; }
+  .t-what { color: #34251c; }
+  .t-what code { font-size: 0.72rem; }
+  .t-meta { color: #8a6f5c; text-align: right; font-variant-numeric: tabular-nums; }
+  .visitor-pager {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.6rem;
+    font-size: 0.76rem;
+  }
+  .visitor-pager button {
+    border: 1px solid #d8c6b1;
+    background: #fff;
+    color: #6f3b24;
+    border-radius: 3px;
+    padding: 0.2rem 0.6rem;
+    cursor: pointer;
+    font: inherit;
+  }
+  .visitor-pager button:disabled { opacity: 0.4; cursor: default; }
+  .visitor-filter {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin: 0 0 0.6rem;
+    font-size: 0.78rem;
+    color: #5f4636;
+    cursor: pointer;
+  }
+  /* A visit that pressed an action is the signal worth finding — give it a
+     warm left edge so it stands out in a list of idle browsing. */
+  .visitor-row.has-trace td:first-child { box-shadow: inset 3px 0 0 #c65f3c; }
+  .trace-tags { display: inline-flex; flex-wrap: wrap; gap: 0.25rem; }
+  .trace-tag {
+    display: inline-block;
+    padding: 0.05rem 0.4rem;
+    border-radius: 999px;
+    background: #f0dcc9;
+    color: #6f3b24;
+    font-size: 0.68rem;
+    font-weight: 600;
+    white-space: nowrap;
+  }
 
   tbody tr.selected {
     background: #f5e5cc;

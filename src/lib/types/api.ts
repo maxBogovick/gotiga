@@ -616,9 +616,9 @@ export interface LifeOfHouseTrend {
 }
 
 export interface AnalyticsEventPayload {
-    eventType: 'figurine_view' | 'figurine_engaged' | 'figurine_cta_click' | 'page_view';
+    eventType: 'figurine_view' | 'figurine_engaged' | 'figurine_cta_click' | 'page_view' | 'page_engaged';
     /** Required for figurine_view/figurine_engaged/figurine_cta_click; absent
-     * for site-wide page_view events. */
+     * for site-wide page_view/page_engaged events. */
     figurineId?: string | null;
     path: string;
     referrer?: string | null;
@@ -627,12 +627,94 @@ export interface AnalyticsEventPayload {
     utmCampaign?: string | null;
     durationMs?: number | null;
     scrollDepth?: number | null;
+    /** Distinct work tiles seen during a home/archive visit (page_engaged only);
+     * absent for gridless pages and all other event types. */
+    worksSeen?: number | null;
     ctaType?: string | null;
     pageViewId?: string | null;
     clientTs?: string;
     lang?: string | null;
     /** Which on-site block a figurine-card click came from, e.g. "home_afisha". */
     internalSource?: string | null;
+}
+
+/** One generic page's engagement (home/archive/author/workshop/commission).
+ * `views`/`uniqueVisitors` cover the full range; everything from `engagedEvents`
+ * on is derived from raw `page_engaged` events and so only covers retention.
+ * Medians are null when no events qualify; `medianWorksSeen`/`reachedWorksEvents`
+ * are meaningful only for the grid pages (home/archive). */
+export interface SitePageEngagement {
+    pathGroup: string;
+    views: number;
+    uniqueVisitors: number;
+    engagedEvents: number;
+    /** Engaged visits shorter than the quick-exit threshold (near-bounces). */
+    quickExitEvents: number;
+    /** Engaged grid-page visits that saw at least one work tile. */
+    reachedWorksEvents: number;
+    medianDurationMs: number | null;
+    medianScrollDepth: number | null;
+    medianWorksSeen: number | null;
+}
+
+export interface SitePageEngagementResponse {
+    from: string;
+    to: string;
+    /** Immediately-preceding equal-length period — the delta baseline. */
+    previousFrom: string;
+    previousTo: string;
+    /** Earliest day the engagement figures actually reach (retention floor). */
+    rawDataFrom: string;
+    pages: SitePageEngagement[];
+    /** Same shape as `pages`, for `previousFrom..previousTo`. */
+    previousPages: SitePageEngagement[];
+}
+
+/** One anonymous visitor's day summary. "Visitor" is the daily-rotating,
+ * pseudonymous `visitorHash` — no IP, no identity, cannot be followed across
+ * days. Derived from raw events, so retention-bound. */
+export interface AdminVisitorSession {
+    visitorHash: string;
+    day: string;
+    firstSeen: string;
+    lastSeen: string;
+    eventCount: number;
+    pageViews: number;
+    figurineViews: number;
+    ctaClicks: number;
+    /** Distinct action buttons pressed during the visit — the visit's "trace";
+     * empty when the visitor only browsed. */
+    ctaTypes: string[];
+    maxWorksSeen: number | null;
+    maxScrollDepth: number | null;
+    countryCode: string | null;
+    deviceClass: string | null;
+    browserFamily: string | null;
+    lang: string | null;
+    source: string | null;
+}
+
+export interface AdminVisitorSessionsPage {
+    sessions: AdminVisitorSession[];
+    total: number;
+    from: string;
+    to: string;
+    rawDataFrom: string;
+}
+
+/** One event on an anonymous visitor's timeline. */
+export interface AdminVisitorEvent {
+    occurredAt: string;
+    eventType: 'page_view' | 'page_engaged' | 'figurine_view' | 'figurine_engaged' | 'figurine_cta_click' | string;
+    path: string;
+    figurineId: string | null;
+    figurineName: string | null;
+    durationMs: number | null;
+    scrollDepth: number | null;
+    worksSeen: number | null;
+    ctaType: string | null;
+    source: string | null;
+    internalSource: string | null;
 }
 
 // ── Commissions: a petition to the master to create a NEW figurine ──

@@ -545,6 +545,30 @@ pub async fn admin_get_commission_funnel(
     Ok(Json(service.admin_get_commission_funnel(query).await?))
 }
 
+pub async fn admin_get_site_page_engagement(
+    State(service): State<AppService>,
+    Query(query): Query<AdminAnalyticsQuery>,
+) -> Result<Json<SitePageEngagementResponse>> {
+    Ok(Json(service.admin_get_site_page_engagement(query).await?))
+}
+
+pub async fn admin_get_visitor_sessions(
+    State(service): State<AppService>,
+    Query(query): Query<AdminVisitorsQuery>,
+) -> Result<Json<AdminVisitorSessionsPage>> {
+    Ok(Json(service.admin_get_visitor_sessions(query).await?))
+}
+
+pub async fn admin_get_visitor_timeline(
+    State(service): State<AppService>,
+    Path(visitor_hash): Path<String>,
+    Query(query): Query<AdminVisitorsQuery>,
+) -> Result<Json<Vec<AdminVisitorEvent>>> {
+    Ok(Json(
+        service.admin_get_visitor_timeline(visitor_hash, query).await?,
+    ))
+}
+
 pub async fn admin_list_figurine_analytics(
     State(service): State<AppService>,
     Query(query): Query<AdminAnalyticsQuery>,

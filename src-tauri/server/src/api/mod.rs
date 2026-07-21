@@ -435,6 +435,24 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 ),
             )
             .route(
+                "/admin/analytics/pages",
+                get(handlers::admin_get_site_page_engagement).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/analytics/visitors",
+                get(handlers::admin_get_visitor_sessions).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/analytics/visitors/:hash",
+                get(handlers::admin_get_visitor_timeline).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
                 "/admin/analytics/backfill",
                 post(handlers::admin_backfill_analytics).route_layer(
                     middleware::from_fn_with_state(config.clone(), auth_middleware),

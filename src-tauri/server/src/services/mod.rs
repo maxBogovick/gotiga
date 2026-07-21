@@ -581,6 +581,118 @@ impl AppService {
         })
     }
 
+    /// Per-page engagement for the generic pages: visits, quick-exit and
+    /// reached-works rates, and time/scroll/works medians — plus the same for
+    /// the previous period so the panel can show deltas. Visits come from the
+    /// permanent page-views rollup (full range); everything else is derived from
+    /// raw `page_engaged` events, so — like the commission funnel — that part is
+    /// clamped to the raw-event floor and `raw_data_from` says how far it reaches.
+    pub async fn admin_get_site_page_engagement(
+        &self,
+        query: AdminAnalyticsQuery,
+    ) -> Result<SitePageEngagementResponse> {
+        let (from, to) = Self::analytics_range(query.from, query.to)?;
+        let (previous_from, previous_to) = Self::previous_period(from, to);
+        let raw_data_from = Self::raw_data_floor().max(from);
+        let pages = self.assemble_site_page_engagement(from, to).await?;
+        let previous_pages = self
+            .assemble_site_page_engagement(previous_from, previous_to)
+            .await?;
+        Ok(SitePageEngagementResponse {
+            from,
+            to,
+            previous_from,
+            previous_to,
+            raw_data_from,
+            pages,
+            previous_pages,
+        })
+    }
+
+    /// Engagement (retention-clamped) merged with views (permanent rollup),
+    /// keyed by path_group — a page with visits but no engagement events still
+    /// appears, with its rates/medians left empty.
+    async fn assemble_site_page_engagement(
+        &self,
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+    ) -> Result<Vec<SitePageEngagement>> {
+        let raw_from = Self::raw_data_floor().max(from);
+        let engagement = self.repo.get_admin_site_page_engagement(raw_from, to).await?;
+        let views = self.repo.get_admin_site_page_views_by_group(from, to).await?;
+
+        let mut by_group: std::collections::BTreeMap<String, SitePageEngagement> = engagement
+            .into_iter()
+            .map(|e| (e.path_group.clone(), e))
+            .collect();
+        for (path_group, v, u) in views {
+            let entry = by_group
+                .entry(path_group.clone())
+                .or_insert_with(|| SitePageEngagement {
+                    path_group,
+                    views: 0,
+                    unique_visitors: 0,
+                    engaged_events: 0,
+                    quick_exit_events: 0,
+                    reached_works_events: 0,
+                    median_duration_ms: None,
+                    median_scroll_depth: None,
+                    median_works_seen: None,
+                });
+            entry.views = v;
+            entry.unique_visitors = u;
+        }
+        Ok(by_group.into_values().collect())
+    }
+
+    /// Paged list of anonymous visitor sessions (daily `visitor_hash`) active in
+    /// range, newest first. Raw-event derived, so clamped to the retention floor;
+    /// `raw_data_from`/`total` let the panel show coverage and paginate.
+    pub async fn admin_get_visitor_sessions(
+        &self,
+        query: AdminVisitorsQuery,
+    ) -> Result<AdminVisitorSessionsPage> {
+        let (from, to) = Self::analytics_range(query.from, query.to)?;
+        let raw_data_from = Self::raw_data_floor().max(from);
+        let limit = query.limit.unwrap_or(100).clamp(1, 500);
+        let offset = query.offset.unwrap_or(0).max(0);
+        let only_actions = query.only_actions.unwrap_or(false);
+        let sessions = self
+            .repo
+            .get_admin_visitor_sessions(raw_data_from, to, limit, offset, only_actions)
+            .await?;
+        let total = self
+            .repo
+            .count_admin_visitor_sessions(raw_data_from, to, only_actions)
+            .await?;
+        Ok(AdminVisitorSessionsPage {
+            sessions,
+            total,
+            from,
+            to,
+            raw_data_from,
+        })
+    }
+
+    /// One anonymous visitor's event timeline. The hash is validated as hex
+    /// (it's an HMAC digest) before it reaches SQL — a cheap guard against a
+    /// malformed or probing id.
+    pub async fn admin_get_visitor_timeline(
+        &self,
+        visitor_hash: String,
+        query: AdminVisitorsQuery,
+    ) -> Result<Vec<AdminVisitorEvent>> {
+        let hash = visitor_hash.trim();
+        if hash.is_empty() || hash.len() > 128 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(AppError::BadRequest("Invalid visitor id".into()));
+        }
+        let (from, to) = Self::analytics_range(query.from, query.to)?;
+        let raw_data_from = Self::raw_data_floor().max(from);
+        self.repo
+            .get_admin_visitor_timeline(hash, raw_data_from, to, 500)
+            .await
+    }
+
     pub async fn admin_create_analytics_annotation(
         &self,
         req: CreateAnnotationRequest,

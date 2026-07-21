@@ -490,6 +490,33 @@ export const api = {
         return webFetch(`/admin/analytics/commission-funnel${qs}`, { headers: authHeaders() });
     },
 
+    async getSitePageEngagement(opts?: AdminAnalyticsQuery): Promise<import('./types/api').SitePageEngagementResponse> {
+        const p = new URLSearchParams();
+        if (opts?.from) p.set('from', opts.from);
+        if (opts?.to) p.set('to', opts.to);
+        const qs = p.toString() ? `?${p}` : '';
+        return webFetch(`/admin/analytics/pages${qs}`, { headers: authHeaders() });
+    },
+
+    async getVisitorSessions(opts?: { from?: string; to?: string; limit?: number; offset?: number; onlyActions?: boolean }): Promise<import('./types/api').AdminVisitorSessionsPage> {
+        const p = new URLSearchParams();
+        if (opts?.from) p.set('from', opts.from);
+        if (opts?.to) p.set('to', opts.to);
+        if (opts?.limit != null) p.set('limit', String(opts.limit));
+        if (opts?.offset != null) p.set('offset', String(opts.offset));
+        if (opts?.onlyActions) p.set('onlyActions', 'true');
+        const qs = p.toString() ? `?${p}` : '';
+        return webFetch(`/admin/analytics/visitors${qs}`, { headers: authHeaders() });
+    },
+
+    async getVisitorTimeline(visitorHash: string, opts?: AdminAnalyticsQuery): Promise<import('./types/api').AdminVisitorEvent[]> {
+        const p = new URLSearchParams();
+        if (opts?.from) p.set('from', opts.from);
+        if (opts?.to) p.set('to', opts.to);
+        const qs = p.toString() ? `?${p}` : '';
+        return webFetch(`/admin/analytics/visitors/${encodeURIComponent(visitorHash)}${qs}`, { headers: authHeaders() });
+    },
+
     async listFigurineAnalytics(opts?: AdminAnalyticsQuery): Promise<AdminFigurineAnalyticsListPage> {
         const p = new URLSearchParams();
         if (opts?.from) p.set('from', opts.from);

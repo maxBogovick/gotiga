@@ -507,9 +507,13 @@ pub enum AnalyticsEventType {
     FigurineView,
     FigurineEngaged,
     FigurineCtaClick,
-    /// Site-wide page view (home/archive/author/workshop/commission) — the
-    /// only event type allowed a `None` figurine_id.
+    /// Site-wide page view (home/archive/author/workshop/commission) — allowed
+    /// a `None` figurine_id, like `PageEngaged`.
     PageView,
+    /// Site-wide engagement (time on page + scroll depth + works_seen), the
+    /// non-figurine sibling of `FigurineEngaged`. Also allowed a `None`
+    /// figurine_id.
+    PageEngaged,
 }
 
 impl AnalyticsEventType {
@@ -519,6 +523,7 @@ impl AnalyticsEventType {
             Self::FigurineEngaged => "figurine_engaged",
             Self::FigurineCtaClick => "figurine_cta_click",
             Self::PageView => "page_view",
+            Self::PageEngaged => "page_engaged",
         }
     }
 }
@@ -537,6 +542,9 @@ pub struct AnalyticsEventRequest {
     pub utm_campaign: Option<String>,
     pub duration_ms: Option<i32>,
     pub scroll_depth: Option<i32>,
+    /// Distinct work tiles seen during a home/archive visit (`page_engaged`
+    /// only); absent for gridless pages and all other event types.
+    pub works_seen: Option<i32>,
     pub cta_type: Option<String>,
     pub page_view_id: Option<String>,
     pub client_ts: Option<DateTime<Utc>>,
@@ -568,6 +576,7 @@ pub struct AnalyticsEventRecord {
     pub country_code: Option<String>,
     pub duration_ms: Option<i32>,
     pub scroll_depth: Option<i32>,
+    pub works_seen: Option<i32>,
     pub cta_type: Option<String>,
     pub user_id: Option<Uuid>,
     pub lang: Option<String>,
@@ -744,6 +753,128 @@ pub struct AdminFigurineAnalyticsDetail {
     /// data — raw events are pruned after a retention window, so this can be
     /// later than `from` when the selected range reaches further back than that.
     pub raw_data_from: NaiveDate,
+}
+
+/// Per-page engagement for the generic (non-figurine) pages, keyed by the same
+/// coarse `path_group` as `site_page_views_daily` (home/archive/author/workshop/
+/// commission).
+///
+/// `views`/`unique_visitors` come from the permanent `site_page_views_daily`
+/// rollup and cover the full range. Everything derived from raw `page_engaged`
+/// events (`engaged_events`, `quick_exit_events`, `reached_works_events` and the
+/// medians) only covers the retention window — `raw_data_from` on the response
+/// marks how far back that reaches. `median_works_seen`/`reached_works_events`
+/// are meaningful only for the grid pages (home/archive); gridless pages never
+/// report `works_seen`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SitePageEngagement {
+    pub path_group: String,
+    pub views: i64,
+    pub unique_visitors: i64,
+    pub engaged_events: i64,
+    /// Engaged visits shorter than `QUICK_EXIT_MS` — the "bounced almost
+    /// immediately" count. Divided by `engaged_events` gives the quick-exit rate.
+    pub quick_exit_events: i64,
+    /// Engaged grid-page visits that saw at least one work tile — divided by
+    /// `engaged_events` gives the "reached the collection" rate.
+    pub reached_works_events: i64,
+    pub median_duration_ms: Option<f64>,
+    pub median_scroll_depth: Option<f64>,
+    pub median_works_seen: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SitePageEngagementResponse {
+    pub from: NaiveDate,
+    pub to: NaiveDate,
+    /// The immediately-preceding, equal-length period — the baseline the panel
+    /// draws its deltas against.
+    pub previous_from: NaiveDate,
+    pub previous_to: NaiveDate,
+    /// Earliest day the engagement figures actually reach (retention floor), so
+    /// the panel can label the coverage instead of implying the full range has
+    /// data.
+    pub raw_data_from: NaiveDate,
+    pub pages: Vec<SitePageEngagement>,
+    /// Same shape as `pages`, for `previous_from..previous_to`.
+    pub previous_pages: Vec<SitePageEngagement>,
+}
+
+/// One anonymous visitor's activity summary for a single day. "Visitor" is the
+/// daily-rotating `visitor_hash` (HMAC of IP-prefix + client hints + date, no
+/// raw IP stored) — so this is pseudonymous and cannot be tied to a real person
+/// or followed across days, by design. Derived entirely from raw events, so it
+/// only covers the retention window.
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminVisitorSession {
+    pub visitor_hash: String,
+    pub day: NaiveDate,
+    pub first_seen: DateTime<Utc>,
+    pub last_seen: DateTime<Utc>,
+    pub event_count: i64,
+    pub page_views: i64,
+    pub figurine_views: i64,
+    pub cta_clicks: i64,
+    /// Distinct action buttons pressed during the visit (reserve/booking/
+    /// waitlist/notify/comment/…) — the visit's "trace". Empty when the visitor
+    /// only browsed. This is the intent signal the analytics pipeline can
+    /// attribute to an anonymous visit; the actual form submissions live in
+    /// their own tables and aren't linked to a `visitor_hash`.
+    pub cta_types: Vec<String>,
+    /// Most works seen on a single grid page (home/archive) during the visit.
+    pub max_works_seen: Option<i32>,
+    pub max_scroll_depth: Option<i32>,
+    pub country_code: Option<String>,
+    pub device_class: Option<String>,
+    pub browser_family: Option<String>,
+    pub lang: Option<String>,
+    /// The visit's entry source (source of the earliest event).
+    pub source: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminVisitorSessionsPage {
+    pub sessions: Vec<AdminVisitorSession>,
+    pub total: i64,
+    pub from: NaiveDate,
+    pub to: NaiveDate,
+    /// Earliest day sessions actually reach (raw-event retention floor).
+    pub raw_data_from: NaiveDate,
+}
+
+/// One event on an anonymous visitor's timeline.
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminVisitorEvent {
+    pub occurred_at: DateTime<Utc>,
+    pub event_type: String,
+    pub path: String,
+    pub figurine_id: Option<Uuid>,
+    /// Resolved name for a `figurine_view`/`figurine_engaged` event, so the
+    /// timeline reads "opened «Hound»" rather than a bare id.
+    pub figurine_name: Option<String>,
+    pub duration_ms: Option<i32>,
+    pub scroll_depth: Option<i32>,
+    pub works_seen: Option<i32>,
+    pub cta_type: Option<String>,
+    pub source: Option<String>,
+    pub internal_source: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminVisitorsQuery {
+    pub from: Option<NaiveDate>,
+    pub to: Option<NaiveDate>,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+    /// When true, keep only visits that pressed at least one action button —
+    /// the "left a trace" filter for finding hot sessions among idle browsing.
+    pub only_actions: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

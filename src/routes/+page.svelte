@@ -435,11 +435,18 @@
     // the very thing it asks for. (There was such a flag; nothing ever set it.)
     let showHint = $state(false);
 
+    // Site-wide analytics for the home page. `trackWorks` so each work tile that
+    // scrolls into view (via `siteAnalytics.observeWork` on its .reel-slot) counts
+    // toward the visit's works_seen — how many pieces the visitor actually saw
+    // before leaving. `start()`/`stop()` measure dwell time + scroll depth.
+    const siteAnalytics = createSiteAnalytics({ trackWorks: true });
+
     onMount(() => {
         // Site-wide view, no figurine attached — respects the same DNT/admin/Tauri
         // exclusions as the figurine-detail tracking automatically. Dedupes
         // internally, so this stays a no-op if the component ever re-mounts.
-        createSiteAnalytics().pageView();
+        siteAnalytics.pageView();
+        siteAnalytics.start();
 
         // Hydration does not touch src/srcset (see hydrate-image.ts): on this prerendered
         // page the hero <img> holds whatever the BUILD resolved, and load() has since
@@ -540,6 +547,7 @@
             reduceMq.removeEventListener('change', syncTiltPreference);
             pointerMq.removeEventListener('change', syncTiltPreference);
             window.removeEventListener('message', onHlMessage);
+            siteAnalytics.stop();
         };
     });
 
@@ -818,7 +826,7 @@
 
                         <div class="work-reel" bind:this={reelEl}>
                             {#each visibleGalleryFigurines as fig, i (fig.id)}
-                                <div class="reel-slot" id="work-{fig.id}" data-reel-slot={i}>
+                                <div class="reel-slot" id="work-{fig.id}" data-reel-slot={i} use:siteAnalytics.observeWork={fig.id}>
                                     <!-- The pane's paragraph is the work's own short text,
                                          which the list payload already carries — no lookup
                                          table in between (there was one; it rebuilt an

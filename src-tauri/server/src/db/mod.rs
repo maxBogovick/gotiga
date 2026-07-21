@@ -69,7 +69,7 @@ impl Repository {
                 occurred_at, event_date, event_type, figurine_id, visitor_hash,
                 page_view_id, path, source, referrer_host, utm_source, utm_medium,
                 utm_campaign, device_class, browser_family, country_code,
-                duration_ms, scroll_depth, cta_type, user_id, lang, internal_source
+                duration_ms, scroll_depth, works_seen, cta_type, user_id, lang, internal_source
             ) ",
         );
         builder.push_values(events, |mut b, event| {
@@ -90,6 +90,7 @@ impl Repository {
                 .push_bind(&event.country_code)
                 .push_bind(event.duration_ms)
                 .push_bind(event.scroll_depth)
+                .push_bind(event.works_seen)
                 .push_bind(&event.cta_type)
                 .push_bind(event.user_id)
                 .push_bind(&event.lang)
@@ -925,6 +926,222 @@ impl Repository {
         )
         .bind(from)
         .bind(to)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Per-generic-page engagement from raw `page_engaged` events: engaged
+    /// count, quick-exit count (visits under `QUICK_EXIT_MS`), reached-works
+    /// count (grid visits that saw ≥1 tile), and the time/scroll/works medians.
+    /// Same NULL-excluding percentile approach as
+    /// `get_admin_figurine_engagement_medians` (NULLs never counted as 0), and
+    /// same retention limit — the caller clamps `from` to the raw-event floor.
+    /// `views`/`unique_visitors` are left 0 here and filled by the caller from
+    /// the permanent page-views rollup. The `path_group` CASE mirrors the
+    /// `site_page_views_daily` rollup so the two line up row-for-row.
+    pub async fn get_admin_site_page_engagement(
+        &self,
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+    ) -> Result<Vec<SitePageEngagement>> {
+        Ok(sqlx::query_as::<_, (String, i64, i64, i64, Option<f64>, Option<f64>, Option<f64>)>(
+            r#"
+            SELECT
+                CASE
+                    WHEN path = '/' OR path LIKE '/?%' THEN 'home'
+                    WHEN path = '/figurines' OR path LIKE '/figurines?%' THEN 'archive'
+                    WHEN path LIKE '/author%' THEN 'author'
+                    WHEN path LIKE '/workshop%' THEN 'workshop'
+                    WHEN path LIKE '/commission%' THEN 'commission'
+                    ELSE 'other'
+                END AS path_group,
+                COUNT(*)::bigint AS engaged_events,
+                COUNT(*) FILTER (WHERE duration_ms IS NOT NULL AND duration_ms < $3)::bigint
+                    AS quick_exit_events,
+                COUNT(*) FILTER (WHERE works_seen IS NOT NULL AND works_seen >= 1)::bigint
+                    AS reached_works_events,
+                percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms)
+                    FILTER (WHERE duration_ms IS NOT NULL) AS median_duration_ms,
+                percentile_cont(0.5) WITHIN GROUP (ORDER BY scroll_depth)
+                    FILTER (WHERE scroll_depth IS NOT NULL) AS median_scroll_depth,
+                percentile_cont(0.5) WITHIN GROUP (ORDER BY works_seen)
+                    FILTER (WHERE works_seen IS NOT NULL) AS median_works_seen
+            FROM figurine_analytics_events
+            WHERE event_date BETWEEN $1 AND $2
+              AND event_type = 'page_engaged'
+              AND figurine_id IS NULL
+            GROUP BY path_group
+            ORDER BY engaged_events DESC
+            "#,
+        )
+        .bind(from)
+        .bind(to)
+        .bind(crate::analytics::QUICK_EXIT_MS)
+        .fetch_all(&self.pg_pool)
+        .await?
+        .into_iter()
+        .map(
+            |(
+                path_group,
+                engaged_events,
+                quick_exit_events,
+                reached_works_events,
+                median_duration_ms,
+                median_scroll_depth,
+                median_works_seen,
+            )| SitePageEngagement {
+                path_group,
+                views: 0,
+                unique_visitors: 0,
+                engaged_events,
+                quick_exit_events,
+                reached_works_events,
+                median_duration_ms,
+                median_scroll_depth,
+                median_works_seen,
+            },
+        )
+        .collect())
+    }
+
+    /// Per-`path_group` views/unique-visitors from the permanent
+    /// `site_page_views_daily` rollup (not retention-bound) — the denominator
+    /// that gives the engagement rates and "works seen" their meaning. Sibling
+    /// of `get_admin_site_page_views_daily`, which collapses the groups into a
+    /// single daily total.
+    pub async fn get_admin_site_page_views_by_group(
+        &self,
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+    ) -> Result<Vec<(String, i64, i64)>> {
+        Ok(sqlx::query_as(
+            r#"
+            SELECT path_group, SUM(views)::bigint, SUM(unique_visitors)::bigint
+            FROM site_page_views_daily
+            WHERE day BETWEEN $1 AND $2
+            GROUP BY path_group
+            "#,
+        )
+        .bind(from)
+        .bind(to)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// One row per anonymous visitor (daily `visitor_hash`) active in range,
+    /// newest last-seen first. Representative device/browser/country/lang/source
+    /// are taken from the visit's earliest event (array_agg ORDER BY occurred_at,
+    /// first non-null). Raw-event derived, so the caller clamps to retention.
+    pub async fn get_admin_visitor_sessions(
+        &self,
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+        limit: i64,
+        offset: i64,
+        only_actions: bool,
+    ) -> Result<Vec<AdminVisitorSession>> {
+        Ok(sqlx::query_as::<_, AdminVisitorSession>(
+            r#"
+            SELECT
+                visitor_hash,
+                MAX(event_date) AS day,
+                MIN(occurred_at) AS first_seen,
+                MAX(occurred_at) AS last_seen,
+                COUNT(*)::bigint AS event_count,
+                COUNT(*) FILTER (WHERE event_type = 'page_view')::bigint AS page_views,
+                COUNT(*) FILTER (WHERE event_type = 'figurine_view')::bigint AS figurine_views,
+                COUNT(*) FILTER (WHERE event_type = 'figurine_cta_click')::bigint AS cta_clicks,
+                COALESCE(
+                    array_agg(DISTINCT cta_type) FILTER (WHERE cta_type IS NOT NULL),
+                    ARRAY[]::text[]
+                ) AS cta_types,
+                MAX(works_seen) AS max_works_seen,
+                MAX(scroll_depth) AS max_scroll_depth,
+                (array_agg(country_code ORDER BY occurred_at) FILTER (WHERE country_code IS NOT NULL))[1] AS country_code,
+                (array_agg(device_class ORDER BY occurred_at) FILTER (WHERE device_class IS NOT NULL))[1] AS device_class,
+                (array_agg(browser_family ORDER BY occurred_at) FILTER (WHERE browser_family IS NOT NULL))[1] AS browser_family,
+                (array_agg(lang ORDER BY occurred_at) FILTER (WHERE lang IS NOT NULL))[1] AS lang,
+                (array_agg(source ORDER BY occurred_at) FILTER (WHERE source IS NOT NULL))[1] AS source
+            FROM figurine_analytics_events
+            WHERE event_date BETWEEN $1 AND $2 AND visitor_hash IS NOT NULL
+            GROUP BY visitor_hash
+            HAVING (NOT $5 OR COUNT(*) FILTER (WHERE event_type = 'figurine_cta_click') > 0)
+            ORDER BY last_seen DESC
+            LIMIT $3 OFFSET $4
+            "#,
+        )
+        .bind(from)
+        .bind(to)
+        .bind(limit)
+        .bind(offset)
+        .bind(only_actions)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Total distinct anonymous visitors in range — the count behind the paged
+    /// `get_admin_visitor_sessions` list. Honours the same `only_actions`
+    /// filter so the pager total matches the filtered list.
+    pub async fn count_admin_visitor_sessions(
+        &self,
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+        only_actions: bool,
+    ) -> Result<i64> {
+        let row: (i64,) = sqlx::query_as(
+            r#"
+            SELECT COUNT(*)::bigint FROM (
+                SELECT visitor_hash
+                FROM figurine_analytics_events
+                WHERE event_date BETWEEN $1 AND $2 AND visitor_hash IS NOT NULL
+                GROUP BY visitor_hash
+                HAVING (NOT $3 OR COUNT(*) FILTER (WHERE event_type = 'figurine_cta_click') > 0)
+            ) t
+            "#,
+        )
+        .bind(from)
+        .bind(to)
+        .bind(only_actions)
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(row.0)
+    }
+
+    /// One anonymous visitor's full event timeline, oldest first, with figurine
+    /// names resolved for the works they opened. Capped so a pathological visit
+    /// can't return an unbounded payload.
+    pub async fn get_admin_visitor_timeline(
+        &self,
+        visitor_hash: &str,
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+        limit: i64,
+    ) -> Result<Vec<AdminVisitorEvent>> {
+        Ok(sqlx::query_as::<_, AdminVisitorEvent>(
+            r#"
+            SELECT
+                e.occurred_at,
+                e.event_type,
+                e.path,
+                e.figurine_id,
+                f.name AS figurine_name,
+                e.duration_ms,
+                e.scroll_depth,
+                e.works_seen,
+                e.cta_type,
+                e.source,
+                e.internal_source
+            FROM figurine_analytics_events e
+            LEFT JOIN figurines f ON f.id = e.figurine_id
+            WHERE e.visitor_hash = $1 AND e.event_date BETWEEN $2 AND $3
+            ORDER BY e.occurred_at ASC
+            LIMIT $4
+            "#,
+        )
+        .bind(visitor_hash)
+        .bind(from)
+        .bind(to)
+        .bind(limit)
         .fetch_all(&self.pg_pool)
         .await?)
     }

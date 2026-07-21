@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import { page } from '$app/state';
@@ -14,9 +14,11 @@
   const PENDING_CLAIM_KEY = 'gotiga_pending_claim';
 
   const siteAnalytics = createSiteAnalytics();
+  onDestroy(() => siteAnalytics.stop());
 
   onMount(() => {
     siteAnalytics.pageView();
+    siteAnalytics.start();
   });
 
   // Fired from the step-1 title/description fields' own input handler — not a

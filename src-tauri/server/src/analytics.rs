@@ -30,6 +30,12 @@ const SHUTDOWN_FLUSH_DEADLINE: Duration = Duration::from_secs(5);
 /// for dates older than this.
 pub const RETENTION_DAYS: i64 = 30;
 
+/// A `page_engaged` visit shorter than this counts as a "quick exit" (a near-
+/// bounce). Ten seconds is long enough to rule out an accidental open, short
+/// enough that the visitor plainly didn't engage. Single source of truth for the
+/// quick-exit-rate query in `get_admin_site_page_engagement`.
+pub const QUICK_EXIT_MS: i32 = 10_000;
+
 #[derive(Clone)]
 pub struct AnalyticsRuntime {
     sender: Arc<Mutex<Option<mpsc::Sender<AnalyticsEventRecord>>>>,
@@ -210,6 +216,7 @@ pub fn build_event_record(
         country_code: ctx.country_code,
         duration_ms: req.duration_ms,
         scroll_depth: req.scroll_depth,
+        works_seen: req.works_seen,
         cta_type: clean_optional(req.cta_type, 80),
         user_id: None,
         lang,
@@ -229,7 +236,11 @@ fn validate_event(req: &AnalyticsEventRequest) -> Result<()> {
     if req.path.trim().is_empty() || req.path.len() > 512 {
         return Err(crate::error::AppError::BadRequest("Invalid path".into()));
     }
-    if req.event_type != AnalyticsEventType::PageView
+    let site_wide = matches!(
+        req.event_type,
+        AnalyticsEventType::PageView | AnalyticsEventType::PageEngaged
+    );
+    if !site_wide
         && req
             .figurine_id
             .as_deref()
@@ -239,6 +250,13 @@ fn validate_event(req: &AnalyticsEventRequest) -> Result<()> {
     {
         return Err(crate::error::AppError::BadRequest(
             "figurineId is required for this event type".into(),
+        ));
+    }
+    if let Some(works) = req.works_seen
+        && works < 0
+    {
+        return Err(crate::error::AppError::BadRequest(
+            "worksSeen must be non-negative".into(),
         ));
     }
     if let Some(duration) = req.duration_ms
@@ -645,6 +663,7 @@ mod tests {
             utm_campaign: None,
             duration_ms: Some(1000),
             scroll_depth: Some(101),
+            works_seen: None,
             cta_type: None,
             page_view_id: Some(Uuid::new_v4().to_string()),
             client_ts: None,
@@ -666,6 +685,51 @@ mod tests {
             utm_campaign: None,
             duration_ms: None,
             scroll_depth: None,
+            works_seen: None,
+            cta_type: None,
+            page_view_id: None,
+            client_ts: None,
+            lang: None,
+            internal_source: None,
+        };
+        assert!(validate_event(&req).is_err());
+    }
+
+    #[test]
+    fn accepts_missing_figurine_id_for_page_engaged() {
+        let req = AnalyticsEventRequest {
+            event_type: AnalyticsEventType::PageEngaged,
+            figurine_id: None,
+            path: "/".into(),
+            referrer: None,
+            utm_source: None,
+            utm_medium: None,
+            utm_campaign: None,
+            duration_ms: Some(12000),
+            scroll_depth: Some(60),
+            works_seen: Some(7),
+            cta_type: None,
+            page_view_id: Some(Uuid::new_v4().to_string()),
+            client_ts: None,
+            lang: Some("ru".into()),
+            internal_source: None,
+        };
+        assert!(validate_event(&req).is_ok());
+    }
+
+    #[test]
+    fn rejects_negative_works_seen() {
+        let req = AnalyticsEventRequest {
+            event_type: AnalyticsEventType::PageEngaged,
+            figurine_id: None,
+            path: "/".into(),
+            referrer: None,
+            utm_source: None,
+            utm_medium: None,
+            utm_campaign: None,
+            duration_ms: Some(1000),
+            scroll_depth: Some(10),
+            works_seen: Some(-1),
             cta_type: None,
             page_view_id: None,
             client_ts: None,
@@ -687,6 +751,7 @@ mod tests {
             utm_campaign: None,
             duration_ms: None,
             scroll_depth: None,
+            works_seen: None,
             cta_type: None,
             page_view_id: None,
             client_ts: None,
@@ -717,6 +782,7 @@ mod tests {
             utm_campaign: None,
             duration_ms: None,
             scroll_depth: None,
+            works_seen: None,
             cta_type: None,
             page_view_id: Some(Uuid::new_v4().to_string()),
             client_ts: None,

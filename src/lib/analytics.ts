@@ -99,12 +99,86 @@ export function createFigurineAnalytics(figurineId: string) {
 /** Site-wide tracking for pages with no single figurine — home, archive,
  * /author, /workshop, /commission. Same pipeline (batching, daily visitor
  * hash, DNT/bot filtering) as `createFigurineAnalytics`, just without a
- * figurine attached. */
-export function createSiteAnalytics() {
+ * figurine attached.
+ *
+ * Beyond the one-shot `page_view`, this also measures engagement — how long the
+ * visitor stayed and how far they scrolled — via a single `page_engaged` event
+ * flushed when the page is backgrounded or left. Pass `{ trackWorks: true }` on
+ * the home/archive grids to also count how many distinct work tiles the visitor
+ * actually saw (attach `observeWork` to each tile). */
+export function createSiteAnalytics(opts?: { trackWorks?: boolean }) {
     const pageViewId = crypto.randomUUID();
     const sent = new Set<string>();
+    const trackWorks = opts?.trackWorks ?? false;
+    const worksSeen = new Set<string>();
+    let mountedAt = 0;
+    let maxScroll = 0;
+    let observer: IntersectionObserver | null = null;
+    let listening = false;
+    // Snapshot of the page's identity (path/referrer/utm/lang) taken at mount.
+    // The engaged event fires on teardown, and on a SvelteKit client-side
+    // navigation `location` has already advanced to the *destination* route by
+    // the time onDestroy runs — reading it then would misattribute this page's
+    // time/scroll/works to the next page. Captured here, it stays correct.
+    let engagedBase: ReturnType<typeof basePayload> | null = null;
+
+    function currentScrollDepth(): number {
+        if (typeof window === 'undefined') return 0;
+        const doc = document.documentElement;
+        const scrollable = Math.max(1, doc.scrollHeight - window.innerHeight);
+        return Math.min(100, Math.max(0, Math.round((window.scrollY / scrollable) * 100)));
+    }
+
+    function onScroll() {
+        const depth = currentScrollDepth();
+        if (depth > maxScroll) maxScroll = depth;
+    }
+
+    // The final engagement flush. Fired once — on tab-background
+    // (visibilitychange→hidden, the reliable signal on mobile where pagehide is
+    // flaky), on pagehide, or on component teardown — reporting foreground time
+    // and the deepest scroll reached.
+    function flushEngaged() {
+        if (sent.has('page_engaged') || !mountedAt || !engagedBase) return;
+        sent.add('page_engaged');
+        onScroll();
+        send({
+            ...engagedBase,
+            eventType: 'page_engaged',
+            durationMs: Math.max(0, Date.now() - mountedAt),
+            scrollDepth: maxScroll,
+            worksSeen: trackWorks ? worksSeen.size : null,
+        });
+    }
+
+    function handleVisibility() {
+        if (document.visibilityState === 'hidden') flushEngaged();
+    }
+
+    function ensureObserver(): IntersectionObserver | null {
+        if (!trackWorks || !canTrack()) return null;
+        if (!observer) {
+            // A tile counts as "seen" once it reaches the central band of the
+            // viewport — not merely peeking in at the very edge. Expressed as a
+            // rootMargin band rather than a visibility ratio on purpose: a
+            // full-height reel pane taller than the viewport never reaches a
+            // 50%-visible ratio, but it does cross this band.
+            observer = new IntersectionObserver(
+                (entries) => {
+                    for (const e of entries) {
+                        if (!e.isIntersecting) continue;
+                        const id = (e.target as HTMLElement).dataset.workId;
+                        if (id) worksSeen.add(id);
+                    }
+                },
+                { rootMargin: '-25% 0px -25% 0px', threshold: 0 },
+            );
+        }
+        return observer;
+    }
 
     return {
+        pageViewId,
         pageView() {
             if (sent.has('page_view')) return;
             sent.add('page_view');
@@ -121,6 +195,42 @@ export function createSiteAnalytics() {
                 eventType: 'figurine_cta_click',
                 ctaType,
             });
+        },
+        /** Begin dwell/scroll tracking. Call once in `onMount` (browser only). */
+        start() {
+            if (!canTrack() || listening) return;
+            listening = true;
+            mountedAt = Date.now();
+            engagedBase = basePayload(null, pageViewId);
+            onScroll();
+            window.addEventListener('scroll', onScroll, { passive: true });
+            document.addEventListener('visibilitychange', handleVisibility);
+            window.addEventListener('pagehide', flushEngaged);
+        },
+        /** Svelte action for work tiles on the home/archive grids — records the
+         * tile toward `works_seen` once it scrolls into view. No-op unless the
+         * instance was created with `{ trackWorks: true }`. */
+        observeWork(node: HTMLElement, id: string) {
+            node.dataset.workId = id;
+            ensureObserver()?.observe(node);
+            return {
+                destroy() {
+                    observer?.unobserve(node);
+                },
+            };
+        },
+        /** Flush the final `page_engaged` event and detach listeners. Call in
+         * `onDestroy` (covers SPA navigation; pagehide covers full unload). */
+        stop() {
+            flushEngaged();
+            if (typeof window !== 'undefined') {
+                window.removeEventListener('scroll', onScroll);
+                document.removeEventListener('visibilitychange', handleVisibility);
+                window.removeEventListener('pagehide', flushEngaged);
+            }
+            observer?.disconnect();
+            observer = null;
+            listening = false;
         },
     };
 }

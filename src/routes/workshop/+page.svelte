@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import { t, brandName } from '$lib/i18n';
@@ -40,9 +40,11 @@
   }
 
   const siteAnalytics = createSiteAnalytics();
+  onDestroy(() => siteAnalytics.stop());
 
   onMount(() => {
     siteAnalytics.pageView();
+    siteAnalytics.start();
     prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   });
 </script>
