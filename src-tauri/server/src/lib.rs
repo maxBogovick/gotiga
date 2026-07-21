@@ -15,3 +15,4 @@ pub mod models;
 pub mod observability;
 pub mod services;
 pub mod slug;
+pub mod tenant;

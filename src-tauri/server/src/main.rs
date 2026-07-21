@@ -1,4 +1,4 @@
-use gotiga_server::{api, config, db, logs, services};
+use gotiga_server::{api, config, db, logs, services, tenant};
 use sqlx::postgres::PgPoolOptions;
 use std::net::SocketAddr;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -50,6 +50,12 @@ async fn main() -> anyhow::Result<()> {
         .run(&pool)
         .await
         .expect("Failed to run migrations");
+
+    // 4b. Load the tenant registry (multi-tenancy foundation). Borrows the pool before
+    // it is moved into the repository. Additive: with only the seeded primary tenant
+    // present, every request still resolves to Ritunia / the `public` schema.
+    let tenants = tenant::TenantRegistry::load(&pool).await?;
+    let tenant_pools = tenant::TenantPools::new(&config.database_url)?;
 
     // 5. Initialize Layers
     let repo = db::Repository::new(pool);
@@ -135,7 +141,7 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    let router = api::router(service.clone(), config.clone(), log_store);
+    let router = api::router(service.clone(), config.clone(), log_store, tenants, tenant_pools);
 
     // 6. Start Server
     let addr: SocketAddr = format!("{}:{}", config.host, config.port)

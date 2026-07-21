@@ -2,6 +2,8 @@ use crate::config::Config;
 use crate::logs::AdminLogStore;
 use crate::observability::{ObservabilityState, request_observability_middleware};
 use crate::services::AppService;
+use crate::tenant::{Tenant, TenantPools, TenantRegistry};
+use std::sync::Arc;
 use axum::extract::DefaultBodyLimit;
 use axum::{
     Router,
@@ -33,6 +35,7 @@ pub struct AppState {
     pub config: Config,
     pub observability: ObservabilityState,
     pub log_store: AdminLogStore,
+    pub tenant_pools: TenantPools,
 }
 
 impl axum::extract::FromRef<AppState> for AppService {
@@ -59,13 +62,51 @@ impl axum::extract::FromRef<AppState> for AdminLogStore {
     }
 }
 
-pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> Router {
+/// Extractor yielding an `AppService` scoped to the request's resolved tenant. Replaces
+/// `State<AppService>` in handlers: `resolve_tenant_middleware` puts the tenant in the
+/// request extensions, and here we bind the service to that tenant's schema pool.
+pub struct TenantService(pub AppService);
+
+#[axum::async_trait]
+impl axum::extract::FromRequestParts<AppState> for TenantService {
+    type Rejection = StatusCode;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let tenant = parts
+            .extensions
+            .get::<Arc<Tenant>>()
+            .cloned()
+            .ok_or_else(|| {
+                tracing::error!(
+                    target: "gotiga_server::tenant",
+                    "tenant missing from request extensions — resolve_tenant_middleware not applied"
+                );
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+        let pool = state.tenant_pools.pool_for(&tenant.schema_name);
+        Ok(TenantService(
+            state.service.with_tenant(&tenant.schema_name, pool),
+        ))
+    }
+}
+
+pub fn router(
+    service: AppService,
+    config: Config,
+    log_store: AdminLogStore,
+    tenants: Arc<TenantRegistry>,
+    tenant_pools: TenantPools,
+) -> Router {
     let observability = service.observability();
     let state = AppState {
         service,
         config: config.clone(),
         observability: observability.clone(),
         log_store,
+        tenant_pools,
     };
 
     // All routes under /api/v1 — no auth on the router level
@@ -890,6 +931,12 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
         )]);
 
     app.layer(cors)
+        // Resolve which tenant this request belongs to (from Host) before anything
+        // downstream runs. Additive for now — see resolve_tenant_middleware.
+        .layer(middleware::from_fn_with_state(
+            tenants,
+            resolve_tenant_middleware,
+        ))
         .layer(middleware::from_fn_with_state(
             observability,
             request_observability_middleware,
@@ -1044,4 +1091,32 @@ async fn auth_middleware(
     }
 
     Ok(next.run(request).await)
+}
+
+/// Resolve which tenant (artist/maker site) a request belongs to, from the Host
+/// header, and stash it in the request extensions for downstream handlers.
+///
+/// Additive for now: with only the seeded primary tenant present, every host resolves
+/// to Ritunia / the `public` schema, so behavior is unchanged. The next increment makes
+/// the service layer honor the resolved schema via `SET search_path`.
+async fn resolve_tenant_middleware(
+    axum::extract::State(tenants): axum::extract::State<Arc<TenantRegistry>>,
+    headers: HeaderMap,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    let host = headers
+        .get(header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("");
+    let tenant: Arc<Tenant> = tenants.resolve(host);
+    tracing::debug!(
+        target: "gotiga_server::tenant",
+        host = %host,
+        tenant = %tenant.slug,
+        schema = %tenant.schema_name,
+        "resolved tenant for request"
+    );
+    request.extensions_mut().insert(tenant);
+    next.run(request).await
 }

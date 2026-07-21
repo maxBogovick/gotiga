@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::error::{AppError, Result};
 use crate::models::*;
-use crate::services::AppService;
+use crate::api::TenantService;
 use axum::{
     Json,
     body::Bytes,
@@ -483,7 +483,7 @@ pub async fn health_check() -> impl IntoResponse {
     )
 }
 
-pub async fn readiness_check(State(service): State<AppService>) -> Result<impl IntoResponse> {
+pub async fn readiness_check(TenantService(service): TenantService) -> Result<impl IntoResponse> {
     service.health_check().await?;
     Ok((
         StatusCode::OK,
@@ -497,7 +497,7 @@ pub async fn readiness_check(State(service): State<AppService>) -> Result<impl I
 }
 
 pub async fn record_analytics_event(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<impl IntoResponse> {
@@ -530,7 +530,7 @@ pub async fn record_analytics_event(
 }
 
 pub async fn admin_get_analytics_overview(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Query(query): Query<AdminAnalyticsQuery>,
 ) -> Result<Json<AdminAnalyticsOverview>> {
     service.refresh_analytics_hot_window_if_due().await?;
@@ -538,7 +538,7 @@ pub async fn admin_get_analytics_overview(
 }
 
 pub async fn admin_get_commission_funnel(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Query(query): Query<AdminAnalyticsQuery>,
 ) -> Result<Json<CommissionFunnel>> {
     service.refresh_analytics_hot_window_if_due().await?;
@@ -546,21 +546,21 @@ pub async fn admin_get_commission_funnel(
 }
 
 pub async fn admin_get_site_page_engagement(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Query(query): Query<AdminAnalyticsQuery>,
 ) -> Result<Json<SitePageEngagementResponse>> {
     Ok(Json(service.admin_get_site_page_engagement(query).await?))
 }
 
 pub async fn admin_get_visitor_sessions(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Query(query): Query<AdminVisitorsQuery>,
 ) -> Result<Json<AdminVisitorSessionsPage>> {
     Ok(Json(service.admin_get_visitor_sessions(query).await?))
 }
 
 pub async fn admin_get_visitor_timeline(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(visitor_hash): Path<String>,
     Query(query): Query<AdminVisitorsQuery>,
 ) -> Result<Json<Vec<AdminVisitorEvent>>> {
@@ -570,7 +570,7 @@ pub async fn admin_get_visitor_timeline(
 }
 
 pub async fn admin_list_figurine_analytics(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Query(query): Query<AdminAnalyticsQuery>,
 ) -> Result<Json<AdminFigurineAnalyticsListPage>> {
     service.refresh_analytics_hot_window_if_due().await?;
@@ -578,7 +578,7 @@ pub async fn admin_list_figurine_analytics(
 }
 
 pub async fn admin_get_figurine_analytics(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<String>,
     Query(query): Query<AdminAnalyticsQuery>,
 ) -> Result<Json<AdminFigurineAnalyticsDetail>> {
@@ -591,7 +591,7 @@ pub async fn admin_get_figurine_analytics(
 /// the full detail endpoint does a lot of extra work (medians, CTA funnel,
 /// browsers…) that a map-only view doesn't need.
 pub async fn admin_get_figurine_geo_daily(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<String>,
     Query(query): Query<AdminAnalyticsQuery>,
 ) -> Result<Json<Vec<FigurineGeoDailyPoint>>> {
@@ -600,7 +600,7 @@ pub async fn admin_get_figurine_geo_daily(
 }
 
 pub async fn admin_backfill_analytics(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     body: Bytes,
 ) -> Result<Json<BackfillAnalyticsResponse>> {
     let req: BackfillAnalyticsRequest = if body.is_empty() {
@@ -613,28 +613,28 @@ pub async fn admin_backfill_analytics(
 }
 
 pub async fn admin_get_life_of_house_trend(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Query(query): Query<AdminAnalyticsQuery>,
 ) -> Result<Json<LifeOfHouseTrend>> {
     Ok(Json(service.admin_get_life_of_house_trend(query).await?))
 }
 
 pub async fn admin_list_analytics_annotations(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Query(query): Query<AdminAnalyticsQuery>,
 ) -> Result<Json<Vec<AnalyticsAnnotation>>> {
     Ok(Json(service.admin_list_analytics_annotations(query).await?))
 }
 
 pub async fn admin_create_analytics_annotation(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Json(req): Json<CreateAnnotationRequest>,
 ) -> Result<Json<AnalyticsAnnotation>> {
     Ok(Json(service.admin_create_analytics_annotation(req).await?))
 }
 
 pub async fn admin_delete_analytics_annotation(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<String>,
 ) -> Result<StatusCode> {
     let id = uuid::Uuid::parse_str(&id)
@@ -644,7 +644,7 @@ pub async fn admin_delete_analytics_annotation(
 }
 
 /*pub async fn get_sync_manifest(
-    State(service): State<AppService>
+    TenantService(service): TenantService
 ) -> Result<Json<Manifest>> {
     //let manifest = service.generate_manifest().await?;
     Ok(Json(manifest))
@@ -669,7 +669,7 @@ pub struct ListParams {
 }
 
 pub async fn list_figurines(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     State(config): State<Config>,
     headers: HeaderMap,
     Query(params): Query<ListParams>,
@@ -711,7 +711,7 @@ pub async fn list_figurines(
 }
 
 pub async fn get_figurine(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<String>,
 ) -> Result<Json<FigurineDto>> {
     let dto = service.get_figurine_details(id).await?;
@@ -719,14 +719,14 @@ pub async fn get_figurine(
 }
 
 pub async fn list_in_progress_figurines(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
 ) -> Result<Json<Vec<FigurineListItemDto>>> {
     let list = service.list_in_progress_figurines().await?;
     Ok(Json(list))
 }
 
 pub async fn list_first_look_figurines(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
 ) -> Result<Json<Vec<FigurineListItemDto>>> {
     let list = service.list_first_look_figurines().await?;
     Ok(Json(list))
@@ -734,7 +734,7 @@ pub async fn list_first_look_figurines(
 
 // Combined GET dispatcher: /content/texts/:param (author | workshop)
 pub async fn get_texts_by_param(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(param): Path<String>,
 ) -> Result<axum::response::Response> {
     match param.as_str() {
@@ -754,7 +754,7 @@ pub async fn get_texts_by_param(
 }
 
 pub async fn get_cabinet_zones(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
 ) -> Result<Json<Vec<CabinetZoneDto>>> {
     let zones = service.get_cabinet_zones().await?;
     Ok(Json(zones))
@@ -788,7 +788,7 @@ pub async fn admin_login(
 // === ADMIN FIGURINE CRUD ===
 
 pub async fn save_figurine(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Json(req): Json<SaveFigurineRequest>,
 ) -> Result<StatusCode> {
     service.save_figurine(req).await?;
@@ -796,7 +796,7 @@ pub async fn save_figurine(
 }
 
 pub async fn delete_figurine(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<String>,
 ) -> Result<StatusCode> {
     service.delete_figurine(id).await?;
@@ -806,7 +806,7 @@ pub async fn delete_figurine(
 /// Admin: generate depth maps for a figurine's images on demand (the per-card
 /// button). Runs Depth-Anything in-process (candle, CPU).
 pub async fn admin_generate_figurine_depth(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse> {
     let summary = service.generate_figurine_depth(id).await?;
@@ -816,7 +816,7 @@ pub async fn admin_generate_figurine_depth(
 // === ADMIN MEDIA UPLOAD ===
 
 pub async fn upload_file(
-    State(_service): State<AppService>,
+    TenantService(_service): TenantService,
     State(config): State<Config>,
     mut multipart: Multipart,
 ) -> Result<Json<serde_json::Value>> {
@@ -899,26 +899,26 @@ pub async fn upload_file(
 }
 
 pub async fn get_media_inventory(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
 ) -> Result<Json<MediaInventoryDto>> {
     Ok(Json(service.media_inventory().await?))
 }
 
 pub async fn get_unused_media_report(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
 ) -> Result<Json<MediaCleanupReportDto>> {
     Ok(Json(service.unused_media_report().await?))
 }
 
 pub async fn cleanup_unused_media(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
 ) -> Result<Json<serde_json::Value>> {
     let removed = service.cleanup_unused_media().await?;
     Ok(Json(serde_json::json!({ "removed": removed })))
 }
 
 pub async fn replace_media_everywhere(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     State(config): State<Config>,
     mut multipart: Multipart,
 ) -> Result<Json<MediaReplaceResultDto>> {
@@ -1011,7 +1011,7 @@ pub async fn replace_media_everywhere(
 // === ADMIN ZONE CRUD ===
 
 pub async fn save_zone(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Json(req): Json<SaveZoneRequest>,
 ) -> Result<StatusCode> {
     service.save_zone(req).await?;
@@ -1019,7 +1019,7 @@ pub async fn save_zone(
 }
 
 pub async fn delete_zone(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<String>,
 ) -> Result<StatusCode> {
     service.delete_zone(id).await?;
@@ -1029,14 +1029,14 @@ pub async fn delete_zone(
 // === SHOWING ROOMS (the house wakes) ===
 
 pub async fn get_showing_rooms(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
 ) -> Result<Json<Vec<crate::models::ShowingRoomDto>>> {
     let rooms = service.get_showing_rooms().await?;
     Ok(Json(rooms))
 }
 
 pub async fn save_showing_room(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Json(req): Json<crate::models::SaveShowingRoomRequest>,
 ) -> Result<StatusCode> {
     service.save_showing_room(req).await?;
@@ -1044,7 +1044,7 @@ pub async fn save_showing_room(
 }
 
 pub async fn delete_showing_room(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<String>,
 ) -> Result<StatusCode> {
     service.delete_showing_room(id).await?;
@@ -1054,7 +1054,7 @@ pub async fn delete_showing_room(
 // === ADMIN TEXT CRUD ===
 
 pub async fn save_text(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(param): Path<String>,
     Json(req): Json<SaveTextRequest>,
 ) -> Result<StatusCode> {
@@ -1068,7 +1068,7 @@ pub async fn save_text(
 }
 
 pub async fn delete_text(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<String>,
 ) -> Result<StatusCode> {
     service.delete_text_item(id).await?;
@@ -1078,7 +1078,7 @@ pub async fn delete_text(
 // === ADMIN BACKGROUND ===
 
 pub async fn get_main_background(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
 ) -> Result<Json<serde_json::Value>> {
     let url = service.get_background().await?;
     Ok(Json(serde_json::json!({ "url": url })))
@@ -1202,7 +1202,7 @@ pub async fn backfill_background_image(upload_dir: String) {
 }
 
 pub async fn upload_main_background(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     State(config): State<Config>,
     mut multipart: Multipart,
 ) -> Result<Json<serde_json::Value>> {
@@ -1291,13 +1291,13 @@ pub async fn upload_main_background(
     Err(AppError::BadRequest("No file field found".to_string()))
 }
 
-pub async fn get_home_content(State(service): State<AppService>) -> Result<Json<HomeContent>> {
+pub async fn get_home_content(TenantService(service): TenantService) -> Result<Json<HomeContent>> {
     let content = service.get_home_content().await?;
     Ok(Json(content))
 }
 
 pub async fn save_home_content(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Json(content): Json<HomeContent>,
 ) -> Result<StatusCode> {
     service.save_home_content(content).await?;
@@ -1307,14 +1307,14 @@ pub async fn save_home_content(
 // === AUTHOR PROFILE ===
 
 pub async fn get_author_profile(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
 ) -> Result<Json<crate::models::AuthorProfile>> {
     let profile = service.get_author_profile().await?;
     Ok(Json(profile))
 }
 
 pub async fn save_author_profile(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Json(profile): Json<crate::models::AuthorProfile>,
 ) -> Result<StatusCode> {
     service.save_author_profile(profile).await?;
@@ -1324,7 +1324,7 @@ pub async fn save_author_profile(
 // === ORDERS ===
 
 pub async fn create_order(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Json(order): Json<crate::models::OrderRequest>,
 ) -> Result<Json<crate::models::OrderCreatedResponse>> {
@@ -1349,7 +1349,7 @@ pub async fn create_order(
 }
 
 pub async fn get_notify_by_token(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Path(token): Path<String>,
 ) -> Result<Json<crate::models::NotifyInfo>> {
@@ -1364,7 +1364,7 @@ pub async fn get_notify_by_token(
 }
 
 pub async fn cancel_notify_by_token(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Path(token): Path<String>,
 ) -> Result<StatusCode> {
@@ -1376,7 +1376,7 @@ pub async fn cancel_notify_by_token(
 }
 
 pub async fn list_orders(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<crate::models::OrdersPage>> {
     let status = params.get("status").map(|s| s.as_str());
@@ -1406,7 +1406,7 @@ pub async fn list_orders(
 }
 
 pub async fn update_order_status(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<Uuid>,
     Json(body): Json<crate::models::UpdateOrderStatusRequest>,
 ) -> Result<StatusCode> {
@@ -1430,7 +1430,7 @@ fn looks_like_email(s: &str) -> bool {
 }
 
 pub async fn create_commission(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Json(req): Json<crate::models::CommissionRequest>,
 ) -> Result<Json<crate::models::CommissionCreatedResponse>> {
@@ -1504,7 +1504,7 @@ pub async fn create_commission(
 }
 
 pub async fn get_commission_by_token(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(token): Path<String>,
 ) -> Result<Json<crate::models::CommissionDto>> {
     service
@@ -1515,7 +1515,7 @@ pub async fn get_commission_by_token(
 }
 
 pub async fn user_claim_commission(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Json(body): Json<crate::models::ClaimCommissionRequest>,
 ) -> Result<Json<crate::models::CommissionDto>> {
@@ -1527,7 +1527,7 @@ pub async fn user_claim_commission(
 }
 
 pub async fn user_list_commissions(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>> {
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
@@ -1542,7 +1542,7 @@ pub async fn user_list_commissions(
 }
 
 pub async fn user_edit_commission(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Path(id): Path<Uuid>,
     Json(body): Json<crate::models::EditCommissionRequest>,
@@ -1555,7 +1555,7 @@ pub async fn user_edit_commission(
 }
 
 pub async fn user_delete_commission(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode> {
@@ -1569,7 +1569,7 @@ pub async fn user_delete_commission(
 /// attachments). Mirrors the admin /upload but gated on a user session and
 /// restricted to images.
 pub async fn user_upload_file(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     State(config): State<Config>,
     headers: HeaderMap,
     mut multipart: Multipart,
@@ -1610,7 +1610,7 @@ pub async fn user_upload_file(
 }
 
 pub async fn admin_list_commissions(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<crate::models::CommissionsPage>> {
     let status = params.get("status").map(|s| s.as_str());
@@ -1635,7 +1635,7 @@ pub async fn admin_list_commissions(
 }
 
 pub async fn admin_update_commission(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<Uuid>,
     Json(body): Json<crate::models::UpdateCommissionStatusRequest>,
 ) -> Result<Json<crate::models::CommissionDto>> {
@@ -1652,7 +1652,7 @@ pub async fn admin_update_commission(
 }
 
 pub async fn admin_delete_commission(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode> {
     service.delete_commission(id, None).await?;
@@ -1662,7 +1662,7 @@ pub async fn admin_delete_commission(
 // === SCHEDULE & BOOKINGS (PUBLIC) ===
 
 pub async fn get_figurine_schedule(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<String>,
 ) -> Result<Json<crate::models::FigurineScheduleDto>> {
     let schedule = service.get_figurine_schedule(id).await?;
@@ -1670,7 +1670,7 @@ pub async fn get_figurine_schedule(
 }
 
 pub async fn create_booking(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Path(_id): Path<String>,
     Json(req): Json<crate::models::CreateBookingRequest>,
@@ -1700,7 +1700,7 @@ pub async fn create_booking(
 /// the other public write endpoints — the response deliberately carries no
 /// count, only this visitor's own resulting state.
 pub async fn set_figurine_mark(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Path(handle): Path<String>,
     Json(req): Json<crate::models::MarkToggleRequest>,
@@ -1720,7 +1720,7 @@ pub async fn set_figurine_mark(
 
 /// Admin-only ranking of every figurine by mark count. Never exposed publicly.
 pub async fn admin_get_mark_stats(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
 ) -> Result<Json<Vec<crate::models::AdminFigurineMarkStat>>> {
     Ok(Json(service.get_admin_mark_stats().await?))
 }
@@ -1728,19 +1728,19 @@ pub async fn admin_get_mark_stats(
 /// Public "noticed by guests" shelf — admin pins + auto-ranked fill. Never
 /// carries counts/tones, only the resolved figurine list.
 pub async fn list_noticed_by_guests(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
 ) -> Result<Json<Vec<crate::models::FigurineListItemDto>>> {
     Ok(Json(service.list_noticed_by_guests().await?))
 }
 
 pub async fn admin_get_noticed_by_guests_settings(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
 ) -> Result<Json<crate::models::NoticedByGuestsSettings>> {
     Ok(Json(service.get_noticed_by_guests_settings().await?))
 }
 
 pub async fn admin_save_noticed_by_guests_settings(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Json(settings): Json<crate::models::NoticedByGuestsSettings>,
 ) -> Result<Json<crate::models::NoticedByGuestsSettings>> {
     service
@@ -1750,7 +1750,7 @@ pub async fn admin_save_noticed_by_guests_settings(
 }
 
 pub async fn get_booking_by_token(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Path(token): Path<String>,
 ) -> Result<Json<crate::models::BookingCancelInfo>> {
@@ -1835,7 +1835,7 @@ fn rss_image_mime(url: &str) -> &'static str {
 /// Public sitemap. Absolute URLs are built from the forwarded Host/proto headers so the
 /// same binary works across environments without a hard-coded domain.
 pub async fn sitemap_xml(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse> {
     let host = headers
@@ -1904,7 +1904,7 @@ pub async fn sitemap_xml(
 /// Only what Pinterest can act on is emitted: text from <title>/<description>, the
 /// image from <enclosure>/<media:content>, and each <link> on the claimed domain.
 pub async fn feed_rss(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse> {
     let host = headers
@@ -2063,7 +2063,7 @@ pub async fn feed_rss(
 }
 
 pub async fn get_bookings_by_tokens(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Json(req): Json<crate::models::BookingsByTokensRequest>,
 ) -> Result<Json<std::collections::HashMap<String, crate::models::BookingCancelInfo>>> {
     // Cap the batch to bound the query and guard against abuse.
@@ -2075,7 +2075,7 @@ pub async fn get_bookings_by_tokens(
 }
 
 pub async fn cancel_booking_by_token(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Path(token): Path<String>,
 ) -> Result<StatusCode> {
@@ -2089,20 +2089,20 @@ pub async fn cancel_booking_by_token(
 // === SHOWINGS (ADMIN) ===
 
 pub async fn list_showings(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
 ) -> Result<Json<Vec<crate::models::ShowingDto>>> {
     Ok(Json(service.list_showings().await?))
 }
 
 pub async fn save_showing(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Json(req): Json<crate::models::SaveShowingRequest>,
 ) -> Result<Json<crate::models::ShowingDto>> {
     Ok(Json(service.save_showing(req).await?))
 }
 
 pub async fn delete_showing(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<String>,
 ) -> Result<StatusCode> {
     service.delete_showing(id).await?;
@@ -2110,49 +2110,49 @@ pub async fn delete_showing(
 }
 
 pub async fn bulk_clear_showings(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
 ) -> Result<impl IntoResponse> {
     Ok(Json(service.bulk_clear_showings().await?))
 }
 
 // === BULK FIGURINE OPS (ADMIN) ===
 
-pub async fn bulk_clear_darkness(State(service): State<AppService>) -> Result<impl IntoResponse> {
+pub async fn bulk_clear_darkness(TenantService(service): TenantService) -> Result<impl IntoResponse> {
     Ok(Json(service.bulk_clear_darkness().await?))
 }
 
-pub async fn bulk_reset_parallax(State(service): State<AppService>) -> Result<impl IntoResponse> {
+pub async fn bulk_reset_parallax(TenantService(service): TenantService) -> Result<impl IntoResponse> {
     Ok(Json(service.bulk_reset_parallax_intensity().await?))
 }
 
 pub async fn bulk_set_parallax(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Json(req): Json<crate::models::BulkSetParallaxRequest>,
 ) -> Result<impl IntoResponse> {
     Ok(Json(service.bulk_set_parallax_intensity(req.intensity).await?))
 }
 
 pub async fn bulk_recalculate_parallax(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
 ) -> Result<impl IntoResponse> {
     Ok(Json(service.bulk_recalculate_parallax().await?))
 }
 
-pub async fn bulk_set_second_angle(State(service): State<AppService>) -> Result<impl IntoResponse> {
+pub async fn bulk_set_second_angle(TenantService(service): TenantService) -> Result<impl IntoResponse> {
     Ok(Json(service.bulk_set_second_angle().await?))
 }
 
 // === SLUGS (ADMIN) ===
 
 /// Backfill: generate a transliterated URL slug for every work still missing one.
-pub async fn backfill_slugs(State(service): State<AppService>) -> Result<impl IntoResponse> {
+pub async fn backfill_slugs(TenantService(service): TenantService) -> Result<impl IntoResponse> {
     Ok(Json(service.backfill_figurine_slugs().await?))
 }
 
 /// Set/regenerate a single work's URL slug. Blank/absent `slug` → regenerate from
 /// the work's name. Returns `{ "slug": "<stored>" }`.
 pub async fn set_figurine_slug(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<String>,
     Json(req): Json<crate::models::SetSlugRequest>,
 ) -> Result<impl IntoResponse> {
@@ -2163,7 +2163,7 @@ pub async fn set_figurine_slug(
 // === BOOKINGS (ADMIN) ===
 
 pub async fn list_bookings(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<crate::models::BookingsPage>> {
     let status = params.get("status").map(|s| s.as_str());
@@ -2188,7 +2188,7 @@ pub async fn list_bookings(
 }
 
 pub async fn update_booking_status(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<Uuid>,
     Json(body): Json<crate::models::UpdateBookingStatusRequest>,
 ) -> Result<StatusCode> {
@@ -2203,7 +2203,7 @@ pub async fn update_booking_status(
 // ============================================================
 
 pub async fn user_register(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Json(body): Json<RegisterRequest>,
 ) -> Result<Json<LoginVerifyResponse>> {
@@ -2216,7 +2216,7 @@ pub async fn user_register(
 }
 
 pub async fn user_login_challenge(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Json(body): Json<LoginChallengeRequest>,
 ) -> Result<Json<LoginChallengeResponse>> {
@@ -2228,7 +2228,7 @@ pub async fn user_login_challenge(
 }
 
 pub async fn user_login_verify(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Json(body): Json<LoginVerifyRequest>,
 ) -> Result<Json<LoginVerifyResponse>> {
@@ -2241,7 +2241,7 @@ pub async fn user_login_verify(
 }
 
 pub async fn user_logout(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
 ) -> Result<StatusCode> {
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
@@ -2250,7 +2250,7 @@ pub async fn user_logout(
 }
 
 pub async fn user_me(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
 ) -> Result<Json<UserDto>> {
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
@@ -2259,7 +2259,7 @@ pub async fn user_me(
 }
 
 pub async fn user_link_bookings(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Json(body): Json<LinkBookingsRequest>,
 ) -> Result<Json<serde_json::Value>> {
@@ -2270,7 +2270,7 @@ pub async fn user_link_bookings(
 }
 
 pub async fn user_profile_bookings(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
 ) -> Result<Json<Vec<UserBookingDto>>> {
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
@@ -2280,7 +2280,7 @@ pub async fn user_profile_bookings(
 }
 
 pub async fn user_profile_orders(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
 ) -> Result<Json<Vec<UserOrderDto>>> {
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
@@ -2293,7 +2293,7 @@ pub async fn user_profile_orders(
 }
 
 pub async fn user_profile_certificates(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
 ) -> Result<Json<Vec<CollectorCertificateDto>>> {
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
@@ -2303,7 +2303,7 @@ pub async fn user_profile_certificates(
 }
 
 pub async fn get_public_certificate(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(token): Path<String>,
 ) -> Result<Json<PublicCertificateDto>> {
     service
@@ -2314,7 +2314,7 @@ pub async fn get_public_certificate(
 }
 
 pub async fn issue_order_certificate(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<String>,
 ) -> Result<Json<CollectorCertificateDto>> {
     let id =
@@ -2324,7 +2324,7 @@ pub async fn issue_order_certificate(
 }
 
 pub async fn revoke_order_certificate(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<String>,
 ) -> Result<Json<CollectorCertificateDto>> {
     let id =
@@ -2334,7 +2334,7 @@ pub async fn revoke_order_certificate(
 }
 
 pub async fn issue_commission_certificate(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<String>,
 ) -> Result<Json<CollectorCertificateDto>> {
     let id = Uuid::parse_str(&id)
@@ -2344,7 +2344,7 @@ pub async fn issue_commission_certificate(
 }
 
 pub async fn revoke_commission_certificate(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<String>,
 ) -> Result<Json<CollectorCertificateDto>> {
     let id = Uuid::parse_str(&id)
@@ -2354,7 +2354,7 @@ pub async fn revoke_commission_certificate(
 }
 
 pub async fn user_get_wishlist(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
 ) -> Result<Json<Vec<String>>> {
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
@@ -2364,7 +2364,7 @@ pub async fn user_get_wishlist(
 }
 
 pub async fn user_profile_waitlist(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
 ) -> Result<Json<Vec<WaitlistEntryDto>>> {
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
@@ -2374,7 +2374,7 @@ pub async fn user_profile_waitlist(
 }
 
 pub async fn user_set_wishlist(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Json(body): Json<SetWishlistRequest>,
 ) -> Result<Json<Vec<String>>> {
@@ -2387,7 +2387,7 @@ pub async fn user_set_wishlist(
 }
 
 pub async fn user_link_claim(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Json(body): Json<LinkClaimRequest>,
 ) -> Result<Json<LinkClaimResponse>> {
@@ -2402,7 +2402,7 @@ pub async fn user_link_claim(
 // ============================================================
 
 pub async fn admin_list_users(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>> {
     let search = params.get("search").map(|s| s.as_str());
@@ -2423,7 +2423,7 @@ pub async fn admin_list_users(
 }
 
 pub async fn admin_get_user(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<Uuid>,
 ) -> Result<Json<AdminUserDetail>> {
     let detail = service.admin_get_user_detail(id).await?;
@@ -2431,7 +2431,7 @@ pub async fn admin_get_user(
 }
 
 pub async fn admin_revoke_user_sessions(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>> {
     let revoked = service.admin_revoke_user_sessions(id).await?;
@@ -2439,7 +2439,7 @@ pub async fn admin_revoke_user_sessions(
 }
 
 pub async fn admin_update_user_notes(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<Uuid>,
     Json(body): Json<UpdateUserAdminNotesRequest>,
 ) -> Result<StatusCode> {
@@ -2450,7 +2450,7 @@ pub async fn admin_update_user_notes(
 }
 
 pub async fn admin_set_user_blocked(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<Uuid>,
     Json(body): Json<SetUserBlockedRequest>,
 ) -> Result<StatusCode> {
@@ -2459,7 +2459,7 @@ pub async fn admin_set_user_blocked(
 }
 
 pub async fn admin_generate_reset_token(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<Uuid>,
 ) -> Result<Json<ResetTokenResponse>> {
     let resp = service.admin_generate_reset_token(id).await?;
@@ -2467,7 +2467,7 @@ pub async fn admin_generate_reset_token(
 }
 
 pub async fn validate_reset_token(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(token): Path<String>,
 ) -> Result<Json<UserDto>> {
     let user = service.validate_reset_token(&token).await?;
@@ -2475,7 +2475,7 @@ pub async fn validate_reset_token(
 }
 
 pub async fn apply_password_reset(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Json(body): Json<ApplyPasswordResetRequest>,
 ) -> Result<StatusCode> {
@@ -2488,7 +2488,7 @@ pub async fn apply_password_reset(
 }
 
 pub async fn forgot_password(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Json(body): Json<ForgotPasswordRequest>,
 ) -> Result<StatusCode> {
@@ -2537,7 +2537,7 @@ pub(crate) fn extract_user_agent_from_headers(headers: &HeaderMap) -> Option<Str
 }
 
 pub async fn get_figurine_comments(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(handle): Path<String>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<Vec<CommentDto>>> {
@@ -2550,7 +2550,7 @@ pub async fn get_figurine_comments(
 }
 
 pub async fn submit_comment(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Path(handle): Path<String>,
     Json(body): Json<SubmitCommentRequest>,
@@ -2569,7 +2569,7 @@ pub async fn submit_comment(
 }
 
 pub async fn admin_list_comments(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<AdminCommentsPage>> {
     let only_pending = params.get("pending").map(|v| v == "true").unwrap_or(false);
@@ -2594,7 +2594,7 @@ pub async fn admin_list_comments(
 }
 
 pub async fn admin_moderate_comment(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<Uuid>,
     Json(body): Json<ModerateCommentRequest>,
 ) -> Result<Json<AdminCommentDto>> {
@@ -2605,7 +2605,7 @@ pub async fn admin_moderate_comment(
 }
 
 pub async fn admin_delete_comment(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode> {
     service.admin_delete_comment(id).await?;
@@ -2615,7 +2615,7 @@ pub async fn admin_delete_comment(
 // === VISITOR IMPRESSIONS ("Book of Impressions") ===
 
 pub async fn submit_impression(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Json(body): Json<SubmitImpressionRequest>,
 ) -> Result<StatusCode> {
@@ -2625,13 +2625,13 @@ pub async fn submit_impression(
 }
 
 pub async fn get_featured_impressions(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
 ) -> Result<Json<Vec<ImpressionDto>>> {
     Ok(Json(service.get_featured_impressions().await?))
 }
 
 pub async fn admin_list_impressions(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<AdminImpressionsPage>> {
     let only_pending = params.get("pending").map(|v| v == "true").unwrap_or(false);
@@ -2653,7 +2653,7 @@ pub async fn admin_list_impressions(
 }
 
 pub async fn admin_moderate_impression(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<Uuid>,
     Json(body): Json<ModerateImpressionRequest>,
 ) -> Result<Json<AdminImpressionDto>> {
@@ -2664,7 +2664,7 @@ pub async fn admin_moderate_impression(
 }
 
 pub async fn admin_delete_impression(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode> {
     service.admin_delete_impression(id).await?;
@@ -2672,14 +2672,14 @@ pub async fn admin_delete_impression(
 }
 
 pub async fn admin_get_smtp_settings(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
 ) -> Result<Json<SmtpSettings>> {
     let settings = service.get_smtp_settings().await?;
     Ok(Json(settings))
 }
 
 pub async fn admin_save_smtp_settings(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Json(body): Json<SmtpSettings>,
 ) -> Result<Json<SmtpSettings>> {
     service.save_smtp_settings(body.clone()).await?;
@@ -2687,13 +2687,13 @@ pub async fn admin_save_smtp_settings(
 }
 
 pub async fn get_contact_settings(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
 ) -> Result<Json<ContactSettings>> {
     Ok(Json(service.get_contact_settings().await?))
 }
 
 pub async fn admin_save_contact_settings(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Json(body): Json<ContactSettings>,
 ) -> Result<Json<ContactSettings>> {
     service.save_contact_settings(body.clone()).await?;
@@ -2703,13 +2703,13 @@ pub async fn admin_save_contact_settings(
 // === WORKSHOP FEATURE ===
 
 pub async fn get_programme_settings(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
 ) -> Result<Json<ProgrammeSettings>> {
     Ok(Json(service.get_programme_settings().await?))
 }
 
 pub async fn save_programme_settings(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Json(body): Json<ProgrammeSettings>,
 ) -> Result<Json<ProgrammeSettings>> {
     service.save_programme_settings(body.clone()).await?;
@@ -2717,13 +2717,13 @@ pub async fn save_programme_settings(
 }
 
 pub async fn get_workshop_feature(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
 ) -> Result<Json<WorkshopFeature>> {
     Ok(Json(service.get_workshop_feature().await?))
 }
 
 pub async fn save_workshop_feature(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Json(body): Json<WorkshopFeature>,
 ) -> Result<Json<WorkshopFeature>> {
     service.save_workshop_feature(body.clone()).await?;
@@ -2732,12 +2732,12 @@ pub async fn save_workshop_feature(
 
 // === THEME CONFIG ===
 
-pub async fn get_theme_config(State(service): State<AppService>) -> Result<Json<ThemeConfig>> {
+pub async fn get_theme_config(TenantService(service): TenantService) -> Result<Json<ThemeConfig>> {
     Ok(Json(service.get_theme_config().await?))
 }
 
 pub async fn save_theme_config(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Json(body): Json<ThemeConfig>,
 ) -> Result<Json<ThemeConfig>> {
     service.save_theme_config(body.clone()).await?;
@@ -2746,12 +2746,12 @@ pub async fn save_theme_config(
 
 // === COPY OVERRIDES ===
 
-pub async fn get_copy_overrides(State(service): State<AppService>) -> Result<Json<CopyOverrides>> {
+pub async fn get_copy_overrides(TenantService(service): TenantService) -> Result<Json<CopyOverrides>> {
     Ok(Json(service.get_copy_overrides().await?))
 }
 
 pub async fn save_copy_overrides(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Json(body): Json<CopyOverrides>,
 ) -> Result<Json<CopyOverrides>> {
     service.save_copy_overrides(body.clone()).await?;
@@ -2760,12 +2760,12 @@ pub async fn save_copy_overrides(
 
 // === HOME LAYOUT CONFIG ===
 
-pub async fn get_home_layout(State(service): State<AppService>) -> Result<Json<HomeLayoutConfig>> {
+pub async fn get_home_layout(TenantService(service): TenantService) -> Result<Json<HomeLayoutConfig>> {
     Ok(Json(service.get_home_layout().await?))
 }
 
 pub async fn save_home_layout(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Json(body): Json<HomeLayoutConfig>,
 ) -> Result<Json<HomeLayoutConfig>> {
     service.save_home_layout(body.clone()).await?;
@@ -2774,12 +2774,12 @@ pub async fn save_home_layout(
 
 // === REEL THEME ===
 
-pub async fn get_reel_theme(State(service): State<AppService>) -> Result<Json<ReelTheme>> {
+pub async fn get_reel_theme(TenantService(service): TenantService) -> Result<Json<ReelTheme>> {
     Ok(Json(service.get_reel_theme().await?))
 }
 
 pub async fn save_reel_theme(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Json(body): Json<ReelTheme>,
 ) -> Result<Json<ReelTheme>> {
     service.save_reel_theme(body.clone()).await?;
@@ -2787,13 +2787,13 @@ pub async fn save_reel_theme(
 }
 
 pub async fn admin_get_reel_theme_presets(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
 ) -> Result<Json<Vec<ReelThemePreset>>> {
     Ok(Json(service.get_reel_theme_presets().await?))
 }
 
 pub async fn admin_save_reel_theme_presets(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Json(body): Json<Vec<ReelThemePreset>>,
 ) -> Result<Json<Vec<ReelThemePreset>>> {
     service.save_reel_theme_presets(body.clone()).await?;
@@ -2801,13 +2801,13 @@ pub async fn admin_save_reel_theme_presets(
 }
 
 pub async fn admin_get_home_layout_presets(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
 ) -> Result<Json<Vec<HomeLayoutPreset>>> {
     Ok(Json(service.get_home_layout_presets().await?))
 }
 
 pub async fn admin_save_home_layout_presets(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Json(body): Json<Vec<HomeLayoutPreset>>,
 ) -> Result<Json<Vec<HomeLayoutPreset>>> {
     service.save_home_layout_presets(body.clone()).await?;
@@ -2817,13 +2817,13 @@ pub async fn admin_save_home_layout_presets(
 // === DISPLAY CONFIG PRESETS ===
 
 pub async fn admin_get_display_presets(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
 ) -> Result<Json<Vec<crate::models::DisplayConfigPreset>>> {
     Ok(Json(service.get_display_presets().await?))
 }
 
 pub async fn admin_save_display_presets(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Json(body): Json<Vec<crate::models::DisplayConfigPreset>>,
 ) -> Result<Json<Vec<crate::models::DisplayConfigPreset>>> {
     service.save_display_presets(body.clone()).await?;
@@ -2831,7 +2831,7 @@ pub async fn admin_save_display_presets(
 }
 
 pub async fn user_update_profile(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Json(body): Json<UpdateProfileRequest>,
 ) -> Result<Json<UserDto>> {
@@ -2842,7 +2842,7 @@ pub async fn user_update_profile(
 }
 
 pub async fn user_upload_avatar(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     State(config): State<Config>,
     headers: HeaderMap,
     mut multipart: Multipart,
@@ -2901,7 +2901,7 @@ pub async fn user_upload_avatar(
 }
 
 pub async fn user_delete_account(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
 ) -> Result<StatusCode> {
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
@@ -2913,7 +2913,7 @@ pub async fn user_delete_account(
 // === MESSAGING THREADS ===
 
 pub async fn user_get_threads(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>> {
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
@@ -2926,7 +2926,7 @@ pub async fn user_get_threads(
 }
 
 pub async fn user_get_thread(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> Result<Json<ThreadDetailDto>> {
@@ -2936,7 +2936,7 @@ pub async fn user_get_thread(
 }
 
 pub async fn user_create_thread(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Json(body): Json<CreateThreadRequest>,
 ) -> Result<Json<ThreadDetailDto>> {
@@ -2956,7 +2956,7 @@ pub async fn user_create_thread(
 }
 
 pub async fn user_reply_to_thread(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Path(id): Path<Uuid>,
     Json(body): Json<ReplyToThreadRequest>,
@@ -2971,7 +2971,7 @@ pub async fn user_reply_to_thread(
 }
 
 pub async fn admin_list_threads(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>> {
     let category = params.get("category").cloned();
@@ -2994,14 +2994,14 @@ pub async fn admin_list_threads(
 }
 
 pub async fn admin_get_thread(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<Uuid>,
 ) -> Result<Json<ThreadDetailDto>> {
     Ok(Json(service.admin_get_thread_detail(id).await?))
 }
 
 pub async fn admin_create_thread_for_user(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(user_id): Path<Uuid>,
     Json(body): Json<CreateThreadRequest>,
 ) -> Result<Json<ThreadDetailDto>> {
@@ -3020,7 +3020,7 @@ pub async fn admin_create_thread_for_user(
 }
 
 pub async fn admin_reply_to_thread(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<Uuid>,
     Json(body): Json<ReplyToThreadRequest>,
 ) -> Result<Json<ThreadMessageDto>> {
@@ -3032,7 +3032,7 @@ pub async fn admin_reply_to_thread(
 }
 
 pub async fn admin_resolve_thread(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode> {
     service.admin_resolve_thread(id).await?;
@@ -3040,7 +3040,7 @@ pub async fn admin_resolve_thread(
 }
 
 pub async fn admin_reopen_thread(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode> {
     service.admin_reopen_thread(id).await?;
@@ -3049,12 +3049,12 @@ pub async fn admin_reopen_thread(
 
 // === BOOKING RULES ===
 
-pub async fn get_booking_rules(State(service): State<AppService>) -> Result<Json<BookingRules>> {
+pub async fn get_booking_rules(TenantService(service): TenantService) -> Result<Json<BookingRules>> {
     Ok(Json(service.get_booking_rules().await?))
 }
 
 pub async fn save_booking_rules(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Json(body): Json<BookingRules>,
 ) -> Result<StatusCode> {
     service.save_booking_rules(body).await?;
@@ -3064,7 +3064,7 @@ pub async fn save_booking_rules(
 // === RESCHEDULE BOOKING ===
 
 pub async fn reschedule_booking_by_token(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(token): Path<String>,
     Json(body): Json<RescheduleBookingRequest>,
 ) -> Result<Json<BookingCancelInfo>> {
@@ -3076,7 +3076,7 @@ pub async fn reschedule_booking_by_token(
 // === WAITLIST ===
 
 pub async fn join_waitlist(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Path(id): Path<String>,
     Json(body): Json<CreateWaitlistRequest>,
@@ -3097,7 +3097,7 @@ pub async fn join_waitlist(
 }
 
 pub async fn get_waitlist_by_token(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Path(token): Path<String>,
 ) -> Result<Json<crate::models::WaitlistCancelInfo>> {
@@ -3112,7 +3112,7 @@ pub async fn get_waitlist_by_token(
 }
 
 pub async fn leave_waitlist_by_token(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Path(token): Path<String>,
 ) -> Result<StatusCode> {
@@ -3124,14 +3124,14 @@ pub async fn leave_waitlist_by_token(
 }
 
 pub async fn admin_notify_waitlist(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(figurine_id): Path<String>,
 ) -> Result<Json<serde_json::Value>> {
     Ok(Json(service.admin_notify_waitlist(figurine_id).await?))
 }
 
 pub async fn admin_list_waitlist(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<Vec<WaitlistEntryDto>>> {
     let figurine_id = params.get("figurineId").cloned();
@@ -3139,7 +3139,7 @@ pub async fn admin_list_waitlist(
 }
 
 pub async fn admin_remove_from_waitlist(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode> {
     service.remove_waitlist_entry(id).await?;
@@ -3149,7 +3149,7 @@ pub async fn admin_remove_from_waitlist(
 // === NEWSLETTER ("visitor book") ===
 
 pub async fn subscribe(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Json(body): Json<CreateSubscriptionRequest>,
 ) -> Result<Json<SubscriptionCreatedResponse>> {
@@ -3159,7 +3159,7 @@ pub async fn subscribe(
 }
 
 pub async fn get_subscription_by_token(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Path(token): Path<String>,
 ) -> Result<Json<SubscriberInfo>> {
@@ -3174,7 +3174,7 @@ pub async fn get_subscription_by_token(
 }
 
 pub async fn unsubscribe_by_token(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Path(token): Path<String>,
 ) -> Result<StatusCode> {
@@ -3186,13 +3186,13 @@ pub async fn unsubscribe_by_token(
 }
 
 pub async fn admin_list_subscribers(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
 ) -> Result<Json<Vec<SubscriberDto>>> {
     Ok(Json(service.list_subscribers_admin().await?))
 }
 
 pub async fn admin_remove_subscriber(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode> {
     service.remove_subscriber(id).await?;
@@ -3202,7 +3202,7 @@ pub async fn admin_remove_subscriber(
 // === CONTACT MESSAGES ("write to the author") ===
 
 pub async fn submit_contact_message(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     headers: HeaderMap,
     Json(body): Json<CreateContactMessageRequest>,
 ) -> Result<StatusCode> {
@@ -3215,13 +3215,13 @@ pub async fn submit_contact_message(
 }
 
 pub async fn admin_list_contact_messages(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
 ) -> Result<Json<Vec<ContactMessageDto>>> {
     Ok(Json(service.list_contact_messages_admin().await?))
 }
 
 pub async fn admin_mark_contact_message_read(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode> {
     service.mark_contact_message_read(id).await?;
@@ -3229,7 +3229,7 @@ pub async fn admin_mark_contact_message_read(
 }
 
 pub async fn admin_remove_contact_message(
-    State(service): State<AppService>,
+    TenantService(service): TenantService,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode> {
     service.remove_contact_message(id).await?;

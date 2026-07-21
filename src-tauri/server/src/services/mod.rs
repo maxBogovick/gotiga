@@ -1,5 +1,6 @@
 use crate::config::Config;
 use crate::db::Repository;
+use sqlx::PgPool;
 use crate::error::{AppError, Result};
 use crate::models::*;
 use crate::observability::ObservabilityState;
@@ -10,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -35,6 +37,11 @@ pub struct AppService {
     /// essentially every public read. The value is a percentile over the WHOLE collection:
     /// it moves slowly by construction, and a minute of staleness is invisible.
     favorite_tiers_cache: Arc<Mutex<Option<(Instant, crate::db::FavoriteTiers)>>>,
+    /// Per-tenant favorite-tiers memo, keyed by schema. `with_tenant` hands each scoped
+    /// service the entry for its schema, so the percentile cache is both persistent per
+    /// tenant and isolated across tenants.
+    favorite_tiers_by_schema:
+        Arc<StdMutex<HashMap<String, Arc<Mutex<Option<(Instant, crate::db::FavoriteTiers)>>>>>>,
 }
 
 /// How long a computed set of favorite tiers stays good.
@@ -54,7 +61,32 @@ impl AppService {
             observability: ObservabilityState::default(),
             analytics,
             favorite_tiers_cache: Arc::new(Mutex::new(None)),
+            favorite_tiers_by_schema: Arc::new(StdMutex::new(HashMap::new())),
         }
+    }
+
+    /// Return a copy of this service scoped to a tenant: queries run against `pool`
+    /// (whose connections pin `search_path` to the tenant schema), and the favorite-tiers
+    /// memo is the per-schema entry so one tenant's cache never serves another. All other
+    /// state (rate limiters, geoip, analytics, observability) is shared by design.
+    ///
+    /// NOTE: analytics ingestion still writes through the pool captured at startup
+    /// (public); making analytics per-tenant is a separate follow-up (see PLATFORM_ROADMAP.md).
+    pub fn with_tenant(&self, schema: &str, pool: PgPool) -> Self {
+        let favorite_tiers_cache = {
+            let mut by_schema = self
+                .favorite_tiers_by_schema
+                .lock()
+                .expect("favorite-tiers registry poisoned");
+            by_schema
+                .entry(schema.to_string())
+                .or_insert_with(|| Arc::new(Mutex::new(None)))
+                .clone()
+        };
+        let mut scoped = self.clone();
+        scoped.repo = Repository::new(pool);
+        scoped.favorite_tiers_cache = favorite_tiers_cache;
+        scoped
     }
 
     pub fn observability(&self) -> ObservabilityState {
