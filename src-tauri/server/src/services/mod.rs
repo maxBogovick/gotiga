@@ -1338,6 +1338,240 @@ impl AppService {
         })
     }
 
+    // ── Semantic search ("Хранитель") ──────────────────────────────────────
+    //
+    // One dense text embedding per figurine (embed.rs, on-device candle). A
+    // guest's natural-language query is embedded the same way and ranked by
+    // cosine similarity. Corpus is tiny, so ranking is a brute-force in-memory
+    // dot product — no vector index needed.
+
+    /// Noise gate on cosine similarity: results below this are dropped so a
+    /// nonsense query returns nothing rather than the "least irrelevant" works.
+    /// Tuning knob — multilingual-e5 similarities sit in a compressed, high band,
+    /// so this is deliberately gentle; raise it if weak matches leak through.
+    const SEMANTIC_FLOOR: f32 = 0.70;
+
+    /// Concatenate a figurine's curatorial fields into the text that gets
+    /// embedded — ordered loosely by descriptive weight; blank/NULL fields drop.
+    fn curatorial_text(f: &Figurine) -> String {
+        let opt = |s: &Option<String>| -> Option<String> {
+            s.as_ref()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+        };
+        let mut parts: Vec<String> = vec![f.name.trim().to_string()];
+        for field in [
+            opt(&f.short_text),
+            opt(&f.full_description),
+            // Backstage AI description of what the photo shows — lets a visual
+            // query ("монах со свечой") match through the text encoder.
+            opt(&f.visual_caption),
+            opt(&f.material),
+            opt(&f.technique),
+            opt(&f.dimensions),
+            opt(&f.edition),
+            opt(&f.created_period),
+            opt(&f.included_items),
+            opt(&f.provenance_note),
+            opt(&f.authenticity_note),
+            opt(&f.care_instructions),
+        ] {
+            if let Some(v) = field {
+                parts.push(v);
+            }
+        }
+        if let Some(y) = f.year {
+            parts.push(y.to_string());
+        }
+        parts.retain(|p| !p.is_empty());
+        parts.join(". ")
+    }
+
+    fn text_hash(model: &str, text: &str) -> String {
+        use sha2::Digest;
+        let mut h = sha2::Sha256::new();
+        h.update(model.as_bytes());
+        h.update(b"\n");
+        h.update(text.as_bytes());
+        hex::encode(h.finalize())
+    }
+
+    /// (Re)embed one figurine if its text or the model changed. Returns whether a
+    /// new vector was written. No-ops (Ok(false)) when weights aren't bundled, so
+    /// callers can fire this best-effort after a save without guarding.
+    pub async fn reindex_figurine_embedding(&self, id: Uuid) -> Result<bool> {
+        if !crate::embed::is_available() {
+            return Ok(false);
+        }
+        let Some(fig) = self.repo.get_figurine_by_id(id).await? else {
+            return Ok(false);
+        };
+        let model = crate::embed::model_name();
+        let text = Self::curatorial_text(&fig);
+        let hash = Self::text_hash(&model, &text);
+
+        let existing: Option<String> = sqlx::query_scalar(
+            "SELECT source_hash FROM figurine_embeddings WHERE figurine_id = $1 AND model = $2",
+        )
+        .bind(id)
+        .bind(&model)
+        .fetch_optional(self.repo.pg_pool())
+        .await?;
+        if existing.as_deref() == Some(hash.as_str()) {
+            return Ok(false);
+        }
+
+        let text_owned = text.clone();
+        let vec = tokio::task::spawn_blocking(move || crate::embed::embed_passage(&text_owned))
+            .await
+            .map_err(|e| AppError::Internal(format!("embed task join error: {e}")))?
+            .map_err(|e| AppError::Internal(format!("embed failed: {e}")))?;
+        let dim = vec.len() as i32;
+        let bytes = crate::embed::to_bytes(&vec);
+
+        sqlx::query(
+            "INSERT INTO figurine_embeddings (figurine_id, model, dim, vec, source_hash, updated_at)
+             VALUES ($1, $2, $3, $4, $5, NOW())
+             ON CONFLICT (figurine_id) DO UPDATE
+               SET model = EXCLUDED.model, dim = EXCLUDED.dim, vec = EXCLUDED.vec,
+                   source_hash = EXCLUDED.source_hash, updated_at = NOW()",
+        )
+        .bind(id)
+        .bind(&model)
+        .bind(dim)
+        .bind(&bytes)
+        .bind(&hash)
+        .execute(self.repo.pg_pool())
+        .await?;
+        Ok(true)
+    }
+
+    /// Admin action: (re)index every publicly-visible work, and drop vectors for
+    /// works no longer public so they can't surface in search.
+    pub async fn reindex_all_embeddings(&self) -> Result<EmbedIndexSummary> {
+        if !crate::embed::is_available() {
+            return Err(AppError::Internal(
+                "Embedding model unavailable (weights not bundled in this build)".into(),
+            ));
+        }
+        let q = FigurineQuery {
+            status: None,
+            search: None,
+            sort: None,
+            page: None,
+            per_page: None,
+        };
+        let (figs, _total) = self.repo.get_all_figurines(true, &q).await?;
+        let total = figs.len();
+        let (mut indexed, mut skipped, mut failed) = (0usize, 0usize, 0usize);
+        for f in &figs {
+            match self.reindex_figurine_embedding(f.id).await {
+                Ok(true) => indexed += 1,
+                Ok(false) => skipped += 1,
+                Err(_) => failed += 1,
+            }
+        }
+        // Prune vectors for works that are no longer public.
+        let visible_ids: Vec<Uuid> = figs.iter().map(|f| f.id).collect();
+        let _ = sqlx::query("DELETE FROM figurine_embeddings WHERE figurine_id <> ALL($1)")
+            .bind(&visible_ids)
+            .execute(self.repo.pg_pool())
+            .await;
+        Self::log_domain_event("embeddings_reindexed", "figurine", indexed, "ok");
+        Ok(EmbedIndexSummary {
+            total,
+            indexed,
+            skipped,
+            failed,
+        })
+    }
+
+    /// Rank publicly-visible works by cosine similarity to a natural-language
+    /// query. Returns id + score, closest first (client already holds the archive
+    /// and reorders). Empty when the query is blank or weights aren't bundled.
+    pub async fn semantic_search(&self, query: &str, limit: usize) -> Result<Vec<SemanticHit>> {
+        let query = query.trim();
+        if query.is_empty() || !crate::embed::is_available() {
+            return Ok(Vec::new());
+        }
+        let model = crate::embed::model_name();
+
+        let q_owned = query.to_string();
+        let qv = tokio::task::spawn_blocking(move || crate::embed::embed_query(&q_owned))
+            .await
+            .map_err(|e| AppError::Internal(format!("embed task join error: {e}")))?
+            .map_err(|e| AppError::Internal(format!("embed failed: {e}")))?;
+
+        let rows: Vec<(Uuid, Vec<u8>)> =
+            sqlx::query_as("SELECT figurine_id, vec FROM figurine_embeddings WHERE model = $1")
+                .bind(&model)
+                .fetch_all(self.repo.pg_pool())
+                .await?;
+
+        // Restrict to works that are currently public (respects hide/first-look
+        // even if the vector is momentarily stale).
+        let fq = FigurineQuery {
+            status: None,
+            search: None,
+            sort: None,
+            page: None,
+            per_page: None,
+        };
+        let (figs, _) = self.repo.get_all_figurines(true, &fq).await?;
+        let visible: HashSet<Uuid> = figs.iter().map(|f| f.id).collect();
+
+        let mut hits: Vec<SemanticHit> = rows
+            .into_iter()
+            .filter(|(id, _)| visible.contains(id))
+            .filter_map(|(id, bytes)| {
+                crate::embed::from_bytes(&bytes).map(|v| SemanticHit {
+                    id: id.to_string(),
+                    score: crate::embed::dot(&qv, &v),
+                })
+            })
+            .filter(|h| h.score >= Self::SEMANTIC_FLOOR)
+            .collect();
+
+        hits.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        hits.truncate(limit.clamp(1, 200));
+        Ok(hits)
+    }
+
+    /// Read a work's backstage visual caption (search-only; never public).
+    pub async fn get_figurine_caption(&self, id: String) -> Result<Option<String>> {
+        let uuid = Self::parse_uuid(&id)?;
+        Ok(self
+            .repo
+            .get_figurine_by_id(uuid)
+            .await?
+            .and_then(|f| f.visual_caption))
+    }
+
+    /// Set (or clear, when blank) a work's backstage visual caption, then refresh
+    /// its search embedding so the new text is immediately searchable. Deliberately
+    /// separate from save_figurine so ordinary edits never touch the caption, and
+    /// so the offline captioner can write it without the full figurine payload.
+    pub async fn set_figurine_caption(&self, id: String, caption: Option<String>) -> Result<()> {
+        let uuid = Self::parse_uuid(&id)?;
+        let cap = caption
+            .map(|c| c.trim().to_string())
+            .filter(|c| !c.is_empty());
+        sqlx::query("UPDATE figurines SET visual_caption = $1 WHERE id = $2")
+            .bind(&cap)
+            .bind(uuid)
+            .execute(self.repo.pg_pool())
+            .await?;
+        // Best-effort: re-embed so the caption is reflected in search right away.
+        if let Err(e) = self.reindex_figurine_embedding(uuid).await {
+            tracing::warn!(target: "gotiga_server::embed", error = %e, "reindex after caption set failed");
+        }
+        Ok(())
+    }
+
     /// Bulk admin action: set every image's darkness to 0, fully dissolving
     /// the keyhole shadow (the CSS gradient collapses to zero alpha at 0, so
     /// this switches the veil off entirely rather than reverting to the

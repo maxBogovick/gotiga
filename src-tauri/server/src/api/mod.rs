@@ -108,6 +108,8 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 get(handlers::list_noticed_by_guests),
             )
             .route("/figurines/:id", get(handlers::get_figurine))
+            // Semantic search ("Хранитель") — natural-language ranking of the archive.
+            .route("/search", get(handlers::semantic_search))
             .route("/content/texts/:param", get(handlers::get_texts_by_param))
             .route("/cabinet/zones", get(handlers::get_cabinet_zones))
             .route("/showing-rooms", get(handlers::get_showing_rooms))
@@ -195,6 +197,21 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 post(handlers::admin_generate_figurine_depth).route_layer(
                     middleware::from_fn_with_state(config.clone(), auth_middleware),
                 ),
+            )
+            .route(
+                "/admin/embeddings/reindex",
+                post(handlers::admin_reindex_embeddings).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/figurines/:id/caption",
+                get(handlers::admin_get_figurine_caption)
+                    .put(handlers::admin_set_figurine_caption)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
             )
             .route(
                 "/upload",

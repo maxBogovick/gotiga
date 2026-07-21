@@ -136,6 +136,21 @@ export interface DepthGenSummary {
     results: DepthGenItem[];
 }
 
+/** One ranked result of a semantic search ("Хранитель"). */
+export interface SemanticHit {
+    id: string;
+    /** Cosine similarity in [-1, 1]; higher is closer. */
+    score: number;
+}
+
+/** Result of an admin re-index of figurine search embeddings. */
+export interface EmbedIndexSummary {
+    total: number;
+    indexed: number;
+    skipped: number;
+    failed: number;
+}
+
 export interface BulkOpResult {
     affected: number;
 }

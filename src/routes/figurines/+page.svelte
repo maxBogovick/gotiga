@@ -6,6 +6,7 @@
   import { SITE_URL, toAbsoluteUrl } from '$lib/site';
   import { figurineHref } from '$lib/figurineHref';
   import { createSiteAnalytics } from '$lib/analytics';
+  import { api, isTauri } from '$lib/api';
   import AppImage from '$lib/components/AppImage.svelte';
   import SealedDoor from '$lib/components/SealedDoor.svelte';
   import Lightbox from '$lib/components/Lightbox.svelte';
@@ -15,7 +16,7 @@
   import { houseClock } from '$lib/stores/house-clock.svelte';
   import { showingRooms } from '$lib/stores/showing-rooms.svelte';
   import { isGated, isShowingOpen, resolveWindow, openingHeadline } from '$lib/showing-window';
-  import type { FigurineListItem } from '$lib/types/api';
+  import type { FigurineListItem, SemanticHit } from '$lib/types/api';
 
   // "The house wakes": a gated work is sealed behind a carved door while the
   // visitor's local clock is outside its window. The effective window is the
@@ -58,7 +59,10 @@
   // ── Derived filter data ────────────────────────────────────────
   type FigItem = import('$lib/types/api').FigurineListItem;
 
-  let filtered = $derived(
+  // Facet filters only (status / year / technique / series / material). Both the
+  // instant local text filter AND the semantic results are constrained to these,
+  // so the chips keep working in every mode.
+  let facetFiltered = $derived(
     (figurines as FigItem[])
       .filter((f) => {
         if (mainFilter === 'saved')    return savedFigurines.has(f.id);
@@ -70,16 +74,20 @@
       .filter((f) => techniqueFilter === 'all' || f.technique === techniqueFilter)
       .filter((f) => seriesFilter === 'all' || f.series === seriesFilter)
       .filter((f) => materialFilter === 'all' || f.material === materialFilter)
-      .filter((f) => {
-        const query = searchQuery.trim().toLowerCase();
-        if (!query) return true;
-        return [f.name, f.year ? String(f.year) : '', f.technique ?? '', f.material ?? '', f.series ?? '']
-          .some(v => v.toLowerCase().includes(query));
-      })
+  );
+
+  // Zero-latency local match on visible metadata — shows the instant it's typed.
+  let localFiltered = $derived(
+    facetFiltered.filter((f) => {
+      const query = searchQuery.trim().toLowerCase();
+      if (!query) return true;
+      return [f.name, f.year ? String(f.year) : '', f.technique ?? '', f.material ?? '', f.series ?? '']
+        .some((v) => v.toLowerCase().includes(query));
+    })
   );
 
   let sorted = $derived(
-    filtered.slice().sort((a, b) => {
+    localFiltered.slice().sort((a, b) => {
       const byCurated = (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
       const byName = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
       const byNewest = (b.year ?? -Infinity) - (a.year ?? -Infinity);
@@ -93,8 +101,88 @@
     })
   );
 
-  let visible = $derived(sorted.slice(0, displayLimit));
-  let hasMore = $derived(sorted.length > displayLimit);
+  // ── Unified search: one box that finds by NAME *and* by DESCRIPTION ─────────
+  // As you type, the local metadata filter above shows instantly. After a short
+  // pause the same phrase is sent to the semantic layer (server-side multilingual
+  // embedding — see api.semanticSearch / server embed.rs), which also searches the
+  // hidden AI visual descriptions and leads with relevance. No Enter needed.
+  // Degrades to the plain local filter under Tauri or when the endpoint is absent.
+  let keeperHits = $state<SemanticHit[] | null>(null); // null → semantic layer idle
+  let keeperLoading = $state(false);
+  let keeperError = $state(false);
+  let keeperSeq = 0;                                   // drops out-of-order replies
+
+  let figById = $derived(new Map((figurines as FigItem[]).map((f) => [f.id, f])));
+
+  // Semantic hits resolved to loaded works, constrained to the active facets.
+  let keeperResults = $derived.by(() => {
+    if (keeperHits === null) return null;
+    const allowed = new Set(facetFiltered.map((f) => f.id));
+    return keeperHits
+      .map((h) => figById.get(h.id))
+      .filter((f): f is FigItem => !!f && allowed.has(f.id));
+  });
+
+  // Final list: semantic relevance first, then any exact metadata matches it
+  // missed — so nothing findable by name is ever lost. Falls back to the plain
+  // local list when the semantic layer is idle or found nothing.
+  let resultList = $derived.by(() => {
+    if (!keeperResults || keeperResults.length === 0) return sorted;
+    const seen = new Set(keeperResults.map((f) => f.id));
+    return [...keeperResults, ...sorted.filter((f) => !seen.has(f.id))];
+  });
+
+  let visible = $derived(resultList.slice(0, displayLimit));
+  let hasMore = $derived(resultList.length > displayLimit);
+
+  let searchDebounce: ReturnType<typeof setTimeout> | undefined;
+
+  // Drive the semantic layer from the query, debounced. Reads searchQuery only;
+  // never reads the keeper* state it writes, so there is no reactive loop.
+  $effect(() => {
+    const q = searchQuery.trim();
+    clearTimeout(searchDebounce);
+    if (isTauri || q.length < 2) {
+      keeperHits = null;
+      keeperError = false;
+      keeperSeq++;                     // cancel any in-flight reply
+      return;
+    }
+    searchDebounce = setTimeout(() => runKeeper(q), 350);
+    return () => clearTimeout(searchDebounce);
+  });
+
+  // e5 cosine similarities sit in a narrow, high band (~0.72–0.89), so the raw
+  // list is mostly ~0.75 background noise — a fixed floor lets a typo like
+  // "frankenstain" drag in ~50 works. Keep only the cluster at/above the higher
+  // of an absolute floor and a small margin below the best score. Calibrated on
+  // real data: a single strong match stays one result; a broad query stays a
+  // handful; gibberish collapses to ~nothing. Server returns scores sorted desc.
+  const REL_ABS_FLOOR = 0.78;
+  const REL_MARGIN = 0.035;
+  const REL_MAX = 24;
+  function mostRelevant(hits: SemanticHit[]): SemanticHit[] {
+    if (hits.length === 0) return hits;
+    const cut = Math.max(REL_ABS_FLOOR, hits[0].score - REL_MARGIN);
+    return hits.filter((h) => h.score >= cut).slice(0, REL_MAX);
+  }
+
+  async function runKeeper(q: string) {
+    const seq = ++keeperSeq;
+    keeperLoading = true;
+    keeperError = false;
+    try {
+      const hits = await api.semanticSearch(q);
+      if (seq !== keeperSeq) return;   // superseded by a newer keystroke
+      keeperHits = mostRelevant(hits);
+    } catch {
+      if (seq !== keeperSeq) return;
+      keeperError = true;
+      keeperHits = null;
+    } finally {
+      if (seq === keeperSeq) keeperLoading = false;
+    }
+  }
 
   let availableYears = $derived(
     [...new Set((figurines as FigItem[]).map((f) => f.year).filter((y): y is number => typeof y === 'number'))]
@@ -179,9 +267,9 @@
 
   let countText = $derived(() => {
     const total = (figurines as FigItem[]).length;
-    const shown = filtered.length;
+    const shown = resultList.length;
     if (total === 0) return $t('archiveEmpty');
-    if (mainFilter !== 'all' || searchQuery.trim()) return `${shown} / ${toRoman(total)}`;
+    if (keeperHits !== null || mainFilter !== 'all' || searchQuery.trim()) return `${shown} / ${toRoman(total)}`;
     return toRoman(total);
   });
 
@@ -195,6 +283,7 @@
   function clearFilters() {
     searchQuery = ''; mainFilter = 'all'; sortMode = 'curated';
     yearFilter = 'all'; techniqueFilter = 'all'; seriesFilter = 'all'; materialFilter = 'all';
+    keeperHits = null; keeperError = false; keeperSeq++;   // the query effect also clears it
   }
 
   // ── Card actions ─────────────────────────────────────────────────────────
@@ -378,21 +467,26 @@
         <!-- Row 2: Search + Sort -->
         <div class="filter-bar__search-row">
           <label class="filter-bar__search-wrap">
-            <svg class="filter-bar__search-icon" width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true">
-              <circle cx="5.5" cy="5.5" r="4" stroke="currentColor" stroke-width="1"/>
-              <path d="M9 9L12 12" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
-            </svg>
+            {#if keeperLoading}
+              <span class="filter-bar__search-spin" aria-hidden="true"></span>
+            {:else}
+              <svg class="filter-bar__search-icon" width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true">
+                <circle cx="5.5" cy="5.5" r="4" stroke="currentColor" stroke-width="1"/>
+                <path d="M9 9L12 12" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+              </svg>
+            {/if}
             <input
               bind:value={searchQuery}
               type="search"
-              placeholder={$t('archiveSearchPlaceholder')}
+              placeholder={isTauri ? $t('archiveSearchPlaceholder') : $t('archiveKeeperPlaceholder')}
               class="filter-bar__search-input"
-              aria-label={$t('archiveSearchPlaceholder')}
+              aria-label={isTauri ? $t('archiveSearchPlaceholder') : $t('archiveKeeperPlaceholder')}
+              onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); clearTimeout(searchDebounce); if (!isTauri && searchQuery.trim().length >= 2) runKeeper(searchQuery.trim()); } }}
             />
             {#if searchQuery}
               <button
                 type="button"
-                onclick={() => searchQuery = ''}
+                onclick={() => { searchQuery = ''; }}
                 class="filter-bar__search-clear"
                 aria-label={$t('archiveClearFilters')}
               >
@@ -586,7 +680,7 @@
 
       </div>
 
-      {#if filtered.length > 0}
+      {#if resultList.length > 0}
         <ul class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-8 gap-y-10">
           {#each visible as figurine, i (figurine.id)}
             <li class="group perspective-container fig-tile"
@@ -859,7 +953,7 @@
               class="group flex items-center gap-4 px-10 py-4 border border-[#34251c]/20 hover:border-[#34251c]/50 text-[#5f4636] hover:text-[#34251c] font-['Inter'] text-xs tracking-[0.08em] uppercase transition-all duration-500"
             >
               <span>{$t('archiveLoadMore')}</span>
-              <span class="text-[#34251c]/30 group-hover:text-[#34251c]/85 transition-colors">{Math.min(PAGE_SIZE, filtered.length - displayLimit)}</span>
+              <span class="text-[#34251c]/30 group-hover:text-[#34251c]/85 transition-colors">{Math.min(PAGE_SIZE, resultList.length - displayLimit)}</span>
               <span class="transition-transform group-hover:translate-y-0.5">↓</span>
             </button>
           </div>
@@ -874,6 +968,16 @@
           >
             {$t('loadErrorRetry')}
           </button>
+        </div>
+      {:else if keeperLoading}
+        <div class="flex flex-col items-center justify-center py-32 border border-dashed border-[#34251c]/10 rounded-lg" in:fade>
+          <span class="filter-bar__search-spin filter-bar__search-spin--lg" aria-hidden="true"></span>
+          <p class="text-xs tracking-wide text-[#7c6554] uppercase mt-5">{$t('archiveKeeperThinking')}</p>
+        </div>
+      {:else if keeperError}
+        <div class="flex flex-col items-center justify-center py-32 border border-dashed border-[#c65f3c]/25 rounded-lg" in:fade>
+          <p class="font-['Fraunces'] text-3xl text-[#6f3b24] mb-2 opacity-85">{$t('archiveKeeperErrorTitle')}</p>
+          <p class="text-xs tracking-wide text-[#7c6554] uppercase max-w-md text-center">{$t('archiveKeeperErrorHint')}</p>
         </div>
       {:else if searchQuery}
         <div class="flex flex-col items-center justify-center py-32 border border-dashed border-[#34251c]/10 rounded-lg" in:fade>
@@ -1299,6 +1403,34 @@
     transition: color 0.18s;
   }
   .filter-bar__search-clear:hover { color: #34251c; }
+
+  /* Spinner shown while the semantic layer searches the descriptions. In the
+     search box it replaces the magnifier (same left slot); the --lg variant is
+     the centered spinner in the "searching…" empty state. */
+  .filter-bar__search-spin {
+    position: absolute;
+    left: 9px;
+    top: 50%;
+    width: 12px;
+    height: 12px;
+    margin-top: -6px;
+    border: 1.5px solid rgba(198,95,60,0.25);
+    border-top-color: #c65f3c;
+    border-radius: 50%;
+    animation: keeper-spin 0.7s linear infinite;
+    pointer-events: none;
+  }
+  .filter-bar__search-spin--lg {
+    position: static;
+    width: 22px;
+    height: 22px;
+    margin: 0;
+    border-width: 2px;
+  }
+  @keyframes keeper-spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) {
+    .filter-bar__search-spin { animation-duration: 2s; }
+  }
 
   /* ── PRIMARY FILTER CHIPS ──────────────────────────────────────── */
   .filter-chips {

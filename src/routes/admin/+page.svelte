@@ -87,6 +87,29 @@
     // === STATE ===
     let figurines = $state<FigurineListItem[]>([]);
     let selectedFigurine = $state<Figurine | null>(null);
+
+    // Backstage search caption ("Хранитель") — edited through its own endpoint,
+    // NOT the main figurine save, so ordinary saves never touch it. Loaded lazily
+    // when a work opens. Server build only (Tauri has no such endpoint).
+    let captionText = $state('');
+    let captionLoading = $state(false);
+    let captionSaving = $state(false);
+    let figurineExists = $derived(
+        selectedFigurine != null && figurines.some((f) => f.id === selectedFigurine!.id),
+    );
+
+    async function saveCaption() {
+        if (!selectedFigurine) return;
+        captionSaving = true;
+        try {
+            await api.setFigurineCaption(selectedFigurine.id, captionText);
+            showMessage($t('adminCaptionSaved'), 'success');
+        } catch (e: unknown) {
+            showMessage($t('adminMsgError') + (e instanceof Error ? e.message : String(e)), 'error');
+        } finally {
+            captionSaving = false;
+        }
+    }
     let savedSnapshot = $state<string>('');
     let isSaving = $state(false);
     let showingsEditor = $state<FigurineShowingsEditor | null>(null);
@@ -418,6 +441,18 @@
             selectedFigurine = { ...full };
             savedSnapshot = JSON.stringify(selectedFigurine);
             selectedImageIdx = null;
+            // Load the backstage search caption (separate from the figurine payload).
+            captionText = '';
+            if (!isTauri) {
+                captionLoading = true;
+                try {
+                    const c = await api.getFigurineCaption(id);
+                    // Guard: the user may have opened another work while this was
+                    // in flight — don't clobber the newer selection's caption.
+                    if (selectedFigurine?.id === id) captionText = c ?? '';
+                } catch { /* leave the field empty on failure */ }
+                finally { if (selectedFigurine?.id === id) captionLoading = false; }
+            }
         }
     }
 
@@ -428,6 +463,7 @@
         savedSnapshot = '';
         activeFormTab = 'media';
         selectedImageIdx = null;
+        captionText = '';
     }
 
     function duplicateFigurine(fig: FigurineListItem) {
@@ -448,6 +484,7 @@
             savedSnapshot = '';
             activeFormTab = 'media';
             selectedImageIdx = null;
+            captionText = '';
         });
     }
 
@@ -825,6 +862,26 @@
 
     async function bulkSetSecondAngle() {
         await runBulkOp($t('adminBulkSetSecondAngleConfirm'), () => api.bulkSetSecondAngle());
+    }
+
+    // Rebuild the "Хранитель" semantic-search vectors for every visible work.
+    // Server-only (candle). Cheap after the first run — unchanged text is skipped.
+    async function reindexKeeper() {
+        if (!confirm($t('adminReindexKeeperConfirm'))) return;
+        bulkBusy = true;
+        try {
+            const res = await api.reindexEmbeddings();
+            showMessage(
+                `${$t('adminReindexKeeperDone')}: ${res.indexed} / ${res.total}` +
+                    (res.failed ? ` · ⚠ ${res.failed}` : ''),
+                'success',
+            );
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e);
+            showMessage($t('adminMsgError') + msg, 'error');
+        } finally {
+            bulkBusy = false;
+        }
     }
 
     function setParallaxIntensity(imgIdx: number, value: string) {
@@ -1310,6 +1367,11 @@
                         {$t('adminBulkRecalculateParallax')}
                     </button>
 
+                    <button onclick={reindexKeeper} disabled={bulkBusy}
+                        class="w-full text-left px-2 py-1.5 border border-[#34251c]/15 hover:border-[#34251c]/40 hover:bg-[#34251c]/5 disabled:opacity-40 transition-colors">
+                        {$t('adminReindexKeeper')}
+                    </button>
+
                     <button onclick={bulkClearShowings} disabled={bulkBusy}
                         class="w-full text-left px-2 py-1.5 border border-[#34251c]/15 hover:border-red-700/40 hover:bg-red-50 disabled:opacity-40 transition-colors">
                         {$t('adminBulkClearShowings')}
@@ -1762,6 +1824,26 @@
                                 <span class="label">{$t('adminFieldSecret')}</span>
                                 <textarea bind:value={selectedFigurine.secretText} class="input-gothic h-20"></textarea>
                             </label>
+
+                            {#if !isTauri}
+                            <div class="block border-t border-[#34251c]/10 pt-6">
+                                <span class="label">{$t('adminCaptionLabel')}</span>
+                                <p class="text-[11px] leading-snug text-[#7c6554] mb-2">{$t('adminCaptionHint')}</p>
+                                {#if figurineExists}
+                                    <textarea bind:value={captionText} disabled={captionLoading}
+                                        placeholder={captionLoading ? '…' : ''}
+                                        class="input-gothic h-28"></textarea>
+                                    <div class="mt-2">
+                                        <button type="button" onclick={saveCaption} disabled={captionSaving || captionLoading}
+                                            class="px-4 py-2 border border-[#34251c]/25 hover:border-[#34251c]/55 text-[#5f4636] hover:text-[#34251c] text-xs tracking-wide uppercase transition-colors disabled:opacity-40">
+                                            {captionSaving ? '…' : $t('adminCaptionSave')}
+                                        </button>
+                                    </div>
+                                {:else}
+                                    <p class="text-[11px] italic text-[#7c6554]">{$t('adminCaptionSaveNewFirst')}</p>
+                                {/if}
+                            </div>
+                            {/if}
 
                         </div>
 

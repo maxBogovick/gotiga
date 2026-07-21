@@ -1,0 +1,12 @@
+-- Backstage, search-only AI visual caption (Path 1 of "Хранитель" visual search).
+--
+-- A vision model (offline — see deploy/caption_figurines.py) describes what each
+-- work's photo actually shows. That text is folded into the embedding input
+-- (services::curatorial_text), so a visual query like "монах со свечой" matches
+-- through the existing text bi-encoder without any image model on the server.
+--
+-- It is NEVER shown to visitors: it is deliberately absent from FigurineDto and
+-- every public surface, existing purely to enrich semantic search. Edited only
+-- through the dedicated /admin/figurines/:id/caption endpoint, so ordinary saves
+-- of a work never touch it.
+ALTER TABLE figurines ADD COLUMN IF NOT EXISTS visual_caption TEXT;

@@ -92,6 +92,29 @@ RUN set -eu; \
         echo "DEPTH_ENABLED empty — building WITHOUT depth weights (endpoint disabled)"; \
     fi
 
+# ── multilingual-e5-small weights (semantic search, "Хранитель") ───────────────
+# On-device multilingual text embeddings (candle/XLM-RoBERTa). Three files:
+# model.safetensors (~470 MB f32) + tokenizer.json + config.json. Baked in so the
+# in-process inference needs no network at runtime. Build with EMBED_ENABLED="" to
+# skip — the /search endpoint then returns empty (feature disables itself).
+FROM --platform=$BUILDPLATFORM debian:bookworm-slim AS embedweights
+ARG EMBED_ENABLED=true
+ARG EMBED_MODEL_REPO=intfloat/multilingual-e5-small
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /embed-weights
+RUN set -eu; \
+    if [ -n "$EMBED_ENABLED" ]; then \
+        base="https://huggingface.co/${EMBED_MODEL_REPO}/resolve/main"; \
+        for f in config.json tokenizer.json model.safetensors; do \
+            curl -fsSL --retry 3 --retry-delay 2 "$base/$f" -o "$f"; \
+        done; \
+        test -s config.json && test -s tokenizer.json && test -s model.safetensors; \
+    else \
+        echo "EMBED_ENABLED empty — building WITHOUT embedding weights (/search disabled)"; \
+    fi
+
 # ── Runtime stage (target arch) ────────────────────────────────────────────────
 FROM debian:bookworm-slim
 
@@ -106,6 +129,7 @@ COPY --from=builder /gotiga-server /usr/local/bin/gotiga-server
 COPY migrations ./migrations
 COPY --from=geoip /geoip/city.mmdb /app/geoip/city.mmdb
 COPY --from=depthweights /depth-weights /app/depth-weights
+COPY --from=embedweights /embed-weights /app/embed-weights
 
 # Run as an unprivileged user; own the uploads dir it needs to write.
 RUN useradd --system --uid 10001 --user-group --no-create-home app \
@@ -122,6 +146,10 @@ ENV RUST_LOG=info
 ENV GEOIP_DB_PATH=/app/geoip/city.mmdb
 # Bundled Depth-Anything weights for on-demand depth maps (admin "Generate depth").
 ENV DEPTH_WEIGHTS_DIR=/app/depth-weights
+# Bundled multilingual-e5-small weights for semantic search ("Хранитель").
+# EMBED_MODEL_NAME must match the repo baked above so stored vectors stay valid.
+ENV EMBED_WEIGHTS_DIR=/app/embed-weights
+ENV EMBED_MODEL_NAME=intfloat/multilingual-e5-small
 
 EXPOSE 3000
 

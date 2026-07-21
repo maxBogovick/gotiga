@@ -73,6 +73,8 @@ import type {
     EditCommissionRequest,
     AttachmentInput,
     DepthGenSummary,
+    SemanticHit,
+    EmbedIndexSummary,
     BulkOpResult,
     AdminFigurineAnalyticsListPage,
     AdminFigurineAnalyticsDetail,
@@ -672,6 +674,51 @@ export const api = {
         return webFetch(`/admin/figurines/${id}/generate-depth`, {
             method: 'POST',
             headers: authHeaders(),
+        });
+    },
+
+    /**
+     * Semantic search ("Хранитель"): rank the archive by meaning against a
+     * natural-language query (RU or EN), closest first. On-device multilingual
+     * embedding in the Rust API. Server build only — the Tauri app has no
+     * embedding model bundled, and returns [] there so callers fall back to the
+     * plain text filter. An empty array also means "feature unavailable / no
+     * match", so callers must treat [] as "keep the current view".
+     */
+    async semanticSearch(query: string, limit = 60): Promise<SemanticHit[]> {
+        const q = query.trim();
+        if (!q || isTauri) return [];
+        return webFetch(`/search?q=${encodeURIComponent(q)}&limit=${limit}`);
+    },
+
+    /** Admin: (re)build the "Хранитель" search embeddings for every visible work. */
+    async reindexEmbeddings(): Promise<EmbedIndexSummary> {
+        if (isTauri) throw new Error('Search indexing is only available on the server build.');
+        return webFetch('/admin/embeddings/reindex', {
+            method: 'POST',
+            headers: authHeaders(),
+        });
+    },
+
+    /**
+     * Admin: read a work's backstage visual caption (search-only, never shown to
+     * visitors). Written by the offline captioner; returns null when unset.
+     */
+    async getFigurineCaption(id: string): Promise<string | null> {
+        if (isTauri) return null;
+        const res = await webFetch<{ caption: string | null }>(`/admin/figurines/${id}/caption`, {
+            headers: authHeaders(),
+        });
+        return res?.caption ?? null;
+    },
+
+    /** Admin: set (blank clears) a work's backstage visual caption; re-embeds it. */
+    async setFigurineCaption(id: string, caption: string): Promise<void> {
+        if (isTauri) throw new Error('Captions are only available on the server build.');
+        await webFetch(`/admin/figurines/${id}/caption`, {
+            method: 'PUT',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ caption }),
         });
     },
 

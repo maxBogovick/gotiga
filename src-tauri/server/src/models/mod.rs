@@ -163,6 +163,9 @@ pub struct Figurine {
     pub ambience_path: Option<String>,
     pub video_url: Option<String>,
     pub secret_text: Option<String>,
+    /// Backstage, search-only AI visual caption (see the migration). Folded into
+    /// the semantic-search embedding text; never serialised to the public DTO.
+    pub visual_caption: Option<String>,
     pub is_visible: bool,
     pub is_featured: bool,
     /// "The house wakes" — daily showing window in minutes from midnight (0..1439),
@@ -403,6 +406,28 @@ pub struct DepthGenItem {
     pub image_id: String,
     pub status: String, // "done" | "skip" | "fail"
     pub detail: Option<String>,
+}
+
+/// One ranked result of a semantic search ("Хранитель"). The client already
+/// holds the archive, so we return only the id + similarity and let it reorder.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticHit {
+    pub id: String,
+    /// Cosine similarity in [-1, 1]; higher is closer.
+    pub score: f32,
+}
+
+/// Result of re-indexing figurine embeddings for semantic search.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmbedIndexSummary {
+    pub total: usize,
+    /// Newly (re)embedded because their text or the model changed.
+    pub indexed: usize,
+    /// Unchanged since last index — skipped.
+    pub skipped: usize,
+    pub failed: usize,
 }
 
 /// Result of a bulk admin operation applied across every figurine/image.

@@ -1,0 +1,13 @@
+{
+  "linkset": [
+    {
+      "anchor": "https://ritunia.com/api/v1",
+      "service-doc": [
+        { "href": "https://ritunia.com/llms.txt", "type": "text/plain" }
+      ],
+      "status": [
+        { "href": "https://ritunia.com/api/v1/health", "type": "application/json" }
+      ]
+    }
+  ]
+}

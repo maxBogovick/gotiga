@@ -42,7 +42,14 @@ ENV VITE_BUILD_TARGET=${VITE_BUILD_TARGET}
 # fresh value (build-frontend.sh passes `date +%s`) always invalidates JUST this step;
 # `npm ci` and `COPY . .` above stay cached, so the rebuild is still fast.
 ARG CACHEBUST=0
-RUN echo "cache-bust: ${CACHEBUST}" && npm run build
+# `npm run build` (not build:web) so VITE_BUILD_TARGET keeps coming from the ENV
+# above — a build:web-style hardcoded prefix would clobber the VITE_BUILD_TARGET=""
+# escape hatch documented above. The markdown-twin generator (scripts/
+# generate-markdown.mjs) only makes sense when there's prerendered HTML to convert,
+# so it's gated on the same variable rather than folded into a second npm script
+# that Dockerfile would then have to choose between.
+RUN echo "cache-bust: ${CACHEBUST}" && npm run build && \
+    if [ "$VITE_BUILD_TARGET" = "web" ]; then node scripts/generate-markdown.mjs build; fi
 
 # ── Runtime stage ──────────────────────────────────────────────────────────────
 FROM nginx:1.27-alpine

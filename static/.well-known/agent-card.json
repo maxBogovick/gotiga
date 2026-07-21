@@ -1,0 +1,12 @@
+{
+  "name": "Ritunia",
+  "description": "An author's cabinet of gothic, handmade miniatures and art dolls. Ritunia is a showcase archive, not a shop — each piece is a unique, hand-sculpted and hand-painted figure with its own story.",
+  "url": "https://ritunia.com",
+  "documentation": "https://ritunia.com/llms.txt",
+  "type": "showcase",
+  "protocols": [],
+  "commissions": {
+    "description": "Custom figures are made to order; no autonomous booking API is exposed.",
+    "contact": "https://ritunia.com/commission"
+  }
+}

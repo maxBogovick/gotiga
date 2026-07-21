@@ -791,7 +791,19 @@ pub async fn save_figurine(
     State(service): State<AppService>,
     Json(req): Json<SaveFigurineRequest>,
 ) -> Result<StatusCode> {
+    let fig_id = req.id.clone();
     service.save_figurine(req).await?;
+    // Best-effort: refresh this work's search embedding in the background so the
+    // "Хранитель" stays current without blocking the save. No-op when embedding
+    // weights aren't bundled, and its content-hash skips unchanged text.
+    if let Ok(uuid) = Uuid::parse_str(fig_id.trim()) {
+        let svc = service.clone();
+        tokio::spawn(async move {
+            if let Err(e) = svc.reindex_figurine_embedding(uuid).await {
+                tracing::warn!(target: "gotiga_server::embed", error = %e, "background reindex failed");
+            }
+        });
+    }
     Ok(StatusCode::OK)
 }
 
@@ -811,6 +823,67 @@ pub async fn admin_generate_figurine_depth(
 ) -> Result<impl IntoResponse> {
     let summary = service.generate_figurine_depth(id).await?;
     Ok(Json(summary))
+}
+
+// === SEMANTIC SEARCH ("Хранитель") ===
+
+#[derive(serde::Deserialize)]
+pub struct SearchParams {
+    pub q: Option<String>,
+    pub limit: Option<i64>,
+}
+
+/// Public: rank the archive by semantic similarity to a natural-language query,
+/// closest first. On-device multilingual embedding (candle) — see embed.rs.
+/// Returns an empty list when the query is blank or no embedding weights are
+/// bundled, so the client feature degrades silently to the plain text filter.
+pub async fn semantic_search(
+    State(service): State<AppService>,
+    Query(params): Query<SearchParams>,
+) -> Result<Json<Vec<SemanticHit>>> {
+    // Bound the query length before it reaches the (CPU-bound, mutex-serialised)
+    // encoder. The tokenizer also truncates to MAX_TOKENS, but capping characters
+    // first keeps a hostile 100 KB "query" from doing pointless tokeniser work on
+    // a small public box. 400 chars is far beyond any real search phrase.
+    let q: String = params.q.unwrap_or_default().chars().take(400).collect();
+    let limit = params.limit.unwrap_or(60).clamp(1, 200) as usize;
+    let hits = service.semantic_search(&q, limit).await?;
+    Ok(Json(hits))
+}
+
+/// Admin: (re)build the search embeddings for every visible work. Cheap after the
+/// first run — unchanged works are skipped via a content hash.
+pub async fn admin_reindex_embeddings(
+    State(service): State<AppService>,
+) -> Result<Json<EmbedIndexSummary>> {
+    let summary = service.reindex_all_embeddings().await?;
+    Ok(Json(summary))
+}
+
+/// Admin: read a work's backstage visual caption (search-only; never public).
+pub async fn admin_get_figurine_caption(
+    State(service): State<AppService>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>> {
+    let caption = service.get_figurine_caption(id).await?;
+    Ok(Json(serde_json::json!({ "caption": caption })))
+}
+
+#[derive(serde::Deserialize)]
+pub struct CaptionBody {
+    pub caption: Option<String>,
+}
+
+/// Admin: set (blank clears) a work's backstage visual caption. Written by the
+/// offline captioner (deploy/caption_figurines.py) and by any review UI; triggers
+/// a re-embed so the caption is searchable immediately.
+pub async fn admin_set_figurine_caption(
+    State(service): State<AppService>,
+    Path(id): Path<String>,
+    Json(body): Json<CaptionBody>,
+) -> Result<StatusCode> {
+    service.set_figurine_caption(id, body.caption).await?;
+    Ok(StatusCode::OK)
 }
 
 // === ADMIN MEDIA UPLOAD ===

@@ -8,6 +8,7 @@ pub mod api;
 pub mod config;
 pub mod db;
 pub mod depth;
+pub mod embed;
 pub mod error;
 pub mod geo;
 pub mod logs;

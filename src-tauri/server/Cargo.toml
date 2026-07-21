@@ -34,6 +34,14 @@ lettre = { version = "0.11", features = ["tokio1-rustls-tls", "smtp-transport", 
 candle-core = "0.9"
 candle-nn = "0.9"
 candle-transformers = "0.9"
+# Semantic search ("Хранитель"): on-device multilingual text embeddings (candle,
+# XLM-RoBERTa / multilingual-e5). tokenizers loads the checkpoint's tokenizer.json.
+# `onig` is REQUIRED, not optional: tokenizers 0.20.4 compiles src/utils/onig.rs
+# unconditionally, so dropping the feature (even for `fancy-regex`) fails to build.
+# It pulls oniguruma (C), which the Docker builder already cross-compiles via its
+# gcc-x86-64-linux-gnu toolchain (CC_x86_64_unknown_linux_gnu). default-features
+# off still trims the http/progressbar/training extras we don't use.
+tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
 webp = "0.3"
 
 [dev-dependencies]
