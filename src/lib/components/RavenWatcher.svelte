@@ -89,8 +89,4 @@
   }
 
   .bird-frame.visible { opacity: 1; }
-
-  @media (max-width: 720px) {
-    .raven-circle { display: none; }
-  }
 </style>

@@ -37,8 +37,22 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Starting server on {}:{}", config.host, config.port);
 
     // 3. Connect to DB
+    // Pool is sized for a public web server: several handlers issue a handful of
+    // sequential queries per request (get_figurine_details, sitemap/feed), so 5
+    // connections queued behind a 30s default acquire timeout could stall under
+    // even light concurrency. Tunable via DB_MAX_CONNECTIONS; timeouts are explicit
+    // so a saturated pool fails fast (5s) rather than hanging, and idle/aged
+    // connections are recycled.
+    let db_max_connections: u32 = dotenvy::var("DB_MAX_CONNECTIONS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(20);
     let pool = PgPoolOptions::new()
-        .max_connections(5)
+        .max_connections(db_max_connections)
+        .acquire_timeout(std::time::Duration::from_secs(5))
+        .idle_timeout(std::time::Duration::from_secs(600))
+        .max_lifetime(std::time::Duration::from_secs(1800))
         .connect(&config.database_url)
         .await
         .expect("Failed to connect to Postgres");
@@ -130,6 +144,23 @@ async fn main() -> anyhow::Result<()> {
                             break;
                         }
                     }
+                }
+            }
+        });
+    }
+
+    // Background: sweep the in-memory rate limiters. The per-request check paths
+    // only prune the key they touch, so keys for one-off IPs would otherwise
+    // accumulate forever — this drops stale/empty ones on a timer.
+    {
+        let svc = service.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(300));
+            loop {
+                tick.tick().await;
+                let removed = svc.prune_rate_limiters().await;
+                if removed > 0 {
+                    tracing::debug!("Rate-limiter GC dropped {removed} stale keys");
                 }
             }
         });

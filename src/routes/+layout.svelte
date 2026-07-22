@@ -7,6 +7,7 @@
   import SiteFooter from '$lib/components/SiteFooter.svelte';
   import DustParticles from '$lib/components/DustParticles.svelte';
   import { themeConfig, themeCSS, startListeningForPreview, applyPreviewPayload } from '$lib/stores/theme.svelte';
+  import { injectStyle } from '$lib/inject-style';
   import { setCopyOverrides, lang } from '$lib/i18n';
   import '$lib/stores/reading-font.svelte'; // initialises --font-reading from saved preference
   import { pageTurn } from '$lib/stores/page-turn.svelte';
@@ -40,6 +41,15 @@
   $effect(() => {
     if (typeof document !== 'undefined') document.documentElement.lang = $lang;
   });
+
+  // Admin theme override CSS. Injected via injectStyle (sets style.textContent, which
+  // does NOT parse HTML) rather than `{@html <style>…</style>}` in <svelte:head>: the
+  // theme values are admin-authored and served to every visitor, and a `</style>` in any
+  // of them would break out of the tag under {@html} — a stored-XSS primitive. textContent
+  // makes that impossible. themeConfig is fetched client-side (see onMount), so nothing was
+  // ever baked into the prerendered HTML anyway; this matches the reel/home-layout CSS,
+  // which already inject this way.
+  $effect(() => injectStyle('theme-override', $themeCSS));
 
   let stopPreviewListener: (() => void) | null = null;
   let removeMessageListener: (() => void) | null = null;
@@ -161,9 +171,8 @@
 
 <svelte:head>
   <link rel="canonical" href={canonicalUrl} />
-  {#if $themeCSS}
-    {@html `<style id="theme-override">${$themeCSS}</style>`}
-  {/if}
+  <!-- Theme override CSS is applied via injectStyle in the script above (safe textContent),
+       NOT emitted here as {@html <style>} — see the effect's comment. -->
 </svelte:head>
 
 <div class="min-h-screen bg-[#f8f1e7]" class:reading-typeset={showSiteHeader}>
@@ -204,7 +213,10 @@
     padding-top: 68px;
   }
 
-  @media (max-width: 680px) {
+  /* Matches SiteHeader's own desktop→mobile switch: below it the header shrinks
+     to its 58px mobile bar, so the content offset must follow at the same width
+     or a gap opens under the header on non-home pages. */
+  @media (max-width: 1024px) {
     .with-site-header {
       padding-top: 58px;
     }

@@ -54,15 +54,15 @@ function imageLoc(figurine: Figurine | null | undefined, fallback: string | null
     return absolute;
 }
 
-export async function GET() {
+export async function GET({ fetch }: { fetch: typeof globalThis.fetch }) {
     let figurines: FigurineListItem[] = [];
     const detailById = new Map<string, Figurine | null>();
     try {
-        const all = await api.getAllFigurines();
+        const all = await api.getAllFigurines(undefined, fetch);
         // In-progress pieces have no public detail page worth indexing.
         figurines = all.filter((f) => f.status !== 'in_progress');
         const details = await Promise.all(
-            figurines.map((f) => api.getFigurine(f.id).catch(() => null))
+            figurines.map((f) => api.getFigurine(f.id, fetch).catch(() => null))
         );
         details.forEach((detail, i) => detailById.set(figurines[i].id, detail));
     } catch {

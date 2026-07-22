@@ -7,10 +7,10 @@ export const prerender = import.meta.env.VITE_BUILD_TARGET === 'web';
 
 const FALLBACK_OG = `${SITE_URL}/images/cabinet-bg.jpeg`;
 
-export const load = async () => {
+export const load = async ({ fetch }: { fetch: typeof globalThis.fetch }) => {
     let ogImage = FALLBACK_OG;
     try {
-        const bg = await api.getMainBackground();
+        const bg = await api.getMainBackground(fetch);
         const resolved = resolveMediaUrl(bg);
         const absolute = toAbsoluteUrl(resolved);
         if (absolute) ogImage = absolute;

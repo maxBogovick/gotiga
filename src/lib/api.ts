@@ -106,6 +106,35 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
 }
 
 // --- Web helpers ---
+// Cached read of the configured server origin. resolveMediaUrl() reads it once per media
+// URL, and AppImage resolves ~8 URLs per image (srcset × jpeg/webp), so an archive grid hit
+// localStorage hundreds of times per render for a value that changes only when the user
+// saves server settings. Cache it; invalidate on that save (invalidateServerUrlCache) and
+// on a cross-tab `storage` event. `null` = not read yet; '' = read, but unset.
+let serverUrlCache: string | null = null;
+let serverUrlCached = false;
+let serverUrlListenerBound = false;
+function cachedServerUrl(): string {
+    if (typeof localStorage === 'undefined') return '';
+    if (!serverUrlCached) {
+        serverUrlCache = localStorage.getItem('gotiga_server_url');
+        serverUrlCached = true;
+        if (typeof window !== 'undefined' && !serverUrlListenerBound) {
+            serverUrlListenerBound = true;
+            window.addEventListener('storage', (e) => {
+                if (e.key === 'gotiga_server_url' || e.key === null) serverUrlCached = false;
+            });
+        }
+    }
+    return serverUrlCache ?? '';
+}
+
+/** Drop the cached server URL so the next read re-reads localStorage. Call after
+ *  writing `gotiga_server_url` in this tab (cross-tab writes invalidate via `storage`). */
+export function invalidateServerUrlCache(): void {
+    serverUrlCached = false;
+}
+
 function getWebSettings(): AppSettings {
     if (typeof localStorage === 'undefined') return { serverUrl: '', apiKey: '' };
     // Admin token may live in sessionStorage when "remember me" is off — it must not
@@ -114,7 +143,7 @@ function getWebSettings(): AppSettings {
         ? sessionStorage.getItem('gotiga_api_key')
         : null;
     return {
-        serverUrl: localStorage.getItem('gotiga_server_url') ?? '',
+        serverUrl: cachedServerUrl(),
         apiKey: localStorage.getItem('gotiga_api_key') ?? sessionKey ?? '',
     };
 }
@@ -181,9 +210,7 @@ export function resolveMediaUrl(url: string | null | undefined): string | null {
     const value = url.trim();
     if (!value) return null;
 
-    const serverUrl = typeof localStorage !== 'undefined'
-        ? (localStorage.getItem('gotiga_server_url') ?? '').replace(/\/$/, '')
-        : '';
+    const serverUrl = cachedServerUrl().replace(/\/$/, '');
 
     if (
         value.startsWith('http://') ||
@@ -325,8 +352,16 @@ function isNotFoundError(err: unknown): boolean {
     return err instanceof ApiError && (err.status === 404 || err.status === 410);
 }
 
-async function webFetch<T>(path: string, options?: RequestInit): Promise<T> {
-    const res = await fetch(`${webApiBase()}${path}`, options);
+// fetch selection is architecture-critical (see [[sveltekit-load-global-fetch]] reasoning):
+//  • In the BROWSER, prefer the SvelteKit `load` fetch when one is passed — it silences the
+//    framework's "window.fetch in load" dev warning and lets SvelteKit dedupe.
+//  • During SSR/PRERENDER (no `window`), ALWAYS use the global fetch. The API is a SEPARATE
+//    backend reached via the absolute VITE_API_BASE; SvelteKit's server fetch would try to
+//    resolve the same-origin /api/v1/* path INTERNALLY → 404 → prerender build abort. The
+//    global fetch hits the real backend and a 404 is swallowed by each loader's `.catch()`.
+async function webFetch<T>(path: string, options?: RequestInit, loadFetch?: typeof fetch): Promise<T> {
+    const doFetch = typeof window !== 'undefined' && loadFetch ? loadFetch : fetch;
+    const res = await doFetch(`${webApiBase()}${path}`, options);
     if (!res.ok) {
         const text = await res.text().catch(() => '');
         throw new ApiError(res.status, text);
@@ -377,8 +412,17 @@ function invalidateReadPrefix(prefix: string): void {
  * so the `api` object's own methods can reuse it without going through `this` (callers
  * do destructure `api`).
  */
-async function fetchFigurinesPage(perPage?: number): Promise<{ items: FigurineListItem[]; total: number }> {
-    return dedupeRead(`figurines:${perPage ?? 'all'}`, 4000, async () => {
+// The public catalogue is the same for every visitor and changes only on an admin
+// edit — which calls invalidateReadPrefix('figurines:') and drops this immediately.
+// So the dedupe window can safely match the server's own Cache-Control (max-age=60)
+// instead of 4s: every consumer reads the WHOLE catalogue as a lookup table (hero,
+// vitrine, marks, prev/next, profile references, the archive), and each route did its
+// own fetch, so a 4s window re-pulled the entire collection on essentially every
+// navigation. 60s dedups those across a browsing session with no staleness beyond
+// what the HTTP layer already permits.
+const FIGURINES_PAGE_TTL_MS = 60_000;
+async function fetchFigurinesPage(perPage?: number, loadFetch?: typeof fetch): Promise<{ items: FigurineListItem[]; total: number }> {
+    return dedupeRead(`figurines:${perPage ?? 'all'}`, FIGURINES_PAGE_TTL_MS, async () => {
         if (isTauri) {
             const all = await invoke<FigurineListItem[]>('get_all_figurines');
             return { items: perPage != null ? all.slice(0, perPage) : all, total: all.length };
@@ -386,7 +430,7 @@ async function fetchFigurinesPage(perPage?: number): Promise<{ items: FigurineLi
         const url = perPage != null
             ? `/figurines?visible=true&perPage=${perPage}`
             : '/figurines?visible=true';
-        const res = await webFetch<{ items: FigurineListItem[]; total?: number } | FigurineListItem[]>(url);
+        const res = await webFetch<{ items: FigurineListItem[]; total?: number } | FigurineListItem[]>(url, undefined, loadFetch);
         if (Array.isArray(res)) return { items: res, total: res.length };
         return { items: res.items, total: res.total ?? res.items.length };
     });
@@ -589,15 +633,15 @@ export const api = {
      */
     getFigurinesPage: fetchFigurinesPage,
 
-    async getAllFigurines(limit?: number): Promise<FigurineListItem[]> {
-        const { items } = await fetchFigurinesPage(limit);
+    async getAllFigurines(limit?: number, loadFetch?: typeof fetch): Promise<FigurineListItem[]> {
+        const { items } = await fetchFigurinesPage(limit, loadFetch);
         return items;
     },
 
-    async getInProgressFigurines(): Promise<FigurineListItem[]> {
+    async getInProgressFigurines(loadFetch?: typeof fetch): Promise<FigurineListItem[]> {
         if (isTauri) return invoke<FigurineListItem[]>('get_all_figurines')
             .then(all => all.filter(f => f.status === 'in_progress'));
-        return webFetch('/figurines/in-progress');
+        return webFetch('/figurines/in-progress', undefined, loadFetch);
     },
 
     // Works inside their "first look" early-release window — the book-holders'
@@ -623,24 +667,24 @@ export const api = {
         return Array.isArray(res) ? res : res.items;
     },
 
-    async getFigurine(id: string): Promise<Figurine | null> {
+    async getFigurine(id: string, loadFetch?: typeof fetch): Promise<Figurine | null> {
         if (isTauri) return invoke('get_figurine', { id });
         try {
-            return await webFetch(`/figurines/${id}`);
+            return await webFetch(`/figurines/${id}`, undefined, loadFetch);
         } catch (e: unknown) {
             if (e instanceof Error && e.message.includes('404')) return null;
             throw e;
         }
     },
 
-    async getAuthorTexts(): Promise<AuthorText[]> {
+    async getAuthorTexts(loadFetch?: typeof fetch): Promise<AuthorText[]> {
         if (isTauri) return invoke('get_author_texts');
-        return webFetch('/content/texts/author');
+        return webFetch('/content/texts/author', undefined, loadFetch);
     },
 
-    async getWorkshopContent(): Promise<WorkshopItem[]> {
+    async getWorkshopContent(loadFetch?: typeof fetch): Promise<WorkshopItem[]> {
         if (isTauri) return invoke('get_workshop_content');
-        return webFetch('/content/texts/workshop');
+        return webFetch('/content/texts/workshop', undefined, loadFetch);
     },
 
     async getCabinetZones(): Promise<CabinetZone[]> {
@@ -648,9 +692,9 @@ export const api = {
         return webFetch('/cabinet/zones');
     },
 
-    async getShowingRooms(): Promise<ShowingRoom[]> {
+    async getShowingRooms(loadFetch?: typeof fetch): Promise<ShowingRoom[]> {
         if (isTauri) return invoke('get_showing_rooms');
-        return webFetch('/showing-rooms');
+        return webFetch('/showing-rooms', undefined, loadFetch);
     },
 
     // === WRITE (ADMIN) ===
@@ -968,10 +1012,10 @@ export const api = {
      * responds to one flaky request by clearing the background the page is already showing.
      * Callers that just want a fallback still write `.catch(() => null)`.
      */
-    async getMainBackground(): Promise<string | null> {
+    async getMainBackground(loadFetch?: typeof fetch): Promise<string | null> {
         return dedupeRead('main-background', 4000, async () => {
             if (isTauri) return invoke<string | null>('get_main_background');
-            const data = await webFetch<{ url: string | null }>('/main-background');
+            const data = await webFetch<{ url: string | null }>('/main-background', undefined, loadFetch);
             return data.url;
         });
     },
@@ -979,11 +1023,11 @@ export const api = {
     // Deduped: the home page's load() and its init() both read this (load() to resolve the
     // hero and the <head> meta, init() so an admin's edit shows up without a rebuild), and
     // without this that is the same GET twice per page view.
-    async getHomeContent(): Promise<HomeContent> {
+    async getHomeContent(loadFetch?: typeof fetch): Promise<HomeContent> {
         return dedupeRead('home-content', 4000, async () => {
             if (isTauri) return invoke<HomeContent>('get_home_content');
             try {
-                return await webFetch<HomeContent>('/home-content');
+                return await webFetch<HomeContent>('/home-content', undefined, loadFetch);
             } catch {
                 return getWebHomeContent();
             }
@@ -1042,6 +1086,7 @@ export const api = {
         if (isTauri) return invoke('save_settings', { settings });
         localStorage.setItem('gotiga_server_url', settings.serverUrl);
         localStorage.setItem('gotiga_api_key', settings.apiKey);
+        invalidateServerUrlCache(); // drop the cached origin so media URLs re-resolve
     },
 
     async exportRelease(): Promise<string> {
@@ -1077,10 +1122,10 @@ export const api = {
         });
     },
 
-    async getAuthorProfile(): Promise<AuthorProfile> {
+    async getAuthorProfile(loadFetch?: typeof fetch): Promise<AuthorProfile> {
         return dedupeRead('author-profile', 4000, async () => {
             if (isTauri) return invoke('get_author_profile');
-            return webFetch('/author/profile');
+            return webFetch('/author/profile', undefined, loadFetch);
         });
     },
 

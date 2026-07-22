@@ -206,7 +206,7 @@
             onmouseleave={() => { hoverDate = ''; }}
             disabled={isDisabled(ds)}
           >
-            {parseInt(ds.slice(8))}
+            {parseInt(ds.slice(8), 10)}
             {#if pending && !start && !end && !single}
               <span class="pending-dot" aria-hidden="true"></span>
             {/if}

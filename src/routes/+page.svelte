@@ -107,11 +107,14 @@
     // Seeded from load(), so the reel is IN the prerendered HTML — see the note in +page.ts
     // (the archive has always done this; the home page used to start empty and pop in).
     // init() then refreshes them against the live API, sharing load()'s deduped request.
-    let collectionFigurines = $state<FigurineListItem[]>(data.works);
-    let availableFigurines = $state<FigurineListItem[]>(
-        data.works.filter((f) => f.status === 'available')
-    );
-    let inProgressFigurines = $state<FigurineListItem[]>(data.inProgress);
+    // $state.raw: these arrays are replaced wholesale (init() reassigns them, never
+    // mutates in place), so the deep reactive proxy over every figurine object is pure
+    // overhead — raw state tracks the reassignment and skips the proxying.
+    let collectionFigurines = $state.raw<FigurineListItem[]>(data.works);
+    // Derived subset of the collection — single source of truth. Was a separate $state
+    // that init() had to keep in sync by hand (a drift-bug waiting to happen).
+    let availableFigurines = $derived(collectionFigurines.filter((f) => f.status === 'available'));
+    let inProgressFigurines = $state.raw<FigurineListItem[]>(data.inProgress);
     let heroFigurine = $state<FigurineListItem | null>(data.heroFig ?? null);
     // Author-led hero + story content, reused from the admin-editable profile.
     let authorProfile = $state<AuthorProfile | null>(data.author ?? null);
@@ -188,6 +191,22 @@
     let authorName = $derived(authorProfile?.name?.trim() || $brandName);
     let titleText = $derived(authorName);
     let leadText = $derived(authorProfile?.tagline?.trim() || homeContent.lead?.trim() || $t('homeAuthorManifesto'));
+
+    // SEO title/description: derive from the admin-editable home content (with a stable
+    // brand-bearing fallback) instead of a hardcoded string, so the page's two most
+    // important on-page signals actually reflect — and can be tuned to — the real content.
+    let metaTitle = $derived(
+        homeContent.title?.trim()
+            ? `${homeContent.title.trim()} · ${$brandName}`
+            : `${$brandName} — Cabinet of Gothic Miniatures`
+    );
+    let metaDescription = $derived(
+        (homeContent.lead?.trim()
+            || authorProfile?.tagline?.trim()
+            || "An author's cabinet of gothic figures and handmade miniatures."
+        ).slice(0, 200)
+    );
+
     let primaryCtaHref = '/commission';
     let primaryCtaText = $derived($t('homeAuthorPrimaryCta'));
     let secondaryCtaHref = '#gallery';
@@ -195,10 +214,10 @@
     // The book-holders' "first look" shelf: works genuinely inside their timed
     // early-release window (held out of the public archive by the server until
     // their hour). Rendered only when signed (see template guard).
-    let firstLookFigurines = $state<FigurineListItem[]>([]);
+    let firstLookFigurines = $state.raw<FigurineListItem[]>([]);
     // Hybrid editorial+algorithmic shelf resolved entirely server-side (admin
     // pins + top of the private mark ranking) — see /figurines/noticed.
-    let noticedByGuestsFigurines = $state<FigurineListItem[]>([]);
+    let noticedByGuestsFigurines = $state.raw<FigurineListItem[]>([]);
     // The work ACTUALLY IN the hero photograph — which is nobody when an admin-uploaded
     // background has overridden it. The caption ("Selected work: <name> → Open work") and
     // the alt text hang off this, not off heroFigurine: the latter is only the pick for the
@@ -383,7 +402,7 @@
             if (page) {
                 const works = sortWorks(visibleWorks(page.items));
                 collectionFigurines = works;
-                availableFigurines = works.filter((item) => item.status === 'available');
+                // availableFigurines is $derived from collectionFigurines — no manual sync.
                 inProgressFigurines = sortWorks(page.items.filter((f) => f.status === 'in_progress'));
                 // The same deterministic pick load() made at build time — normally the same
                 // work, and therefore the same <img src>, so the hero is not re-downloaded.
@@ -564,19 +583,33 @@
 </script>
 
 <svelte:head>
-    <title>{$brandName} — Cabinet of Gothic Miniatures</title>
-    <meta name="description" content="An author's cabinet of gothic figures and handmade miniatures." />
+    <title>{metaTitle}</title>
+    <meta name="description" content={metaDescription} />
     <meta property="og:site_name" content={$brandName} />
     <meta property="og:locale" content="en_US" />
-    <meta property="og:title" content="{$brandName} — Cabinet of Gothic Miniatures" />
-    <meta property="og:description" content="An author's cabinet of gothic figures and handmade miniatures." />
+    <meta property="og:title" content={metaTitle} />
+    <meta property="og:description" content={metaDescription} />
     <meta property="og:image" content={data.ogImage} />
     <meta property="og:type" content="website" />
     <meta property="og:url" content={SITE_URL} />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="{$brandName} — Cabinet of Gothic Miniatures" />
+    <meta name="twitter:title" content={metaTitle} />
     <meta name="twitter:image" content={data.ogImage} />
     <meta name="theme-color" content="#f8f1e7" />
+    <!-- Preload the LCP hero. fetchpriority on the <img> raises its PRIORITY once found;
+         this preload solves early DISCOVERY (web.dev 2026 says use both). Prefer the WebP
+         rendition modern browsers actually paint (type-gated, so a no-WebP browser ignores
+         it and loads the JPEG from the <img> as before); fall back to the single hero URL
+         when there is no responsive srcset (admin background / bundled fallback). -->
+    {#if heroSrcset?.webp}
+        <link rel="preload" as="image" type="image/webp" imagesrcset={heroSrcset.webp} imagesizes={HERO_SIZES} fetchpriority="high" />
+    {:else if heroBackgroundWebp}
+        <!-- Admin-background hero: the <picture> paints heroBackgroundWebp, so preload THAT
+             (not the JPEG), matching the source the browser actually chooses. -->
+        <link rel="preload" as="image" type="image/webp" href={heroBackgroundWebp} fetchpriority="high" />
+    {:else if heroDisplayImage}
+        <link rel="preload" as="image" href={heroDisplayImage} fetchpriority="high" />
+    {/if}
     {@html `<script type="application/ld+json">${websiteJsonLd}<\/script>`}
     <!-- The admin's theme/layout CSS is NOT emitted here — see the injectStyle effects. -->
     <!-- Fonts loaded once globally in app.html -->

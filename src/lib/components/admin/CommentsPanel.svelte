@@ -123,7 +123,7 @@
       {#each pageData.items as c (c.id)}
         <li class="comment-row" class:approved={c.isApproved} class:pending={!c.isApproved}>
           <div class="comment-meta">
-            <a href="/figurines/{c.figurineId}" target="_blank" class="figurine-link">{c.figurineName}</a>
+            <a href="/figurines/{c.figurineId}" target="_blank" rel="noopener" class="figurine-link">{c.figurineName}</a>
             <span class="sep">·</span>
             <strong class="author">{c.authorName}</strong>
             {#if c.authorEmail}

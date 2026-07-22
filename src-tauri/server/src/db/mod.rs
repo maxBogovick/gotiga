@@ -4171,6 +4171,27 @@ impl Repository {
         Ok(pos)
     }
 
+    /// Batched queue positions for one user's waitlist entries: one query instead
+    /// of a per-row `SELECT COUNT(*)` (the N+1 `get_user_waitlist` used to do in the
+    /// service). Position matches `waitlist_position` — rank within the whole
+    /// figurine queue (everyone created at or before this entry). Keyed by entry id.
+    pub async fn waitlist_positions_for_user(
+        &self,
+        user_id: Uuid,
+    ) -> Result<std::collections::HashMap<Uuid, i64>> {
+        let rows: Vec<(Uuid, i64)> = sqlx::query_as(
+            "SELECT w.id,
+                    (SELECT COUNT(*) FROM figurine_waitlist w2
+                      WHERE w2.figurine_id = w.figurine_id AND w2.created_at <= w.created_at)
+             FROM figurine_waitlist w
+             WHERE w.user_id = $1",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pg_pool)
+        .await?;
+        Ok(rows.into_iter().collect())
+    }
+
     pub async fn get_user_waitlist(
         &self,
         user_id: Uuid,

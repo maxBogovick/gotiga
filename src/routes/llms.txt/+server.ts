@@ -12,10 +12,10 @@ function oneLine(s: string | null | undefined): string {
     return (s ?? '').replace(/\s+/g, ' ').trim();
 }
 
-export async function GET() {
+export async function GET({ fetch }: { fetch: typeof globalThis.fetch }) {
     let figurines: FigurineListItem[] = [];
     try {
-        const all = await api.getAllFigurines();
+        const all = await api.getAllFigurines(undefined, fetch);
         figurines = all.filter((f) => f.status !== 'in_progress');
     } catch {
         figurines = [];

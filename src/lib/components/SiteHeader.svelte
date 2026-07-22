@@ -132,6 +132,25 @@
     }
   }
 
+  // Mobile mirror of the "write to the author" quill. The desktop contact button
+  // lives in .ghost-right-group (hidden on mobile), so the compact mobile bar gets
+  // its own button + panel next to the account icon. Separate open-state and ref so
+  // its outside-click handler doesn't fight the desktop one.
+  let mobileContactOpen = $state(false);
+  let mobileContactRef = $state<HTMLElement | null>(null);
+
+  function toggleMobileContact() {
+    mobileContactOpen = !mobileContactOpen;
+    if (mobileContactOpen) mobileNavOpen = false;
+  }
+  function closeMobileContact() { mobileContactOpen = false; }
+
+  function handleMobileContactOutside(e: MouseEvent) {
+    if (mobileContactOpen && mobileContactRef && !mobileContactRef.contains(e.target as Node)) {
+      mobileContactOpen = false;
+    }
+  }
+
   async function handleLogout() {
     userMenuOpen = false;
     mobileNavOpen = false;
@@ -152,6 +171,7 @@
     document.addEventListener('click', handleOutside, { capture: true });
     document.addEventListener('click', handleUserOutside, { capture: true });
     document.addEventListener('click', handleContactOutside, { capture: true });
+    document.addEventListener('click', handleMobileContactOutside, { capture: true });
     window.addEventListener('scroll', handleScroll, { passive: true });
     handleScroll();
 
@@ -178,6 +198,7 @@
       document.removeEventListener('click', handleOutside, { capture: true });
       document.removeEventListener('click', handleUserOutside, { capture: true });
       document.removeEventListener('click', handleContactOutside, { capture: true });
+      document.removeEventListener('click', handleMobileContactOutside, { capture: true });
     }
     if (typeof window !== 'undefined') {
       window.removeEventListener('scroll', handleScroll);
@@ -187,6 +208,7 @@
   $effect(() => {
     void pathname;
     mobileNavOpen = false;
+    mobileContactOpen = false;
     // Wait a tick so the new page's markup (and its .cine-frame, if any)
     // has mounted before we measure it.
     requestAnimationFrame(updateAvatarVisibility);
@@ -420,6 +442,34 @@
 
     <!-- ⑥ Mobile-only controls -->
     <div class="mobile-controls">
+      <!-- "Write to the author" — mobile mirror of the desktop quill (which lives in
+           the hidden .ghost-right-group). Sits before the account icon. -->
+      <div class="mobile-contact-anchor" bind:this={mobileContactRef}>
+        <button
+          class="mobile-contact-btn"
+          class:is-open={mobileContactOpen}
+          onclick={toggleMobileContact}
+          aria-label={$t('headerContactLabel')}
+          title={$t('headerContactLabel')}
+        >
+          <svg width="15" height="15" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+            <path d="M12.2 1.8c-3.6 0-8.4 3.4-9.9 7-.3.7.4 1.4 1.1 1.1l1.9-.8" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M12.2 1.8c0 3.6-3.4 8.4-7 9.9-.7.3-1.4-.4-1.1-1.1l.8-1.9" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M5.4 8.6L1.8 12.2" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+          </svg>
+        </button>
+
+        {#if mobileContactOpen}
+          <div class="contact-panel mobile-contact-panel" transition:fade={{ duration: 150 }}>
+            <div class="panel-head">
+              <span class="panel-title">{$t('headerContactLabel')}</span>
+              <button class="panel-close" onclick={closeMobileContact} aria-label="Close">✕</button>
+            </div>
+            <p class="contact-panel-note">{$t('headerContactNote')}</p>
+            <ContactMessageForm source="header" compact />
+          </div>
+        {/if}
+      </div>
       <button
         class="mobile-user-btn"
         onclick={authStore.isLoggedIn ? () => { closeMobileNav(); goto('/profile'); } : () => goto('/login')}
@@ -633,7 +683,18 @@
   ──────────────────────────────────────────────────────────── */
   .header-inner {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto auto minmax(0, 1fr);
+    /* POINT 1 — overlap made structurally impossible.
+       The two outer tracks hold the "ghost" clusters (avatar + language/font
+       switchers on the left; Write button + bookings/account icons on the
+       right). With minmax(0,1fr) those tracks could shrink to ZERO while their
+       flex content stayed full-width, so the content spilled OUT of its track
+       and painted over the nav — the switchers on ARCHIVE/IN PROGRESS, the
+       Write button on AUTHOR. minmax(auto,1fr) floors each track at its own
+       min-content, so a ghost cluster can never be narrower than what it holds
+       and therefore never overflows onto a neighbour. (We can't just clip the
+       clusters: they host absolutely-positioned popovers — the Write form, the
+       bookings/account menus, the font dropdown — that must escape the box.) */
+    grid-template-columns: minmax(auto, 1fr) auto auto auto minmax(auto, 1fr);
     grid-template-rows: 1fr;
     /* stretch so nav-links can fill the full header height */
     align-items: stretch;
@@ -821,6 +882,7 @@
     font-weight: 500;
     letter-spacing: 0.10em;
     text-transform: uppercase;
+    white-space: nowrap;
     color: var(--color-ink-secondary);
     text-decoration: none;
     transition: color 0.25s;
@@ -1300,8 +1362,16 @@
   }
   .user-panel-logout:hover { color: #c65f3c; }
 
-  /* ── Mobile breakpoint ───────────────────────────────────── */
-  @media (max-width: 720px) {
+  /* ── Mobile breakpoint ───────────────────────────────────────
+     The desktop layout is a wide 5-column "proscenium" (avatar + 2 switchers |
+     nav | brand + subtitle | nav | Write + icons). Thanks to the minmax(auto,1fr)
+     tracks above it no longer OVERLAPS when squeezed — but the content still
+     genuinely runs out of room, so below this width we hand over to the
+     hamburger layout. This is now a cosmetic threshold, not a correctness gate:
+     if a longer brand name or locale pushes the fit-point around, the header
+     degrades gracefully instead of breaking. 1024px clears the tightest locale
+     (RU: МАСТЕРСКАЯ / НАПИСАТЬ), which stops fitting around ~1000px. */
+  @media (max-width: 1024px) {
     .site-header {
       height: 58px;
     }
@@ -1341,6 +1411,45 @@
       align-items: center;
       gap: 6px;
       margin-left: auto;
+    }
+
+    /* Mobile "write" button — copper-outlined like the desktop CTA, sized to sit
+       inline with the account icon. */
+    .mobile-contact-anchor {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .mobile-contact-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 36px;
+      height: 36px;
+      background: transparent;
+      border: 1px solid #c65f3c;
+      border-radius: 2px;
+      padding: 0;
+      cursor: pointer;
+      color: #c65f3c;
+      transition: background 0.2s ease, color 0.2s ease;
+    }
+    .mobile-contact-btn:hover,
+    .mobile-contact-btn.is-open {
+      background: #c65f3c;
+      color: #fff9f0;
+    }
+
+    /* The shared .contact-panel is right-anchored to its button; on the mobile bar
+       that button isn't the rightmost item, so pin the panel to the header edge
+       instead and cap its width to the viewport. */
+    .mobile-contact-panel {
+      position: fixed;
+      top: 58px;
+      right: 12px;
+      left: auto;
+      width: min(320px, calc(100vw - 24px));
     }
 
     .mobile-user-btn {

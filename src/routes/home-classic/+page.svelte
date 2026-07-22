@@ -38,6 +38,7 @@
         homePageStyle,
         generateHomeElementCSS,
     } from '$lib/home-layout';
+    import { injectStyle } from '$lib/inject-style';
     import type { HomeLayoutConfig, HomeBlockId } from '$lib/types/api';
 
     let { data } = $props();
@@ -117,6 +118,10 @@
     // arrive as generated global CSS — `!important` wins over scoped component
     // styles, so the block components themselves stay untouched.
     let hlElementCSS = $derived(generateHomeElementCSS(homeLayout));
+    // Injected via injectStyle (textContent, cannot break out of a tag) rather than
+    // {@html <style>…</style>} in <svelte:head> — admin values must never be able to
+    // spell `</style>` and escape into HTML. Mirrors +layout/theme and the main home.
+    $effect(() => injectStyle('hl-element-overrides', hlElementCSS));
 
     // "Exhibit of the day": admin-pinned pick, else daily rotation. Rendered
     // as a compact mark inside VisitLedger, not its own section.
@@ -623,9 +628,7 @@
     <meta name="twitter:image" content={data.ogImage} />
     <meta name="theme-color" content="#f8f1e7" />
     {@html `<script type="application/ld+json">${websiteJsonLd}<\/script>`}
-    {#if hlElementCSS}
-        {@html `<style id="hl-element-overrides">${hlElementCSS}</style>`}
-    {/if}
+    <!-- hl-element-overrides CSS applied via injectStyle in the script (safe textContent). -->
     <!-- Fonts loaded once globally in app.html -->
 </svelte:head>
 

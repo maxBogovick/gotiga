@@ -8,11 +8,11 @@ export const entries = async () => {
   return all.map((f) => ({ id: f.id }));
 };
 
-export const load = async ({ params }: { params: { id: string } }) => {
+export const load = async ({ params, fetch }: { params: { id: string }; fetch: typeof globalThis.fetch }) => {
   let figurine: import('$lib/types/api').Figurine | null = null;
   let loadError = false;
   try {
-    figurine = await api.getFigurine(params.id);
+    figurine = await api.getFigurine(params.id, fetch);
   } catch {
     loadError = true;
   }

@@ -151,13 +151,21 @@
     videoEl.pause();
   }
 
+  // The travelling bird canvas is hidden at ≤720px (see .bird-travel media query),
+  // so a walk there would only make the raven circle fade to `is-away` with nothing
+  // walking in its place — the emblem would just blink out. Skip the walk at that
+  // width so the mobile circle stays put. Checked per-tick so a resize is picked up.
+  function isNarrow() {
+    return typeof window !== 'undefined' && window.matchMedia('(max-width: 720px)').matches;
+  }
+
   function schedule() {
     timerId = setTimeout(async () => {
       // A walk is driven by requestAnimationFrame, which browsers do not fire on a hidden
       // tab. Starting one here would leave it suspended mid-stride — the video decoding,
       // `birdWalking` stuck true, and the whole chain resuming at a random point when the
       // visitor came back. Skip the turn instead and let the next tick pick it up.
-      if (!document.hidden) await walk();
+      if (!document.hidden && !isNarrow()) await walk();
       schedule();
     }, intervalMs());
   }

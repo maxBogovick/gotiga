@@ -16,11 +16,11 @@ export const entries = async () => {
   }
 };
 
-export const load = async ({ params }: { params: { id: string } }) => {
+export const load = async ({ params, fetch }: { params: { id: string }; fetch: typeof globalThis.fetch }) => {
   // Both fire in parallel. A missing room (room === null) renders NotFound; a
   // backend we can't reach (loadError) renders an error screen — kept distinct.
-  const roomsReq = api.getShowingRooms();
-  const figsReq = api.getAllFigurines().catch(() => null);
+  const roomsReq = api.getShowingRooms(fetch);
+  const figsReq = api.getAllFigurines(undefined, fetch).catch(() => null);
 
   let rooms: ShowingRoom[] | null = null;
   let loadError = false;

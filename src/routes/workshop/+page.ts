@@ -5,7 +5,7 @@ import type { WorkshopItem } from '$lib/types/api';
 // and LLMs (previously fetched in onMount). Tauri stays SPA.
 export const prerender = import.meta.env.VITE_BUILD_TARGET === 'web';
 
-export const load = async () => {
-    const items = await api.getWorkshopContent().catch(() => [] as WorkshopItem[]);
+export const load = async ({ fetch }: { fetch: typeof globalThis.fetch }) => {
+    const items = await api.getWorkshopContent(fetch).catch(() => [] as WorkshopItem[]);
     return { items };
 };

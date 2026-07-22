@@ -41,16 +41,18 @@ const DEFAULT_HOME_CONTENT: HomeContent = {
 // re-runs against the live API; text updates, and AppImage writes the right photos through).
 // A crawler that never runs JS sees the build's collection — which is the whole catalogue,
 // minus whatever was added since. That is strictly more than nothing.
-export const load = async () => {
+export const load = async ({ fetch }: { fetch: typeof globalThis.fetch }) => {
+    // `fetch` is passed to the api so the BROWSER uses SvelteKit's fetch (no window.fetch
+    // warning); during prerender webFetch ignores it and uses the global fetch (see webFetch).
     const [bg, homeContent, page, author] = await Promise.all([
-        api.getMainBackground().catch(() => null as string | null),
-        api.getHomeContent().catch(() => DEFAULT_HOME_CONTENT),
+        api.getMainBackground(fetch).catch(() => null as string | null),
+        api.getHomeContent(fetch).catch(() => DEFAULT_HOME_CONTENT),
         // Uncapped, on purpose — see the note at the top of home-hero.ts.
-        api.getFigurinesPage().catch(() => ({ items: [] as FigurineListItem[], total: 0 })),
+        api.getFigurinesPage(undefined, fetch).catch(() => ({ items: [] as FigurineListItem[], total: 0 })),
         // The maker's own section: it was rendered only after the client had fetched the
         // profile, so the page's one piece of authored prose — the thing that says who made
         // all this — reached no crawler at all. (Deduped: SiteHeader asks for it too.)
-        api.getAuthorProfile().catch(() => null),
+        api.getAuthorProfile(fetch).catch(() => null),
     ]);
 
     const works = sortWorks(visibleWorks(page.items));

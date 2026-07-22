@@ -403,7 +403,7 @@
     if (type === 'popstate') {
       const savedScroll = sessionStorage.getItem(SCROLL_KEY);
       if (savedScroll) {
-        requestAnimationFrame(() => window.scrollTo({ top: parseInt(savedScroll), behavior: 'instant' }));
+        requestAnimationFrame(() => window.scrollTo({ top: parseInt(savedScroll, 10), behavior: 'instant' }));
         sessionStorage.removeItem(SCROLL_KEY);
       }
       try {

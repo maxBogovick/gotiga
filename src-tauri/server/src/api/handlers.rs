@@ -1932,16 +1932,13 @@ pub async fn sitemap_xml(
             continue;
         }
 
-        let detail = service.get_figurine_details(f.id.clone()).await.ok();
-        let image_url = detail
-            .as_ref()
-            .and_then(|d| {
-                d.images
-                    .iter()
-                    .find(|i| i.image_type == ImageType::Face)
-                    .or_else(|| d.images.first())
-            })
-            .map(|i| i.url.as_str())
+        // The list item already carries the face image (from to_list_item), so use
+        // it directly instead of a per-figurine get_figurine_details fetch — that was
+        // an N+1 (one ~7-query detail load per work) for data already in hand. Prefer
+        // the 1800px large rendition, same as feed_rss.
+        let image_url = f
+            .face_image_large_url
+            .as_deref()
             .or(f.face_image_url.as_deref());
         let image = image_sitemap_entry(image_url);
 

@@ -35,7 +35,17 @@ pub struct AppService {
     /// essentially every public read. The value is a percentile over the WHOLE collection:
     /// it moves slowly by construction, and a minute of staleness is invisible.
     favorite_tiers_cache: Arc<Mutex<Option<(Instant, crate::db::FavoriteTiers)>>>,
+    /// One reused HTTP client for all outbound notifications (Telegram). Reqwest's
+    /// Client holds a connection pool and is meant to be created once and cloned —
+    /// building a fresh one per notification threw away connection/TLS reuse. It
+    /// also carries a request timeout so a hung endpoint can't stall a caller.
+    http_client: Client,
 }
+
+/// Widest rate-limit window in use anywhere; the GC keeps timestamps at least this
+/// fresh, so a swept key can never wrongly reject (its data was already expired for
+/// every bucket).
+const RATE_LIMIT_WIDEST_WINDOW: Duration = Duration::from_secs(3600);
 
 /// How long a computed set of favorite tiers stays good.
 const FAVORITE_TIERS_TTL: Duration = Duration::from_secs(60);
@@ -44,6 +54,10 @@ impl AppService {
     pub fn new(repo: Repository, config: Config) -> Self {
         let geoip = Arc::new(crate::geo::GeoIp::open(config.geoip_db_path.as_deref()));
         let analytics = crate::analytics::AnalyticsRuntime::new(repo.clone());
+        let http_client = Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .unwrap_or_default();
         Self {
             repo,
             config,
@@ -54,6 +68,7 @@ impl AppService {
             observability: ObservabilityState::default(),
             analytics,
             favorite_tiers_cache: Arc::new(Mutex::new(None)),
+            http_client,
         }
     }
 
@@ -147,6 +162,31 @@ impl AppService {
         }
         entry.push(now);
         Ok(())
+    }
+
+    /// Periodic sweep so the in-memory limiters can't grow without bound. The
+    /// per-request `check_*` paths only prune the single key they touch, so a key
+    /// for an IP that never returns would otherwise live forever. This drops stale
+    /// timestamps across every key and removes the now-empty ones. Safe to run on
+    /// any interval — it only ever removes already-expired data. Spawned on a timer
+    /// from main.rs.
+    pub async fn prune_rate_limiters(&self) -> usize {
+        let now = Instant::now();
+        let mut removed = 0usize;
+        for limiter in [
+            &self.comment_rate_limiter,
+            &self.commission_rate_limiter,
+            &self.general_rate_limiter,
+        ] {
+            let mut map = limiter.lock().await;
+            let before = map.len();
+            map.retain(|_, times| {
+                times.retain(|t| now.duration_since(*t) < RATE_LIMIT_WIDEST_WINDOW);
+                !times.is_empty()
+            });
+            removed += before - map.len();
+        }
+        removed
     }
 
     pub async fn initialize(&self) -> Result<()> {
@@ -1025,9 +1065,18 @@ impl AppService {
         Ok(tiers)
     }
 
-    pub async fn list_figurines(&self, visible_only: bool, query: crate::models::FigurineQuery) -> Result<crate::models::FigurinesPage> {
+    pub async fn list_figurines(&self, visible_only: bool, mut query: crate::models::FigurineQuery) -> Result<crate::models::FigurinesPage> {
+        // A bounded default so an omitted page size can never become an unbounded
+        // scan-and-return of the whole table: get_all_figurines applies no LIMIT at
+        // all when per_page is None. 1000 sits far above the real catalogue size yet
+        // caps the worst case for sitemap/feed and any client that forgets perPage.
+        const DEFAULT_PAGE_CAP: i64 = 1000;
         let page = query.page.unwrap_or(1).max(1);
-        let per_page = query.per_page.unwrap_or(i64::MAX);
+        let per_page = query
+            .per_page
+            .unwrap_or(DEFAULT_PAGE_CAP)
+            .clamp(1, DEFAULT_PAGE_CAP);
+        query.per_page = Some(per_page);
         let (figurines, total) = self.repo.get_all_figurines(visible_only, &query).await?;
         let ids: Vec<Uuid> = figurines.iter().map(|f| f.id).collect();
         let faces = self.repo.get_face_images_for_figurines(&ids).await?;
@@ -1809,7 +1858,11 @@ impl AppService {
                 .as_ref()
                 .is_some_and(|s| *s != crate::models::FigurineStatus::Available);
         if became_available {
-            let _ = self.send_availability_digest(figurine_id, &req.name).await;
+            let svc = self.clone();
+            let name = req.name.clone();
+            tokio::spawn(async move {
+                let _ = svc.send_availability_digest(figurine_id, &name).await;
+            });
         }
         Self::log_domain_event("figurine_saved", "figurine", figurine_id, "ok");
         Ok(())
@@ -1915,26 +1968,57 @@ impl AppService {
         // figurine_analytics_daily, figurine_analytics_sources_daily.
         self.repo.delete_figurine(uuid).await?;
 
-        // Remove physical files from disk (skip remote http URLs).
+        // Remove physical files from disk (skip remote http URLs), including the
+        // derived renditions that are NOT stored on the image row. The client
+        // derives those URLs by rewriting the path, so save_image_variants writes
+        // seven files per upload (original + preview/medium/thumb, each JPEG+WebP)
+        // while only the preview/original/thumb JPEGs live in the DB. Removing only
+        // the stored three leaked preview.webp / medium.* / thumb.webp on every
+        // delete — collect the full set here. Uses tokio::fs so the (possibly many)
+        // unlinks never block a runtime worker.
+        let webp_sibling = |p: &str| -> Option<String> {
+            p.strip_suffix(".jpg")
+                .or_else(|| p.strip_suffix(".jpeg"))
+                .map(|stem| format!("{stem}.webp"))
+        };
+        let mut rels: Vec<String> = Vec::new();
         for img in &images {
-            for rel in [
-                Some(img.file_path.as_str()),
-                img.original_path.as_deref(),
-                img.thumb_path.as_deref(),
-                img.depth_path.as_deref(),
+            for p in [
+                Some(img.file_path.clone()),
+                img.original_path.clone(),
+                img.thumb_path.clone(),
+                img.depth_path.clone(),
             ]
             .into_iter()
             .flatten()
             {
-                if rel.starts_with("http") {
-                    continue;
-                }
-                let path = Path::new(&self.config.upload_dir)
-                    .join(rel.trim_start_matches('/'));
-                if path.is_file() {
-                    let _ = fs::remove_file(&path);
+                rels.push(p);
+            }
+            // Preview path → its medium rendition and every WebP sibling.
+            let preview = img.file_path.clone();
+            let medium = preview.replace("/preview/", "/medium/");
+            for jpg in [preview.clone(), medium.clone()] {
+                if let Some(w) = webp_sibling(&jpg) {
+                    rels.push(w);
                 }
             }
+            if medium != preview {
+                rels.push(medium);
+            }
+            if let Some(thumb) = &img.thumb_path
+                && let Some(w) = webp_sibling(thumb)
+            {
+                rels.push(w);
+            }
+        }
+        rels.sort();
+        rels.dedup();
+        for rel in rels {
+            if rel.starts_with("http") {
+                continue;
+            }
+            let path = Path::new(&self.config.upload_dir).join(rel.trim_start_matches('/'));
+            let _ = tokio::fs::remove_file(&path).await;
         }
 
         Self::log_domain_event("figurine_deleted", "figurine", uuid, "ok");
@@ -2079,7 +2163,13 @@ impl AppService {
         self.observability
             .record_business_event("order_created", "ok");
         Self::log_domain_event("order_created", "order", saved.id, "ok");
-        let _ = self.send_order_notification(&saved).await;
+        {
+            let svc = self.clone();
+            let saved = saved.clone();
+            tokio::spawn(async move {
+                let _ = svc.send_order_notification(&saved).await;
+            });
+        }
         Ok(saved)
     }
 
@@ -2327,7 +2417,7 @@ impl AppService {
         );
 
         let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
-        let client = Client::new();
+        let client = self.http_client.clone();
         let _ = client
             .post(&url)
             .json(&serde_json::json!({
@@ -2400,7 +2490,13 @@ impl AppService {
         self.observability
             .record_business_event("commission_created", "ok");
         Self::log_domain_event("commission_created", "commission", saved.id, "ok");
-        let _ = self.send_commission_notification(&saved).await;
+        {
+            let svc = self.clone();
+            let saved = saved.clone();
+            tokio::spawn(async move {
+                let _ = svc.send_commission_notification(&saved).await;
+            });
+        }
         Ok(CommissionCreatedResponse {
             id: saved.id.to_string(),
             claim_token: saved.claim_token,
@@ -2708,7 +2804,7 @@ impl AppService {
         );
 
         let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
-        let client = Client::new();
+        let client = self.http_client.clone();
         let _ = client
             .post(&url)
             .json(&serde_json::json!({
@@ -3004,7 +3100,13 @@ impl AppService {
         self.observability
             .record_business_event("booking_created", "ok");
         Self::log_domain_event("booking_created", "booking", booking.id, "ok");
-        let _ = self.send_booking_notification(&booking).await;
+        {
+            let svc = self.clone();
+            let booking = booking.clone();
+            tokio::spawn(async move {
+                let _ = svc.send_booking_notification(&booking).await;
+            });
+        }
         Ok(booking)
     }
 
@@ -3039,7 +3141,7 @@ impl AppService {
         );
 
         let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
-        let client = Client::new();
+        let client = self.http_client.clone();
         let _ = client
             .post(&url)
             .json(&serde_json::json!({
@@ -3365,16 +3467,15 @@ impl AppService {
         }
     }
 
-    fn collect_upload_files(&self) -> Result<Vec<(String, u64)>> {
+    /// Synchronous recursive walk of the uploads tree. Takes the dir by value (not
+    /// &self) so it can be handed to `spawn_blocking` — the blocking std::fs calls
+    /// must never run on an async runtime worker (see `media_inventory`).
+    fn collect_upload_files(upload_dir: &str) -> Result<Vec<(String, u64)>> {
         let mut files = Vec::new();
         for folder in ["images", "videos", "audio", "backgrounds"] {
-            let dir = Path::new(&self.config.upload_dir).join(folder);
+            let dir = Path::new(upload_dir).join(folder);
             if dir.exists() {
-                Self::collect_files_recursive(
-                    Path::new(&self.config.upload_dir),
-                    &dir,
-                    &mut files,
-                )?;
+                Self::collect_files_recursive(Path::new(upload_dir), &dir, &mut files)?;
             }
         }
         files.sort_by(|a, b| a.0.cmp(&b.0));
@@ -3420,7 +3521,13 @@ impl AppService {
             usage_map.entry(usage.path.clone()).or_default().push(usage);
         }
 
-        let files_on_disk = self.collect_upload_files()?;
+        // The uploads-tree walk is synchronous std::fs — run it off the async
+        // runtime so a large media library can't stall every concurrent request.
+        let upload_dir = self.config.upload_dir.clone();
+        let files_on_disk =
+            tokio::task::spawn_blocking(move || Self::collect_upload_files(&upload_dir))
+                .await
+                .map_err(|e| AppError::Internal(format!("media scan task failed: {e}")))??;
         let file_size_map: HashMap<String, u64> = files_on_disk.into_iter().collect();
         let mut known_paths: HashSet<String> = usage_map.keys().cloned().collect();
         known_paths.extend(file_size_map.keys().cloned());
@@ -4203,12 +4310,11 @@ impl AppService {
 
     pub async fn get_user_waitlist(&self, user_id: Uuid) -> Result<Vec<WaitlistEntryDto>> {
         let entries = self.repo.get_user_waitlist(user_id).await?;
+        // All positions in one query instead of a SELECT COUNT(*) per entry (N+1).
+        let positions = self.repo.waitlist_positions_for_user(user_id).await?;
         let mut dtos = Vec::with_capacity(entries.len());
         for e in entries {
-            let position = self
-                .repo
-                .waitlist_position(e.figurine_id, e.created_at)
-                .await?;
+            let position = positions.get(&e.id).copied().unwrap_or(0);
             dtos.push(WaitlistEntryDto {
                 id: e.id.to_string(),
                 figurine_id: e.figurine_id.to_string(),
@@ -4778,7 +4884,13 @@ impl AppService {
         self.observability
             .record_business_event("waitlist_joined", "ok");
         Self::log_domain_event("waitlist_joined", "waitlist", entry.id, "ok");
-        let _ = self.send_waitlist_notification(&entry).await;
+        {
+            let svc = self.clone();
+            let entry = entry.clone();
+            tokio::spawn(async move {
+                let _ = svc.send_waitlist_notification(&entry).await;
+            });
+        }
         Ok(crate::models::WaitlistCreatedResponse {
             cancel_token: entry.cancel_token,
             position,
@@ -4840,7 +4952,13 @@ impl AppService {
         // Registered users get an in-app message; anonymous visitors have no
         // account, so also send the author a digest with everyone's contacts
         // to reach out personally. Runs before entries are cleared.
-        let _ = self.send_availability_digest(uuid, &figurine_name).await;
+        {
+            let svc = self.clone();
+            let figurine_name = figurine_name.clone();
+            tokio::spawn(async move {
+                let _ = svc.send_availability_digest(uuid, &figurine_name).await;
+            });
+        }
         // Remove all entries for this figurine after notification
         self.repo.mark_waitlist_notified(uuid).await?;
         Self::log_domain_event("waitlist_notified", "figurine", uuid, "ok");
@@ -4917,7 +5035,11 @@ impl AppService {
             .record_business_event("newsletter_subscribed", "ok");
         Self::log_domain_event("newsletter_subscribed", "subscriber", sub.id, "ok");
         if !already {
-            let _ = self.send_welcome_email(&sub).await;
+            let svc = self.clone();
+            let sub = sub.clone();
+            tokio::spawn(async move {
+                let _ = svc.send_welcome_email(&sub).await;
+            });
         }
         Ok(crate::models::SubscriptionCreatedResponse {
             unsubscribe_token: sub.unsubscribe_token,
@@ -4999,7 +5121,13 @@ impl AppService {
         self.observability
             .record_business_event("contact_message_received", "ok");
         Self::log_domain_event("contact_message_received", "contact_message", msg.id, "ok");
-        let _ = self.send_contact_message_notification(&msg).await;
+        {
+            let svc = self.clone();
+            let msg = msg.clone();
+            tokio::spawn(async move {
+                let _ = svc.send_contact_message_notification(&msg).await;
+            });
+        }
         Ok(())
     }
 
@@ -5058,7 +5186,7 @@ impl AppService {
         );
 
         let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
-        let client = Client::new();
+        let client = self.http_client.clone();
         let _ = client
             .post(&url)
             .json(&serde_json::json!({
@@ -5180,7 +5308,7 @@ impl AppService {
         );
 
         let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
-        let _ = Client::new().post(&url)
+        let _ = self.http_client.post(&url)
             .json(&serde_json::json!({ "chat_id": chat_id, "text": text, "parse_mode": "MarkdownV2" }))
             .send().await;
         Ok(())
@@ -5280,7 +5408,7 @@ impl AppService {
         );
 
         let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
-        let _ = Client::new().post(&url)
+        let _ = self.http_client.post(&url)
             .json(&serde_json::json!({ "chat_id": chat_id, "text": text, "parse_mode": "MarkdownV2" }))
             .send().await;
         Ok(())
@@ -5377,7 +5505,7 @@ impl AppService {
             admin_link,
         );
         let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
-        let _ = Client::new().post(&url)
+        let _ = self.http_client.post(&url)
             .json(&serde_json::json!({ "chat_id": chat_id, "text": text, "parse_mode": "MarkdownV2" }))
             .send().await;
     }
@@ -5439,8 +5567,15 @@ impl AppService {
             .await?
             .map(|f| f.name)
             .unwrap_or_default();
-        self.send_comment_telegram_notification(&figurine_name, &author_name, body)
-            .await;
+        {
+            let svc = self.clone();
+            let author_name = author_name.clone();
+            let body = body.to_string();
+            tokio::spawn(async move {
+                svc.send_comment_telegram_notification(&figurine_name, &author_name, &body)
+                    .await;
+            });
+        }
 
         Ok(())
     }

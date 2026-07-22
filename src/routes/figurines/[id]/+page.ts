@@ -20,15 +20,15 @@ export const entries = async () => {
   );
 };
 
-export const load = async ({ params }: { params: { id: string } }) => {
+export const load = async ({ params, fetch }: { params: { id: string }; fetch: typeof globalThis.fetch }) => {
   // The work itself is the primary fetch. getFigurine returns null only on 404
   // (api.ts), so a null here means "no such work" — distinct from loadError, which
   // means the backend was unreachable. The page renders NotFound vs an error/retry
   // screen accordingly, instead of an endless skeleton.
   // Both requests fire in parallel; the work is required, neighbours are best-effort
   // (their failure resolves to null and must never block the work or flag loadError).
-  const figurineReq = api.getFigurine(params.id);
-  const allReq = api.getAllFigurines().catch(() => null);
+  const figurineReq = api.getFigurine(params.id, fetch);
+  const allReq = api.getAllFigurines(undefined, fetch).catch(() => null);
 
   let figurine: import('$lib/types/api').Figurine | null = null;
   let loadError = false;
