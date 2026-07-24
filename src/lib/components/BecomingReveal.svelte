@@ -59,12 +59,17 @@
   onpointercancel={onPointerUp}
   role="presentation"
 >
-  <img class="becoming-img becoming-img--after" src={afterSrc} alt="" draggable="false" />
+  <!-- Below-the-fold reveal: lazy-load both plates so the finished-work image
+       (the same full-size photo already shown in the main viewer) isn't fetched
+       a second time on first paint — it loads only when the reader scrolls here. -->
+  <img class="becoming-img becoming-img--after" src={afterSrc} alt="" draggable="false" loading="lazy" decoding="async" />
   <img
     class="becoming-img becoming-img--before"
     src={beforeSrc}
     alt=""
     draggable="false"
+    loading="lazy"
+    decoding="async"
     style="clip-path: inset(0 {100 - pos}% 0 0);"
   />
 

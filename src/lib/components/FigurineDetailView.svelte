@@ -510,7 +510,11 @@
   }
 
   $effect(() => {
-    const url = resolveUrl(currentImage?.url);
+    // Probe the THUMB, not the full preview: aspect ratio is identical across
+    // renditions, and the ~420px thumb is already fetched for BrassLens's blur-up,
+    // so measuring it costs nothing — whereas probing currentImage.url pulled a
+    // second full 1800px preview (~470 KB) solely to read naturalWidth/Height.
+    const url = resolveUrl(currentImage?.thumbUrl ?? currentImage?.url);
     if (!url || typeof Image === 'undefined') {
       resetImageAspect();
       return;

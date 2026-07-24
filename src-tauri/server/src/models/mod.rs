@@ -152,6 +152,8 @@ pub struct Figurine {
     pub dimensions: Option<String>,
     pub material: Option<String>,
     pub technique: Option<String>,
+    /// Editorial grouping (e.g. a named collection) — the archive page's filter axis.
+    pub series: Option<String>,
     pub year: Option<i32>,
     pub passport_number: Option<String>,
     pub edition: Option<String>,
@@ -166,6 +168,9 @@ pub struct Figurine {
     /// Backstage, search-only AI visual caption (see the migration). Folded into
     /// the semantic-search embedding text; never serialised to the public DTO.
     pub visual_caption: Option<String>,
+    /// Admin-only Pinterest SEO copy for feed.xml — never serialised to any
+    /// public/admin figurine DTO; read only by feed_rss (see the migration).
+    pub pinterest_description: Option<String>,
     pub is_visible: bool,
     pub is_featured: bool,
     /// "The house wakes" — daily showing window in minutes from midnight (0..1439),
@@ -474,6 +479,9 @@ pub struct FigurineDto {
     pub dimensions: Option<String>,
     pub material: Option<String>,
     pub technique: Option<String>,
+    /// Editorial grouping (e.g. a named collection) — the archive page's filter axis.
+    #[serde(default)]
+    pub series: Option<String>,
     pub year: Option<i32>,
     pub passport_number: Option<String>,
     pub edition: Option<String>,
@@ -1060,6 +1068,9 @@ pub struct SaveFigurineRequest {
     pub dimensions: Option<String>,
     pub material: Option<String>,
     pub technique: Option<String>,
+    /// Editorial grouping (e.g. a named collection) — the archive page's filter axis.
+    #[serde(default)]
+    pub series: Option<String>,
     pub year: Option<i32>,
     pub passport_number: Option<String>,
     pub edition: Option<String>,
@@ -1218,6 +1229,9 @@ pub struct OrderRequest {
     pub message: Option<String>,
     #[serde(default = "default_order_mode")]
     pub mode: OrderMode,
+    /// Self-certified "I am 16 or older" checkbox — required on every public
+    /// form that collects contact details (see privacy policy "Children" section).
+    pub age_confirmed: bool,
 }
 
 fn default_order_mode() -> OrderMode {
@@ -1588,6 +1602,9 @@ pub struct CreateBookingRequest {
     pub venue: Option<String>,
     pub starts_at: String,
     pub ends_at: String,
+    /// Self-certified "I am 16 or older" checkbox — required on every public
+    /// form that collects contact details (see privacy policy "Children" section).
+    pub age_confirmed: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1685,6 +1702,9 @@ pub struct RegisterRequest {
     /// one entry per category (fixed order), each a list of icon_ids.
     /// Persisted so the same grid can be rebuilt at login.
     pub pool: [Vec<String>; 4],
+    /// Self-certified "I am 16 or older" checkbox — required on every public
+    /// form that collects contact details (see privacy policy "Children" section).
+    pub age_confirmed: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2255,6 +2275,9 @@ pub struct CreateSubscriptionRequest {
     pub name: Option<String>,
     pub source: Option<String>,
     pub lang: Option<String>,
+    /// Self-certified "I am 16 or older" checkbox — required on every public
+    /// form that collects contact details (see privacy policy "Children" section).
+    pub age_confirmed: bool,
 }
 
 /// Returned to the visitor right after signing the book — their receipt and
@@ -2551,6 +2574,9 @@ pub struct CommissionRequest {
     pub website: Option<String>,
     /// UI language at submission time ('ru' | 'en'), for later system messages.
     pub lang: Option<String>,
+    /// Self-certified "I am 16 or older" checkbox — required on every public
+    /// form that collects contact details (see privacy policy "Children" section).
+    pub age_confirmed: bool,
 }
 
 /// Edit of a petition's content (by its owner or the master) — only while work
@@ -2643,6 +2669,9 @@ pub struct CreateWaitlistRequest {
     pub requester_email: String,
     pub requester_phone: Option<String>,
     pub note: Option<String>,
+    /// Self-certified "I am 16 or older" checkbox — required on every public
+    /// form that collects contact details (see privacy policy "Children" section).
+    pub age_confirmed: bool,
 }
 
 // ============================================================

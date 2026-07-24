@@ -42,6 +42,7 @@
   let deadline = $state('');
   let budgetNote = $state('');
   let similarFullFormHref = $derived(`/commission?source=${encodeURIComponent(figurineId)}`);
+  let ageConfirmed = $state(false);
   let submitting = $state(false);
   let submitError = $state('');
   let done = $state(false);
@@ -100,6 +101,7 @@
     startsAt = today;
     endsAt = addDays(today, 1);
     dateError = '';
+    ageConfirmed = false;
     submitError = '';
     done = false;
     successTitle = '';
@@ -127,6 +129,10 @@
     }
     if (!authStore.isLoggedIn && !isValidEmail(contact.requesterEmail)) {
       submitError = $t('formInvalidEmail');
+      return null;
+    }
+    if (!ageConfirmed) {
+      submitError = $t('formAgeConfirmRequired');
       return null;
     }
     return contact;
@@ -166,6 +172,7 @@
           requesterEmail: contact.requesterEmail,
           requesterPhone: phone.trim() || null,
           note: message.trim() || null,
+          ageConfirmed,
         });
         onJoined(res.cancelToken, res.position);
         successTitle = $t('waitlistSuccessTitle');
@@ -182,6 +189,7 @@
           venue: venue.trim() || null,
           startsAt,
           endsAt,
+          ageConfirmed,
         }, authStore.token);
         const claim = { token: res.cancelToken, figurineName, startsAt, endsAt, submittedAt: new Date().toISOString() };
         // Backend already ties the booking to the account when the token is sent;
@@ -209,6 +217,7 @@
           similarKeepNote: keepNote.trim() || null,
           similarChangeNote: changeNote.trim() || null,
           lang: $lang,
+          ageConfirmed,
         }, authStore.token ?? undefined);
         successTitle = $t('commissionSentTitle');
         successText = $t('commissionSentBody');
@@ -236,6 +245,7 @@
           requesterPhone: phone.trim() || null,
           message: orderMessage(prefix),
           mode,
+          ageConfirmed,
         }, authStore.token);
         if (intent === 'notify' && res?.cancelToken) onNotified(res.cancelToken);
         successTitle = $t('orderSuccessTitle');
@@ -391,6 +401,11 @@
           <label class="unified-field">
             <span>{intent === 'waitlist' ? $t('waitlistNoteLabel') : $t('orderMessageLabel')}</span>
             <textarea bind:value={message} rows="3" placeholder={$t('unifiedMessagePlaceholder')}></textarea>
+          </label>
+
+          <label class="unified-consent">
+            <input type="checkbox" bind:checked={ageConfirmed} required />
+            <span>{$t('formAgeConfirm')}</span>
           </label>
 
           {#if submitError}
@@ -614,6 +629,29 @@
   .unified-field textarea:focus,
   .unified-fields input:focus {
     border-color: #c65f3c;
+  }
+
+  .unified-consent {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    cursor: pointer;
+  }
+
+  .unified-consent input {
+    margin-top: 0.15rem;
+    width: 1rem;
+    height: 1rem;
+    accent-color: #6f3b24;
+    flex-shrink: 0;
+    cursor: pointer;
+  }
+
+  .unified-consent span {
+    font-family: "Inter", sans-serif;
+    font-size: 0.78rem;
+    line-height: 1.5;
+    color: #5f4636;
   }
 
   .unified-error {

@@ -766,6 +766,28 @@ export const api = {
         });
     },
 
+    /**
+     * Admin: read a work's Pinterest SEO description — feeds feed.xml only,
+     * never shown to visitors. Returns null when unset.
+     */
+    async getFigurinePinterestDescription(id: string): Promise<string | null> {
+        if (isTauri) return null;
+        const res = await webFetch<{ description: string | null }>(`/admin/figurines/${id}/pinterest-description`, {
+            headers: authHeaders(),
+        });
+        return res?.description ?? null;
+    },
+
+    /** Admin: set (blank clears) a work's Pinterest SEO description. */
+    async setFigurinePinterestDescription(id: string, description: string): Promise<void> {
+        if (isTauri) throw new Error('Pinterest descriptions are only available on the server build.');
+        await webFetch(`/admin/figurines/${id}/pinterest-description`, {
+            method: 'PUT',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ description }),
+        });
+    },
+
     async deleteFigurine(id: string): Promise<void> {
         invalidateReadPrefix('figurines:');
         if (isTauri) return invoke('delete_figurine', { id });
@@ -1429,11 +1451,11 @@ export const api = {
 
     // === USER AUTH ===
 
-    async userRegister(email: string, displayName: string, selections: [string, string, string, string], pool: string[][]): Promise<LoginVerifyResponse> {
+    async userRegister(email: string, displayName: string, selections: [string, string, string, string], pool: string[][], ageConfirmed: boolean): Promise<LoginVerifyResponse> {
         return webFetch('/auth/register', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, displayName, selections, pool }),
+            body: JSON.stringify({ email, displayName, selections, pool, ageConfirmed }),
         });
     },
 

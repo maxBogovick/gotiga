@@ -130,6 +130,7 @@
   let name = $state('');
   let email = $state('');
   let phone = $state('');
+  let ageConfirmed = $state(false);
   let website = $state(''); // honeypot
 
   let isSubmitting = $state(false);
@@ -216,6 +217,7 @@
     if (!effectiveEmail) { submitError = $t('formFillFields'); return; }
     if (!authStore.isLoggedIn && !isValidEmail(effectiveEmail)) { submitError = $t('formInvalidEmail'); return; }
     if (!description.trim()) { submitError = $t('commissionNeedIdea'); step = 1; return; }
+    if (!ageConfirmed) { submitError = $t('formAgeConfirmRequired'); return; }
 
     // On the general form (no URL source) carry the checkbox selection: the first
     // ticked work becomes the linked source (thumbnail in admin/profile), and every
@@ -248,6 +250,7 @@
           attachmentUrls: attachments,
           website: website || null,
           lang: $lang,
+          ageConfirmed,
         },
         authStore.sessionToken ?? undefined,
       );
@@ -527,6 +530,10 @@
               <p>{$t('commissionTerms')}</p>
               <a class="terms-link" href="/acquire">{$t('navAcquire')} →</a>
             </div>
+            <label class="age-consent">
+              <input type="checkbox" bind:checked={ageConfirmed} />
+              <span>{$t('formAgeConfirm')}</span>
+            </label>
           </div>
         {/if}
 
@@ -689,6 +696,10 @@
   .terms-note p { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 1rem; line-height: 1.5; color: #6f3b24; margin: 0; }
   .terms-link { display: inline-block; margin-top: 0.6rem; font-size: 0.8rem; letter-spacing: 0.04em; color: #c65f3c; text-decoration: none; }
   .terms-link:hover { text-decoration: underline; }
+
+  .age-consent { display: flex; align-items: flex-start; gap: 0.55rem; margin-top: 0.9rem; cursor: pointer; }
+  .age-consent input { margin-top: 0.2rem; width: 1rem; height: 1rem; accent-color: #6f3b24; flex-shrink: 0; cursor: pointer; }
+  .age-consent span { font-family: 'Inter', sans-serif; font-size: 0.8rem; line-height: 1.45; color: #5f4636; }
 
   .err { color: #a3361d; font-size: 0.85rem; }
   .err.center { text-align: center; }

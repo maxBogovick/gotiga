@@ -333,6 +333,8 @@ export interface OrderRequest {
     requesterPhone: string | null;
     message: string | null;
     mode: OrderMode;
+    /** Self-certified "I am 16 or older" checkbox. */
+    ageConfirmed: boolean;
 }
 
 export interface Order {
@@ -756,6 +758,8 @@ export interface CommissionRequest {
     website?: string | null;
     /** UI language at submission ('ru' | 'en'). */
     lang?: string | null;
+    /** Self-certified "I am 16 or older" checkbox. */
+    ageConfirmed: boolean;
 }
 
 export interface EditCommissionRequest {
@@ -974,6 +978,8 @@ export interface CreateBookingRequest {
     venue: string | null;
     startsAt: string;
     endsAt: string;
+    /** Self-certified "I am 16 or older" checkbox. */
+    ageConfirmed: boolean;
 }
 
 export interface SaveShowingRequest {
@@ -1339,6 +1345,8 @@ export interface CreateWaitlistRequest {
     requesterEmail: string;
     requesterPhone: string | null;
     note: string | null;
+    /** Self-certified "I am 16 or older" checkbox. */
+    ageConfirmed: boolean;
 }
 
 export interface WaitlistEntryDto {
@@ -1383,6 +1391,8 @@ export interface CreateSubscriptionRequest {
     name?: string | null;
     source?: string | null;
     lang?: string | null;
+    /** Self-certified "I am 16 or older" checkbox. */
+    ageConfirmed: boolean;
 }
 
 export interface SubscriptionCreatedResponse {

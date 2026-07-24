@@ -74,6 +74,7 @@
   let startsAt    = $state(initialToday);
   let endsAt      = $state(addDays(initialToday, 1));
   let dateError   = $state('');
+  let ageConfirmed = $state(false);
   let submitError = $state('');
   let isSubmitting  = $state(false);
   let isSealed      = $state(false);
@@ -108,6 +109,7 @@
       startsAt     = today;
       endsAt       = addDays(today, 1);
       dateError    = '';
+      ageConfirmed = false;
       submitError  = '';
       cancelToken  = '';
       copied       = false;
@@ -144,6 +146,10 @@
       submitError = $t('bookingFillVenue');
       return;
     }
+    if (!ageConfirmed) {
+      submitError = $t('formAgeConfirmRequired');
+      return;
+    }
     isSubmitting = true;
     submitError  = '';
     try {
@@ -158,6 +164,7 @@
         venue:          venue.trim() || null,
         startsAt,
         endsAt,
+        ageConfirmed,
       });
       cancelToken = res.cancelToken;
       savedDates  = { startsAt, endsAt };
@@ -414,6 +421,12 @@
                       ></textarea>
                     </div>
                   {/if}
+
+                  <div class="flex items-start gap-2.5">
+                    <input id="b-age" type="checkbox" bind:checked={ageConfirmed} required
+                      class="mt-0.5 w-4 h-4 accent-[#6f3b24] border-[#d8c6b1] cursor-pointer flex-shrink-0" />
+                    <label for="b-age" class="text-xs text-[#5f4636] leading-relaxed cursor-pointer">{$t('formAgeConfirm')}</label>
+                  </div>
 
                   <!-- Submit -->
                   <p class="booking-process-note">{$t('bookingProcessNote')}</p>

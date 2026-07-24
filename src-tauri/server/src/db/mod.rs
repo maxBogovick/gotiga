@@ -511,6 +511,7 @@ impl Repository {
                 f.id::text AS figurine_id,
                 f.name,
                 f.status,
+                f.series,
                 face.face_url,
                 top_source.top_source,
                 top_country.top_country,
@@ -550,6 +551,7 @@ impl Repository {
                 Option<String>,
                 Option<String>,
                 Option<String>,
+                Option<String>,
                 Vec<String>,
                 i64,
                 i64,
@@ -571,6 +573,7 @@ impl Repository {
                     figurine_id,
                     name,
                     status,
+                    series,
                     face_url,
                     top_source,
                     top_country,
@@ -588,12 +591,7 @@ impl Repository {
                         figurine_id,
                         name,
                         status,
-                        // Not wired to a DB column anywhere in this codebase yet
-                        // (the admin form's series input isn't persisted server-side
-                        // — a pre-existing gap, not introduced here); left `None`
-                        // so the series filter degrades to "no options" instead of
-                        // querying a column that doesn't exist.
-                        series: None,
+                        series,
                         face_url,
                         // The service layer overwrites both of these once it has
                         // merged in the growth-window query (signal/growth depend
@@ -1956,6 +1954,33 @@ impl Repository {
         Ok((figurines, total))
     }
 
+    /// Admin-only Pinterest SEO copy, batched by id — keyed by id string so
+    /// `feed_rss` can look items up straight against `FigurineListItemDto.id`.
+    /// Only non-blank values are returned; feed_rss falls back to its own
+    /// composed description for everything else.
+    pub async fn get_pinterest_descriptions(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<String, String>> {
+        let rows: Vec<(Uuid, Option<String>)> = sqlx::query_as(
+            "SELECT id, pinterest_description FROM figurines WHERE id = ANY($1)",
+        )
+        .bind(ids)
+        .fetch_all(&self.pg_pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|(id, d)| {
+                let d = d?.trim().to_string();
+                if d.is_empty() {
+                    None
+                } else {
+                    Some((id.to_string(), d))
+                }
+            })
+            .collect())
+    }
+
     pub async fn get_figurine_by_id(&self, id: Uuid) -> Result<Option<Figurine>> {
         let figurine = sqlx::query_as::<_, Figurine>("SELECT * FROM figurines WHERE id = $1")
             .bind(id)
@@ -2212,11 +2237,11 @@ impl Repository {
         let mut tx = self.pg_pool.begin().await?;
 
         sqlx::query(
-            "INSERT INTO figurines (id, name, short_text, full_description, dimensions, material, technique, year, passport_number, edition, created_period, care_instructions, provenance_note, authenticity_note, included_items, ambience_path, video_url, secret_text, is_visible, is_featured, status, sort_order, open_from_min, open_until_min, sealed_door_image, showing_room_id, display_layout, display_config, first_look_until, slug, slug_manual, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, NOW())
+            "INSERT INTO figurines (id, name, short_text, full_description, dimensions, material, technique, series, year, passport_number, edition, created_period, care_instructions, provenance_note, authenticity_note, included_items, ambience_path, video_url, secret_text, is_visible, is_featured, status, sort_order, open_from_min, open_until_min, sealed_door_image, showing_room_id, display_layout, display_config, first_look_until, slug, slug_manual, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, NOW())
              ON CONFLICT (id) DO UPDATE SET
                name=EXCLUDED.name, slug=EXCLUDED.slug, slug_manual=EXCLUDED.slug_manual, short_text=EXCLUDED.short_text, full_description=EXCLUDED.full_description,
-               dimensions=EXCLUDED.dimensions, material=EXCLUDED.material, technique=EXCLUDED.technique,
+               dimensions=EXCLUDED.dimensions, material=EXCLUDED.material, technique=EXCLUDED.technique, series=EXCLUDED.series,
                passport_number=EXCLUDED.passport_number, edition=EXCLUDED.edition, created_period=EXCLUDED.created_period,
                care_instructions=EXCLUDED.care_instructions, provenance_note=EXCLUDED.provenance_note,
                authenticity_note=EXCLUDED.authenticity_note, included_items=EXCLUDED.included_items,
@@ -2230,7 +2255,7 @@ impl Repository {
                first_look_until=EXCLUDED.first_look_until, updated_at=NOW()"
         )
         .bind(id).bind(&f.name).bind(&f.short_text).bind(&f.full_description)
-        .bind(&f.dimensions).bind(&f.material).bind(&f.technique).bind(f.year)
+        .bind(&f.dimensions).bind(&f.material).bind(&f.technique).bind(&f.series).bind(f.year)
         .bind(&f.passport_number).bind(&f.edition).bind(&f.created_period)
         .bind(&f.care_instructions).bind(&f.provenance_note).bind(&f.authenticity_note)
         .bind(&f.included_items)

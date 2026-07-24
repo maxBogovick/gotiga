@@ -1,0 +1,20 @@
+# Ritunia
+
+> One-of-a-kind gothic art dolls and miniature sculptures — sculpted, painted, and
+> finished entirely by hand by a single maker. Ritunia is a museum-style showcase,
+> not a shop: each piece is documented like a museum specimen, with material,
+> dimensions, year, and provenance.
+
+## Pages
+
+- [Home](https://ritunia.com/): Overview of the collection and the maker.
+- [Archive](https://ritunia.com/figurines): Full registry of gothic handmade miniatures, filterable by status, year, and series.
+- [About the Master](https://ritunia.com/author): Biography and background of the artist behind Ritunia.
+- [Workshop](https://ritunia.com/workshop): Process, materials, and technique notes.
+- [Commission](https://ritunia.com/commission): How to commission a new one-of-a-kind piece.
+
+## Notes
+
+- Every figurine has its own permanent page at /figurines/{slug} with a description, material, dimensions, year, and photography.
+- Pieces are not sold off-the-shelf; acquisition is by commission or reservation, as described on each figurine's page.
+- Full machine-readable list of figurine pages: https://ritunia.com/sitemap.xml

@@ -1025,7 +1025,7 @@ impl AppService {
             detail_image_large_url: detail.map(|i| self.face_image_large_url(i)),
             year: f.year,
             sort_order: f.sort_order,
-            series: None,
+            series: f.series,
             technique: f.technique,
             material: f.material,
             is_featured: f.is_featured,
@@ -1237,6 +1237,7 @@ impl AppService {
             dimensions: figurine.dimensions,
             material: figurine.material,
             technique: figurine.technique,
+            series: figurine.series,
             year: figurine.year,
             passport_number: figurine.passport_number,
             edition: figurine.edition,
@@ -1618,6 +1619,46 @@ impl AppService {
         if let Err(e) = self.reindex_figurine_embedding(uuid).await {
             tracing::warn!(target: "gotiga_server::embed", error = %e, "reindex after caption set failed");
         }
+        Ok(())
+    }
+
+    /// Batched Pinterest SEO description lookup for feed_rss — see
+    /// `get_figurine_pinterest_description` for the single-item admin editor version.
+    pub async fn get_pinterest_descriptions(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<String, String>> {
+        self.repo.get_pinterest_descriptions(ids).await
+    }
+
+    /// Read a work's admin-only Pinterest SEO description (never public).
+    pub async fn get_figurine_pinterest_description(&self, id: String) -> Result<Option<String>> {
+        let uuid = Self::parse_uuid(&id)?;
+        Ok(self
+            .repo
+            .get_figurine_by_id(uuid)
+            .await?
+            .and_then(|f| f.pinterest_description))
+    }
+
+    /// Set (or clear, when blank) a work's Pinterest SEO description. Deliberately
+    /// separate from save_figurine, like the search caption above, so ordinary
+    /// edits never touch it and the field never round-trips through the shared
+    /// figurine DTO.
+    pub async fn set_figurine_pinterest_description(
+        &self,
+        id: String,
+        description: Option<String>,
+    ) -> Result<()> {
+        let uuid = Self::parse_uuid(&id)?;
+        let desc = description
+            .map(|d| d.trim().to_string())
+            .filter(|d| !d.is_empty());
+        sqlx::query("UPDATE figurines SET pinterest_description = $1 WHERE id = $2")
+            .bind(&desc)
+            .bind(uuid)
+            .execute(self.repo.pg_pool())
+            .await?;
         Ok(())
     }
 
@@ -2138,6 +2179,11 @@ impl AppService {
     // === ORDERS / NOTIFICATIONS ===
 
     pub async fn create_order(&self, order: &OrderRequest, user_id: Option<Uuid>) -> Result<Order> {
+        if !order.age_confirmed {
+            return Err(AppError::BadRequest(
+                "Please confirm you are 16 or older".to_string(),
+            ));
+        }
         if order.mode == OrderMode::Reserve {
             let figurine_id = uuid::Uuid::parse_str(&order.figurine_id)
                 .map_err(|_| AppError::BadRequest("Invalid figurine ID".to_string()))?;
@@ -2472,6 +2518,11 @@ impl AppService {
         &self,
         req: &CommissionRequest,
     ) -> Result<CommissionCreatedResponse> {
+        if !req.age_confirmed {
+            return Err(crate::error::AppError::BadRequest(
+                "Please confirm you are 16 or older".to_string(),
+            ));
+        }
         validate_attachments(&req.attachment_urls)?;
         if let Some(source_id) = req
             .source_figurine_id
@@ -3066,6 +3117,12 @@ impl AppService {
         mut req: CreateBookingRequest,
         user_id: Option<Uuid>,
     ) -> Result<Booking> {
+        if !req.age_confirmed {
+            return Err(crate::error::AppError::BadRequest(
+                "Please confirm you are 16 or older".to_string(),
+            ));
+        }
+
         // The booking form on the detail page carries whatever handle is in the URL
         // (slug or UUID). Normalise to the canonical UUID before create_booking_atomic,
         // which binds figurine_id straight into SQL and cannot resolve a slug itself.
@@ -3973,6 +4030,11 @@ impl AppService {
         ip: Option<String>,
         user_agent: Option<String>,
     ) -> Result<LoginVerifyResponse> {
+        if !req.age_confirmed {
+            return Err(AppError::BadRequest(
+                "Please confirm you are 16 or older".into(),
+            ));
+        }
         if !req.email.contains('@') {
             return Err(AppError::BadRequest("Invalid email".into()));
         }
@@ -4868,6 +4930,11 @@ impl AppService {
         req: CreateWaitlistRequest,
         user_id: Option<Uuid>,
     ) -> Result<crate::models::WaitlistCreatedResponse> {
+        if !req.age_confirmed {
+            return Err(AppError::BadRequest(
+                "Please confirm you are 16 or older".to_string(),
+            ));
+        }
         let uuid = self.resolve_figurine_uuid(&figurine_id).await?;
         validate_text("Name", &req.requester_name, 100)?;
         if !req.requester_email.contains('@') || req.requester_email.len() > 200 {
@@ -5009,6 +5076,11 @@ impl AppService {
         req: crate::models::CreateSubscriptionRequest,
         ip: Option<String>,
     ) -> Result<crate::models::SubscriptionCreatedResponse> {
+        if !req.age_confirmed {
+            return Err(AppError::BadRequest(
+                "Please confirm you are 16 or older".to_string(),
+            ));
+        }
         let email = req.email.trim().to_string();
         if !email.contains('@') || email.len() > 200 {
             return Err(AppError::BadRequest("Valid email is required".to_string()));
@@ -5029,6 +5101,7 @@ impl AppService {
                 .filter(|n| !n.is_empty()),
             source: req.source.clone(),
             lang: req.lang.clone(),
+            age_confirmed: req.age_confirmed,
         };
         let (sub, already) = self.repo.subscribe(&normalized, ip.as_deref()).await?;
         self.observability

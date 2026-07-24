@@ -25,6 +25,7 @@
   let email   = $state('');
   let phone   = $state('');
   let note    = $state('');
+  let ageConfirmed = $state(false);
   let submitting = $state(false);
   let submitError = $state('');
   let done    = $state(false);
@@ -34,7 +35,7 @@
     if (submitting) return;
     onClose();
     setTimeout(() => {
-      name = ''; email = ''; phone = ''; note = '';
+      name = ''; email = ''; phone = ''; note = ''; ageConfirmed = false;
       submitError = ''; done = false; position = 0;
     }, 400);
   }
@@ -45,6 +46,7 @@
     const effectiveEmail = authStore.isLoggedIn ? (authStore.user?.email ?? '') : email.trim();
     if (!effectiveName || !effectiveEmail) { submitError = $t('waitlistFillFields'); return; }
     if (!authStore.isLoggedIn && !isValidEmail(effectiveEmail)) { submitError = $t('formInvalidEmail'); return; }
+    if (!ageConfirmed) { submitError = $t('formAgeConfirmRequired'); return; }
     submitting = true; submitError = '';
     try {
       const res = await api.joinWaitlist(figurineId, {
@@ -53,6 +55,7 @@
         requesterEmail: effectiveEmail,
         requesterPhone: phone.trim() || null,
         note: note.trim() || null,
+        ageConfirmed,
       });
       position = res.position;
       onJoined(res.cancelToken, res.position);
@@ -136,6 +139,12 @@
                     <textarea id="wl-note" bind:value={note} rows="2"
                       placeholder={$t('waitlistNotePlaceholder')}
                       class="w-full bg-[#f8f1e7] border-0 border-b border-[#d8c6b1] p-2 text-base italic text-[#34251c] focus:outline-none focus:border-[#c65f3c]/70 transition-colors placeholder-[#5f4636]/40 resize-none"></textarea>
+                  </div>
+
+                  <div class="flex items-start gap-2.5">
+                    <input id="wl-age" type="checkbox" bind:checked={ageConfirmed} required
+                      class="mt-0.5 w-4 h-4 accent-[#6f3b24] border-[#d8c6b1] cursor-pointer flex-shrink-0" />
+                    <label for="wl-age" class="text-xs text-[#5f4636] leading-relaxed cursor-pointer">{$t('formAgeConfirm')}</label>
                   </div>
 
                   <div class="pt-3 flex justify-center">

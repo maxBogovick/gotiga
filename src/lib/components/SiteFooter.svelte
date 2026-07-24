@@ -117,6 +117,8 @@
     <span class="colophon-text">{$t('footerColophon')}</span>
     <span class="colophon-dot" aria-hidden="true">·</span>
     <span class="colophon-rights">© {year} · {$t('footerRights')}</span>
+    <span class="colophon-dot" aria-hidden="true">·</span>
+    <a href="/privacy" class="colophon-link">{$t('footerPrivacyLink')}</a>
   </div>
 </footer>
 
@@ -390,6 +392,16 @@
   }
   .seal { color: var(--color-ember, #c65f3c); }
   .colophon-dot { color: #5e4c3a; }
+  .colophon-link {
+    color: inherit;
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+    transition: color 0.3s ease, border-color 0.3s ease;
+  }
+  .colophon-link:hover {
+    color: var(--color-ember, #c65f3c);
+    border-color: currentColor;
+  }
 
   @media (max-width: 880px) {
     .inner {

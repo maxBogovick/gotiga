@@ -3,6 +3,7 @@
     import { api, isTauri } from '$lib/api';
     import { figurineHref } from '$lib/figurineHref';
     import { formatFigurineAlt, altLabelsFrom, siblingPosition } from '$lib/figurine-alt';
+    import { generatePinterestDescription } from '$lib/pinterest-description';
     import type { Figurine, FigurineListItem, ShowingRoom } from '$lib/types/api';
     import { fade, slide } from 'svelte/transition';
     import SettingsModal from '$lib/components/SettingsModal.svelte';
@@ -108,6 +109,31 @@
             showMessage($t('adminMsgError') + (e instanceof Error ? e.message : String(e)), 'error');
         } finally {
             captionSaving = false;
+        }
+    }
+
+    // Pinterest SEO description ("Подключить RSS-канал" target) — same shape as
+    // the search caption above: its own endpoint, loaded lazily, never touched
+    // by the ordinary figurine save.
+    let pinterestDescText = $state('');
+    let pinterestDescLoading = $state(false);
+    let pinterestDescSaving = $state(false);
+
+    function generatePinterestDesc() {
+        if (!selectedFigurine) return;
+        pinterestDescText = generatePinterestDescription(selectedFigurine);
+    }
+
+    async function savePinterestDesc() {
+        if (!selectedFigurine) return;
+        pinterestDescSaving = true;
+        try {
+            await api.setFigurinePinterestDescription(selectedFigurine.id, pinterestDescText);
+            showMessage($t('adminPinterestDescSaved'), 'success');
+        } catch (e: unknown) {
+            showMessage($t('adminMsgError') + (e instanceof Error ? e.message : String(e)), 'error');
+        } finally {
+            pinterestDescSaving = false;
         }
     }
     let savedSnapshot = $state<string>('');
@@ -443,8 +469,10 @@
             selectedImageIdx = null;
             // Load the backstage search caption (separate from the figurine payload).
             captionText = '';
+            pinterestDescText = '';
             if (!isTauri) {
                 captionLoading = true;
+                pinterestDescLoading = true;
                 try {
                     const c = await api.getFigurineCaption(id);
                     // Guard: the user may have opened another work while this was
@@ -452,6 +480,11 @@
                     if (selectedFigurine?.id === id) captionText = c ?? '';
                 } catch { /* leave the field empty on failure */ }
                 finally { if (selectedFigurine?.id === id) captionLoading = false; }
+                try {
+                    const pd = await api.getFigurinePinterestDescription(id);
+                    if (selectedFigurine?.id === id) pinterestDescText = pd ?? '';
+                } catch { /* leave the field empty on failure */ }
+                finally { if (selectedFigurine?.id === id) pinterestDescLoading = false; }
             }
         }
     }
@@ -464,6 +497,7 @@
         activeFormTab = 'media';
         selectedImageIdx = null;
         captionText = '';
+        pinterestDescText = '';
     }
 
     function duplicateFigurine(fig: FigurineListItem) {
@@ -485,6 +519,7 @@
             activeFormTab = 'media';
             selectedImageIdx = null;
             captionText = '';
+            pinterestDescText = '';
         });
     }
 
@@ -1841,6 +1876,28 @@
                                     </div>
                                 {:else}
                                     <p class="text-[11px] italic text-[#7c6554]">{$t('adminCaptionSaveNewFirst')}</p>
+                                {/if}
+                            </div>
+
+                            <div class="block border-t border-[#34251c]/10 pt-6">
+                                <span class="label">{$t('adminPinterestDescLabel')}</span>
+                                <p class="text-[11px] leading-snug text-[#7c6554] mb-2">{$t('adminPinterestDescHint')}</p>
+                                {#if figurineExists}
+                                    <textarea bind:value={pinterestDescText} disabled={pinterestDescLoading}
+                                        placeholder={pinterestDescLoading ? '…' : ''}
+                                        class="input-gothic h-28"></textarea>
+                                    <div class="mt-2 flex gap-2">
+                                        <button type="button" onclick={generatePinterestDesc} disabled={pinterestDescLoading}
+                                            class="px-4 py-2 border border-[#34251c]/25 hover:border-[#34251c]/55 text-[#5f4636] hover:text-[#34251c] text-xs tracking-wide uppercase transition-colors disabled:opacity-40">
+                                            {$t('adminPinterestDescGenerate')}
+                                        </button>
+                                        <button type="button" onclick={savePinterestDesc} disabled={pinterestDescSaving || pinterestDescLoading}
+                                            class="px-4 py-2 border border-[#34251c]/25 hover:border-[#34251c]/55 text-[#5f4636] hover:text-[#34251c] text-xs tracking-wide uppercase transition-colors disabled:opacity-40">
+                                            {pinterestDescSaving ? '…' : $t('adminPinterestDescSave')}
+                                        </button>
+                                    </div>
+                                {:else}
+                                    <p class="text-[11px] italic text-[#7c6554]">{$t('adminPinterestDescSaveNewFirst')}</p>
                                 {/if}
                             </div>
                             {/if}

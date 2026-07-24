@@ -20,6 +20,7 @@
   let loading = $state(false);
   let downloading = $state(false);
   let memorized = $state(false);
+  let ageConfirmed = $state(false);
 
   // Personal subset shown to this user (one list of icon_ids per category).
   // Generated once on load and sent with the registration so the same grid is
@@ -50,6 +51,7 @@
   function validateStep1(): string {
     if (!isValidEmail(email)) return $t('authErrorEmail');
     if (!displayName.trim())  return $t('authErrorName');
+    if (!ageConfirmed)        return $t('formAgeConfirmRequired');
     return '';
   }
 
@@ -94,7 +96,8 @@
         email.trim().toLowerCase(),
         displayName.trim(),
         selections as [string, string, string, string],
-        pool
+        pool,
+        ageConfirmed
       );
       registeredUser = result.user;
       authStore.setSession(result.sessionToken, result.user); // auto-login the freshly created account
@@ -145,6 +148,10 @@
                autocomplete="name" onkeydown={(e) => e.key === 'Enter' && advance()} />
       </label>
     </div>
+    <label class="seal-check" class:armed={ageConfirmed}>
+      <input type="checkbox" bind:checked={ageConfirmed} />
+      <span>{$t('formAgeConfirm')}</span>
+    </label>
   {/if}
 
   {#if step >= 2 && step <= 5}

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { fade } from 'svelte/transition';
-  import { resolveWebpUrl } from '$lib/api';
+  import { resolveWebpUrl, resolveSrcset } from '$lib/api';
 
   let {
     src,
@@ -220,20 +220,23 @@
     />
   {/if}
 
-  <!-- Main image -->
+  <!-- Main image. The responsive candidate set is thumb(420)/medium(900)/preview(1800)
+       as JPEG + WebP (resolveSrcset). Including the 900px medium is load-bearing: with
+       only 420 and 1800 to choose from, a phone (needs ~750-1100 physical px) rejected
+       the thumb and pulled the full 1800px preview — ~470 KB to paint a ~390 px plate.
+       Falls back to the plain `src` for non-figurine images that have no siblings. -->
   {#if src && !imageFailed}
+    {@const responsive = resolveSrcset(src)}
     <picture style="display: contents;">
-      {#if resolveWebpUrl(src)}
-        <source
-          type="image/webp"
-          srcset={thumbSrc && resolveWebpUrl(thumbSrc) ? `${resolveWebpUrl(thumbSrc)} 420w, ${resolveWebpUrl(src)} 1800w` : `${resolveWebpUrl(src)} 1800w`}
-          {sizes}
-        />
+      {#if responsive?.webp}
+        <source type="image/webp" srcset={responsive.webp} {sizes} />
+      {:else if resolveWebpUrl(src)}
+        <source type="image/webp" srcset={resolveWebpUrl(src)} />
       {/if}
       <img
         {src}
-        srcset={thumbSrc ? `${thumbSrc} 420w, ${src} 1800w` : undefined}
-        sizes={thumbSrc ? sizes : undefined}
+        srcset={responsive?.jpeg ?? undefined}
+        sizes={responsive ? sizes : undefined}
         {alt}
         class="absolute inset-0 w-full h-full pointer-events-none select-none {imageFit === 'contain' ? 'object-contain' : 'object-cover'}"
         style="

@@ -28,6 +28,7 @@
 
   let email = $state('');
   let name = $state('');
+  let ageConfirmed = $state(false);
   let honeypot = $state(''); // bots fill this; humans never see it
   let sealing = $state(false); // transient "pressing the seal" beat
   let submitting = $state(false);
@@ -74,6 +75,10 @@
       error = $t('visitorBookErrorEmail');
       return;
     }
+    if (!ageConfirmed) {
+      error = $t('formAgeConfirmRequired');
+      return;
+    }
     submitting = true;
     try {
       const res = await api.subscribe({
@@ -81,6 +86,7 @@
         name: name.trim() || null,
         source: 'home_visitor_book',
         lang: $lang,
+        ageConfirmed,
       });
       visitorBook.sign(res.unsubscribeToken, addr, name);
       justLeft = false;
@@ -106,6 +112,7 @@
       visitorBook.leave();
       email = '';
       name = '';
+      ageConfirmed = false;
       justLeft = true;
       leaving = false;
     }
@@ -208,6 +215,11 @@
           <div class="hp" aria-hidden="true">
             <label>Leave this empty<input type="text" bind:value={honeypot} tabindex="-1" autocomplete="off" /></label>
           </div>
+
+          <label class="consent">
+            <input type="checkbox" bind:checked={ageConfirmed} required disabled={submitting || sealing} />
+            <span>{$t('formAgeConfirm')}</span>
+          </label>
 
           {#if error}<p class="form-error" role="alert">{error}</p>{/if}
           {#if justLeft}<p class="form-note" aria-live="polite">{$t('visitorBookLeftText')}</p>{/if}
@@ -461,6 +473,27 @@
     font-family: 'Instrument Sans', system-ui, sans-serif;
     font-size: 11.5px;
     letter-spacing: 0.01em;
+    color: var(--color-ink-tertiary);
+  }
+
+  .consent {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    cursor: pointer;
+  }
+  .consent input {
+    margin-top: 2px;
+    width: 15px;
+    height: 15px;
+    accent-color: var(--color-ember, #c65f3c);
+    flex-shrink: 0;
+    cursor: pointer;
+  }
+  .consent span {
+    font-family: 'Instrument Sans', system-ui, sans-serif;
+    font-size: 11.5px;
+    line-height: 1.5;
     color: var(--color-ink-tertiary);
   }
 

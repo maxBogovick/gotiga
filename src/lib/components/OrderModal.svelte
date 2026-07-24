@@ -34,6 +34,7 @@
   let email = $state('');
   let phone = $state('');
   let message = $state('');
+  let ageConfirmed = $state(false);
   let isSubmitting = $state(false);
   let isSealed = $state(false);
   let submitError = $state('');
@@ -48,6 +49,7 @@
         email = '';
         phone = '';
         message = '';
+        ageConfirmed = false;
       }, 500);
     }
   }
@@ -70,6 +72,7 @@
     if ((mode === 'request' || mode === 'reserve') && !effectiveName) { submitError = $t('formFillFields'); return; }
     if (!effectiveEmail) { submitError = $t('formFillFields'); return; }
     if (!authStore.isLoggedIn && !isValidEmail(effectiveEmail)) { submitError = $t('formInvalidEmail'); return; }
+    if (!ageConfirmed) { submitError = $t('formAgeConfirmRequired'); return; }
 
     isSubmitting = true;
 
@@ -82,6 +85,7 @@
         requesterPhone: phone.trim() || null,
         message: message.trim() || null,
         mode,
+        ageConfirmed,
       }, authStore.token);
 
       if (mode === 'notify' && res?.cancelToken) onNotified(res.cancelToken);
@@ -250,6 +254,12 @@
                               class="w-full bg-[#f8f1e7] border border-[#d8c6b1] p-3 text-lg italic text-[#34251c] focus:outline-none focus:border-[#c65f3c]/50 focus:bg-[#fff9f0] transition-colors placeholder-[#5f4636]/55 resize-none rounded-sm"
                               placeholder={$t('orderMessagePlaceholder')}
                       ></textarea>
+                    </div>
+
+                    <div class="flex items-start gap-2.5 pt-2">
+                      <input id="ord-age" type="checkbox" bind:checked={ageConfirmed} required
+                        class="mt-0.5 w-4 h-4 accent-[#6f3b24] border-[#d8c6b1] cursor-pointer flex-shrink-0" />
+                      <label for="ord-age" class="text-xs text-[#5f4636] leading-relaxed cursor-pointer">{$t('formAgeConfirm')}</label>
                     </div>
 
                     <div class="pt-8 flex justify-center">

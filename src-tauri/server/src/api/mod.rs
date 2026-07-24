@@ -214,6 +214,15 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                     )),
             )
             .route(
+                "/admin/figurines/:id/pinterest-description",
+                get(handlers::admin_get_figurine_pinterest_description)
+                    .put(handlers::admin_set_figurine_pinterest_description)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            .route(
                 "/upload",
                 post(handlers::upload_file)
                     .layer(DefaultBodyLimit::max(MEDIA_UPLOAD_LIMIT))

@@ -886,6 +886,32 @@ pub async fn admin_set_figurine_caption(
     Ok(StatusCode::OK)
 }
 
+/// Admin: read a work's Pinterest SEO description (feed.xml only; never public).
+pub async fn admin_get_figurine_pinterest_description(
+    State(service): State<AppService>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>> {
+    let description = service.get_figurine_pinterest_description(id).await?;
+    Ok(Json(serde_json::json!({ "description": description })))
+}
+
+#[derive(serde::Deserialize)]
+pub struct PinterestDescriptionBody {
+    pub description: Option<String>,
+}
+
+/// Admin: set (blank clears) a work's Pinterest SEO description.
+pub async fn admin_set_figurine_pinterest_description(
+    State(service): State<AppService>,
+    Path(id): Path<String>,
+    Json(body): Json<PinterestDescriptionBody>,
+) -> Result<StatusCode> {
+    service
+        .set_figurine_pinterest_description(id, body.description)
+        .await?;
+    Ok(StatusCode::OK)
+}
+
 // === ADMIN MEDIA UPLOAD ===
 
 pub async fn upload_file(
@@ -2006,6 +2032,14 @@ pub async fn feed_rss(
     // the Cyrillic copy).
     const MAX_DESCRIPTION: usize = 480;
 
+    // Admin-authored Pinterest SEO copy, where set, wins over the composed
+    // fallback below — see `pinterest_description` on the Figurine entity.
+    let feed_ids: Vec<Uuid> = figurines
+        .iter()
+        .filter_map(|f| Uuid::parse_str(&f.id).ok())
+        .collect();
+    let pin_descriptions = service.get_pinterest_descriptions(&feed_ids).await?;
+
     let mut items = String::new();
     for f in &figurines {
         // The 1800px "large" list image is high enough quality for Pins and needs no
@@ -2027,32 +2061,38 @@ pub async fn feed_rss(
         let handle = f.slug.as_deref().unwrap_or(&f.id);
         let link = format!("{base}/figurines/{handle}");
 
-        // Museum-label description: the work's own one-liner, then its attributes as
-        // keyword-rich trailing text. shortText only — never fullDescription (HTML/length)
-        // or secretText.
-        let lead = f
-            .short_text
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty());
-        let mut attrs: Vec<String> = Vec::new();
-        for a in [f.material.as_deref(), f.technique.as_deref()]
-            .into_iter()
-            .flatten()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            attrs.push(a.to_string());
-        }
-        if let Some(y) = f.year {
-            attrs.push(y.to_string());
-        }
-        let attrs = attrs.join(", ");
-        let mut desc = match (lead, attrs.is_empty()) {
-            (Some(l), false) => format!("{l} — {attrs}"),
-            (Some(l), true) => l.to_string(),
-            (None, false) => attrs.clone(),
-            (None, true) => f.name.clone(),
+        // The admin's own Pinterest SEO copy wins when set (see the "Generate"
+        // button in the admin text tab); otherwise fall back to a museum-label
+        // composite: the work's one-liner, then its attributes as keyword-rich
+        // trailing text. shortText only — never fullDescription (HTML/length) or
+        // secretText.
+        let mut desc = if let Some(pd) = pin_descriptions.get(&f.id) {
+            pd.clone()
+        } else {
+            let lead = f
+                .short_text
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let mut attrs: Vec<String> = Vec::new();
+            for a in [f.material.as_deref(), f.technique.as_deref()]
+                .into_iter()
+                .flatten()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                attrs.push(a.to_string());
+            }
+            if let Some(y) = f.year {
+                attrs.push(y.to_string());
+            }
+            let attrs = attrs.join(", ");
+            match (lead, attrs.is_empty()) {
+                (Some(l), false) => format!("{l} — {attrs}"),
+                (Some(l), true) => l.to_string(),
+                (None, false) => attrs,
+                (None, true) => f.name.clone(),
+            }
         };
         if desc.chars().count() > MAX_DESCRIPTION {
             desc = desc.chars().take(MAX_DESCRIPTION - 1).collect::<String>();
