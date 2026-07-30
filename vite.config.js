@@ -5,7 +5,6 @@ import { VitePWA } from "vite-plugin-pwa";
 import fs from "node:fs";
 import path from "node:path";
 
-const host = process.env.TAURI_DEV_HOST;
 const isWebBuild = process.env.VITE_BUILD_TARGET === "web";
 
 // Resolve the /admin route's own emitted files (its JS node chunk + CSS) so the service
@@ -185,15 +184,8 @@ export default defineConfig(async () => ({
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
-    hmr: host
-      ? {
-          protocol: "ws",
-          host,
-          port: 1421,
-        }
-      : undefined,
     watch: {
+      // The Rust backend lives here; recompiles must not trigger an HMR reload.
       ignored: ["**/src-tauri/**"],
     },
     proxy: apiProxy,

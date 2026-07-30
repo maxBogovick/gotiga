@@ -69,20 +69,6 @@ pub enum StepType {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
-#[sqlx(type_name = "zone_type", rename_all = "lowercase")]
-#[serde(rename_all = "lowercase")]
-pub enum ZoneType {
-    Showcase,
-    Desk,
-    Shelf,
-    Note,
-    Curator,
-    Cabinet,
-    Portrait,
-    Windows,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 #[sqlx(type_name = "text_category", rename_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 pub enum TextCategory {
@@ -262,17 +248,6 @@ pub struct Text {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
-pub struct CabinetZone {
-    pub id: Uuid,
-    pub zone_type: ZoneType,
-    pub x_percent: f64,
-    pub y_percent: f64,
-    pub width_percent: f64,
-    pub height_percent: f64,
-    pub target_route: String,
-    pub sort_order: i32,
-}
 
 // ============================================================
 // DTOs (API Contract — camelCase for JS frontend)
@@ -1017,18 +992,6 @@ pub struct LifeOfHouseTrend {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CabinetZoneDto {
-    pub id: String,
-    pub zone_type: ZoneType,
-    pub x: f64,
-    pub y: f64,
-    pub width: f64,
-    pub height: f64,
-    pub target_route: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct TextDto {
     pub id: String,
     pub content: String,
@@ -1150,17 +1113,6 @@ pub struct SaveTextRequest {
     pub image_url: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SaveZoneRequest {
-    pub id: String,
-    pub zone_type: ZoneType,
-    pub x: f64,
-    pub y: f64,
-    pub width: f64,
-    pub height: f64,
-    pub target_route: String,
-}
 
 // ============================================================
 // Misc
@@ -1661,15 +1613,6 @@ pub struct User {
     pub last_reset_request_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, sqlx::FromRow)]
-pub struct UserSession {
-    pub id: Uuid,
-    pub user_id: Uuid,
-    pub token: String,
-    pub expires_at: DateTime<Utc>,
-    pub created_at: DateTime<Utc>,
-}
-
 /// Originating request metadata captured for login attempts and sessions.
 /// All fields best-effort: IP/UA may be absent behind some proxies, and geo is
 /// only populated when an offline GeoIP database is configured.
@@ -2117,52 +2060,6 @@ impl Default for ProgrammeSettings {
             frame_tone: None,
             frame_thickness: None,
             frame_mode: None,
-        }
-    }
-}
-
-/// Customizable "Workshop" feature block on the home page.
-/// All text fields are bilingual; `None`/blank values fall back to the i18n
-/// defaults on the client. `visible = true` by default so the section shows
-/// before any admin configuration exists.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkshopFeature {
-    pub visible: bool,
-    pub photo_back: Option<String>,
-    pub photo_front: Option<String>,
-    pub eyebrow_en: Option<String>,
-    pub eyebrow_ru: Option<String>,
-    pub title_en: Option<String>,
-    pub title_ru: Option<String>,
-    pub text_en: Option<String>,
-    pub text_ru: Option<String>,
-    pub link1_label_en: Option<String>,
-    pub link1_label_ru: Option<String>,
-    pub link1_href: Option<String>,
-    pub link2_label_en: Option<String>,
-    pub link2_label_ru: Option<String>,
-    pub link2_href: Option<String>,
-}
-
-impl Default for WorkshopFeature {
-    fn default() -> Self {
-        Self {
-            visible: true,
-            photo_back: None,
-            photo_front: None,
-            eyebrow_en: None,
-            eyebrow_ru: None,
-            title_en: None,
-            title_ru: None,
-            text_en: None,
-            text_ru: None,
-            link1_label_en: None,
-            link1_label_ru: None,
-            link1_href: None,
-            link2_label_en: None,
-            link2_label_ru: None,
-            link2_href: None,
         }
     }
 }

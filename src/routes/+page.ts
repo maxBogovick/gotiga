@@ -4,7 +4,7 @@ import { heroImageUrl, pickHeroFigurine, sortWorks, visibleWorks } from '$lib/ho
 import type { FigurineListItem, HomeContent } from '$lib/types/api';
 
 // Prerendered to static HTML in the web build so crawlers get real <head> meta
-// (incl. the OG image). Matches the figurines archive page. Tauri stays SPA.
+// (incl. the OG image). Matches the figurines archive page. Dev stays SPA.
 export const prerender = import.meta.env.VITE_BUILD_TARGET === 'web';
 
 const FALLBACK_HERO = '/images/cabinet-bg.jpeg';

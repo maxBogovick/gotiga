@@ -13,8 +13,7 @@ export interface FigurineListItem {
     name: string;
     status: FigurineStatus;
     /** The work's one-line note, carried on the list payload. The home gallery used to
-     *  fetch a full `getFigurine(id)` per visible work just to read this one string.
-     *  Optional because the Tauri build's leaner payload may omit it. */
+     *  fetch a full `getFigurine(id)` per visible work just to read this one string. */
     shortText?: string | null;
     /** 420px thumbnail — sized for the archive's dense grid. */
     faceImageUrl: string | null;
@@ -23,8 +22,8 @@ export interface FigurineListItem {
     detailImageUrl?: string | null;
     /** The same two images at preview size (1800px). Use these wherever a list
      *  item is rendered large — the home hero, the home reel plates — or the
-     *  420px thumb gets upscaled 2-3x and goes soft. Absent on the Tauri
-     *  build's leaner payload; fall back to faceImageUrl. */
+     *  420px thumb gets upscaled 2-3x and goes soft. Null when the work has no
+     *  such image; fall back to faceImageUrl. */
     faceImageLargeUrl?: string | null;
     detailImageLargeUrl?: string | null;
     year?: number | null;
@@ -36,8 +35,7 @@ export interface FigurineListItem {
     isFeatured?: boolean;
     createdAt?: string | null;
     /** When the work was last edited (status, photo, text). Drives the home
-     *  "since your visit" ledger's "refreshed" signal. May be absent on the
-     *  Tauri build's leaner payload. */
+     *  "since your visit" ledger's "refreshed" signal. */
     updatedAt?: string | null;
     thumbUrl?: string | null;
     /**
@@ -58,11 +56,6 @@ export interface FigurineListItem {
      */
     openFromMin?: number | null;
     openUntilMin?: number | null;
-    /**
-     * Optional door asset shown while the window is closed. When null the sealed
-     * door is drawn procedurally (carved oak) instead.
-     */
-    sealedDoorImage?: string | null;
     /**
      * Optional showing room this work belongs to. When set, the room's window is
      * used instead of openFromMin/openUntilMin (mutually exclusive). null → own window.
@@ -192,8 +185,6 @@ export interface Figurine {
     /** "The house wakes" — showing window, minutes from midnight; both null → always open. */
     openFromMin?: number | null;
     openUntilMin?: number | null;
-    /** Optional sealed-door asset; null → procedural carved oak door. */
-    sealedDoorImage?: string | null;
     /** Showing room this work belongs to; null → uses its own window. */
     showingRoomId?: string | null;
     images: FigurineImage[];
@@ -254,16 +245,6 @@ export interface WorkshopItem {
     content: string;
     caption: string | null;
     imageUrl: string | null;
-}
-
-export interface CabinetZone {
-    id: string;
-    zoneType: string;
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-    targetRoute: string;
 }
 
 export interface ServerRelease {
@@ -1305,24 +1286,6 @@ export interface ProgrammeSettings {
     frameThickness: number | null;
     /** Molding mode: 'gradient' (default) | 'flat' | 'none'; null = gradient. */
     frameMode: string | null;
-}
-
-export interface WorkshopFeature {
-    visible: boolean;
-    photoBack: string | null;
-    photoFront: string | null;
-    eyebrowEn: string | null;
-    eyebrowRu: string | null;
-    titleEn: string | null;
-    titleRu: string | null;
-    textEn: string | null;
-    textRu: string | null;
-    link1LabelEn: string | null;
-    link1LabelRu: string | null;
-    link1Href: string | null;
-    link2LabelEn: string | null;
-    link2LabelRu: string | null;
-    link2Href: string | null;
 }
 
 export interface BookingRules {

@@ -1,4 +1,4 @@
-import { api, isTauri } from '$lib/api';
+import { api } from '$lib/api';
 import { lang } from '$lib/i18n';
 import { get } from 'svelte/store';
 import type { AnalyticsEventPayload } from '$lib/types/api';
@@ -18,7 +18,7 @@ type CtaType =
     | string;
 
 function canTrack(): boolean {
-    if (typeof window === 'undefined' || isTauri) return false;
+    if (typeof window === 'undefined') return false;
     if (navigator.doNotTrack === '1') return false;
     if (location.pathname.startsWith('/admin')) return false;
     return true;

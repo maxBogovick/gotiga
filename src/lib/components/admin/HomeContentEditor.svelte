@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api, isTauri } from '$lib/api';
+  import { api } from '$lib/api';
   import type { FigurineListItem, HomeContent } from '$lib/types/api';
   import { t } from '$lib/i18n';
 
@@ -100,24 +100,16 @@
     isUploadingBg = true;
     message = '';
     try {
-      let fileOrPath: string | File;
-      if (isTauri) {
-        const { open } = await import('@tauri-apps/plugin-dialog');
-        const selected = await open({ multiple: false, filters: [{ name: 'Images', extensions: ['jpg', 'png', 'webp'] }] });
-        if (!selected || typeof selected !== 'string') return;
-        fileOrPath = selected;
-      } else {
-        fileOrPath = await new Promise<File>((resolve, reject) => {
-          const input = document.createElement('input');
-          input.type = 'file';
-          input.accept = 'image/jpeg,image/png,image/webp';
-          input.onchange = () => {
-            const file = input.files?.[0];
-            if (file) resolve(file); else reject(new Error('no file'));
-          };
-          input.click();
-        });
-      }
+      const fileOrPath: string | File = await new Promise<File>((resolve, reject) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/jpeg,image/png,image/webp';
+        input.onchange = () => {
+          const file = input.files?.[0];
+          if (file) resolve(file); else reject(new Error('no file'));
+        };
+        input.click();
+      });
       bgImage = await api.setMainBackground(fileOrPath);
       message = 'Hero photo updated';
     } catch (e) {

@@ -3,7 +3,7 @@ import type { FigurineListItem } from '$lib/types/api';
 
 // Web build: prerender one static HTML page per figurine. SvelteKit can't know the
 // ids of a dynamic [id] route on its own, so entries() enumerates them from the API
-// at build time. Tauri/default build: prerender off → SPA as before.
+// at build time. Any other build (dev): prerender off → SPA as before.
 export const prerender = import.meta.env.VITE_BUILD_TARGET === 'web';
 
 export const entries = async () => {

@@ -1,7 +1,7 @@
 import { api } from '$lib/api';
 
 // In the web build this archive page is prerendered to static HTML (data comes from
-// load() below, so it ends up in the markup). In the Tauri/default build it stays SPA.
+// load() below, so it ends up in the markup). In any other build it stays SPA.
 export const prerender = import.meta.env.VITE_BUILD_TARGET === 'web';
 
 export const load = async ({ fetch }: { fetch: typeof globalThis.fetch }) => {

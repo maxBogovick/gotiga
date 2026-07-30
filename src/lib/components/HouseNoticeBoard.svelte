@@ -54,8 +54,7 @@
     figurines?: FigurineListItem[];
     // Tags standalone-work bill links for admin analytics (e.g. "home_afisha").
     // Room bills link to /hall/[id], not a figurine, so this only affects
-    // the standalone-work notes below. Optional — other callers (home-classic)
-    // simply omit it.
+    // the standalone-work notes below. Optional — other callers simply omit it.
     source?: string;
   } = $props();
 

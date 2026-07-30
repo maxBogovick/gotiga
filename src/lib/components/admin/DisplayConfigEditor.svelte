@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { t } from '$lib/i18n';
   import type { DisplayConfig, DisplayConfigBackground, BlockStyle, DisplayConfigPreset } from '$lib/types/api';
-  import { BLOCK_IDS, UPPER_ZONE_IDS, isBlockVisible, type BlockId, type UpperZoneId, type ZoneId } from '$lib/components/figurine-detail/display-config';
+  import { BLOCK_IDS, UPPER_ZONE_IDS, isBlockVisible, type BlockId, type ZoneId } from '$lib/components/figurine-detail/display-config';
   import { READING_FONTS } from '$lib/stores/reading-font.svelte';
   import { api } from '$lib/api';
 

@@ -481,7 +481,6 @@
 
   .unified-kicker,
   .unified-label,
-  .unified-intents legend,
   .unified-field span,
   .unified-fields span {
     color: #6f3b24;
@@ -507,56 +506,6 @@
     color: rgba(95, 70, 54, 0.82);
     font-family: Georgia, serif;
     font-style: italic;
-  }
-
-  .unified-intents {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.65rem;
-    padding: 0;
-    border: 0;
-  }
-
-  .unified-intents legend {
-    grid-column: 1 / -1;
-    margin-bottom: 0.1rem;
-  }
-
-  .unified-intent {
-    display: grid;
-    gap: 0.2rem;
-    min-height: 5rem;
-    padding: 0.75rem;
-    border: 1px solid rgba(111, 59, 36, 0.18);
-    border-radius: 6px;
-    background: rgba(248, 241, 231, 0.64);
-    cursor: pointer;
-  }
-
-  .unified-intent--active {
-    border-color: rgba(198, 95, 60, 0.65);
-    background: rgba(198, 95, 60, 0.08);
-  }
-
-  .unified-intent input {
-    position: absolute;
-    opacity: 0;
-    pointer-events: none;
-  }
-
-  .unified-intent span {
-    font-family: "Inter", sans-serif;
-    font-size: 0.78rem;
-    font-weight: 800;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-  }
-
-  .unified-intent small {
-    color: rgba(95, 70, 54, 0.76);
-    font-family: "Inter", sans-serif;
-    font-size: 0.76rem;
-    line-height: 1.35;
   }
 
   .unified-dates {
@@ -765,8 +714,5 @@
       font-size: 1.55rem;
     }
 
-    .unified-intents {
-      grid-template-columns: minmax(0, 1fr);
-    }
   }
 </style>

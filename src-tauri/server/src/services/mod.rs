@@ -1779,22 +1779,6 @@ impl AppService {
             .collect())
     }
 
-    pub async fn get_cabinet_zones(&self) -> Result<Vec<CabinetZoneDto>> {
-        let zones = self.repo.get_zones().await?;
-        Ok(zones
-            .into_iter()
-            .map(|z| CabinetZoneDto {
-                id: z.id.to_string(),
-                zone_type: z.zone_type,
-                x: z.x_percent,
-                y: z.y_percent,
-                width: z.width_percent,
-                height: z.height_percent,
-                target_route: z.target_route,
-            })
-            .collect())
-    }
-
     // === ADMIN WRITE ===
 
     pub async fn save_figurine(&self, mut req: crate::models::SaveFigurineRequest) -> Result<()> {
@@ -2063,21 +2047,6 @@ impl AppService {
         }
 
         Self::log_domain_event("figurine_deleted", "figurine", uuid, "ok");
-        Ok(())
-    }
-
-    pub async fn save_zone(&self, req: crate::models::SaveZoneRequest) -> Result<()> {
-        let zone_id = req.id.clone();
-        let count = self.repo.get_zone_count().await?;
-        self.repo.upsert_zone(&req, count).await?;
-        Self::log_domain_event("zone_saved", "zone", zone_id, "ok");
-        Ok(())
-    }
-
-    pub async fn delete_zone(&self, id: String) -> Result<()> {
-        let uuid = Self::parse_uuid(&id)?;
-        self.repo.delete_zone(uuid).await?;
-        Self::log_domain_event("zone_deleted", "zone", uuid, "ok");
         Ok(())
     }
 
@@ -4703,22 +4672,6 @@ impl AppService {
             return Err(AppError::BadRequest("Programme settings too large".into()));
         }
         self.repo.upsert_setting("programme_settings", &json).await
-    }
-
-    pub async fn get_workshop_feature(&self) -> Result<WorkshopFeature> {
-        parse_json_setting(
-            "workshop_feature",
-            self.repo.get_setting("workshop_feature").await?,
-        )
-    }
-
-    pub async fn save_workshop_feature(&self, feature: WorkshopFeature) -> Result<()> {
-        let json =
-            serde_json::to_string(&feature).map_err(|e| AppError::Internal(e.to_string()))?;
-        if json.len() > 64 * 1024 {
-            return Err(AppError::BadRequest("Workshop feature is too large".into()));
-        }
-        self.repo.upsert_setting("workshop_feature", &json).await
     }
 
     // === BOOKING RULES ===

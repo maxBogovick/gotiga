@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api, isTauri } from '$lib/api';
+  import { api } from '$lib/api';
   import type { AuthorProfile } from '$lib/types/api';
   import { fade } from 'svelte/transition';
   import { t } from '$lib/i18n';
@@ -49,21 +49,13 @@
   async function uploadPhoto() {
     isUploadingPhoto = true;
     try {
-      let fileOrPath: string | File;
-      if (isTauri) {
-        const { open } = await import('@tauri-apps/plugin-dialog');
-        const selected = await open({ multiple: false, filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp'] }] });
-        if (!selected || typeof selected !== 'string') return;
-        fileOrPath = selected;
-      } else {
-        fileOrPath = await new Promise<File>((resolve, reject) => {
-          const input = document.createElement('input');
-          input.type = 'file';
-          input.accept = 'image/jpeg,image/png,image/webp';
-          input.onchange = () => { const f = input.files?.[0]; f ? resolve(f) : reject(); };
-          input.click();
-        });
-      }
+      const fileOrPath: string | File = await new Promise<File>((resolve, reject) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/jpeg,image/png,image/webp';
+        input.onchange = () => { const f = input.files?.[0]; f ? resolve(f) : reject(); };
+        input.click();
+      });
       const imported = await api.importMediaWithVariants(fileOrPath, 'images');
       profile.photoUrl = imported.url;
     } catch {
@@ -76,21 +68,13 @@
   async function uploadHeroPhoto() {
     isUploadingHeroPhoto = true;
     try {
-      let fileOrPath: string | File;
-      if (isTauri) {
-        const { open } = await import('@tauri-apps/plugin-dialog');
-        const selected = await open({ multiple: false, filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp'] }] });
-        if (!selected || typeof selected !== 'string') return;
-        fileOrPath = selected;
-      } else {
-        fileOrPath = await new Promise<File>((resolve, reject) => {
-          const input = document.createElement('input');
-          input.type = 'file';
-          input.accept = 'image/jpeg,image/png,image/webp';
-          input.onchange = () => { const f = input.files?.[0]; f ? resolve(f) : reject(); };
-          input.click();
-        });
-      }
+      const fileOrPath: string | File = await new Promise<File>((resolve, reject) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/jpeg,image/png,image/webp';
+        input.onchange = () => { const f = input.files?.[0]; f ? resolve(f) : reject(); };
+        input.click();
+      });
       const imported = await api.importMediaWithVariants(fileOrPath, 'images');
       profile.heroPhotoUrl = imported.url;
     } catch {

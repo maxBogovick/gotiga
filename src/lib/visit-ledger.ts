@@ -15,8 +15,8 @@ import type { FigurineListItem } from './types/api';
  * **refreshed** (a changed `updatedAt` — a new photo, edited text), and halls
  * beginning to **wake** (a new showing room).
  *
- * `updatedAt` may be absent on the Tauri build's leaner payload; the "refreshed"
- * signal simply stays quiet there rather than misfiring.
+ * A missing `updatedAt` on either side keeps the "refreshed" signal quiet rather
+ * than misfiring.
  */
 
 const KEY = 'gotiga_ledger';
@@ -115,7 +115,7 @@ export function diffVisit(figurines: FigurineListItem[], rooms: RoomRef[]): Visi
   // "Refreshed": an existing work whose last-edited stamp moved. Skip arrivals
   // (no prior mark), works already shown as homed (a status change also bumps
   // the stamp — don't double-count), and any case where a timestamp is missing
-  // on either side (Tauri payload / pre-v2 snapshot) so we never misfire.
+  // on either side (a pre-v2 snapshot) so we never misfire.
   const updated = figurines.filter((f) => {
     const mark = prev.works[f.id];
     if (!mark || homedIds.has(f.id)) return false;

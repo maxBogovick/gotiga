@@ -1,6 +1,6 @@
 <script lang="ts">
     import { onMount } from 'svelte';
-    import { api, isTauri } from '$lib/api';
+    import { api } from '$lib/api';
     import type { MediaCleanupReport, MediaFile, MediaInventory } from '$lib/types/api';
 
     let {
@@ -108,9 +108,7 @@
             return;
         }
         try {
-            const replacement = isTauri
-                ? await pickReplacementInTauri(selectedFile)
-                : await pickReplacementInWeb(selectedFile);
+            const replacement = await pickReplacementInWeb(selectedFile);
             if (!replacement) return;
             loading = true;
             const result = await api.replaceMediaEverywhere(selectedFile.path, replacement);
@@ -123,19 +121,6 @@
         } finally {
             loading = false;
         }
-    }
-
-    async function pickReplacementInTauri(file: MediaFile): Promise<string | null> {
-        const { open } = await import('@tauri-apps/plugin-dialog');
-        const filters = file.mediaType === 'image'
-            ? [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp'] }]
-            : file.mediaType === 'video'
-                ? [{ name: 'Videos', extensions: ['mp4', 'webm', 'mov'] }]
-                : file.mediaType === 'audio'
-                    ? [{ name: 'Audio', extensions: ['mp3', 'wav', 'ogg', 'm4a'] }]
-                    : [];
-        const replacement = await open({ multiple: false, filters });
-        return typeof replacement === 'string' ? replacement : null;
     }
 
     function pickReplacementInWeb(file: MediaFile): Promise<File | null> {

@@ -29,8 +29,7 @@
         masonry?: boolean;
         // Which named home-page block rendered this tile (e.g. "home_marked") —
         // tags the outgoing link so admin analytics can attribute the click.
-        // Left undefined by every other caller (hall, home-classic), so their
-        // links stay untagged.
+        // Left undefined by every other caller (hall), so their links stay untagged.
         source?: string;
     } = $props();
 

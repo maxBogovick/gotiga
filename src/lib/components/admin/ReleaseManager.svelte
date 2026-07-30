@@ -1,6 +1,6 @@
 <script lang="ts">
     import { onMount } from 'svelte';
-    import { api, isTauri } from '$lib/api';
+    import { api } from '$lib/api';
     import type { ServerRelease } from '$lib/types/api';
     import { fade } from 'svelte/transition';
     import { t } from '$lib/i18n';
@@ -23,21 +23,6 @@
         }
     }
 
-    async function handleExport() {
-        if (!confirm('Create a new release from local data? This will snapshot the current state as a new version on the server.')) return;
-
-        isExporting = true;
-        try {
-            await api.exportRelease();
-            showMessage('Release created', 'success');
-            await loadReleases();
-        } catch (e) {
-            showMessage('Export error: ' + e, 'error');
-        } finally {
-            isExporting = false;
-        }
-    }
-
     async function handleActivate(release: ServerRelease) {
         if (release.isActive) return;
         if (!confirm(`Activate version ${release.version} (${release.description || 'No description'})? Users will start receiving this content.`)) return;
@@ -48,26 +33,6 @@
             await loadReleases();
         } catch (e) {
             showMessage('Activation error: ' + e, 'error');
-        }
-    }
-
-    async function handlePull() {
-        if (!confirm('Download the active version from server? Local changes may be overwritten.')) return;
-        try {
-            const res = await api.pullUpdates();
-            showMessage('Sync complete: ' + res, 'success');
-        } catch (e) {
-            showMessage('Sync error: ' + e, 'error');
-        }
-    }
-
-    async function handleCleanupMedia() {
-        if (!confirm('Remove local media files that are no longer referenced by the database?')) return;
-        try {
-            const removed = await api.cleanupUnusedMedia();
-            showMessage(`Removed ${removed.length} unused media file(s)`, 'success');
-        } catch (e) {
-            showMessage('Cleanup error: ' + e, 'error');
         }
     }
 
@@ -119,23 +84,11 @@
             {#if message}
                 <span class="text-xs transition-opacity duration-500 {messageType === 'error' ? 'text-red-700' : 'text-[#34251c]'}" in:fade>{message}</span>
             {/if}
-            {#if isTauri}
-                <button onclick={handleCleanupMedia} class="btn-gothic border-red-900/40 text-red-700">
-                    {$t('adminReleaseCleanupMedia')}
-                </button>
-                <button onclick={handlePull} class="btn-gothic border-blue-900/40 text-blue-700">
-                    {$t('adminReleaseDownloadActive')}
-                </button>
-                <button onclick={handleExport} class="btn-gothic border-amber-900/40 text-amber-600" disabled={isExporting}>
-                    {isExporting ? $t('adminReleaseCreating') : $t('adminReleaseCreate')}
-                </button>
-            {:else}
                 <span class="text-[10px] text-[#5f4636] italic">{$t('adminReleaseUploadHint')}</span>
                 <label class="btn-gothic border-amber-900/40 text-amber-600 cursor-pointer">
                     {$t('adminReleaseUpload')}
                     <input type="file" accept=".db,.sqlite" class="hidden" onchange={handleUpload} />
                 </label>
-            {/if}
         </div>
     </div>
 

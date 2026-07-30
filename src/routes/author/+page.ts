@@ -2,7 +2,7 @@ import { api } from '$lib/api';
 import type { AuthorText, AuthorProfile } from '$lib/types/api';
 
 // Web build: prerender to static HTML so crawlers and LLMs see the author's bio and
-// notes (previously fetched in onMount → invisible to non-JS bots). Tauri stays SPA.
+// notes (previously fetched in onMount → invisible to non-JS bots). Dev stays SPA.
 export const prerender = import.meta.env.VITE_BUILD_TARGET === 'web';
 
 export const load = async ({ fetch }: { fetch: typeof globalThis.fetch }) => {

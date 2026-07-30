@@ -4,7 +4,7 @@ import type { FigurineListItem } from '$lib/types/api';
 
 // LLM-facing site index (https://llmstxt.org). Prerendered to a static /llms.txt in
 // the web build so language-model crawlers get a clean, link-rich map of the archive
-// without executing JS. Tauri has no SEO surface, so it's excluded.
+// without executing JS. The dev/SPA profile has no SEO surface, so it's excluded.
 export const prerender = import.meta.env.VITE_BUILD_TARGET === 'web';
 
 // Collapse whitespace/newlines so each work stays a single tidy bullet line.

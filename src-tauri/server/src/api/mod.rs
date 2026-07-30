@@ -111,7 +111,6 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             // Semantic search ("Хранитель") — natural-language ranking of the archive.
             .route("/search", get(handlers::semantic_search))
             .route("/content/texts/:param", get(handlers::get_texts_by_param))
-            .route("/cabinet/zones", get(handlers::get_cabinet_zones))
             .route("/showing-rooms", get(handlers::get_showing_rooms))
             .route("/main-background", get(handlers::get_main_background))
             .route("/home-content", get(handlers::get_home_content))
@@ -139,10 +138,6 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             .route(
                 "/settings/programme",
                 get(handlers::get_programme_settings),
-            )
-            .route(
-                "/settings/workshop-feature",
-                get(handlers::get_workshop_feature),
             )
             .route(
                 "/bookings/by-tokens",
@@ -262,20 +257,6 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                     )),
             )
             .route(
-                "/cabinet/zones",
-                post(handlers::save_zone).route_layer(middleware::from_fn_with_state(
-                    config.clone(),
-                    auth_middleware,
-                )),
-            )
-            .route(
-                "/cabinet/zones/:id",
-                delete(handlers::delete_zone).route_layer(middleware::from_fn_with_state(
-                    config.clone(),
-                    auth_middleware,
-                )),
-            )
-            .route(
                 "/showing-rooms",
                 post(handlers::save_showing_room).route_layer(middleware::from_fn_with_state(
                     config.clone(),
@@ -342,13 +323,6 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 put(handlers::save_programme_settings).route_layer(
                     middleware::from_fn_with_state(config.clone(), auth_middleware),
                 ),
-            )
-            .route(
-                "/admin/settings/workshop-feature",
-                put(handlers::save_workshop_feature).route_layer(middleware::from_fn_with_state(
-                    config.clone(),
-                    auth_middleware,
-                )),
             )
             // === THEME CONFIG ===
             .route("/settings/theme", get(handlers::get_theme_config))
@@ -935,7 +909,6 @@ fn is_public_cacheable(path: &str) -> bool {
         "/figurines/in-progress",
         "/figurines/first-look",
         "/figurines/noticed",
-        "/cabinet/zones",
         "/showing-rooms",
         "/main-background",
         "/home-content",

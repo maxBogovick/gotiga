@@ -2,7 +2,7 @@ import { api } from '$lib/api';
 import type { FigurineListItem, ShowingRoom } from '$lib/types/api';
 
 // Web build: prerender one static page per room (entries() enumerates room ids from
-// the API at build time, like the figurine [id] route). Tauri/default build: SPA.
+// the API at build time, like the figurine [id] route). Any other build: SPA.
 export const prerender = import.meta.env.VITE_BUILD_TARGET === 'web';
 
 export const entries = async () => {

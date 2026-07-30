@@ -62,11 +62,6 @@ function findTheme(source: PinterestSource): Theme {
 	return THEME_RULES.find((rule) => rule.match.test(haystack)) ?? GENERIC_THEME;
 }
 
-/** The primary keyword phrase alone — used for previews or other short-form needs. */
-export function detectPinterestTheme(source: PinterestSource): string {
-	return findTheme(source).noun;
-}
-
 // The material is real content, not decoration — claiming "polymer clay" for a
 // work actually sculpted from something else would mismatch what a Pinterest
 // search on that material expects to find, which hurts relevance rather than

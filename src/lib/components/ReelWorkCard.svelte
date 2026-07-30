@@ -670,21 +670,92 @@
   }
 
   @media (max-width: 900px) {
+    /* The whole mobile card is one photograph. .photo and .body are placed in
+       the SAME grid cell (both grid-column:1 / grid-row:1) instead of stacked
+       in separate rows — Grid lets two items share a cell and z-index alone
+       decides which paints on top, so .body becomes an overlay ON the photo
+       with no manual height math (negative margins, absolute-inset offsets)
+       to get wrong. That fragile math is what broke twice already: getting
+       .body positioned also made it the containing block for its own
+       .quick descendant (position:absolute, top/right), dragging the icons
+       down onto whatever .body was doing instead of the photo's corner. */
     .card,
     .card-flip {
       grid-template-columns: 1fr;
+      grid-auto-rows: unset;
       gap: 0;
+    }
+
+    .card .photo,
+    .card-flip .photo,
+    .card .body,
+    .card-flip .body {
+      grid-column: 1;
+      grid-row: 1;
+    }
+
+    /* The paragraph and the "Discover story" button are dropped — the full
+       story is a tap away on the detail page, and the photo itself is
+       already that link. Status/year/roman-numeral plate is dropped too
+       (not wanted on mobile at all). What is left — the title — becomes the
+       photo's own caption instead of a separate block underneath it. */
+    .text,
+    .cta,
+    .num,
+    .plate {
+      display: none;
     }
 
     .card .body,
     .card-flip .body {
-      order: 2;
-      padding: 1.4rem 0.75rem 0.6rem;
+      align-self: end;
+      z-index: 2;
+      /* Grid overlap makes .body exactly as tall as its own content (the
+         title), pinned to the bottom of the shared cell — so this padding is
+         the only thing controlling how far the scrim reaches up the photo. */
+      padding: 2.75rem 1rem 0.9rem;
+      border-radius: 0 0 calc(var(--card-radius, 18px) * 0.72) calc(var(--card-radius, 18px) * 0.72);
+      background: linear-gradient(to top, rgba(28, 15, 8, 0.82) 0%, rgba(28, 15, 8, 0.5) 55%, rgba(28, 15, 8, 0) 100%);
+      /* Nothing inside is interactive (title is plain text, actions/cta are
+         hidden) — let taps fall through to the photo's own <a> underneath
+         rather than dead-ending on this overlay. */
+      pointer-events: none;
     }
 
-    .card .photo,
-    .card-flip .photo {
-      order: 1;
+    .title {
+      margin-top: 0;
+      color: #faf6ee;
+      text-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+      font-size: 1.2rem;
+    }
+
+    .actions {
+      margin-top: 0;
+    }
+
+    /* Save / share / "make me one like this": a frosted chip in the photo's
+       free corner, opposite the marks. Positioned against .card (still the
+       nearest POSITIONED ancestor — .body is a plain grid item, not itself
+       positioned, so it never intercepts this). */
+    .quick {
+      position: absolute;
+      top: 0.75rem;
+      right: 0.75rem;
+      z-index: 3;
+      pointer-events: auto;
+      gap: 0.3rem;
+      padding: 0.3rem;
+      border-radius: 6px;
+      background: rgba(250, 246, 238, 0.85);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      box-shadow: 0 2px 10px rgba(60, 25, 10, 0.14);
+    }
+
+    .qbtn {
+      width: 30px;
+      height: 30px;
+      border-color: transparent;
     }
   }
 </style>

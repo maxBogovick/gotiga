@@ -294,15 +294,3 @@ export function generateHomeElementCSS(config: HomeLayoutConfig | null): string 
 }
 
 /** True when the config carries no overrides at all (nothing to apply). */
-export function isEmptyHomeLayout(config: HomeLayoutConfig | null): boolean {
-    if (!config) return true;
-    return !config.blockOrder?.length
-        && !config.bandOrder?.length
-        && !config.shelfOrder?.length
-        && !config.hiddenBlocks?.length
-        && !config.pageBackground
-        && !Object.keys(config.sizes ?? {}).length
-        && !Object.keys(config.blockStyles ?? {}).length
-        && !Object.keys(config.elements ?? {}).length
-        && !Object.keys(config.elementOrder ?? {}).length;
-}

@@ -11,7 +11,7 @@
  *
  * So once hydration is over, compare what the DOM actually holds against what the
  * component was asked to show, and write the difference through by hand. In a pure
- * client render (CSR, Tauri) the two already agree and every call is a no-op.
+ * client render (CSR) the two already agree and every call is a no-op.
  */
 export function syncAttr(el: Element | null | undefined, name: string, want: string | null | undefined): void {
     if (!el) return;

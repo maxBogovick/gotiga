@@ -6,7 +6,7 @@
   import { SITE_URL, toAbsoluteUrl } from '$lib/site';
   import { figurineHref } from '$lib/figurineHref';
   import { createSiteAnalytics } from '$lib/analytics';
-  import { api, isTauri } from '$lib/api';
+  import { api } from '$lib/api';
   import AppImage from '$lib/components/AppImage.svelte';
   import SealedDoor from '$lib/components/SealedDoor.svelte';
   import Lightbox from '$lib/components/Lightbox.svelte';
@@ -106,7 +106,7 @@
   // pause the same phrase is sent to the semantic layer (server-side multilingual
   // embedding — see api.semanticSearch / server embed.rs), which also searches the
   // hidden AI visual descriptions and leads with relevance. No Enter needed.
-  // Degrades to the plain local filter under Tauri or when the endpoint is absent.
+  // Degrades to the plain local filter when the endpoint is absent.
   let keeperHits = $state<SemanticHit[] | null>(null); // null → semantic layer idle
   let keeperLoading = $state(false);
   let keeperError = $state(false);
@@ -142,7 +142,7 @@
   $effect(() => {
     const q = searchQuery.trim();
     clearTimeout(searchDebounce);
-    if (isTauri || q.length < 2) {
+    if (q.length < 2) {
       keeperHits = null;
       keeperError = false;
       keeperSeq++;                     // cancel any in-flight reply
@@ -478,10 +478,10 @@
             <input
               bind:value={searchQuery}
               type="search"
-              placeholder={isTauri ? $t('archiveSearchPlaceholder') : $t('archiveKeeperPlaceholder')}
+              placeholder={$t('archiveKeeperPlaceholder')}
               class="filter-bar__search-input"
-              aria-label={isTauri ? $t('archiveSearchPlaceholder') : $t('archiveKeeperPlaceholder')}
-              onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); clearTimeout(searchDebounce); if (!isTauri && searchQuery.trim().length >= 2) runKeeper(searchQuery.trim()); } }}
+              aria-label={$t('archiveKeeperPlaceholder')}
+              onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); clearTimeout(searchDebounce); if (searchQuery.trim().length >= 2) runKeeper(searchQuery.trim()); } }}
             />
             {#if searchQuery}
               <button

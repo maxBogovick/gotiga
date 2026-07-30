@@ -18,7 +18,6 @@
     import CorrespondenceInvite from '$lib/components/CorrespondenceInvite.svelte';
     import FirstLook from '$lib/components/FirstLook.svelte';
     import HeroWorkshopTeaser from '$lib/components/HeroWorkshopTeaser.svelte';
-    import WorkshopReelModal from '$lib/components/WorkshopReelModal.svelte';
     import { heroImageUrl, pickHeroFigurine, sortWorks, visibleWorks } from '$lib/home-hero';
     import { syncAttr } from '$lib/hydrate-image';
     import { visitorBook } from '$lib/stores/visitor-book.svelte';
@@ -461,7 +460,7 @@
     const siteAnalytics = createSiteAnalytics({ trackWorks: true });
 
     onMount(() => {
-        // Site-wide view, no figurine attached — respects the same DNT/admin/Tauri
+        // Site-wide view, no figurine attached — respects the same DNT/admin
         // exclusions as the figurine-detail tracking automatically. Dedupes
         // internally, so this stays a no-op if the component ever re-mounts.
         siteAnalytics.pageView();
@@ -515,19 +514,12 @@
         });
         const reduceMq = window.matchMedia('(prefers-reduced-motion: reduce)');
         const pointerMq = window.matchMedia('(pointer: fine)');
-        const syncTiltPreference = () => {
-            canUseHeroTilt = pointerMq.matches && !reduceMq.matches;
-            if (!canUseHeroTilt) {
-                mouseX = 0.5;
-                mouseY = 0.5;
-            }
-        };
-        syncTiltPreference();
-        reduceMq.addEventListener('change', syncTiltPreference);
-        pointerMq.addEventListener('change', syncTiltPreference);
-
         // Dwell push-in: only accumulates while the photo is actually on screen,
-        // and the rAF loop is torn down entirely when it leaves.
+        // and the rAF loop is torn down entirely when it leaves. Gated by the same
+        // `pointer: fine` check as the tilt effect, not just reduced-motion — a touch
+        // device can never produce the tilt this dwell zoom is paired with, and the
+        // rAF loop is a continuous main-thread cost with nothing to show for it on
+        // exactly the class of device (mobile) where that cost matters most.
         let dwellRaf = 0;
         let dwellMs = 0;
         let lastTick = 0;
@@ -539,7 +531,7 @@
             dwellRaf = requestAnimationFrame(tickDwell);
         };
         const startDwell = () => {
-            if (dwellRaf || reduceMq.matches) return;
+            if (dwellRaf || reduceMq.matches || !pointerMq.matches) return;
             lastTick = 0;
             dwellRaf = requestAnimationFrame(tickDwell);
         };
@@ -547,6 +539,24 @@
             if (dwellRaf) cancelAnimationFrame(dwellRaf);
             dwellRaf = 0;
         };
+        const syncTiltPreference = () => {
+            canUseHeroTilt = pointerMq.matches && !reduceMq.matches;
+            if (!canUseHeroTilt) {
+                mouseX = 0.5;
+                mouseY = 0.5;
+            }
+            // A touch device (or a session that just lost its fine pointer) loses the
+            // dwell zoom too. Not restarted on the reverse transition here — the
+            // IntersectionObserver below already calls startDwell() on the next scroll
+            // that brings the hero into view, which is the common case.
+            if (!canUseHeroTilt) {
+                stopDwell();
+                heroDwellZoom = 0;
+            }
+        };
+        syncTiltPreference();
+        reduceMq.addEventListener('change', syncTiltPreference);
+        pointerMq.addEventListener('change', syncTiltPreference);
 
         let heroObserver: IntersectionObserver | null = null;
         if (heroPhotoEl) {
@@ -1039,15 +1049,20 @@
     </div>
 
     {#if reelModalOpen}
-        <WorkshopReelModal
-            webm={reelModalClip === 'a' ? '/images/workshop/atelier-reel.webm' : '/images/workshop/atelier-reel-2.webm'}
-            mp4={reelModalClip === 'a' ? '/images/workshop/atelier-reel.mp4' : '/images/workshop/atelier-reel-2.mp4'}
-            poster={reelModalClip === 'a' ? '/images/workshop/atelier-reel-poster.jpg' : '/images/workshop/atelier-reel-2-poster.jpg'}
-            caption={$t('homeWorkshopReelCaption')}
-            closeLabel={$t('figurineGrimoireClose')}
-            origin={reelModalOrigin}
-            onClose={() => reelModalOpen = false}
-        />
+        <!-- Dynamically imported: a modal that opens on click has no reason to be part
+             of the home route's initial JS payload (see the same pattern for
+             BrassLens/LivingDaguerreotype/RakingLight in the figurine-detail layouts). -->
+        {#await import('$lib/components/WorkshopReelModal.svelte') then { default: WorkshopReelModal }}
+            <WorkshopReelModal
+                webm={reelModalClip === 'a' ? '/images/workshop/atelier-reel.webm' : '/images/workshop/atelier-reel-2.webm'}
+                mp4={reelModalClip === 'a' ? '/images/workshop/atelier-reel.mp4' : '/images/workshop/atelier-reel-2.mp4'}
+                poster={reelModalClip === 'a' ? '/images/workshop/atelier-reel-poster.jpg' : '/images/workshop/atelier-reel-2-poster.jpg'}
+                caption={$t('homeWorkshopReelCaption')}
+                closeLabel={$t('figurineGrimoireClose')}
+                origin={reelModalOrigin}
+                onClose={() => reelModalOpen = false}
+            />
+        {/await}
     {/if}
 </div>
 
@@ -2233,6 +2248,25 @@
 
         .context-side-links {
             align-items: flex-start;
+        }
+
+        /* The Works header specifically: on mobile it has no side-by-side room
+           to hide its height in, and both of its links duplicate CTAs the
+           visitor meets again in a moment — "Open the full archive" as the
+           reel's own last card, "Propose your own idea" in the commission
+           section further down. So this one header drops its meta line and
+           links rather than stacking all of it above the first figurine. */
+        .work-hd {
+            position: static;
+        }
+
+        .work-hd::before {
+            content: none;
+        }
+
+        .work-hd .context-meta,
+        .work-hd .context-side-links {
+            display: none;
         }
     }
 

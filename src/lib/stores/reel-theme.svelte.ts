@@ -1,4 +1,3 @@
-import { writable, derived } from 'svelte/store';
 import type { CardStyle, CardTarget, GradientStop, ReelTheme } from '$lib/types/api';
 import type { TranslationKey } from '$lib/i18n/en';
 
@@ -501,7 +500,6 @@ export const TYPE_PRESETS: Preset<CardStyle>[] = [
     { id: 'ember', label: 'reelPresetTypeEmber', patch: { titleColor: '#faf6ee', bodyColor: '#faf6ee', metaColor: '#c0582c' } },
 ];
 
-export const CARD_TARGETS: CardTarget[] = ['hero', 'work'];
 
 // ── The house themes ────────────────────────────────────────────────────────
 // Five finished looks, each a COMPLETE theme (backdrop, veil, both panes), not a
@@ -1122,17 +1120,6 @@ export const HOUSE_THEMES: Preset<ReelTheme>[] = [
         },
     },
 ];
-
-export const reelTheme = writable<ReelTheme>({});
-export const reelCSS = derived(reelTheme, ($t) => generateReelCSS($t));
-
-/** Which image the room actually shows, given the viewport. */
-export function reelBackgroundImage(config: ReelTheme | null | undefined, narrow: boolean): string {
-    const t = resolveReelTheme(config);
-    if (t.backdropKind !== 'image') return '';
-    if (narrow && t.backgroundImageMobile) return t.backgroundImageMobile;
-    return t.backgroundImage;
-}
 
 // ── Live preview, mirroring the theme editor's channel ───────────────────────
 

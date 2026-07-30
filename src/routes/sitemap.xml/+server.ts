@@ -3,7 +3,7 @@ import { SITE_URL, toAbsoluteUrl } from '$lib/site';
 import type { Figurine, FigurineListItem } from '$lib/types/api';
 
 // Prerendered to a static sitemap.xml in the web build (matches the Sitemap line in
-// robots.txt). The Tauri build has no server and no SEO surface, so it's excluded.
+// robots.txt). The dev/SPA profile has no SEO surface, so it's excluded.
 export const prerender = import.meta.env.VITE_BUILD_TARGET === 'web';
 
 // Public, prerendered routes with real, indexable HTML. /admin is intentionally

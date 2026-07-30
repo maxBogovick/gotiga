@@ -753,13 +753,6 @@ pub async fn get_texts_by_param(
     }
 }
 
-pub async fn get_cabinet_zones(
-    State(service): State<AppService>,
-) -> Result<Json<Vec<CabinetZoneDto>>> {
-    let zones = service.get_cabinet_zones().await?;
-    Ok(Json(zones))
-}
-
 // === ADMIN AUTH ===
 
 pub async fn admin_login(
@@ -1105,24 +1098,6 @@ pub async fn replace_media_everywhere(
         "media replacement uploaded"
     );
     Ok(Json(result))
-}
-
-// === ADMIN ZONE CRUD ===
-
-pub async fn save_zone(
-    State(service): State<AppService>,
-    Json(req): Json<SaveZoneRequest>,
-) -> Result<StatusCode> {
-    service.save_zone(req).await?;
-    Ok(StatusCode::OK)
-}
-
-pub async fn delete_zone(
-    State(service): State<AppService>,
-    Path(id): Path<String>,
-) -> Result<StatusCode> {
-    service.delete_zone(id).await?;
-    Ok(StatusCode::OK)
 }
 
 // === SHOWING ROOMS (the house wakes) ===
@@ -2823,20 +2798,6 @@ pub async fn save_programme_settings(
     Json(body): Json<ProgrammeSettings>,
 ) -> Result<Json<ProgrammeSettings>> {
     service.save_programme_settings(body.clone()).await?;
-    Ok(Json(body))
-}
-
-pub async fn get_workshop_feature(
-    State(service): State<AppService>,
-) -> Result<Json<WorkshopFeature>> {
-    Ok(Json(service.get_workshop_feature().await?))
-}
-
-pub async fn save_workshop_feature(
-    State(service): State<AppService>,
-    Json(body): Json<WorkshopFeature>,
-) -> Result<Json<WorkshopFeature>> {
-    service.save_workshop_feature(body.clone()).await?;
     Ok(Json(body))
 }
 

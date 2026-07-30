@@ -2165,14 +2165,6 @@ impl Repository {
         Ok(texts)
     }
 
-    pub async fn get_zones(&self) -> Result<Vec<CabinetZone>> {
-        let zones =
-            sqlx::query_as::<_, CabinetZone>("SELECT * FROM cabinet_zones ORDER BY sort_order")
-                .fetch_all(&self.pg_pool)
-                .await?;
-        Ok(zones)
-    }
-
     // === ADMIN WRITE OPERATIONS ===
 
     /// Upsert a figurine together with its full image and step sets, atomically.
@@ -2315,42 +2307,6 @@ impl Repository {
             .execute(&self.pg_pool)
             .await?;
         Ok(())
-    }
-
-    pub async fn upsert_zone(
-        &self,
-        z: &crate::models::SaveZoneRequest,
-        sort_order: i32,
-    ) -> Result<()> {
-        let id = Uuid::parse_str(&z.id)
-            .map_err(|_| AppError::BadRequest("Invalid zone ID".to_string()))?;
-        sqlx::query(
-            "INSERT INTO cabinet_zones (id, zone_type, x_percent, y_percent, width_percent, height_percent, target_route, sort_order)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-             ON CONFLICT (id) DO UPDATE SET
-               zone_type=EXCLUDED.zone_type, x_percent=EXCLUDED.x_percent, y_percent=EXCLUDED.y_percent,
-               width_percent=EXCLUDED.width_percent, height_percent=EXCLUDED.height_percent,
-               target_route=EXCLUDED.target_route, sort_order=EXCLUDED.sort_order"
-        )
-        .bind(id).bind(&z.zone_type).bind(z.x).bind(z.y)
-        .bind(z.width).bind(z.height).bind(&z.target_route).bind(sort_order)
-        .execute(&self.pg_pool).await?;
-        Ok(())
-    }
-
-    pub async fn delete_zone(&self, id: Uuid) -> Result<()> {
-        sqlx::query("DELETE FROM cabinet_zones WHERE id = $1")
-            .bind(id)
-            .execute(&self.pg_pool)
-            .await?;
-        Ok(())
-    }
-
-    pub async fn get_zone_count(&self) -> Result<i32> {
-        let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM cabinet_zones")
-            .fetch_one(&self.pg_pool)
-            .await?;
-        Ok(row.0 as i32)
     }
 
     pub async fn get_showing_rooms(&self) -> Result<Vec<crate::models::ShowingRoom>> {
@@ -2629,16 +2585,6 @@ impl Repository {
     }
 
     // === SHOWINGS ===
-
-    pub async fn get_showings_by_figurine(&self, figurine_id: Uuid) -> Result<Vec<Showing>> {
-        let rows = sqlx::query_as::<_, Showing>(
-            "SELECT * FROM figurine_showings WHERE figurine_id = $1 ORDER BY starts_at",
-        )
-        .bind(figurine_id)
-        .fetch_all(&self.pg_pool)
-        .await?;
-        Ok(rows)
-    }
 
     pub async fn get_all_showings(&self) -> Result<Vec<Showing>> {
         let rows =

@@ -10,7 +10,7 @@
  * ever vanishes — miss the night and the door simply opens again tomorrow.
  * Because there is no prize behind the gate, we never validate the clock on the
  * server: a guest who winds their clock to peek has merely performed the ritual
- * by hand. Read against the guest's own device time, it works offline (Tauri)
+ * by hand. Read against the guest's own device time, it works offline
  * with no server round-trip.
  *
  * Pure + side-effect free so it can be unit-reasoned and reused on both card and
@@ -316,6 +316,21 @@ export function formatMinutes(min: number): string {
   const hh = Math.floor(m / 60);
   const mm = m % 60;
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
+/**
+ * Admin clock inputs: a window is stored as minutes from midnight but edited as a
+ * HH:MM `<input type="time">`. An empty input means "no bound", hence the nulls
+ * on both sides — a work with both ends null is ungated (always open).
+ */
+export function minutesToClock(min: number | null | undefined): string {
+  return min == null ? '' : formatMinutes(min);
+}
+export function clockToMinutes(value: string): number | null {
+  if (!value) return null;
+  const [h, m] = value.split(':').map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return null;
+  return h * 60 + m;
 }
 
 /**

@@ -1,15 +1,9 @@
 <script lang="ts">
     import { onMount } from 'svelte';
-    import { api, isTauri } from '$lib/api';
-    import { figurineHref } from '$lib/figurineHref';
-    import { formatFigurineAlt, altLabelsFrom, siblingPosition } from '$lib/figurine-alt';
-    import { generatePinterestDescription } from '$lib/pinterest-description';
+    import { api } from '$lib/api';
     import type { Figurine, FigurineListItem, ShowingRoom } from '$lib/types/api';
     import { fade, slide } from 'svelte/transition';
     import SettingsModal from '$lib/components/SettingsModal.svelte';
-    import KeyholeVeil from '$lib/components/KeyholeVeil.svelte';
-    import { themeConfig } from '$lib/stores/theme.svelte';
-    import ZoneEditor from '$lib/components/admin/ZoneEditor.svelte';
     import TextEditor from '$lib/components/admin/TextEditor.svelte';
     import ReleaseManager from '$lib/components/admin/ReleaseManager.svelte';
     import ProfileEditor from '$lib/components/admin/ProfileEditor.svelte';
@@ -31,18 +25,16 @@
     import ContactMessagesPanel from '$lib/components/admin/ContactMessagesPanel.svelte';
     import BookingRulesPanel from '$lib/components/admin/BookingRulesPanel.svelte';
     import MessagesPanel from '$lib/components/admin/MessagesPanel.svelte';
-    import FigurineShowingsEditor from '$lib/components/admin/FigurineShowingsEditor.svelte';
-    import DisplayConfigEditor from '$lib/components/admin/DisplayConfigEditor.svelte';
     import DesignEditor from '$lib/components/admin/DesignEditor.svelte';
     import HomeLayoutEditor from '$lib/components/admin/HomeLayoutEditor.svelte';
     import ReelThemePanel from '$lib/components/admin/ReelThemePanel.svelte';
     import CopyEditor from '$lib/components/admin/CopyEditor.svelte';
-    import WorkshopFeaturePanel from '$lib/components/admin/WorkshopFeaturePanel.svelte';
     import ProgrammePanel from '$lib/components/admin/ProgrammePanel.svelte';
     import LogsPanel from '$lib/components/admin/LogsPanel.svelte';
-    import { t, lang } from '$lib/i18n';
-    import SealedDoor from '$lib/components/SealedDoor.svelte';
-    import { resolveWindow, isShowingOpen, roomToWindow } from '$lib/showing-window';
+    import { t, type TranslationKey } from '$lib/i18n';
+    import FigurineForm from '$lib/components/admin/FigurineForm.svelte';
+    import SlugsPanel from '$lib/components/admin/SlugsPanel.svelte';
+    import ShowingRoomsPanel from '$lib/components/admin/ShowingRoomsPanel.svelte';
     import LangSwitcher from '$lib/components/LangSwitcher.svelte';
 
     // === AUTH ===
@@ -89,82 +81,116 @@
     let figurines = $state<FigurineListItem[]>([]);
     let selectedFigurine = $state<Figurine | null>(null);
 
-    // Backstage search caption ("Хранитель") — edited through its own endpoint,
-    // NOT the main figurine save, so ordinary saves never touch it. Loaded lazily
-    // when a work opens. Server build only (Tauri has no such endpoint).
-    let captionText = $state('');
-    let captionLoading = $state(false);
-    let captionSaving = $state(false);
-    let figurineExists = $derived(
-        selectedFigurine != null && figurines.some((f) => f.id === selectedFigurine!.id),
-    );
-
-    async function saveCaption() {
-        if (!selectedFigurine) return;
-        captionSaving = true;
-        try {
-            await api.setFigurineCaption(selectedFigurine.id, captionText);
-            showMessage($t('adminCaptionSaved'), 'success');
-        } catch (e: unknown) {
-            showMessage($t('adminMsgError') + (e instanceof Error ? e.message : String(e)), 'error');
-        } finally {
-            captionSaving = false;
-        }
-    }
-
-    // Pinterest SEO description ("Подключить RSS-канал" target) — same shape as
-    // the search caption above: its own endpoint, loaded lazily, never touched
-    // by the ordinary figurine save.
-    let pinterestDescText = $state('');
-    let pinterestDescLoading = $state(false);
-    let pinterestDescSaving = $state(false);
-
-    function generatePinterestDesc() {
-        if (!selectedFigurine) return;
-        pinterestDescText = generatePinterestDescription(selectedFigurine);
-    }
-
-    async function savePinterestDesc() {
-        if (!selectedFigurine) return;
-        pinterestDescSaving = true;
-        try {
-            await api.setFigurinePinterestDescription(selectedFigurine.id, pinterestDescText);
-            showMessage($t('adminPinterestDescSaved'), 'success');
-        } catch (e: unknown) {
-            showMessage($t('adminMsgError') + (e instanceof Error ? e.message : String(e)), 'error');
-        } finally {
-            pinterestDescSaving = false;
-        }
-    }
     let savedSnapshot = $state<string>('');
-    let isSaving = $state(false);
-    let showingsEditor = $state<FigurineShowingsEditor | null>(null);
+    // Raised by the form while an upload is in flight — blocks switching works.
+    let formBusy = $state(false);
     let showSettings = $state(false);
     let bulkPanelOpen = $state(false);
     let bulkBusy = $state(false);
     let bulkParallaxValue = $state(0.5);
-    // Slug editor («Адреса работ»): per-id draft text, in-flight ids, backfill flag.
-    let slugDrafts = $state<Record<string, string>>({});
-    let savingSlugId = $state<string | null>(null);
-    let backfilling = $state(false);
     let message = $state({ text: '', type: 'info' });
-    let activeTab = $state<'registry' | 'slugs' | 'rooms' | 'home' | 'reel-theme' | 'home-layout' | 'workshop-feature' | 'zones' | 'author' | 'workshop' | 'media' | 'releases' | 'orders' | 'commissions' | 'showings' | 'bookings' | 'waitlist' | 'subscribers' | 'contactMessages' | 'analytics' | 'marks' | 'users' | 'comments' | 'impressions' | 'messages' | 'server' | 'logs' | 'booking-rules' | 'contact' | 'design' | 'copy' | 'programme'>('registry');
+    // The sidebar's single source of truth: which tabs exist, in what order, under
+    // which heading. Hash routing (see onMount) validates against this same list, so
+    // a tab can never be reachable by URL yet missing from the nav — the state the
+    // «Брони» tab was in before this list existed.
+    // Grouped by the job the author comes here to do, not by which panel component
+    // happens to render it.
+    const TAB_GROUPS = [
+        {
+            label: 'adminGroupCollection',
+            tabs: [
+                ['registry',  'adminTabRegistry'],
+                ['slugs',     'adminTabSlugs'],
+                ['media',     'adminTabMedia'],
+                ['rooms',     'adminTabShowingRooms'],
+                ['showings',  'adminTabShowings'],
+            ],
+        },
+        {
+            label: 'adminGroupHome',
+            tabs: [
+                ['home',        'adminTabHome'],
+                ['home-layout', 'adminTabHomeLayout'],
+                ['reel-theme',  'adminTabReelTheme'],
+                ['programme',   'adminTabProgramme'],
+                ['marks',       'adminTabMarks'],
+            ],
+        },
+        {
+            label: 'adminGroupPages',
+            tabs: [
+                ['author',   'adminTabAuthor'],
+                ['workshop', 'adminTabWorkshop'],
+                ['design',   'adminTabDesign'],
+                ['copy',     'adminTabCopy'],
+            ],
+        },
+        {
+            label: 'adminGroupRequests',
+            tabs: [
+                ['orders',      'adminTabOrders'],
+                ['commissions', 'adminTabCommissions'],
+                ['bookings',    'adminTabBookings'],
+                ['waitlist',    'adminTabWaitlist'],
+            ],
+        },
+        {
+            label: 'adminGroupGuests',
+            tabs: [
+                ['messages',        'adminTabMessages'],
+                ['contactMessages', 'adminTabContactMessages'],
+                ['comments',        'adminTabComments'],
+                ['impressions',     'adminTabImpressions'],
+                ['subscribers',     'adminTabSubscribers'],
+                ['users',           'adminUsersTab'],
+            ],
+        },
+        {
+            label: 'adminGroupSystem',
+            tabs: [
+                ['analytics',     'adminTabAnalytics'],
+                ['logs',          'adminTabLogs'],
+                ['server',        'adminTabServer'],
+                ['contact',       'adminTabContact'],
+                ['booking-rules', 'adminTabBookingRules'],
+                ['releases',      'adminTabReleases'],
+            ],
+        },
+    ] as const satisfies readonly { label: TranslationKey; tabs: readonly (readonly [string, TranslationKey])[] }[];
+
+    type AdminTab = (typeof TAB_GROUPS)[number]['tabs'][number][0];
+    const TAB_IDS: readonly string[] = TAB_GROUPS.flatMap((g) => g.tabs.map(([id]) => id));
+
+    let activeTab = $state<AdminTab>('registry');
     let activeAuthorSubTab = $state<'profile' | 'texts'>('profile');
     let newOrdersCount = $state(0);
     let newCommissionsCount = $state(0);
-    let newBookingsCount = $state(0);
+    let pendingBookingsCount = $state(0);
     let pendingCommentsCount = $state(0);
     let pendingImpressionsCount = $state(0);
+
+    // Unattended work waiting in a tab. Red = someone is waiting on an answer;
+    // orange = something needs moderating before guests see it.
+    const BADGE_TONE: Partial<Record<AdminTab, string>> = {
+        orders: 'bg-red-500',
+        commissions: 'bg-red-500',
+        bookings: 'bg-red-500',
+        comments: 'bg-orange-600',
+        impressions: 'bg-orange-600',
+    };
+    function tabBadge(tab: AdminTab): number {
+        switch (tab) {
+            case 'orders':      return newOrdersCount;
+            case 'commissions': return newCommissionsCount;
+            case 'bookings':    return pendingBookingsCount;
+            case 'comments':    return pendingCommentsCount;
+            case 'impressions': return pendingImpressionsCount;
+            default:            return 0;
+        }
+    }
     let searchQuery = $state('');
     let isDeleting = $state(false);
-    let uploadingVideo = $state(false);
-    let uploadingImage = $state(false);
-    let activeFormTab = $state<'media' | 'text' | 'object' | 'passport' | 'vitrina'>('media');
-    let selectedImageIdx = $state<number | null>(null);
     let sidebarCollapsed = $state(false);
-    let uploadingAudio = $state(false);
-    let externalVideoUrl = $state('');
-    let folderUploadProgress = $state<{ done: number; total: number } | null>(null);
 
     let hasUnsaved = $derived(
         selectedFigurine !== null && JSON.stringify(selectedFigurine) !== savedSnapshot
@@ -185,43 +211,6 @@
     let dimensionsSuggestions = $derived(
         [...new Set(figurines.map(f => f.dimensions).filter((v): v is string => !!v))].sort()
     );
-
-    function resolveUrl(path: string | null): string {
-        if (!path) return '';
-        if (path.startsWith('http')) return path;
-        if (path.startsWith('/static/')) {
-            // Web-uploaded relative path — prepend server origin
-            if (typeof localStorage !== 'undefined') {
-                const serverUrl = localStorage.getItem('gotiga_server_url') ?? '';
-                return serverUrl ? `${serverUrl}${path}` : path;
-            }
-        }
-        return path;
-    }
-
-    function loadImageAspect(url: string): Promise<number | null> {
-        if (!url) return Promise.resolve(null);
-        return new Promise((resolve) => {
-            const img = new Image();
-            img.onload = () => {
-                resolve(img.naturalWidth && img.naturalHeight
-                    ? img.naturalWidth / img.naturalHeight
-                    : null);
-            };
-            img.onerror = () => resolve(null);
-            img.src = url;
-        });
-    }
-
-    async function confirmDepthAspectMatches(imageUrl: string, depthUrl: string): Promise<boolean> {
-        const [imageAspect, depthAspect] = await Promise.all([
-            loadImageAspect(resolveUrl(imageUrl)),
-            loadImageAspect(resolveUrl(depthUrl)),
-        ]);
-        if (!imageAspect || !depthAspect) return true;
-        const drift = Math.abs(imageAspect - depthAspect) / imageAspect;
-        return drift <= 0.03 || confirm($t('adminMediaDepthAspectWarning'));
-    }
 
     const emptyFigurine: Figurine = {
         id: '',
@@ -251,185 +240,28 @@
         displayConfig: null,
         openFromMin: null,
         openUntilMin: null,
-        sealedDoorImage: null,
         firstLookUntil: null,
         images: [],
         processSteps: [],
         relatedItems: []
     };
 
-    // Showing window ("the house wakes"): stored as minutes-from-midnight, edited
-    // as a HH:MM clock. Empty input → null. Both null → always open (ungated).
-    function minToTime(min: number | null | undefined): string {
-        if (min == null) return '';
-        const m = ((Math.round(min) % 1440) + 1440) % 1440;
-        return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
-    }
-    function timeToMin(value: string): number | null {
-        if (!value) return null;
-        const [h, m] = value.split(':').map(Number);
-        if (Number.isNaN(h) || Number.isNaN(m)) return null;
-        return h * 60 + m;
-    }
-
     // === Showing rooms (named shared windows) ===
     let showingRoomsList = $state<ShowingRoom[]>([]);
 
     async function loadShowingRooms() {
-        try { showingRoomsList = await api.getShowingRooms(); } catch {}
-    }
-
-    // The figurine's window mode: '' = always open, 'custom' = own hours, else a room id.
-    function figWindowMode(f: Figurine | null): string {
-        if (!f) return '';
-        if (f.showingRoomId) return f.showingRoomId;
-        if (f.openFromMin != null && f.openUntilMin != null) return 'custom';
-        return '';
-    }
-
-    // Room and custom hours are mutually exclusive: switching mode clears the other.
-    function setFigWindowMode(value: string) {
-        if (!selectedFigurine) return;
-        if (value === '') {
+        try { showingRoomsList = await api.getShowingRooms(); } catch { return; }
+        // A work pointing at a room that was just deleted falls back to always-open.
+        if (selectedFigurine?.showingRoomId && !showingRoomsList.some((r) => r.id === selectedFigurine!.showingRoomId)) {
             selectedFigurine.showingRoomId = null;
-            selectedFigurine.openFromMin = null;
-            selectedFigurine.openUntilMin = null;
-        } else if (value === 'custom') {
-            selectedFigurine.showingRoomId = null;
-            if (selectedFigurine.openFromMin == null) selectedFigurine.openFromMin = 0;
-            if (selectedFigurine.openUntilMin == null) selectedFigurine.openUntilMin = 4 * 60;
-        } else {
-            selectedFigurine.showingRoomId = value;
-            selectedFigurine.openFromMin = null;
-            selectedFigurine.openUntilMin = null;
         }
     }
-
-    function addShowingRoom() {
-        showingRoomsList = [
-            ...showingRoomsList,
-            { id: crypto.randomUUID(), name: '', openFromMin: 23 * 60, openUntilMin: 4 * 60 },
-        ];
-    }
-
-    async function saveShowingRoom(room: ShowingRoom) {
-        await api.saveShowingRoom(room);
-        await loadShowingRooms();
-    }
-
-    async function deleteShowingRoom(id: string) {
-        await api.deleteShowingRoom(id);
-        // A work pointing at the deleted room falls back to always-open.
-        if (selectedFigurine?.showingRoomId === id) selectedFigurine.showingRoomId = null;
-        await loadShowingRooms();
-    }
-
-    // --- Room schedule: weekday mask + date mode (Task B) ---
-    let roomLocale = $derived($lang === 'ru' ? 'ru-RU' : 'en-US');
-    // Mon..Sun short labels (2024-01-01 was a Monday).
-    let weekdayLabels = $derived(
-        Array.from({ length: 7 }, (_, i) =>
-            new Intl.DateTimeFormat(roomLocale, { weekday: 'short' }).format(new Date(2024, 0, 1 + i))
-        )
-    );
-    const dayBit = (mask: number | null | undefined, i: number) => (((mask ?? 0) >> i) & 1) === 1;
-    function toggleDay(room: ShowingRoom, i: number) {
-        const next = (room.openDaysMask ?? 0) ^ (1 << i);
-        room.openDaysMask = next === 0 ? null : next; // no days set → every day
-    }
-
-    function roomDateMode(room: ShowingRoom): 'none' | 'annual' | 'range' {
-        if (room.openMonthDay) return 'annual';
-        if (room.openDateFrom || room.openDateUntil) return 'range';
-        return 'none';
-    }
-    function setRoomDateMode(room: ShowingRoom, mode: string) {
-        room.openMonthDay = null;
-        room.openDateFrom = null;
-        room.openDateUntil = null;
-        if (mode === 'annual') {
-            const now = new Date();
-            room.openMonthDay = `${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-        } else if (mode === 'range') {
-            room.openDateFrom = new Date().toISOString().slice(0, 10);
-        }
-    }
-    // Annual date <-> "MM-DD": a date input wants YYYY-MM-DD, so pad/strip the year.
-    const annualToInput = (md: string | null | undefined) => (md ? `2000-${md}` : '');
-    const inputToAnnual = (v: string) => (v ? v.slice(5) : null);
-
-    // --- Preview clock (Task E): see a window "as a guest would" at any moment,
-    // without touching the system clock or saving anything. ---
-    let previewAt = $state<Date>(new Date());
-    function toLocalInput(d: Date): string {
-        const p = (n: number) => String(n).padStart(2, '0');
-        return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
-    }
-    // A room's full window (hours + days + date) for preview evaluation.
-    // The selected figurine's effective window (room or own hours).
-    let previewFigWindow = $derived(
-        selectedFigurine
-            ? resolveWindow(
-                  { openFromMin: selectedFigurine.openFromMin, openUntilMin: selectedFigurine.openUntilMin, showingRoomId: selectedFigurine.showingRoomId },
-                  showingRoomsList
-              )
-            : {}
-    );
-    let previewFigOpen = $derived(isShowingOpen(previewFigWindow, previewAt));
 
     async function loadFigurines() {
         try {
-            figurines = isTauri
-                ? await api.getAllFigurines()
-                : await api.getAllFigurinesAdmin();
+            figurines = await api.getAllFigurinesAdmin();
         } catch (e) {
             showMessage($t('adminMsgLoadError') + e, 'error');
-        }
-    }
-
-    // === URL slugs («Адреса работ») ===
-    // Current draft for a row: an explicit edit if present, else the stored slug.
-    function slugDraft(fig: FigurineListItem): string {
-        return slugDrafts[fig.id] ?? fig.slug ?? '';
-    }
-    function slugChanged(fig: FigurineListItem): boolean {
-        return slugDraft(fig).trim() !== (fig.slug ?? '');
-    }
-
-    async function runSlugBackfill() {
-        if (backfilling) return;
-        backfilling = true;
-        try {
-            const res = await api.backfillSlugs();
-            await loadFigurines();
-            slugDrafts = {}; // stored values changed — drop stale drafts
-            showMessage($t('adminSlugBackfillDone').replace('{n}', String(res.affected)), 'success');
-        } catch (e) {
-            showMessage($t('adminSlugError') + e, 'error');
-        } finally {
-            backfilling = false;
-        }
-    }
-
-    // Persist one row. `regenerate` sends null so the backend rebuilds from the name.
-    async function saveSlug(fig: FigurineListItem, regenerate = false) {
-        if (savingSlugId) return;
-        savingSlugId = fig.id;
-        try {
-            const override = regenerate ? null : (slugDraft(fig).trim() || null);
-            const stored = await api.setFigurineSlug(fig.id, override);
-            const idx = figurines.findIndex(f => f.id === fig.id);
-            if (idx >= 0) {
-                figurines[idx].slug = stored;
-                // A blank/regenerate override is auto; an explicit value is manual.
-                figurines[idx].slugManual = override !== null;
-            }
-            delete slugDrafts[fig.id];
-            showMessage($t('adminSlugSaved').replace('{slug}', stored), 'success');
-        } catch (e) {
-            showMessage($t('adminSlugError') + e, 'error');
-        } finally {
-            savingSlugId = null;
         }
     }
 
@@ -456,7 +288,7 @@
     // upload was started for. Blocking the switch here is simpler and safer than trying
     // to retarget an in-flight upload to its original figurine.
     function uploadBusy(): boolean {
-        return uploadingVideo || uploadingAudio || uploadingImage || folderUploadProgress !== null;
+        return formBusy;
     }
 
     async function editFigurine(id: string) {
@@ -466,26 +298,6 @@
         if (full) {
             selectedFigurine = { ...full };
             savedSnapshot = JSON.stringify(selectedFigurine);
-            selectedImageIdx = null;
-            // Load the backstage search caption (separate from the figurine payload).
-            captionText = '';
-            pinterestDescText = '';
-            if (!isTauri) {
-                captionLoading = true;
-                pinterestDescLoading = true;
-                try {
-                    const c = await api.getFigurineCaption(id);
-                    // Guard: the user may have opened another work while this was
-                    // in flight — don't clobber the newer selection's caption.
-                    if (selectedFigurine?.id === id) captionText = c ?? '';
-                } catch { /* leave the field empty on failure */ }
-                finally { if (selectedFigurine?.id === id) captionLoading = false; }
-                try {
-                    const pd = await api.getFigurinePinterestDescription(id);
-                    if (selectedFigurine?.id === id) pinterestDescText = pd ?? '';
-                } catch { /* leave the field empty on failure */ }
-                finally { if (selectedFigurine?.id === id) pinterestDescLoading = false; }
-            }
         }
     }
 
@@ -494,10 +306,6 @@
         if (hasUnsaved && !confirm($t('adminMsgUnsavedLeave'))) return;
         selectedFigurine = { ...emptyFigurine, id: crypto.randomUUID(), sortOrder: figurines.length };
         savedSnapshot = '';
-        activeFormTab = 'media';
-        selectedImageIdx = null;
-        captionText = '';
-        pinterestDescText = '';
     }
 
     function duplicateFigurine(fig: FigurineListItem) {
@@ -516,10 +324,6 @@
                 isVisible: false,
             };
             savedSnapshot = '';
-            activeFormTab = 'media';
-            selectedImageIdx = null;
-            captionText = '';
-            pinterestDescText = '';
         });
     }
 
@@ -540,303 +344,6 @@
             isDeleting = false;
         }
     }
-
-    function pickFileWeb(type: 'images' | 'videos' | 'audio'): Promise<File> {
-        return new Promise((resolve, reject) => {
-            const input = document.createElement('input');
-            input.type = 'file';
-            if (type === 'images') input.accept = 'image/jpeg,image/png,image/webp';
-            else if (type === 'videos') input.accept = 'video/mp4,video/webm';
-            else input.accept = 'audio/mpeg,audio/wav,audio/ogg';
-            input.onchange = () => {
-                const file = input.files?.[0];
-                if (file) resolve(file);
-                else reject(new Error('no file'));
-            };
-            input.click();
-        });
-    }
-
-    // Picks a media source for the current platform: a local path string in Tauri,
-    // a File on web. Returns null when the user cancels (Tauri) — the web picker
-    // rejects with 'no file' instead, which callers swallow.
-    async function pickMediaSource(type: 'images' | 'videos' | 'audio'): Promise<string | File | null> {
-        if (isTauri) {
-            const { open } = await import('@tauri-apps/plugin-dialog');
-            const filters = [];
-            if (type === 'images') filters.push({ name: 'Images', extensions: ['jpg', 'png', 'webp'] });
-            else if (type === 'videos') filters.push({ name: 'Videos', extensions: ['mp4', 'webm', 'mov'] });
-            else filters.push({ name: 'Audio', extensions: ['mp3', 'wav', 'ogg', 'm4a'] });
-            const selected = await open({ multiple: false, filters });
-            if (!selected || typeof selected !== 'string') return null;
-            return selected;
-        }
-        return await pickFileWeb(type);
-    }
-
-    async function handlePickFile(type: 'images' | 'videos' | 'audio', stepIndex?: number) {
-        if (!selectedFigurine) return;
-        // Captured before the awaits below (file picker, then upload) so the result can be
-        // checked against whatever selectedFigurine points to once they resolve — see
-        // uploadBusy()'s comment for why that check matters.
-        const targetId = selectedFigurine.id;
-
-        // The picker sits OUTSIDE the busy window on purpose: while its dialog is open
-        // nothing is in flight, so raising the flag here would tell an admin who opened it,
-        // changed their mind and clicked another figurine to "wait for the upload to finish"
-        // when there is no upload. Switching away during the dialog is allowed — the file
-        // that comes back is simply dropped, since it was picked for a figurine that is no
-        // longer open and attaching it to the new one would be a guess.
-        const fileOrPath = await pickMediaSource(type).catch((e: unknown) => {
-            const msg = e instanceof Error ? e.message : String(e);
-            if (msg !== 'no file') showMessage($t('adminMsgError') + msg, 'error');
-            return null;
-        });
-        if (fileOrPath === null) return;
-
-        if (!selectedFigurine || selectedFigurine.id !== targetId) {
-            showMessage($t('adminMsgUploadTargetChanged'), 'error');
-            return;
-        }
-
-        // From here on there IS a transfer to protect: the flag blocks a figurine switch
-        // until it lands (editFigurine/createNew/duplicateFigurine consult uploadBusy).
-        if (type === 'videos') uploadingVideo = true;
-        if (type === 'audio') uploadingAudio = true;
-        if (type === 'images') uploadingImage = true;
-        try {
-            const imported = await api.importMediaWithVariants(
-                fileOrPath,
-                type === 'videos' ? 'videos' : type === 'audio' ? 'audio' : 'images',
-                type === 'images' ? selectedFigurine.name : undefined
-            );
-            const localUrl = imported.url;
-
-            if (!selectedFigurine || selectedFigurine.id !== targetId) {
-                showMessage($t('adminMsgUploadTargetChanged'), 'error');
-                return;
-            }
-
-            if (type === 'videos') {
-                selectedFigurine.videoUrl = localUrl;
-            } else if (type === 'audio') {
-                selectedFigurine.ambiencePath = localUrl;
-            } else if (typeof stepIndex === 'number') {
-                selectedFigurine.processSteps[stepIndex].imageUrl = localUrl;
-            } else {
-                const variants = deriveImageVariants(localUrl);
-                selectedFigurine.images = [...selectedFigurine.images, {
-                    id: crypto.randomUUID(),
-                    imageType: 'full',
-                    url: localUrl,
-                    originalUrl: imported.originalUrl ?? variants.originalUrl,
-                    thumbUrl: imported.thumbUrl ?? variants.thumbUrl,
-                    altText: '',
-                    depthUrl: null,
-                    parallaxIntensity: null,
-                    focalX: null,
-                    focalY: null,
-                    revealRadius: null,
-                    darkness: null
-                }];
-            }
-            showMessage($t('adminMsgFileUploaded'), 'success');
-        } catch (e: unknown) {
-            const msg = e instanceof Error ? e.message : String(e);
-            if (msg !== 'no file') showMessage($t('adminMsgError') + msg, 'error');
-        } finally {
-            if (type === 'videos') uploadingVideo = false;
-            if (type === 'audio') uploadingAudio = false;
-            if (type === 'images') uploadingImage = false;
-        }
-    }
-
-    async function handleFolderUpload() {
-        if (!selectedFigurine) return;
-        // See uploadBusy()'s comment: captured once, checked before every write into
-        // selectedFigurine.images so a figurine switch mid-batch (blocked at the entry
-        // points by folderUploadProgress, but checked again here too) can never attach
-        // a photo from this batch to a different figurine.
-        const targetId = selectedFigurine.id;
-        // Captured alongside targetId — selectedFigurine may go null mid-batch (see
-        // above), so reading .name off it later in the loop isn't safe.
-        const targetName = selectedFigurine.name;
-        if (isTauri) {
-            const { open } = await import('@tauri-apps/plugin-dialog');
-            const { invoke: inv } = await import('@tauri-apps/api/core');
-            const dir = await open({ directory: true, multiple: false });
-            if (!dir || typeof dir !== 'string') return;
-            let imagePaths: string[] = [];
-            try {
-                imagePaths = await inv<string[]>('list_image_files', { dirPath: dir });
-            } catch (e) {
-                showMessage($t('adminMsgError') + e, 'error');
-                return;
-            }
-            if (imagePaths.length === 0) return;
-            folderUploadProgress = { done: 0, total: imagePaths.length };
-            for (const filePath of imagePaths) {
-                try {
-                    const imported = await api.importMediaWithVariants(filePath, 'images', targetName);
-                    if (!selectedFigurine || selectedFigurine.id !== targetId) {
-                        showMessage($t('adminMsgUploadTargetChanged'), 'error');
-                        break;
-                    }
-                    const variants = deriveImageVariants(imported.url);
-                    selectedFigurine.images = [...selectedFigurine.images, {
-                        id: crypto.randomUUID(),
-                        imageType: 'full',
-                        url: imported.url,
-                        originalUrl: imported.originalUrl ?? variants.originalUrl,
-                        thumbUrl: imported.thumbUrl ?? variants.thumbUrl,
-                        altText: '',
-                        depthUrl: null,
-                        parallaxIntensity: null,
-                        focalX: null,
-                        focalY: null,
-                        revealRadius: null,
-                        darkness: null
-                    }];
-                } catch (e) {
-                    showMessage($t('adminMsgError') + String(e), 'error');
-                }
-                folderUploadProgress = { done: (folderUploadProgress?.done ?? 0) + 1, total: imagePaths.length };
-            }
-            folderUploadProgress = null;
-            showMessage($t('adminMsgFileUploaded'), 'success');
-        } else {
-            // Web mode: native folder picker via webkitdirectory
-            const input = document.createElement('input');
-            input.type = 'file';
-            input.accept = 'image/jpeg,image/png,image/webp';
-            input.multiple = true;
-            (input as HTMLInputElement & { webkitdirectory: boolean }).webkitdirectory = true;
-            input.onchange = async () => {
-                const files = Array.from(input.files ?? [])
-                    .filter(f => /\.(jpe?g|png|webp)$/i.test(f.name))
-                    .sort((a, b) => a.name.localeCompare(b.name));
-                if (files.length === 0) return;
-                folderUploadProgress = { done: 0, total: files.length };
-                for (const file of files) {
-                    try {
-                        const imported = await api.importMediaWithVariants(file, 'images', targetName);
-                        if (!selectedFigurine || selectedFigurine.id !== targetId) {
-                            showMessage($t('adminMsgUploadTargetChanged'), 'error');
-                            break;
-                        }
-                        const variants = deriveImageVariants(imported.url);
-                        selectedFigurine!.images = [...selectedFigurine!.images, {
-                            id: crypto.randomUUID(),
-                            imageType: 'full',
-                            url: imported.url,
-                            originalUrl: imported.originalUrl ?? variants.originalUrl,
-                            thumbUrl: imported.thumbUrl ?? variants.thumbUrl,
-                            altText: '',
-                            depthUrl: null,
-                            parallaxIntensity: null,
-                            focalX: null,
-                            focalY: null,
-                            revealRadius: null,
-                            darkness: null
-                        }];
-                    } catch (e) {
-                        showMessage($t('adminMsgError') + String(e), 'error');
-                    }
-                    folderUploadProgress = { done: (folderUploadProgress?.done ?? 0) + 1, total: files.length };
-                }
-                folderUploadProgress = null;
-                showMessage($t('adminMsgFileUploaded'), 'success');
-            };
-            input.click();
-        }
-    }
-
-    // Attach a precomputed depth map to a single image (LivingDaguerreotype 2.5D
-    // parallax). It's just a grayscale image upload — the offline batch produces
-    // higher-fidelity maps, this is the manual path. NULL falls back to luminance.
-    async function handlePickDepth(imgIdx: number) {
-        if (!selectedFigurine) return;
-        const targetId = selectedFigurine.id;
-
-        // Same shape as handlePickFile: the picker's dialog is not a transfer, so it must
-        // not raise the busy flag and block a figurine switch behind it.
-        const fileOrPath = await pickMediaSource('images').catch((e: unknown) => {
-            const msg = e instanceof Error ? e.message : String(e);
-            if (msg !== 'no file') showMessage($t('adminMsgError') + msg, 'error');
-            return null;
-        });
-        if (fileOrPath === null) return;
-
-        if (!selectedFigurine || selectedFigurine.id !== targetId) {
-            showMessage($t('adminMsgUploadTargetChanged'), 'error');
-            return;
-        }
-
-        uploadingImage = true;
-        try {
-            const imported = await api.importMediaWithVariants(fileOrPath, 'images');
-            if (!selectedFigurine || selectedFigurine.id !== targetId) {
-                showMessage($t('adminMsgUploadTargetChanged'), 'error');
-                return;
-            }
-            const targetImage = selectedFigurine.images[imgIdx];
-            if (targetImage && !(await confirmDepthAspectMatches(targetImage.url, imported.url))) {
-                showMessage($t('adminMediaDepthCancelled'), 'info');
-                return;
-            }
-            if (!selectedFigurine || selectedFigurine.id !== targetId) {
-                showMessage($t('adminMsgUploadTargetChanged'), 'error');
-                return;
-            }
-            selectedFigurine.images[imgIdx].depthUrl = imported.url;
-            selectedFigurine.images = [...selectedFigurine.images];
-            showMessage($t('adminMediaDepthUploaded'), 'success');
-        } catch (e: unknown) {
-            const msg = e instanceof Error ? e.message : String(e);
-            if (msg !== 'no file') showMessage($t('adminMsgError') + msg, 'error');
-        } finally {
-            uploadingImage = false;
-        }
-    }
-
-    function clearDepth(imgIdx: number) {
-        if (!selectedFigurine) return;
-        selectedFigurine.images[imgIdx].depthUrl = null;
-        selectedFigurine.images = [...selectedFigurine.images];
-    }
-
-    let generatingDepth = $state(false);
-
-    // Generate depth maps for every image of the current figurine via the Rust
-    // API (Depth-Anything on CPU). Requires the figurine to already exist server
-    // side; then refresh each image's depthUrl so the badge/preview update.
-    async function generateDepth() {
-        if (!selectedFigurine) return;
-        if (hasUnsaved) {
-            showMessage($t('adminMediaDepthGenSaveFirst'), 'info');
-            return;
-        }
-        generatingDepth = true;
-        try {
-            const res = await api.generateFigurineDepth(selectedFigurine.id);
-            // Pull fresh depthUrls (the API just wrote them) without clobbering
-            // any in-form edits: merge by image id.
-            const fresh = await api.getFigurine(selectedFigurine.id);
-            const byId = new Map((fresh?.images ?? []).map(i => [i.id, i.depthUrl ?? null]));
-            selectedFigurine.images = selectedFigurine.images.map(img => ({
-                ...img,
-                depthUrl: byId.get(img.id) ?? img.depthUrl ?? null,
-            }));
-            showMessage(`${$t('adminMediaDepthGenDone')}: ${res.generated}/${res.results.length}`, 'success');
-        } catch (e: unknown) {
-            const msg = e instanceof Error ? e.message : String(e);
-            showMessage($t('adminMsgError') + msg, 'error');
-        } finally {
-            generatingDepth = false;
-        }
-    }
-
-    // === BULK OPS (ADMIN — apply across every figurine at once) ===
 
     async function refreshAfterBulkOp() {
         await loadFigurines();
@@ -919,196 +426,11 @@
         }
     }
 
-    function setParallaxIntensity(imgIdx: number, value: string) {
-        if (!selectedFigurine) return;
-        const parsed = Number(value);
-        selectedFigurine.images[imgIdx].parallaxIntensity = Number.isFinite(parsed)
-            ? Math.max(0, Math.min(1, parsed))
-            : null;
-        selectedFigurine.images = [...selectedFigurine.images];
-    }
-
-    function resetParallaxIntensity(imgIdx: number) {
-        if (!selectedFigurine) return;
-        selectedFigurine.images[imgIdx].parallaxIntensity = null;
-        selectedFigurine.images = [...selectedFigurine.images];
-    }
-
-    function parallaxValue(value: number | null | undefined): number {
-        if (typeof value !== 'number' || !Number.isFinite(value)) return 0.6;
-        return Math.max(0, Math.min(1, value));
-    }
-
-    // "Keyhole" reveal — the focal fragment shown on the archive/home card while
-    // the work is still sealed (unseen). Frame-relative 0..1, edited over a 4/3
-    // `contain` preview that mirrors the live card exactly.
-    function setFocalPoint(imgIdx: number, x: number, y: number) {
-        if (!selectedFigurine) return;
-        selectedFigurine.images[imgIdx].focalX = Math.round(x * 1000) / 1000;
-        selectedFigurine.images[imgIdx].focalY = Math.round(y * 1000) / 1000;
-        selectedFigurine.images = [...selectedFigurine.images];
-    }
-
-    function setRevealRadius(imgIdx: number, value: string) {
-        if (!selectedFigurine) return;
-        const parsed = Number(value);
-        selectedFigurine.images[imgIdx].revealRadius = Number.isFinite(parsed)
-            ? Math.max(0.08, Math.min(1, parsed))
-            : null;
-        selectedFigurine.images = [...selectedFigurine.images];
-    }
-
-    function resetReveal(imgIdx: number) {
-        if (!selectedFigurine) return;
-        selectedFigurine.images[imgIdx].focalX = null;
-        selectedFigurine.images[imgIdx].focalY = null;
-        selectedFigurine.images[imgIdx].revealRadius = null;
-        selectedFigurine.images[imgIdx].darkness = null;
-        selectedFigurine.images = [...selectedFigurine.images];
-    }
-
-    function revealRadiusValue(value: number | null | undefined): number {
-        if (typeof value !== 'number' || !Number.isFinite(value)) return 0.3;
-        return Math.max(0.08, Math.min(1, value));
-    }
-
-    // Per-image darkness override. Empty/non-finite → null = inherit the global
-    // keyhole darkness (theme setting). Mirrors the renderer's 0.88 default.
-    function setDarkness(imgIdx: number, value: string) {
-        if (!selectedFigurine) return;
-        const parsed = Number(value);
-        selectedFigurine.images[imgIdx].darkness = Number.isFinite(parsed)
-            ? Math.max(0, Math.min(1, parsed))
-            : null;
-        selectedFigurine.images = [...selectedFigurine.images];
-    }
-
-    // The global keyhole darkness shows through when no per-image override is set,
-    // so the stepper lands on it rather than a bare default.
-    function darknessValue(value: number | null | undefined): number {
-        if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.min(1, value));
-        const global = $themeConfig.effects?.keyholeDarkness;
-        return typeof global === 'number' && Number.isFinite(global) ? global : 0.88;
-    }
-
-    // "Window" / "Shadow" are stepper buttons, not sliders: a range input cannot
-    // shrink below its intrinsic width, so it overflowed and went dead in the
-    // narrow per-image column. Each tap nudges by a fixed step, clamped to the
-    // same bounds the renderer enforces.
-    const REVEAL_MIN = 0.08, REVEAL_MAX = 1, DARK_MIN = 0.4, DARK_MAX = 1, KEYHOLE_STEP = 0.05;
-    function nudgeRevealRadius(imgIdx: number, delta: number) {
-        if (!selectedFigurine) return;
-        const next = revealRadiusValue(selectedFigurine.images[imgIdx].revealRadius) + delta;
-        setRevealRadius(imgIdx, String(Math.round(next * 100) / 100));
-    }
-    function nudgeDarkness(imgIdx: number, delta: number) {
-        if (!selectedFigurine) return;
-        const next = Math.max(DARK_MIN, Math.min(DARK_MAX, darknessValue(selectedFigurine.images[imgIdx].darkness) + delta));
-        setDarkness(imgIdx, String(Math.round(next * 100) / 100));
-    }
-
-    function deriveImageVariants(url: string): { originalUrl: string | null; thumbUrl: string | null } {
-        const marker = 'images/preview/';
-        const idx = url.indexOf(marker);
-        if (idx === -1) return { originalUrl: null, thumbUrl: null };
-        const prefix = url.slice(0, idx);
-        const fileName = url.slice(idx + marker.length);
-        return {
-            originalUrl: `${prefix}images/original/${fileName}`,
-            thumbUrl: `${prefix}images/thumb/${fileName}`
-        };
-    }
-
-    function moveImage(index: number, direction: -1 | 1) {
-        if (!selectedFigurine) return;
-        const newIdx = index + direction;
-        if (newIdx < 0 || newIdx >= selectedFigurine.images.length) return;
-        const imgs = [...selectedFigurine.images];
-        [imgs[index], imgs[newIdx]] = [imgs[newIdx], imgs[index]];
-        selectedFigurine.images = imgs;
-    }
-
-    function addProcessStep() {
-        if (!selectedFigurine) return;
-        selectedFigurine.processSteps = [...selectedFigurine.processSteps, {
-            id: crypto.randomUUID(), stepType: 'sketch', description: '', imageUrl: ''
-        }];
-    }
-
-    function removeProcessStep(index: number) {
-        if (!selectedFigurine) return;
-        selectedFigurine.processSteps = selectedFigurine.processSteps.filter((_, i) => i !== index);
-    }
-
-    function setFaceImage(imageId: string) {
-        if (!selectedFigurine) return;
-        selectedFigurine.images = selectedFigurine.images.map(img => ({
-            ...img, imageType: img.id === imageId ? 'face' : 'full'
-        }));
-    }
-
-    // "Second angle" — the home gallery card's hover reveal. Independent of
-    // the cover/face image: exactly one image may carry it, any previous
-    // holder demotes to 'full', and the cover image itself can't double as it
-    // (the keyhole reveal already owns the face image).
-    function setDetailImage(imageId: string) {
-        if (!selectedFigurine) return;
-        selectedFigurine.images = selectedFigurine.images.map(img => {
-            if (img.id === imageId) return { ...img, imageType: 'detail' };
-            if (img.imageType === 'detail') return { ...img, imageType: 'full' };
-            return img;
-        });
-    }
-
-    function clearDetailImage(imageId: string) {
-        if (!selectedFigurine) return;
-        selectedFigurine.images = selectedFigurine.images.map(img =>
-            img.id === imageId ? { ...img, imageType: 'full' } : img
-        );
-    }
-
-    function altTextLen(text: string | null | undefined): number {
-        return (text ?? '').trim().length;
-    }
-
-    // Fills the [type]+[subject]+[material]+[context] SEO formula (same one the public
-    // detail page falls back to automatically) into the alt text field, so an admin
-    // gets a solid starting point instead of a blank input — see figurine-alt.ts.
-    // Overwrites on purpose: it's an explicit click, not a silent fallback.
-    function autoFillAlt(imgIdx: number) {
-        if (!selectedFigurine) return;
-        const img = selectedFigurine.images[imgIdx];
-        if (!img) return;
-        selectedFigurine.images[imgIdx] = {
-            ...img,
-            altText: formatFigurineAlt(
-                selectedFigurine,
-                img.imageType,
-                altLabelsFrom($t),
-                siblingPosition(selectedFigurine.images, img),
-            ),
-        };
-    }
-
-    async function save() {
-        if (!selectedFigurine) return;
-        isSaving = true;
-        try {
-            // Сначала коммитим незакрытую инлайн-форму показа (если в ней есть данные).
-            // При невалидных данных flush() вернёт false и покажет свою ошибку инлайн —
-            // прерываем сохранение, чтобы автор их поправил.
-            if (showingsEditor && !(await showingsEditor.flush())) {
-                return;
-            }
-            await api.saveFigurine(selectedFigurine);
-            savedSnapshot = JSON.stringify(selectedFigurine);
-            showMessage(isTauri ? $t('adminMsgSavedArchive') : $t('adminMsgSavedServer'), 'success');
-            await loadFigurines();
-        } catch (e) {
-            showMessage($t('adminMsgError') + e, 'error');
-        } finally {
-            isSaving = false;
-        }
+    // The form saved the work: the snapshot it was compared against is now the
+    // saved state, and the registry list may show a new name/status.
+    async function afterFigurineSaved() {
+        savedSnapshot = JSON.stringify(selectedFigurine);
+        await loadFigurines();
     }
 
     function cancelEdit() {
@@ -1127,11 +449,7 @@
         const session = sessionStorage.getItem('gotiga_admin');
         const persisted = localStorage.getItem('gotiga_admin_persist');
         const hasKey = localStorage.getItem('gotiga_api_key') || sessionStorage.getItem('gotiga_api_key');
-        if (isTauri) {
-            isAuthenticated = true;
-            loadFigurines();
-            loadShowingRooms();
-        } else if ((session === '1' || persisted === '1') && hasKey) {
+        if ((session === '1' || persisted === '1') && hasKey) {
             isAuthenticated = true;
             loadFigurines();
             loadShowingRooms();
@@ -1140,15 +458,14 @@
         sidebarCollapsed = localStorage.getItem('gotiga_admin_sidebar_collapsed') === '1';
         // Hash-based tab routing (e.g. Telegram notification links)
         const hash = window.location.hash.replace('#', '');
-        const validTabs = ['registry','rooms','home','workshop-feature','zones','author','workshop','media','releases','orders','commissions','showings','bookings','waitlist','subscribers','contactMessages','analytics','marks','users','comments','impressions','messages','server','logs','booking-rules','contact','design','copy','programme'];
-        if (validTabs.includes(hash)) {
-            activeTab = hash as typeof activeTab;
+        if (TAB_IDS.includes(hash)) {
+            activeTab = hash as AdminTab;
         }
     });
 </script>
 
 <!-- ===== LOGIN SCREEN ===== -->
-{#if !isAuthenticated && !isTauri}
+{#if !isAuthenticated}
 <div class="h-screen bg-[#f8f1e7] flex items-center justify-center font-cinzel">
     <div class="relative w-full max-w-sm p-10 border border-[#34251c]/20 bg-[#fff9f0] shadow-[0_0_80px_rgba(111,59,36,0.20)]">
         <!-- Corner marks -->
@@ -1226,98 +543,21 @@
 
         <!-- Nav -->
         <nav class="flex-1 px-3 py-4 flex flex-col gap-5 overflow-y-auto">
-            {#each [
-              {
-                label: $t('adminGroupDaily'),
-                tabs: [
-                  ['registry',   $t('adminTabRegistry')],
-                  ['comments',   $t('adminTabComments')],
-                  ['impressions', $t('adminTabImpressions')],
-                  ['messages',   $t('adminTabMessages')],
-                ]
-              },
-              {
-                label: $t('adminGroupRequests'),
-                tabs: [
-                  ['orders',       $t('adminTabOrders')],
-                  ['commissions',  $t('adminTabCommissions')],
-                  ['waitlist',     $t('adminTabWaitlist')],
-                  ['subscribers',  $t('adminTabSubscribers')],
-                  ['contactMessages', $t('adminTabContactMessages')],
-                ]
-              },
-              {
-                label: $t('adminGroupContent'),
-                tabs: [
-                  ['home',       $t('adminTabHome')],
-                  ['reel-theme', $t('adminTabReelTheme')],
-                  ['home-layout', $t('adminTabHomeLayout')],
-                  ['programme',  $t('adminTabProgramme')],
-                  ['author',     $t('adminTabAuthor')],
-                  ['workshop',   $t('adminTabWorkshop')],
-                  ['media',      $t('adminTabMedia')],
-                ]
-              },
-              {
-                label: $t('adminGroupWorks'),
-                tabs: [
-                  ['slugs',     $t('adminTabSlugs')],
-                  ['rooms',     $t('adminTabShowingRooms')],
-                  ['zones',     $t('adminTabZones')],
-                  ['releases',  $t('adminTabReleases')],
-                ]
-              },
-              {
-                label: $t('adminGroupTools'),
-                tabs: [
-                  ['analytics', $t('adminTabAnalytics')],
-                  ['marks',     $t('adminTabMarks')],
-                  ['users',     $t('adminUsersTab')],
-                ]
-              },
-              {
-                label: $t('adminGroupSystem'),
-                tabs: [
-                  ['server',           $t('adminTabServer')],
-                  ['logs',             $t('adminTabLogs')],
-                  ['booking-rules',    $t('adminTabBookingRules')],
-                  ['contact',          $t('adminTabContact')],
-                  ['showings',         $t('adminTabShowings')],
-                  ['workshop-feature', $t('adminTabWorkshopFeature')],
-                  ['design',           $t('adminTabDesign')],
-                  ['copy',             $t('adminTabCopy')],
-                ]
-              },
-            ] as group}
+            {#each TAB_GROUPS as group}
               <div>
-                <span class="block px-2 mb-1 text-[8px] uppercase tracking-[0.12em] text-[#5f4636]/50 font-medium">{group.label}</span>
-                {#each group.tabs as [tab, label]}
+                <span class="block px-2 mb-1 text-[8px] uppercase tracking-[0.12em] text-[#5f4636]/50 font-medium">{$t(group.label)}</span>
+                {#each group.tabs as [tab, labelKey]}
                   <button
-                    onclick={() => activeTab = tab as typeof activeTab}
+                    onclick={() => activeTab = tab}
                     class="w-full text-left flex items-center justify-between px-2 py-1.5 text-xs uppercase tracking-wide transition-colors
                            {activeTab === tab
                              ? 'border-l-2 border-[#c65f3c] bg-[#c65f3c]/10 text-[#34251c] pl-[6px]'
                              : 'border-l-2 border-transparent text-[#5f4636] hover:text-[#34251c] hover:bg-[#34251c]/5 pl-[6px]'}"
                   >
-                    <span>{label}</span>
-                    {#if tab === 'orders' && newOrdersCount > 0 && activeTab !== 'orders'}
-                      <span class="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold leading-none">
-                        {newOrdersCount > 99 ? '99+' : newOrdersCount}
-                      </span>
-                    {/if}
-                    {#if tab === 'commissions' && newCommissionsCount > 0 && activeTab !== 'commissions'}
-                      <span class="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold leading-none">
-                        {newCommissionsCount > 99 ? '99+' : newCommissionsCount}
-                      </span>
-                    {/if}
-                    {#if tab === 'comments' && pendingCommentsCount > 0 && activeTab !== 'comments'}
-                      <span class="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-orange-600 text-white text-[9px] font-bold leading-none">
-                        {pendingCommentsCount > 99 ? '99+' : pendingCommentsCount}
-                      </span>
-                    {/if}
-                    {#if tab === 'impressions' && pendingImpressionsCount > 0 && activeTab !== 'impressions'}
-                      <span class="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-orange-600 text-white text-[9px] font-bold leading-none">
-                        {pendingImpressionsCount > 99 ? '99+' : pendingImpressionsCount}
+                    <span>{$t(labelKey)}</span>
+                    {#if tabBadge(tab) > 0 && activeTab !== tab}
+                      <span class="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full {BADGE_TONE[tab]} text-white text-[9px] font-bold leading-none">
+                        {tabBadge(tab) > 99 ? '99+' : tabBadge(tab)}
                       </span>
                     {/if}
                   </button>
@@ -1330,9 +570,7 @@
         <div class="px-3 py-4 border-t border-[#34251c]/15 flex flex-col gap-2">
             <LangSwitcher />
             <button onclick={() => showSettings = true} class="btn-gothic text-[10px] w-full text-left opacity-75 hover:opacity-100" title={$t('adminSettings')}>⚙ {$t('adminSettings')}</button>
-            {#if !isTauri}
-                <button onclick={handleLogout} class="btn-gothic text-[10px] w-full text-left opacity-75 hover:opacity-100">{$t('adminLogout')}</button>
-            {/if}
+            <button onclick={handleLogout} class="btn-gothic text-[10px] w-full text-left opacity-75 hover:opacity-100">{$t('adminLogout')}</button>
             <a href="/" class="btn-gothic text-[10px] opacity-60 hover:opacity-100">{$t('adminToMuseum')}</a>
         </div>
 
@@ -1396,7 +634,6 @@
                         {$t('adminBulkSetSecondAngle')}
                     </button>
 
-                    {#if !isTauri}
                     <button onclick={bulkRecalculateParallax} disabled={bulkBusy}
                         class="w-full text-left px-2 py-1.5 border border-[#34251c]/15 hover:border-[#34251c]/40 hover:bg-[#34251c]/5 disabled:opacity-40 transition-colors">
                         {$t('adminBulkRecalculateParallax')}
@@ -1411,9 +648,6 @@
                         class="w-full text-left px-2 py-1.5 border border-[#34251c]/15 hover:border-red-700/40 hover:bg-red-50 disabled:opacity-40 transition-colors">
                         {$t('adminBulkClearShowings')}
                     </button>
-                    {:else}
-                    <div class="opacity-60 italic">{$t('adminBulkServerOnly')}</div>
-                    {/if}
                 </div>
                 {/if}
 
@@ -1488,666 +722,18 @@
             <!-- Editor -->
             <main class="col-span-9 bg-[#fff9f0]/50 border border-[#34251c]/10 relative h-full flex flex-col overflow-hidden">
                 {#if selectedFigurine}
-
-                    <!-- ── TOP BAR ──────────────────────────────────────────── -->
-                    <div class="shrink-0 px-5 py-3 border-b border-[#34251c]/10 bg-[#f2e8da] flex items-center gap-3 min-w-0">
-                        <!-- Delete (far left, subtle) -->
-                        <button
-                            onclick={() => deleteFigurine(selectedFigurine!)}
-                            disabled={isDeleting}
-                            class="shrink-0 text-[10px] uppercase tracking-wide text-[#5f4636]/40 hover:text-red-700 transition-colors"
-                            title={$t('adminFormDeleteWork')}>✕</button>
-
-                        <!-- Name -->
-                        <input
-                            bind:value={selectedFigurine.name}
-                            class="flex-1 min-w-0 bg-transparent border-0 border-b border-[#34251c]/20 focus:border-[#c65f3c]/50 outline-none text-sm font-bold text-[#34251c] px-1 py-0.5 transition-colors"
-                            placeholder={$t('adminFieldName')} />
-
-                        <!-- Status -->
-                        <select bind:value={selectedFigurine.status}
-                            class="shrink-0 text-[10px] uppercase tracking-wide bg-[#f8f1e7] border border-[#34251c]/15 px-2 py-1.5 text-[#34251c] outline-none focus:border-[#c65f3c]/40 transition-colors">
-                            <option value="available">{$t('adminFieldStatusAvail')}</option>
-                            <option value="reserved">{$t('adminFieldStatusRes')}</option>
-                            <option value="in_progress">{$t('adminFieldStatusWip')}</option>
-                            <option value="sold">{$t('adminFieldStatusSold')}</option>
-                        </select>
-
-                        <!-- Visible -->
-                        <label class="flex items-center gap-1.5 shrink-0 cursor-pointer select-none">
-                            <input type="checkbox" bind:checked={selectedFigurine.isVisible} class="accent-[#34251c] w-3.5 h-3.5" />
-                            <span class="text-[10px] uppercase tracking-wide text-[#5f4636]">{$t('adminFieldVisible')}</span>
-                        </label>
-
-                        <!-- Featured -->
-                        <label class="flex items-center gap-1.5 shrink-0 cursor-pointer select-none">
-                            <input type="checkbox" bind:checked={selectedFigurine.isFeatured} class="accent-[#c65f3c] w-3.5 h-3.5" />
-                            <span class="text-[10px] uppercase tracking-wide text-[#5f4636]">{$t('adminFieldFeatured')}</span>
-                        </label>
-
-                        <!-- Unsaved pulse dot -->
-                        {#if hasUnsaved}
-                            <span class="w-1.5 h-1.5 rounded-full bg-amber-600 animate-pulse shrink-0" title={$t('adminRegistryUnsaved')}></span>
-                        {/if}
-
-                        <!-- Cancel -->
-                        <button onclick={cancelEdit} class="btn-gothic text-[10px] shrink-0 opacity-70">{$t('adminFormCancel')}</button>
-
-                        <!-- Push to cloud (Tauri only) -->
-                        {#if isTauri}
-                            <button
-                                onclick={async () => {
-                                    try {
-                                        await api.pushFigurine(selectedFigurine!);
-                                        savedSnapshot = JSON.stringify(selectedFigurine);
-                                        showMessage($t('adminFormSentToCloud'), 'success');
-                                    } catch(e) { showMessage($t('adminMsgError') + e, 'error'); }
-                                }}
-                                class="btn-gothic text-[10px] border-blue-900/40 text-blue-700 shrink-0"
-                            >{$t('adminFormToCloud')}</button>
-                        {/if}
-
-                        <!-- Save -->
-                        <button onclick={save} disabled={isSaving}
-                            class="btn-gothic text-[10px] shrink-0 min-w-[90px] transition-colors
-                                {hasUnsaved ? 'bg-amber-50 border-amber-700/40 text-amber-900 hover:bg-amber-100' : 'bg-[#34251c]/10'}">
-                            {isSaving ? $t('adminFormSaving') : hasUnsaved ? $t('adminFormSaveChanges') : $t('adminFormSaved')}
-                        </button>
-                    </div>
-
-                    <!-- ── TAB STRIP ─────────────────────────────────────────── -->
-                    <div class="shrink-0 flex border-b border-[#34251c]/10 bg-[#f8f1e7] px-1">
-                        {#each [
-                            ['media',    $t('adminFormTabMedia')],
-                            ['text',     $t('adminFormTabText')],
-                            ['object',   $t('adminFormTabObject')],
-                            ['passport', $t('adminFormTabPassport')],
-                            ['vitrina',  $t('adminFormTabVitrina')],
-                        ] as tab}
-                            <button
-                                onclick={() => activeFormTab = tab[0] as typeof activeFormTab}
-                                class="px-5 py-2.5 text-[10px] uppercase tracking-wide border-b-2 -mb-px transition-colors
-                                    {activeFormTab === tab[0]
-                                        ? 'border-[#c65f3c] text-[#34251c]'
-                                        : 'border-transparent text-[#5f4636] hover:text-[#34251c]'}"
-                            >{tab[1]}</button>
-                        {/each}
-                    </div>
-
-                    <!-- ── TAB CONTENT (scrollable) ──────────────────────────── -->
-                    <div class="flex-1 overflow-y-auto">
-
-                        <!-- ╔═ MEDIA ════════════════════════════════════════════ -->
-                        {#if activeFormTab === 'media'}
-                        <div class="p-6 space-y-8" in:fade={{ duration: 120 }}>
-
-                            <!-- Gallery header -->
-                            <div>
-                                <div class="flex items-center justify-between mb-4">
-                                    <span class="label">{$t('adminMediaPhotos')} ({selectedFigurine.images.length})</span>
-                                    <div class="flex gap-2 flex-wrap justify-end">
-                                        {#if !isTauri && selectedFigurine.images.length > 0}
-                                            <button onclick={generateDepth} disabled={generatingDepth}
-                                                title={$t('adminMediaDepthHint')}
-                                                class="btn-gothic text-[10px] disabled:opacity-60 disabled:cursor-wait">
-                                                {generatingDepth ? $t('adminMediaDepthGenRunning') : $t('adminMediaDepthGen')}
-                                            </button>
-                                        {/if}
-                                        <button onclick={() => handlePickFile('images')} class="btn-gothic text-[10px]" disabled={!!folderUploadProgress}>{$t('adminMediaAddPhoto')}</button>
-                                        <button onclick={handleFolderUpload} class="btn-gothic text-[10px]" disabled={!!folderUploadProgress}>
-                                            {folderUploadProgress
-                                                ? $t('adminMediaFolderProgress').replace('{done}', String(folderUploadProgress.done)).replace('{total}', String(folderUploadProgress.total))
-                                                : $t('adminMediaAddFolder')}
-                                        </button>
-                                    </div>
-                                </div>
-
-                                <!-- Thumbnails — 144px, click to expand -->
-                                <div class="flex flex-wrap gap-3 mb-4">
-                                    {#each selectedFigurine.images as img, imgIdx (img.id)}
-                                        <div
-                                            role="button"
-                                            tabindex="0"
-                                            onclick={() => selectedImageIdx = selectedImageIdx === imgIdx ? null : imgIdx}
-                                            onkeydown={(e) => e.key === 'Enter' && (selectedImageIdx = selectedImageIdx === imgIdx ? null : imgIdx)}
-                                            class="relative w-36 h-36 border-2 overflow-hidden transition-all group/thumb shrink-0 cursor-pointer
-                                                {selectedImageIdx === imgIdx
-                                                    ? 'border-[#c65f3c] shadow-[0_0_0_2px_rgba(198,95,60,0.2)]'
-                                                    : img.imageType === 'face'
-                                                        ? 'border-amber-500 hover:border-amber-600'
-                                                        : 'border-[#34251c]/20 hover:border-[#34251c]/50'}">
-                                            <img src={resolveUrl(img.thumbUrl ?? img.url)} alt={img.altText ?? ''} class="w-full h-full object-cover pointer-events-none" />
-
-                                            <!-- Move arrows on hover -->
-                                            <div class="absolute bottom-1 inset-x-0 flex justify-center gap-1 opacity-0 group-hover/thumb:opacity-100 transition-opacity">
-                                                <button
-                                                    onclick={(e) => { e.stopPropagation(); moveImage(imgIdx, -1); }}
-                                                    disabled={imgIdx === 0}
-                                                    class="bg-[#fff9f0]/90 text-[#34251c] text-[10px] px-2 py-0.5 border border-[#34251c]/20 disabled:opacity-30 hover:bg-[#f8f1e7]">←</button>
-                                                <button
-                                                    onclick={(e) => { e.stopPropagation(); moveImage(imgIdx, 1); }}
-                                                    disabled={imgIdx === selectedFigurine.images.length - 1}
-                                                    class="bg-[#fff9f0]/90 text-[#34251c] text-[10px] px-2 py-0.5 border border-[#34251c]/20 disabled:opacity-30 hover:bg-[#f8f1e7]">→</button>
-                                            </div>
-
-                                            {#if img.imageType === 'face'}
-                                                <div class="absolute bottom-0 left-0 right-0 bg-amber-500/80 text-black text-[8px] text-center py-0.5 font-bold pointer-events-none">{$t('adminMediaCoverBadge')}</div>
-                                            {:else if img.imageType === 'detail'}
-                                                <div class="absolute bottom-0 left-0 right-0 bg-[#c65f3c]/85 text-[#fff7ea] text-[8px] text-center py-0.5 font-bold pointer-events-none">{$t('adminMediaDetailBadge')}</div>
-                                            {/if}
-                                            {#if img.depthUrl}
-                                                <div class="absolute top-0 left-0 bg-[#34251c]/85 text-[#f3e9d8] text-[8px] px-1 py-0.5 leading-none tracking-wider font-bold pointer-events-none">{$t('adminMediaDepthBadge')}</div>
-                                            {/if}
-                                        </div>
-                                    {/each}
-
-                                    {#if selectedFigurine.images.length === 0}
-                                        <p class="text-xs text-[#5f4636]/50 italic py-6 w-full text-center">{$t('adminGrimoireEmpty')}</p>
-                                    {/if}
-                                </div>
-
-                                <!-- Per-image expanded panel (full width) -->
-                                {#if selectedImageIdx !== null && selectedFigurine.images[selectedImageIdx]}
-                                    {@const img = selectedFigurine.images[selectedImageIdx]}
-                                    {@const imgIdx = selectedImageIdx}
-                                    <div class="border border-[#c65f3c]/25 bg-[#f8f1e7] p-5" in:slide={{ duration: 160 }}>
-
-                                        <!-- Panel header -->
-                                        <div class="flex items-center justify-between mb-5">
-                                            <span class="text-[10px] uppercase tracking-wide text-[#5f4636]">
-                                                {$t('adminMediaPhotoN').replace('{n}', String(imgIdx + 1)).replace('{total}', String(selectedFigurine.images.length))}
-                                            </span>
-                                            <div class="flex items-center gap-4">
-                                                {#if img.imageType !== 'face'}
-                                                    <button onclick={() => setFaceImage(img.id)}
-                                                        class="text-[10px] uppercase tracking-wide text-[#5f4636] hover:text-amber-800 transition-colors">{$t('adminMediaCover')}</button>
-                                                {:else}
-                                                    <span class="text-[10px] uppercase tracking-wide text-amber-700">{$t('adminMediaCover')} ✓</span>
-                                                {/if}
-                                                {#if img.imageType === 'detail'}
-                                                    <button onclick={() => clearDetailImage(img.id)}
-                                                        class="text-[10px] uppercase tracking-wide text-[#c65f3c]">{$t('adminMediaDetail')} ✓ · {$t('adminMediaDetailClear')}</button>
-                                                {:else if img.imageType !== 'face'}
-                                                    <button onclick={() => setDetailImage(img.id)} title={$t('adminMediaDetailHint')}
-                                                        class="text-[10px] uppercase tracking-wide text-[#5f4636] hover:text-[#c65f3c] transition-colors">{$t('adminMediaDetail')}</button>
-                                                {/if}
-                                                <button onclick={() => {
-                                                        selectedFigurine!.images = selectedFigurine!.images.filter(i => i.id !== img.id);
-                                                        selectedImageIdx = null;
-                                                    }}
-                                                    class="text-[10px] uppercase tracking-wide text-red-700 hover:text-red-900 transition-colors">{$t('adminMediaDeleteFile')}</button>
-                                                <button onclick={() => selectedImageIdx = null}
-                                                    class="text-[10px] text-[#5f4636] hover:text-[#34251c] transition-colors">✕</button>
-                                            </div>
-                                        </div>
-
-                                        <div class="grid grid-cols-2 gap-8">
-                                            <!-- Left: preview + alt + depth -->
-                                            <div class="space-y-4">
-                                                <div class="border border-[#34251c]/15 overflow-hidden bg-[#f1e3d1] aspect-square">
-                                                    <img src={resolveUrl(img.url)} alt={img.altText ?? ''} class="w-full h-full object-contain" />
-                                                </div>
-                                                <label class="block">
-                                                    <div class="flex items-center justify-between gap-2">
-                                                        <span class="label">{$t('adminMediaAltPlaceholder')}</span>
-                                                        <button type="button" onclick={() => autoFillAlt(imgIdx)}
-                                                            class="text-[9px] uppercase tracking-wide text-[#5f4636] hover:text-[#c65f3c] transition-colors shrink-0">
-                                                            {$t('adminMediaAltAuto')}
-                                                        </button>
-                                                    </div>
-                                                    <input bind:value={img.altText} type="text" class="input-gothic text-xs" />
-                                                    <div class="flex items-center justify-between mt-1">
-                                                        <span class="text-[9px] text-[#5f4636]/70 leading-snug">{$t('adminMediaAltFormulaHint')}</span>
-                                                        <span class="text-[9px] shrink-0 ml-2 {altTextLen(img.altText) === 0 ? 'text-[#5f4636]/50' : altTextLen(img.altText) < 50 || altTextLen(img.altText) > 125 ? 'text-[#c65f3c]' : 'text-emerald-700'}">
-                                                            {altTextLen(img.altText)}{altTextLen(img.altText) > 0 ? (altTextLen(img.altText) < 50 ? ` (${$t('adminMediaAltTooShort')})` : altTextLen(img.altText) > 125 ? ` (${$t('adminMediaAltTooLong')})` : '') : ''}
-                                                        </span>
-                                                    </div>
-                                                </label>
-                                                <!-- Depth map -->
-                                                <div>
-                                                    <span class="label">{$t('adminMediaDepthAdd')}</span>
-                                                    {#if img.depthUrl}
-                                                        <div class="flex items-center gap-2 mt-1">
-                                                            <img src={resolveUrl(img.depthUrl)} alt="" class="w-10 h-10 object-cover border border-[#34251c]/20 shrink-0" />
-                                                            <button onclick={() => handlePickDepth(imgIdx)} class="btn-gothic text-[10px]">{$t('adminMediaDepthReplace')}</button>
-                                                            <button onclick={() => clearDepth(imgIdx)} class="text-[10px] uppercase text-red-700 hover:text-red-900">✕</button>
-                                                        </div>
-                                                    {:else}
-                                                        <button onclick={() => handlePickDepth(imgIdx)}
-                                                            class="mt-1 w-full btn-gothic text-[10px] border-dashed">{$t('adminMediaDepthAdd')}</button>
-                                                    {/if}
-                                                </div>
-                                            </div>
-
-                                            <!-- Right: parallax + keyhole -->
-                                            <div class="space-y-6">
-                                                <!-- Parallax -->
-                                                <div>
-                                                    <div class="flex items-center justify-between mb-2">
-                                                        <span class="label">{$t('adminMediaParallax')}</span>
-                                                        <button onclick={() => resetParallaxIntensity(imgIdx)}
-                                                            disabled={img.parallaxIntensity == null}
-                                                            class="text-[9px] uppercase text-[#5f4636] hover:text-[#34251c] disabled:opacity-30 transition-colors">{$t('adminMediaParallaxReset')}</button>
-                                                    </div>
-                                                    <div class="flex items-center gap-3">
-                                                        <input type="range" min="0" max="1" step="0.05"
-                                                            value={parallaxValue(img.parallaxIntensity)}
-                                                            oninput={(e) => setParallaxIntensity(imgIdx, (e.currentTarget as HTMLInputElement).value)}
-                                                            class="flex-1 accent-[#6f3b24]" />
-                                                        <span class="w-10 text-right text-xs tabular-nums text-[#5f4636]">{parallaxValue(img.parallaxIntensity).toFixed(2)}</span>
-                                                    </div>
-                                                </div>
-
-                                                <!-- Keyhole (cover image only) -->
-                                                {#if img.imageType === 'face'}
-                                                    <div>
-                                                        <div class="flex items-center justify-between mb-3">
-                                                            <span class="label">{$t('adminMediaKeyhole')}</span>
-                                                            <button onclick={() => resetReveal(imgIdx)}
-                                                                disabled={img.focalX == null && img.focalY == null && img.revealRadius == null && img.darkness == null}
-                                                                class="text-[9px] uppercase text-[#5f4636] hover:text-[#34251c] disabled:opacity-30 transition-colors">{$t('adminMediaParallaxReset')}</button>
-                                                        </div>
-                                                        <!-- Focal point picker — 280×210, much more usable than 112×84 -->
-                                                        <div class="relative border border-[#34251c]/20 overflow-hidden bg-[#f1e3d1] mb-4" style="width: 280px; aspect-ratio: 4/3;">
-                                                            <img src={resolveUrl(img.thumbUrl ?? img.url)} alt="" class="w-full h-full object-contain" />
-                                                            <KeyholeVeil
-                                                                focalX={img.focalX}
-                                                                focalY={img.focalY}
-                                                                revealRadius={img.revealRadius}
-                                                                darkness={darknessValue(img.darkness)}
-                                                                editable
-                                                                onpick={(x, y) => setFocalPoint(imgIdx, x, y)}
-                                                            />
-                                                        </div>
-                                                        <!-- Window size stepper -->
-                                                        <div class="flex items-center gap-3 mb-3">
-                                                            <span class="text-[10px] uppercase tracking-wide text-[#5f4636] w-16 shrink-0">{$t('adminMediaKeyholeRadius')}</span>
-                                                            <div class="flex items-center flex-1 border border-[#34251c]/20 bg-[#fff9f0]">
-                                                                <button type="button" onclick={() => nudgeRevealRadius(imgIdx, -KEYHOLE_STEP)}
-                                                                    disabled={revealRadiusValue(img.revealRadius) <= REVEAL_MIN}
-                                                                    class="px-3 py-1.5 text-sm text-[#5f4636] hover:bg-[#34251c]/10 disabled:opacity-30">−</button>
-                                                                <span class="flex-1 text-center text-xs tabular-nums text-[#5f4636]">{revealRadiusValue(img.revealRadius).toFixed(2)}</span>
-                                                                <button type="button" onclick={() => nudgeRevealRadius(imgIdx, KEYHOLE_STEP)}
-                                                                    disabled={revealRadiusValue(img.revealRadius) >= REVEAL_MAX}
-                                                                    class="px-3 py-1.5 text-sm text-[#5f4636] hover:bg-[#34251c]/10 disabled:opacity-30">+</button>
-                                                            </div>
-                                                        </div>
-                                                        <!-- Darkness stepper -->
-                                                        <div class="flex items-center gap-3">
-                                                            <span class="text-[10px] uppercase tracking-wide text-[#5f4636] w-16 shrink-0">{$t('adminMediaDarkness')}</span>
-                                                            <div class="flex items-center flex-1 border border-[#34251c]/20 bg-[#fff9f0]">
-                                                                <button type="button" onclick={() => nudgeDarkness(imgIdx, -KEYHOLE_STEP)}
-                                                                    disabled={darknessValue(img.darkness) <= DARK_MIN}
-                                                                    class="px-3 py-1.5 text-sm text-[#5f4636] hover:bg-[#34251c]/10 disabled:opacity-30">−</button>
-                                                                <span class="flex-1 text-center text-xs tabular-nums {img.darkness == null ? 'text-[#5f4636]/45 italic' : 'text-[#5f4636]'}">{darknessValue(img.darkness).toFixed(2)}</span>
-                                                                <button type="button" onclick={() => nudgeDarkness(imgIdx, KEYHOLE_STEP)}
-                                                                    disabled={darknessValue(img.darkness) >= DARK_MAX}
-                                                                    class="px-3 py-1.5 text-sm text-[#5f4636] hover:bg-[#34251c]/10 disabled:opacity-30">+</button>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                {/if}
-                                            </div>
-                                        </div>
-                                    </div>
-                                {/if}
-                            </div>
-
-                            <!-- Video + Audio -->
-                            <div class="grid grid-cols-2 gap-6">
-                                <!-- Video -->
-                                <div class="p-4 border border-dashed border-[#34251c]/20 flex flex-col gap-2">
-                                    <span class="label block">{$t('adminMediaVideo')}</span>
-                                    {#if selectedFigurine.videoUrl}
-                                        <video src={resolveUrl(selectedFigurine.videoUrl)} controls class="w-full max-h-36 bg-[#2f2117]" preload="metadata">
-                                            <track kind="captions" />
-                                        </video>
-                                        <div class="flex gap-2">
-                                            <button onclick={() => handlePickFile('videos')} disabled={uploadingVideo}
-                                                class="text-[10px] text-[#34251c]/85 hover:text-[#6f3b24] uppercase disabled:opacity-70">{$t('adminMediaReplace')}</button>
-                                            <button onclick={() => { selectedFigurine!.videoUrl = null; externalVideoUrl = ''; }}
-                                                class="text-[10px] text-red-700 hover:text-red-900 uppercase">{$t('adminMediaDeleteFile')}</button>
-                                        </div>
-                                    {:else}
-                                        <div class="flex flex-col gap-2">
-                                            <input type="url" bind:value={externalVideoUrl} placeholder="https://... external link" class="input-gothic text-xs" />
-                                            {#if externalVideoUrl.trim()}
-                                                <button onclick={() => { selectedFigurine!.videoUrl = externalVideoUrl.trim(); externalVideoUrl = ''; }}
-                                                    class="btn-gothic text-xs w-full">{$t('adminMediaUseLink')}</button>
-                                            {:else}
-                                                <button onclick={() => handlePickFile('videos')} disabled={uploadingVideo}
-                                                    class="btn-gothic text-xs w-full disabled:opacity-70">{uploadingVideo ? '…' : $t('adminMediaPickMp4')}</button>
-                                            {/if}
-                                        </div>
-                                    {/if}
-                                </div>
-                                <!-- Audio -->
-                                <div class="p-4 border border-dashed border-[#34251c]/20 flex flex-col gap-2">
-                                    <span class="label block">{$t('adminMediaAudio')}</span>
-                                    {#if selectedFigurine.ambiencePath}
-                                        <audio src={resolveUrl(selectedFigurine.ambiencePath)} controls class="w-full" preload="metadata"></audio>
-                                        <div class="flex gap-2">
-                                            <button onclick={() => handlePickFile('audio')} disabled={uploadingAudio}
-                                                class="text-[10px] text-[#34251c]/85 hover:text-[#6f3b24] uppercase disabled:opacity-70">{$t('adminMediaReplace')}</button>
-                                            <button onclick={() => selectedFigurine!.ambiencePath = null}
-                                                class="text-[10px] text-red-700 hover:text-red-900 uppercase">{$t('adminMediaDeleteFile')}</button>
-                                        </div>
-                                    {:else}
-                                        <button onclick={() => handlePickFile('audio')} disabled={uploadingAudio}
-                                            class="btn-gothic text-xs w-full disabled:opacity-70">{uploadingAudio ? '…' : $t('adminMediaPickMp3')}</button>
-                                    {/if}
-                                </div>
-                            </div>
-
-                        </div>
-
-                        <!-- ╔═ TEXT ═════════════════════════════════════════════ -->
-                        {:else if activeFormTab === 'text'}
-                        <div class="p-8 max-w-3xl space-y-6" in:fade={{ duration: 120 }}>
-
-                            <label class="block">
-                                <span class="label">{$t('adminFieldQuote')}</span>
-                                <textarea bind:value={selectedFigurine.shortText} class="input-gothic h-24"></textarea>
-                            </label>
-
-                            <label class="block">
-                                <span class="label">{$t('adminFieldHistory')}</span>
-                                <textarea bind:value={selectedFigurine.fullDescription} class="input-gothic h-56"></textarea>
-                            </label>
-
-                            <label class="block opacity-70">
-                                <span class="label">{$t('adminFieldSecret')}</span>
-                                <textarea bind:value={selectedFigurine.secretText} class="input-gothic h-20"></textarea>
-                            </label>
-
-                            {#if !isTauri}
-                            <div class="block border-t border-[#34251c]/10 pt-6">
-                                <span class="label">{$t('adminCaptionLabel')}</span>
-                                <p class="text-[11px] leading-snug text-[#7c6554] mb-2">{$t('adminCaptionHint')}</p>
-                                {#if figurineExists}
-                                    <textarea bind:value={captionText} disabled={captionLoading}
-                                        placeholder={captionLoading ? '…' : ''}
-                                        class="input-gothic h-28"></textarea>
-                                    <div class="mt-2">
-                                        <button type="button" onclick={saveCaption} disabled={captionSaving || captionLoading}
-                                            class="px-4 py-2 border border-[#34251c]/25 hover:border-[#34251c]/55 text-[#5f4636] hover:text-[#34251c] text-xs tracking-wide uppercase transition-colors disabled:opacity-40">
-                                            {captionSaving ? '…' : $t('adminCaptionSave')}
-                                        </button>
-                                    </div>
-                                {:else}
-                                    <p class="text-[11px] italic text-[#7c6554]">{$t('adminCaptionSaveNewFirst')}</p>
-                                {/if}
-                            </div>
-
-                            <div class="block border-t border-[#34251c]/10 pt-6">
-                                <span class="label">{$t('adminPinterestDescLabel')}</span>
-                                <p class="text-[11px] leading-snug text-[#7c6554] mb-2">{$t('adminPinterestDescHint')}</p>
-                                {#if figurineExists}
-                                    <textarea bind:value={pinterestDescText} disabled={pinterestDescLoading}
-                                        placeholder={pinterestDescLoading ? '…' : ''}
-                                        class="input-gothic h-28"></textarea>
-                                    <div class="mt-2 flex gap-2">
-                                        <button type="button" onclick={generatePinterestDesc} disabled={pinterestDescLoading}
-                                            class="px-4 py-2 border border-[#34251c]/25 hover:border-[#34251c]/55 text-[#5f4636] hover:text-[#34251c] text-xs tracking-wide uppercase transition-colors disabled:opacity-40">
-                                            {$t('adminPinterestDescGenerate')}
-                                        </button>
-                                        <button type="button" onclick={savePinterestDesc} disabled={pinterestDescSaving || pinterestDescLoading}
-                                            class="px-4 py-2 border border-[#34251c]/25 hover:border-[#34251c]/55 text-[#5f4636] hover:text-[#34251c] text-xs tracking-wide uppercase transition-colors disabled:opacity-40">
-                                            {pinterestDescSaving ? '…' : $t('adminPinterestDescSave')}
-                                        </button>
-                                    </div>
-                                {:else}
-                                    <p class="text-[11px] italic text-[#7c6554]">{$t('adminPinterestDescSaveNewFirst')}</p>
-                                {/if}
-                            </div>
-                            {/if}
-
-                        </div>
-
-                        <!-- ╔═ OBJECT ═══════════════════════════════════════════ -->
-                        {:else if activeFormTab === 'object'}
-                        <div class="p-8 max-w-2xl space-y-5" in:fade={{ duration: 120 }}>
-
-                            <div class="grid grid-cols-3 gap-4">
-                                <label class="block">
-                                    <span class="label">{$t('adminFieldYear')}</span>
-                                    <input type="number" bind:value={selectedFigurine.year} class="input-gothic" />
-                                </label>
-                                <label class="block">
-                                    <span class="label">{$t('adminFieldSeries')}</span>
-                                    <input bind:value={selectedFigurine.series} class="input-gothic" placeholder="—" />
-                                </label>
-                                <label class="block">
-                                    <span class="label">{$t('adminFieldSortOrder')}</span>
-                                    <input type="number" bind:value={selectedFigurine.sortOrder} class="input-gothic" />
-                                </label>
-                            </div>
-
-                            <label class="block">
-                                <span class="label">{$t('adminFieldSlug')}</span>
-                                <input bind:value={selectedFigurine.slug} class="input-gothic" placeholder={$t('adminFieldSlugPlaceholder')} autocomplete="off" spellcheck="false" />
-                                <span class="block mt-1 text-[10px] text-[#5f4636]/60">{$t('adminFieldSlugHint')}</span>
-                            </label>
-
-                            <label class="block">
-                                <span class="label">{$t('adminFieldMaterial')}</span>
-                                <input bind:value={selectedFigurine.material} class="input-gothic" list="suggest-material" autocomplete="off" />
-                                <datalist id="suggest-material">
-                                    {#each materialSuggestions as s}<option value={s} />{/each}
-                                </datalist>
-                            </label>
-
-                            <label class="block">
-                                <span class="label">{$t('adminFieldTechnique')}</span>
-                                <input bind:value={selectedFigurine.technique} class="input-gothic" list="suggest-technique" autocomplete="off" />
-                                <datalist id="suggest-technique">
-                                    {#each techniqueSuggestions as s}<option value={s} />{/each}
-                                </datalist>
-                            </label>
-
-                            <label class="block">
-                                <span class="label">{$t('adminFieldDimensions')}</span>
-                                <input bind:value={selectedFigurine.dimensions} class="input-gothic" placeholder="20×15×10 cm" list="suggest-dimensions" autocomplete="off" />
-                                <datalist id="suggest-dimensions">
-                                    {#each dimensionsSuggestions as s}<option value={s} />{/each}
-                                </datalist>
-                            </label>
-
-                        </div>
-
-                        <!-- ╔═ PASSPORT ══════════════════════════════════════════ -->
-                        {:else if activeFormTab === 'passport'}
-                        <div class="p-8 max-w-3xl" in:fade={{ duration: 120 }}>
-                            <p class="text-xs text-[#5f4636]/70 mb-6 max-w-prose leading-relaxed">{$t('adminPassportHint')}</p>
-
-                            <div class="grid grid-cols-3 gap-4 mb-6">
-                                <label class="block">
-                                    <span class="label">{$t('passportNumber')}</span>
-                                    <input bind:value={selectedFigurine.passportNumber} class="input-gothic" placeholder="RTN-2026-001" />
-                                </label>
-                                <label class="block">
-                                    <span class="label">{$t('passportEdition')}</span>
-                                    <input bind:value={selectedFigurine.edition} class="input-gothic" placeholder="1 of 1" />
-                                </label>
-                                <label class="block">
-                                    <span class="label">{$t('passportCreated')}</span>
-                                    <input bind:value={selectedFigurine.createdPeriod} class="input-gothic" placeholder="Spring 2026" />
-                                </label>
-                            </div>
-
-                            <div class="grid grid-cols-2 gap-5">
-                                <label class="block">
-                                    <span class="label">{$t('passportProvenance')}</span>
-                                    <textarea bind:value={selectedFigurine.provenanceNote} class="input-gothic h-28"></textarea>
-                                </label>
-                                <label class="block">
-                                    <span class="label">{$t('passportAuthenticity')}</span>
-                                    <textarea bind:value={selectedFigurine.authenticityNote} class="input-gothic h-28"></textarea>
-                                </label>
-                                <label class="block">
-                                    <span class="label">{$t('passportCare')}</span>
-                                    <textarea bind:value={selectedFigurine.careInstructions} class="input-gothic h-28"></textarea>
-                                </label>
-                                <label class="block">
-                                    <span class="label">{$t('passportIncluded')}</span>
-                                    <textarea bind:value={selectedFigurine.includedItems} class="input-gothic h-28"></textarea>
-                                </label>
-                            </div>
-                        </div>
-
-                        <!-- ╔═ VITRINA ═══════════════════════════════════════════ -->
-                        {:else if activeFormTab === 'vitrina'}
-                        <div class="p-8 max-w-3xl space-y-8" in:fade={{ duration: 120 }}>
-
-                            <!-- Display layout -->
-                            <label class="block max-w-xs">
-                                <span class="label">{$t('adminFieldLayout')}</span>
-                                <select bind:value={selectedFigurine.displayLayout} class="input-gothic">
-                                    <option value={null}>{$t('adminFieldLayoutSpecimen')}</option>
-                                    <option value="showcase">{$t('adminFieldLayoutShowcase')}</option>
-                                    <option value="codex">{$t('adminFieldLayoutCodex')}</option>
-                                    <option value="diptych">{$t('adminFieldLayoutDiptych')}</option>
-                                    <option value="broadside">{$t('adminFieldLayoutBroadside')}</option>
-                                </select>
-                            </label>
-
-                            <!-- Display config -->
-                            <div>
-                                <span class="label">{$t('adminDisplayConfig')}</span>
-                                <DisplayConfigEditor bind:value={selectedFigurine.displayConfig as (string | null)} />
-                            </div>
-
-                            <!-- Showing window -->
-                            <div class="border-t border-[#34251c]/10 pt-6">
-                                <span class="label block mb-3">{$t('adminFieldShowingWindow')}</span>
-                                <select
-                                    value={figWindowMode(selectedFigurine)}
-                                    onchange={(e) => setFigWindowMode(e.currentTarget.value)}
-                                    class="input-gothic max-w-sm mb-3">
-                                    <option value="">{$t('adminShowingModeAlways')}</option>
-                                    <option value="custom">{$t('adminShowingModeCustom')}</option>
-                                    {#each showingRoomsList as room (room.id)}
-                                        {#if room.name}
-                                            <option value={room.id}>{room.name} ({minToTime(room.openFromMin)}–{minToTime(room.openUntilMin)})</option>
-                                        {/if}
-                                    {/each}
-                                </select>
-
-                                {#if figWindowMode(selectedFigurine) === 'custom'}
-                                    <div class="flex gap-4 mb-3 max-w-sm">
-                                        <label class="block flex-1">
-                                            <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminFieldShowingFrom')}</span>
-                                            <input type="time" value={minToTime(selectedFigurine.openFromMin)}
-                                                oninput={(e) => selectedFigurine!.openFromMin = timeToMin(e.currentTarget.value)}
-                                                class="input-gothic" />
-                                        </label>
-                                        <label class="block flex-1">
-                                            <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminFieldShowingUntil')}</span>
-                                            <input type="time" value={minToTime(selectedFigurine.openUntilMin)}
-                                                oninput={(e) => selectedFigurine!.openUntilMin = timeToMin(e.currentTarget.value)}
-                                                class="input-gothic" />
-                                        </label>
-                                    </div>
-                                    <p class="text-[10px] text-[#7c6554] mb-3 leading-snug">{$t('adminFieldShowingHint')}</p>
-                                {/if}
-
-                                <!-- First look: timed early-release for book-holders -->
-                                <label class="block max-w-sm mb-1">
-                                    <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminFirstLookLabel')}</span>
-                                    <div class="flex items-center gap-2">
-                                        <input type="datetime-local"
-                                            value={selectedFigurine.firstLookUntil ? toLocalInput(new Date(selectedFigurine.firstLookUntil)) : ''}
-                                            oninput={(e) => selectedFigurine!.firstLookUntil = e.currentTarget.value ? new Date(e.currentTarget.value).toISOString() : null}
-                                            class="input-gothic" />
-                                        {#if selectedFigurine.firstLookUntil}
-                                            <button type="button" class="text-[11px] uppercase tracking-wide text-[#6f3b24] whitespace-nowrap" onclick={() => selectedFigurine!.firstLookUntil = null}>{$t('adminFirstLookClear')}</button>
-                                        {/if}
-                                    </div>
-                                </label>
-                                <p class="text-[10px] text-[#7c6554] mb-4 leading-snug">{$t('adminFirstLookHint')}</p>
-
-                                <!-- Preview clock -->
-                                <div class="border-t border-[#34251c]/10 pt-4">
-                                    <div class="flex flex-wrap items-end gap-3">
-                                        <label class="block">
-                                            <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminPreviewAt')}</span>
-                                            <input type="datetime-local" value={toLocalInput(previewAt)}
-                                                oninput={(e) => { if (e.currentTarget.value) previewAt = new Date(e.currentTarget.value); }}
-                                                class="input-gothic" />
-                                        </label>
-                                        <button type="button" class="text-[11px] uppercase tracking-wide text-[#6f3b24] pb-2" onclick={() => previewAt = new Date()}>{$t('adminPreviewNow')}</button>
-                                        <span class="text-[10px] uppercase tracking-wide px-2 py-1 rounded pb-1 {previewFigOpen ? 'bg-emerald-600/15 text-emerald-700' : 'bg-[#6f3b24]/12 text-[#6f3b24]'}">
-                                            {previewFigOpen ? $t('adminPreviewOpen') : $t('adminPreviewClosed')}
-                                        </span>
-                                    </div>
-                                    {#if !previewFigOpen}
-                                        <div class="relative w-40 aspect-[3/4] mt-3 rounded-[3px] overflow-hidden border border-[#34251c]/15">
-                                            <SealedDoor
-                                                openFromMin={previewFigWindow.openFromMin}
-                                                openUntilMin={previewFigWindow.openUntilMin}
-                                                daysMask={previewFigWindow.daysMask}
-                                                monthDay={previewFigWindow.monthDay}
-                                                dateFrom={previewFigWindow.dateFrom}
-                                                dateUntil={previewFigWindow.dateUntil}
-                                                imageUrl={(selectedFigurine.images?.find(i => i.imageType === 'face') ?? selectedFigurine.images?.[0])?.url}
-                                                thumbUrl={(selectedFigurine.images?.find(i => i.imageType === 'face') ?? selectedFigurine.images?.[0])?.thumbUrl}
-                                                name={selectedFigurine.name}
-                                                now={previewAt}
-                                                compact
-                                            />
-                                        </div>
-                                    {/if}
-                                </div>
-                            </div>
-
-                            <!-- Grimoire (process steps) -->
-                            <div class="border-t border-[#34251c]/10 pt-6">
-                                <div class="flex items-center justify-between mb-4">
-                                    <h3 class="text-sm font-gothic">{$t('adminGrimoireHeading')}</h3>
-                                    <button onclick={addProcessStep} class="btn-gothic text-[10px]">{$t('adminGrimoireAddStep')}</button>
-                                </div>
-                                <div class="space-y-3">
-                                    {#each selectedFigurine.processSteps as step, i}
-                                        <div class="p-4 bg-[#f8f1e7] border border-[#34251c]/10 flex gap-4 items-start">
-                                            <div class="w-20 h-20 bg-[#f1e3d1] flex items-center justify-center border border-[#34251c]/20 relative group shrink-0">
-                                                {#if step.imageUrl}
-                                                    <img src={resolveUrl(step.imageUrl)} alt="" class="w-full h-full object-cover" />
-                                                    <button onclick={() => step.imageUrl = ''} class="absolute top-0 right-0 bg-[#6f3b24]/30 text-[#fff9f0] p-0.5 text-[9px] opacity-0 group-hover:opacity-100">✕</button>
-                                                {:else}
-                                                    <button onclick={() => handlePickFile('images', i)} class="text-[10px] uppercase text-[#5f4636] hover:text-[#34251c]">{$t('adminGrimoirePhoto')}</button>
-                                                {/if}
-                                            </div>
-                                            <div class="flex-1 grid gap-2">
-                                                <select bind:value={step.stepType} class="input-gothic text-xs py-1.5">
-                                                    <option value="sketch">Sketch</option>
-                                                    <option value="prototype">Prototype</option>
-                                                    <option value="modeling">Modeling</option>
-                                                    <option value="painting">Painting</option>
-                                                    <option value="finish">Finish</option>
-                                                </select>
-                                                <textarea bind:value={step.description} class="input-gothic h-14 text-xs" placeholder={$t('adminGrimoireStepDesc')}></textarea>
-                                            </div>
-                                            <button onclick={() => removeProcessStep(i)} class="text-[#5f4636] hover:text-red-500 self-center text-sm">✕</button>
-                                        </div>
-                                    {/each}
-                                    {#if selectedFigurine.processSteps.length === 0}
-                                        <div class="text-center text-[#5f4636] text-xs py-4 opacity-70">{$t('adminGrimoireEmpty')}</div>
-                                    {/if}
-                                </div>
-                            </div>
-
-                            <!-- Showings for this figurine -->
-                            {#if selectedFigurine.id}
-                                <div class="border-t border-[#34251c]/10 pt-6">
-                                    <FigurineShowingsEditor bind:this={showingsEditor} figurineId={selectedFigurine.id} />
-                                </div>
-                            {/if}
-
-                        </div>
-                        {/if}
-
-                    </div>
-
+                    <FigurineForm
+                        figurine={selectedFigurine}
+                        {figurines}
+                        showingRooms={showingRoomsList}
+                        unsaved={hasUnsaved}
+                        deleting={isDeleting}
+                        bind:busy={formBusy}
+                        onSaved={afterFigurineSaved}
+                        onDelete={() => deleteFigurine(selectedFigurine!)}
+                        onCancel={cancelEdit}
+                        onMessage={showMessage}
+                    />
                 {:else}
                     <div class="h-full flex flex-col items-center justify-center text-[#5f4636] opacity-60">
                         <span class="text-5xl mb-4">📜</span>
@@ -2158,171 +744,10 @@
         </div>
 
         {:else if activeTab === 'slugs'}
-            {@const missingCount = figurines.filter(f => !f.slug).length}
-            <div in:fade class="h-full overflow-auto p-6 sm:p-8 max-w-3xl mx-auto w-full">
-                <h2 class="font-['Fraunces'] text-2xl text-[#34251c] mb-1">{$t('adminTabSlugs')}</h2>
-                <p class="text-[12px] text-[#7c6554] mb-4 leading-snug max-w-prose">{$t('adminSlugsIntro')}</p>
-
-                <div class="flex items-center gap-3 mb-5 flex-wrap">
-                    <button
-                        onclick={runSlugBackfill}
-                        disabled={backfilling || missingCount === 0}
-                        class="px-3 py-1.5 text-[12px] border border-[#6f3b24] text-[#6f3b24] rounded-[3px] hover:bg-[#6f3b24] hover:text-[#f8f1e7] transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-[#6f3b24]"
-                    >
-                        {backfilling ? $t('adminSlugBackfillBusy') : $t('adminSlugBackfillBtn')}
-                    </button>
-                    <span class="text-[11px] text-[#7c6554]">
-                        {missingCount === 0
-                            ? $t('adminSlugAllSet')
-                            : $t('adminSlugMissingCount').replace('{n}', String(missingCount))}
-                    </span>
-                </div>
-
-                <div class="overflow-x-auto border border-[#d8c6b1] rounded-[3px]">
-                    <table class="w-full text-[12px] border-collapse">
-                        <thead>
-                            <tr class="bg-[#efe4d3] text-left text-[#5f4636] uppercase tracking-[0.08em] text-[9px]">
-                                <th class="px-3 py-2 font-medium">{$t('adminSlugColName')}</th>
-                                <th class="px-3 py-2 font-medium">{$t('adminSlugColSlug')}</th>
-                                <th class="px-3 py-2 font-medium w-px whitespace-nowrap">{$t('adminSlugColType')}</th>
-                                <th class="px-3 py-2 font-medium w-px whitespace-nowrap">{$t('adminSlugColActions')}</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {#each figurines as fig (fig.id)}
-                                <tr class="border-t border-[#e5d7c4] align-middle">
-                                    <td class="px-3 py-2 text-[#34251c]">
-                                        <a href={figurineHref(fig)} target="_blank" rel="noopener" class="hover:text-[#c65f3c] hover:underline">{fig.name}</a>
-                                    </td>
-                                    <td class="px-3 py-2">
-                                        <div class="flex items-center gap-1.5">
-                                            <span class="text-[#9a8571] select-none">/figurines/</span>
-                                            <input
-                                                value={slugDraft(fig)}
-                                                oninput={(e) => slugDrafts[fig.id] = e.currentTarget.value}
-                                                placeholder={fig.slug ?? $t('adminSlugMissingPlaceholder')}
-                                                class="flex-1 min-w-[8rem] bg-[#fdf9f2] border border-[#d8c6b1] rounded-[3px] px-2 py-1 font-mono text-[11px] text-[#34251c] focus:outline-none focus:border-[#c65f3c]"
-                                            />
-                                        </div>
-                                    </td>
-                                    <td class="px-3 py-2 whitespace-nowrap">
-                                        {#if !fig.slug}
-                                            <span class="inline-block px-1.5 py-0.5 text-[9px] uppercase tracking-[0.08em] rounded-[3px] border border-[#d8c6b1] text-[#9a8571]">{$t('adminSlugBadgeMissing')}</span>
-                                        {:else if fig.slugManual}
-                                            <span class="inline-block px-1.5 py-0.5 text-[9px] uppercase tracking-[0.08em] rounded-[3px] border border-[#c65f3c]/50 text-[#c65f3c] bg-[#c65f3c]/8">{$t('adminSlugBadgeManual')}</span>
-                                        {:else}
-                                            <span class="inline-block px-1.5 py-0.5 text-[9px] uppercase tracking-[0.08em] rounded-[3px] border border-[#6f3b24]/25 text-[#7c6554]">{$t('adminSlugBadgeAuto')}</span>
-                                        {/if}
-                                    </td>
-                                    <td class="px-3 py-2 whitespace-nowrap text-right">
-                                        <button
-                                            onclick={() => saveSlug(fig)}
-                                            disabled={savingSlugId !== null || !slugChanged(fig)}
-                                            class="px-2 py-1 text-[11px] border border-[#6f3b24] text-[#6f3b24] rounded-[3px] hover:bg-[#6f3b24] hover:text-[#f8f1e7] transition-colors disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-[#6f3b24]"
-                                        >{$t('adminSlugSaveBtn')}</button>
-                                        <button
-                                            onclick={() => saveSlug(fig, true)}
-                                            disabled={savingSlugId !== null}
-                                            title={$t('adminSlugRegenTitle')}
-                                            class="ml-1 px-2 py-1 text-[11px] border border-[#d8c6b1] text-[#7c6554] rounded-[3px] hover:border-[#6f3b24] hover:text-[#6f3b24] transition-colors disabled:opacity-30"
-                                        >⟳</button>
-                                    </td>
-                                </tr>
-                            {/each}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
+            <SlugsPanel {figurines} onReload={loadFigurines} onMessage={showMessage} />
 
         {:else if activeTab === 'rooms'}
-            <div in:fade class="h-full overflow-auto p-6 sm:p-8 max-w-3xl mx-auto w-full">
-                <h2 class="font-['Fraunces'] text-2xl text-[#34251c] mb-1">{$t('adminTabShowingRooms')}</h2>
-                <p class="text-[12px] text-[#7c6554] mb-4 leading-snug max-w-prose">{$t('adminShowingRoomsIntro')}</p>
-
-                <!-- Preview clock: evaluate every room "as a guest would" at this moment. -->
-                <div class="flex flex-wrap items-end gap-3 mb-5 p-3 border border-[#34251c]/12 rounded-md bg-[#f3ead9]">
-                    <label class="block">
-                        <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminPreviewAt')}</span>
-                        <input type="datetime-local" value={toLocalInput(previewAt)} oninput={(e) => { if (e.currentTarget.value) previewAt = new Date(e.currentTarget.value); }} class="input-gothic" />
-                    </label>
-                    <button type="button" class="text-[11px] uppercase tracking-wide text-[#6f3b24] pb-2" onclick={() => previewAt = new Date()}>{$t('adminPreviewNow')}</button>
-                </div>
-
-                <div class="space-y-3">
-                    {#each showingRoomsList as room (room.id)}
-                        <div class="border border-[#34251c]/12 rounded-md p-3 bg-[#fff9f0] space-y-3">
-                            <div class="flex flex-wrap gap-3 items-end">
-                                <label class="block flex-1 min-w-[160px]">
-                                    <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminShowingRoomName')}</span>
-                                    <input bind:value={room.name} class="input-gothic" placeholder={$t('adminShowingRoomNamePlaceholder')} />
-                                </label>
-                                <label class="block w-28">
-                                    <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminFieldShowingFrom')}</span>
-                                    <input type="time" value={minToTime(room.openFromMin)} oninput={(e) => room.openFromMin = timeToMin(e.currentTarget.value) ?? 0} class="input-gothic" />
-                                </label>
-                                <label class="block w-28">
-                                    <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminFieldShowingUntil')}</span>
-                                    <input type="time" value={minToTime(room.openUntilMin)} oninput={(e) => room.openUntilMin = timeToMin(e.currentTarget.value) ?? 0} class="input-gothic" />
-                                </label>
-                                <div class="flex items-center gap-3 pb-2 ml-auto">
-                                    <span class="text-[10px] uppercase tracking-wide px-2 py-1 rounded {isShowingOpen(roomToWindow(room), previewAt) ? 'bg-emerald-600/15 text-emerald-700' : 'bg-[#6f3b24]/12 text-[#6f3b24]'}">
-                                        {isShowingOpen(roomToWindow(room), previewAt) ? $t('adminPreviewOpen') : $t('adminPreviewClosed')}
-                                    </span>
-                                    <button type="button" class="text-[11px] uppercase tracking-wide text-[#c65f3c]" onclick={() => saveShowingRoom(room)}>{$t('adminSave')}</button>
-                                    <button type="button" class="text-[11px] uppercase tracking-wide text-[#7c6554]" onclick={() => deleteShowingRoom(room.id)}>{$t('adminDelete')}</button>
-                                </div>
-                            </div>
-
-                            <!-- Weekdays: empty = every day, pick e.g. Sat+Sun for weekends. -->
-                            <div>
-                                <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminShowingRoomDays')}</span>
-                                <div class="flex flex-wrap gap-1.5 mt-1">
-                                    {#each weekdayLabels as label, i}
-                                        <button
-                                            type="button"
-                                            class="px-2.5 py-1 rounded text-[11px] border transition-colors {dayBit(room.openDaysMask, i) ? 'bg-[#6f3b24] text-[#f8f1e7] border-[#6f3b24]' : 'border-[#34251c]/20 text-[#7c6554] hover:border-[#6f3b24]/40'}"
-                                            onclick={() => toggleDay(room, i)}
-                                        >{label}</button>
-                                    {/each}
-                                </div>
-                            </div>
-
-                            <!-- Calendar date: none / annual (MM-DD) / one-off range. -->
-                            <div class="flex flex-wrap gap-3 items-end">
-                                <label class="block">
-                                    <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminShowingRoomDate')}</span>
-                                    <select value={roomDateMode(room)} onchange={(e) => setRoomDateMode(room, e.currentTarget.value)} class="input-gothic">
-                                        <option value="none">{$t('adminShowingDateNone')}</option>
-                                        <option value="annual">{$t('adminShowingDateAnnual')}</option>
-                                        <option value="range">{$t('adminShowingDateRange')}</option>
-                                    </select>
-                                </label>
-                                {#if roomDateMode(room) === 'annual'}
-                                    <label class="block">
-                                        <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminShowingDateAnnual')}</span>
-                                        <input type="date" value={annualToInput(room.openMonthDay)} oninput={(e) => room.openMonthDay = inputToAnnual(e.currentTarget.value)} class="input-gothic" />
-                                    </label>
-                                {:else if roomDateMode(room) === 'range'}
-                                    <label class="block">
-                                        <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminFieldShowingFrom')}</span>
-                                        <input type="date" bind:value={room.openDateFrom} class="input-gothic" />
-                                    </label>
-                                    <label class="block">
-                                        <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminFieldShowingUntil')}</span>
-                                        <input type="date" bind:value={room.openDateUntil} class="input-gothic" />
-                                    </label>
-                                {/if}
-                            </div>
-                        </div>
-                    {/each}
-                    {#if showingRoomsList.length === 0}
-                        <p class="text-[12px] italic text-[#7c6554]">{$t('adminShowingRoomsEmpty')}</p>
-                    {/if}
-                </div>
-
-                <button type="button" class="mt-5 px-4 py-2 border border-[#6f3b24]/30 rounded-md text-[11px] uppercase tracking-wide text-[#6f3b24] hover:bg-[#6f3b24]/5" onclick={addShowingRoom}>+ {$t('adminShowingRoomAdd')}</button>
-                <p class="text-[10px] text-[#7c6554] mt-3 leading-snug">{$t('adminFieldShowingHint')}</p>
-            </div>
+            <ShowingRoomsPanel rooms={showingRoomsList} onReload={loadShowingRooms} />
 
         {:else if activeTab === 'home'}
             <HomeContentEditor />
@@ -2336,11 +761,6 @@
         {:else if activeTab === 'programme'}
             <div in:fade class="h-full overflow-auto"><ProgrammePanel /></div>
 
-        {:else if activeTab === 'workshop-feature'}
-            <div in:fade class="h-full"><WorkshopFeaturePanel /></div>
-
-        {:else if activeTab === 'zones'}
-            <div in:fade class="h-full"><ZoneEditor /></div>
         {:else if activeTab === 'media'}
             <div in:fade class="h-full">
                 <MediaLibrary onEditFigurine={(id) => { activeTab = 'registry'; editFigurine(id); }} />
@@ -2375,7 +795,7 @@
         {:else if activeTab === 'showings'}
             <div in:fade class="h-full"><ShowingsPanel /></div>
         {:else if activeTab === 'bookings'}
-            <div in:fade class="h-full"><BookingsPanel onPendingCount={(n: number) => newBookingsCount = n} /></div>
+            <div in:fade class="h-full"><BookingsPanel onPendingCount={(n: number) => pendingBookingsCount = n} /></div>
         {:else if activeTab === 'releases'}
             <div in:fade class="h-full"><ReleaseManager /></div>
         {:else if activeTab === 'analytics'}
@@ -2447,8 +867,6 @@
     .input-gothic:focus {
         border-color: rgba(198, 95, 60, 0.55);
     }
-
-    textarea.input-gothic { resize: none; }
 
     .btn-gothic {
         padding: 0.45rem 1.25rem;

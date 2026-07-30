@@ -4,7 +4,6 @@ import type {
     Figurine,
     AuthorText,
     WorkshopItem,
-    CabinetZone,
     ShowingRoom,
     AppSettings,
     ServerRelease,
@@ -47,7 +46,6 @@ import type {
     SmtpSettings,
     ContactSettings,
     ProgrammeSettings,
-    WorkshopFeature,
     BookingRules,
     RescheduleBookingRequest,
     CreateWaitlistRequest,
@@ -95,15 +93,6 @@ export type ImportedMedia = {
     originalUrl?: string | null;
     thumbUrl?: string | null;
 };
-
-// Tauri 2.x injects __TAURI_INTERNALS__ into the webview
-export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
-
-// --- Tauri helpers ---
-async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-    const { invoke: tauriInvoke } = await import('@tauri-apps/api/core');
-    return tauriInvoke<T>(cmd, args);
-}
 
 // --- Web helpers ---
 // Cached read of the configured server origin. resolveMediaUrl() reads it once per media
@@ -203,7 +192,7 @@ function webApiBase(): string {
 /**
  * Resolve a media path (avatar, image, …) to a loadable URL.
  * Relative `/static/` paths are prefixed with the configured server origin in web mode.
- * Shared helper — previously duplicated across SiteHeader/OrderModal/BookingModal/etc.
+ * Shared helper — previously duplicated across SiteHeader/OrderModal/etc.
  */
 export function resolveMediaUrl(url: string | null | undefined): string | null {
     if (!url) return null;
@@ -423,10 +412,6 @@ function invalidateReadPrefix(prefix: string): void {
 const FIGURINES_PAGE_TTL_MS = 60_000;
 async function fetchFigurinesPage(perPage?: number, loadFetch?: typeof fetch): Promise<{ items: FigurineListItem[]; total: number }> {
     return dedupeRead(`figurines:${perPage ?? 'all'}`, FIGURINES_PAGE_TTL_MS, async () => {
-        if (isTauri) {
-            const all = await invoke<FigurineListItem[]>('get_all_figurines');
-            return { items: perPage != null ? all.slice(0, perPage) : all, total: all.length };
-        }
         const url = perPage != null
             ? `/figurines?visible=true&perPage=${perPage}`
             : '/figurines?visible=true';
@@ -609,7 +594,6 @@ export const api = {
     },
 
     async sendAnalyticsEvent(payload: AnalyticsEventPayload): Promise<void> {
-        if (isTauri) return;
         await fetch(`${webApiBase()}/analytics/events`, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
@@ -639,28 +623,22 @@ export const api = {
     },
 
     async getInProgressFigurines(loadFetch?: typeof fetch): Promise<FigurineListItem[]> {
-        if (isTauri) return invoke<FigurineListItem[]>('get_all_figurines')
-            .then(all => all.filter(f => f.status === 'in_progress'));
         return webFetch('/figurines/in-progress', undefined, loadFetch);
     },
 
     // Works inside their "first look" early-release window — the book-holders'
     // shelf. The home page renders these only for a signed visitor.
     async getFirstLookFigurines(): Promise<FigurineListItem[]> {
-        if (isTauri) return invoke<FigurineListItem[]>('get_all_figurines')
-            .then(all => all.filter(f => f.firstLookUntil && new Date(f.firstLookUntil).getTime() > Date.now()));
         return webFetch('/figurines/first-look');
     },
 
     // Hybrid curated shelf: admin pins first, remaining slots auto-fill from the
     // private weighted mark ranking. Never carries counts — just the resolved list.
     async getNoticedByGuests(): Promise<FigurineListItem[]> {
-        if (isTauri) return invoke<FigurineListItem[]>('get_all_figurines').then(all => all.slice(0, 8));
         return webFetch('/figurines/noticed');
     },
 
     async getAllFigurinesAdmin(): Promise<FigurineListItem[]> {
-        if (isTauri) return invoke('get_all_figurines');
         const res = await webFetch<{ items: FigurineListItem[] } | FigurineListItem[]>('/figurines?visible=false', {
             headers: authHeaders(),
         });
@@ -668,7 +646,6 @@ export const api = {
     },
 
     async getFigurine(id: string, loadFetch?: typeof fetch): Promise<Figurine | null> {
-        if (isTauri) return invoke('get_figurine', { id });
         try {
             return await webFetch(`/figurines/${id}`, undefined, loadFetch);
         } catch (e: unknown) {
@@ -678,29 +655,20 @@ export const api = {
     },
 
     async getAuthorTexts(loadFetch?: typeof fetch): Promise<AuthorText[]> {
-        if (isTauri) return invoke('get_author_texts');
         return webFetch('/content/texts/author', undefined, loadFetch);
     },
 
     async getWorkshopContent(loadFetch?: typeof fetch): Promise<WorkshopItem[]> {
-        if (isTauri) return invoke('get_workshop_content');
         return webFetch('/content/texts/workshop', undefined, loadFetch);
     },
 
-    async getCabinetZones(): Promise<CabinetZone[]> {
-        if (isTauri) return invoke('get_cabinet_zones');
-        return webFetch('/cabinet/zones');
-    },
-
     async getShowingRooms(loadFetch?: typeof fetch): Promise<ShowingRoom[]> {
-        if (isTauri) return invoke('get_showing_rooms');
         return webFetch('/showing-rooms', undefined, loadFetch);
     },
 
     // === WRITE (ADMIN) ===
     async saveFigurine(figurine: Figurine): Promise<void> {
         invalidateReadPrefix('figurines:');
-        if (isTauri) return invoke('save_figurine', { figurine });
         await webFetch('/figurines', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -710,11 +678,9 @@ export const api = {
 
     /**
      * Generate depth maps ("Living Daguerreotype" parallax) for a figurine's
-     * images on demand. Runs Depth-Anything in the Rust API (CPU). Server build
-     * only — the Tauri desktop app has no depth model bundled.
+     * images on demand. Runs Depth-Anything in the Rust API (CPU).
      */
     async generateFigurineDepth(id: string): Promise<DepthGenSummary> {
-        if (isTauri) throw new Error('Depth generation is only available on the server build.');
         return webFetch(`/admin/figurines/${id}/generate-depth`, {
             method: 'POST',
             headers: authHeaders(),
@@ -724,20 +690,17 @@ export const api = {
     /**
      * Semantic search ("Хранитель"): rank the archive by meaning against a
      * natural-language query (RU or EN), closest first. On-device multilingual
-     * embedding in the Rust API. Server build only — the Tauri app has no
-     * embedding model bundled, and returns [] there so callers fall back to the
-     * plain text filter. An empty array also means "feature unavailable / no
+     * embedding in the Rust API. An empty array means "feature unavailable / no
      * match", so callers must treat [] as "keep the current view".
      */
     async semanticSearch(query: string, limit = 60): Promise<SemanticHit[]> {
         const q = query.trim();
-        if (!q || isTauri) return [];
+        if (!q) return [];
         return webFetch(`/search?q=${encodeURIComponent(q)}&limit=${limit}`);
     },
 
     /** Admin: (re)build the "Хранитель" search embeddings for every visible work. */
     async reindexEmbeddings(): Promise<EmbedIndexSummary> {
-        if (isTauri) throw new Error('Search indexing is only available on the server build.');
         return webFetch('/admin/embeddings/reindex', {
             method: 'POST',
             headers: authHeaders(),
@@ -749,7 +712,6 @@ export const api = {
      * visitors). Written by the offline captioner; returns null when unset.
      */
     async getFigurineCaption(id: string): Promise<string | null> {
-        if (isTauri) return null;
         const res = await webFetch<{ caption: string | null }>(`/admin/figurines/${id}/caption`, {
             headers: authHeaders(),
         });
@@ -758,7 +720,6 @@ export const api = {
 
     /** Admin: set (blank clears) a work's backstage visual caption; re-embeds it. */
     async setFigurineCaption(id: string, caption: string): Promise<void> {
-        if (isTauri) throw new Error('Captions are only available on the server build.');
         await webFetch(`/admin/figurines/${id}/caption`, {
             method: 'PUT',
             headers: { ...authHeaders(), 'Content-Type': 'application/json' },
@@ -771,7 +732,6 @@ export const api = {
      * never shown to visitors. Returns null when unset.
      */
     async getFigurinePinterestDescription(id: string): Promise<string | null> {
-        if (isTauri) return null;
         const res = await webFetch<{ description: string | null }>(`/admin/figurines/${id}/pinterest-description`, {
             headers: authHeaders(),
         });
@@ -780,7 +740,6 @@ export const api = {
 
     /** Admin: set (blank clears) a work's Pinterest SEO description. */
     async setFigurinePinterestDescription(id: string, description: string): Promise<void> {
-        if (isTauri) throw new Error('Pinterest descriptions are only available on the server build.');
         await webFetch(`/admin/figurines/${id}/pinterest-description`, {
             method: 'PUT',
             headers: { ...authHeaders(), 'Content-Type': 'application/json' },
@@ -790,7 +749,6 @@ export const api = {
 
     async deleteFigurine(id: string): Promise<void> {
         invalidateReadPrefix('figurines:');
-        if (isTauri) return invoke('delete_figurine', { id });
         const res = await fetch(`${webApiBase()}/figurines/${id}`, {
             method: 'DELETE',
             headers: authHeaders(),
@@ -802,7 +760,6 @@ export const api = {
 
     /** Clear the manual per-image darkness override for every image, across every figurine. */
     async bulkClearDarkness(): Promise<BulkOpResult> {
-        if (isTauri) return invoke('bulk_clear_darkness');
         return webFetch('/admin/figurines/bulk/clear-darkness', {
             method: 'POST',
             headers: authHeaders(),
@@ -811,7 +768,6 @@ export const api = {
 
     /** Reset the manual parallax intensity override for every image, across every figurine. */
     async bulkResetParallax(): Promise<BulkOpResult> {
-        if (isTauri) return invoke('bulk_reset_parallax');
         return webFetch('/admin/figurines/bulk/reset-parallax', {
             method: 'POST',
             headers: authHeaders(),
@@ -820,7 +776,6 @@ export const api = {
 
     /** Set the same parallax intensity (0..1) on every image, across every figurine. */
     async bulkSetParallax(intensity: number): Promise<BulkOpResult> {
-        if (isTauri) return invoke('bulk_set_parallax', { intensity });
         return webFetch('/admin/figurines/bulk/set-parallax', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -834,7 +789,6 @@ export const api = {
      *  Idempotent — works that already have a slug are untouched. */
     async backfillSlugs(): Promise<BulkOpResult> {
         invalidateReadPrefix('figurines:');
-        if (isTauri) return invoke('backfill_slugs');
         return webFetch('/admin/figurines/slugs/backfill', {
             method: 'POST',
             headers: authHeaders(),
@@ -845,7 +799,6 @@ export const api = {
      *  from the work's name. Returns the slug actually stored (uniqueness-suffixed). */
     async setFigurineSlug(id: string, slug: string | null): Promise<string> {
         invalidateReadPrefix('figurines:');
-        if (isTauri) return invoke('set_figurine_slug', { id, slug });
         const res = await webFetch<{ slug: string }>(`/admin/figurines/${id}/slug`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -860,7 +813,6 @@ export const api = {
      * `generateFigurineDepth`.
      */
     async bulkRecalculateParallax(): Promise<DepthGenSummary> {
-        if (isTauri) throw new Error('Depth generation is only available on the server build.');
         return webFetch('/admin/figurines/bulk/recalculate-parallax', {
             method: 'POST',
             headers: authHeaders(),
@@ -872,39 +824,29 @@ export const api = {
      * (by display order) as the "detail" (second angle) image.
      */
     async bulkSetSecondAngle(): Promise<BulkOpResult> {
-        if (isTauri) return invoke('bulk_set_second_angle');
         return webFetch('/admin/figurines/bulk/set-second-angle', {
             method: 'POST',
             headers: authHeaders(),
         });
     },
 
-    /** Un-feature every figurine on the home page and delete every scheduled showing entry. Server build only (Tauri has no showings CRUD). */
+    /** Un-feature every figurine on the home page and delete every scheduled showing entry. */
     async bulkClearShowings(): Promise<BulkOpResult> {
-        if (isTauri) throw new Error('Showings are only available on the server build.');
         return webFetch('/admin/showings/bulk-clear', {
             method: 'POST',
             headers: authHeaders(),
         });
     },
 
-    async cleanupUnusedMedia(): Promise<string[]> {
-        if (isTauri) return invoke('cleanup_unused_media');
-        throw new Error('Clearing local media is only available in the Tauri app.');
-    },
-
     async getMediaInventory(): Promise<MediaInventory> {
-        if (isTauri) return invoke('get_media_inventory');
         return webFetch('/admin/media', { headers: authHeaders() });
     },
 
     async getUnusedMediaReport(): Promise<MediaCleanupReport> {
-        if (isTauri) return invoke('get_unused_media_report');
         return webFetch('/admin/media/cleanup-report', { headers: authHeaders() });
     },
 
     async cleanupReportedUnusedMedia(): Promise<string[]> {
-        if (isTauri) return invoke('cleanup_reported_unused_media');
         const data = await webFetch<{ removed: string[] }>('/admin/media/cleanup', {
             method: 'POST',
             headers: authHeaders(),
@@ -913,9 +855,6 @@ export const api = {
     },
 
     async replaceMediaEverywhere(oldPath: string, replacementFilePath: string | File): Promise<MediaReplaceResult> {
-        if (isTauri) {
-            return invoke('replace_media_everywhere', { oldPath, replacementFilePath });
-        }
         const form = new FormData();
         form.append('targetPath', oldPath);
         form.append('file', replacementFilePath as File);
@@ -928,23 +867,10 @@ export const api = {
         return res.json();
     },
 
-    // fileOrPath is a local path string in Tauri, a File object on web
-    async importMedia(fileOrPath: string | File, mediaType: 'images' | 'videos' | 'audio'): Promise<string> {
-        const media = await api.importMediaWithVariants(fileOrPath, mediaType);
-        return media.url;
-    },
-
-    // nameHint (web only): for a figurine photo, pass the figurine's name so the
-    // server can give the file a readable, keyword-bearing filename instead of a
-    // bare UUID — see image_id_with_hint in handlers.rs. Ignored for non-image
-    // uploads and on Tauri (the desktop file pipeline isn't public/crawled, so a
-    // slugged filename buys nothing there).
-    async importMediaWithVariants(fileOrPath: string | File, mediaType: 'images' | 'videos' | 'audio', nameHint?: string): Promise<ImportedMedia> {
-        if (isTauri) {
-            const url = await invoke<string>('import_media', { filePath: fileOrPath as string, mediaType });
-            return { url };
-        }
-        const file = fileOrPath as File;
+    // nameHint: for a figurine photo, pass the figurine's name so the server can
+    // give the file a readable, keyword-bearing filename instead of a bare UUID —
+    // see image_id_with_hint in handlers.rs. Ignored for non-image uploads.
+    async importMediaWithVariants(file: File, mediaType: 'images' | 'videos' | 'audio', nameHint?: string): Promise<ImportedMedia> {
         const form = new FormData();
         // Must be appended before `file` — the server reads fields in arrival order
         // and acts on `file` as soon as it sees it (see upload_file in handlers.rs).
@@ -964,26 +890,7 @@ export const api = {
         };
     },
 
-    async saveCabinetZone(zone: CabinetZone): Promise<void> {
-        if (isTauri) return invoke('save_cabinet_zone', { zone });
-        await webFetch('/cabinet/zones', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...authHeaders() },
-            body: JSON.stringify(zone),
-        });
-    },
-
-    async deleteCabinetZone(id: string): Promise<void> {
-        if (isTauri) return invoke('delete_cabinet_zone', { id });
-        const res = await fetch(`${webApiBase()}/cabinet/zones/${id}`, {
-            method: 'DELETE',
-            headers: authHeaders(),
-        });
-        if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
-    },
-
     async saveShowingRoom(room: ShowingRoom): Promise<void> {
-        if (isTauri) return invoke('save_showing_room', { room });
         await webFetch('/showing-rooms', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -992,7 +899,6 @@ export const api = {
     },
 
     async deleteShowingRoom(id: string): Promise<void> {
-        if (isTauri) return invoke('delete_showing_room', { id });
         const res = await fetch(`${webApiBase()}/showing-rooms/${id}`, {
             method: 'DELETE',
             headers: authHeaders(),
@@ -1007,7 +913,6 @@ export const api = {
             caption: (item as WorkshopItem).caption ?? null,
             imageUrl: (item as WorkshopItem).imageUrl ?? null,
         };
-        if (isTauri) return invoke('save_text', { dto, category });
         await webFetch(`/content/texts/${category}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -1016,7 +921,6 @@ export const api = {
     },
 
     async deleteText(id: string): Promise<void> {
-        if (isTauri) return invoke('delete_text', { id });
         const res = await fetch(`${webApiBase()}/content/texts/${id}`, {
             method: 'DELETE',
             headers: authHeaders(),
@@ -1036,7 +940,6 @@ export const api = {
      */
     async getMainBackground(loadFetch?: typeof fetch): Promise<string | null> {
         return dedupeRead('main-background', 4000, async () => {
-            if (isTauri) return invoke<string | null>('get_main_background');
             const data = await webFetch<{ url: string | null }>('/main-background', undefined, loadFetch);
             return data.url;
         });
@@ -1047,7 +950,6 @@ export const api = {
     // without this that is the same GET twice per page view.
     async getHomeContent(loadFetch?: typeof fetch): Promise<HomeContent> {
         return dedupeRead('home-content', 4000, async () => {
-            if (isTauri) return invoke<HomeContent>('get_home_content');
             try {
                 return await webFetch<HomeContent>('/home-content', undefined, loadFetch);
             } catch {
@@ -1058,7 +960,6 @@ export const api = {
 
     async saveHomeContent(content: HomeContent): Promise<void> {
         invalidateRead('home-content');
-        if (isTauri) return invoke('save_home_content', { content });
         try {
             await webFetch('/home-content', {
                 method: 'POST',
@@ -1081,7 +982,6 @@ export const api = {
 
     async setMainBackground(fileOrPath: string | File): Promise<string> {
         try {
-            if (isTauri) return await invoke('set_main_background', { filePath: fileOrPath as string });
             const file = fileOrPath as File;
             const form = new FormData();
             form.append('file', file);
@@ -1100,35 +1000,16 @@ export const api = {
 
     // === SYNC & SETTINGS ===
     async getSettings(): Promise<AppSettings> {
-        if (isTauri) return invoke('get_settings');
         return getWebSettings();
     },
 
     async saveSettings(settings: AppSettings): Promise<void> {
-        if (isTauri) return invoke('save_settings', { settings });
         localStorage.setItem('gotiga_server_url', settings.serverUrl);
         localStorage.setItem('gotiga_api_key', settings.apiKey);
         invalidateServerUrlCache(); // drop the cached origin so media URLs re-resolve
     },
 
-    async exportRelease(): Promise<string> {
-        if (isTauri) return invoke('export_release');
-        throw new Error('In web mode, data is saved directly to the server without creating releases.');
-    },
-
-    async pullUpdates(): Promise<string> {
-        if (isTauri) return invoke('pull_updates');
-        throw new Error('In web mode, data is loaded directly from the server.');
-    },
-
-    async pushFigurine(figurine: Figurine): Promise<string> {
-        if (isTauri) return invoke('push_figurine', { figurine });
-        await api.saveFigurine(figurine);
-        return 'Saved to server';
-    },
-
     async getServerReleases(): Promise<ServerRelease[]> {
-        if (isTauri) return invoke('get_server_releases');
         try {
             return await webFetch('/admin/releases', { headers: authHeaders() });
         } catch {
@@ -1137,7 +1018,6 @@ export const api = {
     },
 
     async activateServerRelease(id: string): Promise<void> {
-        if (isTauri) return invoke('activate_server_release', { id });
         await webFetch(`/admin/releases/${id}/activate`, {
             method: 'POST',
             headers: authHeaders(),
@@ -1146,14 +1026,12 @@ export const api = {
 
     async getAuthorProfile(loadFetch?: typeof fetch): Promise<AuthorProfile> {
         return dedupeRead('author-profile', 4000, async () => {
-            if (isTauri) return invoke('get_author_profile');
             return webFetch('/author/profile', undefined, loadFetch);
         });
     },
 
     async saveAuthorProfile(profile: AuthorProfile): Promise<void> {
         try {
-            if (isTauri) return await invoke('save_author_profile', { profile });
             await webFetch('/author/profile', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -1508,12 +1386,6 @@ export const api = {
         });
     },
 
-    async userProfileCertificates(sessionToken: string): Promise<CollectorCertificateDto[]> {
-        return webFetch('/profile/certificates', {
-            headers: { Authorization: `Bearer ${sessionToken}` },
-        });
-    },
-
     async getWishlist(sessionToken: string): Promise<string[]> {
         return webFetch('/profile/wishlist', {
             headers: { Authorization: `Bearer ${sessionToken}` },
@@ -1694,10 +1566,6 @@ export const api = {
             headers,
             body: JSON.stringify(req),
         });
-    },
-
-    async getCommissionByToken(token: string): Promise<CommissionDto> {
-        return webFetch(`/commissions/${token}`);
     },
 
     async claimCommission(sessionToken: string, claimToken: string): Promise<CommissionDto> {
@@ -1928,18 +1796,6 @@ export const api = {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify(settings),
-        });
-    },
-
-    async getWorkshopFeature(): Promise<WorkshopFeature> {
-        return webFetch('/settings/workshop-feature');
-    },
-
-    async saveWorkshopFeature(feature: WorkshopFeature): Promise<WorkshopFeature> {
-        return webFetch('/admin/settings/workshop-feature', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json', ...authHeaders() },
-            body: JSON.stringify(feature),
         });
     },
 
