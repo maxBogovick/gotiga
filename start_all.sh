@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+# Local site: Postgres (Docker :5434) + Rust API (:3000) + Vite (:1420).
+#
+#   ./start_all.sh
+#   ./start_all.sh --restore                         # latest deploy/backups archive
+#   ./start_all.sh --restore path/to/gotiga-backup-*.tar.gz
+#   ./start_all.sh --restore --yes                   # skip the restore confirm prompt
+#
+# --restore loads a backup from the panel («Бэкап → на мой Mac») into this
+# local stack, then boots as usual. Overwrites local DB + src-tauri/server/uploads.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,6 +22,8 @@ FRONTEND_URL="${FRONTEND_URL:-http://127.0.0.1:${FRONTEND_PORT}}"
 
 SERVER_PID=""
 FRONTEND_PID=""
+RESTORE_ARCHIVE=""
+RESTORE_YES=""
 
 log() {
   printf '[gotiga] %s\n' "$*"
@@ -22,6 +33,41 @@ fail() {
   printf '[gotiga] ERROR: %s\n' "$*" >&2
   exit 1
 }
+
+usage() {
+  cat <<EOF
+Usage: $0 [--restore [archive]] [--yes]
+
+  --restore [archive]  Load a panel backup into local Postgres + uploads, then boot.
+                       With no path, uses the newest deploy/backups/*/gotiga-backup-*.tar.gz
+  --yes                Skip the restore confirmation prompt
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --yes)
+      RESTORE_YES=1
+      shift
+      ;;
+    --restore)
+      if [[ "${2:-}" != "" && "${2:-}" != --* ]]; then
+        RESTORE_ARCHIVE="$2"
+        shift 2
+      else
+        RESTORE_ARCHIVE="__latest__"
+        shift
+      fi
+      ;;
+    *)
+      fail "Unknown argument: $1 (try --help)"
+      ;;
+  esac
+done
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "Required command not found: $1"
@@ -123,8 +169,35 @@ require_cmd lsof
 
 log "Starting Postgres on ${DB_HOST}:${DB_PORT}..."
 (cd "$SERVER_DIR" && docker compose up -d db)
-wait_for_port "$DB_HOST" "$DB_PORT" 60
 (cd "$SERVER_DIR" && docker compose stop app >/dev/null 2>&1 || true)
+
+# Stop a leftover API before restore — open connections make pg_restore --clean fail
+# and sqlx migrate then creates empty tables (site up, catalog empty).
+if [[ -n "$RESTORE_ARCHIVE" ]]; then
+  log "Clearing port ${SERVER_PORT} so restore can take the database..."
+  kill_port "$SERVER_PORT"
+fi
+
+if [[ -n "$RESTORE_ARCHIVE" ]]; then
+  if [[ "$RESTORE_ARCHIVE" == "__latest__" ]]; then
+    RESTORE_ARCHIVE="$(find "$ROOT_DIR/deploy/backups" -name 'gotiga-backup-*.tar.gz' -type f 2>/dev/null | sort | tail -1 || true)"
+    [[ -n "$RESTORE_ARCHIVE" ]] || fail "No gotiga-backup-*.tar.gz under deploy/backups/. Run the panel backup first."
+  fi
+  [[ -f "$RESTORE_ARCHIVE" ]] || fail "Backup archive not found: $RESTORE_ARCHIVE"
+  [[ -x "$ROOT_DIR/deploy/restore-local.sh" ]] || fail "deploy/restore-local.sh is missing or not executable."
+  log "Restoring local DB + uploads from ${RESTORE_ARCHIVE}..."
+  restore_args=("$ROOT_DIR/deploy/restore-local.sh" "$RESTORE_ARCHIVE")
+  [[ -n "$RESTORE_YES" ]] && restore_args+=(--yes)
+  "${restore_args[@]}"
+else
+  if ! nc -z "$DB_HOST" "$DB_PORT" >/dev/null 2>&1; then
+    sleep 2
+    if (cd "$SERVER_DIR" && docker compose logs db 2>/dev/null | grep -q 'incompatible with server'); then
+      fail "Local Postgres volume is PG15, image is now 16 (needed for prod backups). Recreate the empty local DB:  cd src-tauri/server && docker compose down -v && docker compose up -d db   — or run  ./start_all.sh --restore  which does this for you."
+    fi
+  fi
+  wait_for_port "$DB_HOST" "$DB_PORT" 60
+fi
 
 if [[ ! -d "$ROOT_DIR/node_modules" ]]; then
   log "Installing frontend dependencies..."

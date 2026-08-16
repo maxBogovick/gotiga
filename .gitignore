@@ -21,3 +21,5 @@ planning/
 src-tauri/server/data
 /.idea/
 /src-tauri/server/data/
+# Prod-backup media restored locally for start_all.sh --restore
+/src-tauri/server/uploads/
