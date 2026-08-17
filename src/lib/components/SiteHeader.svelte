@@ -692,6 +692,8 @@
     transition: height 0.4s var(--ease), background 0.3s ease;
     backdrop-filter: blur(4px);
     -webkit-backdrop-filter: blur(4px);
+    /* Cornice of the house: stays while rooms slide (drawer / portiere). */
+    view-transition-name: site-header;
   }
 
   .site-header.is-scrolled {

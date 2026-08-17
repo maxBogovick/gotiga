@@ -24,6 +24,9 @@
   let root = $state<HTMLElement>();
 
   let active = $derived(value !== allValue);
+  // The "all / default" row is always rendered from allLabel — drop the same
+  // value if the caller also put it in `options` (the sort chip used to).
+  let menuOptions = $derived(options.filter((o) => o.value !== allValue));
   let currentLabel = $derived(
     value === allValue ? label : (options.find(o => o.value === value)?.label ?? label)
   );
@@ -66,9 +69,9 @@
         class="fpop__opt {value === allValue ? 'fpop__opt--sel' : ''}"
         onclick={() => select(allValue)}
       >
-        <span>{allLabel}</span>
+        <span class="fpop__opt-label">{allLabel}</span>
       </button>
-      {#each options as opt}
+      {#each menuOptions as opt (opt.value)}
         <button
           type="button"
           role="option"
@@ -130,7 +133,7 @@
     top: calc(100% + 5px);
     left: 0;
     z-index: 40;
-    min-width: 100%;
+    min-width: max(100%, 12.5rem);
     max-width: 240px;
     max-height: 300px;
     overflow-y: auto;
@@ -165,6 +168,7 @@
     border-radius: 2px;
     cursor: pointer;
     text-align: left;
+    white-space: nowrap;
     transition: background 0.14s, color 0.14s;
   }
   .fpop__opt:hover { background: rgba(52,37,28,0.05); color: #34251c; }
@@ -178,6 +182,6 @@
     color: #c65f3c;
   }
 
-  .fpop__opt-label { flex: 1; }
+  .fpop__opt-label { flex: 1; white-space: nowrap; }
   .fpop__opt-count { opacity: 0.5; font-variant-numeric: tabular-nums; }
 </style>

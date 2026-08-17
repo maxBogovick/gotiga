@@ -846,6 +846,45 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   KINETIC TITLE — home “Works” / «Работы»
+   ═══════════════════════════════════════════════════════════════════════════
+   One gesture. As the gallery wall approaches, the heading takes a little
+   weight; once the section has entered, the type is dead again — a book, not
+   a dashboard. Letter-spacing interpolates smoothly; Cormorant’s static cuts
+   only snap 300↔400. Browsers without view() and reduced-motion stay at 300. */
+
+@supports (animation-timeline: view()) {
+  #context-title {
+    animation: works-breathe linear both;
+    animation-timeline: view();
+    animation-range: entry 0% entry 92%;
+  }
+}
+
+@keyframes works-breathe {
+  0% {
+    font-weight: 300;
+    letter-spacing: 0.045em;
+  }
+  40% {
+    font-weight: 400;
+    letter-spacing: 0;
+  }
+  100% {
+    font-weight: 300;
+    letter-spacing: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #context-title {
+    animation: none !important;
+    font-weight: 300;
+    letter-spacing: 0;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    KEYFRAMES
    ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -941,6 +980,22 @@
 
 ::view-transition-new(root) {
   animation: 380ms var(--ease-atelier) 80ms both vt-in;
+}
+
+/* The header is the cornice: it does not fade with the leaf. Old snapshot is
+   dropped; the incoming bar is shown immediately while its group FLIPs size. */
+::view-transition-image-pair(site-header) {
+  isolation: isolate;
+}
+::view-transition-old(site-header) {
+  animation: none;
+  opacity: 0;
+  mix-blend-mode: normal;
+}
+::view-transition-new(site-header) {
+  animation: none;
+  opacity: 1;
+  mix-blend-mode: normal;
 }
 
 /*
@@ -1055,6 +1110,111 @@ html.gt-backward::view-transition-new(root) {
     transform-origin: center center;
     animation: vt-in 420ms var(--ease-atelier) 60ms both;
   }
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   HOUSE ROOMS — hall ↔ archive (cabinet drawer), hall ↔ workshop (portiere)
+   ───────────────────────────────────────────────────────────────────────────
+   Classified from the URL in +layout.svelte (back button included). Figurine
+   detail is not a room crossing — it keeps the plate morph / page-turn.
+   Header is named `site-header` so the cornice stays while the leaf moves.
+   No 3D: the book-turn already owns rotateY, and coarse pointers skip that. */
+
+html.gt-room::view-transition-image-pair(root) {
+  isolation: isolate;
+}
+
+html.gt-room::view-transition-old(root),
+html.gt-room::view-transition-new(root) {
+  mix-blend-mode: normal;
+  animation-delay: 0s;
+}
+
+/* Drawer in: the archive pulls out from under the hall, like a cabinet leaf. */
+html.gt-drawer-in::view-transition-old(root) {
+  z-index: 1;
+  animation: gt-drawer-stay 720ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+html.gt-drawer-in::view-transition-new(root) {
+  z-index: 2;
+  animation: gt-drawer-pull 720ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Drawer out: the leaf slides back; the hall returns from its slight recess. */
+html.gt-drawer-out::view-transition-old(root) {
+  z-index: 2;
+  animation: gt-drawer-push 720ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+html.gt-drawer-out::view-transition-new(root) {
+  z-index: 1;
+  animation: gt-drawer-return 720ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes gt-drawer-stay {
+  to {
+    transform: scale(0.986);
+    filter: brightness(0.88);
+  }
+}
+@keyframes gt-drawer-pull {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+@keyframes gt-drawer-push {
+  from { transform: translateY(0); }
+  to   { transform: translateY(100%); }
+}
+@keyframes gt-drawer-return {
+  from {
+    transform: scale(0.986);
+    filter: brightness(0.88);
+  }
+  to {
+    transform: none;
+    filter: none;
+  }
+}
+
+/* Portiere in: a vertical slit opens onto the workshop. */
+html.gt-curtain-in::view-transition-old(root) {
+  z-index: 1;
+  animation: gt-curtain-recede 860ms cubic-bezier(0.45, 0.02, 0.2, 1) both;
+}
+html.gt-curtain-in::view-transition-new(root) {
+  z-index: 2;
+  animation: gt-curtain-part 860ms cubic-bezier(0.45, 0.02, 0.2, 1) both;
+}
+
+/* Portiere out: the slit closes over the workshop; the hall unveils beneath. */
+html.gt-curtain-out::view-transition-old(root) {
+  z-index: 2;
+  animation: gt-curtain-close 860ms cubic-bezier(0.45, 0.02, 0.2, 1) both;
+}
+html.gt-curtain-out::view-transition-new(root) {
+  z-index: 1;
+  animation: gt-curtain-unveil 860ms cubic-bezier(0.45, 0.02, 0.2, 1) both;
+}
+
+@keyframes gt-curtain-recede {
+  to { filter: brightness(0.52); }
+}
+@keyframes gt-curtain-part {
+  from {
+    clip-path: inset(0 46% 0 46%);
+    filter: brightness(0.7);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+    filter: none;
+  }
+}
+@keyframes gt-curtain-close {
+  from { clip-path: inset(0 0 0 0); }
+  to   { clip-path: inset(0 46% 0 46%); }
+}
+@keyframes gt-curtain-unveil {
+  from { filter: brightness(0.52); }
+  to   { filter: none; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

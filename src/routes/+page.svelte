@@ -1731,6 +1731,7 @@
         line-height: 0.96;
         color: var(--ink);
         margin-top: 6px;
+        font-synthesis: none;
     }
 
     .context-side {

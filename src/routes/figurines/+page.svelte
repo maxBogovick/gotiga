@@ -83,18 +83,26 @@
     searchQuery.trim() ? localMatch(facetFiltered, searchQuery) : facetFiltered
   );
 
+  function createdAtMs(iso?: string | null): number {
+    if (!iso) return 0;
+    const t = new Date(iso).getTime();
+    return Number.isFinite(t) ? t : 0;
+  }
+
   let sorted = $derived(
     localFiltered.slice().sort((a, b) => {
       const byCurated = (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
       const byName = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
-      const byNewest = (b.year ?? -Infinity) - (a.year ?? -Infinity);
-      const byOldest = (a.year ?? Infinity) - (b.year ?? Infinity);
+      // When the piece entered the archive — not the work's year. Most of the
+      // collection shares a year, so year-sort made newest/oldest look identical.
+      const byCreated = createdAtMs(b.createdAt) - createdAtMs(a.createdAt);
+      const byYear = (b.year ?? -Infinity) - (a.year ?? -Infinity);
       const statusRank: Record<string, number> = { available: 0, reserved: 1, sold: 2 };
       if (sortMode === 'available') return statusRank[a.status] - statusRank[b.status] || byCurated || byName;
-      if (sortMode === 'newest') return byNewest || byCurated || byName;
-      if (sortMode === 'oldest') return byOldest || byCurated || byName;
+      if (sortMode === 'newest') return byCreated || byYear || byName;
+      if (sortMode === 'oldest') return -byCreated || -byYear || byName;
       if (sortMode === 'name') return byName || byCurated;
-      return byCurated || byName;
+      return byCurated || byCreated || byName;
     })
   );
 
@@ -190,8 +198,8 @@
   );
 
   // ── Popover option lists (single chip vocabulary, no native <select>) ──────
+  // Default ("curated") is the popover's all-row, not a duplicate in this list.
   let sortOptions = $derived([
-    { value: 'curated',   label: $t('archiveSortCurated') },
     { value: 'available', label: $t('archiveSortAvailable') },
     { value: 'newest',    label: $t('archiveSortNewest') },
     { value: 'oldest',    label: $t('archiveSortOldest') },
