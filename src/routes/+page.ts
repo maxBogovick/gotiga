@@ -63,17 +63,6 @@ export const load = async ({ fetch }: { fetch: typeof globalThis.fetch }) => {
     const heroFig = pickHeroFigurine(works, homeContent);
     const heroImage = heroImageUrl(bg, heroFig, FALLBACK_HERO);
 
-    // The exhibit of the day, as far as it can be known without a browser: the admin's PIN.
-    // The page excludes the vitrine's work from the reel (a piece must not appear twice), and
-    // that exclusion used to happen on the client only — so the prerendered reel showed one
-    // card that hydration then yanked out from under the reader, resequencing the rest. The
-    // daily rotation and the showing-window gate still need the clock and the rooms, so the
-    // client refines this (see computeVitrineFig); seeding the pin makes the common case
-    // agree with itself.
-    const vitrineFig = homeContent.vitrineFigurineId
-        ? works.find((w) => w.id === homeContent.vitrineFigurineId) ?? null
-        : null;
-
     // The OG card shows what the page shows.
     let ogImage = `${SITE_URL}${FALLBACK_HERO}`;
     try {
@@ -83,5 +72,5 @@ export const load = async ({ fetch }: { fetch: typeof globalThis.fetch }) => {
         // Keep the bundled fallback image.
     }
 
-    return { ogImage, bg, homeContent, heroFig, vitrineFig, author, works, inProgress };
+    return { ogImage, bg, homeContent, heroFig, author, works, inProgress };
 };

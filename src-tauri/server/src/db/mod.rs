@@ -3,6 +3,9 @@ use crate::models::*;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 use uuid::Uuid;
 
+mod prepared;
+pub use prepared::{clear_stale_prepared_statements, note_stale_cached_plan};
+
 /// Parse an optional `YYYY-MM-DD` deadline. Empty/absent → None; a present but
 /// unparseable value is a client error (400) rather than a silent drop.
 fn parse_optional_deadline(raw: Option<&str>) -> Result<Option<chrono::NaiveDate>> {
@@ -942,8 +945,9 @@ impl Repository {
         from: chrono::NaiveDate,
         to: chrono::NaiveDate,
     ) -> Result<Vec<SitePageEngagement>> {
-        Ok(sqlx::query_as::<_, (String, i64, i64, i64, Option<f64>, Option<f64>, Option<f64>)>(
-            r#"
+        Ok(
+            sqlx::query_as::<_, (String, i64, i64, i64, Option<f64>, Option<f64>, Option<f64>)>(
+                r#"
             SELECT
                 CASE
                     WHEN path = '/' OR path LIKE '/?%' THEN 'home'
@@ -971,35 +975,36 @@ impl Repository {
             GROUP BY path_group
             ORDER BY engaged_events DESC
             "#,
+            )
+            .bind(from)
+            .bind(to)
+            .bind(crate::analytics::QUICK_EXIT_MS)
+            .fetch_all(&self.pg_pool)
+            .await?
+            .into_iter()
+            .map(
+                |(
+                    path_group,
+                    engaged_events,
+                    quick_exit_events,
+                    reached_works_events,
+                    median_duration_ms,
+                    median_scroll_depth,
+                    median_works_seen,
+                )| SitePageEngagement {
+                    path_group,
+                    views: 0,
+                    unique_visitors: 0,
+                    engaged_events,
+                    quick_exit_events,
+                    reached_works_events,
+                    median_duration_ms,
+                    median_scroll_depth,
+                    median_works_seen,
+                },
+            )
+            .collect(),
         )
-        .bind(from)
-        .bind(to)
-        .bind(crate::analytics::QUICK_EXIT_MS)
-        .fetch_all(&self.pg_pool)
-        .await?
-        .into_iter()
-        .map(
-            |(
-                path_group,
-                engaged_events,
-                quick_exit_events,
-                reached_works_events,
-                median_duration_ms,
-                median_scroll_depth,
-                median_works_seen,
-            )| SitePageEngagement {
-                path_group,
-                views: 0,
-                unique_visitors: 0,
-                engaged_events,
-                quick_exit_events,
-                reached_works_events,
-                median_duration_ms,
-                median_scroll_depth,
-                median_works_seen,
-            },
-        )
-        .collect())
     }
 
     /// Per-`path_group` views/unique-visitors from the permanent
@@ -1888,7 +1893,11 @@ impl Repository {
 
     /// Returns `(items, total_count)`. When `q.per_page` is None — no LIMIT/OFFSET,
     /// all matching rows are returned (used by sitemap and admin calls).
-    pub async fn get_all_figurines(&self, visible_only: bool, q: &crate::models::FigurineQuery) -> Result<(Vec<Figurine>, i64)> {
+    pub async fn get_all_figurines(
+        &self,
+        visible_only: bool,
+        q: &crate::models::FigurineQuery,
+    ) -> Result<(Vec<Figurine>, i64)> {
         // Clone filter values upfront so binds own their data ('static).
         let status = q.status.clone();
         let search = q.search.clone();
@@ -1901,10 +1910,15 @@ impl Repository {
             count_builder.push(" AND (first_look_until IS NULL OR first_look_until <= NOW())");
         }
         if let Some(ref s) = status {
-            count_builder.push(" AND status::text = ").push_bind(s.clone());
+            count_builder
+                .push(" AND status::text = ")
+                .push_bind(s.clone());
         }
         if let Some(ref s) = search {
-            count_builder.push(" AND name ILIKE '%' || ").push_bind(s.clone()).push(" || '%'");
+            count_builder
+                .push(" AND name ILIKE '%' || ")
+                .push_bind(s.clone())
+                .push(" || '%'");
         }
         let total: i64 = count_builder
             .build_query_scalar()
@@ -1923,8 +1937,8 @@ impl Repository {
         let order_clause = match q.sort.as_deref() {
             Some("newest") => " ORDER BY created_at DESC, id",
             Some("oldest") => " ORDER BY created_at ASC, id",
-            Some("name")   => " ORDER BY name ASC, id",
-            _              => " ORDER BY sort_order, created_at DESC, id",
+            Some("name") => " ORDER BY name ASC, id",
+            _ => " ORDER BY sort_order, created_at DESC, id",
         };
 
         let mut items_builder: QueryBuilder<Postgres> =
@@ -1937,7 +1951,10 @@ impl Repository {
             items_builder.push(" AND status::text = ").push_bind(s);
         }
         if let Some(s) = search {
-            items_builder.push(" AND name ILIKE '%' || ").push_bind(s).push(" || '%'");
+            items_builder
+                .push(" AND name ILIKE '%' || ")
+                .push_bind(s)
+                .push(" || '%'");
         }
         items_builder.push(order_clause);
         if let Some(per_page) = q.per_page {
@@ -1962,12 +1979,11 @@ impl Repository {
         &self,
         ids: &[Uuid],
     ) -> Result<std::collections::HashMap<String, String>> {
-        let rows: Vec<(Uuid, Option<String>)> = sqlx::query_as(
-            "SELECT id, pinterest_description FROM figurines WHERE id = ANY($1)",
-        )
-        .bind(ids)
-        .fetch_all(&self.pg_pool)
-        .await?;
+        let rows: Vec<(Uuid, Option<String>)> =
+            sqlx::query_as("SELECT id, pinterest_description FROM figurines WHERE id = ANY($1)")
+                .bind(ids)
+                .fetch_all(&self.pg_pool)
+                .await?;
         Ok(rows
             .into_iter()
             .filter_map(|(id, d)| {
@@ -2013,13 +2029,20 @@ impl Repository {
     /// Overwrite a single work's URL slug and its manual/auto flag. Bumps
     /// updated_at so the sitemap reflects the new address. The caller guarantees
     /// uniqueness; the partial UNIQUE(slug) index is the backstop.
-    pub async fn update_figurine_slug(&self, id: Uuid, slug: &str, slug_manual: bool) -> Result<()> {
-        sqlx::query("UPDATE figurines SET slug = $1, slug_manual = $2, updated_at = NOW() WHERE id = $3")
-            .bind(slug)
-            .bind(slug_manual)
-            .bind(id)
-            .execute(&self.pg_pool)
-            .await?;
+    pub async fn update_figurine_slug(
+        &self,
+        id: Uuid,
+        slug: &str,
+        slug_manual: bool,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE figurines SET slug = $1, slug_manual = $2, updated_at = NOW() WHERE id = $3",
+        )
+        .bind(slug)
+        .bind(slug_manual)
+        .bind(id)
+        .execute(&self.pg_pool)
+        .await?;
         Ok(())
     }
 
@@ -2045,14 +2068,12 @@ impl Repository {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        Ok(
-            sqlx::query_as::<_, Figurine>(
-                "SELECT * FROM figurines WHERE id = ANY($1) AND is_visible = true",
-            )
-            .bind(ids)
-            .fetch_all(&self.pg_pool)
-            .await?,
+        Ok(sqlx::query_as::<_, Figurine>(
+            "SELECT * FROM figurines WHERE id = ANY($1) AND is_visible = true",
         )
+        .bind(ids)
+        .fetch_all(&self.pg_pool)
+        .await?)
     }
 
     pub async fn get_images_by_figurine(&self, figurine_id: Uuid) -> Result<Vec<Image>> {
@@ -2203,8 +2224,10 @@ impl Repository {
 
         // Lenient parse: a bad/empty room id frees the work (NULL → always open)
         // rather than aborting the save.
-        let showing_room_uuid =
-            f.showing_room_id.as_deref().and_then(|s| Uuid::parse_str(s).ok());
+        let showing_room_uuid = f
+            .showing_room_id
+            .as_deref()
+            .and_then(|s| Uuid::parse_str(s).ok());
 
         // Strict parse: a malformed first-look date aborts the save (it gates
         // archive visibility, so a silent NULL could expose a work early).
@@ -2217,9 +2240,7 @@ impl Repository {
             Some(s) => Some(
                 chrono::DateTime::parse_from_rfc3339(s)
                     .map_err(|_| {
-                        AppError::BadRequest(
-                            "Invalid first_look_until (expected ISO-8601)".into(),
-                        )
+                        AppError::BadRequest("Invalid first_look_until (expected ISO-8601)".into())
                     })?
                     .with_timezone(&chrono::Utc),
             ),
@@ -2837,11 +2858,21 @@ impl Repository {
 
         scored.sort_by(|a, b| b.1.cmp(&a.1));
         let noticed_cutoff = ((scored.len() as f64) * NOTICED_PERCENTILE).ceil().max(1.0) as usize;
-        let favorite_cutoff = ((scored.len() as f64) * HOUSE_FAVORITE_PERCENTILE).ceil().max(1.0) as usize;
+        let favorite_cutoff = ((scored.len() as f64) * HOUSE_FAVORITE_PERCENTILE)
+            .ceil()
+            .max(1.0) as usize;
 
         Ok(FavoriteTiers {
-            noticed: scored.iter().take(noticed_cutoff).map(|(id, _)| *id).collect(),
-            house_favorite: scored.iter().take(favorite_cutoff).map(|(id, _)| *id).collect(),
+            noticed: scored
+                .iter()
+                .take(noticed_cutoff)
+                .map(|(id, _)| *id)
+                .collect(),
+            house_favorite: scored
+                .iter()
+                .take(favorite_cutoff)
+                .map(|(id, _)| *id)
+                .collect(),
         })
     }
 
@@ -3177,7 +3208,7 @@ impl Repository {
                 && (dbe.constraint() == Some("users_email_key") || dbe.constraint() == Some("idx_users_email")) {
                     return AppError::Conflict("Email already registered".into());
                 }
-            AppError::Database(e)
+            e.into()
         })?;
         Ok(user)
     }

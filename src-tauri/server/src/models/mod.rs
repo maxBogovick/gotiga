@@ -248,7 +248,6 @@ pub struct Text {
     pub updated_at: DateTime<Utc>,
 }
 
-
 // ============================================================
 // DTOs (API Contract — camelCase for JS frontend)
 // ============================================================
@@ -293,6 +292,10 @@ pub struct FigurineListItemDto {
     pub series: Option<String>,
     pub technique: Option<String>,
     pub material: Option<String>,
+    /// Free-text size (e.g. "20×15×10 cm"). Already on the TypeScript list type
+    /// and the home reel caption; omitting it here meant the client never saw it.
+    #[serde(default)]
+    pub dimensions: Option<String>,
     pub is_featured: bool,
     /// When the piece was catalogued — lets the showcase mark recently added works.
     pub created_at: DateTime<Utc>,
@@ -388,13 +391,13 @@ pub struct DepthGenItem {
     pub detail: Option<String>,
 }
 
-/// One ranked result of a semantic search ("Хранитель"). The client already
-/// holds the archive, so we return only the id + similarity and let it reorder.
+/// One ranked result of a hybrid search ("Хранитель"). The client already
+/// holds the archive, so we return only the id + fused rank and let it reorder.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SemanticHit {
     pub id: String,
-    /// Cosine similarity in [-1, 1]; higher is closer.
+    /// Reciprocal Rank Fusion score (higher is closer). Not cosine.
     pub score: f32,
 }
 
@@ -1112,7 +1115,6 @@ pub struct SaveTextRequest {
     pub caption: Option<String>,
     pub image_url: Option<String>,
 }
-
 
 // ============================================================
 // Misc

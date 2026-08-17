@@ -53,6 +53,12 @@ async fn main() -> anyhow::Result<()> {
         .acquire_timeout(std::time::Duration::from_secs(5))
         .idle_timeout(std::time::Duration::from_secs(600))
         .max_lifetime(std::time::Duration::from_secs(1800))
+        .before_acquire(|conn, _meta| {
+            Box::pin(async move {
+                db::clear_stale_prepared_statements(conn).await?;
+                Ok(true)
+            })
+        })
         .connect(&config.database_url)
         .await
         .expect("Failed to connect to Postgres");
@@ -174,9 +180,12 @@ async fn main() -> anyhow::Result<()> {
         .expect("Invalid address");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
     service.shutdown_analytics().await;
 
     Ok(())

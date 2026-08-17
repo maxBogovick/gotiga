@@ -390,13 +390,7 @@ impl AppService {
             .await?;
         let referrers = self
             .repo
-            .get_admin_figurine_analytics_breakdown(
-                figurine_id,
-                raw_data_from,
-                to,
-                "referrer",
-                12,
-            )
+            .get_admin_figurine_analytics_breakdown(figurine_id, raw_data_from, to, "referrer", 12)
             .await?;
         let utm_sources = self
             .repo
@@ -506,7 +500,9 @@ impl AppService {
     ) -> Result<Vec<FigurineGeoDailyPoint>> {
         let figurine_id = Self::parse_uuid(&id)?;
         let (from, to) = Self::analytics_range(query.from, query.to)?;
-        self.repo.get_admin_figurine_geo_daily(figurine_id, from, to).await
+        self.repo
+            .get_admin_figurine_geo_daily(figurine_id, from, to)
+            .await
     }
 
     /// Site-wide traffic overview (all figurines summed) — J1, "is interest in
@@ -658,8 +654,14 @@ impl AppService {
         to: chrono::NaiveDate,
     ) -> Result<Vec<SitePageEngagement>> {
         let raw_from = Self::raw_data_floor().max(from);
-        let engagement = self.repo.get_admin_site_page_engagement(raw_from, to).await?;
-        let views = self.repo.get_admin_site_page_views_by_group(from, to).await?;
+        let engagement = self
+            .repo
+            .get_admin_site_page_engagement(raw_from, to)
+            .await?;
+        let views = self
+            .repo
+            .get_admin_site_page_views_by_group(from, to)
+            .await?;
 
         let mut by_group: std::collections::BTreeMap<String, SitePageEngagement> = engagement
             .into_iter()
@@ -808,11 +810,7 @@ impl AppService {
         let to = req.to.unwrap_or_else(|| chrono::Utc::now().date_naive());
         let from = match req.from {
             Some(f) => f,
-            None => self
-                .repo
-                .get_earliest_analytics_day()
-                .await?
-                .unwrap_or(to),
+            None => self.repo.get_earliest_analytics_day().await?.unwrap_or(to),
         };
         if from > to {
             return Err(AppError::BadRequest("Invalid backfill range".into()));
@@ -1028,6 +1026,7 @@ impl AppService {
             series: f.series,
             technique: f.technique,
             material: f.material,
+            dimensions: f.dimensions,
             is_featured: f.is_featured,
             created_at: f.created_at,
             updated_at: f.updated_at,
@@ -1049,7 +1048,11 @@ impl AppService {
     /// collection) and intersected with the ids actually being rendered.
     async fn house_favorite_ids(&self, ids: &[Uuid]) -> Result<std::collections::HashSet<Uuid>> {
         let tiers = self.favorite_tiers().await?;
-        Ok(ids.iter().filter(|id| tiers.house_favorite.contains(id)).copied().collect())
+        Ok(ids
+            .iter()
+            .filter(|id| tiers.house_favorite.contains(id))
+            .copied()
+            .collect())
     }
 
     /// The favorite tiers, recomputed at most once a minute (see favorite_tiers_cache).
@@ -1065,7 +1068,11 @@ impl AppService {
         Ok(tiers)
     }
 
-    pub async fn list_figurines(&self, visible_only: bool, mut query: crate::models::FigurineQuery) -> Result<crate::models::FigurinesPage> {
+    pub async fn list_figurines(
+        &self,
+        visible_only: bool,
+        mut query: crate::models::FigurineQuery,
+    ) -> Result<crate::models::FigurinesPage> {
         // A bounded default so an omitted page size can never become an unbounded
         // scan-and-return of the whole table: get_all_figurines applies no LIMIT at
         // all when per_page is None. 1000 sits far above the real catalogue size yet
@@ -1091,7 +1098,12 @@ impl AppService {
                 self.to_list_item(f, face, detail, favorite)
             })
             .collect();
-        Ok(crate::models::FigurinesPage { items, total, page, per_page })
+        Ok(crate::models::FigurinesPage {
+            items,
+            total,
+            page,
+            per_page,
+        })
     }
 
     /// Works inside their "first look" window — the book-holders' shelf. Public
@@ -1143,9 +1155,7 @@ impl AppService {
             Ok(uuid) => self.repo.get_figurine_by_id(uuid).await?,
             Err(_) => self.repo.get_figurine_by_slug(&id).await?,
         }
-        .ok_or_else(|| {
-            crate::error::AppError::NotFound(format!("Figurine {} not found", id))
-        })?;
+        .ok_or_else(|| crate::error::AppError::NotFound(format!("Figurine {} not found", id)))?;
 
         let uuid = figurine.id;
 
@@ -1411,11 +1421,14 @@ impl AppService {
         };
         let mut parts: Vec<String> = vec![f.name.trim().to_string()];
         for field in [
+            opt(&f.series),
             opt(&f.short_text),
             opt(&f.full_description),
             // Backstage AI description of what the photo shows — lets a visual
             // query ("монах со свечой") match through the text encoder.
             opt(&f.visual_caption),
+            // Pinterest copy is visitor-invisible but keyword-rich; search-only.
+            opt(&f.pinterest_description),
             opt(&f.material),
             opt(&f.technique),
             opt(&f.dimensions),
@@ -1536,30 +1549,19 @@ impl AppService {
         })
     }
 
-    /// Rank publicly-visible works by cosine similarity to a natural-language
-    /// query. Returns id + score, closest first (client already holds the archive
-    /// and reorders). Empty when the query is blank or weights aren't bundled.
+    /// Rank publicly-visible works for a natural-language query. Hybrid: e5
+    /// cosine (when weights are bundled), word BM25 (AUTO-fuzzed against the
+    /// cabinet vocabulary), and pg_trgm-style trigram word-similarity, fused
+    /// with RRF. Empty when the query is blank. Degrades to BM25+trigrams
+    /// when embeddings are absent.
     pub async fn semantic_search(&self, query: &str, limit: usize) -> Result<Vec<SemanticHit>> {
         let query = query.trim();
-        if query.is_empty() || !crate::embed::is_available() {
+        if query.is_empty() {
             return Ok(Vec::new());
         }
-        let model = crate::embed::model_name();
-
-        let q_owned = query.to_string();
-        let qv = tokio::task::spawn_blocking(move || crate::embed::embed_query(&q_owned))
-            .await
-            .map_err(|e| AppError::Internal(format!("embed task join error: {e}")))?
-            .map_err(|e| AppError::Internal(format!("embed failed: {e}")))?;
-
-        let rows: Vec<(Uuid, Vec<u8>)> =
-            sqlx::query_as("SELECT figurine_id, vec FROM figurine_embeddings WHERE model = $1")
-                .bind(&model)
-                .fetch_all(self.repo.pg_pool())
-                .await?;
 
         // Restrict to works that are currently public (respects hide/first-look
-        // even if the vector is momentarily stale).
+        // even if a vector is momentarily stale).
         let fq = FigurineQuery {
             status: None,
             search: None,
@@ -1569,26 +1571,40 @@ impl AppService {
         };
         let (figs, _) = self.repo.get_all_figurines(true, &fq).await?;
         let visible: HashSet<Uuid> = figs.iter().map(|f| f.id).collect();
+        let records = crate::search::records_from_figurines(&figs);
 
-        let mut hits: Vec<SemanticHit> = rows
-            .into_iter()
-            .filter(|(id, _)| visible.contains(id))
-            .filter_map(|(id, bytes)| {
-                crate::embed::from_bytes(&bytes).map(|v| SemanticHit {
-                    id: id.to_string(),
-                    score: crate::embed::dot(&qv, &v),
+        let mut vector_scores: Vec<(String, f32)> = Vec::new();
+        if crate::embed::is_available() {
+            let model = crate::embed::model_name();
+            let q_owned = query.to_string();
+            let qv = tokio::task::spawn_blocking(move || crate::embed::embed_query(&q_owned))
+                .await
+                .map_err(|e| AppError::Internal(format!("embed task join error: {e}")))?
+                .map_err(|e| AppError::Internal(format!("embed failed: {e}")))?;
+
+            let rows: Vec<(Uuid, Vec<u8>)> =
+                sqlx::query_as("SELECT figurine_id, vec FROM figurine_embeddings WHERE model = $1")
+                    .bind(&model)
+                    .fetch_all(self.repo.pg_pool())
+                    .await?;
+
+            vector_scores = rows
+                .into_iter()
+                .filter(|(id, _)| visible.contains(id))
+                .filter_map(|(id, bytes)| {
+                    crate::embed::from_bytes(&bytes)
+                        .map(|v| (id.to_string(), crate::embed::dot(&qv, &v)))
                 })
-            })
-            .filter(|h| h.score >= Self::SEMANTIC_FLOOR)
-            .collect();
+                .filter(|(_, score)| *score >= Self::SEMANTIC_FLOOR)
+                .collect();
+        }
 
-        hits.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        hits.truncate(limit.clamp(1, 200));
-        Ok(hits)
+        Ok(crate::search::hybrid_search(
+            query,
+            &records,
+            &vector_scores,
+            limit,
+        ))
     }
 
     /// Read a work's backstage visual caption (search-only; never public).
@@ -1667,10 +1683,11 @@ impl AppService {
     /// this switches the veil off entirely rather than reverting to the
     /// global default, which is still dark).
     pub async fn bulk_clear_darkness(&self) -> Result<crate::models::BulkOpSummary> {
-        let affected = sqlx::query("UPDATE images SET darkness = 0 WHERE darkness IS DISTINCT FROM 0")
-            .execute(self.repo.pg_pool())
-            .await?
-            .rows_affected();
+        let affected =
+            sqlx::query("UPDATE images SET darkness = 0 WHERE darkness IS DISTINCT FROM 0")
+                .execute(self.repo.pg_pool())
+                .await?
+                .rows_affected();
         Self::log_domain_event("bulk_darkness_cleared", "image", affected, "ok");
         Ok(crate::models::BulkOpSummary { affected })
     }
@@ -1811,12 +1828,16 @@ impl AppService {
             {
                 if !(0.0..=1.0).contains(&value) {
                     return Err(AppError::BadRequest(
-                        "Image focal point / reveal radius / darkness must be between 0 and 1".into(),
+                        "Image focal point / reveal radius / darkness must be between 0 and 1"
+                            .into(),
                     ));
                 }
             }
         }
-        for value in [req.open_from_min, req.open_until_min].into_iter().flatten() {
+        for value in [req.open_from_min, req.open_until_min]
+            .into_iter()
+            .flatten()
+        {
             if !(0..=1439).contains(&value) {
                 return Err(AppError::BadRequest(
                     "Showing window minutes must be between 0 and 1439".into(),
@@ -1972,7 +1993,10 @@ impl AppService {
             .get_figurine_by_id(figurine_id)
             .await?
             .ok_or_else(|| AppError::NotFound(format!("Figurine {} not found", id)))?;
-        let manual = slug.as_deref().map(str::trim).is_some_and(|s| !s.is_empty());
+        let manual = slug
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|s| !s.is_empty());
         let base = Self::slug_base(slug.as_deref(), &work.name, &id);
         let stored = self.assign_unique_slug(figurine_id, &base, manual).await?;
         Self::log_domain_event("figurine_slug_set", "figurine", figurine_id, "ok");
@@ -2997,7 +3021,9 @@ impl AppService {
             }
             None => None,
         };
-        self.repo.set_figurine_mark(figurine_id, token, tone).await?;
+        self.repo
+            .set_figurine_mark(figurine_id, token, tone)
+            .await?;
         Ok(tone.map(str::to_string))
     }
 
@@ -3066,8 +3092,14 @@ impl AppService {
             .filter(|id| by_id.contains_key(id))
             .copied()
             .collect();
-        let faces = self.repo.get_face_images_for_figurines(&present_ids).await?;
-        let details = self.repo.get_detail_images_for_figurines(&present_ids).await?;
+        let faces = self
+            .repo
+            .get_face_images_for_figurines(&present_ids)
+            .await?;
+        let details = self
+            .repo
+            .get_detail_images_for_figurines(&present_ids)
+            .await?;
         let favorites = self.house_favorite_ids(&present_ids).await?;
         Ok(present_ids
             .into_iter()
@@ -3095,7 +3127,10 @@ impl AppService {
         // The booking form on the detail page carries whatever handle is in the URL
         // (slug or UUID). Normalise to the canonical UUID before create_booking_atomic,
         // which binds figurine_id straight into SQL and cannot resolve a slug itself.
-        req.figurine_id = self.resolve_figurine_uuid(&req.figurine_id).await?.to_string();
+        req.figurine_id = self
+            .resolve_figurine_uuid(&req.figurine_id)
+            .await?
+            .to_string();
 
         let starts_at =
             chrono::NaiveDate::parse_from_str(&req.starts_at, "%Y-%m-%d").map_err(|_| {
@@ -3224,12 +3259,11 @@ impl AppService {
     /// Bulk admin action: un-feature every figurine on the home page and
     /// wipe every scheduled showing entry across the whole collection.
     pub async fn bulk_clear_showings(&self) -> Result<crate::models::BulkOpSummary> {
-        let unfeatured = sqlx::query(
-            "UPDATE figurines SET is_featured = false WHERE is_featured = true",
-        )
-        .execute(self.repo.pg_pool())
-        .await?
-        .rows_affected();
+        let unfeatured =
+            sqlx::query("UPDATE figurines SET is_featured = false WHERE is_featured = true")
+                .execute(self.repo.pg_pool())
+                .await?
+                .rows_affected();
         let deleted = sqlx::query("DELETE FROM figurine_showings")
             .execute(self.repo.pg_pool())
             .await?
@@ -4711,7 +4745,9 @@ impl AppService {
     pub async fn save_home_layout(&self, config: HomeLayoutConfig) -> Result<()> {
         let json = serde_json::to_string(&config).map_err(|e| AppError::Internal(e.to_string()))?;
         if json.len() > 100 * 1024 {
-            return Err(AppError::BadRequest("Home layout config is too large".into()));
+            return Err(AppError::BadRequest(
+                "Home layout config is too large".into(),
+            ));
         }
         self.repo.upsert_setting("home_layout", &json).await
     }
@@ -4731,7 +4767,9 @@ impl AppService {
         let json =
             serde_json::to_string(&presets).map_err(|e| AppError::Internal(e.to_string()))?;
         if json.len() > 200 * 1024 {
-            return Err(AppError::BadRequest("Home layout presets payload is too large".into()));
+            return Err(AppError::BadRequest(
+                "Home layout presets payload is too large".into(),
+            ));
         }
         self.repo.upsert_setting("home_layout_presets", &json).await
     }
@@ -4765,7 +4803,9 @@ impl AppService {
         let json =
             serde_json::to_string(&presets).map_err(|e| AppError::Internal(e.to_string()))?;
         if json.len() > 200 * 1024 {
-            return Err(AppError::BadRequest("Reel theme presets payload is too large".into()));
+            return Err(AppError::BadRequest(
+                "Reel theme presets payload is too large".into(),
+            ));
         }
         self.repo.upsert_setting("reel_theme_presets", &json).await
     }
@@ -4787,9 +4827,13 @@ impl AppService {
         let json =
             serde_json::to_string(&presets).map_err(|e| AppError::Internal(e.to_string()))?;
         if json.len() > 200 * 1024 {
-            return Err(AppError::BadRequest("Display presets payload is too large".into()));
+            return Err(AppError::BadRequest(
+                "Display presets payload is too large".into(),
+            ));
         }
-        self.repo.upsert_setting("display_config_presets", &json).await
+        self.repo
+            .upsert_setting("display_config_presets", &json)
+            .await
     }
 
     // === COPY OVERRIDES ===
@@ -5143,7 +5187,10 @@ impl AppService {
             source: req.source.clone(),
             lang: req.lang.clone(),
         };
-        let msg = self.repo.create_contact_message(&normalized, ip.as_deref()).await?;
+        let msg = self
+            .repo
+            .create_contact_message(&normalized, ip.as_deref())
+            .await?;
         self.observability
             .record_business_event("contact_message_received", "ok");
         Self::log_domain_event("contact_message_received", "contact_message", msg.id, "ok");
@@ -5157,7 +5204,9 @@ impl AppService {
         Ok(())
     }
 
-    pub async fn list_contact_messages_admin(&self) -> Result<Vec<crate::models::ContactMessageDto>> {
+    pub async fn list_contact_messages_admin(
+        &self,
+    ) -> Result<Vec<crate::models::ContactMessageDto>> {
         let msgs = self.repo.list_contact_messages_admin().await?;
         Ok(msgs
             .into_iter()

@@ -39,10 +39,17 @@ export function sortWorks(items: FigurineListItem[]): FigurineListItem[] {
         if (order !== 0) return order;
         // Same sortOrder (the admin form lets that happen freely): newest first, so a
         // fresh work at least leads its own tie instead of landing arbitrarily.
-        const da = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const db = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        return db - da;
+        const da = createdAtMs(a.createdAt);
+        const db = createdAtMs(b.createdAt);
+        if (db !== da) return db - da;
+        return a.id.localeCompare(b.id);
     });
+}
+
+function createdAtMs(iso?: string | null): number {
+    if (!iso) return 0;
+    const t = new Date(iso).getTime();
+    return Number.isFinite(t) ? t : 0;
 }
 
 /**
@@ -54,9 +61,6 @@ export function sortWorks(items: FigurineListItem[]): FigurineListItem[] {
  * browser downloads a large photo, paints it, and then throws it away for a second large
  * photo — every visit, and the `fetchpriority="high"` goes to the wrong file. A pick that
  * depends on today's date or on the showing rooms disagrees BY CONSTRUCTION.
- *
- * The daily turn survives where it belongs: on the vitrine's single exhibit of the day
- * (dailyPick in +page.svelte), which is a mark on the page, not the page's headline image.
  */
 export function pickHeroFigurine(works: FigurineListItem[], content: HomeContent): FigurineListItem | null {
     const byId = (id: string | null | undefined) =>

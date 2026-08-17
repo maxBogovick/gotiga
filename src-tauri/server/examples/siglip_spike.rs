@@ -68,8 +68,12 @@ fn main() -> Result<()> {
     let img = image::open(&image_path)
         .with_context(|| format!("open {}", image_path.display()))?
         .to_rgb8();
-    let img =
-        image::imageops::resize(&img, image_size as u32, image_size as u32, FilterType::Triangle);
+    let img = image::imageops::resize(
+        &img,
+        image_size as u32,
+        image_size as u32,
+        FilterType::Triangle,
+    );
     let mut data = vec![0f32; 3 * image_size * image_size];
     let plane = image_size * image_size;
     for (x, y, px) in img.enumerate_pixels() {

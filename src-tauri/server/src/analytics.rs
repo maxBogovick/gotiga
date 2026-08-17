@@ -597,7 +597,13 @@ mod tests {
     #[test]
     fn source_uses_social_utm() {
         assert_eq!(
-            classify_source(Some("instagram"), Some("social"), None, "/figurines/x", None),
+            classify_source(
+                Some("instagram"),
+                Some("social"),
+                None,
+                "/figurines/x",
+                None
+            ),
             "social"
         );
     }

@@ -129,10 +129,10 @@ export interface DepthGenSummary {
     results: DepthGenItem[];
 }
 
-/** One ranked result of a semantic search ("Хранитель"). */
+/** One ranked result of a hybrid search ("Хранитель"). */
 export interface SemanticHit {
     id: string;
-    /** Cosine similarity in [-1, 1]; higher is closer. */
+    /** Reciprocal Rank Fusion score; higher is closer. Not cosine. */
     score: number;
 }
 

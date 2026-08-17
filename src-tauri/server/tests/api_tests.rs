@@ -257,7 +257,10 @@ async fn impressions_full_cycle(pool: PgPool) {
 
     // Admin approves + features the first impression → it becomes public.
     let moderated = client
-        .patch(format!("{}/api/v1/admin/impressions/{}", addr, impression_id))
+        .patch(format!(
+            "{}/api/v1/admin/impressions/{}",
+            addr, impression_id
+        ))
         .bearer_auth(&api_key)
         .json(&serde_json::json!({ "isApproved": true, "isFeatured": true }))
         .send()
@@ -326,34 +329,35 @@ async fn delete_figurine_cascades_rows_and_analytics_events(pool: PgPool) {
         .send()
         .await
         .unwrap();
-    assert!(resp.status().is_success(), "delete returned {}", resp.status());
+    assert!(
+        resp.status().is_success(),
+        "delete returned {}",
+        resp.status()
+    );
 
     // Figurine row must be gone.
-    let count: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM figurines WHERE id = $1")
-            .bind(fig_id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM figurines WHERE id = $1")
+        .bind(fig_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(count.0, 0, "figurine row should be deleted");
 
     // Cascade: images row must be gone.
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM images WHERE figurine_id = $1")
+        .bind(fig_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count.0, 0, "images rows should cascade-delete");
+
+    // Manual: analytics events must be gone.
     let count: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM images WHERE figurine_id = $1")
+        sqlx::query_as("SELECT COUNT(*) FROM figurine_analytics_events WHERE figurine_id = $1")
             .bind(fig_id)
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(count.0, 0, "images rows should cascade-delete");
-
-    // Manual: analytics events must be gone.
-    let count: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM figurine_analytics_events WHERE figurine_id = $1",
-    )
-    .bind(fig_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
     assert_eq!(count.0, 0, "analytics events should be manually deleted");
 
     let _ = fs::remove_dir_all(upload_dir).await;
@@ -387,8 +391,8 @@ async fn delete_figurine_removes_image_files_from_disk(pool: PgPool) {
             rel
         }
     };
-    let main_path  = make_file("images/face_main.jpg").await;
-    let orig_path  = make_file("images/original/face_orig.jpg").await;
+    let main_path = make_file("images/face_main.jpg").await;
+    let orig_path = make_file("images/original/face_orig.jpg").await;
     let thumb_path = make_file("images/thumb/face_thumb.jpg").await;
     let depth_path = make_file("images/depth/face_depth.png").await;
 

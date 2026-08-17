@@ -17,6 +17,8 @@
   import { showingRooms } from '$lib/stores/showing-rooms.svelte';
   import { isGated, isShowingOpen, resolveWindow, openingHeadline } from '$lib/showing-window';
   import type { FigurineListItem, SemanticHit } from '$lib/types/api';
+  import { page } from '$app/state';
+  import { assembleResults, isInHouseQuery, KEEPER_ARCHIVE_MAX, localMatch } from '$lib/keeper-search';
 
   // "The house wakes": a gated work is sealed behind a carved door while the
   // visitor's local clock is outside its window. The effective window is the
@@ -40,7 +42,7 @@
   let { data } = $props();
   let figurines = $derived(data.figurines);
 
-  let searchQuery = $state('');
+  let searchQuery = $state(page.url.searchParams.get('q') ?? '');
   let mainFilter = $state<MainFilter>('all');
   let sortMode = $state<SortMode>('curated');
   let yearFilter = $state('all');
@@ -78,12 +80,7 @@
 
   // Zero-latency local match on visible metadata — shows the instant it's typed.
   let localFiltered = $derived(
-    facetFiltered.filter((f) => {
-      const query = searchQuery.trim().toLowerCase();
-      if (!query) return true;
-      return [f.name, f.year ? String(f.year) : '', f.technique ?? '', f.material ?? '', f.series ?? '']
-        .some((v) => v.toLowerCase().includes(query));
-    })
+    searchQuery.trim() ? localMatch(facetFiltered, searchQuery) : facetFiltered
   );
 
   let sorted = $derived(
@@ -101,12 +98,10 @@
     })
   );
 
-  // ── Unified search: one box that finds by NAME *and* by DESCRIPTION ─────────
+  // ── Unified search: local metadata instantly, then the hybrid keeper ─────────
   // As you type, the local metadata filter above shows instantly. After a short
-  // pause the same phrase is sent to the semantic layer (server-side multilingual
-  // embedding — see api.semanticSearch / server embed.rs), which also searches the
-  // hidden AI visual descriptions and leads with relevance. No Enter needed.
-  // Degrades to the plain local filter when the endpoint is absent.
+  // pause the same phrase is sent to /search (vector + fuzzy + lexical, fused).
+  // No Enter needed. Degrades to the local filter when the endpoint is absent.
   let keeperHits = $state<SemanticHit[] | null>(null); // null → semantic layer idle
   let keeperLoading = $state(false);
   let keeperError = $state(false);
@@ -114,22 +109,11 @@
 
   let figById = $derived(new Map((figurines as FigItem[]).map((f) => [f.id, f])));
 
-  // Semantic hits resolved to loaded works, constrained to the active facets.
-  let keeperResults = $derived.by(() => {
-    if (keeperHits === null) return null;
-    const allowed = new Set(facetFiltered.map((f) => f.id));
-    return keeperHits
-      .map((h) => figById.get(h.id))
-      .filter((f): f is FigItem => !!f && allowed.has(f.id));
-  });
-
-  // Final list: semantic relevance first, then any exact metadata matches it
-  // missed — so nothing findable by name is ever lost. Falls back to the plain
-  // local list when the semantic layer is idle or found nothing.
+  // Final list: hybrid rank from the keeper first, then any local leftovers.
+  // Falls back to the plain local list while the keeper is idle or found nothing.
   let resultList = $derived.by(() => {
-    if (!keeperResults || keeperResults.length === 0) return sorted;
-    const seen = new Set(keeperResults.map((f) => f.id));
-    return [...keeperResults, ...sorted.filter((f) => !seen.has(f.id))];
+    const allowed = new Set(facetFiltered.map((f) => f.id));
+    return assembleResults(keeperHits, sorted, figById, allowed, KEEPER_ARCHIVE_MAX);
   });
 
   let visible = $derived(resultList.slice(0, displayLimit));
@@ -142,7 +126,7 @@
   $effect(() => {
     const q = searchQuery.trim();
     clearTimeout(searchDebounce);
-    if (q.length < 2) {
+    if (q.length < 2 || isInHouseQuery(q)) {
       keeperHits = null;
       keeperError = false;
       keeperSeq++;                     // cancel any in-flight reply
@@ -152,21 +136,6 @@
     return () => clearTimeout(searchDebounce);
   });
 
-  // e5 cosine similarities sit in a narrow, high band (~0.72–0.89), so the raw
-  // list is mostly ~0.75 background noise — a fixed floor lets a typo like
-  // "frankenstain" drag in ~50 works. Keep only the cluster at/above the higher
-  // of an absolute floor and a small margin below the best score. Calibrated on
-  // real data: a single strong match stays one result; a broad query stays a
-  // handful; gibberish collapses to ~nothing. Server returns scores sorted desc.
-  const REL_ABS_FLOOR = 0.78;
-  const REL_MARGIN = 0.035;
-  const REL_MAX = 24;
-  function mostRelevant(hits: SemanticHit[]): SemanticHit[] {
-    if (hits.length === 0) return hits;
-    const cut = Math.max(REL_ABS_FLOOR, hits[0].score - REL_MARGIN);
-    return hits.filter((h) => h.score >= cut).slice(0, REL_MAX);
-  }
-
   async function runKeeper(q: string) {
     const seq = ++keeperSeq;
     keeperLoading = true;
@@ -174,7 +143,7 @@
     try {
       const hits = await api.semanticSearch(q);
       if (seq !== keeperSeq) return;   // superseded by a newer keystroke
-      keeperHits = mostRelevant(hits);
+      keeperHits = hits.slice(0, KEEPER_ARCHIVE_MAX);
     } catch {
       if (seq !== keeperSeq) return;
       keeperError = true;

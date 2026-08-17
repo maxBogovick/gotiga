@@ -14,5 +14,6 @@ pub mod geo;
 pub mod logs;
 pub mod models;
 pub mod observability;
+pub mod search;
 pub mod services;
 pub mod slug;

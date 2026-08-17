@@ -191,7 +191,10 @@ fn truncate_slug(slug: &str, max_len: usize) -> &str {
 /// backgrounds, admin media library drops with no figurine context) still gets.
 fn image_id_with_hint(name_hint: Option<&str>) -> String {
     let uuid = Uuid::new_v4().to_string();
-    match name_hint.map(crate::slug::slugify).filter(|s| !s.is_empty()) {
+    match name_hint
+        .map(crate::slug::slugify)
+        .filter(|s| !s.is_empty())
+    {
         Some(slug) => format!("{}-{}", truncate_slug(&slug, MAX_SLUG_LEN), uuid),
         None => uuid,
     }
@@ -291,14 +294,14 @@ pub async fn backfill_image_variants(upload_dir: String) {
             failed += 1;
             continue;
         };
-        let variants =
-            match tokio::task::spawn_blocking(move || build_image_variants(&data)).await {
-                Ok(Ok(v)) => v,
-                _ => {
-                    failed += 1;
-                    continue;
-                }
-            };
+        let variants = match tokio::task::spawn_blocking(move || build_image_variants(&data)).await
+        {
+            Ok(Ok(v)) => v,
+            _ => {
+                failed += 1;
+                continue;
+            }
+        };
 
         // The original is left exactly as it is — it is the source of truth and
         // re-encoding it would only degrade it.
@@ -306,7 +309,10 @@ pub async fn backfill_image_variants(upload_dir: String) {
             (format!("images/preview/{}.jpg", id), &variants.preview_jpeg),
             (medium_relative.clone(), &variants.medium_jpeg),
             (format!("images/thumb/{}.jpg", id), &variants.thumb_jpeg),
-            (format!("images/preview/{}.webp", id), &variants.preview_webp),
+            (
+                format!("images/preview/{}.webp", id),
+                &variants.preview_webp,
+            ),
             (format!("images/medium/{}.webp", id), &variants.medium_webp),
             (format!("images/thumb/{}.webp", id), &variants.thumb_webp),
         ];
@@ -385,8 +391,14 @@ mod tests {
             "slug prefix {} bytes exceeds cap",
             slug_part.len()
         );
-        assert!(!slug_part.ends_with('-'), "truncation must not leave a trailing hyphen");
-        assert!(Uuid::parse_str(&id[id.len() - uuid_len..]).is_ok(), "trailing segment must still be a full, untruncated uuid");
+        assert!(
+            !slug_part.ends_with('-'),
+            "truncation must not leave a trailing hyphen"
+        );
+        assert!(
+            Uuid::parse_str(&id[id.len() - uuid_len..]).is_ok(),
+            "trailing segment must still be a full, untruncated uuid"
+        );
     }
 
     #[test]
@@ -430,10 +442,7 @@ mod tests {
 
     #[tokio::test]
     async fn backfills_webp_sibling_for_a_pre_pipeline_background_and_then_stops() {
-        let dir = std::env::temp_dir().join(format!(
-            "gotiga-bg-backfill-test-{}",
-            Uuid::new_v4()
-        ));
+        let dir = std::env::temp_dir().join(format!("gotiga-bg-backfill-test-{}", Uuid::new_v4()));
         let bg_dir = dir.join("backgrounds");
         fs::create_dir_all(&bg_dir).await.unwrap();
 
@@ -445,7 +454,9 @@ mod tests {
             image::Rgb([(x % 256) as u8, (y % 256) as u8, ((x + y) % 256) as u8])
         });
         let raw = encode_jpeg_bytes(&big, 100).unwrap();
-        fs::write(bg_dir.join("cabinet-bg.jpeg"), &raw).await.unwrap();
+        fs::write(bg_dir.join("cabinet-bg.jpeg"), &raw)
+            .await
+            .unwrap();
 
         backfill_background_image(dir.to_string_lossy().to_string()).await;
 
@@ -565,7 +576,9 @@ pub async fn admin_get_visitor_timeline(
     Query(query): Query<AdminVisitorsQuery>,
 ) -> Result<Json<Vec<AdminVisitorEvent>>> {
     Ok(Json(
-        service.admin_get_visitor_timeline(visitor_hash, query).await?,
+        service
+            .admin_get_visitor_timeline(visitor_hash, query)
+            .await?,
     ))
 }
 
@@ -701,10 +714,7 @@ pub async fn list_figurines(
         search: params.search,
         sort: params.sort,
         page: params.page,
-        per_page: params
-            .per_page
-            .or(params.limit)
-            .map(|n| n.clamp(1, 200)),
+        per_page: params.per_page.or(params.limit).map(|n| n.clamp(1, 200)),
     };
     let page = service.list_figurines(visible_only, query).await?;
     Ok(Json(page))
@@ -826,10 +836,9 @@ pub struct SearchParams {
     pub limit: Option<i64>,
 }
 
-/// Public: rank the archive by semantic similarity to a natural-language query,
-/// closest first. On-device multilingual embedding (candle) — see embed.rs.
-/// Returns an empty list when the query is blank or no embedding weights are
-/// bundled, so the client feature degrades silently to the plain text filter.
+/// Public: rank the archive for a natural-language query (hybrid: e5 vector +
+/// fuzzy + lexical, fused with RRF). Empty when the query is blank. Degrades to
+/// fuzzy+lexical when embedding weights are not bundled.
 pub async fn semantic_search(
     State(service): State<AppService>,
     Query(params): Query<SearchParams>,
@@ -941,7 +950,8 @@ pub async fn upload_file(
         }
     }
 
-    let filename = file_name.ok_or_else(|| AppError::BadRequest("No file field found".to_string()))?;
+    let filename =
+        file_name.ok_or_else(|| AppError::BadRequest("No file field found".to_string()))?;
     let data = file_data.ok_or_else(|| AppError::BadRequest("No file field found".to_string()))?;
     let ext = std::path::Path::new(&filename)
         .extension()
@@ -1246,8 +1256,7 @@ pub async fn backfill_background_image(upload_dir: String) {
         return;
     };
 
-    let variant = match tokio::task::spawn_blocking(move || process_background_image(&data)).await
-    {
+    let variant = match tokio::task::spawn_blocking(move || process_background_image(&data)).await {
         Ok(Ok(v)) => v,
         _ => {
             tracing::warn!(
@@ -1922,7 +1931,10 @@ pub async fn sitemap_xml(
         .unwrap_or("https");
     let base = format!("{proto}://{host}");
 
-    let figurines = service.list_figurines(true, crate::models::FigurineQuery::default()).await?.items;
+    let figurines = service
+        .list_figurines(true, crate::models::FigurineQuery::default())
+        .await?
+        .items;
 
     let mut urls = String::new();
     for path in ["/", "/figurines", "/author", "/workshop", "/upcoming"] {
@@ -1997,8 +2009,7 @@ pub async fn feed_rss(
     // held from the public archive — neither should be pinned yet. (Hidden drafts
     // never reach here: list_figurines(true, …) returns only visible works.)
     figurines.retain(|f| {
-        f.status != FigurineStatus::InProgress
-            && f.first_look_until.map_or(true, |t| t <= now)
+        f.status != FigurineStatus::InProgress && f.first_look_until.map_or(true, |t| t <= now)
     });
     // Newest first — conventional RSS order.
     figurines.sort_by(|a, b| b.created_at.cmp(&a.created_at));
@@ -2194,9 +2205,7 @@ pub async fn delete_showing(
     Ok(StatusCode::OK)
 }
 
-pub async fn bulk_clear_showings(
-    State(service): State<AppService>,
-) -> Result<impl IntoResponse> {
+pub async fn bulk_clear_showings(State(service): State<AppService>) -> Result<impl IntoResponse> {
     Ok(Json(service.bulk_clear_showings().await?))
 }
 
@@ -2214,7 +2223,9 @@ pub async fn bulk_set_parallax(
     State(service): State<AppService>,
     Json(req): Json<crate::models::BulkSetParallaxRequest>,
 ) -> Result<impl IntoResponse> {
-    Ok(Json(service.bulk_set_parallax_intensity(req.intensity).await?))
+    Ok(Json(
+        service.bulk_set_parallax_intensity(req.intensity).await?,
+    ))
 }
 
 pub async fn bulk_recalculate_parallax(

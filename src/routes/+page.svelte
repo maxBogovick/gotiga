@@ -10,6 +10,7 @@
     import { t, brandName } from '$lib/i18n';
     import ReelWorkCard from '$lib/components/ReelWorkCard.svelte';
     import WorkMarginIndex from '$lib/components/WorkMarginIndex.svelte';
+    import KeeperNote from '$lib/components/KeeperNote.svelte';
     import HouseNoticeBoard from '$lib/components/HouseNoticeBoard.svelte';
     import VisitLedger from '$lib/components/VisitLedger.svelte';
     import VisitorBook from '$lib/components/VisitorBook.svelte';
@@ -27,7 +28,6 @@
     import NoticedByGuests from '$lib/components/NoticedByGuests.svelte';
     import { houseClock } from '$lib/stores/house-clock.svelte';
     import { showingRooms } from '$lib/stores/showing-rooms.svelte';
-    import { isShowingOpen, resolveWindow } from '$lib/showing-window';
     import { SITE_URL } from '$lib/site';
     import { jsonLdSafe } from '$lib/jsonld';
     import {
@@ -73,28 +73,6 @@
             },
         ],
     }));
-
-    // Advances once per calendar day. Still used to turn the vitrine's single "today"
-    // exhibit (see dailyPick); it no longer touches the reel — see sortFeaturedFigurines.
-    function dayIndex(d = new Date()): number {
-        return Math.floor(d.getTime() / 86_400_000);
-    }
-
-    // Pick a single element that advances once per calendar day — the vitrine's
-    // "today" exhibit, stable through refreshes, freshly turned tomorrow.
-    function dailyPick<T>(items: T[]): T | null {
-        if (items.length === 0) return null;
-        return items[((dayIndex() % items.length) + items.length) % items.length];
-    }
-
-    // Whether a work's showing door is currently open — the vitrine must never
-    // spotlight a piece that the rest of the site keeps sealed behind its door.
-    function isOpenNow(fig: FigurineListItem): boolean {
-        return isShowingOpen(
-            resolveWindow({ openFromMin: fig.openFromMin, openUntilMin: fig.openUntilMin, showingRoomId: fig.showingRoomId }, showingRooms.list),
-            houseClock.nowDate
-        );
-    }
 
     let isLoaded = $state(false);
     // The hero's own inputs (the background, and the work it shows) are resolved in
@@ -157,11 +135,6 @@
     // styles, so the block components themselves stay untouched.
     let hlElementCSS = $derived(generateHomeElementCSS(homeLayout));
 
-    // "Exhibit of the day": admin-pinned pick, else daily rotation. Rendered as a compact
-    // mark inside VisitLedger, not its own section. Seeded with the pin from load() so the
-    // prerendered reel already leaves its slot out (see the note in +page.ts); the daily
-    // rotation and the showing-window gate are added by computeVitrineFig on the client.
-    let vitrineFig = $state<FigurineListItem | null>(data.vitrineFig ?? null);
     // The list IS the whole visible collection (see home-hero.ts), so its length is the
     // honest count — and, because the works are seeded from load(), it is already right in
     // the prerendered HTML rather than snapping into place after hydration.
@@ -266,9 +239,8 @@
             .filter((item): item is FigurineListItem => Boolean(item))
     );
     // The returning-only personal shelves (first look, marked-by-you,
-    // noticed-by-guests) still dedupe against each other and against the
-    // vitrine pick — with a catalog this small, the same card twice reads
-    // as broken, not as generous curation.
+    // noticed-by-guests) still dedupe against each other — with a catalog this
+    // small, the same card twice reads as broken, not as generous curation.
     let homeShelves = $derived.by(() => {
         const used = new Set<string>();
         const claim = (list: FigurineListItem[]) => {
@@ -276,8 +248,6 @@
             for (const f of picked) used.add(f.id);
             return picked;
         };
-
-        if (vitrineFig) used.add(vitrineFig.id);
 
         const marked = claim(markedWorkFigurines);
         const firstLook = claim(firstLookFigurines);
@@ -289,13 +259,10 @@
     // The main gallery: the site's actual purpose — a generous, unfiltered
     // wall of the maker's work, not a tabbed shop shelf. Everyone gets the
     // same wide cross-section (status reads as a quiet museum-label mark on
-    // each card, not a filter axis); only today's single vitrine pick is
-    // excluded so it doesn't appear twice on the same page.
+    // each card, not a filter axis). Order is the author's `sortOrder`, then
+    // newest first — nothing else (no daily rotation, no vitrine carve-out).
     const GALLERY_LIMIT = 16;
-    let galleryFigurines = $derived.by(() => {
-        if (!vitrineFig) return collectionFigurines;
-        return collectionFigurines.filter((f) => f.id !== vitrineFig!.id);
-    });
+    let galleryFigurines = $derived(collectionFigurines);
     let visibleGalleryFigurines = $derived(galleryFigurines.slice(0, GALLERY_LIMIT));
     let galleryRemaining = $derived(Math.max(0, galleryFigurines.length - GALLERY_LIMIT));
     // The first works the reel did NOT reach — shown as edges of plates sticking
@@ -350,21 +317,6 @@
     // that theme does not apply here: this page keeps its own parchment.
     let reelTheme = $state<ReelTheme>({});
     let reelCSSBlock = $derived(generateReelCSS(reelTheme));
-
-    // Today's vitrine: the admin-pinned vitrine figure if set (independent of the
-    // hero banner's own pin), else a daily-rotating available work (falling back
-    // to the wider collection when none are available). A sealed work is skipped
-    // in favour of the next candidate — the vitrine never spotlights a piece the
-    // rest of the house keeps behind a closed door. Called once showingRooms has
-    // loaded (see onMount) so isOpenNow has real door data to gate against.
-    function computeVitrineFig(): FigurineListItem | null {
-        const pinnedVitrineFigurine = homeContent.vitrineFigurineId
-            ? collectionFigurines.find((item) => item.id === homeContent.vitrineFigurineId) ?? null
-            : null;
-        return (pinnedVitrineFigurine && isOpenNow(pinnedVitrineFigurine) ? pinnedVitrineFigurine : null)
-            ?? dailyPick(availableFigurines.filter(isOpenNow))
-            ?? dailyPick(collectionFigurines.filter(isOpenNow));
-    }
 
     // The hero is seeded from +page.ts's load(), so it paints without waiting on this.
     // Everything that varies with the collection — the works reel above all — is fetched
@@ -504,14 +456,8 @@
             }
         }
         window.addEventListener('message', onHlMessage);
-        // The vitrine's exhibit of the day needs BOTH halves of its answer: the works, and
-        // the doors it must not spotlight a sealed piece through. It used to be computed
-        // twice — once at the end of init(), where the rooms had not necessarily landed and
-        // isOpenNow() was therefore gating against an empty room list, and once more when
-        // the rooms arrived. Whichever finished last won. Compute it once, when both are in.
-        Promise.all([init(), showingRooms.load()]).then(() => {
-            vitrineFig = computeVitrineFig();
-        });
+        void init();
+        void showingRooms.load();
         const reduceMq = window.matchMedia('(prefers-reduced-motion: reduce)');
         const pointerMq = window.matchMedia('(pointer: fine)');
         // Dwell push-in: only accumulates while the photo is actually on screen,
@@ -854,6 +800,8 @@
                     </div>
                 </div>
             </div>
+
+            <KeeperNote figurines={collectionFigurines} reelIds={visibleGalleryFigurines.map((f) => f.id)} />
 
             <div class="work-content">
                 {#if visibleGalleryFigurines.length > 0}

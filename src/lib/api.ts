@@ -688,10 +688,10 @@ export const api = {
     },
 
     /**
-     * Semantic search ("Хранитель"): rank the archive by meaning against a
-     * natural-language query (RU or EN), closest first. On-device multilingual
-     * embedding in the Rust API. An empty array means "feature unavailable / no
-     * match", so callers must treat [] as "keep the current view".
+     * Hybrid search ("Хранитель"): rank the archive against a natural-language
+     * query (RU or EN) — vector + BM25 + trigrams, fused with RRF. Closest first.
+     * An empty array means "no match / query too short", so callers treat []
+     * as "keep the current local view".
      */
     async semanticSearch(query: string, limit = 60): Promise<SemanticHit[]> {
         const q = query.trim();

@@ -82,8 +82,8 @@ fn load_model() -> Result<Model> {
         serde_json::from_slice(&cfg_bytes).context("parse embedding model config.json")?;
     let dim = config.hidden_size;
 
-    let mut tokenizer = Tokenizer::from_file(tokenizer_file())
-        .map_err(|e| anyhow!("load tokenizer.json: {e}"))?;
+    let mut tokenizer =
+        Tokenizer::from_file(tokenizer_file()).map_err(|e| anyhow!("load tokenizer.json: {e}"))?;
     // Fixed-length truncation; padding is unnecessary for single-sequence encoding.
     let truncation = tokenizers::TruncationParams {
         max_length: MAX_TOKENS,
@@ -136,14 +136,22 @@ fn embed(text: &str) -> Result<Vec<f32>> {
     let attention_mask = Tensor::from_vec(mask_f, (1, seq), &m.device)?;
 
     // (batch, seq, hidden) last hidden state.
-    let hidden = m
-        .inner
-        .forward(&input_ids, &attention_mask, &token_type_ids, None, None, None)?;
+    let hidden = m.inner.forward(
+        &input_ids,
+        &attention_mask,
+        &token_type_ids,
+        None,
+        None,
+        None,
+    )?;
 
     // Attention-masked mean pooling → (batch, hidden). attention_mask is F32 0/1.
     let mask_exp = attention_mask.unsqueeze(2)?; // (1, seq, 1)
     let summed = hidden.broadcast_mul(&mask_exp)?.sum(1)?; // (1, hidden)
-    let counts = attention_mask.sum(1)?.clamp(1e-9f32, f32::MAX)?.unsqueeze(1)?; // (1, 1)
+    let counts = attention_mask
+        .sum(1)?
+        .clamp(1e-9f32, f32::MAX)?
+        .unsqueeze(1)?; // (1, 1)
     let mean = summed.broadcast_div(&counts)?; // (1, hidden)
 
     // L2 normalise so cosine similarity is a plain dot product downstream.

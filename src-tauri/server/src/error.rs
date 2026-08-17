@@ -9,7 +9,7 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum AppError {
     #[error("Database error: {0}")]
-    Database(#[from] sqlx::Error),
+    Database(#[source] sqlx::Error),
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
@@ -26,6 +26,13 @@ pub enum AppError {
     Internal(String),
     #[error("Conflict: {0}")]
     Conflict(String),
+}
+
+impl From<sqlx::Error> for AppError {
+    fn from(e: sqlx::Error) -> Self {
+        crate::db::note_stale_cached_plan(&e);
+        AppError::Database(e)
+    }
 }
 
 impl IntoResponse for AppError {

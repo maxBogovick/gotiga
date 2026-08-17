@@ -103,10 +103,7 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 "/figurines/first-look",
                 get(handlers::list_first_look_figurines),
             )
-            .route(
-                "/figurines/noticed",
-                get(handlers::list_noticed_by_guests),
-            )
+            .route("/figurines/noticed", get(handlers::list_noticed_by_guests))
             .route("/figurines/:id", get(handlers::get_figurine))
             // Semantic search ("Хранитель") — natural-language ranking of the archive.
             .route("/search", get(handlers::semantic_search))
@@ -135,10 +132,7 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             .route("/figurines/:id/waitlist", post(handlers::join_waitlist))
             .route("/booking-rules", get(handlers::get_booking_rules))
             .route("/settings/contact", get(handlers::get_contact_settings))
-            .route(
-                "/settings/programme",
-                get(handlers::get_programme_settings),
-            )
+            .route("/settings/programme", get(handlers::get_programme_settings))
             .route(
                 "/bookings/by-tokens",
                 post(handlers::get_bookings_by_tokens),
@@ -169,7 +163,10 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             .route("/contact", post(handlers::submit_contact_message))
             // === VISITOR IMPRESSIONS ("book of impressions") ===
             .route("/impressions", post(handlers::submit_impression))
-            .route("/impressions/featured", get(handlers::get_featured_impressions))
+            .route(
+                "/impressions/featured",
+                get(handlers::get_featured_impressions),
+            )
             // === PUBLIC LOGIN ===
             .route("/admin/login", post(handlers::admin_login))
             // === PROTECTED WRITE — use route_layer so auth only runs on matched routes ===
@@ -320,9 +317,10 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             )
             .route(
                 "/admin/settings/programme",
-                put(handlers::save_programme_settings).route_layer(
-                    middleware::from_fn_with_state(config.clone(), auth_middleware),
-                ),
+                put(handlers::save_programme_settings).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
             )
             // === THEME CONFIG ===
             .route("/settings/theme", get(handlers::get_theme_config))
@@ -408,9 +406,10 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             // === IMPRESSIONS (ADMIN) ===
             .route(
                 "/admin/impressions",
-                get(handlers::admin_list_impressions).route_layer(
-                    middleware::from_fn_with_state(config.clone(), auth_middleware),
-                ),
+                get(handlers::admin_list_impressions).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
             )
             .route(
                 "/admin/impressions/:id",
@@ -616,9 +615,10 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             )
             .route(
                 "/admin/figurines/bulk/set-second-angle",
-                post(handlers::bulk_set_second_angle).route_layer(
-                    middleware::from_fn_with_state(config.clone(), auth_middleware),
-                ),
+                post(handlers::bulk_set_second_angle).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
             )
             // === SLUGS (ADMIN) ===
             .route(
@@ -680,9 +680,10 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             )
             .route(
                 "/admin/subscribers",
-                get(handlers::admin_list_subscribers).route_layer(
-                    middleware::from_fn_with_state(config.clone(), auth_middleware),
-                ),
+                get(handlers::admin_list_subscribers).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
             )
             .route(
                 "/admin/subscribers/:id",

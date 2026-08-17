@@ -154,6 +154,7 @@ export const HOME_BLOCK_ELEMENTS: Partial<Record<HomeBlockId, HomeElementDef[]>>
     ],
     gallery: [
         { id: 'header',  sel: '.context-hd',       kind: 'group', orderable: true },
+        { id: 'keeper',  sel: '.keeper-note',      kind: 'group', orderable: true },
         { id: 'content', sel: '.work-content',     kind: 'group', orderable: true },
         { id: 'eyebrow', sel: '.eyebrow',          kind: 'text' },
         { id: 'title',   sel: '.context-title',    kind: 'text' },
