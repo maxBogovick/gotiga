@@ -16,6 +16,7 @@ export function houseRoom(pathname: string): HouseRoom {
   if (path === '/workshop') return 'workshop';
   if (path === '/figurines') return 'archive';
   if (path.startsWith('/figurines/')) return 'work';
+  if (path === '/gazette' || path.startsWith('/gazette/')) return 'hall';
   return 'other';
 }
 

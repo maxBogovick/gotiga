@@ -10,7 +10,7 @@ export const prerender = import.meta.env.VITE_BUILD_TARGET === 'web';
 // absent (also Disallowed in robots). /commission is omitted on purpose: it reads a
 // ?source query param so it can't be prerendered, and listing a JS-only shell here
 // would point crawlers at a thin page.
-const STATIC_ROUTES = ['/', '/figurines', '/upcoming', '/workshop', '/author'];
+const STATIC_ROUTES = ['/', '/figurines', '/upcoming', '/workshop', '/author', '/gazette'];
 
 function xmlEscape(s: string): string {
     return s.replace(/[<>&'"]/g, (c) =>
@@ -69,6 +69,17 @@ export async function GET({ fetch }: { fetch: typeof globalThis.fetch }) {
         figurines = [];
     }
 
+    let gazetteLeaves: { slug: string; lastmod?: string }[] = [];
+    try {
+        const gaz = await api.getGazettePage(1, 200, fetch);
+        gazetteLeaves = gaz.items.map((leaf) => ({
+            slug: leaf.slug,
+            lastmod: isoDay(leaf.publishedAt ?? leaf.createdAt),
+        }));
+    } catch {
+        gazetteLeaves = [];
+    }
+
     const entries: { loc: string; lastmod?: string; image?: string | null; imageTitle?: string; imageCaption?: string }[] = [
         ...STATIC_ROUTES.map((path) => ({ loc: `${SITE_URL}${path}` })),
         ...figurines.map((f) => ({
@@ -77,6 +88,10 @@ export async function GET({ fetch }: { fetch: typeof globalThis.fetch }) {
             image: imageLoc(detailById.get(f.id), f.faceImageUrl),
             imageTitle: f.name,
             imageCaption: imageCaption(f.name, detailById.get(f.id)?.material),
+        })),
+        ...gazetteLeaves.map((leaf) => ({
+            loc: `${SITE_URL}/gazette/${leaf.slug}`,
+            lastmod: leaf.lastmod,
         })),
     ];
 

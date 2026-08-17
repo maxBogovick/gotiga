@@ -1,7 +1,7 @@
 import { api, resolveMediaUrl } from '$lib/api';
 import { SITE_URL, toAbsoluteUrl } from '$lib/site';
 import { heroImageUrl, pickHeroFigurine, sortWorks, visibleWorks } from '$lib/home-hero';
-import type { FigurineListItem, HomeContent } from '$lib/types/api';
+import type { FigurineListItem, GazetteHome, HomeContent } from '$lib/types/api';
 
 // Prerendered to static HTML in the web build so crawlers get real <head> meta
 // (incl. the OG image). Matches the figurines archive page. Dev stays SPA.
@@ -44,15 +44,12 @@ const DEFAULT_HOME_CONTENT: HomeContent = {
 export const load = async ({ fetch }: { fetch: typeof globalThis.fetch }) => {
     // `fetch` is passed to the api so the BROWSER uses SvelteKit's fetch (no window.fetch
     // warning); during prerender webFetch ignores it and uses the global fetch (see webFetch).
-    const [bg, homeContent, page, author] = await Promise.all([
+    const [bg, homeContent, page, author, gazette] = await Promise.all([
         api.getMainBackground(fetch).catch(() => null as string | null),
         api.getHomeContent(fetch).catch(() => DEFAULT_HOME_CONTENT),
-        // Uncapped, on purpose — see the note at the top of home-hero.ts.
         api.getFigurinesPage(undefined, fetch).catch(() => ({ items: [] as FigurineListItem[], total: 0 })),
-        // The maker's own section: it was rendered only after the client had fetched the
-        // profile, so the page's one piece of authored prose — the thing that says who made
-        // all this — reached no crawler at all. (Deduped: SiteHeader asks for it too.)
         api.getAuthorProfile(fetch).catch(() => null),
+        api.getGazetteHome(fetch).catch(() => ({ leaves: [], cuttings: [] } as GazetteHome)),
     ]);
 
     const works = sortWorks(visibleWorks(page.items));
@@ -72,5 +69,5 @@ export const load = async ({ fetch }: { fetch: typeof globalThis.fetch }) => {
         // Keep the bundled fallback image.
     }
 
-    return { ogImage, bg, homeContent, heroFig, author, works, inProgress };
+    return { ogImage, bg, homeContent, heroFig, author, works, inProgress, gazette };
 };

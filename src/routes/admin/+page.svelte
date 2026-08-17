@@ -30,6 +30,7 @@
     import ReelThemePanel from '$lib/components/admin/ReelThemePanel.svelte';
     import CopyEditor from '$lib/components/admin/CopyEditor.svelte';
     import ProgrammePanel from '$lib/components/admin/ProgrammePanel.svelte';
+    import GazettePanel from '$lib/components/admin/GazettePanel.svelte';
     import LogsPanel from '$lib/components/admin/LogsPanel.svelte';
     import { t, type TranslationKey } from '$lib/i18n';
     import FigurineForm from '$lib/components/admin/FigurineForm.svelte';
@@ -113,6 +114,7 @@
                 ['home-layout', 'adminTabHomeLayout'],
                 ['reel-theme',  'adminTabReelTheme'],
                 ['programme',   'adminTabProgramme'],
+                ['gazette',     'adminTabGazette'],
                 ['marks',       'adminTabMarks'],
             ],
         },
@@ -760,6 +762,9 @@
 
         {:else if activeTab === 'programme'}
             <div in:fade class="h-full overflow-auto"><ProgrammePanel /></div>
+
+        {:else if activeTab === 'gazette'}
+            <div in:fade class="h-full overflow-hidden"><GazettePanel /></div>
 
         {:else if activeTab === 'media'}
             <div in:fade class="h-full">

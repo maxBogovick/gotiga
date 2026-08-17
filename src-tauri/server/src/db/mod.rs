@@ -1,5 +1,6 @@
 use crate::error::{AppError, Result};
 use crate::models::*;
+use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder};
 use uuid::Uuid;
 
@@ -5205,5 +5206,468 @@ impl Repository {
         )
         .bind(reference_id).bind(category)
         .fetch_optional(&self.pg_pool).await?)
+    }
+
+    // === CABINET GAZETTE ===
+
+    const GAZETTE_LEAF_SELECT: &'static str = r#"
+        SELECT l.id, l.slug, l.kind, l.status,
+               l.title_en, l.title_ru, l.dek_en, l.dek_ru, l.body_en, l.body_ru,
+               l.figurine_id, l.href, l.source_name, l.source_url, l.image_url,
+               l.pinned, l.published_at, l.scheduled_at, l.created_at, l.updated_at,
+               f.name AS figurine_name, f.slug AS figurine_slug
+        FROM gazette_leaves l
+        LEFT JOIN figurines f ON f.id = l.figurine_id
+    "#;
+
+    pub async fn list_gazette_leaves_public(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<crate::models::GazetteLeafListed>, i64)> {
+        let items = sqlx::query_as::<_, crate::models::GazetteLeafListed>(&format!(
+            "{} WHERE (l.status = 'published'
+                  OR (l.status = 'scheduled' AND l.scheduled_at IS NOT NULL AND l.scheduled_at <= NOW()))
+             ORDER BY l.pinned DESC,
+                      COALESCE(l.published_at, l.scheduled_at, l.created_at) DESC
+             LIMIT $1 OFFSET $2",
+            Self::GAZETTE_LEAF_SELECT
+        ))
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pg_pool)
+        .await?;
+        let (total,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM gazette_leaves l
+             WHERE (l.status = 'published'
+                OR (l.status = 'scheduled' AND l.scheduled_at IS NOT NULL AND l.scheduled_at <= NOW()))",
+        )
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok((items, total))
+    }
+
+    pub async fn list_gazette_leaves_home(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<crate::models::GazetteLeafListed>> {
+        Ok(sqlx::query_as::<_, crate::models::GazetteLeafListed>(&format!(
+            "{} WHERE (l.status = 'published'
+                  OR (l.status = 'scheduled' AND l.scheduled_at IS NOT NULL AND l.scheduled_at <= NOW()))
+             ORDER BY l.pinned DESC,
+                      COALESCE(l.published_at, l.scheduled_at, l.created_at) DESC
+             LIMIT $1",
+            Self::GAZETTE_LEAF_SELECT
+        ))
+        .bind(limit)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn get_gazette_leaf_by_slug(
+        &self,
+        slug: &str,
+    ) -> Result<Option<crate::models::GazetteLeafListed>> {
+        Ok(sqlx::query_as::<_, crate::models::GazetteLeafListed>(&format!(
+            "{} WHERE l.slug = $1
+               AND (l.status = 'published'
+                    OR (l.status = 'scheduled' AND l.scheduled_at IS NOT NULL AND l.scheduled_at <= NOW()))",
+            Self::GAZETTE_LEAF_SELECT
+        ))
+        .bind(slug)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn list_gazette_leaves_admin(
+        &self,
+        status: Option<&str>,
+        kind: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<crate::models::GazetteLeafListed>, i64)> {
+        let mut where_sql = String::from("WHERE 1=1");
+        if status.is_some() {
+            where_sql.push_str(" AND l.status = $1");
+        }
+        if kind.is_some() {
+            where_sql.push_str(if status.is_some() {
+                " AND l.kind = $2"
+            } else {
+                " AND l.kind = $1"
+            });
+        }
+        let query = format!(
+            "{} {where_sql} ORDER BY l.updated_at DESC LIMIT ${} OFFSET ${}",
+            Self::GAZETTE_LEAF_SELECT,
+            if status.is_some() && kind.is_some() { 3 } else if status.is_some() || kind.is_some() { 2 } else { 1 },
+            if status.is_some() && kind.is_some() { 4 } else if status.is_some() || kind.is_some() { 3 } else { 2 },
+        );
+        let mut q = sqlx::query_as::<_, crate::models::GazetteLeafListed>(&query);
+        if let Some(s) = status {
+            q = q.bind(s);
+        }
+        if let Some(k) = kind {
+            q = q.bind(k);
+        }
+        let items = q.bind(limit).bind(offset).fetch_all(&self.pg_pool).await?;
+
+        let count_sql = format!(
+            "SELECT COUNT(*) FROM gazette_leaves l {where_sql}"
+        );
+        let mut cq = sqlx::query_as::<_, (i64,)>(&count_sql);
+        if let Some(s) = status {
+            cq = cq.bind(s);
+        }
+        if let Some(k) = kind {
+            cq = cq.bind(k);
+        }
+        let (total,) = cq.fetch_one(&self.pg_pool).await?;
+        Ok((items, total))
+    }
+
+    pub async fn get_gazette_leaf_admin(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<crate::models::GazetteLeafListed>> {
+        Ok(sqlx::query_as::<_, crate::models::GazetteLeafListed>(&format!(
+            "{} WHERE l.id = $1",
+            Self::GAZETTE_LEAF_SELECT
+        ))
+        .bind(id)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn list_gazette_slugs_except(&self, except: Option<Uuid>) -> Result<Vec<String>> {
+        let rows: Vec<(String,)> = if let Some(id) = except {
+            sqlx::query_as("SELECT slug FROM gazette_leaves WHERE id <> $1")
+                .bind(id)
+                .fetch_all(&self.pg_pool)
+                .await?
+        } else {
+            sqlx::query_as("SELECT slug FROM gazette_leaves")
+                .fetch_all(&self.pg_pool)
+                .await?
+        };
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+
+    pub async fn insert_gazette_leaf(
+        &self,
+        slug: &str,
+        kind: &str,
+        status: &str,
+        title_en: &str,
+        title_ru: &str,
+        dek_en: Option<&str>,
+        dek_ru: Option<&str>,
+        body_en: Option<&str>,
+        body_ru: Option<&str>,
+        figurine_id: Option<Uuid>,
+        href: Option<&str>,
+        source_name: Option<&str>,
+        source_url: Option<&str>,
+        image_url: Option<&str>,
+        pinned: bool,
+        published_at: Option<DateTime<Utc>>,
+        scheduled_at: Option<DateTime<Utc>>,
+    ) -> Result<crate::models::GazetteLeaf> {
+        Ok(sqlx::query_as::<_, crate::models::GazetteLeaf>(
+            r#"INSERT INTO gazette_leaves (
+                    slug, kind, status, title_en, title_ru, dek_en, dek_ru, body_en, body_ru,
+                    figurine_id, href, source_name, source_url, image_url, pinned,
+                    published_at, scheduled_at
+               ) VALUES (
+                    $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17
+               ) RETURNING *"#,
+        )
+        .bind(slug)
+        .bind(kind)
+        .bind(status)
+        .bind(title_en)
+        .bind(title_ru)
+        .bind(dek_en)
+        .bind(dek_ru)
+        .bind(body_en)
+        .bind(body_ru)
+        .bind(figurine_id)
+        .bind(href)
+        .bind(source_name)
+        .bind(source_url)
+        .bind(image_url)
+        .bind(pinned)
+        .bind(published_at)
+        .bind(scheduled_at)
+        .fetch_one(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn update_gazette_leaf(
+        &self,
+        id: Uuid,
+        slug: &str,
+        kind: &str,
+        status: &str,
+        title_en: &str,
+        title_ru: &str,
+        dek_en: Option<&str>,
+        dek_ru: Option<&str>,
+        body_en: Option<&str>,
+        body_ru: Option<&str>,
+        figurine_id: Option<Uuid>,
+        href: Option<&str>,
+        source_name: Option<&str>,
+        source_url: Option<&str>,
+        image_url: Option<&str>,
+        pinned: bool,
+        published_at: Option<DateTime<Utc>>,
+        scheduled_at: Option<DateTime<Utc>>,
+    ) -> Result<crate::models::GazetteLeaf> {
+        sqlx::query_as::<_, crate::models::GazetteLeaf>(
+            r#"UPDATE gazette_leaves SET
+                    slug = $2, kind = $3, status = $4,
+                    title_en = $5, title_ru = $6, dek_en = $7, dek_ru = $8,
+                    body_en = $9, body_ru = $10, figurine_id = $11, href = $12,
+                    source_name = $13, source_url = $14, image_url = $15,
+                    pinned = $16, published_at = $17, scheduled_at = $18,
+                    updated_at = NOW()
+               WHERE id = $1
+               RETURNING *"#,
+        )
+        .bind(id)
+        .bind(slug)
+        .bind(kind)
+        .bind(status)
+        .bind(title_en)
+        .bind(title_ru)
+        .bind(dek_en)
+        .bind(dek_ru)
+        .bind(body_en)
+        .bind(body_ru)
+        .bind(figurine_id)
+        .bind(href)
+        .bind(source_name)
+        .bind(source_url)
+        .bind(image_url)
+        .bind(pinned)
+        .bind(published_at)
+        .bind(scheduled_at)
+        .fetch_optional(&self.pg_pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Gazette leaf {id} not found")))
+    }
+
+    pub async fn delete_gazette_leaf(&self, id: Uuid) -> Result<()> {
+        let affected = sqlx::query("DELETE FROM gazette_leaves WHERE id = $1")
+            .bind(id)
+            .execute(&self.pg_pool)
+            .await?
+            .rows_affected();
+        if affected == 0 {
+            return Err(AppError::NotFound(format!("Gazette leaf {id} not found")));
+        }
+        Ok(())
+    }
+
+    pub async fn list_gazette_feeds(&self) -> Result<Vec<crate::models::GazetteFeed>> {
+        Ok(sqlx::query_as::<_, crate::models::GazetteFeed>(
+            "SELECT * FROM gazette_feeds ORDER BY title",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn insert_gazette_feed(
+        &self,
+        title: &str,
+        url: &str,
+        enabled: bool,
+    ) -> Result<crate::models::GazetteFeed> {
+        Ok(sqlx::query_as::<_, crate::models::GazetteFeed>(
+            "INSERT INTO gazette_feeds (title, url, enabled) VALUES ($1, $2, $3) RETURNING *",
+        )
+        .bind(title)
+        .bind(url)
+        .bind(enabled)
+        .fetch_one(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn update_gazette_feed(
+        &self,
+        id: Uuid,
+        title: &str,
+        url: &str,
+        enabled: bool,
+    ) -> Result<crate::models::GazetteFeed> {
+        sqlx::query_as::<_, crate::models::GazetteFeed>(
+            "UPDATE gazette_feeds SET title = $2, url = $3, enabled = $4 WHERE id = $1 RETURNING *",
+        )
+        .bind(id)
+        .bind(title)
+        .bind(url)
+        .bind(enabled)
+        .fetch_optional(&self.pg_pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Gazette feed {id} not found")))
+    }
+
+    pub async fn delete_gazette_feed(&self, id: Uuid) -> Result<()> {
+        let affected = sqlx::query("DELETE FROM gazette_feeds WHERE id = $1")
+            .bind(id)
+            .execute(&self.pg_pool)
+            .await?
+            .rows_affected();
+        if affected == 0 {
+            return Err(AppError::NotFound(format!("Gazette feed {id} not found")));
+        }
+        Ok(())
+    }
+
+    pub async fn mark_gazette_feed_fetched(
+        &self,
+        id: Uuid,
+        error: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE gazette_feeds SET last_fetched_at = NOW(), last_error = $2 WHERE id = $1",
+        )
+        .bind(id)
+        .bind(error)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn upsert_gazette_cuttings(
+        &self,
+        feed_id: Uuid,
+        items: &[crate::gazette::ParsedFeedItem],
+    ) -> Result<i64> {
+        let mut imported: i64 = 0;
+        for item in items {
+            let res = sqlx::query(
+                r#"INSERT INTO gazette_cuttings (feed_id, guid, title, url, summary, published_at)
+                   VALUES ($1, $2, $3, $4, $5, $6)
+                   ON CONFLICT (feed_id, guid) DO UPDATE SET
+                     title = EXCLUDED.title,
+                     url = EXCLUDED.url,
+                     summary = EXCLUDED.summary,
+                     published_at = COALESCE(EXCLUDED.published_at, gazette_cuttings.published_at)
+                   WHERE gazette_cuttings.title IS DISTINCT FROM EXCLUDED.title
+                      OR gazette_cuttings.url IS DISTINCT FROM EXCLUDED.url
+                      OR gazette_cuttings.summary IS DISTINCT FROM EXCLUDED.summary"#,
+            )
+            .bind(feed_id)
+            .bind(&item.guid)
+            .bind(&item.title)
+            .bind(&item.url)
+            .bind(if item.summary.is_empty() {
+                None
+            } else {
+                Some(item.summary.as_str())
+            })
+            .bind(item.published_at)
+            .execute(&self.pg_pool)
+            .await?;
+            imported += res.rows_affected() as i64;
+        }
+        Ok(imported)
+    }
+
+    pub async fn list_gazette_cuttings_public(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<crate::models::GazetteCuttingListed>> {
+        Ok(sqlx::query_as::<_, crate::models::GazetteCuttingListed>(
+            r#"SELECT c.id, c.feed_id, c.guid, c.title, c.url, c.summary,
+                      c.published_at, c.dismissed, c.pinned, c.created_at,
+                      f.title AS source_name
+               FROM gazette_cuttings c
+               JOIN gazette_feeds f ON f.id = c.feed_id
+               WHERE NOT c.dismissed AND f.enabled
+               ORDER BY c.pinned DESC, c.published_at DESC NULLS LAST, c.created_at DESC
+               LIMIT $1"#,
+        )
+        .bind(limit)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn list_gazette_cuttings_admin(
+        &self,
+        include_dismissed: bool,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<crate::models::GazetteCuttingListed>, i64)> {
+        let where_sql = if include_dismissed {
+            ""
+        } else {
+            "WHERE NOT c.dismissed"
+        };
+        let items = sqlx::query_as::<_, crate::models::GazetteCuttingListed>(&format!(
+            r#"SELECT c.id, c.feed_id, c.guid, c.title, c.url, c.summary,
+                      c.published_at, c.dismissed, c.pinned, c.created_at,
+                      f.title AS source_name
+               FROM gazette_cuttings c
+               JOIN gazette_feeds f ON f.id = c.feed_id
+               {where_sql}
+               ORDER BY c.pinned DESC, c.published_at DESC NULLS LAST, c.created_at DESC
+               LIMIT $1 OFFSET $2"#
+        ))
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pg_pool)
+        .await?;
+        let (total,): (i64,) = sqlx::query_as(&format!(
+            "SELECT COUNT(*) FROM gazette_cuttings c {where_sql}"
+        ))
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok((items, total))
+    }
+
+    pub async fn get_gazette_cutting(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<crate::models::GazetteCuttingListed>> {
+        Ok(sqlx::query_as::<_, crate::models::GazetteCuttingListed>(
+            r#"SELECT c.id, c.feed_id, c.guid, c.title, c.url, c.summary,
+                      c.published_at, c.dismissed, c.pinned, c.created_at,
+                      f.title AS source_name
+               FROM gazette_cuttings c
+               JOIN gazette_feeds f ON f.id = c.feed_id
+               WHERE c.id = $1"#,
+        )
+        .bind(id)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn set_gazette_cutting_dismissed(&self, id: Uuid, dismissed: bool) -> Result<()> {
+        let affected = sqlx::query("UPDATE gazette_cuttings SET dismissed = $2 WHERE id = $1")
+            .bind(id)
+            .bind(dismissed)
+            .execute(&self.pg_pool)
+            .await?
+            .rows_affected();
+        if affected == 0 {
+            return Err(AppError::NotFound(format!("Gazette cutting {id} not found")));
+        }
+        Ok(())
+    }
+
+    pub async fn set_gazette_cutting_pinned(&self, id: Uuid, pinned: bool) -> Result<()> {
+        let affected = sqlx::query("UPDATE gazette_cuttings SET pinned = $2 WHERE id = $1")
+            .bind(id)
+            .bind(pinned)
+            .execute(&self.pg_pool)
+            .await?
+            .rows_affected();
+        if affected == 0 {
+            return Err(AppError::NotFound(format!("Gazette cutting {id} not found")));
+        }
+        Ok(())
     }
 }

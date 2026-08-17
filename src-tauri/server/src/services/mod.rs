@@ -5,6 +5,7 @@ use crate::models::*;
 use crate::observability::ObservabilityState;
 use argon2::password_hash::{SaltString, rand_core::OsRng};
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
+use chrono::{DateTime, Utc};
 use reqwest::Client;
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -6167,6 +6168,493 @@ impl AppService {
             .map(|(t, unread, preview)| Self::thread_dto(t, *unread, preview.clone()))
             .collect())
     }
+
+    // === CABINET GAZETTE ===
+
+    fn gazette_leaf_dto(row: GazetteLeafListed) -> GazetteLeafDto {
+        GazetteLeafDto {
+            id: row.id.to_string(),
+            slug: row.slug,
+            kind: row.kind,
+            status: row.status,
+            title_en: row.title_en,
+            title_ru: row.title_ru,
+            dek_en: row.dek_en,
+            dek_ru: row.dek_ru,
+            body_en: row.body_en,
+            body_ru: row.body_ru,
+            figurine_id: row.figurine_id.map(|u| u.to_string()),
+            figurine_name: row.figurine_name,
+            figurine_slug: row.figurine_slug,
+            href: row.href,
+            source_name: row.source_name,
+            source_url: row.source_url,
+            image_url: row.image_url,
+            pinned: row.pinned,
+            published_at: row.published_at.map(|t| t.to_rfc3339()),
+            scheduled_at: row.scheduled_at.map(|t| t.to_rfc3339()),
+            created_at: row.created_at.to_rfc3339(),
+            updated_at: row.updated_at.to_rfc3339(),
+        }
+    }
+
+    fn gazette_cutting_dto(row: GazetteCuttingListed) -> GazetteCuttingDto {
+        GazetteCuttingDto {
+            id: row.id.to_string(),
+            feed_id: row.feed_id.to_string(),
+            title: row.title,
+            url: row.url,
+            summary: row.summary,
+            source_name: row.source_name,
+            published_at: row.published_at.map(|t| t.to_rfc3339()),
+            dismissed: row.dismissed,
+            pinned: row.pinned,
+            created_at: row.created_at.to_rfc3339(),
+        }
+    }
+
+    fn gazette_feed_dto(row: GazetteFeed) -> GazetteFeedDto {
+        GazetteFeedDto {
+            id: row.id.to_string(),
+            title: row.title,
+            url: row.url,
+            enabled: row.enabled,
+            last_fetched_at: row.last_fetched_at.map(|t| t.to_rfc3339()),
+            last_error: row.last_error,
+            created_at: row.created_at.to_rfc3339(),
+        }
+    }
+
+    async fn gazette_leaf_listed_or_fetch(&self, id: Uuid) -> Result<GazetteLeafDto> {
+        let row = self
+            .repo
+            .get_gazette_leaf_admin(id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("Gazette leaf {id} not found")))?;
+        Ok(Self::gazette_leaf_dto(row))
+    }
+
+    fn parse_gazette_schedule(raw: Option<&str>) -> Result<Option<DateTime<Utc>>> {
+        match raw.map(str::trim).filter(|s| !s.is_empty()) {
+            None => Ok(None),
+            Some(s) => DateTime::parse_from_rfc3339(s)
+                .map(|d| Some(d.with_timezone(&Utc)))
+                .map_err(|_| AppError::BadRequest("Invalid scheduledAt (expected RFC3339)".into())),
+        }
+    }
+
+    pub async fn get_gazette_home(&self) -> Result<GazetteHomeDto> {
+        let leaves = self
+            .repo
+            .list_gazette_leaves_home(crate::gazette::HOME_LEAVES)
+            .await?;
+        let cuttings = self
+            .repo
+            .list_gazette_cuttings_public(crate::gazette::HOME_CUTTINGS)
+            .await?;
+        Ok(GazetteHomeDto {
+            leaves: leaves.into_iter().map(Self::gazette_leaf_dto).collect(),
+            cuttings: cuttings.into_iter().map(Self::gazette_cutting_dto).collect(),
+        })
+    }
+
+    pub async fn list_gazette_public(
+        &self,
+        page: i64,
+        per_page: i64,
+    ) -> Result<GazetteLeavesPage> {
+        let per_page = per_page.clamp(1, 40);
+        let page = page.max(1);
+        let offset = (page - 1) * per_page;
+        let (items, total) = self
+            .repo
+            .list_gazette_leaves_public(per_page, offset)
+            .await?;
+        Ok(GazetteLeavesPage {
+            items: items.into_iter().map(Self::gazette_leaf_dto).collect(),
+            total,
+            page,
+            per_page,
+        })
+    }
+
+    pub async fn get_gazette_leaf_public(&self, slug: &str) -> Result<GazetteLeafDto> {
+        let row = self
+            .repo
+            .get_gazette_leaf_by_slug(slug)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("Gazette leaf {slug} not found")))?;
+        Ok(Self::gazette_leaf_dto(row))
+    }
+
+    pub async fn admin_list_gazette_leaves(
+        &self,
+        status: Option<&str>,
+        kind: Option<&str>,
+        page: i64,
+        per_page: i64,
+    ) -> Result<GazetteLeavesPage> {
+        let per_page = per_page.clamp(1, 100);
+        let page = page.max(1);
+        let offset = (page - 1) * per_page;
+        let (items, total) = self
+            .repo
+            .list_gazette_leaves_admin(status, kind, per_page, offset)
+            .await?;
+        Ok(GazetteLeavesPage {
+            items: items.into_iter().map(Self::gazette_leaf_dto).collect(),
+            total,
+            page,
+            per_page,
+        })
+    }
+
+    pub async fn admin_get_gazette_leaf(&self, id: Uuid) -> Result<GazetteLeafDto> {
+        self.gazette_leaf_listed_or_fetch(id).await
+    }
+
+    pub async fn admin_create_gazette_leaf(
+        &self,
+        req: SaveGazetteLeafRequest,
+    ) -> Result<GazetteLeafDto> {
+        let taken = self.repo.list_gazette_slugs_except(None).await?;
+        let p = Self::prepare_gazette_save(&req, &taken, None)?;
+        let rec = self
+            .repo
+            .insert_gazette_leaf(
+                &p.slug, &p.kind, &p.status, &p.title_en, &p.title_ru,
+                p.dek_en.as_deref(), p.dek_ru.as_deref(),
+                p.body_en.as_deref(), p.body_ru.as_deref(),
+                p.figurine_id, p.href.as_deref(), p.source_name.as_deref(),
+                p.source_url.as_deref(), p.image_url.as_deref(),
+                p.pinned, p.published_at, p.scheduled_at,
+            )
+            .await?;
+        Self::log_domain_event("gazette_leaf_created", "gazette_leaf", rec.id, "ok");
+        self.gazette_leaf_listed_or_fetch(rec.id).await
+    }
+
+    pub async fn admin_update_gazette_leaf(
+        &self,
+        id: Uuid,
+        req: SaveGazetteLeafRequest,
+    ) -> Result<GazetteLeafDto> {
+        let existing = self
+            .repo
+            .get_gazette_leaf_admin(id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("Gazette leaf {id} not found")))?;
+        let taken = self.repo.list_gazette_slugs_except(Some(id)).await?;
+        let p = Self::prepare_gazette_save(&req, &taken, existing.published_at)?;
+        let rec = self
+            .repo
+            .update_gazette_leaf(
+                id, &p.slug, &p.kind, &p.status, &p.title_en, &p.title_ru,
+                p.dek_en.as_deref(), p.dek_ru.as_deref(),
+                p.body_en.as_deref(), p.body_ru.as_deref(),
+                p.figurine_id, p.href.as_deref(), p.source_name.as_deref(),
+                p.source_url.as_deref(), p.image_url.as_deref(),
+                p.pinned, p.published_at, p.scheduled_at,
+            )
+            .await?;
+        Self::log_domain_event("gazette_leaf_updated", "gazette_leaf", rec.id, "ok");
+        self.gazette_leaf_listed_or_fetch(rec.id).await
+    }
+
+    pub async fn admin_delete_gazette_leaf(&self, id: Uuid) -> Result<()> {
+        self.repo.delete_gazette_leaf(id).await?;
+        Self::log_domain_event("gazette_leaf_deleted", "gazette_leaf", id, "ok");
+        Ok(())
+    }
+
+    pub async fn admin_list_gazette_feeds(&self) -> Result<Vec<GazetteFeedDto>> {
+        Ok(self
+            .repo
+            .list_gazette_feeds()
+            .await?
+            .into_iter()
+            .map(Self::gazette_feed_dto)
+            .collect())
+    }
+
+    pub async fn admin_create_gazette_feed(
+        &self,
+        req: SaveGazetteFeedRequest,
+    ) -> Result<GazetteFeedDto> {
+        let title = req.title.trim();
+        let url = req.url.trim();
+        if title.is_empty() || url.is_empty() {
+            return Err(AppError::BadRequest("Feed title and url are required".into()));
+        }
+        if !(url.starts_with("http://") || url.starts_with("https://")) {
+            return Err(AppError::BadRequest("Feed url must be http(s)".into()));
+        }
+        let rec = self
+            .repo
+            .insert_gazette_feed(title, url, req.enabled)
+            .await
+            .map_err(|e| match e {
+                AppError::Database(_) => {
+                    AppError::Conflict("A feed with this url already sits on the desk".into())
+                }
+                other => other,
+            })?;
+        Self::log_domain_event("gazette_feed_created", "gazette_feed", rec.id, "ok");
+        Ok(Self::gazette_feed_dto(rec))
+    }
+
+    pub async fn admin_update_gazette_feed(
+        &self,
+        id: Uuid,
+        req: SaveGazetteFeedRequest,
+    ) -> Result<GazetteFeedDto> {
+        let title = req.title.trim();
+        let url = req.url.trim();
+        if title.is_empty() || url.is_empty() {
+            return Err(AppError::BadRequest("Feed title and url are required".into()));
+        }
+        let rec = self
+            .repo
+            .update_gazette_feed(id, title, url, req.enabled)
+            .await?;
+        Ok(Self::gazette_feed_dto(rec))
+    }
+
+    pub async fn admin_delete_gazette_feed(&self, id: Uuid) -> Result<()> {
+        self.repo.delete_gazette_feed(id).await?;
+        Self::log_domain_event("gazette_feed_deleted", "gazette_feed", id, "ok");
+        Ok(())
+    }
+
+    pub async fn refresh_gazette_desk(&self) -> Result<GazetteRefreshReport> {
+        let feeds = self.repo.list_gazette_feeds().await?;
+        let mut imported: i64 = 0;
+        let mut errors = Vec::new();
+        let mut fetched: i64 = 0;
+        let origin = self.config.public_url.trim_end_matches('/');
+        for feed in feeds.into_iter().filter(|f| f.enabled) {
+            fetched += 1;
+            let result = self
+                .http_client
+                .get(&feed.url)
+                .header(
+                    "User-Agent",
+                    format!("GotigaCabinet/1.0 (gazette desk; +{origin})"),
+                )
+                .header(
+                    "Accept",
+                    "application/rss+xml, application/atom+xml, application/xml, text/xml",
+                )
+                .send()
+                .await;
+            match result {
+                Err(e) => {
+                    let msg = format!("{}: {e}", feed.title);
+                    let _ = self.repo.mark_gazette_feed_fetched(feed.id, Some(&msg)).await;
+                    errors.push(msg);
+                }
+                Ok(res) if !res.status().is_success() => {
+                    let msg = format!("{}: HTTP {}", feed.title, res.status());
+                    let _ = self.repo.mark_gazette_feed_fetched(feed.id, Some(&msg)).await;
+                    errors.push(msg);
+                }
+                Ok(res) => match res.text().await {
+                    Err(e) => {
+                        let msg = format!("{}: {e}", feed.title);
+                        let _ = self.repo.mark_gazette_feed_fetched(feed.id, Some(&msg)).await;
+                        errors.push(msg);
+                    }
+                    Ok(xml) => {
+                        let items = crate::gazette::parse_feed(&xml);
+                        match self.repo.upsert_gazette_cuttings(feed.id, &items).await {
+                            Ok(n) => {
+                                imported += n;
+                                let _ = self.repo.mark_gazette_feed_fetched(feed.id, None).await;
+                            }
+                            Err(e) => {
+                                let msg = format!("{}: {e}", feed.title);
+                                let _ = self.repo.mark_gazette_feed_fetched(feed.id, Some(&msg)).await;
+                                errors.push(msg);
+                            }
+                        }
+                    }
+                },
+            }
+        }
+        Self::log_domain_event("gazette_desk_refreshed", "gazette", fetched, "ok");
+        Ok(GazetteRefreshReport {
+            feeds: fetched,
+            imported,
+            errors,
+        })
+    }
+
+    pub async fn admin_list_gazette_cuttings(
+        &self,
+        include_dismissed: bool,
+        page: i64,
+        per_page: i64,
+    ) -> Result<GazetteCuttingsPage> {
+        let per_page = per_page.clamp(1, 100);
+        let page = page.max(1);
+        let offset = (page - 1) * per_page;
+        let (items, total) = self
+            .repo
+            .list_gazette_cuttings_admin(include_dismissed, per_page, offset)
+            .await?;
+        Ok(GazetteCuttingsPage {
+            items: items.into_iter().map(Self::gazette_cutting_dto).collect(),
+            total,
+            page,
+            per_page,
+        })
+    }
+
+    pub async fn admin_dismiss_gazette_cutting(&self, id: Uuid, dismissed: bool) -> Result<()> {
+        self.repo.set_gazette_cutting_dismissed(id, dismissed).await
+    }
+
+    pub async fn admin_pin_gazette_cutting(&self, id: Uuid, pinned: bool) -> Result<()> {
+        self.repo.set_gazette_cutting_pinned(id, pinned).await
+    }
+
+    pub async fn admin_promote_gazette_cutting(&self, id: Uuid) -> Result<GazetteLeafDto> {
+        let cutting = self
+            .repo
+            .get_gazette_cutting(id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("Gazette cutting {id} not found")))?;
+        let title = crate::gazette::clamp_title(&cutting.title);
+        let dek = crate::gazette::clamp_dek(cutting.summary.as_deref());
+        let req = SaveGazetteLeafRequest {
+            slug: None,
+            kind: "world".into(),
+            status: "draft".into(),
+            title_en: title.clone(),
+            title_ru: title,
+            dek_en: dek.clone(),
+            dek_ru: dek,
+            body_en: None,
+            body_ru: None,
+            figurine_id: None,
+            href: Some(cutting.url.clone()),
+            source_name: Some(cutting.source_name.clone()),
+            source_url: Some(cutting.url),
+            image_url: None,
+            pinned: false,
+            scheduled_at: None,
+        };
+        let leaf = self.admin_create_gazette_leaf(req).await?;
+        let _ = self.repo.set_gazette_cutting_dismissed(id, true).await;
+        Ok(leaf)
+    }
+
+    fn prepare_gazette_save(
+        req: &SaveGazetteLeafRequest,
+        taken: &[String],
+        existing_published_at: Option<DateTime<Utc>>,
+    ) -> Result<PreparedGazetteLeaf> {
+        if !crate::gazette::valid_kind(&req.kind) {
+            return Err(AppError::BadRequest("Unknown gazette kind".into()));
+        }
+        if !crate::gazette::valid_status(&req.status) {
+            return Err(AppError::BadRequest("Unknown gazette status".into()));
+        }
+        let title_en = crate::gazette::clamp_title(&req.title_en);
+        if title_en.is_empty() {
+            return Err(AppError::BadRequest("English title is required".into()));
+        }
+        let mut title_ru = crate::gazette::clamp_title(&req.title_ru);
+        if title_ru.is_empty() {
+            title_ru = title_en.clone();
+        }
+        let slug = crate::gazette::unique_slug(req.slug.as_deref(), &title_en, taken);
+        let figurine_id = match req
+            .figurine_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            None => None,
+            Some(s) => Some(
+                Uuid::parse_str(s)
+                    .map_err(|_| AppError::BadRequest("Invalid figurineId".into()))?,
+            ),
+        };
+        let scheduled_at = Self::parse_gazette_schedule(req.scheduled_at.as_deref())?;
+        if req.status == "scheduled" && scheduled_at.is_none() {
+            return Err(AppError::BadRequest(
+                "A scheduled leaf needs scheduledAt".into(),
+            ));
+        }
+        let now = Utc::now();
+        let published_at = match req.status.as_str() {
+            "published" => Some(existing_published_at.unwrap_or(now)),
+            "scheduled" if scheduled_at.map(|t| t <= now).unwrap_or(false) => {
+                Some(existing_published_at.unwrap_or(now))
+            }
+            _ => None,
+        };
+        Ok(PreparedGazetteLeaf {
+            slug,
+            kind: req.kind.clone(),
+            status: req.status.clone(),
+            title_en,
+            title_ru,
+            dek_en: crate::gazette::clamp_dek(req.dek_en.as_deref()),
+            dek_ru: crate::gazette::clamp_dek(req.dek_ru.as_deref()),
+            body_en: crate::gazette::clamp_body(req.body_en.as_deref()),
+            body_ru: crate::gazette::clamp_body(req.body_ru.as_deref()),
+            figurine_id,
+            href: req
+                .href
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
+            source_name: req
+                .source_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
+            source_url: req
+                .source_url
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
+            image_url: req
+                .image_url
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
+            pinned: req.pinned,
+            published_at,
+            scheduled_at,
+        })
+    }
+}
+
+struct PreparedGazetteLeaf {
+    slug: String,
+    kind: String,
+    status: String,
+    title_en: String,
+    title_ru: String,
+    dek_en: Option<String>,
+    dek_ru: Option<String>,
+    body_en: Option<String>,
+    body_ru: Option<String>,
+    figurine_id: Option<Uuid>,
+    href: Option<String>,
+    source_name: Option<String>,
+    source_url: Option<String>,
+    image_url: Option<String>,
+    pinned: bool,
+    published_at: Option<DateTime<Utc>>,
+    scheduled_at: Option<DateTime<Utc>>,
 }
 
 #[cfg(test)]

@@ -1641,3 +1641,116 @@ export interface HomeLayoutPreset {
     config: HomeLayoutConfig;
     savedAt: string;
 }
+
+// ============================================================
+// CABINET GAZETTE
+// ============================================================
+
+export type GazetteKind =
+    | 'arrival'
+    | 'collage'
+    | 'showing'
+    | 'guest_story'
+    | 'tale'
+    | 'note'
+    | 'world';
+
+export type GazetteStatus = 'draft' | 'scheduled' | 'published' | 'archived';
+
+export interface GazetteLeaf {
+    id: string;
+    slug: string;
+    kind: GazetteKind;
+    status: GazetteStatus;
+    titleEn: string;
+    titleRu: string;
+    dekEn: string | null;
+    dekRu: string | null;
+    bodyEn: string | null;
+    bodyRu: string | null;
+    figurineId: string | null;
+    figurineName: string | null;
+    figurineSlug: string | null;
+    href: string | null;
+    sourceName: string | null;
+    sourceUrl: string | null;
+    imageUrl: string | null;
+    pinned: boolean;
+    publishedAt: string | null;
+    scheduledAt: string | null;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface SaveGazetteLeafRequest {
+    slug?: string | null;
+    kind: GazetteKind;
+    status: GazetteStatus;
+    titleEn: string;
+    titleRu: string;
+    dekEn?: string | null;
+    dekRu?: string | null;
+    bodyEn?: string | null;
+    bodyRu?: string | null;
+    figurineId?: string | null;
+    href?: string | null;
+    sourceName?: string | null;
+    sourceUrl?: string | null;
+    imageUrl?: string | null;
+    pinned?: boolean;
+    scheduledAt?: string | null;
+}
+
+export interface GazetteLeavesPage {
+    items: GazetteLeaf[];
+    total: number;
+    page: number;
+    perPage: number;
+}
+
+export interface GazetteCutting {
+    id: string;
+    feedId: string;
+    title: string;
+    url: string;
+    summary: string | null;
+    sourceName: string;
+    publishedAt: string | null;
+    dismissed: boolean;
+    pinned: boolean;
+    createdAt: string;
+}
+
+export interface GazetteCuttingsPage {
+    items: GazetteCutting[];
+    total: number;
+    page: number;
+    perPage: number;
+}
+
+export interface GazetteFeed {
+    id: string;
+    title: string;
+    url: string;
+    enabled: boolean;
+    lastFetchedAt: string | null;
+    lastError: string | null;
+    createdAt: string;
+}
+
+export interface SaveGazetteFeedRequest {
+    title: string;
+    url: string;
+    enabled?: boolean;
+}
+
+export interface GazetteHome {
+    leaves: GazetteLeaf[];
+    cuttings: GazetteCutting[];
+}
+
+export interface GazetteRefreshReport {
+    feeds: number;
+    imported: number;
+    errors: string[];
+}

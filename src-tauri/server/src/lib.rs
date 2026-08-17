@@ -10,6 +10,7 @@ pub mod db;
 pub mod depth;
 pub mod embed;
 pub mod error;
+pub mod gazette;
 pub mod geo;
 pub mod logs;
 pub mod models;

@@ -6,12 +6,13 @@
     import { figurineHref } from '$lib/figurineHref';
     import { createSiteAnalytics } from '$lib/analytics';
     import AppImage from '$lib/components/AppImage.svelte';
-    import type { AuthorProfile, FigurineListItem, HomeContent } from '$lib/types/api';
+    import type { AuthorProfile, FigurineListItem, GazetteHome, HomeContent } from '$lib/types/api';
     import { t, brandName } from '$lib/i18n';
     import ReelWorkCard from '$lib/components/ReelWorkCard.svelte';
     import WorkMarginIndex from '$lib/components/WorkMarginIndex.svelte';
     import KeeperNote from '$lib/components/KeeperNote.svelte';
     import HouseNoticeBoard from '$lib/components/HouseNoticeBoard.svelte';
+    import HeroGazettePlate from '$lib/components/HeroGazettePlate.svelte';
     import VisitLedger from '$lib/components/VisitLedger.svelte';
     import VisitorBook from '$lib/components/VisitorBook.svelte';
     import ImpressionsQuoteStrip from '$lib/components/ImpressionsQuoteStrip.svelte';
@@ -140,6 +141,7 @@
     // the prerendered HTML rather than snapping into place after hydration.
     let collectionTotal = $derived(collectionFigurines.length);
     let homeContent = $state<HomeContent>(data.homeContent);
+    let gazetteHome = $state<GazetteHome>(data.gazette);
     let mouseX = $state(0.5);
     let mouseY = $state(0.5);
     let canUseHeroTilt = $state(false);
@@ -329,7 +331,7 @@
     // load() already made, so re-asking for them costs no extra request.
     async function init() {
         try {
-            const [page, firstLook, noticedByGuests, content, author, layout, savedReelTheme, bg] = await Promise.all([
+            const [page, firstLook, noticedByGuests, content, author, layout, savedReelTheme, bg, gazette] = await Promise.all([
                 api.getFigurinesPage().catch(() => null),
                 api.getFirstLookFigurines().catch(() => [] as FigurineListItem[]),
                 api.getNoticedByGuests().catch(() => [] as FigurineListItem[]),
@@ -337,11 +339,8 @@
                 api.getAuthorProfile().catch(() => null),
                 api.getHomeLayout().catch(() => null),
                 api.getReelTheme().catch(() => null),
-                // `undefined` = the request failed; `null` = there genuinely is no background.
-                // Only the second may clear the one load() already resolved — otherwise a
-                // single flaky request would drop the admin's hero photo mid-session and pull
-                // down a second large image in its place.
-                api.getMainBackground().catch(() => undefined)
+                api.getMainBackground().catch(() => undefined),
+                api.getGazetteHome().catch(() => ({ leaves: [], cuttings: [] } as GazetteHome)),
             ]);
             if (author) authorProfile = author;
             if (savedReelTheme) reelTheme = savedReelTheme;
@@ -361,6 +360,7 @@
             }
             firstLookFigurines = firstLook;
             noticedByGuestsFigurines = noticedByGuests;
+            gazetteHome = gazette;
             isLoaded = true;
         } catch (e) {
             isLoaded = true;
@@ -644,6 +644,7 @@
                                 onSelect={(e) => openReelModal('b', e)}
                             />
                             <span class="hw-teasers-label">{$t('homeWorkshopTeaserLabel')}</span>
+                            <HeroGazettePlate leaves={gazetteHome.leaves} cuttings={gazetteHome.cuttings} />
                         </div>
                         {#if availableFigurines.length === 0}
                             <p class="release-note">{$t('homeReleaseNote')}</p>
@@ -1418,7 +1419,8 @@
 
     .hw-teasers {
         display: flex;
-        align-items: center;
+        align-items: flex-end;
+        flex-wrap: wrap;
         gap: 14px;
         width: fit-content;
         margin-top: 20px;

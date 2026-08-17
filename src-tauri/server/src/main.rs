@@ -155,6 +155,34 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // Background: pull the world desk (RSS cuttings) on boot, then every six hours.
+    // Failures stay on the feed row; the blotter simply shows what it has.
+    {
+        let svc = service.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+            match svc.refresh_gazette_desk().await {
+                Ok(r) if r.imported > 0 => {
+                    tracing::info!(
+                        "Gazette desk: {} cuttings from {} feeds",
+                        r.imported,
+                        r.feeds
+                    )
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!("Gazette desk refresh failed: {e}"),
+            }
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(6 * 3600));
+            tick.tick().await;
+            loop {
+                tick.tick().await;
+                if let Err(e) = svc.refresh_gazette_desk().await {
+                    tracing::warn!("Gazette desk refresh failed: {e}");
+                }
+            }
+        });
+    }
+
     // Background: sweep the in-memory rate limiters. The per-request check paths
     // only prune the key they touch, so keys for one-off IPs would otherwise
     // accumulate forever — this drops stale/empty ones on a timer.

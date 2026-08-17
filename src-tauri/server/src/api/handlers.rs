@@ -1937,7 +1937,7 @@ pub async fn sitemap_xml(
         .items;
 
     let mut urls = String::new();
-    for path in ["/", "/figurines", "/author", "/workshop", "/upcoming"] {
+    for path in ["/", "/figurines", "/author", "/workshop", "/upcoming", "/gazette"] {
         urls.push_str(&format!("  <url><loc>{base}{path}</loc></url>\n"));
     }
     for f in &figurines {
@@ -1963,6 +1963,18 @@ pub async fn sitemap_xml(
             xml_escape(handle),
             f.created_at.format("%Y-%m-%d")
         ));
+    }
+
+    if let Ok(gazette) = service.list_gazette_public(1, 200).await {
+        for leaf in gazette.items {
+            let stamp = leaf.published_at.as_deref().unwrap_or(&leaf.created_at);
+            let lastmod: String = stamp.chars().take(10).collect();
+            urls.push_str(&format!(
+                "  <url><loc>{base}/gazette/{}</loc><lastmod>{}</lastmod></url>\n",
+                xml_escape(&leaf.slug),
+                xml_escape(&lastmod),
+            ));
+        }
     }
 
     let body = format!(
@@ -3316,4 +3328,187 @@ pub async fn admin_remove_contact_message(
 ) -> Result<StatusCode> {
     service.remove_contact_message(id).await?;
     Ok(StatusCode::OK)
+}
+
+// === CABINET GAZETTE ===
+
+pub async fn get_gazette_home(
+    State(service): State<AppService>,
+) -> Result<Json<GazetteHomeDto>> {
+    Ok(Json(service.get_gazette_home().await?))
+}
+
+pub async fn list_gazette(
+    State(service): State<AppService>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<GazetteLeavesPage>> {
+    let page = params
+        .get("page")
+        .and_then(|p| p.parse::<i64>().ok())
+        .unwrap_or(1);
+    let per_page = params
+        .get("perPage")
+        .and_then(|p| p.parse::<i64>().ok())
+        .unwrap_or(12);
+    Ok(Json(service.list_gazette_public(page, per_page).await?))
+}
+
+pub async fn get_gazette_leaf(
+    State(service): State<AppService>,
+    Path(slug): Path<String>,
+) -> Result<Json<GazetteLeafDto>> {
+    Ok(Json(service.get_gazette_leaf_public(&slug).await?))
+}
+
+pub async fn admin_list_gazette_leaves(
+    State(service): State<AppService>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<GazetteLeavesPage>> {
+    let status = params
+        .get("status")
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty() && *s != "all");
+    let kind = params
+        .get("kind")
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty() && *s != "all");
+    let page = params
+        .get("page")
+        .and_then(|p| p.parse::<i64>().ok())
+        .unwrap_or(1);
+    let per_page = params
+        .get("perPage")
+        .and_then(|p| p.parse::<i64>().ok())
+        .unwrap_or(20);
+    Ok(Json(
+        service
+            .admin_list_gazette_leaves(status, kind, page, per_page)
+            .await?,
+    ))
+}
+
+pub async fn admin_get_gazette_leaf(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<GazetteLeafDto>> {
+    Ok(Json(service.admin_get_gazette_leaf(id).await?))
+}
+
+pub async fn admin_create_gazette_leaf(
+    State(service): State<AppService>,
+    Json(body): Json<SaveGazetteLeafRequest>,
+) -> Result<(StatusCode, Json<GazetteLeafDto>)> {
+    let leaf = service.admin_create_gazette_leaf(body).await?;
+    Ok((StatusCode::CREATED, Json(leaf)))
+}
+
+pub async fn admin_update_gazette_leaf(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<SaveGazetteLeafRequest>,
+) -> Result<Json<GazetteLeafDto>> {
+    Ok(Json(service.admin_update_gazette_leaf(id, body).await?))
+}
+
+pub async fn admin_delete_gazette_leaf(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    service.admin_delete_gazette_leaf(id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_list_gazette_feeds(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<GazetteFeedDto>>> {
+    Ok(Json(service.admin_list_gazette_feeds().await?))
+}
+
+pub async fn admin_create_gazette_feed(
+    State(service): State<AppService>,
+    Json(body): Json<SaveGazetteFeedRequest>,
+) -> Result<(StatusCode, Json<GazetteFeedDto>)> {
+    let feed = service.admin_create_gazette_feed(body).await?;
+    Ok((StatusCode::CREATED, Json(feed)))
+}
+
+pub async fn admin_update_gazette_feed(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<SaveGazetteFeedRequest>,
+) -> Result<Json<GazetteFeedDto>> {
+    Ok(Json(service.admin_update_gazette_feed(id, body).await?))
+}
+
+pub async fn admin_delete_gazette_feed(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    service.admin_delete_gazette_feed(id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_refresh_gazette_desk(
+    State(service): State<AppService>,
+) -> Result<Json<GazetteRefreshReport>> {
+    Ok(Json(service.refresh_gazette_desk().await?))
+}
+
+pub async fn admin_list_gazette_cuttings(
+    State(service): State<AppService>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<GazetteCuttingsPage>> {
+    let include_dismissed = params.get("dismissed").map(|v| v == "true").unwrap_or(false);
+    let page = params
+        .get("page")
+        .and_then(|p| p.parse::<i64>().ok())
+        .unwrap_or(1);
+    let per_page = params
+        .get("perPage")
+        .and_then(|p| p.parse::<i64>().ok())
+        .unwrap_or(20);
+    Ok(Json(
+        service
+            .admin_list_gazette_cuttings(include_dismissed, page, per_page)
+            .await?,
+    ))
+}
+
+pub async fn admin_dismiss_gazette_cutting(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    service.admin_dismiss_gazette_cutting(id, true).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_restore_gazette_cutting(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    service.admin_dismiss_gazette_cutting(id, false).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_pin_gazette_cutting(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    service.admin_pin_gazette_cutting(id, true).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_unpin_gazette_cutting(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    service.admin_pin_gazette_cutting(id, false).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_promote_gazette_cutting(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<GazetteLeafDto>> {
+    Ok(Json(service.admin_promote_gazette_cutting(id).await?))
 }

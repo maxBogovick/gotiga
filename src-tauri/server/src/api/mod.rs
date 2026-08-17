@@ -167,6 +167,10 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 "/impressions/featured",
                 get(handlers::get_featured_impressions),
             )
+            // === CABINET GAZETTE ===
+            .route("/gazette/home", get(handlers::get_gazette_home))
+            .route("/gazette", get(handlers::list_gazette))
+            .route("/gazette/:slug", get(handlers::get_gazette_leaf))
             // === PUBLIC LOGIN ===
             .route("/admin/login", post(handlers::admin_login))
             // === PROTECTED WRITE — use route_layer so auth only runs on matched routes ===
@@ -415,6 +419,86 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 "/admin/impressions/:id",
                 patch(handlers::admin_moderate_impression)
                     .delete(handlers::admin_delete_impression)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            // === GAZETTE (ADMIN) ===
+            .route(
+                "/admin/gazette",
+                get(handlers::admin_list_gazette_leaves)
+                    .post(handlers::admin_create_gazette_leaf)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            .route(
+                "/admin/gazette/feeds/refresh",
+                post(handlers::admin_refresh_gazette_desk).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/gazette/feeds",
+                get(handlers::admin_list_gazette_feeds)
+                    .post(handlers::admin_create_gazette_feed)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            .route(
+                "/admin/gazette/feeds/:id",
+                put(handlers::admin_update_gazette_feed)
+                    .delete(handlers::admin_delete_gazette_feed)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            .route(
+                "/admin/gazette/cuttings",
+                get(handlers::admin_list_gazette_cuttings).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/gazette/cuttings/:id/dismiss",
+                post(handlers::admin_dismiss_gazette_cutting).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/gazette/cuttings/:id/restore",
+                post(handlers::admin_restore_gazette_cutting).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/gazette/cuttings/:id/pin",
+                post(handlers::admin_pin_gazette_cutting).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/gazette/cuttings/:id/unpin",
+                post(handlers::admin_unpin_gazette_cutting).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/gazette/cuttings/:id/promote",
+                post(handlers::admin_promote_gazette_cutting).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/gazette/:id",
+                get(handlers::admin_get_gazette_leaf)
+                    .put(handlers::admin_update_gazette_leaf)
+                    .delete(handlers::admin_delete_gazette_leaf)
                     .route_layer(middleware::from_fn_with_state(
                         config.clone(),
                         auth_middleware,
@@ -916,6 +1000,8 @@ fn is_public_cacheable(path: &str) -> bool {
         "/author/profile",
         "/booking-rules",
         "/impressions/featured",
+        "/gazette",
+        "/gazette/home",
     ];
 
     if EXACT.contains(&path) {
@@ -929,6 +1015,9 @@ fn is_public_cacheable(path: &str) -> bool {
     // A single figurine: /figurines/<id>, but not its sub-resources.
     if let Some(rest) = path.strip_prefix("/figurines/") {
         return !rest.is_empty() && !rest.contains('/');
+    }
+    if let Some(rest) = path.strip_prefix("/gazette/") {
+        return !rest.is_empty() && !rest.contains('/') && rest != "home";
     }
     false
 }
@@ -984,6 +1073,8 @@ mod cache_tests {
             "/showing-rooms",
             "/main-background",
             "/impressions/featured",
+            "/gazette",
+            "/gazette/home",
             "/settings/theme",
             "/settings/home-layout",
             "/content/texts/author",

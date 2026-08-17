@@ -2935,3 +2935,220 @@ pub struct CopyOverrides {
     #[serde(default)]
     pub ru: std::collections::HashMap<String, String>,
 }
+
+// ============================================================
+// CABINET GAZETTE
+// ============================================================
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct GazetteLeaf {
+    pub id: Uuid,
+    pub slug: String,
+    pub kind: String,
+    pub status: String,
+    pub title_en: String,
+    pub title_ru: String,
+    pub dek_en: Option<String>,
+    pub dek_ru: Option<String>,
+    pub body_en: Option<String>,
+    pub body_ru: Option<String>,
+    pub figurine_id: Option<Uuid>,
+    pub href: Option<String>,
+    pub source_name: Option<String>,
+    pub source_url: Option<String>,
+    pub image_url: Option<String>,
+    pub pinned: bool,
+    pub published_at: Option<DateTime<Utc>>,
+    pub scheduled_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct GazetteLeafListed {
+    pub id: Uuid,
+    pub slug: String,
+    pub kind: String,
+    pub status: String,
+    pub title_en: String,
+    pub title_ru: String,
+    pub dek_en: Option<String>,
+    pub dek_ru: Option<String>,
+    pub body_en: Option<String>,
+    pub body_ru: Option<String>,
+    pub figurine_id: Option<Uuid>,
+    pub href: Option<String>,
+    pub source_name: Option<String>,
+    pub source_url: Option<String>,
+    pub image_url: Option<String>,
+    pub pinned: bool,
+    pub published_at: Option<DateTime<Utc>>,
+    pub scheduled_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub figurine_name: Option<String>,
+    pub figurine_slug: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GazetteLeafDto {
+    pub id: String,
+    pub slug: String,
+    pub kind: String,
+    pub status: String,
+    pub title_en: String,
+    pub title_ru: String,
+    pub dek_en: Option<String>,
+    pub dek_ru: Option<String>,
+    pub body_en: Option<String>,
+    pub body_ru: Option<String>,
+    pub figurine_id: Option<String>,
+    pub figurine_name: Option<String>,
+    pub figurine_slug: Option<String>,
+    pub href: Option<String>,
+    pub source_name: Option<String>,
+    pub source_url: Option<String>,
+    pub image_url: Option<String>,
+    pub pinned: bool,
+    pub published_at: Option<String>,
+    pub scheduled_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveGazetteLeafRequest {
+    pub slug: Option<String>,
+    pub kind: String,
+    pub status: String,
+    pub title_en: String,
+    pub title_ru: String,
+    pub dek_en: Option<String>,
+    pub dek_ru: Option<String>,
+    pub body_en: Option<String>,
+    pub body_ru: Option<String>,
+    pub figurine_id: Option<String>,
+    pub href: Option<String>,
+    pub source_name: Option<String>,
+    pub source_url: Option<String>,
+    pub image_url: Option<String>,
+    #[serde(default)]
+    pub pinned: bool,
+    pub scheduled_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GazetteLeavesPage {
+    pub items: Vec<GazetteLeafDto>,
+    pub total: i64,
+    pub page: i64,
+    pub per_page: i64,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GazetteFeed {
+    pub id: Uuid,
+    pub title: String,
+    pub url: String,
+    pub enabled: bool,
+    pub last_fetched_at: Option<DateTime<Utc>>,
+    pub last_error: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GazetteFeedDto {
+    pub id: String,
+    pub title: String,
+    pub url: String,
+    pub enabled: bool,
+    pub last_fetched_at: Option<String>,
+    pub last_error: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveGazetteFeedRequest {
+    pub title: String,
+    pub url: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct GazetteCutting {
+    pub id: Uuid,
+    pub feed_id: Uuid,
+    pub guid: String,
+    pub title: String,
+    pub url: String,
+    pub summary: Option<String>,
+    pub published_at: Option<DateTime<Utc>>,
+    pub dismissed: bool,
+    pub pinned: bool,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct GazetteCuttingListed {
+    pub id: Uuid,
+    pub feed_id: Uuid,
+    pub guid: String,
+    pub title: String,
+    pub url: String,
+    pub summary: Option<String>,
+    pub published_at: Option<DateTime<Utc>>,
+    pub dismissed: bool,
+    pub pinned: bool,
+    pub created_at: DateTime<Utc>,
+    pub source_name: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GazetteCuttingDto {
+    pub id: String,
+    pub feed_id: String,
+    pub title: String,
+    pub url: String,
+    pub summary: Option<String>,
+    pub source_name: String,
+    pub published_at: Option<String>,
+    pub dismissed: bool,
+    pub pinned: bool,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GazetteHomeDto {
+    pub leaves: Vec<GazetteLeafDto>,
+    pub cuttings: Vec<GazetteCuttingDto>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GazetteCuttingsPage {
+    pub items: Vec<GazetteCuttingDto>,
+    pub total: i64,
+    pub page: i64,
+    pub per_page: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GazetteRefreshReport {
+    pub feeds: i64,
+    pub imported: i64,
+    pub errors: Vec<String>,
+}

@@ -259,6 +259,7 @@
     vitrine:  $t('adminHomeLayoutElVitrine'),
     grid:     $t('adminHomeLayoutElGrid'),
     keeper:   $t('adminHomeLayoutElKeeper'),
+    board:    $t('adminHomeLayoutElBoard'),
   };
 
   const elKey = (blockId: HomeBlockId, elementId: string) => `${blockId}.${elementId}`;

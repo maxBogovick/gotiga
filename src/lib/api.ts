@@ -85,6 +85,17 @@ import type {
     BackfillAnalyticsResponse,
     AdminAnalyticsQuery,
     AnalyticsEventPayload,
+    GazetteKind,
+    GazetteStatus,
+    GazetteLeaf,
+    GazetteLeavesPage,
+    GazetteHome,
+    GazetteCutting,
+    GazetteCuttingsPage,
+    GazetteFeed,
+    SaveGazetteLeafRequest,
+    SaveGazetteFeedRequest,
+    GazetteRefreshReport,
 } from './types/api';
 
 export type { AppSettings };
@@ -1890,6 +1901,120 @@ export const api = {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify(presets),
+        });
+    },
+
+    // === CABINET GAZETTE ===
+
+    async getGazetteHome(loadFetch?: typeof fetch): Promise<GazetteHome> {
+        try {
+            return await webFetch('/gazette/home', undefined, loadFetch);
+        } catch {
+            return { leaves: [], cuttings: [] };
+        }
+    },
+
+    async getGazettePage(page = 1, perPage = 12, loadFetch?: typeof fetch): Promise<GazetteLeavesPage> {
+        const q = new URLSearchParams({ page: String(page), perPage: String(perPage) });
+        return webFetch(`/gazette?${q}`, undefined, loadFetch);
+    },
+
+    async getGazetteLeaf(slug: string, loadFetch?: typeof fetch): Promise<GazetteLeaf> {
+        return webFetch(`/gazette/${encodeURIComponent(slug)}`, undefined, loadFetch);
+    },
+
+    async adminListGazetteLeaves(opts?: {
+        status?: string;
+        kind?: string;
+        page?: number;
+        perPage?: number;
+    }): Promise<GazetteLeavesPage> {
+        const q = new URLSearchParams();
+        if (opts?.status) q.set('status', opts.status);
+        if (opts?.kind) q.set('kind', opts.kind);
+        if (opts?.page) q.set('page', String(opts.page));
+        if (opts?.perPage) q.set('perPage', String(opts.perPage));
+        const qs = q.toString();
+        return webFetch(`/admin/gazette${qs ? `?${qs}` : ''}`, { headers: authHeaders() });
+    },
+
+    async adminGetGazetteLeaf(id: string): Promise<GazetteLeaf> {
+        return webFetch(`/admin/gazette/${id}`, { headers: authHeaders() });
+    },
+
+    async adminSaveGazetteLeaf(body: SaveGazetteLeafRequest, id?: string): Promise<GazetteLeaf> {
+        return webFetch(id ? `/admin/gazette/${id}` : '/admin/gazette', {
+            method: id ? 'PUT' : 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(body),
+        });
+    },
+
+    async adminDeleteGazetteLeaf(id: string): Promise<void> {
+        await webFetch(`/admin/gazette/${id}`, { method: 'DELETE', headers: authHeaders() });
+    },
+
+    async adminListGazetteFeeds(): Promise<GazetteFeed[]> {
+        return webFetch('/admin/gazette/feeds', { headers: authHeaders() });
+    },
+
+    async adminSaveGazetteFeed(body: SaveGazetteFeedRequest, id?: string): Promise<GazetteFeed> {
+        return webFetch(id ? `/admin/gazette/feeds/${id}` : '/admin/gazette/feeds', {
+            method: id ? 'PUT' : 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(body),
+        });
+    },
+
+    async adminDeleteGazetteFeed(id: string): Promise<void> {
+        await webFetch(`/admin/gazette/feeds/${id}`, { method: 'DELETE', headers: authHeaders() });
+    },
+
+    async adminRefreshGazetteDesk(): Promise<GazetteRefreshReport> {
+        return webFetch('/admin/gazette/feeds/refresh', {
+            method: 'POST',
+            headers: authHeaders(),
+        });
+    },
+
+    async adminListGazetteCuttings(opts?: {
+        dismissed?: boolean;
+        page?: number;
+        perPage?: number;
+    }): Promise<GazetteCuttingsPage> {
+        const q = new URLSearchParams();
+        if (opts?.dismissed) q.set('dismissed', 'true');
+        if (opts?.page) q.set('page', String(opts.page));
+        if (opts?.perPage) q.set('perPage', String(opts.perPage));
+        const qs = q.toString();
+        return webFetch(`/admin/gazette/cuttings${qs ? `?${qs}` : ''}`, { headers: authHeaders() });
+    },
+
+    async adminDismissGazetteCutting(id: string): Promise<void> {
+        await webFetch(`/admin/gazette/cuttings/${id}/dismiss`, {
+            method: 'POST',
+            headers: authHeaders(),
+        });
+    },
+
+    async adminRestoreGazetteCutting(id: string): Promise<void> {
+        await webFetch(`/admin/gazette/cuttings/${id}/restore`, {
+            method: 'POST',
+            headers: authHeaders(),
+        });
+    },
+
+    async adminPinGazetteCutting(id: string, pin: boolean): Promise<void> {
+        await webFetch(`/admin/gazette/cuttings/${id}/${pin ? 'pin' : 'unpin'}`, {
+            method: 'POST',
+            headers: authHeaders(),
+        });
+    },
+
+    async adminPromoteGazetteCutting(id: string): Promise<GazetteLeaf> {
+        return webFetch(`/admin/gazette/cuttings/${id}/promote`, {
+            method: 'POST',
+            headers: authHeaders(),
         });
     },
 };
