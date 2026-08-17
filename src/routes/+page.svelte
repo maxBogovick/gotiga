@@ -1718,42 +1718,10 @@
         margin-bottom: 12px;
         padding-bottom: 12px;
         border-bottom: 1px solid var(--border);
-        /* Pins flush under the fixed site header while the cards below scroll
-           past, releasing on its own once .context-section's end reaches this
-           offset (i.e. once the visitor has scrolled through every card).
-           54px matches SiteHeader's shrunk `.is-scrolled` height (the state
-           it's always in by the time this section is reachable) — not the
-           shared --site-header-height var, which is a larger padding buffer
-           used elsewhere and would leave a gap here. */
-        position: sticky;
-        top: 54px;
-        z-index: 3;
-        /* No fill of its own — see ::before. A solid --cream here painted a strip
-           that was both the wrong colour (--cream is #FAF6EE; the page is #F8F1E7)
-           and the wrong width (it stopped at the section's padding), so it read as
-           a pale band with cut edges. The old tile grid hid it; a single column of
-           cards does not. */
+        /* A section title, not persistent chrome. It used to stick under the
+           site header and stack with the keeper dock — three bars over the
+           first work. The loupe in the header is how the visitor asks again. */
         background: transparent;
-    }
-
-    /* The bar the header pins against: the page's own colour, bled to the full
-       window width so it has no edges to see. */
-    .context-hd::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        bottom: 0;
-        left: 50%;
-        /* Deliberately 100vw here: this bar is meant to bleed past the section's padding
-           to the window's edge. It is centred and clipped by .root, so the scrollbar's
-           width costs nothing. */
-        width: 100vw;
-        transform: translateX(-50%);
-        /* The page's own canvas, from the token — it was hardcoded to #f8f1e7, which is
-           the default parchment and nothing else: an admin who re-themed the site got a
-           pale strip of the OLD colour sliding under the sticky header. */
-        background: var(--color-canvas-base);
-        z-index: -1;
     }
 
     .context-title {
@@ -2204,14 +2172,6 @@
            reel's own last card, "Propose your own idea" in the commission
            section further down. So this one header drops its meta line and
            links rather than stacking all of it above the first figurine. */
-        .work-hd {
-            position: static;
-        }
-
-        .work-hd::before {
-            content: none;
-        }
-
         .work-hd .context-meta,
         .work-hd .context-side-links {
             display: none;

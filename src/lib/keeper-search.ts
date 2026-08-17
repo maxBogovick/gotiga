@@ -4,6 +4,8 @@ import type { FigurineListItem, SemanticHit } from '$lib/types/api';
 export const KEEPER_ARCHIVE_MAX = 24;
 /** Plates laid on the home blotter. */
 export const KEEPER_BLOTTER_MAX = 7;
+/** Archive list search field — the header loupe focuses this when already in the register. */
+export const ARCHIVE_KEEPER_INPUT_ID = 'archive-keeper-q';
 
 export type KeeperListFields = Pick<
     FigurineListItem,

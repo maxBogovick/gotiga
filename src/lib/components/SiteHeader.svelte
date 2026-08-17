@@ -13,6 +13,9 @@
   import RavenWatcher from '$lib/components/RavenWatcher.svelte';
   import HeaderBirdWalk from '$lib/components/HeaderBirdWalk.svelte';
   import ContactMessageForm from '$lib/components/ContactMessageForm.svelte';
+  import KeeperFrame from '$lib/components/KeeperFrame.svelte';
+  import { keeper } from '$lib/stores/keeper.svelte';
+  import { ARCHIVE_KEEPER_INPUT_ID } from '$lib/keeper-search';
   import type { AuthorProfile } from '$lib/types/api';
 
   // Header-left maker avatar — admin-editable photo + frame styling.
@@ -76,7 +79,7 @@
 
   function toggleMobileNav() { mobileNavOpen = !mobileNavOpen; }
   function closeMobileNav() { mobileNavOpen = false; }
-  function togglePanel() { panelOpen = !panelOpen; }
+  function togglePanel() { panelOpen = !panelOpen; keeper.closePanel(); }
   function closePanel()  { panelOpen = false; }
 
   function handleScroll() {
@@ -109,7 +112,7 @@
   let userMenuOpen = $state(false);
   let userMenuRef = $state<HTMLElement | null>(null);
 
-  function toggleUserMenu() { userMenuOpen = !userMenuOpen; }
+  function toggleUserMenu() { userMenuOpen = !userMenuOpen; keeper.closePanel(); }
 
   function handleUserOutside(e: MouseEvent) {
     if (userMenuOpen && userMenuRef && !userMenuRef.contains(e.target as Node)) {
@@ -123,7 +126,7 @@
   let contactPanelOpen = $state(false);
   let contactPanelRef = $state<HTMLElement | null>(null);
 
-  function toggleContactPanel() { contactPanelOpen = !contactPanelOpen; }
+  function toggleContactPanel() { contactPanelOpen = !contactPanelOpen; keeper.closePanel(); }
   function closeContactPanel() { contactPanelOpen = false; }
 
   function handleContactOutside(e: MouseEvent) {
@@ -141,7 +144,10 @@
 
   function toggleMobileContact() {
     mobileContactOpen = !mobileContactOpen;
-    if (mobileContactOpen) mobileNavOpen = false;
+    if (mobileContactOpen) {
+      mobileNavOpen = false;
+      keeper.closePanel();
+    }
   }
   function closeMobileContact() { mobileContactOpen = false; }
 
@@ -149,6 +155,65 @@
     if (mobileContactOpen && mobileContactRef && !mobileContactRef.contains(e.target as Node)) {
       mobileContactOpen = false;
     }
+  }
+
+  let keeperPanelRef = $state<HTMLElement | null>(null);
+
+  function isArchiveList(path: string) {
+    return path === '/figurines' || path === '/figurines/';
+  }
+
+  function typingInField(el: EventTarget | null) {
+    if (!(el instanceof HTMLElement)) return false;
+    const tag = el.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+    return el.isContentEditable;
+  }
+
+  function askKeeper() {
+    if (!keeper.blotterOffscreen) return;
+    panelOpen = false;
+    userMenuOpen = false;
+    contactPanelOpen = false;
+    mobileContactOpen = false;
+    mobileNavOpen = false;
+    keeper.togglePanel();
+  }
+
+  function handleKeeperOutside(e: MouseEvent) {
+    if (!keeper.panelOpen) return;
+    const node = e.target as Node | null;
+    if (keeperPanelRef?.contains(node)) return;
+    if (node instanceof Element && node.closest('.keeper-btn, .mobile-keeper-btn')) return;
+    keeper.closePanel();
+  }
+
+  function handleKeeperKey(e: KeyboardEvent) {
+    if (e.key === 'Escape' && keeper.panelOpen) {
+      keeper.closePanel();
+      return;
+    }
+    if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (typingInField(e.target)) return;
+    e.preventDefault();
+    if (isArchiveList(pathname)) {
+      const el = document.getElementById(ARCHIVE_KEEPER_INPUT_ID);
+      if (el instanceof HTMLInputElement) {
+        el.focus();
+        el.select();
+      }
+      return;
+    }
+    if (!keeper.blotterOffscreen) {
+      document.querySelector<HTMLInputElement>('.keeper-slot .kn-input')?.focus();
+      return;
+    }
+    panelOpen = false;
+    userMenuOpen = false;
+    contactPanelOpen = false;
+    mobileContactOpen = false;
+    mobileNavOpen = false;
+    keeper.openPanel();
   }
 
   async function handleLogout() {
@@ -172,6 +237,8 @@
     document.addEventListener('click', handleUserOutside, { capture: true });
     document.addEventListener('click', handleContactOutside, { capture: true });
     document.addEventListener('click', handleMobileContactOutside, { capture: true });
+    document.addEventListener('click', handleKeeperOutside, { capture: true });
+    document.addEventListener('keydown', handleKeeperKey);
     window.addEventListener('scroll', handleScroll, { passive: true });
     handleScroll();
 
@@ -199,6 +266,8 @@
       document.removeEventListener('click', handleUserOutside, { capture: true });
       document.removeEventListener('click', handleContactOutside, { capture: true });
       document.removeEventListener('click', handleMobileContactOutside, { capture: true });
+      document.removeEventListener('click', handleKeeperOutside, { capture: true });
+      document.removeEventListener('keydown', handleKeeperKey);
     }
     if (typeof window !== 'undefined') {
       window.removeEventListener('scroll', handleScroll);
@@ -209,6 +278,7 @@
     void pathname;
     mobileNavOpen = false;
     mobileContactOpen = false;
+    keeper.closePanel();
     // Wait a tick so the new page's markup (and its .cine-frame, if any)
     // has mounted before we measure it.
     requestAnimationFrame(updateAvatarVisibility);
@@ -288,6 +358,23 @@
          button (and its dropdown) in there made both render translucent no
          matter how opaque their own backgrounds were. -->
     <div class="ghost-right-group">
+      {#if keeper.blotterOffscreen}
+      <button
+        type="button"
+        class="keeper-btn"
+        class:is-open={keeper.panelOpen}
+        onclick={askKeeper}
+        aria-label={$t('headerKeeperLabel')}
+        title={$t('headerKeeperLabel')}
+        aria-expanded={keeper.panelOpen}
+      >
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+          <circle cx="6" cy="6" r="4.25" stroke="currentColor" stroke-width="1"/>
+          <path d="M9.2 9.2L12 12" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+        </svg>
+      </button>
+      {/if}
+
       <div class="contact-anchor" bind:this={contactPanelRef}>
         <button
           class="contact-btn"
@@ -442,6 +529,22 @@
 
     <!-- ⑥ Mobile-only controls -->
     <div class="mobile-controls">
+      {#if keeper.blotterOffscreen}
+      <button
+        type="button"
+        class="mobile-keeper-btn"
+        class:is-open={keeper.panelOpen}
+        onclick={askKeeper}
+        aria-label={$t('headerKeeperLabel')}
+        title={$t('headerKeeperLabel')}
+        aria-expanded={keeper.panelOpen}
+      >
+        <svg width="15" height="15" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+          <circle cx="6" cy="6" r="4.25" stroke="currentColor" stroke-width="1"/>
+          <path d="M9.2 9.2L12 12" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+        </svg>
+      </button>
+      {/if}
       <!-- "Write to the author" — mobile mirror of the desktop quill (which lives in
            the hidden .ghost-right-group). Sits before the account icon. -->
       <div class="mobile-contact-anchor" bind:this={mobileContactRef}>
@@ -504,6 +607,21 @@
     </div>
 
   </div>
+
+  {#if keeper.panelOpen && keeper.blotterOffscreen}
+    <div
+      class="keeper-float"
+      bind:this={keeperPanelRef}
+      transition:fade={{ duration: 200 }}
+    >
+      <KeeperFrame
+        titleId="keeper-note-float-title"
+        source="header_keeper"
+        autofocus
+        float
+      />
+    </div>
+  {/if}
 
   <!-- Mobile nav dropdown -->
   <nav id="site-mobile-nav" class="mobile-nav" class:is-open={mobileNavOpen} aria-label="Primary">
@@ -1160,6 +1278,40 @@
   }
   .panel-view-all:hover { color: #c65f3c; }
 
+  /* ── Keeper loupe ──────────────────────────────────────────
+     Appears only after the in-flow cabinet blotter has left the screen.
+     Opens the same framed note, centered under the header. */
+  .keeper-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    background: none;
+    border: 1px solid color-mix(in srgb, var(--ink) 22%, transparent);
+    border-radius: 2px;
+    color: var(--ink);
+    cursor: pointer;
+    transition: color 0.25s ease, border-color 0.25s ease;
+  }
+  .keeper-btn:hover,
+  .keeper-btn.is-open {
+    color: var(--copper);
+    border-color: var(--copper);
+  }
+
+  .keeper-float {
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(var(--reel-card-width, 64rem), calc(100vw - 32px));
+    z-index: 300;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
   /* ── Contact ("write to the author") button ─────────────────
      Deliberately NOT muted like the bookings/user icons — this is the
      answer to "how do I reach the maker," so it carries a permanent
@@ -1411,6 +1563,33 @@
       align-items: center;
       gap: 6px;
       margin-left: auto;
+    }
+
+    .mobile-keeper-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 36px;
+      height: 36px;
+      background: none;
+      border: 1px solid color-mix(in srgb, var(--ink, #34251c) 22%, transparent);
+      border-radius: 2px;
+      padding: 0;
+      cursor: pointer;
+      color: var(--ink, #34251c);
+      transition: color 0.25s ease, border-color 0.25s ease;
+    }
+    .mobile-keeper-btn:hover,
+    .mobile-keeper-btn.is-open {
+      color: var(--copper, #c65f3c);
+      border-color: var(--copper, #c65f3c);
+    }
+
+    .keeper-float {
+      left: 16px;
+      right: 16px;
+      width: auto;
+      transform: none;
     }
 
     /* Mobile "write" button — copper-outlined like the desktop CTA, sized to sit

@@ -18,7 +18,7 @@
   import { isGated, isShowingOpen, resolveWindow, openingHeadline } from '$lib/showing-window';
   import type { FigurineListItem, SemanticHit } from '$lib/types/api';
   import { page } from '$app/state';
-  import { assembleResults, isInHouseQuery, KEEPER_ARCHIVE_MAX, localMatch } from '$lib/keeper-search';
+  import { assembleResults, ARCHIVE_KEEPER_INPUT_ID, isInHouseQuery, KEEPER_ARCHIVE_MAX, localMatch } from '$lib/keeper-search';
 
   // "The house wakes": a gated work is sealed behind a carved door while the
   // visitor's local clock is outside its window. The effective window is the
@@ -447,6 +447,7 @@
             <input
               bind:value={searchQuery}
               type="search"
+              id={ARCHIVE_KEEPER_INPUT_ID}
               placeholder={$t('archiveKeeperPlaceholder')}
               class="filter-bar__search-input"
               aria-label={$t('archiveKeeperPlaceholder')}

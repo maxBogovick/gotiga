@@ -98,6 +98,7 @@ export const ru: Record<TranslationKey, string> = {
   headerContactLabel: 'Написать автору',
   headerContactShortLabel: 'Написать',
   headerContactNote: 'Короткая записка напрямую мне — без регистрации.',
+  headerKeeperLabel: 'Спросить хранителя',
 
   // === ARCHIVE LIST ===
   archiveMetaDescription: 'Реестръ готическихъ миниатюръ ручной работы — полный архивъ существъ по статусу, году и серіи.',

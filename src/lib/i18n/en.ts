@@ -98,6 +98,7 @@ export const en = {
   headerContactLabel: 'Write to the author',
   headerContactShortLabel: 'Write',
   headerContactNote: 'A short note, straight to me — no account needed.',
+  headerKeeperLabel: 'Ask the keeper',
 
   // === ARCHIVE LIST (/figurines) ===
   archiveMetaDescription: 'A registry of gothic handmade miniatures — browse the full archive of creatures by status, year, and series.',

@@ -68,7 +68,7 @@
 
   .mi-inner {
     position: sticky;
-    top: 96px;
+    top: calc(var(--site-header-h, 54px) + 42px);
     display: flex;
     flex-direction: column;
     gap: 0.55rem;
