@@ -1,6 +1,10 @@
 import type { GazetteCutting, GazetteKind, GazetteLeaf } from '$lib/types/api';
 import type { Lang, TranslationKey } from '$lib/i18n';
 
+export const TITLE_MAX = 200;
+export const DEK_MAX = 500;
+export const BODY_MAX = 12_000;
+
 export const GAZETTE_KIND_KEY: Record<GazetteKind, TranslationKey> = {
   arrival: 'gazetteKind_arrival',
   collage: 'gazetteKind_collage',
@@ -50,7 +54,9 @@ export function decodeEntities(s: string): string {
 /** Pick the language the visitor is reading, falling back to English. */
 export function leafCopy(leaf: GazetteLeaf, lang: Lang): { title: string; dek: string; body: string } {
   const ru = lang === 'ru';
-  const title = (ru && leaf.titleRu.trim() ? leaf.titleRu : leaf.titleEn).trim();
+  const titleEn = (leaf.titleEn ?? '').trim();
+  const titleRu = (leaf.titleRu ?? '').trim();
+  const title = (ru && titleRu ? titleRu : titleEn) || titleRu;
   const dek = (ru && leaf.dekRu?.trim() ? leaf.dekRu : leaf.dekEn)?.trim() ?? '';
   const body = (ru && leaf.bodyRu?.trim() ? leaf.bodyRu : leaf.bodyEn)?.trim() ?? '';
   return {
@@ -63,6 +69,9 @@ export function leafCopy(leaf: GazetteLeaf, lang: Lang): { title: string; dek: s
 export interface GazetteSlip {
   id: string;
   title: string;
+  markKey?: string;
+  markUrl?: string | null;
+  letter?: string;
 }
 
 /**
@@ -86,7 +95,13 @@ export function plateSlips(
   for (const cut of cuttings) {
     const title = decodeEntities(cut.title.trim());
     if (!title) continue;
-    out.push({ id: `cut-${cut.id}`, title });
+    out.push({
+      id: `cut-${cut.id}`,
+      title,
+      markKey: cut.markKey,
+      markUrl: cut.markUrl,
+      letter: cut.sourceName,
+    });
     if (out.length >= max) break;
   }
   return out;
@@ -99,51 +114,40 @@ export interface GazetteTemplateFill {
   dekRu: string;
 }
 
-/** House-voice starters. The keeper edits after the template is laid down. */
+/** Starter copy for a new gazette note. The admin edits before publishing. */
 export function fillTemplate(kind: GazetteKind, name: string): GazetteTemplateFill {
-  const n = name.trim() || 'a work';
+  const n = name.trim();
   switch (kind) {
     case 'arrival':
       return {
-        titleEn: `Laid out today: ${n}`,
-        titleRu: `Сегодня на стол легла «${n}»`,
-        dekEn: 'A new work has been set on the table. Come look while the dust still settles.',
-        dekRu: 'Новая работа уже в доме. Кто зайдёт — увидит её первой.',
-      };
-    case 'collage':
-      return {
-        titleEn: `A collage has been laid beside the works: ${n}`,
-        titleRu: `Рядом с работами появился коллаж: «${n}»`,
-        dekEn: 'A small arrangement, to be looked at here.',
-        dekRu: 'Небольшая композиция — можно посмотреть здесь.',
+        titleEn: n || 'New work',
+        titleRu: n || 'Новая работа',
+        dekEn: n ? `${n} has been added to the catalogue.` : 'A new work has been added to the catalogue.',
+        dekRu: n ? `«${n}» появилась в каталоге.` : 'Новая работа появилась в каталоге.',
       };
     case 'showing':
       return {
-        titleEn: `The house will open ${n} to the first glance`,
-        titleRu: `Дом откроет «${n}» для первого взгляда`,
-        dekEn: 'Those who are here will see it first.',
-        dekRu: 'Кто будет в доме — увидит первым.',
+        titleEn: n ? `Showing: ${n}` : 'Upcoming showing',
+        titleRu: n ? `Показ: ${n}` : 'Анонс показа',
+        dekEn: 'Dates and details of the showing.',
+        dekRu: 'Даты и детали показа.',
       };
+    case 'collage':
     case 'guest_story':
-      return {
-        titleEn: `A guest will speak of ${n}`,
-        titleRu: `Гость расскажет о работе «${n}»`,
-        dekEn: 'A visitor’s account of this piece is being set down.',
-        dekRu: 'Готовится рассказ гостя об этой работе автора.',
-      };
     case 'tale':
+    case 'note':
       return {
-        titleEn: n === 'a work' ? 'A short tale about such figures has been set down' : `A short tale beside ${n}`,
-        titleRu: n === 'a work' ? 'Появился маленький рассказ про такие фигурки' : `Маленький рассказ рядом с «${n}»`,
-        dekEn: 'Come read it in the quiet of the house.',
-        dekRu: 'Заходите, оцените — он лежит среди листков.',
+        titleEn: n ? n : '',
+        titleRu: n ? n : '',
+        dekEn: '',
+        dekRu: '',
       };
     case 'world':
       return {
         titleEn: n,
         titleRu: n,
-        dekEn: 'A cutting the keeper pinned from the world.',
-        dekRu: 'Вырезка, которую хранитель приколол со стола мира.',
+        dekEn: '',
+        dekRu: '',
       };
     default:
       return { titleEn: '', titleRu: '', dekEn: '', dekRu: '' };
@@ -162,6 +166,23 @@ export function workHref(leaf: GazetteLeaf, source?: string): string | null {
   return source ? `${base}?src=${encodeURIComponent(source)}` : base;
 }
 
+export function isGazetteYearSlug(slug: string): boolean {
+  return /^\d{4}$/.test(slug);
+}
+
+/** API doors that live under /gazette/* and must never be treated as a leaf. */
+export function isGazetteReservedSlug(slug: string): boolean {
+  return slug === 'home' || slug === 'room' || slug === 'blotter' || slug === 'for-work';
+}
+
+export function leafWhen(leaf: GazetteLeaf): string {
+  return leaf.publishedAt ?? leaf.scheduledAt ?? leaf.createdAt;
+}
+
+export function cuttingWhen(cut: GazetteCutting): string {
+  return cut.publishedAt ?? cut.createdAt;
+}
+
 export function quietDate(iso: string | null | undefined, lang: Lang): string {
   if (!iso) return '';
   const d = new Date(iso);
@@ -169,5 +190,127 @@ export function quietDate(iso: string | null | undefined, lang: Lang): string {
   return d.toLocaleDateString(lang === 'ru' ? 'ru-RU' : 'en-GB', {
     day: 'numeric',
     month: 'long',
+    year: 'numeric',
+  });
+}
+
+export function monthLabel(iso: string, lang: Lang): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString(lang === 'ru' ? 'ru-RU' : 'en-GB', {
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
+export function roomDateline(
+  leaves: GazetteLeaf[],
+  cuttings: GazetteCutting[],
+  year: number,
+  lang: Lang,
+): string {
+  let newest = 0;
+  let iso = '';
+  for (const leaf of leaves) {
+    const t = new Date(leafWhen(leaf)).getTime();
+    if (Number.isFinite(t) && t > newest) {
+      newest = t;
+      iso = leafWhen(leaf);
+    }
+  }
+  for (const cut of cuttings) {
+    const stamp = cuttingWhen(cut);
+    const t = new Date(stamp).getTime();
+    if (Number.isFinite(t) && t > newest) {
+      newest = t;
+      iso = stamp;
+    }
+  }
+  if (!iso) return String(year);
+  return monthLabel(iso, lang);
+}
+
+export function neighborTitle(n: { titleEn: string; titleRu: string }, lang: Lang): string {
+  const raw = (lang === 'ru' && n.titleRu.trim() ? n.titleRu : n.titleEn).trim();
+  return decodeEntities(raw);
+}
+
+export function yearHref(year: number, latestYear: number | undefined): string {
+  if (latestYear != null && year === latestYear) return '/gazette';
+  return `/gazette/${year}`;
+}
+
+const KIND_ORDER: GazetteKind[] = [
+  'arrival',
+  'collage',
+  'showing',
+  'guest_story',
+  'tale',
+  'note',
+  'world',
+];
+
+export interface GazetteMonthBand<T> {
+  iso: string;
+  items: T[];
+}
+
+function monthKey(iso: string): string | null {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function groupByMonth<T>(items: T[], when: (item: T) => string): GazetteMonthBand<T>[] {
+  const bands: GazetteMonthBand<T>[] = [];
+  const index = new Map<string, number>();
+  for (const item of items) {
+    const iso = when(item);
+    const key = monthKey(iso);
+    if (!key) continue;
+    const at = index.get(key);
+    if (at == null) {
+      index.set(key, bands.length);
+      bands.push({ iso, items: [item] });
+    } else {
+      bands[at].items.push(item);
+    }
+  }
+  return bands;
+}
+
+export function groupCuttingsByMonth(cuttings: GazetteCutting[]): GazetteMonthBand<GazetteCutting>[] {
+  return groupByMonth(cuttings, cuttingWhen);
+}
+
+export interface GazetteKindBand {
+  kind: GazetteKind;
+  items: GazetteLeaf[];
+}
+
+export interface GazetteHouseMonth {
+  iso: string;
+  kinds: GazetteKindBand[];
+}
+
+/** Month bands; kind subheads only when a month holds more than one kind. */
+export function groupLeavesByMonthAndKind(leaves: GazetteLeaf[]): GazetteHouseMonth[] {
+  return groupByMonth(leaves, leafWhen).map((band) => {
+    const buckets = new Map<GazetteKind, GazetteLeaf[]>();
+    for (const leaf of band.items) {
+      const list = buckets.get(leaf.kind) ?? [];
+      list.push(leaf);
+      buckets.set(leaf.kind, list);
+    }
+    const first = band.items[0];
+    if (!first) return { iso: band.iso, kinds: [] };
+    const kinds: GazetteKindBand[] =
+      buckets.size <= 1
+        ? [{ kind: first.kind, items: band.items }]
+        : KIND_ORDER.filter((k) => buckets.has(k)).map((kind) => ({
+            kind,
+            items: buckets.get(kind) ?? [],
+          }));
+    return { iso: band.iso, kinds };
   });
 }

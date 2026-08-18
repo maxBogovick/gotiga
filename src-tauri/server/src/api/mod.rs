@@ -169,6 +169,11 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             )
             // === CABINET GAZETTE ===
             .route("/gazette/home", get(handlers::get_gazette_home))
+            .route("/gazette/blotter", get(handlers::get_gazette_room))
+            .route(
+                "/gazette/for-work/:id",
+                get(handlers::list_gazette_for_work),
+            )
             .route("/gazette", get(handlers::list_gazette))
             .route("/gazette/:slug", get(handlers::get_gazette_leaf))
             // === PUBLIC LOGIN ===
@@ -1002,6 +1007,7 @@ fn is_public_cacheable(path: &str) -> bool {
         "/impressions/featured",
         "/gazette",
         "/gazette/home",
+        "/gazette/blotter",
     ];
 
     if EXACT.contains(&path) {
@@ -1017,7 +1023,10 @@ fn is_public_cacheable(path: &str) -> bool {
         return !rest.is_empty() && !rest.contains('/');
     }
     if let Some(rest) = path.strip_prefix("/gazette/") {
-        return !rest.is_empty() && !rest.contains('/') && rest != "home";
+        if let Some(id) = rest.strip_prefix("for-work/") {
+            return !id.is_empty() && !id.contains('/');
+        }
+        return !rest.is_empty() && !rest.contains('/') && rest != "home" && rest != "blotter";
     }
     false
 }
@@ -1075,6 +1084,9 @@ mod cache_tests {
             "/impressions/featured",
             "/gazette",
             "/gazette/home",
+            "/gazette/blotter",
+            "/gazette/for-work/2dc46e41-2645-59af-88b5-1fe9c31a463f",
+            "/gazette/a-leaf",
             "/settings/theme",
             "/settings/home-layout",
             "/content/texts/author",

@@ -5483,13 +5483,15 @@ impl Repository {
         title: &str,
         url: &str,
         enabled: bool,
+        mark_key: &str,
     ) -> Result<crate::models::GazetteFeed> {
         Ok(sqlx::query_as::<_, crate::models::GazetteFeed>(
-            "INSERT INTO gazette_feeds (title, url, enabled) VALUES ($1, $2, $3) RETURNING *",
+            "INSERT INTO gazette_feeds (title, url, enabled, mark_key) VALUES ($1, $2, $3, $4) RETURNING *",
         )
         .bind(title)
         .bind(url)
         .bind(enabled)
+        .bind(mark_key)
         .fetch_one(&self.pg_pool)
         .await?)
     }
@@ -5500,14 +5502,18 @@ impl Repository {
         title: &str,
         url: &str,
         enabled: bool,
+        mark_key: &str,
+        mark_url: Option<&str>,
     ) -> Result<crate::models::GazetteFeed> {
         sqlx::query_as::<_, crate::models::GazetteFeed>(
-            "UPDATE gazette_feeds SET title = $2, url = $3, enabled = $4 WHERE id = $1 RETURNING *",
+            "UPDATE gazette_feeds SET title = $2, url = $3, enabled = $4, mark_key = $5, mark_url = $6 WHERE id = $1 RETURNING *",
         )
         .bind(id)
         .bind(title)
         .bind(url)
         .bind(enabled)
+        .bind(mark_key)
+        .bind(mark_url)
         .fetch_optional(&self.pg_pool)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Gazette feed {id} not found")))
@@ -5583,11 +5589,13 @@ impl Repository {
         Ok(sqlx::query_as::<_, crate::models::GazetteCuttingListed>(
             r#"SELECT c.id, c.feed_id, c.guid, c.title, c.url, c.summary,
                       c.published_at, c.dismissed, c.pinned, c.created_at,
-                      f.title AS source_name
+                      f.title AS source_name,
+                      COALESCE(f.mark_key, 'letter') AS mark_key,
+                      f.mark_url
                FROM gazette_cuttings c
                JOIN gazette_feeds f ON f.id = c.feed_id
-               WHERE NOT c.dismissed AND f.enabled
-               ORDER BY c.pinned DESC, c.published_at DESC NULLS LAST, c.created_at DESC
+               WHERE NOT c.dismissed AND c.pinned AND f.enabled
+               ORDER BY c.published_at DESC NULLS LAST, c.created_at DESC
                LIMIT $1"#,
         )
         .bind(limit)
@@ -5595,34 +5603,196 @@ impl Repository {
         .await?)
     }
 
+    pub async fn list_gazette_leaves_year(
+        &self,
+        year: i32,
+        limit: i64,
+    ) -> Result<Vec<crate::models::GazetteLeafListed>> {
+        Ok(sqlx::query_as::<_, crate::models::GazetteLeafListed>(&format!(
+            "{} WHERE (l.status = 'published'
+                  OR (l.status = 'scheduled' AND l.scheduled_at IS NOT NULL AND l.scheduled_at <= NOW()))
+             AND EXTRACT(YEAR FROM COALESCE(l.published_at, l.scheduled_at, l.created_at))::int = $1
+             ORDER BY l.pinned DESC,
+                      COALESCE(l.published_at, l.scheduled_at, l.created_at) DESC
+             LIMIT $2",
+            Self::GAZETTE_LEAF_SELECT
+        ))
+        .bind(year)
+        .bind(limit)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn list_gazette_cuttings_year(
+        &self,
+        year: i32,
+        limit: i64,
+    ) -> Result<Vec<crate::models::GazetteCuttingListed>> {
+        Ok(sqlx::query_as::<_, crate::models::GazetteCuttingListed>(
+            r#"SELECT c.id, c.feed_id, c.guid, c.title, c.url, c.summary,
+                      c.published_at, c.dismissed, c.pinned, c.created_at,
+                      f.title AS source_name,
+                      COALESCE(f.mark_key, 'letter') AS mark_key,
+                      f.mark_url
+               FROM gazette_cuttings c
+               JOIN gazette_feeds f ON f.id = c.feed_id
+               WHERE NOT c.dismissed AND c.pinned AND f.enabled
+                 AND EXTRACT(YEAR FROM COALESCE(c.published_at, c.created_at))::int = $1
+               ORDER BY c.published_at DESC NULLS LAST, c.created_at DESC
+               LIMIT $2"#,
+        )
+        .bind(year)
+        .bind(limit)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn list_gazette_years(&self) -> Result<Vec<i32>> {
+        Ok(sqlx::query_scalar::<_, i32>(
+            r#"SELECT y FROM (
+                 SELECT EXTRACT(YEAR FROM COALESCE(l.published_at, l.scheduled_at, l.created_at))::int AS y
+                   FROM gazette_leaves l
+                  WHERE (l.status = 'published'
+                     OR (l.status = 'scheduled' AND l.scheduled_at IS NOT NULL AND l.scheduled_at <= NOW()))
+                 UNION
+                 SELECT EXTRACT(YEAR FROM COALESCE(c.published_at, c.created_at))::int AS y
+                   FROM gazette_cuttings c
+                   JOIN gazette_feeds f ON f.id = c.feed_id
+                  WHERE NOT c.dismissed AND c.pinned AND f.enabled
+               ) years
+               WHERE y IS NOT NULL
+               ORDER BY y DESC"#,
+        )
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn list_gazette_leaves_for_figurine(
+        &self,
+        figurine_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<crate::models::GazetteLeafListed>> {
+        Ok(sqlx::query_as::<_, crate::models::GazetteLeafListed>(&format!(
+            "{} WHERE (l.status = 'published'
+                  OR (l.status = 'scheduled' AND l.scheduled_at IS NOT NULL AND l.scheduled_at <= NOW()))
+             AND l.figurine_id = $1
+             ORDER BY COALESCE(l.published_at, l.scheduled_at, l.created_at) DESC
+             LIMIT $2",
+            Self::GAZETTE_LEAF_SELECT
+        ))
+        .bind(figurine_id)
+        .bind(limit)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn gazette_leaf_neighbors(
+        &self,
+        slug: &str,
+    ) -> Result<(
+        Option<crate::models::GazetteNeighborDto>,
+        Option<crate::models::GazetteNeighborDto>,
+    )> {
+        #[derive(sqlx::FromRow)]
+        struct NeighborRow {
+            newer_slug: Option<String>,
+            newer_title_en: Option<String>,
+            newer_title_ru: Option<String>,
+            older_slug: Option<String>,
+            older_title_en: Option<String>,
+            older_title_ru: Option<String>,
+        }
+
+        let row = sqlx::query_as::<_, NeighborRow>(
+            r#"WITH live AS (
+                 SELECT l.slug, l.title_en, l.title_ru, l.id,
+                        COALESCE(l.published_at, l.scheduled_at, l.created_at) AS at
+                   FROM gazette_leaves l
+                  WHERE (l.status = 'published'
+                     OR (l.status = 'scheduled' AND l.scheduled_at IS NOT NULL AND l.scheduled_at <= NOW()))
+               ),
+               ord AS (
+                 SELECT slug,
+                        LAG(slug) OVER (ORDER BY at DESC, id DESC) AS newer_slug,
+                        LAG(title_en) OVER (ORDER BY at DESC, id DESC) AS newer_title_en,
+                        LAG(title_ru) OVER (ORDER BY at DESC, id DESC) AS newer_title_ru,
+                        LEAD(slug) OVER (ORDER BY at DESC, id DESC) AS older_slug,
+                        LEAD(title_en) OVER (ORDER BY at DESC, id DESC) AS older_title_en,
+                        LEAD(title_ru) OVER (ORDER BY at DESC, id DESC) AS older_title_ru
+                   FROM live
+               )
+               SELECT newer_slug, newer_title_en, newer_title_ru,
+                      older_slug, older_title_en, older_title_ru
+                 FROM ord
+                WHERE slug = $1"#,
+        )
+        .bind(slug)
+        .fetch_optional(&self.pg_pool)
+        .await?;
+
+        let Some(row) = row else {
+            return Ok((None, None));
+        };
+        let prev = match (row.newer_slug, row.newer_title_en, row.newer_title_ru) {
+            (Some(slug), Some(title_en), Some(title_ru)) => {
+                Some(crate::models::GazetteNeighborDto {
+                    slug,
+                    title_en,
+                    title_ru,
+                })
+            }
+            _ => None,
+        };
+        let next = match (row.older_slug, row.older_title_en, row.older_title_ru) {
+            (Some(slug), Some(title_en), Some(title_ru)) => {
+                Some(crate::models::GazetteNeighborDto {
+                    slug,
+                    title_en,
+                    title_ru,
+                })
+            }
+            _ => None,
+        };
+        Ok((prev, next))
+    }
+
     pub async fn list_gazette_cuttings_admin(
         &self,
-        include_dismissed: bool,
+        bucket: &str,
+        feed_id: Option<Uuid>,
         limit: i64,
         offset: i64,
     ) -> Result<(Vec<crate::models::GazetteCuttingListed>, i64)> {
-        let where_sql = if include_dismissed {
-            ""
-        } else {
-            "WHERE NOT c.dismissed"
+        let bucket_sql = match bucket {
+            "table" => "NOT c.dismissed AND c.pinned",
+            "aside" => "c.dismissed",
+            "all" => "TRUE",
+            _ => "NOT c.dismissed AND NOT c.pinned",
         };
         let items = sqlx::query_as::<_, crate::models::GazetteCuttingListed>(&format!(
             r#"SELECT c.id, c.feed_id, c.guid, c.title, c.url, c.summary,
                       c.published_at, c.dismissed, c.pinned, c.created_at,
-                      f.title AS source_name
+                      f.title AS source_name,
+                      COALESCE(f.mark_key, 'letter') AS mark_key,
+                      f.mark_url
                FROM gazette_cuttings c
                JOIN gazette_feeds f ON f.id = c.feed_id
-               {where_sql}
-               ORDER BY c.pinned DESC, c.published_at DESC NULLS LAST, c.created_at DESC
-               LIMIT $1 OFFSET $2"#
+               WHERE {bucket_sql}
+                 AND ($1::uuid IS NULL OR c.feed_id = $1)
+               ORDER BY c.published_at DESC NULLS LAST, c.created_at DESC
+               LIMIT $2 OFFSET $3"#
         ))
+        .bind(feed_id)
         .bind(limit)
         .bind(offset)
         .fetch_all(&self.pg_pool)
         .await?;
         let (total,): (i64,) = sqlx::query_as(&format!(
-            "SELECT COUNT(*) FROM gazette_cuttings c {where_sql}"
+            r#"SELECT COUNT(*) FROM gazette_cuttings c
+               WHERE {bucket_sql}
+                 AND ($1::uuid IS NULL OR c.feed_id = $1)"#
         ))
+        .bind(feed_id)
         .fetch_one(&self.pg_pool)
         .await?;
         Ok((items, total))
@@ -5635,7 +5805,9 @@ impl Repository {
         Ok(sqlx::query_as::<_, crate::models::GazetteCuttingListed>(
             r#"SELECT c.id, c.feed_id, c.guid, c.title, c.url, c.summary,
                       c.published_at, c.dismissed, c.pinned, c.created_at,
-                      f.title AS source_name
+                      f.title AS source_name,
+                      COALESCE(f.mark_key, 'letter') AS mark_key,
+                      f.mark_url
                FROM gazette_cuttings c
                JOIN gazette_feeds f ON f.id = c.feed_id
                WHERE c.id = $1"#,
@@ -5646,9 +5818,14 @@ impl Repository {
     }
 
     pub async fn set_gazette_cutting_dismissed(&self, id: Uuid, dismissed: bool) -> Result<()> {
-        let affected = sqlx::query("UPDATE gazette_cuttings SET dismissed = $2 WHERE id = $1")
+        // Set aside also takes the cutting off the public blotter.
+        let sql = if dismissed {
+            "UPDATE gazette_cuttings SET dismissed = TRUE, pinned = FALSE WHERE id = $1"
+        } else {
+            "UPDATE gazette_cuttings SET dismissed = FALSE WHERE id = $1"
+        };
+        let affected = sqlx::query(sql)
             .bind(id)
-            .bind(dismissed)
             .execute(&self.pg_pool)
             .await?
             .rows_affected();
@@ -5659,9 +5836,14 @@ impl Repository {
     }
 
     pub async fn set_gazette_cutting_pinned(&self, id: Uuid, pinned: bool) -> Result<()> {
-        let affected = sqlx::query("UPDATE gazette_cuttings SET pinned = $2 WHERE id = $1")
+        // Pinning puts it on the blotter, so it cannot stay set-aside.
+        let sql = if pinned {
+            "UPDATE gazette_cuttings SET pinned = TRUE, dismissed = FALSE WHERE id = $1"
+        } else {
+            "UPDATE gazette_cuttings SET pinned = FALSE WHERE id = $1"
+        };
+        let affected = sqlx::query(sql)
             .bind(id)
-            .bind(pinned)
             .execute(&self.pg_pool)
             .await?
             .rows_affected();

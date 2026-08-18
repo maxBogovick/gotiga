@@ -262,7 +262,7 @@
   <NotFound backHref="/figurines" backLabel={$t('figurineBackToArchive')} />
 {:else}
   {#key id}
-    <FigurineDetailView {figurine} {id} prev={data.prev ?? null} next={data.next ?? null} />
+    <FigurineDetailView {figurine} {id} prev={data.prev ?? null} next={data.next ?? null} gazetteLeaves={data.gazetteLeaves ?? []} />
   {/key}
 {/if}
 

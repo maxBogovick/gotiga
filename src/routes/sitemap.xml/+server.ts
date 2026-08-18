@@ -70,14 +70,20 @@ export async function GET({ fetch }: { fetch: typeof globalThis.fetch }) {
     }
 
     let gazetteLeaves: { slug: string; lastmod?: string }[] = [];
+    let gazetteYears: number[] = [];
     try {
-        const gaz = await api.getGazettePage(1, 200, fetch);
+        const [gaz, room] = await Promise.all([
+            api.getGazettePage(1, 200, fetch),
+            api.getGazetteRoom(undefined, fetch),
+        ]);
         gazetteLeaves = gaz.items.map((leaf) => ({
             slug: leaf.slug,
             lastmod: isoDay(leaf.publishedAt ?? leaf.createdAt),
         }));
+        gazetteYears = room.years;
     } catch {
         gazetteLeaves = [];
+        gazetteYears = [];
     }
 
     const entries: { loc: string; lastmod?: string; image?: string | null; imageTitle?: string; imageCaption?: string }[] = [
@@ -92,6 +98,9 @@ export async function GET({ fetch }: { fetch: typeof globalThis.fetch }) {
         ...gazetteLeaves.map((leaf) => ({
             loc: `${SITE_URL}/gazette/${leaf.slug}`,
             lastmod: leaf.lastmod,
+        })),
+        ...gazetteYears.map((year) => ({
+            loc: `${SITE_URL}/gazette/${year}`,
         })),
     ];
 

@@ -1680,6 +1680,14 @@ export interface GazetteLeaf {
     scheduledAt: string | null;
     createdAt: string;
     updatedAt: string;
+    prev?: GazetteNeighbor | null;
+    next?: GazetteNeighbor | null;
+}
+
+export interface GazetteNeighbor {
+    slug: string;
+    titleEn: string;
+    titleRu: string;
 }
 
 export interface SaveGazetteLeafRequest {
@@ -1719,6 +1727,8 @@ export interface GazetteCutting {
     dismissed: boolean;
     pinned: boolean;
     createdAt: string;
+    markKey?: string;
+    markUrl?: string | null;
 }
 
 export interface GazetteCuttingsPage {
@@ -1736,15 +1746,26 @@ export interface GazetteFeed {
     lastFetchedAt: string | null;
     lastError: string | null;
     createdAt: string;
+    markKey?: string;
+    markUrl?: string | null;
 }
 
 export interface SaveGazetteFeedRequest {
     title: string;
     url: string;
     enabled?: boolean;
+    markKey?: string | null;
+    markUrl?: string | null;
 }
 
 export interface GazetteHome {
+    leaves: GazetteLeaf[];
+    cuttings: GazetteCutting[];
+}
+
+export interface GazetteRoom {
+    year: number;
+    years: number[];
     leaves: GazetteLeaf[];
     cuttings: GazetteCutting[];
 }

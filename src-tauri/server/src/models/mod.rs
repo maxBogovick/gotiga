@@ -3015,6 +3015,18 @@ pub struct GazetteLeafDto {
     pub scheduled_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prev: Option<GazetteNeighborDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<GazetteNeighborDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GazetteNeighborDto {
+    pub slug: String,
+    pub title_en: String,
+    pub title_ru: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3058,6 +3070,8 @@ pub struct GazetteFeed {
     pub last_fetched_at: Option<DateTime<Utc>>,
     pub last_error: Option<String>,
     pub created_at: DateTime<Utc>,
+    pub mark_key: String,
+    pub mark_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -3070,6 +3084,8 @@ pub struct GazetteFeedDto {
     pub last_fetched_at: Option<String>,
     pub last_error: Option<String>,
     pub created_at: String,
+    pub mark_key: String,
+    pub mark_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3079,6 +3095,8 @@ pub struct SaveGazetteFeedRequest {
     pub url: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    pub mark_key: Option<String>,
+    pub mark_url: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -3112,6 +3130,8 @@ pub struct GazetteCuttingListed {
     pub pinned: bool,
     pub created_at: DateTime<Utc>,
     pub source_name: String,
+    pub mark_key: String,
+    pub mark_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -3127,11 +3147,22 @@ pub struct GazetteCuttingDto {
     pub dismissed: bool,
     pub pinned: bool,
     pub created_at: String,
+    pub mark_key: String,
+    pub mark_url: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GazetteHomeDto {
+    pub leaves: Vec<GazetteLeafDto>,
+    pub cuttings: Vec<GazetteCuttingDto>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GazetteRoomDto {
+    pub year: i32,
+    pub years: Vec<i32>,
     pub leaves: Vec<GazetteLeafDto>,
     pub cuttings: Vec<GazetteCuttingDto>,
 }

@@ -7,6 +7,7 @@
   import { t, lang } from '$lib/i18n';
   import type { GazetteCutting, GazetteLeaf } from '$lib/types/api';
   import { plateSlips } from '$lib/gazette';
+  import GazetteMark from '$lib/components/GazetteMark.svelte';
 
   const INTERVAL_MS = 5200;
   const FADE_MS = 620;
@@ -88,7 +89,16 @@
             class:out={i === leaving}
             aria-hidden={i !== shown}
           >
-            {slip.title}
+            {#if slip.markKey || slip.markUrl}
+              <span class="gz-plate-mark">
+                <GazetteMark
+                  markKey={slip.markKey}
+                  markUrl={slip.markUrl}
+                  letter={slip.letter}
+                  size={22}
+                />
+              </span>
+            {/if}{slip.title}
           </span>
         {/each}
       </span>
@@ -157,7 +167,7 @@
     flex-direction: column;
     flex: 1;
     min-height: 0;
-    padding: 13px 13px 22px 15px;
+    padding: 8px 8px 18px 10px;
     text-decoration: none;
     color: inherit;
   }
@@ -171,14 +181,14 @@
     justify-content: space-between;
     gap: 8px;
     flex-shrink: 0;
-    margin-bottom: 7px;
+    margin-bottom: 4px;
   }
 
   .gz-plate-kicker {
     font-family: 'Instrument Sans', system-ui, sans-serif;
     font-size: 8px;
     font-weight: 600;
-    letter-spacing: 0.18em;
+    letter-spacing: 0.12em;
     line-height: 1;
     text-transform: uppercase;
     color: var(--gz-ember);
@@ -197,7 +207,7 @@
   .gz-progress {
     display: block;
     height: 1px;
-    margin: 0 0 10px;
+    margin: 0 0 5px;
     background: rgba(198, 95, 60, 0.16);
     overflow: hidden;
     flex-shrink: 0;
@@ -232,14 +242,10 @@
     inset: 0;
     margin: 0;
     overflow: hidden;
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 3;
-    line-clamp: 3;
     font-family: Georgia, 'Times New Roman', serif;
-    font-size: 13px;
+    font-size: 12.5px;
     font-weight: 400;
-    line-height: 1.35;
+    line-height: 1.32;
     letter-spacing: 0.01em;
     color: var(--gz-ink);
     opacity: 0;
@@ -248,6 +254,12 @@
       opacity 0.55s ease,
       transform 0.55s cubic-bezier(0.22, 1, 0.36, 1);
     pointer-events: none;
+  }
+
+  .gz-plate-mark {
+    float: left;
+    margin: 1px 6px 3px 0;
+    line-height: 0;
   }
 
   .gz-plate-slip.on {
@@ -264,8 +276,8 @@
 
   .gz-next {
     position: absolute;
-    right: 8px;
-    bottom: 6px;
+    right: 5px;
+    bottom: 3px;
     z-index: 2;
     display: flex;
     align-items: center;

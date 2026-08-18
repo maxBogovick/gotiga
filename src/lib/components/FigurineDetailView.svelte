@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, tick, setContext } from 'svelte';
   import { fade } from 'svelte/transition';
-  import type { Figurine, FigurineSchedule, FigurineStatus, DisplayConfig, FigurineImage } from '$lib/types/api';
+  import type { Figurine, FigurineSchedule, FigurineStatus, DisplayConfig, FigurineImage, GazetteLeaf } from '$lib/types/api';
   import type { FigurineListItem } from '$lib/types/api';
   import { figurineHref } from '$lib/figurineHref';
   import { formatFigurineAlt, altLabelsFrom, siblingPosition } from '$lib/figurine-alt';
@@ -21,7 +21,8 @@
   import { browser } from '$app/environment';
   import { api, resolveMediaUrl, resolveWebpUrl } from '$lib/api';
   import { createFigurineAnalytics } from '$lib/analytics';
-  import { t } from '$lib/i18n';
+  import { t, lang } from '$lib/i18n';
+  import { leafCopy, leafHref } from '$lib/gazette';
   import { FigurineClaimsStore, type ClaimData } from '$lib/stores/figurine-claims.svelte';
   import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
   import { pageTurn } from '$lib/stores/page-turn.svelte';
@@ -39,11 +40,13 @@
     id,
     prev = null,
     next = null,
+    gazetteLeaves = [],
   }: {
     figurine: Figurine;
     id: string;
     prev?: FigurineListItem | null;
     next?: FigurineListItem | null;
+    gazetteLeaves?: GazetteLeaf[];
   } = $props();
 
   let win = $derived(resolveWindow(figurine, showingRooms.list));
@@ -1519,6 +1522,19 @@
       <BroadsideLayout />
     {/if}
 
+    {#if gazetteLeaves.length > 0}
+      <aside class="work-gazette">
+        <p class="work-gazette-label">{$t('gazetteHouseWrote')}</p>
+        <ul class="work-gazette-list">
+          {#each gazetteLeaves as leaf (leaf.id)}
+            <li>
+              <a href={leafHref(leaf, 'work')}>{leafCopy(leaf, $lang).title}</a>
+            </li>
+          {/each}
+        </ul>
+      </aside>
+    {/if}
+
     {/if}
   </div>
 </div>
@@ -1576,3 +1592,38 @@
     <a href={createSimilarHref} class="mobile-cta-link" onclick={() => analyticsClient?.cta('create_similar')}>{$t('commissionCreateSimilarShort')}</a>
   </div>
 {/if}
+
+<style>
+  .work-gazette {
+    margin: 36px 0 8px;
+    padding-top: 18px;
+    border-top: 1px solid rgba(216, 198, 177, 0.7);
+    max-width: 36em;
+  }
+  .work-gazette-label {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: #8a6a55;
+    margin: 0 0 8px;
+  }
+  .work-gazette-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 6px;
+  }
+  .work-gazette-list a {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: 18px;
+    color: #6f3b24;
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+  }
+  .work-gazette-list a:hover {
+    border-bottom-color: #c65f3c;
+    color: #34251c;
+  }
+</style>

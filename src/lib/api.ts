@@ -90,6 +90,7 @@ import type {
     GazetteLeaf,
     GazetteLeavesPage,
     GazetteHome,
+    GazetteRoom,
     GazetteCutting,
     GazetteCuttingsPage,
     GazetteFeed,
@@ -97,6 +98,7 @@ import type {
     SaveGazetteFeedRequest,
     GazetteRefreshReport,
 } from './types/api';
+import { isGazetteReservedSlug } from './gazette';
 
 export type { AppSettings };
 export type ImportedMedia = {
@@ -1914,13 +1916,42 @@ export const api = {
         }
     },
 
+    async getGazetteRoom(year?: number, loadFetch?: typeof fetch): Promise<GazetteRoom> {
+        try {
+            const q = year != null ? `?year=${year}` : '';
+            return await webFetch(`/gazette/blotter${q}`, undefined, loadFetch);
+        } catch {
+            return {
+                year: year ?? new Date().getFullYear(),
+                years: [],
+                leaves: [],
+                cuttings: [],
+            };
+        }
+    },
+
+    async getGazetteForWork(figurineId: string, loadFetch?: typeof fetch): Promise<GazetteLeaf[]> {
+        try {
+            return await webFetch(`/gazette/for-work/${encodeURIComponent(figurineId)}`, undefined, loadFetch);
+        } catch {
+            return [];
+        }
+    },
+
     async getGazettePage(page = 1, perPage = 12, loadFetch?: typeof fetch): Promise<GazetteLeavesPage> {
         const q = new URLSearchParams({ page: String(page), perPage: String(perPage) });
         return webFetch(`/gazette?${q}`, undefined, loadFetch);
     },
 
     async getGazetteLeaf(slug: string, loadFetch?: typeof fetch): Promise<GazetteLeaf> {
-        return webFetch(`/gazette/${encodeURIComponent(slug)}`, undefined, loadFetch);
+        if (isGazetteReservedSlug(slug)) {
+            throw new ApiError(404, 'not a leaf');
+        }
+        const leaf = await webFetch<GazetteLeaf>(`/gazette/${encodeURIComponent(slug)}`, undefined, loadFetch);
+        if (typeof leaf?.titleEn !== 'string') {
+            throw new ApiError(404, 'not a leaf');
+        }
+        return leaf;
     },
 
     async adminListGazetteLeaves(opts?: {
@@ -1978,11 +2009,15 @@ export const api = {
     },
 
     async adminListGazetteCuttings(opts?: {
+        bucket?: 'inbox' | 'table' | 'aside' | 'all';
+        feedId?: string;
         dismissed?: boolean;
         page?: number;
         perPage?: number;
     }): Promise<GazetteCuttingsPage> {
         const q = new URLSearchParams();
+        if (opts?.bucket) q.set('bucket', opts.bucket);
+        if (opts?.feedId) q.set('feedId', opts.feedId);
         if (opts?.dismissed) q.set('dismissed', 'true');
         if (opts?.page) q.set('page', String(opts.page));
         if (opts?.perPage) q.set('perPage', String(opts.perPage));

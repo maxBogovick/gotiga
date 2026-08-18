@@ -1977,6 +1977,15 @@ pub async fn sitemap_xml(
         }
     }
 
+    if let Ok(room) = service.get_gazette_room(None).await {
+        for year in room.years {
+            urls.push_str(&format!(
+                "  <url><loc>{base}/gazette/{}</loc></url>\n",
+                year
+            ));
+        }
+    }
+
     let body = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
          <urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\" xmlns:image=\"http://www.google.com/schemas/sitemap-image/1.1\">\n{urls}</urlset>\n"
@@ -3338,6 +3347,21 @@ pub async fn get_gazette_home(
     Ok(Json(service.get_gazette_home().await?))
 }
 
+pub async fn get_gazette_room(
+    State(service): State<AppService>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<GazetteRoomDto>> {
+    let year = params.get("year").and_then(|s| s.parse::<i32>().ok());
+    Ok(Json(service.get_gazette_room(year).await?))
+}
+
+pub async fn list_gazette_for_work(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<GazetteLeafDto>>> {
+    Ok(Json(service.list_gazette_for_work(id).await?))
+}
+
 pub async fn list_gazette(
     State(service): State<AppService>,
     Query(params): Query<std::collections::HashMap<String, String>>,
@@ -3458,7 +3482,17 @@ pub async fn admin_list_gazette_cuttings(
     State(service): State<AppService>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<GazetteCuttingsPage>> {
-    let include_dismissed = params.get("dismissed").map(|v| v == "true").unwrap_or(false);
+    let bucket = if params.get("dismissed").map(|v| v == "true").unwrap_or(false) {
+        "aside"
+    } else {
+        params
+            .get("bucket")
+            .map(|s| s.as_str())
+            .unwrap_or("inbox")
+    };
+    let feed_id = params
+        .get("feedId")
+        .and_then(|s| Uuid::parse_str(s).ok());
     let page = params
         .get("page")
         .and_then(|p| p.parse::<i64>().ok())
@@ -3469,7 +3503,7 @@ pub async fn admin_list_gazette_cuttings(
         .unwrap_or(20);
     Ok(Json(
         service
-            .admin_list_gazette_cuttings(include_dismissed, page, per_page)
+            .admin_list_gazette_cuttings(bucket, feed_id, page, per_page)
             .await?,
     ))
 }

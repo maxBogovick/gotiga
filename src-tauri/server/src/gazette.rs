@@ -1,8 +1,9 @@
 //! Cabinet gazette — pure helpers for house leaves and world-desk RSS.
 //!
-//! No database here. The service layer uses `leaf_is_live`, slug uniqueness,
-//! kind/status checks, and `parse_feed` so the blotter never auto-publishes
-//! a raw headline as if the house had written it.
+//! No database here. The service layer uses `leaf_is_live`, `cutting_is_live`,
+//! slug uniqueness, kind/status checks, and `parse_feed` so the blotter never
+//! auto-publishes a raw headline as if the house had written it. World cuttings
+//! sit in a private inbox until the keeper pins them.
 
 use chrono::{DateTime, Utc};
 use crate::slug::slugify;
@@ -24,6 +25,32 @@ pub const BODY_MAX: usize = 12_000;
 pub const EXCERPT_MAX: usize = 280;
 pub const HOME_LEAVES: i64 = 4;
 pub const HOME_CUTTINGS: i64 = 10;
+/// A year volume of the room — enough for a blotter, not a catalogue dump.
+pub const ROOM_LEAVES: i64 = 200;
+pub const ROOM_CUTTINGS: i64 = 80;
+pub const WORK_LEAVES: i64 = 8;
+
+pub const MARK_KEYS: &[&str] = &[
+    "pillar", "hive", "boom", "quill", "lens", "shard", "coil", "letter",
+];
+
+pub fn valid_mark_key(key: &str) -> bool {
+    MARK_KEYS.contains(&key)
+}
+
+/// A quiet house stamp for a new desk, guessed from the feed's name or url.
+pub fn guess_mark_key(title: &str, url: &str) -> String {
+    let hay = format!("{title} {url}").to_ascii_lowercase();
+    if hay.contains("colossal") {
+        "pillar".into()
+    } else if hay.contains("hyperallergic") {
+        "hive".into()
+    } else if hay.contains("designboom") {
+        "boom".into()
+    } else {
+        "letter".into()
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedFeedItem {
@@ -49,6 +76,12 @@ pub fn leaf_is_live(status: &str, scheduled_at: Option<DateTime<Utc>>, now: Date
         "scheduled" => scheduled_at.map(|t| t <= now).unwrap_or(false),
         _ => false,
     }
+}
+
+/// A world cutting is on the public blotter only when the keeper pinned it
+/// and has not set it aside. Unpinned cuttings stay in the private desk.
+pub fn cutting_is_live(pinned: bool, dismissed: bool) -> bool {
+    pinned && !dismissed
 }
 
 pub fn clamp_title(s: &str) -> String {
@@ -86,6 +119,11 @@ pub fn unique_slug(preferred: Option<&str>, title_en: &str, taken: &[String]) ->
     if base.is_empty() {
         base = "leaf".into();
     }
+    // Four-digit slugs are year volumes (`/gazette/2026`). `home`/`room`/`for-work`
+    // are public API doors. A leaf must not take those.
+    if is_year_slug(&base) || matches!(base.as_str(), "home" | "room" | "blotter" | "for-work") {
+        base = format!("leaf-{base}");
+    }
     if !taken.iter().any(|s| s == &base) {
         return base;
     }
@@ -96,6 +134,10 @@ pub fn unique_slug(preferred: Option<&str>, title_en: &str, taken: &[String]) ->
         }
     }
     format!("{base}-x")
+}
+
+pub fn is_year_slug(s: &str) -> bool {
+    s.len() == 4 && s.bytes().all(|b| b.is_ascii_digit())
 }
 
 /// RSS 2.0 `<item>` and Atom `<entry>`. Titles/summaries are plain text;
@@ -384,10 +426,22 @@ mod tests {
     }
 
     #[test]
+    fn cutting_live_only_when_pinned() {
+        assert!(cutting_is_live(true, false));
+        assert!(!cutting_is_live(false, false));
+        assert!(!cutting_is_live(true, true));
+        assert!(!cutting_is_live(false, true));
+    }
+
+    #[test]
     fn slug_avoids_taken() {
         let taken = vec!["laid-out-today".into(), "laid-out-today-2".into()];
         assert_eq!(unique_slug(None, "Laid out today", &taken), "laid-out-today-3");
         assert_eq!(unique_slug(Some("custom"), "X", &[]), "custom");
+        assert_eq!(unique_slug(Some("2026"), "X", &[]), "leaf-2026");
+        assert_eq!(unique_slug(Some("room"), "X", &[]), "leaf-room");
+        assert!(is_year_slug("2026"));
+        assert!(!is_year_slug("leaf-2026"));
     }
 
     #[test]
@@ -450,5 +504,13 @@ mod tests {
         </channel></rss>"#;
         let items = parse_feed(xml);
         assert_eq!(items[0].title, "What’s in the cabinet");
+    }
+
+    #[test]
+    fn guesses_house_stamps() {
+        assert_eq!(guess_mark_key("Colossal", "https://www.thisiscolossal.com/feed/"), "pillar");
+        assert_eq!(guess_mark_key("Hyperallergic", "https://hyperallergic.com/feed/"), "hive");
+        assert_eq!(guess_mark_key("Designboom", "https://www.designboom.com/feed/"), "boom");
+        assert_eq!(guess_mark_key("A quiet journal", "https://example.com/rss"), "letter");
     }
 }

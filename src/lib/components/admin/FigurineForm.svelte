@@ -13,6 +13,7 @@
    */
   import { untrack } from 'svelte';
   import { api } from '$lib/api';
+  import { fillTemplate } from '$lib/gazette';
   import { generatePinterestDescription } from '$lib/pinterest-description';
   import { formatFigurineAlt, altLabelsFrom, siblingPosition } from '$lib/figurine-alt';
   import type { Figurine, FigurineListItem, ShowingRoom } from '$lib/types/api';
@@ -98,6 +99,55 @@
     // False for a work that exists only in this form (new / duplicated): the
     // caption and Pinterest endpoints key off a saved row, so they wait for one.
     let figurineExists = $derived(figurines.some((f) => f.id === figurine.id));
+
+    let gzTitle = $state('');
+    let gzSummary = $state('');
+    let gzBusy = $state(false);
+    let gzForId = $state('');
+
+    $effect(() => {
+        const id = figurine.id;
+        const name = figurine.name;
+        if (id === gzForId) return;
+        gzForId = id;
+        const fill = fillTemplate('arrival', name);
+        gzTitle = fill.titleEn;
+        gzSummary = fill.dekEn;
+    });
+
+    function faceUrl(): string | null {
+        return figurine.images.find((img) => img.imageType === 'face')?.url
+            ?? figurine.images[0]?.url
+            ?? null;
+    }
+
+    async function publishGazetteNote() {
+        if (!figurineExists) return;
+        if (!gzTitle.trim()) {
+            onMessage($t('adminGazetteNeedTitle'), 'error');
+            return;
+        }
+        gzBusy = true;
+        try {
+            const handle = figurine.slug ?? figurine.id;
+            await api.adminSaveGazetteLeaf({
+                kind: 'arrival',
+                status: 'published',
+                titleEn: gzTitle.trim(),
+                titleRu: gzTitle.trim(),
+                dekEn: gzSummary.trim() || null,
+                dekRu: gzSummary.trim() || null,
+                figurineId: figurine.id,
+                href: `/figurines/${handle}`,
+                imageUrl: faceUrl(),
+            });
+            onMessage($t('adminGazetteSaved'), 'success');
+        } catch (e: unknown) {
+            onMessage($t('adminMsgError') + (e instanceof Error ? e.message : String(e)), 'error');
+        } finally {
+            gzBusy = false;
+        }
+    }
 
     async function saveCaption() {
         captionSaving = true;
@@ -992,6 +1042,27 @@
             <span class="label">{$t('adminFieldSecret')}</span>
             <textarea bind:value={figurine.secretText} class="input-gothic h-20"></textarea>
         </label>
+
+        <div class="block border-t border-[#34251c]/10 pt-6">
+            <span class="label">{$t('adminGazetteAnnounceHeading')}</span>
+            <p class="text-[11px] leading-snug text-[#7c6554] mb-2">{$t('adminGazetteAnnounceHint')}</p>
+            {#if figurineExists}
+                <label class="block mb-3">
+                    <span class="label">{$t('adminGazetteTitleEn')}</span>
+                    <input bind:value={gzTitle} class="input-gothic" />
+                </label>
+                <label class="block mb-3">
+                    <span class="label">{$t('adminGazetteDekEn')}</span>
+                    <textarea bind:value={gzSummary} class="input-gothic h-28"></textarea>
+                </label>
+                <button type="button" onclick={publishGazetteNote} disabled={gzBusy}
+                    class="px-4 py-2 border border-[#34251c]/25 hover:border-[#34251c]/55 text-[#5f4636] hover:text-[#34251c] text-xs tracking-wide uppercase transition-colors disabled:opacity-40">
+                    {gzBusy ? $t('adminFormSaving') : $t('adminGazetteAnnouncePublish')}
+                </button>
+            {:else}
+                <p class="text-[11px] italic text-[#7c6554]">{$t('adminCaptionSaveNewFirst')}</p>
+            {/if}
+        </div>
 
         <div class="block border-t border-[#34251c]/10 pt-6">
             <span class="label">{$t('adminCaptionLabel')}</span>

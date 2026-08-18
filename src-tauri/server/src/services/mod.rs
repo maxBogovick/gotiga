@@ -5,7 +5,7 @@ use crate::models::*;
 use crate::observability::ObservabilityState;
 use argon2::password_hash::{SaltString, rand_core::OsRng};
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, Utc};
 use reqwest::Client;
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -6195,21 +6195,30 @@ impl AppService {
             scheduled_at: row.scheduled_at.map(|t| t.to_rfc3339()),
             created_at: row.created_at.to_rfc3339(),
             updated_at: row.updated_at.to_rfc3339(),
+            prev: None,
+            next: None,
         }
     }
 
-    fn gazette_cutting_dto(row: GazetteCuttingListed) -> GazetteCuttingDto {
+    fn gazette_cutting_dto(row: GazetteCuttingListed, public: bool) -> GazetteCuttingDto {
         GazetteCuttingDto {
             id: row.id.to_string(),
             feed_id: row.feed_id.to_string(),
             title: row.title,
             url: row.url,
-            summary: row.summary,
+            // Public cards are a pointer, not a reprint. RSS excerpts stay in admin.
+            summary: if public { None } else { row.summary },
             source_name: row.source_name,
             published_at: row.published_at.map(|t| t.to_rfc3339()),
             dismissed: row.dismissed,
             pinned: row.pinned,
             created_at: row.created_at.to_rfc3339(),
+            mark_key: if crate::gazette::valid_mark_key(&row.mark_key) {
+                row.mark_key
+            } else {
+                "letter".into()
+            },
+            mark_url: row.mark_url,
         }
     }
 
@@ -6222,6 +6231,12 @@ impl AppService {
             last_fetched_at: row.last_fetched_at.map(|t| t.to_rfc3339()),
             last_error: row.last_error,
             created_at: row.created_at.to_rfc3339(),
+            mark_key: if crate::gazette::valid_mark_key(&row.mark_key) {
+                row.mark_key
+            } else {
+                "letter".into()
+            },
+            mark_url: row.mark_url,
         }
     }
 
@@ -6254,7 +6269,10 @@ impl AppService {
             .await?;
         Ok(GazetteHomeDto {
             leaves: leaves.into_iter().map(Self::gazette_leaf_dto).collect(),
-            cuttings: cuttings.into_iter().map(Self::gazette_cutting_dto).collect(),
+            cuttings: cuttings
+                .into_iter()
+                .map(|row| Self::gazette_cutting_dto(row, true))
+                .collect(),
         })
     }
 
@@ -6263,7 +6281,7 @@ impl AppService {
         page: i64,
         per_page: i64,
     ) -> Result<GazetteLeavesPage> {
-        let per_page = per_page.clamp(1, 40);
+        let per_page = per_page.clamp(1, 500);
         let page = page.max(1);
         let offset = (page - 1) * per_page;
         let (items, total) = self
@@ -6278,13 +6296,57 @@ impl AppService {
         })
     }
 
+    pub async fn get_gazette_room(&self, year: Option<i32>) -> Result<GazetteRoomDto> {
+        let years = self.repo.list_gazette_years().await?;
+        let current = Utc::now().year();
+        let year = match year.filter(|y| (1990..=2100).contains(y)) {
+            Some(y) => y,
+            None => {
+                if years.contains(&current) {
+                    current
+                } else {
+                    years.first().copied().unwrap_or(current)
+                }
+            }
+        };
+        let leaves = self
+            .repo
+            .list_gazette_leaves_year(year, crate::gazette::ROOM_LEAVES)
+            .await?;
+        let cuttings = self
+            .repo
+            .list_gazette_cuttings_year(year, crate::gazette::ROOM_CUTTINGS)
+            .await?;
+        Ok(GazetteRoomDto {
+            year,
+            years,
+            leaves: leaves.into_iter().map(Self::gazette_leaf_dto).collect(),
+            cuttings: cuttings
+                .into_iter()
+                .map(|row| Self::gazette_cutting_dto(row, true))
+                .collect(),
+        })
+    }
+
     pub async fn get_gazette_leaf_public(&self, slug: &str) -> Result<GazetteLeafDto> {
         let row = self
             .repo
             .get_gazette_leaf_by_slug(slug)
             .await?
             .ok_or_else(|| AppError::NotFound(format!("Gazette leaf {slug} not found")))?;
-        Ok(Self::gazette_leaf_dto(row))
+        let (prev, next) = self.repo.gazette_leaf_neighbors(slug).await?;
+        let mut dto = Self::gazette_leaf_dto(row);
+        dto.prev = prev;
+        dto.next = next;
+        Ok(dto)
+    }
+
+    pub async fn list_gazette_for_work(&self, figurine_id: Uuid) -> Result<Vec<GazetteLeafDto>> {
+        let rows = self
+            .repo
+            .list_gazette_leaves_for_figurine(figurine_id, crate::gazette::WORK_LEAVES)
+            .await?;
+        Ok(rows.into_iter().map(Self::gazette_leaf_dto).collect())
     }
 
     pub async fn admin_list_gazette_leaves(
@@ -6389,9 +6451,16 @@ impl AppService {
         if !(url.starts_with("http://") || url.starts_with("https://")) {
             return Err(AppError::BadRequest("Feed url must be http(s)".into()));
         }
+        let mark_key = req
+            .mark_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| crate::gazette::valid_mark_key(s))
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| crate::gazette::guess_mark_key(&title, &url));
         let rec = self
             .repo
-            .insert_gazette_feed(title, url, req.enabled)
+            .insert_gazette_feed(title, url, req.enabled, &mark_key)
             .await
             .map_err(|e| match e {
                 AppError::Database(_) => {
@@ -6413,9 +6482,37 @@ impl AppService {
         if title.is_empty() || url.is_empty() {
             return Err(AppError::BadRequest("Feed title and url are required".into()));
         }
+        let existing = self
+            .repo
+            .list_gazette_feeds()
+            .await?
+            .into_iter()
+            .find(|f| f.id == id)
+            .ok_or_else(|| AppError::NotFound(format!("Gazette feed {id} not found")))?;
+        let mark_key = req
+            .mark_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| crate::gazette::valid_mark_key(s))
+            .map(|s| s.to_string())
+            .unwrap_or(existing.mark_key);
+        let mark_url = match &req.mark_url {
+            None => existing.mark_url,
+            Some(s) => {
+                let t = s.trim();
+                if t.is_empty() { None } else { Some(t.to_string()) }
+            }
+        };
         let rec = self
             .repo
-            .update_gazette_feed(id, title, url, req.enabled)
+            .update_gazette_feed(
+                id,
+                title,
+                url,
+                req.enabled,
+                &mark_key,
+                mark_url.as_deref(),
+            )
             .await?;
         Ok(Self::gazette_feed_dto(rec))
     }
@@ -6491,19 +6588,27 @@ impl AppService {
 
     pub async fn admin_list_gazette_cuttings(
         &self,
-        include_dismissed: bool,
+        bucket: &str,
+        feed_id: Option<Uuid>,
         page: i64,
         per_page: i64,
     ) -> Result<GazetteCuttingsPage> {
+        let bucket = match bucket {
+            "table" | "aside" | "all" | "inbox" => bucket,
+            _ => "inbox",
+        };
         let per_page = per_page.clamp(1, 100);
         let page = page.max(1);
         let offset = (page - 1) * per_page;
         let (items, total) = self
             .repo
-            .list_gazette_cuttings_admin(include_dismissed, per_page, offset)
+            .list_gazette_cuttings_admin(bucket, feed_id, per_page, offset)
             .await?;
         Ok(GazetteCuttingsPage {
-            items: items.into_iter().map(Self::gazette_cutting_dto).collect(),
+            items: items
+                .into_iter()
+                .map(|row| Self::gazette_cutting_dto(row, false))
+                .collect(),
             total,
             page,
             per_page,
@@ -6525,15 +6630,14 @@ impl AppService {
             .await?
             .ok_or_else(|| AppError::NotFound(format!("Gazette cutting {id} not found")))?;
         let title = crate::gazette::clamp_title(&cutting.title);
-        let dek = crate::gazette::clamp_dek(cutting.summary.as_deref());
         let req = SaveGazetteLeafRequest {
             slug: None,
             kind: "world".into(),
             status: "draft".into(),
             title_en: title.clone(),
             title_ru: title,
-            dek_en: dek.clone(),
-            dek_ru: dek,
+            dek_en: None,
+            dek_ru: None,
             body_en: None,
             body_ru: None,
             figurine_id: None,
@@ -6544,9 +6648,9 @@ impl AppService {
             pinned: false,
             scheduled_at: None,
         };
-        let leaf = self.admin_create_gazette_leaf(req).await?;
-        let _ = self.repo.set_gazette_cutting_dismissed(id, true).await;
-        Ok(leaf)
+        // Leave the cutting where it is. Taking it off the desk while the
+        // rewrite is still a draft would punch a hole in the blotter.
+        self.admin_create_gazette_leaf(req).await
     }
 
     fn prepare_gazette_save(
@@ -6560,11 +6664,14 @@ impl AppService {
         if !crate::gazette::valid_status(&req.status) {
             return Err(AppError::BadRequest("Unknown gazette status".into()));
         }
-        let title_en = crate::gazette::clamp_title(&req.title_en);
-        if title_en.is_empty() {
-            return Err(AppError::BadRequest("English title is required".into()));
-        }
+        let mut title_en = crate::gazette::clamp_title(&req.title_en);
         let mut title_ru = crate::gazette::clamp_title(&req.title_ru);
+        if title_en.is_empty() && title_ru.is_empty() {
+            return Err(AppError::BadRequest("A title is required".into()));
+        }
+        if title_en.is_empty() {
+            title_en = title_ru.clone();
+        }
         if title_ru.is_empty() {
             title_ru = title_en.clone();
         }

@@ -4,8 +4,9 @@
    *
    * Two piles, never a news feed: handwritten house leaves (a work laid out,
    * a showing, a guest's tale) and yellowed cuttings the keeper pinned from
-   * the world of art. Hides entirely when both piles are empty. World cuttings
-   * leave the house; house leaves stay inside it.
+   * the world of art. Unpinned cuttings stay in the private desk. Hides entirely
+   * when both piles are empty. World cuttings leave the house; house leaves stay
+   * inside it.
    */
   import { t, lang, type TranslationKey } from '$lib/i18n';
   import type { GazetteCutting, GazetteKind, GazetteLeaf } from '$lib/types/api';
@@ -87,9 +88,6 @@
                 <a class="gz-cut-link" href={cut.url} target="_blank" rel="noopener noreferrer">
                   <span class="gz-cut-source">{$t('gazetteSource')} {cut.sourceName}</span>
                   <span class="gz-cut-title">{cut.title}</span>
-                  {#if cut.summary}
-                    <span class="gz-cut-dek">{cut.summary}</span>
-                  {/if}
                   <span class="gz-cut-out">{$t('gazetteLeavesHouse')} →</span>
                 </a>
               </li>

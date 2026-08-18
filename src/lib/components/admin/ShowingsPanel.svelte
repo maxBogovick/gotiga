@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
   import { t } from '$lib/i18n';
+  import { fillTemplate } from '$lib/gazette';
   import type { ShowingDto, SaveShowingRequest, FigurineListItem } from '$lib/types/api';
 
   let showings = $state<ShowingDto[]>([]);
@@ -82,6 +83,40 @@
       await load();
       selectedId = saved.id;
       form = { ...req, id: saved.id };
+    } catch {
+      saveMsg = $t('adminShowingsSaveError');
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function publishShowingNote() {
+    if (!form.figurineId) return;
+    const fig = figurines.find((f) => f.id === form.figurineId);
+    const fill = fillTemplate('showing', fig?.name ?? form.title);
+    const titleEn = (fill.titleEn || form.title).trim();
+    const titleRu = (form.title || fill.titleRu).trim();
+    if (!titleEn && !titleRu) {
+      saveMsg = $t('adminGazetteNeedTitle');
+      return;
+    }
+    saving = true;
+    saveMsg = '';
+    try {
+      await api.adminSaveGazetteLeaf({
+        kind: 'showing',
+        status: 'published',
+        titleEn,
+        titleRu,
+        dekEn: fill.dekEn,
+        dekRu: [form.venue, form.startsAt && form.endsAt ? `${form.startsAt} — ${form.endsAt}` : null]
+          .filter(Boolean)
+          .join('. ') || fill.dekRu,
+        figurineId: form.figurineId,
+        href: `/figurines/${fig?.slug ?? form.figurineId}`,
+        imageUrl: fig?.faceImageUrl ?? null,
+      });
+      saveMsg = $t('adminGazetteSaved');
     } catch {
       saveMsg = $t('adminShowingsSaveError');
     } finally {
@@ -270,6 +305,15 @@
               disabled={saving}
               class="px-6 py-2 bg-[#34251c] text-[#fff9f0] text-xs font-['Inter'] uppercase tracking-wide hover:bg-[#6f3b24] transition-colors disabled:opacity-50"
             >{saving ? $t('adminFormSaving') : $t('adminShowingsSave')}</button>
+
+            {#if form.figurineId}
+              <button
+                type="button"
+                onclick={publishShowingNote}
+                disabled={saving}
+                class="px-4 py-2 border border-[#34251c]/30 text-[#34251c] text-xs font-['Inter'] uppercase tracking-wide hover:bg-[#34251c]/5 transition-colors disabled:opacity-50"
+              >{$t('adminGazetteLayLeafShowing')}</button>
+            {/if}
 
             {#if selected}
               <button

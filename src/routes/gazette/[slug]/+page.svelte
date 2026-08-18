@@ -4,9 +4,16 @@
   import { t, lang, brandName } from '$lib/i18n';
   import { SITE_URL } from '$lib/site';
   import { jsonLdSafe } from '$lib/jsonld';
-  import { GAZETTE_KIND_KEY, leafCopy, quietDate, workHref } from '$lib/gazette';
+  import {
+    GAZETTE_KIND_KEY,
+    leafCopy,
+    neighborTitle,
+    quietDate,
+    workHref,
+  } from '$lib/gazette';
   import NotFound from '$lib/components/NotFound.svelte';
   import AppImage from '$lib/components/AppImage.svelte';
+  import GazetteRoom from '$lib/components/GazetteRoom.svelte';
 
   let { data } = $props();
   let copy = $derived(data.leaf ? leafCopy(data.leaf, $lang) : null);
@@ -15,6 +22,13 @@
     data.leaf ? quietDate(data.leaf.publishedAt ?? data.leaf.createdAt, $lang) : '',
   );
   let outside = $derived(data.leaf?.href?.startsWith('http') ? data.leaf.href : null);
+  let ogLocale = $derived($lang === 'ru' ? 'ru_RU' : 'en_US');
+  let prevTitle = $derived(
+    data.leaf?.prev ? neighborTitle(data.leaf.prev, $lang) : '',
+  );
+  let nextTitle = $derived(
+    data.leaf?.next ? neighborTitle(data.leaf.next, $lang) : '',
+  );
 
   let jsonLd = $derived(
     data.leaf && copy
@@ -25,6 +39,9 @@
           description: copy.dek || $t('gazettePageSubtitle'),
           url: `${SITE_URL}/gazette/${data.leaf.slug}`,
           datePublished: data.leaf.publishedAt ?? data.leaf.createdAt,
+          inLanguage: $lang === 'ru' ? 'ru' : 'en',
+          image: data.leaf.imageUrl || undefined,
+          author: { '@type': 'Organization', name: $brandName },
           isPartOf: { '@type': 'WebSite', name: $brandName, url: SITE_URL },
         })
       : '',
@@ -32,24 +49,45 @@
 </script>
 
 <svelte:head>
-  <title>{copy?.title ?? $t('gazettePageTitle')} — {$brandName}</title>
-  <meta name="description" content={copy?.dek || $t('gazettePageSubtitle')} />
-  <meta property="og:site_name" content={$brandName} />
-  <meta property="og:locale" content="en_US" />
-  <meta property="og:type" content="article" />
-  <meta property="og:title" content="{copy?.title ?? $t('gazettePageTitle')} — {$brandName}" />
-  <meta property="og:description" content={copy?.dek || $t('gazettePageSubtitle')} />
-  <meta property="og:url" content="{SITE_URL}/gazette/{data.leaf?.slug ?? ''}" />
-  {#if data.leaf?.imageUrl}
-    <meta property="og:image" content={data.leaf.imageUrl} />
-  {:else}
-    <meta property="og:image" content="{SITE_URL}/images/cabinet-bg.jpeg" />
+  {#if data.mode === 'leaf' && data.leaf}
+    <title>{copy?.title ?? $t('gazettePageTitle')} — {$brandName}</title>
+    <meta name="description" content={copy?.dek || $t('gazettePageSubtitle')} />
+    <link rel="canonical" href="{SITE_URL}/gazette/{data.leaf.slug}" />
+    <link rel="alternate" type="application/rss+xml" title={$t('gazetteRssTitle')} href="{SITE_URL}/gazette/feed.xml" />
+    <meta property="og:site_name" content={$brandName} />
+    <meta property="og:locale" content={ogLocale} />
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="{copy?.title ?? $t('gazettePageTitle')} — {$brandName}" />
+    <meta property="og:description" content={copy?.dek || $t('gazettePageSubtitle')} />
+    <meta property="og:url" content="{SITE_URL}/gazette/{data.leaf.slug}" />
+    {#if data.leaf.imageUrl}
+      <meta property="og:image" content={data.leaf.imageUrl} />
+    {:else}
+      <meta property="og:image" content="{SITE_URL}/images/cabinet-bg.jpeg" />
+    {/if}
+    {#if jsonLd}{@html `<script type="application/ld+json">${jsonLd}<\/script>`}{/if}
   {/if}
-  {#if jsonLd}{@html `<script type="application/ld+json">${jsonLd}<\/script>`}{/if}
 </svelte:head>
 
-{#if !data.leaf}
-  <NotFound />
+{#if data.mode === 'year' && data.room}
+  <GazetteRoom
+    year={data.room.year}
+    years={data.room.years}
+    leaves={data.room.leaves}
+    cuttings={data.room.cuttings}
+  />
+{:else if data.loadError}
+  <NotFound
+    title={$t('loadErrorTitle')}
+    message={$t('gazetteLoadError')}
+    backHref="/gazette"
+    backLabel={$t('gazetteBackLeaves')}
+  />
+{:else if !data.leaf}
+  <NotFound
+    backHref="/gazette"
+    backLabel={$t('gazetteBackLeaves')}
+  />
 {:else}
   <div class="root">
     <div class="grain" aria-hidden="true"></div>
@@ -92,6 +130,25 @@
             </a>
           {/if}
         </footer>
+      {/if}
+
+      {#if data.leaf.prev || data.leaf.next}
+        <nav class="neighbors" aria-label={$t('gazettePageKicker')} in:fade={{ duration: 500, delay: 240 }}>
+          {#if data.leaf.prev}
+            <a class="neighbor" href="/gazette/{data.leaf.prev.slug}">
+              <span class="neighbor-kicker">{$t('gazetteLeafAbove')}</span>
+              <span class="neighbor-title">{prevTitle}</span>
+            </a>
+          {:else}
+            <span class="neighbor empty"></span>
+          {/if}
+          {#if data.leaf.next}
+            <a class="neighbor next" href="/gazette/{data.leaf.next.slug}">
+              <span class="neighbor-kicker">{$t('gazetteLeafBelow')}</span>
+              <span class="neighbor-title">{nextTitle}</span>
+            </a>
+          {/if}
+        </nav>
       {/if}
     </article>
   </div>
@@ -219,4 +276,41 @@
     transition: border-color 0.2s ease, color 0.2s ease;
   }
   .cta a:hover { border-bottom-color: #c65f3c; color: #34251c; }
+
+  .neighbors {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    margin-top: 48px;
+    padding-top: 22px;
+    border-top: 1px solid rgba(216, 198, 177, 0.75);
+  }
+  .neighbor {
+    display: grid;
+    gap: 6px;
+    text-decoration: none;
+    color: inherit;
+    min-width: 0;
+  }
+  .neighbor.next { text-align: right; }
+  .neighbor.empty { visibility: hidden; }
+  .neighbor-kicker {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: #8a6a55;
+  }
+  .neighbor-title {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: 18px;
+    line-height: 1.25;
+    color: #34251c;
+  }
+  .neighbor:hover .neighbor-title { color: #6f3b24; }
+
+  @media (max-width: 560px) {
+    .neighbors { grid-template-columns: 1fr; }
+    .neighbor.next { text-align: left; }
+  }
 </style>

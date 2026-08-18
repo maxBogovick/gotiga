@@ -69,5 +69,10 @@ export const load = async ({ params, fetch }: { params: { id: string }; fetch: t
   // search engines at the pretty URL. Falls back to whatever handle was used.
   const canonicalPath = `/figurines/${figurine?.slug ?? params.id}`;
 
-  return { figurine, prev, next, loadError, canonicalPath };
+  let gazetteLeaves: import('$lib/types/api').GazetteLeaf[] = [];
+  if (figurine) {
+    gazetteLeaves = await api.getGazetteForWork(figurine.id, fetch);
+  }
+
+  return { figurine, prev, next, loadError, canonicalPath, gazetteLeaves };
 };
