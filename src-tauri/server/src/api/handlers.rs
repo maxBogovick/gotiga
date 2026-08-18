@@ -3546,3 +3546,73 @@ pub async fn admin_promote_gazette_cutting(
 ) -> Result<Json<GazetteLeafDto>> {
     Ok(Json(service.admin_promote_gazette_cutting(id).await?))
 }
+
+pub async fn watch_gazette_leaf(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(slug): Path<String>,
+    Json(body): Json<WatchGazetteLeafRequest>,
+) -> Result<Json<GazetteWatchCreatedResponse>> {
+    service
+        .check_rate_limit("gazette_watch", &extract_ip(&headers), 15, 3600)
+        .await?;
+    let (user_id, email, name) = if let Some(token) = bearer_token(&headers) {
+        match service.get_user_from_session(token).await {
+            Ok(u) => (Some(u.id), Some(u.email), Some(u.display_name)),
+            Err(_) => (None, None, None),
+        }
+    } else {
+        (None, None, None)
+    };
+    Ok(Json(
+        service
+            .watch_gazette_leaf(
+                &slug,
+                body,
+                user_id,
+                email.as_deref(),
+                name.as_deref(),
+            )
+            .await?,
+    ))
+}
+
+pub async fn get_gazette_watch(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(token): Path<String>,
+) -> Result<Json<GazetteWatchInfo>> {
+    service
+        .check_rate_limit("token", &extract_ip(&headers), 60, 3600)
+        .await?;
+    service
+        .get_gazette_watch_by_token(&token)
+        .await?
+        .map(Json)
+        .ok_or_else(|| AppError::NotFound("Watch not found".into()))
+}
+
+pub async fn leave_gazette_watch(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(token): Path<String>,
+) -> Result<StatusCode> {
+    service
+        .check_rate_limit("token", &extract_ip(&headers), 60, 3600)
+        .await?;
+    service.leave_gazette_watch(&token).await?;
+    Ok(StatusCode::OK)
+}
+
+pub async fn user_profile_gazette_watches(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<GazetteWatchDto>>> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
+    Ok(Json(
+        service
+            .list_user_gazette_watches(user.id, &user.email)
+            .await?,
+    ))
+}

@@ -10,16 +10,31 @@
     neighborTitle,
     quietDate,
     workHref,
+    leafCoverUrl,
+    leafImageList,
+    expectedWhisper,
   } from '$lib/gazette';
   import NotFound from '$lib/components/NotFound.svelte';
   import AppImage from '$lib/components/AppImage.svelte';
   import GazetteRoom from '$lib/components/GazetteRoom.svelte';
+  import GazetteWatchSeal from '$lib/components/GazetteWatchSeal.svelte';
 
   let { data } = $props();
   let copy = $derived(data.leaf ? leafCopy(data.leaf, $lang) : null);
   let work = $derived(data.leaf ? workHref(data.leaf, 'gazette_leaf') : null);
+  let expected = $derived(
+    data.leaf
+      ? expectedWhisper(
+          data.leaf,
+          $lang,
+          (d) => $t('gazetteExpectedAround').replace('{date}', d),
+          (a, b) => $t('gazetteExpectedRange').replace('{from}', a).replace('{to}', b),
+        )
+      : '',
+  );
   let date = $derived(
-    data.leaf ? quietDate(data.leaf.publishedAt ?? data.leaf.createdAt, $lang) : '',
+    expected ||
+      (data.leaf ? quietDate(data.leaf.publishedAt ?? data.leaf.createdAt, $lang) : ''),
   );
   let outside = $derived(data.leaf?.href?.startsWith('http') ? data.leaf.href : null);
   let ogLocale = $derived($lang === 'ru' ? 'ru_RU' : 'en_US');
@@ -29,6 +44,8 @@
   let nextTitle = $derived(
     data.leaf?.next ? neighborTitle(data.leaf.next, $lang) : '',
   );
+  let plates = $derived(data.leaf ? leafImageList(data.leaf) : []);
+  let cover = $derived(data.leaf ? leafCoverUrl(data.leaf) : '');
 
   let jsonLd = $derived(
     data.leaf && copy
@@ -40,7 +57,7 @@
           url: `${SITE_URL}/gazette/${data.leaf.slug}`,
           datePublished: data.leaf.publishedAt ?? data.leaf.createdAt,
           inLanguage: $lang === 'ru' ? 'ru' : 'en',
-          image: data.leaf.imageUrl || undefined,
+          image: cover || undefined,
           author: { '@type': 'Organization', name: $brandName },
           isPartOf: { '@type': 'WebSite', name: $brandName, url: SITE_URL },
         })
@@ -60,8 +77,8 @@
     <meta property="og:title" content="{copy?.title ?? $t('gazettePageTitle')} — {$brandName}" />
     <meta property="og:description" content={copy?.dek || $t('gazettePageSubtitle')} />
     <meta property="og:url" content="{SITE_URL}/gazette/{data.leaf.slug}" />
-    {#if data.leaf.imageUrl}
-      <meta property="og:image" content={data.leaf.imageUrl} />
+    {#if cover}
+      <meta property="og:image" content={cover} />
     {:else}
       <meta property="og:image" content="{SITE_URL}/images/cabinet-bg.jpeg" />
     {/if}
@@ -106,9 +123,19 @@
         {#if copy?.dek}<p class="dek">{copy.dek}</p>{/if}
       </header>
 
-      {#if data.leaf.imageUrl}
-        <div class="plate" in:fade={{ duration: 700, delay: 120 }}>
-          <AppImage src={data.leaf.imageUrl} alt="" class="plate-img" sizes="280px" />
+      {#if data.leaf.kind === 'sketch'}
+        <div class="watch" in:fade={{ duration: 500, delay: 140 }}>
+          <GazetteWatchSeal leaf={data.leaf} showCopy />
+        </div>
+      {/if}
+
+      {#if plates.length > 0}
+        <div class="plates" class:many={plates.length > 1} in:fade={{ duration: 700, delay: 120 }}>
+          {#each plates as src, i (src)}
+            <div class="plate" style="--tilt: {(i % 2 === 0 ? -1.2 : 0.9)}deg">
+              <AppImage {src} alt="" class="plate-img" sizes={i === 0 ? '280px' : '160px'} />
+            </div>
+          {/each}
         </div>
       {/if}
 
@@ -242,12 +269,29 @@
     margin: 0;
   }
 
+  .watch { margin: 0 0 clamp(24px, 3vw, 36px); }
+
+  .plates {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin: 0 0 clamp(28px, 4vw, 40px);
+    align-items: flex-end;
+  }
   .plate {
     width: min(280px, 100%);
-    margin: 0 0 clamp(28px, 4vw, 40px);
+    margin: 0;
     border: 1px solid #d8c6b1;
     background: #1a120e;
     overflow: hidden;
+    transform: rotate(var(--tilt, 0deg));
+    transform-origin: 20% 0;
+  }
+  .plates.many .plate:first-child {
+    width: min(280px, 100%);
+  }
+  .plates.many .plate:not(:first-child) {
+    width: min(160px, 42%);
   }
   .plate :global(.app-image-wrap),
   .plate :global(img) {

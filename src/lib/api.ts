@@ -97,6 +97,10 @@ import type {
     SaveGazetteLeafRequest,
     SaveGazetteFeedRequest,
     GazetteRefreshReport,
+    WatchGazetteLeafRequest,
+    GazetteWatchCreatedResponse,
+    GazetteWatchInfo,
+    GazetteWatchDto,
 } from './types/api';
 import { isGazetteReservedSlug } from './gazette';
 
@@ -1952,6 +1956,39 @@ export const api = {
             throw new ApiError(404, 'not a leaf');
         }
         return leaf;
+    },
+
+    async watchGazetteLeaf(
+        slug: string,
+        body: WatchGazetteLeafRequest,
+        sessionToken?: string | null,
+    ): Promise<GazetteWatchCreatedResponse> {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
+        return webFetch(`/gazette/${encodeURIComponent(slug)}/watch`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body),
+        });
+    },
+
+    async getGazetteWatchByToken(token: string): Promise<GazetteWatchInfo | null> {
+        try {
+            return await webFetch(`/gazette/watch/${encodeURIComponent(token)}`);
+        } catch (err) {
+            if (isNotFoundError(err)) return null;
+            throw err;
+        }
+    },
+
+    async leaveGazetteWatchByToken(token: string): Promise<void> {
+        await webFetch(`/gazette/watch/${encodeURIComponent(token)}`, { method: 'POST' });
+    },
+
+    async userGazetteWatches(sessionToken: string): Promise<GazetteWatchDto[]> {
+        return webFetch('/profile/gazette-watches', {
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
     },
 
     async adminListGazetteLeaves(opts?: {

@@ -175,6 +175,14 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 get(handlers::list_gazette_for_work),
             )
             .route("/gazette", get(handlers::list_gazette))
+            .route(
+                "/gazette/:slug/watch",
+                post(handlers::watch_gazette_leaf),
+            )
+            .route(
+                "/gazette/watch/:token",
+                get(handlers::get_gazette_watch).post(handlers::leave_gazette_watch),
+            )
             .route("/gazette/:slug", get(handlers::get_gazette_leaf))
             // === PUBLIC LOGIN ===
             .route("/admin/login", post(handlers::admin_login))
@@ -823,6 +831,10 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 get(handlers::user_get_wishlist).put(handlers::user_set_wishlist),
             )
             .route("/profile/waitlist", get(handlers::user_profile_waitlist))
+            .route(
+                "/profile/gazette-watches",
+                get(handlers::user_profile_gazette_watches),
+            )
             .route("/profile/claims/link", post(handlers::user_link_claim))
             .route(
                 "/profile/me",
@@ -1109,6 +1121,8 @@ mod cache_tests {
             "/auth/reset-token/secret-token",
             "/figurines/2dc46e41-2645-59af-88b5-1fe9c31a463f/comments",
             "/bookings/some-cancel-token",
+            "/gazette/watch/secret-token",
+            "/profile/gazette-watches",
         ] {
             assert!(!is_public_cacheable(path), "{path} must NOT be cacheable");
         }

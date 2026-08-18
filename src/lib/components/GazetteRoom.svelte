@@ -17,8 +17,11 @@
     quietDate,
     roomDateline,
     yearHref,
+    leafCoverUrl,
+    expectedWhisper,
   } from '$lib/gazette';
   import type { GazetteCutting, GazetteLeaf } from '$lib/types/api';
+  import GazetteWatchSeal from '$lib/components/GazetteWatchSeal.svelte';
 
   let {
     year,
@@ -38,6 +41,7 @@
   let lead = $derived(leaves[0] ?? null);
   let rest = $derived(leaves.slice(1));
   let leadCopy = $derived(lead ? leafCopy(lead, $lang) : null);
+  let leadCover = $derived(lead ? leafCoverUrl(lead) : '');
   let houseMonths = $derived(groupLeavesByMonthAndKind(rest));
   let worldMonths = $derived(groupCuttingsByMonth(cuttings));
   let empty = $derived(leaves.length === 0 && cuttings.length === 0);
@@ -46,6 +50,15 @@
     isLatest ? $t('gazettePageTitle') : `${$t('gazettePageTitle')}, ${year}`,
   );
   let ogLocale = $derived($lang === 'ru' ? 'ru_RU' : 'en_US');
+
+  function expectedLabel(leaf: GazetteLeaf): string {
+    return expectedWhisper(
+      leaf,
+      $lang,
+      (d) => $t('gazetteExpectedAround').replace('{date}', d),
+      (a, b) => $t('gazetteExpectedRange').replace('{from}', a).replace('{to}', b),
+    );
+  }
 
   let jsonLd = $derived(jsonLdSafe({
     '@context': 'https://schema.org',
@@ -96,29 +109,33 @@
       <p class="empty" in:fade={{ duration: 700, delay: 160 }}>{$t('gazetteEmpty')}</p>
     {:else}
       {#if lead && leadCopy}
-        <a
-          class="lead"
-          href={leafHref(lead, 'gazette')}
-          in:fly={{ y: 16, duration: 700, delay: 120, easing: cubicOut }}
-        >
-          {#if lead.imageUrl}
-            <span class="lead-face">
-              <AppImage src={lead.imageUrl} alt="" class="lead-img" sizes="160px" />
-            </span>
-          {/if}
-          <span class="lead-copy">
-            <span class="meta">
-              <span>{$t(GAZETTE_KIND_KEY[lead.kind])}</span>
-              {#if quietDate(lead.publishedAt ?? lead.createdAt, $lang)}
-                <span>{quietDate(lead.publishedAt ?? lead.createdAt, $lang)}</span>
+        {@const when = expectedLabel(lead)}
+        <div class="lead-block" in:fly={{ y: 16, duration: 700, delay: 120, easing: cubicOut }}>
+          <a class="lead" href={leafHref(lead, 'gazette')}>
+            {#if leadCover}
+              <span class="lead-face">
+                <AppImage src={leadCover} alt="" class="lead-img" sizes="160px" />
+              </span>
+            {/if}
+            <span class="lead-copy">
+              <span class="meta">
+                <span>{$t(GAZETTE_KIND_KEY[lead.kind])}</span>
+                {#if when}
+                  <span>{when}</span>
+                {:else if quietDate(lead.publishedAt ?? lead.createdAt, $lang)}
+                  <span>{quietDate(lead.publishedAt ?? lead.createdAt, $lang)}</span>
+                {/if}
+              </span>
+              <span class="lead-title">{leadCopy.title}</span>
+              {#if leadCopy.dek}
+                <span class="lead-dek">{leadCopy.dek}</span>
               {/if}
             </span>
-            <span class="lead-title">{leadCopy.title}</span>
-            {#if leadCopy.dek}
-              <span class="lead-dek">{leadCopy.dek}</span>
-            {/if}
-          </span>
-        </a>
+          </a>
+          {#if lead.kind === 'sketch'}
+            <GazetteWatchSeal leaf={lead} compact />
+          {/if}
+        </div>
       {/if}
 
       {#if rest.length > 0 || cuttings.length > 0}
@@ -140,20 +157,28 @@
                     {/if}
                     {#each band.items as leaf (leaf.id)}
                       {@const copy = leafCopy(leaf, $lang)}
-                      <a class="row" href={leafHref(leaf, 'gazette')}>
-                        <span class="meta">
-                          {#if month.kinds.length === 1}
-                            <span>{$t(GAZETTE_KIND_KEY[leaf.kind])}</span>
+                      {@const when = expectedLabel(leaf)}
+                      <div class="row-block">
+                        <a class="row" href={leafHref(leaf, 'gazette')}>
+                          <span class="meta">
+                            {#if month.kinds.length === 1}
+                              <span>{$t(GAZETTE_KIND_KEY[leaf.kind])}</span>
+                            {/if}
+                            {#if when}
+                              <span>{when}</span>
+                            {:else if quietDate(leaf.publishedAt ?? leaf.createdAt, $lang)}
+                              <span>{quietDate(leaf.publishedAt ?? leaf.createdAt, $lang)}</span>
+                            {/if}
+                          </span>
+                          <span class="row-title">{copy.title}</span>
+                          {#if copy.dek}
+                            <span class="row-dek">{copy.dek}</span>
                           {/if}
-                          {#if quietDate(leaf.publishedAt ?? leaf.createdAt, $lang)}
-                            <span>{quietDate(leaf.publishedAt ?? leaf.createdAt, $lang)}</span>
-                          {/if}
-                        </span>
-                        <span class="row-title">{copy.title}</span>
-                        {#if copy.dek}
-                          <span class="row-dek">{copy.dek}</span>
+                        </a>
+                        {#if leaf.kind === 'sketch'}
+                          <GazetteWatchSeal {leaf} compact />
                         {/if}
-                      </a>
+                      </div>
                     {/each}
                   {/each}
                 </div>
@@ -336,12 +361,15 @@
     color: #6f3b24;
   }
 
+  .lead-block { margin-bottom: clamp(40px, 6vw, 72px); }
+  .lead-block :global(.seal) { padding: 0 24px 4px 22px; }
+
   .lead {
     display: grid;
     grid-template-columns: 1fr;
     gap: clamp(18px, 3vw, 32px);
     align-items: start;
-    margin-bottom: clamp(40px, 6vw, 72px);
+    margin-bottom: 0;
     padding: 22px 24px 22px 22px;
     text-decoration: none;
     color: inherit;
@@ -454,17 +482,20 @@
     margin: 14px 0 0;
   }
 
+  .row-block {
+    padding: 16px 0 8px;
+    border-top: 1px solid rgba(216, 198, 177, 0.55);
+  }
+  .month .row-block:first-of-type { border-top: none; }
+  .kind-label + .row-block { border-top: none; padding-top: 10px; }
+
   .row {
     display: grid;
     gap: 5px;
-    padding: 16px 0;
-    border-top: 1px solid rgba(216, 198, 177, 0.55);
     text-decoration: none;
     color: inherit;
     transition: color 0.2s ease;
   }
-  .month .row:first-of-type { border-top: none; }
-  .kind-label + .row { border-top: none; padding-top: 10px; }
 
   .row-title {
     font-family: 'Cormorant Garamond', Georgia, serif;

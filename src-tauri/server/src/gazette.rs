@@ -5,7 +5,7 @@
 //! auto-publishes a raw headline as if the house had written it. World cuttings
 //! sit in a private inbox until the keeper pins them.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use crate::slug::slugify;
 
 pub const LEAF_KINDS: &[&str] = &[
@@ -16,7 +16,9 @@ pub const LEAF_KINDS: &[&str] = &[
     "tale",
     "note",
     "world",
+    "sketch",
 ];
+pub const IMAGE_URLS_MAX: usize = 8;
 pub const LEAF_STATUSES: &[&str] = &["draft", "scheduled", "published", "archived"];
 
 pub const TITLE_MAX: usize = 200;
@@ -63,6 +65,61 @@ pub struct ParsedFeedItem {
 
 pub fn valid_kind(kind: &str) -> bool {
     LEAF_KINDS.contains(&kind)
+}
+
+/// A day, a span, or nothing. Only sketch leaves keep a date; others clear it.
+pub fn normalize_expected(
+    kind: &str,
+    from: Option<&str>,
+    to: Option<&str>,
+) -> Result<(Option<NaiveDate>, Option<NaiveDate>), String> {
+    if kind != "sketch" {
+        return Ok((None, None));
+    }
+    let parse = |raw: Option<&str>| -> Result<Option<NaiveDate>, String> {
+        match raw.map(str::trim).filter(|s| !s.is_empty()) {
+            None => Ok(None),
+            Some(s) => NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .map(Some)
+                .map_err(|_| "Invalid expected date".into()),
+        }
+    };
+    let mut start = parse(from)?;
+    let mut end = parse(to)?;
+    if start.is_none() && end.is_none() {
+        return Ok((None, None));
+    }
+    if start.is_none() {
+        start = end;
+    }
+    if end.is_none() {
+        end = start;
+    }
+    if start > end {
+        return Err("expectedFrom must be on or before expectedTo".into());
+    }
+    Ok((start, end))
+}
+
+/// Cover first, then the rest. Empty strings dropped. At most IMAGE_URLS_MAX.
+pub fn normalize_image_urls(cover: Option<&str>, urls: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let push = |out: &mut Vec<String>, raw: &str| {
+        let t = raw.trim();
+        if t.is_empty() || out.iter().any(|u| u == t) || out.len() >= IMAGE_URLS_MAX {
+            return;
+        }
+        out.push(t.to_string());
+    };
+    for u in urls {
+        push(&mut out, u);
+    }
+    if out.is_empty() {
+        if let Some(c) = cover {
+            push(&mut out, c);
+        }
+    }
+    out
 }
 
 pub fn valid_status(status: &str) -> bool {
@@ -121,7 +178,12 @@ pub fn unique_slug(preferred: Option<&str>, title_en: &str, taken: &[String]) ->
     }
     // Four-digit slugs are year volumes (`/gazette/2026`). `home`/`room`/`for-work`
     // are public API doors. A leaf must not take those.
-    if is_year_slug(&base) || matches!(base.as_str(), "home" | "room" | "blotter" | "for-work") {
+    if is_year_slug(&base)
+        || matches!(
+            base.as_str(),
+            "home" | "room" | "blotter" | "for-work" | "watch"
+        )
+    {
         base = format!("leaf-{base}");
     }
     if !taken.iter().any(|s| s == &base) {
@@ -434,11 +496,51 @@ mod tests {
     }
 
     #[test]
+    fn sketch_is_a_kind() {
+        assert!(valid_kind("sketch"));
+        assert!(!valid_kind("news"));
+    }
+
+    #[test]
+    fn image_urls_cover_and_cap() {
+        let many: Vec<String> = (0..12).map(|i| format!("/img/{i}.jpg")).collect();
+        let out = normalize_image_urls(Some("/cover.jpg"), &many);
+        assert_eq!(out.len(), IMAGE_URLS_MAX);
+        assert_eq!(out[0], "/img/0.jpg");
+        let from_cover = normalize_image_urls(Some(" /face.jpg "), &[]);
+        assert_eq!(from_cover, vec!["/face.jpg".to_string()]);
+        let empty = normalize_image_urls(Some("  "), &[" ".into()]);
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn expected_dates_day_range_and_clear() {
+        use chrono::NaiveDate;
+        let day = NaiveDate::from_ymd_opt(2026, 3, 12).unwrap();
+        assert_eq!(
+            normalize_expected("sketch", Some("2026-03-12"), None).unwrap(),
+            (Some(day), Some(day))
+        );
+        let end = NaiveDate::from_ymd_opt(2026, 5, 4).unwrap();
+        assert_eq!(
+            normalize_expected("sketch", Some("2026-03-12"), Some("2026-05-04")).unwrap(),
+            (Some(day), Some(end))
+        );
+        assert!(normalize_expected("sketch", Some("2026-05-04"), Some("2026-03-12")).is_err());
+        assert_eq!(
+            normalize_expected("arrival", Some("2026-03-12"), Some("2026-05-04")).unwrap(),
+            (None, None)
+        );
+        assert_eq!(normalize_expected("sketch", None, None).unwrap(), (None, None));
+    }
+
+    #[test]
     fn slug_avoids_taken() {
         let taken = vec!["laid-out-today".into(), "laid-out-today-2".into()];
         assert_eq!(unique_slug(None, "Laid out today", &taken), "laid-out-today-3");
         assert_eq!(unique_slug(Some("custom"), "X", &[]), "custom");
         assert_eq!(unique_slug(Some("2026"), "X", &[]), "leaf-2026");
+        assert_eq!(unique_slug(Some("watch"), "X", &[]), "leaf-watch");
         assert_eq!(unique_slug(Some("room"), "X", &[]), "leaf-room");
         assert!(is_year_slug("2026"));
         assert!(!is_year_slug("leaf-2026"));

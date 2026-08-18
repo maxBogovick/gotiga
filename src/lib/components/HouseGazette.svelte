@@ -10,7 +10,7 @@
    */
   import { t, lang, type TranslationKey } from '$lib/i18n';
   import type { GazetteCutting, GazetteKind, GazetteLeaf } from '$lib/types/api';
-  import { leafCopy, leafHref, quietDate, workHref } from '$lib/gazette';
+  import { expectedWhisper, leafCopy, leafHref, quietDate, workHref, leafCoverUrl } from '$lib/gazette';
   import AppImage from '$lib/components/AppImage.svelte';
 
   let {
@@ -29,6 +29,7 @@
     tale: 'gazetteKind_tale',
     note: 'gazetteKind_note',
     world: 'gazetteKind_world',
+    sketch: 'gazetteKind_sketch',
   };
 
   let show = $derived(leaves.length > 0 || cuttings.length > 0);
@@ -52,16 +53,25 @@
             {#each leaves as leaf, i (leaf.id)}
               {@const copy = leafCopy(leaf, $lang)}
               {@const work = workHref(leaf, 'home_gazette')}
+              {@const cover = leafCoverUrl(leaf)}
+              {@const when = expectedWhisper(
+                leaf,
+                $lang,
+                (d) => $t('gazetteExpectedAround').replace('{date}', d),
+                (a, b) => $t('gazetteExpectedRange').replace('{from}', a).replace('{to}', b),
+              )}
               <li class="gz-leaf" style="--tilt: {(i % 2 === 0 ? -1.1 : 0.9)}deg">
                 <a class="gz-leaf-link" href={leafHref(leaf, 'home_gazette')}>
-                  {#if leaf.imageUrl}
+                  {#if cover}
                     <span class="gz-leaf-face">
-                      <AppImage src={leaf.imageUrl} alt="" class="gz-leaf-img" loading="lazy" sizes="72px" />
+                      <AppImage src={cover} alt="" class="gz-leaf-img" loading="lazy" sizes="72px" />
                     </span>
                   {/if}
                   <span class="gz-leaf-meta">
                     <span class="gz-kind">{$t(KIND_KEY[leaf.kind])}</span>
-                    {#if quietDate(leaf.publishedAt ?? leaf.createdAt, $lang)}
+                    {#if when}
+                      <span class="gz-date">{when}</span>
+                    {:else if quietDate(leaf.publishedAt ?? leaf.createdAt, $lang)}
                       <span class="gz-date">{quietDate(leaf.publishedAt ?? leaf.createdAt, $lang)}</span>
                     {/if}
                   </span>

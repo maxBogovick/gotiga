@@ -5,13 +5,13 @@
   import { api, resolveMediaUrl } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
   import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
-  import type { UserBookingDto, UserOrderDto, MessageThreadDto, ThreadDetailDto, CommissionDto, AttachmentInput, FigurineListItem, LinkClaimResponse, LinkClaimKind, WaitlistEntryDto } from '$lib/types/api';
+  import type { UserBookingDto, UserOrderDto, MessageThreadDto, ThreadDetailDto, CommissionDto, AttachmentInput, FigurineListItem, LinkClaimResponse, LinkClaimKind, WaitlistEntryDto, GazetteWatchDto } from '$lib/types/api';
   import AppImage from '$lib/components/AppImage.svelte';
   import MessageAttachments from '$lib/components/MessageAttachments.svelte';
   import CommissionEditModal from '$lib/components/CommissionEditModal.svelte';
 
   // ── Cabinet navigation: hub → section → card ──
-  type View = 'hub' | 'dealings' | 'card' | 'messages' | 'wishlist';
+  type View = 'hub' | 'dealings' | 'card' | 'messages' | 'wishlist' | 'watches';
   let view = $state<View>('hub');
   type DealFilter = 'all' | 'booking' | 'order' | 'commission' | 'waitlist';
   let dealFilter = $state<DealFilter>('all');
@@ -21,6 +21,9 @@
   let orders = $state<UserOrderDto[]>([]);
   let commissions = $state<CommissionDto[]>([]);
   let waitlist = $state<WaitlistEntryDto[]>([]);
+  let watches = $state<GazetteWatchDto[]>([]);
+  let releasingWatchId = $state<string | null>(null);
+  let watchError = $state('');
   let wishlistIds = $state<string[]>([]);
   let wishlistItems = $state<Map<string, FigurineListItem | null>>(new Map());
   let sourceFigurineItems = $state<Map<string, FigurineListItem | null>>(new Map());
@@ -217,17 +220,19 @@
     error = '';
     try {
       const token = authStore.token!;
-      const [b, o, th, com, wl] = await Promise.all([
+      const [b, o, th, com, wl, gz] = await Promise.all([
         api.userProfileBookings(token),
         api.userProfileOrders(token),
         api.getUserThreads(token),
         api.getUserCommissions(token),
         api.userProfileWaitlist(token).catch(() => [] as WaitlistEntryDto[]),
+        api.userGazetteWatches(token).catch(() => [] as GazetteWatchDto[]),
       ]);
       bookings = b;
       orders = o;
       commissions = com;
       waitlist = wl;
+      watches = gz;
       threads = th.threads;
       unreadCount = th.unread;
 
@@ -285,6 +290,30 @@
     const next = new Map(wishlistItems);
     next.delete(id);
     wishlistItems = next;
+  }
+
+  function watchTitle(w: GazetteWatchDto): string {
+    const ru = $lang === 'ru' && w.titleRu.trim();
+    return (ru ? w.titleRu : w.titleEn).trim();
+  }
+
+  async function releaseWatch(w: GazetteWatchDto) {
+    if (releasingWatchId) return;
+    releasingWatchId = w.id;
+    watchError = '';
+    try {
+      await api.leaveGazetteWatchByToken(w.cancelToken);
+      watches = watches.filter((x) => x.id !== w.id);
+      try {
+        localStorage.removeItem(`gotiga_gazette_watch_${w.leafId}`);
+      } catch {
+        /* ignore */
+      }
+    } catch {
+      watchError = $t('profileActionError');
+    } finally {
+      releasingWatchId = null;
+    }
   }
 
   async function logout() {
@@ -781,7 +810,7 @@
         {:else if error}
           <p class="error-msg">{error}</p>
         {:else if view === 'hub'}
-          <!-- ── Hub: three large entrances ── -->
+          <!-- ── Hub ── -->
           <section class="hub">
             <button class="hub-tile" onclick={() => view = 'dealings'}>
               <span class="hub-kicker">{$t('profileHubDealingsHint')}</span>
@@ -802,6 +831,13 @@
               <span class="hub-name">{$t('profileWishlist')}</span>
               <span class="hub-foot">
                 {#if wishlistIds.length > 0}<span class="hub-count">{wishlistIds.length}</span> {$t('profileHubPieces')}{:else}{$t('profileEmpty')}{/if}
+              </span>
+            </button>
+            <button class="hub-tile" onclick={() => view = 'watches'}>
+              <span class="hub-kicker">{$t('profileHubWatchesHint')}</span>
+              <span class="hub-name">{$t('profileWatches')}</span>
+              <span class="hub-foot">
+                {#if watches.length > 0}<span class="hub-count">{watches.length}</span>{:else}{$t('profileEmpty')}{/if}
               </span>
             </button>
           </section>
@@ -850,6 +886,33 @@
                 </div>
               {/each}
             </div>
+          {/if}
+        {:else if view === 'watches'}
+          <button class="crumb" onclick={() => view = 'hub'}>← {$t('profileTitle')}</button>
+          {#if watchError}
+            <p class="field-error" role="alert">{watchError}</p>
+          {/if}
+          {#if watches.length === 0}
+            <p class="empty">{$t('profileWatchEmpty')}</p>
+          {:else}
+            <ul class="watch-list">
+              {#each watches as w (w.id)}
+                <li class="watch-row">
+                  <a class="watch-title" href="/gazette/{w.leafSlug}">{watchTitle(w)}</a>
+                  {#if w.notifiedAt}
+                    <span class="watch-note">{$t('gazetteWatchAlreadyTold')}</span>
+                  {/if}
+                  <button
+                    type="button"
+                    class="watch-release"
+                    onclick={() => releaseWatch(w)}
+                    disabled={releasingWatchId === w.id}
+                  >
+                    {$t('profileWatchRelease')}
+                  </button>
+                </li>
+              {/each}
+            </ul>
           {/if}
         {:else if view === 'messages'}
           <button class="crumb" onclick={() => view = 'hub'}>← {$t('profileTitle')}</button>
@@ -1507,7 +1570,7 @@
     .body { padding: 1.5rem 1.1rem 2.5rem; min-height: calc(100vh - 58px); }
   }
 
-  /* ── Hub: three large entrances ── */
+  /* ── Hub ── */
 
   .hub {
     display: grid;
@@ -1559,6 +1622,50 @@
     border-radius: 999px;
     padding: 1px 7px;
   }
+
+  .watch-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .watch-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px 16px;
+    padding: 14px 0;
+    border-top: 1px solid #e0d2bd;
+  }
+  .watch-row:first-child { border-top: none; }
+  .watch-title {
+    font-family: 'Fraunces', Georgia, serif;
+    font-size: 1.15rem;
+    color: #34251c;
+    text-decoration: none;
+    flex: 1 1 12rem;
+  }
+  .watch-title:hover { color: #6f3b24; }
+  .watch-note {
+    font-size: 0.78rem;
+    color: #9a7c5c;
+  }
+  .watch-release {
+    font-family: Inter, sans-serif;
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    color: #9a7c5c;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  .watch-release:hover:not(:disabled) { color: #c65f3c; }
+  .watch-release:disabled { opacity: 0.55; cursor: default; }
 
   /* ── Breadcrumb / back ── */
 

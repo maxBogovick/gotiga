@@ -13,6 +13,7 @@ export const GAZETTE_KIND_KEY: Record<GazetteKind, TranslationKey> = {
   tale: 'gazetteKind_tale',
   note: 'gazetteKind_note',
   world: 'gazetteKind_world',
+  sketch: 'gazetteKind_sketch',
 };
 
 const NAMED_ENTITIES: Record<string, string> = {
@@ -114,6 +115,80 @@ export interface GazetteTemplateFill {
   dekRu: string;
 }
 
+function dateOnlyIso(value: string): string {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T12:00:00` : value;
+}
+
+/** Venue and dates for a showing leaf, in the language of the dek. */
+export function showingDateline(
+  startsAt: string | null | undefined,
+  endsAt: string | null | undefined,
+  venue: string | null | undefined,
+  lang: Lang,
+): string {
+  const start = startsAt?.trim() ? quietDate(dateOnlyIso(startsAt.trim()), lang) : '';
+  const end = endsAt?.trim() ? quietDate(dateOnlyIso(endsAt.trim()), lang) : '';
+  const range = start && end && start !== end ? `${start} — ${end}` : start || end;
+  const place = venue?.trim() ?? '';
+  return [place, range].filter(Boolean).join('. ');
+}
+
+/** Distinct face / detail URLs to pick a frame for a gazette slip. */
+export function workFrameUrls(
+  fig: {
+    faceImageUrl?: string | null;
+    detailImageUrl?: string | null;
+    faceImageLargeUrl?: string | null;
+    detailImageLargeUrl?: string | null;
+  },
+  extra?: { images?: { url: string }[] } | null,
+): string[] {
+  const out: string[] = [];
+  const add = (u?: string | null) => {
+    const v = u?.trim();
+    if (v && !out.includes(v)) out.push(v);
+  };
+  add(fig.faceImageUrl);
+  add(fig.detailImageUrl);
+  add(fig.faceImageLargeUrl);
+  add(fig.detailImageLargeUrl);
+  for (const img of extra?.images ?? []) add(img.url);
+  return out;
+}
+
+export const SKETCH_MAX = 8;
+
+/** Sketches and bench photos for a work still taking shape. Process steps first. */
+export function sketchUrlsFromWork(fig: {
+  processSteps?: { imageUrl?: string | null; stepType?: string }[];
+  images?: { url: string }[];
+  faceImageUrl?: string | null;
+  detailImageUrl?: string | null;
+}): string[] {
+  const out: string[] = [];
+  const add = (u?: string | null) => {
+    const v = u?.trim();
+    if (v && !out.includes(v) && out.length < SKETCH_MAX) out.push(v);
+  };
+  const steps = fig.processSteps ?? [];
+  for (const s of steps.filter((s) => s.stepType === 'sketch')) add(s.imageUrl);
+  for (const s of steps.filter((s) => s.stepType !== 'sketch')) add(s.imageUrl);
+  for (const img of fig.images ?? []) add(img.url);
+  add(fig.faceImageUrl);
+  add(fig.detailImageUrl);
+  return out;
+}
+
+export function leafImageList(leaf: { imageUrl?: string | null; imageUrls?: string[] | null }): string[] {
+  if (leaf.imageUrls?.length) return leaf.imageUrls.filter((u) => !!u?.trim());
+  const cover = leaf.imageUrl?.trim();
+  return cover ? [cover] : [];
+}
+
+export function leafCoverUrl(leaf: { imageUrl?: string | null; imageUrls?: string[] | null }): string {
+  return leafImageList(leaf)[0] ?? '';
+}
+
 /** Starter copy for a new gazette note. The admin edits before publishing. */
 export function fillTemplate(kind: GazetteKind, name: string): GazetteTemplateFill {
   const n = name.trim();
@@ -131,6 +206,13 @@ export function fillTemplate(kind: GazetteKind, name: string): GazetteTemplateFi
         titleRu: n ? `Показ: ${n}` : 'Анонс показа',
         dekEn: 'Dates and details of the showing.',
         dekRu: 'Даты и детали показа.',
+      };
+    case 'sketch':
+      return {
+        titleEn: n || 'In the making',
+        titleRu: n || 'В работе',
+        dekEn: n ? `${n} is still in the making.` : 'Sketches from the workshop.',
+        dekRu: n ? `«${n}» ещё в работе.` : 'Наброски из мастерской.',
       };
     case 'collage':
     case 'guest_story':
@@ -172,7 +254,7 @@ export function isGazetteYearSlug(slug: string): boolean {
 
 /** API doors that live under /gazette/* and must never be treated as a leaf. */
 export function isGazetteReservedSlug(slug: string): boolean {
-  return slug === 'home' || slug === 'room' || slug === 'blotter' || slug === 'for-work';
+  return slug === 'home' || slug === 'room' || slug === 'blotter' || slug === 'for-work' || slug === 'watch';
 }
 
 export function leafWhen(leaf: GazetteLeaf): string {
@@ -192,6 +274,53 @@ export function quietDate(iso: string | null | undefined, lang: Lang): string {
     month: 'long',
     year: 'numeric',
   });
+}
+
+function dateOnly(iso: string): string {
+  return iso.slice(0, 10);
+}
+
+function todayStamp(now = new Date()): string {
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function quietDay(ymd: string, lang: Lang): string {
+  return quietDate(`${ymd}T12:00:00`, lang);
+}
+
+/** Whispered window for a sketch leaf. Empty when the whole span is already past. */
+export function expectedWhen(
+  from: string | null | undefined,
+  to: string | null | undefined,
+  lang: Lang,
+  around: (date: string) => string,
+  range: (a: string, b: string) => string,
+  now = new Date(),
+): string {
+  const start = dateOnly(from || to || '');
+  const end = dateOnly(to || from || '');
+  if (!start || !end) return '';
+  if (end < todayStamp(now)) return '';
+  if (start === end) return around(quietDay(start, lang));
+  return range(quietDay(start, lang), quietDay(end, lang));
+}
+
+export function expectedWhisper(
+  leaf: { kind: string; expectedFrom?: string | null; expectedTo?: string | null },
+  lang: Lang,
+  around: (date: string) => string,
+  range: (a: string, b: string) => string,
+  now = new Date(),
+): string {
+  if (leaf.kind !== 'sketch') return '';
+  return expectedWhen(leaf.expectedFrom, leaf.expectedTo, lang, around, range, now);
+}
+
+export function sketchLaidOut(leaf: { kind: string; figurineStatus?: string | null }): boolean {
+  return leaf.kind === 'sketch' && leaf.figurineStatus === 'available';
 }
 
 export function monthLabel(iso: string, lang: Lang): string {
@@ -242,6 +371,7 @@ export function yearHref(year: number, latestYear: number | undefined): string {
 
 const KIND_ORDER: GazetteKind[] = [
   'arrival',
+  'sketch',
   'collage',
   'showing',
   'guest_story',

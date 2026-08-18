@@ -2957,9 +2957,12 @@ pub struct GazetteLeaf {
     pub source_name: Option<String>,
     pub source_url: Option<String>,
     pub image_url: Option<String>,
+    pub image_urls: Vec<String>,
     pub pinned: bool,
     pub published_at: Option<DateTime<Utc>>,
     pub scheduled_at: Option<DateTime<Utc>>,
+    pub expected_from: Option<NaiveDate>,
+    pub expected_to: Option<NaiveDate>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -2981,13 +2984,18 @@ pub struct GazetteLeafListed {
     pub source_name: Option<String>,
     pub source_url: Option<String>,
     pub image_url: Option<String>,
+    pub image_urls: Vec<String>,
     pub pinned: bool,
     pub published_at: Option<DateTime<Utc>>,
     pub scheduled_at: Option<DateTime<Utc>>,
+    pub expected_from: Option<NaiveDate>,
+    pub expected_to: Option<NaiveDate>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub figurine_name: Option<String>,
     pub figurine_slug: Option<String>,
+    pub figurine_status: Option<String>,
+    pub watch_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3010,9 +3018,15 @@ pub struct GazetteLeafDto {
     pub source_name: Option<String>,
     pub source_url: Option<String>,
     pub image_url: Option<String>,
+    pub image_urls: Vec<String>,
     pub pinned: bool,
     pub published_at: Option<String>,
     pub scheduled_at: Option<String>,
+    pub expected_from: Option<String>,
+    pub expected_to: Option<String>,
+    pub figurine_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watch_count: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3047,8 +3061,14 @@ pub struct SaveGazetteLeafRequest {
     pub source_url: Option<String>,
     pub image_url: Option<String>,
     #[serde(default)]
+    pub image_urls: Vec<String>,
+    #[serde(default)]
     pub pinned: bool,
     pub scheduled_at: Option<String>,
+    #[serde(default)]
+    pub expected_from: Option<String>,
+    #[serde(default)]
+    pub expected_to: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -3058,6 +3078,69 @@ pub struct GazetteLeavesPage {
     pub total: i64,
     pub page: i64,
     pub per_page: i64,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct GazetteWatch {
+    pub id: Uuid,
+    pub leaf_id: Uuid,
+    pub email: String,
+    pub name: Option<String>,
+    pub lang: String,
+    pub cancel_token: String,
+    pub user_id: Option<Uuid>,
+    pub notified_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WatchGazetteLeafRequest {
+    pub email: Option<String>,
+    pub name: Option<String>,
+    pub lang: Option<String>,
+    pub age_confirmed: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GazetteWatchCreatedResponse {
+    pub cancel_token: String,
+    pub already_watching: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GazetteWatchInfo {
+    pub leaf_slug: String,
+    pub title_en: String,
+    pub title_ru: String,
+    pub notified: bool,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct GazetteWatchListed {
+    pub id: Uuid,
+    pub leaf_id: Uuid,
+    pub leaf_slug: String,
+    pub title_en: String,
+    pub title_ru: String,
+    pub cancel_token: String,
+    pub notified_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GazetteWatchDto {
+    pub id: String,
+    pub leaf_id: String,
+    pub leaf_slug: String,
+    pub title_en: String,
+    pub title_ru: String,
+    pub cancel_token: String,
+    pub notified_at: Option<String>,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize)]

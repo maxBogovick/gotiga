@@ -1,6 +1,6 @@
 import { api } from '$lib/api';
 import { SITE_URL, toAbsoluteUrl } from '$lib/site';
-import { leafCopy } from '$lib/gazette';
+import { leafCopy, leafCoverUrl } from '$lib/gazette';
 
 export const prerender = import.meta.env.VITE_BUILD_TARGET === 'web';
 
@@ -34,7 +34,7 @@ export async function GET({ fetch }: { fetch: typeof globalThis.fetch }) {
         const copy = leafCopy(leaf, 'en');
         const link = `${SITE_URL}/gazette/${leaf.slug}`;
         const pubDate = rfc822(leaf.publishedAt ?? leaf.createdAt);
-        const image = toAbsoluteUrl(leaf.imageUrl);
+        const image = toAbsoluteUrl(leafCoverUrl(leaf) || null);
         return (
           `    <item>\n` +
           `      <title>${xmlEscape(copy.title)}</title>\n` +

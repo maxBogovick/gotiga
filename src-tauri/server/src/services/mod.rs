@@ -1909,6 +1909,7 @@ impl AppService {
             let name = req.name.clone();
             tokio::spawn(async move {
                 let _ = svc.send_availability_digest(figurine_id, &name).await;
+                let _ = svc.send_sketch_watch_letters(figurine_id, &name).await;
             });
         }
         Self::log_domain_event("figurine_saved", "figurine", figurine_id, "ok");
@@ -5022,6 +5023,7 @@ impl AppService {
             let figurine_name = figurine_name.clone();
             tokio::spawn(async move {
                 let _ = svc.send_availability_digest(uuid, &figurine_name).await;
+                let _ = svc.send_sketch_watch_letters(uuid, &figurine_name).await;
             });
         }
         // Remove all entries for this figurine after notification
@@ -5413,7 +5415,12 @@ impl AppService {
             .get_notify_orders_for_figurine(figurine_id)
             .await
             .unwrap_or_default();
-        if queue.is_empty() && notify.is_empty() {
+        let watches = self
+            .repo
+            .list_gazette_watches_for_figurine(figurine_id)
+            .await
+            .unwrap_or_default();
+        if queue.is_empty() && notify.is_empty() && watches.is_empty() {
             return Ok(());
         }
 
@@ -5471,6 +5478,34 @@ impl AppService {
                 lines.join("\n")
             ));
         }
+        if !watches.is_empty() {
+            let seen: HashSet<String> = notify
+                .iter()
+                .map(|o| o.requester_email.to_ascii_lowercase())
+                .collect();
+            let extra: Vec<&crate::models::GazetteWatch> = watches
+                .iter()
+                .filter(|w| !seen.contains(&w.email.to_ascii_lowercase()))
+                .collect();
+            if !extra.is_empty() {
+                let lines: Vec<String> = extra
+                    .iter()
+                    .map(|w| {
+                        fmt_contact(
+                            w.name.as_deref().unwrap_or("—"),
+                            &w.email,
+                            None,
+                            Some("вестник"),
+                        )
+                    })
+                    .collect();
+                sections.push(format!(
+                    "📜 *Сторожка вестника* \\({}\\)\n{}",
+                    extra.len(),
+                    lines.join("\n")
+                ));
+            }
+        }
 
         let admin_link = format!(
             "{}/admin#waitlist",
@@ -5487,6 +5522,114 @@ impl AppService {
         let _ = self.http_client.post(&url)
             .json(&serde_json::json!({ "chat_id": chat_id, "text": text, "parse_mode": "MarkdownV2" }))
             .send().await;
+        Ok(())
+    }
+
+    async fn send_sketch_watch_letters(&self, figurine_id: Uuid, figurine_name: &str) -> Result<()> {
+        let pending = self
+            .repo
+            .list_unnotified_gazette_watches_for_figurine(figurine_id)
+            .await?;
+        if pending.is_empty() {
+            return Ok(());
+        }
+        let handle = match self.repo.get_figurine_by_id(figurine_id).await? {
+            Some(f) => f
+                .slug
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| figurine_id.to_string()),
+            None => figurine_id.to_string(),
+        };
+        let mut sent: Vec<String> = Vec::new();
+        let mut seen = HashSet::new();
+        for watch in pending {
+            let key = watch.email.to_ascii_lowercase();
+            if !seen.insert(key) {
+                continue;
+            }
+            if self.send_sketch_laid_email(&watch, figurine_name, &handle).await.is_ok() {
+                sent.push(watch.email);
+            }
+        }
+        self.repo
+            .mark_gazette_watches_notified_for_figurine(figurine_id, &sent)
+            .await?;
+        Ok(())
+    }
+
+    async fn send_sketch_laid_email(
+        &self,
+        watch: &crate::models::GazetteWatch,
+        figurine_name: &str,
+        figurine_handle: &str,
+    ) -> Result<()> {
+        use lettre::message::header::ContentType;
+        use lettre::transport::smtp::authentication::Credentials;
+        use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
+
+        let db = self.get_smtp_settings().await.unwrap_or_default();
+        let host = db.host.as_deref().or(self.config.smtp_host.as_deref());
+        let user = db.user.as_deref().or(self.config.smtp_user.as_deref());
+        let pass = db.pass.as_deref().or(self.config.smtp_pass.as_deref());
+        let from = db.from.as_deref().or(self.config.smtp_from.as_deref());
+        let port = db.port.or(self.config.smtp_port).unwrap_or(587);
+
+        let (Some(host), Some(user), Some(pass), Some(from)) = (host, user, pass, from) else {
+            tracing::warn!(
+                "SMTP not configured — sketch letter not sent to {}",
+                watch.email
+            );
+            return Ok(());
+        };
+
+        let base = self.config.public_url.trim_end_matches('/');
+        let work = format!("{base}/figurines/{figurine_handle}");
+        let leave = format!("{base}/gazette/watch/{}", watch.cancel_token);
+        let ru = watch.lang == "ru";
+        let subject = if ru {
+            format!("«{figurine_name}» уже на сайте")
+        } else {
+            format!("{figurine_name} is ready")
+        };
+        let body_text = if ru {
+            format!(
+                "Работа готова и лежит на сайте.\n\n\
+                 «{figurine_name}»:\n{work}\n\n\
+                 Если больше не хотите писем об этой работе:\n{leave}"
+            )
+        } else {
+            format!(
+                "This work is ready and on the site.\n\n\
+                 {figurine_name}:\n{work}\n\n\
+                 If you no longer want letters about this work:\n{leave}"
+            )
+        };
+
+        let email = Message::builder()
+            .from(
+                from.parse()
+                    .map_err(|_| AppError::Internal("Invalid SMTP from address".into()))?,
+            )
+            .to(watch
+                .email
+                .parse()
+                .map_err(|_| AppError::Internal("Invalid recipient address".into()))?)
+            .subject(subject)
+            .header(ContentType::TEXT_PLAIN)
+            .body(body_text)
+            .map_err(|e| AppError::Internal(format!("Email build error: {e}")))?;
+
+        let creds = Credentials::new(user.to_string(), pass.to_string());
+        let mailer = AsyncSmtpTransport::<Tokio1Executor>::relay(host)
+            .map_err(|e| AppError::Internal(format!("SMTP relay error: {e}")))?
+            .port(port)
+            .credentials(creds)
+            .build();
+
+        mailer
+            .send(email)
+            .await
+            .map_err(|e| AppError::Internal(format!("SMTP send error: {e}")))?;
         Ok(())
     }
 
@@ -6172,6 +6315,14 @@ impl AppService {
     // === CABINET GAZETTE ===
 
     fn gazette_leaf_dto(row: GazetteLeafListed) -> GazetteLeafDto {
+        Self::map_gazette_leaf(row, false)
+    }
+
+    fn gazette_leaf_dto_admin(row: GazetteLeafListed) -> GazetteLeafDto {
+        Self::map_gazette_leaf(row, true)
+    }
+
+    fn map_gazette_leaf(row: GazetteLeafListed, admin: bool) -> GazetteLeafDto {
         GazetteLeafDto {
             id: row.id.to_string(),
             slug: row.slug,
@@ -6189,10 +6340,19 @@ impl AppService {
             href: row.href,
             source_name: row.source_name,
             source_url: row.source_url,
-            image_url: row.image_url,
+            image_url: row.image_url.clone(),
+            image_urls: if row.image_urls.is_empty() {
+                row.image_url.clone().into_iter().collect()
+            } else {
+                row.image_urls
+            },
             pinned: row.pinned,
             published_at: row.published_at.map(|t| t.to_rfc3339()),
             scheduled_at: row.scheduled_at.map(|t| t.to_rfc3339()),
+            expected_from: row.expected_from.map(|d| d.to_string()),
+            expected_to: row.expected_to.map(|d| d.to_string()),
+            figurine_status: row.figurine_status,
+            watch_count: if admin { Some(row.watch_count) } else { None },
             created_at: row.created_at.to_rfc3339(),
             updated_at: row.updated_at.to_rfc3339(),
             prev: None,
@@ -6246,7 +6406,7 @@ impl AppService {
             .get_gazette_leaf_admin(id)
             .await?
             .ok_or_else(|| AppError::NotFound(format!("Gazette leaf {id} not found")))?;
-        Ok(Self::gazette_leaf_dto(row))
+        Ok(Self::gazette_leaf_dto_admin(row))
     }
 
     fn parse_gazette_schedule(raw: Option<&str>) -> Result<Option<DateTime<Utc>>> {
@@ -6364,7 +6524,7 @@ impl AppService {
             .list_gazette_leaves_admin(status, kind, per_page, offset)
             .await?;
         Ok(GazetteLeavesPage {
-            items: items.into_iter().map(Self::gazette_leaf_dto).collect(),
+            items: items.into_iter().map(Self::gazette_leaf_dto_admin).collect(),
             total,
             page,
             per_page,
@@ -6388,11 +6548,12 @@ impl AppService {
                 p.dek_en.as_deref(), p.dek_ru.as_deref(),
                 p.body_en.as_deref(), p.body_ru.as_deref(),
                 p.figurine_id, p.href.as_deref(), p.source_name.as_deref(),
-                p.source_url.as_deref(), p.image_url.as_deref(),
-                p.pinned, p.published_at, p.scheduled_at,
+                p.source_url.as_deref(), p.image_url.as_deref(), &p.image_urls,
+                p.pinned, p.published_at, p.scheduled_at, p.expected_from, p.expected_to,
             )
             .await?;
         Self::log_domain_event("gazette_leaf_created", "gazette_leaf", rec.id, "ok");
+        let _ = self.sync_leaf_watches_to_work(rec.id).await;
         self.gazette_leaf_listed_or_fetch(rec.id).await
     }
 
@@ -6415,17 +6576,184 @@ impl AppService {
                 p.dek_en.as_deref(), p.dek_ru.as_deref(),
                 p.body_en.as_deref(), p.body_ru.as_deref(),
                 p.figurine_id, p.href.as_deref(), p.source_name.as_deref(),
-                p.source_url.as_deref(), p.image_url.as_deref(),
-                p.pinned, p.published_at, p.scheduled_at,
+                p.source_url.as_deref(), p.image_url.as_deref(), &p.image_urls,
+                p.pinned, p.published_at, p.scheduled_at, p.expected_from, p.expected_to,
             )
             .await?;
         Self::log_domain_event("gazette_leaf_updated", "gazette_leaf", rec.id, "ok");
+        let _ = self.sync_leaf_watches_to_work(rec.id).await;
         self.gazette_leaf_listed_or_fetch(rec.id).await
     }
 
     pub async fn admin_delete_gazette_leaf(&self, id: Uuid) -> Result<()> {
         self.repo.delete_gazette_leaf(id).await?;
         Self::log_domain_event("gazette_leaf_deleted", "gazette_leaf", id, "ok");
+        Ok(())
+    }
+
+    pub async fn watch_gazette_leaf(
+        &self,
+        slug: &str,
+        req: WatchGazetteLeafRequest,
+        user_id: Option<Uuid>,
+        user_email: Option<&str>,
+        user_name: Option<&str>,
+    ) -> Result<GazetteWatchCreatedResponse> {
+        if !req.age_confirmed {
+            return Err(AppError::BadRequest(
+                "Please confirm you are 16 or older".into(),
+            ));
+        }
+        let leaf = self
+            .repo
+            .get_gazette_leaf_by_slug(slug)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Gazette leaf not found".into()))?;
+        if leaf.kind != "sketch" {
+            return Err(AppError::BadRequest(
+                "You can only ask to be told about a work still in the making".into(),
+            ));
+        }
+        if leaf.figurine_status.as_deref() == Some("available") {
+            return Err(AppError::BadRequest(
+                "This work is already on the site".into(),
+            ));
+        }
+        let mut email = req
+            .email
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("")
+            .to_string();
+        if email.is_empty() {
+            email = user_email.unwrap_or("").trim().to_string();
+        }
+        if !email.contains('@') || email.len() > 200 {
+            return Err(AppError::BadRequest("Valid email is required".into()));
+        }
+        let name = req
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                user_name
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+            });
+        let lang = req
+            .lang
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| *s == "ru" || *s == "en")
+            .unwrap_or("en");
+        let (watch, already) = self
+            .repo
+            .upsert_gazette_watch(leaf.id, &email, name.as_deref(), lang, user_id)
+            .await?;
+        if let Some(fid) = leaf.figurine_id {
+            let fname = leaf.figurine_name.clone().unwrap_or_default();
+            let _ = self.mirror_watch_as_notify(&watch, fid, &fname).await;
+        }
+        Self::log_domain_event("gazette_watch_left", "gazette_watch", watch.id, "ok");
+        Ok(GazetteWatchCreatedResponse {
+            cancel_token: watch.cancel_token,
+            already_watching: already,
+        })
+    }
+
+    pub async fn get_gazette_watch_by_token(&self, token: &str) -> Result<Option<GazetteWatchInfo>> {
+        let Some(w) = self.repo.get_gazette_watch_by_token(token).await? else {
+            return Ok(None);
+        };
+        let Some(leaf) = self.repo.get_gazette_leaf_admin(w.leaf_id).await? else {
+            return Ok(None);
+        };
+        Ok(Some(GazetteWatchInfo {
+            leaf_slug: leaf.slug,
+            title_en: leaf.title_en,
+            title_ru: leaf.title_ru,
+            notified: w.notified_at.is_some(),
+        }))
+    }
+
+    pub async fn leave_gazette_watch(&self, token: &str) -> Result<()> {
+        self.repo.delete_gazette_watch_by_token(token).await?;
+        Ok(())
+    }
+
+    pub async fn list_user_gazette_watches(&self, user_id: Uuid, email: &str) -> Result<Vec<GazetteWatchDto>> {
+        let _ = self.repo.link_gazette_watches_to_user(user_id, email).await;
+        let rows = self.repo.list_gazette_watches_for_user(user_id).await?;
+        Ok(rows
+            .into_iter()
+            .map(|w| GazetteWatchDto {
+                id: w.id.to_string(),
+                leaf_id: w.leaf_id.to_string(),
+                leaf_slug: w.leaf_slug,
+                title_en: w.title_en,
+                title_ru: w.title_ru,
+                cancel_token: w.cancel_token,
+                notified_at: w.notified_at.map(|t| t.to_rfc3339()),
+                created_at: w.created_at.to_rfc3339(),
+            })
+            .collect())
+    }
+
+    async fn mirror_watch_as_notify(
+        &self,
+        watch: &GazetteWatch,
+        figurine_id: Uuid,
+        figurine_name: &str,
+    ) -> Result<()> {
+        let req = OrderRequest {
+            figurine_id: figurine_id.to_string(),
+            figurine_name: figurine_name.to_string(),
+            requester_name: watch
+                .name
+                .clone()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| "—".into()),
+            requester_email: watch.email.clone(),
+            requester_phone: None,
+            message: None,
+            mode: OrderMode::Notify,
+            age_confirmed: true,
+        };
+        self.repo.upsert_notify_order(&req, watch.user_id).await?;
+        Ok(())
+    }
+
+    async fn sync_leaf_watches_to_work(&self, leaf_id: Uuid) -> Result<()> {
+        let Some(leaf) = self.repo.get_gazette_leaf_admin(leaf_id).await? else {
+            return Ok(());
+        };
+        let Some(fid) = leaf.figurine_id else {
+            return Ok(());
+        };
+        let name = leaf.figurine_name.clone().unwrap_or_default();
+        let watches = self.repo.list_gazette_watches_for_figurine(fid).await?;
+        for w in &watches {
+            let _ = self.mirror_watch_as_notify(w, fid, &name).await;
+        }
+        if leaf.kind == "sketch" && leaf.figurine_status.as_deref() == Some("available") {
+            let pending = self
+                .repo
+                .list_unnotified_gazette_watches_for_figurine(fid)
+                .await
+                .unwrap_or_default();
+            if !pending.is_empty() {
+                let svc = self.clone();
+                let n = name.clone();
+                tokio::spawn(async move {
+                    let _ = svc.send_availability_digest(fid, &n).await;
+                    let _ = svc.send_sketch_watch_letters(fid, &n).await;
+                });
+            }
+        }
         Ok(())
     }
 
@@ -6645,8 +6973,11 @@ impl AppService {
             source_name: Some(cutting.source_name.clone()),
             source_url: Some(cutting.url),
             image_url: None,
+            image_urls: vec![],
             pinned: false,
             scheduled_at: None,
+            expected_from: None,
+            expected_to: None,
         };
         // Leave the cutting where it is. Taking it off the desk while the
         // rewrite is still a draft would punch a hole in the blotter.
@@ -6702,6 +7033,15 @@ impl AppService {
             }
             _ => None,
         };
+        let image_urls =
+            crate::gazette::normalize_image_urls(req.image_url.as_deref(), &req.image_urls);
+        let cover = image_urls.first().cloned();
+        let (expected_from, expected_to) = crate::gazette::normalize_expected(
+            &req.kind,
+            req.expected_from.as_deref(),
+            req.expected_to.as_deref(),
+        )
+        .map_err(AppError::BadRequest)?;
         Ok(PreparedGazetteLeaf {
             slug,
             kind: req.kind.clone(),
@@ -6731,15 +7071,13 @@ impl AppService {
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(str::to_string),
-            image_url: req
-                .image_url
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string),
+            image_url: cover.clone(),
+            image_urls,
             pinned: req.pinned,
             published_at,
             scheduled_at,
+            expected_from,
+            expected_to,
         })
     }
 }
@@ -6759,9 +7097,12 @@ struct PreparedGazetteLeaf {
     source_name: Option<String>,
     source_url: Option<String>,
     image_url: Option<String>,
+    image_urls: Vec<String>,
     pinned: bool,
     published_at: Option<DateTime<Utc>>,
     scheduled_at: Option<DateTime<Utc>>,
+    expected_from: Option<chrono::NaiveDate>,
+    expected_to: Option<chrono::NaiveDate>,
 }
 
 #[cfg(test)]

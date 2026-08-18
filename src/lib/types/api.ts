@@ -1653,9 +1653,21 @@ export type GazetteKind =
     | 'guest_story'
     | 'tale'
     | 'note'
-    | 'world';
+    | 'world'
+    | 'sketch';
 
 export type GazetteStatus = 'draft' | 'scheduled' | 'published' | 'archived';
+
+/** Opens the gazette composer from another admin tab (a work, a showing). */
+export interface GazetteSeed {
+    figurineId?: string;
+    kind?: GazetteKind;
+    leafId?: string;
+    venue?: string | null;
+    startsAt?: string | null;
+    endsAt?: string | null;
+    imageUrls?: string[];
+}
 
 export interface GazetteLeaf {
     id: string;
@@ -1675,9 +1687,14 @@ export interface GazetteLeaf {
     sourceName: string | null;
     sourceUrl: string | null;
     imageUrl: string | null;
+    imageUrls?: string[];
     pinned: boolean;
     publishedAt: string | null;
     scheduledAt: string | null;
+    expectedFrom?: string | null;
+    expectedTo?: string | null;
+    figurineStatus?: string | null;
+    watchCount?: number | null;
     createdAt: string;
     updatedAt: string;
     prev?: GazetteNeighbor | null;
@@ -1705,8 +1722,11 @@ export interface SaveGazetteLeafRequest {
     sourceName?: string | null;
     sourceUrl?: string | null;
     imageUrl?: string | null;
+    imageUrls?: string[] | null;
     pinned?: boolean;
     scheduledAt?: string | null;
+    expectedFrom?: string | null;
+    expectedTo?: string | null;
 }
 
 export interface GazetteLeavesPage {
@@ -1714,6 +1734,36 @@ export interface GazetteLeavesPage {
     total: number;
     page: number;
     perPage: number;
+}
+
+export interface WatchGazetteLeafRequest {
+    email?: string | null;
+    name?: string | null;
+    lang?: string | null;
+    ageConfirmed: boolean;
+}
+
+export interface GazetteWatchCreatedResponse {
+    cancelToken: string;
+    alreadyWatching: boolean;
+}
+
+export interface GazetteWatchInfo {
+    leafSlug: string;
+    titleEn: string;
+    titleRu: string;
+    notified: boolean;
+}
+
+export interface GazetteWatchDto {
+    id: string;
+    leafId: string;
+    leafSlug: string;
+    titleEn: string;
+    titleRu: string;
+    cancelToken: string;
+    notifiedAt: string | null;
+    createdAt: string;
 }
 
 export interface GazetteCutting {

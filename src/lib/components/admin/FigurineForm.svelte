@@ -13,10 +13,10 @@
    */
   import { untrack } from 'svelte';
   import { api } from '$lib/api';
-  import { fillTemplate } from '$lib/gazette';
+  import { sketchUrlsFromWork } from '$lib/gazette';
   import { generatePinterestDescription } from '$lib/pinterest-description';
   import { formatFigurineAlt, altLabelsFrom, siblingPosition } from '$lib/figurine-alt';
-  import type { Figurine, FigurineListItem, ShowingRoom } from '$lib/types/api';
+  import type { Figurine, FigurineListItem, GazetteLeaf, GazetteSeed, ShowingRoom } from '$lib/types/api';
   import { fade, slide } from 'svelte/transition';
   import { t } from '$lib/i18n';
   import { themeConfig } from '$lib/stores/theme.svelte';
@@ -37,6 +37,7 @@
     onDelete,
     onCancel,
     onMessage,
+    onLayGazette,
   }: {
     figurine: Figurine;
     /** The whole registry — powers the material/technique/dimensions suggestions. */
@@ -50,6 +51,7 @@
     onDelete: () => void;
     onCancel: () => void;
     onMessage: (text: string, type?: string) => void;
+    onLayGazette?: (seed: GazetteSeed) => void;
   } = $props();
 
   let isSaving = $state(false);
@@ -100,54 +102,27 @@
     // caption and Pinterest endpoints key off a saved row, so they wait for one.
     let figurineExists = $derived(figurines.some((f) => f.id === figurine.id));
 
-    let gzTitle = $state('');
-    let gzSummary = $state('');
-    let gzBusy = $state(false);
-    let gzForId = $state('');
+    let gzLeaf = $state<GazetteLeaf | null>(null);
+    let gzLoading = $state(false);
 
     $effect(() => {
         const id = figurine.id;
-        const name = figurine.name;
-        if (id === gzForId) return;
-        gzForId = id;
-        const fill = fillTemplate('arrival', name);
-        gzTitle = fill.titleEn;
-        gzSummary = fill.dekEn;
+        const exists = figurines.some((f) => f.id === id);
+        gzLeaf = null;
+        if (!exists) return;
+        let cancelled = false;
+        gzLoading = true;
+        void api.getGazetteForWork(id).then((items) => {
+            if (cancelled) return;
+            const prefer = figurine.status === 'in_progress' ? 'sketch' : 'arrival';
+            gzLeaf = items.find((l) => l.kind === prefer) ?? null;
+        }).finally(() => {
+            if (!cancelled) gzLoading = false;
+        });
+        return () => {
+            cancelled = true;
+        };
     });
-
-    function faceUrl(): string | null {
-        return figurine.images.find((img) => img.imageType === 'face')?.url
-            ?? figurine.images[0]?.url
-            ?? null;
-    }
-
-    async function publishGazetteNote() {
-        if (!figurineExists) return;
-        if (!gzTitle.trim()) {
-            onMessage($t('adminGazetteNeedTitle'), 'error');
-            return;
-        }
-        gzBusy = true;
-        try {
-            const handle = figurine.slug ?? figurine.id;
-            await api.adminSaveGazetteLeaf({
-                kind: 'arrival',
-                status: 'published',
-                titleEn: gzTitle.trim(),
-                titleRu: gzTitle.trim(),
-                dekEn: gzSummary.trim() || null,
-                dekRu: gzSummary.trim() || null,
-                figurineId: figurine.id,
-                href: `/figurines/${handle}`,
-                imageUrl: faceUrl(),
-            });
-            onMessage($t('adminGazetteSaved'), 'success');
-        } catch (e: unknown) {
-            onMessage($t('adminMsgError') + (e instanceof Error ? e.message : String(e)), 'error');
-        } finally {
-            gzBusy = false;
-        }
-    }
 
     async function saveCaption() {
         captionSaving = true;
@@ -1045,20 +1020,36 @@
 
         <div class="block border-t border-[#34251c]/10 pt-6">
             <span class="label">{$t('adminGazetteAnnounceHeading')}</span>
-            <p class="text-[11px] leading-snug text-[#7c6554] mb-2">{$t('adminGazetteAnnounceHint')}</p>
+            <p class="text-[11px] leading-snug text-[#7c6554] mb-2">
+                {figurine.status === 'in_progress' ? $t('adminGazetteAnnounceHintSketch') : $t('adminGazetteAnnounceHint')}
+            </p>
             {#if figurineExists}
-                <label class="block mb-3">
-                    <span class="label">{$t('adminGazetteTitleEn')}</span>
-                    <input bind:value={gzTitle} class="input-gothic" />
-                </label>
-                <label class="block mb-3">
-                    <span class="label">{$t('adminGazetteDekEn')}</span>
-                    <textarea bind:value={gzSummary} class="input-gothic h-28"></textarea>
-                </label>
-                <button type="button" onclick={publishGazetteNote} disabled={gzBusy}
-                    class="px-4 py-2 border border-[#34251c]/25 hover:border-[#34251c]/55 text-[#5f4636] hover:text-[#34251c] text-xs tracking-wide uppercase transition-colors disabled:opacity-40">
-                    {gzBusy ? $t('adminFormSaving') : $t('adminGazetteAnnouncePublish')}
-                </button>
+                {#if gzLoading}
+                    <p class="text-[11px] italic text-[#7c6554]">…</p>
+                {:else if gzLeaf}
+                    <p class="text-[12px] text-[#5f4636] mb-2">{$t('adminGazetteOnDeskAlready')}</p>
+                    <button
+                        type="button"
+                        onclick={() => onLayGazette?.({ leafId: gzLeaf?.id, figurineId: figurine.id, kind: gzLeaf?.kind ?? (figurine.status === 'in_progress' ? 'sketch' : 'arrival') })}
+                        class="px-4 py-2 border border-[#34251c]/25 hover:border-[#34251c]/55 text-[#5f4636] hover:text-[#34251c] text-xs tracking-wide uppercase transition-colors"
+                    >{$t('adminGazetteOpenInDesk')}</button>
+                {:else if figurine.status === 'in_progress'}
+                    <button
+                        type="button"
+                        onclick={() => onLayGazette?.({
+                            figurineId: figurine.id,
+                            kind: 'sketch',
+                            imageUrls: sketchUrlsFromWork(figurine),
+                        })}
+                        class="px-4 py-2 border border-[#34251c]/25 hover:border-[#34251c]/55 text-[#5f4636] hover:text-[#34251c] text-xs tracking-wide uppercase transition-colors"
+                    >{$t('adminGazettePutSketches')}</button>
+                {:else}
+                    <button
+                        type="button"
+                        onclick={() => onLayGazette?.({ figurineId: figurine.id, kind: 'arrival' })}
+                        class="px-4 py-2 border border-[#34251c]/25 hover:border-[#34251c]/55 text-[#5f4636] hover:text-[#34251c] text-xs tracking-wide uppercase transition-colors"
+                    >{$t('adminGazettePutOnTable')}</button>
+                {/if}
             {:else}
                 <p class="text-[11px] italic text-[#7c6554]">{$t('adminCaptionSaveNewFirst')}</p>
             {/if}

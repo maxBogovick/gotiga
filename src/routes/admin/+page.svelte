@@ -1,7 +1,7 @@
 <script lang="ts">
     import { onMount } from 'svelte';
     import { api } from '$lib/api';
-    import type { Figurine, FigurineListItem, ShowingRoom } from '$lib/types/api';
+    import type { Figurine, FigurineListItem, GazetteSeed, ShowingRoom } from '$lib/types/api';
     import { fade, slide } from 'svelte/transition';
     import SettingsModal from '$lib/components/SettingsModal.svelte';
     import TextEditor from '$lib/components/admin/TextEditor.svelte';
@@ -164,6 +164,7 @@
     const TAB_IDS: readonly string[] = TAB_GROUPS.flatMap((g) => g.tabs.map(([id]) => id));
 
     let activeTab = $state<AdminTab>('registry');
+    let gazetteSeed = $state<GazetteSeed | null>(null);
     let activeAuthorSubTab = $state<'profile' | 'texts'>('profile');
     let newOrdersCount = $state(0);
     let newCommissionsCount = $state(0);
@@ -444,6 +445,11 @@
     function showMessage(text: string, type = 'info') {
         message = { text, type };
         setTimeout(() => message.text = '', 3000);
+    }
+
+    function layGazette(seed: GazetteSeed) {
+        gazetteSeed = seed;
+        activeTab = 'gazette';
     }
 
     onMount(() => {
@@ -735,6 +741,7 @@
                         onDelete={() => deleteFigurine(selectedFigurine!)}
                         onCancel={cancelEdit}
                         onMessage={showMessage}
+                        onLayGazette={layGazette}
                     />
                 {:else}
                     <div class="h-full flex flex-col items-center justify-center text-[#5f4636] opacity-60">
@@ -764,7 +771,7 @@
             <div in:fade class="h-full overflow-auto"><ProgrammePanel /></div>
 
         {:else if activeTab === 'gazette'}
-            <div in:fade class="h-full overflow-hidden"><GazettePanel /></div>
+            <div in:fade class="h-full overflow-hidden"><GazettePanel seed={gazetteSeed} onSeedConsumed={() => (gazetteSeed = null)} /></div>
 
         {:else if activeTab === 'media'}
             <div in:fade class="h-full">
@@ -798,7 +805,7 @@
         {:else if activeTab === 'commissions'}
             <div in:fade class="h-full"><CommissionsPanel onNewCount={(n: number) => newCommissionsCount = n} /></div>
         {:else if activeTab === 'showings'}
-            <div in:fade class="h-full"><ShowingsPanel /></div>
+            <div in:fade class="h-full"><ShowingsPanel onLayGazette={layGazette} /></div>
         {:else if activeTab === 'bookings'}
             <div in:fade class="h-full"><BookingsPanel onPendingCount={(n: number) => pendingBookingsCount = n} /></div>
         {:else if activeTab === 'releases'}

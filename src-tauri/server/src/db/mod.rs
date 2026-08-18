@@ -1,6 +1,6 @@
 use crate::error::{AppError, Result};
 use crate::models::*;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder};
 use uuid::Uuid;
 
@@ -5213,9 +5213,12 @@ impl Repository {
     const GAZETTE_LEAF_SELECT: &'static str = r#"
         SELECT l.id, l.slug, l.kind, l.status,
                l.title_en, l.title_ru, l.dek_en, l.dek_ru, l.body_en, l.body_ru,
-               l.figurine_id, l.href, l.source_name, l.source_url, l.image_url,
-               l.pinned, l.published_at, l.scheduled_at, l.created_at, l.updated_at,
-               f.name AS figurine_name, f.slug AS figurine_slug
+               l.figurine_id, l.href, l.source_name, l.source_url, l.image_url, l.image_urls,
+               l.pinned, l.published_at, l.scheduled_at, l.expected_from, l.expected_to,
+               l.created_at, l.updated_at,
+               f.name AS figurine_name, f.slug AS figurine_slug,
+               f.status::text AS figurine_status,
+               (SELECT COUNT(*) FROM gazette_watches w WHERE w.leaf_id = l.id)::bigint AS watch_count
         FROM gazette_leaves l
         LEFT JOIN figurines f ON f.id = l.figurine_id
     "#;
@@ -5369,17 +5372,20 @@ impl Repository {
         source_name: Option<&str>,
         source_url: Option<&str>,
         image_url: Option<&str>,
+        image_urls: &[String],
         pinned: bool,
         published_at: Option<DateTime<Utc>>,
         scheduled_at: Option<DateTime<Utc>>,
+        expected_from: Option<NaiveDate>,
+        expected_to: Option<NaiveDate>,
     ) -> Result<crate::models::GazetteLeaf> {
         Ok(sqlx::query_as::<_, crate::models::GazetteLeaf>(
             r#"INSERT INTO gazette_leaves (
                     slug, kind, status, title_en, title_ru, dek_en, dek_ru, body_en, body_ru,
-                    figurine_id, href, source_name, source_url, image_url, pinned,
-                    published_at, scheduled_at
+                    figurine_id, href, source_name, source_url, image_url, image_urls, pinned,
+                    published_at, scheduled_at, expected_from, expected_to
                ) VALUES (
-                    $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17
+                    $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
                ) RETURNING *"#,
         )
         .bind(slug)
@@ -5396,9 +5402,12 @@ impl Repository {
         .bind(source_name)
         .bind(source_url)
         .bind(image_url)
+        .bind(image_urls)
         .bind(pinned)
         .bind(published_at)
         .bind(scheduled_at)
+        .bind(expected_from)
+        .bind(expected_to)
         .fetch_one(&self.pg_pool)
         .await?)
     }
@@ -5420,17 +5429,21 @@ impl Repository {
         source_name: Option<&str>,
         source_url: Option<&str>,
         image_url: Option<&str>,
+        image_urls: &[String],
         pinned: bool,
         published_at: Option<DateTime<Utc>>,
         scheduled_at: Option<DateTime<Utc>>,
+        expected_from: Option<NaiveDate>,
+        expected_to: Option<NaiveDate>,
     ) -> Result<crate::models::GazetteLeaf> {
         sqlx::query_as::<_, crate::models::GazetteLeaf>(
             r#"UPDATE gazette_leaves SET
                     slug = $2, kind = $3, status = $4,
                     title_en = $5, title_ru = $6, dek_en = $7, dek_ru = $8,
                     body_en = $9, body_ru = $10, figurine_id = $11, href = $12,
-                    source_name = $13, source_url = $14, image_url = $15,
-                    pinned = $16, published_at = $17, scheduled_at = $18,
+                    source_name = $13, source_url = $14, image_url = $15, image_urls = $16,
+                    pinned = $17, published_at = $18, scheduled_at = $19,
+                    expected_from = $20, expected_to = $21,
                     updated_at = NOW()
                WHERE id = $1
                RETURNING *"#,
@@ -5450,9 +5463,12 @@ impl Repository {
         .bind(source_name)
         .bind(source_url)
         .bind(image_url)
+        .bind(image_urls)
         .bind(pinned)
         .bind(published_at)
         .bind(scheduled_at)
+        .bind(expected_from)
+        .bind(expected_to)
         .fetch_optional(&self.pg_pool)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Gazette leaf {id} not found")))
@@ -5468,6 +5484,158 @@ impl Repository {
             return Err(AppError::NotFound(format!("Gazette leaf {id} not found")));
         }
         Ok(())
+    }
+
+    pub async fn upsert_gazette_watch(
+        &self,
+        leaf_id: Uuid,
+        email: &str,
+        name: Option<&str>,
+        lang: &str,
+        user_id: Option<Uuid>,
+    ) -> Result<(crate::models::GazetteWatch, bool)> {
+        let existing = sqlx::query_as::<_, crate::models::GazetteWatch>(
+            "SELECT * FROM gazette_watches WHERE leaf_id = $1 AND lower(email) = lower($2) LIMIT 1",
+        )
+        .bind(leaf_id)
+        .bind(email)
+        .fetch_optional(&self.pg_pool)
+        .await?;
+        if let Some(ex) = existing {
+            let rec = sqlx::query_as::<_, crate::models::GazetteWatch>(
+                "UPDATE gazette_watches SET
+                        name = COALESCE($2, name),
+                        lang = $3,
+                        user_id = COALESCE($4, user_id)
+                 WHERE id = $1
+                 RETURNING *",
+            )
+            .bind(ex.id)
+            .bind(name)
+            .bind(lang)
+            .bind(user_id)
+            .fetch_one(&self.pg_pool)
+            .await?;
+            return Ok((rec, true));
+        }
+        let token = Self::generate_cancel_token();
+        let rec = sqlx::query_as::<_, crate::models::GazetteWatch>(
+            "INSERT INTO gazette_watches (leaf_id, email, name, lang, cancel_token, user_id)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             RETURNING *",
+        )
+        .bind(leaf_id)
+        .bind(email)
+        .bind(name)
+        .bind(lang)
+        .bind(&token)
+        .bind(user_id)
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok((rec, false))
+    }
+
+    pub async fn get_gazette_watch_by_token(
+        &self,
+        token: &str,
+    ) -> Result<Option<crate::models::GazetteWatch>> {
+        Ok(sqlx::query_as::<_, crate::models::GazetteWatch>(
+            "SELECT * FROM gazette_watches WHERE cancel_token = $1",
+        )
+        .bind(token)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn delete_gazette_watch_by_token(&self, token: &str) -> Result<()> {
+        sqlx::query("DELETE FROM gazette_watches WHERE cancel_token = $1")
+            .bind(token)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn list_gazette_watches_for_figurine(
+        &self,
+        figurine_id: Uuid,
+    ) -> Result<Vec<crate::models::GazetteWatch>> {
+        Ok(sqlx::query_as::<_, crate::models::GazetteWatch>(
+            "SELECT w.* FROM gazette_watches w
+             JOIN gazette_leaves l ON l.id = w.leaf_id
+             WHERE l.figurine_id = $1
+             ORDER BY w.created_at ASC",
+        )
+        .bind(figurine_id)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn list_unnotified_gazette_watches_for_figurine(
+        &self,
+        figurine_id: Uuid,
+    ) -> Result<Vec<crate::models::GazetteWatch>> {
+        Ok(sqlx::query_as::<_, crate::models::GazetteWatch>(
+            "SELECT w.* FROM gazette_watches w
+             JOIN gazette_leaves l ON l.id = w.leaf_id
+             WHERE l.figurine_id = $1 AND w.notified_at IS NULL
+             ORDER BY w.created_at ASC",
+        )
+        .bind(figurine_id)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn mark_gazette_watches_notified_for_figurine(
+        &self,
+        figurine_id: Uuid,
+        emails: &[String],
+    ) -> Result<()> {
+        if emails.is_empty() {
+            return Ok(());
+        }
+        sqlx::query(
+            "UPDATE gazette_watches w
+             SET notified_at = NOW()
+             FROM gazette_leaves l
+             WHERE w.leaf_id = l.id
+               AND l.figurine_id = $1
+               AND w.notified_at IS NULL
+               AND lower(w.email) = ANY($2::text[])",
+        )
+        .bind(figurine_id)
+        .bind(emails)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_gazette_watches_for_user(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<crate::models::GazetteWatchListed>> {
+        Ok(sqlx::query_as::<_, crate::models::GazetteWatchListed>(
+            "SELECT w.id, w.leaf_id, l.slug AS leaf_slug, l.title_en, l.title_ru,
+                    w.cancel_token, w.notified_at, w.created_at
+             FROM gazette_watches w
+             JOIN gazette_leaves l ON l.id = w.leaf_id
+             WHERE w.user_id = $1
+             ORDER BY w.created_at DESC",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn link_gazette_watches_to_user(&self, user_id: Uuid, email: &str) -> Result<u64> {
+        let res = sqlx::query(
+            "UPDATE gazette_watches SET user_id = $1
+             WHERE user_id IS NULL AND lower(email) = lower($2)",
+        )
+        .bind(user_id)
+        .bind(email)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected())
     }
 
     pub async fn list_gazette_feeds(&self) -> Result<Vec<crate::models::GazetteFeed>> {

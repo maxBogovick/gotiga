@@ -2,8 +2,13 @@
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
   import { t } from '$lib/i18n';
-  import { fillTemplate } from '$lib/gazette';
-  import type { ShowingDto, SaveShowingRequest, FigurineListItem } from '$lib/types/api';
+  import type { ShowingDto, SaveShowingRequest, FigurineListItem, GazetteSeed } from '$lib/types/api';
+
+  let {
+    onLayGazette,
+  }: {
+    onLayGazette?: (seed: GazetteSeed) => void;
+  } = $props();
 
   let showings = $state<ShowingDto[]>([]);
   let figurines = $state<FigurineListItem[]>([]);
@@ -90,38 +95,15 @@
     }
   }
 
-  async function publishShowingNote() {
+  function layShowingLeaf() {
     if (!form.figurineId) return;
-    const fig = figurines.find((f) => f.id === form.figurineId);
-    const fill = fillTemplate('showing', fig?.name ?? form.title);
-    const titleEn = (fill.titleEn || form.title).trim();
-    const titleRu = (form.title || fill.titleRu).trim();
-    if (!titleEn && !titleRu) {
-      saveMsg = $t('adminGazetteNeedTitle');
-      return;
-    }
-    saving = true;
-    saveMsg = '';
-    try {
-      await api.adminSaveGazetteLeaf({
-        kind: 'showing',
-        status: 'published',
-        titleEn,
-        titleRu,
-        dekEn: fill.dekEn,
-        dekRu: [form.venue, form.startsAt && form.endsAt ? `${form.startsAt} — ${form.endsAt}` : null]
-          .filter(Boolean)
-          .join('. ') || fill.dekRu,
-        figurineId: form.figurineId,
-        href: `/figurines/${fig?.slug ?? form.figurineId}`,
-        imageUrl: fig?.faceImageUrl ?? null,
-      });
-      saveMsg = $t('adminGazetteSaved');
-    } catch {
-      saveMsg = $t('adminShowingsSaveError');
-    } finally {
-      saving = false;
-    }
+    onLayGazette?.({
+      figurineId: form.figurineId,
+      kind: 'showing',
+      venue: form.venue,
+      startsAt: form.startsAt || null,
+      endsAt: form.endsAt || null,
+    });
   }
 
   async function remove() {
@@ -309,9 +291,8 @@
             {#if form.figurineId}
               <button
                 type="button"
-                onclick={publishShowingNote}
-                disabled={saving}
-                class="px-4 py-2 border border-[#34251c]/30 text-[#34251c] text-xs font-['Inter'] uppercase tracking-wide hover:bg-[#34251c]/5 transition-colors disabled:opacity-50"
+                onclick={layShowingLeaf}
+                class="px-4 py-2 border border-[#34251c]/30 text-[#34251c] text-xs font-['Inter'] uppercase tracking-wide hover:bg-[#34251c]/5 transition-colors"
               >{$t('adminGazetteLayLeafShowing')}</button>
             {/if}
 
