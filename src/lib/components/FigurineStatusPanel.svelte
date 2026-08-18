@@ -18,6 +18,7 @@
     analyticsClient,
     queueJoin = null,
     notifyJoin = null,
+    omitLead = false,
   }: {
     figurine: Figurine;
     id: string;
@@ -28,6 +29,7 @@
     analyticsClient: ReturnType<typeof createFigurineAnalytics> | null;
     queueJoin?: { token: string; position: number } | null;
     notifyJoin?: string | null;
+    omitLead?: boolean;
   } = $props();
 
   function readStoredToken(key: string): string | null {
@@ -176,8 +178,9 @@
   });
 </script>
 
-<div class="entry-status entry-status--{figurine.status}">
+<div class="entry-status entry-status--{figurine.status}" class:entry-status--follow={omitLead}>
 
+  {#if !omitLead}
   <div class="entry-status-grain" aria-hidden="true"></div>
 
   <div class="entry-status-head">
@@ -198,8 +201,10 @@
   </div>
 
   <div class="entry-divider" aria-hidden="true"></div>
+  {/if}
 
   <div class="entry-status-body">
+    {#if !omitLead}
     <div class="entry-status-copy">
       <h2 class="entry-status-title">
         {statusTitle}
@@ -220,6 +225,7 @@
         {/if}
       </p>
     </div>
+    {/if}
 
     <button
       type="button"
@@ -235,6 +241,7 @@
     </button>
   </div>
 
+  {#if !omitLead}
   <div class="entry-status-facts" aria-label={$t('detailRegistryFacts')}>
     <span class="entry-status-facts-item">{$t('detailReplyWindow')}</span>
     <span class="entry-status-facts-item">{$t('detailNoObligation')}</span>
@@ -266,6 +273,7 @@
       </a>
     </div>
   </section>
+  {/if}
 
   {#if scheduleLoadFailed}
     <p class="queue-receipt-left queue-receipt-left--warning">
@@ -978,5 +986,24 @@
     .queue-receipt-left {
       padding: 0 1.05rem 1rem;
     }
+  }
+
+  .entry-status--follow {
+    margin: 0.2rem 0 0.85rem;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    overflow: visible;
+  }
+
+  .entry-status--follow::before,
+  .entry-status--follow .entry-status-grain {
+    display: none;
+  }
+
+  .entry-status--follow .entry-status-body {
+    padding: 0;
   }
 </style>

@@ -163,9 +163,17 @@
     });
   }
 
-  // Await an existing <img> instead of refetching: the browser is already
-  // loading the visible base image, so the colour texture costs zero extra
-  // network — we just upload that same element once it's ready.
+  function isSameOrigin(url: string): boolean {
+    try {
+      return new URL(url, window.location.href).origin === window.location.origin;
+    } catch {
+      return false;
+    }
+  }
+
+  // Await an existing <img> instead of refetching: only when same-origin, so
+  // a prod-dump URL on ritunia.com can still paint the photograph (no CORS
+  // on the visible <img>) while WebGL quietly sits out.
   function imageMatches(img: HTMLImageElement, url: string): boolean {
     try {
       return img.currentSrc === url || img.src === new URL(url, window.location.href).href;
@@ -217,6 +225,7 @@
     gl.uniform1f(uGrazing, GRAZING);
 
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    if ((host?.clientWidth ?? 0) > 8 && (host?.clientHeight ?? 0) > 8) glReady = true;
   }
 
   function frame() {
@@ -240,7 +249,11 @@
   }
 
   function kick() {
-    if (running || destroyed || !visible || !colorTex) return;
+    if (running || destroyed || !colorTex) return;
+    if (!visible) {
+      draw();
+      return;
+    }
     running = true;
     raf = requestAnimationFrame(frame);
   }
@@ -282,11 +295,11 @@
     glReady = false;
     imageFailed = false;
 
-    const colorImg = baseImg
+    const colorImg = baseImg && isSameOrigin(colorSrc)
       ? (await awaitImg(baseImg, colorSrc)) ?? await loadImage(colorSrc)
       : await loadImage(colorSrc);
     if (destroyed || seq !== loadSeq) return;
-    if (!colorImg) { imageFailed = true; return; }
+    if (!colorImg) return;
 
     imageAspect = colorImg.naturalWidth / Math.max(1, colorImg.naturalHeight);
     texelX = 1 / Math.max(1, colorImg.naturalWidth);
@@ -305,7 +318,6 @@
     }
 
     draw();
-    glReady = true; // fade the canvas in over the base <img>
     kick();
   }
 
@@ -566,13 +578,12 @@
   onclick={() => onActivate?.()}
   onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onActivate?.(); } }}
 >
-  <!-- Base photograph: always present (SSR, view-transition, reduced-motion,
-       no-WebGL fallback). The canvas fades in on top once it has drawn.
-       crossorigin keeps the WebGL upload CORS-clean AND reuses the same cached
-       request as the visible image — one fetch, not two. -->
+  <!-- Base photograph: always present. No crossorigin — a failed CORS check
+       on the visible <img> is a broken-image icon, not a quiet GL fallback. -->
   {#if src && !imageFailed}
-    <img bind:this={baseImg} class="raking-base" {src} {alt} class:is-hidden={glReady}
-         crossorigin="anonymous" draggable="false" />
+    <img bind:this={baseImg} class="raking-base" {src} {alt}
+         draggable="false"
+         onerror={() => (imageFailed = true)} />
   {:else}
     <div class="raking-fallback" aria-hidden="true"></div>
   {/if}
@@ -598,10 +609,6 @@
     object-fit: contain;
     user-select: none;
     -webkit-user-drag: none;
-    transition: opacity 0.4s ease;
-  }
-  .raking-base.is-hidden {
-    opacity: 0;
   }
   .raking-canvas {
     opacity: 0;

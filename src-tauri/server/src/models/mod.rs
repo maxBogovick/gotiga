@@ -172,6 +172,9 @@ pub struct Figurine {
     pub display_layout: Option<String>,
     /// JSON blob for per-figurine display customisation ({background, blockOrder}).
     pub display_config: Option<String>,
+    /// JSON blob for the Specimen catalog leaf lists (Features / Perfect for).
+    /// NULL → every built-in line is on, no custom lines.
+    pub catalog_lists: Option<String>,
     /// "First look" early-release window. While now < this, the work is held back
     /// from the public archive and shown only on the book-holders' shelf. NULL →
     /// no window (ordinary public work).
@@ -486,6 +489,10 @@ pub struct FigurineDto {
     pub display_layout: Option<String>,
     /// JSON blob for per-figurine display customisation ({background, blockOrder}).
     pub display_config: Option<String>,
+    /// JSON blob for the Specimen catalog leaf lists (Features / Perfect for).
+    /// Null → every built-in line is on, no custom lines.
+    #[serde(default)]
+    pub catalog_lists: Option<String>,
     /// "First look" early-release window (null once public).
     pub first_look_until: Option<DateTime<Utc>>,
 
@@ -1069,6 +1076,10 @@ pub struct SaveFigurineRequest {
     /// JSON blob for per-figurine display customisation ({background, blockOrder}).
     #[serde(default)]
     pub display_config: Option<String>,
+    /// JSON blob for the Specimen catalog leaf lists (Features / Perfect for).
+    /// Null → every built-in line is on, no custom lines.
+    #[serde(default)]
+    pub catalog_lists: Option<String>,
     /// "First look" early-release window as an RFC-3339 / ISO-8601 string (or
     /// null to clear). Parsed to a timestamptz on save.
     #[serde(default)]

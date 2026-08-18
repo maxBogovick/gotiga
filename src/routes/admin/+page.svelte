@@ -241,6 +241,7 @@
         series: null,
         displayLayout: null,
         displayConfig: null,
+        catalogLists: null,
         openFromMin: null,
         openUntilMin: null,
         firstLookUntil: null,

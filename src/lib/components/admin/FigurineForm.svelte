@@ -25,6 +25,7 @@
   import SealedDoor from '$lib/components/SealedDoor.svelte';
   import FigurineShowingsEditor from '$lib/components/admin/FigurineShowingsEditor.svelte';
   import DisplayConfigEditor from '$lib/components/admin/DisplayConfigEditor.svelte';
+  import CatalogListsEditor from '$lib/components/admin/CatalogListsEditor.svelte';
 
   let {
     figurine,
@@ -56,7 +57,7 @@
 
   let isSaving = $state(false);
   let showingsEditor = $state<FigurineShowingsEditor | null>(null);
-  let activeFormTab = $state<'media' | 'text' | 'object' | 'passport' | 'vitrina'>('media');
+  let activeFormTab = $state<'media' | 'text' | 'object' | 'passport' | 'catalog' | 'vitrina'>('media');
   let selectedImageIdx = $state<number | null>(null);
   let uploadingVideo = $state(false);
   let uploadingImage = $state(false);
@@ -720,6 +721,7 @@
         ['text',     $t('adminFormTabText')],
         ['object',   $t('adminFormTabObject')],
         ['passport', $t('adminFormTabPassport')],
+        ['catalog',  $t('adminFormTabCatalog')],
         ['vitrina',  $t('adminFormTabVitrina')],
     ] as tab}
         <button
@@ -1186,6 +1188,14 @@
                 <textarea bind:value={figurine.includedItems} class="input-gothic h-28"></textarea>
             </label>
         </div>
+    </div>
+
+    <!-- ╔═ CATALOG LISTS ═════════════════════════════════════ -->
+    {:else if activeFormTab === 'catalog'}
+    <div class="p-8 max-w-4xl" in:fade={{ duration: 120 }}>
+        {#key figurine.id}
+            <CatalogListsEditor bind:value={figurine.catalogLists as (string | null)} {figurine} />
+        {/key}
     </div>
 
     <!-- ╔═ VITRINA ═══════════════════════════════════════════ -->

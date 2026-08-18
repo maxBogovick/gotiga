@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { getContext, onMount } from 'svelte';
+  import { getContext } from 'svelte';
   import { figurineHref } from '$lib/figurineHref';
+  import { resolveWebpUrl } from '$lib/api';
   import { t } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
   import FigurineImageViewer from '../FigurineImageViewer.svelte';
@@ -11,19 +12,24 @@
   import FontSwitcher from '$lib/components/FontSwitcher.svelte';
   import ShowingsTimeline from '$lib/components/ShowingsTimeline.svelte';
   import FigurineComments from '$lib/components/FigurineComments.svelte';
+  import CatalogGlyph from '$lib/components/figurine-detail/CatalogGlyph.svelte';
+  import {
+    enabledCustomLines,
+    isCatalogKeyOn,
+    parseCatalogLists,
+  } from '$lib/catalog-lists';
+  import '$lib/styles/figurine-detail/layout-catalog.css';
 
-  import { computeSectionOrderStyle, isBlockVisible, computeBlockStyle, computeElementStyle, computeAttrsStyle, computeEyebrowStyle } from '$lib/components/figurine-detail/display-config';
+  import { computeSectionOrderStyle, isBlockVisible, computeBlockStyle, computeElementStyle } from '$lib/components/figurine-detail/display-config';
 
   const ctx = getContext<App.FigurineDetailContext>('figurine-detail');
   let sectionStyle = $derived(computeSectionOrderStyle(ctx.displayConfig));
 
-  // Gallery element registration for topnav Phase 2 (sticky identity)
   function registerGallery(el: HTMLElement) {
     ctx.setGalleryEl(el);
     return { destroy() { ctx.setGalleryEl(undefined); } };
   }
 
-  // Ink reveal — local to this layout
   let historyRef = $state<HTMLElement | null>(null);
   let inkReady = $state(false);
 
@@ -48,53 +54,268 @@
     }).join(' ');
   }
 
-  // Video — local to this layout
   let videoRef = $state<HTMLVideoElement | null>(null);
 
   function toggleFullscreen() {
     if (!videoRef) return;
     document.fullscreenElement ? document.exitFullscreen() : videoRef.requestFullscreen().catch(() => {});
   }
+
+  let titleClass = $derived(
+    ctx.figurine.name.length > 60 ? 'catalog-title--long'
+    : ctx.figurine.name.length > 30 ? 'catalog-title--medium'
+    : ''
+  );
+
+  let heroParagraphs = $derived.by(() => splitProse(ctx.figurine.shortText ?? ''));
+  let showHistory = $derived(
+    ctx.hasHistorySection && isBlockVisible(ctx.displayConfig, 'description')
+  );
+
+  let filmEl = $state<HTMLElement | null>(null);
+
+  $effect(() => {
+    const index = ctx.activeImageIndex;
+    const root = filmEl;
+    if (!root) return;
+    const thumb = root.querySelector<HTMLElement>(`[data-film-index="${index}"]`);
+    if (!thumb) return;
+    const left = thumb.offsetLeft - (root.clientWidth - thumb.offsetWidth) / 2;
+    root.scrollTo({ left: Math.max(0, left), behavior: 'smooth' });
+  });
+
+  function splitProse(text: string): string[] {
+    const raw = text.trim();
+    if (!raw) return [];
+    const parts = raw.split(/\n{2,}/).map((s) => s.trim()).filter(Boolean);
+    if (parts.length >= 2) return parts.slice(0, 3);
+    const one = parts[0] ?? '';
+    if (one.length < 320) return [one];
+    const mid = Math.floor(one.length / 2);
+    const window = one.slice(Math.max(80, mid - 80), mid + 80);
+    const relative = window.search(/\.\s+/);
+    if (relative < 0) return [one];
+    const cut = Math.max(80, mid - 80) + relative + 1;
+    return [one.slice(0, cut).trim(), one.slice(cut).trim()].filter(Boolean);
+  }
+
+  type CatalogLine = { icon: string; text: string };
+
+  let catalogLists = $derived(parseCatalogLists(ctx.figurine.catalogLists));
+
+  let featureLines = $derived.by(() => {
+    const on = (key: string) => isCatalogKeyOn(catalogLists.featuresSelected, key);
+    const lines: CatalogLine[] = [];
+    if (on('unique')) {
+      lines.push({ icon: 'star', text: $t('catalogFeatureUnique') });
+    }
+    if (on('material') && ctx.hasText(ctx.figurine.material)) {
+      lines.push({ icon: 'face', text: `${$t('catalogFeatureMaterial')} ${ctx.figurine.material.trim()}` });
+    }
+    if (on('technique') && ctx.hasText(ctx.figurine.technique)) {
+      lines.push({ icon: 'pencil', text: ctx.figurine.technique.trim() });
+    } else if (on('handPainted')) {
+      lines.push({ icon: 'pencil', text: $t('catalogFeatureHandPainted') });
+    }
+    if (on('handFinished')) {
+      lines.push({ icon: 'needle', text: $t('catalogFeatureHandFinished') });
+    }
+    if (on('recorded') && (ctx.hasText(ctx.figurine.passportNumber) || ctx.hasText(ctx.figurine.authenticityNote))) {
+      lines.push({ icon: 'lock', text: $t('catalogFeatureRecorded') });
+    }
+    if (on('included') && ctx.hasText(ctx.figurine.includedItems)) {
+      const first = ctx.figurine.includedItems.trim().split(/\n/)[0]?.trim() ?? '';
+      if (first) lines.push({ icon: 'gift', text: first });
+    }
+    if (on('quietRoom')) {
+      lines.push({ icon: 'figure', text: $t('catalogFeatureQuietRoom') });
+    }
+    for (const line of enabledCustomLines(catalogLists.featuresCustom)) {
+      lines.push({ icon: 'star', text: line.text.trim() });
+    }
+    return lines;
+  });
+
+  let perfectLines = $derived.by(() => {
+    const on = (key: string) => isCatalogKeyOn(catalogLists.perfectSelected, key);
+    const lines: CatalogLine[] = [];
+    if (on('collectors')) lines.push({ icon: 'heart', text: $t('catalogPerfectCollectors') });
+    if (on('cabinet')) lines.push({ icon: 'house', text: $t('catalogPerfectCabinet') });
+    if (on('looking')) lines.push({ icon: 'spool', text: $t('catalogPerfectLooking') });
+    if (on('closeWork')) lines.push({ icon: 'scissors', text: $t('catalogPerfectCloseWork') });
+    if (on('display')) lines.push({ icon: 'frame', text: $t('catalogPerfectDisplay') });
+    if (on('gift')) lines.push({ icon: 'gift', text: $t('catalogPerfectGift') });
+    for (const line of enabledCustomLines(catalogLists.perfectCustom)) {
+      lines.push({ icon: 'heart', text: line.text.trim() });
+    }
+    return lines;
+  });
+
+  let requestFacts = $derived<CatalogLine[]>([
+    { icon: 'quill', text: $t('detailReplyWindow') },
+    { icon: 'seal', text: $t('detailNoObligation') },
+    { icon: 'crate', text: $t('detailPersonalTransfer') },
+  ]);
 </script>
 
-<div class="main-grid">
-  <div class="gallery-col" use:registerGallery>
-    <FigurineImageViewer />
+<div class="catalog-root">
+  <div class="catalog-leaf">
+      <header class="catalog-head">
+        <h1
+          class="figurine-title catalog-title {titleClass}"
+          style={computeElementStyle(ctx.displayConfig, 'name')}
+        >
+          <svg class="catalog-flourish" viewBox="0 0 48 16" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true">
+            <path d="M46 8.2C36 8.2 33.5 3.2 27.5 3.2c-7.2 0-9.2 9.6-16.4 9.6C7.4 12.8 3.8 10.4 2 8.2" />
+          </svg>
+          <span class="catalog-title-text">{ctx.figurine.name}</span>
+          <svg class="catalog-flourish catalog-flourish--end" viewBox="0 0 48 16" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true">
+            <path d="M46 8.2C36 8.2 33.5 3.2 27.5 3.2c-7.2 0-9.2 9.6-16.4 9.6C7.4 12.8 3.8 10.4 2 8.2" />
+          </svg>
+        </h1>
+        <p class="catalog-subtitle">{$t('catalogSubtitle')}</p>
+        {#if ctx.hasText(ctx.figurine.dimensions)}
+          <p class="catalog-dims">{$t('catalogDimsPrefix')} {ctx.figurine.dimensions}</p>
+        {/if}
+      </header>
+
+      <div class="catalog-main">
+        <div class="catalog-copy">
+          {#if heroParagraphs.length > 0 || (ctx.hasText(ctx.figurine.secretText) && ctx.isCandleLit)}
+          <div class="catalog-prose" style={computeElementStyle(ctx.displayConfig, 'shortText')}>
+            {#each heroParagraphs as para}
+              <p>{para}</p>
+            {/each}
+            {#if ctx.hasText(ctx.figurine.secretText) && ctx.isCandleLit}
+              <div class="secret-anchor">
+                <SecretText text={ctx.figurine.secretText} isCandleLit={ctx.isCandleLit} />
+              </div>
+            {/if}
+          </div>
+          {/if}
+
+          {#if showHistory}
+            <section class="catalog-history dc-block--description" style={computeBlockStyle(ctx.displayConfig, 'description')}>
+              <header class="d-section-header">
+                <span class="sec-label">{$t('figurineHistory')}</span>
+                <div class="sec-rule" aria-hidden="true"></div>
+                <FontSwitcher variant="colophon" />
+              </header>
+              <p bind:this={historyRef} class="history-body drop-cap">
+                {#if inkReady}
+                  {@html buildInkHtml(ctx.figurine.fullDescription ?? '')}
+                {:else}
+                  {ctx.figurine.fullDescription}
+                {/if}
+              </p>
+            </section>
+          {/if}
+
+          {#if featureLines.length > 0}
+          <section class="catalog-features">
+            <h2 class="catalog-list-title">{$t('catalogFeaturesTitle')}</h2>
+            <ul class="catalog-list">
+              {#each featureLines as line}
+                <li class="catalog-list-item">
+                  <CatalogGlyph name={line.icon} />
+                  <span>{line.text}</span>
+                </li>
+              {/each}
+            </ul>
+          </section>
+          {/if}
+
+          <section class="catalog-request">
+            <h2 class="catalog-notes-title">{ctx.statusUi.title}</h2>
+            <div class="catalog-request-facts">
+              {#each requestFacts as line}
+                <p class="catalog-list-item">
+                  <CatalogGlyph name={line.icon} />
+                  <span>{line.text}</span>
+                </p>
+              {/each}
+            </div>
+            <div class="catalog-request-actions">
+              <button
+                type="button"
+                class="catalog-request-btn"
+                onclick={() => ctx.openRequestModal(ctx.statusUi.defaultIntent)}
+              >
+                {$t('unifiedOpenRequest')}
+              </button>
+              <a class="catalog-passport" href="/figurines/{ctx.id}/passport" onclick={() => ctx.analyticsClient?.cta('passport')}>
+                {$t('detailOpenPassport')}
+              </a>
+            </div>
+          </section>
+        </div>
+
+        <div class="catalog-visual">
+          <div class="catalog-plate" use:registerGallery>
+            <FigurineImageViewer hideThumbs hideCaption aspect="4 / 5" />
+          </div>
+
+          {#if ctx.sortedImages.length > 1}
+            <div class="catalog-film">
+              <nav bind:this={filmEl} class="catalog-film-track" aria-label={$t('figurineShowView')}>
+                {#each ctx.sortedImages as img, i}
+                  <button
+                    type="button"
+                    data-film-index={i}
+                    class="catalog-thumb {ctx.activeImageIndex === i ? 'catalog-thumb--active' : ''}"
+                    onclick={() => ctx.selectImage(i)}
+                    aria-label="{ctx.imageTypeLabel(img.imageType)}: {ctx.imageRoleNote(img.imageType)}"
+                    aria-current={ctx.activeImageIndex === i ? 'true' : undefined}
+                    title="{ctx.imageTypeLabel(img.imageType)} · {i + 1}/{ctx.sortedImages.length}"
+                  >
+                    <picture>
+                      <source type="image/webp" srcset={resolveWebpUrl(img.thumbUrl ?? img.url) ?? undefined} />
+                      <img
+                        src={ctx.resolveUrl(img.thumbUrl ?? img.url)}
+                        alt={ctx.altTextFor(img)}
+                        loading="lazy"
+                        decoding="async"
+                        style={img.focalX != null && img.focalY != null
+                          ? `object-position: ${img.focalX * 100}% ${img.focalY * 100}%;`
+                          : undefined}
+                      />
+                    </picture>
+                    <span class="catalog-thumb-label">{ctx.imageTypeLabel(img.imageType)}</span>
+                  </button>
+                {/each}
+              </nav>
+              <p class="catalog-film-meta">
+                <span>{ctx.imageTypeLabel(ctx.currentImage?.imageType)}</span>
+                <span class="catalog-film-count">{String(ctx.activeImageIndex + 1).padStart(2, '0')} / {String(ctx.sortedImages.length).padStart(2, '0')}</span>
+              </p>
+            </div>
+          {/if}
+
+          {#if perfectLines.length > 0}
+          <section class="catalog-perfect">
+            <h2 class="catalog-list-title">{$t('catalogPerfectTitle')}</h2>
+            <ul class="catalog-list">
+              {#each perfectLines as line}
+                <li class="catalog-list-item">
+                  <CatalogGlyph name={line.icon} />
+                  <span>{line.text}</span>
+                </li>
+              {/each}
+            </ul>
+          </section>
+          {/if}
+
+          <aside class="catalog-guarantee">
+            <p>{$t('catalogGuarantee')}</p>
+            <span class="catalog-guarantee-mark" aria-hidden="true">♡</span>
+          </aside>
+        </div>
+      </div>
+
+    <p class="catalog-thanks">{$t('catalogThanks')} ♡</p>
   </div>
 
-  <div class="details-col" style={computeEyebrowStyle(ctx.displayConfig)}>
-    <div class="d-eyebrow">
-      <div class="eyebrow-tags">
-        <span class="colophon-ref">ARC-{ctx.id.slice(0, 8).toUpperCase()}</span>
-        {#if ctx.figurine.year}
-          <span class="eyebrow-sep">·</span>
-          <span class="eyebrow-year">Anno {ctx.figurine.year}</span>
-        {/if}
-      </div>
-    </div>
-
-    <h1 class="figurine-title {ctx.figurine.name.length > 60 ? 'figurine-title--long' : ctx.figurine.name.length > 30 ? 'figurine-title--medium' : ''}" style={computeElementStyle(ctx.displayConfig, 'name')}>{ctx.figurine.name}</h1>
-
-    <span class="colophon-kind">{$t('detailKind')}</span>
-
-    {#if ctx.hasText(ctx.figurine.shortText)}
-      <p class="lore-short" style={computeElementStyle(ctx.displayConfig, 'shortText')}>{ctx.figurine.shortText}</p>
-    {/if}
-
-    {#if ctx.hasAttributesSection}
-      <dl class="hero-facts" aria-label={$t('figurineAttributes')} style={computeAttrsStyle(ctx.displayConfig)}>
-        {#each ctx.attributes as attr (attr.kind)}
-          <div><dt>{attr.label}</dt><dd>{attr.value}</dd></div>
-        {/each}
-      </dl>
-    {/if}
-
-    {#if ctx.hasText(ctx.figurine.secretText) && ctx.isCandleLit}
-      <div class="secret-anchor">
-        <SecretText text={ctx.figurine.secretText} isCandleLit={ctx.isCandleLit} />
-      </div>
-    {/if}
-
+  <div class="catalog-after details-col">
     <FigurineStatusPanel
       figurine={ctx.figurine}
       id={ctx.id}
@@ -105,6 +326,7 @@
       analyticsClient={ctx.analyticsClient}
       queueJoin={ctx.queueJoin}
       notifyJoin={ctx.notifyJoin}
+      omitLead={true}
     />
 
     {#if ctx.canShowPersonalRecord}
@@ -171,26 +393,6 @@
     {/if}
 
     <div class="dc-sections" style={sectionStyle}>
-    <div class="dc-block--description" class:dc-block--hidden={!isBlockVisible(ctx.displayConfig, 'description')} style={computeBlockStyle(ctx.displayConfig, 'description')}>
-    {#if ctx.hasHistorySection}
-      <div class="act-divider" aria-hidden="true"></div>
-      <div class="d-history">
-        <header class="d-section-header">
-          <span class="sec-label">{$t('figurineHistory')}</span>
-          <div class="sec-rule" aria-hidden="true"></div>
-          <FontSwitcher variant="colophon" />
-        </header>
-        <p bind:this={historyRef} class="history-body drop-cap">
-          {#if inkReady}
-            {@html buildInkHtml(ctx.figurine.fullDescription ?? '')}
-          {:else}
-            {ctx.figurine.fullDescription}
-          {/if}
-        </p>
-      </div>
-    {/if}
-    </div>
-
     <div class="dc-block--making" class:dc-block--hidden={!isBlockVisible(ctx.displayConfig, 'making')} style={computeBlockStyle(ctx.displayConfig, 'making')}>
     {#if ctx.hasMakingSection}
       <div class="act-divider" aria-hidden="true"></div>

@@ -33,6 +33,7 @@
   } = $props();
 
   let container: HTMLDivElement;
+  let mainImg = $state<HTMLImageElement | null>(null);
   let isPointerFine = $state(true);
   let imageFailed = $state(false);
   let mainLoaded = $state(false);
@@ -40,11 +41,12 @@
   $effect(() => {
     void src;
     imageFailed = false;
-    mainLoaded = false;
+    mainLoaded = Boolean(mainImg?.complete && (mainImg?.naturalWidth ?? 0) > 0);
   });
 
   onMount(() => {
     isPointerFine = window.matchMedia('(pointer: fine)').matches;
+    if (mainImg?.complete && mainImg.naturalWidth > 0) mainLoaded = true;
   });
 
   // ── Desktop: brass magnifying lens ───────────────────────────────────────
@@ -204,7 +206,7 @@
        slightly oversized to hide its own soft edge, visible only until the
        full image has decoded. Reuses an asset that exists for every image
        already, so this costs no extra request. -->
-  {#if thumbSrc && src && !imageFailed}
+  {#if thumbSrc}
     <img
       src={thumbSrc}
       alt=""
@@ -212,9 +214,9 @@
       class="absolute inset-0 w-full h-full pointer-events-none select-none {imageFit === 'contain' ? 'object-contain' : 'object-cover'}"
       style="
         object-position: {objectPosition};
-        filter: blur(18px) saturate(1.05);
-        transform: scale(1.08);
-        opacity: {mainLoaded ? 0 : 1};
+        filter: {mainLoaded && !imageFailed ? 'none' : 'blur(18px) saturate(1.05)'};
+        transform: {mainLoaded && !imageFailed ? 'none' : 'scale(1.08)'};
+        opacity: {mainLoaded && !imageFailed ? 0 : 1};
         transition: opacity 0.4s ease;
       "
     />
@@ -238,12 +240,13 @@
         srcset={responsive?.jpeg ?? undefined}
         sizes={responsive ? sizes : undefined}
         {alt}
+        bind:this={mainImg}
         class="absolute inset-0 w-full h-full pointer-events-none select-none {imageFit === 'contain' ? 'object-contain' : 'object-cover'}"
         style="
           object-position: {objectPosition};
           transform: scale({scale}) translate({panX / scale}px, {panY / scale}px);
-          opacity: {mainLoaded ? 1 : 0};
-          transition: {transitioning ? 'transform 0.28s cubic-bezier(0.22,0.1,0.2,1)' : 'none'}, opacity 0.35s ease;
+        opacity: {mainLoaded || imageFailed || !thumbSrc ? 1 : 0};
+        transition: {transitioning ? 'transform 0.28s cubic-bezier(0.22,0.1,0.2,1)' : 'none'}, opacity 0.35s ease;
           touch-action: none;
           will-change: transform;
         "

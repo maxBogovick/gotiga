@@ -135,9 +135,19 @@
     });
   }
 
-  // Await an existing <img> instead of fetching the URL again. The browser is
-  // already loading the visible base image, so the colour texture costs zero
-  // extra network requests — we just upload that same element once it's ready.
+  function isSameOrigin(url: string): boolean {
+    try {
+      return new URL(url, window.location.href).origin === window.location.origin;
+    } catch {
+      return false;
+    }
+  }
+
+  // Await an existing <img> instead of fetching the URL again. Only when that
+  // element is same-origin: a cross-origin display photo without CORS is fine
+  // to show, but uploading it to WebGL taints the context. Prod-dump URLs that
+  // still point at ritunia.com take the loadImage path (and skip GL if CORS
+  // refuses), while the visible <img> stays unadorned and paints.
   function imageMatches(img: HTMLImageElement, url: string): boolean {
     try {
       return img.currentSrc === url || img.src === new URL(url, window.location.href).href;
@@ -187,6 +197,7 @@
     gl.uniform1f(uIntensity, MAX_SHIFT * Math.max(0, Math.min(1, intensity)));
 
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    if ((host?.clientWidth ?? 0) > 8 && (host?.clientHeight ?? 0) > 8) glReady = true;
   }
 
   function frame() {
@@ -205,7 +216,11 @@
   }
 
   function kick() {
-    if (running || destroyed || !visible || !colorTex) return;
+    if (running || destroyed || !colorTex) return;
+    if (!visible) {
+      draw();
+      return;
+    }
     running = true;
     raf = requestAnimationFrame(frame);
   }
@@ -247,11 +262,12 @@
 
     // Colour: reuse the visible base <img> when it's the same element/source,
     // else a fresh load (covers the no-DOM-yet edge).
-    const colorImg = baseImg
+    const colorImg = baseImg && isSameOrigin(colorSrc)
       ? (await awaitImg(baseImg, colorSrc)) ?? await loadImage(colorSrc)
       : await loadImage(colorSrc);
     if (destroyed || seq !== loadSeq) return;
-    if (!colorImg) { imageFailed = true; return; }
+    // Keep the visible <img> — a failed texture upload must never blank the plate.
+    if (!colorImg) return;
 
     imageAspect = colorImg.naturalWidth / Math.max(1, colorImg.naturalHeight);
     if (!colorTex) colorTex = makeTexture();
@@ -269,7 +285,6 @@
     }
 
     draw();
-    glReady = true; // fade the canvas in over the base <img>
     kick();
   }
 
@@ -498,13 +513,13 @@
   onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onActivate?.(); } }}
 >
   <!-- Base photograph: always present (SSR, view-transition, reduced-motion,
-       no-WebGL fallback). The canvas fades in on top once it has drawn.
-       crossorigin keeps the WebGL upload from this element CORS-clean (so the
-       effect also works on a cross-origin media host) AND makes the texture
-       reuse the same cached request as the visible image — one fetch, not two. -->
+       no-WebGL fallback). No crossorigin here — a failed CORS check replaces
+       the photograph with the browser's broken-image icon. The canvas texture
+       is loaded separately when the URL is CORS-clean. -->
   {#if src && !imageFailed}
-    <img bind:this={baseImg} class="daguerreotype-base" {src} {alt} class:is-hidden={glReady}
-         crossorigin="anonymous" draggable="false" />
+    <img bind:this={baseImg} class="daguerreotype-base" {src} {alt}
+         draggable="false" fetchpriority="high"
+         onerror={() => (imageFailed = true)} />
   {:else}
     <div class="daguerreotype-fallback" aria-hidden="true"></div>
   {/if}
@@ -530,10 +545,6 @@
     object-fit: contain;
     user-select: none;
     -webkit-user-drag: none;
-    transition: opacity 0.4s ease;
-  }
-  .daguerreotype-base.is-hidden {
-    opacity: 0;
   }
   .daguerreotype-canvas {
     opacity: 0;

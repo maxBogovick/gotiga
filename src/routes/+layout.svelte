@@ -122,6 +122,11 @@
       return;
     }
     const vtDocument = document as VTDocument;
+    const nudgePlateRedraw = () => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => window.dispatchEvent(new Event('gotiga:redraw')));
+      });
+    };
 
     // Page-turn (prev/next figurine) wins when armed. Hall↔archive and
     // hall↔workshop use the house room gestures. Everything else — and reduced
@@ -151,10 +156,7 @@
         transition.finished.finally(() => {
           root.classList.remove('gt-page-turn', 'gt-forward', 'gt-backward');
           pageTurn.disarm();
-          // The WebGL plate (LivingDaguerreotype) parks its render loop after one
-          // frame; a view transition can leave that frame blank until the next
-          // draw. Nudge it to repaint now instead of waiting for a pointermove.
-          requestAnimationFrame(() => window.dispatchEvent(new Event('gotiga:redraw')));
+          nudgePlateRedraw();
         });
       });
     }
@@ -169,10 +171,12 @@
 
     if (!gesture) {
       return new Promise<void>((resolve) => {
-        vtDocument.startViewTransition(async () => {
+        const transition = vtDocument.startViewTransition(async () => {
           resolve();
           await navigation.complete;
         });
+        // Card→detail morph can leave the WebGL plate holding a discarded buffer.
+        transition.finished.finally(nudgePlateRedraw);
       });
     }
 
@@ -203,7 +207,7 @@
           'gt-curtain-in',
           'gt-curtain-out',
         );
-        requestAnimationFrame(() => window.dispatchEvent(new Event('gotiga:redraw')));
+        nudgePlateRedraw();
       });
     });
   });

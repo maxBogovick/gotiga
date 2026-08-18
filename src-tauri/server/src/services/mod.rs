@@ -1276,6 +1276,7 @@ impl AppService {
             showing_room_id: figurine.showing_room_id.map(|u| u.to_string()),
             display_layout: figurine.display_layout,
             display_config: figurine.display_config,
+            catalog_lists: figurine.catalog_lists,
             first_look_until: figurine.first_look_until,
             images: image_dtos,
             process_steps: step_dtos,

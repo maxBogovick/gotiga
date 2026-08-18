@@ -9,14 +9,24 @@
   import { t } from '$lib/i18n';
 
   const ctx = getContext<App.FigurineDetailContext>('figurine-detail');
+
+  let {
+    hideThumbs = false,
+    hideCaption = false,
+    aspect = '',
+  }: {
+    hideThumbs?: boolean;
+    hideCaption?: boolean;
+    aspect?: string;
+  } = $props();
 </script>
 
 <div
   class="gallery-layout"
-  class:gallery-layout--solo={ctx.sortedImages.length <= 1}
-  style={ctx.plateStyle}
+  class:gallery-layout--solo={hideThumbs || ctx.sortedImages.length <= 1}
+  style={aspect ? `--viewer-aspect-ratio: ${aspect};` : ctx.plateStyle}
 >
-  {#if ctx.sortedImages.length > 1}
+  {#if !hideThumbs && ctx.sortedImages.length > 1}
     <nav class="thumbs-strip" aria-label={$t('figurineShowView')}>
       {#each ctx.sortedImages as img, i}
         <button
@@ -86,6 +96,7 @@
               <BrassLens
                 src={ctx.resolveUrl(ctx.currentImage?.url)}
                 thumbSrc={ctx.resolveUrl(ctx.currentImage?.thumbUrl)}
+                sizes={aspect ? '(min-width: 860px) 42vw, 92vw' : undefined}
                 alt={ctx.altTextFor(ctx.currentImage)}
                 class="w-full h-full"
                 imageFit={ctx.currentImageFit}
@@ -291,7 +302,7 @@
       </div>
     </div>
 
-    {#if ctx.currentImage}
+    {#if ctx.currentImage && !hideCaption}
       <!-- Museum object label: title first, so the photo is never just an
            unlabelled picture to a crawler reading the page's visible text —
            Google's image-SEO guidance weighs an on-page caption more heavily

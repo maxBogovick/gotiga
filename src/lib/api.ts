@@ -206,10 +206,27 @@ function webApiBase(): string {
     return '/api/v1';
 }
 
+function isLoopbackHost(hostname: string): boolean {
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0' || hostname === '[::1]';
+}
+
+function isAppMediaPath(pathname: string): boolean {
+    return pathname.startsWith('/static/') || pathname.startsWith('/api/v1/assets/');
+}
+
 /**
  * Resolve a media path (avatar, image, …) to a loadable URL.
  * Relative `/static/` paths are prefixed with the configured server origin in web mode.
  * Shared helper — previously duplicated across SiteHeader/OrderModal/etc.
+ *
+ * Absolute media URLs (`/static/…`, `/api/v1/assets/…`) are rewritten onto the
+ * origin the page can actually load: `gotiga_server_url` when it points at a
+ * remote API; a same-origin relative path when both the page and the URL (or
+ * the configured server) are loopback. Vite already proxies `/static` to the
+ * Rust API, so `http://localhost:3000/static/foo.jpg` on a :1420 UI becomes
+ * `/static/foo.jpg`. Production hosts (ritunia.com) are left untouched — the
+ * dump may still point there, and the visible photograph does not need CORS
+ * to display a foreign image.
  */
 export function resolveMediaUrl(url: string | null | undefined): string | null {
     if (!url) return null;
@@ -222,15 +239,35 @@ export function resolveMediaUrl(url: string | null | undefined): string | null {
         value.startsWith('http://') ||
         value.startsWith('https://')
     ) {
-        if (serverUrl) {
-            try {
-                const parsed = new URL(value);
-                if (parsed.pathname.startsWith('/static/') || parsed.pathname.startsWith('/api/v1/assets/')) {
-                    return `${serverUrl}${parsed.pathname}${parsed.search}${parsed.hash}`;
+        try {
+            const parsed = new URL(value);
+            if (isAppMediaPath(parsed.pathname)) {
+                const suffix = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+                if (serverUrl) {
+                    try {
+                        const dest = new URL(serverUrl);
+                        if (
+                            typeof window !== 'undefined'
+                            && isLoopbackHost(window.location.hostname)
+                            && isLoopbackHost(dest.hostname)
+                        ) {
+                            return suffix;
+                        }
+                    } catch {
+                        /* prefix as written */
+                    }
+                    return `${serverUrl}${suffix}`;
                 }
-            } catch {
-                return value;
+                if (
+                    typeof window !== 'undefined'
+                    && parsed.origin !== window.location.origin
+                    && isLoopbackHost(parsed.hostname)
+                ) {
+                    return suffix;
+                }
             }
+        } catch {
+            return value;
         }
         return value;
     }

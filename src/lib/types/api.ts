@@ -193,6 +193,9 @@ export interface Figurine {
     displayLayout?: 'specimen' | 'showcase' | 'codex' | 'diptych' | 'broadside' | null;
     /** JSON string — parsed by the frontend into DisplayConfig. */
     displayConfig?: string | null;
+    /** JSON string — parsed into CatalogLists (Features / Perfect for).
+     *  Null / omitted → every built-in line is on, no custom lines. */
+    catalogLists?: string | null;
     /** "First look" early-release window (ISO-8601); null → ordinary public work. */
     firstLookUntil?: string | null;
     /** True once this piece crosses a private mark-count threshold. The only

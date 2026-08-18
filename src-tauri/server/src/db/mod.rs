@@ -2251,8 +2251,8 @@ impl Repository {
         let mut tx = self.pg_pool.begin().await?;
 
         sqlx::query(
-            "INSERT INTO figurines (id, name, short_text, full_description, dimensions, material, technique, series, year, passport_number, edition, created_period, care_instructions, provenance_note, authenticity_note, included_items, ambience_path, video_url, secret_text, is_visible, is_featured, status, sort_order, open_from_min, open_until_min, sealed_door_image, showing_room_id, display_layout, display_config, first_look_until, slug, slug_manual, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, NOW())
+            "INSERT INTO figurines (id, name, short_text, full_description, dimensions, material, technique, series, year, passport_number, edition, created_period, care_instructions, provenance_note, authenticity_note, included_items, ambience_path, video_url, secret_text, is_visible, is_featured, status, sort_order, open_from_min, open_until_min, sealed_door_image, showing_room_id, display_layout, display_config, catalog_lists, first_look_until, slug, slug_manual, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, NOW())
              ON CONFLICT (id) DO UPDATE SET
                name=EXCLUDED.name, slug=EXCLUDED.slug, slug_manual=EXCLUDED.slug_manual, short_text=EXCLUDED.short_text, full_description=EXCLUDED.full_description,
                dimensions=EXCLUDED.dimensions, material=EXCLUDED.material, technique=EXCLUDED.technique, series=EXCLUDED.series,
@@ -2266,6 +2266,7 @@ impl Repository {
                sealed_door_image=EXCLUDED.sealed_door_image,
                showing_room_id=EXCLUDED.showing_room_id,
                display_layout=EXCLUDED.display_layout, display_config=EXCLUDED.display_config,
+               catalog_lists=EXCLUDED.catalog_lists,
                first_look_until=EXCLUDED.first_look_until, updated_at=NOW()"
         )
         .bind(id).bind(&f.name).bind(&f.short_text).bind(&f.full_description)
@@ -2277,6 +2278,7 @@ impl Repository {
         .bind(f.is_visible).bind(f.is_featured).bind(&f.status).bind(f.sort_order)
         .bind(f.open_from_min).bind(f.open_until_min).bind(&f.sealed_door_image)
         .bind(showing_room_uuid).bind(&f.display_layout).bind(&f.display_config)
+        .bind(&f.catalog_lists)
         .bind(first_look_until).bind(&f.slug).bind(slug_manual)
         .execute(&mut *tx).await?;
 
