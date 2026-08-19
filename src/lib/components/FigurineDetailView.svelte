@@ -9,7 +9,6 @@
   import CandleReveal from '$lib/components/CandleReveal.svelte';
   import MemoryMirror from '$lib/components/MemoryMirror.svelte';
   import Lightbox from '$lib/components/Lightbox.svelte';
-  import TurnSoundSwitcher from '$lib/components/TurnSoundSwitcher.svelte';
   import SealedDoor from '$lib/components/SealedDoor.svelte';
   import SpecimenLayout from '$lib/components/figurine-detail/layouts/SpecimenLayout.svelte';
   import ShowcaseLayout from '$lib/components/figurine-detail/layouts/ShowcaseLayout.svelte';
@@ -26,6 +25,7 @@
   import { FigurineClaimsStore, type ClaimData } from '$lib/stores/figurine-claims.svelte';
   import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
   import { pageTurn } from '$lib/stores/page-turn.svelte';
+  import { detailHeader } from '$lib/stores/detail-header.svelte';
   import { turnSound } from '$lib/stores/page-turn-sound.svelte';
   import { playTurnSound } from '$lib/audio/page-turn-sounds';
   import { focusTrap } from '$lib/actions/focusTrap';
@@ -913,11 +913,11 @@
     if (sound !== 'off') playTurnSound(sound, direction);
   }
 
-  // Paper bleed-through: while a neighbour pill is hovered/focused, a faint ghost
+  // Paper bleed-through: while a neighbour plate is hovered/focused, a faint ghost
   // of that work shows through the spine edge of the current leaf, as if the page
-  // were thin enough to see the next one underneath. The image is already in cache
-  // (the pills preload on hover), so this costs no extra request.
-  let bleedDir = $state<'prev' | 'next' | null>(null);
+  // were thin enough to see the next one underneath. Peek is armed from the
+  // header plates (detailHeader); the image is already in cache.
+  let bleedDir = $derived(detailHeader.peek);
   let bleedImage = $derived(
     bleedDir === 'prev'
       ? resolveUrl(prev?.thumbUrl ?? prev?.faceImageUrl)
@@ -967,6 +967,19 @@
     if (showLightbox || showRequestModal || showStoryModal || isGrimoireOpen) return;
     const target = e.target as HTMLElement | null;
     if (target?.closest('input, textarea, select, button, a, [contenteditable="true"]')) return;
+
+    if (e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      e.preventDefault();
+      const neighbor = e.key === 'ArrowLeft' ? prev : next;
+      if (!neighbor) return;
+      const direction = e.key === 'ArrowLeft' ? 'backward' : 'forward';
+      pageTurn.arm(direction);
+      const sound = turnSound.value;
+      if (sound !== 'off') playTurnSound(sound, direction);
+      void goto(figurineHref(neighbor));
+      return;
+    }
+
     if (sortedImages.length <= 1) return;
     if (e.key === 'ArrowLeft') {
       e.preventDefault();
@@ -980,29 +993,6 @@
 
   // ── Sticky condensed nav — три фазы ─────────────────────────────────────
   let scrollY = $state(0);
-  let scrolled = $derived(scrollY > 80);
-
-  // Gallery element is registered by the active layout component via setGalleryEl.
-  let galleryEl = $state<HTMLElement | undefined>(undefined);
-  let galleryObserver: IntersectionObserver | null = null;
-  const TOPNAV_THRESHOLD = 130;
-
-  let galleryExited = $state(false);
-
-  function setGalleryEl(el: HTMLElement | undefined) { galleryEl = el; }
-
-  $effect(() => {
-    if (!galleryEl) { galleryObserver?.disconnect(); return; }
-    galleryObserver?.disconnect();
-    galleryObserver = new IntersectionObserver(
-      ([entry]) => {
-        galleryExited = !entry.isIntersecting && entry.boundingClientRect.bottom < TOPNAV_THRESHOLD;
-      },
-      { rootMargin: `-${TOPNAV_THRESHOLD}px 0px 0px 0px`, threshold: 0 }
-    );
-    galleryObserver.observe(galleryEl);
-    return () => { galleryObserver?.disconnect(); galleryObserver = null; };
-  });
 
   function defaultRequestIntent(): RequestIntent {
     return statusUi.defaultIntent;
@@ -1036,10 +1026,8 @@
     }
   }
 
-  // Scroll path stays cheap: only read window.scrollY (drives `scrolled` and the
-  // CTA threshold). Whether the gallery has left the top of the viewport is tracked
-  // by an IntersectionObserver below, so we no longer call getBoundingClientRect on
-  // every scroll frame (that forced a synchronous layout reflow).
+  // Scroll path stays cheap: only read window.scrollY (drives the
+  // mobile CTA reveal and the engaged-depth analytics ping).
   function onScroll() {
     scrollY = window.scrollY;
     if (!analyticsClient || analyticsScrollSent) return;
@@ -1063,6 +1051,15 @@
       cs.verify();
     }
   }
+
+  $effect(() => {
+    detailHeader.bind({
+      storySaving,
+      copied,
+      openStoryModal,
+      share,
+    });
+  });
 
   onMount(() => {
     houseClock.start();
@@ -1110,7 +1107,7 @@
     if (analyticsEngagedTimer) clearTimeout(analyticsEngagedTimer);
     if (markPressTimer) clearTimeout(markPressTimer);
     if (markThanksTimer) clearTimeout(markThanksTimer);
-    galleryObserver?.disconnect();
+    detailHeader.clear();
     clearTodayRefresh();
     clearAudioFade();
     if (storyObjectUrl) URL.revokeObjectURL(storyObjectUrl);
@@ -1195,7 +1192,6 @@
     openClaimLookup,
     closeClaimLookup,
     armPageTurn,
-    setGalleryEl,
     resolveUrl,
     altTextFor,
     imageTypeLabel,
@@ -1292,196 +1288,6 @@
   />
 
   <div class="page-container">
-
-    <!-- ── NAV ── -->
-    <nav class="topnav" class:topnav--scrolled={scrolled} in:fade={{ duration: 600 }}>
-
-      <!-- Left: back + prev/next -->
-      <div class="topnav-left">
-        <a href="/figurines" class="back-link" aria-label={$t('figurineBackToArchive')}>
-          <svg class="back-arrow" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">
-            <path d="M9 2.5L4.5 7 9 11.5"/>
-          </svg>
-          <span class="back-label">{$t('figurineBackToArchive')}</span>
-        </a>
-
-        {#if prev || next}
-          <div class="topnav-fig-nav" role="group" aria-label="{$t('figurineNavPrev')} / {$t('figurineNavNext')}">
-            {#if prev}
-              <a
-                href={figurineHref(prev)}
-                class="fig-nav-pill"
-                title={prev.name}
-                aria-label="{$t('figurineNavPrev')}: {prev.name}"
-                data-sveltekit-preload-data="hover"
-                onclick={(e) => armPageTurn(e, 'backward')}
-                onpointerenter={() => (bleedDir = 'prev')}
-                onpointerleave={() => (bleedDir = null)}
-                onfocus={() => (bleedDir = 'prev')}
-                onblur={() => (bleedDir = null)}
-              >
-                <svg class="fig-nav-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6">
-                  <path d="M6.5 2L3.5 5 6.5 8"/>
-                </svg>
-                <span class="fig-nav-whisper">{prev.name}</span>
-              </a>
-            {:else}
-              <span class="fig-nav-pill fig-nav-pill--off" aria-hidden="true">
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6">
-                  <path d="M6.5 2L3.5 5 6.5 8"/>
-                </svg>
-              </span>
-            {/if}
-            {#if next}
-              <a
-                href={figurineHref(next)}
-                class="fig-nav-pill fig-nav-pill--next"
-                title={next.name}
-                aria-label="{$t('figurineNavNext')}: {next.name}"
-                data-sveltekit-preload-data="hover"
-                onclick={(e) => armPageTurn(e, 'forward')}
-                onpointerenter={() => (bleedDir = 'next')}
-                onpointerleave={() => (bleedDir = null)}
-                onfocus={() => (bleedDir = 'next')}
-                onblur={() => (bleedDir = null)}
-              >
-                <span class="fig-nav-whisper">{next.name}</span>
-                <svg class="fig-nav-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6">
-                  <path d="M3.5 2l3 3L3.5 8"/>
-                </svg>
-              </a>
-            {:else}
-              <span class="fig-nav-pill fig-nav-pill--off fig-nav-pill--next" aria-hidden="true">
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6">
-                  <path d="M3.5 2l3 3L3.5 8"/>
-                </svg>
-              </span>
-            {/if}
-          </div>
-        {/if}
-      </div>
-
-      <!-- Center: progressive identity once the gallery leaves the viewport -->
-      <div class="topnav-center">
-
-        <!-- Phase 1: только имя -->
-        {#if scrolled && !galleryExited}
-          <span class="topnav-p1-name" transition:fade={{ duration: 220 }}>
-            {figurine.name}
-          </span>
-        {/if}
-
-        <!-- Phase 2+: полная идентичность с галереей и годом -->
-        {#if galleryExited}
-          <div class="topnav-identity" transition:fade={{ duration: 280 }}>
-            {#if currentImage?.url}
-              <button
-                type="button"
-                class="topnav-mini-img"
-                onclick={() => openLightbox(activeImageIndex)}
-                title={$t('figurineFullscreen')}
-                aria-label={$t('figurineFullscreen')}
-              >
-                <img src={resolveUrl(currentImage.url)} alt="" loading="eager" />
-              </button>
-            {/if}
-
-            <span class="topnav-ident-name">{figurine.name}</span>
-
-            {#if sortedImages.length > 1}
-              <div class="topnav-dots" role="group" aria-label={$t('figurineShowView')}>
-                {#each sortedImages as _, i}
-                  <button
-                    type="button"
-                    class="topnav-dot {i === activeImageIndex ? 'topnav-dot--on' : ''}"
-                    onclick={() => selectImage(i)}
-                    aria-label="{$t('figurineShowView')} {i + 1}"
-                  ></button>
-                {/each}
-              </div>
-            {/if}
-
-            {#if figurine.year}
-              <span class="topnav-ident-year">Anno {figurine.year}</span>
-            {/if}
-          </div>
-        {/if}
-      </div>
-
-      <!-- Right: controls — turn-sound, candle (mood + reveal), whisper (if audio), share -->
-      <div class="topnav-controls">
-        <TurnSoundSwitcher />
-
-        <button
-          type="button"
-          onclick={toggleCandle}
-          class="control-btn control-btn--utility {isCandleLit ? 'control-btn--lit' : ''}"
-          aria-label={isCandleLit ? $t('figurineExtinguish') : $t('figurineCandle')}
-          title={isCandleLit ? $t('figurineExtinguish') : $t('figurineCandle')}
-        >
-          <svg class="control-svg" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.35" aria-hidden="true">
-            <path d="M7 1.3c1.1 1.15 2.5 2.88 2.5 5.05a2.5 2.5 0 0 1-5 0C4.5 4.8 5.42 3.72 6.2 2.8c.32-.38.6-.72.8-1.5z" fill="currentColor" fill-opacity="0.12"/>
-            <path d="M4.25 12.2h5.5M5.15 9.6h3.7M7 1.3c1.1 1.15 2.5 2.88 2.5 5.05a2.5 2.5 0 0 1-5 0C4.5 4.8 5.42 3.72 6.2 2.8c.32-.38.6-.72.8-1.5z"/>
-          </svg>
-          <span class="btn-label">{isCandleLit ? $t('figurineExtinguish') : $t('figurineCandle')}</span>
-        </button>
-
-        {#if figurine.ambiencePath}
-          <button
-            type="button"
-            onclick={toggleAudio}
-            class="control-btn control-btn--utility {isAudioPlaying ? 'control-btn--active' : ''}"
-            aria-label={isAudioPlaying ? $t('figurineSilence') : $t('figurineWhisper')}
-            title={isAudioPlaying ? $t('figurineSilence') : $t('figurineWhisper')}
-          >
-            <span class="audio-indicator {isAudioPlaying ? 'audio-indicator--on' : ''}"></span>
-            <span class="btn-label">{isAudioPlaying ? $t('figurineSilence') : $t('figurineWhisper')}</span>
-          </button>
-        {/if}
-
-        <button
-          type="button"
-          onclick={openStoryModal}
-          disabled={storySaving}
-          class="control-btn control-btn--utility {storySaving ? 'control-btn--active' : ''}"
-          aria-label={storySaving ? $t('figurineStorySaving') : $t('figurineStoryShare')}
-          title={storySaving ? $t('figurineStorySaving') : $t('figurineStoryShare')}
-        >
-          {#if storySaving}
-            <span class="control-spinner" aria-hidden="true"></span>
-            <span class="btn-label">{$t('figurineStorySaving')}</span>
-          {:else}
-            <svg class="control-svg" width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.35" aria-hidden="true">
-              <rect x="2" y="1.5" width="9" height="10" rx="1.2"/>
-              <path d="M4.1 8.5 6 6.8l1.3 1.1 1.6-2 1.1 1.4"/>
-              <circle cx="4.6" cy="4.1" r="0.65" fill="currentColor" stroke="none"/>
-            </svg>
-            <span class="btn-label">{$t('figurineStoryShare')}</span>
-          {/if}
-        </button>
-
-        <button
-          type="button"
-          onclick={share}
-          class="control-btn control-btn--utility {copied ? 'control-btn--active' : ''}"
-          aria-label={$t('figurineShare')}
-          title={$t('figurineShare')}
-        >
-          {#if copied}
-            <svg class="control-svg" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-              <path d="M2 6l3 3 5-5"/>
-            </svg>
-            <span class="btn-label">{$t('figurineCopied')}</span>
-          {:else}
-            <svg class="control-svg" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-              <path d="M9 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM3 4.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM9 7.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z"/>
-              <path d="M7.5 2.7l-3 1.8M7.5 9.3l-3-1.8"/>
-            </svg>
-            <span class="btn-label">{$t('figurineShare')}</span>
-          {/if}
-        </button>
-      </div>
-    </nav>
 
     <!-- ── MAIN GRID ── -->
     {#if doorClosed}

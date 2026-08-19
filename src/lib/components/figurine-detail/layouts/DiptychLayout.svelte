@@ -20,13 +20,6 @@
   const ctx = getContext<App.FigurineDetailContext>('figurine-detail');
   let sectionStyle = $derived(computeSectionOrderStyle(ctx.displayConfig));
 
-  // Left wing: gallery; right wing: text
-  // Gallery element registration for topnav phase 2
-  function registerGallery(el: HTMLElement) {
-    ctx.setGalleryEl(el);
-    return { destroy() { ctx.setGalleryEl(undefined); } };
-  }
-
   let historyRef = $state<HTMLElement | null>(null);
   let inkReady = $state(false);
 
@@ -64,7 +57,7 @@
   <div class="diptych-spine" aria-hidden="true"></div>
 
   <!-- Left wing: image gallery — sticky, fills viewport height -->
-  <div class="diptych-wing diptych-wing--left" use:registerGallery>
+  <div class="diptych-wing diptych-wing--left">
     <div
       class="diptych-plate"
       data-figurine-plate

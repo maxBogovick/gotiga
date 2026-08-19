@@ -14,9 +14,19 @@
   import HeaderBirdWalk from '$lib/components/HeaderBirdWalk.svelte';
   import ContactMessageForm from '$lib/components/ContactMessageForm.svelte';
   import KeeperFrame from '$lib/components/KeeperFrame.svelte';
+  import NeighborPlate from '$lib/components/NeighborPlate.svelte';
+  import DetailHeaderTools from '$lib/components/DetailHeaderTools.svelte';
   import { keeper } from '$lib/stores/keeper.svelte';
   import { ARCHIVE_KEEPER_INPUT_ID } from '$lib/keeper-search';
-  import type { AuthorProfile } from '$lib/types/api';
+  import type { AuthorProfile, Figurine, FigurineListItem } from '$lib/types/api';
+
+  const WORK_LEAF_RE = /^\/figurines\/[^/]+\/?$/;
+
+  type WorkLeafData = {
+    figurine?: Figurine | null;
+    prev?: FigurineListItem | null;
+    next?: FigurineListItem | null;
+  };
 
   // Header-left maker avatar — admin-editable photo + frame styling.
   let authorProfile = $state<AuthorProfile | null>(null);
@@ -39,6 +49,10 @@
   ]);
 
   let pathname = $derived(page.url.pathname);
+  let leafData = $derived(page.data as WorkLeafData);
+  let isWorkLeaf = $derived(WORK_LEAF_RE.test(pathname) && Boolean(leafData.figurine));
+  let leafPrev = $derived(leafData.prev ?? null);
+  let leafNext = $derived(leafData.next ?? null);
 
   function jumpToWorkshopStory(event: MouseEvent) {
     if (pathname === '/') {
@@ -93,7 +107,7 @@
     if (typeof document === 'undefined') return;
     document.documentElement.style.setProperty(
       '--site-header-h',
-      isScrolled ? '54px' : '78px'
+      isWorkLeaf ? '56px' : isScrolled ? '54px' : '78px'
     );
   });
 
@@ -285,7 +299,7 @@
   });
 </script>
 
-<header class="site-header" class:is-scrolled={isScrolled} class:over-plate={isOverPlate}>
+<header class="site-header" class:is-scrolled={isScrolled} class:over-plate={isOverPlate} class:is-leaf={isWorkLeaf}>
   <HeaderBirdWalk />
   <div class="header-inner">
 
@@ -311,44 +325,72 @@
         <img src={headerAvatarUrl} alt="" class="header-avatar-img" loading="eager" decoding="async" />
         <span class="header-avatar-tip">{headerAuthorName}</span>
       </a>
-      <span class="ghost-left-utils">
-        <LangSwitcher variant="light" />
-        <FontSwitcher variant="header" />
-      </span>
+      {#if isWorkLeaf}
+        <a href="/figurines" class="leaf-archive">
+          <svg class="leaf-archive-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+            <path d="M6.5 2L3.5 5 6.5 8"/>
+          </svg>
+          {$t('navArchive')}
+        </a>
+      {:else}
+        <span class="ghost-left-utils">
+          <LangSwitcher variant="light" />
+          <FontSwitcher variant="header" />
+        </span>
+      {/if}
     </div>
 
-    <!-- ② Left nav -->
-    <nav class="nav-side nav-left" aria-label="Primary left">
-      {#each leftLinks as link}
-        <a
-          href={link.href}
-          class="nav-link"
-          class:is-active={isActive(link.href)}
-          aria-current={isActive(link.href) ? 'page' : undefined}
-        >{link.label}</a>
-      {/each}
-    </nav>
+    <!-- ② Left nav — rooms of the house; on a work leaf the plates take this place. -->
+    {#if !isWorkLeaf}
+      <nav class="nav-side nav-left" aria-label="Primary left">
+        {#each leftLinks as link}
+          <a
+            href={link.href}
+            class="nav-link"
+            class:is-active={isActive(link.href)}
+            aria-current={isActive(link.href) ? 'page' : undefined}
+          >{link.label}</a>
+        {/each}
+      </nav>
+    {/if}
 
-    <!-- ③ Brand: proscenium centerpiece -->
-    <a href="/" class="brand" aria-label={$brandName}>
-      <span class="brand-inner">
-        <RavenWatcher />
-        <span class="brand-name">{$brandName}</span>
-      </span>
-      <span class="brand-sub">Cabinet of Gothic Miniatures</span>
-    </a>
+    <!-- ③ Brand: proscenium centerpiece. On a work leaf, neighbour daguerreotypes
+         sit immediately left and right of the raven. -->
+    <div class="brand-triptych">
+      {#if isWorkLeaf}
+        <NeighborPlate side="prev" work={leafPrev} />
+      {/if}
+      <a
+        href="/"
+        class="brand"
+        aria-label={$brandName}
+      >
+        <span class="brand-inner">
+          <RavenWatcher />
+          <span class="brand-name">{$brandName}</span>
+        </span>
+        {#if !isWorkLeaf}
+          <span class="brand-sub">Cabinet of Gothic Miniatures</span>
+        {/if}
+      </a>
+      {#if isWorkLeaf}
+        <NeighborPlate side="next" work={leafNext} />
+      {/if}
+    </div>
 
     <!-- ④ Right nav -->
-    <nav class="nav-side nav-right" aria-label="Primary right">
-      {#each rightLinks as link}
-        <a
-          href={link.href}
-          class="nav-link"
-          class:is-active={isActive(link.href)}
-          aria-current={isActive(link.href) ? 'page' : undefined}
-        >{link.label}</a>
-      {/each}
-    </nav>
+    {#if !isWorkLeaf}
+      <nav class="nav-side nav-right" aria-label="Primary right">
+        {#each rightLinks as link}
+          <a
+            href={link.href}
+            class="nav-link"
+            class:is-active={isActive(link.href)}
+            aria-current={isActive(link.href) ? 'page' : undefined}
+          >{link.label}</a>
+        {/each}
+      </nav>
+    {/if}
 
     <!-- ⑤ Ghost-right: muted utilities pinned to right edge. The "Write"
          button lives OUTSIDE .ghost-right on purpose: that container (and
@@ -358,6 +400,11 @@
          button (and its dropdown) in there made both render translucent no
          matter how opaque their own backgrounds were. -->
     <div class="ghost-right-group">
+      <div class="header-actions">
+      {#if isWorkLeaf}
+        <DetailHeaderTools />
+      {/if}
+
       {#if keeper.blotterOffscreen}
       <button
         type="button"
@@ -523,6 +570,7 @@
             </button>
           </div>
         {/if}
+      </div>
       </div>
       </div>
     </div>
@@ -701,6 +749,69 @@
     background: rgba(248, 241, 231, 0.99);
   }
 
+  /* ── Work leaf: floating island ────────────────────────────────
+     The cornice leaves the full-width bar. The inner row becomes a
+     parchment capsule that keeps every control visible on scroll —
+     no collapse to a raven crumb. */
+  .site-header.is-leaf {
+    /* Zero-height so the full-width fixed layer has no bottom edge —
+       Safari/Chrome otherwise paint a 1px hairline across the viewport
+       even when background and border are none. The capsule lives in
+       overflow of this box. */
+    height: 0;
+    overflow: visible;
+    padding: 0 14px;
+    background: none;
+    border: none;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    pointer-events: none;
+    transition: none;
+    view-transition-name: none;
+  }
+
+  .site-header.is-leaf .header-inner,
+  .site-header.is-leaf .keeper-float,
+  .site-header.is-leaf .mobile-controls,
+  .site-header.is-leaf .mobile-nav {
+    pointer-events: auto;
+  }
+
+  .site-header.is-leaf.is-scrolled {
+    height: 0;
+    background: none;
+    box-shadow: none;
+  }
+
+  .site-header.is-leaf .header-inner {
+    height: 56px;
+    max-width: 1320px;
+    padding: 0 8px 0 10px;
+    background: rgba(248, 241, 231, 0.94);
+    border: 1px solid color-mix(in srgb, var(--color-ink-primary) 10%, transparent);
+    border-radius: 999px;
+    box-shadow: none;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    view-transition-name: site-header;
+  }
+
+  .site-header.is-leaf.is-scrolled .header-inner {
+    background: rgba(248, 241, 231, 0.97);
+    box-shadow: none;
+  }
+
+  .site-header.is-leaf .header-avatar,
+  .site-header.is-leaf.is-scrolled .header-avatar {
+    width: 40px;
+    height: 40px;
+  }
+
+  :global(html:has(.site-header.is-leaf) .with-site-header) {
+    padding-top: 56px;
+  }
+
   /* ── Floating over the home room photograph ──────────────────
      No bar, no rule: just type on the picture. The whole palette inverts —
      parchment where ink used to be — and the header leans on a soft gradient
@@ -840,6 +951,12 @@
     display: flex;
     align-items: center;
     gap: 12px;
+  }
+
+  /* Flattened on ordinary pages so the existing ghost-right-group flex
+     layout is unchanged. On a work leaf this becomes the tool capsule. */
+  .header-actions {
+    display: contents;
   }
 
   /* .ghost-left itself stays at full opacity now that it carries the maker
@@ -1034,9 +1151,21 @@
   }
 
   /* ── Brand: theatrical centerpiece ───────────────────────── */
-  .brand {
+  .brand-triptych {
     grid-column: 3;
     align-self: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: clamp(20px, 2.4vw, 32px);
+    min-width: 0;
+  }
+
+  .site-header.is-leaf .brand-triptych {
+    grid-column: 2 / 5;
+  }
+
+  .brand {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -1045,9 +1174,21 @@
     text-decoration: none;
     color: inherit;
     transition: opacity 0.3s;
+    min-width: 0;
+  }
+
+  .site-header.is-leaf .brand {
+    padding: 0 4px;
+    flex-direction: row;
+    gap: 0;
+  }
+
+  .site-header.is-leaf .brand-name {
+    white-space: nowrap;
   }
 
   .brand:hover { opacity: 0.82; }
+  .site-header.is-leaf .brand:hover { opacity: 1; }
 
   /* inner row: emblem + wordmark side by side */
   .brand-inner {
@@ -1091,6 +1232,173 @@
     max-height: 0;
     transform: translateY(-5px);
     pointer-events: none;
+  }
+
+  .leaf-archive {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.28rem;
+    margin-left: 6px;
+    padding: 0.15rem 0.2rem;
+    color: var(--color-ink-tertiary);
+    font-family: var(--font-body);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.10em;
+    text-decoration: none;
+    text-transform: uppercase;
+    white-space: nowrap;
+    opacity: 0.42;
+    transition: opacity 0.3s ease, color 0.25s ease;
+  }
+
+  .leaf-archive:hover,
+  .leaf-archive:focus-visible {
+    opacity: 0.78;
+    color: var(--ink);
+  }
+
+  .leaf-archive:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--copper, #c65f3c) 55%, transparent);
+    outline-offset: 3px;
+  }
+
+  .leaf-archive-arrow {
+    flex: 0 0 auto;
+    transition: transform 0.2s ease;
+  }
+
+  .leaf-archive:hover .leaf-archive-arrow {
+    transform: translateX(-2px);
+  }
+
+  .site-header.is-leaf .leaf-archive {
+    opacity: 0.62;
+  }
+
+  /* ── Work leaf: one copper capsule for every right-hand action ──
+     Story, share, write, bookings and account share size, stroke and
+     hover so they read as a single instrument, not mixed chrome. */
+  .site-header.is-leaf .header-actions {
+    display: flex;
+    align-items: stretch;
+    flex-shrink: 0;
+    height: 40px;
+    overflow: visible;
+    background: color-mix(in srgb, var(--color-canvas-base, #f8f1e7) 78%, white);
+    border: 1px solid #c65f3c;
+    border-radius: 999px;
+  }
+
+  .site-header.is-leaf .header-actions :global(.leaf-tools),
+  .site-header.is-leaf .header-actions .contact-anchor,
+  .site-header.is-leaf .header-actions .ghost-right,
+  .site-header.is-leaf .header-actions .bookings-anchor,
+  .site-header.is-leaf .header-actions .user-anchor {
+    display: flex;
+    align-items: stretch;
+    height: 100%;
+    gap: 0;
+    opacity: 1;
+  }
+
+  .site-header.is-leaf .ghost-right:hover,
+  .site-header.is-leaf .ghost-right:focus-within,
+  .site-header.is-leaf .ghost-right:has(.bookings-btn.has-claims),
+  .site-header.is-leaf .ghost-right:has(.user-btn.logged-in) {
+    opacity: 1;
+  }
+
+  .site-header.is-leaf .header-actions :global(.leaf-tool),
+  .site-header.is-leaf .header-actions .keeper-btn,
+  .site-header.is-leaf .header-actions .contact-btn,
+  .site-header.is-leaf .header-actions .bookings-btn,
+  .site-header.is-leaf .header-actions .user-btn {
+    box-sizing: border-box;
+    width: 40px;
+    min-width: 40px;
+    height: 100%;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    color: #c65f3c;
+    box-shadow: inset 1px 0 0 color-mix(in srgb, #c65f3c 32%, transparent);
+    transition: background 0.2s ease, color 0.2s ease;
+  }
+
+  .site-header.is-leaf .header-actions :global(.leaf-tool:first-child),
+  .site-header.is-leaf .header-actions > :first-child.keeper-btn,
+  .site-header.is-leaf .header-actions > :first-child > button:first-child {
+    box-shadow: none;
+    border-radius: 999px 0 0 999px;
+  }
+
+  .site-header.is-leaf .header-actions .user-btn {
+    border-radius: 0 999px 999px 0;
+  }
+
+  .site-header.is-leaf .header-actions .contact-btn {
+    width: auto;
+    min-width: 0;
+    padding: 0 14px 0 12px;
+    gap: 7px;
+  }
+
+  .site-header.is-leaf .header-actions .user-btn.logged-in {
+    border: none;
+  }
+
+  .site-header.is-leaf .header-actions .user-avatar {
+    width: 22px;
+    height: 22px;
+  }
+
+  .site-header.is-leaf .header-actions .user-initial {
+    font-size: 13px;
+  }
+
+  .site-header.is-leaf .header-actions :global(.leaf-tool svg),
+  .site-header.is-leaf .header-actions .keeper-btn svg,
+  .site-header.is-leaf .header-actions .contact-btn svg,
+  .site-header.is-leaf .header-actions .bookings-btn svg,
+  .site-header.is-leaf .header-actions .user-btn svg {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+  }
+
+  .site-header.is-leaf .header-actions :global(.leaf-tool:hover),
+  .site-header.is-leaf .header-actions :global(.leaf-tool:focus-visible),
+  .site-header.is-leaf .header-actions :global(.leaf-tool.is-on),
+  .site-header.is-leaf .header-actions .keeper-btn:hover,
+  .site-header.is-leaf .header-actions .keeper-btn.is-open,
+  .site-header.is-leaf .header-actions .keeper-btn:focus-visible,
+  .site-header.is-leaf .header-actions .contact-btn:hover,
+  .site-header.is-leaf .header-actions .contact-btn.is-open,
+  .site-header.is-leaf .header-actions .contact-btn:focus-visible,
+  .site-header.is-leaf .header-actions .bookings-btn:hover,
+  .site-header.is-leaf .header-actions .bookings-btn.is-open,
+  .site-header.is-leaf .header-actions .bookings-btn:focus-visible,
+  .site-header.is-leaf .header-actions .user-btn:hover,
+  .site-header.is-leaf .header-actions .user-btn.is-open,
+  .site-header.is-leaf .header-actions .user-btn:focus-visible {
+    background: #c65f3c;
+    color: #fff9f0;
+  }
+
+  .site-header.is-leaf .header-actions :global(.leaf-tool:focus-visible),
+  .site-header.is-leaf .header-actions .keeper-btn:focus-visible,
+  .site-header.is-leaf .header-actions .contact-btn:focus-visible,
+  .site-header.is-leaf .header-actions .bookings-btn:focus-visible,
+  .site-header.is-leaf .header-actions .user-btn:focus-visible {
+    outline: 2px solid color-mix(in srgb, #c65f3c 55%, transparent);
+    outline-offset: -2px;
+  }
+
+  .site-header.is-leaf .header-actions .badge {
+    top: 4px;
+    right: 4px;
   }
 
   /* ── Mobile controls + nav (hidden on desktop) ───────────── */
@@ -1314,6 +1622,10 @@
     box-sizing: border-box;
   }
 
+  .site-header.is-leaf .keeper-float {
+    top: 56px;
+  }
+
   /* ── Contact ("write to the author") button ─────────────────
      Deliberately NOT muted like the bookings/user icons — this is the
      answer to "how do I reach the maker," so it carries a permanent
@@ -1530,11 +1842,33 @@
       height: 58px;
     }
 
+    .site-header.is-leaf {
+      height: 0;
+      padding: 0 10px;
+      background: none;
+      border: none;
+      box-shadow: none;
+    }
+
+    .site-header.is-leaf.is-scrolled {
+      height: 0;
+      background: none;
+    }
+
     /* On mobile, override the 5-col grid with a simple flex row */
     .header-inner {
       display: flex;
       align-items: center;
       padding: 0 16px;
+    }
+
+    .site-header.is-leaf .header-inner {
+      height: 50px;
+      padding: 0 10px 0 12px;
+    }
+
+    :global(html:has(.site-header.is-leaf) .with-site-header) {
+      padding-top: 50px;
     }
 
     /* Hide desktop-only zones */
@@ -1543,12 +1877,21 @@
     .nav-side { display: none; }
 
     /* Brand: move to flex-start, horizontal layout */
+    .brand-triptych {
+      gap: 14px;
+      min-width: 0;
+    }
+
     .brand {
       flex-direction: row;
       align-items: center;
       gap: 9px;
       padding: 0;
       align-self: auto;
+    }
+
+    .site-header.is-leaf .brand {
+      padding: 0;
     }
 
     .brand-inner { gap: 9px; }
@@ -1631,6 +1974,14 @@
       right: 12px;
       left: auto;
       width: min(320px, calc(100vw - 24px));
+    }
+
+    .site-header.is-leaf .mobile-nav {
+      top: 50px;
+    }
+
+    .site-header.is-leaf .mobile-contact-panel {
+      top: 50px;
     }
 
     .mobile-user-btn {

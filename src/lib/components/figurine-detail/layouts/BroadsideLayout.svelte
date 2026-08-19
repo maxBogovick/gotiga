@@ -28,11 +28,6 @@
   }
   let bdColorStyle = $derived(getBdColorStyle(ctx.displayConfig));
 
-  function registerGallery(el: HTMLElement) {
-    ctx.setGalleryEl(el);
-    return { destroy() { ctx.setGalleryEl(undefined); } };
-  }
-
   let historyRef = $state<HTMLElement | null>(null);
   let inkReady = $state(false);
 
@@ -77,7 +72,7 @@
 <div class="bd-root" style={bdColorStyle}>
 
   <!-- LEFT: sticky photo column — the specimen, fixed in place -->
-  <div class="bd-photo-col" use:registerGallery>
+  <div class="bd-photo-col">
     <div
       class="bd-plate"
       data-figurine-plate

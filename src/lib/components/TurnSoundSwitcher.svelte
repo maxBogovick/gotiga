@@ -17,6 +17,13 @@
     { id: 'riffle', key: 'turnSoundRiffle' },
   ];
 
+  let {
+    compact = false,
+  }: {
+    /** Header cornice: 28px ghost icon, no label. */
+    compact?: boolean;
+  } = $props();
+
   let open = $state(false);
   let wrap = $state<HTMLElement>();
 
@@ -48,7 +55,7 @@
   });
 </script>
 
-<div class="turn-sound" bind:this={wrap}>
+<div class="turn-sound" class:is-compact={compact} bind:this={wrap}>
   <button
     type="button"
     class="control-btn control-btn--utility {isOn ? 'control-btn--active' : ''}"
@@ -64,7 +71,9 @@
       <path d="M7.5 3.4c.6.1 1.1.6 1.1 1.2v7.2" stroke-linecap="round" />
       <path d="M10.4 4.7c.7.7.7 2 0 2.8M11.9 3.6c1.2 1.3 1.2 3.6 0 5" stroke-linecap="round" opacity="0.8" />
     </svg>
-    <span class="btn-label">{$t('turnSoundLabel')}</span>
+    {#if !compact}
+      <span class="btn-label">{$t('turnSoundLabel')}</span>
+    {/if}
   </button>
 
   {#if open}
@@ -158,5 +167,32 @@
   .turn-sound-opt:focus-visible {
     outline: 1px solid color-mix(in srgb, var(--color-ember, #c65f3c) 70%, transparent);
     outline-offset: 1px;
+  }
+
+  /* Header cornice: match the muted 28px ghost icons beside Write. */
+  .turn-sound.is-compact .control-btn {
+    width: 28px;
+    height: 28px;
+    min-height: 28px;
+    min-width: 28px;
+    max-width: none;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: none;
+    color: var(--ink, #34251c);
+    box-shadow: none;
+    text-transform: none;
+    cursor: pointer;
+    appearance: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .turn-sound.is-compact .control-btn:hover,
+  .turn-sound.is-compact .control-btn.control-btn--active {
+    color: var(--copper, #c65f3c);
+    background: color-mix(in srgb, var(--copper, #c65f3c) 8%, transparent);
   }
 </style>

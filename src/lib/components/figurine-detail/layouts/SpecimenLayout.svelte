@@ -24,11 +24,6 @@
   const ctx = getContext<App.FigurineDetailContext>('figurine-detail');
   let sectionStyle = $derived(computeSectionOrderStyle(ctx.displayConfig));
 
-  function registerGallery(el: HTMLElement) {
-    ctx.setGalleryEl(el);
-    return { destroy() { ctx.setGalleryEl(undefined); } };
-  }
-
   let videoRef = $state<HTMLVideoElement | null>(null);
 
   function toggleFullscreen() {
@@ -201,7 +196,7 @@
         </div>
 
         <div class="catalog-stage">
-          <div class="catalog-plate" use:registerGallery>
+          <div class="catalog-plate">
             <FigurineImageViewer quiet hideThumbs hideCaption aspect="4 / 5" />
           </div>
           <p class="catalog-plate-index">

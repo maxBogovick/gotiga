@@ -14,7 +14,7 @@
   color: var(--bd-paper);
 }
 
-/* Pull the dark background behind the topnav and page-root decorations */
+/* Pull the dark background behind the page-root decorations */
 /* --dc-bg is set on .page-root via inline style; fall back to the default dark */
 .page-root:has(.bd-root) {
   background: var(--dc-bg, color-mix(in srgb, var(--color-ink-primary) 96%, var(--color-ember)));
@@ -24,24 +24,6 @@
 .page-root:has(.bd-root)::before,
 .page-root:has(.bd-root)::after {
   opacity: 0.015;
-}
-
-/* Topnav: the page-root bg can be any preset colour — lock the nav bar to
-   frosted canvas so it reads against dark AND light backgrounds alike.
-   Specificity (0,3,0) wins over .topnav--scrolled::before (0,2,0). */
-.page-root:has(.bd-root) .topnav {
-  margin-bottom: 0;
-}
-
-.page-root:has(.bd-root) .topnav::before {
-  /* Stretch upward to cover the page-container padding-top gap (otherwise
-     the preset colour bleeds through above the nav bar). */
-  top: -1.15rem;
-  background: color-mix(in srgb, var(--color-canvas-base) 94%, transparent);
-  backdrop-filter: blur(8px) saturate(1.15);
-  -webkit-backdrop-filter: blur(8px) saturate(1.15);
-  border-bottom: 1px solid var(--color-border-subtle);
-  box-shadow: 0 6px 20px color-mix(in srgb, var(--color-ink-primary) 5%, transparent);
 }
 
 /* ── Left: sticky photo column ──────────────────────────────────────── */

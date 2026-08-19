@@ -129,7 +129,7 @@
             role: 'Quiet recessed areas and loading/skeleton surfaces.',
             usage: ['image stages', 'thumb placeholders', 'subtle inactive areas'],
             impact: 'Medium',
-            selectors: ['.image-stage', '.topnav-mini-img'],
+            selectors: ['.image-stage'],
         },
         'canvas-deep': {
             title: 'Deep canvas',
@@ -157,7 +157,7 @@
             role: 'Quiet navigation, inactive controls, and minor UI labels.',
             usage: ['back links', 'inactive nav', 'secondary icons'],
             impact: 'Medium',
-            selectors: ['.back-link', '.fig-nav-pill', '.cta-heart'],
+            selectors: ['.cta-heart'],
         },
         'ink-muted': {
             title: 'Muted text',
@@ -171,7 +171,7 @@
             role: 'Unavailable and disabled states.',
             usage: ['disabled controls', 'inactive text', 'unavailable UI'],
             impact: 'Low',
-            selectors: ['button:disabled', '.fig-nav-pill--off'],
+            selectors: ['button:disabled'],
         },
         'ember-subtle': {
             title: 'Accent background',
@@ -199,7 +199,7 @@
             role: 'Main terracotta brand accent.',
             usage: ['active tabs', 'links', 'icons', 'decorative lines', 'hover borders'],
             impact: 'High',
-            selectors: ['a', '.sec-label', '.topnav-dot--on', '.spec-icon', '.related-card:hover .related-name', '.control-btn--eye-pulse', '.cp-link--reschedule'],
+            selectors: ['a', '.sec-label', '.spec-icon', '.related-card:hover .related-name', '.control-btn--eye-pulse', '.cp-link--reschedule'],
         },
         'ember-deep': {
             title: 'Dark accent',

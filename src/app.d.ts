@@ -88,7 +88,6 @@ declare global {
 			openClaimLookup(): void;
 			closeClaimLookup(): void;
 			armPageTurn(e: MouseEvent, direction: 'forward' | 'backward'): void;
-			setGalleryEl(el: HTMLElement | undefined): void;
 			resolveUrl(path: string | undefined | null): string;
 			altTextFor(image: import('$lib/types/api').FigurineImage | null | undefined): string;
 			imageTypeLabel(type: string | undefined | null): string;

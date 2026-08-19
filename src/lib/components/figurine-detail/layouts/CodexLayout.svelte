@@ -20,11 +20,6 @@
   const ctx = getContext<App.FigurineDetailContext>('figurine-detail');
   let sectionStyle = $derived(computeSectionOrderStyle(ctx.displayConfig));
 
-  function registerGallery(el: HTMLElement) {
-    ctx.setGalleryEl(el);
-    return { destroy() { ctx.setGalleryEl(undefined); } };
-  }
-
   let historyRef = $state<HTMLElement | null>(null);
   let inkReady = $state(false);
 
@@ -215,7 +210,6 @@
       class="cx-illum"
       data-figurine-plate
       style="view-transition-name: {ctx.viewTransitionName}; {ctx.plateStyle}"
-      use:registerGallery
     >
       {#if ctx.useRaking}
         <div class="image-layer">
