@@ -802,7 +802,7 @@
     }
     function onClickAway(e: MouseEvent) {
       const target = e.target as HTMLElement | null;
-      if (!target?.closest('.gallery-mark, .gallery-mark-option')) markPickerOpen = false;
+      if (!target?.closest('.gallery-mark-wrap, .gallery-mark, .gallery-mark-option')) markPickerOpen = false;
     }
     window.addEventListener('keydown', onKey);
     // Defer attaching so the click that opened the picker doesn't immediately close it.
@@ -1323,7 +1323,7 @@
                 <svg class="fig-nav-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6">
                   <path d="M6.5 2L3.5 5 6.5 8"/>
                 </svg>
-                <span class="fig-nav-name">{prev.name}</span>
+                <span class="fig-nav-whisper">{prev.name}</span>
               </a>
             {:else}
               <span class="fig-nav-pill fig-nav-pill--off" aria-hidden="true">
@@ -1345,7 +1345,7 @@
                 onfocus={() => (bleedDir = 'next')}
                 onblur={() => (bleedDir = null)}
               >
-                <span class="fig-nav-name">{next.name}</span>
+                <span class="fig-nav-whisper">{next.name}</span>
                 <svg class="fig-nav-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6">
                   <path d="M3.5 2l3 3L3.5 8"/>
                 </svg>
@@ -1415,7 +1415,7 @@
         <button
           type="button"
           onclick={toggleCandle}
-          class="control-btn {isCandleLit ? 'control-btn--lit' : ''}"
+          class="control-btn control-btn--utility {isCandleLit ? 'control-btn--lit' : ''}"
           aria-label={isCandleLit ? $t('figurineExtinguish') : $t('figurineCandle')}
           title={isCandleLit ? $t('figurineExtinguish') : $t('figurineCandle')}
         >
@@ -1430,7 +1430,7 @@
           <button
             type="button"
             onclick={toggleAudio}
-            class="control-btn {isAudioPlaying ? 'control-btn--active' : ''}"
+            class="control-btn control-btn--utility {isAudioPlaying ? 'control-btn--active' : ''}"
             aria-label={isAudioPlaying ? $t('figurineSilence') : $t('figurineWhisper')}
             title={isAudioPlaying ? $t('figurineSilence') : $t('figurineWhisper')}
           >

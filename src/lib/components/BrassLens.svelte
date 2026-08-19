@@ -103,6 +103,22 @@
     if (animated) setTimeout(() => { transitioning = false; }, 300);
   }
 
+  // Touch: the brass overlay is desktop-only, so the lens button zooms the plate.
+  $effect(() => {
+    const enabled = lensEnabled;
+    const fine = isPointerFine;
+    if (fine) return;
+    if (enabled) {
+      transitioning = true;
+      scale = 2.5;
+      panX = 0;
+      panY = 0;
+      const timer = setTimeout(() => { transitioning = false; }, 300);
+      return () => clearTimeout(timer);
+    }
+    resetZoom(true);
+  });
+
   function handleTouchStart(e: TouchEvent) {
     if (isPointerFine) return;
 

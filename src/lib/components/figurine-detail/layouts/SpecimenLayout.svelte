@@ -9,7 +9,6 @@
   import FigurineClaimRow from '$lib/components/FigurineClaimRow.svelte';
   import BecomingReveal from '$lib/components/BecomingReveal.svelte';
   import SecretText from '$lib/components/SecretText.svelte';
-  import FontSwitcher from '$lib/components/FontSwitcher.svelte';
   import ShowingsTimeline from '$lib/components/ShowingsTimeline.svelte';
   import FigurineComments from '$lib/components/FigurineComments.svelte';
   import CatalogGlyph from '$lib/components/figurine-detail/CatalogGlyph.svelte';
@@ -30,30 +29,6 @@
     return { destroy() { ctx.setGalleryEl(undefined); } };
   }
 
-  let historyRef = $state<HTMLElement | null>(null);
-  let inkReady = $state(false);
-
-  $effect(() => {
-    if (!historyRef || inkReady) return;
-    if (typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      inkReady = true; return;
-    }
-    const io = new IntersectionObserver((entries) => {
-      if (entries[0].isIntersecting) { inkReady = true; io.disconnect(); }
-    }, { threshold: 0.05 });
-    io.observe(historyRef);
-    return () => io.disconnect();
-  });
-
-  function buildInkHtml(text: string): string {
-    const words = text.split(/\s+/).filter(Boolean);
-    return words.map((word, i) => {
-      const esc = word.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      const delay = Math.min(i, 80) * 25;
-      return `<span class="ink-word" style="animation-delay:${delay}ms">${esc}</span>`;
-    }).join(' ');
-  }
-
   let videoRef = $state<HTMLVideoElement | null>(null);
 
   function toggleFullscreen() {
@@ -62,12 +37,16 @@
   }
 
   let titleClass = $derived(
-    ctx.figurine.name.length > 80 ? 'catalog-title--long'
-    : ctx.figurine.name.length > 56 ? 'catalog-title--medium'
+    ctx.figurine.name.length > 64 ? 'catalog-title--long'
+    : ctx.figurine.name.length > 38 ? 'catalog-title--medium'
     : ''
   );
 
   let heroParagraphs = $derived.by(() => splitProse(ctx.figurine.shortText ?? ''));
+  let historyParagraphs = $derived.by(() => historyBlocks(ctx.figurine.fullDescription ?? ''));
+  let filmHasMixedTypes = $derived(
+    new Set(ctx.sortedImages.map((img) => img.imageType)).size > 1
+  );
   let showHistory = $derived(
     ctx.hasHistorySection && isBlockVisible(ctx.displayConfig, 'description')
   );
@@ -97,6 +76,20 @@
     if (relative < 0) return [one];
     const cut = Math.max(80, mid - 80) + relative + 1;
     return [one.slice(0, cut).trim(), one.slice(cut).trim()].filter(Boolean);
+  }
+
+  function historyBlocks(text: string): string[] {
+    return text
+      .trim()
+      .split(/\n{2,}/)
+      .map((block) => block.replace(/[ \t]*\n[ \t]*/g, ' ').replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+  }
+
+  function dropCapParts(text: string): { letter: string; rest: string } {
+    const m = text.match(/^(\p{L}|\p{N})/u);
+    if (!m) return { letter: '', rest: text };
+    return { letter: m[1], rest: text.slice(m[1].length) };
   }
 
   type CatalogLine = { icon: string; text: string };
@@ -161,6 +154,7 @@
 <div class="catalog-root">
   <div class="catalog-leaf">
       <div class="catalog-main">
+        <div class="catalog-copy">
         <header class="catalog-head">
           <h1
             class="figurine-title catalog-title {titleClass}"
@@ -171,16 +165,49 @@
           {#if ctx.hasText(ctx.figurine.dimensions)}
             <p class="catalog-dims">{$t('catalogDimsPrefix')} {ctx.figurine.dimensions}</p>
           {/if}
+          <p class="catalog-status">{ctx.statusUi.label}</p>
         </header>
+
+        {#if heroParagraphs.length > 0 || (ctx.hasText(ctx.figurine.secretText) && ctx.isCandleLit)}
+        <div class="catalog-prose" style={computeElementStyle(ctx.displayConfig, 'shortText')}>
+          {#each heroParagraphs as para}
+            <p>{para}</p>
+          {/each}
+          {#if ctx.hasText(ctx.figurine.secretText) && ctx.isCandleLit}
+            <div class="secret-anchor">
+              <SecretText text={ctx.figurine.secretText} isCandleLit={ctx.isCandleLit} />
+            </div>
+          {/if}
+        </div>
+        {/if}
+
+        {#if showHistory}
+          <section class="catalog-history dc-block--description" style={computeBlockStyle(ctx.displayConfig, 'description')}>
+            <h2 class="catalog-history-label">{$t('figurineHistory')}</h2>
+            <div class="history-body">
+              {#each historyParagraphs as para, i}
+                {@const cap = i === 0 ? dropCapParts(para) : null}
+                {#if cap?.letter}
+                  <p class="history-copy">
+                    <span class="history-drop">{cap.letter}</span>{cap.rest}
+                  </p>
+                {:else}
+                  <p class="history-copy">{para}</p>
+                {/if}
+              {/each}
+            </div>
+          </section>
+        {/if}
+        </div>
 
         <div class="catalog-stage">
           <div class="catalog-plate" use:registerGallery>
-            <FigurineImageViewer hideThumbs hideCaption aspect="4 / 5" />
+            <FigurineImageViewer quiet hideThumbs hideCaption aspect="4 / 5" />
           </div>
           <p class="catalog-plate-index">
-            <span>{$t('catalogPlate')} {String(ctx.activeImageIndex + 1).padStart(2, '0')}</span>
+            {$t('catalogPlate')} {String(ctx.activeImageIndex + 1).padStart(2, '0')}
             {#if ctx.currentImage}
-              <span>{ctx.imageTypeLabel(ctx.currentImage.imageType)}</span>
+              <span aria-hidden="true"> · </span>{ctx.imageTypeLabel(ctx.currentImage.imageType)}
             {/if}
           </p>
 
@@ -209,47 +236,20 @@
                           : undefined}
                       />
                     </picture>
-                    <span class="catalog-thumb-label">{ctx.imageTypeLabel(img.imageType)}</span>
+                    {#if filmHasMixedTypes}
+                      <span class="catalog-thumb-label">{ctx.imageTypeLabel(img.imageType)}</span>
+                    {/if}
                   </button>
                 {/each}
               </nav>
-              <p class="catalog-film-meta">
-                <span>{ctx.imageTypeLabel(ctx.currentImage?.imageType)}</span>
-                <span class="catalog-film-count">{String(ctx.activeImageIndex + 1).padStart(2, '0')} / {String(ctx.sortedImages.length).padStart(2, '0')}</span>
-              </p>
             </div>
           {/if}
-        </div>
 
-        {#if heroParagraphs.length > 0 || (ctx.hasText(ctx.figurine.secretText) && ctx.isCandleLit)}
-        <div class="catalog-prose" style={computeElementStyle(ctx.displayConfig, 'shortText')}>
-          {#each heroParagraphs as para}
-            <p>{para}</p>
-          {/each}
-          {#if ctx.hasText(ctx.figurine.secretText) && ctx.isCandleLit}
-            <div class="secret-anchor">
-              <SecretText text={ctx.figurine.secretText} isCandleLit={ctx.isCandleLit} />
-            </div>
-          {/if}
+          <aside class="catalog-guarantee">
+            <p>{$t('catalogGuarantee')}</p>
+            <span class="catalog-guarantee-mark" aria-hidden="true">♡</span>
+          </aside>
         </div>
-        {/if}
-
-        {#if showHistory}
-          <section class="catalog-history dc-block--description" style={computeBlockStyle(ctx.displayConfig, 'description')}>
-            <header class="d-section-header">
-              <span class="sec-label">{$t('figurineHistory')}</span>
-              <div class="sec-rule" aria-hidden="true"></div>
-              <FontSwitcher variant="colophon" />
-            </header>
-            <p bind:this={historyRef} class="history-body drop-cap">
-              {#if inkReady}
-                {@html buildInkHtml(ctx.figurine.fullDescription ?? '')}
-              {:else}
-                {ctx.figurine.fullDescription}
-              {/if}
-            </p>
-          </section>
-        {/if}
 
         {#if featureLines.length > 0}
         <section class="catalog-features">
@@ -309,11 +309,6 @@
           </ul>
         </section>
         {/if}
-
-        <aside class="catalog-guarantee">
-          <p>{$t('catalogGuarantee')}</p>
-          <span class="catalog-guarantee-mark" aria-hidden="true">♡</span>
-        </aside>
       </div>
 
     <p class="catalog-thanks">{$t('catalogThanks')} ♡</p>

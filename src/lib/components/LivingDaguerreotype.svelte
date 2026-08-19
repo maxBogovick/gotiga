@@ -32,6 +32,8 @@
     depthSrc = null,
     alt = '',
     intensity = 0.6,
+    imageFit = 'contain',
+    objectPosition = 'center center',
     class: className = '',
     onActivate,
   }: {
@@ -40,6 +42,8 @@
     alt?: string;
     /** 0..1 — multiplies the (already subtle) maximum displacement. */
     intensity?: number;
+    imageFit?: 'cover' | 'contain';
+    objectPosition?: string;
     class?: string;
     onActivate?: () => void;
   } = $props();
@@ -68,6 +72,8 @@
   let uCanvasAspect: WebGLUniformLocation | null = null;
   let uMouse: WebGLUniformLocation | null = null;
   let uIntensity: WebGLUniformLocation | null = null;
+  let uCover: WebGLUniformLocation | null = null;
+  let uOrigin: WebGLUniformLocation | null = null;
 
   let colorTex: WebGLTexture | null = null;
   let depthTex: WebGLTexture | null = null;
@@ -87,6 +93,22 @@
   let initialized = false; // GL context + program ready
   let loadedKey = '';      // de-dupes the (src|depthSrc) currently loaded/loading
   let loadSeq = 0;         // supersedes in-flight loads when the image changes fast
+
+  function originFromPosition(pos: string): [number, number] {
+    const parts = pos.trim().split(/\s+/);
+    const parse = (token: string | undefined, fallback: number) => {
+      if (!token) return fallback;
+      if (token === 'center' || token === 'centre') return 0.5;
+      if (token === 'left' || token === 'top') return 0;
+      if (token === 'right' || token === 'bottom') return 1;
+      if (token.endsWith('%')) {
+        const n = parseFloat(token);
+        return Number.isFinite(n) ? n / 100 : fallback;
+      }
+      return fallback;
+    };
+    return [parse(parts[0], 0.5), parse(parts[1], 0.5)];
+  }
 
   function updateHostRect() {
     hostRect = host?.getBoundingClientRect() ?? null;
@@ -195,6 +217,9 @@
     gl.uniform1f(uCanvasAspect, canvas.width / canvas.height);
     gl.uniform2f(uMouse, curX, curY);
     gl.uniform1f(uIntensity, MAX_SHIFT * Math.max(0, Math.min(1, intensity)));
+    gl.uniform1f(uCover, imageFit === 'cover' ? 1 : 0);
+    const origin = originFromPosition(objectPosition);
+    gl.uniform2f(uOrigin, origin[0], origin[1]);
 
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     if ((host?.clientWidth ?? 0) > 8 && (host?.clientHeight ?? 0) > 8) glReady = true;
@@ -319,6 +344,8 @@
       uniform float uCanvasAspect;
       uniform vec2  uMouse;     // -1..1
       uniform float uIntensity; // max texture-space shift
+      uniform float uCover;     // 0 contain, 1 cover
+      uniform vec2  uOrigin;    // object-position 0..1
 
       float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
 
@@ -336,14 +363,20 @@
       }
 
       void main() {
-        // object-fit: contain — letterbox bands stay transparent so the
-        // parchment mat shows through, exactly like the <img> did.
         vec2 scale = vec2(1.0);
-        if (uImageAspect > uCanvasAspect) scale.y = uCanvasAspect / uImageAspect;
-        else                              scale.x = uImageAspect / uCanvasAspect;
+        if (uCover > 0.5) {
+          if (uImageAspect > uCanvasAspect) scale.x = uImageAspect / uCanvasAspect;
+          else                              scale.y = uCanvasAspect / uImageAspect;
+        } else {
+          // contain — letterbox bands stay transparent so the mat shows through
+          if (uImageAspect > uCanvasAspect) scale.y = uCanvasAspect / uImageAspect;
+          else                              scale.x = uImageAspect / uCanvasAspect;
+        }
 
-        vec2 imgUv = (vUv - 0.5) / scale + 0.5;
-        if (imgUv.x < 0.0 || imgUv.x > 1.0 || imgUv.y < 0.0 || imgUv.y > 1.0) discard;
+        vec2 origin = vec2(0.5);
+        if (uCover > 0.5) origin = clamp(uOrigin, 0.5 / scale, 1.0 - 0.5 / scale);
+        vec2 imgUv = (vUv - 0.5) / scale + origin;
+        if (uCover < 0.5 && (imgUv.x < 0.0 || imgUv.x > 1.0 || imgUv.y < 0.0 || imgUv.y > 1.0)) discard;
 
         float d = depthAt(imgUv);
         vec2 disp = uMouse * d * uIntensity;
@@ -403,6 +436,8 @@
     uCanvasAspect = gl.getUniformLocation(prog, 'uCanvasAspect');
     uMouse = gl.getUniformLocation(prog, 'uMouse');
     uIntensity = gl.getUniformLocation(prog, 'uIntensity');
+    uCover = gl.getUniformLocation(prog, 'uCover');
+    uOrigin = gl.getUniformLocation(prog, 'uOrigin');
 
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -496,6 +531,8 @@
 
   $effect(() => {
     intensity;
+    imageFit;
+    objectPosition;
     if (initialized && colorTex) {
       draw();
       kick();
@@ -517,8 +554,9 @@
        the photograph with the browser's broken-image icon. The canvas texture
        is loaded separately when the URL is CORS-clean. -->
   {#if src && !imageFailed}
-    <img bind:this={baseImg} class="daguerreotype-base" {src} {alt}
+    <img bind:this={baseImg} class="daguerreotype-base" class:daguerreotype-base--cover={imageFit === 'cover'} {src} {alt}
          draggable="false" fetchpriority="high"
+         style="object-position: {objectPosition};"
          onerror={() => (imageFailed = true)} />
   {:else}
     <div class="daguerreotype-fallback" aria-hidden="true"></div>
@@ -545,6 +583,9 @@
     object-fit: contain;
     user-select: none;
     -webkit-user-drag: none;
+  }
+  .daguerreotype-base--cover {
+    object-fit: cover;
   }
   .daguerreotype-canvas {
     opacity: 0;
