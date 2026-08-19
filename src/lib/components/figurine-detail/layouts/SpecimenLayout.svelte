@@ -2,7 +2,7 @@
   import { getContext } from 'svelte';
   import { figurineHref } from '$lib/figurineHref';
   import { resolveWebpUrl } from '$lib/api';
-  import { t, brandName } from '$lib/i18n';
+  import { t } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
   import FigurineImageViewer from '../FigurineImageViewer.svelte';
   import FigurineStatusPanel from '$lib/components/FigurineStatusPanel.svelte';
@@ -161,104 +161,19 @@
 <div class="catalog-root">
   <div class="catalog-leaf">
       <div class="catalog-main">
-        <div class="catalog-copy">
-          <header class="catalog-head">
-            <p class="catalog-masthead">
-              <span class="catalog-masthead-brand">{$brandName}</span>
-              <span class="catalog-masthead-sep" aria-hidden="true">·</span>
-              <span>{$t('catalogMasthead')}</span>
-              {#if ctx.figurine.year}
-                <span class="catalog-masthead-year">{ctx.toRoman(ctx.figurine.year)}</span>
-              {/if}
-            </p>
-            <p class="catalog-kicker">{$t('catalogSubtitle')}</p>
-            <h1
-              class="figurine-title catalog-title {titleClass}"
-              style={computeElementStyle(ctx.displayConfig, 'name')}
-            >
-              {ctx.figurine.name}
-            </h1>
-            {#if ctx.hasText(ctx.figurine.dimensions)}
-              <p class="catalog-dims">{$t('catalogDimsPrefix')} {ctx.figurine.dimensions}</p>
-            {/if}
-          </header>
-          {#if heroParagraphs.length > 0 || (ctx.hasText(ctx.figurine.secretText) && ctx.isCandleLit)}
-          <div class="catalog-prose" style={computeElementStyle(ctx.displayConfig, 'shortText')}>
-            {#each heroParagraphs as para}
-              <p>{para}</p>
-            {/each}
-            {#if ctx.hasText(ctx.figurine.secretText) && ctx.isCandleLit}
-              <div class="secret-anchor">
-                <SecretText text={ctx.figurine.secretText} isCandleLit={ctx.isCandleLit} />
-              </div>
-            {/if}
-          </div>
+        <header class="catalog-head">
+          <h1
+            class="figurine-title catalog-title {titleClass}"
+            style={computeElementStyle(ctx.displayConfig, 'name')}
+          >
+            {ctx.figurine.name}
+          </h1>
+          {#if ctx.hasText(ctx.figurine.dimensions)}
+            <p class="catalog-dims">{$t('catalogDimsPrefix')} {ctx.figurine.dimensions}</p>
           {/if}
+        </header>
 
-          {#if showHistory}
-            <section class="catalog-history dc-block--description" style={computeBlockStyle(ctx.displayConfig, 'description')}>
-              <header class="d-section-header">
-                <span class="sec-label">{$t('figurineHistory')}</span>
-                <div class="sec-rule" aria-hidden="true"></div>
-                <FontSwitcher variant="colophon" />
-              </header>
-              <p bind:this={historyRef} class="history-body drop-cap">
-                {#if inkReady}
-                  {@html buildInkHtml(ctx.figurine.fullDescription ?? '')}
-                {:else}
-                  {ctx.figurine.fullDescription}
-                {/if}
-              </p>
-            </section>
-          {/if}
-
-          {#if featureLines.length > 0}
-          <section class="catalog-features">
-            <h2 class="catalog-list-title">{$t('catalogFeaturesTitle')}</h2>
-            <ul class="catalog-list">
-              {#each featureLines as line}
-                <li class="catalog-list-item">
-                  <CatalogGlyph name={line.icon} />
-                  <span>{line.text}</span>
-                </li>
-              {/each}
-            </ul>
-          </section>
-          {/if}
-
-          <section class="catalog-request">
-            <h2 class="catalog-notes-title">{ctx.statusUi.title}</h2>
-            <div class="catalog-request-facts">
-              {#each requestFacts as line}
-                <p class="catalog-list-item">
-                  <CatalogGlyph name={line.icon} />
-                  <span>{line.text}</span>
-                </p>
-              {/each}
-            </div>
-            <div class="catalog-request-actions">
-              <button
-                type="button"
-                class="catalog-request-btn"
-                onclick={() => ctx.openRequestModal(ctx.statusUi.defaultIntent)}
-              >
-                {$t('unifiedOpenRequest')}
-              </button>
-              <button
-                type="button"
-                class="catalog-request-btn catalog-request-btn--quiet"
-                onclick={() => ctx.openRequestModal('similar')}
-              >
-                {$t('commissionCreateSimilarShort')}
-              </button>
-              <a class="catalog-passport" href="/figurines/{ctx.id}/passport" onclick={() => ctx.analyticsClient?.cta('passport')}>
-                {$t('detailOpenPassport')}
-              </a>
-            </div>
-          </section>
-        </div>
-
-        <div class="catalog-visual">
+        <div class="catalog-stage">
           <div class="catalog-plate" use:registerGallery>
             <FigurineImageViewer hideThumbs hideCaption aspect="4 / 5" />
           </div>
@@ -304,26 +219,101 @@
               </p>
             </div>
           {/if}
-
-          {#if perfectLines.length > 0}
-          <section class="catalog-perfect">
-            <h2 class="catalog-list-title">{$t('catalogPerfectTitle')}</h2>
-            <ul class="catalog-list">
-              {#each perfectLines as line}
-                <li class="catalog-list-item">
-                  <CatalogGlyph name={line.icon} />
-                  <span>{line.text}</span>
-                </li>
-              {/each}
-            </ul>
-          </section>
-          {/if}
-
-          <aside class="catalog-guarantee">
-            <p>{$t('catalogGuarantee')}</p>
-            <span class="catalog-guarantee-mark" aria-hidden="true">♡</span>
-          </aside>
         </div>
+
+        {#if heroParagraphs.length > 0 || (ctx.hasText(ctx.figurine.secretText) && ctx.isCandleLit)}
+        <div class="catalog-prose" style={computeElementStyle(ctx.displayConfig, 'shortText')}>
+          {#each heroParagraphs as para}
+            <p>{para}</p>
+          {/each}
+          {#if ctx.hasText(ctx.figurine.secretText) && ctx.isCandleLit}
+            <div class="secret-anchor">
+              <SecretText text={ctx.figurine.secretText} isCandleLit={ctx.isCandleLit} />
+            </div>
+          {/if}
+        </div>
+        {/if}
+
+        {#if showHistory}
+          <section class="catalog-history dc-block--description" style={computeBlockStyle(ctx.displayConfig, 'description')}>
+            <header class="d-section-header">
+              <span class="sec-label">{$t('figurineHistory')}</span>
+              <div class="sec-rule" aria-hidden="true"></div>
+              <FontSwitcher variant="colophon" />
+            </header>
+            <p bind:this={historyRef} class="history-body drop-cap">
+              {#if inkReady}
+                {@html buildInkHtml(ctx.figurine.fullDescription ?? '')}
+              {:else}
+                {ctx.figurine.fullDescription}
+              {/if}
+            </p>
+          </section>
+        {/if}
+
+        {#if featureLines.length > 0}
+        <section class="catalog-features">
+          <h2 class="catalog-list-title">{$t('catalogFeaturesTitle')}</h2>
+          <ul class="catalog-list">
+            {#each featureLines as line}
+              <li class="catalog-list-item">
+                <CatalogGlyph name={line.icon} />
+                <span>{line.text}</span>
+              </li>
+            {/each}
+          </ul>
+        </section>
+        {/if}
+
+        <section class="catalog-request">
+          <h2 class="catalog-notes-title">{ctx.statusUi.title}</h2>
+          <div class="catalog-request-facts">
+            {#each requestFacts as line}
+              <p class="catalog-list-item">
+                <CatalogGlyph name={line.icon} />
+                <span>{line.text}</span>
+              </p>
+            {/each}
+          </div>
+          <div class="catalog-request-actions">
+            <button
+              type="button"
+              class="catalog-request-btn"
+              onclick={() => ctx.openRequestModal(ctx.statusUi.defaultIntent)}
+            >
+              {$t('unifiedOpenRequest')}
+            </button>
+            <button
+              type="button"
+              class="catalog-request-btn catalog-request-btn--quiet"
+              onclick={() => ctx.openRequestModal('similar')}
+            >
+              {$t('commissionCreateSimilarShort')}
+            </button>
+            <a class="catalog-passport" href="/figurines/{ctx.id}/passport" onclick={() => ctx.analyticsClient?.cta('passport')}>
+              {$t('detailOpenPassport')}
+            </a>
+          </div>
+        </section>
+
+        {#if perfectLines.length > 0}
+        <section class="catalog-perfect">
+          <h2 class="catalog-list-title">{$t('catalogPerfectTitle')}</h2>
+          <ul class="catalog-list">
+            {#each perfectLines as line}
+              <li class="catalog-list-item">
+                <CatalogGlyph name={line.icon} />
+                <span>{line.text}</span>
+              </li>
+            {/each}
+          </ul>
+        </section>
+        {/if}
+
+        <aside class="catalog-guarantee">
+          <p>{$t('catalogGuarantee')}</p>
+          <span class="catalog-guarantee-mark" aria-hidden="true">♡</span>
+        </aside>
       </div>
 
     <p class="catalog-thanks">{$t('catalogThanks')} ♡</p>

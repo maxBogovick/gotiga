@@ -301,8 +301,6 @@ export const ru: Record<TranslationKey, string> = {
   detailMobileRequestCta:  'Запросить',
   detailMobileShowingSub:  'Сейчас на показе',
   detailKind:              'Готическая миниатюра',
-  catalogSubtitle:         'Готическая миниатюра ручной работы',
-  catalogMasthead:         'Образец',
   catalogPlate:            'Таблица',
   catalogDimsPrefix:       'примерно',
   catalogFeaturesTitle:    'Особенности',
