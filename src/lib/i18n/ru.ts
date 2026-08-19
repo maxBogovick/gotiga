@@ -967,6 +967,7 @@ export const ru: Record<TranslationKey, string> = {
 
   // === NAV ===
   navArchive:  'Архив',
+  navAllWorks: 'Все работы',
   navUpcoming: 'В работе',
   navWorkshop: 'Мастерская',
   navAuthor:   'Автор',

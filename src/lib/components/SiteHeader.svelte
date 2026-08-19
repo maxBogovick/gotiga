@@ -38,17 +38,17 @@
   let avatarBorderColor = $derived(authorProfile?.avatarBorderColor?.trim() || 'var(--copper)');
   let avatarBg = $derived(authorProfile?.avatarBg?.trim() || 'transparent');
 
-  let leftLinks = $derived([
-    { href: '/figurines', label: $t('navArchive') },
-    { href: '/upcoming', label: $t('navUpcoming') },
-  ]);
-
   let rightLinks = $derived([
     { href: '/workshop', label: $t('navWorkshop') },
     { href: '/author',   label: $t('navAuthor') },
   ]);
 
   let pathname = $derived(page.url.pathname);
+  let isHome = $derived(pathname === '/');
+  let leftLinks = $derived([
+    { href: '/figurines', label: $t('navAllWorks') },
+    { href: '/gazette', label: $t('navGazette') },
+  ]);
   let leafData = $derived(page.data as WorkLeafData);
   let isWorkLeaf = $derived(WORK_LEAF_RE.test(pathname) && Boolean(leafData.figurine));
   let leafPrev = $derived(leafData.prev ?? null);
@@ -299,7 +299,7 @@
   });
 </script>
 
-<header class="site-header" class:is-scrolled={isScrolled} class:over-plate={isOverPlate} class:is-leaf={isWorkLeaf}>
+<header class="site-header" class:is-scrolled={isScrolled} class:over-plate={isOverPlate} class:is-leaf={isWorkLeaf} class:is-home={isHome}>
   <HeaderBirdWalk />
   <div class="header-inner">
 
@@ -330,9 +330,9 @@
           <svg class="leaf-archive-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
             <path d="M6.5 2L3.5 5 6.5 8"/>
           </svg>
-          {$t('navArchive')}
+          {$t('navAllWorks')}
         </a>
-      {:else}
+      {:else if !isHome}
         <span class="ghost-left-utils">
           <LangSwitcher variant="light" />
           <FontSwitcher variant="header" />
@@ -367,7 +367,9 @@
       >
         <span class="brand-inner">
           <RavenWatcher />
-          <span class="brand-name">{$brandName}</span>
+          {#if !isHome}
+            <span class="brand-name">{$brandName}</span>
+          {/if}
         </span>
         {#if !isWorkLeaf}
           <span class="brand-sub">Cabinet of Gothic Miniatures</span>
@@ -682,10 +684,12 @@
         onclick={closeMobileNav}
       >{link.label}</a>
     {/each}
-    <div class="mobile-nav-footer">
-      <LangSwitcher variant="light" />
-      <FontSwitcher variant="header" />
-    </div>
+    {#if !isHome}
+      <div class="mobile-nav-footer">
+        <LangSwitcher variant="light" />
+        <FontSwitcher variant="header" />
+      </div>
+    {/if}
   </nav>
 </header>
 

@@ -967,6 +967,7 @@ export const en = {
 
   // === NAV ===
   navArchive: 'Archive',
+  navAllWorks: 'All works',
   navUpcoming: 'In Progress',
   navWorkshop: 'Workshop',
   navAuthor: 'Author',
