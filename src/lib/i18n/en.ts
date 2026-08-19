@@ -302,6 +302,8 @@ export const en = {
   detailMobileShowingSub: 'Currently on showing',
   detailKind: 'Gothic miniature',
   catalogSubtitle: 'Handmade gothic miniature',
+  catalogMasthead: 'Specimen',
+  catalogPlate: 'Plate',
   catalogDimsPrefix: 'approximately',
   catalogFeaturesTitle: 'Features',
   catalogPerfectTitle: 'Perfect for',

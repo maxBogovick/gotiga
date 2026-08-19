@@ -2,7 +2,7 @@
   import { getContext } from 'svelte';
   import { figurineHref } from '$lib/figurineHref';
   import { resolveWebpUrl } from '$lib/api';
-  import { t } from '$lib/i18n';
+  import { t, brandName } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
   import FigurineImageViewer from '../FigurineImageViewer.svelte';
   import FigurineStatusPanel from '$lib/components/FigurineStatusPanel.svelte';
@@ -62,8 +62,8 @@
   }
 
   let titleClass = $derived(
-    ctx.figurine.name.length > 60 ? 'catalog-title--long'
-    : ctx.figurine.name.length > 30 ? 'catalog-title--medium'
+    ctx.figurine.name.length > 80 ? 'catalog-title--long'
+    : ctx.figurine.name.length > 56 ? 'catalog-title--medium'
     : ''
   );
 
@@ -160,27 +160,28 @@
 
 <div class="catalog-root">
   <div class="catalog-leaf">
-      <header class="catalog-head">
-        <h1
-          class="figurine-title catalog-title {titleClass}"
-          style={computeElementStyle(ctx.displayConfig, 'name')}
-        >
-          <svg class="catalog-flourish" viewBox="0 0 48 16" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true">
-            <path d="M46 8.2C36 8.2 33.5 3.2 27.5 3.2c-7.2 0-9.2 9.6-16.4 9.6C7.4 12.8 3.8 10.4 2 8.2" />
-          </svg>
-          <span class="catalog-title-text">{ctx.figurine.name}</span>
-          <svg class="catalog-flourish catalog-flourish--end" viewBox="0 0 48 16" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" aria-hidden="true">
-            <path d="M46 8.2C36 8.2 33.5 3.2 27.5 3.2c-7.2 0-9.2 9.6-16.4 9.6C7.4 12.8 3.8 10.4 2 8.2" />
-          </svg>
-        </h1>
-        <p class="catalog-subtitle">{$t('catalogSubtitle')}</p>
-        {#if ctx.hasText(ctx.figurine.dimensions)}
-          <p class="catalog-dims">{$t('catalogDimsPrefix')} {ctx.figurine.dimensions}</p>
-        {/if}
-      </header>
-
       <div class="catalog-main">
         <div class="catalog-copy">
+          <header class="catalog-head">
+            <p class="catalog-masthead">
+              <span class="catalog-masthead-brand">{$brandName}</span>
+              <span class="catalog-masthead-sep" aria-hidden="true">·</span>
+              <span>{$t('catalogMasthead')}</span>
+              {#if ctx.figurine.year}
+                <span class="catalog-masthead-year">{ctx.toRoman(ctx.figurine.year)}</span>
+              {/if}
+            </p>
+            <p class="catalog-kicker">{$t('catalogSubtitle')}</p>
+            <h1
+              class="figurine-title catalog-title {titleClass}"
+              style={computeElementStyle(ctx.displayConfig, 'name')}
+            >
+              {ctx.figurine.name}
+            </h1>
+            {#if ctx.hasText(ctx.figurine.dimensions)}
+              <p class="catalog-dims">{$t('catalogDimsPrefix')} {ctx.figurine.dimensions}</p>
+            {/if}
+          </header>
           {#if heroParagraphs.length > 0 || (ctx.hasText(ctx.figurine.secretText) && ctx.isCandleLit)}
           <div class="catalog-prose" style={computeElementStyle(ctx.displayConfig, 'shortText')}>
             {#each heroParagraphs as para}
@@ -243,6 +244,13 @@
               >
                 {$t('unifiedOpenRequest')}
               </button>
+              <button
+                type="button"
+                class="catalog-request-btn catalog-request-btn--quiet"
+                onclick={() => ctx.openRequestModal('similar')}
+              >
+                {$t('commissionCreateSimilarShort')}
+              </button>
               <a class="catalog-passport" href="/figurines/{ctx.id}/passport" onclick={() => ctx.analyticsClient?.cta('passport')}>
                 {$t('detailOpenPassport')}
               </a>
@@ -254,6 +262,12 @@
           <div class="catalog-plate" use:registerGallery>
             <FigurineImageViewer hideThumbs hideCaption aspect="4 / 5" />
           </div>
+          <p class="catalog-plate-index">
+            <span>{$t('catalogPlate')} {String(ctx.activeImageIndex + 1).padStart(2, '0')}</span>
+            {#if ctx.currentImage}
+              <span>{ctx.imageTypeLabel(ctx.currentImage.imageType)}</span>
+            {/if}
+          </p>
 
           {#if ctx.sortedImages.length > 1}
             <div class="catalog-film">
