@@ -7,6 +7,8 @@
   import { authStore } from '$lib/stores/auth.svelte';
   import { isValidEmail } from '$lib/validation';
   import { focusTrap } from '$lib/actions/focusTrap';
+  import { lockBodyScroll } from '$lib/actions/lockBodyScroll';
+  import { portal } from '$lib/actions/portal';
   import DateRangePicker from '$lib/components/DateRangePicker.svelte';
   import type { BookingRules, FigurineSchedule, FigurineStatus } from '$lib/types/api';
 
@@ -275,6 +277,8 @@
     transition:fade={{ duration: 250 }}
     onclick={(e) => { if (e.target === e.currentTarget) close(); }}
     role="presentation"
+    use:portal
+    use:lockBodyScroll
   >
     <div
       role="dialog"
@@ -440,7 +444,7 @@
     place-items: center;
     padding: 1rem;
     background: rgba(111, 59, 36, 0.35);
-    backdrop-filter: blur(8px);
+    overscroll-behavior: none;
   }
 
   .unified-dialog {
@@ -448,6 +452,8 @@
     width: min(100%, 42rem);
     max-height: min(90vh, 48rem);
     overflow: auto;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
     padding: 1.25rem;
     border: 1px solid #d8c6b1;
     border-radius: 8px;

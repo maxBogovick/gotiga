@@ -64,21 +64,15 @@
     if (!lensEnabled) showLens = false;
   });
 
-  // ── Mobile: pinch-to-zoom + pan ───────────────────────────────────────────
+  // ── Mobile: pan while the lens is on; swipe between photos at rest ──────
   let scale       = $state(1);
   let panX        = $state(0);
   let panY        = $state(0);
   let isPanning    = false;
-  let pinchStartD  = 0;
-  let pinchStartS  = 1;
   let panStartX    = 0, panStartY = 0;
   let panOriginX   = 0, panOriginY = 0;
   let swipeStartX  = 0, swipeStartY = 0;
   let transitioning = $state(false);
-
-  function dist(t: TouchList) {
-    return Math.hypot(t[1].clientX - t[0].clientX, t[1].clientY - t[0].clientY);
-  }
 
   function clampPan(s: number, px: number, py: number) {
     if (!container) return { px, py };
@@ -115,36 +109,23 @@
 
   function handleTouchStart(e: TouchEvent) {
     if (isPointerFine) return;
+    if (e.touches.length !== 1) return;
 
-    if (e.touches.length === 2) {
-      e.preventDefault();
-      pinchStartD = dist(e.touches);
-      pinchStartS = scale;
-      isPanning = false;
-    } else if (e.touches.length === 1) {
-      swipeStartX = e.touches[0].clientX;
-      swipeStartY = e.touches[0].clientY;
+    swipeStartX = e.touches[0].clientX;
+    swipeStartY = e.touches[0].clientY;
 
-      if (scale > 1.05) {
-        isPanning = true;
-        panStartX  = e.touches[0].clientX;
-        panStartY  = e.touches[0].clientY;
-        panOriginX = panX;
-        panOriginY = panY;
-      }
+    if (scale > 1.05) {
+      isPanning = true;
+      panStartX  = e.touches[0].clientX;
+      panStartY  = e.touches[0].clientY;
+      panOriginX = panX;
+      panOriginY = panY;
     }
   }
 
   function handleTouchMove(e: TouchEvent) {
     if (isPointerFine) return;
-
-    if (e.touches.length === 2) {
-      e.preventDefault();
-      const d = dist(e.touches);
-      const s = Math.max(1, Math.min(5, pinchStartS * (d / pinchStartD)));
-      const c = clampPan(s, panX, panY);
-      scale = s; panX = c.px; panY = c.py;
-    } else if (e.touches.length === 1 && isPanning && scale > 1.05) {
+    if (e.touches.length === 1 && isPanning && scale > 1.05) {
       e.preventDefault();
       const pdx = e.touches[0].clientX - panStartX;
       const pdy = e.touches[0].clientY - panStartY;

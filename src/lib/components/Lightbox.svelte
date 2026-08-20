@@ -4,6 +4,7 @@
   import { t } from '$lib/i18n';
   import { focusTrap } from '$lib/actions/focusTrap';
   import { lockBodyScroll } from '$lib/actions/lockBodyScroll';
+  import { portal } from '$lib/actions/portal';
   import { resolveWebpUrl } from '$lib/api';
 
   type LightboxImage = { url: string; alt?: string; thumbUrl?: string; focalX?: number | null; focalY?: number | null };
@@ -15,7 +16,7 @@
   }: {
     images: LightboxImage[];
     startIndex?: number;
-    onClose: () => void;
+    onClose: (index?: number) => void;
   } = $props();
 
   let current = $state(0);
@@ -54,18 +55,36 @@
   $effect(() => { current = startIndex; });
   $effect(() => { current; isImageLoaded = false; resetZoom(false); });
 
+  function close() { onClose(current); }
+
+  function revealWhenReady(node: HTMLImageElement) {
+    const done = () => { isImageLoaded = true; };
+    if (node.complete && node.naturalWidth > 0) {
+      done();
+      return;
+    }
+    node.addEventListener('load', done);
+    node.addEventListener('error', done);
+    return {
+      destroy() {
+        node.removeEventListener('load', done);
+        node.removeEventListener('error', done);
+      },
+    };
+  }
+
   function prev() { if (zoomed) return; current = (current - 1 + images.length) % images.length; }
   function next() { if (zoomed) return; current = (current + 1) % images.length; }
 
   function handleKey(e: KeyboardEvent) {
-    if (e.key === 'Escape')      { zoomed ? resetZoom() : onClose(); }
+    if (e.key === 'Escape')      { zoomed ? resetZoom() : close(); }
     if (e.key === 'ArrowLeft')   prev();
     if (e.key === 'ArrowRight')  next();
   }
 
   function handleStageClick(e: MouseEvent) {
     if (dragged) { dragged = false; return; }
-    if (e.target === e.currentTarget) onClose();
+    if (e.target === e.currentTarget) close();
   }
 
   // ── Desktop: wheel-zoom centred on the cursor + click-drag pan ──────────
@@ -223,7 +242,7 @@
 
     if (dismissGesture === 'vertical') {
       if (dismissY > DISMISS_THRESHOLD) {
-        onClose();
+        close();
       } else {
         dismissSnapBack = true;
         dismissY = 0;
@@ -243,6 +262,13 @@
 
   let hasMultiple = $derived(images.length > 1);
   let overlayEl: HTMLElement;
+  let overlayStyle = $derived(
+    `position:fixed;inset:0;z-index:4000;${
+      dismissY > 0
+        ? `background-color:rgba(16,8,4,${(0.97 - dismissProgress * 0.65).toFixed(3)});`
+        : ''
+    }`
+  );
 
   onMount(() => {
     const el = overlayEl;
@@ -263,12 +289,13 @@
 <div
   bind:this={overlayEl}
   class="lb-overlay"
-  style={dismissY > 0 ? `background-color: rgba(16, 8, 4, ${(0.97 - dismissProgress * 0.65).toFixed(3)});` : ''}
+  style={overlayStyle}
   transition:fade={{ duration: 200 }}
   role="dialog"
   aria-modal="true"
   aria-label="Image viewer"
   tabindex="-1"
+  use:portal
   use:focusTrap
   use:lockBodyScroll
   ontouchstart={handleTouchStart}
@@ -314,7 +341,7 @@
     </span>
 
     <!-- Right: close -->
-    <button class="lb-close" onclick={onClose} aria-label={$t('figurineGrimoireClose')}>
+    <button class="lb-close" onclick={close} aria-label={$t('figurineGrimoireClose')}>
       <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
         <path d="M1 1l10 10M11 1L1 11"/>
       </svg>
@@ -340,7 +367,7 @@
       role="button"
       tabindex="-1"
       aria-label="Close"
-      onkeydown={(e) => { if (e.key === 'Enter') onClose(); }}
+      onkeydown={(e) => { if (e.key === 'Enter') close(); }}
     >
       <!-- Prev / Next arrows inside stage -->
       {#if hasMultiple && !zoomed}
@@ -382,7 +409,7 @@
             class="lb-image"
             class:lb-image--loaded={isImageLoaded}
             style="filter: sepia(0.06) contrast(1.02);"
-            onload={() => { isImageLoaded = true; }}
+            use:revealWhenReady
             draggable="false"
           />
           <!-- Grain overlay on image -->
@@ -457,8 +484,10 @@
   .lb-overlay {
     position: fixed;
     inset: 0;
+    width: 100vw;
+    height: 100dvh;
     /* Above SiteHeader and its dropdown layers. */
-    z-index: 1000;
+    z-index: 4000;
     background: rgba(16, 8, 4, 0.97);
     display: flex;
     flex-direction: column;
@@ -602,8 +631,8 @@
 
   .lb-image {
     display: block;
-    max-width: 100%;
-    max-height: calc(100vh - 54px - 3rem);
+    max-width: min(100%, 100vw);
+    max-height: min(100%, calc(100dvh - 54px - 3rem));
     width: auto;
     height: auto;
     object-fit: contain;

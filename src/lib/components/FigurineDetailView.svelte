@@ -29,6 +29,7 @@
   import { turnSound } from '$lib/stores/page-turn-sound.svelte';
   import { playTurnSound } from '$lib/audio/page-turn-sounds';
   import { focusTrap } from '$lib/actions/focusTrap';
+  import { lockBodyScroll } from '$lib/actions/lockBodyScroll';
   import '$lib/styles/figurine-detail.css';
   import { houseClock } from '$lib/stores/house-clock.svelte';
   import { showingRooms } from '$lib/stores/showing-rooms.svelte';
@@ -937,6 +938,26 @@
   let swipeTouchStartY = 0;
   let swipeTouchTarget: EventTarget | null = null;
 
+  function isHorizontallyScrollableChain(start: Element): boolean {
+    let node: Element | null = start;
+    while (node && node !== document.documentElement) {
+      const style = getComputedStyle(node);
+      const ox = style.overflowX;
+      if ((ox === 'auto' || ox === 'scroll' || ox === 'overlay') && node.scrollWidth > node.clientWidth + 8) {
+        return true;
+      }
+      node = node.parentElement;
+    }
+    return false;
+  }
+
+  function shouldIgnorePageSwipe(target: EventTarget | null): boolean {
+    if (!(target instanceof Element)) return true;
+    if (target.closest('[data-figurine-plate], .gallery-col, [data-no-page-swipe]')) return true;
+    if (target.closest('a, button, input, textarea, select, label, [role="dialog"], [role="menu"]')) return true;
+    return isHorizontallyScrollableChain(target);
+  }
+
   function handlePageTouchStart(e: TouchEvent) {
     if (e.touches.length !== 1) return;
     swipeTouchStartX = e.touches[0].clientX;
@@ -950,13 +971,10 @@
     const dx = e.changedTouches[0].clientX - swipeTouchStartX;
     const dy = e.changedTouches[0].clientY - swipeTouchStartY;
     if (Math.abs(dx) < 72 || Math.abs(dx) < Math.abs(dy) * 1.6) return;
-    // A horizontal drag that began on the photograph must not turn the leaf.
-    if (swipeTouchTarget instanceof Element && swipeTouchTarget.closest('[data-figurine-plate], .gallery-col')) return;
-    if (dx > 0 && prev) {
-      void goto(`/figurines/${prev.id}`);
-    } else if (dx < 0 && next) {
-      void goto(`/figurines/${next.id}`);
-    }
+    if (shouldIgnorePageSwipe(swipeTouchTarget)) return;
+    const neighbor = dx > 0 ? prev : next;
+    if (!neighbor) return;
+    void goto(figurineHref(neighbor));
   }
 
   // ── Keyboard gallery navigation ───────────────────────────────────────────
@@ -1212,6 +1230,17 @@
 
 <CandleReveal isActive={isCandleLit} />
 
+{#if showLightbox}
+  <Lightbox
+    images={lightboxImages}
+    startIndex={lightboxStartIndex}
+    onClose={(index) => {
+      showLightbox = false;
+      if (typeof index === 'number') selectImage(index);
+    }}
+  />
+{/if}
+
 <div class="page-root" class:page-root--has-cta={scrollY > 300} class:page-root--candle={isCandleLit}
   style={pageRootBgStyle}
   ontouchstart={handlePageTouchStart}
@@ -1232,7 +1261,7 @@
 
   <!-- ── Story share modal ──────────────────────────────────────────────── -->
   {#if showStoryModal}
-    <div class="story-backdrop" transition:fade={{ duration: 200 }}>
+    <div class="story-backdrop" transition:fade={{ duration: 200 }} use:lockBodyScroll>
       <button type="button" class="story-backdrop-dismiss" onclick={closeStoryModal} aria-label={$t('lightboxClose')}></button>
       <div class="story-modal" bind:this={storyModalRef} transition:fade={{ duration: 150 }}
            role="dialog" aria-modal="true" aria-labelledby="story-modal-title" tabindex="-1" use:focusTrap>
@@ -1275,10 +1304,6 @@
         {/if}
       </div>
     </div>
-  {/if}
-
-  {#if showLightbox}
-    <Lightbox images={lightboxImages} startIndex={lightboxStartIndex} onClose={() => (showLightbox = false)} />
   {/if}
 
   <MemoryMirror
