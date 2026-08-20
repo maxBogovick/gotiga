@@ -1,5 +1,11 @@
 import { api } from '$lib/api';
-import { SITE_URL } from '$lib/site';
+import {
+    SITE_URL,
+    ACQUIRE_PATH,
+    IMPRESSIONS_PATH,
+    PRIVACY_PATH,
+    IMAGE_RIGHTS_PATH,
+} from '$lib/site';
 import type { FigurineListItem } from '$lib/types/api';
 
 // LLM-facing site index (https://llmstxt.org). Prerendered to a static /llms.txt in
@@ -42,15 +48,17 @@ export async function GET({ fetch }: { fetch: typeof globalThis.fetch }) {
         `## About\n\n` +
         `- [The author](${SITE_URL}/author): who makes the figures and why.\n` +
         `- [The workshop](${SITE_URL}/workshop): tools, materials and process.\n` +
-        `- [Commission a piece](${SITE_URL}/commission): how to request a custom figure.\n` +
-        `- [The photographs](${SITE_URL}/rights): images are copyrighted; reuse needs written permission.\n\n` +
+        `- [How to acquire a work](${SITE_URL}${ACQUIRE_PATH}): house rules for commissioning or reserving a piece. The petition form is a later step, not a public listing.\n` +
+        `- [The photographs](${SITE_URL}${IMAGE_RIGHTS_PATH}): images are copyrighted; reuse needs written permission.\n` +
+        `- [Privacy](${SITE_URL}${PRIVACY_PATH}): what personal data the site collects and why.\n\n` +
         `## Works\n\n` +
         (works || '- (the archive is currently quiet)') +
         `\n\n## Browse\n\n` +
         `- [Full archive](${SITE_URL}/figurines): every available, reserved and sold piece.\n` +
         `- [Gazette](${SITE_URL}/gazette): notes from the house — arrivals, sketches, openings, cuttings.\n` +
         `- [Gazette RSS](${SITE_URL}/gazette/feed.xml): machine-readable leaves of the cabinet.\n` +
-        `- [Upcoming](${SITE_URL}/upcoming): figures currently in progress.\n`;
+        `- [Upcoming](${SITE_URL}/upcoming): figures currently in progress.\n` +
+        `- [Book of Impressions](${SITE_URL}${IMPRESSIONS_PATH}): leave a quiet reaction to the exhibition.\n`;
 
     return new Response(body, {
         headers: { 'Content-Type': 'text/plain; charset=utf-8' },

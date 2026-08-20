@@ -998,6 +998,7 @@ export const ru: Record<TranslationKey, string> = {
   footerKicker:        'Для связи',
   footerTagline:       'Тихий кабинет готических миниатюр. Каждая работа хранится, а не продаётся в спешке.',
   footerNavTitle:      'Кабинет',
+  footerNotesTitle:    'Записки',
   footerContactTitle:  'Связаться с мастерской',
   footerEmailLabel:    'Письма',
   footerPhoneLabel:    'Голосом',

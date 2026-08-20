@@ -2,8 +2,6 @@
   import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
-  import LangSwitcher from '$lib/components/LangSwitcher.svelte';
-  import FontSwitcher from '$lib/components/FontSwitcher.svelte';
   import { allClaims } from '$lib/stores/all-claims.svelte';
   import { authStore } from '$lib/stores/auth.svelte';
   import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
@@ -12,10 +10,6 @@
   import { api, resolveMediaUrl } from '$lib/api';
   import RavenWatcher from '$lib/components/RavenWatcher.svelte';
   import HeaderBirdWalk from '$lib/components/HeaderBirdWalk.svelte';
-  import ContactMessageForm from '$lib/components/ContactMessageForm.svelte';
-  import KeeperFrame from '$lib/components/KeeperFrame.svelte';
-  import NeighborPlate from '$lib/components/NeighborPlate.svelte';
-  import DetailHeaderTools from '$lib/components/DetailHeaderTools.svelte';
   import { keeper } from '$lib/stores/keeper.svelte';
   import { ARCHIVE_KEEPER_INPUT_ID } from '$lib/keeper-search';
   import type { AuthorProfile, Figurine, FigurineListItem } from '$lib/types/api';
@@ -32,6 +26,8 @@
   let authorProfile = $state<AuthorProfile | null>(null);
   let headerAvatarUrl = $derived(authorProfile?.heroPhotoUrl?.trim() || '/images/avatar.jpg');
   let headerAuthorName = $derived(authorProfile?.name?.trim() || $brandName);
+  let brandCap = $derived($brandName.trim().charAt(0));
+  let brandRest = $derived($brandName.trim().slice(1));
   let avatarShape = $derived(authorProfile?.avatarShape ?? 'circle');
   let avatarRadiusCss = $derived(avatarShape === 'square' ? `${authorProfile?.avatarRadius ?? 12}px` : '50%');
   let avatarBorderWidthCss = $derived(`${authorProfile?.avatarBorderWidth ?? 3.5}px`);
@@ -77,6 +73,10 @@
   // pathname (not just `true`) so a home-page load doesn't flash the avatar
   // in before the first scroll check hides it again.
   let avatarVisible = $state(pathname !== '/');
+  // Neighbour plates / leaf tools are code-split. Don't render the {#await}
+  // during prerender or hydration would flash an empty pending state against
+  // HTML that already contained them.
+  let leafChrome = $state(false);
 
   function updateAvatarVisibility() {
     if (pathname !== '/') {
@@ -244,6 +244,7 @@
   let avatarUrl = $derived(resolveMediaUrl(authStore.user?.avatarUrl));
 
   onMount(async () => {
+    leafChrome = true;
     allClaims.load();
     allClaims.verify();
     allClaims.startPolling();
@@ -303,7 +304,7 @@
   <HeaderBirdWalk />
   <div class="header-inner">
 
-    <!-- ① Ghost-left: muted utilities pinned to left edge -->
+    <!-- ① Ghost-left: maker avatar pinned to left edge -->
     <div class="ghost-left">
       <!-- Maker avatar: large, full colour, fills the header's height —
            a real face, not a muted icon. -->
@@ -332,11 +333,6 @@
           </svg>
           {$t('navAllWorks')}
         </a>
-      {:else if !isHome}
-        <span class="ghost-left-utils">
-          <LangSwitcher variant="light" />
-          <FontSwitcher variant="header" />
-        </span>
       {/if}
     </div>
 
@@ -357,8 +353,10 @@
     <!-- ③ Brand: proscenium centerpiece. On a work leaf, neighbour daguerreotypes
          sit immediately left and right of the raven. -->
     <div class="brand-triptych">
-      {#if isWorkLeaf}
+      {#if isWorkLeaf && leafChrome}
+        {#await import('$lib/components/NeighborPlate.svelte') then { default: NeighborPlate }}
         <NeighborPlate side="prev" work={leafPrev} />
+        {/await}
       {/if}
       <a
         href="/"
@@ -367,16 +365,20 @@
       >
         <span class="brand-inner">
           <RavenWatcher />
-          {#if !isHome}
-            <span class="brand-name">{$brandName}</span>
-          {/if}
+          <span class="brand-name">
+            <span class="brand-mark">
+              <span class="brand-mark-cap">{brandCap}</span><span class="brand-mark-rest">{brandRest}</span>
+            </span>
+          </span>
         </span>
         {#if !isWorkLeaf}
           <span class="brand-sub">Cabinet of Gothic Miniatures</span>
         {/if}
       </a>
-      {#if isWorkLeaf}
+      {#if isWorkLeaf && leafChrome}
+        {#await import('$lib/components/NeighborPlate.svelte') then { default: NeighborPlate }}
         <NeighborPlate side="next" work={leafNext} />
+        {/await}
       {/if}
     </div>
 
@@ -403,8 +405,10 @@
          matter how opaque their own backgrounds were. -->
     <div class="ghost-right-group">
       <div class="header-actions">
-      {#if isWorkLeaf}
+      {#if isWorkLeaf && leafChrome}
+        {#await import('$lib/components/DetailHeaderTools.svelte') then { default: DetailHeaderTools }}
         <DetailHeaderTools />
+        {/await}
       {/if}
 
       {#if keeper.blotterOffscreen}
@@ -447,7 +451,9 @@
               <button class="panel-close" onclick={closeContactPanel} aria-label="Close">✕</button>
             </div>
             <p class="contact-panel-note">{$t('headerContactNote')}</p>
+            {#await import('$lib/components/ContactMessageForm.svelte') then { default: ContactMessageForm }}
             <ContactMessageForm source="header" compact />
+            {/await}
           </div>
         {/if}
       </div>
@@ -619,7 +625,9 @@
               <button class="panel-close" onclick={closeMobileContact} aria-label="Close">✕</button>
             </div>
             <p class="contact-panel-note">{$t('headerContactNote')}</p>
+            {#await import('$lib/components/ContactMessageForm.svelte') then { default: ContactMessageForm }}
             <ContactMessageForm source="header" compact />
+            {/await}
           </div>
         {/if}
       </div>
@@ -664,12 +672,14 @@
       bind:this={keeperPanelRef}
       transition:fade={{ duration: 200 }}
     >
+      {#await import('$lib/components/KeeperFrame.svelte') then { default: KeeperFrame }}
       <KeeperFrame
         titleId="keeper-note-float-title"
         source="header_keeper"
         autofocus
         float
       />
+      {/await}
     </div>
   {/if}
 
@@ -684,12 +694,6 @@
         onclick={closeMobileNav}
       >{link.label}</a>
     {/each}
-    {#if !isHome}
-      <div class="mobile-nav-footer">
-        <LangSwitcher variant="light" />
-        <FontSwitcher variant="header" />
-      </div>
-    {/if}
   </nav>
 </header>
 
@@ -871,29 +875,16 @@
      those panels under a dimmed ancestor made them render half see-through
      no matter how opaque their own background was. The always-accented
      contact button is excluded — see its own rule below. */
-  .site-header.over-plate .ghost-left-utils,
   .site-header.over-plate .ghost-right .bookings-btn,
   .site-header.over-plate .ghost-right .user-btn {
     opacity: 0.72;
   }
 
-  .site-header.over-plate .ghost-left-utils:hover,
-  .site-header.over-plate .ghost-left-utils:focus-within,
   .site-header.over-plate .ghost-right .bookings-anchor:hover .bookings-btn,
   .site-header.over-plate .ghost-right .bookings-anchor:focus-within .bookings-btn,
   .site-header.over-plate .ghost-right .user-anchor:hover .user-btn,
   .site-header.over-plate .ghost-right .user-anchor:focus-within .user-btn {
     opacity: 1;
-  }
-
-  /* The lang and font switchers are separate components that hard-code their ink
-     as Tailwind literals (text-[#34251c] …), so no variable of ours can reach
-     them. Over the photograph they have to be repainted from the outside. */
-  .site-header.over-plate .ghost-left-utils :global(button),
-  .site-header.over-plate .ghost-left-utils :global(span),
-  .site-header.over-plate .ghost-left-utils :global(a) {
-    color: rgb(var(--plate-ink) / 0.9);
-    text-shadow: 0 1px 10px rgb(var(--plate-scrim) / 0.8);
   }
 
   /* Same for the bookings/account icons on the right — they draw with
@@ -964,27 +955,14 @@
   }
 
   /* .ghost-left itself stays at full opacity now that it carries the maker
-     avatar — that must never look grey/dimmed. Only the lang/font switchers
-     (wrapped below in .ghost-left-utils) keep the old muted-until-hovered
-     behaviour; .ghost-right (bookings/account icons) is unaffected. */
+     avatar — that must never look grey/dimmed. .ghost-right (bookings/account
+     icons) stays muted until hovered. */
   .ghost-right {
     opacity: 0.42;
     transition: opacity 0.3s ease;
   }
   .ghost-right:hover,
   .ghost-right:focus-within {
-    opacity: 0.78;
-  }
-
-  .ghost-left-utils {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    opacity: 0.42;
-    transition: opacity 0.3s ease;
-  }
-  .ghost-left-utils:hover,
-  .ghost-left-utils:focus-within {
     opacity: 0.78;
   }
 
@@ -1188,28 +1166,54 @@
   }
 
   .site-header.is-leaf .brand-name {
+    font-size: 1.45rem;
     white-space: nowrap;
   }
 
-  .brand:hover { opacity: 0.82; }
+  .brand:hover { opacity: 1; }
   .site-header.is-leaf .brand:hover { opacity: 1; }
 
   /* inner row: emblem + wordmark side by side */
   .brand-inner {
     display: flex;
     align-items: center;
-    gap: 11px;
+    gap: 13px;
   }
 
 
   .brand-name {
     font-family: var(--font-display);
-    font-size: 20px;
-    font-weight: 400;
-    letter-spacing: 0.3em;
-    text-transform: uppercase;
+    font-style: italic;
+    font-weight: 300;
+    font-size: clamp(1.7rem, 2.35vw, 2.15rem);
+    font-optical-sizing: none;
+    font-variation-settings: 'opsz' 144, 'SOFT' 40, 'WONK' 1, 'wght' 300;
+    letter-spacing: 0.015em;
+    text-transform: none;
+    line-height: 0.86;
     color: var(--ink);
-    line-height: 1;
+    transition: color 0.45s var(--ease);
+  }
+  .brand:hover .brand-name {
+    color: var(--copper);
+  }
+  .brand-mark {
+    display: inline-flex;
+    align-items: baseline;
+  }
+  .brand-mark-cap {
+    font-size: 1.22em;
+    letter-spacing: -0.05em;
+    margin-right: 0.01em;
+    line-height: 0.78;
+    font-variation-settings: 'opsz' 144, 'SOFT' 20, 'WONK' 1, 'wght' 400;
+  }
+  .brand-mark-rest {
+    font-variation-settings: 'opsz' 144, 'SOFT' 50, 'WONK' 1, 'wght' 300;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .brand-name { transition: none; }
   }
 
   /* subtitle: fades out on scroll */
@@ -1901,7 +1905,7 @@
     .brand-inner { gap: 9px; }
 
 
-    .brand-name { font-size: 18px; }
+    .brand-name { font-size: 1.45rem; }
 
     /* subtitle always hidden on mobile */
     .brand-sub { display: none; }
@@ -2079,14 +2083,6 @@
 
     .mobile-nav-link.is-active,
     .mobile-nav-link:hover { color: var(--ink); }
-
-    .mobile-nav-footer {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding-top: 12px;
-      opacity: 0.55;
-    }
   }
 
   /* ── Notifications ───────────────────────────────────────── */

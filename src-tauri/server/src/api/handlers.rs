@@ -1937,7 +1937,20 @@ pub async fn sitemap_xml(
         .items;
 
     let mut urls = String::new();
-    for path in ["/", "/figurines", "/author", "/workshop", "/upcoming", "/gazette"] {
+    // Keep in sync with SITEMAP_STATIC_ROUTES in src/lib/site.ts. /commission is
+    // omitted: it is a JS form keyed off ?source, not a crawlable page.
+    for path in [
+        "/",
+        "/figurines",
+        "/gazette",
+        "/workshop",
+        "/author",
+        "/upcoming",
+        "/acquire",
+        "/impressions",
+        "/privacy",
+        "/rights",
+    ] {
         urls.push_str(&format!("  <url><loc>{base}{path}</loc></url>\n"));
     }
     for f in &figurines {

@@ -846,45 +846,6 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   KINETIC TITLE — home “Works” / «Работы»
-   ═══════════════════════════════════════════════════════════════════════════
-   One gesture. As the gallery wall approaches, the heading takes a little
-   weight; once the section has entered, the type is dead again — a book, not
-   a dashboard. Letter-spacing interpolates smoothly; Cormorant’s static cuts
-   only snap 300↔400. Browsers without view() and reduced-motion stay at 300. */
-
-@supports (animation-timeline: view()) {
-  #context-title {
-    animation: works-breathe linear both;
-    animation-timeline: view();
-    animation-range: entry 0% entry 92%;
-  }
-}
-
-@keyframes works-breathe {
-  0% {
-    font-weight: 300;
-    letter-spacing: 0.045em;
-  }
-  40% {
-    font-weight: 400;
-    letter-spacing: 0;
-  }
-  100% {
-    font-weight: 300;
-    letter-spacing: 0;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  #context-title {
-    animation: none !important;
-    font-weight: 300;
-    letter-spacing: 0;
-  }
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
    KEYFRAMES
    ═══════════════════════════════════════════════════════════════════════════ */
 

@@ -10,23 +10,16 @@
     import { t, brandName } from '$lib/i18n';
     import ReelWorkCard from '$lib/components/ReelWorkCard.svelte';
     import WorkMarginIndex from '$lib/components/WorkMarginIndex.svelte';
-    import KeeperNote from '$lib/components/KeeperNote.svelte';
-    import HouseNoticeBoard from '$lib/components/HouseNoticeBoard.svelte';
-    import HeroGazettePlate from '$lib/components/HeroGazettePlate.svelte';
-    import VisitLedger from '$lib/components/VisitLedger.svelte';
     import VisitorBook from '$lib/components/VisitorBook.svelte';
     import ImpressionsQuoteStrip from '$lib/components/ImpressionsQuoteStrip.svelte';
     import AuthorStory from '$lib/components/AuthorStory.svelte';
     import CorrespondenceInvite from '$lib/components/CorrespondenceInvite.svelte';
-    import FirstLook from '$lib/components/FirstLook.svelte';
     import HeroWorkshopTeaser from '$lib/components/HeroWorkshopTeaser.svelte';
     import { heroImageUrl, pickHeroFigurine, pickLatestAddedWork, sortWorks, visibleWorks } from '$lib/home-hero';
     import { syncAttr } from '$lib/hydrate-image';
     import { visitorBook } from '$lib/stores/visitor-book.svelte';
     import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
     import { visitorMarks } from '$lib/stores/visitor-marks.svelte';
-    import MarkedByYou from '$lib/components/MarkedByYou.svelte';
-    import NoticedByGuests from '$lib/components/NoticedByGuests.svelte';
     import { houseClock } from '$lib/stores/house-clock.svelte';
     import { showingRooms } from '$lib/stores/showing-rooms.svelte';
     import { SITE_URL } from '$lib/site';
@@ -76,6 +69,15 @@
     }));
 
     let isLoaded = $state(false);
+    // Grain is an SVG feTurbulence layer at 200% viewport. Rasterizing it
+    // during the first seconds of load shows up as Total Blocking Time in lab
+    // tools; paint it once the thread is idle — at 3% opacity the delay is
+    // invisible to a visitor.
+    let showGrain = $state(false);
+    // Code-split blotter / gazette plate: they must not be in the SSR tree or
+    // the client {#await} pending state fights the prerendered HTML. Flip this
+    // on mount so hydration is a no-op, then the chunks load off the critical path.
+    let deferHomeExtras = $state(false);
     // The hero's own inputs (the background, and the work it shows) are resolved in
     // load() and seeded here, so the <img> in the prerendered HTML is already the one
     // this component wants — see the note in +page.ts. The bundled photo is only the
@@ -267,6 +269,9 @@
     const GALLERY_LIMIT = 16;
     let galleryFigurines = $derived(collectionFigurines);
     let visibleGalleryFigurines = $derived(galleryFigurines.slice(0, GALLERY_LIMIT));
+    // Stable ids for the keeper — a `.map()` in the template would allocate a
+    // new array on every parent invalidation and re-seed the blotter.
+    let galleryReelIds = $derived(visibleGalleryFigurines.map((f) => f.id));
     let galleryRemaining = $derived(Math.max(0, galleryFigurines.length - GALLERY_LIMIT));
     // The first works the reel did NOT reach — shown as edges of plates sticking
     // out of the drawer on the closing card, so the way into the archive is the
@@ -332,10 +337,17 @@
     // load() already made, so re-asking for them costs no extra request.
     async function init() {
         try {
+            const returning =
+                visitedBefore
+                || visitorBook.signed
+                || savedFigurines.ids.length > 0
+                || Object.keys(visitorMarks.marks).length > 0
+                || previewVisitorMode === 'returning';
+            const none: FigurineListItem[] = [];
             const [page, firstLook, noticedByGuests, content, author, layout, savedReelTheme, bg, gazette] = await Promise.all([
                 api.getFigurinesPage().catch(() => null),
-                api.getFirstLookFigurines().catch(() => [] as FigurineListItem[]),
-                api.getNoticedByGuests().catch(() => [] as FigurineListItem[]),
+                returning ? api.getFirstLookFigurines().catch(() => none) : Promise.resolve(none),
+                returning ? api.getNoticedByGuests().catch(() => none) : Promise.resolve(none),
                 api.getHomeContent().catch(() => null),
                 api.getAuthorProfile().catch(() => null),
                 api.getHomeLayout().catch(() => null),
@@ -418,6 +430,7 @@
         // internally, so this stays a no-op if the component ever re-mounts.
         siteAnalytics.pageView();
         siteAnalytics.start();
+        deferHomeExtras = true;
 
         // Hydration does not touch src/srcset (see hydrate-image.ts): on this prerendered
         // page the hero <img> holds whatever the BUILD resolved, and load() has since
@@ -433,6 +446,10 @@
         visitorMarks.load();
         houseClock.start();
         visitorBook.load();
+        const grainIdle =
+            'requestIdleCallback' in window
+                ? requestIdleCallback(() => { showGrain = true; }, { timeout: 2500 })
+                : setTimeout(() => { showGrain = true; }, 1200);
         // Inside the admin editor's preview iframe: don't pollute the shared
         // localStorage visit flag, and listen for live layout drafts.
         const inHlPreview = new URLSearchParams(window.location.search).has('hlPreview');
@@ -524,6 +541,8 @@
             pointerMq.removeEventListener('change', syncTiltPreference);
             window.removeEventListener('message', onHlMessage);
             siteAnalytics.stop();
+            if ('requestIdleCallback' in window) cancelIdleCallback(grainIdle as number);
+            else clearTimeout(grainIdle);
         };
     });
 
@@ -576,7 +595,9 @@
 
 <div class="root">
     <div class="cursor-glow" style="transform:translate(calc({mouseX*100}vw - 250px),calc({mouseY*100}vh - 250px))"></div>
-    <div class="grain" aria-hidden="true"></div>
+    {#if showGrain}
+        <div class="grain" aria-hidden="true"></div>
+    {/if}
 
     <!-- Not a <main>: the layout (+layout.svelte) already renders the page's single
          <main> landmark around {@render children()}. A second <main> here nested one
@@ -645,11 +666,17 @@
                                 onSelect={(e) => openReelModal('b', e)}
                             />
                             <span class="hw-teasers-label">{$t('homeWorkshopTeaserLabel')}</span>
+                            {#if deferHomeExtras}
+                            {#await import('$lib/components/HeroGazettePlate.svelte') then { default: HeroGazettePlate }}
                             <HeroGazettePlate
                                 leaves={gazetteHome.leaves}
                                 cuttings={gazetteHome.cuttings}
                                 latestWork={latestAddedWork}
                             />
+                            {/await}
+                            {:else}
+                                <div class="gz-plate-slot" aria-hidden="true"></div>
+                            {/if}
                         </div>
                         {#if availableFigurines.length === 0}
                             <p class="release-note">{$t('homeReleaseNote')}</p>
@@ -747,11 +774,13 @@
                         <!-- "Since your visit" + "Exhibit of the day" folded into one light
                              ledger: quick facts worth a daily glance, not a monument. -->
                         <div class={hlClasses('visitLedger')} style={hlSubStyle('visitLedger', hlBandOrder.indexOf('visitLedger'))} data-hl="visitLedger">
+                            {#await import('$lib/components/VisitLedger.svelte') then { default: VisitLedger }}
                             <VisitLedger
                                 figurines={collectionFigurines}
                                 rooms={showingRooms.list.map((r) => ({ id: r.id, name: r.name }))}
                                 inProgressCount={inProgressFigurines.length}
                             />
+                            {/await}
                         </div>
                     {/if}
 
@@ -761,7 +790,9 @@
                              real ceremony in the band — the showing programme runs regularly
                              and earns the theatre. -->
                         <div class={hlClasses('noticeBoard')} style={hlSubStyle('noticeBoard', hlBandOrder.indexOf('noticeBoard'))} data-hl="noticeBoard">
+                            {#await import('$lib/components/HouseNoticeBoard.svelte') then { default: HouseNoticeBoard }}
                             <HouseNoticeBoard figurines={collectionFigurines} source="home_afisha" />
+                            {/await}
                         </div>
                     {/if}
                 </div>
@@ -807,7 +838,11 @@
                 </div>
             </div>
 
-            <KeeperNote figurines={collectionFigurines} reelIds={visibleGalleryFigurines.map((f) => f.id)} />
+            {#if deferHomeExtras}
+            {#await import('$lib/components/KeeperNote.svelte') then { default: KeeperNote }}
+            <KeeperNote figurines={collectionFigurines} reelIds={galleryReelIds} />
+            {/await}
+            {/if}
 
             <div class="work-content">
                 {#if visibleGalleryFigurines.length > 0}
@@ -979,21 +1014,27 @@
                          so the admin can actually see the shelf). -->
                     {#if hlVisible('firstLook') && (visitorBook.signed || previewVisitorMode === 'returning')}
                         <div class={hlClasses('firstLook')} style={hlSubStyle('firstLook', hlShelfOrder.indexOf('firstLook'))} data-hl="firstLook">
+                            {#await import('$lib/components/FirstLook.svelte') then { default: FirstLook }}
                             <FirstLook works={homeShelves.firstLook} greetName={visitorBook.name} source="home_first_look" />
+                            {/await}
                         </div>
                     {/if}
 
                     <!-- The visitor's own private marks, resolved locally. -->
                     {#if hlVisible('markedByYou')}
                         <div class={hlClasses('markedByYou')} style={hlSubStyle('markedByYou', hlShelfOrder.indexOf('markedByYou'))} data-hl="markedByYou">
+                            {#await import('$lib/components/MarkedByYou.svelte') then { default: MarkedByYou }}
                             <MarkedByYou figurines={homeShelves.marked} source="home_marked" />
+                            {/await}
                         </div>
                     {/if}
 
                     <!-- Hybrid editorial+algorithmic shelf: admin pins + top of the private mark ranking. -->
                     {#if hlVisible('noticedByGuests')}
                         <div class={hlClasses('noticedByGuests')} style={hlSubStyle('noticedByGuests', hlShelfOrder.indexOf('noticedByGuests'))} data-hl="noticedByGuests">
+                            {#await import('$lib/components/NoticedByGuests.svelte') then { default: NoticedByGuests }}
                             <NoticedByGuests figurines={homeShelves.noticed} source="home_noticed" />
+                            {/await}
                         </div>
                     {/if}
                 </div>
@@ -1441,6 +1482,15 @@
         color: var(--mid);
         border-bottom: 1px solid rgba(198,95,60,0.25);
         padding-bottom: 2px;
+    }
+
+    /* Same box as HeroGazettePlate while its chunk loads — keeps the teaser
+       row from shifting when the blotter arrives. */
+    .gz-plate-slot {
+        width: 142px;
+        height: 142px;
+        flex-shrink: 0;
+        margin: 5px 1px 5px 2px;
     }
 
     .release-note {

@@ -998,6 +998,7 @@ export const en = {
   footerKicker: 'Correspondence',
   footerTagline: 'A quiet cabinet of gothic miniatures. Each piece kept, never sold in haste.',
   footerNavTitle: 'The Cabinet',
+  footerNotesTitle: 'Notes',
   footerContactTitle: 'Reach the workshop',
   footerEmailLabel: 'Letters',
   footerPhoneLabel: 'By voice',

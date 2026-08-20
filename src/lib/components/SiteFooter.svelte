@@ -8,14 +8,17 @@
   const PHONE_DISPLAY = '+373 60 326 813';
   const TELEGRAM = 'https://t.me/+37360326813';
 
-  let links = $derived([
-    { href: '/figurines', label: $t('navArchive') },
-    { href: '/upcoming', label: $t('navUpcoming') },
+  // Rooms match the header. Notes are not rooms — they live beside the cabinet.
+  let rooms = $derived([
+    { href: '/figurines', label: $t('navAllWorks') },
+    { href: '/gazette', label: $t('navGazette') },
     { href: '/workshop', label: $t('navWorkshop') },
     { href: '/author', label: $t('navAuthor') },
+  ]);
+  let notes = $derived([
     { href: '/acquire', label: $t('navAcquire') },
     { href: '/impressions', label: $t('navImpressions') },
-    { href: '/gazette', label: $t('navGazette') },
+    { href: '/upcoming', label: $t('navUpcoming') },
   ]);
 
   let year = $derived(new Date().getFullYear());
@@ -45,21 +48,14 @@
       <span class="established">{$t('footerEstablished')}</span>
     </section>
 
-    <!-- Navigation ledger -->
-    <nav class="col col-nav" aria-label="Footer">
+    <nav class="col col-nav" aria-label={$t('footerNavTitle')}>
       <h2 class="col-title">{$t('footerNavTitle')}</h2>
-      <ul class="nav-list">
-        {#each links as link, i}
-          <li>
-            <a href={link.href} class="nav-row">
-              <span class="nav-num">{String(i + 1).padStart(2, '0')}</span>
-              <span class="nav-label">{link.label}</span>
-              <span class="leader" aria-hidden="true"></span>
-              <span class="nav-arrow" aria-hidden="true">→</span>
-            </a>
-          </li>
-        {/each}
-      </ul>
+      {@render ledger(rooms)}
+    </nav>
+
+    <nav class="col col-notes" aria-label={$t('footerNotesTitle')}>
+      <h2 class="col-title">{$t('footerNotesTitle')}</h2>
+      {@render ledger(notes)}
     </nav>
 
     <!-- Correspondence -->
@@ -125,6 +121,21 @@
   </div>
 </footer>
 
+{#snippet ledger(links: { href: string; label: string }[])}
+  <ul class="nav-list">
+    {#each links as link, i}
+      <li>
+        <a href={link.href} class="nav-row">
+          <span class="nav-num">{String(i + 1).padStart(2, '0')}</span>
+          <span class="nav-label">{link.label}</span>
+          <span class="leader" aria-hidden="true"></span>
+          <span class="nav-arrow" aria-hidden="true">→</span>
+        </a>
+      </li>
+    {/each}
+  </ul>
+{/snippet}
+
 <style>
   .site-footer {
     position: relative;
@@ -178,7 +189,7 @@
   /* ── Layout ── */
   .inner {
     display: grid;
-    grid-template-columns: 1.4fr 0.9fr 1.2fr;
+    grid-template-columns: 1.4fr 0.8fr 0.8fr 1.2fr;
     gap: clamp(36px, 5vw, 88px);
     max-width: 1180px;
     margin: 0 auto;
@@ -406,11 +417,10 @@
     border-color: currentColor;
   }
 
-  @media (max-width: 880px) {
+  @media (max-width: 1100px) {
     .inner {
       grid-template-columns: 1fr 1fr;
     }
-    .col-contact { grid-column: 1 / -1; }
   }
 
   @media (max-width: 560px) {

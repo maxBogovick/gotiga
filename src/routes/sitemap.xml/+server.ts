@@ -1,16 +1,14 @@
 import { api } from '$lib/api';
-import { SITE_URL, IMAGE_RIGHTS_PATH, toAbsoluteUrl } from '$lib/site';
+import { SITE_URL, SITEMAP_STATIC_ROUTES, toAbsoluteUrl } from '$lib/site';
 import type { Figurine, FigurineListItem } from '$lib/types/api';
 
 // Prerendered to a static sitemap.xml in the web build (matches the Sitemap line in
 // robots.txt). The dev/SPA profile has no SEO surface, so it's excluded.
 export const prerender = import.meta.env.VITE_BUILD_TARGET === 'web';
 
-// Public, prerendered routes with real, indexable HTML. /admin is intentionally
-// absent (also Disallowed in robots). /commission is omitted on purpose: it reads a
-// ?source query param so it can't be prerendered, and listing a JS-only shell here
-// would point crawlers at a thin page.
-const STATIC_ROUTES = ['/', '/figurines', '/upcoming', '/workshop', '/author', '/gazette', IMAGE_RIGHTS_PATH];
+// /admin is intentionally absent (also Disallowed in robots). /commission is omitted
+// on purpose: it reads a ?source query param so it can't be prerendered, and listing
+// a JS-only shell here would point crawlers at a thin page. Acquisition is /acquire.
 
 function xmlEscape(s: string): string {
     return s.replace(/[<>&'"]/g, (c) =>
@@ -87,7 +85,7 @@ export async function GET({ fetch }: { fetch: typeof globalThis.fetch }) {
     }
 
     const entries: { loc: string; lastmod?: string; image?: string | null; imageTitle?: string; imageCaption?: string }[] = [
-        ...STATIC_ROUTES.map((path) => ({ loc: `${SITE_URL}${path}` })),
+        ...SITEMAP_STATIC_ROUTES.map((path) => ({ loc: `${SITE_URL}${path}` })),
         ...figurines.map((f) => ({
             loc: `${SITE_URL}/figurines/${f.slug ?? f.id}`,
             lastmod: isoDay(f.createdAt),

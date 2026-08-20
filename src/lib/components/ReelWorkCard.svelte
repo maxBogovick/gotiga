@@ -120,6 +120,18 @@
   function openSimilarCommission() {
     goto(`/commission?source=${encodeURIComponent(fig.id)}`);
   }
+
+  // The second angle used to live in the prerendered HTML for every plate.
+  // Sixteen 1800px photographs at opacity:0 are still in-layout, so Chrome's
+  // lazy-loader treats them as near the viewport and decodes them on the main
+  // thread — that is most of a 7s Total Blocking Time on the home page. Mount
+  // the extra <img> only when a fine pointer actually asks to look closer.
+  let altReady = $state(false);
+  function revealAlt() {
+    if (altReady || !fig.detailImageUrl) return;
+    if (typeof window !== 'undefined' && !window.matchMedia('(hover: hover)').matches) return;
+    altReady = true;
+  }
 </script>
 
 <!-- The `glass-work` class is what the admin's reel theme targets when it emits
@@ -215,6 +227,8 @@
     href={figurineHref(fig, source)}
     style="--focal:{focalPos}"
     aria-label="{$t('homeViewFigurine')}: {fig.name}"
+    onpointerenter={revealAlt}
+    onfocusin={revealAlt}
   >
     <!-- The plate is ~536 CSS px wide on a wide screen and full-bleed on a phone. `sizes`
          says exactly that, and AppImage offers the 420/900/1800 renditions, so the browser
@@ -229,9 +243,10 @@
       sizes="(max-width: 680px) 100vw, 536px"
     />
 
-    {#if fig.detailImageUrl}
+    {#if altReady && fig.detailImageUrl}
       <!-- A second angle, held in reserve for a lingering look — not a product
-           swatch swap, a closer look at the same piece. -->
+           swatch swap, a closer look at the same piece. Mounted on hover only
+           (see revealAlt) so PageSpeed does not decode sixteen extra previews. -->
       <AppImage
         src={fig.detailImageLargeUrl ?? fig.detailImageUrl}
         alt=""
