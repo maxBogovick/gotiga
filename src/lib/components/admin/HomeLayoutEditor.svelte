@@ -29,7 +29,7 @@
     normalizeHomeOrder,
     isHomeBlockVisible,
   } from '$lib/home-layout';
-  import { READING_FONTS } from '$lib/stores/reading-font.svelte';
+  import { SITE_FONTS } from '$lib/fonts';
 
   // ── Config state ───────────────────────────────────────────────────────────
 
@@ -164,7 +164,7 @@
 
   const FONT_OPTIONS = [
     { id: '', label: $t('adminDisplayConfigFontDefault'), family: 'inherit' },
-    ...READING_FONTS.map((f) => ({ id: f.id, label: f.name, family: f.stack })),
+    ...SITE_FONTS.map((f) => ({ id: f.id, label: f.name, family: f.stack })),
   ];
 
   const TEXT_SIZE_OPTIONS: { id: NonNullable<BlockStyle['fontSize']>; label: string }[] = [

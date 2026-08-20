@@ -479,7 +479,7 @@
   .filters { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .5rem; padding: .75rem 1rem; border-bottom: 1px solid #d8dee7; }
   .filters input, .filters select { min-width: 0; }
   .error { margin: 0 1rem .75rem; color: #b42318; }
-  .logs-table { flex: 1; overflow: auto; font-family: Inter, system-ui, sans-serif; }
+  .logs-table { flex: 1; overflow: auto; font-family: 'Instrument Sans', system-ui, sans-serif; }
   .row { width: 100%; display: grid; grid-template-columns: 80px 70px minmax(180px, 1.5fr) 60px 70px 110px minmax(200px, 2fr); gap: .55rem; align-items: center; border: 0; border-bottom: 1px solid #e3e8ef; text-align: left; background: transparent; min-height: 2.15rem; padding: 0 0.5rem; }
   .row:hover { background: #edf4ff; }
   .row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

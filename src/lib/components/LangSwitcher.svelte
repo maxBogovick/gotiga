@@ -16,7 +16,7 @@
       <span class="{sepClass} select-none text-[10px]">/</span>
     {/if}
     <button
-      onclick={() => setLang(l)}
+      onclick={() => void setLang(l)}
       class="{baseClass} {$lang === l ? activeClass : inactiveClass}"
       aria-current={$lang === l ? 'true' : undefined}
     >{l.toUpperCase()}</button>

@@ -63,7 +63,7 @@ export async function downloadKeyCard(finalSelections: string[], userName: strin
     if (img) ctx.drawImage(img, x - ICON_SIZE / 2, 56, ICON_SIZE, ICON_SIZE);
     if (icon) {
       ctx.fillStyle = '#6f3b24';
-      ctx.font = '9px Inter, sans-serif';
+      ctx.font = '9px "Instrument Sans", sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText(iconLabel(icon, lang), x, 118);
     }

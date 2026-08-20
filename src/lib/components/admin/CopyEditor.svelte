@@ -4,6 +4,8 @@
     import { t, setCopyOverrides } from '$lib/i18n';
     import { en } from '$lib/i18n/en';
     import { ru } from '$lib/i18n/ru';
+    import { enAdmin } from '$lib/i18n/en.admin';
+    import { ruAdmin } from '$lib/i18n/ru.admin';
     import type { TranslationKey, Lang } from '$lib/i18n';
     import type { CopyOverrides } from '$lib/types/api';
 
@@ -15,7 +17,10 @@
     let overridesDraft = $state<CopyOverrides>({ en: {}, ru: {} });
     let showModifiedOnly = $state(false);
 
-    const staticDicts: Record<Lang, Record<string, string>> = { en: en as Record<string, string>, ru: ru as Record<string, string> };
+    const staticDicts: Record<Lang, Record<string, string>> = {
+        en: { ...en, ...enAdmin },
+        ru: { ...ru, ...ruAdmin },
+    };
 
     onMount(async () => {
         try {

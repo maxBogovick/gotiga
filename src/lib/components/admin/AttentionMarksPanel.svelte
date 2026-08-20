@@ -240,7 +240,7 @@
     padding: 0.9rem 1rem;
     margin-bottom: 0.85rem;
     color: #111827;
-    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-family: 'Instrument Sans', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     font-size: 13px;
   }
 

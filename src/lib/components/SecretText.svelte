@@ -51,7 +51,7 @@
     
     <!-- THE CIPHER (Always visible when not revealed) -->
     <span 
-        class="font-['Inter'] text-xl tracking-wide transition-all duration-700
+        class="font-['Instrument Sans'] text-xl tracking-wide transition-all duration-700
         {isRevealed ? 'opacity-0 blur-sm scale-95' : 'opacity-65 blur-[0.6px]'}
         {isCandleLit ? 'text-[#6b3a26]' : 'text-[#d8c6b1]'}"
     >

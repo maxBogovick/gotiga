@@ -950,7 +950,8 @@
     const dx = e.changedTouches[0].clientX - swipeTouchStartX;
     const dy = e.changedTouches[0].clientY - swipeTouchStartY;
     if (Math.abs(dx) < 72 || Math.abs(dx) < Math.abs(dy) * 1.6) return;
-    if (swipeTouchTarget instanceof Element && swipeTouchTarget.closest('.gallery-col')) return;
+    // A horizontal drag that began on the photograph must not turn the leaf.
+    if (swipeTouchTarget instanceof Element && swipeTouchTarget.closest('[data-figurine-plate], .gallery-col')) return;
     if (dx > 0 && prev) {
       void goto(`/figurines/${prev.id}`);
     } else if (dx < 0 && next) {

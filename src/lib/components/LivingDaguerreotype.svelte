@@ -93,6 +93,11 @@
   let initialized = false; // GL context + program ready
   let loadedKey = '';      // de-dupes the (src|depthSrc) currently loaded/loading
   let loadSeq = 0;         // supersedes in-flight loads when the image changes fast
+  let isPointerFine = $state(true);
+
+  function handleActivate() {
+    if (isPointerFine) onActivate?.();
+  }
 
   function originFromPosition(pos: string): [number, number] {
     const parts = pos.trim().split(/\s+/);
@@ -314,6 +319,7 @@
   }
 
   onMount(() => {
+    isPointerFine = window.matchMedia('(pointer: fine)').matches;
     if (reducedMotion || !canvas || !host || !src) return;
 
     // preserveDrawingBuffer: this canvas draws a single frame then parks its rAF
@@ -543,11 +549,12 @@
 <div
   bind:this={host}
   class="daguerreotype {className}"
-  role="button"
-  tabindex="0"
+  class:daguerreotype--zoomable={isPointerFine && !!onActivate}
+  role={isPointerFine && onActivate ? 'button' : 'img'}
+  tabindex={isPointerFine && onActivate ? 0 : undefined}
   aria-label={alt}
-  onclick={() => onActivate?.()}
-  onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onActivate?.(); } }}
+  onclick={handleActivate}
+  onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleActivate(); } }}
 >
   <!-- Base photograph: always present (SSR, view-transition, reduced-motion,
        no-WebGL fallback). No crossorigin here — a failed CORS check replaces
@@ -570,6 +577,8 @@
     width: 100%;
     height: 100%;
     overflow: hidden;
+  }
+  .daguerreotype--zoomable {
     cursor: zoom-in;
   }
   .daguerreotype-base,

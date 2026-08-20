@@ -53,37 +53,19 @@
     const FONT_CATALOG: Record<'display' | 'body' | 'serif' | 'mono', FontEntry[]> = {
         display: [
             { name: 'Fraunces',           preview: 'Whispers of the Archive' },
-            { name: 'Cinzel',             preview: 'Whispers of the Archive · Annals' },
-            { name: 'Playfair Display',   preview: 'Whispers of the Archive' },
             { name: 'Cormorant Garamond', preview: 'Whispers of the Archive' },
-            { name: 'Uncial Antiqua',     preview: 'Whispers of the Archive' },
-            { name: 'Pirata One',         preview: 'Whispers of the Archive' },
-            { name: 'Cardo',              preview: 'Whispers of the Archive' },
-            { name: 'IM Fell English',    preview: 'Whispers of the Archive' },
         ],
         body: [
-            { name: 'DM Sans',        preview: 'Gothic miniatures by hand' },
-            { name: 'Inter',          preview: 'Gothic miniatures by hand' },
-            { name: 'Raleway',        preview: 'Gothic miniatures by hand' },
-            { name: 'Nunito',         preview: 'Gothic miniatures by hand' },
-            { name: 'Lato',           preview: 'Gothic miniatures by hand' },
-            { name: 'Mulish',         preview: 'Gothic miniatures by hand' },
-            { name: 'Source Sans 3',  preview: 'Gothic miniatures by hand' },
+            { name: 'DM Sans',         preview: 'Gothic miniatures by hand' },
+            { name: 'Instrument Sans', preview: 'Gothic miniatures by hand' },
         ],
         serif: [
             { name: 'EB Garamond',       preview: 'Figures with their own faces' },
-            { name: 'Libre Baskerville', preview: 'Figures with their own faces' },
-            { name: 'Lora',              preview: 'Figures with their own faces' },
-            { name: 'Merriweather',      preview: 'Figures with their own faces' },
-            { name: 'Spectral',          preview: 'Figures with their own faces' },
-            { name: 'Crimson Pro',       preview: 'Figures with their own faces' },
+            { name: 'Cormorant Garamond', preview: 'Figures with their own faces' },
         ],
         mono: [
-            { name: 'JetBrains Mono',  preview: 'const shadow = true;' },
-            { name: 'Fira Code',       preview: 'const shadow = true;' },
-            { name: 'Source Code Pro', preview: 'const shadow = true;' },
-            { name: 'Courier Prime',   preview: 'const shadow = true;' },
-            { name: 'IBM Plex Mono',   preview: 'const shadow = true;' },
+            { name: 'ui-monospace', preview: 'const shadow = true;' },
+            { name: 'Courier New',  preview: 'const shadow = true;' },
         ],
     };
 
@@ -507,11 +489,15 @@
         return draft.fonts[role as keyof typeof draft.fonts] ?? DEFAULT_FONTS[role as keyof typeof DEFAULT_FONTS];
     }
 
+    const SHIPPED_FONTS = new Set([
+        'fraunces', 'cormorant garamond', 'dm sans', 'instrument sans', 'eb garamond',
+        'ui-monospace', 'courier new', 'monospace', 'georgia',
+    ]);
     const loadedFonts = new Set<string>();
     function loadGoogleFont(family: string, role: string) {
         if (typeof document === 'undefined') return;
         const key = family.toLowerCase();
-        if (loadedFonts.has(key)) return;
+        if (SHIPPED_FONTS.has(key) || loadedFonts.has(key)) return;
         loadedFonts.add(key);
         const weights = role === 'mono' ? '400' : '300;400;500';
         const url = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family)}:wght@${weights}&display=swap`;

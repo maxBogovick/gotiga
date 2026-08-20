@@ -96,7 +96,7 @@
   align-items: center;
   gap: 0.55rem;
   margin: 0 0 0.55rem;
-  font-family: 'Inter', sans-serif;
+  font-family: 'Instrument Sans', sans-serif;
   font-size: 0.58rem;
   font-weight: 500;
   letter-spacing: 0.22em;
@@ -171,13 +171,6 @@
 
 /* ── Gallery buttons — one rail, top-right so they clear the title ── */
 
-.sc-hero .expand-btn {
-  top: 1rem;
-  left: 1rem;
-  right: auto;
-  bottom: auto;
-}
-
 .sc-hero .notice-badge {
   top: 3.55rem;
   left: 1rem;
@@ -193,7 +186,7 @@
 .sc-hero .gallery-lens,
 .sc-hero .gallery-rake,
 .sc-hero .gallery-mark,
-.sc-hero .expand-btn {
+.sc-hero .gallery-expand {
   color: rgba(255, 255, 255, 0.78);
   background: rgba(0, 0, 0, 0.36);
   border-color: rgba(255, 255, 255, 0.18);
@@ -206,7 +199,7 @@
 .sc-hero .gallery-lens:hover,
 .sc-hero .gallery-rake:hover,
 .sc-hero .gallery-mark:hover,
-.sc-hero .expand-btn:hover {
+.sc-hero .gallery-expand:hover {
   color: rgba(255, 255, 255, 0.96);
   background: rgba(0, 0, 0, 0.54);
   border-color: rgba(255, 255, 255, 0.32);
@@ -268,7 +261,7 @@
 }
 
 .sc-spec-label {
-  font-family: 'Inter', sans-serif;
+  font-family: 'Instrument Sans', sans-serif;
   font-size: 0.5rem;
   letter-spacing: 0.2em;
   text-transform: uppercase;
@@ -387,7 +380,7 @@
   position: absolute;
   bottom: 0.35rem;
   left: 0.4rem;
-  font-family: 'Inter', monospace;
+  font-family: 'Instrument Sans', monospace;
   font-size: 0.5rem;
   font-weight: 600;
   letter-spacing: 0.08em;
@@ -397,7 +390,7 @@
 }
 
 .sc-frame-caption {
-  font-family: 'Inter', sans-serif;
+  font-family: 'Instrument Sans', sans-serif;
   font-size: 0.68rem;
   line-height: 1.45;
   color: color-mix(in srgb, var(--color-ink-primary) 52%, transparent);
@@ -468,7 +461,7 @@
   position: absolute;
   bottom: 0.42rem;
   left: 0.42rem;
-  font-family: 'Inter', sans-serif;
+  font-family: 'Instrument Sans', sans-serif;
   font-size: 0.5rem;
   font-weight: 500;
   letter-spacing: 0.1em;
@@ -501,7 +494,7 @@
 
 .sc-related-year {
   display: block;
-  font-family: 'Inter', sans-serif;
+  font-family: 'Instrument Sans', sans-serif;
   font-size: 0.56rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -530,7 +523,7 @@
 
 .sc-body .presence-note {
   margin-top: 0.75rem;
-  font-family: 'Inter', sans-serif;
+  font-family: 'Instrument Sans', sans-serif;
   font-size: 0.7rem;
   color: color-mix(in srgb, var(--color-ink-primary) 42%, transparent);
 }

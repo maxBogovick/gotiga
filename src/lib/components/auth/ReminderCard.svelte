@@ -118,7 +118,7 @@
     letter-spacing: 0.1em;
     text-transform: uppercase;
     color: #6f3b24;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     margin: 0 0 0.25rem;
   }
 
@@ -126,7 +126,7 @@
     font-size: 0.82rem;
     color: #9a7c5c;
     margin: 0 0 1rem;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
   }
 
   .card {
@@ -166,7 +166,7 @@
 
   .card-icon span {
     font-size: 0.6rem;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     color: #9a7c5c;
     letter-spacing: 0.04em;
   }
@@ -193,7 +193,7 @@
     color: #6f3b24;
     padding: 0.4rem 0.9rem;
     font-size: 0.8rem;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     cursor: pointer;
     letter-spacing: 0.04em;
     transition: border-color 0.2s;
@@ -204,7 +204,7 @@
   .saved-note {
     font-size: 0.75rem;
     color: #9a7c5c;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
   }
 
   .btn-primary {

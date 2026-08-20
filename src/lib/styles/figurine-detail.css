@@ -576,11 +576,11 @@ main:has(.page-root) ~ .site-footer {
 }
 
 .img-counter,
-.expand-btn,
 .gallery-heart,
 .gallery-lens,
 .gallery-rake,
 .gallery-mark,
+.gallery-expand,
 .gallery-mark-option,
 .gallery-nav-prev,
 .gallery-nav-next,
@@ -603,7 +603,6 @@ main:has(.page-root) ~ .site-footer {
 }
 
 .img-counter,
-.expand-btn,
 .gallery-nav-prev,
 .gallery-nav-next,
 .notice-badge,
@@ -660,7 +659,7 @@ main:has(.page-root) ~ .site-footer {
   pointer-events: none;
 }
 
-/* One rail, bottom-right: mark → (rake) → lens → heart. Flex so missing
+/* One rail, bottom-right: mark → (rake) → lens → heart → expand. Flex so missing
    tools collapse the stack instead of leaving a hole. */
 .gallery-actions {
   right: 0.75rem;
@@ -675,7 +674,8 @@ main:has(.page-root) ~ .site-footer {
 .gallery-heart,
 .gallery-lens,
 .gallery-rake,
-.gallery-mark {
+.gallery-mark,
+.gallery-expand {
   justify-content: center;
   width: 2.35rem;
   height: 2.35rem;
@@ -702,7 +702,8 @@ main:has(.page-root) ~ .site-footer {
 .gallery-heart:hover,
 .gallery-lens:hover,
 .gallery-rake:hover,
-.gallery-mark:hover {
+.gallery-mark:hover,
+.gallery-expand:hover {
   color: var(--color-canvas-raised);
   background: color-mix(in srgb, var(--color-ember) 42%, var(--color-ink-primary));
   border-color: color-mix(in srgb, var(--color-ember) 56%, transparent);
@@ -935,28 +936,6 @@ main:has(.page-root) ~ .site-footer {
   opacity: 0.55;
 }
 
-.expand-btn {
-  top: 0.75rem;
-  left: 0.75rem;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid color-mix(in srgb, var(--color-canvas-raised) 20%, transparent);
-  cursor: pointer;
-  opacity: 0;
-  transition:
-    background var(--duration-fast) var(--ease-atelier),
-    opacity var(--duration-fast) var(--ease-atelier);
-}
-
-.image-stage:hover .expand-btn,
-.expand-btn:focus-visible {
-  opacity: 1;
-}
-
-.expand-btn:hover {
-  color: var(--color-canvas-raised);
-  background: color-mix(in srgb, var(--color-ink-primary) 68%, transparent);
-}
-
 @media (max-width: 819px) {
   .thumbs-strip {
     gap: 0.5rem;
@@ -976,18 +955,6 @@ main:has(.page-root) ~ .site-footer {
   .image-stage {
     height: auto;
     min-height: 0;
-  }
-
-  .expand-btn {
-    opacity: 1;
-  }
-
-  .image-stage:has(> .expand-btn) .notice-badge,
-  .diptych-plate:has(> .expand-btn) .notice-badge,
-  .cx-illum:has(> .expand-btn) .notice-badge,
-  .sc-hero:has(> .expand-btn) .notice-badge,
-  .bd-plate:has(> .expand-btn) .notice-badge {
-    top: 3.2rem;
   }
 }
 
@@ -2659,6 +2626,7 @@ main:has(.page-root) ~ .site-footer {
   .gallery-lens,
   .gallery-rake,
   .gallery-mark,
+  .gallery-expand,
   .gallery-nav-prev,
   .gallery-nav-next {
     width: 2.75rem;
@@ -2672,9 +2640,6 @@ main:has(.page-root) ~ .site-footer {
   .image-view-tool {
     min-height: 2.2rem;
     padding: 0 0.65rem;
-  }
-  .expand-btn {
-    opacity: 0.82;
   }
   .gallery-nav-prev,
   .gallery-nav-next {
@@ -2701,11 +2666,11 @@ main:has(.page-root) ~ .site-footer {
     -webkit-backdrop-filter: blur(8px);
   }
   .img-counter,
-  .expand-btn,
   .gallery-heart,
   .gallery-lens,
   .gallery-rake,
   .gallery-mark,
+  .gallery-expand,
   .gallery-mark-option,
   .mark-thanks,
   .image-view-tools {
@@ -2714,7 +2679,7 @@ main:has(.page-root) ~ .site-footer {
 }
 
 .thumb-v:focus-visible,
-.expand-btn:focus-visible,
+.gallery-expand:focus-visible,
 .queue-receipt-leave:focus-visible,
 .entry-record > summary:focus-visible,
 .claim-lookup-link:focus-visible,

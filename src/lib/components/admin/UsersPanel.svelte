@@ -448,7 +448,7 @@
 <style>
   .users-panel, .users-detail {
     padding: 1rem 0;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     color: #34251c;
   }
 
@@ -466,7 +466,7 @@
     border: 1px solid #d8c6b1;
     background: #fdf8f2;
     color: #34251c;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: .85rem;
     outline: none;
   }
@@ -654,7 +654,7 @@
     border: 1px solid #d8c6b1;
     background: #fdf8f2;
     color: #34251c;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: .82rem;
     resize: vertical;
     outline: none;
@@ -779,7 +779,7 @@
     background: transparent;
     border: 1px solid #c65f3c;
     color: #c65f3c;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: .7rem;
     letter-spacing: .07em;
     text-transform: uppercase;
@@ -819,7 +819,7 @@
     letter-spacing: .06em;
     text-transform: uppercase;
     color: #9a7c5c;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
   }
   .msg-badge {
     font-size: .6rem;
@@ -833,7 +833,7 @@
   .msg-date {
     font-size: .68rem;
     color: #b5a090;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     margin-left: auto;
   }
   .msg-subject {
@@ -843,7 +843,7 @@
     margin: 0 0 .15rem;
   }
   .msg-body {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: .8rem;
     color: #6f4e37;
     margin: 0;

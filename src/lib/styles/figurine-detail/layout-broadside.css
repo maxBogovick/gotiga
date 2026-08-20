@@ -101,7 +101,7 @@
 
 /* Eyebrow */
 .bd-eyebrow {
-  font-family: 'Inter', sans-serif;
+  font-family: 'Instrument Sans', sans-serif;
   font-size: 0.58rem;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -134,7 +134,7 @@
 
 /* Subtitle: technique · series */
 .bd-subtitle {
-  font-family: 'Inter', sans-serif;
+  font-family: 'Instrument Sans', sans-serif;
   font-size: 0.62rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -181,7 +181,7 @@
 }
 
 .bd-attr-label {
-  font-family: 'Inter', sans-serif;
+  font-family: 'Instrument Sans', sans-serif;
   font-size: 0.58rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -265,7 +265,7 @@
 }
 
 .bd-making-kicker {
-  font-family: 'Inter', sans-serif;
+  font-family: 'Instrument Sans', sans-serif;
   font-size: 0.58rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -331,7 +331,7 @@
   position: absolute;
   bottom: 0.38rem;
   left: 0.42rem;
-  font-family: 'Inter', sans-serif;
+  font-family: 'Instrument Sans', sans-serif;
   font-size: 0.55rem;
   letter-spacing: 0.04em;
   line-height: 1;
@@ -355,7 +355,7 @@
 /* ── Связанные работы ────────────────────────────────────────────────── */
 
 .bd-related-label {
-  font-family: 'Inter', sans-serif;
+  font-family: 'Instrument Sans', sans-serif;
   font-size: 0.58rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -420,7 +420,7 @@
   position: absolute;
   bottom: 0.38rem;
   left: 0.38rem;
-  font-family: 'Inter', sans-serif;
+  font-family: 'Instrument Sans', sans-serif;
   font-size: 0.54rem;
   letter-spacing: 0.07em;
   text-transform: uppercase;

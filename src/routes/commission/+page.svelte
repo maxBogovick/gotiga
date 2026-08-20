@@ -699,7 +699,7 @@
 
   .age-consent { display: flex; align-items: flex-start; gap: 0.55rem; margin-top: 0.9rem; cursor: pointer; }
   .age-consent input { margin-top: 0.2rem; width: 1rem; height: 1rem; accent-color: #6f3b24; flex-shrink: 0; cursor: pointer; }
-  .age-consent span { font-family: 'Inter', sans-serif; font-size: 0.8rem; line-height: 1.45; color: #5f4636; }
+  .age-consent span { font-family: 'Instrument Sans', sans-serif; font-size: 0.8rem; line-height: 1.45; color: #5f4636; }
 
   .err { color: #a3361d; font-size: 0.85rem; }
   .err.center { text-align: center; }

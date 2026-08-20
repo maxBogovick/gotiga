@@ -5,11 +5,9 @@
   import { page } from '$app/state';
   import SiteHeader from '$lib/components/SiteHeader.svelte';
   import SiteFooter from '$lib/components/SiteFooter.svelte';
-  import DustParticles from '$lib/components/DustParticles.svelte';
   import { themeConfig, themeCSS, startListeningForPreview, applyPreviewPayload } from '$lib/stores/theme.svelte';
   import { injectStyle } from '$lib/inject-style';
   import { setCopyOverrides, lang } from '$lib/i18n';
-  import '$lib/stores/reading-font.svelte'; // initialises --font-reading from saved preference
   import { pageTurn } from '$lib/stores/page-turn.svelte';
   import { roomGesture } from '$lib/house-rooms';
   import { api } from '$lib/api';
@@ -29,7 +27,8 @@
   let showSiteHeader = $derived(!page.url.pathname.startsWith('/admin'));
   let hasHeaderOffset = $derived(showSiteHeader && page.url.pathname !== '/');
   // Detail page has its own DustParticles at higher intensity — skip in layout to avoid double canvas
-  let showDust = $derived(showSiteHeader && !page.url.pathname.startsWith('/figurines/'));
+  let dustReady = $state(false);
+  let showDust = $derived(dustReady && showSiteHeader && !page.url.pathname.startsWith('/figurines/'));
   // House-descent scroll dimmer: every public page EXCEPT the figurine detail /
   // passport routes, which run their own candle vignette (stacking a second
   // scroll-linked dimmer there would over-darken the specimen).
@@ -69,6 +68,12 @@
   }
 
   onMount(() => {
+    if ('requestIdleCallback' in window) {
+      requestIdleCallback(() => { dustReady = true; }, { timeout: 2000 });
+    } else {
+      setTimeout(() => { dustReady = true; }, 400);
+    }
+
     if ('serviceWorker' in navigator && import.meta.env.VITE_BUILD_TARGET === 'web') {
       import('virtual:pwa-register').then(({ registerSW }) => {
         registerSW({ immediate: false });
@@ -219,13 +224,15 @@
        NOT emitted here as {@html <style>} — see the effect's comment. -->
 </svelte:head>
 
-<div class="min-h-screen bg-[#f8f1e7]" class:reading-typeset={showSiteHeader}>
+<div class="min-h-screen bg-[#f8f1e7]">
   {#if showSiteHeader}
     <SiteHeader />
   {/if}
 
   {#if showDust}
-    <DustParticles opacity={0.2} />
+    {#await import('$lib/components/DustParticles.svelte') then { default: DustParticles }}
+      <DustParticles opacity={0.2} />
+    {/await}
   {/if}
 
   {#if showDescent}
@@ -243,16 +250,6 @@
 </div>
 
 <style>
-  /* The reader's chosen typeface governs the ENTIRE public site — header,
-     headings, body and prose on every page. Scoped to the wrapper (not :root)
-     so it overrides any admin font set inline on <html>, and excluded on /admin
-     so the design-system editor's own font preview keeps working.
-     --font-serif is left alone: it feeds --font-reading (would be a var cycle). */
-  .reading-typeset {
-    --font-display: var(--font-reading);
-    --font-body: var(--font-reading);
-  }
-
   .with-site-header {
     padding-top: 68px;
   }

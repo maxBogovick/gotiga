@@ -161,14 +161,14 @@
               {selectedId === s.id ? 'bg-[#fff9f0] border-l-2 border-l-[#c65f3c]' : ''}"
           >
             <div class="flex items-center gap-2 mb-0.5">
-              <span class="text-[9px] uppercase tracking-wide font-bold font-['Inter'] px-1.5 py-0.5 rounded-sm
+              <span class="text-[9px] uppercase tracking-wide font-bold font-['Instrument Sans'] px-1.5 py-0.5 rounded-sm
                 {s.showingType === 'exhibition' ? 'bg-amber-100 text-amber-800' : 'bg-purple-100 text-purple-800'}">
                 {s.showingType === 'exhibition' ? $t('adminShowingsExhibition') : $t('adminShowingsPrivate')}
               </span>
             </div>
             <div class="text-sm font-['Fraunces'] text-[#34251c] truncate">{s.title}</div>
-            <div class="text-[11px] text-[#5f4636]/70 font-['Inter'] mt-0.5">{figurineName(s.figurineId)}</div>
-            <div class="text-[11px] text-[#5f4636]/60 font-['Inter']">{formatDate(s.startsAt)} — {formatDate(s.endsAt)}</div>
+            <div class="text-[11px] text-[#5f4636]/70 font-['Instrument Sans'] mt-0.5">{figurineName(s.figurineId)}</div>
+            <div class="text-[11px] text-[#5f4636]/60 font-['Instrument Sans']">{formatDate(s.startsAt)} — {formatDate(s.endsAt)}</div>
           </button>
         {/each}
       {/if}
@@ -185,7 +185,7 @@
 
           <!-- Figurine -->
           <div>
-            <label for="sp-figurine" class="block text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">{$t('adminShowingsFigureLabel')}</label>
+            <label for="sp-figurine" class="block text-xs font-['Instrument Sans'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">{$t('adminShowingsFigureLabel')}</label>
             <select
               id="sp-figurine"
               bind:value={form.figurineId}
@@ -201,7 +201,7 @@
 
           <!-- Type -->
           <div>
-            <span class="block text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">{$t('adminShowingsTypeLabel')}</span>
+            <span class="block text-xs font-['Instrument Sans'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">{$t('adminShowingsTypeLabel')}</span>
             <div class="flex gap-3">
               {#each [['exhibition', $t('adminShowingsExhibition')], ['private', $t('adminShowingsPrivateLabel')]] as [val, lbl]}
                 <label class="flex items-center gap-2 cursor-pointer">
@@ -212,7 +212,7 @@
                     bind:group={form.showingType}
                     class="accent-[#c65f3c]"
                   />
-                  <span class="text-sm font-['Inter'] text-[#34251c]">{lbl}</span>
+                  <span class="text-sm font-['Instrument Sans'] text-[#34251c]">{lbl}</span>
                 </label>
               {/each}
             </div>
@@ -220,7 +220,7 @@
 
           <!-- Title -->
           <div>
-            <label for="showing-title" class="block text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">{$t('adminShowingsTitleLabel')}</label>
+            <label for="showing-title" class="block text-xs font-['Instrument Sans'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">{$t('adminShowingsTitleLabel')}</label>
             <input
               id="showing-title"
               type="text"
@@ -234,49 +234,49 @@
           <!-- Dates -->
           <div class="grid grid-cols-2 gap-4">
             <div>
-              <label for="showing-starts" class="block text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">{$t('adminShowingsFromLabel')}</label>
+              <label for="showing-starts" class="block text-xs font-['Instrument Sans'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">{$t('adminShowingsFromLabel')}</label>
               <input
                 id="showing-starts"
                 type="date"
                 bind:value={form.startsAt}
                 required
-                class="w-full border-b border-[#d8c6b1] bg-transparent py-1.5 text-sm text-[#34251c] font-['Inter'] focus:outline-none focus:border-[#c65f3c] transition-colors"
+                class="w-full border-b border-[#d8c6b1] bg-transparent py-1.5 text-sm text-[#34251c] font-['Instrument Sans'] focus:outline-none focus:border-[#c65f3c] transition-colors"
               />
             </div>
             <div>
-              <label for="showing-ends" class="block text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">{$t('adminShowingsToLabel')}</label>
+              <label for="showing-ends" class="block text-xs font-['Instrument Sans'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">{$t('adminShowingsToLabel')}</label>
               <input
                 id="showing-ends"
                 type="date"
                 bind:value={form.endsAt}
                 min={form.startsAt}
                 required
-                class="w-full border-b border-[#d8c6b1] bg-transparent py-1.5 text-sm text-[#34251c] font-['Inter'] focus:outline-none focus:border-[#c65f3c] transition-colors"
+                class="w-full border-b border-[#d8c6b1] bg-transparent py-1.5 text-sm text-[#34251c] font-['Instrument Sans'] focus:outline-none focus:border-[#c65f3c] transition-colors"
               />
             </div>
           </div>
 
           <!-- Venue -->
           <div>
-            <label for="showing-venue" class="block text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">{$t('adminShowingsVenue')}</label>
+            <label for="showing-venue" class="block text-xs font-['Instrument Sans'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">{$t('adminShowingsVenue')}</label>
             <input
               id="showing-venue"
               type="text"
               bind:value={form.venue}
               placeholder={$t('adminFigShowingsVenuePlaceholder')}
-              class="w-full border-b border-[#d8c6b1] bg-transparent py-1.5 text-sm text-[#34251c] font-['Inter'] focus:outline-none focus:border-[#c65f3c] transition-colors"
+              class="w-full border-b border-[#d8c6b1] bg-transparent py-1.5 text-sm text-[#34251c] font-['Instrument Sans'] focus:outline-none focus:border-[#c65f3c] transition-colors"
             />
           </div>
 
           <!-- Notes -->
           <div>
-            <label for="showing-notes" class="block text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">{$t('adminShowingsNotes')}</label>
+            <label for="showing-notes" class="block text-xs font-['Instrument Sans'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-1.5">{$t('adminShowingsNotes')}</label>
             <textarea
               id="showing-notes"
               bind:value={form.notes}
               rows="2"
               placeholder={$t('adminShowingsNotesPH')}
-              class="w-full border border-[#d8c6b1] bg-[#f8f1e7] px-3 py-2 text-sm text-[#34251c] font-['Inter'] focus:outline-none focus:border-[#c65f3c]/50 resize-none"
+              class="w-full border border-[#d8c6b1] bg-[#f8f1e7] px-3 py-2 text-sm text-[#34251c] font-['Instrument Sans'] focus:outline-none focus:border-[#c65f3c]/50 resize-none"
             ></textarea>
           </div>
 
@@ -285,14 +285,14 @@
             <button
               type="submit"
               disabled={saving}
-              class="px-6 py-2 bg-[#34251c] text-[#fff9f0] text-xs font-['Inter'] uppercase tracking-wide hover:bg-[#6f3b24] transition-colors disabled:opacity-50"
+              class="px-6 py-2 bg-[#34251c] text-[#fff9f0] text-xs font-['Instrument Sans'] uppercase tracking-wide hover:bg-[#6f3b24] transition-colors disabled:opacity-50"
             >{saving ? $t('adminFormSaving') : $t('adminShowingsSave')}</button>
 
             {#if form.figurineId}
               <button
                 type="button"
                 onclick={layShowingLeaf}
-                class="px-4 py-2 border border-[#34251c]/30 text-[#34251c] text-xs font-['Inter'] uppercase tracking-wide hover:bg-[#34251c]/5 transition-colors"
+                class="px-4 py-2 border border-[#34251c]/30 text-[#34251c] text-xs font-['Instrument Sans'] uppercase tracking-wide hover:bg-[#34251c]/5 transition-colors"
               >{$t('adminGazetteLayLeafShowing')}</button>
             {/if}
 
@@ -300,12 +300,12 @@
               <button
                 type="button"
                 onclick={remove}
-                class="px-4 py-2 border border-red-300 text-red-700 text-xs font-['Inter'] uppercase tracking-wide hover:bg-red-50 transition-colors"
+                class="px-4 py-2 border border-red-300 text-red-700 text-xs font-['Instrument Sans'] uppercase tracking-wide hover:bg-red-50 transition-colors"
               >{$t('adminShowingsDelete')}</button>
             {/if}
 
             {#if saveMsg}
-              <span class="text-xs font-['Inter'] {saveMsg === $t('adminShowingsSaveError') ? 'text-red-700' : 'text-green-700'}">{saveMsg}</span>
+              <span class="text-xs font-['Instrument Sans'] {saveMsg === $t('adminShowingsSaveError') ? 'text-red-700' : 'text-green-700'}">{saveMsg}</span>
             {/if}
           </div>
 

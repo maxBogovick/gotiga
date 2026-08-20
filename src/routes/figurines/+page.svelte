@@ -426,7 +426,7 @@
 <div class="fixed inset-0 pointer-events-none z-0 bg-noise opacity-[0.07] mix-blend-overlay"></div>
 <div class="fixed inset-0 pointer-events-none z-0 bg-[radial-gradient(circle_at_50%_50%,transparent_0%,#f8f1e7_90%)]"></div>
 
-<div class="min-h-screen relative z-10 overflow-hidden font-['Inter'] text-[#34251c]">
+<div class="min-h-screen relative z-10 overflow-hidden font-['Instrument Sans'] text-[#34251c]">
 
     <div class="container mx-auto px-6 sm:px-12 py-12">
       <!-- ── FILTER BAR ─────────────────────────────────────────────── -->
@@ -931,7 +931,7 @@
           <div class="mt-20 flex justify-center" in:fade>
             <button
               onclick={loadMore}
-              class="group flex items-center gap-4 px-10 py-4 border border-[#34251c]/20 hover:border-[#34251c]/50 text-[#5f4636] hover:text-[#34251c] font-['Inter'] text-xs tracking-[0.08em] uppercase transition-all duration-500"
+              class="group flex items-center gap-4 px-10 py-4 border border-[#34251c]/20 hover:border-[#34251c]/50 text-[#5f4636] hover:text-[#34251c] font-['Instrument Sans'] text-xs tracking-[0.08em] uppercase transition-all duration-500"
             >
               <span>{$t('archiveLoadMore')}</span>
               <span class="text-[#34251c]/30 group-hover:text-[#34251c]/85 transition-colors">{Math.min(PAGE_SIZE, resultList.length - displayLimit)}</span>
@@ -1359,7 +1359,7 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: #34251c;
-    font-family: 'Inter', sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     outline: none;
     transition: border-color 0.22s;
   }
@@ -1448,7 +1448,7 @@
     flex-shrink: 0;
     cursor: pointer;
     background: transparent;
-    font-family: 'Inter', sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     line-height: 1;
     transition: border-color 0.18s, color 0.18s, background 0.18s;
   }
@@ -1533,7 +1533,7 @@
     align-items: center;
     gap: 7px;
     padding: 4px 2px;
-    font-family: 'Inter', sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 9.5px;
     letter-spacing: 0.10em;
     text-transform: uppercase;
@@ -1592,7 +1592,7 @@
     font-size: 9px;
     letter-spacing: 0.10em;
     text-transform: uppercase;
-    font-family: 'Inter', sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     color: rgba(95,70,54,0.60);
     border: 1px solid rgba(52,37,28,0.12);
     background: transparent;

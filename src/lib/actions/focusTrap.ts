@@ -4,13 +4,21 @@
 // Usage:  <div role="dialog" tabindex="-1" use:focusTrap> … </div>
 //
 // Pair with an Escape handler in the host component for full modal a11y.
+//
+// Focus always uses { preventScroll: true } and lands on the dialog node, not
+// the first tiny-font control. On iOS, `.focus()` on a fixed overlay otherwise
+// pans the visual viewport; scrolling after that desyncs the layout.
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]),' +
   ' textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+const FOCUS_OPTS: FocusOptions = { preventScroll: true };
+
 export function focusTrap(node: HTMLElement) {
   const previouslyFocused = document.activeElement as HTMLElement | null;
+
+  if (!node.hasAttribute('tabindex')) node.tabIndex = -1;
 
   function focusables(): HTMLElement[] {
     return Array.from(node.querySelectorAll<HTMLElement>(FOCUSABLE))
@@ -24,7 +32,7 @@ export function focusTrap(node: HTMLElement) {
     const els = focusables();
     if (els.length === 0) {
       e.preventDefault();
-      node.focus();
+      node.focus(FOCUS_OPTS);
       return;
     }
     const first = els[0];
@@ -33,18 +41,19 @@ export function focusTrap(node: HTMLElement) {
     if (e.shiftKey) {
       if (active === first || !node.contains(active)) {
         e.preventDefault();
-        last.focus();
+        last.focus(FOCUS_OPTS);
       }
     } else if (active === last || !node.contains(active)) {
       e.preventDefault();
-      first.focus();
+      first.focus(FOCUS_OPTS);
     }
   }
 
-  // Move focus into the dialog after it mounts.
+  // Move focus into the dialog after it mounts — the dialog itself, not a
+  // child button. Tab still reaches the first control from here.
   queueMicrotask(() => {
     if (!node.contains(document.activeElement)) {
-      (focusables()[0] ?? node).focus();
+      node.focus(FOCUS_OPTS);
     }
   });
 
@@ -53,8 +62,7 @@ export function focusTrap(node: HTMLElement) {
   return {
     destroy() {
       node.removeEventListener('keydown', onKeydown);
-      // Restore focus to whatever was focused before the dialog opened.
-      previouslyFocused?.focus?.();
+      previouslyFocused?.focus?.(FOCUS_OPTS);
     },
   };
 }

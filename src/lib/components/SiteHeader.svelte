@@ -9,7 +9,6 @@
   import { fade, fly } from 'svelte/transition';
   import { api, resolveMediaUrl } from '$lib/api';
   import RavenWatcher from '$lib/components/RavenWatcher.svelte';
-  import HeaderBirdWalk from '$lib/components/HeaderBirdWalk.svelte';
   import { keeper } from '$lib/stores/keeper.svelte';
   import { ARCHIVE_KEEPER_INPUT_ID } from '$lib/keeper-search';
   import type { AuthorProfile, Figurine, FigurineListItem } from '$lib/types/api';
@@ -77,6 +76,7 @@
   // during prerender or hydration would flash an empty pending state against
   // HTML that already contained them.
   let leafChrome = $state(false);
+  let birdReady = $state(false);
 
   function updateAvatarVisibility() {
     if (pathname !== '/') {
@@ -245,6 +245,11 @@
 
   onMount(async () => {
     leafChrome = true;
+    if ('requestIdleCallback' in window) {
+      requestIdleCallback(() => { birdReady = true; }, { timeout: 2500 });
+    } else {
+      setTimeout(() => { birdReady = true; }, 600);
+    }
     allClaims.load();
     allClaims.verify();
     allClaims.startPolling();
@@ -301,7 +306,11 @@
 </script>
 
 <header class="site-header" class:is-scrolled={isScrolled} class:over-plate={isOverPlate} class:is-leaf={isWorkLeaf} class:is-home={isHome}>
-  <HeaderBirdWalk />
+  {#if birdReady}
+    {#await import('$lib/components/HeaderBirdWalk.svelte') then { default: HeaderBirdWalk }}
+      <HeaderBirdWalk />
+    {/await}
+  {/if}
   <div class="header-inner">
 
     <!-- ① Ghost-left: maker avatar pinned to left edge -->
@@ -684,7 +693,14 @@
   {/if}
 
   <!-- Mobile nav dropdown -->
-  <nav id="site-mobile-nav" class="mobile-nav" class:is-open={mobileNavOpen} aria-label="Primary">
+  <nav
+    id="site-mobile-nav"
+    class="mobile-nav"
+    class:is-open={mobileNavOpen}
+    aria-label="Primary"
+    aria-hidden={!mobileNavOpen}
+    inert={!mobileNavOpen}
+  >
     {#each [...leftLinks, ...rightLinks] as link}
       <a
         href={link.href}
@@ -781,8 +797,7 @@
 
   .site-header.is-leaf .header-inner,
   .site-header.is-leaf .keeper-float,
-  .site-header.is-leaf .mobile-controls,
-  .site-header.is-leaf .mobile-nav {
+  .site-header.is-leaf .mobile-controls {
     pointer-events: auto;
   }
 
@@ -1797,7 +1812,7 @@
   }
 
   .user-panel-email {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.7rem;
     color: rgba(95, 70, 54, 0.55);
     overflow: hidden;
@@ -1808,7 +1823,7 @@
   .user-panel-link {
     display: block;
     padding: 10px 14px;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.78rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -1826,7 +1841,7 @@
     background: none;
     border: none;
     text-align: left;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.78rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -2056,13 +2071,15 @@
       box-shadow: 0 18px 34px rgba(52, 37, 28, 0.10);
       transform: translateY(-6px);
       opacity: 0;
+      visibility: hidden;
       pointer-events: none;
-      transition: opacity 0.22s ease, transform 0.22s ease;
+      transition: opacity 0.22s ease, transform 0.22s ease, visibility 0.22s ease;
     }
 
     .mobile-nav.is-open {
       transform: translateY(0);
       opacity: 1;
+      visibility: visible;
       pointer-events: auto;
     }
 

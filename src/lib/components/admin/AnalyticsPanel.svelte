@@ -1841,7 +1841,7 @@
     padding: 1.25rem 1.5rem 2.5rem;
     color: #34251c;
     background: #f8f1e7;
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    font-family: 'Instrument Sans', system-ui, -apple-system, sans-serif;
     font-size: 13px;
   }
 

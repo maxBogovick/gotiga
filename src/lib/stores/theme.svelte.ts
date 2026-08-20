@@ -31,7 +31,7 @@ export const DEFAULT_FONTS = {
     display: 'Fraunces',
     body: 'DM Sans',
     serif: 'EB Garamond',
-    mono: 'JetBrains Mono',
+    mono: 'ui-monospace',
 };
 
 export const FONT_FALLBACKS: Record<string, string> = {
@@ -103,8 +103,13 @@ export function generateThemeCSS(config: ThemeConfig): string {
     }
 
     const fonts = config.fonts ?? {};
+    const retired: Record<string, string> = {
+        Inter: 'Instrument Sans',
+        'JetBrains Mono': 'ui-monospace',
+    };
     for (const role of ['display', 'body', 'serif', 'mono'] as const) {
-        const family = fonts[role];
+        const raw = fonts[role];
+        const family = raw ? (retired[raw] ?? raw) : raw;
         if (family && family !== DEFAULT_FONTS[role]) {
             lines.push(`  --font-${role}: '${family}', ${FONT_FALLBACKS[role]};`);
         }

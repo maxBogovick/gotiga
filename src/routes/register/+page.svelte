@@ -271,7 +271,7 @@
     flex: 0 0 auto;
   }
   .memorize-text {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.72rem;
     line-height: 1.35;
     color: #6f3b24;
@@ -287,7 +287,7 @@
     margin-top: 1rem;
   }
   .key-strip-label {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.6rem;
     text-transform: uppercase;
     letter-spacing: 0.12em;
@@ -350,7 +350,7 @@
   .seal-icon :global(svg) { width: 40px; height: 40px; }
   .seal-icon span {
     font-size: 0.6rem;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     color: #9a7c5c;
     letter-spacing: 0.04em;
   }
@@ -362,7 +362,7 @@
     margin: 0.9rem 0 0;
   }
   .seal-text {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.8rem;
     line-height: 1.5;
     color: #6f3b24;
@@ -370,7 +370,7 @@
     margin: 0 0 1.1rem;
   }
   .seal-download-hint {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.72rem;
     color: #9a7c5c;
     text-align: center;
@@ -384,7 +384,7 @@
     color: #6f3b24;
     padding: 0.6rem 0.9rem;
     font-size: 0.85rem;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     cursor: pointer;
     letter-spacing: 0.04em;
     transition: background 0.2s, border-color 0.2s;
@@ -406,7 +406,7 @@
   .seal-check.armed { border-color: #6f3b24; border-style: solid; background: #f4ead8; }
   .seal-check input { margin-top: 0.15rem; accent-color: #6f3b24; flex: 0 0 auto; }
   .seal-check span {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.8rem;
     line-height: 1.4;
     color: #34251c;

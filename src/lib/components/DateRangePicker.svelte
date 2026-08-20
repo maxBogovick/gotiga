@@ -243,7 +243,7 @@
 </div>
 
 <style>
-  .cal { width: 100%; font-family: 'Inter', sans-serif; user-select: none; }
+  .cal { width: 100%; font-family: 'Instrument Sans', sans-serif; user-select: none; }
 
   .cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem; }
   .cal-nav {
@@ -301,6 +301,6 @@
   .leg-pending::after { content: ''; position: absolute; bottom: -3px; left: 50%; transform: translateX(-50%); width: 3px; height: 3px; border-radius: 50%; background: #d97706; }
 
   .cal-result { margin-top: 0.5rem; min-height: 1.25rem; text-align: center; }
-  .result-filled { font-size: 0.72rem; color: #34251c; font-weight: 600; font-family: 'Inter', sans-serif; }
+  .result-filled { font-size: 0.72rem; color: #34251c; font-weight: 600; font-family: 'Instrument Sans', sans-serif; }
   .result-hint   { font-size: 0.68rem; color: rgba(95,70,54,0.6); font-style: italic; }
 </style>

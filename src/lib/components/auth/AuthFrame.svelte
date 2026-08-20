@@ -47,7 +47,7 @@
     font-size: 0.78rem;
     color: #9a7c5c;
     margin: 0 0 1.2rem;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
@@ -87,7 +87,7 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: #6f3b24;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
   }
   :global(.auth-field input) {
     background: transparent;
@@ -133,7 +133,7 @@
   :global(.auth-icon-btn svg) { width: 32px; height: 32px; }
   :global(.auth-icon-label) {
     font-size: 0.6rem;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     letter-spacing: 0.04em;
     text-align: center;
     line-height: 1.2;
@@ -172,13 +172,13 @@
     font-size: 0.82rem;
     color: #c65f3c;
     margin: 0.5rem 0 0;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
   }
   :global(.auth-switch) {
     margin-top: 1.5rem;
     font-size: 0.8rem;
     color: #9a7c5c;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     text-align: center;
   }
   :global(.auth-link) {

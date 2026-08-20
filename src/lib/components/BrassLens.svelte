@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
   import { fade } from 'svelte/transition';
   import { resolveWebpUrl, resolveSrcset } from '$lib/api';
 
@@ -12,7 +12,6 @@
     imageFit = 'cover',
     objectPosition = 'center 20%',
     lensEnabled = false,
-    onOpenLightbox = () => {},
     onSwipeLeft = () => {},
     onSwipeRight = () => {},
   }: {
@@ -27,7 +26,6 @@
     imageFit?: 'cover' | 'contain';
     objectPosition?: string;
     lensEnabled?: boolean;
-    onOpenLightbox?: () => void;
     onSwipeLeft?: () => void;
     onSwipeRight?: () => void;
   } = $props();
@@ -66,7 +64,7 @@
     if (!lensEnabled) showLens = false;
   });
 
-  // ── Mobile: pinch-to-zoom + pan + double-tap ──────────────────────────────
+  // ── Mobile: pinch-to-zoom + pan ───────────────────────────────────────────
   let scale       = $state(1);
   let panX        = $state(0);
   let panY        = $state(0);
@@ -76,11 +74,7 @@
   let panStartX    = 0, panStartY = 0;
   let panOriginX   = 0, panOriginY = 0;
   let swipeStartX  = 0, swipeStartY = 0;
-  let lastTap      = 0;
-  let tapTimer:    ReturnType<typeof setTimeout>;
   let transitioning = $state(false);
-
-  onDestroy(() => { clearTimeout(tapTimer); });
 
   function dist(t: TouchList) {
     return Math.hypot(t[1].clientX - t[0].clientX, t[1].clientY - t[0].clientY);
@@ -132,33 +126,11 @@
       swipeStartY = e.touches[0].clientY;
 
       if (scale > 1.05) {
-        // Pan mode
         isPanning = true;
         panStartX  = e.touches[0].clientX;
         panStartY  = e.touches[0].clientY;
         panOriginX = panX;
         panOriginY = panY;
-      } else {
-        // Double-tap detection
-        const now = Date.now();
-        if (now - lastTap < 280) {
-          clearTimeout(tapTimer);
-          // Zoom in to tap position
-          const r = container.getBoundingClientRect();
-          const tx = e.touches[0].clientX - r.left - r.width  / 2;
-          const ty = e.touches[0].clientY - r.top  - r.height / 2;
-          transitioning = true;
-          scale = 2.5;
-          const c = clampPan(2.5, -tx * 1.5, -ty * 1.5);
-          panX = c.px; panY = c.py;
-          setTimeout(() => { transitioning = false; }, 300);
-        } else {
-          // Single tap — might open lightbox after delay
-          tapTimer = setTimeout(() => {
-            if (scale <= 1.05) onOpenLightbox();
-          }, 240);
-        }
-        lastTap = now;
       }
     }
   }
@@ -174,10 +146,9 @@
       scale = s; panX = c.px; panY = c.py;
     } else if (e.touches.length === 1 && isPanning && scale > 1.05) {
       e.preventDefault();
-      clearTimeout(tapTimer);
-      const dx = e.touches[0].clientX - panStartX;
-      const dy = e.touches[0].clientY - panStartY;
-      const c = clampPan(scale, panOriginX + dx, panOriginY + dy);
+      const pdx = e.touches[0].clientX - panStartX;
+      const pdy = e.touches[0].clientY - panStartY;
+      const c = clampPan(scale, panOriginX + pdx, panOriginY + pdy);
       panX = c.px; panY = c.py;
     }
   }
@@ -188,18 +159,14 @@
       isPanning = false;
       if (scale < 1.1) resetZoom(true);
 
-      // Detect horizontal swipe for gallery navigation (when not zoomed in).
       if (scale <= 1.05 && e.changedTouches.length > 0) {
         const dx = e.changedTouches[0].clientX - swipeStartX;
         const dy = e.changedTouches[0].clientY - swipeStartY;
         const absX = Math.abs(dx);
         const absY = Math.abs(dy);
-        // Require at least 48px horizontal movement and mostly horizontal direction.
         if (absX >= 48 && absX > absY * 1.4) {
-          clearTimeout(tapTimer);
           if (dx < 0) onSwipeLeft();
           else onSwipeRight();
-          return;
         }
       }
     }
@@ -209,12 +176,14 @@
 <div
   bind:this={container}
   class="relative w-full h-full overflow-hidden {isPointerFine && lensEnabled ? 'cursor-none' : ''} {className}"
+  style="touch-action: {scale > 1.05 ? 'none' : 'pan-y'};"
   onmousemove={handleMouseMove}
   onmouseenter={() => { if (isPointerFine && lensEnabled) showLens = true; }}
   onmouseleave={() => showLens = false}
   ontouchstart={handleTouchStart}
   ontouchmove={handleTouchMove}
   ontouchend={handleTouchEnd}
+  ontouchcancel={() => { isPanning = false; }}
   role="img"
   aria-label={alt}
 >
@@ -261,10 +230,9 @@
         style="
           object-position: {objectPosition};
           transform: scale({scale}) translate({panX / scale}px, {panY / scale}px);
-        opacity: {mainLoaded || imageFailed || !thumbSrc ? 1 : 0};
-        transition: {transitioning ? 'transform 0.28s cubic-bezier(0.22,0.1,0.2,1)' : 'none'}, opacity 0.35s ease;
-          touch-action: none;
-          will-change: transform;
+          opacity: {mainLoaded || imageFailed || !thumbSrc ? 1 : 0};
+          transition: {transitioning ? 'transform 0.28s cubic-bezier(0.22,0.1,0.2,1)' : 'none'}, opacity 0.35s ease;
+          {scale > 1.05 || transitioning ? 'will-change: transform;' : ''}
         "
         decoding="async"
         onload={() => (mainLoaded = true)}

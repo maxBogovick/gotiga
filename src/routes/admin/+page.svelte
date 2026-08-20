@@ -32,7 +32,11 @@
     import ProgrammePanel from '$lib/components/admin/ProgrammePanel.svelte';
     import GazettePanel from '$lib/components/admin/GazettePanel.svelte';
     import LogsPanel from '$lib/components/admin/LogsPanel.svelte';
-    import { t, type TranslationKey } from '$lib/i18n';
+    import { t, registerAdminDicts, type TranslationKey } from '$lib/i18n';
+    import { enAdmin } from '$lib/i18n/en.admin';
+    import { ruAdmin } from '$lib/i18n/ru.admin';
+
+    registerAdminDicts(enAdmin, ruAdmin);
     import FigurineForm from '$lib/components/admin/FigurineForm.svelte';
     import SlugsPanel from '$lib/components/admin/SlugsPanel.svelte';
     import ShowingRoomsPanel from '$lib/components/admin/ShowingRoomsPanel.svelte';

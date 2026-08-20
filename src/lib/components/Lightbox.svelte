@@ -1,7 +1,9 @@
 <script lang="ts">
   import { fade } from 'svelte/transition';
+  import { onMount } from 'svelte';
   import { t } from '$lib/i18n';
   import { focusTrap } from '$lib/actions/focusTrap';
+  import { lockBodyScroll } from '$lib/actions/lockBodyScroll';
   import { resolveWebpUrl } from '$lib/api';
 
   type LightboxImage = { url: string; alt?: string; thumbUrl?: string; focalX?: number | null; focalY?: number | null };
@@ -240,11 +242,26 @@
   }
 
   let hasMultiple = $derived(images.length > 1);
+  let overlayEl: HTMLElement;
+
+  onMount(() => {
+    const el = overlayEl;
+    if (!el) return;
+    // Svelte's ontouchmove may be passive; iOS needs preventDefault to keep
+    // the document from scrolling under the overlay.
+    function blockPageScroll(e: TouchEvent) {
+      if ((e.target as HTMLElement | null)?.closest?.('.lb-sidebar')) return;
+      e.preventDefault();
+    }
+    el.addEventListener('touchmove', blockPageScroll, { passive: false });
+    return () => el.removeEventListener('touchmove', blockPageScroll);
+  });
 </script>
 
 <svelte:window onkeydown={handleKey} onmousemove={handleMouseMove} onmouseup={handleMouseUp} />
 
 <div
+  bind:this={overlayEl}
   class="lb-overlay"
   style={dismissY > 0 ? `background-color: rgba(16, 8, 4, ${(0.97 - dismissProgress * 0.65).toFixed(3)});` : ''}
   transition:fade={{ duration: 200 }}
@@ -253,6 +270,7 @@
   aria-label="Image viewer"
   tabindex="-1"
   use:focusTrap
+  use:lockBodyScroll
   ontouchstart={handleTouchStart}
   ontouchmove={handleTouchMove}
   ontouchend={handleTouchEnd}
@@ -444,6 +462,8 @@
     background: rgba(16, 8, 4, 0.97);
     display: flex;
     flex-direction: column;
+    overscroll-behavior: none;
+    touch-action: none;
   }
 
   /* ── Header bar ── */
@@ -723,6 +743,7 @@
     padding: 0.75rem 0.5rem;
     scrollbar-width: none;
     align-items: center;
+    touch-action: pan-y;
   }
   .lb-sidebar::-webkit-scrollbar { display: none; }
 

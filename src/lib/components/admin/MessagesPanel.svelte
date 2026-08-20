@@ -322,7 +322,7 @@
     background: transparent;
     border: 1px solid #d8c6b1;
     color: #9a7c5c;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.65rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -338,7 +338,7 @@
     padding: 2rem 1rem;
     text-align: center;
     color: #b5a090;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.8rem;
     font-style: italic;
   }
@@ -387,7 +387,7 @@
   }
 
   .thread-item-user {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.72rem;
     color: #34251c;
     font-weight: 500;
@@ -397,7 +397,7 @@
   }
 
   .thread-item-cat {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.6rem;
     letter-spacing: 0.07em;
     text-transform: uppercase;
@@ -422,7 +422,7 @@
   }
 
   .thread-item-date {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.62rem;
     color: #b5a090;
   }
@@ -436,7 +436,7 @@
   }
 
   .thread-item-resolved {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.58rem;
     letter-spacing: 0.07em;
     text-transform: uppercase;
@@ -457,7 +457,7 @@
     background: transparent;
     border: 1px solid #d8c6b1;
     color: #9a7c5c;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.72rem;
     padding: 0.2rem 0.5rem;
     cursor: pointer;
@@ -467,7 +467,7 @@
   .page-btn:disabled { opacity: 0.35; cursor: default; }
 
   .page-info {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.72rem;
     color: #9a7c5c;
   }
@@ -503,7 +503,7 @@
   }
 
   .detail-cat {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.62rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -512,7 +512,7 @@
   }
 
   .detail-user {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.72rem;
     color: #9a7c5c;
   }
@@ -527,7 +527,7 @@
     background: transparent;
     border: 1px solid #c65f3c;
     color: #c65f3c;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.65rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -569,7 +569,7 @@
   }
 
   .msg-bubble-from {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.62rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -578,7 +578,7 @@
   }
 
   .msg-bubble-body {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.85rem;
     color: #34251c;
     margin: 0 0 0.25rem;
@@ -587,7 +587,7 @@
   }
 
   .msg-bubble-date {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.62rem;
     color: #b5a090;
     margin: 0;
@@ -602,7 +602,7 @@
   }
 
   .reply-input {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.85rem;
     background: transparent;
     border: 1px solid #d8c6b1;
@@ -622,7 +622,7 @@
     background: #c65f3c;
     border: none;
     color: #fff;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.72rem;
     letter-spacing: 0.07em;
     text-transform: uppercase;

@@ -8,7 +8,6 @@
   import FigurineClaimRow from '$lib/components/FigurineClaimRow.svelte';
   import BecomingReveal from '$lib/components/BecomingReveal.svelte';
   import SecretText from '$lib/components/SecretText.svelte';
-  import FontSwitcher from '$lib/components/FontSwitcher.svelte';
   import GalleryPlateActions from '$lib/components/figurine-detail/GalleryPlateActions.svelte';
   import ShowingsTimeline from '$lib/components/ShowingsTimeline.svelte';
   import FigurineComments from '$lib/components/FigurineComments.svelte';
@@ -97,7 +96,6 @@
                 ? `${ctx.currentImage.focalX * 100}% ${ctx.currentImage.focalY * 100}%`
                 : 'center top'}
               lensEnabled={ctx.isLensEnabled}
-              onOpenLightbox={() => ctx.canOpenLightbox && ctx.openLightbox(ctx.activeImageIndex)}
               onSwipeLeft={() => ctx.sortedImages.length > 1 && ctx.selectImage(ctx.activeImageIndex + 1)}
               onSwipeRight={() => ctx.sortedImages.length > 1 && ctx.selectImage(ctx.activeImageIndex - 1)}
             />
@@ -190,15 +188,6 @@
     {/if}
 
     <GalleryPlateActions />
-
-    {#if ctx.canOpenLightbox}
-      <button type="button" onclick={() => ctx.openLightbox(ctx.activeImageIndex)} class="expand-btn" aria-label={$t('figurineFullscreen')}>
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-          <path d="M1 4V1h3M6 1h3v3M9 6v3H6M4 9H1V6"/>
-        </svg>
-        {$t('figurineFullscreen')}
-      </button>
-    {/if}
 
     <div class="image-vignette"></div>
   </div>
@@ -331,7 +320,6 @@
         <header class="section-row">
           <span class="sec-label">{$t('figurineHistory')}</span>
           <div class="sec-rule" aria-hidden="true"></div>
-          <FontSwitcher variant="colophon" />
         </header>
         <p bind:this={historyRef} class="history-body drop-cap sc-body-text">
           {#if inkReady}

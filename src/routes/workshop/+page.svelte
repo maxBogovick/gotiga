@@ -70,7 +70,7 @@
   <div class="absolute inset-0 pointer-events-none bg-noise opacity-[0.06] mix-blend-overlay"></div>
 </div>
 
-<div class="min-h-screen relative z-10 p-6 lg:p-16 font-['Inter'] text-[#34251c]">
+<div class="min-h-screen relative z-10 p-6 lg:p-16 font-['Instrument Sans'] text-[#34251c]">
 
     <div class="mb-10" in:fade={{ duration: 800 }}>
       <a href="/" class="inline-flex items-center min-h-[44px] text-[10px] tracking-[0.10em] text-[#5f4636] hover:text-[#34251c] active:text-[#34251c] transition-colors group">

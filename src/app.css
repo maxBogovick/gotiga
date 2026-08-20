@@ -1,9 +1,8 @@
 /* NOTE: the Google Fonts @import that used to sit on this line is gone on purpose.
-   DM Sans / EB Garamond / Fraunces (the families behind --font-body, --font-serif and
-   --font-display below) are now part of the single consolidated, non-blocking <link>
-   in app.html. Do not reintroduce an @import here: it is only discovered after this
-   whole stylesheet has been fetched and parsed, and it blocks rendering — see the
-   comment in app.html. Same rule as the one in CLAUDE.md for route <svelte:head> blocks. */
+   Fraunces / DM Sans / EB Garamond / Cormorant / Instrument Sans live in the
+   single consolidated, non-blocking <link> in app.html. Do not reintroduce an
+   @import here: it is only discovered after this whole stylesheet has been
+   fetched and parsed, and it blocks rendering — see the comment in app.html. */
 @import "tailwindcss";
 @source "../src/**/*.{svelte,ts,js,html}";
 
@@ -77,7 +76,6 @@
   --color-sage: #6B8A56;
   --color-sage-ink: #344529;
 
-  /* ── Legacy alias still read by FontSwitcher ──────────────────────── */
   --color-cabinet-wood: #CEAF86;
 
   /* ── Shadows ────────────────────────────────────────────────────────── */
@@ -93,10 +91,8 @@
   --font-display: 'Fraunces', Georgia, serif;
   --font-body: 'DM Sans', system-ui, sans-serif;
   --font-serif: 'EB Garamond', Georgia, serif;
-  /* Reader's chosen prose typeface — set at runtime by reading-font store;
-     falls back to the admin-controlled serif when no choice is made. */
   --font-reading: var(--font-serif);
-  --font-mono: 'JetBrains Mono', monospace;
+  --font-mono: ui-monospace, 'Courier New', monospace;
   --font-cinzel: var(--font-body);
   --font-gothic: var(--font-display);
   --font-fraktur: var(--font-display);

@@ -1829,7 +1829,7 @@
     }
 
     .context-meta-kicker {
-        font-family: 'Inter', sans-serif;
+        font-family: 'Instrument Sans', sans-serif;
         font-size: 10px;
         font-weight: 600;
         font-style: normal;

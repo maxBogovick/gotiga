@@ -484,7 +484,7 @@
   .unified-field span,
   .unified-fields span {
     color: #6f3b24;
-    font-family: "Inter", sans-serif;
+    font-family: "Instrument Sans", sans-serif;
     font-size: 0.64rem;
     font-weight: 800;
     letter-spacing: 0.12em;
@@ -597,7 +597,7 @@
   }
 
   .unified-consent span {
-    font-family: "Inter", sans-serif;
+    font-family: "Instrument Sans", sans-serif;
     font-size: 0.78rem;
     line-height: 1.5;
     color: #5f4636;
@@ -606,7 +606,7 @@
   .unified-error {
     margin: 0;
     color: #991b1b;
-    font-family: "Inter", sans-serif;
+    font-family: "Instrument Sans", sans-serif;
     font-size: 0.82rem;
   }
 
@@ -616,7 +616,7 @@
     border: 1px solid rgba(111, 59, 36, 0.16);
     background: rgba(248, 241, 231, 0.7);
     color: rgba(95, 70, 54, 0.9);
-    font-family: "Inter", sans-serif;
+    font-family: "Instrument Sans", sans-serif;
     font-size: 0.82rem;
     line-height: 1.45;
   }
@@ -624,7 +624,7 @@
   .unified-fullform {
     margin: -0.35rem 0 0;
     color: #c65f3c;
-    font-family: "Inter", sans-serif;
+    font-family: "Instrument Sans", sans-serif;
     font-size: 0.78rem;
     font-weight: 700;
     text-decoration: none;
@@ -649,7 +649,7 @@
     color: #fff9f0;
     background: #34251c;
     cursor: pointer;
-    font-family: "Inter", sans-serif;
+    font-family: "Instrument Sans", sans-serif;
     font-size: 0.72rem;
     font-weight: 800;
     letter-spacing: 0.1em;
@@ -666,7 +666,7 @@
     color: rgba(95, 70, 54, 0.82);
     background: transparent;
     cursor: pointer;
-    font-family: "Inter", sans-serif;
+    font-family: "Instrument Sans", sans-serif;
     font-size: 0.68rem;
     font-weight: 800;
     letter-spacing: 0.1em;
@@ -689,7 +689,7 @@
     max-width: 24rem;
     margin: 0;
     color: #5f4636;
-    font-family: "Inter", sans-serif;
+    font-family: "Instrument Sans", sans-serif;
     line-height: 1.55;
   }
 

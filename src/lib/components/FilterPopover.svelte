@@ -99,7 +99,7 @@
     align-items: center;
     gap: 6px;
     padding: 5px 10px 5px 11px;
-    font-family: 'Inter', sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 9px;
     letter-spacing: 0.10em;
     text-transform: uppercase;
@@ -158,7 +158,7 @@
     gap: 10px;
     width: 100%;
     padding: 7px 9px;
-    font-family: 'Inter', sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 9.5px;
     letter-spacing: 0.08em;
     text-transform: uppercase;

@@ -125,12 +125,12 @@
       {#each showings as s}
         <div class="flex items-center gap-3 px-3 py-2 bg-[#f8f1e7] border border-[#34251c]/10
           {editingId === s.id ? 'border-[#c65f3c]/30' : ''}">
-          <span class="text-[9px] uppercase tracking-wide font-bold font-['Inter'] px-1.5 py-0.5 rounded-sm flex-shrink-0
+          <span class="text-[9px] uppercase tracking-wide font-bold font-['Instrument Sans'] px-1.5 py-0.5 rounded-sm flex-shrink-0
             {s.showingType === 'exhibition' ? 'bg-amber-100 text-amber-800' : 'bg-purple-100 text-purple-800'}">
             {s.showingType === 'exhibition' ? $t('adminFigShowingsTypeExhibition') : $t('adminFigShowingsTypePrivate')}
           </span>
           <span class="text-sm font-['Fraunces'] text-[#34251c] flex-1 truncate">{s.title}</span>
-          <span class="text-[11px] text-[#5f4636]/60 font-['Inter'] flex-shrink-0">{fmt(s.startsAt)} — {fmt(s.endsAt)}</span>
+          <span class="text-[11px] text-[#5f4636]/60 font-['Instrument Sans'] flex-shrink-0">{fmt(s.startsAt)} — {fmt(s.endsAt)}</span>
           <button type="button" onclick={() => startEdit(s)}
             class="text-[10px] text-[#5f4636] hover:text-[#34251c] uppercase tracking-wide flex-shrink-0">{$t('adminFigShowingsEditRow')}</button>
           <button type="button" onclick={() => remove(s)}
@@ -147,7 +147,7 @@
       onsubmit={(e) => e.preventDefault()}
     >
       <div class="flex items-center justify-between">
-        <p class="text-[10px] uppercase tracking-wide text-[#5f4636] font-bold font-['Inter']">
+        <p class="text-[10px] uppercase tracking-wide text-[#5f4636] font-bold font-['Instrument Sans']">
           {editingId === '__new__' ? $t('adminFigShowingsNewTitle') : $t('adminFigShowingsEditTitle')}
         </p>
         <button type="button" onclick={cancel}
@@ -159,7 +159,7 @@
         {#each [['exhibition', $t('adminFigShowingsTypeExhibition')], ['private', $t('adminFigShowingsTypePrivate')]] as [val, lbl]}
           <label class="flex items-center gap-1.5 cursor-pointer">
             <input type="radio" name="fse-type" value={val} bind:group={form.showingType} class="accent-[#c65f3c]" />
-            <span class="text-xs font-['Inter'] text-[#34251c]">{lbl}</span>
+            <span class="text-xs font-['Instrument Sans'] text-[#34251c]">{lbl}</span>
           </label>
         {/each}
       </div>
@@ -197,9 +197,9 @@
       <!-- Hint + validation -->
       <div class="flex items-center gap-3 pt-1 min-h-[1.25rem]">
         {#if saveMsg}
-          <span class="text-xs font-['Inter'] text-red-700">{saveMsg}</span>
+          <span class="text-xs font-['Instrument Sans'] text-red-700">{saveMsg}</span>
         {:else}
-          <span class="text-[11px] italic font-['Inter'] text-[#5f4636]/60">{$t('adminFigShowingsHint')}</span>
+          <span class="text-[11px] italic font-['Instrument Sans'] text-[#5f4636]/60">{$t('adminFigShowingsHint')}</span>
         {/if}
       </div>
     </form>

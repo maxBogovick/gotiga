@@ -38,7 +38,7 @@
     <div class="space-y-5">
 
       <div>
-        <label for="br-min-days" class="block text-[10px] font-['Inter'] font-bold tracking-[0.08em] text-[#5f4636] uppercase mb-1">
+        <label for="br-min-days" class="block text-[10px] font-['Instrument Sans'] font-bold tracking-[0.08em] text-[#5f4636] uppercase mb-1">
           {$t('adminBookingRulesMinDays')}
         </label>
         <input id="br-min-days" type="number" min="1" max="365"
@@ -48,7 +48,7 @@
       </div>
 
       <div>
-        <label for="br-max-days" class="block text-[10px] font-['Inter'] font-bold tracking-[0.08em] text-[#5f4636] uppercase mb-1">
+        <label for="br-max-days" class="block text-[10px] font-['Instrument Sans'] font-bold tracking-[0.08em] text-[#5f4636] uppercase mb-1">
           {$t('adminBookingRulesMaxDays')}
         </label>
         <input id="br-max-days" type="number" min="1" max="365"
@@ -58,7 +58,7 @@
       </div>
 
       <div>
-        <label for="br-advance-days" class="block text-[10px] font-['Inter'] font-bold tracking-[0.08em] text-[#5f4636] uppercase mb-1">
+        <label for="br-advance-days" class="block text-[10px] font-['Instrument Sans'] font-bold tracking-[0.08em] text-[#5f4636] uppercase mb-1">
           {$t('adminBookingRulesAdvanceDays')}
         </label>
         <input id="br-advance-days" type="number" min="0" max="90"
@@ -69,14 +69,14 @@
 
       <div class="pt-2 flex items-center gap-3">
         <button onclick={save} disabled={saving}
-          class="px-5 py-2 bg-[#34251c] text-[#fff9f0] text-xs font-['Inter'] uppercase tracking-wide hover:bg-[#6f3b24] transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+          class="px-5 py-2 bg-[#34251c] text-[#fff9f0] text-xs font-['Instrument Sans'] uppercase tracking-wide hover:bg-[#6f3b24] transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
           {saving ? $t('adminSaving') : $t('adminSave')}
         </button>
         {#if saved}
-          <span class="text-xs text-green-700 font-['Inter']">{$t('adminBookingRulesSaved')}</span>
+          <span class="text-xs text-green-700 font-['Instrument Sans']">{$t('adminBookingRulesSaved')}</span>
         {/if}
         {#if saveErr}
-          <span class="text-xs text-red-700 font-['Inter']">{saveErr}</span>
+          <span class="text-xs text-red-700 font-['Instrument Sans']">{saveErr}</span>
         {/if}
       </div>
     </div>

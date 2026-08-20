@@ -260,7 +260,7 @@
 
   .back-to-profile {
     display: block;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.68rem;
     letter-spacing: 0.07em;
     text-transform: uppercase;

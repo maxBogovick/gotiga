@@ -104,4 +104,18 @@
       />
     </svg>
   </button>
+
+  {#if ctx.canOpenLightbox}
+    <button
+      type="button"
+      class="gallery-expand"
+      onclick={() => ctx.openLightbox(ctx.activeImageIndex)}
+      aria-label={$t('figurineFullscreen')}
+      title={$t('figurineFullscreen')}
+    >
+      <svg width="13" height="13" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+        <path d="M1 4V1h3M6 1h3v3M9 6v3H6M4 9H1V6"/>
+      </svg>
+    </button>
+  {/if}
 </div>

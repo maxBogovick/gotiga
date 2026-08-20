@@ -102,7 +102,7 @@ export default defineConfig(async () => ({
       base: "/",
       scope: "/",
       workbox: {
-        globPatterns: ["**/*.{js,css,html,ico,png,webp,svg,woff2}"],
+        globPatterns: ["**/*.{js,css,html,ico,png,webp,svg}"],
         // This ignore is BACK, because the premise of removing it was wrong. The note
         // here used to say bg-main.png "is gone with the file" — it is not: the asset is
         // still in static/images/ at 2.4 MB, and it is still referenced by nothing in
@@ -131,6 +131,14 @@ export default defineConfig(async () => ({
         manifestTransforms: [adminPrecacheExclusion],
         navigateFallback: null,
         runtimeCaching: [
+          {
+            urlPattern: /\/fonts\/.*\.woff2$/i,
+            handler: "CacheFirst",
+            options: {
+              cacheName: "self-hosted-fonts",
+              expiration: { maxAgeSeconds: 60 * 60 * 24 * 365, maxEntries: 40 },
+            },
+          },
           {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
             handler: "StaleWhileRevalidate",

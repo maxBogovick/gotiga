@@ -1,5 +1,5 @@
 import type { DisplayConfig, BlockStyle } from '$lib/types/api';
-import { READING_FONTS } from '$lib/stores/reading-font.svelte';
+import { fontStack } from '$lib/fonts';
 export type { BlockStyle };
 
 // Orderable / hideable content blocks (lower sections)
@@ -12,11 +12,6 @@ export type UpperZoneId = typeof UPPER_ZONE_IDS[number];
 
 export type ZoneId = UpperZoneId | BlockId;
 
-// Build font stack lookup from the site's reading-font system
-const FONT_STACK: Record<string, string> = Object.fromEntries(
-  READING_FONTS.map(f => [f.id, f.stack])
-);
-
 const FONT_SIZES: Record<NonNullable<BlockStyle['fontSize']>, string> = {
   sm:   '0.875rem',
   base: '1rem',
@@ -28,7 +23,7 @@ function styleForZone(s: BlockStyle): string {
   const parts: string[] = [];
   if (s.color) parts.push(`color:${s.color}`);
   if (s.fontSize && s.fontSize !== 'base') parts.push(`font-size:${FONT_SIZES[s.fontSize]}`);
-  if (s.font) parts.push(`font-family:${FONT_STACK[s.font] ?? 'inherit'}`);
+  if (s.font) parts.push(`font-family:${fontStack(s.font)}`);
   return parts.join(';');
 }
 
@@ -43,7 +38,7 @@ export function computeBlockStyle(config: DisplayConfig | null, blockId: BlockId
   const parts: string[] = [];
   if (s.color) parts.push(`--dc-block-color:${s.color}`);
   if (s.fontSize && s.fontSize !== 'base') parts.push(`--dc-block-size:${FONT_SIZES[s.fontSize]}`);
-  if (s.font) parts.push(`--dc-block-font:${FONT_STACK[s.font] ?? 'inherit'}`);
+  if (s.font) parts.push(`--dc-block-font:${fontStack(s.font)}`);
   return parts.join(';');
 }
 

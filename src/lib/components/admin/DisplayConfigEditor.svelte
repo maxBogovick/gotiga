@@ -3,7 +3,7 @@
   import { t } from '$lib/i18n';
   import type { DisplayConfig, DisplayConfigBackground, BlockStyle, DisplayConfigPreset } from '$lib/types/api';
   import { BLOCK_IDS, UPPER_ZONE_IDS, isBlockVisible, type BlockId, type ZoneId } from '$lib/components/figurine-detail/display-config';
-  import { READING_FONTS } from '$lib/stores/reading-font.svelte';
+  import { SITE_FONTS } from '$lib/fonts';
   import { api } from '$lib/api';
 
   let {
@@ -113,7 +113,7 @@
 
   const FONT_OPTIONS = [
     { id: '',  label: $t('adminDisplayConfigFontDefault'), family: 'inherit' },
-    ...READING_FONTS.map(f => ({ id: f.id, label: f.name, family: f.stack })),
+    ...SITE_FONTS.map(f => ({ id: f.id, label: f.name, family: f.stack })),
   ];
 
   const SIZE_OPTIONS: { id: NonNullable<BlockStyle['fontSize']>; label: string }[] = [

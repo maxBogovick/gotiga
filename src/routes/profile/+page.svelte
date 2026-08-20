@@ -1408,7 +1408,7 @@
     inset: 0;
     background: rgba(42,26,16,0.72);
     color: #f8f1e7;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.5rem;
     letter-spacing: 0.05em;
     text-transform: uppercase;
@@ -1464,7 +1464,7 @@
   .ms-edit-btn:hover { color: #c65f3c; }
 
   .ms-name-saved {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.6rem;
     color: #4a7a3a;
     letter-spacing: 0.07em;
@@ -1495,7 +1495,7 @@
     background: transparent;
     border: 1px solid rgba(198,95,60,0.55);
     color: #b9522f;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.65rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -1522,7 +1522,7 @@
   .ms-name-cancel:hover { color: #34251c; }
 
   .ms-sub {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.76rem;
     color: #9a7c5c;
     margin: 0.2rem 0 0;
@@ -1543,7 +1543,7 @@
     background: transparent;
     border: none;
     color: #9a7c5c;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.68rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -1595,7 +1595,7 @@
   .hub-tile:hover { border-color: #c65f3c; background: #fff6ec; }
 
   .hub-kicker {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.62rem;
     letter-spacing: 0.1em;
     text-transform: uppercase;
@@ -1611,7 +1611,7 @@
   }
 
   .hub-foot {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.74rem;
     color: #9a7c5c;
   }
@@ -1652,7 +1652,7 @@
     color: #9a7c5c;
   }
   .watch-release {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.72rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -1676,7 +1676,7 @@
     border: none;
     padding: 0;
     cursor: pointer;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.72rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -1714,7 +1714,7 @@
   .subfilter-tab:hover { color: #34251c; }
   .subfilter-tab.active { color: #6f3b24; border-bottom-color: #c65f3c; }
   .subfilter-count {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.6rem;
     color: #b5a090;
   }
@@ -1823,7 +1823,7 @@
     gap: 0.3rem;
   }
   .work-kind {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.55rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -1881,7 +1881,7 @@
     line-height: 1.15;
   }
   .work-head-sub {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.72rem;
     letter-spacing: 0.04em;
     color: #9a7c5c;
@@ -1908,7 +1908,7 @@
     background: transparent;
     border: none;
     color: #c8b89a;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.66rem;
     letter-spacing: 0.07em;
     text-transform: uppercase;
@@ -1927,7 +1927,7 @@
   }
 
   .foot-warning {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.74rem;
     color: #7a3020;
     margin: 0 0 0.7rem;
@@ -1944,7 +1944,7 @@
     background: #9b2020;
     border: none;
     color: #fff;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.68rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -1960,7 +1960,7 @@
     background: transparent;
     border: 1px solid #d8c6b1;
     color: #9a7c5c;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.68rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -1983,7 +1983,7 @@
   .error-msg {
     color: #c65f3c;
     font-size: 0.85rem;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     padding: 1rem 0;
   }
 
@@ -1998,7 +1998,7 @@
   }
 
   .claim-hint {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.76rem;
     line-height: 1.5;
     color: #8a7253;
@@ -2026,14 +2026,14 @@
     outline: none;
     transition: border-color 0.15s;
   }
-  .claim-input::placeholder { color: #b5a090; font-family: Inter, sans-serif; letter-spacing: 0; }
+  .claim-input::placeholder { color: #b5a090; font-family: 'Instrument Sans', sans-serif; letter-spacing: 0; }
   .claim-input:focus { border-color: #c65f3c; }
 
   .claim-btn {
     background: #6f3b24;
     border: none;
     color: #f8f1e7;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.72rem;
     letter-spacing: 0.07em;
     text-transform: uppercase;
@@ -2048,7 +2048,7 @@
 
   .claim-msg {
     margin: 0.65rem 0 0;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.78rem;
     line-height: 1.45;
   }
@@ -2094,7 +2094,7 @@
   }
 
   .entry-date {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.7rem;
     color: #a8916f;
     flex-shrink: 0;
@@ -2103,7 +2103,7 @@
   }
 
   .entry-kind {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.58rem;
     letter-spacing: 0.11em;
     text-transform: uppercase;
@@ -2125,7 +2125,7 @@
   .entry-title--link:hover { color: #c65f3c; }
 
   .entry-status {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.62rem;
     letter-spacing: 0.07em;
     text-transform: uppercase;
@@ -2151,7 +2151,7 @@
   }
 
   .d-range {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-style: italic;
     font-size: 0.82rem;
     color: #6f4e37;
@@ -2160,7 +2160,7 @@
 
   .d-line { margin: 0; }
   .d-tag {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.62rem;
     letter-spacing: 0.07em;
     text-transform: uppercase;
@@ -2226,7 +2226,7 @@
   .ctl-step--done .ctl-dot { background: #c65f3c; border-color: #c65f3c; }
   .ctl-step--current .ctl-dot { border-color: #c65f3c; box-shadow: 0 0 0 3px rgba(198,95,60,0.2); background: #fffaf2; }
   .ctl-label {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.66rem;
     letter-spacing: 0.03em;
     text-transform: uppercase;
@@ -2243,7 +2243,7 @@
     border: 1px solid #c0a08f;
     background: rgba(120,80,60,0.06);
     color: #8a5a44;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.72rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -2259,7 +2259,7 @@
   .reserve-note {
     margin: 0;
     color: #5f4636;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.78rem;
     line-height: 1.45;
   }
@@ -2306,7 +2306,7 @@
   }
 
   .commission-source-label {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.55rem;
     font-weight: 700;
     letter-spacing: 0.09em;
@@ -2332,7 +2332,7 @@
   }
   .commission-source-meta {
     color: #8a6d55;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.68rem;
   }
 
@@ -2345,7 +2345,7 @@
   .commission-similar-notes p {
     margin: 0;
     color: #5f4636;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.78rem;
     line-height: 1.45;
   }
@@ -2367,7 +2367,7 @@
   }
   .d-curator-label {
     display: block;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.56rem;
     text-transform: uppercase;
     letter-spacing: 0.09em;
@@ -2395,7 +2395,7 @@
     border: none;
     padding: 0;
     cursor: pointer;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.72rem;
     letter-spacing: 0.05em;
     text-transform: uppercase;
@@ -2414,7 +2414,7 @@
     border: none;
     padding: 0;
     cursor: pointer;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.72rem;
     letter-spacing: 0.04em;
     color: #c65f3c;
@@ -2485,7 +2485,7 @@
     border: 1px solid #f0d0c8;
     background: #fdf3f0;
     color: #8a3926;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.76rem;
     line-height: 1.4;
   }
@@ -2545,7 +2545,7 @@
     margin-top: 0.28rem;
     font-size: 0.67rem;
     color: #b5a090;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
   }
 
   .wishlist-remove {
@@ -2573,7 +2573,7 @@
     font-size: 0.77rem;
     color: #9a7c5c;
     margin: 0 0 0.2rem;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-style: italic;
   }
 
@@ -2589,11 +2589,11 @@
     font-size: 0.68rem;
     color: #b5a090;
     margin: 0;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
   }
 
   .card-manage {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.66rem;
     letter-spacing: 0.07em;
     text-transform: uppercase;
@@ -2613,7 +2613,7 @@
   }
   .card-curator-label {
     display: block;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.58rem;
     text-transform: uppercase;
     letter-spacing: 0.09em;
@@ -2633,7 +2633,7 @@
     font-size: 0.62rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     padding: 2px 6px;
     border-radius: 2px;
     flex-shrink: 0;
@@ -2654,7 +2654,7 @@
   .mode {
     font-size: 0.62rem;
     color: #9a7c5c;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
@@ -2663,7 +2663,7 @@
     font-size: 0.6rem;
     letter-spacing: 0.07em;
     text-transform: uppercase;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     padding: 2px 5px;
     border-radius: 2px;
     white-space: nowrap;
@@ -2675,7 +2675,7 @@
   .wishlist-status {
     font-size: 0.67rem;
     letter-spacing: 0.05em;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     color: #9a7c5c;
     font-style: italic;
     flex-shrink: 0;
@@ -2687,7 +2687,7 @@
     font-size: 0.7rem;
     color: #b5a090;
     margin: 0.1rem 0 0;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
   }
 
 
@@ -2761,7 +2761,7 @@
     background: transparent;
     border: 1px solid #d8c6b1;
     color: #9a7c5c;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.68rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -2776,7 +2776,7 @@
     background: transparent;
     border: 1px solid #c65f3c;
     color: #c65f3c;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.68rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -2811,7 +2811,7 @@
   .msg-subject::placeholder { color: #b5a090; }
 
   .msg-body {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.82rem;
     background: transparent;
     border: 1px solid #d8c6b1;
@@ -2829,7 +2829,7 @@
     background: transparent;
     border: 1px solid #c65f3c;
     color: #c65f3c;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.72rem;
     letter-spacing: 0.07em;
     text-transform: uppercase;
@@ -2879,7 +2879,7 @@
   }
 
   .msg-new-badge {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.6rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -2889,7 +2889,7 @@
   }
 
   .thread-resolved-small {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.6rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -2898,7 +2898,7 @@
   }
 
   .msg-body-preview {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.82rem;
     color: #6f4e37;
     margin: 0.15rem 0 0;
@@ -2929,7 +2929,7 @@
     background: transparent;
     border: none;
     color: #9a7c5c;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.75rem;
     letter-spacing: 0.04em;
     cursor: pointer;
@@ -2948,7 +2948,7 @@
   }
 
   .thread-resolved-badge {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.62rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -2998,7 +2998,7 @@
   }
 
   .chat-sender {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.6rem;
     letter-spacing: 0.1em;
     text-transform: uppercase;
@@ -3007,7 +3007,7 @@
   }
 
   .chat-body {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.85rem;
     color: #34251c;
     margin: 0;
@@ -3016,7 +3016,7 @@
   }
 
   .chat-time {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.63rem;
     color: #b5a090;
     margin: 0.2rem 0 0;
@@ -3033,7 +3033,7 @@
   .chat-reply-input {
     width: 100%;
     box-sizing: border-box;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.85rem;
     background: transparent;
     border: 1px solid #d8c6b1;
@@ -3056,7 +3056,7 @@
   }
 
   .chat-reply-hint {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.63rem;
     color: #c8b89a;
     letter-spacing: 0.03em;
@@ -3066,7 +3066,7 @@
     background: #c65f3c;
     border: none;
     color: #fff;
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.73rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -3078,7 +3078,7 @@
   .chat-reply-btn:disabled { opacity: 0.45; cursor: default; }
 
   .chat-resolved-note {
-    font-family: Inter, sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-size: 0.72rem;
     color: #b5a090;
     font-style: italic;

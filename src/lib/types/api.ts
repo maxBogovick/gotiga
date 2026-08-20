@@ -212,7 +212,7 @@ export interface BlockStyle {
     color?: string;
     background?: string;
     fontSize?: 'sm' | 'base' | 'lg' | 'xl';
-    /** Font ID from READING_FONTS (e.g. 'garamond', 'spectral'). */
+    /** Id from SITE_FONTS (e.g. 'garamond', 'cormorant'). */
     font?: string;
 }
 

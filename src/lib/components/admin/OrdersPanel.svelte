@@ -310,7 +310,7 @@
 
             {#if order.mode === 'reserve'}
               <div class="mt-3 border border-emerald-900/10 bg-emerald-50/45 p-3 space-y-2">
-                <div class="flex flex-wrap items-center gap-2 text-[11px] font-['Inter'] text-[#34251c]">
+                <div class="flex flex-wrap items-center gap-2 text-[11px] font-['Instrument Sans'] text-[#34251c]">
                   <span class="font-semibold uppercase tracking-wide">Reserve status</span>
                   <span class="px-1.5 py-0.5 bg-white border border-emerald-900/10 text-emerald-800">
                     {reserveStatusLabel(order.reserveStatus)}
@@ -320,29 +320,29 @@
                   {/if}
                 </div>
                 <div class="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_10rem] gap-2">
-                  <label class="text-[10px] uppercase tracking-wide text-[#5f4636] font-['Inter']">
+                  <label class="text-[10px] uppercase tracking-wide text-[#5f4636] font-['Instrument Sans']">
                     Reserve stage
                     <select
                       value={reserveStatusDraft[order.id] ?? order.reserveStatus ?? 'requested'}
                       onchange={(e) => { reserveStatusDraft[order.id] = (e.target as HTMLSelectElement).value as ReserveStatus; reserveStatusDraft = { ...reserveStatusDraft }; }}
-                      class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1.5 text-xs normal-case tracking-normal text-[#34251c] font-['Inter']"
+                      class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1.5 text-xs normal-case tracking-normal text-[#34251c] font-['Instrument Sans']"
                     >
                       {#each reserveStatusOptions as option}
                         <option value={option.value}>{option.label}</option>
                       {/each}
                     </select>
                   </label>
-                  <label class="text-[10px] uppercase tracking-wide text-[#5f4636] font-['Inter']">
+                  <label class="text-[10px] uppercase tracking-wide text-[#5f4636] font-['Instrument Sans']">
                     Expires
                     <input
                       type="date"
                       value={reserveExpiryDraft[order.id] ?? order.reserveExpiresAt ?? ''}
                       oninput={(e) => { reserveExpiryDraft[order.id] = (e.target as HTMLInputElement).value; reserveExpiryDraft = { ...reserveExpiryDraft }; }}
-                      class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1.5 text-xs normal-case tracking-normal text-[#34251c] font-['Inter']"
+                      class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1.5 text-xs normal-case tracking-normal text-[#34251c] font-['Instrument Sans']"
                     />
                   </label>
                 </div>
-                <label class="block text-[10px] uppercase tracking-wide text-[#5f4636] font-['Inter']">
+                <label class="block text-[10px] uppercase tracking-wide text-[#5f4636] font-['Instrument Sans']">
                   <span class="flex items-center justify-between gap-2">
                     Terms shown to client
                     <button
@@ -356,27 +356,27 @@
                     value={termsDraft[order.id] ?? order.adminTermsNote ?? ''}
                     oninput={(e) => { termsDraft[order.id] = (e.target as HTMLTextAreaElement).value; termsDraft = { ...termsDraft }; }}
                     placeholder="Manual reserve terms, pickup/payment window, handoff details…"
-                    class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1.5 text-xs normal-case tracking-normal text-[#34251c] font-['Inter'] resize-y"
+                    class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1.5 text-xs normal-case tracking-normal text-[#34251c] font-['Instrument Sans'] resize-y"
                   ></textarea>
                 </label>
-                <label class="block text-[10px] uppercase tracking-wide text-[#5f4636] font-['Inter']">
+                <label class="block text-[10px] uppercase tracking-wide text-[#5f4636] font-['Instrument Sans']">
                   Invoice note
                   <textarea
                     rows="2"
                     value={invoiceDraft[order.id] ?? order.invoiceNote ?? ''}
                     oninput={(e) => { invoiceDraft[order.id] = (e.target as HTMLTextAreaElement).value; invoiceDraft = { ...invoiceDraft }; }}
                     placeholder="Manual invoice, payment method, amount, or next instruction…"
-                    class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1.5 text-xs normal-case tracking-normal text-[#34251c] font-['Inter'] resize-y"
+                    class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1.5 text-xs normal-case tracking-normal text-[#34251c] font-['Instrument Sans'] resize-y"
                   ></textarea>
                 </label>
-                <label class="block text-[10px] uppercase tracking-wide text-[#5f4636] font-['Inter']">
+                <label class="block text-[10px] uppercase tracking-wide text-[#5f4636] font-['Instrument Sans']">
                   Internal note
                   <input
                     type="text"
                     value={adminNotesDraft[order.id] ?? order.adminNotes ?? ''}
                     oninput={(e) => { adminNotesDraft[order.id] = (e.target as HTMLInputElement).value; adminNotesDraft = { ...adminNotesDraft }; }}
                     placeholder="Private admin note…"
-                    class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1.5 text-xs normal-case tracking-normal text-[#34251c] font-['Inter']"
+                    class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1.5 text-xs normal-case tracking-normal text-[#34251c] font-['Instrument Sans']"
                   />
                 </label>
                 <div class="flex justify-end">
@@ -391,7 +391,7 @@
                   <div class="border-t border-emerald-900/10 pt-2">
                     <div class="flex flex-wrap items-center justify-between gap-2">
                       <div class="min-w-0">
-                        <p class="text-[10px] uppercase tracking-wide text-[#5f4636] font-['Inter']">Collector certificate</p>
+                        <p class="text-[10px] uppercase tracking-wide text-[#5f4636] font-['Instrument Sans']">Collector certificate</p>
                         {#if order.certificateToken && order.certificateNumber}
                           <a
                             href="/certificate/{order.certificateToken}"

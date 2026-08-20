@@ -373,11 +373,11 @@
                     <rect x="0.5" y="1.5" width="10" height="9" rx="0.7"/>
                     <path d="M3 1.5V0.5M8 1.5V0.5M0.5 4.5h10"/>
                   </svg>
-                  <span class="text-xs font-['Inter'] font-semibold text-[#34251c]">
+                  <span class="text-xs font-['Instrument Sans'] font-semibold text-[#34251c]">
                     {formatDate(booking.startsAt)} — {formatDate(booking.endsAt)}
                   </span>
                   {#if isStale(booking)}
-                    <span class="text-[9px] px-1.5 py-0.5 bg-orange-100 text-orange-700 border border-orange-300 rounded font-['Inter'] uppercase tracking-wide">{$t('adminBookingsOverdue')}</span>
+                    <span class="text-[9px] px-1.5 py-0.5 bg-orange-100 text-orange-700 border border-orange-300 rounded font-['Instrument Sans'] uppercase tracking-wide">{$t('adminBookingsOverdue')}</span>
                   {/if}
                 </div>
                 <div class="text-xs text-[#5f4636]/60 mt-0.5">{formatTs(booking.createdAt)}</div>
@@ -398,7 +398,7 @@
 
             <!-- Display type / venue / requirements -->
             {#if booking.displayType || booking.venue || booking.purpose}
-              <div class="mt-2 flex flex-wrap gap-2 text-[10px] font-['Inter']">
+              <div class="mt-2 flex flex-wrap gap-2 text-[10px] font-['Instrument Sans']">
                 {#if booking.displayType}
                   <span class="px-1.5 py-0.5 bg-[#f8f1e7] border border-[#d8c6b1] text-[#5f4636]">
                     {booking.displayType === 'private' ? $t('adminShowingsPrivate') : booking.displayType === 'exhibition' ? $t('adminShowingsExhibition') : $t('adminBookingsPhotoVideo')}
@@ -421,28 +421,28 @@
                   placeholder={$t('adminBookingsNotesPH')}
                   value={notesMap[booking.id] ?? booking.adminNotes ?? ''}
                   oninput={(e) => { notesMap[booking.id] = (e.target as HTMLInputElement).value; notesMap = {...notesMap}; }}
-                  class="w-full border-b border-[#d8c6b1] bg-transparent text-xs py-1 text-[#34251c] font-['Inter'] focus:outline-none focus:border-[#c65f3c] placeholder-[#5f4636]/40"
+                  class="w-full border-b border-[#d8c6b1] bg-transparent text-xs py-1 text-[#34251c] font-['Instrument Sans'] focus:outline-none focus:border-[#c65f3c] placeholder-[#5f4636]/40"
                 />
                 <input
                   type="text"
                   placeholder={$t('adminBookingsCuratorPH')}
                   value={curatorMap[booking.id] ?? booking.curatorConditions ?? ''}
                   oninput={(e) => { curatorMap[booking.id] = (e.target as HTMLInputElement).value; curatorMap = {...curatorMap}; }}
-                  class="w-full border-b border-[#d8c6b1] bg-transparent text-xs py-1 text-[#34251c] font-['Inter'] focus:outline-none focus:border-[#c65f3c] placeholder-[#5f4636]/40"
+                  class="w-full border-b border-[#d8c6b1] bg-transparent text-xs py-1 text-[#34251c] font-['Instrument Sans'] focus:outline-none focus:border-[#c65f3c] placeholder-[#5f4636]/40"
                 />
               </div>
             {:else}
               {#if booking.adminNotes}
-                <p class="text-xs text-[#5f4636]/70 font-['Inter'] mt-2 italic">{$t('adminBookingsNoteLabel')} {booking.adminNotes}</p>
+                <p class="text-xs text-[#5f4636]/70 font-['Instrument Sans'] mt-2 italic">{$t('adminBookingsNoteLabel')} {booking.adminNotes}</p>
               {/if}
               {#if booking.curatorConditions}
-                <p class="text-xs text-[#34251c] font-['Inter'] mt-1.5 border-l-2 border-green-500/50 pl-2">{$t('adminBookingsCuratorLabel')} {booking.curatorConditions}</p>
+                <p class="text-xs text-[#34251c] font-['Instrument Sans'] mt-1.5 border-l-2 border-green-500/50 pl-2">{$t('adminBookingsCuratorLabel')} {booking.curatorConditions}</p>
               {/if}
             {/if}
 
             <!-- Conflict error -->
             {#if conflictErrors[booking.id]}
-              <div class="mt-2 flex items-start gap-2 px-2 py-1.5 bg-red-50 border border-red-200 rounded text-xs text-red-800 font-['Inter']">
+              <div class="mt-2 flex items-start gap-2 px-2 py-1.5 bg-red-50 border border-red-200 rounded text-xs text-red-800 font-['Instrument Sans']">
                 <span class="flex-shrink-0 font-bold">⚠</span>
                 <span>{conflictErrors[booking.id]}</span>
               </div>
@@ -454,23 +454,23 @@
                 <button
                   onclick={() => setStatus(booking, 'confirmed')}
                   disabled={updatingId === booking.id}
-                  class="text-[10px] px-3 py-1 bg-green-700 text-white border border-green-700 hover:bg-green-800 transition-colors disabled:opacity-40 font-['Inter'] uppercase tracking-wide"
+                  class="text-[10px] px-3 py-1 bg-green-700 text-white border border-green-700 hover:bg-green-800 transition-colors disabled:opacity-40 font-['Instrument Sans'] uppercase tracking-wide"
                 >✓ {$t('adminBookingsConfirm')}</button>
                 <button
                   onclick={() => setStatus(booking, 'rejected')}
                   disabled={updatingId === booking.id}
-                  class="text-[10px] px-3 py-1 border border-red-300 text-red-700 hover:bg-red-50 transition-colors disabled:opacity-40 font-['Inter'] uppercase tracking-wide"
+                  class="text-[10px] px-3 py-1 border border-red-300 text-red-700 hover:bg-red-50 transition-colors disabled:opacity-40 font-['Instrument Sans'] uppercase tracking-wide"
                 >✕ {$t('adminBookingsReject')}</button>
               {:else if booking.status === 'confirmed'}
                 <button
                   onclick={() => setStatus(booking, 'completed')}
                   disabled={updatingId === booking.id}
-                  class="text-[10px] px-3 py-1 bg-teal-700 text-white border border-teal-700 hover:bg-teal-800 transition-colors disabled:opacity-40 font-['Inter'] uppercase tracking-wide"
+                  class="text-[10px] px-3 py-1 bg-teal-700 text-white border border-teal-700 hover:bg-teal-800 transition-colors disabled:opacity-40 font-['Instrument Sans'] uppercase tracking-wide"
                 >↩ {$t('adminBookingsReturned')}</button>
                 <button
                   onclick={() => setStatus(booking, 'cancelled')}
                   disabled={updatingId === booking.id}
-                  class="text-[10px] px-3 py-1 border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-40 font-['Inter'] uppercase tracking-wide"
+                  class="text-[10px] px-3 py-1 border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-40 font-['Instrument Sans'] uppercase tracking-wide"
                 >{$t('adminFormCancel')}</button>
               {/if}
               <div class="ml-auto flex gap-1">

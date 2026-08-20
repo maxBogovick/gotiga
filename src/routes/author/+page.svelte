@@ -85,7 +85,7 @@
   <div class="absolute bottom-[-10%] right-[-5%] w-[50vw] h-[50vw] bg-[#c65f3c]/20 rounded-full blur-[100px] pointer-events-none"></div>
 </div>
 
-<div class="min-h-screen relative z-10 font-['Inter'] text-[#34251c] pb-32">
+<div class="min-h-screen relative z-10 font-['Instrument Sans'] text-[#34251c] pb-32">
     <div class="max-w-5xl mx-auto px-6 py-12 lg:py-20">
 
       <nav class="mb-16" in:fade={{ duration: 1000 }}>

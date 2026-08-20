@@ -263,7 +263,7 @@
     border: 1px solid color-mix(in srgb, var(--color-ink-primary, #34251c) 8%, transparent);
     border-radius: 8px;
     background: color-mix(in srgb, var(--color-canvas-raised, #fff9f0) 54%, transparent);
-    font-family: 'Inter', system-ui, sans-serif;
+    font-family: 'Instrument Sans', system-ui, sans-serif;
   }
 
   /* ── Month grid ────────────────────────────────────────────── */
@@ -468,7 +468,7 @@
     color: rgba(95, 70, 54, 0.7);
     background: transparent;
     cursor: pointer;
-    font-family: 'Inter', system-ui, sans-serif;
+    font-family: 'Instrument Sans', system-ui, sans-serif;
     font-size: 0.6rem;
     font-weight: 700;
     letter-spacing: 0.1em;

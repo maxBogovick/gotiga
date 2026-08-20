@@ -177,10 +177,6 @@
   pointer-events: none;
 }
 
-.catalog-plate .expand-btn {
-  display: none;
-}
-
 .catalog-plate .image-stage:hover .gallery-actions,
 .catalog-plate .image-stage:hover .gallery-nav-prev,
 .catalog-plate .image-stage:hover .gallery-nav-next,
@@ -222,6 +218,7 @@
 .catalog-plate .gallery-heart:focus-visible,
 .catalog-plate .gallery-mark:focus-visible,
 .catalog-plate .gallery-lens:focus-visible,
+.catalog-plate .gallery-expand:focus-visible,
 .catalog-plate .gallery-nav-prev:focus-visible,
 .catalog-plate .gallery-nav-next:focus-visible {
   pointer-events: auto;
@@ -230,6 +227,7 @@
 .catalog-plate .gallery-heart:focus-visible,
 .catalog-plate .gallery-mark:focus-visible,
 .catalog-plate .gallery-lens:focus-visible,
+.catalog-plate .gallery-expand:focus-visible,
 .catalog-plate .gallery-nav-prev:focus-visible,
 .catalog-plate .gallery-nav-next:focus-visible {
   opacity: 0.92;
@@ -662,6 +660,12 @@
 }
 
 @media (max-width: 859px) {
+  .catalog-plate .gallery-actions,
+  .catalog-plate .gallery-actions button {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
   .catalog-main {
     gap: 1.15rem 0;
   }

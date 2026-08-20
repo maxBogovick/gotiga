@@ -210,7 +210,7 @@
                               class="peer w-full bg-transparent border-b-2 border-[#d8c6b1] py-2 text-2xl text-[#34251c] font-['Fraunces'] focus:outline-none focus:border-[#c65f3c] transition-colors placeholder-transparent"
                               placeholder={$t('orderNameLabel')}
                       />
-                      <label for="name" class="absolute left-0 -top-4 text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase transition-all peer-placeholder-shown:text-base peer-placeholder-shown:top-2 peer-placeholder-shown:text-[#5f4636]/90 peer-focus:-top-4 peer-focus:text-xs peer-focus:text-[#c65f3c]">
+                      <label for="name" class="absolute left-0 -top-4 text-xs font-['Instrument Sans'] font-bold tracking-[0.06em] text-[#5f4636] uppercase transition-all peer-placeholder-shown:text-base peer-placeholder-shown:top-2 peer-placeholder-shown:text-[#5f4636]/90 peer-focus:-top-4 peer-focus:text-xs peer-focus:text-[#c65f3c]">
                           {$t('orderNameLabel')}{mode !== 'request' ? ` ${$t('formOptional')}` : ''}
                       </label>
                     </div>
@@ -224,7 +224,7 @@
                               class="peer w-full bg-transparent border-b-2 border-[#d8c6b1] py-2 text-xl italic font-serif text-[#34251c] focus:outline-none focus:border-[#c65f3c] transition-colors placeholder-transparent"
                               placeholder="Email"
                       />
-                       <label for="email" class="absolute left-0 -top-4 text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase transition-all peer-placeholder-shown:text-base peer-placeholder-shown:top-2 peer-placeholder-shown:text-[#5f4636]/90 peer-focus:-top-4 peer-focus:text-xs peer-focus:text-[#c65f3c]">
+                       <label for="email" class="absolute left-0 -top-4 text-xs font-['Instrument Sans'] font-bold tracking-[0.06em] text-[#5f4636] uppercase transition-all peer-placeholder-shown:text-base peer-placeholder-shown:top-2 peer-placeholder-shown:text-[#5f4636]/90 peer-focus:-top-4 peer-focus:text-xs peer-focus:text-[#c65f3c]">
                           {$t('orderEmailLabel')}
                       </label>
                     </div>
@@ -238,13 +238,13 @@
                               class="peer w-full bg-transparent border-b-2 border-[#d8c6b1] py-2 text-xl italic font-serif text-[#34251c] focus:outline-none focus:border-[#c65f3c] transition-colors placeholder-transparent"
                               placeholder={$t('orderPhonePlaceholder')}
                       />
-                      <label for="phone" class="absolute left-0 -top-4 text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase transition-all peer-placeholder-shown:text-base peer-placeholder-shown:top-2 peer-placeholder-shown:text-[#5f4636]/90 peer-focus:-top-4 peer-focus:text-xs peer-focus:text-[#c65f3c]">
+                      <label for="phone" class="absolute left-0 -top-4 text-xs font-['Instrument Sans'] font-bold tracking-[0.06em] text-[#5f4636] uppercase transition-all peer-placeholder-shown:text-base peer-placeholder-shown:top-2 peer-placeholder-shown:text-[#5f4636]/90 peer-focus:-top-4 peer-focus:text-xs peer-focus:text-[#c65f3c]">
                           {$t('orderPhoneLabel')}
                       </label>
                     </div>
 
                     <div class="relative group pt-2">
-                       <label for="message" class="block text-xs font-['Inter'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-2">
+                       <label for="message" class="block text-xs font-['Instrument Sans'] font-bold tracking-[0.06em] text-[#5f4636] uppercase mb-2">
                           {$t('orderMessageLabel')}
                        </label>
                       <textarea
@@ -266,7 +266,7 @@
                       <button
                               type="submit"
                               disabled={isSubmitting}
-                              class="group relative inline-flex items-center justify-center px-10 py-4 overflow-hidden font-['Inter'] font-bold tracking-wide text-[#fff9f0] bg-[#9e452d] hover:bg-[#6f3b24] transition-all duration-500 shadow-lg disabled:opacity-80 disabled:cursor-not-allowed border border-[#6f3b24]/20 clip-corners"
+                              class="group relative inline-flex items-center justify-center px-10 py-4 overflow-hidden font-['Instrument Sans'] font-bold tracking-wide text-[#fff9f0] bg-[#9e452d] hover:bg-[#6f3b24] transition-all duration-500 shadow-lg disabled:opacity-80 disabled:cursor-not-allowed border border-[#6f3b24]/20 clip-corners"
                       >
                          <span class="absolute inset-0 w-full h-full bg-noise opacity-10"></span>
                          <span class="absolute w-0 h-0 transition-all duration-500 ease-out bg-[#c65f3c] rounded-full group-hover:w-72 group-hover:h-72 opacity-75"></span>
@@ -284,11 +284,11 @@
                     </div>
                      
                     {#if submitError}
-                      <p class="text-center text-sm text-red-700 font-['Inter']">{submitError}</p>
+                      <p class="text-center text-sm text-red-700 font-['Instrument Sans']">{submitError}</p>
                     {/if}
 
                     <div class="text-center mt-6">
-                        <button onclick={close} type="button" class="inline-flex items-center justify-center min-h-[44px] px-4 text-xs font-['Inter'] text-[#5f4636]/90 hover:text-[#c65f3c] active:text-[#c65f3c] tracking-wide uppercase border-b border-transparent hover:border-[#c65f3c]/30 transition-all">
+                        <button onclick={close} type="button" class="inline-flex items-center justify-center min-h-[44px] px-4 text-xs font-['Instrument Sans'] text-[#5f4636]/90 hover:text-[#c65f3c] active:text-[#c65f3c] tracking-wide uppercase border-b border-transparent hover:border-[#c65f3c]/30 transition-all">
                             {$t('orderCancel')}
                         </button>
                     </div>
@@ -317,7 +317,7 @@
 
                    <div class="relative max-w-xs text-center">
                        <span class="absolute -left-4 top-0 text-4xl text-[#6f3b24]/15 font-serif">"</span>
-                       <p class="font-['Inter'] text-[#5f4636] text-sm leading-relaxed font-semibold">
+                       <p class="font-['Instrument Sans'] text-[#5f4636] text-sm leading-relaxed font-semibold">
                          {$t('orderSuccessText')}
                        </p>
                        <span class="absolute -right-2 bottom-0 text-4xl text-[#6f3b24]/15 font-serif rotate-180">"</span>
@@ -403,7 +403,7 @@
     align-items: center;
     gap: 0.4rem;
     font-size: 0.625rem;
-    font-family: 'Inter', sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -412,7 +412,7 @@
   }
   .showing-notice-entry {
     font-size: 0.7rem;
-    font-family: 'Inter', sans-serif;
+    font-family: 'Instrument Sans', sans-serif;
     color: #78350f;
     margin: 0.15rem 0 0;
     line-height: 1.4;

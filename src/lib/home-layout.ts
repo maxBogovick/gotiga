@@ -17,7 +17,7 @@ export const HOME_BG_PRESETS: { id: string; color: string }[] = [
     { id: 'dark',      color: '#181210' },
     { id: 'slate',     color: '#dce0e4' },
 ];
-import { READING_FONTS } from '$lib/stores/reading-font.svelte';
+import { fontStack } from '$lib/fonts';
 
 // Default order of the home page main flow. `returningBand` and `latelyShelves`
 // are compound blocks: they travel as one unit (keeping their isReturningVisitor
@@ -28,10 +28,6 @@ export const HOME_MAIN_BLOCK_IDS: readonly HomeMainBlockId[] = [
 ] as const;
 export const HOME_BAND_BLOCK_IDS: readonly HomeBandBlockId[] = ['visitLedger', 'noticeBoard'] as const;
 export const HOME_SHELF_BLOCK_IDS: readonly HomeShelfBlockId[] = ['firstLook', 'markedByYou', 'noticedByGuests'] as const;
-
-const FONT_STACK: Record<string, string> = Object.fromEntries(
-    READING_FONTS.map(f => [f.id, f.stack])
-);
 
 const FONT_SIZES: Record<NonNullable<BlockStyle['fontSize']>, string> = {
     sm:   '0.875rem',
@@ -82,7 +78,7 @@ export function homeBlockWrapperStyle(
     const color = safeColor(s?.color);
     if (background) parts.push(`--hl-bg:${background}`);
     if (color) parts.push(`--hl-color:${color}`);
-    if (s?.font) parts.push(`--hl-font:${FONT_STACK[s.font] ?? 'inherit'}`);
+    if (s?.font) parts.push(`--hl-font:${fontStack(s.font)}`);
     if (s?.fontSize && s.fontSize !== 'base') parts.push(`--hl-size:${FONT_SIZES[s.fontSize]}`);
     return parts.join(';');
 }

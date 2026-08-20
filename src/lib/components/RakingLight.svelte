@@ -111,6 +111,11 @@
   let initialized = false; // GL context + program ready
   let loadedKey = '';      // de-dupes the (src|heightSrc) currently loaded/loading
   let loadSeq = 0;         // supersedes in-flight loads when the image changes fast
+  let isPointerFine = $state(true);
+
+  function handleActivate() {
+    if (isPointerFine) onActivate?.();
+  }
 
   function updateHostRect() {
     hostRect = host?.getBoundingClientRect() ?? null;
@@ -322,6 +327,7 @@
   }
 
   onMount(() => {
+    isPointerFine = window.matchMedia('(pointer: fine)').matches;
     if (reducedMotion || !canvas || !host || !src) return;
 
     // preserveDrawingBuffer: like the daguerreotype, this canvas draws then
@@ -572,11 +578,12 @@
 <div
   bind:this={host}
   class="raking {className}"
-  role="button"
-  tabindex="0"
+  class:raking--zoomable={isPointerFine && !!onActivate}
+  role={isPointerFine && onActivate ? 'button' : 'img'}
+  tabindex={isPointerFine && onActivate ? 0 : undefined}
   aria-label={alt}
-  onclick={() => onActivate?.()}
-  onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onActivate?.(); } }}
+  onclick={handleActivate}
+  onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleActivate(); } }}
 >
   <!-- Base photograph: always present. No crossorigin — a failed CORS check
        on the visible <img> is a broken-image icon, not a quiet GL fallback. -->
@@ -596,6 +603,8 @@
     width: 100%;
     height: 100%;
     overflow: hidden;
+  }
+  .raking--zoomable {
     cursor: zoom-in;
   }
   .raking-base,
