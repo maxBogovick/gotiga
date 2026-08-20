@@ -31,7 +31,7 @@ export const en = {
   homeWorkshopReelCaption: 'A moment at the workbench, looped in silence',
   homeWorkshopTeaserLabel: 'Watch the hands that make these',
   homeGazettePlateLabel: 'Gazette',
-  homeGazettePlateAria: 'Open the cabinet gazette',
+  homeGazettePlateAria: 'Open {title}',
   homeGazettePlateNext: 'Next leaf',
   homeScrollCue: 'See the work',
   homeGalleryEyebrow: 'The collection',
@@ -1006,6 +1006,7 @@ export const en = {
   footerRights: 'All works one of a kind',
   footerEstablished: 'Est. MMXXIV',
   footerPrivacyLink: 'Privacy Policy',
+  footerRightsLink: 'The photographs',
 
   // === PRIVACY POLICY ===
   privacyTitle: 'Privacy Policy',
@@ -1035,6 +1036,25 @@ export const en = {
   privacyChangesBody: 'If this policy changes, the "last updated" date at the top of this page will change too. We recommend checking back occasionally if you have an ongoing request with us.',
   privacySectionContactTitle: 'Contact',
   privacyContactBody: 'Questions about your data, or a request to access/correct/delete it, can be sent to:',
+
+  // === IMAGE RIGHTS (Google Image metadata: license + acquireLicensePage) ===
+  rightsTitle: 'The photographs',
+  rightsUpdated: 'Last updated 20 August 2026',
+  rightsMetaDescription: 'How the photographs on this site may be used: sharing on Pinterest, Instagram, Facebook and TikTok is welcome; anything else needs a letter.',
+  rightsIntro: 'Every photograph on this site is a document of a unique, handmade work. They are not stock, and they are not free to take as your own. Sharing them onto Pinterest, Instagram, Facebook or TikTok is welcome. This page is the statement of rights that governs them.',
+  rightsSectionWhatTitle: 'What they are',
+  rightsWhatBody: 'The photographs belong to {brand}. Each one shows a one-of-a-kind sculpture made by the artist. Both the image and the work it depicts are copyrighted. A caption credits the house; it is not a license to take the file as yours.',
+  rightsSectionShareTitle: 'Pinterest, Instagram, Facebook, TikTok',
+  rightsShareBody: 'The artist publishes these photographs on Pinterest, Instagram, Facebook and TikTok. Those posts are allowed. So is what those houses need in order to show them: keeping a copy, making a preview, and letting a visitor Pin the image or share a link so a picture appears. Pinning from this site, sharing a page of the cabinet, or reposting from the artist\'s own accounts with the credit left in place, is sharing the work — not claiming it.',
+  rightsSectionNotTitle: 'What is not permitted',
+  rightsNotBody: 'Do not take a photograph to sell it, print it, use it as your product shot, or present it as your own making. Do not strip a caption or credit. Do not use the photographs to train an image generator. A Pin, a story or a link preview is not taking the file. For a magazine, an exhibition, a film, or any other use — write first. Silence is not permission.',
+  rightsSectionFindTitle: 'Finding the work',
+  rightsFindBody: 'Search engines, language-model crawlers, and the preview crawlers of Pinterest, Instagram, Facebook and TikTok are welcome to fetch these pages and their pictures so a shared link can show the work. That invitation does not extend to reproducing a photograph as if it were yours, or to using the photographs to train an image generator.',
+  rightsSectionRequestTitle: 'To use a photograph',
+  rightsRequestBody: 'If you want to reproduce a photograph — press, exhibition, editorial, or anything else — write to the address below. Say which image, where it would appear, and for how long. A written reply granting use is the license; until then, there is none. There is no checkout and no standard fee: each request is considered by the artist.',
+  rightsSectionWorksTitle: 'The sculptures',
+  rightsWorksBody: 'This page is about the photographs, not about a piece leaving the house. How a sculpture is acquired is a separate correspondence.',
+  rightsContactBody: 'Write about a photograph to:',
 
   // === READING TYPEFACE ===
   readingColophon: 'set in',

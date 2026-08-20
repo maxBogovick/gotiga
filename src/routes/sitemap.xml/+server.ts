@@ -1,5 +1,5 @@
 import { api } from '$lib/api';
-import { SITE_URL, toAbsoluteUrl } from '$lib/site';
+import { SITE_URL, IMAGE_RIGHTS_PATH, toAbsoluteUrl } from '$lib/site';
 import type { Figurine, FigurineListItem } from '$lib/types/api';
 
 // Prerendered to a static sitemap.xml in the web build (matches the Sitemap line in
@@ -10,7 +10,7 @@ export const prerender = import.meta.env.VITE_BUILD_TARGET === 'web';
 // absent (also Disallowed in robots). /commission is omitted on purpose: it reads a
 // ?source query param so it can't be prerendered, and listing a JS-only shell here
 // would point crawlers at a thin page.
-const STATIC_ROUTES = ['/', '/figurines', '/upcoming', '/workshop', '/author', '/gazette'];
+const STATIC_ROUTES = ['/', '/figurines', '/upcoming', '/workshop', '/author', '/gazette', IMAGE_RIGHTS_PATH];
 
 function xmlEscape(s: string): string {
     return s.replace(/[<>&'"]/g, (c) =>

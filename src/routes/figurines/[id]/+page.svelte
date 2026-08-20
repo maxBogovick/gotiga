@@ -9,6 +9,7 @@
   import { t , brandName } from '$lib/i18n';
   import { formatFigurineAlt, altLabelsFrom, siblingPosition } from '$lib/figurine-alt';
   import { jsonLdSafe } from '$lib/jsonld';
+  import { IMAGE_RIGHTS_PATH } from '$lib/site';
   import type { FigurineImage } from '$lib/types/api';
   import '$lib/styles/figurine-detail.css';
 
@@ -120,12 +121,13 @@
   }
 
   // Full ImageObject (not a bare URL string) per Google's image-SEO guidance: creator/
-  // creditText/copyrightNotice are what let Google attribute the photo and surface it
-  // with licensing info in Image results. No `license` URL — these are one-of-a-kind
-  // pieces, not stock assets under a reuse license, and the site has no rights page to
-  // point at; a fabricated link would be worse than omitting the field.
+  // creditText/copyrightNotice attribute the photo; `license` and `acquireLicensePage`
+  // are the two URLs Search Console asks for. Both point at /rights — a real page that
+  // says the photographs are not stock and how to write for permission — rather than a
+  // Creative Commons URL these one-of-a-kind plates are not under.
   function imageObjectFor(img: FigurineImage) {
     const url = toAbsoluteImageUrl(img.url);
+    const license = `${page.url.origin}${IMAGE_RIGHTS_PATH}`;
     return {
       '@type': 'ImageObject',
       contentUrl: url,
@@ -134,6 +136,8 @@
       creator: { '@type': 'Organization', name: $brandName, url: page.url.origin },
       creditText: $brandName,
       copyrightNotice: `© ${figurine?.year ?? new Date().getFullYear()} ${$brandName}`,
+      license,
+      acquireLicensePage: `${license}#request`,
     };
   }
 

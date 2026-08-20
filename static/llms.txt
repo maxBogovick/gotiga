@@ -9,12 +9,16 @@
 
 - [Home](https://ritunia.com/): Overview of the collection and the maker.
 - [Archive](https://ritunia.com/figurines): Full registry of gothic handmade miniatures, filterable by status, year, and series.
+- [Gazette](https://ritunia.com/gazette): Notes from the house — arrivals, sketches in the making, openings, and cuttings.
 - [About the Master](https://ritunia.com/author): Biography and background of the artist behind Ritunia.
 - [Workshop](https://ritunia.com/workshop): Process, materials, and technique notes.
 - [Commission](https://ritunia.com/commission): How to commission a new one-of-a-kind piece.
+- [Upcoming](https://ritunia.com/upcoming): Figures currently in the making.
+- [The photographs](https://ritunia.com/rights): Image rights — photographs are not free to reuse; write for permission.
 
 ## Notes
 
 - Every figurine has its own permanent page at /figurines/{slug} with a description, material, dimensions, year, and photography.
+- Gazette leaves live at /gazette/{slug}. RSS: https://ritunia.com/gazette/feed.xml
 - Pieces are not sold off-the-shelf; acquisition is by commission or reservation, as described on each figurine's page.
-- Full machine-readable list of figurine pages: https://ritunia.com/sitemap.xml
+- Full machine-readable list of figurine and gazette pages: https://ritunia.com/sitemap.xml

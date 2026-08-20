@@ -120,6 +120,8 @@
     <span class="colophon-rights">© {year} · {$t('footerRights')}</span>
     <span class="colophon-dot" aria-hidden="true">·</span>
     <a href="/privacy" class="colophon-link">{$t('footerPrivacyLink')}</a>
+    <span class="colophon-dot" aria-hidden="true">·</span>
+    <a href="/rights" class="colophon-link">{$t('footerRightsLink')}</a>
   </div>
 </footer>
 

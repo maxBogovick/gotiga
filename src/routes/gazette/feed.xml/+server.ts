@@ -4,6 +4,9 @@ import { leafCopy, leafCoverUrl } from '$lib/gazette';
 
 export const prerender = import.meta.env.VITE_BUILD_TARGET === 'web';
 
+// Static snapshot for the web build. Production nginx proxies /gazette/feed.xml
+// to the live Rust handler so a newly laid leaf appears without a redeploy.
+
 const CHANNEL_TITLE = 'Ritunia — leaves of the cabinet';
 const CHANNEL_DESCRIPTION =
   'Notes the house has set down: arrivals, tales, openings, and cuttings pinned from farther away.';

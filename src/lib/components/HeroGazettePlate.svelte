@@ -1,12 +1,15 @@
 <script lang="ts">
   /**
    * A square plate beside the workshop lockets. One slip at a time; the
-   * type steps up and the next line rises. The plate opens /gazette; a
-   * small arrow at the foot turns the next leaf.
+   * type steps up and the next line rises. Each slip opens its own leaf,
+   * cutting, or figurine. The newest work is always among the slips, and
+   * stands in alone when the blotter is empty.
    */
   import { t, lang } from '$lib/i18n';
-  import type { GazetteCutting, GazetteLeaf } from '$lib/types/api';
+  import { browser } from '$app/environment';
+  import type { FigurineListItem, GazetteCutting, GazetteLeaf } from '$lib/types/api';
   import { plateSlips } from '$lib/gazette';
+  import AppImage from '$lib/components/AppImage.svelte';
   import GazetteMark from '$lib/components/GazetteMark.svelte';
 
   const INTERVAL_MS = 5200;
@@ -15,16 +18,19 @@
   let {
     leaves = [],
     cuttings = [],
+    latestWork = null,
   }: {
     leaves?: GazetteLeaf[];
     cuttings?: GazetteCutting[];
+    latestWork?: FigurineListItem | null;
   } = $props();
 
-  let slips = $derived(plateSlips(leaves, cuttings, $lang));
+  let slips = $derived(plateSlips(leaves, cuttings, $lang, latestWork));
   let tick = $state(0);
   let paused = $state(false);
   let leaving = $state<number | null>(null);
   let shown = $derived(slips.length ? tick % slips.length : 0);
+  let current = $derived(slips[shown] ?? null);
   let cycling = $derived(slips.length > 1);
   let fadeTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -41,7 +47,7 @@
 
   $effect(() => {
     const count = slips.length;
-    if (count <= 1) return;
+    if (!browser || count <= 1) return;
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
 
     const id = window.setInterval(() => {
@@ -53,7 +59,7 @@
   });
 </script>
 
-{#if slips.length > 0}
+{#if current}
   <div
     class="gz-plate"
     class:paused
@@ -63,8 +69,10 @@
   >
     <a
       class="gz-plate-hit"
-      href="/gazette?src=home_plate"
-      aria-label={$t('homeGazettePlateAria')}
+      href={current.href}
+      target={current.external ? '_blank' : undefined}
+      rel={current.external ? 'noopener noreferrer' : undefined}
+      aria-label={$t('homeGazettePlateAria').replace('{title}', current.title)}
       onfocus={() => (paused = true)}
       onblur={() => (paused = false)}
     >
@@ -87,18 +95,31 @@
             class="gz-plate-slip"
             class:on={i === shown}
             class:out={i === leaving}
+            class:has-face={Boolean(slip.imageUrl) || slip.kind === 'work'}
             aria-hidden={i !== shown}
           >
-            {#if slip.markKey || slip.markUrl}
-              <span class="gz-plate-mark">
-                <GazetteMark
-                  markKey={slip.markKey}
-                  markUrl={slip.markUrl}
-                  letter={slip.letter}
-                  size={22}
-                />
-              </span>
-            {/if}{slip.title}
+            {#if slip.kind === 'work' || slip.imageUrl}
+              <span class="gz-work-name">{slip.title}</span>
+              {#if slip.dateLabel}
+                <span class="gz-work-date">{slip.dateLabel}</span>
+              {/if}
+              {#if slip.imageUrl}
+                <span class="gz-work-face">
+                  <AppImage src={slip.imageUrl} alt="" class="gz-work-img" sizes="72px" />
+                </span>
+              {/if}
+            {:else}
+              {#if slip.markKey || slip.markUrl}
+                <span class="gz-plate-mark">
+                  <GazetteMark
+                    markKey={slip.markKey}
+                    markUrl={slip.markUrl}
+                    letter={slip.letter}
+                    size={22}
+                  />
+                </span>
+              {/if}{slip.title}
+            {/if}
           </span>
         {/each}
       </span>
@@ -272,6 +293,65 @@
     opacity: 0;
     transform: translateY(-9px);
     z-index: 0;
+  }
+
+  .gz-plate-slip.has-face {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .gz-work-name {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    flex-shrink: 0;
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.25;
+    letter-spacing: 0.01em;
+  }
+
+  .gz-work-date {
+    flex-shrink: 0;
+    margin-top: 3px;
+    font-family: 'Instrument Sans', system-ui, sans-serif;
+    font-size: 8px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    line-height: 1.2;
+    color: rgba(52, 37, 28, 0.48);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .gz-work-face {
+    position: relative;
+    flex: 1 1 0;
+    min-height: 0;
+    margin-top: 6px;
+    overflow: hidden;
+    border: 1px solid rgba(52, 37, 28, 0.14);
+    background: #2a1a12;
+  }
+
+  .gz-work-face :global(.gz-work-img) {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  .gz-work-face :global(img) {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center top;
+    display: block;
   }
 
   .gz-next {

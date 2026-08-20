@@ -2,6 +2,8 @@ User-agent: *
 Allow: /
 Disallow: /admin
 Disallow: /api/
+# Personal cancel tokens for gazette watch letters — not a public page.
+Disallow: /gazette/watch/
 
 # LLM / AI crawlers — explicitly welcomed. Ritunia is a public showcase and wants
 # to be discoverable inside AI answers. Remove a block here to opt a bot out.

@@ -42,11 +42,14 @@ export async function GET({ fetch }: { fetch: typeof globalThis.fetch }) {
         `## About\n\n` +
         `- [The author](${SITE_URL}/author): who makes the figures and why.\n` +
         `- [The workshop](${SITE_URL}/workshop): tools, materials and process.\n` +
-        `- [Commission a piece](${SITE_URL}/commission): how to request a custom figure.\n\n` +
+        `- [Commission a piece](${SITE_URL}/commission): how to request a custom figure.\n` +
+        `- [The photographs](${SITE_URL}/rights): images are copyrighted; reuse needs written permission.\n\n` +
         `## Works\n\n` +
         (works || '- (the archive is currently quiet)') +
         `\n\n## Browse\n\n` +
         `- [Full archive](${SITE_URL}/figurines): every available, reserved and sold piece.\n` +
+        `- [Gazette](${SITE_URL}/gazette): notes from the house — arrivals, sketches, openings, cuttings.\n` +
+        `- [Gazette RSS](${SITE_URL}/gazette/feed.xml): machine-readable leaves of the cabinet.\n` +
         `- [Upcoming](${SITE_URL}/upcoming): figures currently in progress.\n`;
 
     return new Response(body, {

@@ -2179,6 +2179,141 @@ pub async fn feed_rss(
     ))
 }
 
+fn gazette_rss_stamp(leaf: &GazetteLeafDto) -> &str {
+    leaf.published_at.as_deref().unwrap_or(leaf.created_at.as_str())
+}
+
+fn gazette_rss_title(leaf: &GazetteLeafDto) -> String {
+    let en = leaf.title_en.trim();
+    if !en.is_empty() {
+        en.to_string()
+    } else {
+        leaf.title_ru.trim().to_string()
+    }
+}
+
+fn gazette_rss_dek(leaf: &GazetteLeafDto, title: &str) -> String {
+    for raw in [&leaf.dek_en, &leaf.dek_ru] {
+        if let Some(s) = raw.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            return s.to_string();
+        }
+    }
+    title.to_string()
+}
+
+fn gazette_rss_cover(leaf: &GazetteLeafDto) -> Option<&str> {
+    leaf.image_urls
+        .iter()
+        .map(|s| s.trim())
+        .find(|s| !s.is_empty())
+        .or_else(|| {
+            leaf.image_url
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        })
+}
+
+fn rss_rfc2822(raw: &str) -> Option<String> {
+    chrono::DateTime::parse_from_rfc3339(raw)
+        .ok()
+        .map(|d| d.to_rfc2822())
+}
+
+/// Live RSS of cabinet gazette leaves. Kept off `/feed.xml` so Pinterest's works
+/// channel stays a pin-board of finished pieces. nginx routes `/gazette/feed.xml`
+/// here, the same way `/feed.xml` is live.
+pub async fn gazette_feed_rss(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse> {
+    let host = headers
+        .get("host")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("localhost");
+    let proto = headers
+        .get("x-forwarded-proto")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("https");
+    let base = format!("{proto}://{host}");
+    let now = chrono::Utc::now();
+
+    let mut leaves = service.list_gazette_public(1, 200).await?.items;
+    leaves.sort_by(|a, b| gazette_rss_stamp(b).cmp(gazette_rss_stamp(a)));
+
+    let mut items = String::new();
+    for leaf in &leaves {
+        let title = gazette_rss_title(leaf);
+        if title.is_empty() {
+            continue;
+        }
+        let link = format!("{base}/gazette/{}", leaf.slug);
+        let desc = gazette_rss_dek(leaf, &title);
+        let pub_date = rss_rfc2822(gazette_rss_stamp(leaf)).unwrap_or_else(|| now.to_rfc2822());
+        let enclosure = match absolute_media_url(&base, gazette_rss_cover(leaf)) {
+            Some(img) => {
+                let mime = rss_image_mime(&img);
+                format!(
+                    "      <enclosure url=\"{}\" type=\"{mime}\" length=\"0\" />\n",
+                    xml_escape(&img)
+                )
+            }
+            None => String::new(),
+        };
+        let category = if leaf.kind.trim().is_empty() {
+            String::new()
+        } else {
+            format!("      <category>{}</category>\n", xml_escape(&leaf.kind))
+        };
+        items.push_str(&format!(
+            "    <item>\n\
+             \x20     <title>{title}</title>\n\
+             \x20     <link>{link}</link>\n\
+             \x20     <guid isPermaLink=\"true\">{link}</guid>\n\
+             \x20     <pubDate>{pub_date}</pubDate>\n\
+             {category}\
+             \x20     <description>{desc}</description>\n\
+             {enclosure}\
+             \x20   </item>\n",
+            title = xml_escape(&title),
+            link = xml_escape(&link),
+            pub_date = pub_date,
+            category = category,
+            desc = xml_escape(&desc),
+            enclosure = enclosure,
+        ));
+    }
+
+    let last_build = leaves
+        .first()
+        .and_then(|leaf| rss_rfc2822(gazette_rss_stamp(leaf)))
+        .unwrap_or_else(|| now.to_rfc2822());
+
+    let base_esc = xml_escape(&base);
+    let body = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <rss version=\"2.0\" xmlns:atom=\"http://www.w3.org/2005/Atom\">\n\
+         \x20 <channel>\n\
+         \x20   <title>Ritunia — leaves of the cabinet</title>\n\
+         \x20   <link>{base_esc}/gazette</link>\n\
+         \x20   <atom:link href=\"{base_esc}/gazette/feed.xml\" rel=\"self\" type=\"application/rss+xml\" />\n\
+         \x20   <description>Notes the house has set down: arrivals, tales, openings, and cuttings pinned from farther away.</description>\n\
+         \x20   <language>en</language>\n\
+         \x20   <lastBuildDate>{last_build}</lastBuildDate>\n\
+         {items}\
+         \x20 </channel>\n\
+         </rss>\n"
+    );
+
+    Ok((
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "application/rss+xml; charset=utf-8",
+        )],
+        body,
+    ))
+}
+
 pub async fn get_bookings_by_tokens(
     State(service): State<AppService>,
     Json(req): Json<crate::models::BookingsByTokensRequest>,

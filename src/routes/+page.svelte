@@ -20,7 +20,7 @@
     import CorrespondenceInvite from '$lib/components/CorrespondenceInvite.svelte';
     import FirstLook from '$lib/components/FirstLook.svelte';
     import HeroWorkshopTeaser from '$lib/components/HeroWorkshopTeaser.svelte';
-    import { heroImageUrl, pickHeroFigurine, sortWorks, visibleWorks } from '$lib/home-hero';
+    import { heroImageUrl, pickHeroFigurine, pickLatestAddedWork, sortWorks, visibleWorks } from '$lib/home-hero';
     import { syncAttr } from '$lib/hydrate-image';
     import { visitorBook } from '$lib/stores/visitor-book.svelte';
     import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
@@ -210,6 +210,7 @@
         ];
     })());
     let heroObjectHref = $derived(heroPhotoFigurine ? figurineHref(heroPhotoFigurine, 'home_featured') : '/figurines');
+    let latestAddedWork = $derived(pickLatestAddedWork([...collectionFigurines, ...inProgressFigurines]));
     let showHeroCaption = $derived(Boolean(heroObjectName));
     // The hero photo. `heroFigurine` is the deterministic pick made by pickHeroFigurine —
     // the same function load() ran at build time, over the same data — so this string is
@@ -644,7 +645,11 @@
                                 onSelect={(e) => openReelModal('b', e)}
                             />
                             <span class="hw-teasers-label">{$t('homeWorkshopTeaserLabel')}</span>
-                            <HeroGazettePlate leaves={gazetteHome.leaves} cuttings={gazetteHome.cuttings} />
+                            <HeroGazettePlate
+                                leaves={gazetteHome.leaves}
+                                cuttings={gazetteHome.cuttings}
+                                latestWork={latestAddedWork}
+                            />
                         </div>
                         {#if availableFigurines.length === 0}
                             <p class="release-note">{$t('homeReleaseNote')}</p>

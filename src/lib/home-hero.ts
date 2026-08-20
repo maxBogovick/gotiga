@@ -52,6 +52,20 @@ function createdAtMs(iso?: string | null): number {
     return Number.isFinite(t) ? t : 0;
 }
 
+/** Newest work by `createdAt`, including pieces still on the bench. */
+export function pickLatestAddedWork(items: FigurineListItem[]): FigurineListItem | null {
+    let best: FigurineListItem | null = null;
+    let bestMs = Number.NEGATIVE_INFINITY;
+    for (const item of items) {
+        const ms = createdAtMs(item.createdAt);
+        if (!best || ms > bestMs || (ms === bestMs && item.id.localeCompare(best.id) > 0)) {
+            best = item;
+            bestMs = ms;
+        }
+    }
+    return best;
+}
+
 /**
  * The work the hero shows. `works` must already be sorted (sortWorks).
  *

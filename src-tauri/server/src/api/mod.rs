@@ -957,7 +957,9 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
         .nest("/api/v1", api)
         .route("/sitemap.xml", get(handlers::sitemap_xml))
         // Live RSS feed of new works — connected to Pinterest's "Подключить RSS-канал".
-        .route("/feed.xml", get(handlers::feed_rss));
+        .route("/feed.xml", get(handlers::feed_rss))
+        // Live RSS of gazette leaves — separate from the Pinterest works channel.
+        .route("/gazette/feed.xml", get(handlers::gazette_feed_rss));
     for subdir in ["images", "videos", "audio", "backgrounds", "avatars"] {
         app = app.nest_service(
             &format!("/static/{}", subdir),

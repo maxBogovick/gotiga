@@ -1,4 +1,5 @@
-import type { GazetteCutting, GazetteKind, GazetteLeaf } from '$lib/types/api';
+import { figurineHref } from '$lib/figurineHref';
+import type { FigurineListItem, GazetteCutting, GazetteKind, GazetteLeaf } from '$lib/types/api';
 import type { Lang, TranslationKey } from '$lib/i18n';
 
 export const TITLE_MAX = 200;
@@ -67,44 +68,91 @@ export function leafCopy(leaf: GazetteLeaf, lang: Lang): { title: string; dek: s
   };
 }
 
+export type GazetteSlipKind = 'leaf' | 'cut' | 'work';
+
 export interface GazetteSlip {
   id: string;
   title: string;
+  href: string;
+  kind: GazetteSlipKind;
   markKey?: string;
   markUrl?: string | null;
   letter?: string;
+  dateLabel?: string;
+  imageUrl?: string | null;
+  external?: boolean;
+}
+
+export type GazettePlateWork = Pick<
+  FigurineListItem,
+  'id' | 'slug' | 'name' | 'createdAt' | 'faceImageUrl' | 'thumbUrl'
+>;
+
+function workSlip(fig: GazettePlateWork, lang: Lang): GazetteSlip | null {
+  const title = fig.name.trim();
+  if (!title) return null;
+  const imageUrl = (fig.thumbUrl ?? fig.faceImageUrl)?.trim() || null;
+  return {
+    id: `work-${fig.id}`,
+    title,
+    href: figurineHref(fig, 'home_plate'),
+    kind: 'work',
+    dateLabel: quietDate(fig.createdAt, lang),
+    imageUrl,
+  };
 }
 
 /**
- * Slips for the hero plate: house leaves first, then world cuttings
- * (pinned first, as the API already sorts them). Enough items that the
- * square can actually turn; a single slip would sit still.
+ * Slips for the hero plate: the newest work is always mixed in, then house
+ * leaves, then world cuttings (pinned first, as the API already sorts them).
+ * Each slip opens its own leaf, cutting, or figurine — never the gazette index.
  */
 export function plateSlips(
   leaves: GazetteLeaf[],
   cuttings: GazetteCutting[],
   lang: Lang,
+  latestWork?: GazettePlateWork | null,
   max = 6,
 ): GazetteSlip[] {
+  const mixed = latestWork ? workSlip(latestWork, lang) : null;
+  const skipArrivalId = mixed ? latestWork?.id : null;
+  const budget = mixed ? Math.max(0, max - 1) : max;
   const out: GazetteSlip[] = [];
+
   for (const leaf of leaves) {
+    if (out.length >= budget) break;
+    if (skipArrivalId && leaf.figurineId === skipArrivalId && leaf.kind === 'arrival') continue;
     const title = leafCopy(leaf, lang).title;
     if (!title) continue;
-    out.push({ id: `leaf-${leaf.id}`, title });
-    if (out.length >= max) return out;
+    const cover = leafCoverUrl(leaf);
+    out.push({
+      id: `leaf-${leaf.id}`,
+      title,
+      href: leafHref(leaf, 'home_plate'),
+      kind: 'leaf',
+      dateLabel: quietDate(leafWhen(leaf), lang),
+      imageUrl: cover || null,
+    });
   }
   for (const cut of cuttings) {
+    if (out.length >= budget) break;
     const title = decodeEntities(cut.title.trim());
     if (!title) continue;
+    const href = cut.url.trim();
+    if (!href) continue;
     out.push({
       id: `cut-${cut.id}`,
       title,
+      href,
+      kind: 'cut',
+      external: true,
       markKey: cut.markKey,
       markUrl: cut.markUrl,
       letter: cut.sourceName,
     });
-    if (out.length >= max) break;
   }
+
+  if (mixed) out.unshift(mixed);
   return out;
 }
 

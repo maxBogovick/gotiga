@@ -42,7 +42,7 @@
   let { data } = $props();
   let figurines = $derived(data.figurines);
 
-  let searchQuery = $state(page.url.searchParams.get('q') ?? '');
+  let searchQuery = $state('');
   let mainFilter = $state<MainFilter>('all');
   let sortMode = $state<SortMode>('curated');
   let yearFilter = $state('all');
@@ -278,6 +278,9 @@
     savedFigurines.load();
     houseClock.start();
     showingRooms.load();
+    // `page.url.searchParams` is forbidden during prerender — seed `?q=` only
+    // in the browser, after the static archive HTML has been written.
+    searchQuery = page.url.searchParams.get('q') ?? '';
     try {
       const viewed: string[] = JSON.parse(localStorage.getItem('gotiga_viewed') ?? '[]');
       viewedIds = new Set(viewed);
