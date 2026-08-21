@@ -1,11 +1,11 @@
 <script lang="ts">
   import { getContext } from 'svelte';
   import { figurineHref } from '$lib/figurineHref';
-  import { fade } from 'svelte/transition';
   import { t } from '$lib/i18n';
   import { resolveWebpUrl } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
   import GalleryPlateActions from '$lib/components/figurine-detail/GalleryPlateActions.svelte';
+  import BrassLens from '$lib/components/BrassLens.svelte';
   import FigurineStatusPanel from '$lib/components/FigurineStatusPanel.svelte';
   import FigurineClaimRow from '$lib/components/FigurineClaimRow.svelte';
   import BecomingReveal from '$lib/components/BecomingReveal.svelte';
@@ -74,40 +74,35 @@
             />
           {/await}
         </div>
-      {:else if ctx.useDaguerreotype}
-        <div class="image-layer">
-          {#await import('$lib/components/LivingDaguerreotype.svelte') then { default: LivingDaguerreotype }}
-            <LivingDaguerreotype
-              src={ctx.resolveUrl(ctx.currentImage?.url)}
-              depthSrc={ctx.resolveUrl(ctx.currentImage?.depthUrl) || null}
-              intensity={ctx.currentImage?.parallaxIntensity ?? undefined}
-              alt={ctx.altTextFor(ctx.currentImage)}
-              class="w-full h-full"
-              onActivate={() => ctx.canOpenLightbox && ctx.openLightbox(ctx.activeImageIndex)}
-            />
-          {/await}
-        </div>
       {:else}
-        {#key ctx.currentImage?.id}
-          <div class="image-layer" transition:fade={{ duration: 220 }}>
-            {#await import('$lib/components/BrassLens.svelte') then { default: BrassLens }}
-              <BrassLens
+        <div class="image-layer">
+          <BrassLens
+            src={ctx.resolveUrl(ctx.currentImage?.url)}
+            thumbSrc={ctx.resolveUrl(ctx.currentImage?.thumbUrl)}
+            sizes="(min-width: 900px) 50vw, 100vw"
+            alt={ctx.altTextFor(ctx.currentImage)}
+            class="w-full h-full"
+            imageFit={ctx.currentImageFit}
+            objectPosition={ctx.currentImage?.focalX != null && ctx.currentImage?.focalY != null
+              ? `${ctx.currentImage.focalX * 100}% ${ctx.currentImage.focalY * 100}%`
+              : 'center center'}
+            lensEnabled={ctx.isLensEnabled}
+            onSwipeLeft={() => ctx.sortedImages.length > 1 && ctx.selectImage(ctx.activeImageIndex + 1)}
+            onSwipeRight={() => ctx.sortedImages.length > 1 && ctx.selectImage(ctx.activeImageIndex - 1)}
+          />
+          {#if ctx.useDaguerreotype}
+            {#await import('$lib/components/LivingDaguerreotype.svelte') then { default: LivingDaguerreotype }}
+              <LivingDaguerreotype
                 src={ctx.resolveUrl(ctx.currentImage?.url)}
-                thumbSrc={ctx.resolveUrl(ctx.currentImage?.thumbUrl)}
-                sizes="(min-width: 900px) 50vw, 100vw"
+                depthSrc={ctx.resolveUrl(ctx.currentImage?.depthUrl) || null}
+                intensity={ctx.currentImage?.parallaxIntensity ?? undefined}
                 alt={ctx.altTextFor(ctx.currentImage)}
                 class="w-full h-full"
-                imageFit={ctx.currentImageFit}
-                objectPosition={ctx.currentImage?.focalX != null && ctx.currentImage?.focalY != null
-                  ? `${ctx.currentImage.focalX * 100}% ${ctx.currentImage.focalY * 100}%`
-                  : 'center center'}
-                lensEnabled={ctx.isLensEnabled}
-                onSwipeLeft={() => ctx.sortedImages.length > 1 && ctx.selectImage(ctx.activeImageIndex + 1)}
-                onSwipeRight={() => ctx.sortedImages.length > 1 && ctx.selectImage(ctx.activeImageIndex - 1)}
+                onActivate={() => ctx.canOpenLightbox && ctx.openLightbox(ctx.activeImageIndex)}
               />
             {/await}
-          </div>
-        {/key}
+          {/if}
+        </div>
       {/if}
 
       {#if ctx.sortedImages.length > 1}

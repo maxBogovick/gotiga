@@ -292,7 +292,7 @@
         {#if resolved.backdropKind === 'image'}
           <label class="row">
             <span>{$t('adminReelImage')}</span>
-            <input type="text" bind:value={cfg.backgroundImage} placeholder="/images/main.jpg" />
+            <input type="text" bind:value={cfg.backgroundImage} placeholder="/images/cabinet-bg.jpeg" />
           </label>
 
           <label class="row">

@@ -1,17 +1,19 @@
 <script lang="ts">
   /**
    * A small looping locket in the hero, hinting at the workshop reel further
-   * down the page. Starts playing only after the hero's own entrance settles,
-   * so it never competes with the hero photo for bandwidth or attention.
+   * down the page. The poster sits in the prerendered HTML (~5 KB). The video
+   * itself is mounted after `load`, so it never shares the Slow 4G pipe with
+   * the hero photograph.
    */
   import { onMount } from 'svelte';
+  import { afterLoadIdle } from '$lib/after-load-idle';
 
   let {
     webm = '/images/workshop/atelier-reel-tiny.webm',
     mp4 = '/images/workshop/atelier-reel-tiny.mp4',
     poster = '/images/workshop/atelier-reel-tiny-poster.jpg',
     label,
-    delayMs = 1300,
+    delayMs = 0,
     onSelect,
   }: {
     webm?: string;
@@ -23,14 +25,19 @@
   } = $props();
 
   let videoEl = $state<HTMLVideoElement>();
+  let armed = $state(false);
   const reducedMotion =
     typeof window !== 'undefined' &&
     window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   onMount(() => {
-    if (reducedMotion || !videoEl) return;
-    const el = videoEl;
+    const stopArm = afterLoadIdle(() => { armed = true; });
+    return () => stopArm();
+  });
 
+  $effect(() => {
+    if (!armed || reducedMotion || !videoEl) return;
+    const el = videoEl;
     const startTimer = setTimeout(() => el.play().catch(() => {}), delayMs);
 
     function onVisibility() {
@@ -48,19 +55,23 @@
 
 <button type="button" class="hw-teaser" aria-label={label} onclick={(e) => onSelect?.(e)}>
   <span class="hw-ring" aria-hidden="true"></span>
-  <video
-    bind:this={videoEl}
-    class="hw-video"
-    {poster}
-    muted
-    loop
-    playsinline
-    preload="none"
-    aria-hidden="true"
-  >
-    <source src={webm} type="video/webm" />
-    <source src={mp4} type="video/mp4" />
-  </video>
+  {#if armed}
+    <video
+      bind:this={videoEl}
+      class="hw-video"
+      {poster}
+      muted
+      loop
+      playsinline
+      preload="none"
+      aria-hidden="true"
+    >
+      <source src={webm} type="video/webm" />
+      <source src={mp4} type="video/mp4" />
+    </video>
+  {:else}
+    <img src={poster} alt="" class="hw-video" decoding="async" fetchpriority="low" />
+  {/if}
 </button>
 
 <style>

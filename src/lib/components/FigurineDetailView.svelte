@@ -10,11 +10,8 @@
   import MemoryMirror from '$lib/components/MemoryMirror.svelte';
   import Lightbox from '$lib/components/Lightbox.svelte';
   import SealedDoor from '$lib/components/SealedDoor.svelte';
+  import LeafTurn from '$lib/components/figurine-detail/LeafTurn.svelte';
   import SpecimenLayout from '$lib/components/figurine-detail/layouts/SpecimenLayout.svelte';
-  import ShowcaseLayout from '$lib/components/figurine-detail/layouts/ShowcaseLayout.svelte';
-  import CodexLayout from '$lib/components/figurine-detail/layouts/CodexLayout.svelte';
-  import DiptychLayout from '$lib/components/figurine-detail/layouts/DiptychLayout.svelte';
-  import BroadsideLayout from '$lib/components/figurine-detail/layouts/BroadsideLayout.svelte';
   import { goto, replaceState } from '$app/navigation';
   import { page } from '$app/stores';
   import { browser } from '$app/environment';
@@ -57,6 +54,20 @@
     return images.find(i => i.imageType === 'face') ?? images[0] ?? null;
   });
   let layout = $derived(figurine.displayLayout ?? 'specimen');
+
+  // Specimen is the default leaf and the one prev/next paging almost always
+  // stays on — keep it eager so the plate is in the DOM for the view-transition
+  // snapshot. The other four layouts load on demand.
+  const LAYOUT_LOADERS = {
+    showcase: () => import('$lib/components/figurine-detail/layouts/ShowcaseLayout.svelte'),
+    codex: () => import('$lib/components/figurine-detail/layouts/CodexLayout.svelte'),
+    diptych: () => import('$lib/components/figurine-detail/layouts/DiptychLayout.svelte'),
+    broadside: () => import('$lib/components/figurine-detail/layouts/BroadsideLayout.svelte'),
+  };
+  function loadAltLayout(name: string) {
+    return LAYOUT_LOADERS[name as keyof typeof LAYOUT_LOADERS]?.() ?? null;
+  }
+  let altLayoutModule = $derived(layout === 'specimen' ? null : loadAltLayout(layout));
 
   function parseDisplayConfig(raw: string | null | undefined): DisplayConfig | null {
     if (!raw) return null;
@@ -476,16 +487,20 @@
   let currentImageFit = $derived<'cover' | 'contain'>(imageViewMode === 'detail' ? 'cover' : 'contain');
 
   // Living daguerreotype (2.5D depth parallax) is the resting presentation of the
-  // main plate. It only takes over on desktop pointers, with motion allowed, while
-  // the lens is off and we're in fit (contain) mode — otherwise BrassLens keeps its
-  // lens / mobile pinch-zoom / lightbox behaviour untouched.
+  // main plate on a desktop-width pointer. Phones and tablets never mount the
+  // WebGL canvas: a bluetooth mouse can still make `(pointer: fine)` true on a
+  // 390px screen, so the gate is hover + min-width 860 as well as the pointer.
+  // Lens / raking / fit-mode still apply on desktop; BrassLens keeps pinch-zoom
+  // and lightbox on mobile.
   //
   // It is also suppressed while a prev/next page-turn is armed: a WebGL canvas does
   // not survive a view-transition snapshot reliably across browsers (Safari leaves
   // it blank), so during the turn we render the plain <img> the browser can capture
   // cleanly, and the daguerreotype re-mounts once the leaf has settled.
   let isPointerFine = $state(false);
+  let isDesktopViewport = $state(false);
   let prefersReducedMotion = $state(false);
+  let stopPlateMotion: (() => void) | null = null;
 
   // Raking-light examination ("осмотр под косым светом"): a conservator's mode,
   // mutually exclusive with the lens and the resting daguerreotype — all three
@@ -500,8 +515,8 @@
       && !pageTurn.direction
   );
   let useDaguerreotype = $derived(
-    isPointerFine && !prefersReducedMotion && !isLensEnabled && !isRakingEnabled
-      && imageViewMode === 'fit' && !pageTurn.direction
+    isPointerFine && isDesktopViewport && !prefersReducedMotion && !isLensEnabled
+      && !isRakingEnabled && imageViewMode === 'fit' && !pageTurn.direction
   );
 
   // Stage adapts to the work's real proportion. The gallery grid itself stays
@@ -1097,8 +1112,32 @@
         ),
       });
     }, 8000);
-    isPointerFine = window.matchMedia('(pointer: fine)').matches;
-    prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const pointerMq = window.matchMedia('(pointer: fine)');
+    const hoverMq = window.matchMedia('(hover: hover)');
+    const wideMq = window.matchMedia('(min-width: 860px)');
+    const motionMq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const syncPlateMotion = () => {
+      isPointerFine = pointerMq.matches;
+      isDesktopViewport = hoverMq.matches && wideMq.matches;
+      prefersReducedMotion = motionMq.matches;
+    };
+    syncPlateMotion();
+    pointerMq.addEventListener('change', syncPlateMotion);
+    hoverMq.addEventListener('change', syncPlateMotion);
+    wideMq.addEventListener('change', syncPlateMotion);
+    motionMq.addEventListener('change', syncPlateMotion);
+    stopPlateMotion = () => {
+      pointerMq.removeEventListener('change', syncPlateMotion);
+      hoverMq.removeEventListener('change', syncPlateMotion);
+      wideMq.removeEventListener('change', syncPlateMotion);
+      motionMq.removeEventListener('change', syncPlateMotion);
+    };
+    // The daguerreotype overlay unmounts for the page-turn snapshot (WebGL
+    // canvases don't capture); BrassLens stays so the plate never blanks.
+    // Warm this chunk so the overlay can mount as soon as the leaf settles.
+    if (pointerMq.matches && hoverMq.matches && wideMq.matches && !motionMq.matches) {
+      void import('$lib/components/LivingDaguerreotype.svelte');
+    }
     window.addEventListener('keydown', handleKeydown);
     window.addEventListener('scroll', onScroll, { passive: true });
     document.addEventListener('visibilitychange', handleVisibility);
@@ -1118,6 +1157,7 @@
     // onDestroy runs during SSR teardown in Svelte 5; these listeners were only added
     // in onMount (client), so guard the browser-only cleanup.
     if (typeof window !== 'undefined') {
+      stopPlateMotion?.();
       window.removeEventListener('keydown', handleKeydown);
       window.removeEventListener('scroll', onScroll);
       document.removeEventListener('visibilitychange', handleVisibility);
@@ -1168,6 +1208,7 @@
     get lastBleed() { return lastBleed; },
     get plateStyle() { return plateStyle; },
     get viewTransitionName() { return viewTransitionName; },
+    get isPageTurning() { return Boolean(pageTurn.direction); },
     get isCandleLit() { return isCandleLit; },
     get hasHistorySection() { return hasHistorySection; },
     get hasMakingSection() { return hasMakingSection; },
@@ -1342,16 +1383,12 @@
       </p>
     {/if}
 
-    {#if layout === 'specimen'}
+    {#if layout === 'specimen' || !altLayoutModule}
       <SpecimenLayout />
-    {:else if layout === 'showcase'}
-      <ShowcaseLayout />
-    {:else if layout === 'codex'}
-      <CodexLayout />
-    {:else if layout === 'diptych'}
-      <DiptychLayout />
-    {:else if layout === 'broadside'}
-      <BroadsideLayout />
+    {:else}
+      {#await altLayoutModule then { default: Layout }}
+        <Layout />
+      {/await}
     {/if}
 
     {#if gazetteLeaves.length > 0}
@@ -1368,18 +1405,25 @@
     {/if}
 
     {/if}
+
+    {#if prev || next}
+      <LeafTurn {prev} {next} />
+    {/if}
   </div>
 </div>
 
-<!-- Mobile swipe edge indicators — only on touch devices, only when prev/next exist -->
+<!-- Mobile swipe edge indicators — appear after the first screen, when the
+     header plates have left. Quiet chips; the chevron is the copper accent. -->
 {#if prev && !showLightbox && !showRequestModal && !showStoryModal && !isGrimoireOpen}
   <a
     href={figurineHref(prev)}
     class="swipe-edge swipe-edge--prev"
+    class:is-shown={scrollY > 48}
     aria-label="{$t('figurineNavPrev')}: {prev.name}"
     data-sveltekit-preload-data="hover"
+    onclick={(e) => armPageTurn(e, 'backward')}
   >
-    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+    <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
       <path d="M6.5 2L3.5 5 6.5 8" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
     <span class="swipe-edge-name">{prev.name}</span>
@@ -1389,10 +1433,12 @@
   <a
     href={figurineHref(next)}
     class="swipe-edge swipe-edge--next"
+    class:is-shown={scrollY > 48}
     aria-label="{$t('figurineNavNext')}: {next.name}"
     data-sveltekit-preload-data="hover"
+    onclick={(e) => armPageTurn(e, 'forward')}
   >
-    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+    <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
       <path d="M3.5 2l3 3L3.5 8" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
     <span class="swipe-edge-name">{next.name}</span>

@@ -117,7 +117,7 @@
 
 /* ── Title: dark-mode override of the shared figurine-title class ── */
 .bd-root .figurine-title {
-  font-weight: 300;
+  font-weight: 500;
   color: var(--bd-paper);
   letter-spacing: -0.015em;
   margin-bottom: 0.5rem;

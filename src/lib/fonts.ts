@@ -11,6 +11,7 @@ export interface SiteFont {
 
 export const SITE_FONTS: SiteFont[] = [
 	{ id: 'fraunces', name: 'Fraunces', stack: "'Fraunces', Georgia, serif" },
+	{ id: 'newsreader', name: 'Newsreader', stack: "'Newsreader', Georgia, serif" },
 	{ id: 'cormorant', name: 'Cormorant', stack: "'Cormorant Garamond', Georgia, serif" },
 	{ id: 'garamond', name: 'Garamond', stack: "'EB Garamond', Georgia, serif" },
 	{ id: 'instrument', name: 'Instrument Sans', stack: "'Instrument Sans', system-ui, sans-serif" },
@@ -19,7 +20,6 @@ export const SITE_FONTS: SiteFont[] = [
 
 const STACK_BY_ID: Record<string, string> = {
 	...Object.fromEntries(SITE_FONTS.map((f) => [f.id, f.stack])),
-	newsreader: "'EB Garamond', Georgia, serif",
 	spectral: "'EB Garamond', Georgia, serif",
 	lora: "'EB Garamond', Georgia, serif",
 	yeseva: "'Fraunces', Georgia, serif",

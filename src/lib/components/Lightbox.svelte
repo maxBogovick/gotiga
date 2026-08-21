@@ -19,10 +19,13 @@
     onClose: (index?: number) => void;
   } = $props();
 
-  let current = $state(0);
-  let isImageLoaded = $state(false);
+  let current = $state(startIndex);
+  let loadedUrl = $state('');
   let touchStartX = 0;
   let touchStartY = 0;
+
+  let currentImage = $derived(images[current]);
+  let isImageLoaded = $derived(Boolean(currentImage && loadedUrl === currentImage.url));
 
   // ── Zoom + pan (deep-look mode) ──────────────────────────────────────────
   // Mirrors BrassLens' interaction model so the lightbox — the place a
@@ -53,19 +56,37 @@
   }
 
   $effect(() => { current = startIndex; });
-  $effect(() => { current; isImageLoaded = false; resetZoom(false); });
+  $effect(() => { current; resetZoom(false); });
 
   function close() { onClose(current); }
 
-  function revealWhenReady(node: HTMLImageElement) {
-    const done = () => { isImageLoaded = true; };
-    if (node.complete && node.naturalWidth > 0) {
-      done();
-      return;
-    }
+  function urlAlreadyDecoded(url: string): boolean {
+    if (typeof Image === 'undefined' || !url) return false;
+    const probe = new Image();
+    probe.src = url;
+    return probe.complete && probe.naturalWidth > 0;
+  }
+
+  // Bound to the visible <img>. When `url` changes (same node, new src) `update`
+  // re-reads `.complete` so a cached file never waits on a second load event —
+  // and never shares a loaded flag with a previous frame.
+  function revealWhenReady(node: HTMLImageElement, url: string) {
+    let bound = url;
+    const nodeShowsBound = () => node.getAttribute('src') === bound;
+    const done = () => {
+      if (nodeShowsBound()) loadedUrl = bound;
+    };
+    const sync = () => {
+      if (nodeShowsBound() && node.complete && node.naturalWidth > 0) done();
+    };
+    sync();
     node.addEventListener('load', done);
     node.addEventListener('error', done);
     return {
+      update(next: string) {
+        bound = next;
+        sync();
+      },
       destroy() {
         node.removeEventListener('load', done);
         node.removeEventListener('error', done);
@@ -73,8 +94,17 @@
     };
   }
 
-  function prev() { if (zoomed) return; current = (current - 1 + images.length) % images.length; }
-  function next() { if (zoomed) return; current = (current + 1) % images.length; }
+  function goTo(index: number) {
+    if (images.length === 0) return;
+    const nextIndex = (index + images.length) % images.length;
+    if (nextIndex === current) return;
+    const nextUrl = images[nextIndex]?.url ?? '';
+    current = nextIndex;
+    loadedUrl = urlAlreadyDecoded(nextUrl) ? nextUrl : '';
+  }
+
+  function prev() { if (zoomed) return; goTo(current - 1); }
+  function next() { if (zoomed) return; goTo(current + 1); }
 
   function handleKey(e: KeyboardEvent) {
     if (e.key === 'Escape')      { zoomed ? resetZoom() : close(); }
@@ -382,18 +412,17 @@
         </button>
       {/if}
 
-      {#key current}
+      {#if currentImage}
         <div
           class="lb-image-wrap"
-          transition:fade={{ duration: 130 }}
           style="
             transform: scale({scale}) translate({panX / scale}px, {panY / scale}px);
             transition: {transitioning ? 'transform 0.26s cubic-bezier(0.22,0.1,0.2,1)' : 'none'};
           "
         >
-          {#if !isImageLoaded && images[current].thumbUrl}
+          {#if !isImageLoaded && currentImage.thumbUrl}
             <img
-              src={images[current].thumbUrl}
+              src={currentImage.thumbUrl}
               alt=""
               aria-hidden="true"
               class="lb-image-blur"
@@ -404,18 +433,17 @@
             </div>
           {/if}
           <img
-            src={images[current].url}
-            alt={images[current].alt ?? ''}
+            src={currentImage.url}
+            alt={currentImage.alt ?? ''}
             class="lb-image"
             class:lb-image--loaded={isImageLoaded}
             style="filter: sepia(0.06) contrast(1.02);"
-            use:revealWhenReady
+            use:revealWhenReady={currentImage.url}
             draggable="false"
           />
-          <!-- Grain overlay on image -->
           <div class="lb-grain" aria-hidden="true"></div>
         </div>
-      {/key}
+      {/if}
 
       {#if hasMultiple && !zoomed}
         <button
@@ -453,7 +481,7 @@
           <button
             class="lb-thumb"
             class:lb-thumb--active={i === current}
-            onclick={() => current = i}
+            onclick={() => goTo(i)}
             aria-label="{$t('lightboxPhoto')} {i + 1}"
             aria-current={i === current ? 'true' : undefined}
           >

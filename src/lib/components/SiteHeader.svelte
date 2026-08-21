@@ -9,6 +9,8 @@
   import { fade, fly } from 'svelte/transition';
   import { api, resolveMediaUrl } from '$lib/api';
   import RavenWatcher from '$lib/components/RavenWatcher.svelte';
+  import NeighborPlate from '$lib/components/NeighborPlate.svelte';
+  import { afterLoadIdle } from '$lib/after-load-idle';
   import { keeper } from '$lib/stores/keeper.svelte';
   import { ARCHIVE_KEEPER_INPUT_ID } from '$lib/keeper-search';
   import type { AuthorProfile, Figurine, FigurineListItem } from '$lib/types/api';
@@ -77,6 +79,7 @@
   // HTML that already contained them.
   let leafChrome = $state(false);
   let birdReady = $state(false);
+  let stopBird: (() => void) | null = null;
 
   function updateAvatarVisibility() {
     if (pathname !== '/') {
@@ -91,7 +94,13 @@
     return pathname === href || pathname.startsWith(`${href}/`);
   }
 
-  function toggleMobileNav() { mobileNavOpen = !mobileNavOpen; }
+  function toggleMobileNav() {
+    mobileNavOpen = !mobileNavOpen;
+    if (mobileNavOpen) {
+      mobileContactOpen = false;
+      keeper.closePanel();
+    }
+  }
   function closeMobileNav() { mobileNavOpen = false; }
   function togglePanel() { panelOpen = !panelOpen; keeper.closePanel(); }
   function closePanel()  { panelOpen = false; }
@@ -155,6 +164,7 @@
   // its outside-click handler doesn't fight the desktop one.
   let mobileContactOpen = $state(false);
   let mobileContactRef = $state<HTMLElement | null>(null);
+  let mobileContactPanelRef = $state<HTMLElement | null>(null);
 
   function toggleMobileContact() {
     mobileContactOpen = !mobileContactOpen;
@@ -165,10 +175,17 @@
   }
   function closeMobileContact() { mobileContactOpen = false; }
 
+  function openWriteFromMenu() {
+    mobileNavOpen = false;
+    mobileContactOpen = true;
+    keeper.closePanel();
+  }
+
   function handleMobileContactOutside(e: MouseEvent) {
-    if (mobileContactOpen && mobileContactRef && !mobileContactRef.contains(e.target as Node)) {
-      mobileContactOpen = false;
-    }
+    if (!mobileContactOpen) return;
+    const node = e.target as Node;
+    if (mobileContactRef?.contains(node) || mobileContactPanelRef?.contains(node)) return;
+    mobileContactOpen = false;
   }
 
   let keeperPanelRef = $state<HTMLElement | null>(null);
@@ -245,11 +262,7 @@
 
   onMount(async () => {
     leafChrome = true;
-    if ('requestIdleCallback' in window) {
-      requestIdleCallback(() => { birdReady = true; }, { timeout: 2500 });
-    } else {
-      setTimeout(() => { birdReady = true; }, 600);
-    }
+    stopBird = afterLoadIdle(() => { birdReady = true; });
     allClaims.load();
     allClaims.verify();
     allClaims.startPolling();
@@ -280,6 +293,7 @@
   });
 
   onDestroy(() => {
+    stopBird?.();
     allClaims.stopPolling();
     if (typeof document !== 'undefined') {
       document.removeEventListener('click', handleOutside, { capture: true });
@@ -332,7 +346,9 @@
           --avatar-bg: {avatarBg};
         "
       >
-        <img src={headerAvatarUrl} alt="" class="header-avatar-img" loading="eager" decoding="async" />
+        {#if avatarVisible}
+        <img src={headerAvatarUrl} alt="" class="header-avatar-img" decoding="async" />
+        {/if}
         <span class="header-avatar-tip">{headerAuthorName}</span>
       </a>
       {#if isWorkLeaf}
@@ -362,10 +378,8 @@
     <!-- ③ Brand: proscenium centerpiece. On a work leaf, neighbour daguerreotypes
          sit immediately left and right of the raven. -->
     <div class="brand-triptych">
-      {#if isWorkLeaf && leafChrome}
-        {#await import('$lib/components/NeighborPlate.svelte') then { default: NeighborPlate }}
+      {#if isWorkLeaf}
         <NeighborPlate side="prev" work={leafPrev} />
-        {/await}
       {/if}
       <a
         href="/"
@@ -384,10 +398,8 @@
           <span class="brand-sub">Cabinet of Gothic Miniatures</span>
         {/if}
       </a>
-      {#if isWorkLeaf && leafChrome}
-        {#await import('$lib/components/NeighborPlate.svelte') then { default: NeighborPlate }}
+      {#if isWorkLeaf}
         <NeighborPlate side="next" work={leafNext} />
-        {/await}
       {/if}
     </div>
 
@@ -626,19 +638,6 @@
             <path d="M5.4 8.6L1.8 12.2" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
           </svg>
         </button>
-
-        {#if mobileContactOpen}
-          <div class="contact-panel mobile-contact-panel" transition:fade={{ duration: 150 }}>
-            <div class="panel-head">
-              <span class="panel-title">{$t('headerContactLabel')}</span>
-              <button class="panel-close" onclick={closeMobileContact} aria-label="Close">✕</button>
-            </div>
-            <p class="contact-panel-note">{$t('headerContactNote')}</p>
-            {#await import('$lib/components/ContactMessageForm.svelte') then { default: ContactMessageForm }}
-            <ContactMessageForm source="header" compact />
-            {/await}
-          </div>
-        {/if}
       </div>
       <button
         class="mobile-user-btn"
@@ -710,7 +709,35 @@
         onclick={closeMobileNav}
       >{link.label}</a>
     {/each}
+    <div class="mobile-nav-house">
+      <button
+        type="button"
+        class="mobile-nav-link mobile-nav-link--write"
+        onclick={openWriteFromMenu}
+      >{$t('headerContactLabel')}</button>
+      <a
+        href={authStore.isLoggedIn ? '/profile' : '/login'}
+        class="mobile-nav-link"
+        onclick={closeMobileNav}
+      >{authStore.isLoggedIn ? $t('profileTitle') : $t('authLogin')}</a>
+    </div>
   </nav>
+  {#if mobileContactOpen}
+    <div
+      class="contact-panel mobile-contact-panel"
+      bind:this={mobileContactPanelRef}
+      transition:fade={{ duration: 150 }}
+    >
+      <div class="panel-head">
+        <span class="panel-title">{$t('headerContactLabel')}</span>
+        <button class="panel-close" onclick={closeMobileContact} aria-label="Close">✕</button>
+      </div>
+      <p class="contact-panel-note">{$t('headerContactNote')}</p>
+      {#await import('$lib/components/ContactMessageForm.svelte') then { default: ContactMessageForm }}
+      <ContactMessageForm source="header" compact />
+      {/await}
+    </div>
+  {/if}
 </header>
 
 <!-- Status change notifications -->
@@ -1197,15 +1224,14 @@
 
 
   .brand-name {
-    font-family: var(--font-display);
+    font-family: var(--font-title);
     font-style: italic;
-    font-weight: 300;
+    font-weight: 500;
     font-size: clamp(1.7rem, 2.35vw, 2.15rem);
-    font-optical-sizing: none;
-    font-variation-settings: 'opsz' 144, 'SOFT' 40, 'WONK' 1, 'wght' 300;
-    letter-spacing: 0.015em;
+    font-optical-sizing: auto;
+    letter-spacing: -0.02em;
     text-transform: none;
-    line-height: 0.86;
+    line-height: 1;
     color: var(--ink);
     transition: color 0.45s var(--ease);
   }
@@ -1217,14 +1243,10 @@
     align-items: baseline;
   }
   .brand-mark-cap {
-    font-size: 1.22em;
-    letter-spacing: -0.05em;
+    font-size: 1.18em;
+    letter-spacing: -0.04em;
     margin-right: 0.01em;
-    line-height: 0.78;
-    font-variation-settings: 'opsz' 144, 'SOFT' 20, 'WONK' 1, 'wght' 400;
-  }
-  .brand-mark-rest {
-    font-variation-settings: 'opsz' 144, 'SOFT' 50, 'WONK' 1, 'wght' 300;
+    line-height: 0.9;
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -1886,8 +1908,9 @@
     }
 
     .site-header.is-leaf .header-inner {
+      position: relative;
       height: 50px;
-      padding: 0 10px 0 12px;
+      padding: 0 4px 0 6px;
     }
 
     :global(html:has(.site-header.is-leaf) .with-site-header) {
@@ -1915,6 +1938,40 @@
 
     .site-header.is-leaf .brand {
       padding: 0;
+      grid-column: auto;
+      justify-self: auto;
+    }
+
+    /* Coat of arms, not a stretched grid: prev–raven–next as one lockup,
+       optically centered in the pill. The menu sits on top as a bookmark. */
+    .site-header.is-leaf:not(.is-scrolled) .brand-triptych {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex: none;
+      justify-content: center;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+      pointer-events: none;
+    }
+
+    .site-header.is-leaf:not(.is-scrolled) .brand-triptych :global(a) {
+      pointer-events: auto;
+    }
+
+    .site-header.is-leaf:not(.is-scrolled) .brand-name {
+      display: none;
+    }
+
+    /* After scroll the plates leave — collapse back to a normal app bar. */
+    .site-header.is-leaf.is-scrolled .brand-triptych {
+      position: static;
+      display: flex;
+      flex: 1;
+      justify-content: flex-start;
+      gap: 0;
+      pointer-events: auto;
     }
 
     .brand-inner { gap: 9px; }
@@ -1931,6 +1988,16 @@
       align-items: center;
       gap: 6px;
       margin-left: auto;
+      flex: 0 0 auto;
+      z-index: 2;
+    }
+
+    /* Arrival: the spread is the chrome. Write / account / keeper live in
+       the page and the menu; they return once the plates leave. */
+    .site-header.is-leaf:not(.is-scrolled) .mobile-contact-anchor,
+    .site-header.is-leaf:not(.is-scrolled) .mobile-user-btn,
+    .site-header.is-leaf:not(.is-scrolled) .mobile-keeper-btn {
+      display: none;
     }
 
     .mobile-keeper-btn {
@@ -2100,6 +2167,31 @@
 
     .mobile-nav-link.is-active,
     .mobile-nav-link:hover { color: var(--ink); }
+
+    .mobile-nav-house {
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid color-mix(in srgb, var(--color-ink-primary) 10%, transparent);
+    }
+
+    .mobile-nav-house .mobile-nav-link {
+      width: 100%;
+      border-left: none;
+      border-right: none;
+      border-top: none;
+      background: none;
+      padding: 0;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .mobile-nav-link--write {
+      color: var(--copper, #c65f3c);
+    }
+
+    .mobile-nav-link--write:hover {
+      color: var(--mid, #6f3b24);
+    }
   }
 
   /* ── Notifications ───────────────────────────────────────── */

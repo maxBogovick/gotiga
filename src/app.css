@@ -1,8 +1,8 @@
 /* NOTE: the Google Fonts @import that used to sit on this line is gone on purpose.
-   Fraunces / DM Sans / EB Garamond / Cormorant / Instrument Sans live in the
-   single consolidated, non-blocking <link> in app.html. Do not reintroduce an
-   @import here: it is only discovered after this whole stylesheet has been
-   fetched and parsed, and it blocks rendering — see the comment in app.html. */
+   Fraunces / DM Sans / EB Garamond / Cormorant / Instrument Sans live in
+   static/fonts/ and are injected after `load` (see load-fonts.ts). Do not
+   reintroduce an @import here: it is only discovered after this whole stylesheet
+   has been fetched and parsed, and it blocks rendering. */
 @import "tailwindcss";
 @source "../src/**/*.{svelte,ts,js,html}";
 
@@ -89,6 +89,7 @@
 
   /* ── Typography ─────────────────────────────────────────────────────── */
   --font-display: 'Fraunces', Georgia, serif;
+  --font-title: 'Newsreader', Georgia, serif;
   --font-body: 'DM Sans', system-ui, sans-serif;
   --font-serif: 'EB Garamond', Georgia, serif;
   --font-reading: var(--font-serif);
@@ -226,10 +227,6 @@
     background-color: var(--color-canvas-base);
     min-height: 100svh;
     overflow-x: hidden;
-    /* Warm grain texture — very subtle */
-    background-image:
-      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.72' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23g)' opacity='0.028'/%3E%3C/svg%3E");
-    background-attachment: fixed;
   }
 
   /* ── Headings ── */

@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
   import { fade } from 'svelte/transition';
 
   let { isActive = false } = $props();
@@ -12,10 +11,6 @@
   let rawY = -100;
   let rafId: number | null = null;
 
-  onMount(() => {
-    reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  });
-
   function scheduleUpdate() {
     if (rafId !== null) return;
     rafId = requestAnimationFrame(() => {
@@ -25,31 +20,39 @@
     });
   }
 
-  function handleMouseMove(e: MouseEvent) {
-    if (!isActive) return;
-    rawX = e.clientX;
-    rawY = e.clientY;
-    scheduleUpdate();
-  }
-
-  function handleTouchMove(e: TouchEvent) {
-    if (!isActive || e.touches.length === 0) return;
-    rawX = e.touches[0].clientX;
-    rawY = e.touches[0].clientY;
-    scheduleUpdate();
-  }
-
-  onMount(() => {
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('touchmove', handleTouchMove, { passive: true });
+  $effect(() => {
+    if (typeof window === 'undefined') return;
+    reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   });
 
-  onDestroy(() => {
-    if (typeof window !== 'undefined') {
+  // Listen only while the candle is actually lit. Attaching on mount meant every
+  // figurine page paid a window mousemove/touchmove handler for a tool almost
+  // nobody turns on.
+  $effect(() => {
+    if (!isActive || reduced || typeof window === 'undefined') return;
+
+    function handleMouseMove(e: MouseEvent) {
+      rawX = e.clientX;
+      rawY = e.clientY;
+      scheduleUpdate();
+    }
+    function handleTouchMove(e: TouchEvent) {
+      if (e.touches.length === 0) return;
+      rawX = e.touches[0].clientX;
+      rawY = e.touches[0].clientY;
+      scheduleUpdate();
+    }
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('touchmove', handleTouchMove, { passive: true });
+    return () => {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('touchmove', handleTouchMove);
-      if (rafId !== null) cancelAnimationFrame(rafId);
-    }
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+    };
   });
 </script>
 

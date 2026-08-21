@@ -41,6 +41,7 @@ declare global {
 			readonly lastBleed: { dir: 'prev' | 'next'; img: string } | null;
 			readonly plateStyle: string;
 			readonly viewTransitionName: string;
+			readonly isPageTurning: boolean;
 			readonly isCandleLit: boolean;
 			readonly hasHistorySection: boolean;
 			readonly hasMakingSection: boolean;

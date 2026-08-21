@@ -10,6 +10,7 @@
   import { setCopyOverrides, lang } from '$lib/i18n';
   import { pageTurn } from '$lib/stores/page-turn.svelte';
   import { roomGesture } from '$lib/house-rooms';
+  import { loadSiteFonts } from '$lib/load-fonts';
   import { api } from '$lib/api';
   import type { Lang } from '$lib/i18n';
 
@@ -26,9 +27,6 @@
   let { children } = $props();
   let showSiteHeader = $derived(!page.url.pathname.startsWith('/admin'));
   let hasHeaderOffset = $derived(showSiteHeader && page.url.pathname !== '/');
-  // Detail page has its own DustParticles at higher intensity — skip in layout to avoid double canvas
-  let dustReady = $state(false);
-  let showDust = $derived(dustReady && showSiteHeader && !page.url.pathname.startsWith('/figurines/'));
   // House-descent scroll dimmer: every public page EXCEPT the figurine detail /
   // passport routes, which run their own candle vignette (stacking a second
   // scroll-linked dimmer there would over-darken the specimen).
@@ -67,12 +65,10 @@
     if (!style.parentNode) document.head.appendChild(style);
   }
 
+  let stopFontLoader: (() => void) | null = null;
+
   onMount(() => {
-    if ('requestIdleCallback' in window) {
-      requestIdleCallback(() => { dustReady = true; }, { timeout: 2000 });
-    } else {
-      setTimeout(() => { dustReady = true; }, 400);
-    }
+    stopFontLoader = loadSiteFonts();
 
     if ('serviceWorker' in navigator && import.meta.env.VITE_BUILD_TARGET === 'web') {
       import('virtual:pwa-register').then(({ registerSW }) => {
@@ -116,6 +112,7 @@
   });
 
   onDestroy(() => {
+    stopFontLoader?.();
     stopPreviewListener?.();
     removeMessageListener?.();
     if (typeof document !== 'undefined') applyThemeHighlight(null);
@@ -227,12 +224,6 @@
 <div class="min-h-screen bg-[#f8f1e7]">
   {#if showSiteHeader}
     <SiteHeader />
-  {/if}
-
-  {#if showDust}
-    {#await import('$lib/components/DustParticles.svelte') then { default: DustParticles }}
-      <DustParticles opacity={0.2} />
-    {/await}
   {/if}
 
   {#if showDescent}

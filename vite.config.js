@@ -103,21 +103,6 @@ export default defineConfig(async () => ({
       scope: "/",
       workbox: {
         globPatterns: ["**/*.{js,css,html,ico,png,webp,svg}"],
-        // This ignore is BACK, because the premise of removing it was wrong. The note
-        // here used to say bg-main.png "is gone with the file" — it is not: the asset is
-        // still in static/images/ at 2.4 MB, and it is still referenced by nothing in
-        // src/. What got deleted was the ignore, i.e. the only thing holding a 2.4 MB
-        // dead PNG out of the precache manifest (it matches the `png` glob above and sits
-        // under the 3 MB cap, so workbox takes it).
-        //
-        // That went unnoticed because the service worker was not being built at all in
-        // production — VITE_BUILD_TARGET was empty, so `disable` above was true. Turning
-        // the web target back on (Dockerfile.frontend) makes the SW real, and with it
-        // this rule: without the ignore the precache is 5.5 MB, of which 2.4 MB is a file
-        // no one asked for, downloaded by every first-time visitor.
-        //
-        // The ignore is the safe half of the fix. The right half is deleting the asset.
-        globIgnores: ["**/bg-main.png"],
         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
         // Drop the SPA-only /admin route from the precache. It is never prerendered and
         // pulls in 27 panels — a ~0.5 MB JS chunk plus ~90 KB CSS that the service worker

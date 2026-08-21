@@ -2,7 +2,7 @@
     import { onMount } from 'svelte';
     import { fade, fly } from 'svelte/transition';
     import { cubicOut } from 'svelte/easing';
-    import { api, resolveSrcset, resolveWebpUrl } from '$lib/api';
+    import { api, resolveSrcset, resolveBackgroundSrcset, resolveWebpUrl } from '$lib/api';
     import { figurineHref } from '$lib/figurineHref';
     import { createSiteAnalytics } from '$lib/analytics';
     import AppImage from '$lib/components/AppImage.svelte';
@@ -17,6 +17,7 @@
     import HeroWorkshopTeaser from '$lib/components/HeroWorkshopTeaser.svelte';
     import { heroImageUrl, pickHeroFigurine, pickLatestAddedWork, sortWorks, visibleWorks } from '$lib/home-hero';
     import { syncAttr } from '$lib/hydrate-image';
+    import { afterLoadIdle } from '$lib/after-load-idle';
     import { visitorBook } from '$lib/stores/visitor-book.svelte';
     import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
     import { visitorMarks } from '$lib/stores/visitor-marks.svelte';
@@ -69,11 +70,6 @@
     }));
 
     let isLoaded = $state(false);
-    // Grain is an SVG feTurbulence layer at 200% viewport. Rasterizing it
-    // during the first seconds of load shows up as Total Blocking Time in lab
-    // tools; paint it once the thread is idle — at 3% opacity the delay is
-    // invisible to a visitor.
-    let showGrain = $state(false);
     // Code-split blotter / gazette plate: they must not be in the SSR tree or
     // the client {#await} pending state fights the prerendered HTML. Flip this
     // on mount so hydration is a no-op, then the chunks load off the critical path.
@@ -224,14 +220,12 @@
     // behind faceImageUrl is built for the archive's small cards and goes to mush here.
     let heroDisplayImage = $derived(heroImageUrl(backgroundUrl, heroFigurine, FALLBACK_HERO));
     const HERO_SIZES = '(max-width: 900px) 100vw, 50vw';
-    let heroSrcset = $derived(resolveSrcset(heroDisplayImage));
-    // The format-only fallback, for a hero that has no size siblings to offer: a custom
-    // background (one file by design — see resolveSrcset's comment in api.ts). It is
-    // derived from heroDisplayImage, so it always describes the photograph actually on
-    // screen — handing the browser a WebP <source> from a different picture than the
-    // <img> beneath it is exactly the bug this guards against. resolveWebpUrl returns
-    // null unless a sibling is actually written for that path, so a hero with no WebP
-    // simply gets no <source>.
+    let heroSrcset = $derived(
+        resolveSrcset(heroDisplayImage) ?? resolveBackgroundSrcset(heroDisplayImage)
+    );
+    // Format-only fallback when there is neither a figurine srcset nor a 900px
+    // background sibling (bundled /images/cabinet-bg.jpeg). Prefer the WebP
+    // rewrite when it exists so preload and <picture> point at the same file.
     let heroBackgroundWebp = $derived(heroSrcset ? null : resolveWebpUrl(heroDisplayImage));
 
     // "Отмеченное вами" — the visitor's own private marks, resolved against the
@@ -430,7 +424,7 @@
         // internally, so this stays a no-op if the component ever re-mounts.
         siteAnalytics.pageView();
         siteAnalytics.start();
-        deferHomeExtras = true;
+        const stopExtras = afterLoadIdle(() => { deferHomeExtras = true; });
 
         // Hydration does not touch src/srcset (see hydrate-image.ts): on this prerendered
         // page the hero <img> holds whatever the BUILD resolved, and load() has since
@@ -446,10 +440,6 @@
         visitorMarks.load();
         houseClock.start();
         visitorBook.load();
-        const grainIdle =
-            'requestIdleCallback' in window
-                ? requestIdleCallback(() => { showGrain = true; }, { timeout: 2500 })
-                : setTimeout(() => { showGrain = true; }, 1200);
         // Inside the admin editor's preview iframe: don't pollute the shared
         // localStorage visit flag, and listen for live layout drafts.
         const inHlPreview = new URLSearchParams(window.location.search).has('hlPreview');
@@ -533,6 +523,7 @@
 
         const hintTimer = setTimeout(() => { showHint = true; }, 3000);
         return () => {
+            stopExtras();
             clearTimeout(hintTimer);
             if (mouseRaf) cancelAnimationFrame(mouseRaf);
             stopDwell();
@@ -541,8 +532,6 @@
             pointerMq.removeEventListener('change', syncTiltPreference);
             window.removeEventListener('message', onHlMessage);
             siteAnalytics.stop();
-            if ('requestIdleCallback' in window) cancelIdleCallback(grainIdle as number);
-            else clearTimeout(grainIdle);
         };
     });
 
@@ -587,17 +576,14 @@
         <link rel="preload" as="image" href={heroDisplayImage} fetchpriority="high" />
     {/if}
     {@html `<script type="application/ld+json">${websiteJsonLd}<\/script>`}
-    <!-- The admin's theme/layout CSS is NOT emitted here — see the injectStyle effects. -->
-    <!-- Fonts loaded once globally in app.html -->
+    <!-- Fonts are injected after load from +layout.svelte so they do not
+         share the Slow 4G pipe with this photograph. -->
 </svelte:head>
 
 <svelte:window onmousemove={handleMouseMove} />
 
 <div class="root">
     <div class="cursor-glow" style="transform:translate(calc({mouseX*100}vw - 250px),calc({mouseY*100}vh - 250px))"></div>
-    {#if showGrain}
-        <div class="grain" aria-hidden="true"></div>
-    {/if}
 
     <!-- Not a <main>: the layout (+layout.svelte) already renders the page's single
          <main> landmark around {@render children()}. A second <main> here nested one
@@ -662,7 +648,7 @@
                                 mp4="/images/workshop/atelier-reel-2-tiny.mp4"
                                 poster="/images/workshop/atelier-reel-2-tiny-poster.jpg"
                                 label={$t('homeWorkshopTeaserLabel')}
-                                delayMs={1700}
+                                delayMs={400}
                                 onSelect={(e) => openReelModal('b', e)}
                             />
                             <span class="hw-teasers-label">{$t('homeWorkshopTeaserLabel')}</span>
@@ -734,7 +720,6 @@
                     </div>
                     <div class="img-vignette"></div>
                     <div class="img-grade"></div>
-                    <div class="img-noise"></div>
 
                     {#if showHeroCaption}
                     <a class="art-caption" href={heroObjectHref} aria-label="{heroObjectCta}: {heroObjectName}">
@@ -1135,28 +1120,6 @@
         will-change: transform;
     }
 
-    /* ── GRAIN ───────────────────────────────────── */
-    .grain {
-        position: fixed;
-        inset: -50%;
-        width: 200%;
-        height: 200%;
-        opacity: 0.028;
-        pointer-events: none;
-        z-index: 500;
-        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-        animation: grain-anim 6s steps(1) infinite;
-    }
-    @keyframes grain-anim {
-        0%   { transform: translate(0,0); }
-        16%  { transform: translate(-5%,-8%); }
-        33%  { transform: translate(8%,4%); }
-        50%  { transform: translate(-3%,10%); }
-        66%  { transform: translate(10%,-4%); }
-        83%  { transform: translate(-8%,6%); }
-        100% { transform: translate(0,0); }
-    }
-
     /* Was a bare `main {}` selector; renamed with the element (see the markup note) so
        it still matches after the tag became a <div class="home-main">. */
     .home-main {
@@ -1323,7 +1286,6 @@
 
     @media (prefers-reduced-motion: reduce) {
         .title-word,
-        .grain,
         .sc-line {
             animation: none;
             transform: none;
@@ -1647,15 +1609,6 @@
         background: linear-gradient(180deg, rgba(198,95,60,0.04) 0%, transparent 46%, rgba(44,23,16,0.12) 100%);
         mix-blend-mode: multiply;
         pointer-events: none;
-    }
-
-    .img-noise {
-        position: absolute;
-        inset: 0; z-index: 4;
-        opacity: 0.03;
-        mix-blend-mode: overlay;
-        pointer-events: none;
-        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
     }
 
     /* Scroll cue */
@@ -2313,11 +2266,6 @@
         .cta-ghost {
             transform: none !important;
         }
-    }
-
-    @media (pointer: coarse) {
-        /* Suppress compositing-heavy animations on touch devices */
-        .grain { animation: none; }
     }
 
 </style>

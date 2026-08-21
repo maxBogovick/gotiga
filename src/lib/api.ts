@@ -322,7 +322,8 @@ function resolveVariantUrl(url: string | null | undefined, variant: Variant): st
     const resolved = resolveMediaUrl(url);
     if (!resolved) return null;
     // Only figurine renditions live under images/<variant>/. Anything else (bundled art,
-    // avatars, backgrounds, remote URLs) has no siblings and must be left alone.
+    // avatars, remote URLs) has no siblings here. The main background has its own
+    // 900px pair — see resolveBackgroundSrcset.
     const re = new RegExp(`/images/(${VARIANT_DIRS.join('|')})/`);
     if (!re.test(resolved)) return null;
     return resolved.replace(re, `/images/${variant}/`);
@@ -374,6 +375,35 @@ export function resolveSrcset(url: string | null | undefined): { jpeg: string; w
     const w = [thumb, medium, preview].map(resolveWebpUrl);
     const webp = w.every(Boolean) ? `${w[0]} 420w, ${w[1]} 900w, ${w[2]} 1800w` : '';
     return { jpeg, webp };
+}
+
+/**
+ * The admin background is a stable URL (`/static/backgrounds/cabinet-bg.jpg`, or
+ * `.jpeg` from older uploads) plus a WebP sibling. It used to be one size — the
+ * 1359×822 file was the home LCP element, ~104 KB to paint a ~422×230 phone
+ * frame. `process_background_image` now also writes `cabinet-bg-900.{jpg,webp}`
+ * (never upscaled). Width descriptors match the encoder caps (900 / 1800).
+ *
+ * Returns null for the bundled fallback (`/images/cabinet-bg.jpeg`) and for any
+ * URL that is not the main background — those have no 900 sibling on disk, and
+ * a `<source>` pointing at a 404 blanks the photo (see resolveWebpUrl).
+ */
+export function resolveBackgroundSrcset(
+    url: string | null | undefined,
+): { jpeg: string; webp: string } | null {
+    const resolved = resolveMediaUrl(url);
+    if (!resolved) return null;
+    const m = resolved.match(/^(.*\/backgrounds\/)cabinet-bg\.(jpe?g)(\?.*)?$/i);
+    if (!m) return null;
+    const [, dir, , query = ''] = m;
+    const fullWebp = resolveWebpUrl(resolved);
+    if (!fullWebp) return null;
+    const mediumJpeg = `${dir}cabinet-bg-900.jpg${query}`;
+    const mediumWebp = `${dir}cabinet-bg-900.webp${query}`;
+    return {
+        jpeg: `${mediumJpeg} 900w, ${resolved} 1800w`,
+        webp: `${mediumWebp} 900w, ${fullWebp} 1800w`,
+    };
 }
 
 function webPublicUrl(url: unknown): string | null {

@@ -160,7 +160,6 @@
           {#if ctx.hasText(ctx.figurine.dimensions)}
             <p class="catalog-dims">{$t('catalogDimsPrefix')} {ctx.figurine.dimensions}</p>
           {/if}
-          <p class="catalog-status">{ctx.statusUi.label}</p>
         </header>
 
         {#if heroParagraphs.length > 0 || (ctx.hasText(ctx.figurine.secretText) && ctx.isCandleLit)}

@@ -432,6 +432,10 @@ mod tests {
         assert!(decoded_jpeg.height() <= BACKGROUND_MAX_PX);
         assert_eq!(decoded_webp.width(), decoded_jpeg.width());
         assert_eq!(decoded_webp.height(), decoded_jpeg.height());
+        let decoded_medium =
+            image::load_from_memory(&variant.medium_webp).expect("decode medium webp");
+        assert!(decoded_medium.width() <= BACKGROUND_MEDIUM_PX);
+        assert!(decoded_medium.height() <= BACKGROUND_MEDIUM_PX);
         assert!(
             variant.jpeg.len() < raw.len(),
             "expected recompression to shrink the file: {} -> {}",
@@ -472,14 +476,57 @@ mod tests {
         let decoded = image::load_from_memory(&webp_bytes).expect("decode backfilled webp");
         assert!(decoded.width() <= BACKGROUND_MAX_PX);
 
+        let medium_webp = fs::read(bg_dir.join(BACKGROUND_MEDIUM_WEBP))
+            .await
+            .expect("backfill should have written the 900px webp sibling");
+        let medium = image::load_from_memory(&medium_webp).expect("decode medium webp");
+        assert!(medium.width() <= BACKGROUND_MEDIUM_PX);
+
         // Second run must be a no-op: touch cabinet-bg.jpeg with obviously-wrong bytes
-        // and confirm backfill leaves it alone because the webp sibling already exists.
+        // and confirm backfill leaves it alone because the webp sibling AND the 900px
+        // pair already exist.
         fs::write(bg_dir.join("cabinet-bg.jpeg"), b"not a real image")
             .await
             .unwrap();
         backfill_background_image(dir.to_string_lossy().to_string()).await;
         let untouched = fs::read(bg_dir.join("cabinet-bg.jpeg")).await.unwrap();
         assert_eq!(untouched, b"not a real image");
+
+        fs::remove_dir_all(&dir).await.ok();
+    }
+
+    #[tokio::test]
+    async fn backfill_writes_900px_pair_without_touching_an_existing_webp() {
+        // The live site already has cabinet-bg.webp (old backfill returned early).
+        // Restart after this change must add the mobile pair and leave the stored
+        // JPEG — the URL in settings — alone.
+        let dir = std::env::temp_dir().join(format!("gotiga-bg-900-backfill-{}", Uuid::new_v4()));
+        let bg_dir = dir.join("backgrounds");
+        fs::create_dir_all(&bg_dir).await.unwrap();
+
+        let src = image::RgbImage::from_fn(1400, 840, |x, y| {
+            image::Rgb([(x % 256) as u8, (y % 256) as u8, 80])
+        });
+        let jpeg = encode_jpeg_bytes(&src, 90).unwrap();
+        fs::write(bg_dir.join("cabinet-bg.jpeg"), &jpeg)
+            .await
+            .unwrap();
+        fs::write(bg_dir.join("cabinet-bg.webp"), b"existing-webp-bytes")
+            .await
+            .unwrap();
+
+        backfill_background_image(dir.to_string_lossy().to_string()).await;
+
+        let jpeg_after = fs::read(bg_dir.join("cabinet-bg.jpeg")).await.unwrap();
+        assert_eq!(jpeg_after, jpeg);
+        let webp_after = fs::read(bg_dir.join("cabinet-bg.webp")).await.unwrap();
+        assert_eq!(webp_after, b"existing-webp-bytes");
+
+        let medium = fs::read(bg_dir.join(BACKGROUND_MEDIUM_WEBP))
+            .await
+            .expect("900px webp");
+        let decoded = image::load_from_memory(&medium).expect("decode 900 webp");
+        assert!(decoded.width() <= BACKGROUND_MEDIUM_PX);
 
         fs::remove_dir_all(&dir).await.ok();
     }
@@ -1172,15 +1219,38 @@ pub async fn get_main_background(
 /// JPEG or a lossless PNG export never ships to every visitor at whatever
 /// size/quality it happened to be uploaded at — this was previously written
 /// to disk byte-for-byte, which is exactly how a 275 KB background ended up
-/// as the page's LCP element. Stays a single file, unlike figurine photos:
-/// see resolveSrcset's doc comment in api.ts on why backgrounds deliberately
-/// have no responsive thumb/medium/preview siblings.
+/// as the page's LCP element.
+///
+/// Two widths, same idea as figurine photos: the full file is capped at
+/// BACKGROUND_MAX_PX for a wide desktop hero (`50vw` × DPR 2), and a 900px
+/// sibling is what a phone actually paints (~422 CSS px × 1.75). Without the
+/// 900, srcset had nothing to pick but the full file — ~104 KB of 1359×822
+/// for a 422×230 frame. Names are stable (`cabinet-bg-900.{jpg,webp}`) so
+/// the client can derive them from the stored URL; see resolveBackgroundSrcset.
 const BACKGROUND_MAX_PX: u32 = 1800;
+const BACKGROUND_MEDIUM_PX: u32 = 900;
 const BACKGROUND_JPEG_QUALITY: u8 = 86;
+const BACKGROUND_MEDIUM_JPEG: &str = "cabinet-bg-900.jpg";
+const BACKGROUND_MEDIUM_WEBP: &str = "cabinet-bg-900.webp";
 
 struct BackgroundVariant {
     jpeg: Vec<u8>,
     webp: Vec<u8>,
+    medium_jpeg: Vec<u8>,
+    medium_webp: Vec<u8>,
+}
+
+fn fit_within(image: &image::DynamicImage, max_px: u32) -> image::RgbImage {
+    // Never upscale: this same function reprocesses an already-capped background on
+    // every server boot (see backfill_background_image below), and `resize` scales
+    // *to fit* the box, which would blow up a smaller image back up to it.
+    if image.width() <= max_px && image.height() <= max_px {
+        image.to_rgb8()
+    } else {
+        image
+            .resize(max_px, max_px, FilterType::Lanczos3)
+            .to_rgb8()
+    }
 }
 
 fn process_background_image(data: &[u8]) -> Result<BackgroundVariant> {
@@ -1194,29 +1264,23 @@ fn process_background_image(data: &[u8]) -> Result<BackgroundVariant> {
             "Image dimensions are too large".into(),
         ));
     }
-    // Never upscale: this same function reprocesses an already-capped background on
-    // every server boot (see backfill_background_image below), and `resize` scales
-    // *to fit* the box, which would blow up a smaller image back up to it.
-    let fits_already = image.width() <= BACKGROUND_MAX_PX && image.height() <= BACKGROUND_MAX_PX;
-    let sized = if fits_already {
-        image.to_rgb8()
-    } else {
-        image
-            .resize(BACKGROUND_MAX_PX, BACKGROUND_MAX_PX, FilterType::Lanczos3)
-            .to_rgb8()
-    };
+    let full = fit_within(&image, BACKGROUND_MAX_PX);
+    let medium = fit_within(&image, BACKGROUND_MEDIUM_PX);
     Ok(BackgroundVariant {
-        jpeg: encode_jpeg_bytes(&sized, BACKGROUND_JPEG_QUALITY)?,
-        webp: encode_webp_bytes(&sized)?,
+        jpeg: encode_jpeg_bytes(&full, BACKGROUND_JPEG_QUALITY)?,
+        webp: encode_webp_bytes(&full)?,
+        medium_jpeg: encode_jpeg_bytes(&medium, BACKGROUND_JPEG_QUALITY)?,
+        medium_webp: encode_webp_bytes(&medium)?,
     })
 }
 
-/// One-time startup fixup for a main background that predates this pipeline (i.e.
-/// was written byte-for-byte by the old upload handler, with no WebP sibling).
-/// Idempotent the same way backfill_image_variants is: presence of cabinet-bg.webp
-/// means it's already done, so this only ever does real work once. Detached and
-/// silent on failure — a missing WebP sibling degrades the format savings, not
-/// correctness, and must never hold up the listener.
+/// Startup fixup for a main background that predates this pipeline: missing
+/// WebP sibling, and/or missing 900px mobile sibling. Idempotent: presence of
+/// both cabinet-bg.webp AND cabinet-bg-900.webp means it's done. The 900px
+/// file is the one that matters for a live site that already has WebP — that
+/// used to return early and never write the mobile rendition. Detached and
+/// silent on failure — a missing sibling degrades savings, not correctness,
+/// and must never hold up the listener.
 pub async fn backfill_background_image(upload_dir: String) {
     let bg_dir = std::path::Path::new(&upload_dir).join("backgrounds");
 
@@ -1248,8 +1312,13 @@ pub async fn backfill_background_image(upload_dir: String) {
     };
 
     let webp_path = jpg_path.with_extension("webp");
-    if fs::metadata(&webp_path).await.is_ok() {
-        return; // already has a WebP sibling — uploaded (or backfilled) since this shipped
+    let medium_jpg_path = bg_dir.join(BACKGROUND_MEDIUM_JPEG);
+    let medium_webp_path = bg_dir.join(BACKGROUND_MEDIUM_WEBP);
+    let webp_ok = fs::metadata(&webp_path).await.is_ok();
+    let medium_ok =
+        fs::metadata(&medium_jpg_path).await.is_ok() && fs::metadata(&medium_webp_path).await.is_ok();
+    if webp_ok && medium_ok {
+        return;
     }
 
     let Ok(data) = fs::read(&jpg_path).await else {
@@ -1267,20 +1336,41 @@ pub async fn backfill_background_image(upload_dir: String) {
         }
     };
 
-    if let Err(e) = fs::write(&jpg_path, &variant.jpeg).await {
-        tracing::warn!(
-            "background backfill: failed to write {}: {}",
-            jpg_path.display(),
-            e
-        );
-        return;
+    // Full JPEG is only rewritten when the WebP sibling is also missing — that's
+    // the pre-pipeline case. If WebP already exists, the stored URL's bytes stay
+    // put (a later run must not clobber them while adding the 900px pair).
+    if !webp_ok {
+        if let Err(e) = fs::write(&jpg_path, &variant.jpeg).await {
+            tracing::warn!(
+                "background backfill: failed to write {}: {}",
+                jpg_path.display(),
+                e
+            );
+            return;
+        }
+        if let Err(e) = fs::write(&webp_path, &variant.webp).await {
+            tracing::warn!(
+                "background backfill: failed to write {}: {}",
+                webp_path.display(),
+                e
+            );
+        }
     }
-    if let Err(e) = fs::write(&webp_path, &variant.webp).await {
-        tracing::warn!(
-            "background backfill: failed to write {}: {}",
-            webp_path.display(),
-            e
-        );
+    if !medium_ok {
+        if let Err(e) = fs::write(&medium_jpg_path, &variant.medium_jpeg).await {
+            tracing::warn!(
+                "background backfill: failed to write {}: {}",
+                medium_jpg_path.display(),
+                e
+            );
+        }
+        if let Err(e) = fs::write(&medium_webp_path, &variant.medium_webp).await {
+            tracing::warn!(
+                "background backfill: failed to write {}: {}",
+                medium_webp_path.display(),
+                e
+            );
+        }
     }
 }
 
@@ -1314,13 +1404,11 @@ pub async fn upload_main_background(
                 .map_err(|e| AppError::Io(std::io::Error::other(e)))?;
 
             // Always re-encoded to JPEG+WebP below, so the files on disk are always
-            // cabinet-bg.jpg/.webp regardless of what format was uploaded — this also
-            // stops old uploads in a different format piling up as orphaned files.
-            // The WebP sibling is found by the client via resolveWebpUrl's plain
-            // .jpg→.webp rewrite (api.ts) — same trick as the figurine renditions,
-            // just without the thumb/medium/preview multiplication (see the doc
-            // comment on process_background_image above for why backgrounds stay
-            // single-size).
+            // cabinet-bg.jpg/.webp plus the 900px pair, regardless of what format was
+            // uploaded — this also stops old uploads in a different format piling up
+            // as orphaned files. The WebP sibling is found by the client via
+            // resolveWebpUrl's .jpg→.webp rewrite; the 900px pair via
+            // resolveBackgroundSrcset.
             let data_owned = data.to_vec();
             let variant =
                 tokio::task::spawn_blocking(move || process_background_image(&data_owned))
@@ -1341,6 +1429,19 @@ pub async fn upload_main_background(
             let mut webp_file = fs::File::create(&webp_path).await.map_err(AppError::Io)?;
             webp_file
                 .write_all(&variant.webp)
+                .await
+                .map_err(AppError::Io)?;
+
+            let medium_jpg_path = format!("{}/{}", bg_dir, BACKGROUND_MEDIUM_JPEG);
+            let mut medium_jpg = fs::File::create(&medium_jpg_path).await.map_err(AppError::Io)?;
+            medium_jpg
+                .write_all(&variant.medium_jpeg)
+                .await
+                .map_err(AppError::Io)?;
+            let medium_webp_path = format!("{}/{}", bg_dir, BACKGROUND_MEDIUM_WEBP);
+            let mut medium_webp = fs::File::create(&medium_webp_path).await.map_err(AppError::Io)?;
+            medium_webp
+                .write_all(&variant.medium_webp)
                 .await
                 .map_err(AppError::Io)?;
 

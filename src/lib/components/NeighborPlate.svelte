@@ -302,8 +302,54 @@
     display: block;
   }
 
-  @media (max-width: 720px) {
-    .neighbor-plate { display: none; }
+  @media (max-width: 1024px) {
+    .neighbor-plate {
+      --plate-size: 32px;
+      height: 44px;
+      min-width: 44px;
+      min-height: 44px;
+      gap: 7px;
+      justify-self: auto;
+    }
+
+    .neighbor-plate--next {
+      justify-self: auto;
+    }
+
+    .neighbor-chevron {
+      width: 11px;
+      height: 11px;
+      color: var(--copper, #c65f3c);
+      opacity: 0.92;
+    }
+
+    .neighbor-mat,
+    .neighbor-plate--next .neighbor-mat {
+      transform: none;
+      border-radius: 1px;
+      box-shadow:
+        0 0 0 1px color-mix(in srgb, var(--copper, #c65f3c) 48%, transparent),
+        0 0 0 2px color-mix(in srgb, var(--color-canvas-base, #f8f1e7) 96%, white),
+        0 0 0 3px color-mix(in srgb, var(--copper, #c65f3c) 20%, transparent);
+    }
+
+    .neighbor-whisper {
+      display: none;
+    }
+
+    .neighbor-plate:not(.neighbor-plate--empty) {
+      animation: none;
+    }
+
+    .neighbor-plate--empty {
+      display: none;
+    }
+
+    /* After the first screen the edge chevrons take over — the capsule
+       is too small to keep two daguerreotypes. */
+    :global(.site-header.is-leaf.is-scrolled) .neighbor-plate {
+      display: none;
+    }
   }
 
   @media (prefers-reduced-motion: reduce) {

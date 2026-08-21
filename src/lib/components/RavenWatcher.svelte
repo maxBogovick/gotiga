@@ -1,11 +1,14 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { birdWalking, ravenCircleEl } from '$lib/stores/bird-walk';
+  import { afterLoadIdle } from '$lib/after-load-idle';
 
   const FRAMES = 8;
   const frames = Array.from({ length: FRAMES }, (_, i) => `/images/bird-see/frame-${i + 1}.jpg`);
 
   let circleEl = $state<HTMLElement | null>(null);
+  let framesReady = $state(false);
+  let stopFrames: (() => void) | null = null;
   let scrollY = $state(0);
   let maxScroll = $state(1);
 
@@ -23,25 +26,29 @@
   onMount(() => {
     maxScroll = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
     window.addEventListener('scroll', onScroll, { passive: true });
+    stopFrames = afterLoadIdle(() => { framesReady = true; });
   });
 
   onDestroy(() => {
+    stopFrames?.();
     if (typeof window !== 'undefined') window.removeEventListener('scroll', onScroll);
     ravenCircleEl.set(null);
   });
 </script>
 
 <div class="raven-circle" class:is-away={$birdWalking} bind:this={circleEl} aria-hidden="true">
-  {#each frames as src, i}
-    <img
-      {src}
-      alt=""
-      class="bird-frame"
-      class:visible={i === frameIndex}
-      draggable="false"
-      decoding="async"
-    />
-  {/each}
+  {#if framesReady}
+    {#each frames as src, i}
+      <img
+        {src}
+        alt=""
+        class="bird-frame"
+        class:visible={i === frameIndex}
+        draggable="false"
+        decoding="async"
+      />
+    {/each}
+  {/if}
 </div>
 
 <style>

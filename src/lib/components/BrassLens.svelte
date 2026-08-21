@@ -37,9 +37,10 @@
   let mainLoaded = $state(false);
 
   $effect(() => {
+    const img = mainImg;
     void src;
     imageFailed = false;
-    mainLoaded = Boolean(mainImg?.complete && (mainImg?.naturalWidth ?? 0) > 0);
+    mainLoaded = Boolean(img?.complete && (img.naturalWidth ?? 0) > 0);
   });
 
   onMount(() => {

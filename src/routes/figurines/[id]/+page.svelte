@@ -3,7 +3,6 @@
   import { page } from '$app/state';
   import { fade } from 'svelte/transition';
   import { invalidateAll } from '$app/navigation';
-  import DustParticles from '$lib/components/DustParticles.svelte';
   import FigurineDetailView from '$lib/components/FigurineDetailView.svelte';
   import NotFound from '$lib/components/NotFound.svelte';
   import { t , brandName } from '$lib/i18n';
@@ -232,15 +231,12 @@
 </svelte:head>
 
 <div class="fixed inset-0 bg-cabinet-bg -z-50"></div>
-<div class="fixed inset-0 pointer-events-none z-0 bg-noise opacity-[0.08] mix-blend-overlay"></div>
 <div class="fixed inset-0 pointer-events-none z-0 detail-backdrop"></div>
 <div
   class="fixed inset-0 pointer-events-none z-0 foxing"
   style:opacity={aged ? 0.85 : 0}
   style:transition-duration={aged ? '7000ms' : '650ms'}
 ></div>
-
-<DustParticles />
 
 {#if data.loadError}
   <!-- Backend unreachable — distinct from a genuine 404 (see +page.ts) -->
@@ -271,10 +267,6 @@
 {/if}
 
 <style>
-  .bg-noise {
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
-  }
-
   .detail-backdrop {
     background:
       radial-gradient(ellipse 70% 55% at 72% 38%, color-mix(in srgb, var(--color-ember) 7%, transparent) 0%, transparent 65%),

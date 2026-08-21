@@ -35,18 +35,14 @@ const config = {
     // biggest lever on FCP/LCP (measured: ~400-650ms of render-blocking time on a
     // FAST desktop connection per Lighthouse; mobile RTT makes it worse).
     //
-    // 35_000 (UTF-16 units of raw, uncompressed CSS) is chosen to sit strictly
-    // between HomeFigurineTile.css (~12.5 KB) and NoticedByGuests.css (~43 KB) as
-    // measured on the current build. Below the line: small chunks get inlined into
-    // the page's own HTML — a few KB of duplication per route is cheap. Above the
-    // line: NoticedByGuests.css and the shared root-layout stylesheet (~149 KB
-    // raw) stay as separate cached files on purpose — they are large enough, and
-    // reused across enough routes (home, /figurines, every /hall/[id]),
-    // that duplicating them into every page's HTML would cost more than the
-    // request they'd save. Re-check these sizes with `npm run build` before
-    // raising this number — the split is a snapshot of today's component sizes,
-    // not a law.
-    inlineStyleThreshold: 35_000,
+    // 100_000 (UTF-16 units of raw, uncompressed CSS) inlines the home page's own
+    // sheet (~81 KB) into its HTML so first paint does not wait on a second CSS
+    // request. The shared root-layout stylesheet (~155 KB raw) stays a separate
+    // cached file — duplicating it into every prerendered route would cost more
+    // than the request it saves. JS `modulepreload` is stripped in hooks.server.ts
+    // so that remaining file no longer shares Slow 4G with 48 script chunks.
+    // Re-check these sizes with `npm run build` before raising this number.
+    inlineStyleThreshold: 100_000,
   },
 };
 

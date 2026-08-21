@@ -1,9 +1,6 @@
 <script lang="ts">
   import { getContext } from 'svelte';
-  import { fade } from 'svelte/transition';
   import BrassLens from '$lib/components/BrassLens.svelte';
-  import LivingDaguerreotype from '$lib/components/LivingDaguerreotype.svelte';
-  import RakingLight from '$lib/components/RakingLight.svelte';
   import GalleryPlateActions from '$lib/components/figurine-detail/GalleryPlateActions.svelte';
   import { resolveWebpUrl } from '$lib/api';
   import { t } from '$lib/i18n';
@@ -21,6 +18,19 @@
     quiet?: boolean;
     aspect?: string;
   } = $props();
+
+  let isNarrow = $state(false);
+
+  $effect(() => {
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia('(max-width: 859px)');
+    const sync = () => {
+      isNarrow = mq.matches;
+    };
+    sync();
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
+  });
 </script>
 
 <div
@@ -74,48 +84,49 @@
       >
         {#if !quiet && ctx.useRaking}
           <div class="image-layer">
-            <RakingLight
-              src={ctx.resolveUrl(ctx.currentImage?.url)}
-              heightSrc={ctx.resolveUrl(ctx.currentImage?.depthUrl) || null}
-              alt={ctx.altTextFor(ctx.currentImage)}
-              class="w-full h-full"
-              onActivate={() => ctx.canOpenLightbox && ctx.openLightbox(ctx.activeImageIndex)}
-            />
+            {#await import('$lib/components/RakingLight.svelte') then { default: RakingLight }}
+              <RakingLight
+                src={ctx.resolveUrl(ctx.currentImage?.url)}
+                heightSrc={ctx.resolveUrl(ctx.currentImage?.depthUrl) || null}
+                alt={ctx.altTextFor(ctx.currentImage)}
+                class="w-full h-full"
+                onActivate={() => ctx.canOpenLightbox && ctx.openLightbox(ctx.activeImageIndex)}
+              />
+            {/await}
           </div>
-        {:else if ctx.useDaguerreotype}
+        {:else}
           <div class="image-layer">
-            <LivingDaguerreotype
+            <BrassLens
               src={ctx.resolveUrl(ctx.currentImage?.url)}
-              depthSrc={ctx.resolveUrl(ctx.currentImage?.depthUrl) || null}
-              intensity={ctx.currentImage?.parallaxIntensity ?? undefined}
+              thumbSrc={ctx.resolveUrl(ctx.currentImage?.thumbUrl)}
+              sizes={aspect ? '(min-width: 860px) 42vw, 92vw' : undefined}
               alt={ctx.altTextFor(ctx.currentImage)}
               class="w-full h-full"
-              imageFit="contain"
+              imageFit={isNarrow ? 'cover' : aspect ? 'contain' : ctx.currentImageFit}
               objectPosition={ctx.currentImage?.focalX != null && ctx.currentImage?.focalY != null
                 ? `${ctx.currentImage.focalX * 100}% ${ctx.currentImage.focalY * 100}%`
                 : 'center center'}
-              onActivate={() => ctx.canOpenLightbox && ctx.openLightbox(ctx.activeImageIndex)}
+              lensEnabled={ctx.isLensEnabled}
+              onSwipeLeft={() => ctx.sortedImages.length > 1 && ctx.selectImage(ctx.activeImageIndex + 1)}
+              onSwipeRight={() => ctx.sortedImages.length > 1 && ctx.selectImage(ctx.activeImageIndex - 1)}
             />
+            {#if ctx.useDaguerreotype}
+              {#await import('$lib/components/LivingDaguerreotype.svelte') then { default: LivingDaguerreotype }}
+                <LivingDaguerreotype
+                  src={ctx.resolveUrl(ctx.currentImage?.url)}
+                  depthSrc={ctx.resolveUrl(ctx.currentImage?.depthUrl) || null}
+                  intensity={ctx.currentImage?.parallaxIntensity ?? undefined}
+                  alt={ctx.altTextFor(ctx.currentImage)}
+                  class="w-full h-full"
+                  imageFit="contain"
+                  objectPosition={ctx.currentImage?.focalX != null && ctx.currentImage?.focalY != null
+                    ? `${ctx.currentImage.focalX * 100}% ${ctx.currentImage.focalY * 100}%`
+                    : 'center center'}
+                  onActivate={() => ctx.canOpenLightbox && ctx.openLightbox(ctx.activeImageIndex)}
+                />
+              {/await}
+            {/if}
           </div>
-        {:else}
-          {#key ctx.currentImage?.id}
-            <div class="image-layer" transition:fade={{ duration: 220 }}>
-              <BrassLens
-                src={ctx.resolveUrl(ctx.currentImage?.url)}
-                thumbSrc={ctx.resolveUrl(ctx.currentImage?.thumbUrl)}
-                sizes={aspect ? '(min-width: 860px) 42vw, 92vw' : undefined}
-                alt={ctx.altTextFor(ctx.currentImage)}
-                class="w-full h-full"
-                imageFit={aspect ? 'contain' : ctx.currentImageFit}
-                objectPosition={ctx.currentImage?.focalX != null && ctx.currentImage?.focalY != null
-                  ? `${ctx.currentImage.focalX * 100}% ${ctx.currentImage.focalY * 100}%`
-                  : 'center center'}
-                lensEnabled={ctx.isLensEnabled}
-                onSwipeLeft={() => ctx.sortedImages.length > 1 && ctx.selectImage(ctx.activeImageIndex + 1)}
-                onSwipeRight={() => ctx.sortedImages.length > 1 && ctx.selectImage(ctx.activeImageIndex - 1)}
-              />
-            </div>
-          {/key}
         {/if}
 
         {#if ctx.sortedImages.length > 1}
