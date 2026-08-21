@@ -141,6 +141,8 @@
           <label class="field field-name">
             <span class="field-label">{$t('impressionsNameLabel')}</span>
             <input
+              id="impressions-name"
+              name="name"
               type="text"
               bind:value={name}
               placeholder={$t('impressionsNamePlaceholder')}
@@ -152,7 +154,7 @@
 
           <!-- honeypot: visually hidden, off-screen; real users never fill it -->
           <div class="hp" aria-hidden="true">
-            <label>Leave this empty<input type="text" bind:value={honeypot} tabindex="-1" autocomplete="off" /></label>
+            <label>Leave this empty<input id="impressions-hp" name="website" type="text" bind:value={honeypot} tabindex="-1" autocomplete="off" /></label>
           </div>
 
           {#if error}<p class="form-error" role="alert">{error}</p>{/if}

@@ -456,9 +456,10 @@
               </svg>
             {/if}
             <input
-              bind:value={searchQuery}
               type="search"
+              bind:value={searchQuery}
               id={ARCHIVE_KEEPER_INPUT_ID}
+              name="q"
               placeholder={$t('archiveKeeperPlaceholder')}
               class="filter-bar__search-input"
               aria-label={$t('archiveKeeperPlaceholder')}

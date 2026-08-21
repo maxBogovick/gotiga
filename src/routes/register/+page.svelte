@@ -140,16 +140,16 @@
       <label class="auth-field">
         <span>{$t('authEmail')}</span>
         <input type="email" bind:value={email} placeholder={$t('authEmailPlaceholder')}
-               autocomplete="email" onkeydown={(e) => e.key === 'Enter' && advance()} />
+               id="auth-email" name="email" autocomplete="email" onkeydown={(e) => e.key === 'Enter' && advance()} />
       </label>
       <label class="auth-field">
         <span>{$t('authDisplayName')}</span>
         <input type="text" bind:value={displayName} placeholder={$t('authDisplayNameHint')}
-               autocomplete="name" onkeydown={(e) => e.key === 'Enter' && advance()} />
+               id="auth-display-name" name="name" autocomplete="name" onkeydown={(e) => e.key === 'Enter' && advance()} />
       </label>
     </div>
     <label class="seal-check" class:armed={ageConfirmed}>
-      <input type="checkbox" bind:checked={ageConfirmed} />
+      <input id="auth-age" name="age-confirm" type="checkbox" bind:checked={ageConfirmed} />
       <span>{$t('formAgeConfirm')}</span>
     </label>
   {/if}
@@ -223,7 +223,7 @@
     </button>
 
     <label class="seal-check" class:armed={memorized}>
-      <input type="checkbox" bind:checked={memorized} />
+      <input id="auth-memorized" name="memorized" type="checkbox" bind:checked={memorized} />
       <span>{$t('authMemorizedCheck')}</span>
     </label>
   {/if}

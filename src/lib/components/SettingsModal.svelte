@@ -100,8 +100,11 @@
             <label class="block">
                 <span class="text-xs uppercase tracking-wide text-[#5f4636] block mb-2">{$t('settingsServerUrl')}</span>
                 <input
+                    id="settings-server-url"
+                    name="server-url"
                     bind:value={settings.serverUrl}
                     type="text"
+                    autocomplete="url"
                     placeholder="https://api.ritunia.com"
                     class="w-full bg-[#fff9f0] border border-[#34251c]/20 p-3 text-sm focus:border-[#34251c]/60 outline-none transition-colors"
                 />
@@ -110,8 +113,11 @@
             <label class="block">
                 <span class="text-xs uppercase tracking-wide text-[#5f4636] block mb-2">{$t('settingsApiKey')}</span>
                 <input
+                    id="settings-api-key"
+                    name="api-key"
                     bind:value={settings.apiKey}
                     type="password"
+                    autocomplete="off"
                     placeholder="••••••••••••••••"
                     class="w-full bg-[#fff9f0] border border-[#34251c]/20 p-3 text-sm focus:border-[#34251c]/60 outline-none transition-colors"
                 />
@@ -120,8 +126,11 @@
             <label class="block">
                 <span class="text-xs uppercase tracking-wide text-[#5f4636] block mb-2">{$t('settingsContactEmail')}</span>
                 <input
+                    id="settings-contact-email"
+                    name="email"
                     bind:value={contactEmail}
                     type="email"
+                    autocomplete="email"
                     placeholder="info@ritunia.art"
                     class="w-full bg-[#fff9f0] border border-[#34251c]/20 p-3 text-sm focus:border-[#34251c]/60 outline-none transition-colors"
                 />

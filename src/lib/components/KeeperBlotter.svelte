@@ -90,6 +90,8 @@
     <input
       bind:this={inputEl}
       type="search"
+      id="keeper-query-{source}"
+      name="q"
       class="kn-input"
       value={keeper.query}
       placeholder={$t('homeKeeperPlaceholder')}

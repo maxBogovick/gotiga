@@ -188,6 +188,8 @@
           <label class="field field-name">
             <span class="field-label">{$t('visitorBookNameLabel')}</span>
             <input
+              id="visitor-book-name"
+              name="name"
               type="text"
               bind:value={name}
               placeholder={$t('visitorBookNamePlaceholder')}
@@ -200,6 +202,8 @@
           <label class="field field-email">
             <span class="field-label">{$t('visitorBookEmailLabel')}</span>
             <input
+              id="visitor-book-email"
+              name="email"
               type="email"
               bind:value={email}
               placeholder={$t('visitorBookEmailPlaceholder')}
@@ -213,11 +217,11 @@
 
           <!-- honeypot: visually hidden, off-screen; real users never fill it -->
           <div class="hp" aria-hidden="true">
-            <label>Leave this empty<input type="text" bind:value={honeypot} tabindex="-1" autocomplete="off" /></label>
+            <label>Leave this empty<input id="visitor-book-hp" name="website" type="text" bind:value={honeypot} tabindex="-1" autocomplete="off" /></label>
           </div>
 
           <label class="consent">
-            <input type="checkbox" bind:checked={ageConfirmed} required disabled={submitting || sealing} />
+            <input id="visitor-book-age" name="age-confirm" type="checkbox" bind:checked={ageConfirmed} required disabled={submitting || sealing} />
             <span>{$t('formAgeConfirm')}</span>
           </label>
 

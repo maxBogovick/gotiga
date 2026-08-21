@@ -1,0 +1,345 @@
+/* Unscoped: the overlay is portaled to document.body. Svelte scoped
+   selectors (a parent hash that stays in the route tree) then miss every
+   .lb-* rule, and the chrome dumps into the page as unstyled buttons. */
+
+  /* ── Overlay ── */
+  .lb-overlay {
+    position: fixed !important;
+    inset: 0 !important;
+    width: 100vw;
+    height: 100dvh;
+    z-index: 10000;
+    background: rgba(16, 8, 4, 0.97);
+    display: flex;
+    flex-direction: column;
+    overscroll-behavior: none;
+    touch-action: none;
+  }
+
+  /* ── Header bar ── */
+  .lb-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 54px;
+    padding: 0 1.25rem;
+    border-bottom: 1px solid rgba(255, 249, 240, 0.07);
+    flex-shrink: 0;
+    gap: 1rem;
+  }
+
+  /* Nav pills (prev / next in header) */
+  .lb-nav-pills {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+
+  .lb-pill {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border: 1px solid rgba(255, 249, 240, 0.16);
+    border-radius: 50%;
+    color: rgba(255, 249, 240, 0.5);
+    background: transparent;
+    cursor: pointer;
+    transition: color 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+  }
+  .lb-pill:hover {
+    color: #fff9f0;
+    border-color: rgba(255, 249, 240, 0.38);
+    background: rgba(255, 249, 240, 0.07);
+  }
+  .lb-pill:disabled {
+    opacity: 0.3;
+    cursor: default;
+    pointer-events: none;
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  /* Counter */
+  .lb-counter {
+    display: flex;
+    align-items: center;
+    gap: 0.3em;
+    font-family: var(--font-body);
+    font-size: 0.6875rem;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    color: rgba(255, 249, 240, 0.4);
+    user-select: none;
+  }
+  .lb-counter-current { color: rgba(255, 249, 240, 0.75); }
+  .lb-counter-sep     { color: rgba(255, 249, 240, 0.22); }
+  .lb-counter-label   { color: rgba(255, 249, 240, 0.35); text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.5625rem; }
+
+  /* Close button */
+  .lb-close {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.38rem 0.875rem;
+    border: 1px solid rgba(255, 249, 240, 0.16);
+    border-radius: 100px;
+    color: rgba(255, 249, 240, 0.55);
+    background: transparent;
+    cursor: pointer;
+    font-family: var(--font-body);
+    font-size: 0.5625rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    transition: color 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+  }
+  .lb-close:hover {
+    color: #fff9f0;
+    border-color: rgba(255, 249, 240, 0.38);
+    background: rgba(255, 249, 240, 0.07);
+  }
+
+  /* ── Body ── */
+  .lb-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+  }
+
+  /* ── Image stage ── */
+  .lb-stage {
+    flex: 1;
+    min-width: 0;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem 4rem;
+    cursor: zoom-in;
+    touch-action: none;
+    overflow: hidden;
+  }
+  .lb-stage--zoomed {
+    cursor: grab;
+  }
+  .lb-stage--zoomed:active {
+    cursor: grabbing;
+  }
+
+  .lb-image-wrap {
+    position: relative;
+    max-width: 100%;
+    max-height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transform-origin: center center;
+    will-change: transform;
+  }
+
+  .lb-image {
+    display: block;
+    max-width: min(100%, 100vw);
+    max-height: min(100%, calc(100dvh - 54px - 3rem));
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    user-select: none;
+    opacity: 0;
+    transition: opacity 0.28s ease;
+  }
+  .lb-image--loaded { opacity: 1; }
+
+  .lb-zoom-reset {
+    position: absolute;
+    bottom: 1rem;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4em;
+    padding: 0.32rem 0.8rem;
+    font-family: var(--font-body);
+    font-size: 0.625rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgba(255, 249, 240, 0.75);
+    background: rgba(44, 23, 16, 0.55);
+    backdrop-filter: blur(4px);
+    border: 1px solid rgba(255, 249, 240, 0.2);
+    border-radius: 100px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .lb-grain {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    opacity: 0.04;
+    mix-blend-mode: overlay;
+  }
+
+  .lb-loading {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Blur-up placeholder — the same small thumb already used in the sidebar,
+     stretched and blurred to fill the stage while the full-resolution image
+     decodes. No extra request: it's the asset the sidebar thumbnail loads. */
+  .lb-image-blur {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    filter: blur(22px) saturate(1.05);
+    transform: scale(1.1);
+    opacity: 0.85;
+  }
+
+  .lb-spinner {
+    width: 28px;
+    height: 28px;
+    border: 1.5px solid rgba(255, 249, 240, 0.2);
+    border-top-color: rgba(255, 249, 240, 0.65);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Arrows inside stage */
+  .lb-arrow {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 10;
+    width: 38px;
+    height: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(255, 249, 240, 0.16);
+    border-radius: 50%;
+    color: rgba(255, 249, 240, 0.45);
+    background: rgba(16, 8, 4, 0.4);
+    backdrop-filter: blur(4px);
+    cursor: pointer;
+    transition: color 0.18s ease, border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+  }
+  .lb-arrow:hover {
+    color: #fff9f0;
+    border-color: rgba(255, 249, 240, 0.38);
+    background: rgba(255, 249, 240, 0.1);
+  }
+  .lb-arrow--prev {
+    left: 0.75rem;
+  }
+  .lb-arrow--prev:hover { transform: translateY(-50%) translateX(-2px); }
+
+  .lb-arrow--next {
+    right: 0.75rem;
+  }
+  .lb-arrow--next:hover { transform: translateY(-50%) translateX(2px); }
+
+  /* Caption */
+  .lb-caption {
+    position: absolute;
+    bottom: 1rem;
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: var(--font-body);
+    font-size: 0.625rem;
+    font-weight: 400;
+    letter-spacing: 0.08em;
+    color: rgba(255, 249, 240, 0.38);
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 28rem;
+    pointer-events: none;
+  }
+
+  /* ── Thumbnail sidebar ── */
+  .lb-sidebar {
+    width: 76px;
+    flex-shrink: 0;
+    border-left: 1px solid rgba(255, 249, 240, 0.07);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.75rem 0.5rem;
+    scrollbar-width: none;
+    align-items: center;
+    touch-action: pan-y;
+  }
+  .lb-sidebar::-webkit-scrollbar { display: none; }
+
+  /* Hide sidebar on mobile — swipe to navigate */
+  @media (max-width: 767px) {
+    .lb-sidebar { display: none; }
+    .lb-stage   { padding: 1rem 2.5rem; }
+  }
+
+  .lb-thumb {
+    flex-shrink: 0;
+    width: 56px;
+    height: 56px;
+    overflow: hidden;
+    border: 1.5px solid rgba(255, 249, 240, 0.1);
+    border-radius: 3px;
+    background: rgba(255, 249, 240, 0.04);
+    cursor: pointer;
+    padding: 0;
+    transition:
+      border-color 0.18s ease,
+      transform 0.18s ease;
+  }
+  .lb-thumb:hover {
+    border-color: rgba(255, 249, 240, 0.3);
+    transform: translateX(-2px);
+  }
+  .lb-thumb--active {
+    border-color: rgba(192, 88, 44, 0.7);
+    box-shadow: 0 0 0 1px rgba(192, 88, 44, 0.2);
+  }
+
+  .lb-thumb picture {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  .lb-thumb-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center 20%;
+    filter: grayscale(0.45);
+    transition: filter 0.18s ease;
+    display: block;
+  }
+  .lb-thumb:hover .lb-thumb-img,
+  .lb-thumb--active .lb-thumb-img { filter: grayscale(0); }

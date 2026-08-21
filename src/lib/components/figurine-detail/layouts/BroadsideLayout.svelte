@@ -297,6 +297,7 @@
                 {:else}
                   <div class="claim-lookup-form">
                     <input type="text" bind:value={ctx.cs.tokenInput} placeholder="XXXX-XXXX" maxlength="9"
+                      id="claim-token" name="claim-token" autocomplete="off"
                       class="claim-lookup-input" oninput={() => { ctx.cs.tokenLookupInfo = null; ctx.cs.tokenLookupErr = ''; }} />
                     <button type="button" onclick={() => ctx.cs.lookupToken()} disabled={ctx.cs.tokenLooking} class="claim-lookup-btn">
                       {ctx.cs.tokenLooking ? '...' : $t('claimLookupBtn')}

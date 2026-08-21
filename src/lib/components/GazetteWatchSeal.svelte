@@ -205,7 +205,7 @@
           bind:value={name}
         />
         <label class="age">
-          <input type="checkbox" bind:checked={ageConfirmed} />
+          <input type="checkbox" id="gz-watch-age-{leaf.id}" name="age-confirm" bind:checked={ageConfirmed} />
           {$t('formAgeConfirm')}
         </label>
         {#if error}<p class="err">{error}</p>{/if}

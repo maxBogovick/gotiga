@@ -328,16 +328,16 @@
             <p class="unified-notice">{$t('unifiedSimilarIntro')}</p>
             <label class="unified-field">
               <span>{$t('commissionSimilarKeep')}</span>
-              <textarea bind:value={keepNote} rows="2" placeholder={$t('commissionSimilarKeepPh')}></textarea>
+              <textarea id="unified-keep" name="keep-note" bind:value={keepNote} rows="2" placeholder={$t('commissionSimilarKeepPh')}></textarea>
             </label>
             <label class="unified-field">
               <span>{$t('commissionSimilarChange')}</span>
-              <textarea bind:value={changeNote} rows="2" placeholder={$t('commissionSimilarChangePh')}></textarea>
+              <textarea id="unified-change" name="change-note" bind:value={changeNote} rows="2" placeholder={$t('commissionSimilarChangePh')}></textarea>
             </label>
             <div class="unified-fields">
               <label class="unified-field">
                 <span>{$t('commissionFieldSize')}</span>
-                <select bind:value={sizeNote}>
+                <select id="unified-size" name="size" bind:value={sizeNote}>
                   <option value="">{$t('commissionSizeUnsure')}</option>
                   <option value={$t('commissionSizeXs')}>{$t('commissionSizeXs')}</option>
                   <option value={$t('commissionSizeS')}>{$t('commissionSizeS')}</option>
@@ -348,12 +348,12 @@
               </label>
               <label class="unified-field">
                 <span>{$t('commissionFieldDeadline')}</span>
-                <input type="date" bind:value={deadline} />
+                <input id="unified-deadline" name="deadline" type="date" bind:value={deadline} />
               </label>
             </div>
             <label class="unified-field">
               <span>{$t('commissionFieldBudget')}</span>
-              <input type="text" bind:value={budgetNote} placeholder={$t('commissionFieldBudgetPh')} />
+              <input id="unified-budget" name="budget" type="text" bind:value={budgetNote} placeholder={$t('commissionFieldBudgetPh')} autocomplete="off" />
             </label>
             <a class="unified-fullform" href={similarFullFormHref}>{$t('unifiedSimilarFullForm')}</a>
           {/if}
@@ -371,24 +371,24 @@
             <div class="unified-fields">
               <label>
                 <span>{$t('orderNameLabel')}</span>
-                <input type="text" bind:value={name} required />
+                <input id="unified-name" name="name" type="text" bind:value={name} required autocomplete="name" />
               </label>
               <label>
                 <span>{$t('orderEmailLabel')}</span>
-                <input type="email" bind:value={email} required />
+                <input id="unified-email" name="email" type="email" bind:value={email} required autocomplete="email" />
               </label>
             </div>
           {/if}
 
           <label class="unified-field">
             <span>{$t('orderPhoneLabel')}</span>
-            <input type="tel" bind:value={phone} placeholder={$t('orderPhonePlaceholder')} />
+            <input id="unified-phone" name="phone" type="tel" bind:value={phone} placeholder={$t('orderPhonePlaceholder')} autocomplete="tel" />
           </label>
 
           {#if intent === 'viewing'}
             <label class="unified-field">
               <span>{$t('bookingDisplayTypeLabel')}</span>
-              <select bind:value={displayType}>
+              <select id="unified-display-type" name="display-type" bind:value={displayType}>
                 <option value="private">{$t('bookingDisplayPrivate')}</option>
                 <option value="exhibition">{$t('bookingDisplayExhibition')}</option>
                 <option value="photo">{$t('bookingDisplayPhoto')}</option>
@@ -397,18 +397,18 @@
             {#if displayType === 'exhibition' || displayType === 'photo'}
               <label class="unified-field">
                 <span>{$t('bookingVenueLabel')}</span>
-                <input type="text" bind:value={venue} placeholder={$t('bookingVenuePlaceholder')} />
+                <input id="unified-venue" name="venue" type="text" bind:value={venue} placeholder={$t('bookingVenuePlaceholder')} autocomplete="off" />
               </label>
             {/if}
           {/if}
 
           <label class="unified-field">
             <span>{intent === 'waitlist' ? $t('waitlistNoteLabel') : $t('orderMessageLabel')}</span>
-            <textarea bind:value={message} rows="3" placeholder={$t('unifiedMessagePlaceholder')}></textarea>
+            <textarea id="unified-message" name="message" bind:value={message} rows="3" placeholder={$t('unifiedMessagePlaceholder')}></textarea>
           </label>
 
           <label class="unified-consent">
-            <input type="checkbox" bind:checked={ageConfirmed} required />
+            <input id="unified-age" name="age-confirm" type="checkbox" bind:checked={ageConfirmed} required />
             <span>{$t('formAgeConfirm')}</span>
           </label>
 

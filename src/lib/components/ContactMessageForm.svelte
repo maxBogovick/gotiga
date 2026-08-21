@@ -65,6 +65,8 @@
     <label class="cmf-field">
       <span class="cmf-label">{$t('contactFormEmailLabel')}</span>
       <input
+        id="contact-email"
+        name="email"
         type="email"
         bind:value={email}
         placeholder={$t('contactFormEmailPlaceholder')}
@@ -76,6 +78,8 @@
     <label class="cmf-field">
       <span class="cmf-label">{$t('contactFormMessageLabel')}</span>
       <textarea
+        id="contact-message"
+        name="message"
         bind:value={message}
         rows={compact ? 3 : 4}
         placeholder={$t('contactFormMessagePlaceholder')}
