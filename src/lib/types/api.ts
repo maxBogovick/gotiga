@@ -923,6 +923,11 @@ export interface BookingCancelInfo {
  *  public site; only whether *this* visitor has marked *this* piece. */
 export type MarkTone = 'touched' | 'mesmerized' | 'desired';
 
+export interface LikeToggleResponse {
+    liked: boolean;
+    likeCount: number;
+}
+
 export interface MarkToggleResponse {
     marked: boolean;
     tone: MarkTone | null;
@@ -936,6 +941,7 @@ export interface AdminFigurineMarkStat {
     status: FigurineStatus;
     isVisible: boolean;
     markCount: number;
+    likeCount: number;
     touchedCount: number;
     mesmerizedCount: number;
     desiredCount: number;

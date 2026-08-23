@@ -4,6 +4,7 @@
   import { t } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
   import GalleryPlateActions from '$lib/components/figurine-detail/GalleryPlateActions.svelte';
+  import PlateGestures from '$lib/components/figurine-detail/PlateGestures.svelte';
   import BrassLens from '$lib/components/BrassLens.svelte';
   import FigurineStatusPanel from '$lib/components/FigurineStatusPanel.svelte';
   import FigurineClaimRow from '$lib/components/FigurineClaimRow.svelte';
@@ -225,6 +226,8 @@
       {#if subtitle}
         <p class="bd-subtitle">{subtitle}</p>
       {/if}
+
+      <PlateGestures />
 
       <!-- Short lore -->
       {#if ctx.hasText(ctx.figurine.shortText)}

@@ -622,8 +622,6 @@
         </svg>
       </button>
       {/if}
-      <!-- "Write to the author" — mobile mirror of the desktop quill (which lives in
-           the hidden .ghost-right-group). Sits before the account icon. -->
       <div class="mobile-contact-anchor" bind:this={mobileContactRef}>
         <button
           class="mobile-contact-btn"

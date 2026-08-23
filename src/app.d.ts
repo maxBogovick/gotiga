@@ -28,7 +28,6 @@ declare global {
 			readonly showRakingButton: boolean;
 			readonly isSaved: boolean;
 			readonly markTone: import('$lib/types/api').MarkTone | null;
-			readonly markIconTone: import('$lib/types/api').MarkTone | 'bookmark';
 			readonly markLabel: string;
 			readonly markPressing: boolean;
 			readonly markPickerOpen: boolean;
@@ -37,6 +36,7 @@ declare global {
 			readonly noticedByOthers: boolean;
 			readonly houseFavorite: boolean;
 			readonly canOpenLightbox: boolean;
+			readonly storySaving: boolean;
 			readonly bleedDir: 'prev' | 'next' | null;
 			readonly lastBleed: { dir: 'prev' | 'next'; img: string } | null;
 			readonly plateStyle: string;
@@ -76,6 +76,7 @@ declare global {
 			};
 			selectImage(index: number): void;
 			openLightbox(index: number): void;
+			openStoryModal(): void;
 			toggleSaved(): void;
 			toggleMarkPicker(): void;
 			setMarkTone(tone: import('$lib/types/api').MarkTone): void;

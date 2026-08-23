@@ -1241,6 +1241,16 @@ export const api = {
         });
     },
 
+    async setFigurineLike(figurineId: string, visitorToken: string, liked: boolean, sessionToken?: string | null): Promise<import('./types/api').LikeToggleResponse> {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
+        return webFetch(`/figurines/${figurineId}/like`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ visitorToken, liked }),
+        });
+    },
+
     // A single quiet wax-seal gesture, not a rating — no count is ever returned here.
     // `tone: null` clears the mark; the caller decides the target state explicitly.
     async toggleFigurineMark(figurineId: string, visitorToken: string, tone: import('./types/api').MarkTone | null): Promise<import('./types/api').MarkToggleResponse> {

@@ -1423,6 +1423,22 @@ pub struct MarkToggleResponse {
     pub tone: Option<String>,
 }
 
+/// Heart like from a visitor. `liked` is the target state (explicit-set, not a
+/// server-side flip) so a doubled request cannot unlike then like again.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LikeToggleRequest {
+    pub visitor_token: String,
+    pub liked: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LikeToggleResponse {
+    pub liked: bool,
+    pub like_count: i64,
+}
+
 /// Admin-only ranking row. Deliberately never exposed on the public site — see
 /// migration comment on `figurine_marks` for why counts stay private.
 #[derive(Debug, Clone, sqlx::FromRow, Serialize)]
@@ -1433,6 +1449,7 @@ pub struct AdminFigurineMarkStat {
     pub status: FigurineStatus,
     pub is_visible: bool,
     pub mark_count: i64,
+    pub like_count: i64,
     pub touched_count: i64,
     pub mesmerized_count: i64,
     pub desired_count: i64,

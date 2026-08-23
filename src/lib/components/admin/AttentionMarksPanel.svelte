@@ -40,6 +40,7 @@
   });
 
   let totalMarks = $derived(stats.reduce((sum, s) => sum + s.markCount, 0));
+  let totalLikes = $derived(stats.reduce((sum, s) => sum + (s.likeCount ?? 0), 0));
   let totalDesired = $derived(stats.reduce((sum, s) => sum + s.desiredCount, 0));
   let markedCount = $derived(stats.filter((s) => s.markCount > 0).length);
   let visibleRows = $derived(expanded ? filtered : filtered.slice(0, 8));
@@ -129,6 +130,7 @@
     </div>
     <div class="marks-summary">
       <span><strong>{totalMarks}</strong> marks total</span>
+      <span><strong>{totalLikes}</strong> likes (distinct visitors)</span>
       <span><strong>{markedCount}</strong> of {stats.length} pieces marked</span>
       <span title="Closest to commission intent"><strong>{totalDesired}</strong> ✒ want-one-like-this</span>
     </div>
@@ -184,6 +186,7 @@
             <th>#</th>
             <th>Figurine</th>
             <th>Status</th>
+            <th class="num" title="Distinct visitors who liked">Likes</th>
             <th title="❧ touched · ✺ mesmerized · ✒ want one like this">Tones</th>
             <th class="num" title="touched×1 + mesmerized×2 + desired×3">Score</th>
             <th>Last mark</th>
@@ -199,6 +202,7 @@
                 {#if !row.isVisible}<span class="hidden-badge">hidden</span>{/if}
               </td>
               <td><span class="status-badge status-{row.status}">{row.status.replace('_', ' ')}</span></td>
+              <td class="num">{row.likeCount ?? 0}</td>
               <td class="tones">
                 <span title="Touched">❧{row.touchedCount}</span>
                 <span title="Mesmerized">✺{row.mesmerizedCount}</span>

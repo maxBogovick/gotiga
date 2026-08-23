@@ -191,6 +191,7 @@
         <label class="sr" for="gz-watch-email-{leaf.id}">{$t('gazetteWatchEmail')}</label>
         <input
           id="gz-watch-email-{leaf.id}"
+          name="email"
           type="email"
           autocomplete="email"
           placeholder={$t('gazetteWatchEmail')}
@@ -199,6 +200,7 @@
         <label class="sr" for="gz-watch-name-{leaf.id}">{$t('gazetteWatchName')}</label>
         <input
           id="gz-watch-name-{leaf.id}"
+          name="name"
           type="text"
           autocomplete="name"
           placeholder={$t('gazetteWatchName')}

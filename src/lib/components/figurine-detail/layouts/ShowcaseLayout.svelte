@@ -8,6 +8,7 @@
   import BecomingReveal from '$lib/components/BecomingReveal.svelte';
   import SecretText from '$lib/components/SecretText.svelte';
   import GalleryPlateActions from '$lib/components/figurine-detail/GalleryPlateActions.svelte';
+  import PlateGestures from '$lib/components/figurine-detail/PlateGestures.svelte';
   import BrassLens from '$lib/components/BrassLens.svelte';
   import ShowingsTimeline from '$lib/components/ShowingsTimeline.svelte';
   import FigurineComments from '$lib/components/FigurineComments.svelte';
@@ -198,6 +199,7 @@
       <span class="plate-caption-note">{ctx.imageRoleNote(ctx.currentImage.imageType)}</span>
     </div>
   {/if}
+  <PlateGestures />
 
   <!-- ── РЕДАКЦИОННЫЙ БЛОК ── -->
   <div class="sc-body">

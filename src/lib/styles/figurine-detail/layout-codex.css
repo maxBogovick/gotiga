@@ -77,6 +77,15 @@
   margin-top: auto;
 }
 
+/* Правая колонка — пластина, музейная подпись и знак посетителя */
+.cx-plate-col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+  align-self: start;
+}
+
 /* Правая колонка — иллюминированная пластина */
 .cx-illum {
   position: relative;
@@ -465,11 +474,14 @@
   }
 
   /* Пластина выходит первой на мобиле (как в текущем float-поведении) */
-  .cx-illum {
+  .cx-plate-col {
     order: -1;
+    margin-bottom: 1.75rem;
+  }
+
+  .cx-illum {
     width: 100%;
     max-height: 72svh;
-    margin-bottom: 1.75rem;
   }
 
   .cx-making-strip {

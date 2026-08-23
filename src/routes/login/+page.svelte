@@ -270,7 +270,7 @@
           <span class="auth-forgot-note">{$t('authForgotPrompt')}</span>
           <div class="auth-forgot-form">
             <input type="email" bind:value={forgotEmail} placeholder={$t('authEmailPlaceholder')}
-                   id="auth-forgot-email" name="email" autocomplete="email" onkeydown={(e) => e.key === 'Enter' && requestReset()} />
+                   id="auth-forgot-email" name="forgot-email" autocomplete="email" onkeydown={(e) => e.key === 'Enter' && requestReset()} />
             <button class="auth-btn-primary" onclick={requestReset} disabled={forgotLoading}>
               {forgotLoading ? '…' : $t('authForgotSend')}
             </button>

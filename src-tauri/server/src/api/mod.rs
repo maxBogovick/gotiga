@@ -129,6 +129,7 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             )
             .route("/figurines/:id/book", post(handlers::create_booking))
             .route("/figurines/:id/mark", post(handlers::set_figurine_mark))
+            .route("/figurines/:id/like", post(handlers::set_figurine_like))
             .route("/figurines/:id/waitlist", post(handlers::join_waitlist))
             .route("/booking-rules", get(handlers::get_booking_rules))
             .route("/settings/contact", get(handlers::get_contact_settings))

@@ -115,7 +115,9 @@
       </header>
 
       <div class="ps-body">
-        <div class="ps-seal" aria-hidden="true">GT</div>
+        <div class="ps-seal" aria-hidden="true">
+          <img src="/images/raven-emblem.png" alt="" />
+        </div>
 
         <p class="ps-eyebrow">{$t('passportNumber')} · {passportNo}</p>
         <h1 id="passport-title">{$t('passportTitle')}</h1>
@@ -304,25 +306,25 @@
     text-align: center;
   }
 
-  /* wax seal — the house stamp */
+  /* house stamp — the same raven emblem as the header */
   .ps-seal {
     display: grid;
     place-items: center;
-    width: 3.5rem;
-    height: 3.5rem;
+    width: 4rem;
+    height: 4rem;
     margin-bottom: clamp(1rem, 2.4vw, 1.5rem);
+    overflow: hidden;
     border-radius: 999px;
-    color: color-mix(in srgb, var(--color-canvas-raised) 92%, white);
-    font-family: var(--font-display);
-    font-size: 1.15rem;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    background:
-      radial-gradient(circle at 38% 32%, color-mix(in srgb, var(--color-ember-mid) 80%, white), var(--color-ember) 52%, var(--color-ember-deep) 100%);
     box-shadow:
-      inset 0 1px 2px color-mix(in srgb, white 40%, transparent),
-      inset 0 -3px 6px color-mix(in srgb, var(--color-ember-ink) 60%, transparent),
-      0 4px 10px -3px color-mix(in srgb, var(--color-ember-ink) 55%, transparent);
+      0 0 0 1px color-mix(in srgb, var(--color-ember-deep) 45%, transparent),
+      0 4px 10px -3px color-mix(in srgb, var(--color-ember-ink) 40%, transparent);
+  }
+
+  .ps-seal img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
   }
 
   .ps-eyebrow {
@@ -585,6 +587,12 @@
     .passport-sheet::before {
       box-shadow: none;
       border-color: rgba(0, 0, 0, 0.35);
+    }
+
+    .ps-seal {
+      box-shadow: none;
+      print-color-adjust: exact;
+      -webkit-print-color-adjust: exact;
     }
   }
 </style>

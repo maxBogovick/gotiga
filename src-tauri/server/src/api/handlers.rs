@@ -1902,6 +1902,30 @@ pub async fn set_figurine_mark(
     }))
 }
 
+/// Set or clear this visitor's heart like. Explicit-set (not a flip) so a
+/// doubled request cannot unlike. Count is stored for admin; the public UI
+/// does not have to display it.
+pub async fn set_figurine_like(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(handle): Path<String>,
+    Json(req): Json<crate::models::LikeToggleRequest>,
+) -> Result<Json<crate::models::LikeToggleResponse>> {
+    service
+        .check_rate_limit("like", &extract_ip(&headers), 60, 3600)
+        .await?;
+    let figurine_id = service.resolve_figurine_uuid(&handle).await?;
+    let user_id = if let Some(token) = bearer_token(&headers) {
+        service.get_user_from_session(token).await.ok().map(|u| u.id)
+    } else {
+        None
+    };
+    let (liked, like_count) = service
+        .set_figurine_like(figurine_id, &req.visitor_token, user_id, req.liked)
+        .await?;
+    Ok(Json(crate::models::LikeToggleResponse { liked, like_count }))
+}
+
 /// Admin-only ranking of every figurine by mark count. Never exposed publicly.
 pub async fn admin_get_mark_stats(
     State(service): State<AppService>,

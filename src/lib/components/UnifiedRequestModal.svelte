@@ -75,7 +75,7 @@
 
   $effect(() => {
     if (!isOpen) return;
-    intent = 'similar';
+    intent = initialIntent;
   });
 
   $effect(() => {
@@ -85,8 +85,25 @@
     }
   });
 
-  let modalTitle = $derived($t('unifiedIntentSimilar'));
-  let submitLabel = $derived($t('unifiedSubmitSimilar'));
+  let modalKicker = $derived(intent === 'similar' ? $t('unifiedKickerSimilar') : $t('unifiedKicker'));
+  let modalTitle = $derived(
+    intent === 'similar' ? $t('unifiedIntentSimilar')
+      : intent === 'reserve' ? $t('unifiedReserveTitle')
+      : intent === 'waitlist' ? $t('unifiedIntentWaitlist')
+      : intent === 'viewing' ? $t('unifiedIntentViewing')
+      : intent === 'notify' ? $t('unifiedIntentNotify')
+      : intent === 'question' ? $t('unifiedIntentQuestion')
+      : $t('unifiedIntentRequest')
+  );
+  let submitLabel = $derived(
+    intent === 'waitlist' ? $t('unifiedSubmitWaitlist')
+      : intent === 'viewing' ? $t('unifiedSubmitViewing')
+      : intent === 'similar' ? $t('unifiedSubmitSimilar')
+      : intent === 'question' ? $t('unifiedSubmitQuestion')
+      : intent === 'notify' ? $t('unifiedSubmitNotify')
+      : intent === 'reserve' ? $t('unifiedSubmitReserve')
+      : $t('unifiedSubmitRequest')
+  );
 
   function reset() {
     name = '';
@@ -298,7 +315,7 @@
       {#if !done}
         <form class="unified-form" onsubmit={handleSubmit}>
           <div class="unified-head">
-            <span class="unified-kicker">{$t('unifiedKicker')}</span>
+            <span class="unified-kicker">{modalKicker}</span>
             <h3 id="unified-request-title">{modalTitle}</h3>
             <p>{figurineName}</p>
           </div>
@@ -402,10 +419,12 @@
             {/if}
           {/if}
 
-          <label class="unified-field">
-            <span>{intent === 'waitlist' ? $t('waitlistNoteLabel') : $t('orderMessageLabel')}</span>
-            <textarea id="unified-message" name="message" bind:value={message} rows="3" placeholder={$t('unifiedMessagePlaceholder')}></textarea>
-          </label>
+          {#if intent !== 'similar'}
+            <label class="unified-field">
+              <span>{intent === 'waitlist' ? $t('waitlistNoteLabel') : $t('orderMessageLabel')}</span>
+              <textarea id="unified-message" name="message" bind:value={message} rows="3" placeholder={$t('unifiedMessagePlaceholder')}></textarea>
+            </label>
+          {/if}
 
           <label class="unified-consent">
             <input id="unified-age" name="age-confirm" type="checkbox" bind:checked={ageConfirmed} required />

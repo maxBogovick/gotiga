@@ -6,8 +6,7 @@
 //! resolution and the Telegram MarkdownV2 escaper. None of them touch
 //! Postgres, so they run in milliseconds and are fully reproducible.
 //!
-//! DB-backed behaviour (auth flows, bookings, orders, commissions, …) is
-//! exercised end-to-end in `tests/service_db.rs`.
+//! DB-backed like/wishlist behaviour is in `tests/figurine_likes.rs`.
 
 use super::*;
 use crate::config::Config;
@@ -614,5 +613,23 @@ async fn check_rate_limit_allows_up_to_max_then_blocks_per_key() {
         svc.check_rate_limit("orders", "1.2.3.4", 2, 3600)
             .await
             .is_ok()
+    );
+}
+
+#[tokio::test]
+async fn set_figurine_like_rejects_empty_and_oversized_token() {
+    let svc = lazy_service();
+    let id = Uuid::nil();
+    assert_bad_request(
+        svc.set_figurine_like(id, "  ", None, true)
+            .await
+            .unwrap_err(),
+        "Invalid visitor token",
+    );
+    assert_bad_request(
+        svc.set_figurine_like(id, &"x".repeat(65), None, true)
+            .await
+            .unwrap_err(),
+        "Invalid visitor token",
     );
 }

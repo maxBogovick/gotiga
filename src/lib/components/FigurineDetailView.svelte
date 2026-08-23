@@ -17,7 +17,7 @@
   import { browser } from '$app/environment';
   import { api, resolveMediaUrl, resolveWebpUrl } from '$lib/api';
   import { createFigurineAnalytics } from '$lib/analytics';
-  import { t, lang } from '$lib/i18n';
+  import { t, lang, brandName } from '$lib/i18n';
   import { leafCopy, leafHref } from '$lib/gazette';
   import { FigurineClaimsStore, type ClaimData } from '$lib/stores/figurine-claims.svelte';
   import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
@@ -220,7 +220,7 @@
       title,
       note,
       mobileSubtitle,
-      mobileCtaLabel: isAvailable ? $t('detailMobileRequestCta') : $t('unifiedOpenRequest'),
+      mobileCtaLabel: $t('detailMobileRequestCta'),
       mobileIcon: isAvailable ? 'lock' : 'arrow',
       defaultIntent,
     };
@@ -299,7 +299,42 @@
     return `rgba(${r},${g},${b},${alpha})`;
   }
 
-  // ── Instagram Story share ────────────────────────────────────────────────
+  function loadCanvasImage(url: string, cors: boolean): Promise<HTMLImageElement | null> {
+    return new Promise((resolve) => {
+      const img = new Image();
+      if (cors) img.crossOrigin = 'anonymous';
+      img.onload = () => resolve(img.naturalWidth > 0 ? img : null);
+      img.onerror = () => resolve(null);
+      img.src = url;
+    });
+  }
+
+  function isCrossOriginUrl(url: string): boolean {
+    try {
+      return new URL(url, window.location.href).origin !== window.location.origin;
+    } catch {
+      return true;
+    }
+  }
+
+  function drawHouseEmblem(
+    ctx: CanvasRenderingContext2D,
+    img: HTMLImageElement,
+    cx: number, cy: number, size: number,
+  ) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, size / 2, 0, Math.PI * 2);
+    ctx.closePath();
+    ctx.clip();
+    const bleed = size * 0.08;
+    ctx.drawImage(img, cx - size / 2 - bleed, cy - size / 2 - bleed, size + bleed * 2, size + bleed * 2);
+    ctx.restore();
+  }
+
+  const STORY_W = 1080;
+  const STORY_H = 1920;
+
   let storySaving    = $state(false);
   let storyBlob      = $state<Blob | null>(null);
   let storyObjectUrl = $state('');
@@ -307,92 +342,227 @@
   let canNativeShare = $state(false);
   let storyModalRef = $state<HTMLElement | null>(null);
   let storyError = $state('');
+  let storyPhotoUrl = $state('');
+  let storyPhoto = $state<HTMLImageElement | null>(null);
+  let storyEmblem = $state<HTMLImageElement | null>(null);
+  let storyNatW = $state(0);
+  let storyNatH = $state(0);
+  let storyStageW = $state(0);
+  let storyStageH = $state(0);
+  let storyPanX = $state(0);
+  let storyPanY = $state(0);
+  let storyZoom = $state(1);
+  let storyCover = $derived(
+    storyNatW > 0 && storyStageW > 0
+      ? Math.max(storyStageW / storyNatW, storyStageH / storyNatH)
+      : 1
+  );
+
+  function clampStoryPan(x: number, y: number, zoom = storyZoom) {
+    const scale = storyCover * Math.max(1, zoom);
+    const maxX = Math.max(0, (storyNatW * scale - storyStageW) / 2);
+    const maxY = Math.max(0, (storyNatH * scale - storyStageH) / 2);
+    return {
+      x: Math.max(-maxX, Math.min(maxX, x)),
+      y: Math.max(-maxY, Math.min(maxY, y)),
+    };
+  }
+
+  const storyPointers = new Map<number, { x: number; y: number }>();
+  let storyDrag: { x: number; y: number; panX: number; panY: number } | null = null;
+  let storyPinchDist = 0;
+  let storyPinchZoom = 1;
+  let storyHintShown = $state(false);
+  let storyHintTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function dismissStoryHint() {
+    storyHintShown = false;
+    if (storyHintTimer) {
+      clearTimeout(storyHintTimer);
+      storyHintTimer = undefined;
+    }
+  }
+
+  function armStoryHint() {
+    dismissStoryHint();
+    storyHintTimer = setTimeout(() => {
+      storyHintShown = true;
+      storyHintTimer = setTimeout(dismissStoryHint, 3400);
+    }, 400);
+  }
+
+  function onStoryPointerDown(e: PointerEvent) {
+    dismissStoryHint();
+    if (e.button !== 0 && e.pointerType === 'mouse') return;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    storyPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (storyPointers.size === 1) {
+      storyDrag = { x: e.clientX, y: e.clientY, panX: storyPanX, panY: storyPanY };
+    } else {
+      const pts = [...storyPointers.values()];
+      storyPinchDist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+      storyPinchZoom = storyZoom;
+      storyDrag = null;
+    }
+  }
+
+  function onStoryPointerMove(e: PointerEvent) {
+    if (!storyPointers.has(e.pointerId)) return;
+    storyPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (storyPointers.size >= 2) {
+      const pts = [...storyPointers.values()];
+      const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+      if (storyPinchDist > 8) {
+        storyZoom = Math.max(1, Math.min(3.2, storyPinchZoom * (dist / storyPinchDist)));
+        const c = clampStoryPan(storyPanX, storyPanY);
+        storyPanX = c.x;
+        storyPanY = c.y;
+      }
+      return;
+    }
+    if (!storyDrag) return;
+    const c = clampStoryPan(
+      storyDrag.panX + (e.clientX - storyDrag.x),
+      storyDrag.panY + (e.clientY - storyDrag.y),
+    );
+    storyPanX = c.x;
+    storyPanY = c.y;
+  }
+
+  function onStoryPointerUp(e: PointerEvent) {
+    storyPointers.delete(e.pointerId);
+    if (storyPointers.size < 2) storyPinchDist = 0;
+    if (storyPointers.size === 0) storyDrag = null;
+  }
+
+  function onStoryDblClick() {
+    storyZoom = 1;
+    storyPanX = 0;
+    storyPanY = 0;
+  }
+
+  function storyWheel(node: HTMLElement) {
+    function onWheel(e: WheelEvent) {
+      e.preventDefault();
+      dismissStoryHint();
+      storyZoom = Math.max(1, Math.min(3.2, storyZoom * (1 - e.deltaY * 0.0018)));
+      const c = clampStoryPan(storyPanX, storyPanY);
+      storyPanX = c.x;
+      storyPanY = c.y;
+    }
+    node.addEventListener('wheel', onWheel, { passive: false });
+    return { destroy() { node.removeEventListener('wheel', onWheel); } };
+  }
 
   async function openStoryModal() {
     if (storySaving) return;
     storySaving = true;
     storyError = '';
+    storyPanX = 0;
+    storyPanY = 0;
+    storyZoom = 1;
+    storyPointers.clear();
+    storyDrag = null;
     try {
       const images = figurine.images ?? [];
       const faceImg = images.find(i => i.imageType === 'face') ?? images[0];
-      const imgSrc  = faceImg?.originalUrl ?? faceImg?.url ?? '';
-      const W = 1080, H = 1920;
-      const storyBase = themeColor('--color-canvas-base', '#f8f1e7');
-      const storyInk = themeColor('--color-ink-primary', '#34251c');
-
-      async function buildCanvas(withImage: boolean): Promise<HTMLCanvasElement> {
-        const cv = document.createElement('canvas');
-        cv.width = W; cv.height = H;
-        const ctx = cv.getContext('2d');
-        if (!ctx) throw new Error('Canvas 2D context is unavailable');
-        ctx.fillStyle = storyBase;
-        ctx.fillRect(0, 0, W, H);
-        if (withImage && imgSrc) {
-          const img = new Image();
-          img.crossOrigin = 'anonymous';
-          await new Promise<void>(res => { img.onload = () => res(); img.onerror = () => res(); img.src = imgSrc; });
-          if (img.naturalWidth > 0) {
-            const zone = H * 0.75;
-            const scale = Math.max(W / img.naturalWidth, zone / img.naturalHeight);
-            const iw = img.naturalWidth * scale, ih = img.naturalHeight * scale;
-            ctx.save();
-            ctx.beginPath(); ctx.rect(0, 0, W, zone); ctx.clip();
-            ctx.drawImage(img, (W - iw) / 2, (zone - ih) / 2, iw, ih);
-            ctx.restore();
-          }
-        }
-        const grad = ctx.createLinearGradient(0, H * 0.45, 0, H);
-        grad.addColorStop(0, withAlpha(storyInk, 0, 'rgba(34,15,10,0)'));
-        grad.addColorStop(0.55, withAlpha(storyInk, 0.75, 'rgba(34,15,10,0.75)'));
-        grad.addColorStop(1, withAlpha(storyInk, 0.94, 'rgba(34,15,10,0.94)'));
-        ctx.fillStyle = grad;
-        ctx.fillRect(0, H * 0.45, W, H * 0.55);
-        ctx.strokeStyle = withAlpha(storyBase, 0.15, 'rgba(248,241,231,0.15)');
-        ctx.lineWidth = 2;
-        ctx.strokeRect(40, 40, W - 80, H - 80);
-        ctx.fillStyle = storyBase;
-        ctx.textAlign = 'center';
-        ctx.font = `500 ${Math.round(W * 0.072)}px Georgia, serif`;
-        ctx.fillText(figurine.name, W / 2, Math.round(H * 0.825), W - 140);
-        ctx.strokeStyle = withAlpha(storyBase, 0.22, 'rgba(248,241,231,0.22)');
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(W * 0.31, H * 0.875); ctx.lineTo(W * 0.69, H * 0.875);
-        ctx.stroke();
-        ctx.font = `400 ${Math.round(W * 0.048)}px Georgia, serif`;
-        ctx.fillStyle = withAlpha(storyBase, 0.55, 'rgba(248,241,231,0.55)');
-        ctx.fillText('G O T I G A', W / 2, Math.round(H * 0.916), W - 160);
-        return cv;
-      }
-
-      let blob: Blob | null = null;
-      try {
-        const cv = await buildCanvas(true);
-        blob = await new Promise<Blob | null>(res => cv.toBlob(res, 'image/jpeg', 0.92));
-      } catch {
-        try {
-          const cv = await buildCanvas(false);
-          blob = await new Promise<Blob | null>(res => cv.toBlob(res, 'image/jpeg', 0.92));
-        } catch {
-          storyError = $t('storyBuildError');
-          return;
-        }
-      }
-
-      if (!blob) {
+      const imgSrc = resolveUrl(faceImg?.originalUrl ?? faceImg?.url);
+      if (!imgSrc) {
         storyError = $t('storyBuildError');
         return;
       }
-
-      if (storyObjectUrl) URL.revokeObjectURL(storyObjectUrl);
-      storyBlob      = blob;
-      storyObjectUrl = URL.createObjectURL(blob);
-      const testFile = new File([blob], 'story.jpg', { type: 'image/jpeg' });
-      canNativeShare = !!navigator.canShare?.({ files: [testFile] });
+      storyPhotoUrl = imgSrc;
+      const [photo, emblem] = await Promise.all([
+        loadCanvasImage(imgSrc, isCrossOriginUrl(imgSrc)),
+        loadCanvasImage('/images/raven-emblem.png', false),
+      ]);
+      storyPhoto = photo;
+      storyEmblem = emblem;
+      if (photo) {
+        storyNatW = photo.naturalWidth;
+        storyNatH = photo.naturalHeight;
+      } else {
+        const preview = await loadCanvasImage(imgSrc, false);
+        if (preview) {
+          storyNatW = preview.naturalWidth;
+          storyNatH = preview.naturalHeight;
+        }
+      }
+      const probe = new File([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], 't.jpg', { type: 'image/jpeg' });
+      canNativeShare = !!navigator.canShare?.({ files: [probe] });
       showStoryModal = true;
+      armStoryHint();
     } finally {
       storySaving = false;
     }
+  }
+
+  function drawStoryChrome(ctx: CanvasRenderingContext2D, base: string, ink: string) {
+    const W = STORY_W, H = STORY_H;
+    const houseName = $brandName.trim() || 'Ritunia';
+    const grad = ctx.createLinearGradient(0, H * 0.62, 0, H);
+    grad.addColorStop(0, withAlpha(ink, 0, 'rgba(34,15,10,0)'));
+    grad.addColorStop(0.4, withAlpha(ink, 0.58, 'rgba(34,15,10,0.58)'));
+    grad.addColorStop(1, withAlpha(ink, 0.96, 'rgba(34,15,10,0.96)'));
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, H * 0.62, W, H * 0.38);
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    let nameSize = Math.round(W * 0.052);
+    ctx.font = `500 ${nameSize}px Georgia, "Times New Roman", serif`;
+    const nameMax = W - 160;
+    while (nameSize > 30 && ctx.measureText(figurine.name).width > nameMax) {
+      nameSize -= 2;
+      ctx.font = `500 ${nameSize}px Georgia, "Times New Roman", serif`;
+    }
+    ctx.fillStyle = base;
+    ctx.fillText(figurine.name, W / 2, Math.round(H * 0.84), nameMax);
+
+    const brandSize = Math.round(W * 0.03);
+    ctx.font = `400 ${brandSize}px Georgia, "Times New Roman", serif`;
+    ctx.letterSpacing = `${Math.round(W * 0.005)}px`;
+    const brandWidth = ctx.measureText(houseName).width;
+    const emblemSize = storyEmblem ? Math.round(W * 0.044) : 0;
+    const lockupGap = storyEmblem ? Math.round(W * 0.016) : 0;
+    const lockupW = emblemSize + lockupGap + brandWidth;
+    const lockupX = (W - lockupW) / 2;
+    const lockupY = Math.round(H * 0.905);
+    if (storyEmblem) {
+      drawHouseEmblem(ctx, storyEmblem, lockupX + emblemSize / 2, lockupY - brandSize * 0.32, emblemSize);
+    }
+    ctx.textAlign = 'left';
+    ctx.fillStyle = withAlpha(base, 0.78, 'rgba(248,241,231,0.78)');
+    ctx.fillText(houseName, lockupX + emblemSize + lockupGap, lockupY);
+    ctx.letterSpacing = '0px';
+  }
+
+  async function bakeStoryBlob(): Promise<Blob | null> {
+    const photo = storyPhoto;
+    const cv = document.createElement('canvas');
+    cv.width = STORY_W;
+    cv.height = STORY_H;
+    const ctx = cv.getContext('2d');
+    if (!ctx) return null;
+    const storyBase = themeColor('--color-canvas-base', '#f8f1e7');
+    const storyInk = themeColor('--color-ink-primary', '#34251c');
+    ctx.fillStyle = storyInk;
+    ctx.fillRect(0, 0, STORY_W, STORY_H);
+    if (photo && photo.naturalWidth > 0) {
+      const k = storyStageW > 0 ? STORY_W / storyStageW : 1;
+      const cover = Math.max(STORY_W / photo.naturalWidth, STORY_H / photo.naturalHeight);
+      const scale = cover * Math.max(1, storyZoom);
+      const iw = photo.naturalWidth * scale;
+      const ih = photo.naturalHeight * scale;
+      const x = (STORY_W - iw) / 2 + storyPanX * k;
+      const y = (STORY_H - ih) / 2 + storyPanY * k;
+      ctx.drawImage(photo, x, y, iw, ih);
+    } else {
+      ctx.fillStyle = storyBase;
+      ctx.fillRect(0, 0, STORY_W, STORY_H);
+    }
+    drawStoryChrome(ctx, storyBase, storyInk);
+    return await new Promise<Blob | null>(res => cv.toBlob(res, 'image/jpeg', 0.92));
   }
 
   function storyFileName() {
@@ -404,30 +574,65 @@
     return `ritunia-${slug}-story.jpg`;
   }
 
-  function downloadStory() {
-    if (!storyObjectUrl) return;
-    const a = document.createElement('a');
-    a.href = storyObjectUrl;
-    a.download = storyFileName();
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    setTimeout(closeStoryModal, 250);
+  async function downloadStory() {
+    if (storySaving) return;
+    storySaving = true;
+    storyError = '';
+    try {
+      const blob = await bakeStoryBlob();
+      if (!blob) {
+        storyError = $t('storyBuildError');
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = storyFileName();
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+      setTimeout(closeStoryModal, 250);
+    } finally {
+      storySaving = false;
+    }
   }
 
   async function nativeShareStory() {
-    if (!storyBlob) return;
-    const file = new File([storyBlob], 'ritunia-story.jpg', { type: 'image/jpeg' });
+    if (storySaving) return;
+    storySaving = true;
+    storyError = '';
     try {
+      const blob = await bakeStoryBlob();
+      if (!blob) {
+        storyError = $t('storyBuildError');
+        return;
+      }
+      const file = new File([blob], 'ritunia-story.jpg', { type: 'image/jpeg' });
       await navigator.share({ files: [file], title: figurine.name });
       closeStoryModal();
     } catch { /* user cancelled */ }
+    finally {
+      storySaving = false;
+    }
   }
 
   function closeStoryModal() {
     showStoryModal = false;
     storyError = '';
+    storyPhotoUrl = '';
+    storyPhoto = null;
+    storyEmblem = null;
+    storyNatW = 0;
+    storyNatH = 0;
+    storyPanX = 0;
+    storyPanY = 0;
+    storyZoom = 1;
+    storyPointers.clear();
+    storyDrag = null;
+    dismissStoryHint();
     if (storyObjectUrl) { URL.revokeObjectURL(storyObjectUrl); storyObjectUrl = ''; }
     storyBlob = null;
   }
+
 
   $effect(() => {
     if (!showStoryModal || !storyModalRef) return;
@@ -574,7 +779,7 @@
     }))
   );
   let canOpenLightbox = $derived(lightboxImages.length > 0);
-  let isSaved = $derived(savedFigurines.has(id));
+  let isSaved = $derived(savedFigurines.has(figurine.id) || savedFigurines.has(id));
 
   function hasText(value: string | null | undefined): value is string {
     return Boolean(value?.trim());
@@ -724,7 +929,7 @@
   }
   function toggleSaved() {
     analyticsClient?.cta('wishlist');
-    savedFigurines.toggle(id);
+    savedFigurines.toggle(figurine.id, id !== figurine.id ? [id] : []);
   }
   function toggleLens() {
     isLensEnabled = !isLensEnabled;
@@ -751,11 +956,10 @@
 
   function toggleCandle() { isCandleLit = !isCandleLit; }
 
-  // "Mark of attention" — a wax seal overlaid on the image itself (see the
-  // per-layout gallery-mark button). Clicking the seal opens a row of all 3
-  // tone icons at once so the visitor picks the one they mean directly,
-  // instead of blind-cycling through clicks. No count or tone is ever shown
-  // publicly; the seal just confirms this visitor's own state on this piece.
+  // "Mark of attention" — a private three-tone gesture, not a rating. Lives
+  // as labelled tickets under the plate (PlateGestures), not among the camera tools on the
+  // photo. Clicking the line opens the three named tones so the visitor picks
+  // directly. No count or tone is ever shown publicly.
   let markTone = $derived(visitorMarks.toneOf(figurine.id));
   let markPickerOpen = $state(false);
   let markToggling = $state(false);
@@ -772,7 +976,6 @@
       : tone === 'mesmerized' ? $t('figurineMarkMesmerized')
       : $t('figurineMarkDesired');
   }
-  let markIconTone = $derived<import('$lib/types/api').MarkTone | 'bookmark'>(markTone ?? 'bookmark');
   let markLabel = $derived(
     markTone ? `${markToneText(markTone)} — ${$t('figurineMarkChangeHint')}` : $t('figurineMarkNone')
   );
@@ -818,7 +1021,7 @@
     }
     function onClickAway(e: MouseEvent) {
       const target = e.target as HTMLElement | null;
-      if (!target?.closest('.gallery-mark-wrap, .gallery-mark, .gallery-mark-option')) markPickerOpen = false;
+      if (!target?.closest('.plate-gestures, .catalog-plate-marks')) markPickerOpen = false;
     }
     window.addEventListener('keydown', onKey);
     // Defer attaching so the click that opened the picker doesn't immediately close it.
@@ -1195,7 +1398,6 @@
     get showRakingButton() { return showRakingButton; },
     get isSaved() { return isSaved; },
     get markTone() { return markTone; },
-    get markIconTone() { return markIconTone; },
     get markLabel() { return markLabel; },
     get markPressing() { return markPressing; },
     get markPickerOpen() { return markPickerOpen; },
@@ -1204,6 +1406,7 @@
     get noticedByOthers() { return Boolean(figurine.noticedByOthers); },
     get houseFavorite() { return Boolean(figurine.houseFavorite); },
     get canOpenLightbox() { return canOpenLightbox; },
+    get storySaving() { return storySaving; },
     get bleedDir() { return bleedDir; },
     get lastBleed() { return lastBleed; },
     get plateStyle() { return plateStyle; },
@@ -1239,6 +1442,7 @@
     get statusUi() { return statusUi; },
     selectImage,
     openLightbox,
+    openStoryModal,
     toggleSaved,
     toggleMarkPicker,
     setMarkTone,
@@ -1314,16 +1518,51 @@
 
         <p id="story-modal-title" class="story-modal-title">{$t('figurineStoryShare')}</p>
 
-        <!-- 9:16 preview -->
-        {#if storyObjectUrl}
-          <div class="story-preview-wrap">
-            <img src={storyObjectUrl} alt={$t('figurineStoryShare')} class="story-preview-img" />
+        {#if storyPhotoUrl}
+          <div
+            class="story-preview-wrap"
+            bind:clientWidth={storyStageW}
+            bind:clientHeight={storyStageH}
+            use:storyWheel
+            onpointerdown={onStoryPointerDown}
+            onpointermove={onStoryPointerMove}
+            onpointerup={onStoryPointerUp}
+            onpointercancel={onStoryPointerUp}
+            ondblclick={onStoryDblClick}
+            aria-label="{$t('figurineStoryShare')}. {$t('storyRepositionHint')}"
+          >
+            {#if storyNatW > 0 && storyStageW > 0}
+              <img
+                src={storyPhotoUrl}
+                alt=""
+                draggable="false"
+                class="story-stage-photo"
+                style="width:{storyNatW}px;height:{storyNatH}px;transform:translate(-50%,-50%) translate({storyPanX}px,{storyPanY}px) scale({storyCover * storyZoom});"
+              />
+            {/if}
+            <div class="story-stage-veil" aria-hidden="true"></div>
+            <div class="story-stage-chrome">
+              <p class="story-stage-name">{figurine.name}</p>
+              <div class="story-stage-brand">
+                <img src="/images/raven-emblem.png" alt="" />
+                <span>{$brandName}</span>
+              </div>
+            </div>
+            {#if storyHintShown}
+              <div class="story-frame-hint" transition:fade={{ duration: 280 }} aria-hidden="true">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">
+                  <path d="M7 1.25v11.5M1.25 7h11.5" stroke-linecap="round"/>
+                  <path d="M7 1.25L5.1 3.15M7 1.25L8.9 3.15M7 12.75L5.1 10.85M7 12.75L8.9 10.85M1.25 7L3.15 5.1M1.25 7L3.15 8.9M12.75 7L10.85 5.1M12.75 7L10.85 8.9" stroke-linecap="round"/>
+                </svg>
+                <span>{$t('storyRepositionHint')}</span>
+              </div>
+            {/if}
           </div>
         {/if}
 
         <div class="story-actions">
           {#if canNativeShare}
-            <button type="button" class="story-btn story-btn--primary" onclick={nativeShareStory}>
+            <button type="button" class="story-btn story-btn--primary" onclick={nativeShareStory} disabled={storySaving}>
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3">
                 <circle cx="11" cy="3" r="1.5"/><circle cx="3" cy="7" r="1.5"/><circle cx="11" cy="11" r="1.5"/>
                 <path d="M4.4 6.1l5.2-2.6M4.4 7.9l5.2 2.6"/>
@@ -1331,7 +1570,7 @@
               {$t('storyShare')}
             </button>
           {/if}
-          <button type="button" class="story-btn {canNativeShare ? 'story-btn--secondary' : 'story-btn--primary'}" onclick={downloadStory}>
+          <button type="button" class="story-btn {canNativeShare ? 'story-btn--secondary' : 'story-btn--primary'}" onclick={downloadStory} disabled={storySaving}>
             <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.3">
               <path d="M6.5 1v7.5M4 6l2.5 2.5L9 6" stroke-linecap="round" stroke-linejoin="round"/>
               <path d="M1 10v1.5A0.5 0.5 0 0 0 1.5 12h10a0.5 0.5 0 0 0 0.5-0.5V10"/>

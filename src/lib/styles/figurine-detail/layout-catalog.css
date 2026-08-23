@@ -1,17 +1,21 @@
-/* Specimen catalog leaf — glossy magazine spread
-   Left: stacked editorial (headline, measure, lead, history).
-   Right: plate. Parchment, not a shop. */
+/* Specimen catalog leaf — magazine spread
+   Left: book measure. Right: plate, flush to the room's edge.
+   Wide screens: the photograph holds while the leaf is read. */
 
 .page-root:has(.catalog-root) {
   padding-bottom: 0;
 }
 
 .catalog-root {
-  width: min(100%, 1120px);
-  margin: 0 auto;
+  width: 100%;
   padding: 0 0 3.4rem;
   color: var(--color-ink-primary);
   counter-reset: act;
+}
+
+.catalog-rest,
+.catalog-pair {
+  display: contents;
 }
 
 .catalog-leaf {
@@ -43,10 +47,29 @@
   min-width: 0;
 }
 
+.catalog-plate-row {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.catalog-title-deeds,
+.catalog-plate-marks {
+  display: none;
+}
+
 /* ── Headline block ── */
 
 .catalog-head {
   min-width: 0;
+}
+
+.catalog-title-block {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: fit-content;
+  max-width: 100%;
 }
 
 .catalog-root h1.catalog-title {
@@ -79,8 +102,45 @@
   max-width: 28ch;
 }
 
+.catalog-title-rule {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  margin: 0.7rem 0 0;
+  gap: 0.4rem;
+}
+
+.catalog-title-rule::before,
+.catalog-title-rule::after {
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+  min-width: 0.6rem;
+}
+
+.catalog-title-rule::before {
+  background: color-mix(in srgb, #34251c 16%, transparent);
+}
+
+.catalog-title-rule::after {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, #34251c 16%, transparent) 0%,
+    color-mix(in srgb, #34251c 6%, transparent) 100%
+  );
+}
+
+.catalog-title-rule span {
+  flex: none;
+  width: 0.28rem;
+  height: 0.28rem;
+  transform: rotate(45deg);
+  background: var(--color-ember, #c65f3c);
+  box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--color-ember, #c65f3c) 14%, transparent);
+}
+
 .catalog-dims {
-  margin: 0.55rem 0 0;
+  margin: 0.5rem 0 0;
   color: color-mix(in srgb, #34251c 58%, transparent);
   font-family: var(--font-serif);
   font-size: 0.92rem;
@@ -171,99 +231,71 @@
 .catalog-plate .gallery-nav-prev,
 .catalog-plate .gallery-nav-next,
 .catalog-plate .img-counter {
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 180ms ease;
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .catalog-plate .gallery-actions button {
-  pointer-events: none;
-}
-
-.catalog-plate .image-stage:hover .gallery-actions,
-.catalog-plate .image-stage:hover .gallery-nav-prev,
-.catalog-plate .image-stage:hover .gallery-nav-next,
-.catalog-plate .image-stage:hover .img-counter,
-.catalog-plate .image-stage:focus-within .gallery-actions,
-.catalog-plate .image-stage:focus-within .gallery-nav-prev,
-.catalog-plate .image-stage:focus-within .gallery-nav-next,
-.catalog-plate .image-stage:focus-within .img-counter,
-.catalog-plate .gallery-actions:has(.gallery-heart--saved),
-.catalog-plate .gallery-actions:has(.gallery-mark--marked),
-.catalog-plate .gallery-actions:has(.gallery-mark[aria-expanded="true"]),
-.catalog-plate .gallery-actions:has(.gallery-lens--active),
-.catalog-plate .image-stage:has(.gallery-heart--saved) .img-counter,
-.catalog-plate .image-stage:has(.gallery-mark--marked) .img-counter,
-.catalog-plate .image-stage:has(.gallery-mark[aria-expanded="true"]) .img-counter,
-.catalog-plate .image-stage:has(.gallery-lens--active) .img-counter {
-  opacity: 1;
-}
-
-.catalog-plate .image-stage:hover .gallery-actions,
-.catalog-plate .image-stage:hover .gallery-nav-prev,
-.catalog-plate .image-stage:hover .gallery-nav-next,
-.catalog-plate .image-stage:focus-within .gallery-actions,
-.catalog-plate .image-stage:focus-within .gallery-nav-prev,
-.catalog-plate .image-stage:focus-within .gallery-nav-next,
-.catalog-plate .gallery-actions:has(.gallery-heart--saved),
-.catalog-plate .gallery-actions:has(.gallery-mark--marked),
-.catalog-plate .gallery-actions:has(.gallery-mark[aria-expanded="true"]),
-.catalog-plate .gallery-actions:has(.gallery-lens--active) {
   pointer-events: auto;
 }
 
-.catalog-plate .image-stage:hover .gallery-actions button,
-.catalog-plate .image-stage:focus-within .gallery-actions button,
-.catalog-plate .gallery-actions:has(.gallery-heart--saved) button,
-.catalog-plate .gallery-actions:has(.gallery-mark--marked) button,
-.catalog-plate .gallery-actions:has(.gallery-mark[aria-expanded="true"]) button,
-.catalog-plate .gallery-actions:has(.gallery-lens--active) button,
-.catalog-plate .gallery-heart:focus-visible,
-.catalog-plate .gallery-mark:focus-visible,
-.catalog-plate .gallery-lens:focus-visible,
-.catalog-plate .gallery-expand:focus-visible,
-.catalog-plate .gallery-nav-prev:focus-visible,
-.catalog-plate .gallery-nav-next:focus-visible {
-  pointer-events: auto;
+.catalog-plate .gallery-actions {
+  flex-direction: row;
+  gap: 0;
+  right: 0.7rem;
+  bottom: 0.7rem;
+  padding: 0.18rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-ink-primary) 38%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
 
-.catalog-plate .gallery-heart:focus-visible,
-.catalog-plate .gallery-mark:focus-visible,
-.catalog-plate .gallery-lens:focus-visible,
-.catalog-plate .gallery-expand:focus-visible,
-.catalog-plate .gallery-nav-prev:focus-visible,
-.catalog-plate .gallery-nav-next:focus-visible {
-  opacity: 0.92;
+.catalog-plate .gallery-lens,
+.catalog-plate .gallery-rake,
+.catalog-plate .gallery-expand {
+  width: 2.05rem;
+  height: 2.05rem;
+  background: transparent;
+  border: none;
+  color: var(--color-canvas-raised);
+}
+
+.catalog-plate .gallery-lens:hover,
+.catalog-plate .gallery-rake:hover,
+.catalog-plate .gallery-expand:hover,
+.catalog-plate .gallery-lens--active,
+.catalog-plate .gallery-rake--active {
+  background: color-mix(in srgb, var(--color-canvas-raised) 18%, transparent);
+  transform: none;
+}
+
+.catalog-plate .gallery-nav-prev,
+.catalog-plate .gallery-nav-next {
+  width: 2.05rem;
+  height: 2.05rem;
+  background: color-mix(in srgb, var(--color-ink-primary) 32%, transparent);
+  border: none;
+  color: var(--color-canvas-raised);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.catalog-plate .gallery-nav-prev:hover,
+.catalog-plate .gallery-nav-next:hover {
+  background: color-mix(in srgb, var(--color-ink-primary) 52%, transparent);
+  transform: translateY(-50%);
 }
 
 .catalog-plate .gallery-nav-prev:disabled,
-.catalog-plate .gallery-nav-next:disabled,
-.catalog-plate .image-stage:hover .gallery-nav-prev:disabled,
-.catalog-plate .image-stage:hover .gallery-nav-next:disabled {
-  opacity: 0;
+.catalog-plate .gallery-nav-next:disabled {
+  opacity: 0.22;
   pointer-events: none;
 }
 
-@media (pointer: coarse) {
-  .catalog-plate .gallery-actions,
-  .catalog-plate .img-counter {
-    opacity: 1;
-  }
-
-  .catalog-plate .gallery-actions {
-    pointer-events: auto;
-  }
-
-  .catalog-plate .gallery-actions button,
-  .catalog-plate .gallery-nav-prev,
-  .catalog-plate .gallery-nav-next {
-    pointer-events: auto;
-  }
-
-  .catalog-plate .gallery-nav-prev,
-  .catalog-plate .gallery-nav-next {
-    opacity: 0.85;
-  }
+.catalog-plate .img-counter {
+  background: color-mix(in srgb, var(--color-ink-primary) 32%, transparent);
+  border: none;
 }
 
 .catalog-plate .lens-fallback,
@@ -326,59 +358,137 @@
 .catalog-request-facts {
   display: grid;
   gap: 0.48rem;
-  margin: 0 0 0.85rem;
+  margin: 0;
 }
 
-.catalog-request-actions {
+.catalog-deeds {
+  width: 100%;
+}
+
+.catalog-mobile-deeds {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 1.1rem;
+  row-gap: 0.35rem;
+  align-items: start;
+  overflow: visible;
+  border: 0;
+  background: transparent;
+}
+
+.catalog-mobile-deeds .catalog-deeds,
+.catalog-mobile-deeds .plate-gestures {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-column: 1 / -1;
+  column-gap: inherit;
+  row-gap: inherit;
+  width: 100%;
+}
+
+.catalog-mobile-deeds .plate-gestures > .deed-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-column: 1 / -1;
+  column-gap: inherit;
+  row-gap: inherit;
+}
+
+.catalog-mobile-deeds .deed {
+  width: auto;
+  min-width: 0;
+  flex: none;
+  justify-content: flex-start;
+  min-height: 2.75rem;
+  padding: 0.4rem 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  color: color-mix(in srgb, #34251c 88%, transparent);
+  font-family: var(--font-serif);
+  font-size: 0.98rem;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.catalog-mobile-deeds .deed-label {
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--color-ember) 42%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.28em;
+}
+
+.catalog-mobile-deeds .deed:focus-visible,
+.catalog-mobile-deeds .deed--on,
+.catalog-mobile-deeds .deed--open {
+  color: var(--color-ember-deep);
+  background: transparent;
+}
+
+.catalog-mobile-deeds .deed:focus-visible .deed-label,
+.catalog-mobile-deeds .deed--on .deed-label,
+.catalog-mobile-deeds .deed--open .deed-label {
+  text-decoration-color: var(--color-ember);
+  text-decoration-thickness: 1.5px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .catalog-mobile-deeds .deed:hover {
+    color: var(--color-ember-deep);
+    background: transparent;
+  }
+
+  .catalog-mobile-deeds .deed:hover .deed-label {
+    text-decoration-color: var(--color-ember);
+    text-decoration-thickness: 1.5px;
+  }
+}
+
+.catalog-mobile-deeds .deed--primary {
+  grid-column: 1 / -1;
+  justify-content: center;
+  min-height: 3.35rem;
+  margin-bottom: 0.35rem;
+  padding: 0.7rem 1rem;
+  border-radius: 6px;
+  color: var(--color-canvas-raised);
+  background: var(--color-ember);
+  font-family: var(--font-body);
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.catalog-mobile-deeds .deed--primary .deed-label {
+  text-decoration: none;
+}
+
+.catalog-mobile-deeds .deed--primary:focus-visible {
+  color: var(--color-canvas-raised);
+  background: var(--color-ember-deep);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .catalog-mobile-deeds .deed--primary:hover {
+    color: var(--color-canvas-raised);
+    background: var(--color-ember-deep);
+  }
+}
+
+.catalog-mobile-deeds .plate-gestures-tones,
+.catalog-mobile-deeds .plate-gestures-thanks {
+  grid-column: 1 / -1;
+}
+
+.catalog-mobile-deeds .plate-gestures-tones {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 0.85rem 1.15rem;
+  gap: 0.2rem 0.85rem;
+  padding: 0.1rem 0 0.25rem;
 }
 
-.catalog-request-btn {
-  display: inline-flex;
-  align-items: center;
-  margin: 0;
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--color-ember-deep);
-  cursor: pointer;
-  font-family: var(--font-body);
-  font-size: 0.72rem;
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  line-height: 1.2;
-  text-transform: uppercase;
-}
-
-.catalog-request-btn:hover {
-  color: #34251c;
-}
-
-.catalog-request-btn--quiet {
-  color: color-mix(in srgb, #34251c 48%, transparent);
-}
-
-.catalog-request-btn--quiet:hover {
-  color: var(--color-ember-deep);
-}
-
-.catalog-passport {
-  display: inline-flex;
-  margin: 0;
-  color: color-mix(in srgb, #34251c 48%, transparent);
-  font-family: var(--font-body);
-  font-size: 0.68rem;
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  text-decoration: none;
-  text-transform: uppercase;
-}
-
-.catalog-passport:hover {
-  color: var(--color-ember-deep);
+.catalog-mobile-deeds .plate-gestures-thanks {
+  padding: 0.1rem 0 0.15rem;
 }
 
 .catalog-guarantee {
@@ -628,7 +738,7 @@
 
 @media (min-width: 860px) {
   .catalog-main {
-    grid-template-columns: minmax(0, 1fr) minmax(16rem, 26rem);
+    grid-template-columns: minmax(0, 1fr) minmax(16rem, 28rem);
     column-gap: 2.6rem;
     row-gap: 1.1rem;
     grid-auto-flow: dense;
@@ -636,7 +746,8 @@
 
   .catalog-copy,
   .catalog-features,
-  .catalog-request {
+  .catalog-request,
+  .catalog-guarantee {
     grid-column: 1;
   }
 
@@ -662,13 +773,203 @@
   }
 }
 
-@media (max-width: 859px) {
-  .catalog-plate .gallery-actions,
-  .catalog-plate .gallery-actions button {
-    opacity: 1;
-    pointer-events: auto;
+@media (min-width: 1025px) {
+  .catalog-root {
+    --stage-sticky-top: calc(var(--site-header-h, 56px) + 0.7rem);
+    --plate-chrome: 4.6rem;
+    --plate-fit: min(52rem, calc(100svh - var(--stage-sticky-top) - var(--plate-chrome)));
+    --plate-col: min(46rem, calc(var(--plate-fit) * 4 / 5));
+    width: 100%;
+    padding-left: clamp(1.35rem, 4.2vw, 4.75rem);
+    padding-right: clamp(1.35rem, 4.2vw, 4.75rem);
   }
 
+  .catalog-root:has(.catalog-film) {
+    --plate-chrome: 8.85rem;
+  }
+
+  .catalog-main {
+    grid-template-columns: minmax(16rem, 42rem) var(--plate-col);
+    grid-template-rows: auto auto;
+    grid-auto-flow: row;
+    justify-content: center;
+    align-items: start;
+    column-gap: clamp(1.35rem, 2vw, 2.1rem);
+    row-gap: 1.35rem;
+  }
+
+  .catalog-copy {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .catalog-rest {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+    grid-column: 1;
+    grid-row: 2;
+    min-width: 0;
+  }
+
+  .catalog-stage {
+    grid-column: 2;
+    grid-row: 1 / -1;
+    position: sticky;
+    top: var(--stage-sticky-top);
+    align-self: start;
+    z-index: 2;
+    width: 100%;
+    max-width: var(--plate-col);
+    gap: 0.5rem;
+  }
+
+  .catalog-perfect,
+  .catalog-guarantee,
+  .catalog-features,
+  .catalog-request {
+    grid-column: auto;
+  }
+
+  .catalog-pair {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: 1.35rem;
+    row-gap: 0.85rem;
+    align-items: start;
+  }
+
+  .catalog-mobile-deeds {
+    display: none;
+  }
+
+  .catalog-plate {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    gap: 0.35rem;
+  }
+
+  .catalog-plate .image-stage {
+    width: 100%;
+    height: auto;
+    max-height: var(--plate-fit);
+    aspect-ratio: 4 / 5;
+  }
+
+  .catalog-plate-index,
+  .catalog-film {
+    width: 100%;
+  }
+
+  .catalog-thumb {
+    flex: 0 0 3.35rem;
+    width: 3.35rem;
+  }
+
+  .catalog-thanks {
+    margin-top: 0.35rem;
+  }
+
+  .catalog-after {
+    margin-top: 0.2rem;
+  }
+
+  .catalog-title-deeds {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 0.4rem;
+    margin: 0.75rem 0 0;
+  }
+
+  .catalog-title-deeds .catalog-title-deed,
+  .catalog-plate-marks .catalog-plate-mark {
+    min-height: 2.15rem;
+    padding: 0.32rem 0.72rem 0.32rem 0.58rem;
+    gap: 0.42rem;
+    border: 1px solid color-mix(in srgb, #34251c 16%, transparent);
+    border-radius: 5px;
+    background: color-mix(in srgb, var(--color-canvas-raised, #f8f1e7) 92%, white);
+    box-shadow: none;
+    color: var(--color-ember-deep, #6f3b24);
+    font-family: var(--font-body);
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    line-height: 1.2;
+  }
+
+  .catalog-title-deeds .deed-ico,
+  .catalog-plate-marks .deed-ico {
+    width: 0.95rem;
+    height: 0.95rem;
+    color: currentColor;
+  }
+
+  .catalog-title-deeds .deed-ico svg,
+  .catalog-plate-marks .deed-ico svg {
+    width: 0.95rem;
+    height: 0.95rem;
+  }
+
+  .catalog-title-deeds .deed-label,
+  .catalog-plate-marks .deed-label {
+    text-decoration: none;
+    text-wrap: nowrap;
+  }
+
+  .catalog-title-deeds .catalog-title-deed:hover,
+  .catalog-title-deeds .catalog-title-deed:focus-visible,
+  .catalog-plate-marks .catalog-plate-mark:hover,
+  .catalog-plate-marks .catalog-plate-mark:focus-visible {
+    color: var(--color-ember-deep, #6f3b24);
+    background: color-mix(in srgb, var(--color-ember, #c65f3c) 10%, var(--color-canvas-raised, #f8f1e7));
+    border-color: color-mix(in srgb, var(--color-ember, #c65f3c) 42%, transparent);
+  }
+
+  .catalog-plate-marks .catalog-plate-mark.deed--on,
+  .catalog-plate-marks .catalog-plate-mark.deed--open {
+    color: var(--color-ember-deep, #6f3b24);
+    background: color-mix(in srgb, var(--color-ember, #c65f3c) 16%, var(--color-canvas-raised, #f8f1e7));
+    border-color: color-mix(in srgb, var(--color-ember, #c65f3c) 52%, transparent);
+  }
+
+  .catalog-plate-marks {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.35rem;
+    width: 100%;
+  }
+
+  .catalog-plate-marks-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 0.4rem;
+  }
+
+  .catalog-plate-marks-tones {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    padding: 0;
+  }
+
+  .catalog-plate-marks-tones .catalog-plate-mark {
+    min-height: 1.95rem;
+    padding: 0.26rem 0.62rem 0.26rem 0.5rem;
+    font-size: 0.76rem;
+  }
+
+  .catalog-plate-marks .plate-gestures-thanks {
+    padding: 0.05rem 0.1rem 0;
+    max-width: none;
+  }
+}
+
+@media (max-width: 859px) {
   .catalog-main {
     gap: 0.3rem 0;
   }
@@ -686,12 +987,15 @@
 
   .catalog-head { order: 1; }
   .catalog-stage { order: 2; }
-  .catalog-prose { order: 3; }
+  .catalog-guarantee { order: 3; }
+  .catalog-prose { order: 4; }
   .catalog-history,
-  .catalog-history.dc-block--description { order: 4; }
-  .catalog-features { order: 5; }
-  .catalog-request { order: 6; }
-  .catalog-perfect { order: 7; }
+  .catalog-history.dc-block--description { order: 5; }
+  .catalog-features { order: 6; }
+  .catalog-request { order: 7; }
+  .catalog-perfect { order: 8; }
+  .catalog-thanks { order: 9; }
+  .catalog-after { order: 10; }
 
   .catalog-history-label {
     margin-bottom: 0.55rem;

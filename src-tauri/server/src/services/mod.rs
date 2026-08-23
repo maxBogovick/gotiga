@@ -3030,6 +3030,32 @@ impl AppService {
         Ok(tone.map(str::to_string))
     }
 
+    pub async fn set_figurine_like(
+        &self,
+        figurine_id: Uuid,
+        visitor_token: &str,
+        user_id: Option<Uuid>,
+        liked: bool,
+    ) -> Result<(bool, i64)> {
+        let token = visitor_token.trim();
+        if token.is_empty() || token.len() > 64 {
+            return Err(crate::error::AppError::BadRequest(
+                "Invalid visitor token".to_string(),
+            ));
+        }
+        let result = self
+            .repo
+            .set_figurine_like(figurine_id, token, user_id, liked)
+            .await?;
+        Self::log_domain_event(
+            if liked { "figurine_liked" } else { "figurine_unliked" },
+            "figurine",
+            figurine_id,
+            "ok",
+        );
+        Ok(result)
+    }
+
     pub async fn get_admin_mark_stats(&self) -> Result<Vec<AdminFigurineMarkStat>> {
         self.repo.get_admin_mark_stats().await
     }

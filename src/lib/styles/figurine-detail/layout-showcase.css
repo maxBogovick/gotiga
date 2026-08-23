@@ -186,7 +186,6 @@
 .sc-hero .gallery-heart,
 .sc-hero .gallery-lens,
 .sc-hero .gallery-rake,
-.sc-hero .gallery-mark,
 .sc-hero .gallery-expand {
   color: rgba(255, 255, 255, 0.78);
   background: rgba(0, 0, 0, 0.36);
@@ -199,15 +198,13 @@
 .sc-hero .gallery-heart:hover,
 .sc-hero .gallery-lens:hover,
 .sc-hero .gallery-rake:hover,
-.sc-hero .gallery-mark:hover,
 .sc-hero .gallery-expand:hover {
   color: rgba(255, 255, 255, 0.96);
   background: rgba(0, 0, 0, 0.54);
   border-color: rgba(255, 255, 255, 0.32);
 }
 
-.sc-hero .gallery-heart--saved,
-.sc-hero .gallery-mark--marked {
+.sc-hero .gallery-heart--saved {
   color: var(--color-ember);
 }
 
@@ -226,6 +223,17 @@
   margin: 0 auto;
   padding: 0 1.4rem;
   counter-reset: act;
+}
+
+.sc-root > .plate-caption,
+.sc-root > .plate-gestures {
+  width: min(100%, 920px);
+  margin-inline: auto;
+  padding-inline: 1.4rem;
+}
+
+.sc-root > .plate-caption {
+  padding-top: 0.9rem;
 }
 
 .sc-section {

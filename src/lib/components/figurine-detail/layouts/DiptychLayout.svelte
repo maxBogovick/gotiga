@@ -5,6 +5,7 @@
   import { resolveWebpUrl } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
   import GalleryPlateActions from '$lib/components/figurine-detail/GalleryPlateActions.svelte';
+  import PlateGestures from '$lib/components/figurine-detail/PlateGestures.svelte';
   import BrassLens from '$lib/components/BrassLens.svelte';
   import FigurineStatusPanel from '$lib/components/FigurineStatusPanel.svelte';
   import FigurineClaimRow from '$lib/components/FigurineClaimRow.svelte';
@@ -223,6 +224,7 @@
 
     <h1 class="figurine-title {ctx.figurine.name.length > 60 ? 'figurine-title--long' : ctx.figurine.name.length > 30 ? 'figurine-title--medium' : ''}" style={computeElementStyle(ctx.displayConfig, 'name')}>{ctx.figurine.name}</h1>
     <span class="colophon-kind">{$t('detailKind')}</span>
+    <PlateGestures />
 
     {#if ctx.hasText(ctx.figurine.shortText)}
       <p class="lore-short" style={computeElementStyle(ctx.displayConfig, 'shortText')}>{ctx.figurine.shortText}</p>

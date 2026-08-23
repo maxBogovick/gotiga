@@ -227,10 +227,10 @@
     </div>
     {/if}
 
-    <button
-      type="button"
+    <a
       class="commission-similar-btn"
-      onclick={() => onOpenModal('similar')}
+      href="/commission?source={encodeURIComponent(id)}"
+      onclick={() => analyticsClient?.cta('create_similar')}
     >
       <span class="commission-similar-btn-label">{$t('commissionCreateSimilarCta')}</span>
       <span class="commission-similar-btn-icon" aria-hidden="true">
@@ -238,7 +238,7 @@
           <path d="M1.5 6h9M7 2.5L10.5 6 7 9.5"/>
         </svg>
       </span>
-    </button>
+    </a>
   </div>
 
   {#if !omitLead}
@@ -678,6 +678,7 @@
       0 1px 3px color-mix(in srgb, var(--color-ink-primary) 7%, transparent);
     cursor: pointer;
     overflow: hidden;
+    text-decoration: none;
     transition:
       border-color 220ms ease,
       color 220ms ease,

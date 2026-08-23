@@ -17,6 +17,8 @@
     compact = false,
   }: { source?: 'home' | 'header'; compact?: boolean } = $props();
 
+  const uid = $props.id();
+
   let email = $state(authStore.user?.email ?? '');
   let message = $state('');
   let submitting = $state(false);
@@ -65,7 +67,7 @@
     <label class="cmf-field">
       <span class="cmf-label">{$t('contactFormEmailLabel')}</span>
       <input
-        id="contact-email"
+        id="contact-email-{uid}"
         name="email"
         type="email"
         bind:value={email}
@@ -78,7 +80,7 @@
     <label class="cmf-field">
       <span class="cmf-label">{$t('contactFormMessageLabel')}</span>
       <textarea
-        id="contact-message"
+        id="contact-message-{uid}"
         name="message"
         bind:value={message}
         rows={compact ? 3 : 4}

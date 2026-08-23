@@ -5,6 +5,7 @@
   import { resolveWebpUrl } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
   import GalleryPlateActions from '$lib/components/figurine-detail/GalleryPlateActions.svelte';
+  import PlateGestures from '$lib/components/figurine-detail/PlateGestures.svelte';
   import BrassLens from '$lib/components/BrassLens.svelte';
   import FigurineStatusPanel from '$lib/components/FigurineStatusPanel.svelte';
   import FigurineClaimRow from '$lib/components/FigurineClaimRow.svelte';
@@ -205,7 +206,8 @@
       {/if}
     </div>
 
-    <!-- Правая колонка: иллюминированная пластина -->
+    <!-- Правая колонка: иллюминированная пластина + подпись + знак -->
+    <div class="cx-plate-col">
     <div
       class="cx-illum"
       data-figurine-plate
@@ -329,6 +331,8 @@
         <span class="plate-caption-note">{ctx.imageRoleNote(ctx.currentImage.imageType)}</span>
       </div>
     {/if}
+    <PlateGestures />
+    </div>
 
   </div>
   <!-- /cx-opening -->

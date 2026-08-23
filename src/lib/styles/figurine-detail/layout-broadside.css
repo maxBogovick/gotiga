@@ -139,7 +139,52 @@
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: color-mix(in srgb, var(--dc-eyebrow-color, var(--bd-paper)) 34%, transparent);
+  margin: 0 0 0.45rem;
+}
+
+.bd-root .plate-gestures {
   margin: 0 0 1.5rem;
+  padding: 0;
+}
+
+.bd-root .deed {
+  color: color-mix(in srgb, var(--color-ember) 70%, var(--bd-paper));
+  background: color-mix(in srgb, var(--bd-paper) 8%, transparent);
+  border-color: color-mix(in srgb, var(--bd-paper) 18%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bd-paper) 6%, transparent);
+}
+
+.bd-root .deed:hover,
+.bd-root .deed:focus-visible,
+.bd-root .deed--on:hover,
+.bd-root .deed--open:hover {
+  color: var(--bd-bg);
+  background: var(--color-ember);
+  border-color: var(--color-ember);
+}
+
+.bd-root .deed--on,
+.bd-root .deed--open {
+  color: var(--color-ember);
+  background: color-mix(in srgb, var(--color-ember) 14%, transparent);
+  border-color: color-mix(in srgb, var(--color-ember) 42%, transparent);
+}
+
+.bd-root .deed--primary {
+  color: var(--bd-bg);
+  background: var(--color-ember);
+  border-color: var(--color-ember);
+}
+
+.bd-root .deed--primary:hover,
+.bd-root .deed--primary:focus-visible {
+  color: var(--bd-bg);
+  background: var(--color-ember-deep);
+  border-color: var(--color-ember-deep);
+}
+
+.bd-root .plate-gestures-thanks {
+  color: color-mix(in srgb, var(--bd-paper) 48%, transparent);
 }
 
 /* Short lore */

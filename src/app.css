@@ -4,6 +4,8 @@
    reintroduce an @import here: it is only discovered after this whole stylesheet
    has been fetched and parsed, and it blocks rendering. */
 @import "tailwindcss";
+/* Local file — Vite inlines it into this sheet. Not a network @import. */
+@import "./lib/styles/lightbox.css";
 @source "../src/**/*.{svelte,ts,js,html}";
 
 /* ═══════════════════════════════════════════════════════════════════════════

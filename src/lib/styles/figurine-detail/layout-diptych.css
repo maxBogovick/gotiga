@@ -103,6 +103,11 @@
   object-fit: cover;
 }
 
+.diptych-wing--right .plate-gestures {
+  margin: 0.45rem 0 1.15rem;
+  padding: 0;
+}
+
 @media (max-width: 860px) {
   .diptych-root {
     grid-template-columns: 1fr;

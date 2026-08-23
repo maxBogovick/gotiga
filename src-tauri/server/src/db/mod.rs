@@ -2689,6 +2689,13 @@ impl Repository {
         i64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
     }
 
+    /// Like mutations on one figurine serialize against each other, not against
+    /// bookings — reverse the UUID bytes so the two lock namespaces stay apart.
+    fn like_lock_key(figurine_id: Uuid) -> i64 {
+        let b = figurine_id.as_bytes();
+        i64::from_le_bytes([b[7], b[6], b[5], b[4], b[3], b[2], b[1], b[0]])
+    }
+
     /// Create a pending booking atomically: acquire the per-figurine advisory
     /// lock, re-check conflicts and insert inside one transaction. Returns
     /// `Ok(None)` if the dates conflict (caller maps to 409).
@@ -2822,6 +2829,123 @@ impl Repository {
         Ok(())
     }
 
+    /// Explicit-set a heart like. Returns (this visitor/account now likes, distinct like count).
+    ///
+    /// One transaction, one row per person: a logged-in like absorbs the guest
+    /// row for this token (and any other device row for this account) so the
+    /// unique visitor/user indexes cannot 500 or double-count. Unlike always
+    /// clears `users.wishlist` for whoever owned the deleted row — including
+    /// a logged-out tap on a token that was created while signed in.
+    pub async fn set_figurine_like(
+        &self,
+        figurine_id: Uuid,
+        visitor_token: &str,
+        user_id: Option<Uuid>,
+        liked: bool,
+    ) -> Result<(bool, i64)> {
+        let fig_key = figurine_id.to_string();
+        let mut tx = self.pg_pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(Self::like_lock_key(figurine_id))
+            .execute(&mut *tx)
+            .await?;
+
+        if liked {
+            if let Some(uid) = user_id {
+                sqlx::query(
+                    "DELETE FROM figurine_likes
+                     WHERE figurine_id = $1
+                       AND (visitor_token = $2 OR user_id = $3)",
+                )
+                .bind(figurine_id)
+                .bind(visitor_token)
+                .bind(uid)
+                .execute(&mut *tx)
+                .await?;
+                sqlx::query(
+                    "INSERT INTO figurine_likes (figurine_id, visitor_token, user_id)
+                     VALUES ($1, $2, $3)",
+                )
+                .bind(figurine_id)
+                .bind(visitor_token)
+                .bind(uid)
+                .execute(&mut *tx)
+                .await?;
+                sqlx::query(
+                    "UPDATE users
+                     SET wishlist = (
+                         SELECT ARRAY(SELECT DISTINCT x FROM unnest(array_append(wishlist, $1::text)) AS x)
+                     )
+                     WHERE id = $2",
+                )
+                .bind(&fig_key)
+                .bind(uid)
+                .execute(&mut *tx)
+                .await?;
+            } else {
+                sqlx::query(
+                    "INSERT INTO figurine_likes (figurine_id, visitor_token, user_id)
+                     VALUES ($1, $2, NULL)
+                     ON CONFLICT (figurine_id, visitor_token) DO NOTHING",
+                )
+                .bind(figurine_id)
+                .bind(visitor_token)
+                .execute(&mut *tx)
+                .await?;
+            }
+        } else {
+            let mut owner_ids: Vec<Uuid> = sqlx::query_scalar(
+                "SELECT DISTINCT user_id FROM figurine_likes
+                 WHERE figurine_id = $1
+                   AND user_id IS NOT NULL
+                   AND (visitor_token = $2 OR user_id = $3)",
+            )
+            .bind(figurine_id)
+            .bind(visitor_token)
+            .bind(user_id)
+            .fetch_all(&mut *tx)
+            .await?;
+            if let Some(uid) = user_id {
+                if !owner_ids.contains(&uid) {
+                    owner_ids.push(uid);
+                }
+            }
+
+            sqlx::query(
+                "DELETE FROM figurine_likes
+                 WHERE figurine_id = $1
+                   AND (visitor_token = $2 OR user_id = $3)",
+            )
+            .bind(figurine_id)
+            .bind(visitor_token)
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
+
+            for uid in owner_ids {
+                sqlx::query(
+                    "UPDATE users SET wishlist = array_remove(wishlist, $1::text) WHERE id = $2",
+                )
+                .bind(&fig_key)
+                .bind(uid)
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+
+        let like_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM figurine_likes WHERE figurine_id = $1",
+        )
+        .bind(figurine_id)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        // Explicit-set: echo the requested state, not a re-read. A leftover row
+        // must not glue the heart back on after the visitor asked to unlike.
+        Ok((liked, like_count))
+    }
+
     /// The two public "noticed" tiers, computed as a percentile rank among
     /// marked, visible figurines — not a fixed score threshold. "Deservedly
     /// in the top" means relative to the rest of the collection (Airbnb
@@ -2887,6 +3011,7 @@ impl Repository {
         Ok(sqlx::query_as::<_, AdminFigurineMarkStat>(
             "SELECT f.id AS figurine_id, f.name AS figurine_name, f.status, f.is_visible,
                     COUNT(m.id) AS mark_count,
+                    (SELECT COUNT(*)::bigint FROM figurine_likes l WHERE l.figurine_id = f.id) AS like_count,
                     COUNT(*) FILTER (WHERE m.tone = 'touched') AS touched_count,
                     COUNT(*) FILTER (WHERE m.tone = 'mesmerized') AS mesmerized_count,
                     COUNT(*) FILTER (WHERE m.tone = 'desired') AS desired_count,

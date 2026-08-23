@@ -1,11 +1,10 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { untrack } from 'svelte';
   import { t } from '$lib/i18n';
   import { focusTrap } from '$lib/actions/focusTrap';
   import { lockBodyScroll } from '$lib/actions/lockBodyScroll';
   import { portal } from '$lib/actions/portal';
   import { resolveWebpUrl } from '$lib/api';
-  import '$lib/styles/lightbox.css';
 
   type LightboxImage = { url: string; alt?: string; thumbUrl?: string; focalX?: number | null; focalY?: number | null };
 
@@ -55,8 +54,17 @@
     };
   }
 
-  $effect(() => { current = startIndex; });
-  $effect(() => { current; resetZoom(false); });
+  $effect(() => {
+    const nextStart = startIndex;
+    untrack(() => {
+      current = nextStart;
+    });
+  });
+
+  $effect(() => {
+    current;
+    resetZoom(false);
+  });
 
   function close() { onClose(current); }
 
@@ -291,32 +299,31 @@
   }
 
   let hasMultiple = $derived(images.length > 1);
-  let overlayEl: HTMLElement;
   let overlayStyle = $derived(
     `position:fixed;inset:0;z-index:10000;display:flex;flex-direction:column;width:100vw;height:100dvh;background:rgba(16,8,4,${
       dismissY > 0 ? (0.97 - dismissProgress * 0.65).toFixed(3) : '0.97'
     });`
   );
 
-  onMount(() => {
-    const el = overlayEl;
-    if (!el) return;
-    if (el.parentNode !== document.body) document.body.appendChild(el);
-    // Svelte's ontouchmove may be passive; iOS needs preventDefault to keep
-    // the document from scrolling under the overlay.
-    function blockPageScroll(e: TouchEvent) {
+  // Svelte's ontouchmove is passive; iOS needs preventDefault to keep
+  // the document from scrolling under the overlay.
+  function preventPageScroll(node: HTMLElement) {
+    function onTouchMove(e: TouchEvent) {
       if ((e.target as HTMLElement | null)?.closest?.('.lb-sidebar')) return;
       e.preventDefault();
     }
-    el.addEventListener('touchmove', blockPageScroll, { passive: false });
-    return () => el.removeEventListener('touchmove', blockPageScroll);
-  });
+    node.addEventListener('touchmove', onTouchMove, { passive: false });
+    return {
+      destroy() {
+        node.removeEventListener('touchmove', onTouchMove);
+      },
+    };
+  }
 </script>
 
 <svelte:window onkeydown={handleKey} onmousemove={handleMouseMove} onmouseup={handleMouseUp} />
 
 <div
-  bind:this={overlayEl}
   class="lb-overlay"
   style={overlayStyle}
   role="dialog"
@@ -326,6 +333,7 @@
   use:portal
   use:focusTrap
   use:lockBodyScroll
+  use:preventPageScroll
   ontouchstart={handleTouchStart}
   ontouchmove={handleTouchMove}
   ontouchend={handleTouchEnd}
@@ -504,4 +512,3 @@
 
   </div>
 </div>
-

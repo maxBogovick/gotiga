@@ -12,14 +12,25 @@
     hideCaption = false,
     quiet = false,
     aspect = '',
+    imageFit = '',
   }: {
     hideThumbs?: boolean;
     hideCaption?: boolean;
     quiet?: boolean;
     aspect?: string;
+    imageFit?: 'cover' | 'contain' | '';
   } = $props();
 
   let isNarrow = $state(false);
+  let plateFit = $derived<'cover' | 'contain'>(
+    isNarrow
+      ? 'cover'
+      : imageFit === 'cover' || imageFit === 'contain'
+        ? imageFit
+        : aspect
+          ? 'contain'
+          : ctx.currentImageFit
+  );
 
   $effect(() => {
     if (typeof window === 'undefined') return;
@@ -99,10 +110,10 @@
             <BrassLens
               src={ctx.resolveUrl(ctx.currentImage?.url)}
               thumbSrc={ctx.resolveUrl(ctx.currentImage?.thumbUrl)}
-              sizes={aspect ? '(min-width: 860px) 42vw, 92vw' : undefined}
+              sizes={aspect ? '(min-width: 1025px) 52vw, (min-width: 860px) 42vw, 92vw' : undefined}
               alt={ctx.altTextFor(ctx.currentImage)}
               class="w-full h-full"
-              imageFit={isNarrow ? 'cover' : aspect ? 'contain' : ctx.currentImageFit}
+              imageFit={plateFit}
               objectPosition={ctx.currentImage?.focalX != null && ctx.currentImage?.focalY != null
                 ? `${ctx.currentImage.focalX * 100}% ${ctx.currentImage.focalY * 100}%`
                 : 'center center'}
@@ -118,7 +129,7 @@
                   intensity={ctx.currentImage?.parallaxIntensity ?? undefined}
                   alt={ctx.altTextFor(ctx.currentImage)}
                   class="w-full h-full"
-                  imageFit="contain"
+                  imageFit={plateFit}
                   objectPosition={ctx.currentImage?.focalX != null && ctx.currentImage?.focalY != null
                     ? `${ctx.currentImage.focalX * 100}% ${ctx.currentImage.focalY * 100}%`
                     : 'center center'}

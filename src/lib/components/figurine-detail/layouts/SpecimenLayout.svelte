@@ -5,6 +5,10 @@
   import { t } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
   import FigurineImageViewer from '../FigurineImageViewer.svelte';
+  import CatalogTitleDeeds from '../CatalogTitleDeeds.svelte';
+  import CatalogPlateMarks from '../CatalogPlateMarks.svelte';
+  import PlateGestures from '../PlateGestures.svelte';
+  import CatalogDeeds from '../CatalogDeeds.svelte';
   import FigurineStatusPanel from '$lib/components/FigurineStatusPanel.svelte';
   import FigurineClaimRow from '$lib/components/FigurineClaimRow.svelte';
   import BecomingReveal from '$lib/components/BecomingReveal.svelte';
@@ -151,15 +155,19 @@
       <div class="catalog-main">
         <div class="catalog-copy">
         <header class="catalog-head">
-          <h1
-            class="figurine-title catalog-title {titleClass}"
-            style={computeElementStyle(ctx.displayConfig, 'name')}
-          >
-            {ctx.figurine.name}
-          </h1>
+          <div class="catalog-title-block">
+            <h1
+              class="figurine-title catalog-title {titleClass}"
+              style={computeElementStyle(ctx.displayConfig, 'name')}
+            >
+              {ctx.figurine.name}
+            </h1>
+            <div class="catalog-title-rule" aria-hidden="true"><span></span></div>
+          </div>
           {#if ctx.hasText(ctx.figurine.dimensions)}
             <p class="catalog-dims">{$t('catalogDimsPrefix')} {ctx.figurine.dimensions}</p>
           {/if}
+          <CatalogTitleDeeds />
         </header>
 
         {#if heroParagraphs.length > 0 || (ctx.hasText(ctx.figurine.secretText) && ctx.isCandleLit)}
@@ -195,8 +203,11 @@
         </div>
 
         <div class="catalog-stage">
-          <div class="catalog-plate">
-            <FigurineImageViewer quiet hideThumbs hideCaption aspect="4 / 5" />
+          <div class="catalog-plate-row">
+            <div class="catalog-plate">
+              <CatalogPlateMarks />
+              <FigurineImageViewer quiet hideThumbs hideCaption aspect="4 / 5" />
+            </div>
           </div>
           <p class="catalog-plate-index">
             {$t('catalogPlate')} {String(ctx.activeImageIndex + 1).padStart(2, '0')}
@@ -239,24 +250,48 @@
             </div>
           {/if}
 
-          <aside class="catalog-guarantee">
-            <p>{$t('catalogGuarantee')}</p>
-            <span class="catalog-guarantee-mark" aria-hidden="true">♡</span>
-          </aside>
+          <div class="catalog-mobile-deeds">
+            <CatalogDeeds />
+            <PlateGestures />
+          </div>
         </div>
 
-        {#if featureLines.length > 0}
-        <section class="catalog-features">
-          <h2 class="catalog-list-title">{$t('catalogFeaturesTitle')}</h2>
-          <ul class="catalog-list">
-            {#each featureLines as line}
-              <li class="catalog-list-item">
-                <CatalogGlyph name={line.icon} />
-                <span>{line.text}</span>
-              </li>
-            {/each}
-          </ul>
-        </section>
+        <div class="catalog-rest">
+        <aside class="catalog-guarantee">
+          <p>{$t('catalogGuarantee')}</p>
+          <span class="catalog-guarantee-mark" aria-hidden="true">♡</span>
+        </aside>
+
+        {#if featureLines.length > 0 || perfectLines.length > 0}
+        <div class="catalog-pair">
+          {#if featureLines.length > 0}
+          <section class="catalog-features">
+            <h2 class="catalog-list-title">{$t('catalogFeaturesTitle')}</h2>
+            <ul class="catalog-list">
+              {#each featureLines as line}
+                <li class="catalog-list-item">
+                  <CatalogGlyph name={line.icon} />
+                  <span>{line.text}</span>
+                </li>
+              {/each}
+            </ul>
+          </section>
+          {/if}
+
+          {#if perfectLines.length > 0}
+          <section class="catalog-perfect">
+            <h2 class="catalog-list-title">{$t('catalogPerfectTitle')}</h2>
+            <ul class="catalog-list">
+              {#each perfectLines as line}
+                <li class="catalog-list-item">
+                  <CatalogGlyph name={line.icon} />
+                  <span>{line.text}</span>
+                </li>
+              {/each}
+            </ul>
+          </section>
+          {/if}
+        </div>
         {/if}
 
         <section class="catalog-request">
@@ -269,46 +304,11 @@
               </p>
             {/each}
           </div>
-          <div class="catalog-request-actions">
-            <button
-              type="button"
-              class="catalog-request-btn"
-              onclick={() => ctx.openRequestModal(ctx.statusUi.defaultIntent)}
-            >
-              {$t('unifiedOpenRequest')}
-            </button>
-            <button
-              type="button"
-              class="catalog-request-btn catalog-request-btn--quiet"
-              onclick={() => ctx.openRequestModal('similar')}
-            >
-              {$t('commissionCreateSimilarShort')}
-            </button>
-            <a class="catalog-passport" href="/figurines/{ctx.id}/passport" onclick={() => ctx.analyticsClient?.cta('passport')}>
-              {$t('detailOpenPassport')}
-            </a>
-          </div>
         </section>
 
-        {#if perfectLines.length > 0}
-        <section class="catalog-perfect">
-          <h2 class="catalog-list-title">{$t('catalogPerfectTitle')}</h2>
-          <ul class="catalog-list">
-            {#each perfectLines as line}
-              <li class="catalog-list-item">
-                <CatalogGlyph name={line.icon} />
-                <span>{line.text}</span>
-              </li>
-            {/each}
-          </ul>
-        </section>
-        {/if}
-      </div>
+        <p class="catalog-thanks">{$t('catalogThanks')} ♡</p>
 
-    <p class="catalog-thanks">{$t('catalogThanks')} ♡</p>
-  </div>
-
-  <div class="catalog-after details-col">
+        <div class="catalog-after details-col">
     <FigurineStatusPanel
       figurine={ctx.figurine}
       id={ctx.id}
@@ -563,5 +563,8 @@
       <FigurineComments figurineId={ctx.id} />
     </div>
     </div>
-  </div>
+        </div>
+        </div>
+      </div>
+    </div>
 </div>

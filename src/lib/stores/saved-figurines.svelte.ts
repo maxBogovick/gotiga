@@ -5,6 +5,7 @@ import { api } from '$lib/api';
 const CANONICAL_KEY = 'gotiga_saved_figurines';
 const LEGACY_KEYS = ['gotiga_liked', 'gotiga_wishlist'] as const;
 const ALL_KEYS = [CANONICAL_KEY, ...LEGACY_KEYS] as const;
+const VISITOR_TOKEN_KEY = 'gotiga_visitor_token';
 type SyncOptions = { importLocal?: boolean };
 
 function readIds(key: string): string[] {
@@ -27,6 +28,10 @@ class SavedFigurinesStore {
 
   #loaded = false;
   #listening = false;
+  #pending = new Map<string, Promise<boolean>>();
+  #desired = new Map<string, boolean>();
+  #pushChain: Promise<unknown> = Promise.resolve();
+  #gen = 0;
 
   get count() {
     return this.ids.length;
@@ -44,21 +49,59 @@ class SavedFigurinesStore {
     return this.ids.includes(id);
   }
 
-  toggle(id: string) {
-    this.load();
-    const set = new Set(this.ids);
-    if (set.has(id)) set.delete(id);
-    else set.add(id);
-    this.ids = [...set];
-    this.#persist();
-    this.#pushToServer();
+  hasAny(ids: string[]) {
+    return ids.some((id) => this.ids.includes(id));
   }
 
-  remove(id: string) {
+  toggle(id: string, aliases: string[] = []) {
     this.load();
-    this.ids = this.ids.filter((savedId) => savedId !== id);
-    this.#persist();
-    this.#pushToServer();
+    void this.set(id, !this.hasAny([id, ...aliases]), aliases);
+  }
+
+  remove(id: string, aliases: string[] = []) {
+    void this.set(id, false, aliases);
+  }
+
+  // Explicit target state — a retry or a doubled click cannot flip twice.
+  // `aliases` are extra localStorage keys for the same work (URL slug vs UUID)
+  // so an unlike cannot leave a leftover handle that reappears on reload.
+  set(id: string, liked: boolean, aliases: string[] = []): Promise<boolean> {
+    this.load();
+    this.#gen += 1;
+    this.#desired.set(id, liked);
+    this.#setLocal(id, liked, aliases);
+
+    const ahead = this.#pending.get(id) ?? Promise.resolve(liked);
+    const request = ahead.catch(() => liked).then(async () => {
+      const target = this.#desired.get(id) ?? liked;
+      try {
+        await api.setFigurineLike(
+          id,
+          this.#token(),
+          target,
+          authStore.token,
+        );
+        const wanted = this.#desired.get(id) ?? target;
+        // Trust the last tap, not the server echo. A liked:true response
+        // after unlike used to write the id back into localStorage, so the
+        // heart came back on reload. The like endpoint already updates the
+        // account wishlist for this one id — a full PUT here raced and
+        // resurrected it.
+        this.#setLocal(id, wanted, aliases);
+        return wanted;
+      } catch {
+        const wanted = this.#desired.get(id) ?? target;
+        this.#setLocal(id, wanted, aliases);
+        this.syncError = true;
+        this.#pushToServer();
+        return wanted;
+      } finally {
+        if (this.#pending.get(id) === request) this.#pending.delete(id);
+      }
+    });
+
+    this.#pending.set(id, request);
+    return request;
   }
 
   localIds() {
@@ -79,10 +122,20 @@ class SavedFigurinesStore {
     const token = authStore.token;
     if (!token) return;
     this.load();
+    const gen = this.#gen;
     try {
+      await this.#pushChain.catch(() => undefined);
       const server = await api.getWishlist(token);
+      if (gen !== this.#gen) return;
       const importLocal = options.importLocal === true;
-      const next = importLocal ? dedupe([...this.ids, ...server]) : dedupe(server);
+      let next = importLocal ? dedupe([...this.ids, ...server]) : dedupe(server);
+      for (const [id, liked] of this.#desired) {
+        if (liked) {
+          if (!next.includes(id)) next = [...next, id];
+        } else {
+          next = next.filter((savedId) => savedId !== id);
+        }
+      }
       const changed = importLocal && (
         next.length !== this.ids.length || next.length !== server.length
       );
@@ -110,14 +163,39 @@ class SavedFigurinesStore {
     return this.ids;
   }
 
+  #setLocal(id: string, liked: boolean, aliases: string[] = []) {
+    const keys = dedupe([id, ...aliases]);
+    if (liked) {
+      this.ids = dedupe([...this.ids.filter((savedId) => !keys.includes(savedId)), id]);
+    } else {
+      this.ids = this.ids.filter((savedId) => !keys.includes(savedId));
+    }
+    this.#persist();
+  }
+
+  #token(): string {
+    let token = browser ? localStorage.getItem(VISITOR_TOKEN_KEY) : null;
+    if (!token) {
+      token = crypto.randomUUID();
+      if (browser) localStorage.setItem(VISITOR_TOKEN_KEY, token);
+    }
+    return token;
+  }
+
   #pushToServer() {
     if (!browser) return;
     const token = authStore.token;
     if (!token) return;
-    // Best effort: localStorage already holds the source of truth for this device.
-    api.setWishlist(token, this.ids)
-      .then(() => { this.syncError = false; })
-      .catch(() => { this.syncError = true; });
+    // Read `ids` when this write actually runs, not when it was scheduled, so
+    // an in-flight like cannot overwrite a later unlike on the account wishlist.
+    this.#pushChain = this.#pushChain.catch(() => undefined).then(async () => {
+      try {
+        await api.setWishlist(token, [...this.ids]);
+        this.syncError = false;
+      } catch {
+        this.syncError = true;
+      }
+    });
   }
 
   #persist() {
