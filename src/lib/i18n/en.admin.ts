@@ -570,6 +570,7 @@ export const enAdmin = {
   adminHomeLayoutElCtas: 'Buttons',
   adminHomeLayoutElProof: 'Trust line',
   adminHomeLayoutElTeasers: 'Video lockets',
+  adminHomeLayoutElDoors: 'Three doors',
   adminHomeLayoutElVisual: 'Photo',
   adminHomeLayoutElHeader: 'Section header',
   adminHomeLayoutElContent: 'Content',

@@ -19,10 +19,12 @@
     leaves = [],
     cuttings = [],
     latestWork = null,
+    variant = 'plate',
   }: {
     leaves?: GazetteLeaf[];
     cuttings?: GazetteCutting[];
     latestWork?: FigurineListItem | null;
+    variant?: 'plate' | 'door';
   } = $props();
 
   let slips = $derived(plateSlips(leaves, cuttings, $lang, latestWork));
@@ -62,6 +64,7 @@
 {#if current}
   <div
     class="gz-plate"
+    class:gz-door={variant === 'door'}
     class:paused
     class:cycling
     onmouseenter={() => (paused = true)}
@@ -76,6 +79,31 @@
       onfocus={() => (paused = true)}
       onblur={() => (paused = false)}
     >
+      {#if variant === 'door'}
+        <span class="gz-door-face" aria-hidden="true">
+          {#if current.imageUrl}
+            <AppImage src={current.imageUrl} alt="" class="gz-work-img" sizes="64px" />
+          {:else if current.markKey || current.markUrl || current.letter}
+            <GazetteMark
+              markKey={current.markKey}
+              markUrl={current.markUrl}
+              letter={current.letter}
+              size={28}
+            />
+          {/if}
+        </span>
+        <span class="gz-door-copy">
+          <b>{$t('homeGazettePlateLabel')}</b>
+          <span>{current.title || $t('homeDoorGazetteHint')}</span>
+        </span>
+        {#if cycling}
+          <span class="gz-progress" aria-hidden="true">
+            {#key tick}
+              <span class="gz-progress-bar" style="animation-duration:{INTERVAL_MS}ms"></span>
+            {/key}
+          </span>
+        {/if}
+      {:else}
       <span class="gz-plate-top">
         <span class="gz-plate-kicker">{$t('homeGazettePlateLabel')}</span>
         {#if cycling}
@@ -123,6 +151,7 @@
           </span>
         {/each}
       </span>
+      {/if}
     </a>
     {#if cycling}
       <button
@@ -380,6 +409,116 @@
   }
   .gz-next:active {
     transform: translateY(1px);
+  }
+
+  /* Door row: same rhythm as the two workshop lockets beside it — 64px face,
+     title, a line of the current leaf. The square plate chrome drops away. */
+  .gz-plate.gz-door {
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    margin: 0;
+    overflow: visible;
+    flex-direction: row;
+    align-items: center;
+    border: none;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+  }
+
+  .gz-plate.gz-door::after {
+    display: none;
+  }
+
+  .gz-plate.gz-door:hover {
+    transform: none;
+    box-shadow: none;
+    border-color: transparent;
+  }
+
+  .gz-plate.gz-door .gz-plate-hit {
+    display: grid;
+    grid-template-columns: 64px minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    column-gap: 14px;
+    row-gap: 0;
+    align-items: center;
+    flex: 1;
+    min-height: 0;
+    padding: 12px 28px 12px 0;
+  }
+
+  .gz-door-face {
+    grid-column: 1;
+    grid-row: 1;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 64px;
+    height: 64px;
+    overflow: hidden;
+    border-radius: 8px;
+    background: #2a1a12;
+    border: 1px solid rgba(52, 37, 28, 0.14);
+  }
+
+  .gz-door-face :global(.gz-work-img),
+  .gz-door-face :global(img) {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center top;
+  }
+
+  .gz-door-copy {
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .gz-door-copy b {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 22px;
+    font-weight: 500;
+    line-height: 1.15;
+    letter-spacing: 0;
+    color: var(--gz-ink);
+  }
+
+  .gz-door-copy span {
+    font-family: 'Instrument Sans', system-ui, sans-serif;
+    font-size: 12px;
+    font-weight: 400;
+    letter-spacing: 0.01em;
+    line-height: 1.35;
+    color: rgba(52, 37, 28, 0.55);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .gz-plate.gz-door .gz-progress {
+    grid-column: 2;
+    grid-row: 2;
+    margin: 6px 0 0;
+  }
+
+  .gz-plate.gz-door .gz-next {
+    position: static;
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    margin-right: 0;
+  }
+
+  .gz-plate.gz-door:hover .gz-door-copy b {
+    color: var(--gz-ember);
   }
 
   @media (prefers-reduced-motion: reduce) {

@@ -179,10 +179,10 @@
         ).slice(0, 200)
     );
 
-    let primaryCtaHref = '/commission';
-    let primaryCtaText = $derived($t('homeAuthorPrimaryCta'));
-    let secondaryCtaHref = '#gallery';
-    let secondaryCtaText = $derived($t('homeAuthorSecondaryCta'));
+    let primaryCtaHref = '#gallery';
+    let primaryCtaText = $derived($t('homeSeeTheWorks'));
+    let secondaryCtaHref = '#correspondence';
+    let secondaryCtaText = $derived($t('headerContactLabel'));
     // The book-holders' "first look" shelf: works genuinely inside their timed
     // early-release window (held out of the public archive by the server until
     // their hour). Rendered only when signed (see template guard).
@@ -219,7 +219,7 @@
     // The hero fills the fold, so it takes the preview-sized photo — the 420px thumbnail
     // behind faceImageUrl is built for the archive's small cards and goes to mush here.
     let heroDisplayImage = $derived(heroImageUrl(backgroundUrl, heroFigurine, FALLBACK_HERO));
-    const HERO_SIZES = '(max-width: 900px) 100vw, 50vw';
+    const HERO_SIZES = '(max-width: 1080px) 100vw, 58vw';
     let heroSrcset = $derived(
         resolveSrcset(heroDisplayImage) ?? resolveBackgroundSrcset(heroDisplayImage)
     );
@@ -597,106 +597,7 @@
         <div class={hlClasses('hero')} style={hlStyle('hero')} data-hl="hero">
         <section class="hero hero-cine" aria-labelledby="home-title">
 
-            <!-- Text, left column -->
-            <div class="hero-text" in:fly={{ y: 20, duration: 900, delay: 350, easing: cubicOut }}>
-                <h1 id="home-title" class="hero-title" aria-label={titleText}>
-                    {#each titleLines as line}
-                        <span class="title-line" aria-hidden="true">
-                            {#each line.words as word, i}
-                                <span
-                                    class="title-word"
-                                    class:accent={line.offset + i === titleWords.length - 1}
-                                    style="animation-delay:{0.12 + (line.offset + i) * 0.08}s"
-                                >{word}</span>
-                            {/each}
-                        </span>
-                    {/each}
-                </h1>
-
-                <div class="hero-body">
-                    <div class="hero-main">
-                        <p class="hero-lead">{leadText}</p>
-
-                        <div class="hero-ctas">
-                            <a href={primaryCtaHref} class="cta-primary">
-                                {primaryCtaText}
-                                <svg class="cta-arrow" width="18" height="9" viewBox="0 0 18 9" fill="none">
-                                    <path d="M0 4.5H17M17 4.5L12.5 1M17 4.5L12.5 8" stroke="currentColor" stroke-width="1"/>
-                                </svg>
-                            </a>
-                            <a href={secondaryCtaHref} class="cta-ghost">{secondaryCtaText}</a>
-                        </div>
-
-                        <div class="hero-proof" aria-label={$brandName}>
-                            <span>{$t('homeTrustUnique')}</span>
-                            <span>{$t('homeTrustHandmade')}</span>
-                            <span>{$t('homeTrustAuthorReply')}</span>
-                        </div>
-
-                        <!-- Process footage, right under the trust line — a quiet second
-                             layer of proof, not competing with title/CTA for the eye. -->
-                        <div class="hw-teasers">
-                            <HeroWorkshopTeaser
-                                webm="/images/workshop/atelier-reel-tiny.webm"
-                                mp4="/images/workshop/atelier-reel-tiny.mp4"
-                                poster="/images/workshop/atelier-reel-tiny-poster.jpg"
-                                label={$t('homeWorkshopTeaserLabel')}
-                                onSelect={(e) => openReelModal('a', e)}
-                            />
-                            <HeroWorkshopTeaser
-                                webm="/images/workshop/atelier-reel-2-tiny.webm"
-                                mp4="/images/workshop/atelier-reel-2-tiny.mp4"
-                                poster="/images/workshop/atelier-reel-2-tiny-poster.jpg"
-                                label={$t('homeWorkshopTeaserLabel')}
-                                delayMs={400}
-                                onSelect={(e) => openReelModal('b', e)}
-                            />
-                            <span class="hw-teasers-label">{$t('homeWorkshopTeaserLabel')}</span>
-                            {#if deferHomeExtras}
-                            {#await import('$lib/components/HeroGazettePlate.svelte') then { default: HeroGazettePlate }}
-                            <HeroGazettePlate
-                                leaves={gazetteHome.leaves}
-                                cuttings={gazetteHome.cuttings}
-                                latestWork={latestAddedWork}
-                            />
-                            {/await}
-                            {:else}
-                                <div class="gz-plate-slot" aria-hidden="true"></div>
-                            {/if}
-                        </div>
-                        {#if availableFigurines.length === 0}
-                            <p class="release-note">{$t('homeReleaseNote')}</p>
-                        {/if}
-
-                        {#if collectionTotal > 0}
-                            <div class="hero-stats">
-                                <a class="hero-stat" href="#gallery">
-                                    <b>{collectionTotal}</b>
-                                    <span>{$t('homeHeroCountSuffix')}<svg class="hero-stat-arrow" width="10" height="8" viewBox="0 0 10 8" fill="none" aria-hidden="true"><path d="M0 4H9M9 4L6 1M9 4L6 7" stroke="currentColor" stroke-width="1"/></svg></span>
-                                </a>
-                                {#if inProgressFigurines.length > 0}
-                                    <a class="hero-stat" href="/upcoming">
-                                        <b>{inProgressFigurines.length}</b>
-                                        <span>{$t('homeLedgerInProgress')}<svg class="hero-stat-arrow" width="10" height="8" viewBox="0 0 10 8" fill="none" aria-hidden="true"><path d="M0 4H9M9 4L6 1M9 4L6 7" stroke="currentColor" stroke-width="1"/></svg></span>
-                                    </a>
-                                {/if}
-                                {#if homeShelves.marked.length > 0}
-                                    <a class="hero-stat" href="#marked-by-you">
-                                        <b>{homeShelves.marked.length}</b>
-                                        <span>{$t('markedByYouEyebrow')}<svg class="hero-stat-arrow" width="10" height="8" viewBox="0 0 10 8" fill="none" aria-hidden="true"><path d="M0 4H9M9 4L6 1M9 4L6 7" stroke="currentColor" stroke-width="1"/></svg></span>
-                                    </a>
-                                {/if}
-                            </div>
-                        {/if}
-                    </div>
-
-                </div>
-
-            </div>
-
-            <!-- Photo, right column: a slow drift stands in for the pointer-tilt
-                 this layout replaced, and a HUD strip carries the "live" read
-                 instead of a decorative ornament. -->
+            <!-- Photo, left: the work is the first thing the eye meets. -->
             <div class="cine-frame">
                 <div class="cine-photo" style="--lens-scale:{heroLensScale}">
                     <div class="hero-lens" bind:this={heroPhotoEl}>
@@ -725,7 +626,6 @@
                     <a class="art-caption" href={heroObjectHref} aria-label="{heroObjectCta}: {heroObjectName}">
                         <span class="art-caption-kicker">{$t('homeHeroObjectLabel')}</span>
                         <span class="art-caption-name">{heroObjectName}</span>
-                        <span class="art-caption-meta">{heroObjectMeta}</span>
                         <span class="art-caption-open">{heroObjectCta} →</span>
                     </a>
                     {/if}
@@ -739,7 +639,98 @@
                 {/if}
             </div>
 
-        
+            <!-- Copy, right column -->
+            <div class="hero-text" in:fly={{ y: 20, duration: 900, delay: 350, easing: cubicOut }}>
+                <p class="hero-kicker">{homeContent.kicker?.trim() || $t('homeKicker')}</p>
+                <h1 id="home-title" class="hero-title" aria-label={titleText}>
+                    {#each titleLines as line}
+                        <span class="title-line" aria-hidden="true">
+                            {#each line.words as word, i}
+                                <span
+                                    class="title-word"
+                                    class:accent={line.offset + i === titleWords.length - 1}
+                                    style="animation-delay:{0.12 + (line.offset + i) * 0.08}s"
+                                >{word}</span>
+                            {/each}
+                        </span>
+                    {/each}
+                </h1>
+
+                <div class="hero-body">
+                    <div class="hero-main">
+                        <p class="hero-lead">{leadText}</p>
+
+                        <div class="hero-ctas">
+                            <a href={primaryCtaHref} class="cta-primary">
+                                {primaryCtaText}
+                                <svg class="cta-arrow" width="18" height="9" viewBox="0 0 18 9" fill="none">
+                                    <path d="M0 4.5H17M17 4.5L12.5 1M17 4.5L12.5 8" stroke="currentColor" stroke-width="1"/>
+                                </svg>
+                            </a>
+                            <a href={secondaryCtaHref} class="cta-ghost">{secondaryCtaText}</a>
+                        </div>
+
+                        <div class="hero-doors">
+                            <button
+                                type="button"
+                                class="hero-door"
+                                onclick={(e) => openReelModal('a', e)}
+                            >
+                                <HeroWorkshopTeaser
+                                    webm="/images/workshop/atelier-reel-tiny.webm"
+                                    mp4="/images/workshop/atelier-reel-tiny.mp4"
+                                    poster="/images/workshop/atelier-reel-tiny-poster.jpg"
+                                    label={$t('homeDoorHandsTitle')}
+                                    size="door"
+                                    interactive={false}
+                                />
+                                <span class="hero-door-copy">
+                                    <b>{$t('homeDoorHandsTitle')}</b>
+                                    <span>{$t('homeDoorHandsHint')}</span>
+                                </span>
+                            </button>
+                            <button
+                                type="button"
+                                class="hero-door"
+                                onclick={(e) => openReelModal('b', e)}
+                            >
+                                <HeroWorkshopTeaser
+                                    webm="/images/workshop/atelier-reel-2-tiny.webm"
+                                    mp4="/images/workshop/atelier-reel-2-tiny.mp4"
+                                    poster="/images/workshop/atelier-reel-2-tiny-poster.jpg"
+                                    label={$t('homeDoorBenchTitle')}
+                                    size="door"
+                                    interactive={false}
+                                    delayMs={400}
+                                />
+                                <span class="hero-door-copy">
+                                    <b>{$t('homeDoorBenchTitle')}</b>
+                                    <span>{$t('homeDoorBenchHint')}</span>
+                                </span>
+                            </button>
+                            {#if deferHomeExtras}
+                            {#await import('$lib/components/HeroGazettePlate.svelte') then { default: HeroGazettePlate }}
+                            <div class="hero-door-row">
+                                <HeroGazettePlate
+                                    variant="door"
+                                    leaves={gazetteHome.leaves}
+                                    cuttings={gazetteHome.cuttings}
+                                    latestWork={latestAddedWork}
+                                />
+                            </div>
+                            {/await}
+                            {:else}
+                                <div class="hero-door-slot" aria-hidden="true"></div>
+                            {/if}
+                        </div>
+                        {#if availableFigurines.length === 0}
+                            <p class="release-note">{$t('homeReleaseNote')}</p>
+                        {/if}
+                    </div>
+
+                </div>
+
+            </div>
 
         </section>
         </div>
@@ -854,6 +845,7 @@
                                         story={fig.shortText}
                                         flip={i % 2 === 1}
                                         source="home_grid"
+                                        onLike={() => siteAnalytics.cta('wishlist')}
                                     />
                                 </div>
                             {/each}
@@ -1186,23 +1178,19 @@
         .hl-hide-desktop { display: none; }
     }
 
-    /* ── HERO LAYOUT (split: text left, letterboxed frame right) ───
-       The frame used to run full-width with the text stacked under it,
-       which left the pillarboxed side-bars (from object-fit: contain)
-       doing nothing. Side by side, that same width goes to the text
-       column instead of sitting empty. */
+    /* ── HERO LAYOUT (photo left, copy right) ─────────────────────
+       The photograph is the first thing a visitor meets; the words sit
+       beside it as a caption, not as a wall to read before the work. */
     .hero-cine {
         display: grid;
-        grid-template-columns: minmax(340px, 0.86fr) minmax(420px, 1.14fr);
-        align-items: start;
-        gap: clamp(28px, 4vw, 64px);
-        /* Главная без header-offset — добавляем верхний воздух, чтобы фото и мета-строка
-           не уходили под фиксированную шапку. */
+        grid-template-columns: minmax(420px, 1.2fr) minmax(300px, 0.8fr);
+        align-items: center;
+        gap: clamp(28px, 4vw, 56px);
         padding:
             calc(var(--site-header-height) + clamp(18px, 2.4vw, 34px))
             clamp(20px, 4.5vw, 64px)
             clamp(28px, 3.2vw, 44px);
-        max-width: 1320px;
+        max-width: 1480px;
         margin: 0 auto;
     }
 
@@ -1211,6 +1199,16 @@
         position: relative;
         z-index: 10;
         min-width: 0;
+        padding-block: 8px;
+    }
+
+    .hero-kicker {
+        margin: 0 0 14px;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--copper);
     }
 
     .eyebrow {
@@ -1237,7 +1235,7 @@
     /* ── H1: word-based reveal, so Russian titles wrap like typography ─────── */
     .hero-title {
         font-family: 'Cormorant Garamond', serif;
-        font-size: clamp(48px, 7vw, 108px);
+        font-size: clamp(40px, 5.2vw, 76px);
         font-weight: 300;
         line-height: 0.9;
         letter-spacing: 0;
@@ -1398,61 +1396,76 @@
         transform: translateY(1px);
     }
 
-    .hero-proof {
+    .hero-doors {
         display: flex;
+        flex-direction: column;
+        width: 100%;
+        margin-top: 8px;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .hero-door,
+    .hero-door-row,
+    .hero-door-slot {
+        border-top: 1px solid var(--border);
+    }
+
+    .hero-door {
+        display: grid;
+        grid-template-columns: 64px minmax(0, 1fr);
+        gap: 14px;
         align-items: center;
-        flex-wrap: wrap;
-        gap: 6px 14px;
-        max-width: 520px;
-        color: var(--muted);
-        font-size: 12.5px;
-        letter-spacing: 0.01em;
-        line-height: 1.5;
+        width: 100%;
+        padding: 12px 0;
+        border: none;
+        border-top: 1px solid var(--border);
+        background: none;
+        text-align: left;
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+        -webkit-appearance: none;
+        appearance: none;
     }
 
-    .hero-proof span {
-        position: relative;
-        padding-left: 13px;
-    }
-
-    .hero-proof span::before {
-        content: "\00b7";
-        position: absolute;
-        left: 0;
-        top: -0.2em;
-        font-size: 16px;
-        line-height: 1;
+    .hero-door:hover .hero-door-copy b,
+    .hero-door:focus-visible .hero-door-copy b {
         color: var(--copper);
     }
 
-    .hw-teasers {
+    .hero-door:focus-visible {
+        outline: 2px solid rgba(198, 95, 60, 0.56);
+        outline-offset: 3px;
+    }
+
+    .hero-door-copy {
+        min-width: 0;
         display: flex;
-        align-items: flex-end;
-        flex-wrap: wrap;
-        gap: 14px;
-        width: fit-content;
-        margin-top: 20px;
+        flex-direction: column;
+        gap: 3px;
     }
 
-    .hw-teasers-label {
-        font-size: 11px;
-        font-weight: 600;
-        letter-spacing: 0.1em;
-        line-height: 1.3;
-        text-transform: uppercase;
-        max-width: 130px;
-        color: var(--mid);
-        border-bottom: 1px solid rgba(198,95,60,0.25);
-        padding-bottom: 2px;
+    .hero-door-copy b {
+        font-family: 'Cormorant Garamond', serif;
+        font-size: 22px;
+        font-weight: 500;
+        line-height: 1.15;
+        color: var(--ink);
+        transition: color 0.18s ease;
     }
 
-    /* Same box as HeroGazettePlate while its chunk loads — keeps the teaser
-       row from shifting when the blotter arrives. */
-    .gz-plate-slot {
-        width: 142px;
-        height: 142px;
-        flex-shrink: 0;
-        margin: 5px 1px 5px 2px;
+    .hero-door-copy span {
+        font-size: 12px;
+        line-height: 1.35;
+        color: var(--muted);
+    }
+
+    .hero-door-row {
+        min-width: 0;
+    }
+
+    .hero-door-slot {
+        height: 88px;
     }
 
     .release-note {
@@ -1466,85 +1479,6 @@
         font-weight: 300;
         line-height: 1.42;
         color: var(--muted);
-    }
-
-    /* Honest facts doubling as quick jumps — only shown alongside the pin
-       (otherwise the tightened single column above is already complete). */
-    .hero-stats {
-        display: flex;
-        gap: 30px;
-        margin-top: 30px;
-        padding-top: 20px;
-        border-top: 1px solid var(--border);
-    }
-
-    .hero-stat {
-        display: block;
-        text-decoration: none;
-        cursor: pointer;
-        transition: transform 0.16s ease;
-    }
-
-    .hero-stat:hover,
-    .hero-stat:focus-visible {
-        transform: translateY(-2px);
-    }
-
-    .hero-stat:focus-visible {
-        outline: 2px solid rgba(198,95,60,0.56);
-        outline-offset: 3px;
-    }
-
-    .hero-stat b {
-        display: block;
-        font-family: 'Cormorant Garamond', serif;
-        font-weight: 300;
-        font-size: 26px;
-        line-height: 1;
-        color: var(--mid);
-        margin-bottom: 5px;
-        transition: color 0.16s ease;
-    }
-
-    .hero-stat:hover b,
-    .hero-stat:focus-visible b {
-        color: var(--copper);
-    }
-
-    /* Underline is always faintly present (this is a link), and the
-       arrow only becomes legible on interaction so the row stays quiet
-       until someone's pointer actually lands on it. */
-    .hero-stat span {
-        display: inline-flex;
-        align-items: center;
-        gap: 5px;
-        font-size: 10.5px;
-        font-weight: 600;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: var(--muted);
-        border-bottom: 1px solid rgba(198,95,60,0.28);
-        padding-bottom: 2px;
-        transition: border-color 0.16s ease, color 0.16s ease;
-    }
-
-    .hero-stat:hover span,
-    .hero-stat:focus-visible span {
-        color: var(--copper);
-        border-color: rgba(198,95,60,0.7);
-    }
-
-    .hero-stat-arrow {
-        flex-shrink: 0;
-        opacity: 0;
-        transform: translateX(-3px);
-        transition: opacity 0.18s ease, transform 0.18s ease;
-    }
-
-    .hero-stat:hover .hero-stat-arrow,
-    .hero-stat:focus-visible .hero-stat-arrow {
-        opacity: 1;
-        transform: translateX(0);
     }
 
     /* ── HERO VISUAL: cinematic letterboxed frame ─────────────────
@@ -1564,13 +1498,11 @@
     .cine-photo {
         position: relative;
         width: 100%;
-        /* Matches the current hero photo's own aspect ratio (1509×822). Now
-           that the frame lives in its own flexible-width column instead of
-           spanning the full page, it can just take the photo's real shape —
-           no more dark contain-bars filling in a mismatched box. */
-        aspect-ratio: 1509 / 822;
-        max-height: 460px;
+        aspect-ratio: 4 / 3;
+        min-height: 380px;
+        max-height: min(72vh, 680px);
         overflow: hidden;
+        border-radius: inherit;
     }
 
     /* Lens layer: carries the dwell push-in, written every frame from rAF — no
@@ -1643,67 +1575,52 @@
 
     .art-caption {
         position: absolute;
-        left: clamp(18px, 2.3vw, 34px);
-        bottom: clamp(18px, 2.3vw, 34px);
+        left: clamp(16px, 2vw, 28px);
+        bottom: clamp(16px, 2vw, 28px);
         z-index: 28;
         display: grid;
         gap: 6px;
-        max-width: min(360px, calc(100% - 36px));
-        padding: 13px 15px 12px 16px;
-        color: #fff7ea;
+        max-width: min(320px, calc(100% - 32px));
+        padding: 14px 16px 13px;
+        color: var(--ink);
         text-decoration: none;
-        border: 1px solid rgba(255,247,234,0.16);
-        border-left: 2px solid rgba(198,95,60,0.72);
-        background:
-            linear-gradient(90deg, rgba(28,16,10,0.78), rgba(28,16,10,0.58) 72%, rgba(28,16,10,0.18));
-        box-shadow: 0 14px 34px rgba(20,10,6,0.34);
-        backdrop-filter: blur(10px) saturate(0.9);
-        text-shadow: 0 1px 2px rgba(0,0,0,0.55);
-        transition: border-color 0.22s ease, background 0.22s ease, transform 0.18s ease;
+        background: var(--cream);
+        border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+        box-shadow: none;
+        transition: border-color 0.22s ease, transform 0.18s ease;
     }
 
     .art-caption:hover {
-        border-color: rgba(255,247,234,0.28);
-        background:
-            linear-gradient(90deg, rgba(28,16,10,0.84), rgba(28,16,10,0.64) 72%, rgba(28,16,10,0.22));
+        border-color: color-mix(in srgb, var(--copper) 55%, transparent);
         transform: translateY(-1px);
     }
 
     .art-caption-kicker {
-        font-size: 8px;
-        letter-spacing: 0.18em;
+        font-size: 10px;
+        letter-spacing: 0.16em;
         line-height: 1;
         text-transform: uppercase;
-        color: rgba(255,247,234,0.68);
+        color: var(--copper);
     }
 
     .art-caption-name {
         font-family: 'Cormorant Garamond', serif;
-        font-size: clamp(25px, 2.2vw, 34px);
-        font-style: italic;
-        line-height: 0.95;
-        color: #fff7ea;
-    }
-
-    .art-caption-meta {
-        max-width: 30ch;
-        font-size: 9px;
-        letter-spacing: 0.08em;
-        line-height: 1.35;
-        text-transform: uppercase;
-        color: rgba(255,247,234,0.72);
+        font-size: clamp(22px, 2vw, 30px);
+        font-weight: 500;
+        font-style: normal;
+        line-height: 1;
+        color: var(--ink);
     }
 
     .art-caption-open {
         width: fit-content;
-        margin-top: 2px;
-        padding-top: 6px;
-        border-top: 1px solid rgba(255,247,234,0.18);
-        font-size: 9px;
-        letter-spacing: 0.14em;
+        margin-top: 4px;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.12em;
         line-height: 1;
         text-transform: uppercase;
-        color: #fff7ea;
+        color: var(--copper);
     }
 
     /* ── WORK HUB ────────────────────────────────── */
@@ -2086,16 +2003,14 @@
             gap: 22px;
         }
 
-        /* Stacked, the photo leads: it is the thing worth seeing first, and the
-           copy reads as its caption rather than as a wall to scroll past. */
-        .cine-frame { order: -1; }
+        /* Stacked, the photo already leads in the markup. */
 
         /* Stacked, the text has the whole page width to itself — the 580px cap
            belonged to the two-column layout and here it just walls off the
            right half of the screen. */
         .hero-text { max-width: none; }
 
-        .cine-photo { max-height: 420px; }
+        .cine-photo { min-height: 280px; max-height: 420px; }
 
         .request-path {
             grid-template-columns: 1fr;
@@ -2109,8 +2024,7 @@
 
     /* Tablet band: the hero has stacked, so the copy suddenly has ~1000px of
        width and nothing to do with it. Split it in two — the pitch (lead + CTAs)
-       reads left, the evidence (trust line, process clips) sits right, and the
-       ledger figures run the full width underneath as a footer rule. */
+       reads left, the three doors sit right. */
     @media (min-width: 781px) and (max-width: 1080px) {
         .hero-body {
             max-width: none;
@@ -2136,27 +2050,14 @@
             margin-bottom: 0;
         }
 
-        .hero-proof {
+        .hero-doors {
             grid-column: 2;
-            grid-row: 1;
-            margin-top: 4px;
-        }
-
-        .hw-teasers {
-            grid-column: 2;
-            grid-row: 2;
+            grid-row: 1 / span 2;
             margin-top: 0;
         }
 
         .release-note {
-            grid-column: 2;
-            grid-row: 3;
-        }
-
-        .hero-stats {
             grid-column: 1 / -1;
-            justify-content: flex-start;
-            gap: clamp(40px, 8vw, 96px);
         }
     }
 
@@ -2211,11 +2112,6 @@
             min-height: 40px;
             padding: 0 2px;
             font-size: 11px;
-        }
-
-        .hero-proof {
-            font-size: 11px;
-            line-height: 1.45;
         }
 
         .release-note {

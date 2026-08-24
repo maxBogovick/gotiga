@@ -19,9 +19,11 @@
      * tags the outgoing link so admin analytics can attribute the click.
      * Optional — this component is only used by the home page today. */
     source?: string;
+    /** Fired after a heart tap — home page wires this to analytics. */
+    onLike?: () => void;
   };
 
-  let { fig, index, story = null, flip = false, source }: Props = $props();
+  let { fig, index, story = null, flip = false, source, onLike }: Props = $props();
 
   let text = $derived(
     story?.trim() ||
@@ -74,9 +76,9 @@
           : $t('archiveStatusSoldLabel')
   );
 
-  // ── Card actions: mark, share, commission. Same store and the same wording
-  // the archive plates use (HomeFigurineTile), so a work marked here is marked
-  // everywhere and the copy stays in one place.
+  // ── Card actions: save (heart), share, commission. Same store and the same
+  // wording the archive plates use (HomeFigurineTile) — each tap goes through
+  // savedFigurines.set → api.setFigurineLike → set_figurine_like on the server.
   let href = $derived(`/figurines/${fig.id}`);
   let saved = $derived(savedFigurines.has(fig.id));
   let justSaved = $state(false);
@@ -92,9 +94,13 @@
     };
   });
 
-  function toggleSaved() {
-    savedFigurines.toggle(fig.id);
-    if (savedFigurines.has(fig.id)) {
+  function toggleSaved(e: MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    const next = !saved;
+    void savedFigurines.set(fig.id, next);
+    onLike?.();
+    if (next) {
       justSaved = true;
       clearTimeout(pulseTimer);
       pulseTimer = setTimeout(() => { justSaved = false; }, 650);
@@ -159,6 +165,7 @@
 
       <div class="quick">
         <button
+          type="button"
           class="qbtn"
           class:is-active={saved}
           class:just-saved={justSaved}

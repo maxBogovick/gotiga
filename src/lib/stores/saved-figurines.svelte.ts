@@ -159,6 +159,11 @@ class SavedFigurinesStore {
     const merged = dedupe([...server, ...localIds]);
     const saved = await api.setWishlist(token, merged);
     this.replaceLocal(saved);
+    const visitor = this.#token();
+    const toSync = localIds.filter((id) => !server.includes(id));
+    await Promise.allSettled(
+      toSync.map((id) => api.setFigurineLike(id, visitor, true, token)),
+    );
     this.syncError = false;
     return this.ids;
   }

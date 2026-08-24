@@ -12,7 +12,7 @@
   let { authorName }: { authorName: string } = $props();
 </script>
 
-<section class="corr" aria-labelledby="corr-title">
+<section id="correspondence" class="corr" aria-labelledby="corr-title">
   <div class="corr-card">
     <span class="fc fc-tl"></span>
     <span class="fc fc-tr"></span>
@@ -41,6 +41,7 @@
     max-width: 900px;
     margin: clamp(24px, 4vw, 56px) auto;
     padding: 0 clamp(20px, 4.5vw, 64px);
+    scroll-margin-top: calc(var(--site-header-height) + 12px);
   }
 
   .corr-card {

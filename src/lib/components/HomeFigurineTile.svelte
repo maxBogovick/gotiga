@@ -18,6 +18,7 @@
         selected = false,
         masonry = false,
         source,
+        onLike,
     }: {
         fig: FigurineListItem;
         index?: number;
@@ -31,6 +32,8 @@
         // tags the outgoing link so admin analytics can attribute the click.
         // Left undefined by every other caller (hall), so their links stay untagged.
         source?: string;
+        /** Fired after a heart tap — optional analytics hook from the home page. */
+        onLike?: () => void;
     } = $props();
 
     let saved = $derived(savedFigurines.has(fig.id));
@@ -139,8 +142,10 @@
     function toggleSaved(e: MouseEvent) {
         e.preventDefault();
         e.stopPropagation();
-        savedFigurines.toggle(fig.id);
-        if (savedFigurines.has(fig.id)) {
+        const next = !saved;
+        void savedFigurines.set(fig.id, next);
+        onLike?.();
+        if (next) {
             justSaved = true;
             clearTimeout(pulseTimer);
             pulseTimer = setTimeout(() => { justSaved = false; }, 650);

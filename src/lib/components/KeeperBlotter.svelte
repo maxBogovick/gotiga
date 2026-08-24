@@ -76,45 +76,53 @@
     void goto(figurineHref(fig, source));
   }
 
-  function onKey(e: KeyboardEvent) {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      keeper.runNow();
-    }
+  function onSubmit(e: SubmitEvent) {
+    e.preventDefault();
+    keeper.runNow();
   }
 </script>
 
 <div class="blotter">
-  <label class="kn-line">
-    <span class="sr-only">{$t('homeKeeperTitle')}</span>
-    <input
-      bind:this={inputEl}
-      type="search"
-      id="keeper-query-{source}"
-      name="q"
-      class="kn-input"
-      value={keeper.query}
-      placeholder={$t('homeKeeperPlaceholder')}
-      autocomplete="off"
-      spellcheck="false"
-      oninput={(e) => keeper.setQuery(e.currentTarget.value)}
-      onkeydown={onKey}
-    />
-    {#if keeper.query}
-      <button
-        type="button"
-        class="kn-clear"
-        onclick={() => keeper.setQuery('')}
-        aria-label={$t('archiveClearFilters')}
-      >
-        <svg width="9" height="9" viewBox="0 0 9 9" fill="none" aria-hidden="true">
-          <path d="M1 1l7 7M8 1L1 8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+  <form class="kn-form" role="search" aria-label={$t('homeKeeperTitle')} onsubmit={onSubmit}>
+    <label class="kn-field-label" for="keeper-query-{source}">{$t('homeKeeperFieldLabel')}</label>
+    <div class="kn-line">
+      <span class="kn-loupe" aria-hidden="true">
+        <svg width="15" height="15" viewBox="0 0 14 14" fill="none">
+          <circle cx="6" cy="6" r="4.25" stroke="currentColor" stroke-width="1"/>
+          <path d="M9.2 9.2L12 12" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
         </svg>
-      </button>
-    {/if}
-  </label>
+      </span>
+      <input
+        bind:this={inputEl}
+        type="search"
+        id="keeper-query-{source}"
+        name="q"
+        class="kn-input"
+        value={keeper.query}
+        placeholder={$t('homeKeeperPlaceholder')}
+        autocomplete="off"
+        spellcheck="false"
+        enterkeyhint="search"
+        oninput={(e) => keeper.setQuery(e.currentTarget.value)}
+      />
+      {#if keeper.query}
+        <button
+          type="button"
+          class="kn-clear"
+          onclick={() => keeper.setQuery('')}
+          aria-label={$t('archiveClearFilters')}
+        >
+          <svg width="9" height="9" viewBox="0 0 9 9" fill="none" aria-hidden="true">
+            <path d="M1 1l7 7M8 1L1 8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+          </svg>
+        </button>
+      {/if}
+      <button type="submit" class="kn-go">{$t('homeKeeperSubmit')}</button>
+    </div>
+  </form>
 
   {#if !asked}
+    <p class="kn-examples-label">{$t('homeKeeperExamples')}</p>
     <ul class="kn-whispers">
       {#each whispers as w}
         <li>
@@ -158,12 +166,35 @@
 </div>
 
 <style>
+  .kn-form {
+    margin: 0;
+  }
+
+  .kn-field-label {
+    display: block;
+    margin: 0 0 8px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #6f3b24;
+  }
+
   .kn-line {
     display: flex;
     align-items: center;
     gap: 8px;
-    border-bottom: 1px solid color-mix(in srgb, #34251c 28%, transparent);
-    padding-bottom: 6px;
+    padding: 6px 6px 6px 12px;
+    border: 1px solid color-mix(in srgb, #34251c 22%, transparent);
+    background: color-mix(in srgb, #fff 38%, transparent);
+  }
+
+  .kn-loupe {
+    flex: 0 0 auto;
+    display: grid;
+    place-items: center;
+    color: #6f3b24;
+    opacity: 0.72;
   }
 
   .kn-input {
@@ -176,7 +207,7 @@
     font-style: italic;
     color: #34251c;
     outline: none;
-    padding: 4px 0;
+    padding: 6px 0;
   }
   .kn-input::placeholder {
     color: color-mix(in srgb, #7c6554 70%, transparent);
@@ -195,6 +226,30 @@
     place-items: center;
   }
   .kn-clear:hover { color: #34251c; }
+
+  .kn-go {
+    flex: 0 0 auto;
+    height: 32px;
+    padding: 0 14px;
+    border: 0;
+    background: #34251c;
+    color: #f8f1e7;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .kn-go:hover { background: #6f3b24; }
+
+  .kn-examples-label {
+    margin: 16px 0 6px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #7c6554;
+  }
 
   .kn-whispers {
     list-style: none;

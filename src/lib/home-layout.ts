@@ -135,8 +135,7 @@ export const HOME_BLOCK_ELEMENTS: Partial<Record<HomeBlockId, HomeElementDef[]>>
         { id: 'title',   sel: '.hero-title',  kind: 'text',  orderable: true },
         { id: 'lead',    sel: '.hero-lead',   kind: 'text',  orderable: true },
         { id: 'ctas',    sel: '.hero-ctas',   kind: 'group', orderable: true },
-        { id: 'proof',   sel: '.hero-proof',  kind: 'text',  orderable: true },
-        { id: 'teasers', sel: '.hw-teasers',  kind: 'group', orderable: true },
+        { id: 'doors',   sel: '.hero-doors',  kind: 'group', orderable: true },
         // Deliberately renamed from `visual` while its selector was being repointed from the
         // long-dead `.hero-visual` to the live `.cine-frame`. Keeping the id would have
         // ARMED every override an admin ever saved for it: the control has been generating

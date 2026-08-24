@@ -573,6 +573,7 @@ export const ruAdmin: Record<AdminTranslationKey, string> = {
   adminHomeLayoutElCtas:       'Кнопки',
   adminHomeLayoutElProof:      'Строка доверия',
   adminHomeLayoutElTeasers:    'Видео-медальоны',
+  adminHomeLayoutElDoors:      'Три двери',
   adminHomeLayoutElVisual:     'Фото',
   adminHomeLayoutElHeader:     'Шапка секции',
   adminHomeLayoutElContent:    'Содержимое',

@@ -4,6 +4,9 @@
    * down the page. The poster sits in the prerendered HTML (~5 KB). The video
    * itself is mounted after `load`, so it never shares the Slow 4G pipe with
    * the hero photograph.
+   *
+   * When nested inside a door row the outer control owns the click, so this
+   * renders as a decorative span rather than a nested button.
    */
   import { onMount } from 'svelte';
   import { afterLoadIdle } from '$lib/after-load-idle';
@@ -14,6 +17,8 @@
     poster = '/images/workshop/atelier-reel-tiny-poster.jpg',
     label,
     delayMs = 0,
+    size = 'locket',
+    interactive = true,
     onSelect,
   }: {
     webm?: string;
@@ -21,6 +26,8 @@
     poster?: string;
     label: string;
     delayMs?: number;
+    size?: 'locket' | 'door';
+    interactive?: boolean;
     onSelect?: (e: MouseEvent) => void;
   } = $props();
 
@@ -53,7 +60,7 @@
   });
 </script>
 
-<button type="button" class="hw-teaser" aria-label={label} onclick={(e) => onSelect?.(e)}>
+{#snippet media()}
   <span class="hw-ring" aria-hidden="true"></span>
   {#if armed}
     <video
@@ -72,7 +79,23 @@
   {:else}
     <img src={poster} alt="" class="hw-video" decoding="async" fetchpriority="low" />
   {/if}
-</button>
+{/snippet}
+
+{#if interactive}
+  <button
+    type="button"
+    class="hw-teaser"
+    class:hw-teaser-door={size === 'door'}
+    aria-label={label}
+    onclick={(e) => onSelect?.(e)}
+  >
+    {@render media()}
+  </button>
+{:else}
+  <span class="hw-teaser" class:hw-teaser-door={size === 'door'} aria-hidden="true">
+    {@render media()}
+  </span>
+{/if}
 
 <style>
   .hw-teaser {
@@ -88,6 +111,20 @@
     border-radius: 50%;
     overflow: hidden;
     box-shadow: 0 6px 16px rgba(52,37,28,0.22);
+  }
+
+  span.hw-teaser {
+    cursor: inherit;
+  }
+
+  .hw-teaser.hw-teaser-door {
+    width: 64px;
+    height: 64px;
+    overflow: visible;
+  }
+
+  .hw-teaser-door .hw-video {
+    border-radius: 50%;
   }
 
   .hw-video {
