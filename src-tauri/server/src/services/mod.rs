@@ -6380,6 +6380,7 @@ impl AppService {
             expected_to: row.expected_to.map(|d| d.to_string()),
             figurine_status: row.figurine_status,
             watch_count: if admin { Some(row.watch_count) } else { None },
+            shelf_order: row.shelf_order,
             created_at: row.created_at.to_rfc3339(),
             updated_at: row.updated_at.to_rfc3339(),
             prev: None,
@@ -6521,11 +6522,36 @@ impl AppService {
             .get_gazette_leaf_by_slug(slug)
             .await?
             .ok_or_else(|| AppError::NotFound(format!("Gazette leaf {slug} not found")))?;
-        let (prev, next) = self.repo.gazette_leaf_neighbors(slug).await?;
+        let (prev, next) = self.repo.gazette_leaf_neighbors(slug, &row.kind).await?;
         let mut dto = Self::gazette_leaf_dto(row);
         dto.prev = prev;
         dto.next = next;
         Ok(dto)
+    }
+
+    /// The whole shelf of tall tales at once — the room has no pagination,
+    /// because counting pages is exactly the shop reflex it is built against.
+    pub async fn list_tales_public(&self) -> Result<Vec<GazetteLeafDto>> {
+        let rows = self
+            .repo
+            .list_tales_public(crate::gazette::SHELF_TALES)
+            .await?;
+        Ok(rows.into_iter().map(Self::gazette_leaf_dto).collect())
+    }
+
+    /// Lay the shelf out in the given order; position is the index in the list.
+    pub async fn admin_reorder_tales(&self, ids: Vec<Uuid>) -> Result<()> {
+        if ids.len() > crate::gazette::SHELF_TALES as usize {
+            return Err(AppError::BadRequest("Shelf is longer than the room".into()));
+        }
+        let mut seen = std::collections::HashSet::with_capacity(ids.len());
+        if !ids.iter().all(|id| seen.insert(*id)) {
+            return Err(AppError::BadRequest(
+                "A tale cannot stand in two places on the shelf".into(),
+            ));
+        }
+        self.repo.set_tale_shelf_order(&ids).await?;
+        Ok(())
     }
 
     pub async fn list_gazette_for_work(&self, figurine_id: Uuid) -> Result<Vec<GazetteLeafDto>> {

@@ -17,6 +17,9 @@ export function houseRoom(pathname: string): HouseRoom {
   if (path === '/figurines') return 'archive';
   if (path.startsWith('/figurines/')) return 'work';
   if (path === '/gazette' || path.startsWith('/gazette/')) return 'hall';
+  // The shelf of tall tales stands in the hall too: the gazette announces a
+  // tale, the shelf keeps it. Same room, so the same crossings.
+  if (path === '/tales' || path.startsWith('/tales/')) return 'hall';
   return 'other';
 }
 

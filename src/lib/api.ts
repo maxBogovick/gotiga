@@ -2019,6 +2019,24 @@ export const api = {
         }
     },
 
+    /** The whole shelf of tall tales, in the order the keeper arranged it. */
+    async getTales(loadFetch?: typeof fetch): Promise<GazetteLeaf[]> {
+        try {
+            return await webFetch('/tales', undefined, loadFetch);
+        } catch {
+            return [];
+        }
+    },
+
+    /** Lay the shelf out top to bottom; position is the index in the array. */
+    async adminReorderTales(ids: string[]): Promise<void> {
+        await webFetch('/admin/gazette/tales/order', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ ids }),
+        });
+    },
+
     async getGazettePage(page = 1, perPage = 12, loadFetch?: typeof fetch): Promise<GazetteLeavesPage> {
         const q = new URLSearchParams({ page: String(page), perPage: String(perPage) });
         return webFetch(`/gazette?${q}`, undefined, loadFetch);

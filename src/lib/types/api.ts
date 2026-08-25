@@ -1698,6 +1698,8 @@ export interface GazetteLeaf {
     imageUrl: string | null;
     imageUrls?: string[];
     pinned: boolean;
+    /** Place on the shelf of tall tales. Absent on every other kind of leaf. */
+    shelfOrder?: number | null;
     publishedAt: string | null;
     scheduledAt: string | null;
     expectedFrom?: string | null;

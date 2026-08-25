@@ -31,6 +31,8 @@ pub const HOME_CUTTINGS: i64 = 10;
 pub const ROOM_LEAVES: i64 = 200;
 pub const ROOM_CUTTINGS: i64 = 80;
 pub const WORK_LEAVES: i64 = 8;
+/// The shelf of tall tales, handed out whole — it is a shelf, not a feed.
+pub const SHELF_TALES: i64 = 500;
 
 pub const MARK_KEYS: &[&str] = &[
     "pillar", "hive", "boom", "quill", "lens", "shard", "coil", "letter",

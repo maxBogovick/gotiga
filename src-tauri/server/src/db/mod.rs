@@ -5341,7 +5341,7 @@ impl Repository {
         SELECT l.id, l.slug, l.kind, l.status,
                l.title_en, l.title_ru, l.dek_en, l.dek_ru, l.body_en, l.body_ru,
                l.figurine_id, l.href, l.source_name, l.source_url, l.image_url, l.image_urls,
-               l.pinned, l.published_at, l.scheduled_at, l.expected_from, l.expected_to,
+               l.pinned, l.shelf_order, l.published_at, l.scheduled_at, l.expected_from, l.expected_to,
                l.created_at, l.updated_at,
                f.name AS figurine_name, f.slug AS figurine_slug,
                f.status::text AS figurine_status,
@@ -5375,6 +5375,52 @@ impl Repository {
         .fetch_one(&self.pg_pool)
         .await?;
         Ok((items, total))
+    }
+
+    /// The shelf of tall tales, in the order the keeper arranged it by hand.
+    ///
+    /// `pinned` deliberately does not sort here the way it sorts the gazette:
+    /// on a hand-arranged shelf it would fight the dragging. It only marks the
+    /// one tale the room shows large, and the room picks that itself.
+    pub async fn list_tales_public(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<crate::models::GazetteLeafListed>> {
+        Ok(sqlx::query_as::<_, crate::models::GazetteLeafListed>(&format!(
+            "{} WHERE l.kind = 'tale'
+               AND (l.status = 'published'
+                    OR (l.status = 'scheduled' AND l.scheduled_at IS NOT NULL AND l.scheduled_at <= NOW()))
+             ORDER BY l.shelf_order NULLS LAST,
+                      COALESCE(l.published_at, l.scheduled_at, l.created_at) DESC,
+                      l.id DESC
+             LIMIT $1",
+            Self::GAZETTE_LEAF_SELECT
+        ))
+        .bind(limit)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Rewrite the whole shelf in one statement. Ids that are not tales are
+    /// ignored rather than rejected, so a stale tab cannot renumber the vestnik.
+    /// `updated_at` is left alone on purpose: the writing desk compares it
+    /// against its local draft, and a reorder is not a rewrite of the prose.
+    pub async fn set_tale_shelf_order(&self, ids: &[Uuid]) -> Result<u64> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let orders: Vec<i32> = (0..ids.len() as i32).collect();
+        let res = sqlx::query(
+            "UPDATE gazette_leaves AS l
+                SET shelf_order = v.ord
+               FROM (SELECT * FROM UNNEST($1::uuid[], $2::int[]) AS t(id, ord)) AS v
+              WHERE l.id = v.id AND l.kind = 'tale'",
+        )
+        .bind(ids)
+        .bind(&orders)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected())
     }
 
     pub async fn list_gazette_leaves_home(
@@ -5981,9 +6027,16 @@ impl Repository {
         .await?)
     }
 
+    /// Who stands on either side of a leaf.
+    ///
+    /// A tall tale looks along its own shelf, in the order the keeper arranged
+    /// it; every other leaf looks along the gazette in time. Without the fork,
+    /// "next along the shelf" would walk a reader out of the room and into an
+    /// announcement of a showing.
     pub async fn gazette_leaf_neighbors(
         &self,
         slug: &str,
+        kind: &str,
     ) -> Result<(
         Option<crate::models::GazetteNeighborDto>,
         Option<crate::models::GazetteNeighborDto>,
@@ -5998,29 +6051,39 @@ impl Repository {
             older_title_ru: Option<String>,
         }
 
-        let row = sqlx::query_as::<_, NeighborRow>(
+        let tale = kind == "tale";
+        // Both halves are house constants, never anything a request carries.
+        let scope = if tale { "AND l.kind = 'tale'" } else { "" };
+        let walk = if tale {
+            "shelf_order NULLS LAST, at DESC, id DESC"
+        } else {
+            "at DESC, id DESC"
+        };
+
+        let row = sqlx::query_as::<_, NeighborRow>(&format!(
             r#"WITH live AS (
-                 SELECT l.slug, l.title_en, l.title_ru, l.id,
+                 SELECT l.slug, l.title_en, l.title_ru, l.id, l.shelf_order,
                         COALESCE(l.published_at, l.scheduled_at, l.created_at) AS at
                    FROM gazette_leaves l
                   WHERE (l.status = 'published'
                      OR (l.status = 'scheduled' AND l.scheduled_at IS NOT NULL AND l.scheduled_at <= NOW()))
+                    {scope}
                ),
                ord AS (
                  SELECT slug,
-                        LAG(slug) OVER (ORDER BY at DESC, id DESC) AS newer_slug,
-                        LAG(title_en) OVER (ORDER BY at DESC, id DESC) AS newer_title_en,
-                        LAG(title_ru) OVER (ORDER BY at DESC, id DESC) AS newer_title_ru,
-                        LEAD(slug) OVER (ORDER BY at DESC, id DESC) AS older_slug,
-                        LEAD(title_en) OVER (ORDER BY at DESC, id DESC) AS older_title_en,
-                        LEAD(title_ru) OVER (ORDER BY at DESC, id DESC) AS older_title_ru
+                        LAG(slug) OVER (ORDER BY {walk}) AS newer_slug,
+                        LAG(title_en) OVER (ORDER BY {walk}) AS newer_title_en,
+                        LAG(title_ru) OVER (ORDER BY {walk}) AS newer_title_ru,
+                        LEAD(slug) OVER (ORDER BY {walk}) AS older_slug,
+                        LEAD(title_en) OVER (ORDER BY {walk}) AS older_title_en,
+                        LEAD(title_ru) OVER (ORDER BY {walk}) AS older_title_ru
                    FROM live
                )
                SELECT newer_slug, newer_title_en, newer_title_ru,
                       older_slug, older_title_en, older_title_ru
                  FROM ord
                 WHERE slug = $1"#,
-        )
+        ))
         .bind(slug)
         .fetch_optional(&self.pg_pool)
         .await?;

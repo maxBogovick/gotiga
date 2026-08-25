@@ -1198,6 +1198,89 @@ export const en = {
   gazetteWatchLeaveMissing: 'This page is no longer valid.',
   gazetteWatchToBench: 'See the work',
 
+  // === THE SHELF OF TALL TALES ===
+  navTales: 'Tall tales',
+  homeDoorTalesHint: 'On the shelf, in its own words',
+  talesAboutThisThing: 'What this thing remembers',
+  talesPageKicker: 'The shelf',
+  talesPageTitle: 'Tall tales',
+  talesPageRule: 'Everything in this house remembers something. Here it is written down.',
+  talesEmpty: 'The shelf is bare. Nothing has told its story yet.',
+  talesBack: '\u2190 The hall',
+  talesShelf: 'The rest of the shelf',
+  talesRandom: 'Open one at random',
+  talesRead: 'Read it',
+  talesBackShelf: '\u2190 The shelf',
+  talesKicker: 'From the shelf',
+  talesWorkHere: 'This thing stands here',
+  talesNearby: 'Nearby on the shelf',
+  talesLeft: 'To the left',
+  talesRight: 'To the right',
+  talesLoadError: 'The house could not fetch this tale.',
+
+
+  // === CELLAR (making-of, /cellar — not in nav; reached from the footer) ===
+  cellarKicker: 'Under the house',
+  cellarTitle: 'The Cellar',
+  cellarLead: 'Every house has one room where the beams are left showing. This is that room. Below the hall and the archive sit the five lamps that light everything above them, the six colours they burn in, and the rules that decide what never gets built. Nothing here is for sale. It is only how the house stands up.',
+  cellarBack: '← RETURN TO HALL',
+
+  cellarLampsTitle: 'Five lamps',
+  cellarCodeShow: 'The workings',
+  cellarCodeLines: 'lines',
+
+  cellarLamp1Name: 'Raking Light',
+  cellarLamp1Why: 'A conservator walks a lamp at a grazing angle across a surface, and the relief no one could see comes up out of it — tool marks, seams, a thumbprint left in the clay. Here the lamp is your pointer. The photograph is treated as a height map, the light sits low above it, and only genuine relief answers; a flat area stays exactly the photograph it was. Move the lamp away and the plate returns to itself, byte for byte.',
+  cellarLamp1Hint: 'Move the pointer across the plate',
+
+  cellarLamp2Name: 'Dust',
+  cellarLamp2Why: 'Eighty motes, drifting at fifteen frames a second, thinking about your cursor from a distance. It costs almost nothing and it does the one thing no still image can: it says the room has air in it, and that nobody has swept for a while.',
+  cellarLamp2Hint: 'The dust settles on the whole cellar — it was never made to live in a box',
+
+  cellarLamp3Name: 'The Living Plate',
+  cellarLamp3Why: 'A depth map turns one still photograph into two planes, and the subject drifts against its ground by three per cent of the frame as you move. Three per cent is the whole argument. Any more and it becomes a product viewer that wants you to buy something; this much only makes the portrait seem to breathe when you look away from it.',
+  cellarLamp3Hint: 'Move the pointer — slowly',
+
+  cellarLamp4Name: 'The Keyhole',
+  cellarLamp4Why: 'A soft darkness over the work, with one lit fragment left showing. It lifts once you have actually stepped inside the piece — the house remembers what you have opened. Enough is visible to draw you across the room; not enough to spare you the walk.',
+  cellarLamp4Hint: 'What is hidden is not lost, only unvisited',
+
+  cellarLamp5Name: 'Cipher and Candle',
+  cellarLamp5Why: 'Some lines are set in a cipher and stay that way until a candle is lit and carried near them. It is a small ceremony, entirely optional, and most visitors never light it. That is the point: a house is allowed to keep something back for whoever thinks to look.',
+  cellarLamp5Hint: 'Light the candle, then bring it close to the line',
+
+  cellarDustOn: 'Stir the dust',
+  cellarDustOff: 'Let it settle',
+  cellarVeilLift: 'Lift the veil',
+  cellarVeilDrop: 'Draw it back',
+  cellarCandleOn: 'Light the candle',
+  cellarCandleOff: 'Put it out',
+  cellarSecret: 'the house keeps its own hours',
+
+  cellarPaletteTitle: 'Six colours',
+  cellarPaletteLead: 'Nothing is picked from a generator. Parchment for ground, iron for text, ember for the one place a visitor may act — and that ember appears perhaps twice on a page, which is exactly why it still works.',
+  cellarSwatchParchment: 'Parchment',
+  cellarSwatchIron: 'Iron gall',
+  cellarSwatchBark: 'Bark',
+  cellarSwatchDeep: 'Deep wood',
+  cellarSwatchEmber: 'Ember',
+  cellarSwatchDust: 'Dust',
+
+  cellarFontsTitle: 'Three hands',
+  cellarSpecimen: 'The collection rests, and the dust never settles',
+  cellarFontFraunces: 'for the names of rooms and works',
+  cellarFontGeorgia: 'for anything the house says in its own voice',
+  cellarFontInstrument: 'for labels, dates and the small print of the ledger',
+
+  cellarRulesTitle: 'Rules of the house',
+  cellarRule1: 'If a feature speeds up perception, it does not belong here. Slowness is the exhibit.',
+  cellarRule2: 'The gallery answers the arrow keys. Nothing on the page says so. A hint would cost more than the discovery is worth.',
+  cellarRule3: 'A booking needs no account. You are given a token and you keep it, the way you would keep a cloakroom ticket.',
+  cellarRule4: 'One motion per crossing, not a new animation per link. The archive is a drawer; the workshop is a curtain; every other door simply fades.',
+  cellarRule5: 'This is not a shop. It never learned to behave like one, and it will not be taught.',
+
+  cellarOutro: 'That is the whole cellar. The lamps are five files, the colours are six lines of CSS, and the rules are the only part that was difficult. Mind the step on the way up.',
+
 } as const;
 
 export type TranslationKey = keyof typeof en;

@@ -185,6 +185,10 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 get(handlers::get_gazette_watch).post(handlers::leave_gazette_watch),
             )
             .route("/gazette/:slug", get(handlers::get_gazette_leaf))
+            // === THE SHELF OF TALL TALES ===
+            // A tale is a gazette leaf of kind `tale`; only its shelf is its own.
+            // The leaf itself is still read through `/gazette/:slug`.
+            .route("/tales", get(handlers::list_tales))
             // === PUBLIC LOGIN ===
             .route("/admin/login", post(handlers::admin_login))
             // === PROTECTED WRITE — use route_layer so auth only runs on matched routes ===
@@ -505,6 +509,12 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             .route(
                 "/admin/gazette/cuttings/:id/promote",
                 post(handlers::admin_promote_gazette_cutting).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/gazette/tales/order",
+                post(handlers::admin_reorder_tales).route_layer(
                     middleware::from_fn_with_state(config.clone(), auth_middleware),
                 ),
             )

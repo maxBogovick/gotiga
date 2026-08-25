@@ -9,7 +9,7 @@ Rule: if a feature "speeds up perception" or "looks like a store" — it doesn't
 All API calls go through the `api` object in `src/lib/api.ts`. Never call fetch directly.
 
 ## Routes
-`/` home · `/figurines` archive · `/figurines/[id]` detail · `/author` · `/workshop` · `/upcoming` (not in nav) · `/gazette` · `/admin`
+`/` home · `/figurines` archive · `/figurines/[id]` detail · `/author` · `/workshop` · `/upcoming` (not in nav) · `/gazette` · `/tales` shelf of tall tales · `/admin`
 
 ## Key localStorage keys
 `gotiga_api_key` · `gotiga_server_url` · `gotiga_wishlist` · `gotiga_viewed` · `gotiga_claims_${id}`
@@ -34,6 +34,7 @@ Modals: rotate-1deg frame, double border, wax seal on success, Georgia/Fraunces/
 - Gallery keyboard nav: ←/→ arrows (undiscoverable — no hint shown)
 - `view-transition-name: figurine-{id}` enables shared-element morph card→detail; `startViewTransition` is wired globally in `+layout.svelte` (onNavigate). Each `figurine-{id}` must be unique per rendered page or the transition aborts.
 - Admin auth: `sessionStorage` only (lost on tab close by design)
+- A tale is a gazette leaf with `kind = 'tale'` — same table, same admin plumbing — but it lives at `/tales/[slug]`, not `/gazette/[slug]`, which 308s to the shelf. Always build leaf links through `leafHref()`; it makes that choice in one place. The shelf is arranged by hand (`shelf_order`), not by date.
 - `series` field is editable in the admin figurine form (`admin/+page.svelte`) and is a filter axis on the archive page.
 - Web fonts: one consolidated Google Fonts `<link>` lives in `app.html`; route `<svelte:head>` blocks must NOT add their own (reader-font and admin design-preview fonts load dynamically via their stores).
 - `<html lang>` is kept in sync with the language store from `+layout.svelte` (SPA has no SSR handle hook).

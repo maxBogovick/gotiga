@@ -48,6 +48,7 @@ export async function GET({ fetch }: { fetch: typeof globalThis.fetch }) {
         `## About\n\n` +
         `- [The author](${SITE_URL}/author): who makes the figures and why.\n` +
         `- [The workshop](${SITE_URL}/workshop): tools, materials and process.\n` +
+        `- [The cellar](${SITE_URL}/cellar): how this site itself is built — the five effects, the palette, the rules.\n` +
         `- [How to acquire a work](${SITE_URL}${ACQUIRE_PATH}): house rules for commissioning or reserving a piece. The petition form is a later step, not a public listing.\n` +
         `- [The photographs](${SITE_URL}${IMAGE_RIGHTS_PATH}): images are copyrighted; reuse needs written permission.\n` +
         `- [Privacy](${SITE_URL}${PRIVACY_PATH}): what personal data the site collects and why.\n\n` +
@@ -56,6 +57,7 @@ export async function GET({ fetch }: { fetch: typeof globalThis.fetch }) {
         `\n\n## Browse\n\n` +
         `- [Full archive](${SITE_URL}/figurines): every available, reserved and sold piece.\n` +
         `- [Gazette](${SITE_URL}/gazette): notes from the house — arrivals, sketches, openings, cuttings.\n` +
+        `- [Tall tales](${SITE_URL}/tales): short stories about the works — what each figure remembers, in its own words.\n` +
         `- [Gazette RSS](${SITE_URL}/gazette/feed.xml): machine-readable leaves of the cabinet.\n` +
         `- [Upcoming](${SITE_URL}/upcoming): figures currently in progress.\n` +
         `- [Book of Impressions](${SITE_URL}${IMPRESSIONS_PATH}): leave a quiet reaction to the exhibition.\n`;

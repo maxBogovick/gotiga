@@ -31,6 +31,7 @@
     import CopyEditor from '$lib/components/admin/CopyEditor.svelte';
     import ProgrammePanel from '$lib/components/admin/ProgrammePanel.svelte';
     import GazettePanel from '$lib/components/admin/GazettePanel.svelte';
+    import TalesPanel from '$lib/components/admin/TalesPanel.svelte';
     import LogsPanel from '$lib/components/admin/LogsPanel.svelte';
     import { t, registerAdminDicts, type TranslationKey } from '$lib/i18n';
     import { enAdmin } from '$lib/i18n/en.admin';
@@ -119,6 +120,7 @@
                 ['reel-theme',  'adminTabReelTheme'],
                 ['programme',   'adminTabProgramme'],
                 ['gazette',     'adminTabGazette'],
+                ['tales',       'adminTabTales'],
                 ['marks',       'adminTabMarks'],
             ],
         },
@@ -454,7 +456,9 @@
 
     function layGazette(seed: GazetteSeed) {
         gazetteSeed = seed;
-        activeTab = 'gazette';
+        // A tale is a gazette leaf, but it is not written in the newsroom —
+        // «Записать небылицу» from a work must land at the writing desk.
+        activeTab = seed.kind === 'tale' ? 'tales' : 'gazette';
     }
 
     onMount(() => {
@@ -777,6 +781,9 @@
 
         {:else if activeTab === 'gazette'}
             <div in:fade class="h-full overflow-hidden"><GazettePanel seed={gazetteSeed} onSeedConsumed={() => (gazetteSeed = null)} /></div>
+
+        {:else if activeTab === 'tales'}
+            <div in:fade class="h-full overflow-hidden"><TalesPanel seed={gazetteSeed} onSeedConsumed={() => (gazetteSeed = null)} /></div>
 
         {:else if activeTab === 'media'}
             <div in:fade class="h-full">

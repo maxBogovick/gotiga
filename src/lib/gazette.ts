@@ -59,8 +59,12 @@ export function leafCopy(leaf: GazetteLeaf, lang: Lang): { title: string; dek: s
   const titleEn = (leaf.titleEn ?? '').trim();
   const titleRu = (leaf.titleRu ?? '').trim();
   const title = (ru && titleRu ? titleRu : titleEn) || titleRu;
-  const dek = (ru && leaf.dekRu?.trim() ? leaf.dekRu : leaf.dekEn)?.trim() ?? '';
-  const body = (ru && leaf.bodyRu?.trim() ? leaf.bodyRu : leaf.bodyEn)?.trim() ?? '';
+  // Fall back to whichever language was actually written, in both directions.
+  // The reader's own language wins; an empty one must not blank the page. This
+  // used to be asymmetric — a leaf written only in Russian showed nothing at
+  // all to an English reader, while the reverse read fine.
+  const dek = (ru ? leaf.dekRu?.trim() || leaf.dekEn?.trim() : leaf.dekEn?.trim() || leaf.dekRu?.trim()) ?? '';
+  const body = (ru ? leaf.bodyRu?.trim() || leaf.bodyEn?.trim() : leaf.bodyEn?.trim() || leaf.bodyRu?.trim()) ?? '';
   return {
     title: decodeEntities(title),
     dek: decodeEntities(dek),
@@ -285,7 +289,10 @@ export function fillTemplate(kind: GazetteKind, name: string): GazetteTemplateFi
 }
 
 export function leafHref(leaf: GazetteLeaf, source?: string): string {
-  const base = `/gazette/${leaf.slug}`;
+  // The gazette announces a tale; the shelf is where it lives. Routing that
+  // choice through this one function is what keeps the vestnik, the hall and
+  // every work page pointing at the room without each of them knowing about it.
+  const base = leaf.kind === 'tale' ? `/tales/${leaf.slug}` : `/gazette/${leaf.slug}`;
   return source ? `${base}?src=${encodeURIComponent(source)}` : base;
 }
 

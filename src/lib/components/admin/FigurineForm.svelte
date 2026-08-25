@@ -1052,6 +1052,14 @@
                         class="px-4 py-2 border border-[#34251c]/25 hover:border-[#34251c]/55 text-[#5f4636] hover:text-[#34251c] text-xs tracking-wide uppercase transition-colors"
                     >{$t('adminGazettePutOnTable')}</button>
                 {/if}
+                <!-- A tale is not an announcement: a work may already be on the
+                     table and still have nothing written about it. This one is
+                     offered whatever the gazette says, and opens the desk. -->
+                <button
+                    type="button"
+                    onclick={() => onLayGazette?.({ figurineId: figurine.id, kind: 'tale' })}
+                    class="ml-2 px-4 py-2 border border-[#c65f3c]/40 hover:border-[#c65f3c]/70 text-[#c65f3c] text-xs tracking-wide uppercase transition-colors"
+                >{$t('adminTalesWriteOne')}</button>
             {:else}
                 <p class="text-[11px] italic text-[#7c6554]">{$t('adminCaptionSaveNewFirst')}</p>
             {/if}

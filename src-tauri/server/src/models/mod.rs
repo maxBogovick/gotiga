@@ -3024,6 +3024,7 @@ pub struct GazetteLeafListed {
     pub figurine_slug: Option<String>,
     pub figurine_status: Option<String>,
     pub watch_count: i64,
+    pub shelf_order: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3055,6 +3056,9 @@ pub struct GazetteLeafDto {
     pub figurine_status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub watch_count: Option<i64>,
+    /// Place on the shelf of tall tales. Absent for every other kind of leaf.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shelf_order: Option<i32>,
     pub created_at: String,
     pub updated_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3069,6 +3073,13 @@ pub struct GazetteNeighborDto {
     pub slug: String,
     pub title_en: String,
     pub title_ru: String,
+}
+
+/// The shelf of tall tales, top to bottom. Position is the index in the list.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReorderTalesRequest {
+    pub ids: Vec<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -19,6 +19,7 @@
   import { createFigurineAnalytics } from '$lib/analytics';
   import { t, lang, brandName } from '$lib/i18n';
   import { leafCopy, leafHref } from '$lib/gazette';
+  import { isTale } from '$lib/tales';
   import { FigurineClaimsStore, type ClaimData } from '$lib/stores/figurine-claims.svelte';
   import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
   import { pageTurn } from '$lib/stores/page-turn.svelte';
@@ -46,6 +47,11 @@
     next?: FigurineListItem | null;
     gazetteLeaves?: GazetteLeaf[];
   } = $props();
+
+  // Tales are pulled out of the leaf list: they open the shelf, everything
+  // else opens the gazette, and the two deserve different names on the page.
+  let workTales = $derived(gazetteLeaves.filter(isTale));
+  let workLeaves = $derived(gazetteLeaves.filter((leaf) => !isTale(leaf)));
 
   let win = $derived(resolveWindow(figurine, showingRooms.list));
   let doorClosed = $derived(isGated(win) && !isShowingOpen(win, houseClock.nowDate));
@@ -1630,16 +1636,30 @@
       {/await}
     {/if}
 
-    {#if gazetteLeaves.length > 0}
+    {#if workTales.length > 0 || workLeaves.length > 0}
       <aside class="work-gazette">
-        <p class="work-gazette-label">{$t('gazetteHouseWrote')}</p>
-        <ul class="work-gazette-list">
-          {#each gazetteLeaves as leaf (leaf.id)}
-            <li>
-              <a href={leafHref(leaf, 'work')}>{leafCopy(leaf, $lang).title}</a>
-            </li>
-          {/each}
-        </ul>
+        <!-- A tale about this thing is the strongest door into the shelf, so it
+             is named for what it is and stands above the gazette's notices. -->
+        {#if workTales.length > 0}
+          <p class="work-gazette-label">{$t('talesAboutThisThing')}</p>
+          <ul class="work-gazette-list work-tales">
+            {#each workTales as tale (tale.id)}
+              <li>
+                <a href={leafHref(tale, 'work')}>{leafCopy(tale, $lang).title}</a>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+        {#if workLeaves.length > 0}
+          <p class="work-gazette-label" class:second={workTales.length > 0}>{$t('gazetteHouseWrote')}</p>
+          <ul class="work-gazette-list">
+            {#each workLeaves as leaf (leaf.id)}
+              <li>
+                <a href={leafHref(leaf, 'work')}>{leafCopy(leaf, $lang).title}</a>
+              </li>
+            {/each}
+          </ul>
+        {/if}
       </aside>
     {/if}
 
@@ -1717,6 +1737,10 @@
     border-top: 1px solid rgba(216, 198, 177, 0.7);
     max-width: 36em;
   }
+  .work-gazette-label.second {
+    margin-top: 18px;
+  }
+
   .work-gazette-label {
     font-size: 9px;
     font-weight: 600;

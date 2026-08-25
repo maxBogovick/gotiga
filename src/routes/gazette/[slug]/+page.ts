@@ -1,5 +1,7 @@
+import { redirect } from '@sveltejs/kit';
 import { api } from '$lib/api';
 import { isGazetteReservedSlug, isGazetteYearSlug } from '$lib/gazette';
+import { isTale } from '$lib/tales';
 import type { GazetteLeaf, GazetteRoom } from '$lib/types/api';
 
 export const prerender = import.meta.env.VITE_BUILD_TARGET === 'web';
@@ -40,5 +42,9 @@ export const load = async ({ params, fetch }: { params: { slug: string }; fetch:
     leaf = null;
     loadError = !(e instanceof Error && /API 404|API 410/.test(e.message));
   }
+  // A tale lives on the shelf now. Old links, feeds and bookmarks still work;
+  // they just arrive by way of a permanent redirect.
+  if (leaf && isTale(leaf)) redirect(308, `/tales/${leaf.slug}`);
+
   return { mode: 'leaf' as const, room: null, leaf, loadError };
 };

@@ -8,6 +8,7 @@
   import { t, brandName } from '$lib/i18n';
   import { fade, fly } from 'svelte/transition';
   import { api, resolveMediaUrl } from '$lib/api';
+  import LangSwitcher from '$lib/components/LangSwitcher.svelte';
   import RavenWatcher from '$lib/components/RavenWatcher.svelte';
   import NeighborPlate from '$lib/components/NeighborPlate.svelte';
   import { afterLoadIdle } from '$lib/after-load-idle';
@@ -45,7 +46,12 @@
   let leftLinks = $derived([
     { href: '/figurines', label: $t('navAllWorks') },
     { href: '/gazette', label: $t('navGazette') },
+    { href: '/tales', label: $t('navTales') },
   ]);
+  // The stories are the one place where the two languages are genuinely
+  // different writing rather than the same page translated, so the switch
+  // belongs in reach there.
+  let isTales = $derived(pathname === '/tales' || pathname.startsWith('/tales/'));
   let leafData = $derived(page.data as WorkLeafData);
   let isWorkLeaf = $derived(WORK_LEAF_RE.test(pathname) && Boolean(leafData.figurine));
   let leafPrev = $derived(leafData.prev ?? null);
@@ -351,6 +357,11 @@
         {/if}
         <span class="header-avatar-tip">{headerAuthorName}</span>
       </a>
+      {#if isTales && !isWorkLeaf}
+        <span class="ghost-left-utils">
+          <LangSwitcher variant="light" />
+        </span>
+      {/if}
       {#if isWorkLeaf}
         <a href="/figurines" class="leaf-archive">
           <svg class="leaf-archive-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
@@ -707,6 +718,11 @@
         onclick={closeMobileNav}
       >{link.label}</a>
     {/each}
+    {#if isTales}
+      <div class="mobile-nav-lang">
+        <LangSwitcher variant="light" />
+      </div>
+    {/if}
     <div class="mobile-nav-house">
       <button
         type="button"
@@ -1275,6 +1291,18 @@
     max-height: 0;
     transform: translateY(-5px);
     pointer-events: none;
+  }
+
+  .ghost-left-utils {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 4px;
+  }
+
+  .mobile-nav-lang {
+    display: flex;
+    justify-content: center;
+    padding: 6px 0 2px;
   }
 
   .leaf-archive {

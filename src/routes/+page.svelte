@@ -719,6 +719,11 @@
                                 />
                             </div>
                             {/await}
+                            {#await import('$lib/components/HeroTalesPlate.svelte') then { default: HeroTalesPlate }}
+                            <div class="hero-door-row">
+                                <HeroTalesPlate />
+                            </div>
+                            {/await}
                             {:else}
                                 <div class="hero-door-slot" aria-hidden="true"></div>
                             {/if}

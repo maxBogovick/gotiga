@@ -118,6 +118,10 @@
     <a href="/privacy" class="colophon-link">{$t('footerPrivacyLink')}</a>
     <span class="colophon-dot" aria-hidden="true">·</span>
     <a href="/rights" class="colophon-link">{$t('footerRightsLink')}</a>
+    <span class="colophon-dot" aria-hidden="true">·</span>
+    <!-- The way down. Not in the nav on purpose: whoever reaches the cellar
+         is the sort of visitor the cellar was written for. -->
+    <a href="/cellar" class="colophon-link">{$t('cellarTitle')}</a>
   </div>
 </footer>
 

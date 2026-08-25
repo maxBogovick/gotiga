@@ -2068,6 +2068,7 @@ pub async fn sitemap_xml(
         "/",
         "/figurines",
         "/gazette",
+        "/tales",
         "/workshop",
         "/author",
         "/upcoming",
@@ -2108,8 +2109,8 @@ pub async fn sitemap_xml(
             let stamp = leaf.published_at.as_deref().unwrap_or(&leaf.created_at);
             let lastmod: String = stamp.chars().take(10).collect();
             urls.push_str(&format!(
-                "  <url><loc>{base}/gazette/{}</loc><lastmod>{}</lastmod></url>\n",
-                xml_escape(&leaf.slug),
+                "  <url><loc>{base}{}</loc><lastmod>{}</lastmod></url>\n",
+                xml_escape(&leaf_public_path(&leaf.kind, &leaf.slug)),
                 xml_escape(&lastmod),
             ));
         }
@@ -2361,6 +2362,19 @@ fn rss_rfc2822(raw: &str) -> Option<String> {
 /// Live RSS of cabinet gazette leaves. Kept off `/feed.xml` so Pinterest's works
 /// channel stays a pin-board of finished pieces. nginx routes `/gazette/feed.xml`
 /// here, the same way `/feed.xml` is live.
+/// Where a leaf actually answers.
+///
+/// A tale lives on the shelf and `/gazette/<slug>` only redirects there, so a
+/// feed or a sitemap built on the gazette path would hand every reader — and
+/// every crawler — a 308. Kept next to the two builders that need it.
+fn leaf_public_path(kind: &str, slug: &str) -> String {
+    if kind == "tale" {
+        format!("/tales/{slug}")
+    } else {
+        format!("/gazette/{slug}")
+    }
+}
+
 pub async fn gazette_feed_rss(
     State(service): State<AppService>,
     headers: HeaderMap,
@@ -2385,7 +2399,7 @@ pub async fn gazette_feed_rss(
         if title.is_empty() {
             continue;
         }
-        let link = format!("{base}/gazette/{}", leaf.slug);
+        let link = format!("{base}{}", leaf_public_path(&leaf.kind, &leaf.slug));
         let desc = gazette_rss_dek(leaf, &title);
         let pub_date = rss_rfc2822(gazette_rss_stamp(leaf)).unwrap_or_else(|| now.to_rfc2822());
         let enclosure = match absolute_media_url(&base, gazette_rss_cover(leaf)) {
@@ -3648,6 +3662,18 @@ pub async fn list_gazette(
         .and_then(|p| p.parse::<i64>().ok())
         .unwrap_or(12);
     Ok(Json(service.list_gazette_public(page, per_page).await?))
+}
+
+pub async fn list_tales(State(service): State<AppService>) -> Result<Json<Vec<GazetteLeafDto>>> {
+    Ok(Json(service.list_tales_public().await?))
+}
+
+pub async fn admin_reorder_tales(
+    State(service): State<AppService>,
+    Json(body): Json<ReorderTalesRequest>,
+) -> Result<StatusCode> {
+    service.admin_reorder_tales(body.ids).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn get_gazette_leaf(

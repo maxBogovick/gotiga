@@ -68,19 +68,31 @@ export async function GET({ fetch }: { fetch: typeof globalThis.fetch }) {
     }
 
     let gazetteLeaves: { slug: string; lastmod?: string }[] = [];
+    let taleLeaves: { slug: string; lastmod?: string }[] = [];
     let gazetteYears: number[] = [];
     try {
         const [gaz, room] = await Promise.all([
             api.getGazettePage(1, 200, fetch),
             api.getGazetteRoom(undefined, fetch),
         ]);
-        gazetteLeaves = gaz.items.map((leaf) => ({
-            slug: leaf.slug,
-            lastmod: isoDay(leaf.publishedAt ?? leaf.createdAt),
-        }));
+        // A tale answers on /tales/<slug>; /gazette/<slug> only redirects there,
+        // so listing the gazette address would point the crawler at a 308.
+        gazetteLeaves = gaz.items
+            .filter((leaf) => leaf.kind !== 'tale')
+            .map((leaf) => ({
+                slug: leaf.slug,
+                lastmod: isoDay(leaf.publishedAt ?? leaf.createdAt),
+            }));
+        taleLeaves = gaz.items
+            .filter((leaf) => leaf.kind === 'tale')
+            .map((leaf) => ({
+                slug: leaf.slug,
+                lastmod: isoDay(leaf.publishedAt ?? leaf.createdAt),
+            }));
         gazetteYears = room.years;
     } catch {
         gazetteLeaves = [];
+        taleLeaves = [];
         gazetteYears = [];
     }
 
@@ -99,6 +111,10 @@ export async function GET({ fetch }: { fetch: typeof globalThis.fetch }) {
         })),
         ...gazetteYears.map((year) => ({
             loc: `${SITE_URL}/gazette/${year}`,
+        })),
+        ...taleLeaves.map((tale) => ({
+            loc: `${SITE_URL}/tales/${tale.slug}`,
+            lastmod: tale.lastmod,
         })),
     ];
 
