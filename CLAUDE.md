@@ -9,7 +9,7 @@ Rule: if a feature "speeds up perception" or "looks like a store" — it doesn't
 All API calls go through the `api` object in `src/lib/api.ts`. Never call fetch directly.
 
 ## Routes
-`/` home · `/figurines` archive · `/figurines/[id]` detail · `/author` · `/workshop` · `/upcoming` (not in nav) · `/gazette` · `/tales` shelf of tall tales · `/admin`
+`/` home · `/figurines` archive · `/figurines/[id]` detail · `/author` · `/workshop` · `/upcoming` (not in nav) · `/gazette` · `/tales` shelf of tall tales · `/battles` card shelf (not in nav) · `/admin`
 
 ## Key localStorage keys
 `gotiga_api_key` · `gotiga_server_url` · `gotiga_wishlist` · `gotiga_viewed` · `gotiga_claims_${id}`
@@ -37,4 +37,5 @@ Modals: rotate-1deg frame, double border, wax seal on success, Georgia/Fraunces/
 - A tale is a gazette leaf with `kind = 'tale'` — same table, same admin plumbing — but it lives at `/tales/[slug]`, not `/gazette/[slug]`, which 308s to the shelf. Always build leaf links through `leafHref()`; it makes that choice in one place. The shelf is arranged by hand (`shelf_order`), not by date.
 - `series` field is editable in the admin figurine form (`admin/+page.svelte`) and is a filter axis on the archive page.
 - Web fonts: one consolidated Google Fonts `<link>` lives in `app.html`; route `<svelte:head>` blocks must NOT add their own (reader-font and admin design-preview fonts load dynamically via their stores).
+- Битвы: a card is `battle_cards`, one row per figurine (`UNIQUE figurine_id`). Two 1..5 ranges that are NOT the same thing — `tier` is the card's rank (frame + price, keeper's choice), `level` is the state of one person's copy (`battle_owned_cards`, raised with dust). The wallet (`battle_wallet_entries`) is append-only: balance is `SUM(amount)`, and every write carries an `idem_key`. The five frames live in `settings.battle_frames`, not per card — design in the frame, content in the card. `BattleCard.svelte` is the only renderer: shelf, preview and admin all use it, and it is sized by container queries, never by props.
 - `<html lang>` is kept in sync with the language store from `+layout.svelte` (SPA has no SSR handle hook).

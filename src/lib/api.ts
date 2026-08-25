@@ -58,6 +58,9 @@ import type {
     ThreadMessageDto,
     ThreadDetailDto,
     ThemeConfig,
+    BattleCard,
+    BattleFrames,
+    SaveBattleCardRequest,
     CopyOverrides,
     HomeLayoutConfig,
     HomeLayoutPreset,
@@ -2182,6 +2185,60 @@ export const api = {
         return webFetch(`/admin/gazette/cuttings/${id}/promote`, {
             method: 'POST',
             headers: authHeaders(),
+        });
+    },
+
+    // === СКРОМНЫЕ ЭПИЧЕСКИЕ БИТВЫ ===
+
+    /** The whole shelf, in the order the keeper arranged it. Never paginated. */
+    async getBattleCards(loadFetch?: typeof fetch): Promise<BattleCard[]> {
+        try {
+            return await webFetch('/battles/cards', undefined, loadFetch);
+        } catch {
+            // An empty room is a room with no cards in it yet, not a broken page.
+            return [];
+        }
+    },
+
+    async getBattleFrames(loadFetch?: typeof fetch): Promise<BattleFrames> {
+        try {
+            return await webFetch('/battles/frames', undefined, loadFetch);
+        } catch {
+            // The renderer falls back to its own five frames; see `frameFor`.
+            return { frames: [] };
+        }
+    },
+
+    async adminListBattleCards(): Promise<BattleCard[]> {
+        return webFetch('/admin/battles/cards', { headers: authHeaders() });
+    },
+
+    async adminSaveBattleCard(body: SaveBattleCardRequest, id?: string): Promise<BattleCard> {
+        return webFetch(id ? `/admin/battles/cards/${id}` : '/admin/battles/cards', {
+            method: id ? 'PUT' : 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(body),
+        });
+    },
+
+    async adminDeleteBattleCard(id: string): Promise<void> {
+        await webFetch(`/admin/battles/cards/${id}`, { method: 'DELETE', headers: authHeaders() });
+    },
+
+    /** Rewrite the whole shelf; position is the index in `ids`. */
+    async adminReorderBattleCards(ids: string[]): Promise<void> {
+        await webFetch('/admin/battles/cards/order', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ ids }),
+        });
+    },
+
+    async adminSaveBattleFrames(config: BattleFrames): Promise<BattleFrames> {
+        return webFetch('/admin/battles/frames', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(config),
         });
     },
 };

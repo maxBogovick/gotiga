@@ -3305,3 +3305,130 @@ pub struct GazetteRefreshReport {
     pub imported: i64,
     pub errors: Vec<String>,
 }
+
+// ============================================================
+// СКРОМНЫЕ ЭПИЧЕСКИЕ БИТВЫ — the shelf of cards
+// ============================================================
+
+/// A card as the row that was just written. `tier` is the card's rank; the
+/// owner's `level` lives on `battle_owned_cards` and never on the card itself.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct BattleCard {
+    pub id: Uuid,
+    pub slug: String,
+    pub figurine_id: Option<Uuid>,
+    pub status: String,
+    pub tier: i16,
+    pub title_en: String,
+    pub title_ru: String,
+    pub effect_en: Option<String>,
+    pub effect_ru: Option<String>,
+    pub lore_en: Option<String>,
+    pub lore_ru: Option<String>,
+    pub cost: i16,
+    pub power: i16,
+    pub price_dust: Option<i32>,
+    pub price_feed: Option<i32>,
+    pub art_url: Option<String>,
+    pub art_focal: Option<String>,
+    pub shelf_order: Option<i32>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// A card read for a page, carrying what the work it belongs to lends it: its
+/// name, its address, and the face photograph the card wears when the keeper
+/// has not given it a picture of its own.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct BattleCardListed {
+    pub id: Uuid,
+    pub slug: String,
+    pub figurine_id: Option<Uuid>,
+    pub status: String,
+    pub tier: i16,
+    pub title_en: String,
+    pub title_ru: String,
+    pub effect_en: Option<String>,
+    pub effect_ru: Option<String>,
+    pub lore_en: Option<String>,
+    pub lore_ru: Option<String>,
+    pub cost: i16,
+    pub power: i16,
+    pub price_dust: Option<i32>,
+    pub price_feed: Option<i32>,
+    pub art_url: Option<String>,
+    pub art_focal: Option<String>,
+    pub shelf_order: Option<i32>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub figurine_name: Option<String>,
+    pub figurine_slug: Option<String>,
+    /// Raw stored path of the work's face image; the service turns it into a URL.
+    pub figurine_face_path: Option<String>,
+    pub figurine_face_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleCardDto {
+    pub id: String,
+    pub slug: String,
+    pub status: String,
+    /// The card's rank, 1..5. Not to be confused with an owner's level.
+    pub tier: i16,
+    pub title_en: String,
+    pub title_ru: String,
+    pub effect_en: Option<String>,
+    pub effect_ru: Option<String>,
+    pub lore_en: Option<String>,
+    pub lore_ru: Option<String>,
+    pub cost: i16,
+    pub power: i16,
+    pub price_dust: Option<i32>,
+    pub price_feed: Option<i32>,
+    /// What the card actually wears: the keeper's own picture if there is one,
+    /// otherwise the work's face. Already a public URL.
+    pub art_url: Option<String>,
+    /// The override as the keeper typed it, so the desk can tell "no picture of
+    /// its own" from "borrowing the work's". Absent on the public shelf.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub art_url_override: Option<String>,
+    pub art_focal: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shelf_order: Option<i32>,
+    pub figurine_id: Option<String>,
+    pub figurine_name: Option<String>,
+    pub figurine_slug: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveBattleCardRequest {
+    pub slug: Option<String>,
+    pub status: String,
+    pub tier: i16,
+    pub title_en: String,
+    pub title_ru: String,
+    pub effect_en: Option<String>,
+    pub effect_ru: Option<String>,
+    pub lore_en: Option<String>,
+    pub lore_ru: Option<String>,
+    #[serde(default)]
+    pub cost: i16,
+    #[serde(default)]
+    pub power: i16,
+    pub price_dust: Option<i32>,
+    pub price_feed: Option<i32>,
+    pub art_url: Option<String>,
+    pub art_focal: Option<String>,
+    pub figurine_id: Option<String>,
+}
+
+/// The shelf, left to right. Position is the index in the list.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReorderBattleCardsRequest {
+    pub ids: Vec<Uuid>,
+}

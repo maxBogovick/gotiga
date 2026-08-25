@@ -3915,3 +3915,69 @@ pub async fn user_profile_gazette_watches(
             .await?,
     ))
 }
+
+// === СКРОМНЫЕ ЭПИЧЕСКИЕ БИТВЫ ===
+
+pub async fn list_battle_cards(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<BattleCardDto>>> {
+    Ok(Json(service.list_battle_cards_public().await?))
+}
+
+pub async fn get_battle_frames(
+    State(service): State<AppService>,
+) -> Result<Json<crate::battles::BattleFrames>> {
+    Ok(Json(service.get_battle_frames().await?))
+}
+
+pub async fn admin_list_battle_cards(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<BattleCardDto>>> {
+    Ok(Json(service.admin_list_battle_cards().await?))
+}
+
+pub async fn admin_get_battle_card(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<BattleCardDto>> {
+    Ok(Json(service.admin_get_battle_card(id).await?))
+}
+
+pub async fn admin_create_battle_card(
+    State(service): State<AppService>,
+    Json(body): Json<SaveBattleCardRequest>,
+) -> Result<(StatusCode, Json<BattleCardDto>)> {
+    let card = service.admin_create_battle_card(body).await?;
+    Ok((StatusCode::CREATED, Json(card)))
+}
+
+pub async fn admin_update_battle_card(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<SaveBattleCardRequest>,
+) -> Result<Json<BattleCardDto>> {
+    Ok(Json(service.admin_update_battle_card(id, body).await?))
+}
+
+pub async fn admin_delete_battle_card(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    service.admin_delete_battle_card(id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_reorder_battle_cards(
+    State(service): State<AppService>,
+    Json(body): Json<ReorderBattleCardsRequest>,
+) -> Result<StatusCode> {
+    service.admin_reorder_battle_cards(body.ids).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_save_battle_frames(
+    State(service): State<AppService>,
+    Json(body): Json<crate::battles::BattleFrames>,
+) -> Result<Json<crate::battles::BattleFrames>> {
+    Ok(Json(service.save_battle_frames(body).await?))
+}

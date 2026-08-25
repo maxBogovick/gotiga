@@ -1281,6 +1281,25 @@ export const en = {
 
   cellarOutro: 'That is the whole cellar. The lamps are five files, the colours are six lines of CSS, and the rules are the only part that was difficult. Mind the step on the way up.',
 
+
+  // === СКРОМНЫЕ ЭПИЧЕСКИЕ БИТВЫ — the shelf of cards ===
+  battlesPageKicker: 'The card shelf',
+  battlesPageTitle: 'Humble epic battles',
+  battlesPageRule: 'Every thing in this house remembers something. Here it is dealt out as cards.',
+  battlesBack: '\u2190 The hall',
+  battlesEmpty: 'The shelf is bare. No work has been dealt a card yet.',
+  battlesShelfNote: 'Cards you have stand face up. The rest lie face down, with what they would cost.',
+  battlesCostLabel: 'Cost',
+  battlesPowerLabel: 'Power',
+  battlesLevelLabel: 'Level of your copy',
+  battlesRankLabel: 'Rank',
+  battlesNew: 'New',
+  battlesCoinDust: 'book dust',
+  battlesCoinFeed: 'raven feed',
+  battlesCoinsNote: 'Dust settles on its own, for time spent in the house. Feed is given by hand, for something actually done.',
+  battlesNotYetTakeable: 'Nothing can be taken yet. The keeper is still laying the shelf out.',
+  battlesWorkLink: 'The work itself',
+
 } as const;
 
 export type TranslationKey = keyof typeof en;

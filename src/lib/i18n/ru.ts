@@ -1281,4 +1281,23 @@ export const ru: Record<TranslationKey, string> = {
 
   cellarOutro:                 'Вот и весь подвал. Лампы — это пять файлов, краски — шесть строк CSS, и трудными оказались только правила. Осторожно, ступенька на выходе.',
 
+
+  // === СКРОМНЫЕ ЭПИЧЕСКИЕ БИТВЫ ===
+  battlesPageKicker:           'Полка карт',
+  battlesPageTitle:            'Скромные эпические битвы',
+  battlesPageRule:             'Каждая вещь в доме что-то помнит. Здесь это роздано картами.',
+  battlesBack:                 '\u2190 В зал',
+  battlesEmpty:                'Полка пуста. Пока ни одной работе не выдали карту.',
+  battlesShelfNote:            'Ваши карты стоят лицом. Остальные лежат рубашкой вверх — и на них видно, чего они стоят.',
+  battlesCostLabel:            'Стоимость',
+  battlesPowerLabel:           'Сила',
+  battlesLevelLabel:           'Уровень вашего экземпляра',
+  battlesRankLabel:            'Чин',
+  battlesNew:                  'Новая',
+  battlesCoinDust:             'книжная пыль',
+  battlesCoinFeed:             'корм для ворона',
+  battlesCoinsNote:            'Пыль оседает сама — за время, проведённое в доме. Корм даётся из рук, за настоящий поступок.',
+  battlesNotYetTakeable:       'Взять пока нельзя: хранитель ещё расставляет полку.',
+  battlesWorkLink:             'Сама работа',
+
 };

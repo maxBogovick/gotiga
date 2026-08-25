@@ -32,6 +32,7 @@
     import ProgrammePanel from '$lib/components/admin/ProgrammePanel.svelte';
     import GazettePanel from '$lib/components/admin/GazettePanel.svelte';
     import TalesPanel from '$lib/components/admin/TalesPanel.svelte';
+    import BattlesPanel from '$lib/components/admin/BattlesPanel.svelte';
     import LogsPanel from '$lib/components/admin/LogsPanel.svelte';
     import { t, registerAdminDicts, type TranslationKey } from '$lib/i18n';
     import { enAdmin } from '$lib/i18n/en.admin';
@@ -121,6 +122,7 @@
                 ['programme',   'adminTabProgramme'],
                 ['gazette',     'adminTabGazette'],
                 ['tales',       'adminTabTales'],
+                ['battles',     'adminTabBattles'],
                 ['marks',       'adminTabMarks'],
             ],
         },
@@ -784,6 +786,8 @@
 
         {:else if activeTab === 'tales'}
             <div in:fade class="h-full overflow-hidden"><TalesPanel seed={gazetteSeed} onSeedConsumed={() => (gazetteSeed = null)} /></div>
+        {:else if activeTab === 'battles'}
+            <div in:fade class="h-full overflow-hidden"><BattlesPanel /></div>
 
         {:else if activeTab === 'media'}
             <div in:fade class="h-full">

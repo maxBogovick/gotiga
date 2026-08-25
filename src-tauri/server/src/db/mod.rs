@@ -6210,4 +6210,237 @@ impl Repository {
         }
         Ok(())
     }
+
+    // === СКРОМНЫЕ ЭПИЧЕСКИЕ БИТВЫ ===
+
+    /// A card plus what its work lends it. `file_path` is the preview-sized
+    /// variant, not the 420px thumb: a card is rendered large enough that the
+    /// thumb goes soft, the same reason the detail page reaches for it.
+    const BATTLE_CARD_SELECT: &'static str = r#"
+        SELECT c.id, c.slug, c.figurine_id, c.status, c.tier,
+               c.title_en, c.title_ru, c.effect_en, c.effect_ru, c.lore_en, c.lore_ru,
+               c.cost, c.power, c.price_dust, c.price_feed,
+               c.art_url, c.art_focal, c.shelf_order, c.created_at, c.updated_at,
+               f.name AS figurine_name, f.slug AS figurine_slug,
+               fi.file_path AS figurine_face_path, fi.id AS figurine_face_id
+        FROM battle_cards c
+        LEFT JOIN figurines f ON f.id = c.figurine_id
+        LEFT JOIN LATERAL (
+            SELECT i.id, i.file_path FROM images i
+            WHERE i.figurine_id = c.figurine_id AND i.image_type = 'face'
+            ORDER BY i.sort_order LIMIT 1
+        ) fi ON TRUE
+    "#;
+
+    /// The shelf as guests see it: published cards only, in the keeper's order.
+    /// A card the keeper has not arranged falls to the end by rank, so a new
+    /// card lands somewhere sensible before anyone drags it anywhere.
+    pub async fn list_battle_cards_public(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<crate::models::BattleCardListed>> {
+        Ok(sqlx::query_as::<_, crate::models::BattleCardListed>(&format!(
+            "{} WHERE c.status = 'published'
+             ORDER BY c.shelf_order NULLS LAST, c.tier DESC, c.created_at DESC, c.id DESC
+             LIMIT $1",
+            Self::BATTLE_CARD_SELECT
+        ))
+        .bind(limit)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// The keeper's desk: drafts and retired cards too, same order.
+    pub async fn list_battle_cards_admin(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<crate::models::BattleCardListed>> {
+        Ok(sqlx::query_as::<_, crate::models::BattleCardListed>(&format!(
+            "{} ORDER BY c.shelf_order NULLS LAST, c.tier DESC, c.created_at DESC, c.id DESC
+             LIMIT $1",
+            Self::BATTLE_CARD_SELECT
+        ))
+        .bind(limit)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn get_battle_card_admin(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<crate::models::BattleCardListed>> {
+        Ok(sqlx::query_as::<_, crate::models::BattleCardListed>(&format!(
+            "{} WHERE c.id = $1",
+            Self::BATTLE_CARD_SELECT
+        ))
+        .bind(id)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn list_battle_card_slugs_except(&self, except: Option<Uuid>) -> Result<Vec<String>> {
+        let rows: Vec<(String,)> = if let Some(id) = except {
+            sqlx::query_as("SELECT slug FROM battle_cards WHERE id <> $1")
+                .bind(id)
+                .fetch_all(&self.pg_pool)
+                .await?
+        } else {
+            sqlx::query_as("SELECT slug FROM battle_cards")
+                .fetch_all(&self.pg_pool)
+                .await?
+        };
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+
+    /// Which card already stands for this work, if any. Checked before writing
+    /// so the keeper is told "that work already has a card" instead of being
+    /// handed a raw unique-index violation.
+    pub async fn battle_card_for_figurine(
+        &self,
+        figurine_id: Uuid,
+        except: Option<Uuid>,
+    ) -> Result<Option<String>> {
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT title_ru FROM battle_cards
+             WHERE figurine_id = $1 AND ($2::uuid IS NULL OR id <> $2)
+             LIMIT 1",
+        )
+        .bind(figurine_id)
+        .bind(except)
+        .fetch_optional(&self.pg_pool)
+        .await?;
+        Ok(row.map(|r| r.0))
+    }
+
+    pub async fn insert_battle_card(
+        &self,
+        slug: &str,
+        figurine_id: Option<Uuid>,
+        status: &str,
+        tier: i16,
+        title_en: &str,
+        title_ru: &str,
+        effect_en: Option<&str>,
+        effect_ru: Option<&str>,
+        lore_en: Option<&str>,
+        lore_ru: Option<&str>,
+        cost: i16,
+        power: i16,
+        price_dust: Option<i32>,
+        price_feed: Option<i32>,
+        art_url: Option<&str>,
+        art_focal: Option<&str>,
+    ) -> Result<crate::models::BattleCard> {
+        Ok(sqlx::query_as::<_, crate::models::BattleCard>(
+            r#"INSERT INTO battle_cards (
+                    slug, figurine_id, status, tier, title_en, title_ru,
+                    effect_en, effect_ru, lore_en, lore_ru, cost, power,
+                    price_dust, price_feed, art_url, art_focal
+               ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+               RETURNING *"#,
+        )
+        .bind(slug)
+        .bind(figurine_id)
+        .bind(status)
+        .bind(tier)
+        .bind(title_en)
+        .bind(title_ru)
+        .bind(effect_en)
+        .bind(effect_ru)
+        .bind(lore_en)
+        .bind(lore_ru)
+        .bind(cost)
+        .bind(power)
+        .bind(price_dust)
+        .bind(price_feed)
+        .bind(art_url)
+        .bind(art_focal)
+        .fetch_one(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn update_battle_card(
+        &self,
+        id: Uuid,
+        slug: &str,
+        figurine_id: Option<Uuid>,
+        status: &str,
+        tier: i16,
+        title_en: &str,
+        title_ru: &str,
+        effect_en: Option<&str>,
+        effect_ru: Option<&str>,
+        lore_en: Option<&str>,
+        lore_ru: Option<&str>,
+        cost: i16,
+        power: i16,
+        price_dust: Option<i32>,
+        price_feed: Option<i32>,
+        art_url: Option<&str>,
+        art_focal: Option<&str>,
+    ) -> Result<crate::models::BattleCard> {
+        sqlx::query_as::<_, crate::models::BattleCard>(
+            r#"UPDATE battle_cards SET
+                    slug = $2, figurine_id = $3, status = $4, tier = $5,
+                    title_en = $6, title_ru = $7, effect_en = $8, effect_ru = $9,
+                    lore_en = $10, lore_ru = $11, cost = $12, power = $13,
+                    price_dust = $14, price_feed = $15, art_url = $16, art_focal = $17,
+                    updated_at = NOW()
+               WHERE id = $1
+               RETURNING *"#,
+        )
+        .bind(id)
+        .bind(slug)
+        .bind(figurine_id)
+        .bind(status)
+        .bind(tier)
+        .bind(title_en)
+        .bind(title_ru)
+        .bind(effect_en)
+        .bind(effect_ru)
+        .bind(lore_en)
+        .bind(lore_ru)
+        .bind(cost)
+        .bind(power)
+        .bind(price_dust)
+        .bind(price_feed)
+        .bind(art_url)
+        .bind(art_focal)
+        .fetch_optional(&self.pg_pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Battle card {id} not found")))
+    }
+
+    pub async fn delete_battle_card(&self, id: Uuid) -> Result<()> {
+        let affected = sqlx::query("DELETE FROM battle_cards WHERE id = $1")
+            .bind(id)
+            .execute(&self.pg_pool)
+            .await?
+            .rows_affected();
+        if affected == 0 {
+            return Err(AppError::NotFound(format!("Battle card {id} not found")));
+        }
+        Ok(())
+    }
+
+    /// Lay the shelf out in one statement. `updated_at` is deliberately left
+    /// alone: rearranging the shelf is not a rewrite of the card, and the desk
+    /// compares that stamp against its own open draft.
+    pub async fn set_battle_card_order(&self, ids: &[Uuid]) -> Result<u64> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let orders: Vec<i32> = (0..ids.len() as i32).collect();
+        let res = sqlx::query(
+            "UPDATE battle_cards AS c
+                SET shelf_order = v.ord
+               FROM (SELECT * FROM UNNEST($1::uuid[], $2::int[]) AS t(id, ord)) AS v
+              WHERE c.id = v.id",
+        )
+        .bind(ids)
+        .bind(&orders)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected())
+    }
 }

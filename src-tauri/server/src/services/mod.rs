@@ -7133,6 +7133,279 @@ impl AppService {
             expected_to,
         })
     }
+
+    // === СКРОМНЫЕ ЭПИЧЕСКИЕ БИТВЫ ===
+
+    /// A card wears its own picture when the keeper gave it one, and the work's
+    /// face otherwise. The choice is made here, once, so neither the shelf nor
+    /// the keeper's preview can disagree about what a card looks like.
+    fn battle_card_dto(&self, row: BattleCardListed, admin: bool) -> BattleCardDto {
+        let own = row
+            .art_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        let art_url = match (&own, &row.figurine_face_path, &row.figurine_face_id) {
+            (Some(url), _, _) => Some(self.resolve_url(url, "images", "")),
+            (None, Some(path), Some(img_id)) => {
+                Some(self.resolve_url(path, "images", &img_id.to_string()))
+            }
+            _ => None,
+        };
+        BattleCardDto {
+            id: row.id.to_string(),
+            slug: row.slug,
+            status: row.status,
+            tier: row.tier,
+            title_en: row.title_en,
+            title_ru: row.title_ru,
+            effect_en: row.effect_en,
+            effect_ru: row.effect_ru,
+            lore_en: row.lore_en,
+            lore_ru: row.lore_ru,
+            cost: row.cost,
+            power: row.power,
+            price_dust: row.price_dust,
+            price_feed: row.price_feed,
+            art_url,
+            art_url_override: if admin { own } else { None },
+            art_focal: row.art_focal,
+            shelf_order: row.shelf_order,
+            figurine_id: row.figurine_id.map(|id| id.to_string()),
+            figurine_name: row.figurine_name,
+            figurine_slug: row.figurine_slug,
+            created_at: row.created_at.to_rfc3339(),
+            updated_at: row.updated_at.to_rfc3339(),
+        }
+    }
+
+    /// The whole shelf at once. No pagination, for the same reason the tales
+    /// room refuses it: counting pages is the shop reflex this house is built
+    /// against.
+    pub async fn list_battle_cards_public(&self) -> Result<Vec<BattleCardDto>> {
+        let rows = self
+            .repo
+            .list_battle_cards_public(crate::battles::SHELF_CARDS)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| self.battle_card_dto(r, false))
+            .collect())
+    }
+
+    pub async fn admin_list_battle_cards(&self) -> Result<Vec<BattleCardDto>> {
+        let rows = self
+            .repo
+            .list_battle_cards_admin(crate::battles::SHELF_CARDS)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| self.battle_card_dto(r, true))
+            .collect())
+    }
+
+    async fn battle_card_or_fetch(&self, id: Uuid) -> Result<BattleCardDto> {
+        let row = self
+            .repo
+            .get_battle_card_admin(id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("Battle card {id} not found")))?;
+        Ok(self.battle_card_dto(row, true))
+    }
+
+    pub async fn admin_get_battle_card(&self, id: Uuid) -> Result<BattleCardDto> {
+        self.battle_card_or_fetch(id).await
+    }
+
+    pub async fn admin_create_battle_card(
+        &self,
+        req: SaveBattleCardRequest,
+    ) -> Result<BattleCardDto> {
+        let taken = self.repo.list_battle_card_slugs_except(None).await?;
+        let p = Self::prepare_battle_card_save(&req, &taken)?;
+        self.assert_work_is_free(p.figurine_id, None).await?;
+        let rec = self
+            .repo
+            .insert_battle_card(
+                &p.slug, p.figurine_id, &p.status, p.tier, &p.title_en, &p.title_ru,
+                p.effect_en.as_deref(), p.effect_ru.as_deref(),
+                p.lore_en.as_deref(), p.lore_ru.as_deref(),
+                p.cost, p.power, p.price_dust, p.price_feed,
+                p.art_url.as_deref(), p.art_focal.as_deref(),
+            )
+            .await?;
+        Self::log_domain_event("battle_card_created", "battle_card", rec.id, "ok");
+        self.battle_card_or_fetch(rec.id).await
+    }
+
+    pub async fn admin_update_battle_card(
+        &self,
+        id: Uuid,
+        req: SaveBattleCardRequest,
+    ) -> Result<BattleCardDto> {
+        let taken = self.repo.list_battle_card_slugs_except(Some(id)).await?;
+        let p = Self::prepare_battle_card_save(&req, &taken)?;
+        self.assert_work_is_free(p.figurine_id, Some(id)).await?;
+        let rec = self
+            .repo
+            .update_battle_card(
+                id, &p.slug, p.figurine_id, &p.status, p.tier, &p.title_en, &p.title_ru,
+                p.effect_en.as_deref(), p.effect_ru.as_deref(),
+                p.lore_en.as_deref(), p.lore_ru.as_deref(),
+                p.cost, p.power, p.price_dust, p.price_feed,
+                p.art_url.as_deref(), p.art_focal.as_deref(),
+            )
+            .await?;
+        // Rank and price are what an owner's collection is worth, so a change
+        // to them leaves a trace even before anything can be bought.
+        Self::log_domain_event("battle_card_updated", "battle_card", rec.id, "ok");
+        self.battle_card_or_fetch(rec.id).await
+    }
+
+    pub async fn admin_delete_battle_card(&self, id: Uuid) -> Result<()> {
+        self.repo.delete_battle_card(id).await?;
+        Self::log_domain_event("battle_card_deleted", "battle_card", id, "ok");
+        Ok(())
+    }
+
+    pub async fn admin_reorder_battle_cards(&self, ids: Vec<Uuid>) -> Result<()> {
+        if ids.len() > crate::battles::SHELF_CARDS as usize {
+            return Err(AppError::BadRequest("Shelf is longer than the room".into()));
+        }
+        let mut seen = std::collections::HashSet::with_capacity(ids.len());
+        if !ids.iter().all(|id| seen.insert(*id)) {
+            return Err(AppError::BadRequest(
+                "A card cannot stand in two places on the shelf".into(),
+            ));
+        }
+        self.repo.set_battle_card_order(&ids).await?;
+        Ok(())
+    }
+
+    /// One card per work. Told plainly, because the alternative is a raw
+    /// unique-index violation and a keeper who cannot tell what went wrong.
+    async fn assert_work_is_free(&self, figurine_id: Option<Uuid>, except: Option<Uuid>) -> Result<()> {
+        let Some(work) = figurine_id else {
+            return Ok(());
+        };
+        if let Some(title) = self.repo.battle_card_for_figurine(work, except).await? {
+            return Err(AppError::BadRequest(format!(
+                "This work already has a card: «{title}»"
+            )));
+        }
+        Ok(())
+    }
+
+    pub async fn get_battle_frames(&self) -> Result<crate::battles::BattleFrames> {
+        let saved: crate::battles::BattleFrames =
+            parse_json_setting("battle_frames", self.repo.get_setting("battle_frames").await?)?;
+        Ok(crate::battles::BattleFrames {
+            frames: crate::battles::normalize_frames(saved.frames),
+        })
+    }
+
+    pub async fn save_battle_frames(
+        &self,
+        config: crate::battles::BattleFrames,
+    ) -> Result<crate::battles::BattleFrames> {
+        let normalized = crate::battles::BattleFrames {
+            frames: crate::battles::normalize_frames(config.frames),
+        };
+        let json =
+            serde_json::to_string(&normalized).map_err(|e| AppError::Internal(e.to_string()))?;
+        if json.len() > 64 * 1024 {
+            return Err(AppError::BadRequest("Battle frames are too large".into()));
+        }
+        self.repo.upsert_setting("battle_frames", &json).await?;
+        Ok(normalized)
+    }
+
+    /// Everything the keeper typed, clamped into what the frame and the table
+    /// can hold. Text is cut rather than refused — a title one character too
+    /// long is not worth losing a draft over — but a card with no price in
+    /// either coin is refused, because such a card can never be taken.
+    fn prepare_battle_card_save(
+        req: &SaveBattleCardRequest,
+        taken: &[String],
+    ) -> Result<PreparedBattleCard> {
+        if !crate::battles::valid_status(&req.status) {
+            return Err(AppError::BadRequest("Unknown card status".into()));
+        }
+        let mut title_en = crate::battles::clamp_title(&req.title_en);
+        let mut title_ru = crate::battles::clamp_title(&req.title_ru);
+        if title_en.is_empty() && title_ru.is_empty() {
+            return Err(AppError::BadRequest("A title is required".into()));
+        }
+        if title_en.is_empty() {
+            title_en = title_ru.clone();
+        }
+        if title_ru.is_empty() {
+            title_ru = title_en.clone();
+        }
+        let price_dust = crate::battles::clamp_price(req.price_dust);
+        let price_feed = crate::battles::clamp_price(req.price_feed);
+        if price_dust.is_none() && price_feed.is_none() {
+            return Err(AppError::BadRequest(
+                "A card needs a price in at least one coin".into(),
+            ));
+        }
+        let figurine_id = match req
+            .figurine_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            None => None,
+            Some(s) => Some(
+                Uuid::parse_str(s).map_err(|_| AppError::BadRequest("Invalid figurineId".into()))?,
+            ),
+        };
+        Ok(PreparedBattleCard {
+            slug: crate::battles::unique_slug(req.slug.as_deref(), &title_en, taken),
+            figurine_id,
+            status: req.status.clone(),
+            tier: crate::battles::clamp_tier(req.tier),
+            title_en,
+            title_ru,
+            effect_en: crate::battles::clamp_effect(req.effect_en.as_deref()),
+            effect_ru: crate::battles::clamp_effect(req.effect_ru.as_deref()),
+            lore_en: crate::battles::clamp_lore(req.lore_en.as_deref()),
+            lore_ru: crate::battles::clamp_lore(req.lore_ru.as_deref()),
+            cost: crate::battles::clamp_cost(req.cost),
+            power: crate::battles::clamp_power(req.power),
+            price_dust,
+            price_feed,
+            art_url: req
+                .art_url
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
+            art_focal: crate::battles::normalize_focal(req.art_focal.as_deref()),
+        })
+    }
+}
+
+/// The card as it will be written, after clamping. Mirrors `PreparedGazetteLeaf`:
+/// the service validates once, the repository only writes.
+struct PreparedBattleCard {
+    slug: String,
+    figurine_id: Option<Uuid>,
+    status: String,
+    tier: i16,
+    title_en: String,
+    title_ru: String,
+    effect_en: Option<String>,
+    effect_ru: Option<String>,
+    lore_en: Option<String>,
+    lore_ru: Option<String>,
+    cost: i16,
+    power: i16,
+    price_dust: Option<i32>,
+    price_feed: Option<i32>,
+    art_url: Option<String>,
+    art_focal: Option<String>,
 }
 
 struct PreparedGazetteLeaf {

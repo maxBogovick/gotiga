@@ -189,6 +189,11 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             // A tale is a gazette leaf of kind `tale`; only its shelf is its own.
             // The leaf itself is still read through `/gazette/:slug`.
             .route("/tales", get(handlers::list_tales))
+            // === СКРОМНЫЕ ЭПИЧЕСКИЕ БИТВЫ ===
+            // The shelf and the five frames are the same for every visitor;
+            // what a given person owns is not, and lives behind a session.
+            .route("/battles/cards", get(handlers::list_battle_cards))
+            .route("/battles/frames", get(handlers::get_battle_frames))
             // === PUBLIC LOGIN ===
             .route("/admin/login", post(handlers::admin_login))
             // === PROTECTED WRITE — use route_layer so auth only runs on matched routes ===
@@ -527,6 +532,39 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                         config.clone(),
                         auth_middleware,
                     )),
+            )
+            // === BATTLES (ADMIN) ===
+            .route(
+                "/admin/battles/cards",
+                get(handlers::admin_list_battle_cards)
+                    .post(handlers::admin_create_battle_card)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            // Ordered before `/:id` so a shelf rewrite is never read as a card id.
+            .route(
+                "/admin/battles/cards/order",
+                post(handlers::admin_reorder_battle_cards).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/battles/cards/:id",
+                get(handlers::admin_get_battle_card)
+                    .put(handlers::admin_update_battle_card)
+                    .delete(handlers::admin_delete_battle_card)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            .route(
+                "/admin/battles/frames",
+                post(handlers::admin_save_battle_frames).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
             )
             // === ORDERS (ADMIN) ===
             .route(
@@ -1033,6 +1071,8 @@ fn is_public_cacheable(path: &str) -> bool {
         "/gazette",
         "/gazette/home",
         "/gazette/blotter",
+        "/battles/cards",
+        "/battles/frames",
     ];
 
     if EXACT.contains(&path) {

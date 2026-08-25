@@ -1836,3 +1836,78 @@ export interface GazetteRefreshReport {
     imported: number;
     errors: string[];
 }
+
+// === СКРОМНЫЕ ЭПИЧЕСКИЕ БИТВЫ ===
+
+export type BattleCardStatus = 'draft' | 'published' | 'retired';
+
+/** 1..5. The card's rank — NOT the level of anyone's copy of it. */
+export type BattleTier = 1 | 2 | 3 | 4 | 5;
+
+export interface BattleCard {
+    id: string;
+    slug: string;
+    status: BattleCardStatus;
+    /** The card's rank, set by the keeper. Drives the frame and the price. */
+    tier: number;
+    titleEn: string;
+    titleRu: string;
+    effectEn: string | null;
+    effectRu: string | null;
+    loreEn: string | null;
+    loreRu: string | null;
+    /** Top-left corner of the card. */
+    cost: number;
+    /** Bottom-right corner of the card. */
+    power: number;
+    /** `null` means the card is not to be had for this coin — not that it is free. */
+    priceDust: number | null;
+    priceFeed: number | null;
+    /** What the card wears: its own picture if it has one, else the work's face. */
+    artUrl: string | null;
+    /** The keeper's override as typed. Admin reads only. */
+    artUrlOverride?: string | null;
+    /** JSON `{x,y,zoom}` — how the picture sits in the frame. */
+    artFocal: string | null;
+    shelfOrder?: number | null;
+    figurineId: string | null;
+    figurineName: string | null;
+    figurineSlug: string | null;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface SaveBattleCardRequest {
+    slug?: string | null;
+    status: BattleCardStatus;
+    tier: number;
+    titleEn: string;
+    titleRu: string;
+    effectEn?: string | null;
+    effectRu?: string | null;
+    loreEn?: string | null;
+    loreRu?: string | null;
+    cost: number;
+    power: number;
+    priceDust?: number | null;
+    priceFeed?: number | null;
+    artUrl?: string | null;
+    artFocal?: string | null;
+    figurineId?: string | null;
+}
+
+/** One rank's dress. Design lives in the frame, content lives in the card. */
+export interface BattleFrame {
+    tier: number;
+    nameEn: string;
+    nameRu: string;
+    paper: string;
+    ink: string;
+    border: string;
+    /** Empty string = no foil sweep at all, which is what a humble card is. */
+    foil: string;
+}
+
+export interface BattleFrames {
+    frames: BattleFrame[];
+}
