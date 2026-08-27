@@ -1,0 +1,15 @@
+[package]
+name = "battle-core"
+version = "0.1.0"
+edition = "2024"
+
+# The whole point of this crate is what is NOT here.
+#
+# No sqlx, no axum, no tokio, no chrono, no rand. The rule "the engine knows
+# nothing about the database, the network, the clock or chance" is enforced by
+# this list rather than by anyone's discipline — a module inside the server
+# would not have stopped `use sqlx::…` from appearing one tired evening.
+#
+# `serde` joins the day the match journal is written to the database. It is a
+# derive on plain structs and changes nothing about the shape below.
+[dependencies]

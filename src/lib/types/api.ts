@@ -1844,22 +1844,43 @@ export type BattleCardStatus = 'draft' | 'published' | 'retired';
 /** 1..5. The card's rank — NOT the level of anyone's copy of it. */
 export type BattleTier = 1 | 2 | 3 | 4 | 5;
 
+/** One named property of a card, shown in both languages the way the keeper
+ *  draws it: «Вихрь Души (Wind of Soul): …». */
+export interface CardTrait {
+    nameEn: string;
+    nameRu: string;
+    textEn: string;
+    textRu: string;
+}
+
 export interface BattleCard {
     id: string;
     slug: string;
     status: BattleCardStatus;
     /** The card's rank, set by the keeper. Drives the frame and the price. */
     tier: number;
+    /** The header band. */
+    raceId: string | null;
+    raceNameEn: string | null;
+    raceNameRu: string | null;
+    /** The race's shared icon, already a public URL. */
+    raceIconUrl: string | null;
+    typeEn: string | null;
+    typeRu: string | null;
     titleEn: string;
     titleRu: string;
+    /** Up to 400 characters: room for a list of named abilities on a dressed card. */
     effectEn: string | null;
     effectRu: string | null;
     loreEn: string | null;
     loreRu: string | null;
     /** Top-left corner of the card. */
     cost: number;
-    /** Bottom-right corner of the card. */
+    /** Strength. */
     power: number;
+    health: number;
+    mana: number;
+    traits: CardTrait[];
     /** `null` means the card is not to be had for this coin — not that it is free. */
     priceDust: number | null;
     priceFeed: number | null;
@@ -1869,6 +1890,9 @@ export interface BattleCard {
     artUrlOverride?: string | null;
     /** JSON `{x,y,zoom}` — how the picture sits in the frame. */
     artFocal: string | null;
+    /** This card's own exception to the tier's shared frame: JSON
+     *  `{frameImage?,frameMode?,aspect?}`. `null` wears the tier's frame as is. */
+    frameOverride: string | null;
     shelfOrder?: number | null;
     figurineId: string | null;
     figurineName: string | null;
@@ -1881,6 +1905,9 @@ export interface SaveBattleCardRequest {
     slug?: string | null;
     status: BattleCardStatus;
     tier: number;
+    raceId?: string | null;
+    typeEn?: string | null;
+    typeRu?: string | null;
     titleEn: string;
     titleRu: string;
     effectEn?: string | null;
@@ -1889,14 +1916,27 @@ export interface SaveBattleCardRequest {
     loreRu?: string | null;
     cost: number;
     power: number;
+    health: number;
+    mana: number;
+    traits: CardTrait[];
     priceDust?: number | null;
     priceFeed?: number | null;
     artUrl?: string | null;
     artFocal?: string | null;
+    frameOverride?: string | null;
     figurineId?: string | null;
 }
 
-/** One rank's dress. Design lives in the frame, content lives in the card. */
+export type BattleLayout = 'corners' | 'plaque';
+export type BattleFrameMode = 'overlay' | 'behind';
+
+/**
+ * One rank's dress. Design lives in the frame, content lives in the card.
+ *
+ * A frame is either PAINTED (paper/ink/border/foil, drawn by the renderer) or
+ * DRESSED (`frameImage` — a photograph of a real frame laid under the card,
+ * with the content set inside it by the four insets).
+ */
 export interface BattleFrame {
     tier: number;
     nameEn: string;
@@ -1906,8 +1946,66 @@ export interface BattleFrame {
     border: string;
     /** Empty string = no foil sweep at all, which is what a humble card is. */
     foil: string;
+    /** A picture of a frame. Empty = painted. */
+    frameImage: string;
+    /**
+     * `overlay` — the picture lies on top and the card shows through the hole in
+     * it. What a cut-out frame with transparency wants.
+     * `behind`  — the picture is the card's ground, for a frame with no hole.
+     */
+    frameMode: BattleFrameMode;
+    /** Texture for the card's ground. A cut-out frame has nothing behind it but
+     *  this. Empty = the flat `paper` colour. */
+    paperImage: string;
+    /** Where the content sits inside that photograph, in % of the card. */
+    insetTop: number;
+    insetRight: number;
+    insetBottom: number;
+    insetLeft: number;
+    /** Card width ÷ height. */
+    aspect: number;
+    /**
+     * The card is four bands: header, photograph, properties, footer. Three get
+     * a share of the content's height; the properties band takes what is left,
+     * because it is the one that has to hold a paragraph.
+     * Zero is a real choice for these two — a bare card wants neither.
+     */
+    headerShare: number;
+    /** How much of the content the work's photograph takes, 0..1. */
+    artShare: number;
+    footShare: number;
+    /** Font id from `SITE_FONTS`. Empty = the card's ordinary serif. */
+    titleFont: string;
+    /** Ink for the name alone. Empty = `ink`. */
+    titleInk: string;
+    layout: BattleLayout;
 }
 
 export interface BattleFrames {
     frames: BattleFrame[];
+}
+
+/** A race in the keeper's dictionary. Shared by many cards, so renaming it
+ *  renames it everywhere at once. */
+export interface BattleRace {
+    id: string;
+    slug: string;
+    nameEn: string;
+    nameRu: string;
+    noteEn: string | null;
+    noteRu: string | null;
+    /** Shown in the header band of every card of this race. */
+    iconUrl: string | null;
+    sortOrder?: number | null;
+    /** How many cards stand under it — what a rename or a removal would touch. */
+    cardCount: number;
+}
+
+export interface SaveBattleRaceRequest {
+    slug?: string | null;
+    nameEn: string;
+    nameRu: string;
+    noteEn?: string | null;
+    noteRu?: string | null;
+    iconUrl?: string | null;
 }

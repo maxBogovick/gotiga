@@ -1300,4 +1300,8 @@ export const ru: Record<TranslationKey, string> = {
   battlesNotYetTakeable:       'Взять пока нельзя: хранитель ещё расставляет полку.',
   battlesWorkLink:             'Сама работа',
 
+  battlesHealthLabel:          'Здоровье',
+  battlesManaLabel:            'Мана',
+  battlesRaceLabel:            'Раса',
+  battlesTypeLabel:            'Тип',
 };

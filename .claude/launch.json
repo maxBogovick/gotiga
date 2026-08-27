@@ -18,6 +18,15 @@
         "VITE_API_URL=http://localhost:3001 npm run dev -- --port 1421"
       ],
       "port": 1421
+    },
+    {
+      "name": "gotiga-battles-editor",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "VITE_API_URL=http://localhost:3002 npm run dev -- --port 1422"
+      ],
+      "port": 1422
     }
   ]
 }

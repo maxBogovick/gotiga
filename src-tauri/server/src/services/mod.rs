@@ -7158,6 +7158,12 @@ impl AppService {
             slug: row.slug,
             status: row.status,
             tier: row.tier,
+            race_id: row.race_id.map(|id| id.to_string()),
+            race_name_en: row.race_name_en,
+            race_name_ru: row.race_name_ru,
+            race_icon_url: row.race_icon_url,
+            type_en: row.type_en,
+            type_ru: row.type_ru,
             title_en: row.title_en,
             title_ru: row.title_ru,
             effect_en: row.effect_en,
@@ -7166,11 +7172,15 @@ impl AppService {
             lore_ru: row.lore_ru,
             cost: row.cost,
             power: row.power,
+            health: row.health,
+            mana: row.mana,
+            traits: crate::battles::read_traits(row.traits.as_deref()),
             price_dust: row.price_dust,
             price_feed: row.price_feed,
             art_url,
             art_url_override: if admin { own } else { None },
             art_focal: row.art_focal,
+            frame_override: row.frame_override,
             shelf_order: row.shelf_order,
             figurine_id: row.figurine_id.map(|id| id.to_string()),
             figurine_name: row.figurine_name,
@@ -7228,11 +7238,14 @@ impl AppService {
         let rec = self
             .repo
             .insert_battle_card(
-                &p.slug, p.figurine_id, &p.status, p.tier, &p.title_en, &p.title_ru,
+                &p.slug, p.figurine_id, p.race_id, &p.status, p.tier,
+                p.type_en.as_deref(), p.type_ru.as_deref(),
+                &p.title_en, &p.title_ru,
                 p.effect_en.as_deref(), p.effect_ru.as_deref(),
                 p.lore_en.as_deref(), p.lore_ru.as_deref(),
-                p.cost, p.power, p.price_dust, p.price_feed,
-                p.art_url.as_deref(), p.art_focal.as_deref(),
+                p.cost, p.power, p.health, p.mana, p.traits.as_deref(),
+                p.price_dust, p.price_feed,
+                p.art_url.as_deref(), p.art_focal.as_deref(), p.frame_override.as_deref(),
             )
             .await?;
         Self::log_domain_event("battle_card_created", "battle_card", rec.id, "ok");
@@ -7250,11 +7263,14 @@ impl AppService {
         let rec = self
             .repo
             .update_battle_card(
-                id, &p.slug, p.figurine_id, &p.status, p.tier, &p.title_en, &p.title_ru,
+                id, &p.slug, p.figurine_id, p.race_id, &p.status, p.tier,
+                p.type_en.as_deref(), p.type_ru.as_deref(),
+                &p.title_en, &p.title_ru,
                 p.effect_en.as_deref(), p.effect_ru.as_deref(),
                 p.lore_en.as_deref(), p.lore_ru.as_deref(),
-                p.cost, p.power, p.price_dust, p.price_feed,
-                p.art_url.as_deref(), p.art_focal.as_deref(),
+                p.cost, p.power, p.health, p.mana, p.traits.as_deref(),
+                p.price_dust, p.price_feed,
+                p.art_url.as_deref(), p.art_focal.as_deref(), p.frame_override.as_deref(),
             )
             .await?;
         // Rank and price are what an owner's collection is worth, so a change
@@ -7361,11 +7377,25 @@ impl AppService {
                 Uuid::parse_str(s).map_err(|_| AppError::BadRequest("Invalid figurineId".into()))?,
             ),
         };
+        let race_id = match req
+            .race_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            None => None,
+            Some(s) => {
+                Some(Uuid::parse_str(s).map_err(|_| AppError::BadRequest("Invalid raceId".into()))?)
+            }
+        };
         Ok(PreparedBattleCard {
             slug: crate::battles::unique_slug(req.slug.as_deref(), &title_en, taken),
             figurine_id,
+            race_id,
             status: req.status.clone(),
             tier: crate::battles::clamp_tier(req.tier),
+            type_en: crate::battles::clamp_type(req.type_en.as_deref()),
+            type_ru: crate::battles::clamp_type(req.type_ru.as_deref()),
             title_en,
             title_ru,
             effect_en: crate::battles::clamp_effect(req.effect_en.as_deref()),
@@ -7374,6 +7404,9 @@ impl AppService {
             lore_ru: crate::battles::clamp_lore(req.lore_ru.as_deref()),
             cost: crate::battles::clamp_cost(req.cost),
             power: crate::battles::clamp_power(req.power),
+            health: crate::battles::clamp_stat(req.health),
+            mana: crate::battles::clamp_stat(req.mana),
+            traits: crate::battles::normalize_traits(&req.traits),
             price_dust,
             price_feed,
             art_url: req
@@ -7383,8 +7416,151 @@ impl AppService {
                 .filter(|s| !s.is_empty())
                 .map(str::to_string),
             art_focal: crate::battles::normalize_focal(req.art_focal.as_deref()),
+            frame_override: crate::battles::normalize_frame_override(req.frame_override.as_deref()),
         })
     }
+
+    // === RACES ===
+
+    fn battle_race_dto(row: BattleRaceListed) -> BattleRaceDto {
+        BattleRaceDto {
+            id: row.id.to_string(),
+            slug: row.slug,
+            name_en: row.name_en,
+            name_ru: row.name_ru,
+            note_en: row.note_en,
+            note_ru: row.note_ru,
+            icon_url: row.icon_url,
+            sort_order: row.sort_order,
+            card_count: row.card_count,
+        }
+    }
+
+    pub async fn list_battle_races(&self) -> Result<Vec<BattleRaceDto>> {
+        let rows = self.repo.list_battle_races().await?;
+        Ok(rows.into_iter().map(Self::battle_race_dto).collect())
+    }
+
+    pub async fn admin_create_battle_race(
+        &self,
+        req: SaveBattleRaceRequest,
+    ) -> Result<BattleRaceDto> {
+        let taken = self.repo.list_battle_race_slugs_except(None).await?;
+        let p = Self::prepare_race(&req, &taken)?;
+        let rec = self
+            .repo
+            .insert_battle_race(
+                &p.slug,
+                &p.name_en,
+                &p.name_ru,
+                p.note_en.as_deref(),
+                p.note_ru.as_deref(),
+                p.icon_url.as_deref(),
+            )
+            .await?;
+        Self::log_domain_event("battle_race_created", "battle_race", rec.id, "ok");
+        self.find_race(rec.id).await
+    }
+
+    pub async fn admin_update_battle_race(
+        &self,
+        id: Uuid,
+        req: SaveBattleRaceRequest,
+    ) -> Result<BattleRaceDto> {
+        let taken = self.repo.list_battle_race_slugs_except(Some(id)).await?;
+        let p = Self::prepare_race(&req, &taken)?;
+        let rec = self
+            .repo
+            .update_battle_race(
+                id,
+                &p.slug,
+                &p.name_en,
+                &p.name_ru,
+                p.note_en.as_deref(),
+                p.note_ru.as_deref(),
+                p.icon_url.as_deref(),
+            )
+            .await?;
+        Self::log_domain_event("battle_race_updated", "battle_race", rec.id, "ok");
+        self.find_race(rec.id).await
+    }
+
+    /// Removing a race does not remove the cards that wore it — they simply
+    /// stand without one. Said here as well as in the schema, because that is
+    /// the thing a keeper is right to fear before clicking.
+    pub async fn admin_delete_battle_race(&self, id: Uuid) -> Result<()> {
+        self.repo.delete_battle_race(id).await?;
+        Self::log_domain_event("battle_race_deleted", "battle_race", id, "ok");
+        Ok(())
+    }
+
+    pub async fn admin_reorder_battle_races(&self, ids: Vec<Uuid>) -> Result<()> {
+        let mut seen = std::collections::HashSet::with_capacity(ids.len());
+        if !ids.iter().all(|id| seen.insert(*id)) {
+            return Err(AppError::BadRequest(
+                "A race cannot stand in two places".into(),
+            ));
+        }
+        self.repo.set_battle_race_order(&ids).await?;
+        Ok(())
+    }
+
+    /// Read back through the listing, so the card count comes with it.
+    async fn find_race(&self, id: Uuid) -> Result<BattleRaceDto> {
+        self.list_battle_races()
+            .await?
+            .into_iter()
+            .find(|r| r.id == id.to_string())
+            .ok_or_else(|| AppError::NotFound(format!("Battle race {id} not found")))
+    }
+
+    fn prepare_race(req: &SaveBattleRaceRequest, taken: &[String]) -> Result<PreparedRace> {
+        let cut = |raw: &str| -> String {
+            raw.trim()
+                .chars()
+                .take(crate::battles::RACE_NAME_MAX)
+                .collect()
+        };
+        let mut name_en = cut(&req.name_en);
+        let mut name_ru = cut(&req.name_ru);
+        if name_en.is_empty() && name_ru.is_empty() {
+            return Err(AppError::BadRequest("A race needs a name".into()));
+        }
+        if name_en.is_empty() {
+            name_en = name_ru.clone();
+        }
+        if name_ru.is_empty() {
+            name_ru = name_en.clone();
+        }
+        let note = |raw: Option<&str>| -> Option<String> {
+            raw.map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.chars().take(200).collect())
+        };
+        let icon_url = req
+            .icon_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        Ok(PreparedRace {
+            slug: crate::battles::unique_slug(req.slug.as_deref(), &name_en, taken),
+            name_en,
+            name_ru,
+            note_en: note(req.note_en.as_deref()),
+            note_ru: note(req.note_ru.as_deref()),
+            icon_url,
+        })
+    }
+}
+
+struct PreparedRace {
+    slug: String,
+    name_en: String,
+    name_ru: String,
+    note_en: Option<String>,
+    note_ru: Option<String>,
+    icon_url: Option<String>,
 }
 
 /// The card as it will be written, after clamping. Mirrors `PreparedGazetteLeaf`:
@@ -7392,8 +7568,11 @@ impl AppService {
 struct PreparedBattleCard {
     slug: String,
     figurine_id: Option<Uuid>,
+    race_id: Option<Uuid>,
     status: String,
     tier: i16,
+    type_en: Option<String>,
+    type_ru: Option<String>,
     title_en: String,
     title_ru: String,
     effect_en: Option<String>,
@@ -7402,10 +7581,14 @@ struct PreparedBattleCard {
     lore_ru: Option<String>,
     cost: i16,
     power: i16,
+    health: i16,
+    mana: i16,
+    traits: Option<String>,
     price_dust: Option<i32>,
     price_feed: Option<i32>,
     art_url: Option<String>,
     art_focal: Option<String>,
+    frame_override: Option<String>,
 }
 
 struct PreparedGazetteLeaf {

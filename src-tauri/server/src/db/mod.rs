@@ -6217,14 +6217,17 @@ impl Repository {
     /// variant, not the 420px thumb: a card is rendered large enough that the
     /// thumb goes soft, the same reason the detail page reaches for it.
     const BATTLE_CARD_SELECT: &'static str = r#"
-        SELECT c.id, c.slug, c.figurine_id, c.status, c.tier,
+        SELECT c.id, c.slug, c.figurine_id, c.race_id, c.status, c.tier,
+               c.type_en, c.type_ru,
                c.title_en, c.title_ru, c.effect_en, c.effect_ru, c.lore_en, c.lore_ru,
-               c.cost, c.power, c.price_dust, c.price_feed,
-               c.art_url, c.art_focal, c.shelf_order, c.created_at, c.updated_at,
+               c.cost, c.power, c.health, c.mana, c.traits, c.price_dust, c.price_feed,
+               c.art_url, c.art_focal, c.frame_override, c.shelf_order, c.created_at, c.updated_at,
                f.name AS figurine_name, f.slug AS figurine_slug,
-               fi.file_path AS figurine_face_path, fi.id AS figurine_face_id
+               fi.file_path AS figurine_face_path, fi.id AS figurine_face_id,
+               r.name_en AS race_name_en, r.name_ru AS race_name_ru, r.icon_url AS race_icon_url
         FROM battle_cards c
         LEFT JOIN figurines f ON f.id = c.figurine_id
+        LEFT JOIN battle_races r ON r.id = c.race_id
         LEFT JOIN LATERAL (
             SELECT i.id, i.file_path FROM images i
             WHERE i.figurine_id = c.figurine_id AND i.image_type = 'face'
@@ -6316,8 +6319,11 @@ impl Repository {
         &self,
         slug: &str,
         figurine_id: Option<Uuid>,
+        race_id: Option<Uuid>,
         status: &str,
         tier: i16,
+        type_en: Option<&str>,
+        type_ru: Option<&str>,
         title_en: &str,
         title_ru: &str,
         effect_en: Option<&str>,
@@ -6326,23 +6332,31 @@ impl Repository {
         lore_ru: Option<&str>,
         cost: i16,
         power: i16,
+        health: i16,
+        mana: i16,
+        traits: Option<&str>,
         price_dust: Option<i32>,
         price_feed: Option<i32>,
         art_url: Option<&str>,
         art_focal: Option<&str>,
+        frame_override: Option<&str>,
     ) -> Result<crate::models::BattleCard> {
         Ok(sqlx::query_as::<_, crate::models::BattleCard>(
             r#"INSERT INTO battle_cards (
-                    slug, figurine_id, status, tier, title_en, title_ru,
-                    effect_en, effect_ru, lore_en, lore_ru, cost, power,
-                    price_dust, price_feed, art_url, art_focal
-               ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+                    slug, figurine_id, race_id, status, tier, type_en, type_ru,
+                    title_en, title_ru, effect_en, effect_ru, lore_en, lore_ru,
+                    cost, power, health, mana, traits,
+                    price_dust, price_feed, art_url, art_focal, frame_override
+               ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
                RETURNING *"#,
         )
         .bind(slug)
         .bind(figurine_id)
+        .bind(race_id)
         .bind(status)
         .bind(tier)
+        .bind(type_en)
+        .bind(type_ru)
         .bind(title_en)
         .bind(title_ru)
         .bind(effect_en)
@@ -6351,10 +6365,14 @@ impl Repository {
         .bind(lore_ru)
         .bind(cost)
         .bind(power)
+        .bind(health)
+        .bind(mana)
+        .bind(traits)
         .bind(price_dust)
         .bind(price_feed)
         .bind(art_url)
         .bind(art_focal)
+        .bind(frame_override)
         .fetch_one(&self.pg_pool)
         .await?)
     }
@@ -6364,8 +6382,11 @@ impl Repository {
         id: Uuid,
         slug: &str,
         figurine_id: Option<Uuid>,
+        race_id: Option<Uuid>,
         status: &str,
         tier: i16,
+        type_en: Option<&str>,
+        type_ru: Option<&str>,
         title_en: &str,
         title_ru: &str,
         effect_en: Option<&str>,
@@ -6374,17 +6395,24 @@ impl Repository {
         lore_ru: Option<&str>,
         cost: i16,
         power: i16,
+        health: i16,
+        mana: i16,
+        traits: Option<&str>,
         price_dust: Option<i32>,
         price_feed: Option<i32>,
         art_url: Option<&str>,
         art_focal: Option<&str>,
+        frame_override: Option<&str>,
     ) -> Result<crate::models::BattleCard> {
         sqlx::query_as::<_, crate::models::BattleCard>(
             r#"UPDATE battle_cards SET
-                    slug = $2, figurine_id = $3, status = $4, tier = $5,
-                    title_en = $6, title_ru = $7, effect_en = $8, effect_ru = $9,
-                    lore_en = $10, lore_ru = $11, cost = $12, power = $13,
-                    price_dust = $14, price_feed = $15, art_url = $16, art_focal = $17,
+                    slug = $2, figurine_id = $3, race_id = $4, status = $5, tier = $6,
+                    type_en = $7, type_ru = $8,
+                    title_en = $9, title_ru = $10, effect_en = $11, effect_ru = $12,
+                    lore_en = $13, lore_ru = $14, cost = $15, power = $16,
+                    health = $17, mana = $18, traits = $19,
+                    price_dust = $20, price_feed = $21, art_url = $22, art_focal = $23,
+                    frame_override = $24,
                     updated_at = NOW()
                WHERE id = $1
                RETURNING *"#,
@@ -6392,8 +6420,11 @@ impl Repository {
         .bind(id)
         .bind(slug)
         .bind(figurine_id)
+        .bind(race_id)
         .bind(status)
         .bind(tier)
+        .bind(type_en)
+        .bind(type_ru)
         .bind(title_en)
         .bind(title_ru)
         .bind(effect_en)
@@ -6402,10 +6433,14 @@ impl Repository {
         .bind(lore_ru)
         .bind(cost)
         .bind(power)
+        .bind(health)
+        .bind(mana)
+        .bind(traits)
         .bind(price_dust)
         .bind(price_feed)
         .bind(art_url)
         .bind(art_focal)
+        .bind(frame_override)
         .fetch_optional(&self.pg_pool)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Battle card {id} not found")))
@@ -6436,6 +6471,115 @@ impl Repository {
                 SET shelf_order = v.ord
                FROM (SELECT * FROM UNNEST($1::uuid[], $2::int[]) AS t(id, ord)) AS v
               WHERE c.id = v.id",
+        )
+        .bind(ids)
+        .bind(&orders)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected())
+    }
+
+    /// The race dictionary, with how many cards stand under each. The count is
+    /// what tells the keeper whether a rename is a small act or a large one.
+    pub async fn list_battle_races(&self) -> Result<Vec<crate::models::BattleRaceListed>> {
+        Ok(sqlx::query_as::<_, crate::models::BattleRaceListed>(
+            "SELECT r.id, r.slug, r.name_en, r.name_ru, r.note_en, r.note_ru, r.icon_url, r.sort_order,
+                    (SELECT COUNT(*) FROM battle_cards c WHERE c.race_id = r.id)::bigint
+                        AS card_count
+               FROM battle_races r
+              ORDER BY r.sort_order NULLS LAST, r.name_ru, r.id",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn list_battle_race_slugs_except(&self, except: Option<Uuid>) -> Result<Vec<String>> {
+        let rows: Vec<(String,)> = if let Some(id) = except {
+            sqlx::query_as("SELECT slug FROM battle_races WHERE id <> $1")
+                .bind(id)
+                .fetch_all(&self.pg_pool)
+                .await?
+        } else {
+            sqlx::query_as("SELECT slug FROM battle_races")
+                .fetch_all(&self.pg_pool)
+                .await?
+        };
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+
+    pub async fn insert_battle_race(
+        &self,
+        slug: &str,
+        name_en: &str,
+        name_ru: &str,
+        note_en: Option<&str>,
+        note_ru: Option<&str>,
+        icon_url: Option<&str>,
+    ) -> Result<crate::models::BattleRace> {
+        Ok(sqlx::query_as::<_, crate::models::BattleRace>(
+            "INSERT INTO battle_races (slug, name_en, name_ru, note_en, note_ru, icon_url)
+             VALUES ($1,$2,$3,$4,$5,$6) RETURNING *",
+        )
+        .bind(slug)
+        .bind(name_en)
+        .bind(name_ru)
+        .bind(note_en)
+        .bind(note_ru)
+        .bind(icon_url)
+        .fetch_one(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn update_battle_race(
+        &self,
+        id: Uuid,
+        slug: &str,
+        name_en: &str,
+        name_ru: &str,
+        note_en: Option<&str>,
+        note_ru: Option<&str>,
+        icon_url: Option<&str>,
+    ) -> Result<crate::models::BattleRace> {
+        sqlx::query_as::<_, crate::models::BattleRace>(
+            "UPDATE battle_races SET slug = $2, name_en = $3, name_ru = $4,
+                    note_en = $5, note_ru = $6, icon_url = $7, updated_at = NOW()
+              WHERE id = $1 RETURNING *",
+        )
+        .bind(id)
+        .bind(slug)
+        .bind(name_en)
+        .bind(name_ru)
+        .bind(note_en)
+        .bind(note_ru)
+        .bind(icon_url)
+        .fetch_optional(&self.pg_pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Battle race {id} not found")))
+    }
+
+    /// Removing a race leaves its cards standing, without one — the foreign key
+    /// is ON DELETE SET NULL. A dictionary entry is not the cards under it.
+    pub async fn delete_battle_race(&self, id: Uuid) -> Result<()> {
+        let affected = sqlx::query("DELETE FROM battle_races WHERE id = $1")
+            .bind(id)
+            .execute(&self.pg_pool)
+            .await?
+            .rows_affected();
+        if affected == 0 {
+            return Err(AppError::NotFound(format!("Battle race {id} not found")));
+        }
+        Ok(())
+    }
+
+    pub async fn set_battle_race_order(&self, ids: &[Uuid]) -> Result<u64> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let orders: Vec<i32> = (0..ids.len() as i32).collect();
+        let res = sqlx::query(
+            "UPDATE battle_races AS r SET sort_order = v.ord
+               FROM (SELECT * FROM UNNEST($1::uuid[], $2::int[]) AS t(id, ord)) AS v
+              WHERE r.id = v.id",
         )
         .bind(ids)
         .bind(&orders)

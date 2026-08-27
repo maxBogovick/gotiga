@@ -3317,8 +3317,11 @@ pub struct BattleCard {
     pub id: Uuid,
     pub slug: String,
     pub figurine_id: Option<Uuid>,
+    pub race_id: Option<Uuid>,
     pub status: String,
     pub tier: i16,
+    pub type_en: Option<String>,
+    pub type_ru: Option<String>,
     pub title_en: String,
     pub title_ru: String,
     pub effect_en: Option<String>,
@@ -3327,10 +3330,17 @@ pub struct BattleCard {
     pub lore_ru: Option<String>,
     pub cost: i16,
     pub power: i16,
+    pub health: i16,
+    pub mana: i16,
+    /// JSON array of named properties; see `battles::read_traits`.
+    pub traits: Option<String>,
     pub price_dust: Option<i32>,
     pub price_feed: Option<i32>,
     pub art_url: Option<String>,
     pub art_focal: Option<String>,
+    /// This card's own exception to the tier's shared frame. JSON, see
+    /// `battles::FrameOverride`. `None` wears the tier's frame unmodified.
+    pub frame_override: Option<String>,
     pub shelf_order: Option<i32>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -3344,8 +3354,11 @@ pub struct BattleCardListed {
     pub id: Uuid,
     pub slug: String,
     pub figurine_id: Option<Uuid>,
+    pub race_id: Option<Uuid>,
     pub status: String,
     pub tier: i16,
+    pub type_en: Option<String>,
+    pub type_ru: Option<String>,
     pub title_en: String,
     pub title_ru: String,
     pub effect_en: Option<String>,
@@ -3354,10 +3367,15 @@ pub struct BattleCardListed {
     pub lore_ru: Option<String>,
     pub cost: i16,
     pub power: i16,
+    pub health: i16,
+    pub mana: i16,
+    /// JSON array of named properties; see `battles::read_traits`.
+    pub traits: Option<String>,
     pub price_dust: Option<i32>,
     pub price_feed: Option<i32>,
     pub art_url: Option<String>,
     pub art_focal: Option<String>,
+    pub frame_override: Option<String>,
     pub shelf_order: Option<i32>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -3366,6 +3384,11 @@ pub struct BattleCardListed {
     /// Raw stored path of the work's face image; the service turns it into a URL.
     pub figurine_face_path: Option<String>,
     pub figurine_face_id: Option<Uuid>,
+    pub race_name_en: Option<String>,
+    pub race_name_ru: Option<String>,
+    /// The race's shared icon — already a public URL, joined in from the
+    /// dictionary so the shelf never has to fetch the race list just to draw it.
+    pub race_icon_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3376,6 +3399,13 @@ pub struct BattleCardDto {
     pub status: String,
     /// The card's rank, 1..5. Not to be confused with an owner's level.
     pub tier: i16,
+    /// The header band: what this is, and what kind it is.
+    pub race_id: Option<String>,
+    pub race_name_en: Option<String>,
+    pub race_name_ru: Option<String>,
+    pub race_icon_url: Option<String>,
+    pub type_en: Option<String>,
+    pub type_ru: Option<String>,
     pub title_en: String,
     pub title_ru: String,
     pub effect_en: Option<String>,
@@ -3383,7 +3413,11 @@ pub struct BattleCardDto {
     pub lore_en: Option<String>,
     pub lore_ru: Option<String>,
     pub cost: i16,
+    /// Strength, in the properties band.
     pub power: i16,
+    pub health: i16,
+    pub mana: i16,
+    pub traits: Vec<crate::battles::CardTrait>,
     pub price_dust: Option<i32>,
     pub price_feed: Option<i32>,
     /// What the card actually wears: the keeper's own picture if there is one,
@@ -3394,6 +3428,9 @@ pub struct BattleCardDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub art_url_override: Option<String>,
     pub art_focal: Option<String>,
+    /// This card's own exception to the tier's shared frame. JSON, see
+    /// `battles::FrameOverride`. `None` wears the tier's frame unmodified.
+    pub frame_override: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shelf_order: Option<i32>,
     pub figurine_id: Option<String>,
@@ -3409,6 +3446,9 @@ pub struct SaveBattleCardRequest {
     pub slug: Option<String>,
     pub status: String,
     pub tier: i16,
+    pub race_id: Option<String>,
+    pub type_en: Option<String>,
+    pub type_ru: Option<String>,
     pub title_en: String,
     pub title_ru: String,
     pub effect_en: Option<String>,
@@ -3419,10 +3459,17 @@ pub struct SaveBattleCardRequest {
     pub cost: i16,
     #[serde(default)]
     pub power: i16,
+    #[serde(default)]
+    pub health: i16,
+    #[serde(default)]
+    pub mana: i16,
+    #[serde(default)]
+    pub traits: Vec<crate::battles::CardTrait>,
     pub price_dust: Option<i32>,
     pub price_feed: Option<i32>,
     pub art_url: Option<String>,
     pub art_focal: Option<String>,
+    pub frame_override: Option<String>,
     pub figurine_id: Option<String>,
 }
 
@@ -3431,4 +3478,67 @@ pub struct SaveBattleCardRequest {
 #[serde(rename_all = "camelCase")]
 pub struct ReorderBattleCardsRequest {
     pub ids: Vec<Uuid>,
+}
+
+/// A race in the keeper's dictionary. Shared by many cards, so a table rather
+/// than a field: renaming one must rename it everywhere at once.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct BattleRace {
+    pub id: Uuid,
+    pub slug: String,
+    pub name_en: String,
+    pub name_ru: String,
+    pub note_en: Option<String>,
+    pub note_ru: Option<String>,
+    /// Shown in the header band of every card of this race. Already a public
+    /// URL — set once here, worn by every card, the same choice already made
+    /// for frames.
+    pub icon_url: Option<String>,
+    pub sort_order: Option<i32>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// A race read for the desk, carrying how many cards stand under it. A separate
+/// struct because sqlx maps a row into ONE `FromRow` type — a tuple of a struct
+/// and a count is not something it can decode.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct BattleRaceListed {
+    pub id: Uuid,
+    pub slug: String,
+    pub name_en: String,
+    pub name_ru: String,
+    pub note_en: Option<String>,
+    pub note_ru: Option<String>,
+    pub icon_url: Option<String>,
+    pub sort_order: Option<i32>,
+    pub card_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleRaceDto {
+    pub id: String,
+    pub slug: String,
+    pub name_en: String,
+    pub name_ru: String,
+    pub note_en: Option<String>,
+    pub note_ru: Option<String>,
+    pub icon_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort_order: Option<i32>,
+    /// How many cards stand under this race. The keeper sees what a rename or a
+    /// removal would touch before doing it.
+    pub card_count: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveBattleRaceRequest {
+    pub slug: Option<String>,
+    pub name_en: String,
+    pub name_ru: String,
+    pub note_en: Option<String>,
+    pub note_ru: Option<String>,
+    pub icon_url: Option<String>,
 }

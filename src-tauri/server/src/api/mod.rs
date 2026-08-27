@@ -194,6 +194,7 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             // what a given person owns is not, and lives behind a session.
             .route("/battles/cards", get(handlers::list_battle_cards))
             .route("/battles/frames", get(handlers::get_battle_frames))
+            .route("/battles/races", get(handlers::list_battle_races))
             // === PUBLIC LOGIN ===
             .route("/admin/login", post(handlers::admin_login))
             // === PROTECTED WRITE — use route_layer so auth only runs on matched routes ===
@@ -565,6 +566,40 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 post(handlers::admin_save_battle_frames).route_layer(
                     middleware::from_fn_with_state(config.clone(), auth_middleware),
                 ),
+            )
+            // Frame pictures keep their transparency, so they cannot go through
+            // the ordinary image upload. Its own body limit: a carved frame is
+            // a big PNG before it is re-encoded.
+            .route(
+                "/admin/battles/races",
+                post(handlers::admin_create_battle_race).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            // Before `/:id`, so a reorder is never read as a race id.
+            .route(
+                "/admin/battles/races/order",
+                post(handlers::admin_reorder_battle_races).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/battles/races/:id",
+                put(handlers::admin_update_battle_race)
+                    .delete(handlers::admin_delete_battle_race)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            .route(
+                "/admin/battles/frames/art",
+                post(handlers::admin_upload_battle_frame_art)
+                    .route_layer(DefaultBodyLimit::max(MEDIA_UPLOAD_LIMIT))
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
             )
             // === ORDERS (ADMIN) ===
             .route(
@@ -1009,7 +1044,7 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
         .route("/feed.xml", get(handlers::feed_rss))
         // Live RSS of gazette leaves — separate from the Pinterest works channel.
         .route("/gazette/feed.xml", get(handlers::gazette_feed_rss));
-    for subdir in ["images", "videos", "audio", "backgrounds", "avatars"] {
+    for subdir in ["images", "videos", "audio", "backgrounds", "avatars", "frames"] {
         app = app.nest_service(
             &format!("/static/{}", subdir),
             ServeDir::new(upload_dir.join(subdir)),
@@ -1073,6 +1108,7 @@ fn is_public_cacheable(path: &str) -> bool {
         "/gazette/blotter",
         "/battles/cards",
         "/battles/frames",
+        "/battles/races",
     ];
 
     if EXACT.contains(&path) {

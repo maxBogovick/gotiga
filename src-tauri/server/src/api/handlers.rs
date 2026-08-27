@@ -112,6 +112,63 @@ fn encode_webp_bytes(image: &image::RgbImage) -> Result<Vec<u8>> {
     Ok(encoder.encode(WEBP_QUALITY).to_vec())
 }
 
+/// LOSSY WebP that KEEPS ITS ALPHA, via libwebp.
+///
+/// The ordinary media pipeline flattens everything to JPEG, which is right for
+/// a photograph of a work and fatal for a card frame: those are cut-outs whose
+/// middle is a hole, and a JPEG would arrive with the hole filled in white.
+///
+/// libwebp compresses the alpha plane losslessly even in lossy mode, so the
+/// cut edge stays crisp while the carving itself compresses like a photograph —
+/// roughly 100 KB against the 2 MB the same frame weighs as a PNG.
+fn encode_webp_rgba(image: &image::RgbaImage) -> Vec<u8> {
+    webp::Encoder::from_rgba(image.as_raw(), image.width(), image.height())
+        .encode(WEBP_QUALITY)
+        .to_vec()
+}
+
+/// The longest side a card frame is kept at. A frame is chrome, not an exhibit:
+/// it is never rendered wider than a card, and 1600 covers a full-bleed card on
+/// a retina screen with room to spare.
+const FRAME_MAX_PX: u32 = 1600;
+
+struct EncodedFrame {
+    webp: Vec<u8>,
+    width: u32,
+    height: u32,
+    /// Whether the picture actually has anything transparent in it. A frame
+    /// without a hole can only be worn behind the card, and the keeper is told
+    /// so rather than left wondering where their card went.
+    has_alpha: bool,
+}
+
+/// CPU-bound: decode + resize + encode. Runs inside spawn_blocking.
+fn build_frame_asset(data: &[u8]) -> Result<EncodedFrame> {
+    let decoded = image::load_from_memory(data)
+        .map_err(|e| AppError::BadRequest(format!("Invalid image file: {}", e)))?;
+    if (decoded.width() as u64) * (decoded.height() as u64) > MAX_IMAGE_PIXELS {
+        return Err(AppError::BadRequest(
+            "Image dimensions are too large".into(),
+        ));
+    }
+    let sized = if decoded.width() > FRAME_MAX_PX || decoded.height() > FRAME_MAX_PX {
+        decoded.resize(FRAME_MAX_PX, FRAME_MAX_PX, FilterType::Lanczos3)
+    } else {
+        decoded
+    };
+    let rgba = sized.to_rgba8();
+    // Sampled rather than exhaustive: a 1600x1600 frame is 2.5M pixels and the
+    // answer is the same after a few thousand of them. Every 37th pixel is a
+    // stride that cannot fall into step with a row width.
+    let has_alpha = rgba.pixels().step_by(37).any(|p| p.0[3] < 250);
+    Ok(EncodedFrame {
+        width: rgba.width(),
+        height: rgba.height(),
+        webp: encode_webp_rgba(&rgba),
+        has_alpha,
+    })
+}
+
 /// CPU-bound: decode + resize + encode. Runs inside spawn_blocking so it never
 /// blocks an async runtime worker.
 fn build_image_variants(data: &[u8]) -> Result<EncodedImageVariants> {
@@ -3980,4 +4037,93 @@ pub async fn admin_save_battle_frames(
     Json(body): Json<crate::battles::BattleFrames>,
 ) -> Result<Json<crate::battles::BattleFrames>> {
     Ok(Json(service.save_battle_frames(body).await?))
+}
+
+/// Upload one card-frame picture, keeping its transparency.
+///
+/// Deliberately NOT the ordinary `/upload`: that writes four JPEG renditions,
+/// and a JPEG of a cut-out frame is a rectangle of white where the card should
+/// show through. Frames are UI chrome and live apart from the archive's images.
+pub async fn admin_upload_battle_frame_art(
+    State(config): State<Config>,
+    mut multipart: Multipart,
+) -> Result<Json<serde_json::Value>> {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::BadRequest(e.to_string()))?
+    {
+        if field.name() != Some("file") {
+            continue;
+        }
+        let data = field
+            .bytes()
+            .await
+            .map_err(|e| AppError::BadRequest(e.to_string()))?;
+        if data.len() > MAX_IMAGE_BYTES {
+            return Err(AppError::BadRequest("Image file is too large".into()));
+        }
+        let bytes = data.to_vec();
+        let asset = tokio::task::spawn_blocking(move || build_frame_asset(&bytes))
+            .await
+            .map_err(|e| AppError::Internal(format!("Frame processing task failed: {}", e)))??;
+
+        let relative = format!("frames/{}.webp", Uuid::new_v4());
+        write_bytes(&config.upload_dir, &relative, &asset.webp).await?;
+        tracing::info!(
+            target: "gotiga_server::media",
+            event = "battle_frame_uploaded",
+            path = %relative,
+            bytes = asset.webp.len(),
+            outcome = "ok",
+            "card frame uploaded"
+        );
+        return Ok(Json(serde_json::json!({
+            "url": public_static_url(&relative),
+            "width": asset.width,
+            "height": asset.height,
+            "hasAlpha": asset.has_alpha,
+        })));
+    }
+    Err(AppError::BadRequest("No file field found".to_string()))
+}
+
+// === RACES ===
+
+pub async fn list_battle_races(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<BattleRaceDto>>> {
+    Ok(Json(service.list_battle_races().await?))
+}
+
+pub async fn admin_create_battle_race(
+    State(service): State<AppService>,
+    Json(body): Json<SaveBattleRaceRequest>,
+) -> Result<(StatusCode, Json<BattleRaceDto>)> {
+    let race = service.admin_create_battle_race(body).await?;
+    Ok((StatusCode::CREATED, Json(race)))
+}
+
+pub async fn admin_update_battle_race(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<SaveBattleRaceRequest>,
+) -> Result<Json<BattleRaceDto>> {
+    Ok(Json(service.admin_update_battle_race(id, body).await?))
+}
+
+pub async fn admin_delete_battle_race(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    service.admin_delete_battle_race(id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_reorder_battle_races(
+    State(service): State<AppService>,
+    Json(body): Json<ReorderBattleCardsRequest>,
+) -> Result<StatusCode> {
+    service.admin_reorder_battle_races(body.ids).await?;
+    Ok(StatusCode::NO_CONTENT)
 }

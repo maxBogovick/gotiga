@@ -75,8 +75,9 @@
     {#if !cards.length}
       <p class="empty" in:fade={{ duration: 700, delay: 160 }}>{$t('battlesEmpty')}</p>
     {:else}
+      <p class="not-yet" in:fade={{ duration: 700, delay: 200 }}>{$t('battlesNotYetTakeable')}</p>
       <div class="shelf" in:fade={{ duration: 700, delay: 240 }}>
-        {#each cards as card, index (card.id)}
+        {#each cards as card (card.id)}
           {@const copy = cardCopy(card, $lang)}
           {@const prices = pricesOf(card)}
           {@const href = workHref(card)}
@@ -100,10 +101,6 @@
               {/if}
             </figcaption>
           </figure>
-          {#if index === 0}
-            <!-- Said once, at the top of the shelf, and never repeated per card. -->
-            <p class="not-yet">{$t('battlesNotYetTakeable')}</p>
-          {/if}
         {/each}
       </div>
     {/if}
@@ -236,9 +233,7 @@
   }
 
   .not-yet {
-    grid-column: 1 / -1;
-    order: -1;
-    margin: 0;
+    margin: 2.5rem 0 0;
     font-family: Georgia, 'Fraunces', serif;
     font-size: 0.88rem;
     font-style: italic;
@@ -253,6 +248,11 @@
   }
 
   .stand {
+    /* Each label sits under its own card rather than on a shared line: a frame
+       carries its own ratio, so a dressed card is shorter than a bare one
+       beside it, and pretending otherwise would either stretch a card out of
+       its proportions or leave a hole under it. A shelf of different cards is
+       uneven; that is what a shelf looks like. */
     /* A long shelf skips the layout and paint of what is not on screen. Cheaper
        than virtualising it in JS, and it does not break find-in-page. */
     content-visibility: auto;

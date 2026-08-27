@@ -1300,6 +1300,10 @@ export const en = {
   battlesNotYetTakeable: 'Nothing can be taken yet. The keeper is still laying the shelf out.',
   battlesWorkLink: 'The work itself',
 
+  battlesHealthLabel: 'Health',
+  battlesManaLabel: 'Mana',
+  battlesRaceLabel: 'Race',
+  battlesTypeLabel: 'Type',
 } as const;
 
 export type TranslationKey = keyof typeof en;

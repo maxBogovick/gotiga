@@ -60,6 +60,8 @@ import type {
     ThemeConfig,
     BattleCard,
     BattleFrames,
+    BattleRace,
+    SaveBattleRaceRequest,
     SaveBattleCardRequest,
     CopyOverrides,
     HomeLayoutConfig,
@@ -2209,6 +2211,28 @@ export const api = {
         }
     },
 
+    /** The race dictionary. Same for every visitor, so cached like the shelf. */
+    async getBattleRaces(loadFetch?: typeof fetch): Promise<BattleRace[]> {
+        try {
+            return await webFetch('/battles/races', undefined, loadFetch);
+        } catch {
+            return [];
+        }
+    },
+
+    async adminSaveBattleRace(body: SaveBattleRaceRequest, id?: string): Promise<BattleRace> {
+        return webFetch(id ? `/admin/battles/races/${id}` : '/admin/battles/races', {
+            method: id ? 'PUT' : 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(body),
+        });
+    },
+
+    /** Removes the dictionary entry, never the cards that wore it. */
+    async adminDeleteBattleRace(id: string): Promise<void> {
+        await webFetch(`/admin/battles/races/${id}`, { method: 'DELETE', headers: authHeaders() });
+    },
+
     async adminListBattleCards(): Promise<BattleCard[]> {
         return webFetch('/admin/battles/cards', { headers: authHeaders() });
     },
@@ -2232,6 +2256,34 @@ export const api = {
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify({ ids }),
         });
+    },
+
+    /**
+     * Upload one card-frame picture, transparency intact.
+     *
+     * Not `importMediaWithVariants`: that writes four JPEG renditions, and a
+     * JPEG of a cut-out frame is a rectangle of white where the card should
+     * show through. Returns the picture's own size so the desk can set the
+     * card's ratio from it, and whether it has a hole in it at all.
+     */
+    async adminUploadBattleFrameArt(
+        file: File,
+    ): Promise<{ url: string; width: number; height: number; hasAlpha: boolean }> {
+        const form = new FormData();
+        form.append('file', file);
+        const res = await fetch(`${webApiBase()}/admin/battles/frames/art`, {
+            method: 'POST',
+            headers: authHeaders(),
+            body: form,
+        });
+        if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+        const data = await res.json();
+        return {
+            url: webPublicUrl(data.url) ?? '',
+            width: Number(data.width) || 0,
+            height: Number(data.height) || 0,
+            hasAlpha: !!data.hasAlpha,
+        };
     },
 
     async adminSaveBattleFrames(config: BattleFrames): Promise<BattleFrames> {
