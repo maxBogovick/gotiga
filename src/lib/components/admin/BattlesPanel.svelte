@@ -20,9 +20,11 @@
     FRAME_MODES,
     LAYOUTS,
     TIERS,
+    applyInsetDelta,
     frameName,
     parseFocal,
     pickImageFile,
+    type InsetKey,
   } from '$lib/battles';
   import { SITE_FONTS } from '$lib/fonts';
   import BattleCard from '$lib/components/BattleCard.svelte';
@@ -238,6 +240,30 @@
     } finally {
       uploading = false;
     }
+  }
+
+  /** The reverse — what a card you do not own shows lying in dust. Never the
+   *  frame's own picture: the carving is the front's dress and BattleCard
+   *  never wears it face down, whatever this is set to. */
+  async function uploadBackArt() {
+    const file = await pickImageFile();
+    if (!file) return;
+    uploading = true;
+    try {
+      const art = await api.adminUploadBattleFrameArt(file);
+      frames[frameIndex].backImage = art.url;
+    } catch (e) {
+      flash(String(e), 6000);
+    } finally {
+      uploading = false;
+    }
+  }
+
+  /** A slider set to `value` — mirrored onto the opposite side by the same
+   *  amount, same as dragging the inset handle on the card itself. */
+  function setInset(kind: InsetKey, value: number) {
+    const frame = frames[frameIndex];
+    applyInsetDelta(frame, kind, value - (frame[kind] ?? 0));
   }
 
   // ── The race dictionary ───────────────────────────────────────────────────
@@ -611,6 +637,32 @@
               </div>
             </div>
 
+            <!-- The reverse. Never wears the frame above, whatever picture it shows —
+                 the carving is the front's own dress. -->
+            <div class="pt-5 border-t border-[#34251c]/10">
+              <p class="mb-3 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminBattlesBackArt')}</p>
+              <p class="max-w-[62ch] mb-3 text-[11px] leading-relaxed italic text-[#8a6a55]">{$t('adminBattlesBackArtHint')}</p>
+              <div class="flex flex-wrap items-end gap-3">
+                <button
+                  onclick={uploadBackArt}
+                  disabled={uploading}
+                  class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
+                >{uploading ? '…' : $t('adminBattlesBackArtUpload')}</button>
+                <label class="block flex-1 min-w-[16rem]">
+                  <span class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">
+                    {#if !frames[frameIndex].backImage.trim()}{$t('adminBattlesBackArtNone')}{:else}URL{/if}
+                  </span>
+                  <input bind:value={frames[frameIndex].backImage} placeholder="/static/frames/…" class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35" />
+                </label>
+                {#if frames[frameIndex].backImage.trim()}
+                  <button
+                    onclick={() => (frames[frameIndex].backImage = '')}
+                    class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
+                  >{$t('adminBattlesFrameArtClear')}</button>
+                {/if}
+              </div>
+            </div>
+
             <!-- Where the opening in that frame actually is. -->
             <div class="pt-5 border-t border-[#34251c]/10">
               <p class="mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminBattlesFrameWindow')}</p>
@@ -619,19 +671,39 @@
               <div class="flex flex-wrap gap-5">
                 <label class="block w-40">
                   <span class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminBattlesInsetTop')} · {frames[frameIndex].insetTop.toFixed(0)}%</span>
-                  <input type="range" min="0" max="45" step="0.5" bind:value={frames[frameIndex].insetTop} class="w-full" />
+                  <input
+                    type="range" min="0" max="45" step="0.5"
+                    value={frames[frameIndex].insetTop}
+                    oninput={(e) => setInset('insetTop', Number(e.currentTarget.value))}
+                    class="w-full"
+                  />
                 </label>
                 <label class="block w-40">
                   <span class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminBattlesInsetRight')} · {frames[frameIndex].insetRight.toFixed(0)}%</span>
-                  <input type="range" min="0" max="45" step="0.5" bind:value={frames[frameIndex].insetRight} class="w-full" />
+                  <input
+                    type="range" min="0" max="45" step="0.5"
+                    value={frames[frameIndex].insetRight}
+                    oninput={(e) => setInset('insetRight', Number(e.currentTarget.value))}
+                    class="w-full"
+                  />
                 </label>
                 <label class="block w-40">
                   <span class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminBattlesInsetBottom')} · {frames[frameIndex].insetBottom.toFixed(0)}%</span>
-                  <input type="range" min="0" max="45" step="0.5" bind:value={frames[frameIndex].insetBottom} class="w-full" />
+                  <input
+                    type="range" min="0" max="45" step="0.5"
+                    value={frames[frameIndex].insetBottom}
+                    oninput={(e) => setInset('insetBottom', Number(e.currentTarget.value))}
+                    class="w-full"
+                  />
                 </label>
                 <label class="block w-40">
                   <span class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminBattlesInsetLeft')} · {frames[frameIndex].insetLeft.toFixed(0)}%</span>
-                  <input type="range" min="0" max="45" step="0.5" bind:value={frames[frameIndex].insetLeft} class="w-full" />
+                  <input
+                    type="range" min="0" max="45" step="0.5"
+                    value={frames[frameIndex].insetLeft}
+                    oninput={(e) => setInset('insetLeft', Number(e.currentTarget.value))}
+                    class="w-full"
+                  />
                 </label>
                 <label class="block w-40">
                   <span class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminBattlesAspect')} · {frames[frameIndex].aspect.toFixed(2)}</span>

@@ -1957,6 +1957,10 @@ export interface BattleFrame {
     /** Texture for the card's ground. A cut-out frame has nothing behind it but
      *  this. Empty = the flat `paper` colour. */
     paperImage: string;
+    /** The reverse — what a card you do not own shows lying in dust. Never
+     *  wears the frame itself, whatever this is set to; empty = the plain
+     *  dusty texture the renderer already draws. */
+    backImage: string;
     /** Where the content sits inside that photograph, in % of the card. */
     insetTop: number;
     insetRight: number;
@@ -1979,7 +1983,19 @@ export interface BattleFrame {
     /** Ink for the name alone. Empty = `ink`. */
     titleInk: string;
     layout: BattleLayout;
+    /** Centre of the cost badge, `corners` layout only — X in % of the card's
+     *  width, Y in % of its height. */
+    costX: number;
+    costY: number;
+    /** Centre of the power badge, same units. */
+    powerX: number;
+    powerY: number;
+    /** The badge's own outline, independent per badge — from `BADGE_SHAPES`. */
+    costShape: BattleBadgeShape;
+    powerShape: BattleBadgeShape;
 }
+
+export type BattleBadgeShape = 'circle' | 'square' | 'diamond' | 'hex' | 'shield';
 
 export interface BattleFrames {
     frames: BattleFrame[];

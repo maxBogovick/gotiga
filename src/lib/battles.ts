@@ -10,6 +10,7 @@
 // Nothing on this page may quietly turn one into the other.
 
 import type {
+  BattleBadgeShape,
   BattleCard,
   BattleFrame,
   BattleFrameMode,
@@ -35,6 +36,10 @@ export const DEFAULT_ASPECT = 5 / 7;
 export const DEFAULT_ART_SHARE = 0.44;
 export const DEFAULT_HEADER_SHARE = 0.09;
 export const DEFAULT_FOOT_SHARE = 0.1;
+export const DEFAULT_COST_X = 10;
+export const DEFAULT_COST_Y = 9;
+export const DEFAULT_POWER_X = 90;
+export const DEFAULT_POWER_Y = 91;
 
 function painted(
   tier: number,
@@ -50,6 +55,7 @@ function painted(
     frameImage: '',
     frameMode: 'overlay',
     paperImage: '',
+    backImage: '',
     insetTop: 0, insetRight: 0, insetBottom: 0, insetLeft: 0,
     aspect: DEFAULT_ASPECT,
     headerShare: DEFAULT_HEADER_SHARE,
@@ -58,6 +64,12 @@ function painted(
     titleFont: '',
     titleInk: '',
     layout: 'corners',
+    costX: DEFAULT_COST_X,
+    costY: DEFAULT_COST_Y,
+    powerX: DEFAULT_POWER_X,
+    powerY: DEFAULT_POWER_Y,
+    costShape: 'circle',
+    powerShape: 'circle',
   };
 }
 
@@ -77,6 +89,7 @@ export const DEFAULT_FRAMES: BattleFrame[] = [
 
 export const LAYOUTS: BattleLayout[] = ['corners', 'plaque'];
 export const FRAME_MODES: BattleFrameMode[] = ['overlay', 'behind'];
+export const BADGE_SHAPES: BattleBadgeShape[] = ['circle', 'square', 'diamond', 'hex', 'shield'];
 
 export function clampTier(tier: number): number {
   if (!Number.isFinite(tier)) return 1;
@@ -163,6 +176,7 @@ export function isOverlaid(frame: BattleFrame): boolean {
 export function frameVars(frame: BattleFrame): Record<string, string> {
   const image = frame.frameImage?.trim();
   const paperArt = frame.paperImage?.trim();
+  const backArt = frame.backImage?.trim();
   return {
     '--paper-image': paperArt ? `url("${cssUrl(paperArt)}")` : 'none',
     '--paper': frame.paper,
@@ -170,6 +184,7 @@ export function frameVars(frame: BattleFrame): Record<string, string> {
     '--edge': frame.border,
     '--foil': frame.foil || 'transparent',
     '--frame-image': image ? `url("${cssUrl(image)}")` : 'none',
+    '--back-image': backArt ? `url("${cssUrl(backArt)}")` : 'none',
     '--pad-top': `${frame.insetTop || 0}%`,
     '--pad-right': `${frame.insetRight || 0}%`,
     '--pad-bottom': `${frame.insetBottom || 0}%`,
@@ -184,6 +199,34 @@ export function frameVars(frame: BattleFrame): Record<string, string> {
     '--title-face': frame.titleFont ? fontStack(frame.titleFont) : 'inherit',
     '--title-ink': frame.titleInk?.trim() || frame.ink,
   };
+}
+
+/** The card's four insets — how far the window sits from each side of the
+ *  photograph, in % of the card. */
+export type InsetKey = 'insetTop' | 'insetRight' | 'insetBottom' | 'insetLeft';
+export const INSET_MAX = 45;
+
+const OPPOSITE_INSET: Record<InsetKey, InsetKey> = {
+  insetTop: 'insetBottom',
+  insetBottom: 'insetTop',
+  insetLeft: 'insetRight',
+  insetRight: 'insetLeft',
+};
+
+/**
+ * Grows `kind` by `delta` and mirrors the same delta onto the side facing
+ * it — the frame's two parallel sides are edited as a pair, not four
+ * independent numbers, so narrowing the left always narrows the right by
+ * the same amount instead of leaving the keeper to match them by eye.
+ * Shared by the on-card drag handles and the Frames tab's own sliders, so
+ * both ways of setting an inset agree. Each side is clamped on its own.
+ */
+export function applyInsetDelta(target: BattleFrame, kind: InsetKey, delta: number): void {
+  const current = target[kind] ?? 0;
+  target[kind] = Math.min(INSET_MAX, Math.max(0, current + delta));
+  const opposite = OPPOSITE_INSET[kind];
+  const currentOpposite = target[opposite] ?? 0;
+  target[opposite] = Math.min(INSET_MAX, Math.max(0, currentOpposite + delta));
 }
 
 export function frameName(frame: BattleFrame, lang: Lang): string {

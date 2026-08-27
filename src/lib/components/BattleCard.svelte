@@ -30,6 +30,13 @@
     pricesOf,
     cardTransitionName,
     pickImageFile,
+    DEFAULT_COST_X,
+    DEFAULT_COST_Y,
+    DEFAULT_POWER_X,
+    DEFAULT_POWER_Y,
+    BADGE_SHAPES,
+    applyInsetDelta,
+    type InsetKey,
     type FrameOverride,
   } from '$lib/battles';
   import { api } from '$lib/api';
@@ -101,6 +108,7 @@
   let rank = $derived(frameName(frame, $lang));
   let dressed = $derived(isDressed(frame));
   let overlaid = $derived(isOverlaid(frame));
+  let hasBackArt = $derived(!!frame.backImage?.trim());
   let vars = $derived(frameVars(frame));
   let varStyle = $derived(
     Object.entries(vars)
@@ -305,13 +313,11 @@
   // make, just aimed by hand instead of by number.
 
   type ShareKey = 'headerShare' | 'artShare' | 'footShare';
-  type InsetKey = 'insetTop' | 'insetRight' | 'insetBottom' | 'insetLeft';
   const SHARE_BOUNDS: Record<ShareKey, [number, number]> = {
     headerShare: [0, 0.3],
     artShare: [0.12, 0.85],
     footShare: [0, 0.3],
   };
-  const INSET_MAX = 45;
 
   let frameDragKind = $state<ShareKey | InsetKey | null>(null);
 
@@ -372,9 +378,7 @@
     if (!size) return;
     const movement = vertical ? event.movementY : event.movementX;
     const delta = ((movement / size) * 100) * INSET_SIGN[kind];
-    const target = rankFrame();
-    const current = target[kind] ?? 0;
-    target[kind] = Math.min(INSET_MAX, Math.max(0, current + delta));
+    applyInsetDelta(rankFrame(), kind, delta);
   }
 
   function frameDragMove(event: PointerEvent) {
@@ -388,6 +392,82 @@
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
+  }
+
+  // ── Cost and power, dragged instead of dialled ─────────────────────────────
+  //
+  // Same tap-vs-drag gesture as the photograph: held and moved, the badge
+  // follows the pointer; let go without moving it and its own numeric editor
+  // opens instead — the keyboard-reachable form a drag can never be exact
+  // enough to replace.
+
+  type BadgeKind = 'cost' | 'power';
+  const BADGE_KEYS: Record<
+    BadgeKind,
+    { x: 'costX'; y: 'costY'; shape: 'costShape' } | { x: 'powerX'; y: 'powerY'; shape: 'powerShape' }
+  > = {
+    cost: { x: 'costX', y: 'costY', shape: 'costShape' },
+    power: { x: 'powerX', y: 'powerY', shape: 'powerShape' },
+  };
+
+  let badgeDragKind = $state<BadgeKind | null>(null);
+  let badgeMoved = false;
+  let badgePopoverOpen = $state<BadgeKind | null>(null);
+  /** Where the popover sits, in % of `.slot` (this component's own root) —
+   *  read off the badge itself when it opens rather than reusing
+   *  `frame.costX`/`costY`: those are percentages of `.content`, which sits
+   *  inset from `.slot` by the frame's own padding, so reusing them here would
+   *  drift the popover away from the badge on any dressed or inset frame.
+   *  Rendered as a sibling of `.card` rather than inside it: an unrelated
+   *  global `.card { overflow: hidden }` rule (see the admin design system)
+   *  would otherwise clip it, the same trap `.frame-popover` sits in. */
+  let badgePopoverPos = $state<{ left: number; top: number } | null>(null);
+
+  function badgeDragStart(kind: BadgeKind, event: PointerEvent & { currentTarget: HTMLElement }) {
+    if (!frameEditable) return;
+    event.preventDefault();
+    event.stopPropagation();
+    badgeDragKind = kind;
+    badgeMoved = false;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function badgeDragMove(event: PointerEvent) {
+    if (!badgeDragKind || !contentEl) return;
+    const rect = contentEl.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    badgeMoved = true;
+    const { x, y } = BADGE_KEYS[badgeDragKind];
+    const target = rankFrame();
+    const dx = (event.movementX / rect.width) * 100;
+    const dy = (event.movementY / rect.height) * 100;
+    target[x] = Math.min(100, Math.max(0, (target[x] ?? 0) + dx));
+    target[y] = Math.min(100, Math.max(0, (target[y] ?? 0) + dy));
+  }
+
+  function badgeDragEnd(event: PointerEvent & { currentTarget: HTMLElement }) {
+    if (!badgeDragKind) return;
+    const kind = badgeDragKind;
+    const badgeEl = event.currentTarget;
+    badgeDragKind = null;
+    if (badgeEl.hasPointerCapture(event.pointerId)) {
+      badgeEl.releasePointerCapture(event.pointerId);
+    }
+    // A click that never moved opens the badge's own editor; a drag has
+    // already placed it, and popping the editor up too would just be in the way.
+    if (badgeMoved) return;
+    if (badgePopoverOpen === kind) {
+      badgePopoverOpen = null;
+      return;
+    }
+    const rootRect = root?.getBoundingClientRect();
+    if (!rootRect || !rootRect.width || !rootRect.height) return;
+    const badgeRect = badgeEl.getBoundingClientRect();
+    badgePopoverPos = {
+      left: ((badgeRect.left + badgeRect.width / 2 - rootRect.left) / rootRect.width) * 100,
+      top: ((badgeRect.top + badgeRect.height / 2 - rootRect.top) / rootRect.height) * 100,
+    };
+    badgePopoverOpen = kind;
   }
 </script>
 
@@ -406,17 +486,12 @@
    class="card"
    class:card--down={!owned}
    class:card--still={!interactive}
-   class:card--dressed={dressed}
-   class:card--overlaid={overlaid}
+   class:card--dressed={dressed && owned}
+   class:card--overlaid={overlaid && owned}
+   class:card--back-art={!owned && hasBackArt}
  >
   <div class="content" bind:this={contentEl}>
   {#if owned}
-    {#if frame.layout === 'corners'}
-      <!-- Cost, top left. In a fanned hand the left edge is the sliver you can
-           actually see, which is where every game held in a hand puts it. -->
-      <span class="corner corner--cost" title={$t('battlesCostLabel')}>{card.cost}</span>
-    {/if}
-
     <!-- 1. The header: what this is, and what kind of thing it is. -->
     <header class="band band--head">
       {#if editable || raceIconEditable || card.raceIconUrl}
@@ -437,6 +512,17 @@
       {#if head.race}<span class="race">{head.race}</span>{/if}
       {#if head.race && head.type}<span class="head-sep">·</span>{/if}
       {#if head.type}<span class="kind">{head.type}</span>{/if}
+
+      <!-- Notches, not a number: at shelf size a digit disappears and a row of
+           marks does not. This is the level of your copy — never the card's
+           rank, which is worn as the frame itself. -->
+      {#if level != null}
+        <span class="pips" aria-label="{$t('battlesLevelLabel')}: {level}">
+          {#each [1, 2, 3, 4, 5] as step (step)}
+            <span class="pip" class:pip--lit={step <= level}></span>
+          {/each}
+        </span>
+      {/if}
 
       {#if frameEditable}
         <div
@@ -547,20 +633,7 @@
           tabindex="0"
         ></div>
       {/if}
-      <!-- Notches, not a number: at shelf size a digit disappears and a row of
-           marks does not. This is the level of your copy — never the card's
-           rank, which is worn as the frame itself. -->
-      {#if level != null}
-        <span class="pips" aria-label="{$t('battlesLevelLabel')}: {level}">
-          {#each [1, 2, 3, 4, 5] as step (step)}
-            <span class="pip" class:pip--lit={step <= level}></span>
-          {/each}
-        </span>
-      {/if}
-      {#if frame.layout === 'corners'}
-        <!-- Power, bottom right: the corner Magic has used for thirty years. -->
-        <span class="corner corner--power" title={$t('battlesPowerLabel')}>{card.power}</span>
-      {:else}
+      {#if frame.layout !== 'corners'}
         <span class="stats">
           {$t('battlesCostLabel')} {card.cost} · {$t('battlesPowerLabel')} {card.power}
         </span>
@@ -646,6 +719,45 @@
   {/if}
   </div>
 
+  {#if owned && frame.layout === 'corners'}
+    <!-- Cost and power, above the carving. Same box as `.content` (see
+         `.badges-layer` below) but its own layer: a cut-out frame's ornament
+         can bulge inward over the window, and a badge sitting inside
+         `.content`'s own stacking context can never paint over a sibling
+         layer no matter its local z-index — only a layer of its own can. -->
+    <div class="badges-layer">
+      <!-- Cost, top left by default. Held and dragged, the badge follows the
+           pointer; clicked without moving, its own X/Y editor opens instead —
+           in a fanned hand the left edge is the sliver you can actually see,
+           which is where every game held in a hand puts it. -->
+      <button
+        type="button"
+        class="corner corner--cost corner--shape-{frame.costShape ?? 'circle'}"
+        class:corner--editable={frameEditable}
+        disabled={!frameEditable}
+        style="left:{frame.costX ?? DEFAULT_COST_X}%; top:{frame.costY ?? DEFAULT_COST_Y}%"
+        title={$t('battlesCostLabel')}
+        onpointerdown={(e) => badgeDragStart('cost', e)}
+        onpointermove={badgeDragMove}
+        onpointerup={badgeDragEnd}
+        onpointercancel={badgeDragEnd}
+      >{card.cost}</button>
+      <!-- Power, dragged and edited the same way as cost. -->
+      <button
+        type="button"
+        class="corner corner--power corner--shape-{frame.powerShape ?? 'circle'}"
+        class:corner--editable={frameEditable}
+        disabled={!frameEditable}
+        style="left:{frame.powerX ?? DEFAULT_POWER_X}%; top:{frame.powerY ?? DEFAULT_POWER_Y}%"
+        title={$t('battlesPowerLabel')}
+        onpointerdown={(e) => badgeDragStart('power', e)}
+        onpointermove={badgeDragMove}
+        onpointerup={badgeDragEnd}
+        onpointercancel={badgeDragEnd}
+      >{card.power}</button>
+    </div>
+  {/if}
+
   {#if editable}
     <!-- The frame: pick which of the five ranks dresses this card, or wear a
          picture just for this one card instead. Floats outside `.content` so
@@ -693,14 +805,75 @@
     </div>
   {/if}
 
-  {#if overlaid}
+  {#if overlaid && owned}
     <!-- The carving, laid over the card. A cut-out frame is a picture with a
          hole in it, not a border: its ornament runs past the rectangle and its
          inner edge is meant to overlap the photograph. Last in the stack, and
-         deaf to the pointer so it never swallows anything underneath. -->
+         deaf to the pointer so it never swallows anything underneath.
+         Never worn face down — the frame is the FRONT's own dress; a card
+         lying in dust shows its back, not the front's carving. -->
     <span class="carving" aria-hidden="true"></span>
   {/if}
  </div>
+
+ {#if badgePopoverOpen && badgePopoverPos}
+   <!-- The cost/power badge's own numeric editor. Anchored off the badge's
+        own screen position rather than `frame.costX`/`powerX` directly, and
+        a sibling of `.card` rather than inside it — an unrelated global
+        `.card { overflow: hidden }` rule would otherwise clip it. -->
+   <button
+     type="button"
+     class="frame-backdrop"
+     aria-label={$t('adminBattlesFrameClose')}
+     onclick={() => (badgePopoverOpen = null)}
+   ></button>
+   <div class="badge-popover" style="left:{badgePopoverPos.left}%; top:{badgePopoverPos.top}%">
+     <span class="badge-popover-label">
+       {badgePopoverOpen === 'cost' ? $t('battlesCostLabel') : $t('battlesPowerLabel')}
+     </span>
+     <div class="badge-popover-shapes" role="radiogroup" aria-label={$t('adminBattlesBadgeShape')}>
+       {#each BADGE_SHAPES as shape (shape)}
+         <button
+           type="button"
+           class="badge-shape-swatch badge-shape-swatch--{shape}"
+           class:active={(badgePopoverOpen === 'cost' ? frame.costShape : frame.powerShape) === shape}
+           title={$t(
+             shape === 'circle' ? 'adminBattlesBadgeShapeCircle' :
+             shape === 'square' ? 'adminBattlesBadgeShapeSquare' :
+             shape === 'diamond' ? 'adminBattlesBadgeShapeDiamond' :
+             shape === 'hex' ? 'adminBattlesBadgeShapeHex' :
+             'adminBattlesBadgeShapeShield',
+           )}
+           role="radio"
+           aria-checked={(badgePopoverOpen === 'cost' ? frame.costShape : frame.powerShape) === shape}
+           onclick={() => (rankFrame()[BADGE_KEYS[badgePopoverOpen!].shape] = shape)}
+         ></button>
+       {/each}
+     </div>
+     <div class="badge-popover-row">
+       <label class="badge-popover-field">
+         X <input
+           type="number" min="0" max="100" step="1"
+           value={Math.round(
+             (badgePopoverOpen === 'cost' ? frame.costX : frame.powerX) ??
+               (badgePopoverOpen === 'cost' ? DEFAULT_COST_X : DEFAULT_POWER_X),
+           )}
+           oninput={(e) => (rankFrame()[BADGE_KEYS[badgePopoverOpen!].x] = Number(e.currentTarget.value))}
+         />
+       </label>
+       <label class="badge-popover-field">
+         Y <input
+           type="number" min="0" max="100" step="1"
+           value={Math.round(
+             (badgePopoverOpen === 'cost' ? frame.costY : frame.powerY) ??
+               (badgePopoverOpen === 'cost' ? DEFAULT_COST_Y : DEFAULT_POWER_Y),
+           )}
+           oninput={(e) => (rankFrame()[BADGE_KEYS[badgePopoverOpen!].y] = Number(e.currentTarget.value))}
+         />
+       </label>
+     </div>
+   </div>
+ {/if}
 </article>
 
 <style>
@@ -764,6 +937,29 @@
     pointer-events: none;
   }
 
+  /* The same box as `.content` (same inset formula, same conditional padding
+     below) but a layer of its OWN, above the carving — a stacking context
+     can only be beaten by a sibling with a higher z-index, never from
+     inside it, which is why the badges cannot simply ask for a higher
+     z-index while still living inside `.content`. Deaf to the pointer
+     itself so the empty parts of the layer never steal a click from the
+     photograph or the header underneath; only the badges opt back in. */
+  .badges-layer {
+    position: absolute;
+    inset: var(--pad-top, 0) var(--pad-right, 0) var(--pad-bottom, 0) var(--pad-left, 0);
+    padding: 5cqi;
+    z-index: 4;
+    pointer-events: none;
+  }
+
+  .card--dressed .badges-layer {
+    padding: 0;
+  }
+
+  .badges-layer .corner {
+    pointer-events: auto;
+  }
+
   /* The paper the card is written on, under everything. A cut-out frame has
      nothing behind it but this. */
   .card--dressed.card--overlaid {
@@ -819,28 +1015,70 @@
   }
 
   .corner {
+    position: absolute;
     z-index: 2;
     display: grid;
     place-items: center;
     width: 13cqi;
     height: 13cqi;
+    margin: 0;
+    padding: 0;
+    font: inherit;
     font-size: 7cqi;
     line-height: 1;
     color: var(--paper);
     background: var(--ink);
+    border: none;
+    /* `left`/`top` are the badge's own CENTRE, in % of the card, so a drag can
+       move it in either direction from wherever it starts without the badge's
+       own size skewing the math. */
+    transform: translate(-50%, -50%);
+    cursor: default;
+  }
+
+  /* The badge's own outline — a coin is only the default, not the only shape
+     a cost or a power has ever worn. Picked per badge in its own popover. */
+  .corner--shape-circle {
     border-radius: 50%;
   }
 
-  .corner--cost {
-    position: absolute;
-    top: 3cqi;
-    left: 3cqi;
+  .corner--shape-square {
+    border-radius: 12%;
+  }
+
+  .corner--shape-diamond {
+    border-radius: 0;
+    clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+  }
+
+  .corner--shape-hex {
+    border-radius: 0;
+    clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
+  }
+
+  .corner--shape-shield {
+    border-radius: 0;
+    clip-path: polygon(50% 0%, 100% 18%, 100% 55%, 50% 100%, 0% 55%, 0% 18%);
   }
 
   .corner--power {
-    margin-left: auto;
     background: var(--edge);
     color: var(--ink);
+  }
+
+  /* Only in the Frames tab: the badge itself becomes a handle, dragged to
+     reposition and clicked (without moving) to open its own X/Y editor. */
+  .corner--editable {
+    cursor: grab;
+    touch-action: none;
+  }
+
+  .corner--editable:active {
+    cursor: grabbing;
+  }
+
+  .corner:disabled {
+    opacity: 1;
   }
 
   /* Three bands are measured; the properties band is not, and takes the rest.
@@ -1111,6 +1349,13 @@
     gap: 1.4cqi;
   }
 
+  /* Pushed to the far side of the header, opposite the race and type — the
+     plaque layout centres its header as one group instead, so an auto margin
+     there would fight the centring rather than sit at its edge. */
+  .slot[data-layout='corners'] .band--head .pips {
+    margin-left: auto;
+  }
+
   .pip {
     width: 5cqi;
     height: 1.4cqi;
@@ -1162,6 +1407,15 @@
   /* The dusty back. */
   .card--down {
     background: color-mix(in oklab, var(--ink) 10%, var(--paper));
+  }
+
+  /* The keeper's own picture for the reverse, in place of the plain dusty
+     tint above. The dust texture and the rank/price text stay on top of it —
+     see `.back` / `.back-copy` below — the same way they read over the tint. */
+  .card--back-art {
+    background-image: var(--back-image);
+    background-size: cover;
+    background-position: center;
   }
 
   .back {
@@ -1426,6 +1680,94 @@
     background: transparent;
     border: 1px solid color-mix(in oklab, var(--ink) 30%, transparent);
     cursor: pointer;
+  }
+
+  /* The cost/power badge's own numeric editor — a click on the badge that
+     never moved opens this instead of dragging it. Anchored on the badge's
+     own centre, same as the badge itself, and dropped just clear of it. */
+  .badge-popover {
+    position: absolute;
+    z-index: 6;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4em;
+    padding: 0.5em 0.6em;
+    font-size: 0.65rem;
+    color: var(--ink, #34251c);
+    background: var(--paper, #f8f1e7);
+    border: 1px solid color-mix(in oklab, var(--ink) 30%, transparent);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+    transform: translate(-50%, calc(7cqi + 6px));
+    white-space: nowrap;
+  }
+
+  .badge-popover-label {
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .badge-popover-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6em;
+  }
+
+  .badge-popover-shapes {
+    display: flex;
+    gap: 0.35em;
+  }
+
+  .badge-shape-swatch {
+    width: 1.3em;
+    height: 1.3em;
+    padding: 0;
+    background: color-mix(in oklab, var(--ink) 55%, transparent);
+    border: 1px solid transparent;
+    cursor: pointer;
+  }
+
+  .badge-shape-swatch.active {
+    border-color: var(--ink);
+    background: var(--ink);
+  }
+
+  .badge-shape-swatch--circle {
+    border-radius: 50%;
+  }
+
+  .badge-shape-swatch--square {
+    border-radius: 12%;
+  }
+
+  .badge-shape-swatch--diamond {
+    border-radius: 0;
+    clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+  }
+
+  .badge-shape-swatch--hex {
+    border-radius: 0;
+    clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
+  }
+
+  .badge-shape-swatch--shield {
+    border-radius: 0;
+    clip-path: polygon(50% 0%, 100% 18%, 100% 55%, 50% 100%, 0% 55%, 0% 18%);
+  }
+
+  .badge-popover-field {
+    display: flex;
+    align-items: center;
+    gap: 0.3em;
+  }
+
+  .badge-popover-field input {
+    width: 3.2em;
+    padding: 0.15em 0.3em;
+    font: inherit;
+    color: var(--ink);
+    background: color-mix(in oklab, var(--paper) 90%, var(--ink) 10%);
+    border: 1px solid color-mix(in oklab, var(--ink) 25%, transparent);
   }
 
   /* A tilting, sweeping card is decoration; the card without it is the whole

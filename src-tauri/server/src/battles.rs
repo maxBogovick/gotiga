@@ -275,6 +275,12 @@ pub struct BattleFrame {
     /// A cut-out frame has nothing behind it but this. Empty = flat `paper`.
     #[serde(default)]
     pub paper_image: String,
+    /// The reverse — what a card you do not own shows lying in dust. The
+    /// frame (carving or dressed ground) is the FRONT's own dress and never
+    /// worn on the back, whatever this is set to; empty means the plain dusty
+    /// texture the renderer already draws.
+    #[serde(default)]
+    pub back_image: String,
     /// Where the card's content sits inside that photograph, as a percentage of
     /// the card on each side. A carved frame has thick sides; this is how the
     /// keeper says where the window actually is.
@@ -321,10 +327,31 @@ pub struct BattleFrame {
     ///             are read as a line, as on a card standing in a case.
     #[serde(default)]
     pub layout: String,
+    /// Centre of the cost badge, `corners` layout only — X in % of the card's
+    /// width, Y in % of its height. `Option` for the same reason as the band
+    /// shares: a frame saved before the badge was draggable has none, and
+    /// zero is a real place on the card (the top-left corner itself).
+    #[serde(default)]
+    pub cost_x: Option<f32>,
+    #[serde(default)]
+    pub cost_y: Option<f32>,
+    /// Centre of the power badge, same units.
+    #[serde(default)]
+    pub power_x: Option<f32>,
+    #[serde(default)]
+    pub power_y: Option<f32>,
+    /// The badge's own outline — a coin is not the only shape a cost or a
+    /// power has ever worn. Independent per badge, so a keeper can, say, keep
+    /// cost round and give power a shield.
+    #[serde(default)]
+    pub cost_shape: String,
+    #[serde(default)]
+    pub power_shape: String,
 }
 
 pub const LAYOUTS: &[&str] = &["corners", "plaque"];
 pub const FRAME_MODES: &[&str] = &["overlay", "behind"];
+pub const BADGE_SHAPES: &[&str] = &["circle", "square", "diamond", "hex", "shield"];
 
 pub fn valid_layout(layout: &str) -> bool {
     LAYOUTS.contains(&layout)
@@ -332,6 +359,10 @@ pub fn valid_layout(layout: &str) -> bool {
 
 pub fn valid_frame_mode(mode: &str) -> bool {
     FRAME_MODES.contains(&mode)
+}
+
+pub fn valid_badge_shape(shape: &str) -> bool {
+    BADGE_SHAPES.contains(&shape)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -354,6 +385,10 @@ pub const DEFAULT_ASPECT: f32 = 5.0 / 7.0;
 pub const DEFAULT_ART_SHARE: f32 = 0.44;
 pub const DEFAULT_HEADER_SHARE: f32 = 0.09;
 pub const DEFAULT_FOOT_SHARE: f32 = 0.10;
+pub const DEFAULT_COST_X: f32 = 10.0;
+pub const DEFAULT_COST_Y: f32 = 9.0;
+pub const DEFAULT_POWER_X: f32 = 90.0;
+pub const DEFAULT_POWER_Y: f32 = 91.0;
 
 fn painted(
     tier: i16,
@@ -375,6 +410,7 @@ fn painted(
         frame_image: String::new(),
         frame_mode: "overlay".into(),
         paper_image: String::new(),
+        back_image: String::new(),
         inset_top: 0.0,
         inset_right: 0.0,
         inset_bottom: 0.0,
@@ -386,6 +422,12 @@ fn painted(
         title_font: String::new(),
         title_ink: String::new(),
         layout: "corners".into(),
+        cost_x: Some(DEFAULT_COST_X),
+        cost_y: Some(DEFAULT_COST_Y),
+        power_x: Some(DEFAULT_POWER_X),
+        power_y: Some(DEFAULT_POWER_Y),
+        cost_shape: "circle".into(),
+        power_shape: "circle".into(),
     }
 }
 
@@ -437,6 +479,12 @@ pub fn normalize_frames(mut saved: Vec<BattleFrame>) -> Vec<BattleFrame> {
                     if !valid_layout(&found.layout) {
                         found.layout = fallback.layout;
                     }
+                    if !valid_badge_shape(&found.cost_shape) {
+                        found.cost_shape = fallback.cost_shape;
+                    }
+                    if !valid_badge_shape(&found.power_shape) {
+                        found.power_shape = fallback.power_shape;
+                    }
                     if !valid_frame_mode(&found.frame_mode) {
                         // A frame saved before cards could wear a cut-out has no
                         // mode, and back then a picture was always the card's
@@ -452,6 +500,7 @@ pub fn normalize_frames(mut saved: Vec<BattleFrame>) -> Vec<BattleFrame> {
                     }
                     found.frame_image = found.frame_image.trim().to_string();
                     found.paper_image = found.paper_image.trim().to_string();
+                    found.back_image = found.back_image.trim().to_string();
                     found.title_font = found.title_font.trim().to_string();
                     found.title_ink = found.title_ink.trim().to_string();
                     found.aspect = if found.aspect > 0.0 {
@@ -484,6 +533,10 @@ pub fn normalize_frames(mut saved: Vec<BattleFrame>) -> Vec<BattleFrame> {
                     found.inset_bottom = bottom;
                     found.inset_left = left;
                     found.inset_right = right;
+                    found.cost_x = Some(clamp_pos(found.cost_x, fallback.cost_x));
+                    found.cost_y = Some(clamp_pos(found.cost_y, fallback.cost_y));
+                    found.power_x = Some(clamp_pos(found.power_x, fallback.power_x));
+                    found.power_y = Some(clamp_pos(found.power_y, fallback.power_y));
                     found
                 }
                 None => fallback,
@@ -501,6 +554,16 @@ fn clamp_band(given: Option<f32>, fallback: Option<f32>) -> f32 {
         Some(v) if v.is_finite() => v.clamp(0.0, 0.3),
         Some(_) => fallback,
         None => fallback,
+    }
+}
+
+/// A badge's centre, in % of the card. Absent or non-finite falls back to the
+/// tier's default position rather than snapping to a corner.
+fn clamp_pos(given: Option<f32>, fallback: Option<f32>) -> f32 {
+    let fallback = fallback.unwrap_or(0.0);
+    match given {
+        Some(v) if v.is_finite() => v.clamp(0.0, 100.0),
+        _ => fallback,
     }
 }
 

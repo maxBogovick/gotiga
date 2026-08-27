@@ -1123,6 +1123,16 @@ export const enAdmin = {
   adminBattlesFrameOwnPicture: 'A picture for this card alone',
   adminBattlesFrameResetCard: 'Back to the shared frame',
   adminBattlesFrameClose: 'Close',
+  adminBattlesBadgeShape: 'Shape',
+  adminBattlesBadgeShapeCircle: 'Circle',
+  adminBattlesBadgeShapeSquare: 'Square',
+  adminBattlesBadgeShapeDiamond: 'Diamond',
+  adminBattlesBadgeShapeHex: 'Hexagon',
+  adminBattlesBadgeShapeShield: 'Shield',
+  adminBattlesBackArt: 'Card back',
+  adminBattlesBackArtHint: 'What a card you do not own shows lying in dust, face down. Never wears the frame above — the carving and the dressed ground are the front’s own dress, so this reverse is free to be a plain, unrelated picture.',
+  adminBattlesBackArtUpload: 'Upload',
+  adminBattlesBackArtNone: 'no picture — the plain dusty tint',
 } as const;
 
 export type AdminTranslationKey = keyof typeof enAdmin;
