@@ -1330,6 +1330,55 @@
     }
   }
 
+  /* Smaller still: the card standing on a board cell. At this width it is a
+     figure, not a document — frame, photograph, name, and nothing else.
+     Power and armour do not change during a match, so keeping them on the
+     board keeps in front of the reader what the reader already learned from
+     the card; health is told by the scene itself, beside the wounded.
+
+     Here rather than behind a `compact` prop for the same reason the preview
+     lives in this component: a board that draws its own smaller card is a
+     board that will drift from the shelf, and then one of the two is lying. */
+  @container (max-width: 160px) {
+    .band--head,
+    .band--foot,
+    .traits,
+    .effect,
+    .numbers,
+    .rank,
+    .new-mark,
+    .corner {
+      display: none;
+    }
+
+    /* The photograph takes everything the name leaves: the three shares are a
+       frame's way of dividing four bands, and at this size there are two. */
+    .art {
+      flex: 1 1 auto;
+    }
+
+    .band--props {
+      flex: 0 0 auto;
+      padding-top: 2cqi;
+      overflow: visible;
+    }
+
+    .title {
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      line-clamp: 2;
+      overflow: hidden;
+      font-size: 9cqi;
+      line-height: 1.1;
+    }
+
+    /* The header is gone, and with it the corner it was standing clear of. */
+    .slot[data-layout='corners'] .band--head {
+      padding-left: 0;
+    }
+  }
+
   .lore {
     /* First to give way when the band is short: a note is the least of what a
        card has to say. */

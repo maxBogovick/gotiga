@@ -8,14 +8,16 @@
 //! written to the journal and compared for equality, and every step can be
 //! asked afterwards what it did — which is where `Breakdown` comes from.
 
-use crate::unit::{Stat, Unit};
+use crate::event::Event;
+use crate::unit::{Stat, Unit, UnitId};
 
 /// What kind of damage this is, and therefore which defence answers it.
 ///
 /// Three, and there will not be more. An element wheel grows quadratically and,
 /// worse, asks the player to remember which element they have already tried on
 /// this card. Fire and ice stay words in the name of an ability.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum Channel {
     /// Bodily. Answered by armour.
     Physical,
@@ -31,7 +33,8 @@ pub enum Channel {
 /// and poison must not provoke thorns every turn. Later slices read this field;
 /// it is here from the first line so that adding them is not a migration
 /// through every call site.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum Source {
     Attack,
     Ability,
@@ -55,7 +58,8 @@ impl Source {
 }
 
 /// One blow, before anything has been done to it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DamagePacket {
     pub amount: i32,
     pub channel: Channel,
@@ -68,18 +72,41 @@ impl DamagePacket {
     }
 }
 
+/// Which step of the pipeline a line of the trail belongs to.
+///
+/// A token, not a phrase. The engine names steps; it does not word them. The
+/// house is bilingual down to every column of every table, so a Russian string
+/// baked in here would hand an English reader a Russian explanation — and the
+/// trail is shown to readers, that is its entire purpose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StepId {
+    Immunity,
+    AttackerBless,
+    AttackerCurse,
+    TargetVulnerable,
+    ChannelDefence,
+    Floor,
+    Shield,
+}
+
 /// What one step of the pipeline did. Kept only when it changed the number, so
 /// the trail reads as an explanation rather than a log.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Breakdown {
-    pub step: &'static str,
+    pub step: StepId,
     pub from: i32,
     pub to: i32,
 }
 
 /// The finished sum: what the pipeline decided, and how.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Resolution {
+    /// Who struck. Kept beside the arithmetic rather than passed separately to
+    /// `apply`, so a resolution stays a complete account of one blow.
+    pub by: Option<UnitId>,
     /// After everything, including the shield. This is what health loses.
     pub to_health: i32,
     /// What the shield caught. Reported separately because the scene shows it
@@ -97,22 +124,6 @@ impl Resolution {
     }
 }
 
-/// What actually happened, for the scene and for the journal.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Event {
-    Damaged {
-        target: crate::unit::UnitId,
-        to_health: i32,
-        to_shield: i32,
-        channel: Channel,
-        source: Source,
-    },
-    /// The blow was felt as nothing at all — a different picture from zero
-    /// damage, and the scene should say so.
-    Immune { target: crate::unit::UnitId, channel: Channel },
-    Died { target: crate::unit::UnitId },
-}
-
 /// What a step is allowed to see: the blow, the one dealing it (there may be
 /// none — a zone has no author), and the one receiving it.
 struct Ctx<'a> {
@@ -121,7 +132,7 @@ struct Ctx<'a> {
     target: &'a Unit,
 }
 
-type Step = (&'static str, fn(i32, &Ctx) -> i32);
+type Step = (StepId, fn(i32, &Ctx) -> i32);
 
 /// The order of application, written once, in one place.
 ///
@@ -129,11 +140,11 @@ type Step = (&'static str, fn(i32, &Ctx) -> i32);
 /// have expressed by wrapping is expressed here by position, where it can be
 /// read, tested and reordered deliberately.
 const PIPELINE: &[Step] = &[
-    ("благословения бьющего", step_attacker_bless),
-    ("проклятия бьющего", step_attacker_curse),
-    ("уязвимость цели", step_target_vulnerable),
-    ("защита по каналу", step_channel_defence),
-    ("минимум 1", step_floor),
+    (StepId::AttackerBless, step_attacker_bless),
+    (StepId::AttackerCurse, step_attacker_curse),
+    (StepId::TargetVulnerable, step_target_vulnerable),
+    (StepId::ChannelDefence, step_channel_defence),
+    (StepId::Floor, step_floor),
 ];
 
 fn step_attacker_bless(amount: i32, ctx: &Ctx) -> i32 {
@@ -179,11 +190,12 @@ fn step_floor(amount: i32, _ctx: &Ctx) -> i32 {
 pub fn resolve(attacker: Option<&Unit>, target: &Unit, packet: DamagePacket) -> Resolution {
     if target.immune == Some(packet.channel) {
         return Resolution {
+            by: attacker.map(|a| a.id),
             to_health: 0,
             to_shield: 0,
             channel: packet.channel,
             source: packet.source,
-            trail: vec![Breakdown { step: "невосприимчивость", from: packet.amount, to: 0 }],
+            trail: vec![Breakdown { step: StepId::Immunity, from: packet.amount, to: 0 }],
         };
     }
 
@@ -191,10 +203,10 @@ pub fn resolve(attacker: Option<&Unit>, target: &Unit, packet: DamagePacket) -> 
     let mut amount = packet.amount;
     let mut trail = Vec::new();
 
-    for (name, step) in PIPELINE {
+    for (id, step) in PIPELINE {
         let next = step(amount, &ctx);
         if next != amount {
-            trail.push(Breakdown { step: name, from: amount, to: next });
+            trail.push(Breakdown { step: *id, from: amount, to: next });
         }
         amount = next;
     }
@@ -205,10 +217,17 @@ pub fn resolve(attacker: Option<&Unit>, target: &Unit, packet: DamagePacket) -> 
     let to_shield = amount.min(target.shield.max(0));
     let to_health = amount - to_shield;
     if to_shield > 0 {
-        trail.push(Breakdown { step: "щит", from: amount, to: to_health });
+        trail.push(Breakdown { step: StepId::Shield, from: amount, to: to_health });
     }
 
-    Resolution { to_health, to_shield, channel: packet.channel, source: packet.source, trail }
+    Resolution {
+        by: attacker.map(|a| a.id),
+        to_health,
+        to_shield,
+        channel: packet.channel,
+        source: packet.source,
+        trail,
+    }
 }
 
 /// Write a resolution into a body, and say what happened.
@@ -220,19 +239,24 @@ pub fn apply(target: &mut Unit, res: &Resolution) -> Vec<Event> {
     let mut events = Vec::new();
 
     if res.total() == 0 && target.immune == Some(res.channel) {
-        events.push(Event::Immune { target: target.id, channel: res.channel });
+        events.push(Event::Immune { target: target.id, by: res.by, channel: res.channel });
         return events;
     }
 
     target.shield -= res.to_shield;
-    target.health.current -= res.to_health;
+    // Clamped at nothing rather than left negative. Overkill is information no
+    // rule reads, and a body at minus four would have to be clamped by every
+    // place that ever shows a number.
+    target.health.current = (target.health.current - res.to_health).max(0);
 
     events.push(Event::Damaged {
         target: target.id,
+        by: res.by,
         to_health: res.to_health,
         to_shield: res.to_shield,
         channel: res.channel,
         source: res.source,
+        trail: res.trail.clone(),
     });
 
     if target.health.is_dead() {
@@ -247,6 +271,6 @@ pub fn apply(target: &mut Unit, res: &Resolution) -> Vec<Event> {
 
 /// The ordinary blow: a unit strikes with its own strength.
 pub fn strike(attacker: &Unit, target: &Unit) -> Resolution {
-    let packet = DamagePacket::new(attacker.power, Channel::Physical, Source::Attack);
+    let packet = DamagePacket::new(attacker.power, attacker.channel, Source::Attack);
     resolve(Some(attacker), target, packet)
 }

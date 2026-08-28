@@ -27,6 +27,15 @@
         "VITE_API_URL=http://localhost:3002 npm run dev -- --port 1422"
       ],
       "port": 1422
+    },
+    {
+      "name": "gotiga-api-editor",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd src-tauri/server && PORT=3002 cargo run"
+      ],
+      "port": 3002
     }
   ]
 }

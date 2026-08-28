@@ -3053,6 +3053,20 @@ impl AppService {
             figurine_id,
             "ok",
         );
+
+        // Пыль за сердечко: однажды за работу, и только тому, кто вошёл под
+        // именем. Снятое сердечко ничего не возвращает — иначе появился бы
+        // насос из одного щелчка туда и обратно; ключ книги (`liked:{id}`) и
+        // так не даст заплатить за ту же работу дважды.
+        //
+        // Ошибка кошелька не отменяет сердечка: человек пришёл отметить работу,
+        // а не пополнить книгу, и споткнувшаяся пыль не должна выглядеть как
+        // «не удалось поставить отметку».
+        if liked && let Some(uid) = user_id {
+            if let Err(e) = self.grant_attention_dust(uid, "liked", figurine_id).await {
+                tracing::warn!(%figurine_id, "пыль за сердечко не осела: {e}");
+            }
+        }
         Ok(result)
     }
 
@@ -7175,8 +7189,22 @@ impl AppService {
             health: row.health,
             mana: row.mana,
             traits: crate::battles::read_traits(row.traits.as_deref()),
+            kind: row.kind,
+            armor: row.armor,
+            ward: row.ward,
+            attack_channel: row.attack_channel,
+            reach: row.reach,
+            step: row.step,
+            speed: row.speed,
+            mend: row.mend,
+            abilities: crate::battles::read_abilities(row.abilities.as_deref()),
+            // The verdict is for the desk. The shelf shows a card, not a ledger.
+            budget_points: if admin { row.budget_points } else { None },
+            balance_index: if admin { row.balance_index } else { None },
+            rules_version: row.rules_version,
             price_dust: row.price_dust,
             price_feed: row.price_feed,
+            level_price_dust: row.level_price_dust.clone(),
             art_url,
             art_url_override: if admin { own } else { None },
             art_focal: row.art_focal,
@@ -7237,16 +7265,7 @@ impl AppService {
         self.assert_work_is_free(p.figurine_id, None).await?;
         let rec = self
             .repo
-            .insert_battle_card(
-                &p.slug, p.figurine_id, p.race_id, &p.status, p.tier,
-                p.type_en.as_deref(), p.type_ru.as_deref(),
-                &p.title_en, &p.title_ru,
-                p.effect_en.as_deref(), p.effect_ru.as_deref(),
-                p.lore_en.as_deref(), p.lore_ru.as_deref(),
-                p.cost, p.power, p.health, p.mana, p.traits.as_deref(),
-                p.price_dust, p.price_feed,
-                p.art_url.as_deref(), p.art_focal.as_deref(), p.frame_override.as_deref(),
-            )
+            .insert_battle_card(&p)
             .await?;
         Self::log_domain_event("battle_card_created", "battle_card", rec.id, "ok");
         self.battle_card_or_fetch(rec.id).await
@@ -7262,16 +7281,7 @@ impl AppService {
         self.assert_work_is_free(p.figurine_id, Some(id)).await?;
         let rec = self
             .repo
-            .update_battle_card(
-                id, &p.slug, p.figurine_id, p.race_id, &p.status, p.tier,
-                p.type_en.as_deref(), p.type_ru.as_deref(),
-                &p.title_en, &p.title_ru,
-                p.effect_en.as_deref(), p.effect_ru.as_deref(),
-                p.lore_en.as_deref(), p.lore_ru.as_deref(),
-                p.cost, p.power, p.health, p.mana, p.traits.as_deref(),
-                p.price_dust, p.price_feed,
-                p.art_url.as_deref(), p.art_focal.as_deref(), p.frame_override.as_deref(),
-            )
+            .update_battle_card(id, &p)
             .await?;
         // Rank and price are what an owner's collection is worth, so a change
         // to them leaves a trace even before anything can be bought.
@@ -7337,6 +7347,209 @@ impl AppService {
         Ok(normalized)
     }
 
+    // === КОШЕЛЁК, ВЛАДЕНИЕ, ЦЕРЕМОНИЯ ===
+
+    pub async fn get_battle_dust_rates(&self) -> Result<crate::models::BattleDustRates> {
+        parse_json_setting(
+            "battle_dust_rates",
+            self.repo.get_setting("battle_dust_rates").await?,
+        )
+    }
+
+    pub async fn save_battle_dust_rates(
+        &self,
+        rates: crate::models::BattleDustRates,
+    ) -> Result<crate::models::BattleDustRates> {
+        // Отрицательная ставка — это не штраф, а испорченная книга: строка со
+        // знаком минус за прочитанную небылицу. Обрезается молча.
+        let clean = crate::models::BattleDustRates {
+            liked: rates.liked.clamp(0, 1000),
+            seen: rates.seen.clamp(0, 1000),
+            read: rates.read.clamp(0, 1000),
+        };
+        let json = serde_json::to_string(&clean).map_err(|e| AppError::Internal(e.to_string()))?;
+        self.repo.upsert_setting("battle_dust_rates", &json).await?;
+        Ok(clean)
+    }
+
+    /// Balances and holdings in one answer: the shelf cannot draw a single card
+    /// until it knows whose that card is.
+    pub async fn battle_me(&self, user_id: Uuid) -> Result<crate::models::BattleMeDto> {
+        let (dust, feed, owned) = tokio::try_join!(
+            self.repo.battle_wallet_balance(user_id, "dust"),
+            self.repo.battle_wallet_balance(user_id, "feed"),
+            self.repo.list_owned_battle_cards(user_id),
+        )?;
+        Ok(crate::models::BattleMeDto {
+            dust,
+            feed,
+            owned: owned
+                .into_iter()
+                .map(|o| crate::models::BattleOwnedCardDto {
+                    card_id: o.card_id.to_string(),
+                    level: o.level,
+                    is_new: o.seen_at.is_none(),
+                })
+                .collect(),
+        })
+    }
+
+    /// Take a card off the shelf.
+    ///
+    /// The price is read from the table, never from the request. What the
+    /// request carries is the price the visitor *saw*, and its only job is to
+    /// let the server refuse a stale page: a card repriced while the shelf
+    /// stood open must not be taken at yesterday's number, in either direction.
+    pub async fn buy_battle_card(
+        &self,
+        user_id: Uuid,
+        req: &crate::models::BuyBattleCardRequest,
+    ) -> Result<crate::models::BuyBattleCardResponse> {
+        if req.currency != "dust" && req.currency != "feed" {
+            return Err(AppError::BadRequest("Unknown coin".into()));
+        }
+        let card = self
+            .repo
+            .get_battle_card_admin(req.card_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("No such card".into()))?;
+        if card.status != "published" {
+            return Err(AppError::BadRequest("This card is not on the shelf".into()));
+        }
+        let price = match req.currency.as_str() {
+            "dust" => card.price_dust,
+            _ => card.price_feed,
+        }
+        .ok_or_else(|| AppError::BadRequest("This card is not sold for that coin".into()))?;
+        if price != req.expected_price {
+            return Err(AppError::BadRequest("The price has changed".into()));
+        }
+
+        let taken_now = self
+            .repo
+            .buy_battle_card(user_id, req.card_id, &req.currency, price)
+            .await?;
+        let balance = self
+            .repo
+            .battle_wallet_balance(user_id, &req.currency)
+            .await?;
+        Ok(crate::models::BuyBattleCardResponse {
+            card_id: req.card_id.to_string(),
+            level: 1,
+            balance,
+            taken_now,
+        })
+    }
+
+    /// Raise your own copy a rung.
+    ///
+    /// The level does not touch a match — not by a point of anything. That is
+    /// decided in `TASKS-BATTLE-ENGINE.md` §1.6 and it is the whole reason this
+    /// is allowed to be bought with dust at all: dust is a memory of attention,
+    /// and attention that bought strength would be pay-to-win with the price
+    /// tag in hours. A level is foil, a signature, a notch on the shelf.
+    ///
+    /// So there is nothing here to guard against a rich opponent. What is
+    /// guarded is arithmetic: the rung, its price and the balance are all read
+    /// on the server, and the ladder is climbed one rung at a time.
+    pub async fn raise_battle_card_level(
+        &self,
+        user_id: Uuid,
+        req: &crate::models::RaiseBattleCardRequest,
+    ) -> Result<crate::models::RaiseBattleCardResponse> {
+        let card = self
+            .repo
+            .get_battle_card_admin(req.card_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("No such card".into()))?;
+        let ladder = card
+            .level_price_dust
+            .as_ref()
+            .filter(|l| l.len() == 4)
+            .ok_or_else(|| AppError::BadRequest("This card does not rise".into()))?;
+
+        let held = self
+            .repo
+            .list_owned_battle_cards(user_id)
+            .await?
+            .into_iter()
+            .find(|o| o.card_id == req.card_id)
+            .ok_or_else(|| AppError::BadRequest("This card is not yours".into()))?;
+        if held.level >= 5 {
+            return Err(AppError::BadRequest("This copy is as high as it goes".into()));
+        }
+
+        // Ступень читается из уровня, а не из запроса: клиент, который умеет
+        // назвать ступень, умеет назвать дешёвую.
+        let rung = usize::try_from(held.level - 1)
+            .map_err(|_| AppError::Internal("Impossible level".into()))?;
+        let price = *ladder
+            .get(rung)
+            .ok_or_else(|| AppError::Internal("Ladder is short a rung".into()))?;
+        if price != req.expected_price {
+            return Err(AppError::BadRequest("The price has changed".into()));
+        }
+
+        let (level, raised_now) = self
+            .repo
+            .raise_battle_card_level(user_id, req.card_id, held.level, price)
+            .await?;
+        let balance = self.repo.battle_wallet_balance(user_id, "dust").await?;
+        Ok(crate::models::RaiseBattleCardResponse {
+            card_id: req.card_id.to_string(),
+            level,
+            balance,
+            raised_now,
+        })
+    }
+
+    pub async fn mark_battle_card_seen(&self, user_id: Uuid, card_id: Uuid) -> Result<()> {
+        self.repo.mark_battle_card_seen(user_id, card_id).await
+    }
+
+    /// Dust for attention the house already counts.
+    ///
+    /// One kind, one thing, once — the ledger key is the whole guard. A tale
+    /// read twice pays once, and the ceiling on the whole faucet is the size of
+    /// the house: there are only so many works to look at.
+    ///
+    /// Never fails on an unknown thing: attention is reported by a page as it
+    /// goes, and a beacon that can return an error is a beacon somebody will
+    /// eventually show to a reader.
+    pub async fn grant_attention_dust(
+        &self,
+        user_id: Uuid,
+        kind: &str,
+        id: Uuid,
+    ) -> Result<crate::models::BattleAttentionResponse> {
+        let rates = self.get_battle_dust_rates().await?;
+        let amount = match kind {
+            "liked" => rates.liked,
+            "seen" => rates.seen,
+            "read" => rates.read,
+            _ => 0,
+        };
+        let settled = if amount > 0 {
+            self.repo
+                .credit_battle_wallet(
+                    user_id,
+                    "dust",
+                    amount,
+                    kind,
+                    Some(id),
+                    &format!("{kind}:{id}"),
+                )
+                .await?
+        } else {
+            false
+        };
+        let balance = self.repo.battle_wallet_balance(user_id, "dust").await?;
+        Ok(crate::models::BattleAttentionResponse {
+            dust: if settled { amount } else { 0 },
+            balance,
+        })
+    }
+
     /// Everything the keeper typed, clamped into what the frame and the table
     /// can hold. Text is cut rather than refused — a title one character too
     /// long is not worth losing a draft over — but a card with no price in
@@ -7344,7 +7557,7 @@ impl AppService {
     fn prepare_battle_card_save(
         req: &SaveBattleCardRequest,
         taken: &[String],
-    ) -> Result<PreparedBattleCard> {
+    ) -> Result<BattleCardWrite> {
         if !crate::battles::valid_status(&req.status) {
             return Err(AppError::BadRequest("Unknown card status".into()));
         }
@@ -7388,12 +7601,44 @@ impl AppService {
                 Some(Uuid::parse_str(s).map_err(|_| AppError::BadRequest("Invalid raceId".into()))?)
             }
         };
-        Ok(PreparedBattleCard {
+        let kind = if crate::battles::valid_kind(req.kind.trim()) {
+            req.kind.trim().to_string()
+        } else {
+            crate::battles::default_kind()
+        };
+        let attack_channel = if crate::battles::valid_channel(req.attack_channel.trim()) {
+            req.attack_channel.trim().to_string()
+        } else {
+            crate::battles::default_channel()
+        };
+        let armor = crate::battles::clamp_defence(req.armor);
+        let ward = crate::battles::clamp_defence(req.ward);
+        let reach = crate::battles::clamp_reach(req.reach);
+        let step = crate::battles::clamp_step(req.step);
+        let speed = crate::battles::clamp_speed(req.speed);
+        let mend = crate::battles::clamp_mend(req.mend);
+        let health = crate::battles::clamp_stat(req.health);
+        let power = crate::battles::clamp_power(req.power);
+        let tier = crate::battles::clamp_tier(req.tier);
+        let cost = crate::battles::clamp_cost(req.cost);
+        let abilities = crate::battles::normalize_abilities(&req.abilities);
+
+        // The scales run on every save, on the clamped numbers rather than the
+        // typed ones — so the verdict is about the card that was actually
+        // written, not the one that was asked for.
+        let points = crate::battles::body_points(health, armor, ward, power, reach, speed, mend)
+            + crate::battles::read_abilities(abilities.as_deref())
+                .iter()
+                .map(|a| crate::battles::ability_points(a, tier))
+                .sum::<f64>();
+        let index = crate::battles::balance_index(points, cost);
+
+        Ok(BattleCardWrite {
             slug: crate::battles::unique_slug(req.slug.as_deref(), &title_en, taken),
             figurine_id,
             race_id,
             status: req.status.clone(),
-            tier: crate::battles::clamp_tier(req.tier),
+            tier,
             type_en: crate::battles::clamp_type(req.type_en.as_deref()),
             type_ru: crate::battles::clamp_type(req.type_ru.as_deref()),
             title_en,
@@ -7402,13 +7647,25 @@ impl AppService {
             effect_ru: crate::battles::clamp_effect(req.effect_ru.as_deref()),
             lore_en: crate::battles::clamp_lore(req.lore_en.as_deref()),
             lore_ru: crate::battles::clamp_lore(req.lore_ru.as_deref()),
-            cost: crate::battles::clamp_cost(req.cost),
-            power: crate::battles::clamp_power(req.power),
-            health: crate::battles::clamp_stat(req.health),
+            cost,
+            power,
+            health,
             mana: crate::battles::clamp_stat(req.mana),
             traits: crate::battles::normalize_traits(&req.traits),
+            kind,
+            armor,
+            ward,
+            attack_channel,
+            reach,
+            step,
+            speed,
+            mend,
+            abilities,
+            budget_points: Some((points * 100.0).round() / 100.0),
+            balance_index: Some((index * 100.0).round() / 100.0),
             price_dust,
             price_feed,
+            level_price_dust: crate::battles::clamp_level_prices(req.level_price_dust.as_deref()),
             art_url: req
                 .art_url
                 .as_deref()
@@ -7417,6 +7674,602 @@ impl AppService {
                 .map(str::to_string),
             art_focal: crate::battles::normalize_focal(req.art_focal.as_deref()),
             frame_override: crate::battles::normalize_frame_override(req.frame_override.as_deref()),
+        })
+    }
+
+    /// Weigh a card that has not been saved.
+    ///
+    /// Clamps exactly as a save would, so the verdict is about the card that
+    /// *would* be written rather than the one that was typed — a keeper who
+    /// enters reach 9 should see the number for reach 5.
+    pub fn weigh_battle_card(req: &SaveBattleCardRequest) -> BattleWeighDto {
+        let tier = crate::battles::clamp_tier(req.tier);
+        let cost = crate::battles::clamp_cost(req.cost);
+        let body = crate::battles::body_points(
+            crate::battles::clamp_stat(req.health),
+            crate::battles::clamp_defence(req.armor),
+            crate::battles::clamp_defence(req.ward),
+            crate::battles::clamp_power(req.power),
+            crate::battles::clamp_reach(req.reach),
+            crate::battles::clamp_speed(req.speed),
+            crate::battles::clamp_mend(req.mend),
+        );
+
+        // Through normalize/read rather than over `req.abilities` directly: an
+        // ability with an unknown verb is dropped on save, and the scales must
+        // agree with what will actually be stored.
+        let stored = crate::battles::read_abilities(
+            crate::battles::normalize_abilities(&req.abilities).as_deref(),
+        );
+        let abilities: Vec<AbilityWeightDto> = stored
+            .iter()
+            .map(|a| AbilityWeightDto {
+                id: a.id.clone(),
+                points: round2(crate::battles::ability_points(a, tier)),
+            })
+            .collect();
+
+        let total = body + stored
+            .iter()
+            .map(|a| crate::battles::ability_points(a, tier))
+            .sum::<f64>();
+
+        BattleWeighDto {
+            body_points: round2(body),
+            abilities,
+            total_points: round2(total),
+            balance_index: round2(crate::battles::balance_index(total, cost)),
+            tier_budget: crate::battles::tier_budget(tier),
+            // The price at which this weight would sit on the curve, from
+            // `points ≈ 4 × cost + 2`.
+            suggested_cost: (((total - 2.0) / 4.0).round() as i16)
+                .clamp(0, crate::battles::COST_MAX),
+        }
+    }
+
+    // === CHALLENGES AND MATCHES ===
+
+    /// The key a grant is written under. Per challenge, never per victory —
+    /// otherwise the easiest challenge becomes a dust mill.
+    fn challenge_key(challenge_id: Uuid) -> String {
+        format!("battle:{challenge_id}")
+    }
+
+    fn challenge_dto(
+        row: crate::models::BattleChallenge,
+        paid_keys: Option<&[String]>,
+    ) -> BattleChallengeDto {
+        let key = Self::challenge_key(row.id);
+        BattleChallengeDto {
+            id: row.id.to_string(),
+            slug: row.slug,
+            title_en: row.title_en,
+            title_ru: row.title_ru,
+            note_en: row.note_en,
+            note_ru: row.note_ru,
+            setup: serde_json::from_str(&row.setup).unwrap_or_default(),
+            bot_depth: row.bot_depth,
+            reward_dust: row.reward_dust,
+            status: row.status,
+            sort_order: row.sort_order,
+            already_paid: paid_keys.map(|keys| keys.iter().any(|k| *k == key)),
+        }
+    }
+
+    pub async fn list_battle_challenges(
+        &self,
+        user_id: Option<Uuid>,
+        published_only: bool,
+    ) -> Result<Vec<BattleChallengeDto>> {
+        let rows = self.repo.list_battle_challenges(published_only).await?;
+        // One query for the whole shelf rather than one per challenge.
+        let paid = match user_id {
+            Some(id) => Some(self.repo.battle_wallet_keys(id).await?),
+            None => None,
+        };
+        Ok(rows
+            .into_iter()
+            .map(|r| Self::challenge_dto(r, paid.as_deref()))
+            .collect())
+    }
+
+    pub async fn admin_save_battle_challenge(
+        &self,
+        id: Option<Uuid>,
+        req: SaveBattleChallengeRequest,
+    ) -> Result<BattleChallengeDto> {
+        if !crate::battles::valid_status(&req.status) {
+            return Err(AppError::BadRequest("Unknown challenge status".into()));
+        }
+        let mut title_en = crate::battles::clamp_title(&req.title_en);
+        let mut title_ru = crate::battles::clamp_title(&req.title_ru);
+        if title_en.is_empty() && title_ru.is_empty() {
+            return Err(AppError::BadRequest("A challenge needs a title".into()));
+        }
+        if title_en.is_empty() {
+            title_en = title_ru.clone();
+        }
+        if title_ru.is_empty() {
+            title_ru = title_en.clone();
+        }
+
+        // Refused before it is written rather than found when a guest clicks it:
+        // an arrangement that cannot be raised is not a challenge, it is a trap.
+        self.assert_setup_can_be_raised(&req.setup).await?;
+
+        let taken = self.repo.list_battle_challenge_slugs_except(id).await?;
+        let setup = serde_json::to_string(&req.setup)
+            .map_err(|_| AppError::BadRequest("Arrangement will not serialise".into()))?;
+        let rec = self
+            .repo
+            .upsert_battle_challenge(
+                id,
+                &crate::battles::unique_slug(req.slug.as_deref(), &title_en, &taken),
+                &title_en,
+                &title_ru,
+                req.note_en.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+                req.note_ru.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+                &setup,
+                req.bot_depth.clamp(1, 3),
+                req.reward_dust.clamp(0, 1000),
+                &req.status,
+            )
+            .await?;
+        Self::log_domain_event("battle_challenge_saved", "battle_challenge", rec.id, "ok");
+        Ok(Self::challenge_dto(rec, None))
+    }
+
+    pub async fn admin_delete_battle_challenge(&self, id: Uuid) -> Result<()> {
+        self.repo.delete_battle_challenge(id).await?;
+        Self::log_domain_event("battle_challenge_deleted", "battle_challenge", id, "ok");
+        Ok(())
+    }
+
+    /// Every published card, by slug — what an arrangement is resolved against.
+    async fn cards_by_slug(&self) -> Result<std::collections::BTreeMap<String, BattleCardDto>> {
+        Ok(self
+            .list_battle_cards_public()
+            .await?
+            .into_iter()
+            .filter(crate::battles::can_take_the_field)
+            .map(|c| (c.slug.clone(), c))
+            .collect())
+    }
+
+    async fn assert_setup_can_be_raised(&self, setup: &ChallengeSetup) -> Result<()> {
+        let cards = self.cards_by_slug().await?;
+        let mut named: Vec<&String> = setup.player_hand.iter().chain(&setup.keeper_hand).collect();
+        named.extend(setup.player_board.iter().map(|p| &p.card));
+        named.extend(setup.keeper_board.iter().map(|p| &p.card));
+        for slug in named {
+            if !cards.contains_key(slug) {
+                return Err(AppError::BadRequest(format!(
+                    "No published card with health under the name {slug}"
+                )));
+            }
+        }
+        if setup.player_board.is_empty() || setup.keeper_board.is_empty() {
+            return Err(AppError::BadRequest(
+                "Both sides need someone standing".into(),
+            ));
+        }
+        // Cells are checked by raising the arrangement for real: the engine
+        // knows what a legal cell is, and asking it here means the rule is not
+        // written down twice.
+        Self::raise(setup, &cards)?;
+        Ok(())
+    }
+
+    /// Turn an arrangement of slugs into the setup the engine fights with.
+    fn raise(
+        setup: &ChallengeSetup,
+        cards: &std::collections::BTreeMap<String, BattleCardDto>,
+    ) -> Result<battle_core::Setup> {
+        let body = |slug: &str| -> Result<battle_core::CardSnapshot> {
+            cards
+                .get(slug)
+                .map(crate::battles::to_snapshot)
+                .ok_or_else(|| AppError::BadRequest(format!("Unknown card {slug}")))
+        };
+        let place = |list: &[crate::models::ChallengePlacement]| -> Result<Vec<_>> {
+            list.iter()
+                .map(|p| {
+                    let cell = battle_core::Cell::new(p.x, p.y)
+                        .ok_or_else(|| AppError::BadRequest("No such cell on the field".into()))?;
+                    Ok((body(&p.card)?, cell))
+                })
+                .collect()
+        };
+        let hand = |list: &[String]| -> Result<Vec<_>> { list.iter().map(|s| body(s)).collect() };
+
+        Ok(battle_core::Setup {
+            player_board: place(&setup.player_board)?,
+            player_hand: hand(&setup.player_hand)?,
+            keeper_board: place(&setup.keeper_board)?,
+            keeper_hand: hand(&setup.keeper_hand)?,
+        })
+    }
+
+    /// Fold a journal back into a board. The only definition of "the state of a
+    /// match" there is — the cache is a convenience, this is the truth.
+    fn replay(
+        setup: &battle_core::Setup,
+        actions: &[battle_core::Action],
+    ) -> Result<battle_core::MatchState> {
+        let mut state = battle_core::MatchState::begin(setup.clone());
+        for action in actions {
+            state = battle_core::reduce(&state, action)
+                .map_err(|e| {
+                    AppError::Internal(format!("Recorded match will not replay: {e:?}"))
+                })?
+                .0;
+        }
+        Ok(state)
+    }
+
+    fn match_state(rec: &crate::models::BattleMatch) -> Result<battle_core::MatchState> {
+        // The cache first, the journal when it is missing or unreadable. Either
+        // way the answer is the same board; that is what makes it a cache.
+        if let Some(cached) = rec.board_cache.as_deref() {
+            if let Ok(state) = serde_json::from_str(cached) {
+                return Ok(state);
+            }
+        }
+        let setup: battle_core::Setup = serde_json::from_str(&rec.setup)
+            .map_err(|_| AppError::Internal("Match arrangement will not read".into()))?;
+        let actions: Vec<battle_core::Action> = serde_json::from_str(&rec.actions)
+            .map_err(|_| AppError::Internal("Match journal will not read".into()))?;
+        Self::replay(&setup, &actions)
+    }
+
+    fn match_dto(
+        rec: &crate::models::BattleMatch,
+        state: battle_core::MatchState,
+        events: Vec<battle_core::Event>,
+        reward_dust: i32,
+    ) -> BattleMatchDto {
+        BattleMatchDto {
+            id: rec.id.to_string(),
+            challenge_id: rec.challenge_id.map(|id| id.to_string()),
+            seq: rec.seq,
+            legal_actions: battle_core::legal_actions(&state),
+            state,
+            events,
+            outcome: rec.outcome.clone(),
+            reward_dust,
+        }
+    }
+
+    /// Begin — or, for a guest who left one going, continue.
+    pub async fn begin_battle_match(
+        &self,
+        user_id: Uuid,
+        challenge_id: Uuid,
+    ) -> Result<BattleMatchDto> {
+        if let Some(open) = self.repo.find_open_battle_match(user_id, challenge_id).await? {
+            let state = Self::match_state(&open)?;
+            return Ok(Self::match_dto(&open, state, Vec::new(), 0));
+        }
+
+        let challenge = self.repo.get_battle_challenge(challenge_id).await?;
+        if challenge.status != "published" {
+            return Err(AppError::NotFound("No such challenge".into()));
+        }
+        let arrangement: ChallengeSetup = serde_json::from_str(&challenge.setup)
+            .map_err(|_| AppError::Internal("Challenge arrangement will not read".into()))?;
+
+        let cards = self.cards_by_slug().await?;
+        let setup = Self::raise(&arrangement, &cards)?;
+        // The snapshot is taken here and never again: from this moment editing a
+        // card cannot reach into this match.
+        let frozen = serde_json::to_string(&setup)
+            .map_err(|_| AppError::Internal("Arrangement will not freeze".into()))?;
+        let state = battle_core::MatchState::begin(setup);
+        let cache = serde_json::to_string(&state)
+            .map_err(|_| AppError::Internal("Board will not serialise".into()))?;
+
+        // The highest rules version among the cards that took the field, so a
+        // replay knows which numbers it was played under.
+        let version = cards.values().map(|c| c.rules_version).max().unwrap_or(1);
+
+        let rec = self
+            .repo
+            .insert_battle_match(user_id, challenge_id, &frozen, version, &cache)
+            .await?;
+        Self::log_domain_event("battle_match_started", "battle_match", rec.id, "ok");
+        Ok(Self::match_dto(&rec, state, Vec::new(), 0))
+    }
+
+    pub async fn read_battle_match(&self, user_id: Uuid, id: Uuid) -> Result<BattleMatchDto> {
+        let rec = self.repo.get_battle_match(id, user_id).await?;
+        let state = Self::match_state(&rec)?;
+        Ok(Self::match_dto(&rec, state, Vec::new(), 0))
+    }
+
+    /// One move by the guest, and the keeper's answer, in a single round trip.
+    pub async fn act_in_battle_match(
+        &self,
+        user_id: Uuid,
+        id: Uuid,
+        req: BattleActRequest,
+    ) -> Result<BattleMatchDto> {
+        let rec = self.repo.get_battle_match(id, user_id).await?;
+        if rec.outcome.is_some() {
+            let state = Self::match_state(&rec)?;
+            return Ok(Self::match_dto(&rec, state, Vec::new(), 0));
+        }
+
+        // The number is checked BEFORE the move is judged, and this order is the
+        // whole of it. A double-clicked "play this card" would otherwise be read
+        // against a board where the card has already left the hand, and come
+        // back as "no such card" — a rules error for what is simply a repeat.
+        // A repeat must be answered with the same board, not with a complaint.
+        if req.seq != rec.seq {
+            let state = Self::match_state(&rec)?;
+            return Ok(Self::match_dto(&rec, state, Vec::new(), 0));
+        }
+
+        let mut journal: Vec<battle_core::Action> = serde_json::from_str(&rec.actions)
+            .map_err(|_| AppError::Internal("Match journal will not read".into()))?;
+        let mut state = Self::match_state(&rec)?;
+
+        if state.active != battle_core::Side::Player {
+            return Err(AppError::BadRequest("Not your turn".into()));
+        }
+
+        let mut events = Vec::new();
+        let (next, produced) = battle_core::reduce(&state, &req.action)
+            .map_err(|e| AppError::BadRequest(format!("{e:?}")))?;
+        state = next;
+        events.extend(produced);
+        journal.push(req.action);
+
+        // The keeper answers in the same breath: one trip over the network for a
+        // whole turn, and the scene plays both halves from one journal.
+        let mut guard = 0;
+        while state.outcome.is_none() && state.active == battle_core::Side::Keeper {
+            let action = battle_core::bot::choose(&state);
+            let (next, produced) = battle_core::reduce(&state, &action)
+                .map_err(|e| AppError::Internal(format!("Keeper played an illegal move: {e:?}")))?;
+            state = next;
+            events.extend(produced);
+            journal.push(action);
+            guard += 1;
+            if guard > 500 {
+                return Err(AppError::Internal("Keeper will not stop".into()));
+            }
+        }
+
+        let outcome = state.outcome.map(|o| match o {
+            battle_core::Outcome::Player => "player",
+            battle_core::Outcome::Keeper => "keeper",
+            battle_core::Outcome::Draw => "draw",
+        });
+        let written = serde_json::to_string(&journal)
+            .map_err(|_| AppError::Internal("Journal will not serialise".into()))?;
+        let cache = serde_json::to_string(&state)
+            .map_err(|_| AppError::Internal("Board will not serialise".into()))?;
+
+        // The guard against a double click: the row moves only from the number
+        // the caller had. A repeat finds nothing and changes nothing.
+        let Some(saved) = self
+            .repo
+            .advance_battle_match(id, req.seq, &written, &cache, outcome, state.round as i16)
+            .await?
+        else {
+            let rec = self.repo.get_battle_match(id, user_id).await?;
+            let state = Self::match_state(&rec)?;
+            return Ok(Self::match_dto(&rec, state, Vec::new(), 0));
+        };
+
+        let mut reward = 0;
+        if outcome == Some("player") {
+            if let Some(challenge_id) = rec.challenge_id {
+                let challenge = self.repo.get_battle_challenge(challenge_id).await?;
+                if challenge.reward_dust > 0
+                    && self
+                        .repo
+                        .credit_battle_wallet(
+                            user_id,
+                            "dust",
+                            challenge.reward_dust,
+                            "battle_challenge",
+                            Some(challenge_id),
+                            &Self::challenge_key(challenge_id),
+                        )
+                        .await?
+                {
+                    reward = challenge.reward_dust;
+                    Self::log_domain_event("battle_reward_paid", "battle_match", id, "ok");
+                }
+            }
+        }
+
+        Ok(Self::match_dto(&saved, state, events, reward))
+    }
+
+    /// The bench: an arrangement played by hand, without a trace.
+    ///
+    /// The keeper's own testing table. Deliberately stateless — see `BenchRequest`.
+    pub async fn bench_battle(&self, req: BenchRequest) -> Result<BenchDto> {
+        let cards = self.cards_by_slug().await?;
+        let setup = Self::raise(&req.setup, &cards)?;
+
+        // Everything already played is folded back in silently: its events were
+        // shown when they happened and showing them again would be a lie.
+        let mut state = Self::replay(&setup, &req.actions)?;
+        let mut journal = req.actions;
+        let mut events = Vec::new();
+
+        if let Some(action) = req.next {
+            let (next, produced) = battle_core::reduce(&state, &action)
+                .map_err(|e| AppError::BadRequest(format!("{e:?}")))?;
+            state = next;
+            events.extend(produced);
+            journal.push(action);
+        }
+
+        // The far side answers, or both sides play themselves to the end.
+        let mut guard = 0;
+        while state.outcome.is_none()
+            && (req.play_out || (req.auto_keeper && state.active == battle_core::Side::Keeper))
+        {
+            let action = battle_core::bot::choose(&state);
+            let (next, produced) = battle_core::reduce(&state, &action)
+                .map_err(|e| AppError::Internal(format!("Bot played an illegal move: {e:?}")))?;
+            state = next;
+            events.extend(produced);
+            journal.push(action);
+            guard += 1;
+            if guard > 2000 {
+                return Err(AppError::Internal("The bench will not settle".into()));
+            }
+        }
+
+        Ok(BenchDto {
+            legal_actions: battle_core::legal_actions(&state),
+            outcome: state.outcome.map(|o| match o {
+                battle_core::Outcome::Player => "player".to_string(),
+                battle_core::Outcome::Keeper => "keeper".to_string(),
+                battle_core::Outcome::Draw => "draw".to_string(),
+            }),
+            state,
+            events,
+            actions: journal,
+        })
+    }
+
+    pub async fn battle_dust_balance(&self, user_id: Uuid) -> Result<i64> {
+        self.repo.battle_wallet_balance(user_id, "dust").await
+    }
+
+    // === KEYWORDS ===
+    //
+    // The dictionary where the exchange rates live. Editing a `point_value` here
+    // rebalances every card that names the keyword — which is the whole reason
+    // the rate is a row and not a constant in the code.
+
+    fn battle_keyword_dto(row: crate::models::BattleKeyword) -> BattleKeywordDto {
+        BattleKeywordDto {
+            id: row.id.to_string(),
+            slug: row.slug,
+            name_en: row.name_en,
+            name_ru: row.name_ru,
+            rules_en: row.rules_en,
+            rules_ru: row.rules_ru,
+            icon_url: row.icon_url,
+            point_value: row.point_value,
+            sort_order: row.sort_order,
+        }
+    }
+
+    pub async fn list_battle_keywords(&self) -> Result<Vec<BattleKeywordDto>> {
+        let rows = self.repo.list_battle_keywords().await?;
+        Ok(rows.into_iter().map(Self::battle_keyword_dto).collect())
+    }
+
+    pub async fn admin_create_battle_keyword(
+        &self,
+        req: SaveBattleKeywordRequest,
+    ) -> Result<BattleKeywordDto> {
+        let taken = self.repo.list_battle_keyword_slugs_except(None).await?;
+        let p = Self::prepare_keyword(&req, &taken)?;
+        let rec = self
+            .repo
+            .insert_battle_keyword(
+                &p.slug,
+                &p.name_en,
+                &p.name_ru,
+                p.rules_en.as_deref(),
+                p.rules_ru.as_deref(),
+                p.icon_url.as_deref(),
+                p.point_value,
+            )
+            .await?;
+        Self::log_domain_event("battle_keyword_created", "battle_keyword", rec.id, "ok");
+        Ok(Self::battle_keyword_dto(rec))
+    }
+
+    pub async fn admin_update_battle_keyword(
+        &self,
+        id: Uuid,
+        req: SaveBattleKeywordRequest,
+    ) -> Result<BattleKeywordDto> {
+        let taken = self.repo.list_battle_keyword_slugs_except(Some(id)).await?;
+        let p = Self::prepare_keyword(&req, &taken)?;
+        let rec = self
+            .repo
+            .update_battle_keyword(
+                id,
+                &p.slug,
+                &p.name_en,
+                &p.name_ru,
+                p.rules_en.as_deref(),
+                p.rules_ru.as_deref(),
+                p.icon_url.as_deref(),
+                p.point_value,
+            )
+            .await?;
+        Self::log_domain_event("battle_keyword_updated", "battle_keyword", rec.id, "ok");
+        Ok(Self::battle_keyword_dto(rec))
+    }
+
+    /// Removing a keyword does not touch the cards that named it: their ability
+    /// still carries the slug, it simply no longer resolves to a wording.
+    pub async fn admin_delete_battle_keyword(&self, id: Uuid) -> Result<()> {
+        self.repo.delete_battle_keyword(id).await?;
+        Self::log_domain_event("battle_keyword_deleted", "battle_keyword", id, "ok");
+        Ok(())
+    }
+
+    pub async fn admin_reorder_battle_keywords(&self, ids: Vec<Uuid>) -> Result<()> {
+        let mut seen = std::collections::HashSet::with_capacity(ids.len());
+        if !ids.iter().all(|id| seen.insert(*id)) {
+            return Err(AppError::BadRequest(
+                "A keyword cannot stand in two places".into(),
+            ));
+        }
+        self.repo.set_battle_keyword_order(&ids).await?;
+        Ok(())
+    }
+
+    fn prepare_keyword(
+        req: &SaveBattleKeywordRequest,
+        taken: &[String],
+    ) -> Result<PreparedKeyword> {
+        let cut = |raw: &str, max: usize| -> String { raw.trim().chars().take(max).collect() };
+        let mut name_en = cut(&req.name_en, crate::battles::KEYWORD_NAME_MAX);
+        let mut name_ru = cut(&req.name_ru, crate::battles::KEYWORD_NAME_MAX);
+        if name_en.is_empty() && name_ru.is_empty() {
+            return Err(AppError::BadRequest("A keyword needs a name".into()));
+        }
+        if name_en.is_empty() {
+            name_en = name_ru.clone();
+        }
+        if name_ru.is_empty() {
+            name_ru = name_en.clone();
+        }
+        let rules = |raw: Option<&str>| -> Option<String> {
+            raw.map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.chars().take(crate::battles::KEYWORD_RULES_MAX).collect())
+        };
+        // A negative rate is nonsense in every direction, and a runaway one
+        // would quietly overload every card naming the keyword.
+        let point_value = req.point_value.filter(|v| v.is_finite() && *v >= 0.0 && *v <= 100.0);
+        Ok(PreparedKeyword {
+            slug: crate::battles::unique_slug(req.slug.as_deref(), &name_en, taken),
+            name_en,
+            name_ru,
+            rules_en: rules(req.rules_en.as_deref()),
+            rules_ru: rules(req.rules_ru.as_deref()),
+            icon_url: req
+                .icon_url
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
+            point_value,
         })
     }
 
@@ -7554,6 +8407,21 @@ impl AppService {
     }
 }
 
+/// Two places after the point: the scales are read by a person, not summed.
+fn round2(value: f64) -> f64 {
+    (value * 100.0).round() / 100.0
+}
+
+struct PreparedKeyword {
+    slug: String,
+    name_en: String,
+    name_ru: String,
+    rules_en: Option<String>,
+    rules_ru: Option<String>,
+    icon_url: Option<String>,
+    point_value: Option<f64>,
+}
+
 struct PreparedRace {
     slug: String,
     name_en: String,
@@ -7565,32 +8433,6 @@ struct PreparedRace {
 
 /// The card as it will be written, after clamping. Mirrors `PreparedGazetteLeaf`:
 /// the service validates once, the repository only writes.
-struct PreparedBattleCard {
-    slug: String,
-    figurine_id: Option<Uuid>,
-    race_id: Option<Uuid>,
-    status: String,
-    tier: i16,
-    type_en: Option<String>,
-    type_ru: Option<String>,
-    title_en: String,
-    title_ru: String,
-    effect_en: Option<String>,
-    effect_ru: Option<String>,
-    lore_en: Option<String>,
-    lore_ru: Option<String>,
-    cost: i16,
-    power: i16,
-    health: i16,
-    mana: i16,
-    traits: Option<String>,
-    price_dust: Option<i32>,
-    price_feed: Option<i32>,
-    art_url: Option<String>,
-    art_focal: Option<String>,
-    frame_override: Option<String>,
-}
-
 struct PreparedGazetteLeaf {
     slug: String,
     kind: String,

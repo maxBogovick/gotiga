@@ -60,8 +60,24 @@ import type {
     ThemeConfig,
     BattleCard,
     BattleFrames,
+    BattleMe,
+    BattleDustRates,
+    BattleAttentionResponse,
+    BuyBattleCardRequest,
+    BuyBattleCardResponse,
+    RaiseBattleCardRequest,
+    RaiseBattleCardResponse,
     BattleRace,
     SaveBattleRaceRequest,
+    BattleKeyword,
+    SaveBattleKeywordRequest,
+    BattleWeigh,
+    BattleChallenge,
+    SaveBattleChallengeRequest,
+    BattleMatch,
+    BattleAction,
+    BenchRequest,
+    Bench,
     SaveBattleCardRequest,
     CopyOverrides,
     HomeLayoutConfig,
@@ -2218,6 +2234,239 @@ export const api = {
         } catch {
             return [];
         }
+    },
+
+    // ── Кошелёк и владение ───────────────────────────────────────────────
+    //
+    // Всё под именем. Книга лежит на сервере ровно потому, что кошелёк в
+    // localStorage — это бесконечные деньги.
+
+    /** Баланс и владение одним запросом: полка рисуется целиком или мигает. */
+    async getBattleMe(sessionToken: string): Promise<BattleMe> {
+        return webFetch('/battles/me', {
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    /**
+     * Взять карту с полки.
+     *
+     * `expectedPrice` — цена, которую видел человек. Сервер её не берёт, а
+     * сверяет со своей: карта могла подорожать, пока страница стояла открытой.
+     */
+    async buyBattleCard(
+        sessionToken: string,
+        body: BuyBattleCardRequest,
+    ): Promise<BuyBattleCardResponse> {
+        return webFetch('/battles/buy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
+            body: JSON.stringify(body),
+        });
+    },
+
+    /**
+     * Поднять свой экземпляр на ступень.
+     *
+     * Ступень не называется: сервер читает уровень, который держит, и сам
+     * решает, какая это ступень. Клиент, умеющий назвать ступень, умеет
+     * назвать дешёвую.
+     *
+     * Уровень не трогает бой ни на очко (`TASKS-BATTLE-ENGINE.md` §1.6) —
+     * это фольга и засечка, а не сила.
+     */
+    async raiseBattleCard(
+        sessionToken: string,
+        body: RaiseBattleCardRequest,
+    ): Promise<RaiseBattleCardResponse> {
+        return webFetch('/battles/raise', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
+            body: JSON.stringify(body),
+        });
+    },
+
+    /** Карту посмотрели — пометка «новая» снимается. */
+    async markBattleCardSeen(sessionToken: string, cardId: string): Promise<void> {
+        await webFetch(`/battles/cards/${cardId}/seen`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    /**
+     * Внимание, за которое оседает пыль: сердечко, просмотренная работа,
+     * прочитанная небылица. Однажды за каждую — ключ книги это и стережёт.
+     *
+     * Молчаливый: это маячок, а не просьба. Ошибку здесь показывать некому.
+     */
+    async grantBattleAttention(
+        sessionToken: string,
+        kind: 'seen' | 'read',
+        id: string,
+    ): Promise<BattleAttentionResponse | null> {
+        try {
+            return await webFetch('/battles/attention', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
+                body: JSON.stringify({ kind, id }),
+            });
+        } catch {
+            return null;
+        }
+    },
+
+    async adminGetBattleDustRates(): Promise<BattleDustRates> {
+        return webFetch('/admin/battles/dust-rates');
+    },
+
+    async adminSaveBattleDustRates(rates: BattleDustRates): Promise<BattleDustRates> {
+        return webFetch('/admin/battles/dust-rates', {
+            method: 'POST',
+            body: JSON.stringify(rates),
+        });
+    },
+
+    // ── Испытания и партии ───────────────────────────────────────────────
+    //
+    // Клиент не знает ни одного правила боя: он показывает состояние и
+    // отправляет обратно одно из присланных законных действий.
+
+    /**
+     * The shelf of studies. Visible without a name; playing needs one.
+     *
+     * With a token the server also marks which studies this guest has already
+     * been paid for — the reward belongs to the study, not to the victory.
+     */
+    async getBattleChallenges(
+        sessionToken?: string | null,
+        loadFetch?: typeof fetch,
+    ): Promise<BattleChallenge[]> {
+        try {
+            const init = sessionToken
+                ? { headers: { Authorization: `Bearer ${sessionToken}` } }
+                : undefined;
+            return await webFetch('/battles/challenges', init, loadFetch);
+        } catch {
+            return [];
+        }
+    },
+
+    /** Begins a match — or continues the one this guest left going. */
+    async beginBattleMatch(sessionToken: string, challengeId: string): Promise<BattleMatch> {
+        return webFetch(`/battles/challenges/${challengeId}/begin`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    async getBattleMatch(sessionToken: string, id: string): Promise<BattleMatch> {
+        return webFetch(`/battles/matches/${id}`, {
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    /**
+     * One move, and the keeper's answer with it.
+     *
+     * `seq` is what makes a double click harmless: the server answers a repeat
+     * with the same board instead of playing the move twice.
+     */
+    async actInBattleMatch(
+        sessionToken: string,
+        id: string,
+        seq: number,
+        action: BattleAction,
+    ): Promise<BattleMatch> {
+        return webFetch(`/battles/matches/${id}/act`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${sessionToken}`,
+            },
+            body: JSON.stringify({ seq, action }),
+        });
+    },
+
+    /**
+     * One step at the bench, or the whole thing played out.
+     *
+     * Writes nothing: the arrangement and the journal travel with the request.
+     */
+    async adminBenchBattle(body: BenchRequest): Promise<Bench> {
+        return webFetch('/admin/battles/bench', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(body),
+        });
+    },
+
+    async adminListBattleChallenges(): Promise<BattleChallenge[]> {
+        return webFetch('/admin/battles/challenges', { headers: authHeaders() });
+    },
+
+    async adminSaveBattleChallenge(
+        body: SaveBattleChallengeRequest,
+        id?: string,
+    ): Promise<BattleChallenge> {
+        return webFetch(id ? `/admin/battles/challenges/${id}` : '/admin/battles/challenges', {
+            method: id ? 'PUT' : 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(body),
+        });
+    },
+
+    async adminDeleteBattleChallenge(id: string): Promise<void> {
+        await webFetch(`/admin/battles/challenges/${id}`, {
+            method: 'DELETE',
+            headers: authHeaders(),
+        });
+    },
+
+    /**
+     * The scales, on a card that has not been saved.
+     *
+     * Called as the keeper types. The formula lives on the server and only
+     * there — a second copy in the browser would drift, and the drift would be
+     * noticed by a player rather than by a test.
+     */
+    async adminWeighBattleCard(body: SaveBattleCardRequest): Promise<BattleWeigh> {
+        return webFetch('/admin/battles/weigh', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(body),
+        });
+    },
+
+    /**
+     * The keyword dictionary. Public like the races: a reader who meets "Шипы 3"
+     * on a card should be able to find out what Шипы means without an account.
+     */
+    async getBattleKeywords(loadFetch?: typeof fetch): Promise<BattleKeyword[]> {
+        try {
+            return await webFetch('/battles/keywords', undefined, loadFetch);
+        } catch {
+            return [];
+        }
+    },
+
+    async adminSaveBattleKeyword(
+        body: SaveBattleKeywordRequest,
+        id?: string,
+    ): Promise<BattleKeyword> {
+        return webFetch(id ? `/admin/battles/keywords/${id}` : '/admin/battles/keywords', {
+            method: id ? 'PUT' : 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(body),
+        });
+    },
+
+    /** Removes the wording, never the cards that named it. */
+    async adminDeleteBattleKeyword(id: string): Promise<void> {
+        await webFetch(`/admin/battles/keywords/${id}`, {
+            method: 'DELETE',
+            headers: authHeaders(),
+        });
     },
 
     async adminSaveBattleRace(body: SaveBattleRaceRequest, id?: string): Promise<BattleRace> {

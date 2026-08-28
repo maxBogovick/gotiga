@@ -1,6 +1,8 @@
 <script lang="ts">
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
+  import { api } from '$lib/api';
+  import { authStore } from '$lib/stores/auth.svelte';
   import { t, lang, brandName } from '$lib/i18n';
   import { SITE_URL } from '$lib/site';
   import { jsonLdSafe } from '$lib/jsonld';
@@ -21,6 +23,26 @@
   // One photograph on the page, so the morph into the work has a unique name.
   let morph = $derived(data.leaf?.figurineId ? `figurine-${data.leaf.figurineId}` : '');
   let ogLocale = $derived($lang === 'ru' ? 'ru_RU' : 'en_US');
+
+  /**
+   * Пыль за прочитанную небылицу — тому, кто дочитал до конца, а не тому, кто
+   * открыл. Конец засчитывается буквально: последняя строка попала на экран.
+   *
+   * Действие на самом низе текста, а не таймер: небылицы разной длины, и
+   * секунды сказали бы про длинную то же, что про короткую.
+   */
+  function lastLine(node: HTMLElement) {
+    const token = authStore.token;
+    const id = data.leaf?.id;
+    if (!token || !id) return;
+    const watcher = new IntersectionObserver((entries) => {
+      if (!entries.some((e) => e.isIntersecting)) return;
+      watcher.disconnect();
+      void api.grantBattleAttention(token, 'read', id);
+    });
+    watcher.observe(node);
+    return { destroy: () => watcher.disconnect() };
+  }
 
   let jsonLd = $derived(
     data.leaf && copy
@@ -123,6 +145,9 @@
         {/if}
       </div>
 
+      <!-- Дно текста. Ничего не показывает — только отмечает, что дочитано. -->
+      <span class="bottom" use:lastLine aria-hidden="true"></span>
+
       {#if work}
         <footer class="stands" in:fade={{ duration: 500, delay: 220 }}>
           <a href={work}>{$t('talesWorkHere')} →</a>
@@ -152,6 +177,12 @@
 {/if}
 
 <style>
+  /* Ни высоты, ни цвета: это отметка дна, а не элемент страницы. */
+  .bottom {
+    display: block;
+    height: 1px;
+  }
+
   .root {
     width: 100%;
     min-height: 100svh;

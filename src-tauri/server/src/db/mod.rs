@@ -6220,7 +6220,10 @@ impl Repository {
         SELECT c.id, c.slug, c.figurine_id, c.race_id, c.status, c.tier,
                c.type_en, c.type_ru,
                c.title_en, c.title_ru, c.effect_en, c.effect_ru, c.lore_en, c.lore_ru,
-               c.cost, c.power, c.health, c.mana, c.traits, c.price_dust, c.price_feed,
+               c.cost, c.power, c.health, c.mana, c.traits,
+               c.kind, c.armor, c.ward, c.attack_channel, c.reach, c.step, c.speed, c.mend,
+               c.abilities, c.budget_points, c.balance_index, c.rules_version,
+               c.price_dust, c.price_feed, c.level_price_dust,
                c.art_url, c.art_focal, c.frame_override, c.shelf_order, c.created_at, c.updated_at,
                f.name AS figurine_name, f.slug AS figurine_slug,
                fi.file_path AS figurine_face_path, fi.id AS figurine_face_id,
@@ -6315,94 +6318,73 @@ impl Repository {
         Ok(row.map(|r| r.0))
     }
 
+    /// One struct rather than thirty positional arguments: two neighbouring
+    /// `Option<&str>` can be swapped by hand without the compiler saying a word,
+    /// and a card whose lore quietly holds its effect is found by a reader
+    /// months later.
     pub async fn insert_battle_card(
         &self,
-        slug: &str,
-        figurine_id: Option<Uuid>,
-        race_id: Option<Uuid>,
-        status: &str,
-        tier: i16,
-        type_en: Option<&str>,
-        type_ru: Option<&str>,
-        title_en: &str,
-        title_ru: &str,
-        effect_en: Option<&str>,
-        effect_ru: Option<&str>,
-        lore_en: Option<&str>,
-        lore_ru: Option<&str>,
-        cost: i16,
-        power: i16,
-        health: i16,
-        mana: i16,
-        traits: Option<&str>,
-        price_dust: Option<i32>,
-        price_feed: Option<i32>,
-        art_url: Option<&str>,
-        art_focal: Option<&str>,
-        frame_override: Option<&str>,
+        w: &crate::models::BattleCardWrite,
     ) -> Result<crate::models::BattleCard> {
         Ok(sqlx::query_as::<_, crate::models::BattleCard>(
             r#"INSERT INTO battle_cards (
                     slug, figurine_id, race_id, status, tier, type_en, type_ru,
                     title_en, title_ru, effect_en, effect_ru, lore_en, lore_ru,
                     cost, power, health, mana, traits,
-                    price_dust, price_feed, art_url, art_focal, frame_override
-               ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+                    kind, armor, ward, attack_channel, reach, step, speed, mend,
+                    abilities, budget_points, balance_index,
+                    price_dust, price_feed, level_price_dust,
+                    art_url, art_focal, frame_override
+               ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,
+                         $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35)
                RETURNING *"#,
         )
-        .bind(slug)
-        .bind(figurine_id)
-        .bind(race_id)
-        .bind(status)
-        .bind(tier)
-        .bind(type_en)
-        .bind(type_ru)
-        .bind(title_en)
-        .bind(title_ru)
-        .bind(effect_en)
-        .bind(effect_ru)
-        .bind(lore_en)
-        .bind(lore_ru)
-        .bind(cost)
-        .bind(power)
-        .bind(health)
-        .bind(mana)
-        .bind(traits)
-        .bind(price_dust)
-        .bind(price_feed)
-        .bind(art_url)
-        .bind(art_focal)
-        .bind(frame_override)
+        .bind(&w.slug)
+        .bind(w.figurine_id)
+        .bind(w.race_id)
+        .bind(&w.status)
+        .bind(w.tier)
+        .bind(w.type_en.as_deref())
+        .bind(w.type_ru.as_deref())
+        .bind(&w.title_en)
+        .bind(&w.title_ru)
+        .bind(w.effect_en.as_deref())
+        .bind(w.effect_ru.as_deref())
+        .bind(w.lore_en.as_deref())
+        .bind(w.lore_ru.as_deref())
+        .bind(w.cost)
+        .bind(w.power)
+        .bind(w.health)
+        .bind(w.mana)
+        .bind(w.traits.as_deref())
+        .bind(&w.kind)
+        .bind(w.armor)
+        .bind(w.ward)
+        .bind(&w.attack_channel)
+        .bind(w.reach)
+        .bind(w.step)
+        .bind(w.speed)
+        .bind(w.mend)
+        .bind(w.abilities.as_deref())
+        .bind(w.budget_points)
+        .bind(w.balance_index)
+        .bind(w.price_dust)
+        .bind(w.price_feed)
+        .bind(w.level_price_dust.as_deref())
+        .bind(w.art_url.as_deref())
+        .bind(w.art_focal.as_deref())
+        .bind(w.frame_override.as_deref())
         .fetch_one(&self.pg_pool)
         .await?)
     }
 
+    /// Editing the numbers raises `rules_version`: a match records the version
+    /// it was played under, so a rebalance never rewrites a match already
+    /// played.
     pub async fn update_battle_card(
         &self,
         id: Uuid,
-        slug: &str,
-        figurine_id: Option<Uuid>,
-        race_id: Option<Uuid>,
-        status: &str,
-        tier: i16,
-        type_en: Option<&str>,
-        type_ru: Option<&str>,
-        title_en: &str,
-        title_ru: &str,
-        effect_en: Option<&str>,
-        effect_ru: Option<&str>,
-        lore_en: Option<&str>,
-        lore_ru: Option<&str>,
-        cost: i16,
-        power: i16,
-        health: i16,
-        mana: i16,
-        traits: Option<&str>,
-        price_dust: Option<i32>,
-        price_feed: Option<i32>,
-        art_url: Option<&str>,
-        art_focal: Option<&str>,
-        frame_override: Option<&str>,
+        w: &crate::models::BattleCardWrite,
     ) -> Result<crate::models::BattleCard> {
         sqlx::query_as::<_, crate::models::BattleCard>(
             r#"UPDATE battle_cards SET
@@ -6411,36 +6393,52 @@ impl Repository {
                     title_en = $9, title_ru = $10, effect_en = $11, effect_ru = $12,
                     lore_en = $13, lore_ru = $14, cost = $15, power = $16,
                     health = $17, mana = $18, traits = $19,
-                    price_dust = $20, price_feed = $21, art_url = $22, art_focal = $23,
-                    frame_override = $24,
+                    kind = $20, armor = $21, ward = $22, attack_channel = $23,
+                    reach = $24, step = $25, speed = $26, mend = $27,
+                    abilities = $28, budget_points = $29, balance_index = $30,
+                    price_dust = $31, price_feed = $32, level_price_dust = $33,
+                    art_url = $34, art_focal = $35, frame_override = $36,
+                    rules_version = rules_version + 1,
                     updated_at = NOW()
                WHERE id = $1
                RETURNING *"#,
         )
         .bind(id)
-        .bind(slug)
-        .bind(figurine_id)
-        .bind(race_id)
-        .bind(status)
-        .bind(tier)
-        .bind(type_en)
-        .bind(type_ru)
-        .bind(title_en)
-        .bind(title_ru)
-        .bind(effect_en)
-        .bind(effect_ru)
-        .bind(lore_en)
-        .bind(lore_ru)
-        .bind(cost)
-        .bind(power)
-        .bind(health)
-        .bind(mana)
-        .bind(traits)
-        .bind(price_dust)
-        .bind(price_feed)
-        .bind(art_url)
-        .bind(art_focal)
-        .bind(frame_override)
+        .bind(&w.slug)
+        .bind(w.figurine_id)
+        .bind(w.race_id)
+        .bind(&w.status)
+        .bind(w.tier)
+        .bind(w.type_en.as_deref())
+        .bind(w.type_ru.as_deref())
+        .bind(&w.title_en)
+        .bind(&w.title_ru)
+        .bind(w.effect_en.as_deref())
+        .bind(w.effect_ru.as_deref())
+        .bind(w.lore_en.as_deref())
+        .bind(w.lore_ru.as_deref())
+        .bind(w.cost)
+        .bind(w.power)
+        .bind(w.health)
+        .bind(w.mana)
+        .bind(w.traits.as_deref())
+        .bind(&w.kind)
+        .bind(w.armor)
+        .bind(w.ward)
+        .bind(&w.attack_channel)
+        .bind(w.reach)
+        .bind(w.step)
+        .bind(w.speed)
+        .bind(w.mend)
+        .bind(w.abilities.as_deref())
+        .bind(w.budget_points)
+        .bind(w.balance_index)
+        .bind(w.price_dust)
+        .bind(w.price_feed)
+        .bind(w.level_price_dust.as_deref())
+        .bind(w.art_url.as_deref())
+        .bind(w.art_focal.as_deref())
+        .bind(w.frame_override.as_deref())
         .fetch_optional(&self.pg_pool)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Battle card {id} not found")))
@@ -6569,6 +6567,596 @@ impl Repository {
             return Err(AppError::NotFound(format!("Battle race {id} not found")));
         }
         Ok(())
+    }
+
+    // === WALLET ===
+    //
+    // Append-only. The balance is never stored, it is summed — a stored balance
+    // is an invitation to a double spend, and the ledger is also the keeper's
+    // record of where every grain of dust came from.
+
+    /// Write one credit. Returns `false` when this exact grant was already made:
+    /// `idem_key` is unique per visitor, so a double-clicked victory, a retried
+    /// request and a replayed challenge all land on the same row.
+    pub async fn credit_battle_wallet(
+        &self,
+        user_id: Uuid,
+        currency: &str,
+        amount: i32,
+        reason: &str,
+        ref_id: Option<Uuid>,
+        idem_key: &str,
+    ) -> Result<bool> {
+        let res = sqlx::query(
+            "INSERT INTO battle_wallet_entries (user_id, currency, amount, reason, ref_id, idem_key)
+             VALUES ($1,$2,$3,$4,$5,$6)
+             ON CONFLICT (user_id, idem_key) DO NOTHING",
+        )
+        .bind(user_id)
+        .bind(currency)
+        .bind(amount)
+        .bind(reason)
+        .bind(ref_id)
+        .bind(idem_key)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    pub async fn battle_wallet_balance(&self, user_id: Uuid, currency: &str) -> Result<i64> {
+        let row: (Option<i64>,) = sqlx::query_as(
+            "SELECT SUM(amount)::bigint FROM battle_wallet_entries
+              WHERE user_id = $1 AND currency = $2",
+        )
+        .bind(user_id)
+        .bind(currency)
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(row.0.unwrap_or(0))
+    }
+
+    pub async fn battle_wallet_paid(&self, user_id: Uuid, idem_key: &str) -> Result<bool> {
+        let row: (bool,) = sqlx::query_as(
+            "SELECT EXISTS(SELECT 1 FROM battle_wallet_entries
+                            WHERE user_id = $1 AND idem_key = $2)",
+        )
+        .bind(user_id)
+        .bind(idem_key)
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(row.0)
+    }
+
+    /// Every key this visitor has already been paid under, for marking a shelf
+    /// of challenges in one query rather than one query per challenge.
+    pub async fn battle_wallet_keys(&self, user_id: Uuid) -> Result<Vec<String>> {
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT idem_key FROM battle_wallet_entries WHERE user_id = $1")
+                .bind(user_id)
+                .fetch_all(&self.pg_pool)
+                .await?;
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+
+    // === OWNING ===
+
+    /// Every card this visitor holds. One query for the whole shelf: asking per
+    /// card would be forty round trips to draw one page.
+    pub async fn list_owned_battle_cards(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<crate::models::BattleOwnedCard>> {
+        Ok(sqlx::query_as::<_, crate::models::BattleOwnedCard>(
+            "SELECT * FROM battle_owned_cards WHERE user_id = $1 ORDER BY acquired_at",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Take the mark off a card that has now been looked at. Idempotent by
+    /// being a no-op once `seen_at` is set: the first look is the one recorded.
+    pub async fn mark_battle_card_seen(&self, user_id: Uuid, card_id: Uuid) -> Result<()> {
+        sqlx::query(
+            "UPDATE battle_owned_cards SET seen_at = NOW()
+              WHERE user_id = $1 AND card_id = $2 AND seen_at IS NULL",
+        )
+        .bind(user_id)
+        .bind(card_id)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Take a card off the shelf: one row out of the wallet, one row of owning,
+    /// both or neither.
+    ///
+    /// The whole of it is one transaction, and the order inside it matters. The
+    /// balance is summed **inside** that transaction and the ledger row is
+    /// written before the check can go stale — two tabs pressing "take" at once
+    /// both read the same balance otherwise, and both are allowed to spend it.
+    ///
+    /// `idem_key` is `buy:{card_id}`, so the second press writes nothing and is
+    /// answered with the same board: a card cannot be bought twice, and a
+    /// double click is not a double spend.
+    ///
+    /// Returns `false` when nothing was written because it was already theirs.
+    pub async fn buy_battle_card(
+        &self,
+        user_id: Uuid,
+        card_id: Uuid,
+        currency: &str,
+        price: i32,
+    ) -> Result<bool> {
+        let mut tx = self.pg_pool.begin().await?;
+
+        // Serialise the buyers of this one wallet against each other. Two
+        // presses in two tabs queue here instead of both reading the same
+        // balance and both being told they can afford it.
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))")
+            .bind(user_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+
+        let owned: (bool,) = sqlx::query_as(
+            "SELECT EXISTS(SELECT 1 FROM battle_owned_cards WHERE user_id = $1 AND card_id = $2)",
+        )
+        .bind(user_id)
+        .bind(card_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if owned.0 {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+
+        let balance: (Option<i64>,) = sqlx::query_as(
+            "SELECT SUM(amount)::bigint FROM battle_wallet_entries
+              WHERE user_id = $1 AND currency = $2",
+        )
+        .bind(user_id)
+        .bind(currency)
+        .fetch_one(&mut *tx)
+        .await?;
+        if balance.0.unwrap_or(0) < i64::from(price) {
+            tx.rollback().await?;
+            return Err(AppError::BadRequest("Not enough in the wallet".into()));
+        }
+
+        let spent = sqlx::query(
+            "INSERT INTO battle_wallet_entries
+                 (user_id, currency, amount, reason, ref_id, idem_key)
+             VALUES ($1, $2, $3, 'bought', $4, $5)
+             ON CONFLICT (user_id, idem_key) DO NOTHING",
+        )
+        .bind(user_id)
+        .bind(currency)
+        .bind(-price)
+        .bind(card_id)
+        .bind(format!("buy:{card_id}"))
+        .execute(&mut *tx)
+        .await?;
+        if spent.rows_affected() == 0 {
+            // Paid for once already, and the owning row is missing — the only
+            // way here is a crash between the two writes. Owning is what the
+            // payment bought, so it is written rather than the money returned.
+            tracing::warn!(%user_id, %card_id, "покупка была оплачена, но карта не записана — дописываем");
+        }
+
+        sqlx::query(
+            "INSERT INTO battle_owned_cards (user_id, card_id, level)
+             VALUES ($1, $2, 1)
+             ON CONFLICT (user_id, card_id) DO NOTHING",
+        )
+        .bind(user_id)
+        .bind(card_id)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    /// Raise one owned copy one rung.
+    ///
+    /// The same shape as a purchase, and for the same reasons: one transaction,
+    /// the wallet locked against its own other tabs, the balance summed inside.
+    /// Two differences.
+    ///
+    /// The ledger key names the rung (`level:{card}:{to}`) and not just the
+    /// card, because a card is bought once but climbed four times — a key
+    /// without the rung would let the second rung ride the first one's row.
+    ///
+    /// The level is raised by compare-and-set (`WHERE level = from`) rather
+    /// than by `level + 1`: two presses that both get past the key would
+    /// otherwise each add one, and the owner would arrive at three having paid
+    /// for two.
+    ///
+    /// Returns the level after, and whether anything was written.
+    pub async fn raise_battle_card_level(
+        &self,
+        user_id: Uuid,
+        card_id: Uuid,
+        from_level: i16,
+        price: i32,
+    ) -> Result<(i16, bool)> {
+        let to_level = from_level + 1;
+        let mut tx = self.pg_pool.begin().await?;
+
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))")
+            .bind(user_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+
+        let held: Option<(i16,)> = sqlx::query_as(
+            "SELECT level FROM battle_owned_cards
+              WHERE user_id = $1 AND card_id = $2 FOR UPDATE",
+        )
+        .bind(user_id)
+        .bind(card_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some((held,)) = held else {
+            tx.rollback().await?;
+            return Err(AppError::BadRequest("This card is not yours".into()));
+        };
+        // Уже поднято — значит, это повтор, а не вторая ступень.
+        if held >= to_level {
+            tx.rollback().await?;
+            return Ok((held, false));
+        }
+        if held != from_level {
+            tx.rollback().await?;
+            return Err(AppError::BadRequest("The level has changed".into()));
+        }
+
+        let balance: (Option<i64>,) = sqlx::query_as(
+            "SELECT SUM(amount)::bigint FROM battle_wallet_entries
+              WHERE user_id = $1 AND currency = 'dust'",
+        )
+        .bind(user_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if balance.0.unwrap_or(0) < i64::from(price) {
+            tx.rollback().await?;
+            return Err(AppError::BadRequest("Not enough dust".into()));
+        }
+
+        let spent = sqlx::query(
+            "INSERT INTO battle_wallet_entries
+                 (user_id, currency, amount, reason, ref_id, idem_key)
+             VALUES ($1, 'dust', $2, 'level_up', $3, $4)
+             ON CONFLICT (user_id, idem_key) DO NOTHING",
+        )
+        .bind(user_id)
+        .bind(-price)
+        .bind(card_id)
+        .bind(format!("level:{card_id}:{to_level}"))
+        .execute(&mut *tx)
+        .await?;
+        if spent.rows_affected() == 0 {
+            // Ступень оплачена, а уровень ниже её: между двумя записями что-то
+            // оборвалось. Ступень уже куплена — значит, её и дописываем.
+            tracing::warn!(%user_id, %card_id, to_level, "ступень оплачена, но не поднята — дописываем");
+        }
+
+        let raised = sqlx::query(
+            "UPDATE battle_owned_cards SET level = $3
+              WHERE user_id = $1 AND card_id = $2 AND level = $4",
+        )
+        .bind(user_id)
+        .bind(card_id)
+        .bind(to_level)
+        .bind(from_level)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok((to_level, raised.rows_affected() > 0))
+    }
+
+    // === CHALLENGES AND MATCHES ===
+
+    pub async fn list_battle_challenges(
+        &self,
+        published_only: bool,
+    ) -> Result<Vec<crate::models::BattleChallenge>> {
+        let sql = if published_only {
+            "SELECT * FROM battle_challenges WHERE status = 'published'
+              ORDER BY sort_order NULLS LAST, created_at DESC"
+        } else {
+            "SELECT * FROM battle_challenges ORDER BY sort_order NULLS LAST, created_at DESC"
+        };
+        Ok(sqlx::query_as::<_, crate::models::BattleChallenge>(sql)
+            .fetch_all(&self.pg_pool)
+            .await?)
+    }
+
+    pub async fn get_battle_challenge(
+        &self,
+        id: Uuid,
+    ) -> Result<crate::models::BattleChallenge> {
+        sqlx::query_as::<_, crate::models::BattleChallenge>(
+            "SELECT * FROM battle_challenges WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pg_pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Battle challenge {id} not found")))
+    }
+
+    pub async fn list_battle_challenge_slugs_except(
+        &self,
+        except: Option<Uuid>,
+    ) -> Result<Vec<String>> {
+        let rows: Vec<(String,)> = if let Some(id) = except {
+            sqlx::query_as("SELECT slug FROM battle_challenges WHERE id <> $1")
+                .bind(id)
+                .fetch_all(&self.pg_pool)
+                .await?
+        } else {
+            sqlx::query_as("SELECT slug FROM battle_challenges")
+                .fetch_all(&self.pg_pool)
+                .await?
+        };
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn upsert_battle_challenge(
+        &self,
+        id: Option<Uuid>,
+        slug: &str,
+        title_en: &str,
+        title_ru: &str,
+        note_en: Option<&str>,
+        note_ru: Option<&str>,
+        setup: &str,
+        bot_depth: i16,
+        reward_dust: i32,
+        status: &str,
+    ) -> Result<crate::models::BattleChallenge> {
+        match id {
+            None => Ok(sqlx::query_as::<_, crate::models::BattleChallenge>(
+                "INSERT INTO battle_challenges
+                     (slug, title_en, title_ru, note_en, note_ru, setup, bot_depth, reward_dust, status)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *",
+            )
+            .bind(slug).bind(title_en).bind(title_ru).bind(note_en).bind(note_ru)
+            .bind(setup).bind(bot_depth).bind(reward_dust).bind(status)
+            .fetch_one(&self.pg_pool)
+            .await?),
+            Some(id) => sqlx::query_as::<_, crate::models::BattleChallenge>(
+                "UPDATE battle_challenges SET slug=$2, title_en=$3, title_ru=$4,
+                        note_en=$5, note_ru=$6, setup=$7, bot_depth=$8,
+                        reward_dust=$9, status=$10, updated_at = NOW()
+                  WHERE id=$1 RETURNING *",
+            )
+            .bind(id).bind(slug).bind(title_en).bind(title_ru).bind(note_en).bind(note_ru)
+            .bind(setup).bind(bot_depth).bind(reward_dust).bind(status)
+            .fetch_optional(&self.pg_pool)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("Battle challenge {id} not found"))),
+        }
+    }
+
+    pub async fn delete_battle_challenge(&self, id: Uuid) -> Result<()> {
+        let affected = sqlx::query("DELETE FROM battle_challenges WHERE id = $1")
+            .bind(id)
+            .execute(&self.pg_pool)
+            .await?
+            .rows_affected();
+        if affected == 0 {
+            return Err(AppError::NotFound(format!("Battle challenge {id} not found")));
+        }
+        Ok(())
+    }
+
+    /// The match this visitor already has going on this challenge, if any.
+    ///
+    /// A returning guest continues the one they left rather than starting a
+    /// second with the same click — that is what the partial unique index on
+    /// `outcome IS NULL` is for.
+    pub async fn find_open_battle_match(
+        &self,
+        user_id: Uuid,
+        challenge_id: Uuid,
+    ) -> Result<Option<crate::models::BattleMatch>> {
+        Ok(sqlx::query_as::<_, crate::models::BattleMatch>(
+            "SELECT * FROM battle_matches
+              WHERE user_id = $1 AND challenge_id = $2 AND outcome IS NULL",
+        )
+        .bind(user_id)
+        .bind(challenge_id)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn get_battle_match(
+        &self,
+        id: Uuid,
+        user_id: Uuid,
+    ) -> Result<crate::models::BattleMatch> {
+        sqlx::query_as::<_, crate::models::BattleMatch>(
+            "SELECT * FROM battle_matches WHERE id = $1 AND user_id = $2",
+        )
+        .bind(id)
+        .bind(user_id)
+        .fetch_optional(&self.pg_pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Battle match {id} not found")))
+    }
+
+    pub async fn insert_battle_match(
+        &self,
+        user_id: Uuid,
+        challenge_id: Uuid,
+        setup: &str,
+        rules_version: i32,
+        board_cache: &str,
+    ) -> Result<crate::models::BattleMatch> {
+        Ok(sqlx::query_as::<_, crate::models::BattleMatch>(
+            "INSERT INTO battle_matches (user_id, challenge_id, setup, rules_version, board_cache)
+             VALUES ($1,$2,$3,$4,$5) RETURNING *",
+        )
+        .bind(user_id)
+        .bind(challenge_id)
+        .bind(setup)
+        .bind(rules_version)
+        .bind(board_cache)
+        .fetch_one(&self.pg_pool)
+        .await?)
+    }
+
+    /// Append to the journal, under the number the caller expected.
+    ///
+    /// The `seq = $2` in the WHERE clause is the whole guard: a repeated or
+    /// reordered request finds no row and changes nothing, instead of playing
+    /// the same move twice.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn advance_battle_match(
+        &self,
+        id: Uuid,
+        expected_seq: i32,
+        actions: &str,
+        board_cache: &str,
+        outcome: Option<&str>,
+        rounds: i16,
+    ) -> Result<Option<crate::models::BattleMatch>> {
+        Ok(sqlx::query_as::<_, crate::models::BattleMatch>(
+            "UPDATE battle_matches
+                SET actions = $3, board_cache = $4, seq = seq + 1,
+                    outcome = $5, rounds = $6,
+                    finished_at = CASE WHEN $5 IS NULL THEN NULL ELSE NOW() END
+              WHERE id = $1 AND seq = $2
+              RETURNING *",
+        )
+        .bind(id)
+        .bind(expected_seq)
+        .bind(actions)
+        .bind(board_cache)
+        .bind(outcome)
+        .bind(rounds)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    // === KEYWORDS ===
+    //
+    // No card count beside a keyword, unlike a race: an ability names a keyword
+    // by slug inside its own JSON, so counting would mean reading every card.
+    // When that number is wanted, it will be worth its own index.
+
+    pub async fn list_battle_keywords(&self) -> Result<Vec<crate::models::BattleKeyword>> {
+        Ok(sqlx::query_as::<_, crate::models::BattleKeyword>(
+            "SELECT * FROM battle_keywords ORDER BY sort_order NULLS LAST, name_ru, id",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn list_battle_keyword_slugs_except(
+        &self,
+        except: Option<Uuid>,
+    ) -> Result<Vec<String>> {
+        let rows: Vec<(String,)> = if let Some(id) = except {
+            sqlx::query_as("SELECT slug FROM battle_keywords WHERE id <> $1")
+                .bind(id)
+                .fetch_all(&self.pg_pool)
+                .await?
+        } else {
+            sqlx::query_as("SELECT slug FROM battle_keywords")
+                .fetch_all(&self.pg_pool)
+                .await?
+        };
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+
+    pub async fn insert_battle_keyword(
+        &self,
+        slug: &str,
+        name_en: &str,
+        name_ru: &str,
+        rules_en: Option<&str>,
+        rules_ru: Option<&str>,
+        icon_url: Option<&str>,
+        point_value: Option<f64>,
+    ) -> Result<crate::models::BattleKeyword> {
+        Ok(sqlx::query_as::<_, crate::models::BattleKeyword>(
+            "INSERT INTO battle_keywords (slug, name_en, name_ru, rules_en, rules_ru, icon_url, point_value)
+             VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *",
+        )
+        .bind(slug)
+        .bind(name_en)
+        .bind(name_ru)
+        .bind(rules_en)
+        .bind(rules_ru)
+        .bind(icon_url)
+        .bind(point_value)
+        .fetch_one(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn update_battle_keyword(
+        &self,
+        id: Uuid,
+        slug: &str,
+        name_en: &str,
+        name_ru: &str,
+        rules_en: Option<&str>,
+        rules_ru: Option<&str>,
+        icon_url: Option<&str>,
+        point_value: Option<f64>,
+    ) -> Result<crate::models::BattleKeyword> {
+        sqlx::query_as::<_, crate::models::BattleKeyword>(
+            "UPDATE battle_keywords SET slug = $2, name_en = $3, name_ru = $4,
+                    rules_en = $5, rules_ru = $6, icon_url = $7, point_value = $8,
+                    updated_at = NOW()
+              WHERE id = $1 RETURNING *",
+        )
+        .bind(id)
+        .bind(slug)
+        .bind(name_en)
+        .bind(name_ru)
+        .bind(rules_en)
+        .bind(rules_ru)
+        .bind(icon_url)
+        .bind(point_value)
+        .fetch_optional(&self.pg_pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Battle keyword {id} not found")))
+    }
+
+    /// A keyword removed from the dictionary leaves the cards that named it
+    /// standing. Their ability still carries the slug; it simply no longer
+    /// resolves to a wording — the same forgiveness a race gets.
+    pub async fn delete_battle_keyword(&self, id: Uuid) -> Result<()> {
+        let affected = sqlx::query("DELETE FROM battle_keywords WHERE id = $1")
+            .bind(id)
+            .execute(&self.pg_pool)
+            .await?
+            .rows_affected();
+        if affected == 0 {
+            return Err(AppError::NotFound(format!("Battle keyword {id} not found")));
+        }
+        Ok(())
+    }
+
+    pub async fn set_battle_keyword_order(&self, ids: &[Uuid]) -> Result<u64> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let orders: Vec<i32> = (0..ids.len() as i32).collect();
+        let res = sqlx::query(
+            "UPDATE battle_keywords AS k SET sort_order = v.ord
+               FROM (SELECT * FROM UNNEST($1::uuid[], $2::int[]) AS t(id, ord)) AS v
+              WHERE k.id = v.id",
+        )
+        .bind(ids)
+        .bind(&orders)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected())
     }
 
     pub async fn set_battle_race_order(&self, ids: &[Uuid]) -> Result<u64> {

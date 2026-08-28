@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { page } from '$app/state';
+  import { api } from '$lib/api';
+  import { authStore } from '$lib/stores/auth.svelte';
   import { fade } from 'svelte/transition';
   import { invalidateAll } from '$app/navigation';
   import FigurineDetailView from '$lib/components/FigurineDetailView.svelte';
@@ -26,6 +28,19 @@
       const next = [fid, ...viewed.filter((id) => id !== fid)].slice(0, 50);
       localStorage.setItem(VIEWED_KEY, JSON.stringify(next));
     } catch {}
+
+    // Пыль за просмотренную работу — тому, кто вошёл под именем. Не сразу:
+    // открыть и закрыть — это не «посмотрел», и платить за отскок значит
+    // платить за перелистывание архива. Двенадцать секунд — это уже взгляд.
+    //
+    // Маячок молчит: ключ книги (`seen:{id}`) не даст заплатить дважды, а
+    // человек пришёл смотреть работу, а не копить.
+    const token = authStore.token;
+    if (!token) return;
+    const dwell = setTimeout(() => {
+      void api.grantBattleAttention(token, 'seen', fid);
+    }, 12_000);
+    return () => clearTimeout(dwell);
   });
   let id = $derived(page.params.id ?? '');
 

@@ -195,6 +195,22 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             .route("/battles/cards", get(handlers::list_battle_cards))
             .route("/battles/frames", get(handlers::get_battle_frames))
             .route("/battles/races", get(handlers::list_battle_races))
+            .route("/battles/keywords", get(handlers::list_battle_keywords))
+            // Полка испытаний видна и без имени; играть — только с именем.
+            .route("/battles/challenges", get(handlers::list_battle_challenges))
+            .route(
+                "/battles/challenges/:id/begin",
+                post(handlers::begin_battle_match),
+            )
+            .route("/battles/matches/:id", get(handlers::get_battle_match))
+            .route("/battles/matches/:id/act", post(handlers::act_in_battle_match))
+            // Кошелёк и владение. Всё под сессией: книга лежит на сервере
+            // именно потому, что кошелёк в localStorage — бесконечные деньги.
+            .route("/battles/me", get(handlers::get_battle_me))
+            .route("/battles/buy", post(handlers::buy_battle_card))
+            .route("/battles/raise", post(handlers::raise_battle_card_level))
+            .route("/battles/cards/:id/seen", post(handlers::mark_battle_card_seen))
+            .route("/battles/attention", post(handlers::grant_battle_attention))
             // === PUBLIC LOGIN ===
             .route("/admin/login", post(handlers::admin_login))
             // === PROTECTED WRITE — use route_layer so auth only runs on matched routes ===
@@ -567,9 +583,72 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                     middleware::from_fn_with_state(config.clone(), auth_middleware),
                 ),
             )
+            // Ставки начисления за внимание. Настройка хранителя, а не схема:
+            // числа подбираются на живом доме, а не закладываются в миграцию.
+            .route(
+                "/admin/battles/dust-rates",
+                get(handlers::admin_get_battle_dust_rates)
+                    .post(handlers::admin_save_battle_dust_rates)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
             // Frame pictures keep their transparency, so they cannot go through
             // the ordinary image upload. Its own body limit: a carved frame is
             // a big PNG before it is re-encoded.
+            .route(
+                "/admin/battles/bench",
+                post(handlers::admin_bench_battle).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/battles/challenges",
+                get(handlers::admin_list_battle_challenges)
+                    .post(handlers::admin_create_battle_challenge)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            .route(
+                "/admin/battles/challenges/:id",
+                put(handlers::admin_update_battle_challenge)
+                    .delete(handlers::admin_delete_battle_challenge)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            .route(
+                "/admin/battles/weigh",
+                post(handlers::admin_weigh_battle_card).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/battles/keywords",
+                post(handlers::admin_create_battle_keyword).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            // Before `/:id`, so a reorder is never read as a keyword id.
+            .route(
+                "/admin/battles/keywords/order",
+                post(handlers::admin_reorder_battle_keywords).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/battles/keywords/:id",
+                put(handlers::admin_update_battle_keyword)
+                    .delete(handlers::admin_delete_battle_keyword)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
             .route(
                 "/admin/battles/races",
                 post(handlers::admin_create_battle_race).route_layer(
@@ -1109,6 +1188,8 @@ fn is_public_cacheable(path: &str) -> bool {
         "/battles/cards",
         "/battles/frames",
         "/battles/races",
+        "/battles/keywords",
+        "/battles/challenges",
     ];
 
     if EXACT.contains(&path) {

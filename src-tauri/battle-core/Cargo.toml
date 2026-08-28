@@ -10,6 +10,17 @@ edition = "2024"
 # this list rather than by anyone's discipline — a module inside the server
 # would not have stopped `use sqlx::…` from appearing one tired evening.
 #
-# `serde` joins the day the match journal is written to the database. It is a
-# derive on plain structs and changes nothing about the shape below.
+# `serde` and nothing else. It arrived the day the journal had to be written to
+# a database, and it changed nothing about the shapes below — a derive on plain
+# structs is exactly what those shapes were kept plain for.
+#
+# Everything else still stays out: no sqlx, no axum, no tokio, no chrono, no
+# rand. The rule "the engine knows nothing about the database, the network, the
+# clock or chance" is enforced by this list rather than by anyone's discipline.
 [dependencies]
+serde = { version = "1.0", features = ["derive"] }
+
+# Только для тестов: журнал пишется и читается обратно. В самом крейте формата
+# нет — есть только derive, а чем именно его сериализуют, решает служба.
+[dev-dependencies]
+serde_json = "1.0"

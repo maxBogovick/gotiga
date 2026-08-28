@@ -43,6 +43,95 @@ pub const TYPE_MAX: usize = 40;
 /// the tales room refuses pagination.
 pub const SHELF_CARDS: i64 = 500;
 
+// ── The body, as the engine reads it ─────────────────────────────────────────
+//
+// The numbers below are the same ones `battle-core` works in, and the CHECKs in
+// the migration repeat them. Repeated deliberately: the database refuses what a
+// broken client sends, and these clamp what a keeper types by hand.
+
+pub const CARD_KINDS: &[&str] = &["unit", "spell", "relic"];
+pub const ATTACK_CHANNELS: &[&str] = &["physical", "magic", "pure", "none"];
+
+/// Range and step are counted in king's moves on a field three wide and six
+/// deep, so 5 means "the whole field, corner to corner".
+pub const REACH_MAX: i16 = 5;
+pub const STEP_MAX: i16 = 3;
+pub const SPEED_MIN: i16 = 1;
+pub const SPEED_MAX: i16 = 5;
+pub const DEFENCE_MAX: i16 = 20;
+pub const MEND_MAX: i16 = 20;
+
+pub const ABILITIES_MAX: usize = 6;
+pub const ABILITY_NAME_MAX: usize = 60;
+pub const ABILITY_TEXT_MAX: usize = 200;
+pub const KEYWORD_NAME_MAX: usize = 60;
+pub const KEYWORD_RULES_MAX: usize = 300;
+
+/// The closed list of verbs. A new card brings a new combination, never a new
+/// verb — that is the whole reason the engine can be written once.
+pub const ABILITY_VERBS: &[&str] = &[
+    "damage", "dot", "heal", "hot", "shield", "zone", "bless", "curse", "control",
+    "silence", "disarm", "charm", "veil", "guard", "immune", "thorns", "move",
+    "summon", "sacrifice", "cleanse", "dispel", "mana",
+];
+
+/// How many the effect reaches. `chain` and `radius` carry a number in `radius`.
+pub const ABILITY_SHAPES: &[&str] =
+    &["self", "one", "adjacent", "chain", "line", "radius", "side", "cell"];
+
+/// When it happens.
+pub const ABILITY_TRIGGERS: &[&str] = &[
+    "active", "onPlay", "onHit", "onDamaged", "onDeath", "turnStart", "aura", "once",
+];
+
+pub fn default_kind() -> String {
+    "unit".to_string()
+}
+
+pub fn default_channel() -> String {
+    "physical".to_string()
+}
+
+pub fn default_reach() -> i16 {
+    1
+}
+
+pub fn default_step() -> i16 {
+    1
+}
+
+pub fn default_speed() -> i16 {
+    3
+}
+
+pub fn valid_kind(kind: &str) -> bool {
+    CARD_KINDS.contains(&kind)
+}
+
+pub fn valid_channel(channel: &str) -> bool {
+    ATTACK_CHANNELS.contains(&channel)
+}
+
+pub fn clamp_defence(raw: i16) -> i16 {
+    raw.clamp(0, DEFENCE_MAX)
+}
+
+pub fn clamp_reach(raw: i16) -> i16 {
+    raw.clamp(0, REACH_MAX)
+}
+
+pub fn clamp_step(raw: i16) -> i16 {
+    raw.clamp(0, STEP_MAX)
+}
+
+pub fn clamp_speed(raw: i16) -> i16 {
+    raw.clamp(SPEED_MIN, SPEED_MAX)
+}
+
+pub fn clamp_mend(raw: i16) -> i16 {
+    raw.clamp(0, MEND_MAX)
+}
+
 /// Doors of the battles API. A card must not take one for a slug.
 const RESERVED_SLUGS: &[&str] = &["cards", "frames", "me", "buy", "wallet", "new"];
 
@@ -138,10 +227,310 @@ pub fn read_traits(raw: Option<&str>) -> Vec<CardTrait> {
         .unwrap_or_default()
 }
 
+/// One executable ability, beside the prose in `traits`.
+///
+/// Same storage choice as `CardTrait`, for the same three reasons: read only
+/// with the card, never searched across cards, order matters. The difference is
+/// who reads it — a person reads the trait, the engine reads this.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CardAbility {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name_en: String,
+    #[serde(default)]
+    pub name_ru: String,
+    /// From `ABILITY_VERBS`. Anything else is refused.
+    pub verb: String,
+    #[serde(default = "default_channel")]
+    pub channel: String,
+    #[serde(default)]
+    pub amount: i16,
+    #[serde(default = "default_shape")]
+    pub shape: String,
+    /// The number carried by `chain` (links) and `radius` (cells).
+    #[serde(default)]
+    pub radius: i16,
+    #[serde(default = "default_reach")]
+    pub range: i16,
+    /// Turns of the bearer. Zero — it happens and is over.
+    #[serde(default)]
+    pub duration: i16,
+    #[serde(default = "default_trigger")]
+    pub trigger: String,
+    #[serde(default)]
+    pub mana_cost: i16,
+    #[serde(default)]
+    pub cooldown: i16,
+    #[serde(default)]
+    pub keywords: Vec<String>,
+}
+
+pub fn default_shape() -> String {
+    "one".to_string()
+}
+
+pub fn default_trigger() -> String {
+    "active".to_string()
+}
+
+/// The abilities of a card, as they will be stored.
+///
+/// An ability whose verb is not in the closed list is dropped rather than
+/// stored: an unknown verb is not a card the engine could ever run, and keeping
+/// it would mean the shelf shows a rule that never fires.
+pub fn normalize_abilities(abilities: &[CardAbility]) -> Option<String> {
+    let cut = |raw: &str, max: usize| -> String { raw.trim().chars().take(max).collect() };
+    let cleaned: Vec<CardAbility> = abilities
+        .iter()
+        .filter(|a| ABILITY_VERBS.contains(&a.verb.trim()))
+        .map(|a| {
+            let shape = if ABILITY_SHAPES.contains(&a.shape.trim()) {
+                a.shape.trim().to_string()
+            } else {
+                default_shape()
+            };
+            let trigger = if ABILITY_TRIGGERS.contains(&a.trigger.trim()) {
+                a.trigger.trim().to_string()
+            } else {
+                default_trigger()
+            };
+            let channel = if valid_channel(a.channel.trim()) {
+                a.channel.trim().to_string()
+            } else {
+                default_channel()
+            };
+            CardAbility {
+                id: cut(&a.id, ABILITY_NAME_MAX),
+                name_en: cut(&a.name_en, ABILITY_NAME_MAX),
+                name_ru: cut(&a.name_ru, ABILITY_NAME_MAX),
+                verb: a.verb.trim().to_string(),
+                channel,
+                amount: a.amount.clamp(0, POWER_MAX),
+                shape,
+                radius: a.radius.clamp(0, 3),
+                range: clamp_reach(a.range),
+                duration: a.duration.clamp(0, 5),
+                trigger,
+                mana_cost: a.mana_cost.clamp(0, COST_MAX),
+                cooldown: a.cooldown.clamp(0, 5),
+                keywords: a
+                    .keywords
+                    .iter()
+                    .map(|k| cut(k, ABILITY_NAME_MAX))
+                    .filter(|k| !k.is_empty())
+                    .take(4)
+                    .collect(),
+            }
+        })
+        .take(ABILITIES_MAX)
+        .collect();
+    if cleaned.is_empty() {
+        return None;
+    }
+    serde_json::to_string(&cleaned).ok()
+}
+
+/// Read back what was stored. A column that will not parse yields no abilities
+/// rather than failing the whole card — the rest of it is still worth showing.
+pub fn read_abilities(raw: Option<&str>) -> Vec<CardAbility> {
+    raw.and_then(|j| serde_json::from_str(j).ok())
+        .unwrap_or_default()
+}
+
+// ── The scales ───────────────────────────────────────────────────────────────
+//
+// One unit: a single point of damage, to one target, from range 1, at once, on
+// command. Everything else is quoted against it. The rates come from
+// `TASKS-BATTLE-ENGINE.md` §7.2 — and §12 records that the range multiplier is
+// already known to be too low against what simulation measured. It is left as
+// written until the runner replaces it with a measured one, because a number
+// half-corrected by hand is worse than a number known to be wrong.
+
+/// What a card of this rank is allowed to weigh. Rank is not strength; rank is
+/// *permitted* strength.
+pub fn tier_budget(tier: i16) -> f64 {
+    8.0 + 6.0 * ((clamp_tier(tier) - 1) as f64)
+}
+
+fn shape_multiplier(shape: &str, radius: i16) -> f64 {
+    match shape {
+        "self" => 0.8,
+        "one" | "cell" => 1.0,
+        "adjacent" => 1.8,
+        "chain" => 1.0 + 0.7 * ((radius.max(1) - 1) as f64),
+        "line" => 2.0,
+        "radius" => {
+            if radius >= 2 {
+                3.2
+            } else {
+                2.4
+            }
+        }
+        "side" => 3.6,
+        _ => 1.0,
+    }
+}
+
+fn trigger_multiplier(trigger: &str) -> f64 {
+    match trigger {
+        "onHit" | "onDamaged" | "once" => 0.8,
+        "onDeath" => 0.7,
+        "aura" => 1.5,
+        _ => 1.0,
+    }
+}
+
+fn channel_multiplier(channel: &str) -> f64 {
+    match channel {
+        "magic" => 1.05,
+        "pure" => 1.4,
+        _ => 1.0,
+    }
+}
+
+/// Range is worth real but modest money: 1.0 at arm's length, 1.4 across the
+/// whole field.
+fn range_multiplier(range: i16) -> f64 {
+    0.9 + 0.1 * (clamp_reach(range) as f64)
+}
+
+/// What one ability costs, in points.
+pub fn ability_points(a: &CardAbility, tier: i16) -> f64 {
+    let amount = a.amount as f64;
+    let turns = a.duration.max(1) as f64;
+    let control = (3.0 + clamp_tier(tier) as f64) * turns;
+
+    let base = match a.verb.as_str() {
+        "damage" => amount,
+        "dot" => 0.8 * amount * turns,
+        "heal" => 0.7 * amount,
+        "hot" => 0.6 * amount * turns,
+        "shield" => 0.8 * amount,
+        "zone" => 0.9 * amount * turns,
+        "bless" | "curse" => 0.9 * amount * turns,
+        "control" => control,
+        "silence" => 0.6 * control,
+        "disarm" => 0.5 * control,
+        "charm" => 2.0 * control,
+        "veil" => 4.0 * turns,
+        "guard" => 2.5 * amount.max(1.0),
+        "immune" => 6.0 * turns,
+        "thorns" => 1.5 * amount,
+        "move" => amount,
+        "summon" => 0.9 * amount,
+        // The one verb with a discount: it pays with a body.
+        "sacrifice" => -0.7 * amount,
+        "cleanse" | "dispel" => 2.0,
+        "mana" => 2.0 * amount,
+        _ => 0.0,
+    };
+
+    base * shape_multiplier(&a.shape, a.radius)
+        * trigger_multiplier(&a.trigger)
+        * channel_multiplier(&a.channel)
+        * range_multiplier(a.range)
+}
+
+/// What a body costs before a single ability is written on it.
+#[allow(clippy::too_many_arguments)]
+pub fn body_points(
+    health: i16,
+    armor: i16,
+    ward: i16,
+    power: i16,
+    reach: i16,
+    speed: i16,
+    mend: i16,
+) -> f64 {
+    0.5 * health as f64
+        + 1.2 * armor as f64
+        + 1.2 * ward as f64
+        + power as f64 * range_multiplier(reach)
+        + 2.0 * (clamp_speed(speed) - 1) as f64
+        + 0.7 * mend as f64 * range_multiplier(reach)
+}
+
+/// Points against price. 1.0 is on the curve; above 1.15 the card is overloaded,
+/// below 0.85 nobody will put it in a deck.
+///
+/// The "+2" is a tax on existing: even an empty body takes a place on the field.
+pub fn balance_index(points: f64, cost: i16) -> f64 {
+    let denominator = 4.0 * clamp_cost(cost) as f64 + 2.0;
+    if denominator <= 0.0 {
+        return 0.0;
+    }
+    points / denominator
+}
+
+// ── The card, as the engine takes it ─────────────────────────────────────────
+
+/// Turn a card into the body a match will fight with.
+///
+/// The one place where the archive and the engine meet. Everything above this
+/// line is the house's own vocabulary; everything the engine sees comes through
+/// here, which is why it is a function and not a scattering of field accesses.
+///
+/// `name` carries the **slug** rather than a title. The journal outlives the
+/// session that wrote it and is read in both languages, so a Russian title
+/// frozen into it would be a language baked into a record. The scene looks the
+/// real card up by that slug and renders whichever title the reader wants.
+pub fn to_snapshot(card: &crate::models::BattleCardDto) -> battle_core::CardSnapshot {
+    battle_core::CardSnapshot {
+        name: card.slug.clone(),
+        cost: card.cost as i32,
+        health: card.health as i32,
+        power: card.power as i32,
+        armor: card.armor as i32,
+        ward: card.ward as i32,
+        reach: card.reach.clamp(0, REACH_MAX) as u8,
+        step: card.step.clamp(0, STEP_MAX) as u8,
+        mend: card.mend as i32,
+        channel: to_channel(&card.attack_channel),
+    }
+}
+
+/// The stored word for a channel, as the engine's own.
+///
+/// An unknown word becomes bodily rather than refusing the card: the column has
+/// a CHECK on it, so this can only be reached by a hand-edited database, and a
+/// match that will not start is a worse answer than a card that hits normally.
+pub fn to_channel(raw: &str) -> battle_core::Channel {
+    match raw {
+        "magic" => battle_core::Channel::Magic,
+        "pure" => battle_core::Channel::Pure,
+        _ => battle_core::Channel::Physical,
+    }
+}
+
+/// Whether a card can stand on a field at all.
+///
+/// A body with no health falls the moment it is raised, which is not a card the
+/// keeper meant to publish — it is one that was never given numbers. Caught here
+/// so a match refuses to start rather than ending on its own first tick.
+pub fn can_take_the_field(card: &crate::models::BattleCardDto) -> bool {
+    card.health > 0 && card.status == "published"
+}
+
 /// A price of `None` means "not to be had for this coin", which is not zero.
 /// Negative is nonsense either way, so it becomes "not for this coin" too.
 pub fn clamp_price(raw: Option<i32>) -> Option<i32> {
     raw.filter(|p| *p >= 0)
+}
+
+/// The four rungs of the level ladder, or nothing.
+///
+/// Four exactly — 1→2, 2→3, 3→4, 4→5 — because there are five levels and there
+/// will not be a sixth. A list of any other length is not a shorter ladder, it
+/// is a mistake, and it is refused rather than padded: a card silently given
+/// free rungs would be discovered by whoever climbed them.
+pub fn clamp_level_prices(raw: Option<&[i32]>) -> Option<Vec<i32>> {
+    let steps = raw?;
+    if steps.len() != 4 || steps.iter().any(|p| *p < 0) {
+        return None;
+    }
+    Some(steps.to_vec())
 }
 
 pub fn unique_slug(preferred: Option<&str>, title: &str, taken: &[String]) -> String {
@@ -680,6 +1069,239 @@ mod tests {
         assert_eq!(frames[0].header_share, Some(0.0));
         assert_eq!(frames[0].foot_share, Some(0.0));
         assert_eq!(frames[0].art_share, DEFAULT_ART_SHARE);
+    }
+
+    #[test]
+    fn a_card_becomes_a_body_the_engine_can_fight_with() {
+        let mut card = sample_card();
+        card.attack_channel = "magic".into();
+        card.armor = 2;
+        card.ward = 3;
+        card.reach = 4;
+        card.step = 0;
+        card.mend = 5;
+
+        let body = to_snapshot(&card);
+        assert_eq!(body.name, "vedma", "в журнал едет слаг, а не заголовок");
+        assert_eq!(body.channel, battle_core::Channel::Magic);
+        assert_eq!(body.armor, 2);
+        assert_eq!(body.ward, 3);
+        assert_eq!(body.reach, 4);
+        assert_eq!(body.step, 0);
+        assert_eq!(body.mend, 5);
+    }
+
+    #[test]
+    fn cards_from_the_archive_actually_play_a_match() {
+        // Ради этого теста движок и подключали: он проходит через обе половины —
+        // карта дома превращается в тело, тело воюет, партия кончается исходом.
+        // Если однажды перевод разъедется с движком, упадёт здесь, а не у игрока.
+        use battle_core::{Action, Cell, MatchState, Outcome, Setup, bot, reduce};
+
+        let mut boec = sample_card();
+        boec.health = 6;
+        boec.power = 3;
+
+        let mut strelok = sample_card();
+        strelok.slug = "strelok".into();
+        strelok.health = 4;
+        strelok.power = 2;
+        strelok.reach = 3;
+
+        let setup = Setup {
+            player_board: vec![
+                (to_snapshot(&boec), Cell::new(1, 4).unwrap()),
+                (to_snapshot(&strelok), Cell::new(0, 5).unwrap()),
+            ],
+            keeper_board: vec![
+                (to_snapshot(&boec), Cell::new(1, 1).unwrap()),
+                (to_snapshot(&strelok), Cell::new(2, 0).unwrap()),
+            ],
+            ..Default::default()
+        };
+
+        let mut state = MatchState::begin(setup);
+        let mut journal = Vec::new();
+        let mut guard = 0;
+        while state.outcome.is_none() {
+            let action: Action = bot::choose(&state);
+            let (next, events) = reduce(&state, &action).expect("законное действие");
+            state = next;
+            journal.extend(events);
+            guard += 1;
+            assert!(guard < 2000, "партия не кончилась");
+        }
+
+        assert!(matches!(
+            state.outcome,
+            Some(Outcome::Player) | Some(Outcome::Keeper) | Some(Outcome::Draw)
+        ));
+        assert!(!journal.is_empty());
+        // И журнал ложится в базу как есть — колонка JSONB его примет.
+        assert!(serde_json::to_string(&journal).is_ok());
+    }
+
+    #[test]
+    fn a_hand_edited_channel_falls_back_instead_of_refusing_the_match() {
+        assert_eq!(to_channel("огненный"), battle_core::Channel::Physical);
+        assert_eq!(to_channel("pure"), battle_core::Channel::Pure);
+    }
+
+    #[test]
+    fn a_card_without_health_never_takes_the_field() {
+        let mut card = sample_card();
+        assert!(can_take_the_field(&card));
+
+        card.health = 0;
+        assert!(!can_take_the_field(&card), "упало бы на первом же тике");
+
+        card.health = 6;
+        card.status = "draft".into();
+        assert!(!can_take_the_field(&card), "черновик не воюет");
+    }
+
+    fn sample_card() -> crate::models::BattleCardDto {
+        crate::models::BattleCardDto {
+            id: String::new(),
+            slug: "vedma".into(),
+            status: "published".into(),
+            tier: 3,
+            race_id: None,
+            race_name_en: None,
+            race_name_ru: None,
+            race_icon_url: None,
+            type_en: None,
+            type_ru: None,
+            title_en: "Witch".into(),
+            title_ru: "Ведьма".into(),
+            effect_en: None,
+            effect_ru: None,
+            lore_en: None,
+            lore_ru: None,
+            cost: 3,
+            power: 4,
+            health: 6,
+            mana: 0,
+            traits: Vec::new(),
+            kind: "unit".into(),
+            armor: 0,
+            ward: 0,
+            attack_channel: "physical".into(),
+            reach: 1,
+            step: 1,
+            speed: 3,
+            mend: 0,
+            abilities: Vec::new(),
+            budget_points: None,
+            balance_index: None,
+            rules_version: 1,
+            price_dust: Some(10),
+            price_feed: None,
+            art_url: None,
+            art_url_override: None,
+            art_focal: None,
+            frame_override: None,
+            shelf_order: None,
+            figurine_id: None,
+            figurine_name: None,
+            figurine_slug: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn abilities_with_an_unknown_verb_are_dropped_rather_than_stored() {
+        // An unknown verb is not a card the engine could ever run, and keeping
+        // it would mean the shelf shows a rule that never fires.
+        let abilities = vec![
+            CardAbility {
+                verb: "damage".into(),
+                amount: 5,
+                ..blank_ability()
+            },
+            CardAbility {
+                verb: "разбудить дракона".into(),
+                amount: 5,
+                ..blank_ability()
+            },
+        ];
+        let back = read_abilities(normalize_abilities(&abilities).as_deref());
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].verb, "damage");
+    }
+
+    #[test]
+    fn an_unknown_shape_or_trigger_falls_back_instead_of_refusing_the_card() {
+        let abilities = vec![CardAbility {
+            verb: "damage".into(),
+            shape: "повсюду".into(),
+            trigger: "когда-нибудь".into(),
+            channel: "огненный".into(),
+            ..blank_ability()
+        }];
+        let back = read_abilities(normalize_abilities(&abilities).as_deref());
+        assert_eq!(back[0].shape, "one");
+        assert_eq!(back[0].trigger, "active");
+        assert_eq!(back[0].channel, "physical");
+    }
+
+    #[test]
+    fn the_scales_price_a_mass_spell_by_the_book() {
+        // Ураган эпического мага: 8 урона, радиус 2, дальность 3, чарный.
+        // 8 × 3.2 × 1.0 × 1.05 × 1.2 = 32.256
+        let hurricane = CardAbility {
+            verb: "damage".into(),
+            channel: "magic".into(),
+            amount: 8,
+            shape: "radius".into(),
+            radius: 2,
+            range: 3,
+            ..blank_ability()
+        };
+        let points = ability_points(&hurricane, 5);
+        assert!((points - 32.256).abs() < 0.001, "получилось {points}");
+        // Одна способность уже перебирает бюджет пятого чина.
+        assert!(points > tier_budget(5));
+    }
+
+    #[test]
+    fn control_is_priced_against_the_rank_it_stops() {
+        // Лишение действия стоит дороже на высоком чине: там действие дороже.
+        let stun = CardAbility {
+            verb: "control".into(),
+            duration: 2,
+            ..blank_ability()
+        };
+        assert!(ability_points(&stun, 5) > ability_points(&stun, 1));
+    }
+
+    #[test]
+    fn the_verdict_moves_with_the_price_and_not_with_the_rank() {
+        let points = 24.0;
+        // Дорогая карта на кривой; та же сила задёшево — перегруз.
+        assert!((balance_index(points, 5) - 24.0 / 22.0).abs() < 0.001);
+        assert!(balance_index(points, 5) < 1.15);
+        assert!(balance_index(points, 2) > 1.15);
+    }
+
+    fn blank_ability() -> CardAbility {
+        CardAbility {
+            id: String::new(),
+            name_en: String::new(),
+            name_ru: String::new(),
+            verb: "damage".into(),
+            channel: default_channel(),
+            amount: 0,
+            shape: default_shape(),
+            radius: 0,
+            range: 1,
+            duration: 0,
+            trigger: default_trigger(),
+            mana_cost: 0,
+            cooldown: 0,
+            keywords: Vec::new(),
+        }
     }
 
     #[test]

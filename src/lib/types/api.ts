@@ -1881,9 +1881,35 @@ export interface BattleCard {
     health: number;
     mana: number;
     traits: CardTrait[];
+    // ── The body, as the engine reads it ─────────────────────────────────
+    /** What this is for the rules. `typeRu` stays free text for the header band. */
+    kind: BattleCardKind;
+    /** Flat reduction of bodily damage. */
+    armor: number;
+    /** Flat reduction of charmed damage. */
+    ward: number;
+    /** Which defence answers this card's ordinary blow. */
+    attackChannel: BattleChannel;
+    /** How far the ordinary blow carries, in king's steps. 5 is the whole field. */
+    reach: number;
+    /** Cells walked in one move. 0 — it stands where it was put. */
+    step: number;
+    /** Who acts first. 3 is the middle. */
+    speed: number;
+    /** How much it mends in one act of mending. */
+    mend: number;
+    /** The executable half, beside the prose in `traits`. */
+    abilities: CardAbility[];
+    /** What the scales said at the last save. Desk only — the shelf never sees it. */
+    budgetPoints?: number | null;
+    balanceIndex?: number | null;
+    /** Raised on every edit of the numbers, so a played match can still be replayed. */
+    rulesVersion: number;
     /** `null` means the card is not to be had for this coin — not that it is free. */
     priceDust: number | null;
     priceFeed: number | null;
+    /** Цена ступеней уровня в пыли: 1→2, 2→3, 3→4, 4→5. `null` — не растёт. */
+    levelPriceDust: number[] | null;
     /** What the card wears: its own picture if it has one, else the work's face. */
     artUrl: string | null;
     /** The keeper's override as typed. Admin reads only. */
@@ -1919,8 +1945,19 @@ export interface SaveBattleCardRequest {
     health: number;
     mana: number;
     traits: CardTrait[];
+    kind: BattleCardKind;
+    armor: number;
+    ward: number;
+    attackChannel: BattleChannel;
+    reach: number;
+    step: number;
+    speed: number;
+    mend: number;
+    abilities: CardAbility[];
     priceDust?: number | null;
     priceFeed?: number | null;
+    /** Цена ступеней уровня в пыли: 1→2, 2→3, 3→4, 4→5. `null` — не растёт. */
+    levelPriceDust?: number[] | null;
     artUrl?: string | null;
     artFocal?: string | null;
     frameOverride?: string | null;
@@ -2015,6 +2052,353 @@ export interface BattleRace {
     sortOrder?: number | null;
     /** How many cards stand under it — what a rename or a removal would touch. */
     cardCount: number;
+}
+
+export type BattleCardKind = 'unit' | 'spell' | 'relic';
+export type BattleChannel = 'physical' | 'magic' | 'pure' | 'none';
+
+/** The closed list of verbs. A new card is a new combination, never a new verb. */
+export type AbilityVerb =
+    | 'damage' | 'dot' | 'heal' | 'hot' | 'shield' | 'zone'
+    | 'bless' | 'curse' | 'control' | 'silence' | 'disarm' | 'charm'
+    | 'veil' | 'guard' | 'immune' | 'thorns' | 'move' | 'summon'
+    | 'sacrifice' | 'cleanse' | 'dispel' | 'mana';
+
+export type AbilityShape =
+    | 'self' | 'one' | 'adjacent' | 'chain' | 'line' | 'radius' | 'side' | 'cell';
+
+export type AbilityTrigger =
+    | 'active' | 'onPlay' | 'onHit' | 'onDamaged' | 'onDeath' | 'turnStart' | 'aura' | 'once';
+
+/**
+ * One executable ability. Lives beside the prose in `traits`, never instead of it:
+ * the prose is what gets printed, this is what the engine runs.
+ */
+export interface CardAbility {
+    id: string;
+    nameEn: string;
+    nameRu: string;
+    verb: AbilityVerb;
+    channel: BattleChannel;
+    amount: number;
+    shape: AbilityShape;
+    /** The number carried by `chain` (links) and `radius` (cells). */
+    radius: number;
+    range: number;
+    /** Turns of the bearer. 0 — it happens and is over. */
+    duration: number;
+    trigger: AbilityTrigger;
+    manaCost: number;
+    cooldown: number;
+    keywords: string[];
+}
+
+/**
+ * What the scales say about a card still being written.
+ *
+ * Computed by the server on every keystroke rather than in the browser: one
+ * formula, in one place. Two implementations of it would disagree by the second
+ * week, and the disagreement would be found by a player.
+ */
+export interface BattleWeigh {
+    bodyPoints: number;
+    abilities: AbilityWeight[];
+    totalPoints: number;
+    balanceIndex: number;
+    tierBudget: number;
+    /** The price at which this weight would sit on the curve. */
+    suggestedCost: number;
+}
+
+export interface AbilityWeight {
+    id: string;
+    points: number;
+}
+
+// ── Испытания и партии ───────────────────────────────────────────────────────
+
+/** Where a card stands in a challenge's arrangement. */
+export interface ChallengePlacement {
+    card: string;
+    x: number;
+    y: number;
+}
+
+/** A challenge sets BOTH sides: it is a study, not a duel. */
+export interface ChallengeSetup {
+    playerBoard: ChallengePlacement[];
+    playerHand: string[];
+    keeperBoard: ChallengePlacement[];
+    keeperHand: string[];
+}
+
+export interface BattleChallenge {
+    id: string;
+    slug: string;
+    titleEn: string;
+    titleRu: string;
+    noteEn: string | null;
+    noteRu: string | null;
+    setup: ChallengeSetup;
+    botDepth: number;
+    /** Paid once per challenge, never per victory. */
+    rewardDust: number;
+    status: BattleCardStatus;
+    sortOrder?: number | null;
+    /** Whether this visitor has already been paid. Absent for a guest. */
+    alreadyPaid?: boolean;
+}
+
+export interface SaveBattleChallengeRequest {
+    slug?: string | null;
+    titleEn: string;
+    titleRu: string;
+    noteEn?: string | null;
+    noteRu?: string | null;
+    setup: ChallengeSetup;
+    botDepth: number;
+    rewardDust: number;
+    status: BattleCardStatus;
+}
+
+// ── Что присылает движок ─────────────────────────────────────────────────────
+//
+// Эти формы — не выдумка фронта, а ровно то, что сериализует `battle-core`.
+// Правил здесь нет и быть не должно: клиент рисует состояние и выбирает из
+// присланного списка законных действий.
+
+export type BattleSide = 'player' | 'keeper';
+export type BattleOutcome = 'player' | 'keeper' | 'draw';
+
+/** A place on the field. Rows 0–2 are the keeper's, 3–5 the guest's. */
+export interface BattleCell {
+    x: number;
+    y: number;
+}
+
+export interface BattleSpot {
+    cell: BattleCell;
+    unit: number;
+}
+
+export interface BattleBodyCard {
+    /** The card's slug — look the real card up by it. Never a title: a journal
+     *  outlives the session and is read in both languages. */
+    name: string;
+    cost: number;
+    health: number;
+    power: number;
+    armor: number;
+    ward: number;
+    reach: number;
+    step: number;
+    mend: number;
+    channel: BattleChannel;
+}
+
+export interface BattleStatus {
+    name: string;
+    stat: string;
+    amount: number;
+    turns: number;
+}
+
+/** One body on the field. Not a card: a card is a template, this is a copy. */
+export interface BattleUnit {
+    id: number;
+    owner: BattleSide;
+    reach: number;
+    step: number;
+    mend: number;
+    channel: BattleChannel;
+    /** Whether it has already acted this turn. */
+    acted: boolean;
+    card: BattleBodyCard;
+    health: { current: number; max: number };
+    power: number;
+    armor: number;
+    ward: number;
+    shield: number;
+    statuses: BattleStatus[];
+    immune: BattleChannel | null;
+}
+
+export interface BattleSideState {
+    hand: BattleBodyCard[];
+    mana: number;
+    manaMax: number;
+}
+
+export interface BattleMatchState {
+    units: BattleUnit[];
+    board: BattleSpot[];
+    player: BattleSideState;
+    keeper: BattleSideState;
+    round: number;
+    active: BattleSide;
+    outcome: BattleOutcome | null;
+    rules: { secondSideCoin: number; openingAttacks: number };
+    openingAttacksUsed: number;
+}
+
+/**
+ * One action, in the engine's own shape. The client never builds these by hand —
+ * it picks one out of `legalActions` and sends it back unchanged.
+ */
+export type BattleAction =
+    | { play: { handIndex: number; cell: BattleCell } }
+    | { move: { unit: number; to: BattleCell } }
+    | { mend: { healer: number; target: number } }
+    | { attack: { attacker: number; target: number } }
+    | 'endTurn';
+
+/** Одна копия одной карты — чья-то. */
+export interface BattleOwnedCard {
+    cardId: string;
+    level: number;
+    /** Пока карту не посмотрели, она носит пометку «новая». */
+    isNew: boolean;
+}
+
+/**
+ * Всё, что полка должна знать о том, кто на неё смотрит.
+ *
+ * Одним запросом, а не тремя: полка не может нарисовать ни одной карты, пока не
+ * знает, чья она, — а страница, задающая три вопроса ради одной строки, мигает.
+ */
+export interface BattleMe {
+    dust: number;
+    feed: number;
+    owned: BattleOwnedCard[];
+}
+
+export interface BuyBattleCardRequest {
+    cardId: string;
+    currency: 'dust' | 'feed';
+    /** Цена, которую видел гость. Сервер её не берёт, а сверяет. */
+    expectedPrice: number;
+}
+
+export interface BuyBattleCardResponse {
+    cardId: string;
+    level: number;
+    balance: number;
+    /** false — карта уже была своей, и ничего не записано: церемония играет однажды. */
+    takenNow: boolean;
+}
+
+export interface RaiseBattleCardRequest {
+    cardId: string;
+    /** Цена следующей ступени, которую видел владелец. Сервер сверяет. */
+    expectedPrice: number;
+}
+
+export interface RaiseBattleCardResponse {
+    cardId: string;
+    level: number;
+    balance: number;
+    /** false — ступень уже была оплачена, и ничего не записано. */
+    raisedNow: boolean;
+}
+
+export interface BattleAttentionResponse {
+    /** Сколько осело именно сейчас. Ноль — за это уже платили. */
+    dust: number;
+    balance: number;
+}
+
+/** Что хранитель платит за внимание, которое дом и так считает. */
+export interface BattleDustRates {
+    liked: number;
+    seen: number;
+    read: number;
+}
+
+export type BattleEvent =
+    | { played: { side: BattleSide; unit: number; cell: BattleCell; cost: number } }
+    | { moved: { unit: number; from: BattleCell; to: BattleCell } }
+    | {
+          damaged: {
+              target: number;
+              /** Кто ударил. `null` у зоны, яда, шипов — урона без автора.
+               *  Носится ради сцены: при дальности 4 иначе не видно, кто. */
+              by: number | null;
+              toHealth: number;
+              toShield: number;
+              channel: BattleChannel;
+              source: string;
+              /** Почему это число, а не то, что написано на карте. */
+              trail: { step: string; from: number; to: number }[];
+          };
+      }
+    | { immune: { target: number; by: number | null; channel: BattleChannel } }
+    | { healed: { target: number; amount: number } }
+    | { died: { target: number } }
+    | { turnEnded: { side: BattleSide; round: number } }
+    | { finished: { outcome: BattleOutcome } };
+
+export interface BattleMatch {
+    id: string;
+    challengeId: string | null;
+    /** The number the next action must carry. A repeat is harmless. */
+    seq: number;
+    state: BattleMatchState;
+    legalActions: BattleAction[];
+    /** What just happened, for the scene to play through. */
+    events: BattleEvent[];
+    outcome: BattleOutcome | null;
+    /** Dust credited by this very request. Zero on every later reading. */
+    rewardDust: number;
+}
+
+/**
+ * The keeper's bench: an arrangement played by hand, without a trace.
+ *
+ * Stateless on purpose. The whole journal travels with every request and the
+ * board is folded from it each time — no rows to clean up, no account, no dust,
+ * and the replay property checked on every click.
+ */
+export interface BenchRequest {
+    setup: ChallengeSetup;
+    actions: BattleAction[];
+    next?: BattleAction | null;
+    /** Whether the far side answers by itself. */
+    autoKeeper: boolean;
+    /** Play the rest out with the bot on both sides. */
+    playOut?: boolean;
+}
+
+export interface Bench {
+    state: BattleMatchState;
+    legalActions: BattleAction[];
+    events: BattleEvent[];
+    actions: BattleAction[];
+    outcome: BattleOutcome | null;
+}
+
+/** A keyword in the dictionary. `pointValue` is where the balance rate lives. */
+export interface BattleKeyword {
+    id: string;
+    slug: string;
+    nameEn: string;
+    nameRu: string;
+    /** The canonical wording of the rule, one per game. */
+    rulesEn: string | null;
+    rulesRu: string | null;
+    iconUrl: string | null;
+    /** Points per unit, from the exchange table. `null` — not priced yet. */
+    pointValue: number | null;
+    sortOrder?: number | null;
+}
+
+export interface SaveBattleKeywordRequest {
+    slug?: string | null;
+    nameEn: string;
+    nameRu: string;
+    rulesEn?: string | null;
+    rulesRu?: string | null;
+    iconUrl?: string | null;
+    pointValue?: number | null;
 }
 
 export interface SaveBattleRaceRequest {

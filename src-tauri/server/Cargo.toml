@@ -4,6 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# The rules of the battle room, as their own package.
+#
+# A path dependency and not a module: the crate boundary is what actually keeps
+# `sqlx`, `axum` and the clock out of the engine. A module inside this server
+# would rely on nobody ever typing `use sqlx` in it on a tired evening, and the
+# whole value of the engine — that a match can be replayed and ten thousand of
+# them simulated — rests on it having no way to reach the outside world.
+battle-core = { path = "../battle-core" }
 axum = { version = "0.7", features = ["multipart"] }
 tokio = { version = "1.0", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }

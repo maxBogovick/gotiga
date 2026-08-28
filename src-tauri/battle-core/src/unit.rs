@@ -11,7 +11,8 @@ pub type UnitId = u32;
 
 /// What a rider modifies. A closed list — a new card brings a new combination,
 /// never a new stat.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum Stat {
     /// Strength of what this unit deals.
     Power,
@@ -30,7 +31,8 @@ pub enum Stat {
 /// "Дым из печи" refreshes the term of the first instead of doubling its
 /// magnitude — the difference between a game whose numbers can be budgeted and
 /// one whose numbers avalanche.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Status {
     pub name: String,
     pub stat: Stat,
@@ -53,7 +55,8 @@ impl Status {
 /// Mitigation deliberately does not live here. Armour is read by the damage
 /// pipeline, by the card in the archive and by the points calculator; buried
 /// inside a wrapper around health, every one of those would have to unwrap it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Health {
     pub current: i32,
     pub max: i32,
@@ -73,9 +76,28 @@ impl Health {
 /// rule. Past five the card can no longer be understood at a glance.
 pub const STATUS_CAP: usize = 5;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Unit {
     pub id: UnitId,
+    /// Whose body this is. Sides, not players: the keeper's side is a bot, and
+    /// the rules must not care which.
+    pub owner: crate::board::Side,
+    /// How far its ordinary blow carries, in king's steps.
+    pub reach: u8,
+    /// How many cells it walks in one move.
+    pub step: u8,
+    /// How much it mends in one act of mending. Zero — it does not mend.
+    pub mend: i32,
+    /// Which defence answers its ordinary blow.
+    pub channel: crate::damage::Channel,
+    /// Whether it has already acted this turn. One action per body per turn is
+    /// the whole of the action economy in this slice.
+    pub acted: bool,
+    /// The card this body was raised from, frozen. Kept because the fields
+    /// below are the *current* numbers — wounded, blessed, cursed — and the
+    /// card is what was printed. The name lives here and nowhere else.
+    pub card: crate::card::CardSnapshot,
     pub health: Health,
     pub power: i32,
     pub armor: i32,
@@ -93,6 +115,13 @@ impl Unit {
     pub fn new(id: UnitId, health: i32, power: i32) -> Self {
         Self {
             id,
+            owner: crate::board::Side::Player,
+            reach: 1,
+            step: 1,
+            mend: 0,
+            channel: crate::damage::Channel::Physical,
+            acted: false,
+            card: crate::card::CardSnapshot::new("", 0, health, power),
             health: Health::full(health),
             power,
             armor: 0,
@@ -101,6 +130,59 @@ impl Unit {
             statuses: Vec::new(),
             immune: None,
         }
+    }
+
+    /// Raise a body from a frozen card. The only way a unit is made in a match.
+    pub fn from_card(id: UnitId, card: &crate::card::CardSnapshot, owner: crate::board::Side) -> Self {
+        Self {
+            id,
+            owner,
+            reach: card.reach,
+            step: card.step,
+            mend: card.mend,
+            channel: card.channel,
+            // A body placed this turn does not swing this turn. Without it,
+            // mana buys damage outright and holding the field means nothing.
+            acted: true,
+            card: card.clone(),
+            health: Health::full(card.health),
+            power: card.power,
+            armor: card.armor,
+            ward: card.ward,
+            shield: 0,
+            statuses: Vec::new(),
+            immune: None,
+        }
+    }
+
+    pub fn with_owner(mut self, owner: crate::board::Side) -> Self {
+        self.owner = owner;
+        self
+    }
+
+    pub fn with_reach(mut self, reach: u8) -> Self {
+        self.reach = reach;
+        self
+    }
+
+    pub fn with_step(mut self, step: u8) -> Self {
+        self.step = step;
+        self
+    }
+
+    pub fn with_mend(mut self, mend: i32) -> Self {
+        self.mend = mend;
+        self
+    }
+
+    /// How much of this body is missing. What mending can actually put back.
+    pub fn wound(&self) -> i32 {
+        self.health.max - self.health.current
+    }
+
+    /// What the card says, as opposed to what the body currently is.
+    pub fn name(&self) -> &str {
+        &self.card.name
     }
 
     pub fn with_armor(mut self, armor: i32) -> Self {

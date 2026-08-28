@@ -101,8 +101,10 @@ fn encode_jpeg_bytes(image: &image::RgbImage, quality: u8) -> Result<Vec<u8>> {
 /// crate can encode — and lossless WebP of a photograph is not a saving, it is a
 /// disaster. Measured on this server's own uploads before the change:
 ///
-///     preview (1800px)   JPEG  392 KB   WebP  2480 KB    6.3x LARGER
-///     thumb   (420px)    JPEG   31 KB   WebP   230 KB    7.2x LARGER
+/// ```text
+/// preview (1800px)   JPEG  392 KB   WebP  2480 KB    6.3x LARGER
+/// thumb   (420px)    JPEG   31 KB   WebP   230 KB    7.2x LARGER
+/// ```
 ///
 /// Anything that offered those files to a browser was handing mobile visitors megabytes
 /// per photograph. Lossy q80 is what WebP is actually for: it comes out roughly 25-30%
@@ -4089,6 +4091,220 @@ pub async fn admin_upload_battle_frame_art(
 }
 
 // === RACES ===
+
+/// The scales, on a card that is still being written.
+///
+/// A `GET` would have been nicer, but the thing being weighed is a whole card
+/// with its abilities — that is a body, not a query string.
+pub async fn admin_weigh_battle_card(
+    State(_service): State<AppService>,
+    Json(body): Json<SaveBattleCardRequest>,
+) -> Result<Json<BattleWeighDto>> {
+    Ok(Json(AppService::weigh_battle_card(&body)))
+}
+
+// ── Испытания и партии ───────────────────────────────────────────────────────
+
+/// The visitor behind a bearer token, or a refusal.
+///
+/// A match belongs to a person: the ledger it can credit is theirs, and the
+/// board it moves is theirs. Anonymous play would mean a wallet in the browser,
+/// which is the same as infinite money.
+async fn current_user(
+    service: &AppService,
+    headers: &HeaderMap,
+) -> Result<crate::models::User> {
+    let token = bearer_token(headers).ok_or(AppError::Unauthorized)?;
+    service.get_user_from_session(token).await
+}
+
+/// The shelf of challenges. Visible to a guest without an account — the room
+/// shows what is there and asks for a name only when something is at stake.
+pub async fn list_battle_challenges(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<BattleChallengeDto>>> {
+    let user_id = match bearer_token(&headers) {
+        Some(token) => service.get_user_from_session(token).await.ok().map(|u| u.id),
+        None => None,
+    };
+    Ok(Json(service.list_battle_challenges(user_id, true).await?))
+}
+
+pub async fn get_battle_me(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<Json<crate::models::BattleMeDto>> {
+    let user = current_user(&service, &headers).await?;
+    Ok(Json(service.battle_me(user.id).await?))
+}
+
+pub async fn buy_battle_card(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(req): Json<crate::models::BuyBattleCardRequest>,
+) -> Result<Json<crate::models::BuyBattleCardResponse>> {
+    let user = current_user(&service, &headers).await?;
+    Ok(Json(service.buy_battle_card(user.id, &req).await?))
+}
+
+pub async fn raise_battle_card_level(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(req): Json<crate::models::RaiseBattleCardRequest>,
+) -> Result<Json<crate::models::RaiseBattleCardResponse>> {
+    let user = current_user(&service, &headers).await?;
+    Ok(Json(service.raise_battle_card_level(user.id, &req).await?))
+}
+
+/// The card has been looked at; the mark comes off.
+pub async fn mark_battle_card_seen(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(card_id): Path<Uuid>,
+) -> Result<StatusCode> {
+    let user = current_user(&service, &headers).await?;
+    service.mark_battle_card_seen(user.id, card_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// A beacon, not a request: a page reports attention as it goes.
+///
+/// Rate-limited by address as well as by ledger key. The key alone already caps
+/// what any account can ever earn — one grain per work, per tale — but nothing
+/// should be able to hammer the wallet table for free.
+pub async fn grant_battle_attention(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(req): Json<crate::models::BattleAttentionRequest>,
+) -> Result<Json<crate::models::BattleAttentionResponse>> {
+    let user = current_user(&service, &headers).await?;
+    service
+        .check_rate_limit("battle_attention", &extract_ip(&headers), 120, 3600)
+        .await?;
+    Ok(Json(
+        service.grant_attention_dust(user.id, &req.kind, req.id).await?,
+    ))
+}
+
+pub async fn admin_get_battle_dust_rates(
+    State(service): State<AppService>,
+) -> Result<Json<crate::models::BattleDustRates>> {
+    Ok(Json(service.get_battle_dust_rates().await?))
+}
+
+pub async fn admin_save_battle_dust_rates(
+    State(service): State<AppService>,
+    Json(req): Json<crate::models::BattleDustRates>,
+) -> Result<Json<crate::models::BattleDustRates>> {
+    Ok(Json(service.save_battle_dust_rates(req).await?))
+}
+
+pub async fn begin_battle_match(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(challenge_id): Path<Uuid>,
+) -> Result<(StatusCode, Json<BattleMatchDto>)> {
+    let user = current_user(&service, &headers).await?;
+    let dto = service.begin_battle_match(user.id, challenge_id).await?;
+    Ok((StatusCode::CREATED, Json(dto)))
+}
+
+pub async fn get_battle_match(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<Json<BattleMatchDto>> {
+    let user = current_user(&service, &headers).await?;
+    Ok(Json(service.read_battle_match(user.id, id).await?))
+}
+
+/// One move by the guest and the keeper's answer, in one round trip.
+pub async fn act_in_battle_match(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(body): Json<BattleActRequest>,
+) -> Result<Json<BattleMatchDto>> {
+    let user = current_user(&service, &headers).await?;
+    Ok(Json(service.act_in_battle_match(user.id, id, body).await?))
+}
+
+/// The bench. Admin only, and it writes nothing anywhere.
+pub async fn admin_bench_battle(
+    State(service): State<AppService>,
+    Json(body): Json<BenchRequest>,
+) -> Result<Json<BenchDto>> {
+    Ok(Json(service.bench_battle(body).await?))
+}
+
+pub async fn admin_list_battle_challenges(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<BattleChallengeDto>>> {
+    Ok(Json(service.list_battle_challenges(None, false).await?))
+}
+
+pub async fn admin_create_battle_challenge(
+    State(service): State<AppService>,
+    Json(body): Json<SaveBattleChallengeRequest>,
+) -> Result<(StatusCode, Json<BattleChallengeDto>)> {
+    let dto = service.admin_save_battle_challenge(None, body).await?;
+    Ok((StatusCode::CREATED, Json(dto)))
+}
+
+pub async fn admin_update_battle_challenge(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<SaveBattleChallengeRequest>,
+) -> Result<Json<BattleChallengeDto>> {
+    Ok(Json(service.admin_save_battle_challenge(Some(id), body).await?))
+}
+
+pub async fn admin_delete_battle_challenge(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    service.admin_delete_battle_challenge(id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn list_battle_keywords(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<BattleKeywordDto>>> {
+    Ok(Json(service.list_battle_keywords().await?))
+}
+
+pub async fn admin_create_battle_keyword(
+    State(service): State<AppService>,
+    Json(body): Json<SaveBattleKeywordRequest>,
+) -> Result<(StatusCode, Json<BattleKeywordDto>)> {
+    let keyword = service.admin_create_battle_keyword(body).await?;
+    Ok((StatusCode::CREATED, Json(keyword)))
+}
+
+pub async fn admin_update_battle_keyword(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<SaveBattleKeywordRequest>,
+) -> Result<Json<BattleKeywordDto>> {
+    Ok(Json(service.admin_update_battle_keyword(id, body).await?))
+}
+
+pub async fn admin_delete_battle_keyword(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    service.admin_delete_battle_keyword(id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_reorder_battle_keywords(
+    State(service): State<AppService>,
+    Json(body): Json<ReorderBattleCardsRequest>,
+) -> Result<StatusCode> {
+    service.admin_reorder_battle_keywords(body.ids).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
 
 pub async fn list_battle_races(
     State(service): State<AppService>,

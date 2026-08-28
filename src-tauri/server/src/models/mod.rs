@@ -3334,8 +3334,37 @@ pub struct BattleCard {
     pub mana: i16,
     /// JSON array of named properties; see `battles::read_traits`.
     pub traits: Option<String>,
+    // ── The body, as the engine reads it ──────────────────────────────────
+    /// `unit` | `spell` | `relic`. Not `type_ru`, which is free text for the
+    /// header band and which no rule may read.
+    pub kind: String,
+    /// Flat reduction of bodily damage.
+    pub armor: i16,
+    /// Flat reduction of charmed damage.
+    pub ward: i16,
+    /// Which defence answers this card's ordinary blow.
+    pub attack_channel: String,
+    /// How far the ordinary blow carries, in king's steps.
+    pub reach: i16,
+    /// How many cells it walks in one move. Zero — it stands where it was put.
+    pub step: i16,
+    /// Who acts first. Three is the middle.
+    pub speed: i16,
+    /// How much it mends in one act of mending. Interim: moves into `abilities`
+    /// when abilities arrive.
+    pub mend: i16,
+    /// JSON array of executable abilities, beside the prose in `traits`.
+    pub abilities: Option<String>,
+    /// What the balance calculator worked out at the last save. A mirror.
+    pub budget_points: Option<f64>,
+    pub balance_index: Option<f64>,
+    /// Editing the numbers is a new version, not a silent change.
+    pub rules_version: i32,
     pub price_dust: Option<i32>,
     pub price_feed: Option<i32>,
+    /// Price of each rung of the level ladder, in dust: 1→2, 2→3, 3→4, 4→5.
+    /// `None` — this card does not rise. Written now, spent in 1c.
+    pub level_price_dust: Option<Vec<i32>>,
     pub art_url: Option<String>,
     pub art_focal: Option<String>,
     /// This card's own exception to the tier's shared frame. JSON, see
@@ -3371,8 +3400,37 @@ pub struct BattleCardListed {
     pub mana: i16,
     /// JSON array of named properties; see `battles::read_traits`.
     pub traits: Option<String>,
+    // ── The body, as the engine reads it ──────────────────────────────────
+    /// `unit` | `spell` | `relic`. Not `type_ru`, which is free text for the
+    /// header band and which no rule may read.
+    pub kind: String,
+    /// Flat reduction of bodily damage.
+    pub armor: i16,
+    /// Flat reduction of charmed damage.
+    pub ward: i16,
+    /// Which defence answers this card's ordinary blow.
+    pub attack_channel: String,
+    /// How far the ordinary blow carries, in king's steps.
+    pub reach: i16,
+    /// How many cells it walks in one move. Zero — it stands where it was put.
+    pub step: i16,
+    /// Who acts first. Three is the middle.
+    pub speed: i16,
+    /// How much it mends in one act of mending. Interim: moves into `abilities`
+    /// when abilities arrive.
+    pub mend: i16,
+    /// JSON array of executable abilities, beside the prose in `traits`.
+    pub abilities: Option<String>,
+    /// What the balance calculator worked out at the last save. A mirror.
+    pub budget_points: Option<f64>,
+    pub balance_index: Option<f64>,
+    /// Editing the numbers is a new version, not a silent change.
+    pub rules_version: i32,
     pub price_dust: Option<i32>,
     pub price_feed: Option<i32>,
+    /// Price of each rung of the level ladder, in dust: 1→2, 2→3, 3→4, 4→5.
+    /// `None` — this card does not rise. Written now, spent in 1c.
+    pub level_price_dust: Option<Vec<i32>>,
     pub art_url: Option<String>,
     pub art_focal: Option<String>,
     pub frame_override: Option<String>,
@@ -3418,8 +3476,28 @@ pub struct BattleCardDto {
     pub health: i16,
     pub mana: i16,
     pub traits: Vec<crate::battles::CardTrait>,
+    // ── The body, as the engine reads it ──────────────────────────────────
+    pub kind: String,
+    pub armor: i16,
+    pub ward: i16,
+    pub attack_channel: String,
+    pub reach: i16,
+    pub step: i16,
+    pub speed: i16,
+    pub mend: i16,
+    /// The executable half, beside the prose in `traits`.
+    pub abilities: Vec<crate::battles::CardAbility>,
+    /// Only the desk needs the verdict; the shelf shows a card, not a ledger.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_points: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub balance_index: Option<f64>,
+    pub rules_version: i32,
     pub price_dust: Option<i32>,
     pub price_feed: Option<i32>,
+    /// Price of each rung of the level ladder, in dust: 1→2, 2→3, 3→4, 4→5.
+    /// `None` — this card does not rise. Written now, spent in 1c.
+    pub level_price_dust: Option<Vec<i32>>,
     /// What the card actually wears: the keeper's own picture if there is one,
     /// otherwise the work's face. Already a public URL.
     pub art_url: Option<String>,
@@ -3465,12 +3543,471 @@ pub struct SaveBattleCardRequest {
     pub mana: i16,
     #[serde(default)]
     pub traits: Vec<crate::battles::CardTrait>,
+    #[serde(default = "crate::battles::default_kind")]
+    pub kind: String,
+    #[serde(default)]
+    pub armor: i16,
+    #[serde(default)]
+    pub ward: i16,
+    #[serde(default = "crate::battles::default_channel")]
+    pub attack_channel: String,
+    #[serde(default = "crate::battles::default_reach")]
+    pub reach: i16,
+    #[serde(default = "crate::battles::default_step")]
+    pub step: i16,
+    #[serde(default = "crate::battles::default_speed")]
+    pub speed: i16,
+    #[serde(default)]
+    pub mend: i16,
+    #[serde(default)]
+    pub abilities: Vec<crate::battles::CardAbility>,
     pub price_dust: Option<i32>,
     pub price_feed: Option<i32>,
+    /// Price of each rung of the level ladder, in dust: 1→2, 2→3, 3→4, 4→5.
+    /// `None` — this card does not rise. Written now, spent in 1c.
+    pub level_price_dust: Option<Vec<i32>>,
     pub art_url: Option<String>,
     pub art_focal: Option<String>,
     pub frame_override: Option<String>,
     pub figurine_id: Option<String>,
+}
+
+/// A card as it will be written, already checked and clamped.
+///
+/// One struct rather than thirty-odd positional arguments. Not tidiness: two
+/// neighbouring `Option<&str>` in a long argument list can be swapped by hand
+/// and the compiler will not say a word, and `lore_ru` quietly holding the
+/// effect is the kind of bug that is found by a reader, months later.
+#[derive(Debug, Clone)]
+pub struct BattleCardWrite {
+    pub slug: String,
+    pub figurine_id: Option<Uuid>,
+    pub race_id: Option<Uuid>,
+    pub status: String,
+    pub tier: i16,
+    pub type_en: Option<String>,
+    pub type_ru: Option<String>,
+    pub title_en: String,
+    pub title_ru: String,
+    pub effect_en: Option<String>,
+    pub effect_ru: Option<String>,
+    pub lore_en: Option<String>,
+    pub lore_ru: Option<String>,
+    pub cost: i16,
+    pub power: i16,
+    pub health: i16,
+    pub mana: i16,
+    pub traits: Option<String>,
+    pub kind: String,
+    pub armor: i16,
+    pub ward: i16,
+    pub attack_channel: String,
+    pub reach: i16,
+    pub step: i16,
+    pub speed: i16,
+    pub mend: i16,
+    pub abilities: Option<String>,
+    pub budget_points: Option<f64>,
+    pub balance_index: Option<f64>,
+    pub price_dust: Option<i32>,
+    pub price_feed: Option<i32>,
+    /// Price of each rung of the level ladder, in dust: 1→2, 2→3, 3→4, 4→5.
+    /// `None` — this card does not rise. Written now, spent in 1c.
+    pub level_price_dust: Option<Vec<i32>>,
+    pub art_url: Option<String>,
+    pub art_focal: Option<String>,
+    pub frame_override: Option<String>,
+}
+
+/// What the scales say about a card that has not been saved yet.
+///
+/// Exists so the keeper sees the verdict while typing without the formula being
+/// written a second time in TypeScript. Two implementations of one formula
+/// disagree by the second week, and the disagreement is found by a player.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleWeighDto {
+    /// What the body costs before a single ability is written on it.
+    pub body_points: f64,
+    /// One entry per ability, in the order written.
+    pub abilities: Vec<AbilityWeightDto>,
+    pub total_points: f64,
+    /// Points against price. 1.0 is on the curve.
+    pub balance_index: f64,
+    /// What a card of this rank is allowed to weigh.
+    pub tier_budget: f64,
+    /// What the price would have to be for this weight to sit on the curve.
+    pub suggested_cost: i16,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AbilityWeightDto {
+    /// The ability's own id inside the card, so the desk can put the number
+    /// beside the right row.
+    pub id: String,
+    pub points: f64,
+}
+
+// ── Стол ─────────────────────────────────────────────────────────────────────
+
+/// A match on the keeper's bench: an arrangement and everything done to it.
+///
+/// Nothing is stored. The whole position travels with every request and is
+/// folded from the journal each time — which costs a few microseconds and buys
+/// three things: no rows to clean up afterwards, no account and no dust
+/// involved, and the replay property exercised on literally every click.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BenchRequest {
+    pub setup: ChallengeSetup,
+    /// What has already been played. Replayed silently to rebuild the board.
+    #[serde(default)]
+    pub actions: Vec<battle_core::Action>,
+    /// One more move, if the keeper is making one.
+    #[serde(default)]
+    pub next: Option<battle_core::Action>,
+    /// Whether the far side answers by itself after the move.
+    #[serde(default)]
+    pub auto_keeper: bool,
+    /// Play the rest out with the bot on both sides and return the ending.
+    ///
+    /// Not "run it a thousand times": the engine has no chance in it, so a
+    /// thousand runs of one arrangement are one run repeated. The answer to
+    /// "who wins this?" is a single play.
+    #[serde(default)]
+    pub play_out: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BenchDto {
+    pub state: battle_core::MatchState,
+    pub legal_actions: Vec<battle_core::Action>,
+    /// Everything that happened because of this request.
+    pub events: Vec<battle_core::Event>,
+    /// The journal to send back next time.
+    pub actions: Vec<battle_core::Action>,
+    pub outcome: Option<String>,
+}
+
+/// A keyword in the keeper's dictionary: Шипы, Немота, Покров, Яд.
+///
+/// A table for the three reasons a race is one — shared by many cards, renamed
+/// in one place, read by a rule — and one of its own: `point_value` is the
+/// exchange rate from the balance formula, so rebalancing the whole game is an
+/// edit in a dictionary rather than a deployment.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct BattleKeyword {
+    pub id: Uuid,
+    pub slug: String,
+    pub name_en: String,
+    pub name_ru: String,
+    /// The canonical wording, one per game. A card says "Шипы 3"; what Шипы
+    /// means is said here, once.
+    pub rules_en: Option<String>,
+    pub rules_ru: Option<String>,
+    pub icon_url: Option<String>,
+    /// Points per unit, from the exchange table. `None` — not priced yet.
+    pub point_value: Option<f64>,
+    pub sort_order: Option<i32>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleKeywordDto {
+    pub id: String,
+    pub slug: String,
+    pub name_en: String,
+    pub name_ru: String,
+    pub rules_en: Option<String>,
+    pub rules_ru: Option<String>,
+    pub icon_url: Option<String>,
+    pub point_value: Option<f64>,
+    pub sort_order: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveBattleKeywordRequest {
+    pub slug: Option<String>,
+    pub name_en: String,
+    pub name_ru: String,
+    pub rules_en: Option<String>,
+    pub rules_ru: Option<String>,
+    pub icon_url: Option<String>,
+    pub point_value: Option<f64>,
+}
+
+// ── Испытания и партии ───────────────────────────────────────────────────────
+
+/// One place on a challenge's board: a card, by slug, and where it stands.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChallengePlacement {
+    pub card: String,
+    pub x: u8,
+    pub y: u8,
+}
+
+/// A challenge's arrangement, by slug rather than by snapshot.
+///
+/// A challenge is a template: editing a card must change every challenge that
+/// uses it. The snapshot is taken when a match begins and lives in the match.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChallengeSetup {
+    #[serde(default)]
+    pub player_board: Vec<ChallengePlacement>,
+    #[serde(default)]
+    pub player_hand: Vec<String>,
+    #[serde(default)]
+    pub keeper_board: Vec<ChallengePlacement>,
+    #[serde(default)]
+    pub keeper_hand: Vec<String>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct BattleChallenge {
+    pub id: Uuid,
+    pub slug: String,
+    pub title_en: String,
+    pub title_ru: String,
+    pub note_en: Option<String>,
+    pub note_ru: Option<String>,
+    /// JSON, see `ChallengeSetup`.
+    pub setup: String,
+    pub bot_depth: i16,
+    /// Paid once per challenge, never per victory.
+    pub reward_dust: i32,
+    pub status: String,
+    pub sort_order: Option<i32>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleChallengeDto {
+    pub id: String,
+    pub slug: String,
+    pub title_en: String,
+    pub title_ru: String,
+    pub note_en: Option<String>,
+    pub note_ru: Option<String>,
+    pub setup: ChallengeSetup,
+    pub bot_depth: i16,
+    pub reward_dust: i32,
+    pub status: String,
+    pub sort_order: Option<i32>,
+    /// Whether this visitor has already been paid for this challenge. `None`
+    /// for a guest, who is not being paid for anything yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub already_paid: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveBattleChallengeRequest {
+    pub slug: Option<String>,
+    pub title_en: String,
+    pub title_ru: String,
+    pub note_en: Option<String>,
+    pub note_ru: Option<String>,
+    pub setup: ChallengeSetup,
+    #[serde(default = "one")]
+    pub bot_depth: i16,
+    #[serde(default)]
+    pub reward_dust: i32,
+    pub status: String,
+}
+
+fn one() -> i16 {
+    1
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct BattleMatch {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub challenge_id: Option<Uuid>,
+    pub setup: String,
+    pub rules_version: i32,
+    /// The journal. The truth about a match; everything else is derived.
+    pub actions: String,
+    pub board_cache: Option<String>,
+    pub seq: i32,
+    pub outcome: Option<String>,
+    pub rounds: Option<i16>,
+    pub created_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+}
+
+/// A match as the scene needs it.
+///
+/// Carries the engine's own state and its own list of legal actions, unchanged.
+/// The client draws what it is given and computes no rule of its own — which is
+/// the only way to have a live board and one implementation of the rules.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleMatchDto {
+    pub id: String,
+    pub challenge_id: Option<String>,
+    /// The number the next action must carry.
+    pub seq: i32,
+    pub state: battle_core::MatchState,
+    pub legal_actions: Vec<battle_core::Action>,
+    /// What just happened, for the scene to play. Empty when a match is read
+    /// rather than acted upon.
+    pub events: Vec<battle_core::Event>,
+    pub outcome: Option<String>,
+    /// Dust credited by this very request. Zero on every later reading — the
+    /// reward belongs to the challenge, not to the victory.
+    pub reward_dust: i32,
+}
+
+/// One move by the player, with the number that makes a repeat harmless.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleActRequest {
+    pub seq: i32,
+    pub action: battle_core::Action,
+}
+
+/// One copy of one card, belonging to one person.
+///
+/// `level` lives here and never on the card: the card's rank is the keeper's
+/// choice and the same for everybody, the level is the state of *your* copy.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct BattleOwnedCard {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub card_id: Uuid,
+    pub level: i16,
+    pub acquired_at: DateTime<Utc>,
+    /// NULL while the card still wears the "new" mark on the shelf.
+    pub seen_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleOwnedCardDto {
+    pub card_id: String,
+    pub level: i16,
+    /// Whether the card still wears the mark. Sent instead of the timestamp:
+    /// the shelf needs the answer, not the hour.
+    pub is_new: bool,
+}
+
+/// Everything the shelf needs to know about the person looking at it.
+///
+/// One request rather than three: the shelf cannot draw a single card until it
+/// knows whether that card is theirs, and a page that asks three questions to
+/// draw one row is a page that flickers.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleMeDto {
+    pub dust: i64,
+    pub feed: i64,
+    pub owned: Vec<BattleOwnedCardDto>,
+}
+
+/// Taking a card off the shelf.
+///
+/// The price travels with the request only so the server can refuse a stale
+/// one: the card may have been repriced while the page stood open, and taking
+/// it at yesterday's price would be the keeper paying for the visitor's tab.
+/// The server never trusts this number, it compares it.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuyBattleCardRequest {
+    pub card_id: Uuid,
+    /// `dust` or `feed`.
+    pub currency: String,
+    pub expected_price: i32,
+}
+
+/// What the ceremony is told.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuyBattleCardResponse {
+    pub card_id: String,
+    pub level: i16,
+    /// Balance after, in the currency that was spent — so the shelf does not
+    /// have to ask again to redraw the margin.
+    pub balance: i64,
+    /// False when this card was already theirs and nothing was written. The
+    /// ceremony plays once; a repeat is answered, not celebrated.
+    pub taken_now: bool,
+}
+
+/// Raising your own copy a rung.
+///
+/// No rung number in the request: the server reads the level it holds and works
+/// out which rung that is. A client that could name the rung could name the
+/// cheap one.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RaiseBattleCardRequest {
+    pub card_id: Uuid,
+    /// The price the owner saw for the next rung. Compared, never trusted.
+    pub expected_price: i32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RaiseBattleCardResponse {
+    pub card_id: String,
+    /// The level after. The same number on a repeat: a rung is climbed once.
+    pub level: i16,
+    pub balance: i64,
+    /// False when the rung was already paid for and nothing was written.
+    pub raised_now: bool,
+}
+
+/// An act of attention worth a grain of dust.
+///
+/// One kind, one thing, once. The pair becomes the ledger key (`liked:{id}`),
+/// and that key is what keeps a re-read tale from paying twice.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleAttentionRequest {
+    /// `liked` | `seen` | `read`.
+    pub kind: String,
+    /// The work or the leaf the attention was paid to.
+    pub id: Uuid,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleAttentionResponse {
+    /// How much settled just now. Zero when this act was already paid for, or
+    /// when the keeper pays nothing for this kind.
+    pub dust: i32,
+    pub balance: i64,
+}
+
+/// What the keeper pays for attention the house already counts.
+///
+/// A setting and not a table: three numbers the keeper tunes, next to the
+/// frames. Zero anywhere means that kind pays nothing at all.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleDustRates {
+    pub liked: i32,
+    pub seen: i32,
+    pub read: i32,
+}
+
+impl Default for BattleDustRates {
+    /// A starting point, not a measurement. Deliberately small beside a
+    /// challenge (25): attention is the slow, wide source and a study is the
+    /// deliberate one, and the order between them should be felt.
+    fn default() -> Self {
+        Self { liked: 2, seen: 1, read: 3 }
+    }
 }
 
 /// The shelf, left to right. Position is the index in the list.
