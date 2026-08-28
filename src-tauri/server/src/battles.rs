@@ -586,6 +586,12 @@ pub fn normalize_focal(raw: Option<&str>) -> Option<String> {
 /// wears. Every field optional and `None` when absent, unlike `BattleFrame`
 /// itself: this is a patch, not a whole dressing, and a field left out here
 /// means "keep the tier's own", not "keep it empty".
+///
+/// The four insets travel with the picture rather than staying tier-only: a
+/// picture chosen just for this card (or, for a race's `level_frames`, just
+/// for this level) was never measured against the tier's own window, so
+/// keeping the tier's insets would centre the content on ornament that isn't
+/// there and cut into ornament that is.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FrameOverride {
@@ -595,31 +601,80 @@ pub struct FrameOverride {
     pub frame_mode: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aspect: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inset_top: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inset_right: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inset_bottom: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inset_left: Option<f32>,
 }
 
-/// `None` for "no override at all" — a broken or empty patch is the same as
-/// none, never a patch that blanks the tier's own picture.
-pub fn normalize_frame_override(raw: Option<&str>) -> Option<String> {
-    let parsed: FrameOverride = serde_json::from_str(raw?.trim()).ok()?;
+/// The clamps a `FrameOverride` patch must pass however it arrives — alone or
+/// as one slot of a race's `level_frames`. `None` for "no override at all": a
+/// broken or empty patch is the same as none, never a patch that blanks the
+/// tier's own picture.
+///
+/// Each inset is clamped on its own, unlike a tier's own (`clamp_pair`, which
+/// also caps top+bottom together): a race's own picture isn't mirrored
+/// top-to-bottom by `applyInsetDelta` in the first place, so there is no pair
+/// to check the sum of.
+fn clean_frame_override(parsed: FrameOverride) -> Option<FrameOverride> {
     let frame_image = parsed
         .frame_image
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string);
-    let frame_mode = parsed
-        .frame_mode
-        .filter(|m| valid_frame_mode(m));
+    let frame_mode = parsed.frame_mode.filter(|m| valid_frame_mode(m));
     let aspect = parsed.aspect.map(|a| a.clamp(0.3, 2.0));
-    if frame_image.is_none() && frame_mode.is_none() && aspect.is_none() {
+    let inset = |v: Option<f32>| v.filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 45.0));
+    let inset_top = inset(parsed.inset_top);
+    let inset_right = inset(parsed.inset_right);
+    let inset_bottom = inset(parsed.inset_bottom);
+    let inset_left = inset(parsed.inset_left);
+    if frame_image.is_none()
+        && frame_mode.is_none()
+        && aspect.is_none()
+        && inset_top.is_none()
+        && inset_right.is_none()
+        && inset_bottom.is_none()
+        && inset_left.is_none()
+    {
         return None;
     }
-    serde_json::to_string(&FrameOverride {
+    Some(FrameOverride {
         frame_image,
         frame_mode,
         aspect,
+        inset_top,
+        inset_right,
+        inset_bottom,
+        inset_left,
     })
-    .ok()
+}
+
+pub fn normalize_frame_override(raw: Option<&str>) -> Option<String> {
+    let parsed: FrameOverride = serde_json::from_str(raw?.trim()).ok()?;
+    serde_json::to_string(&clean_frame_override(parsed)?).ok()
+}
+
+/// A race's own dress per level of an owned copy — five slots, each the same
+/// patch a card's own `frame_override` is. Padded/truncated to exactly 5 so a
+/// client always finds a slot for every level; `None` (not `[null,null,...]`)
+/// when every slot ends up empty, keeping the column unused rather than
+/// storing five nulls forever.
+pub fn normalize_level_frames(raw: Option<&str>) -> Option<String> {
+    let parsed: Vec<Option<FrameOverride>> = serde_json::from_str(raw?.trim()).ok()?;
+    let mut slots: Vec<Option<FrameOverride>> = (0..5)
+        .map(|i| parsed.get(i).cloned().flatten().and_then(clean_frame_override))
+        .collect();
+    if slots.iter().all(Option::is_none) {
+        return None;
+    }
+    slots.truncate(5);
+    serde_json::to_string(&slots).ok()
 }
 
 /// How a rank is dressed. Frames are the design, cards are the data — a rule
@@ -1170,6 +1225,7 @@ mod tests {
             race_name_en: None,
             race_name_ru: None,
             race_icon_url: None,
+            race_level_frames: None,
             type_en: None,
             type_ru: None,
             title_en: "Witch".into(),
@@ -1197,6 +1253,7 @@ mod tests {
             rules_version: 1,
             price_dust: Some(10),
             price_feed: None,
+            level_price_dust: None,
             art_url: None,
             art_url_override: None,
             art_focal: None,

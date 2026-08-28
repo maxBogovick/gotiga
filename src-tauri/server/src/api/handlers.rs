@@ -205,6 +205,72 @@ fn build_image_variants(data: &[u8]) -> Result<EncodedImageVariants> {
     })
 }
 
+/// One image, re-encoded into another common format at full resolution — no
+/// resizing, unlike `build_image_variants`: a converter that quietly shrinks
+/// the keeper's file has converted it into something else. CPU-bound: runs
+/// inside spawn_blocking.
+fn convert_image(
+    data: &[u8],
+    format: &str,
+    max_dimension: Option<u32>,
+) -> Result<(&'static str, &'static str, Vec<u8>)> {
+    let decoded = image::load_from_memory(data)
+        .map_err(|e| AppError::BadRequest(format!("Invalid image file: {}", e)))?;
+    if (decoded.width() as u64) * (decoded.height() as u64) > MAX_IMAGE_PIXELS {
+        return Err(AppError::BadRequest(
+            "Image dimensions are too large".into(),
+        ));
+    }
+    // Fit-within-box, never upscale — the same shape as every other resize in
+    // this file (FRAME_MAX_PX, PREVIEW_PX/MEDIUM_PX/THUMB_PX). A converter that
+    // enlarges a file the keeper never asked to enlarge would be inventing
+    // detail that isn't there.
+    let decoded = match max_dimension {
+        Some(max) if max > 0 && (decoded.width() > max || decoded.height() > max) => {
+            decoded.resize(max, max, FilterType::Lanczos3)
+        }
+        _ => decoded,
+    };
+    match format {
+        // Alpha is simply dropped, the same simplification `build_image_variants`
+        // already makes for every JPEG rendition — a faithful re-encode, not a
+        // background compositor.
+        "jpeg" => Ok(("image/jpeg", "jpg", encode_jpeg_bytes(&decoded.to_rgb8(), 95)?)),
+        "png" => {
+            let mut bytes = Vec::new();
+            decoded
+                .write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
+                .map_err(|e| AppError::Internal(format!("Failed to encode image: {}", e)))?;
+            Ok(("image/png", "png", bytes))
+        }
+        "webp" => Ok(("image/webp", "webp", encode_webp_rgba(&decoded.to_rgba8()))),
+        other => Err(AppError::BadRequest(format!(
+            "Unsupported target format: {other}"
+        ))),
+    }
+}
+
+/// Strip whatever would break a `Content-Disposition` header or smuggle a
+/// second parameter into it — a quote ends the filename early, and control
+/// characters are simply not legal there. What survives keeps the keeper's
+/// own name legible in their downloads folder.
+fn sanitize_download_basename(name: &str) -> String {
+    let base = std::path::Path::new(name)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("image");
+    let cleaned: String = base
+        .chars()
+        .filter(|c| !c.is_control() && *c != '"' && *c != '\\')
+        .collect();
+    let trimmed = cleaned.trim();
+    if trimmed.is_empty() {
+        "image".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 async fn write_bytes(upload_dir: &str, relative_path: &str, bytes: &[u8]) -> Result<()> {
     let path = std::path::Path::new(upload_dir).join(relative_path);
     if let Some(parent) = path.parent() {
@@ -4088,6 +4154,73 @@ pub async fn admin_upload_battle_frame_art(
         })));
     }
     Err(AppError::BadRequest("No file field found".to_string()))
+}
+
+// === TOOLS ===
+
+/// Convert one image to another common format and hand the result straight
+/// back — the only handler in this server that returns raw image bytes
+/// instead of a saved file's URL, because there is nothing to save: this is
+/// a one-off conversion for the keeper's own use, never written to disk or
+/// the media library.
+pub async fn admin_convert_image(mut multipart: Multipart) -> Result<impl IntoResponse> {
+    let mut format: Option<String> = None;
+    let mut max_dimension: Option<u32> = None;
+    let mut file_name: Option<String> = None;
+    let mut file_data: Option<Bytes> = None;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::BadRequest(e.to_string()))?
+    {
+        let name = field.name().unwrap_or("").to_string();
+        if name == "format" {
+            format = field.text().await.ok().filter(|s| !s.trim().is_empty());
+        } else if name == "maxDimension" {
+            // Forgiving on purpose: an empty or unparsable value just means
+            // "no cap", the same as the field being absent entirely.
+            max_dimension = field
+                .text()
+                .await
+                .ok()
+                .and_then(|s| s.trim().parse::<u32>().ok())
+                .filter(|n| *n > 0);
+        } else if name == "file" {
+            file_name = Some(field.file_name().unwrap_or("image").to_string());
+            file_data = Some(
+                field
+                    .bytes()
+                    .await
+                    .map_err(|e| AppError::Io(std::io::Error::other(e)))?,
+            );
+        }
+    }
+
+    let format = format.ok_or_else(|| AppError::BadRequest("No target format given".to_string()))?;
+    let file_name = file_name.unwrap_or_else(|| "image".to_string());
+    let data = file_data.ok_or_else(|| AppError::BadRequest("No file field found".to_string()))?;
+    if data.len() > MAX_IMAGE_BYTES {
+        return Err(AppError::BadRequest("Image file is too large".into()));
+    }
+
+    let bytes = data.to_vec();
+    let (mime, ext, out) =
+        tokio::task::spawn_blocking(move || convert_image(&bytes, &format, max_dimension))
+            .await
+            .map_err(|e| AppError::Internal(format!("Conversion task failed: {}", e)))??;
+
+    let base = sanitize_download_basename(&file_name);
+    Ok((
+        [
+            (axum::http::header::CONTENT_TYPE, mime.to_string()),
+            (
+                axum::http::header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{base}.{ext}\""),
+            ),
+        ],
+        out,
+    ))
 }
 
 // === RACES ===

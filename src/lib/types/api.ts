@@ -1865,6 +1865,9 @@ export interface BattleCard {
     raceNameRu: string | null;
     /** The race's shared icon, already a public URL. */
     raceIconUrl: string | null;
+    /** The race's own dress per level, joined in the same way as the icon:
+     *  JSON array of 5 `{frameImage?,frameMode?,aspect?}` patches, or `null`. */
+    raceLevelFrames: string | null;
     typeEn: string | null;
     typeRu: string | null;
     titleEn: string;
@@ -2049,6 +2052,10 @@ export interface BattleRace {
     noteRu: string | null;
     /** Shown in the header band of every card of this race. */
     iconUrl: string | null;
+    /** This race's own dress per level of an owned copy — JSON array of 5
+     *  `{frameImage?,frameMode?,aspect?}` patches, or `null` to wear the
+     *  tier's frame at every level. */
+    levelFrames: string | null;
     sortOrder?: number | null;
     /** How many cards stand under it — what a rename or a removal would touch. */
     cardCount: number;
@@ -2408,4 +2415,5 @@ export interface SaveBattleRaceRequest {
     noteEn?: string | null;
     noteRu?: string | null;
     iconUrl?: string | null;
+    levelFrames?: string | null;
 }

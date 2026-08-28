@@ -6227,7 +6227,8 @@ impl Repository {
                c.art_url, c.art_focal, c.frame_override, c.shelf_order, c.created_at, c.updated_at,
                f.name AS figurine_name, f.slug AS figurine_slug,
                fi.file_path AS figurine_face_path, fi.id AS figurine_face_id,
-               r.name_en AS race_name_en, r.name_ru AS race_name_ru, r.icon_url AS race_icon_url
+               r.name_en AS race_name_en, r.name_ru AS race_name_ru, r.icon_url AS race_icon_url,
+               r.level_frames AS race_level_frames
         FROM battle_cards c
         LEFT JOIN figurines f ON f.id = c.figurine_id
         LEFT JOIN battle_races r ON r.id = c.race_id
@@ -6481,7 +6482,8 @@ impl Repository {
     /// what tells the keeper whether a rename is a small act or a large one.
     pub async fn list_battle_races(&self) -> Result<Vec<crate::models::BattleRaceListed>> {
         Ok(sqlx::query_as::<_, crate::models::BattleRaceListed>(
-            "SELECT r.id, r.slug, r.name_en, r.name_ru, r.note_en, r.note_ru, r.icon_url, r.sort_order,
+            "SELECT r.id, r.slug, r.name_en, r.name_ru, r.note_en, r.note_ru, r.icon_url,
+                    r.level_frames, r.sort_order,
                     (SELECT COUNT(*) FROM battle_cards c WHERE c.race_id = r.id)::bigint
                         AS card_count
                FROM battle_races r
@@ -6513,10 +6515,11 @@ impl Repository {
         note_en: Option<&str>,
         note_ru: Option<&str>,
         icon_url: Option<&str>,
+        level_frames: Option<&str>,
     ) -> Result<crate::models::BattleRace> {
         Ok(sqlx::query_as::<_, crate::models::BattleRace>(
-            "INSERT INTO battle_races (slug, name_en, name_ru, note_en, note_ru, icon_url)
-             VALUES ($1,$2,$3,$4,$5,$6) RETURNING *",
+            "INSERT INTO battle_races (slug, name_en, name_ru, note_en, note_ru, icon_url, level_frames)
+             VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *",
         )
         .bind(slug)
         .bind(name_en)
@@ -6524,6 +6527,7 @@ impl Repository {
         .bind(note_en)
         .bind(note_ru)
         .bind(icon_url)
+        .bind(level_frames)
         .fetch_one(&self.pg_pool)
         .await?)
     }
@@ -6537,10 +6541,11 @@ impl Repository {
         note_en: Option<&str>,
         note_ru: Option<&str>,
         icon_url: Option<&str>,
+        level_frames: Option<&str>,
     ) -> Result<crate::models::BattleRace> {
         sqlx::query_as::<_, crate::models::BattleRace>(
             "UPDATE battle_races SET slug = $2, name_en = $3, name_ru = $4,
-                    note_en = $5, note_ru = $6, icon_url = $7, updated_at = NOW()
+                    note_en = $5, note_ru = $6, icon_url = $7, level_frames = $8, updated_at = NOW()
               WHERE id = $1 RETURNING *",
         )
         .bind(id)
@@ -6550,6 +6555,7 @@ impl Repository {
         .bind(note_en)
         .bind(note_ru)
         .bind(icon_url)
+        .bind(level_frames)
         .fetch_optional(&self.pg_pool)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Battle race {id} not found")))

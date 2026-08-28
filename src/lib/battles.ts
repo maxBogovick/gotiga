@@ -106,11 +106,18 @@ export function frameFor(tier: number, frames: BattleFrame[] | null | undefined)
 }
 
 /** A card's own exception to its tier's shared frame — a picture just for
- *  this one card, without touching what every other card of that rank wears. */
+ *  this one card, without touching what every other card of that rank wears.
+ *  The four insets are here too, not just the picture: a race's own frame per
+ *  level wears a picture the tier's insets were never tuned for, so where its
+ *  window actually sits has to travel with it. */
 export interface FrameOverride {
   frameImage?: string;
   frameMode?: BattleFrameMode;
   aspect?: number;
+  insetTop?: number;
+  insetRight?: number;
+  insetBottom?: number;
+  insetLeft?: number;
 }
 
 /** A broken or empty override is the same as none: the tier's own frame. */
@@ -124,27 +131,57 @@ export function parseFrameOverride(raw: string | null | undefined): FrameOverrid
   }
 }
 
-/**
- * The frame this ONE card actually wears: the tier's shared frame, with the
- * card's own `frameOverride` patched on top where it sets something. This is
- * the exception the user asked the frame-click to offer — "pick the tier, or
- * wear a picture of your own" — kept to `frameImage`/`frameMode`/`aspect`
- * only, so the rest of the tier's design (paper, ink, bands, insets) still
- * belongs to the dictionary, not the card.
- */
-export function frameForCard(
-  card: Pick<BattleCard, 'tier' | 'frameOverride'>,
-  frames: BattleFrame[] | null | undefined,
-): BattleFrame {
-  const base = frameFor(card.tier, frames);
-  const override = parseFrameOverride(card.frameOverride);
-  if (!override) return base;
+/** A race's own dress per level of an owned copy: 5 slots, index 0 = level 1.
+ *  Anything unparseable or short comes back as 5 empty slots, never fewer. */
+export function parseLevelFrames(raw: string | null | undefined): (FrameOverride | null)[] {
+  const empty: (FrameOverride | null)[] = [null, null, null, null, null];
+  if (!raw) return empty;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return empty;
+    return empty.map((_, i) => (parsed[i] && typeof parsed[i] === 'object' ? parsed[i] : null));
+  } catch {
+    return empty;
+  }
+}
+
+/** Patch a base frame's picture and window from an override, the one merge
+ *  every layer of dress uses. */
+function patchFrame(base: BattleFrame, patch: FrameOverride | null): BattleFrame {
+  if (!patch) return base;
   return {
     ...base,
-    frameImage: override.frameImage ?? base.frameImage,
-    frameMode: override.frameMode ?? base.frameMode,
-    aspect: override.aspect ?? base.aspect,
+    frameImage: patch.frameImage ?? base.frameImage,
+    frameMode: patch.frameMode ?? base.frameMode,
+    aspect: patch.aspect ?? base.aspect,
+    insetTop: patch.insetTop ?? base.insetTop,
+    insetRight: patch.insetRight ?? base.insetRight,
+    insetBottom: patch.insetBottom ?? base.insetBottom,
+    insetLeft: patch.insetLeft ?? base.insetLeft,
   };
+}
+
+/**
+ * The frame this ONE card actually wears, built in three layers:
+ *   1. the tier's shared frame
+ *   2. the card's race, dressed for this level of an owned copy (if the race
+ *      set one for that level — a level nobody dressed keeps the tier's own)
+ *   3. this one card's own `frameOverride` — the keeper's most specific
+ *      exception, "wear a picture of your own", wins over both of the above
+ * Kept to `frameImage`/`frameMode`/`aspect` at every layer, so the rest of the
+ * tier's design (paper, ink, bands, insets) always belongs to the dictionary,
+ * never to a race or a single card.
+ */
+export function frameForCard(
+  card: Pick<BattleCard, 'tier' | 'frameOverride' | 'raceLevelFrames'>,
+  frames: BattleFrame[] | null | undefined,
+  level?: number | null,
+): BattleFrame {
+  let frame = frameFor(card.tier, frames);
+  const levelFrames = parseLevelFrames(card.raceLevelFrames);
+  frame = patchFrame(frame, levelFrames[clampTier(level ?? 1) - 1]);
+  frame = patchFrame(frame, parseFrameOverride(card.frameOverride));
+  return frame;
 }
 
 /**
@@ -214,16 +251,28 @@ const OPPOSITE_INSET: Record<InsetKey, InsetKey> = {
 };
 
 /**
- * Grows `kind` by `delta` and mirrors the same delta onto the side facing
- * it — the frame's two parallel sides are edited as a pair, not four
- * independent numbers, so narrowing the left always narrows the right by
- * the same amount instead of leaving the keeper to match them by eye.
- * Shared by the on-card drag handles and the Frames tab's own sliders, so
- * both ways of setting an inset agree. Each side is clamped on its own.
+ * Grows `kind` by `delta` and, when `mirror` (the default), the side facing
+ * it by the same amount — a tier's two parallel sides are edited as a pair,
+ * not four independent numbers, so narrowing the left always narrows the
+ * right by the same amount instead of leaving the keeper to match them by
+ * eye. Shared by the on-card drag handles and the Frames tab's own sliders,
+ * so both ways of setting an inset agree. Each side is clamped on its own.
+ *
+ * A race's own frame per level does NOT mirror: its window was cut into one
+ * particular picture, off-centre as that picture happens to be — the herbs
+ * hanging along the top of a frame take more room than the moss along its
+ * foot, and forcing the two to move together would put the fit out of the
+ * keeper's reach.
  */
-export function applyInsetDelta(target: BattleFrame, kind: InsetKey, delta: number): void {
+export function applyInsetDelta(
+  target: BattleFrame | FrameOverride,
+  kind: InsetKey,
+  delta: number,
+  mirror = true,
+): void {
   const current = target[kind] ?? 0;
   target[kind] = Math.min(INSET_MAX, Math.max(0, current + delta));
+  if (!mirror) return;
   const opposite = OPPOSITE_INSET[kind];
   const currentOpposite = target[opposite] ?? 0;
   target[opposite] = Math.min(INSET_MAX, Math.max(0, currentOpposite + delta));

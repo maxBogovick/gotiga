@@ -3447,6 +3447,9 @@ pub struct BattleCardListed {
     /// The race's shared icon — already a public URL, joined in from the
     /// dictionary so the shelf never has to fetch the race list just to draw it.
     pub race_icon_url: Option<String>,
+    /// The race's own dress per level, joined in the same way as the icon —
+    /// JSON, see `battles::normalize_level_frames`.
+    pub race_level_frames: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3462,6 +3465,7 @@ pub struct BattleCardDto {
     pub race_name_en: Option<String>,
     pub race_name_ru: Option<String>,
     pub race_icon_url: Option<String>,
+    pub race_level_frames: Option<String>,
     pub type_en: Option<String>,
     pub type_ru: Option<String>,
     pub title_en: String,
@@ -4031,6 +4035,10 @@ pub struct BattleRace {
     /// URL — set once here, worn by every card, the same choice already made
     /// for frames.
     pub icon_url: Option<String>,
+    /// This race's own dress per level of an owned copy — JSON, see
+    /// `battles::normalize_level_frames`. `None` wears the tier's frame at
+    /// every level.
+    pub level_frames: Option<String>,
     pub sort_order: Option<i32>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -4048,6 +4056,7 @@ pub struct BattleRaceListed {
     pub note_en: Option<String>,
     pub note_ru: Option<String>,
     pub icon_url: Option<String>,
+    pub level_frames: Option<String>,
     pub sort_order: Option<i32>,
     pub card_count: i64,
 }
@@ -4062,6 +4071,8 @@ pub struct BattleRaceDto {
     pub note_en: Option<String>,
     pub note_ru: Option<String>,
     pub icon_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub level_frames: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort_order: Option<i32>,
     /// How many cards stand under this race. The keeper sees what a rename or a
@@ -4078,4 +4089,5 @@ pub struct SaveBattleRaceRequest {
     pub note_en: Option<String>,
     pub note_ru: Option<String>,
     pub icon_url: Option<String>,
+    pub level_frames: Option<String>,
 }

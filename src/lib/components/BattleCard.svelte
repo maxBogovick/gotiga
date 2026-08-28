@@ -53,6 +53,7 @@
     editable = false,
     editLang = null,
     frameEditable = false,
+    frameEditTarget = null,
     raceIconEditable = false,
     onEditRace,
     onIconUpload,
@@ -83,6 +84,14 @@
      *  numbers. Set only by the Frames tab, on the sample it dresses — never
      *  together with `editable`, which is a different card's content. */
     frameEditable?: boolean;
+    /** Redirects the four inset handles onto a race's own per-level patch
+     *  instead of the tier's shared frame — set only by the Races tab, on the
+     *  sample it dresses, together with `frameEditable`. The header/art/foot
+     *  seams and the badges stay off in this mode: a picture chosen for one
+     *  level isn't the place to also retune the tier's bands. Insets here
+     *  don't mirror to the opposite side either — a race's own picture is
+     *  rarely symmetric. */
+    frameEditTarget?: FrameOverride | null;
     /** The header icon alone is a live uploader, independent of `editable` —
      *  what the Races tab's own sample card sets, where nothing else here is
      *  this card's to edit. */
@@ -94,7 +103,7 @@
     onError?: (message: string) => void;
   } = $props();
 
-  let frame = $derived(frameForCard(card, frames));
+  let frame = $derived(frameForCard(card, frames, level));
   /** The language the card's own text reads as. A reader always sees the
    *  site's language; the keeper's desk passes its RU/EN toggle instead, so
    *  the preview shows exactly the language being typed into the sidebar
@@ -209,7 +218,6 @@
         frameImage: art.url,
         frameMode: art.hasAlpha ? 'overlay' : 'behind',
       };
-      if (art.width && art.height) patch.aspect = art.width / art.height;
       card.frameOverride = JSON.stringify(patch);
     } catch (e) {
       onError?.(String(e));
@@ -331,6 +339,15 @@
     return frameFor(card.tier, frames);
   }
 
+  /** What the inset handles actually mutate: a race's own per-level patch
+   *  when `frameEditTarget` names one, else the tier's shared frame — the
+   *  same fallback `rankFrame` uses, kept separate because `frameEditTarget`
+   *  is missing the header/art/foot/badge fields `rankFrame`'s other callers
+   *  need. */
+  function insetTarget() {
+    return frameEditTarget ?? rankFrame();
+  }
+
   function shareDragStart(kind: ShareKey, event: PointerEvent & { currentTarget: HTMLElement }) {
     if (!frameEditable) return;
     event.preventDefault();
@@ -378,7 +395,7 @@
     if (!size) return;
     const movement = vertical ? event.movementY : event.movementX;
     const delta = ((movement / size) * 100) * INSET_SIGN[kind];
-    applyInsetDelta(rankFrame(), kind, delta);
+    applyInsetDelta(insetTarget(), kind, delta, !frameEditTarget);
   }
 
   function frameDragMove(event: PointerEvent) {
@@ -524,7 +541,7 @@
         </span>
       {/if}
 
-      {#if frameEditable}
+      {#if frameEditable && !frameEditTarget}
         <div
           class="share-handle share-handle--head"
           class:active={frameDragKind === 'headerShare'}
@@ -564,7 +581,7 @@
       {/if}
       <span class="foil" aria-hidden="true"></span>
 
-      {#if frameEditable}
+      {#if frameEditable && !frameEditTarget}
         <div
           class="share-handle share-handle--art"
           class:active={frameDragKind === 'artShare'}
@@ -618,7 +635,7 @@
 
     <!-- 4. The footer. -->
     <footer class="band band--foot">
-      {#if frameEditable}
+      {#if frameEditable && !frameEditTarget}
         <div
           class="share-handle share-handle--foot"
           class:active={frameDragKind === 'footShare'}
@@ -733,8 +750,8 @@
       <button
         type="button"
         class="corner corner--cost corner--shape-{frame.costShape ?? 'circle'}"
-        class:corner--editable={frameEditable}
-        disabled={!frameEditable}
+        class:corner--editable={frameEditable && !frameEditTarget}
+        disabled={!frameEditable || !!frameEditTarget}
         style="left:{frame.costX ?? DEFAULT_COST_X}%; top:{frame.costY ?? DEFAULT_COST_Y}%"
         title={$t('battlesCostLabel')}
         onpointerdown={(e) => badgeDragStart('cost', e)}
@@ -746,8 +763,8 @@
       <button
         type="button"
         class="corner corner--power corner--shape-{frame.powerShape ?? 'circle'}"
-        class:corner--editable={frameEditable}
-        disabled={!frameEditable}
+        class:corner--editable={frameEditable && !frameEditTarget}
+        disabled={!frameEditable || !!frameEditTarget}
         style="left:{frame.powerX ?? DEFAULT_POWER_X}%; top:{frame.powerY ?? DEFAULT_POWER_Y}%"
         title={$t('battlesPowerLabel')}
         onpointerdown={(e) => badgeDragStart('power', e)}
@@ -1542,19 +1559,17 @@
     touch-action: none;
   }
 
-  /* The dashed line is the whole point of the handle being visible at all —
-     the invisible 6cqi hit area is only ever felt, never seen, so the seam
-     itself has to be drawn or there is nothing on screen to tell the keeper
-     where one band ends and the drag even starts. Faint at rest so it reads
-     as a guide and not as part of the card's own ink; full strength on
-     hover, focus, or mid-drag, when it is the thing being watched. */
+  /* The dashed line is only for the moment of dragging — the frame's own
+     picture is the card's border, so the guide stays invisible at rest and
+     appears only on hover, focus, or mid-drag, when the keeper is actually
+     looking for the seam. The invisible 6cqi hit area is felt regardless. */
   .share-handle::after,
   .inset-handle::after {
     content: '';
     position: absolute;
     border-style: dashed;
     border-color: color-mix(in oklab, var(--ink) 70%, transparent);
-    opacity: 0.6;
+    opacity: 0;
     transition: opacity 150ms ease;
   }
 

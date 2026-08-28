@@ -7176,6 +7176,7 @@ impl AppService {
             race_name_en: row.race_name_en,
             race_name_ru: row.race_name_ru,
             race_icon_url: row.race_icon_url,
+            race_level_frames: row.race_level_frames,
             type_en: row.type_en,
             type_ru: row.type_ru,
             title_en: row.title_en,
@@ -8284,6 +8285,7 @@ impl AppService {
             note_en: row.note_en,
             note_ru: row.note_ru,
             icon_url: row.icon_url,
+            level_frames: row.level_frames,
             sort_order: row.sort_order,
             card_count: row.card_count,
         }
@@ -8309,6 +8311,7 @@ impl AppService {
                 p.note_en.as_deref(),
                 p.note_ru.as_deref(),
                 p.icon_url.as_deref(),
+                p.level_frames.as_deref(),
             )
             .await?;
         Self::log_domain_event("battle_race_created", "battle_race", rec.id, "ok");
@@ -8332,6 +8335,7 @@ impl AppService {
                 p.note_en.as_deref(),
                 p.note_ru.as_deref(),
                 p.icon_url.as_deref(),
+                p.level_frames.as_deref(),
             )
             .await?;
         Self::log_domain_event("battle_race_updated", "battle_race", rec.id, "ok");
@@ -8396,6 +8400,7 @@ impl AppService {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(str::to_string);
+        let level_frames = crate::battles::normalize_level_frames(req.level_frames.as_deref());
         Ok(PreparedRace {
             slug: crate::battles::unique_slug(req.slug.as_deref(), &name_en, taken),
             name_en,
@@ -8403,6 +8408,7 @@ impl AppService {
             note_en: note(req.note_en.as_deref()),
             note_ru: note(req.note_ru.as_deref()),
             icon_url,
+            level_frames,
         })
     }
 }
@@ -8429,6 +8435,7 @@ struct PreparedRace {
     note_en: Option<String>,
     note_ru: Option<String>,
     icon_url: Option<String>,
+    level_frames: Option<String>,
 }
 
 /// The card as it will be written, after clamping. Mirrors `PreparedGazetteLeaf`:

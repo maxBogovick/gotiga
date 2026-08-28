@@ -680,6 +680,16 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                         auth_middleware,
                     )),
             )
+            // === TOOLS (ADMIN) ===
+            .route(
+                "/admin/tools/convert-image",
+                post(handlers::admin_convert_image)
+                    .route_layer(DefaultBodyLimit::max(MEDIA_UPLOAD_LIMIT))
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
             // === ORDERS (ADMIN) ===
             .route(
                 "/admin/analytics/overview",

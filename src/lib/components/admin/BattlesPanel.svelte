@@ -24,7 +24,9 @@
     applyInsetDelta,
     frameName,
     parseFocal,
+    parseLevelFrames,
     pickImageFile,
+    type FrameOverride,
     type InsetKey,
   } from '$lib/battles';
   import { SITE_FONTS } from '$lib/fonts';
@@ -98,6 +100,10 @@
   let raceNoteEn = $state('');
   let raceNoteRu = $state('');
   let raceIconUrl = $state('');
+  /** This race's own dress per level of an owned copy — 5 slots, index 0 = level 1. */
+  let raceLevelFrames = $state<(FrameOverride | null)[]>([null, null, null, null, null]);
+  /** Which level's slot the uploader and the sample card currently show. */
+  let raceLevelPreview = $state(1);
 
   /**
    * Шесть чисел тела. Списком, а не шестью копиями разметки: они отличаются
@@ -266,6 +272,7 @@
       raceNameEn: null,
       raceNameRu: null,
       raceIconUrl: null,
+      raceLevelFrames: null,
       typeEn: null,
       typeRu: null,
       titleEn: '',
@@ -387,9 +394,10 @@
     raceNameEn: raceNameEn || raceNameRu ? raceNameEn || raceNameRu : null,
     raceNameRu: raceNameRu || raceNameEn ? raceNameRu || raceNameEn : null,
     raceIconUrl: raceIconUrl.trim() || null,
+    raceLevelFrames: raceLevelFrames.some((f) => f) ? JSON.stringify(raceLevelFrames) : null,
   });
 
-  /** A frame picture, kept transparent, with the card's ratio taken from it. */
+  /** A frame picture, kept transparent, stretched to the card's fixed ratio. */
   async function uploadFrameArt() {
     const file = await pickImageFile();
     if (!file) return;
@@ -398,10 +406,9 @@
       const art = await api.adminUploadBattleFrameArt(file);
       const frame = frames[frameIndex];
       frame.frameImage = art.url;
-      // The picture is stretched over the whole card, so the card must take the
-      // picture's proportions or the carving comes out squashed. Set here, once,
-      // instead of leaving the keeper to find the slider and guess.
-      if (art.width && art.height) frame.aspect = art.width / art.height;
+      // The card's ratio is fixed game-wide; the picture is stretched to fit
+      // it, not the other way around, so different frame uploads can never
+      // leave cards different shapes. The aspect slider still overrides it.
       if (art.hasAlpha) {
         frame.frameMode = 'overlay';
       } else {
@@ -508,22 +515,31 @@
     raceNoteEn = race?.noteEn ?? '';
     raceNoteRu = race?.noteRu ?? '';
     raceIconUrl = race?.iconUrl ?? '';
+    raceLevelFrames = parseLevelFrames(race?.levelFrames);
+    raceLevelPreview = 1;
   }
 
   async function saveRace() {
     saving = true;
     try {
-      await api.adminSaveBattleRace(
+      const saved = await api.adminSaveBattleRace(
         {
           nameEn: raceNameEn.trim(),
           nameRu: raceNameRu.trim(),
           noteEn: raceNoteEn.trim() || null,
           noteRu: raceNoteRu.trim() || null,
           iconUrl: raceIconUrl.trim() || null,
+          levelFrames: raceLevelFrames.some((f) => f) ? JSON.stringify(raceLevelFrames) : null,
         },
         raceDraftId ?? undefined,
       );
-      races = await api.getBattleRaces();
+      // Not re-fetched: the race dictionary is a cached public read (an hour
+      // on the shelf, a minute here), so a re-fetch right after saving could
+      // still hand back what was true before this save. The save's own
+      // response is already the truth, no round-trip needed to confirm it.
+      races = raceDraftId
+        ? races.map((r) => (r.id === saved.id ? saved : r))
+        : [...races, saved];
       openRace(null);
       flash($t('adminBattlesRaceSaved'));
     } catch (e) {
@@ -531,6 +547,31 @@
     } finally {
       saving = false;
     }
+  }
+
+  /** A picture for this one level of this race, kept transparent, stretched
+   *  to the card's fixed ratio — the same choice a tier's own frame makes. */
+  async function uploadRaceLevelFrame(index: number) {
+    const file = await pickImageFile();
+    if (!file) return;
+    uploading = true;
+    try {
+      const art = await api.adminUploadBattleFrameArt(file);
+      const patch: FrameOverride = {
+        frameImage: art.url,
+        frameMode: art.hasAlpha ? 'overlay' : 'behind',
+      };
+      if (!art.hasAlpha) flash($t('adminBattlesFrameNoAlpha'), 8000);
+      raceLevelFrames[index] = patch;
+    } catch (e) {
+      flash(String(e), 6000);
+    } finally {
+      uploading = false;
+    }
+  }
+
+  function clearRaceLevelFrame(index: number) {
+    raceLevelFrames[index] = null;
   }
 
   async function removeRace(race: BattleRace) {
@@ -572,6 +613,7 @@
     draft.raceNameEn = picked?.nameEn ?? null;
     draft.raceNameRu = picked?.nameRu ?? null;
     draft.raceIconUrl = picked?.iconUrl ?? null;
+    draft.raceLevelFrames = picked?.levelFrames ?? null;
   }
 
   const TRAITS_MAX = 8;
@@ -1580,9 +1622,12 @@
           card={raceSample}
           {frames}
           owned={true}
+          level={raceLevelPreview}
           transition={false}
           interactive={false}
           raceIconEditable={true}
+          frameEditable={!!raceLevelFrames[raceLevelPreview - 1]}
+          frameEditTarget={raceLevelFrames[raceLevelPreview - 1]}
           onIconUpload={(url) => (raceIconUrl = url)}
           onError={(e) => flash(e, 6000)}
         />
@@ -1592,6 +1637,33 @@
             class="mt-3 px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
           >{$t('adminBattlesFrameArtClear')}</button>
         {/if}
+
+        <p class="mt-6 mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminBattlesRaceLevelFrames')}</p>
+        <p class="max-w-[62ch] mb-3 text-[11px] leading-relaxed italic text-[#8a6a55]">{$t('adminBattlesRaceLevelFramesHint')}</p>
+        <div class="flex gap-2">
+          {#each [1, 2, 3, 4, 5] as lvl (lvl)}
+            <button
+              onclick={() => (raceLevelPreview = lvl)}
+              class="w-11 h-11 flex items-center justify-center text-xs border {raceLevelPreview === lvl ? 'border-[#c65f3c] text-[#c65f3c]' : 'border-[#34251c]/20 text-[#5f4636]'}"
+              style={raceLevelFrames[lvl - 1]?.frameImage
+                ? `background-image:url("${raceLevelFrames[lvl - 1]?.frameImage}");background-size:100% 100%;background-repeat:no-repeat;`
+                : ''}
+            >{#if !raceLevelFrames[lvl - 1]?.frameImage}{lvl}{/if}</button>
+          {/each}
+        </div>
+        <div class="flex items-center gap-3 mt-3">
+          <button
+            onclick={() => uploadRaceLevelFrame(raceLevelPreview - 1)}
+            disabled={uploading}
+            class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
+          >{$t('adminBattlesFrameArtUpload')}</button>
+          {#if raceLevelFrames[raceLevelPreview - 1]}
+            <button
+              onclick={() => clearRaceLevelFrame(raceLevelPreview - 1)}
+              class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
+            >{$t('adminBattlesFrameArtClear')}</button>
+          {/if}
+        </div>
       </aside>
     </div>
   {:else}

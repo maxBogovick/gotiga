@@ -34,6 +34,7 @@
     import TalesPanel from '$lib/components/admin/TalesPanel.svelte';
     import BattlesPanel from '$lib/components/admin/BattlesPanel.svelte';
     import LogsPanel from '$lib/components/admin/LogsPanel.svelte';
+    import ToolsPanel from '$lib/components/admin/ToolsPanel.svelte';
     import { t, registerAdminDicts, type TranslationKey } from '$lib/i18n';
     import { enAdmin } from '$lib/i18n/en.admin';
     import { ruAdmin } from '$lib/i18n/ru.admin';
@@ -161,6 +162,7 @@
                 ['analytics',     'adminTabAnalytics'],
                 ['logs',          'adminTabLogs'],
                 ['server',        'adminTabServer'],
+                ['tools',         'adminTabTools'],
                 ['contact',       'adminTabContact'],
                 ['booking-rules', 'adminTabBookingRules'],
                 ['releases',      'adminTabReleases'],
@@ -840,6 +842,8 @@
             <div in:fade class="h-full overflow-y-auto"><SmtpSettingsPanel /></div>
         {:else if activeTab === 'logs'}
             <div in:fade class="h-full overflow-hidden"><LogsPanel /></div>
+        {:else if activeTab === 'tools'}
+            <div in:fade class="h-full overflow-y-auto"><ToolsPanel /></div>
         {:else if activeTab === 'waitlist'}
             <div in:fade class="h-full"><WaitlistPanel /></div>
         {:else if activeTab === 'subscribers'}

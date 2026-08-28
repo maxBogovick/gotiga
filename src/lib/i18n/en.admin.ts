@@ -444,6 +444,7 @@ export const enAdmin = {
 
   adminGroupSystem: 'System',
   adminTabServer: 'Server',
+  adminTabTools: 'Tools',
   adminSmtpTitle: 'Email (SMTP)',
   adminSmtpHint: 'Leave blank to disable email notifications for comment replies.',
   adminSmtpHost: 'Host',
@@ -1228,6 +1229,8 @@ export const enAdmin = {
   adminBattlesRaceJump: 'Edit this race',
   adminBattlesRaceIcon: 'Race icon',
   adminBattlesRaceIconHint: 'Shared by every card of this race — uploaded once here, worn by all of them at once. Click the icon on the sample card to set it.',
+  adminBattlesRaceLevelFrames: 'Frames by level',
+  adminBattlesRaceLevelFramesHint: 'Up to five frames of its own — one for each level a raised copy of this race’s cards can reach. A level with none simply wears the rank’s own frame, as usual. The picture is laid over the whole card, edge to edge — don’t send a photo with margin around the frame itself; crop that away first. A PNG with a genuine transparent middle works best (real transparency, not a grey-and-white “no background” checker baked into the pixels), at roughly a card’s own ratio, 5:7 (say, 1000×1400px), any resolution up to 1600px on the long side. After uploading, drag the four marks around the window on the card itself — they fit where THIS picture’s own window actually sits, since every picture’s is different.',
   adminBattlesFrameOwnPicture: 'A picture for this card alone',
   adminBattlesFrameResetCard: 'Back to the shared frame',
   adminBattlesFrameClose: 'Close',

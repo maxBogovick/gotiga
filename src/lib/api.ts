@@ -2542,4 +2542,40 @@ export const api = {
             body: JSON.stringify(config),
         });
     },
+
+    /**
+     * Re-encode one image into another common format, at full resolution —
+     * a one-off conversion for the keeper's own use, nothing saved on this
+     * end. The only admin call that reads back a `Blob` instead of JSON: the
+     * server hands back the converted file itself, not a URL to it.
+     */
+    async adminConvertImage(
+        file: File,
+        format: 'jpeg' | 'png' | 'webp',
+        maxDimension?: number,
+    ): Promise<Blob> {
+        const form = new FormData();
+        // Must be appended before `file` — the server reads fields in
+        // arrival order (see admin_convert_image in handlers.rs).
+        form.append('format', format);
+        if (maxDimension) form.append('maxDimension', String(maxDimension));
+        form.append('file', file);
+        const res = await fetch(`${webApiBase()}/admin/tools/convert-image`, {
+            method: 'POST',
+            headers: authHeaders(),
+            body: form,
+        });
+        if (!res.ok) {
+            const text = await res.text().catch(() => '');
+            let message = text;
+            try {
+                const parsed = JSON.parse(text);
+                if (parsed?.error) message = parsed.error;
+            } catch {
+                // Not JSON — the raw text is still better than nothing.
+            }
+            throw new Error(message || `Conversion failed: ${res.status}`);
+        }
+        return res.blob();
+    },
 };
