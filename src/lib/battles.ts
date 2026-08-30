@@ -56,6 +56,12 @@ function painted(
     frameMode: 'overlay',
     paperImage: '',
     backImage: '',
+    cornerImage: '',
+    sideImageH: '',
+    sideImageV: '',
+    cornerExtra: '',
+    sideMidH: '',
+    sideMidV: '',
     insetTop: 0, insetRight: 0, insetBottom: 0, insetLeft: 0,
     aspect: DEFAULT_ASPECT,
     headerShare: DEFAULT_HEADER_SHARE,
@@ -88,7 +94,7 @@ export const DEFAULT_FRAMES: BattleFrame[] = [
 ];
 
 export const LAYOUTS: BattleLayout[] = ['corners', 'plaque'];
-export const FRAME_MODES: BattleFrameMode[] = ['overlay', 'behind'];
+export const FRAME_MODES: BattleFrameMode[] = ['overlay', 'behind', 'sliced'];
 export const BADGE_SHAPES: BattleBadgeShape[] = ['circle', 'square', 'diamond', 'hex', 'shield'];
 
 export function clampTier(tier: number): number {
@@ -193,9 +199,21 @@ function cssUrl(raw: string): string {
   return raw.replace(/["'()\\\s]/g, encodeURIComponent);
 }
 
-/** A dressed frame is one that wears a picture, worn either way round. */
+/** A dressed frame is one that wears a picture, worn either way round — a
+ *  single stretched photograph, or built from a corner and two side
+ *  pictures instead. */
 export function isDressed(frame: BattleFrame): boolean {
-  return !!frame.frameImage?.trim();
+  return (
+    !!frame.frameImage?.trim() ||
+    !!frame.cornerImage?.trim() ||
+    !!frame.sideImageH?.trim() ||
+    !!frame.sideImageV?.trim()
+  );
+}
+
+/** Built from a corner and two side pictures rather than one stretched whole. */
+export function isSliced(frame: BattleFrame): boolean {
+  return frame.frameMode === 'sliced' && isDressed(frame);
 }
 
 /** The picture lies on top and the card shows through the hole in it. */
@@ -214,6 +232,12 @@ export function frameVars(frame: BattleFrame): Record<string, string> {
   const image = frame.frameImage?.trim();
   const paperArt = frame.paperImage?.trim();
   const backArt = frame.backImage?.trim();
+  const cornerArt = frame.cornerImage?.trim();
+  const sideHArt = frame.sideImageH?.trim();
+  const sideVArt = frame.sideImageV?.trim();
+  const cornerExtraArt = frame.cornerExtra?.trim();
+  const sideMidHArt = frame.sideMidH?.trim();
+  const sideMidVArt = frame.sideMidV?.trim();
   return {
     '--paper-image': paperArt ? `url("${cssUrl(paperArt)}")` : 'none',
     '--paper': frame.paper,
@@ -222,6 +246,12 @@ export function frameVars(frame: BattleFrame): Record<string, string> {
     '--foil': frame.foil || 'transparent',
     '--frame-image': image ? `url("${cssUrl(image)}")` : 'none',
     '--back-image': backArt ? `url("${cssUrl(backArt)}")` : 'none',
+    '--corner-image': cornerArt ? `url("${cssUrl(cornerArt)}")` : 'none',
+    '--side-image-h': sideHArt ? `url("${cssUrl(sideHArt)}")` : 'none',
+    '--side-image-v': sideVArt ? `url("${cssUrl(sideVArt)}")` : 'none',
+    '--corner-extra-image': cornerExtraArt ? `url("${cssUrl(cornerExtraArt)}")` : 'none',
+    '--side-mid-h-image': sideMidHArt ? `url("${cssUrl(sideMidHArt)}")` : 'none',
+    '--side-mid-v-image': sideMidVArt ? `url("${cssUrl(sideMidVArt)}")` : 'none',
     '--pad-top': `${frame.insetTop || 0}%`,
     '--pad-right': `${frame.insetRight || 0}%`,
     '--pad-bottom': `${frame.insetBottom || 0}%`,

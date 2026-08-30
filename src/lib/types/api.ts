@@ -1968,7 +1968,7 @@ export interface SaveBattleCardRequest {
 }
 
 export type BattleLayout = 'corners' | 'plaque';
-export type BattleFrameMode = 'overlay' | 'behind';
+export type BattleFrameMode = 'overlay' | 'behind' | 'sliced';
 
 /**
  * One rank's dress. Design lives in the frame, content lives in the card.
@@ -2001,7 +2001,29 @@ export interface BattleFrame {
      *  wears the frame itself, whatever this is set to; empty = the plain
      *  dusty texture the renderer already draws. */
     backImage: string;
-    /** Where the content sits inside that photograph, in % of the card. */
+    /** One corner's ornament, `frameMode: 'sliced'` only — mirrored into all
+     *  four corners rather than rotated, so an asymmetric flourish stays
+     *  right-side up. */
+    cornerImage: string;
+    /** The top edge's ornament, `sliced` only — stretched between the two
+     *  corners and mirrored top-to-bottom for the foot. */
+    sideImageH: string;
+    /** The left edge's ornament, `sliced` only — stretched top-to-bottom and
+     *  mirrored left-to-right for the other side. */
+    sideImageV: string;
+    /** An accent over the corner band, `sliced` only — mirrored into all four
+     *  corners like `cornerImage`, but drawn in a layer above the whole
+     *  9-slice assembly and shown at its own size rather than stretched. */
+    cornerExtra: string;
+    /** An accent centred on the top edge, `sliced` only — mirrored to the
+     *  foot like `sideImageH`, laid over the assembled frame. */
+    sideMidH: string;
+    /** An accent centred on the left edge, `sliced` only — mirrored to the
+     *  right side like `sideImageV`. */
+    sideMidV: string;
+    /** Where the content sits inside that photograph, in % of the card — and,
+     *  in `sliced` mode, the actual width each of the four ornament bands is
+     *  drawn at. */
     insetTop: number;
     insetRight: number;
     insetBottom: number;

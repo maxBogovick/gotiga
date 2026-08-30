@@ -26,6 +26,7 @@
     frameVars,
     isDressed,
     isOverlaid,
+    isSliced,
     parseFocal,
     pricesOf,
     cardTransitionName,
@@ -117,6 +118,7 @@
   let rank = $derived(frameName(frame, $lang));
   let dressed = $derived(isDressed(frame));
   let overlaid = $derived(isOverlaid(frame));
+  let sliced = $derived(isSliced(frame));
   let hasBackArt = $derived(!!frame.backImage?.trim());
   let vars = $derived(frameVars(frame));
   let varStyle = $derived(
@@ -823,13 +825,52 @@
   {/if}
 
   {#if overlaid && owned}
-    <!-- The carving, laid over the card. A cut-out frame is a picture with a
-         hole in it, not a border: its ornament runs past the rectangle and its
-         inner edge is meant to overlap the photograph. Last in the stack, and
-         deaf to the pointer so it never swallows anything underneath.
-         Never worn face down — the frame is the FRONT's own dress; a card
-         lying in dust shows its back, not the front's carving. -->
-    <span class="carving" aria-hidden="true"></span>
+    {#if sliced}
+      <!-- The carving, built from a corner and two side pictures instead of
+           one stretched whole. Same job as `.carving` below — a hole the card
+           shows through, last in the stack, deaf to the pointer — but each
+           piece is sized off the frame's own four insets, so the keeper can
+           re-stretch one side without disturbing the others. Corners are
+           mirrored (never rotated) so an asymmetric flourish stays right-side
+           up; the two side pictures are mirrored the same way `applyInsetDelta`
+           already pairs top with bottom and left with right. -->
+      <div class="sliced-carving" aria-hidden="true">
+        <span class="slice-corner slice-corner--tl"></span>
+        <span class="slice-corner slice-corner--tr"></span>
+        <span class="slice-corner slice-corner--bl"></span>
+        <span class="slice-corner slice-corner--br"></span>
+        <span class="slice-edge slice-edge--top"></span>
+        <span class="slice-edge slice-edge--bottom"></span>
+        <span class="slice-edge slice-edge--left"></span>
+        <span class="slice-edge slice-edge--right"></span>
+      </div>
+      <!-- Small accents on top of the assembled frame — a corner flourish and
+           a mid-edge medallion, each its own upload, each mirrored the same
+           way the piece it sits on is. A later sibling of `.sliced-carving`
+           at the same z-index paints over it without needing a taller
+           z-index of its own; shown at their own size (`background-size:
+           contain`), never stretched to fill the band the way the nine base
+           pieces are, so an accent stays an accent rather than a second
+           frame. -->
+      <div class="frame-ornaments" aria-hidden="true">
+        <span class="ornament ornament--corner ornament--corner-tl"></span>
+        <span class="ornament ornament--corner ornament--corner-tr"></span>
+        <span class="ornament ornament--corner ornament--corner-bl"></span>
+        <span class="ornament ornament--corner ornament--corner-br"></span>
+        <span class="ornament ornament--mid-top"></span>
+        <span class="ornament ornament--mid-bottom"></span>
+        <span class="ornament ornament--mid-left"></span>
+        <span class="ornament ornament--mid-right"></span>
+      </div>
+    {:else}
+      <!-- The carving, laid over the card. A cut-out frame is a picture with a
+           hole in it, not a border: its ornament runs past the rectangle and its
+           inner edge is meant to overlap the photograph. Last in the stack, and
+           deaf to the pointer so it never swallows anything underneath.
+           Never worn face down — the frame is the FRONT's own dress; a card
+           lying in dust shows its back, not the front's carving. -->
+      <span class="carving" aria-hidden="true"></span>
+    {/if}
   {/if}
  </div>
 
@@ -952,6 +993,198 @@
     /* Chrome, not a surface: it must never take a click, a hover or a
        text selection away from the card underneath. */
     pointer-events: none;
+  }
+
+  /* The sliced carving's own layer — same box, same stacking order as
+     `.carving` above, just built from eight pieces instead of one image. */
+  .sliced-carving {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    pointer-events: none;
+  }
+
+  /* Each piece is sized directly off the frame's own four insets — the same
+     numbers that place `.content`'s window — so a keeper dragging a side
+     wider grows that piece's own band without means to touch the others. */
+  .slice-corner,
+  .slice-edge {
+    position: absolute;
+    background-repeat: no-repeat;
+    background-size: 100% 100%;
+  }
+
+  /* One picture, mirrored rather than rotated into the other three corners —
+     an asymmetric flourish (a vine that climbs one way) stays right-side up
+     wherever it lands. */
+  .slice-corner--tl {
+    top: 0;
+    left: 0;
+    width: var(--pad-left, 0);
+    height: var(--pad-top, 0);
+    background-image: var(--corner-image);
+  }
+
+  .slice-corner--tr {
+    top: 0;
+    right: 0;
+    width: var(--pad-right, 0);
+    height: var(--pad-top, 0);
+    background-image: var(--corner-image);
+    transform: scaleX(-1);
+  }
+
+  .slice-corner--bl {
+    bottom: 0;
+    left: 0;
+    width: var(--pad-left, 0);
+    height: var(--pad-bottom, 0);
+    background-image: var(--corner-image);
+    transform: scaleY(-1);
+  }
+
+  .slice-corner--br {
+    bottom: 0;
+    right: 0;
+    width: var(--pad-right, 0);
+    height: var(--pad-bottom, 0);
+    background-image: var(--corner-image);
+    transform: scale(-1, -1);
+  }
+
+  /* The top edge, stretched between the two corners; the foot is the same
+     picture mirrored vertically, the same pairing the inset handles already
+     move together by default. */
+  .slice-edge--top,
+  .slice-edge--bottom {
+    left: var(--pad-left, 0);
+    right: var(--pad-right, 0);
+    background-image: var(--side-image-h);
+  }
+
+  .slice-edge--top {
+    top: 0;
+    height: var(--pad-top, 0);
+  }
+
+  .slice-edge--bottom {
+    bottom: 0;
+    height: var(--pad-bottom, 0);
+    transform: scaleY(-1);
+  }
+
+  .slice-edge--left,
+  .slice-edge--right {
+    top: var(--pad-top, 0);
+    bottom: var(--pad-bottom, 0);
+    background-image: var(--side-image-v);
+  }
+
+  .slice-edge--left {
+    left: 0;
+    width: var(--pad-left, 0);
+  }
+
+  .slice-edge--right {
+    right: 0;
+    width: var(--pad-right, 0);
+    transform: scaleX(-1);
+  }
+
+  /* The accent layer — a later sibling of `.sliced-carving`, same z-index, so
+     it always paints on top of the nine base pieces without a taller
+     z-index of its own. */
+  .frame-ornaments {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    pointer-events: none;
+  }
+
+  /* Shown at their own size and centred, never stretched to fill the band —
+     an accent, not a second copy of the piece underneath it. */
+  .ornament {
+    position: absolute;
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: contain;
+  }
+
+  /* Same box as the matching `.slice-corner` piece, so the accent can never
+     spill past the corner band onto the card's own content. Mirrored, never
+     rotated, for the same reason `--corner-image` is. */
+  .ornament--corner-tl {
+    top: 0;
+    left: 0;
+    width: var(--pad-left, 0);
+    height: var(--pad-top, 0);
+    background-image: var(--corner-extra-image);
+  }
+
+  .ornament--corner-tr {
+    top: 0;
+    right: 0;
+    width: var(--pad-right, 0);
+    height: var(--pad-top, 0);
+    background-image: var(--corner-extra-image);
+    transform: scaleX(-1);
+  }
+
+  .ornament--corner-bl {
+    bottom: 0;
+    left: 0;
+    width: var(--pad-left, 0);
+    height: var(--pad-bottom, 0);
+    background-image: var(--corner-extra-image);
+    transform: scaleY(-1);
+  }
+
+  .ornament--corner-br {
+    bottom: 0;
+    right: 0;
+    width: var(--pad-right, 0);
+    height: var(--pad-bottom, 0);
+    background-image: var(--corner-extra-image);
+    transform: scale(-1, -1);
+  }
+
+  /* Centred on the band, sized square to the band's own width — a medallion
+     that reads at the scale of the border it rides on, confined to the
+     band's own height so it never reaches into the card's content. */
+  .ornament--mid-top {
+    top: 0;
+    left: 50%;
+    width: var(--pad-top, 0);
+    height: var(--pad-top, 0);
+    transform: translateX(-50%);
+    background-image: var(--side-mid-h-image);
+  }
+
+  .ornament--mid-bottom {
+    bottom: 0;
+    left: 50%;
+    width: var(--pad-bottom, 0);
+    height: var(--pad-bottom, 0);
+    transform: translateX(-50%) scaleY(-1);
+    background-image: var(--side-mid-h-image);
+  }
+
+  .ornament--mid-left {
+    left: 0;
+    top: 50%;
+    width: var(--pad-left, 0);
+    height: var(--pad-left, 0);
+    transform: translateY(-50%);
+    background-image: var(--side-mid-v-image);
+  }
+
+  .ornament--mid-right {
+    right: 0;
+    top: 50%;
+    width: var(--pad-right, 0);
+    height: var(--pad-right, 0);
+    transform: translateY(-50%) scaleX(-1);
+    background-image: var(--side-mid-v-image);
   }
 
   /* The same box as `.content` (same inset formula, same conditional padding
