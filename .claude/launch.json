@@ -36,6 +36,15 @@
         "cd src-tauri/server && PORT=3002 cargo run"
       ],
       "port": 3002
+    },
+    {
+      "name": "gotiga-decks-preview",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "VITE_API_URL=http://localhost:3010 npm run dev -- --port 1423"
+      ],
+      "port": 1423
     }
   ]
 }

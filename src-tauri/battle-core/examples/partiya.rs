@@ -36,6 +36,9 @@ fn setup() -> Setup {
 fn step_name(step: StepId) -> &'static str {
     match step {
         StepId::Immunity => "невосприимчивость",
+        StepId::Escalation => "поздний круг",
+        StepId::LongShot => "выстрел за дальность",
+        StepId::PointBlank => "стрелка достали вплотную",
         StepId::AttackerBless => "благословения бьющего",
         StepId::AttackerCurse => "проклятия бьющего",
         StepId::TargetVulnerable => "уязвимость цели",

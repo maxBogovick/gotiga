@@ -184,13 +184,13 @@ fn mana_rises_by_one_each_of_your_own_turns() {
     assert_eq!(st.player.mana, 1);
     let (st, _) = act(&st, Action::EndTurn);
     assert_eq!(st.active, Side::Keeper);
-    assert_eq!(st.keeper.mana, 3, "монета в два плюс собственный ход");
+    assert_eq!(st.keeper.mana, 2, "монета в одну плюс собственный ход");
     let (st, _) = act(&st, Action::EndTurn);
     assert_eq!(st.active, Side::Player);
     assert_eq!(st.round, 2);
     assert_eq!(st.player.mana, 2, "у первой стороны рост обычный");
     let (st, _) = act(&st, Action::EndTurn);
-    assert_eq!(st.keeper.mana, 4, "и дальше растёт от монеты");
+    assert_eq!(st.keeper.mana, 3, "и дальше растёт от монеты");
 }
 
 #[test]
@@ -534,12 +534,216 @@ fn a_rank_of_bodies_is_walked_around_and_not_through() {
 }
 
 #[test]
-fn walking_is_what_this_body_does_this_turn() {
+fn a_body_walks_and_then_strikes_in_one_turn() {
+    // Замерено, а не выбрано: пока шаг тратил ход целиком, у карт равной силы
+    // 98 партий из 100 выигрывал тот, чья очередь наступала раньше, — то есть
+    // побеждала не карта, а очередь. С этим правилом решает карта.
+    // См. таблицу в `Rules::default`.
+    let st = MatchState::begin(face_off());
+    let (st, _) = act(&st, Action::Move { unit: 0, to: cell(0, 3) });
+    assert!(
+        reduce(&st, &Action::Attack { attacker: 0, target: 1 }).is_ok(),
+        "подошёл — и бьёт в тот же ход"
+    );
+}
+
+#[test]
+fn a_body_walks_only_once_in_a_turn() {
+    // Другая половина того же правила. Без неё тело гуляет по доске даром:
+    // шаг перестал тратить ход, значит тратить его должно что-то другое.
     let st = MatchState::begin(face_off());
     let (st, _) = act(&st, Action::Move { unit: 0, to: cell(0, 3) });
     assert_eq!(
-        reduce(&st, &Action::Attack { attacker: 0, target: 1 }).unwrap_err(),
+        reduce(&st, &Action::Move { unit: 0, to: cell(0, 4) }).unwrap_err(),
         Illegal::AlreadyActed
+    );
+    assert!(
+        !legal_actions(&st).iter().any(|a| matches!(a, Action::Move { unit: 0, .. })),
+        "и второго шага не предлагают"
+    );
+}
+
+#[test]
+fn an_archer_reached_at_arms_length_strikes_at_half() {
+    // Стрелок — тело, бьющее дальше соседней клетки. Пока к нему не подошли,
+    // он бьёт в полную силу; подошли — вполсилы. Так у ближнего боя появляется
+    // смысл идти, а у одного бюджета перестаёт быть два разных исхода.
+    let setup = Setup {
+        player_board: vec![(boec("Лучник", 1, 9, 6).with_reach(3), cell(1, 3))],
+        keeper_board: vec![
+            (boec("Дальний", 1, 20, 1), cell(1, 0)),
+            (boec("Ближний", 1, 20, 1), cell(1, 2)),
+        ],
+        ..Default::default()
+    };
+    let st = MatchState::begin(setup);
+    let far = st.unit(1).unwrap().health.current;
+    let near = st.unit(2).unwrap().health.current;
+
+    let (shot, events) = act(&st, Action::Attack { attacker: 0, target: 1 });
+    assert_eq!(far - shot.unit(1).unwrap().health.current, 3, "к нему подошли — бьёт вполсилы даже вдаль");
+
+    // И на вопрос «почему три, а не шесть» есть ответ — первой же строкой следа.
+    let Some(Event::Damaged { trail, .. }) = events.first() else {
+        panic!("удар должен оставить событие урона");
+    };
+    assert_eq!(trail[0].step, StepId::PointBlank);
+    assert_eq!((trail[0].from, trail[0].to), (6, 3));
+
+    // Тот же лучник, но рядом никого.
+    let alone = Setup {
+        player_board: vec![(boec("Лучник", 1, 9, 6).with_reach(3), cell(1, 3))],
+        keeper_board: vec![(boec("Дальний", 1, 20, 1), cell(1, 0))],
+        ..Default::default()
+    };
+    let st = MatchState::begin(alone);
+    let (shot, _) = act(&st, Action::Attack { attacker: 0, target: 1 });
+    assert_eq!(20 - shot.unit(1).unwrap().health.current, 6, "никого рядом — полная сила");
+    let _ = near;
+}
+
+#[test]
+fn a_body_that_stood_all_turn_pays_for_it() {
+    // Против руки с перебором половина партий доигрывалась до лимита кругов:
+    // умелый бот не идёт в невыгодный размен и просто СТОИТ. Плата целится
+    // ровно в это. См. §18 в `TASKS-BATTLE-ENGINE.md`.
+    let rules = Rules { idle_toll: 1, ..Default::default() };
+    let setup = Setup {
+        player_board: vec![
+            (boec("Ждущий", 1, 6, 3), cell(1, 5)),
+            (boec("Ходящий", 1, 6, 3), cell(0, 5)),
+        ],
+        keeper_board: vec![(boec("Ворон", 1, 6, 3), cell(1, 0))],
+        ..Default::default()
+    };
+    let st = MatchState::begin_with(setup, rules);
+    // Один ходит, другой стоит.
+    let (st, _) = act(&st, Action::Move { unit: 1, to: cell(0, 4) });
+    let (after, events) = act(&st, Action::EndTurn);
+
+    assert_eq!(after.unit(0).unwrap().health.current, 5, "простоявший заплатил");
+    assert_eq!(after.unit(1).unwrap().health.current, 6, "ходивший не платит");
+    assert_eq!(after.unit(2).unwrap().health.current, 6, "чужие не платят в наш ход");
+    assert!(
+        events.iter().any(|e| matches!(e, Event::Damaged { target: 0, .. })),
+        "плата видна событием, а не молча"
+    );
+}
+
+#[test]
+fn nobody_pays_for_standing_when_the_toll_is_off() {
+    let st = MatchState::begin_with(face_off(), Rules { idle_toll: 0, ..Default::default() });
+    let (after, _) = act(&st, Action::EndTurn);
+    assert_eq!(after.unit(0).unwrap().health.current, 6);
+}
+
+#[test]
+fn a_match_recorded_before_the_toll_replays_without_it() {
+    // Записанные правила не знают поля `idleToll`, и читаться оно должно нулём,
+    // а не нынешним умолчанием: партия переигрывается по тем правилам, по
+    // которым её сыграли, — иначе пересмотр покажет не то, что видел человек.
+    let old = r#"{"secondSideCoin":1,"openingAttacks":1}"#;
+    let rules: Rules = serde_json::from_str(old).expect("старая запись читается");
+    assert_eq!(rules.idle_toll, 0, "старая партия платы не знала");
+    assert_eq!(Rules::default().idle_toll, 1, "новая — знает");
+}
+
+#[test]
+fn a_body_just_played_from_hand_owes_nothing() {
+    // Оно и так не могло действовать: `acted` поднят при выходе на поле.
+    // Без этой оговорки плата брала бы с того, кому нечего было делать.
+    let rules = Rules { idle_toll: 2, ..Default::default() };
+    let setup = Setup {
+        player_board: vec![(boec("Боец", 1, 6, 3), cell(1, 3))],
+        player_hand: vec![boec("Новичок", 1, 5, 2)],
+        keeper_board: vec![(boec("Ворон", 1, 9, 1), cell(1, 2))],
+        ..Default::default()
+    };
+    let st = MatchState::begin_with(setup, rules);
+    let (st, _) = act(&st, Action::Play { hand_index: 0, cell: cell(0, 4) });
+    let (after, _) = act(&st, Action::EndTurn);
+    assert_eq!(after.unit(2).unwrap().health.current, 5, "выставленный в этот ход не платит");
+}
+
+#[test]
+fn a_shooter_reaches_the_whole_field_at_a_price() {
+    // Безопасных клеток на поле быть не должно: замер показал, что пятая часть
+    // партий не кончается никогда — тела становятся туда, куда не дотянуться,
+    // и стоят. См. §19–§20.
+    let setup = Setup {
+        player_board: vec![(boec("Стрелок", 1, 6, 8).with_reach(2), cell(1, 5))],
+        keeper_board: vec![(boec("Ворон", 1, 20, 1), cell(1, 0))],
+        ..Default::default()
+    };
+    let st = MatchState::begin(setup);
+    assert_eq!(cell(1, 5).distance(cell(1, 0)), 5, "дальше своей дальности");
+
+    let (after, events) = act(&st, Action::Attack { attacker: 0, target: 1 });
+    // Восьмёрка за далью — четверть, то есть двойка.
+    assert_eq!(20 - after.unit(1).unwrap().health.current, 2);
+    let Some(Event::Damaged { trail, .. }) = events.first() else {
+        panic!("удар должен оставить событие урона");
+    };
+    assert_eq!(trail[0].step, StepId::LongShot, "и сказано, почему два, а не восемь");
+    assert_eq!((trail[0].from, trail[0].to), (8, 2));
+}
+
+#[test]
+fn melee_never_reaches_across_the_field() {
+    // Штраф за далью — про стрельбу. Ближний бой бьёт только вплотную, и
+    // дальность 1 не должна вдруг начать доставать через доску.
+    let setup = Setup {
+        player_board: vec![(boec("Боец", 1, 6, 3), cell(1, 5))],
+        keeper_board: vec![(boec("Ворон", 1, 6, 3), cell(1, 0))],
+        ..Default::default()
+    };
+    let st = MatchState::begin(setup);
+    assert_eq!(
+        reduce(&st, &Action::Attack { attacker: 0, target: 1 }).unwrap_err(),
+        Illegal::OutOfReach
+    );
+    assert!(!legal_actions(&st).iter().any(|a| matches!(a, Action::Attack { .. })));
+}
+
+#[test]
+fn a_match_recorded_before_the_long_shot_replays_with_the_old_cutoff() {
+    let old = r#"{"secondSideCoin":1,"openingAttacks":1}"#;
+    let rules: Rules = serde_json::from_str(old).expect("старая запись читается");
+    assert_eq!(rules.long_shot_power, 0, "у старой партии отсечка была жёсткой");
+    assert_eq!(Rules::default().long_shot_power, 25);
+}
+
+#[test]
+fn a_body_without_a_blow_is_never_offered_one() {
+    // Котёл, знамя, безоружный лекарь. До этого поля хранитель мог сказать
+    // «не бьёт» в форме, а карта выходила и била своей силой.
+    let setup = Setup {
+        player_board: vec![(boec("Котёл", 1, 7, 4).without_a_blow(), cell(1, 3))],
+        keeper_board: vec![(boec("Ворон", 1, 6, 3), cell(1, 2))],
+        ..Default::default()
+    };
+    let st = MatchState::begin(setup);
+    assert_eq!(
+        reduce(&st, &Action::Attack { attacker: 0, target: 1 }).unwrap_err(),
+        Illegal::DoesNotStrike
+    );
+    assert!(
+        !legal_actions(&st).iter().any(|a| matches!(a, Action::Attack { .. })),
+        "и в списке законных удара нет — иначе клиент подсветил бы то, чего нельзя"
+    );
+    // Ходить и лечить оно по-прежнему может: не бьёт — не значит не участвует.
+    assert!(legal_actions(&st).iter().any(|a| matches!(a, Action::Move { .. })));
+}
+
+#[test]
+fn a_melee_body_is_never_penalised_at_arms_length() {
+    // У ближнего боя штрафу взяться неоткуда: он и так бьёт только вплотную.
+    let st = MatchState::begin(face_off());
+    let (st2, _) = act(&st, Action::Attack { attacker: 0, target: 1 });
+    assert_eq!(
+        st.unit(1).unwrap().health.current - st2.unit(1).unwrap().health.current,
+        3,
+        "боец бьёт в полную силу"
     );
 }
 
@@ -646,7 +850,13 @@ fn mender_setup() -> Setup {
 
 /// Дать «Раненому» рану, чтобы было что лечить: ход хранителя, потом обратно.
 fn wounded_state() -> MatchState {
-    let st = MatchState::begin(mender_setup());
+    // Плата за простой здесь выключена намеренно: эти проверки про лечение, а
+    // не про неё, и здоровье в них должно меняться только тем, что лечат и
+    // ранят. Сама плата проверяется своими тремя тестами выше.
+    let st = MatchState::begin_with(
+        mender_setup(),
+        Rules { idle_toll: 0, ..Default::default() },
+    );
     let (st, _) = act(&st, Action::EndTurn);
     let (st, _) = act(&st, Action::Attack { attacker: 2, target: 0 });
     let (st, _) = act(&st, Action::EndTurn);
@@ -806,7 +1016,7 @@ fn the_side_moving_second_is_paid_for_moving_second() {
     let st = MatchState::begin(face_off());
     assert_eq!(st.player.mana, 1, "первый ход — обычная мана");
     let (st, _) = act(&st, Action::EndTurn);
-    assert_eq!(st.keeper.mana, 3, "монета в два плюс собственный ход");
+    assert_eq!(st.keeper.mana, 2, "монета в одну плюс собственный ход");
 }
 
 #[test]

@@ -39,9 +39,273 @@ pub const TRAIT_TEXT_MAX: usize = 200;
 pub const RACE_NAME_MAX: usize = 60;
 pub const TYPE_MAX: usize = 40;
 
+/// Сколько сыгранных партий читает разбор. Не лента и не бесконечность: сводка
+/// считается по прочитанному, и хранителю сказано, по скольким именно.
+pub const MATCHES_SHOWN: i64 = 500;
+
 /// The shelf is handed out whole. It is a shelf, not a feed — the same reason
 /// the tales room refuses pagination.
 pub const SHELF_CARDS: i64 = 500;
+
+// ── Стол гостя ───────────────────────────────────────────────────────────────
+//
+// Числа не выбраны вкусом. `TASKS-BATTLE-ENGINE.md` §13.1: правило первого хода
+// измерено на расстановке «три стоят, три в руке» — «примерно то, что остаётся
+// от колоды из шести после расстановки». Колода другой глубины делает выбранное
+// правило непроверенным, поэтому это константы, а не настройка.
+
+/// Кем задана сторона гостя.
+///
+///   `scripted` — рукой хранителя. Этюд: обе стороны расставлены, есть решение.
+///   `deck`     — столом гостя. Встреча: хранитель ставит своё, гость приводит своё.
+// ── Годность карты ───────────────────────────────────────────────────────────
+//
+// Одна функция и для отказа при сохранении, и для живой подсказки на весах.
+// Две реализации разошлись бы, и хранитель увидел бы предупреждение об одном,
+// а отказ — о другом.
+//
+// Различаются две вещи. ПРЕПЯТСТВИЕ — карта, опубликованная в таком виде, не
+// заработает никогда, и публиковать её нельзя. ЗАМЕЧАНИЕ — так можно, но стоит
+// знать: это подсказка, а не запрет.
+
+/// Потолок маны из движка, а не число здесь: карта дороже него не может быть
+/// оплачена ни на каком ходу, и знать этот предел должен один источник.
+pub const MANA_CEILING: i16 = battle_core::state::MANA_CAP as i16;
+
+/// Почему опубликованная карта не заработает. Слова, а не текст: текст живёт
+/// в `i18n` на двух языках.
+///
+/// `points` — вес карты целиком, тело и способности. Нужен ради потолка чина:
+/// чин — это не сила, а РАЗРЕШЁННАЯ сила, и скромная карта не имеет права быть
+/// бомбой, даже если дорого стоит в мане.
+///
+/// Потолок — единственное, для чего сумма очков годится как приговор. Замер
+/// (`battle-core/examples/revizia.rs`) говорит, почему именно так: связь суммы
+/// с долей побед на всей полке 0.95, а среди близких по очкам карт падает до
+/// 0.6–0.8. Крупно сумма права, тонко — нет. Поэтому здесь забор, а не весы:
+/// «не больше двадцати на третий чин» сумма ответить может, «сыграет ли это»
+/// — только прогон.
+pub fn card_blockers(
+    status: &str,
+    health: i16,
+    cost: i16,
+    points: f64,
+    tier: i16,
+) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    if status != "published" {
+        // Черновик имеет право быть недоделанным — он затем и черновик.
+        return out;
+    }
+    // Округляется до сотых, как и число, которое видит хранитель: иначе карта
+    // ровно в бюджет отказывалась бы из-за двоичной пыли в пятнадцатом знаке.
+    if (points * 100.0).round() / 100.0 > tier_budget(tier) {
+        out.push("overTierBudget");
+    }
+    // `can_take_the_field` требует здоровья. Без него карту можно купить, но
+    // нельзя ни положить в колоду, ни выставить на поле: она падает в тот же
+    // миг, как встанет. Продавать такую — брать плату за невозможное.
+    if health <= 0 {
+        out.push("noHealth");
+    }
+    // Мана растёт по единице за ход и упирается в потолок. Карта дороже
+    // потолка не может быть выложена никогда, ни на каком ходу.
+    if cost > MANA_CEILING {
+        out.push("costBeyondMana");
+    }
+    out
+}
+
+/// Так можно, но стоит знать.
+pub fn card_notes(
+    status: &str,
+    tier: i16,
+    lendable: bool,
+    price_dust: Option<i32>,
+    price_feed: Option<i32>,
+) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    // Ноль — это «даром», а пусто — «за эту монету не продаётся». Их легко
+    // перепутать в поле ввода, и разница видна только гостю.
+    if price_dust == Some(0) || price_feed == Some(0) {
+        out.push("freeForACoin");
+    }
+    // Корм не оседает сам: его выдаёт хранитель руками. Карта только за корм
+    // недостижима, пока он никому его не дал.
+    if price_dust.is_none() && price_feed.is_some() {
+        out.push("onlyForFeed");
+    }
+    if lendable {
+        // Одалживается только первый чин — отбор идёт по чину, а не по отметке.
+        if tier != DECK_LOAN_TIER {
+            out.push("lendableNotFirstTier");
+        }
+        if status != "published" {
+            out.push("lendableNotPublished");
+        }
+    }
+    out
+}
+
+// ── Из рук ───────────────────────────────────────────────────────────────────
+
+/// Сколько записок показывает полка. Немного и намеренно: это поля, а не лента.
+pub const GIFTS_SHOWN: i64 = 5;
+
+/// Потолок одной выдачи. Не про баланс — про опечатку: лишний ноль в поле
+/// хранителя не должен становиться экономикой.
+pub const GRANT_MAX: i32 = 10_000;
+
+pub const CURRENCIES: &[&str] = &["dust", "feed"];
+
+pub fn valid_currency(coin: &str) -> bool {
+    CURRENCIES.contains(&coin)
+}
+
+/// Записка режется, а не отвергается: выдача не должна срываться из-за
+/// лишнего абзаца — тот же счёт, что у заголовка карты.
+pub fn clamp_note(note: Option<&str>) -> Option<String> {
+    clamp_text(note, 400)
+}
+
+pub const SIDE_SCRIPTED: &str = "scripted";
+pub const SIDE_DECK: &str = "deck";
+
+/// Ступени сложности бота: рука жадная и рука с перебором.
+///
+/// Две, а не три. Третья была измерена и не оказалась сильнее второй (44 %
+/// побед против неё), а попытка сделать её сильнее — умнее моделью противника
+/// — считала ход секундами вместо миллисекунд. Обоснование и таблица лежат в
+/// `battle_core::bot::DEPTH_MAX`.
+pub const BOT_DEPTH_MIN: i16 = battle_core::bot::DEPTH_MIN as i16;
+pub const BOT_DEPTH_MAX: i16 = battle_core::bot::DEPTH_MAX as i16;
+
+pub fn default_bot_depth() -> i16 {
+    BOT_DEPTH_MIN
+}
+
+/// Глубина, с которой бот действительно умеет играть. Старые испытания могли
+/// быть сохранены с тройкой, пока она была в форме, — они читаются как двойка,
+/// а не отвергаются: испытание от этого не ломается.
+pub fn clamp_bot_depth(raw: i16) -> i16 {
+    raw.clamp(BOT_DEPTH_MIN, BOT_DEPTH_MAX)
+}
+
+pub fn valid_player_side(side: &str) -> bool {
+    side == SIDE_SCRIPTED || side == SIDE_DECK
+}
+
+pub const DECK_BOARD: usize = 3;
+pub const DECK_HAND: usize = 3;
+
+/// Ограничение по чинам, `TASKS-BATTLE-ENGINE.md` §1.9. Единственная «стоимость
+/// колоды», которая нужна на старте: дублей не бывает по построению
+/// (`UNIQUE (user_id, card_id)` в собрании и `UNIQUE (figurine_id)` на карте).
+pub const DECK_TIER5_MAX: usize = 1;
+pub const DECK_TIER4_MAX: usize = 2;
+
+/// Куда дом ставит то, что одолжил, когда гость не выбрал клетку сам.
+/// Средний ряд своей половины: не в упор к хранителю и не у самой стены.
+pub const DECK_DEFAULT_CELLS: [(u8, u8); DECK_BOARD] = [(0, 4), (1, 4), (2, 4)];
+
+/// Чин, которым дом одалживает. Только первый: заём не должен заменять собой
+/// собрание — он должен давать сыграть, пока собрания нет.
+pub const DECK_LOAN_TIER: i16 = 1;
+
+/// Клетка своей половины. Половина гостя — `y` 3..5 (`battle-core::board`),
+/// и это единственное место, где это правило записано на стороне сервера.
+pub fn own_half(x: u8, y: u8) -> bool {
+    x < 3 && (3..6).contains(&y)
+}
+
+/// Почему стол нельзя сохранить. Закрытый список, чтобы отказ можно было
+/// показать человеку на двух языках, а не отдать строкой из середины сервера.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeckFault {
+    TooManyOnBoard,
+    TooManyInHand,
+    NotYourHalf,
+    CellTaken,
+    SameCardTwice,
+    NotYours,
+    TooManyOfRankFive,
+    TooManyOfRankFour,
+}
+
+impl DeckFault {
+    /// Слово, по которому комната находит свою строку. Не текст: текст живёт в
+    /// `i18n`, и сервер, который его сочиняет, сочиняет его на одном языке.
+    pub fn word(self) -> &'static str {
+        match self {
+            DeckFault::TooManyOnBoard => "tooManyOnBoard",
+            DeckFault::TooManyInHand => "tooManyInHand",
+            DeckFault::NotYourHalf => "notYourHalf",
+            DeckFault::CellTaken => "cellTaken",
+            DeckFault::SameCardTwice => "sameCardTwice",
+            DeckFault::NotYours => "notYours",
+            DeckFault::TooManyOfRankFive => "tooManyOfRankFive",
+            DeckFault::TooManyOfRankFour => "tooManyOfRankFour",
+        }
+    }
+}
+
+/// Законен ли стол. Чистая функция: ни базы, ни часов — то же правило потом
+/// перечитывается в момент начала партии, и второй его реализации быть не
+/// должно.
+///
+/// `owned` — что у гостя есть, `tier_of` — чин карты. Обе справки приходят
+/// снаружи, потому что читать их — не дело правила.
+pub fn check_deck(
+    board: &[(uuid::Uuid, u8, u8)],
+    hand: &[uuid::Uuid],
+    owned: &std::collections::HashSet<uuid::Uuid>,
+    tier_of: &std::collections::HashMap<uuid::Uuid, i16>,
+) -> Result<(), DeckFault> {
+    if board.len() > DECK_BOARD {
+        return Err(DeckFault::TooManyOnBoard);
+    }
+    if hand.len() > DECK_HAND {
+        return Err(DeckFault::TooManyInHand);
+    }
+
+    let mut cells = std::collections::HashSet::new();
+    for (_, x, y) in board {
+        if !own_half(*x, *y) {
+            return Err(DeckFault::NotYourHalf);
+        }
+        if !cells.insert((*x, *y)) {
+            return Err(DeckFault::CellTaken);
+        }
+    }
+
+    // Дублей не бывает по построению — но клиент, который прислал одну карту
+    // дважды, построения не знает, и молча проглотить это значило бы выставить
+    // на поле два тела с одним владением.
+    let mut seen = std::collections::HashSet::new();
+    let named = board.iter().map(|(c, _, _)| *c).chain(hand.iter().copied());
+    let mut fives = 0usize;
+    let mut fours = 0usize;
+    for card in named {
+        if !seen.insert(card) {
+            return Err(DeckFault::SameCardTwice);
+        }
+        if !owned.contains(&card) {
+            return Err(DeckFault::NotYours);
+        }
+        match tier_of.get(&card).copied().unwrap_or(1) {
+            5 => fives += 1,
+            4 => fours += 1,
+            _ => {}
+        }
+    }
+    if fives > DECK_TIER5_MAX {
+        return Err(DeckFault::TooManyOfRankFive);
+    }
+    if fours > DECK_TIER4_MAX {
+        return Err(DeckFault::TooManyOfRankFour);
+    }
+    Ok(())
+}
 
 // ── The body, as the engine reads it ─────────────────────────────────────────
 //
@@ -434,22 +698,57 @@ pub fn ability_points(a: &CardAbility, tier: i16) -> f64 {
 }
 
 /// What a body costs before a single ability is written on it.
-#[allow(clippy::too_many_arguments)]
+///
+/// `speed` сюда больше не входит, и это не подгонка курса, а удаление вранья:
+/// характеристика бралась в 2 очка за ступень — 8 очков за пятую, то есть весь
+/// бюджет первого чина, — а в `battle-core` слова `speed` нет ни разу. Ход
+/// чередуется, очерёдности по скорости в игре не существует. Столбец в таблице
+/// оставлен и значения сохраняются: появится очерёдность — вернётся и строка
+/// здесь, но выдумывать ей цену раньше движка нельзя.
 pub fn body_points(
     health: i16,
     armor: i16,
     ward: i16,
     power: i16,
     reach: i16,
-    speed: i16,
+    step: i16,
     mend: i16,
 ) -> f64 {
     0.5 * health as f64
         + 1.2 * armor as f64
         + 1.2 * ward as f64
         + power as f64 * range_multiplier(reach)
-        + 2.0 * (clamp_speed(speed) - 1) as f64
+        + step_points(step)
         + 0.7 * mend as f64 * range_multiplier(reach)
+}
+
+/// Цена шага, четверть очка за клетку сверх первой.
+///
+/// Число выбрано замером, а не на слух, и оно намеренно скромное — потому что
+/// замер даёт только ПОТОЛОК, а не точку. При равных очках тело с шагом 2
+/// выигрывает у тела с шагом 1 в 64 % стычек и 50 % встреч на расстоянии; шаг 3
+/// — 53 % и 67 %. То есть шаг выигрывает, и стоить ноль он не имеет права.
+///
+/// Но стоит он мало: чтобы медленное тело сравнялось, хватает ОДНОГО очка
+/// здоровья, то есть половины очка весов, — и хватает его одинаково против
+/// шага 2 и против шага 3. Значит вся цена шага целиком не больше половины
+/// очка, и четверть за клетку кладёт шаг 3 ровно на этот потолок.
+///
+/// Взято по верхнему краю намеренно. Настоящая цена, судя по тому, что при том
+/// же лишнем очке здоровья медленное тело выигрывает уже 86–89 %, заметно ниже
+/// — но это забор, и ошибаться ему лучше в сторону строгости: пропущенная
+/// бомба дороже, чем карта, которой велели срезать полочка.
+///
+/// Точнее эта линейка не покажет никогда: бой прыгает целыми ударами, и между
+/// «здоровья не хватило» и «хватило» нет промежуточных состояний. Тонкую
+/// разницу решает прогон, а не формула.
+///
+/// Шаг 0 — неподвижное тело — считается наравне с шагом 1, а не в минус.
+/// Неподвижность и правда недостаток, но насколько — не измерено, а платить
+/// бюджетом за неизмеренное значит выдавать хранителю очки из воздуха: любой
+/// котёл получил бы скидку, которую никто не проверял.
+fn step_points(step: i16) -> f64 {
+    0.25 * (clamp_step(step).max(1) - 1) as f64
 }
 
 /// Points against price. 1.0 is on the curve; above 1.15 the card is overloaded,
@@ -488,7 +787,24 @@ pub fn to_snapshot(card: &crate::models::BattleCardDto) -> battle_core::CardSnap
         step: card.step.clamp(0, STEP_MAX) as u8,
         mend: card.mend as i32,
         channel: to_channel(&card.attack_channel),
+        strikes: strikes(&card.attack_channel),
     }
+}
+
+/// Наносит ли тело удары вообще. Канал «не бьёт» — единственное, что это
+/// значит: в движке каналов три, и отсутствие удара живёт отдельным полем.
+pub fn strikes(channel: &str) -> bool {
+    channel != "none"
+}
+
+/// Сила, за которую весы берут деньги.
+///
+/// У тела, которое не бьёт, сила мертва: она напечатана на карте и никогда не
+/// превращается в урон. Брать за неё очки — та же ошибка, что была со
+/// скоростью, только тише: котёл с силой 5 платил бы пять очков ни за что и
+/// мог не пройти потолок чина.
+pub fn striking_power(power: i16, channel: &str) -> i16 {
+    if strikes(channel) { power } else { 0 }
 }
 
 /// The stored word for a channel, as the engine's own.
@@ -1029,6 +1345,185 @@ fn clamp_pair(a: f32, b: f32) -> (f32, f32) {
 mod tests {
     use super::*;
 
+    // ── Стол гостя ────────────────────────────────────────────────────
+    //
+    // Правило колоды — чистая функция, и проверяется оно здесь, а не через
+    // базу: то же самое правило перечитывает начало партии, и если оно
+    // однажды разойдётся с собой, разойдётся оно молча.
+
+    fn table(
+        board: &[(uuid::Uuid, u8, u8)],
+        hand: &[uuid::Uuid],
+        tiers: &[(uuid::Uuid, i16)],
+    ) -> Result<(), DeckFault> {
+        let owned: std::collections::HashSet<uuid::Uuid> = board
+            .iter()
+            .map(|(c, _, _)| *c)
+            .chain(hand.iter().copied())
+            .collect();
+        check_deck(board, hand, &owned, &tiers.iter().copied().collect())
+    }
+
+    fn card() -> uuid::Uuid {
+        uuid::Uuid::new_v4()
+    }
+
+    // ── Потолок чина ──────────────────────────────────────────────────
+    //
+    // Забор, а не весы. Проверяется здесь потому, что тем же разбором
+    // сервер и отказывает при сохранении, и подсказывает, пока хранитель
+    // печатает: разойдись они — хранитель увидел бы одно, а получил другое.
+
+    #[test]
+    fn a_draft_may_weigh_anything() {
+        // Черновик имеет право быть недоделанным — он затем и черновик.
+        assert!(card_blockers("draft", 10, 2, 999.0, 1).is_empty());
+    }
+
+    #[test]
+    fn a_published_card_may_not_outweigh_its_rank() {
+        assert_eq!(tier_budget(1), 8.0);
+        assert!(card_blockers("published", 10, 2, 8.0, 1).is_empty(), "ровно в бюджет — можно");
+        assert_eq!(
+            card_blockers("published", 10, 2, 8.01, 1),
+            vec!["overTierBudget"],
+            "сверх бюджета — на полку не выходит"
+        );
+        // Тот же вес на чине повыше проходит: чин и есть разрешение.
+        assert!(card_blockers("published", 10, 2, 8.01, 2).is_empty());
+    }
+
+    #[test]
+    fn speed_no_longer_costs_anything() {
+        // Характеристика бралась в 2 очка за ступень при том, что в движке её
+        // нет вовсе. Тело считается без неё — и подпись это стережёт.
+        assert_eq!(body_points(10, 0, 0, 5, 1, 1, 0), 0.5 * 10.0 + 5.0);
+    }
+
+    #[test]
+    fn a_body_that_does_not_strike_pays_nothing_for_its_power() {
+        // Сила напечатана на карте и никогда не превращается в урон.
+        assert_eq!(striking_power(5, "physical"), 5);
+        assert_eq!(striking_power(5, "none"), 0);
+        assert!(!strikes("none"));
+        assert!(strikes("magic"));
+    }
+
+    #[test]
+    fn a_step_costs_a_quarter_of_a_point_a_cell() {
+        let at = |step| body_points(10, 0, 0, 5, 1, step, 0);
+        assert_eq!(at(1), 10.0);
+        assert_eq!(at(2), 10.25);
+        assert_eq!(at(3), 10.5);
+        // Стоять на месте не даёт скидки: недостаток это настоящий, но
+        // неизмеренный, а бюджет из воздуха выдавать нельзя.
+        assert_eq!(at(0), 10.0);
+        // Весь шаг целиком не дороже одного очка здоровья — тот потолок,
+        // который дал замер. Шаг 3 стоит ровно по этому потолку.
+        assert!(at(3) - at(1) <= 0.5);
+    }
+
+    #[test]
+    fn the_ceiling_is_read_at_the_same_rounding_the_keeper_sees() {
+        // Хранитель видит 8.0 и должен иметь право сохранить. Без округления
+        // до сотых карта ровно в бюджет отказывалась бы из-за двоичной пыли.
+        let almost = 8.0_f64 + 1e-14;
+        assert!(almost > 8.0, "именно та пыль, ради которой округление и есть");
+        assert!(card_blockers("published", 10, 2, almost, 1).is_empty());
+        // А настоящий перебор — ловится.
+        assert!(!card_blockers("published", 10, 2, 8.02, 1).is_empty());
+    }
+
+    #[test]
+    fn three_and_three_is_the_table() {
+        let (a, b, c) = (card(), card(), card());
+        let (d, e, f) = (card(), card(), card());
+        assert_eq!(table(&[(a, 0, 4), (b, 1, 4), (c, 2, 4)], &[d, e, f], &[]), Ok(()));
+    }
+
+    #[test]
+    fn a_fourth_body_does_not_fit() {
+        let placed: Vec<_> = (0..4).map(|i| (card(), i as u8 % 3, 3 + i as u8 / 3)).collect();
+        assert_eq!(table(&placed, &[], &[]), Err(DeckFault::TooManyOnBoard));
+    }
+
+    #[test]
+    fn a_fourth_card_does_not_fit_the_hand() {
+        let held: Vec<_> = (0..4).map(|_| card()).collect();
+        assert_eq!(table(&[], &held, &[]), Err(DeckFault::TooManyInHand));
+    }
+
+    /// Половина гостя — ряды 3..5. Ряд 2 принадлежит хранителю, и поставить
+    /// туда своё тело значило бы начать партию в его тылу.
+    #[test]
+    fn the_keepers_half_is_not_yours() {
+        assert_eq!(table(&[(card(), 1, 2)], &[], &[]), Err(DeckFault::NotYourHalf));
+        assert!(own_half(1, 3) && own_half(1, 5));
+        assert!(!own_half(1, 6) && !own_half(3, 4));
+    }
+
+    #[test]
+    fn two_bodies_do_not_share_a_cell() {
+        let (a, b) = (card(), card());
+        assert_eq!(table(&[(a, 1, 4), (b, 1, 4)], &[], &[]), Err(DeckFault::CellTaken));
+    }
+
+    /// Дублей не бывает по построению (`UNIQUE (user_id, card_id)`), но клиент
+    /// построения не знает, и молча проглотить это значило бы выставить два
+    /// тела с одним владением.
+    #[test]
+    fn one_card_stands_in_one_place() {
+        let a = card();
+        assert_eq!(table(&[(a, 0, 4)], &[a], &[]), Err(DeckFault::SameCardTwice));
+    }
+
+    #[test]
+    fn a_card_you_do_not_own_is_refused() {
+        let mine = card();
+        let theirs = card();
+        let owned = std::collections::HashSet::from([mine]);
+        assert_eq!(
+            check_deck(&[(theirs, 1, 4)], &[], &owned, &Default::default()),
+            Err(DeckFault::NotYours)
+        );
+    }
+
+    #[test]
+    fn one_card_of_rank_five_and_no_more() {
+        let (a, b) = (card(), card());
+        assert_eq!(table(&[(a, 0, 4)], &[], &[(a, 5)]), Ok(()));
+        assert_eq!(
+            table(&[(a, 0, 4), (b, 1, 4)], &[], &[(a, 5), (b, 5)]),
+            Err(DeckFault::TooManyOfRankFive)
+        );
+    }
+
+    #[test]
+    fn two_cards_of_rank_four_and_no_more() {
+        let (a, b, c) = (card(), card(), card());
+        assert_eq!(table(&[(a, 0, 4), (b, 1, 4)], &[], &[(a, 4), (b, 4)]), Ok(()));
+        assert_eq!(
+            table(&[(a, 0, 4), (b, 1, 4), (c, 2, 4)], &[], &[(a, 4), (b, 4), (c, 4)]),
+            Err(DeckFault::TooManyOfRankFour)
+        );
+    }
+
+    /// Пустой стол законен. Он не бесполезен: всё, чего гость не поставил,
+    /// закрывает дом, и новый гость садится играть, ничем не владея.
+    #[test]
+    fn an_empty_table_is_legal() {
+        assert_eq!(table(&[], &[], &[]), Ok(()));
+    }
+
+    /// Клетки по умолчанию обязаны лежать на своей половине и не совпадать —
+    /// иначе дом положил бы два заёма на одно место.
+    #[test]
+    fn the_default_cells_are_on_your_half_and_distinct() {
+        let cells: std::collections::HashSet<_> = DECK_DEFAULT_CELLS.iter().collect();
+        assert_eq!(cells.len(), DECK_DEFAULT_CELLS.len());
+        assert!(DECK_DEFAULT_CELLS.iter().all(|(x, y)| own_half(*x, *y)));
+    }
+
     #[test]
     fn slug_avoids_api_doors() {
         assert_eq!(unique_slug(Some("cards"), "anything", &[]), "card-cards");
@@ -1259,6 +1754,7 @@ mod tests {
             art_focal: None,
             frame_override: None,
             shelf_order: None,
+            lendable: false,
             figurine_id: None,
             figurine_name: None,
             figurine_slug: None,

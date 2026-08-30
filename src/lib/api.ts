@@ -73,6 +73,15 @@ import type {
     SaveBattleKeywordRequest,
     BattleWeigh,
     BattleChallenge,
+    BattleMatches,
+    MatchReplay,
+    BattleDeck,
+    GrantBattleCoinRequest,
+    GrantBattleCoinResponse,
+    GiveBattleCardsRequest,
+    RevokeBattleCardsRequest,
+    GiveBattleCardsResponse,
+    SaveBattleDeckRequest,
     SaveBattleChallengeRequest,
     BattleMatch,
     BattleAction,
@@ -2248,6 +2257,31 @@ export const api = {
         });
     },
 
+    /** Стол гостя, с уже досчитанным заёмом: чем дом закрывает пустые места,
+     *  решает сервер, а не страница. Второй реализации одного правила быть не
+     *  должно — та, что в браузере, разошлась бы с той, по которой играют. */
+    async getBattleDeck(sessionToken: string): Promise<BattleDeck> {
+        return webFetch('/battles/deck', {
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    /** Разложить стол целиком. Половина сохранённой расстановки — не
+     *  расстановка, а состояние, в котором её застали. */
+    async saveBattleDeck(
+        sessionToken: string,
+        body: SaveBattleDeckRequest,
+    ): Promise<BattleDeck> {
+        return webFetch('/battles/deck', {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${sessionToken}`,
+            },
+            body: JSON.stringify(body),
+        });
+    },
+
     /**
      * Взять карту с полки.
      *
@@ -2401,6 +2435,18 @@ export const api = {
         });
     },
 
+    /** Сыгранные партии и сводка по ним. */
+    async adminReadBattleMatches(): Promise<BattleMatches> {
+        return webFetch('/admin/battles/matches', { headers: authHeaders() });
+    },
+
+    /** Пересмотр записанной партии до заданной ступени. */
+    async adminReplayBattleMatch(id: string, upto: number): Promise<MatchReplay> {
+        return webFetch(`/admin/battles/matches/${id}/replay?upto=${upto}`, {
+            headers: authHeaders(),
+        });
+    },
+
     async adminListBattleChallenges(): Promise<BattleChallenge[]> {
         return webFetch('/admin/battles/challenges', { headers: authHeaders() });
     },
@@ -2413,6 +2459,58 @@ export const api = {
             method: id ? 'PUT' : 'POST',
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify(body),
+        });
+    },
+
+    /** Порядок полки этюдов. Тот же приём, что и у полки карт: список целиком,
+     *  а не «подвинь одно» — половина порядка порядком не является. */
+    /** Что у гостя сейчас: монеты, карты, записки — ровно то, что видит он сам.
+     *  Второго разбора нет намеренно: проверять игру надо по тому, что видит
+     *  человек, а не по отчёту, который может с ним разойтись. */
+    async adminReadBattleGuest(userId: string): Promise<BattleMe> {
+        return webFetch(`/admin/battles/guest/${userId}`, { headers: authHeaders() });
+    },
+
+    /** Выдать карты гостю напрямую, минуя покупку. Кошелька не касается. */
+    async adminGiveBattleCards(
+        body: GiveBattleCardsRequest,
+    ): Promise<GiveBattleCardsResponse> {
+        return webFetch('/admin/battles/cards/give', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(body),
+        });
+    },
+
+    /** Забрать карты обратно — единственный способ проверить пустое собрание
+     *  и временные карты, которые его закрывают. */
+    async adminRevokeBattleCards(
+        body: RevokeBattleCardsRequest,
+    ): Promise<GiveBattleCardsResponse> {
+        return webFetch('/admin/battles/cards/revoke', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(body),
+        });
+    },
+
+    /** Из рук хранителя — одному гостю, за настоящее. Единственный способ, каким
+     *  в доме появляется корм: он не оседает сам, как пыль. */
+    async adminGrantBattleCoin(
+        body: GrantBattleCoinRequest,
+    ): Promise<GrantBattleCoinResponse> {
+        return webFetch('/admin/battles/grant', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(body),
+        });
+    },
+
+    async adminReorderBattleChallenges(ids: string[]): Promise<void> {
+        await webFetch('/admin/battles/challenges/reorder', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ ids }),
         });
     },
 

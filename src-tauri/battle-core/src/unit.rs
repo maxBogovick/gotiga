@@ -72,6 +72,10 @@ impl Health {
     }
 }
 
+fn strikes_by_default() -> bool {
+    true
+}
+
 /// How many riders one unit may carry at once. Not a balance rule — a reading
 /// rule. Past five the card can no longer be understood at a glance.
 pub const STATUS_CAP: usize = 5;
@@ -91,9 +95,26 @@ pub struct Unit {
     pub mend: i32,
     /// Which defence answers its ordinary blow.
     pub channel: crate::damage::Channel,
-    /// Whether it has already acted this turn. One action per body per turn is
-    /// the whole of the action economy in this slice.
+    /// Бьёт ли это тело вообще. Читается с карты и в партии не меняется.
+    #[serde(default = "strikes_by_default")]
+    pub strikes: bool,
+    /// Whether it has already struck, mended — or walked, when the rules say a
+    /// walk spends the whole turn. One such act per body per turn is the whole
+    /// of the action economy.
     pub acted: bool,
+    /// Whether it has already walked this turn. Read when the rules let a body
+    /// walk without spending its whole turn — which is the default; otherwise
+    /// `acted` says it.
+    /// Kept apart from `acted` so a body that walked can still be asked whether
+    /// it may strike, which is the entire question the dial exists to answer.
+    #[serde(default)]
+    pub moved: bool,
+    /// Whether it has already struck back during the enemy's turn. Retaliation
+    /// is once per turn: without the cap, focusing one body would cost the
+    /// attacker more than it costs the defender, and holding still would beat
+    /// attacking at every board.
+    #[serde(default)]
+    pub retaliated: bool,
     /// The card this body was raised from, frozen. Kept because the fields
     /// below are the *current* numbers — wounded, blessed, cursed — and the
     /// card is what was printed. The name lives here and nowhere else.
@@ -120,7 +141,10 @@ impl Unit {
             step: 1,
             mend: 0,
             channel: crate::damage::Channel::Physical,
+            strikes: true,
             acted: false,
+            moved: false,
+            retaliated: false,
             card: crate::card::CardSnapshot::new("", 0, health, power),
             health: Health::full(health),
             power,
@@ -141,9 +165,12 @@ impl Unit {
             step: card.step,
             mend: card.mend,
             channel: card.channel,
+            strikes: card.strikes,
             // A body placed this turn does not swing this turn. Without it,
             // mana buys damage outright and holding the field means nothing.
             acted: true,
+            moved: false,
+            retaliated: false,
             card: card.clone(),
             health: Health::full(card.health),
             power: card.power,

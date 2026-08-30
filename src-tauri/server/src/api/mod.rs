@@ -207,6 +207,11 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             // Кошелёк и владение. Всё под сессией: книга лежит на сервере
             // именно потому, что кошелёк в localStorage — бесконечные деньги.
             .route("/battles/me", get(handlers::get_battle_me))
+            // Стол принадлежит человеку: читать и писать его может только он.
+            .route(
+                "/battles/deck",
+                get(handlers::get_battle_deck).put(handlers::save_battle_deck),
+            )
             .route("/battles/buy", post(handlers::buy_battle_card))
             .route("/battles/raise", post(handlers::raise_battle_card_level))
             .route("/battles/cards/:id/seen", post(handlers::mark_battle_card_seen))
@@ -604,6 +609,18 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 ),
             )
             .route(
+                "/admin/battles/matches/{id}/replay",
+                get(handlers::admin_replay_battle_match).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/battles/matches",
+                get(handlers::admin_read_battle_matches).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
                 "/admin/battles/challenges",
                 get(handlers::admin_list_battle_challenges)
                     .post(handlers::admin_create_battle_challenge)
@@ -611,6 +628,40 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                         config.clone(),
                         auth_middleware,
                     )),
+            )
+            // Состояние гостя и прямая выдача карт: без них проверить игру можно
+            // только начислив монеты, войдя под гостем и купив карты по одной.
+            .route(
+                "/admin/battles/guest/:id",
+                get(handlers::admin_read_battle_guest).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/battles/cards/give",
+                post(handlers::admin_give_battle_cards).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/battles/cards/revoke",
+                post(handlers::admin_revoke_battle_cards).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            // Корм не оседает сам: его даёт хранитель руками, за настоящее.
+            .route(
+                "/admin/battles/grant",
+                post(handlers::admin_grant_battle_coin).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            // Раньше `:id`, иначе «reorder» будет прочитан как идентификатор.
+            .route(
+                "/admin/battles/challenges/reorder",
+                post(handlers::admin_reorder_battle_challenges).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
             )
             .route(
                 "/admin/battles/challenges/:id",

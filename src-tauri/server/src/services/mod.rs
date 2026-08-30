@@ -7211,6 +7211,7 @@ impl AppService {
             art_focal: row.art_focal,
             frame_override: row.frame_override,
             shelf_order: row.shelf_order,
+            lendable: row.lendable,
             figurine_id: row.figurine_id.map(|id| id.to_string()),
             figurine_name: row.figurine_name,
             figurine_slug: row.figurine_slug,
@@ -7280,14 +7281,64 @@ impl AppService {
         let taken = self.repo.list_battle_card_slugs_except(Some(id)).await?;
         let p = Self::prepare_battle_card_save(&req, &taken)?;
         self.assert_work_is_free(p.figurine_id, Some(id)).await?;
+        // Как карта звалась ДО правки. Испытания ссылаются на карты по слугу —
+        // намеренно, испытание это шаблон, — и переименование без этого просто
+        // осиротило бы каждое из них: карта пропала бы с доски молча, а узнал
+        // бы об этом гость.
+        let was = self.repo.get_battle_card_admin(id).await?.map(|c| c.slug);
         let rec = self
             .repo
             .update_battle_card(id, &p)
             .await?;
+        if let Some(old) = was.filter(|old| *old != rec.slug) {
+            let moved = self.carry_slug_into_challenges(&old, &rec.slug).await?;
+            if moved > 0 {
+                Self::log_domain_event("battle_slug_carried", "battle_card", rec.id, "ok");
+            }
+        }
         // Rank and price are what an owner's collection is worth, so a change
         // to them leaves a trace even before anything can be bought.
         Self::log_domain_event("battle_card_updated", "battle_card", rec.id, "ok");
         self.battle_card_or_fetch(rec.id).await
+    }
+
+    /// Перенести переименование карты во все испытания, которые её называют.
+    ///
+    /// Разбором JSON, а не подстановкой в тексте: слуг «ved» встречается внутри
+    /// «vedma», и текстовая замена однажды переписала бы половину чужого имени.
+    /// Возвращает, сколько испытаний тронуто.
+    async fn carry_slug_into_challenges(&self, from: &str, to: &str) -> Result<usize> {
+        let mut moved = 0usize;
+        for challenge in self.repo.list_battle_challenges(false).await? {
+            let Ok(mut setup) =
+                serde_json::from_str::<crate::models::ChallengeSetup>(&challenge.setup)
+            else {
+                // Испытание с нечитаемой расстановкой не чинится переименованием
+                // и не должно ронять сохранение карты.
+                continue;
+            };
+            let mut touched = false;
+            for place in setup.player_board.iter_mut().chain(setup.keeper_board.iter_mut()) {
+                if place.card == from {
+                    place.card = to.to_string();
+                    touched = true;
+                }
+            }
+            for slug in setup.player_hand.iter_mut().chain(setup.keeper_hand.iter_mut()) {
+                if slug == from {
+                    *slug = to.to_string();
+                    touched = true;
+                }
+            }
+            if !touched {
+                continue;
+            }
+            let json = serde_json::to_string(&setup)
+                .map_err(|_| AppError::Internal("Arrangement will not serialise".into()))?;
+            self.repo.update_battle_challenge_setup(challenge.id, &json).await?;
+            moved += 1;
+        }
+        Ok(moved)
     }
 
     pub async fn admin_delete_battle_card(&self, id: Uuid) -> Result<()> {
@@ -7376,10 +7427,11 @@ impl AppService {
     /// Balances and holdings in one answer: the shelf cannot draw a single card
     /// until it knows whose that card is.
     pub async fn battle_me(&self, user_id: Uuid) -> Result<crate::models::BattleMeDto> {
-        let (dust, feed, owned) = tokio::try_join!(
+        let (dust, feed, owned, gifts) = tokio::try_join!(
             self.repo.battle_wallet_balance(user_id, "dust"),
             self.repo.battle_wallet_balance(user_id, "feed"),
             self.repo.list_owned_battle_cards(user_id),
+            self.repo.list_battle_hand_grants(user_id, crate::battles::GIFTS_SHOWN),
         )?;
         Ok(crate::models::BattleMeDto {
             dust,
@@ -7392,7 +7444,301 @@ impl AppService {
                     is_new: o.seen_at.is_none(),
                 })
                 .collect(),
+            gifts: gifts
+                .into_iter()
+                .map(|g| crate::models::BattleGiftDto {
+                    currency: g.currency,
+                    amount: g.amount,
+                    note: g.note,
+                    at: g.created_at.to_rfc3339(),
+                })
+                .collect(),
         })
+    }
+
+    /// Что у гостя сейчас: монеты, карты, записки. То же, что видит он сам.
+    ///
+    /// Ровно `battle_me`, только чужой книги. Отдельного разбора нет намеренно:
+    /// проверять игру надо по тому, что видит человек, а не по второму отчёту,
+    /// который может с ним разойтись.
+    pub async fn admin_read_battle_guest(
+        &self,
+        user_id: Uuid,
+    ) -> Result<crate::models::BattleMeDto> {
+        self.battle_me(user_id).await
+    }
+
+    /// Выдать карты гостю напрямую, минуя покупку.
+    ///
+    /// Кошелька не касается: это подарок, а не покупка. Нужен, чтобы привести
+    /// собрание в состояние, в котором игру можно проверить, — иначе для этого
+    /// пришлось бы начислить монеты, войти под гостем и купить карты по одной.
+    pub async fn admin_give_battle_cards(
+        &self,
+        req: &crate::models::GiveBattleCardsRequest,
+    ) -> Result<crate::models::GiveBattleCardsResponse> {
+        let level = crate::battles::clamp_level(req.level);
+        let ids: Vec<Uuid> = if req.all {
+            // Только те, что могут выйти на поле: выдать карту без здоровья
+            // значило бы выдать тело, падающее в тот же миг, как встанет.
+            self.list_battle_cards_public()
+                .await?
+                .into_iter()
+                .filter(crate::battles::can_take_the_field)
+                .filter_map(|c| c.id.parse().ok())
+                .collect()
+        } else {
+            req.card_ids.clone()
+        };
+        if ids.is_empty() {
+            return Ok(crate::models::GiveBattleCardsResponse { touched: 0 });
+        }
+        let touched = self.repo.give_battle_cards(req.user_id, &ids, level).await?;
+        Self::log_domain_event("battle_cards_given", "user", req.user_id, "ok");
+        Ok(crate::models::GiveBattleCardsResponse { touched })
+    }
+
+    /// Забрать карты обратно. Пустой список — все.
+    ///
+    /// Единственный способ проверить пустое собрание и заём, который его
+    /// закрывает: обратно карты сами не уходят.
+    pub async fn admin_revoke_battle_cards(
+        &self,
+        req: &crate::models::RevokeBattleCardsRequest,
+    ) -> Result<crate::models::GiveBattleCardsResponse> {
+        let ids = if req.all { Vec::new() } else { req.card_ids.clone() };
+        if !req.all && ids.is_empty() {
+            return Ok(crate::models::GiveBattleCardsResponse { touched: 0 });
+        }
+        let touched = self.repo.revoke_battle_cards(req.user_id, &ids).await?;
+        Self::log_domain_event("battle_cards_revoked", "user", req.user_id, "ok");
+        Ok(crate::models::GiveBattleCardsResponse { touched })
+    }
+
+    /// Дать из рук.
+    ///
+    /// Единственный способ, которым в доме появляется корм: он не оседает сам,
+    /// как пыль, — его даёт хранитель за настоящее (состоявшийся показ,
+    /// опубликованное впечатление, заказ работы). Поэтому здесь нет ни ставки,
+    /// ни правила: есть человек, число и записка.
+    ///
+    /// Записка обязательна. Корм без неё был бы просто выросшим счётчиком —
+    /// ровно тем, от чего эта комната отказывается.
+    pub async fn admin_grant_battle_coin(
+        &self,
+        req: &crate::models::GrantBattleCoinRequest,
+    ) -> Result<crate::models::GrantBattleCoinResponse> {
+        if !crate::battles::valid_currency(&req.currency) {
+            return Err(AppError::BadRequest("Unknown coin".into()));
+        }
+        if req.amount == 0 || req.amount.abs() > crate::battles::GRANT_MAX {
+            return Err(AppError::BadRequest("A grant of nothing is not a grant".into()));
+        }
+        let note = req.note.as_deref().map(str::trim).filter(|s| !s.is_empty());
+        if note.is_none() {
+            return Err(AppError::BadRequest("A grant needs a note".into()));
+        }
+        // Ключ приходит от панели и по одному на открытую форму: сервер,
+        // чеканящий его сам, сделал бы двойной щелчок второй выдачей.
+        let key = req.idem_key.trim();
+        if key.is_empty() || key.len() > 100 {
+            return Err(AppError::BadRequest("A grant needs a key of its own".into()));
+        }
+        let note = crate::battles::clamp_note(note);
+        let granted_now = self
+            .repo
+            .grant_battle_wallet(
+                req.user_id,
+                &req.currency,
+                req.amount,
+                note.as_deref(),
+                &format!("hand:{key}"),
+            )
+            .await?;
+        let balance = self.repo.battle_wallet_balance(req.user_id, &req.currency).await?;
+        if granted_now {
+            Self::log_domain_event("battle_coin_granted", "user", req.user_id, "ok");
+        }
+        Ok(crate::models::GrantBattleCoinResponse { balance, granted_now })
+    }
+
+    // ── Стол гостя ────────────────────────────────────────────────────────
+    //
+    // Шесть мест: три на клетках своей половины, три в руке. Чего гость не
+    // выбрал — закрывает дом (`lendable`), потому что иначе стол это запертая
+    // дверь ровно для того, кому комната нужнее всего: новый гость владеет
+    // нулём карт, а партия просит шести.
+
+    /// Стол как он есть — с досчитанным заёмом.
+    ///
+    /// Заём НЕ хранится вместе с колодой и досчитывается на каждое чтение:
+    /// иначе он застыл бы в чужой колоде и пережил бы решение хранителя его
+    /// отозвать.
+    pub async fn read_battle_deck(&self, user_id: Uuid) -> Result<crate::models::BattleDeckDto> {
+        let stored = self.repo.get_battle_deck(user_id).await?;
+        let laid = stored.is_some();
+        // Строка, которая не читается, не запирает человека в его собственной
+        // комнате: стол открывается пустым, и первое же сохранение его чинит.
+        let layout: crate::models::DeckLayout = stored
+            .as_ref()
+            .and_then(|d| serde_json::from_str(&d.layout).ok())
+            .unwrap_or_default();
+
+        let cards = self.list_battle_cards_public().await?;
+        let fieldable: std::collections::HashSet<Uuid> = cards
+            .iter()
+            .filter(|c| crate::battles::can_take_the_field(c))
+            .filter_map(|c| c.id.parse().ok())
+            .collect();
+
+        // Пул перебирается по кругу, а не раздаётся по одной карте: у дома,
+        // отметившего одну карту заёмной, иначе закрывалось бы одно место из
+        // шести, а остальные пять оставались бы пустыми — то есть отметить
+        // меньше шести карт значило бы не отметить ничего. Повтор одного тела
+        // на поле правилам не мешает; пустая половина мешает партии.
+        let pool = self.loan_pool(user_id).await?;
+        let mut given = 0usize;
+        let mut hand_out = |taken: bool| -> Option<String> {
+            if !taken || pool.is_empty() {
+                return None;
+            }
+            let id = pool[given % pool.len()];
+            given += 1;
+            Some(id.to_string())
+        };
+
+        let mut board = Vec::with_capacity(crate::battles::DECK_BOARD);
+        for slot in layout.board.iter().take(crate::battles::DECK_BOARD) {
+            let gone = !fieldable.contains(&slot.card);
+            board.push(crate::models::BattleDeckSlotDto {
+                card_id: Some(slot.card.to_string()),
+                gone,
+                lent_card_id: hand_out(gone),
+                x: Some(slot.x),
+                y: Some(slot.y),
+            });
+        }
+        // Пустые места дома встают на клетки по умолчанию — на те, которых
+        // гость ещё не занял: заём, поставленный поверх своей карты, был бы
+        // не заёмом, а подменой.
+        // Свободные клетки отбираются ДО того, как в `board` что-то допишут:
+        // ленивый фильтр держал бы `board` на всё время дозаписи.
+        let taken_cells: Vec<(u8, u8)> = board.iter().filter_map(|s| s.x.zip(s.y)).collect();
+        let mut free = crate::battles::DECK_DEFAULT_CELLS
+            .into_iter()
+            .filter(|cell| !taken_cells.contains(cell));
+        while board.len() < crate::battles::DECK_BOARD {
+            let (x, y) = free.next().unwrap_or((1, 4));
+            board.push(crate::models::BattleDeckSlotDto {
+                card_id: None,
+                gone: false,
+                lent_card_id: hand_out(true),
+                x: Some(x),
+                y: Some(y),
+            });
+        }
+
+        let mut hand = Vec::with_capacity(crate::battles::DECK_HAND);
+        for card in layout.hand.iter().take(crate::battles::DECK_HAND) {
+            let gone = !fieldable.contains(card);
+            hand.push(crate::models::BattleDeckSlotDto {
+                card_id: Some(card.to_string()),
+                gone,
+                lent_card_id: hand_out(gone),
+                x: None,
+                y: None,
+            });
+        }
+        while hand.len() < crate::battles::DECK_HAND {
+            hand.push(crate::models::BattleDeckSlotDto {
+                card_id: None,
+                gone: false,
+                lent_card_id: hand_out(true),
+                x: None,
+                y: None,
+            });
+        }
+
+        // Не «не хватило на все места» — а «дому нечего одолжить вовсе».
+        // Пул перебирается по кругу, поэтому непокрытое место означает ровно
+        // одно: хранитель не отметил ни одной карты.
+        let nothing_to_lend = board
+            .iter()
+            .chain(&hand)
+            .any(|s| s.lent_card_id.is_none() && (s.card_id.is_none() || s.gone));
+
+        Ok(crate::models::BattleDeckDto { board, hand, laid, nothing_to_lend })
+    }
+
+    /// Что дом одолжит этому гостю, в одном и том же порядке.
+    ///
+    /// Свои карты из пула вычеркнуты: одна и та же карта своей и заёмной на
+    /// одном поле — не поломка правил, но лишний вопрос в голове у человека.
+    async fn loan_pool(&self, user_id: Uuid) -> Result<Vec<Uuid>> {
+        let held: std::collections::HashSet<Uuid> = self
+            .repo
+            .list_owned_battle_cards(user_id)
+            .await?
+            .into_iter()
+            .map(|o| o.card_id)
+            .collect();
+        let limit = (crate::battles::DECK_BOARD + crate::battles::DECK_HAND) as i64
+            + held.len() as i64;
+        // Порядок один и тот же на каждое чтение: стол, который тасует заём при
+        // каждом открытии, — это стол, на который нельзя посмотреть дважды.
+        Ok(self
+            .repo
+            .list_lendable_battle_cards(crate::battles::DECK_LOAN_TIER, limit)
+            .await?
+            .into_iter()
+            .map(|c| c.id)
+            .filter(|id| !held.contains(id))
+            .collect())
+    }
+
+    /// Разложить стол.
+    ///
+    /// Заём сюда не приходит: его не выбирают. Приходит только то, что гость
+    /// поставил сам, — и проверяется тем же правилом, которое потом перечитает
+    /// начало партии.
+    pub async fn save_battle_deck(
+        &self,
+        user_id: Uuid,
+        req: &crate::models::SaveBattleDeckRequest,
+    ) -> Result<crate::models::BattleDeckDto> {
+        let owned: std::collections::HashSet<Uuid> = self
+            .repo
+            .list_owned_battle_cards(user_id)
+            .await?
+            .into_iter()
+            .map(|o| o.card_id)
+            .collect();
+        let tier_of: std::collections::HashMap<Uuid, i16> = self
+            .list_battle_cards_public()
+            .await?
+            .into_iter()
+            .filter_map(|c| c.id.parse().ok().map(|id| (id, c.tier)))
+            .collect();
+
+        let board: Vec<(Uuid, u8, u8)> =
+            req.board.iter().map(|p| (p.card, p.x, p.y)).collect();
+        // Отказ называет причину словом, а не текстом: текст живёт в `i18n`, и
+        // сервер, который его сочиняет, сочиняет его на одном языке.
+        crate::battles::check_deck(&board, &req.hand, &owned, &tier_of)
+            .map_err(|fault| AppError::BadRequest(format!("deck:{}", fault.word())))?;
+
+        let layout = crate::models::DeckLayout {
+            board: req
+                .board
+                .iter()
+                .map(|p| crate::models::DeckPlacement { card: p.card, x: p.x, y: p.y })
+                .collect(),
+            hand: req.hand.clone(),
+        };
+        let json = serde_json::to_string(&layout)
+            .map_err(|_| AppError::Internal("Table will not serialise".into()))?;
+        self.repo.upsert_battle_deck(user_id, &json).await?;
+        self.read_battle_deck(user_id).await
     }
 
     /// Take a card off the shelf.
@@ -7562,6 +7908,15 @@ impl AppService {
         if !crate::battles::valid_status(&req.status) {
             return Err(AppError::BadRequest("Unknown card status".into()));
         }
+        // Карта, которую нельзя ни выложить, ни оплатить, не должна попадать на
+        // полку: гость купит её за настоящую пыль и не сможет ничего с ней
+        // сделать. Отказ называет причину тем же словом, которое весы показали
+        // хранителю, пока он печатал, — одним разбором на оба случая.
+        //
+        // Черновик так сохранить можно: он затем и черновик.
+        if let Some(fault) = Self::card_readiness(req).blocking.first() {
+            return Err(AppError::BadRequest(format!("card:{fault}")));
+        }
         let mut title_en = crate::battles::clamp_title(&req.title_en);
         let mut title_ru = crate::battles::clamp_title(&req.title_ru);
         if title_en.is_empty() && title_ru.is_empty() {
@@ -7627,7 +7982,15 @@ impl AppService {
         // The scales run on every save, on the clamped numbers rather than the
         // typed ones — so the verdict is about the card that was actually
         // written, not the one that was asked for.
-        let points = crate::battles::body_points(health, armor, ward, power, reach, speed, mend)
+        let points = crate::battles::body_points(
+            health,
+            armor,
+            ward,
+            crate::battles::striking_power(power, &attack_channel),
+            reach,
+            step,
+            mend,
+        )
             + crate::battles::read_abilities(abilities.as_deref())
                 .iter()
                 .map(|a| crate::battles::ability_points(a, tier))
@@ -7675,6 +8038,7 @@ impl AppService {
                 .map(str::to_string),
             art_focal: crate::battles::normalize_focal(req.art_focal.as_deref()),
             frame_override: crate::battles::normalize_frame_override(req.frame_override.as_deref()),
+            lendable: req.lendable,
         })
     }
 
@@ -7683,25 +8047,69 @@ impl AppService {
     /// Clamps exactly as a save would, so the verdict is about the card that
     /// *would* be written rather than the one that was typed — a keeper who
     /// enters reach 9 should see the number for reach 5.
-    pub fn weigh_battle_card(req: &SaveBattleCardRequest) -> BattleWeighDto {
+    /// Годность карты — одним разбором и для весов, и для отказа при сохранении.
+    fn card_readiness(req: &SaveBattleCardRequest) -> crate::models::CardReadinessDto {
+        crate::models::CardReadinessDto {
+            blocking: crate::battles::card_blockers(
+                &req.status,
+                crate::battles::clamp_stat(req.health),
+                crate::battles::clamp_cost(req.cost),
+                Self::weigh_points(req).0,
+                crate::battles::clamp_tier(req.tier),
+            )
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+            notes: crate::battles::card_notes(
+                &req.status,
+                crate::battles::clamp_tier(req.tier),
+                req.lendable,
+                crate::battles::clamp_price(req.price_dust),
+                crate::battles::clamp_price(req.price_feed),
+            )
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+        }
+    }
+
+    /// Вес карты: тело, способности и сумма. Одним счётом и для весов, и для
+    /// потолка — два счёта однажды разошлись бы, и хранитель увидел бы одно
+    /// число, а отказ пришёл бы по другому.
+    ///
+    /// Способности читаются через `normalize/read`, а не прямо из запроса:
+    /// строка с неизвестным глаголом при сохранении отбрасывается, и весить
+    /// надо то, что будет записано.
+    fn weigh_points(req: &SaveBattleCardRequest) -> (f64, f64, Vec<crate::battles::CardAbility>) {
         let tier = crate::battles::clamp_tier(req.tier);
-        let cost = crate::battles::clamp_cost(req.cost);
         let body = crate::battles::body_points(
             crate::battles::clamp_stat(req.health),
             crate::battles::clamp_defence(req.armor),
             crate::battles::clamp_defence(req.ward),
-            crate::battles::clamp_power(req.power),
+            crate::battles::striking_power(
+                crate::battles::clamp_power(req.power),
+                req.attack_channel.trim(),
+            ),
             crate::battles::clamp_reach(req.reach),
-            crate::battles::clamp_speed(req.speed),
+            crate::battles::clamp_step(req.step),
             crate::battles::clamp_mend(req.mend),
         );
-
-        // Through normalize/read rather than over `req.abilities` directly: an
-        // ability with an unknown verb is dropped on save, and the scales must
-        // agree with what will actually be stored.
         let stored = crate::battles::read_abilities(
             crate::battles::normalize_abilities(&req.abilities).as_deref(),
         );
+        let total = body
+            + stored
+                .iter()
+                .map(|a| crate::battles::ability_points(a, tier))
+                .sum::<f64>();
+        (total, body, stored)
+    }
+
+    pub fn weigh_battle_card(req: &SaveBattleCardRequest) -> BattleWeighDto {
+        let tier = crate::battles::clamp_tier(req.tier);
+        let cost = crate::battles::clamp_cost(req.cost);
+        let readiness = Self::card_readiness(req);
+        let (total, body, stored) = Self::weigh_points(req);
         let abilities: Vec<AbilityWeightDto> = stored
             .iter()
             .map(|a| AbilityWeightDto {
@@ -7709,11 +8117,6 @@ impl AppService {
                 points: round2(crate::battles::ability_points(a, tier)),
             })
             .collect();
-
-        let total = body + stored
-            .iter()
-            .map(|a| crate::battles::ability_points(a, tier))
-            .sum::<f64>();
 
         BattleWeighDto {
             body_points: round2(body),
@@ -7725,7 +8128,208 @@ impl AppService {
             // `points ≈ 4 × cost + 2`.
             suggested_cost: (((total - 2.0) / 4.0).round() as i16)
                 .clamp(0, crate::battles::COST_MAX),
+            readiness,
         }
+    }
+
+    /// Сыгранные партии и что из них следует.
+    ///
+    /// Единственный источник правды о живой игре. Сводка по картам считается по
+    /// ЗАМОРОЖЕННОЙ расстановке каждой партии, а не по нынешней полке: карта
+    /// могла быть с тех пор переписана, а выиграла или проиграла та, что стояла
+    /// на доске. Слуг в снимке — то же имя, каким карта звалась тогда.
+    pub async fn admin_read_battle_matches(&self) -> Result<crate::models::BattleMatchesDto> {
+        let rows = self
+            .repo
+            .admin_list_battle_matches(crate::battles::MATCHES_SHOWN)
+            .await?;
+
+        // Имена карт по слугу. Из админской полки, а не из публичной: партия
+        // могла быть сыграна картой, которую с тех пор сняли.
+        let titles: std::collections::HashMap<String, (String, String)> = self
+            .repo
+            .list_battle_cards_admin(crate::battles::SHELF_CARDS)
+            .await?
+            .into_iter()
+            .map(|c| (c.slug.clone(), (c.title_ru.clone(), c.title_en.clone())))
+            .collect();
+
+        let mut by_challenge: Vec<crate::models::BattleChallengeTally> = Vec::new();
+        let mut cards: std::collections::HashMap<String, crate::models::BattleCardTally> =
+            std::collections::HashMap::new();
+        let mut out_rows = Vec::with_capacity(rows.len());
+
+        for row in &rows {
+            let moves = serde_json::from_str::<Vec<battle_core::Action>>(&row.actions)
+                .map(|a| a.len() as i64)
+                .unwrap_or(0);
+
+            // ── по испытаниям ───────────────────────────────────────────────
+            let key = row.challenge_id.map(|id| id.to_string());
+            let tally = match by_challenge.iter_mut().find(|t| t.challenge_id == key) {
+                Some(t) => t,
+                None => {
+                    by_challenge.push(crate::models::BattleChallengeTally {
+                        challenge_id: key.clone(),
+                        title_ru: row.title_ru.clone(),
+                        title_en: row.title_en.clone(),
+                        played: 0,
+                        guest_won: 0,
+                        keeper_won: 0,
+                        draws: 0,
+                        unfinished: 0,
+                    });
+                    by_challenge.last_mut().expect("только что добавлено")
+                }
+            };
+            tally.played += 1;
+            match row.outcome.as_deref() {
+                Some("player") => tally.guest_won += 1,
+                Some("keeper") => tally.keeper_won += 1,
+                Some("draw") => tally.draws += 1,
+                _ => tally.unfinished += 1,
+            }
+
+            // ── по картам ───────────────────────────────────────────────────
+            if let (Some(outcome), Ok(setup)) = (
+                row.outcome.as_deref(),
+                serde_json::from_str::<battle_core::Setup>(&row.setup),
+            ) {
+                let names = |board: &[(battle_core::CardSnapshot, battle_core::Cell)],
+                             hand: &[battle_core::CardSnapshot]| {
+                    board
+                        .iter()
+                        .map(|(c, _)| c.name.clone())
+                        .chain(hand.iter().map(|c| c.name.clone()))
+                        .collect::<std::collections::HashSet<String>>()
+                };
+                let sides = [
+                    (names(&setup.player_board, &setup.player_hand), "player"),
+                    (names(&setup.keeper_board, &setup.keeper_hand), "keeper"),
+                ];
+                for (slugs, side) in sides {
+                    for slug in slugs {
+                        let named = titles.get(&slug);
+                        let tally = cards.entry(slug.clone()).or_insert_with(|| {
+                            crate::models::BattleCardTally {
+                                slug: slug.clone(),
+                                title_ru: named.map(|t| t.0.clone()),
+                                title_en: named.map(|t| t.1.clone()),
+                                played: 0,
+                                won: 0,
+                                lost: 0,
+                                draws: 0,
+                            }
+                        });
+                        tally.played += 1;
+                        if outcome == "draw" {
+                            tally.draws += 1;
+                        } else if outcome == side {
+                            tally.won += 1;
+                        } else {
+                            tally.lost += 1;
+                        }
+                    }
+                }
+            }
+
+            out_rows.push(crate::models::BattleMatchRowDto {
+                id: row.id.to_string(),
+                guest: row.guest.clone(),
+                challenge_id: key,
+                title_ru: row.title_ru.clone(),
+                title_en: row.title_en.clone(),
+                outcome: row.outcome.clone(),
+                rounds: row.rounds,
+                moves,
+                started_at: row.created_at.to_rfc3339(),
+                finished_at: row.finished_at.map(|t| t.to_rfc3339()),
+            });
+        }
+
+        let mut by_card: Vec<crate::models::BattleCardTally> = cards.into_values().collect();
+        // Часто выходившие вперёд: по ним число что-то значит. Ровные — по слугу,
+        // чтобы порядок не плясал от запроса к запросу.
+        by_card.sort_by(|a, b| b.played.cmp(&a.played).then_with(|| a.slug.cmp(&b.slug)));
+        by_challenge.sort_by(|a, b| b.played.cmp(&a.played));
+
+        Ok(crate::models::BattleMatchesDto {
+            read: out_rows.len() as i64,
+            rows: out_rows,
+            by_challenge,
+            by_card,
+        })
+    }
+
+    /// Пересмотр записанной партии, ступень за ступенью.
+    ///
+    /// Правила берутся ИЗ ЗАПИСИ, а не нынешние. Это не мелочь: умолчания
+    /// `Rules` за одну неделю менялись трижды, и партия, переигранная новыми
+    /// правилами, разошлась бы с тем, что человек видел своими глазами, — а то
+    /// и вовсе перестала бы переигрываться на первом же ходу.
+    ///
+    /// Если запись всё-таки разошлась (правила менялись и до того, как их стали
+    /// хранить), доска показывается до места расхождения, а не заменяется
+    /// отказом: половина партии честнее пустого экрана.
+    pub async fn admin_replay_battle_match(
+        &self,
+        id: Uuid,
+        upto: usize,
+    ) -> Result<crate::models::MatchReplayDto> {
+        let rec = self
+            .repo
+            .admin_get_battle_match(id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("No such match".into()))?;
+
+        let setup: battle_core::Setup = serde_json::from_str(&rec.setup)
+            .map_err(|_| AppError::Internal("Frozen arrangement will not read".into()))?;
+        let actions: Vec<battle_core::Action> = serde_json::from_str(&rec.actions)
+            .map_err(|_| AppError::Internal("Match journal will not read".into()))?;
+
+        // Правила той партии. Лежат внутри сохранённого состояния — единственное
+        // место, где они записаны.
+        let rules = rec
+            .board_cache
+            .as_deref()
+            .and_then(|c| serde_json::from_str::<battle_core::MatchState>(c).ok())
+            .map(|s| s.rules)
+            .unwrap_or_default();
+
+        let want = upto.min(actions.len());
+        let mut state = battle_core::MatchState::begin_with(setup, rules);
+        let mut events = Vec::new();
+        let mut done = 0usize;
+        let mut diverged = false;
+        for action in actions.iter().take(want) {
+            match battle_core::reduce(&state, action) {
+                Ok((next, produced)) => {
+                    state = next;
+                    // Показываются события ПОСЛЕДНЕЙ ступени: сцена проигрывает
+                    // один ход, а не всю партию разом.
+                    events = produced;
+                    done += 1;
+                }
+                Err(_) => {
+                    diverged = true;
+                    break;
+                }
+            }
+        }
+
+        Ok(crate::models::MatchReplayDto {
+            outcome: state.outcome.map(|o| match o {
+                battle_core::Outcome::Player => "player".to_string(),
+                battle_core::Outcome::Keeper => "keeper".to_string(),
+                battle_core::Outcome::Draw => "draw".to_string(),
+            }),
+            state,
+            events,
+            upto: done,
+            total: actions.len(),
+            actions,
+            diverged,
+        })
     }
 
     // === CHALLENGES AND MATCHES ===
@@ -7749,8 +8353,9 @@ impl AppService {
             note_en: row.note_en,
             note_ru: row.note_ru,
             setup: serde_json::from_str(&row.setup).unwrap_or_default(),
-            bot_depth: row.bot_depth,
+            bot_depth: crate::battles::clamp_bot_depth(row.bot_depth),
             reward_dust: row.reward_dust,
+            player_side: row.player_side,
             status: row.status,
             sort_order: row.sort_order,
             already_paid: paid_keys.map(|keys| keys.iter().any(|k| *k == key)),
@@ -7794,30 +8399,56 @@ impl AppService {
             title_ru = title_en.clone();
         }
 
+        if !crate::battles::valid_player_side(&req.player_side) {
+            return Err(AppError::BadRequest("Unknown side for the guest".into()));
+        }
         // Refused before it is written rather than found when a guest clicks it:
         // an arrangement that cannot be raised is not a challenge, it is a trap.
-        self.assert_setup_can_be_raised(&req.setup).await?;
+        //
+        // У встречи проверяется только половина хранителя: половину гостя
+        // приносит его стол, и требовать её здесь значило бы требовать чужого.
+        self.assert_setup_can_be_raised(&req.setup, &req.player_side).await?;
 
         let taken = self.repo.list_battle_challenge_slugs_except(id).await?;
         let setup = serde_json::to_string(&req.setup)
             .map_err(|_| AppError::BadRequest("Arrangement will not serialise".into()))?;
+        let slug = crate::battles::unique_slug(req.slug.as_deref(), &title_en, &taken);
         let rec = self
             .repo
             .upsert_battle_challenge(
                 id,
-                &crate::battles::unique_slug(req.slug.as_deref(), &title_en, &taken),
-                &title_en,
-                &title_ru,
-                req.note_en.as_deref().map(str::trim).filter(|s| !s.is_empty()),
-                req.note_ru.as_deref().map(str::trim).filter(|s| !s.is_empty()),
-                &setup,
-                req.bot_depth.clamp(1, 3),
-                req.reward_dust.clamp(0, 1000),
-                &req.status,
+                &crate::models::BattleChallengeWrite {
+                    slug: &slug,
+                    title_en: &title_en,
+                    title_ru: &title_ru,
+                    note_en: req.note_en.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+                    note_ru: req.note_ru.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+                    setup: &setup,
+                    bot_depth: crate::battles::clamp_bot_depth(req.bot_depth),
+                    reward_dust: req.reward_dust.clamp(0, 1000),
+                    player_side: &req.player_side,
+                    status: &req.status,
+                },
             )
             .await?;
         Self::log_domain_event("battle_challenge_saved", "battle_challenge", rec.id, "ok");
         Ok(Self::challenge_dto(rec, None))
+    }
+
+    /// Порядок полки этюдов. Та же проверка, что и у карт: испытание не может
+    /// стоять на полке в двух местах, и полка не может быть длиннее комнаты.
+    pub async fn admin_reorder_battle_challenges(&self, ids: Vec<Uuid>) -> Result<()> {
+        if ids.len() > crate::battles::SHELF_CARDS as usize {
+            return Err(AppError::BadRequest("Shelf is longer than the room".into()));
+        }
+        let mut seen = std::collections::HashSet::with_capacity(ids.len());
+        if !ids.iter().all(|id| seen.insert(*id)) {
+            return Err(AppError::BadRequest(
+                "A challenge cannot stand in two places on the shelf".into(),
+            ));
+        }
+        self.repo.set_battle_challenge_order(&ids).await?;
+        Ok(())
     }
 
     pub async fn admin_delete_battle_challenge(&self, id: Uuid) -> Result<()> {
@@ -7837,7 +8468,11 @@ impl AppService {
             .collect())
     }
 
-    async fn assert_setup_can_be_raised(&self, setup: &ChallengeSetup) -> Result<()> {
+    async fn assert_setup_can_be_raised(
+        &self,
+        setup: &ChallengeSetup,
+        player_side: &str,
+    ) -> Result<()> {
         let cards = self.cards_by_slug().await?;
         let mut named: Vec<&String> = setup.player_hand.iter().chain(&setup.keeper_hand).collect();
         named.extend(setup.player_board.iter().map(|p| &p.card));
@@ -7849,7 +8484,12 @@ impl AppService {
                 )));
             }
         }
-        if setup.player_board.is_empty() || setup.keeper_board.is_empty() {
+        if setup.keeper_board.is_empty() {
+            return Err(AppError::BadRequest("The keeper needs someone standing".into()));
+        }
+        // Половина гостя обязательна только у этюда. У встречи её приносит стол,
+        // и требовать её от хранителя значило бы требовать чужого.
+        if player_side == crate::battles::SIDE_SCRIPTED && setup.player_board.is_empty() {
             return Err(AppError::BadRequest(
                 "Both sides need someone standing".into(),
             ));
@@ -7889,6 +8529,105 @@ impl AppService {
             keeper_board: place(&setup.keeper_board)?,
             keeper_hand: hand(&setup.keeper_hand)?,
         })
+    }
+
+    /// Что выходит на поле со стороны гостя: его стол, с досчитанным заёмом.
+    ///
+    /// Заём считается ровно там же, где его считает сама комната стола, —
+    /// `read_battle_deck`. Второй расчёт заёма означал бы, что человек видит на
+    /// столе одно, а на поле у него встаёт другое.
+    ///
+    /// Законность перечитывается ЗДЕСЬ, а не берётся из сохранения: между тем,
+    /// как стол был разложен, и тем, как гость нажал «Взяться», мог пройти
+    /// месяц, и чин карты мог за это время подняться.
+    async fn deck_takes_the_field(
+        &self,
+        user_id: Uuid,
+    ) -> Result<(
+        Vec<(battle_core::CardSnapshot, battle_core::Cell)>,
+        Vec<battle_core::CardSnapshot>,
+    )> {
+        let table = self.read_battle_deck(user_id).await?;
+
+        // Своё — только то, что гость выбрал сам и что ещё выходит на поле.
+        // Заём в проверку не идёт: его не выбирают и им не владеют.
+        let kept_board: Vec<(Uuid, u8, u8)> = table
+            .board
+            .iter()
+            .filter(|s| !s.gone)
+            .filter_map(|s| {
+                Some((s.card_id.as_deref()?.parse().ok()?, s.x?, s.y?))
+            })
+            .collect();
+        let kept_hand: Vec<Uuid> = table
+            .hand
+            .iter()
+            .filter(|s| !s.gone)
+            .filter_map(|s| s.card_id.as_deref()?.parse().ok())
+            .collect();
+
+        let owned: std::collections::HashSet<Uuid> = self
+            .repo
+            .list_owned_battle_cards(user_id)
+            .await?
+            .into_iter()
+            .map(|o| o.card_id)
+            .collect();
+        let cards = self.list_battle_cards_public().await?;
+        let by_id: std::collections::HashMap<Uuid, &BattleCardDto> = cards
+            .iter()
+            .filter_map(|c| c.id.parse().ok().map(|id| (id, c)))
+            .collect();
+        let tier_of: std::collections::HashMap<Uuid, i16> =
+            by_id.iter().map(|(id, c)| (*id, c.tier)).collect();
+
+        crate::battles::check_deck(&kept_board, &kept_hand, &owned, &tier_of)
+            .map_err(|fault| AppError::BadRequest(format!("deck:{}", fault.word())))?;
+
+        // Что фактически встаёт: свой выбор, а где его нет — заём.
+        let body = |id: Uuid| -> Result<battle_core::CardSnapshot> {
+            by_id
+                .get(&id)
+                .map(|c| crate::battles::to_snapshot(c))
+                .ok_or_else(|| AppError::BadRequest("deck:nothingToBring".into()))
+        };
+        let mut board = Vec::new();
+        for slot in &table.board {
+            let Some(id) = Self::slot_takes_the_field(slot) else { continue };
+            let (Some(x), Some(y)) = (slot.x, slot.y) else { continue };
+            let cell = battle_core::Cell::new(x, y)
+                .ok_or_else(|| AppError::BadRequest("deck:notYourHalf".into()))?;
+            board.push((body(id)?, cell));
+        }
+        let mut hand = Vec::new();
+        for slot in &table.hand {
+            if let Some(id) = Self::slot_takes_the_field(slot) {
+                hand.push(body(id)?);
+            }
+        }
+
+        // Отказ только если приводить НЕЧЕГО — ни на поле, ни в руке.
+        //
+        // Пустое поле при непустой руке партию не проигрывает: `is_spent` в
+        // `battle-core/src/state.rs` считает сторону вышедшей из игры только
+        // тогда, когда у неё нет ни стоящих тел, ни карты, которую есть на что
+        // выложить и куда. Рука — это и есть «есть чем ходить»: первым ходом
+        // карты выставляются на свою половину за ману.
+        //
+        // Здесь раньше стояла проверка `board.is_empty()`, и она переписывала
+        // правило движка своим, более строгим. Колода из трёх карт в руке —
+        // законная и играбельная — отвергалась с сообщением, что колода пуста.
+        if board.is_empty() && hand.is_empty() {
+            return Err(AppError::BadRequest("deck:nothingToBring".into()));
+        }
+        Ok((board, hand))
+    }
+
+    /// Одно место стола, сведённое к одной карте: свой выбор, а если его нет
+    /// или он снят с полки — то, что дом одолжил.
+    fn slot_takes_the_field(slot: &crate::models::BattleDeckSlotDto) -> Option<Uuid> {
+        let chosen = if slot.gone { None } else { slot.card_id.as_deref() };
+        chosen.or(slot.lent_card_id.as_deref()).and_then(|s| s.parse().ok())
     }
 
     /// Fold a journal back into a board. The only definition of "the state of a
@@ -7960,7 +8699,17 @@ impl AppService {
             .map_err(|_| AppError::Internal("Challenge arrangement will not read".into()))?;
 
         let cards = self.cards_by_slug().await?;
-        let setup = Self::raise(&arrangement, &cards)?;
+        let mut setup = Self::raise(&arrangement, &cards)?;
+        // Встреча: половину гостя приносит его стол, половина хранителя остаётся
+        // той, что расставлена рукой. Всё, что ниже, не знает, какого рода было
+        // испытание, — и это единственная причина, по которой ветка помещается
+        // в один вызов: снимок, `MatchState::begin`, запись, награда и пересмотр
+        // общие для обоих родов.
+        if challenge.player_side == crate::battles::SIDE_DECK {
+            let (board, hand) = self.deck_takes_the_field(user_id).await?;
+            setup.player_board = board;
+            setup.player_hand = hand;
+        }
         // The snapshot is taken here and never again: from this moment editing a
         // card cannot reach into this match.
         let frozen = serde_json::to_string(&setup)
@@ -8027,9 +8776,18 @@ impl AppService {
 
         // The keeper answers in the same breath: one trip over the network for a
         // whole turn, and the scene plays both halves from one journal.
+        // Рука хранителя — та, что задана испытанием. До этого поле `bot_depth`
+        // писалось в базу, показывалось на полке этюдов и не читалось никем:
+        // единственная ручка сложности всего PvE ничего не делала.
+        let depth = match rec.challenge_id {
+            Some(id) => crate::battles::clamp_bot_depth(
+                self.repo.get_battle_challenge(id).await?.bot_depth,
+            ),
+            None => crate::battles::BOT_DEPTH_MIN,
+        };
         let mut guard = 0;
         while state.outcome.is_none() && state.active == battle_core::Side::Keeper {
-            let action = battle_core::bot::choose(&state);
+            let action = battle_core::bot::choose_at(&state, depth as u8);
             let (next, produced) = battle_core::reduce(&state, &action)
                 .map_err(|e| AppError::Internal(format!("Keeper played an illegal move: {e:?}")))?;
             state = next;
@@ -8115,7 +8873,8 @@ impl AppService {
         while state.outcome.is_none()
             && (req.play_out || (req.auto_keeper && state.active == battle_core::Side::Keeper))
         {
-            let action = battle_core::bot::choose(&state);
+            let action =
+                battle_core::bot::choose_at(&state, crate::battles::clamp_bot_depth(req.bot_depth) as u8);
             let (next, produced) = battle_core::reduce(&state, &action)
                 .map_err(|e| AppError::Internal(format!("Bot played an illegal move: {e:?}")))?;
             state = next;

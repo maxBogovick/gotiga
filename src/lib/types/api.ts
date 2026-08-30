@@ -1923,6 +1923,10 @@ export interface BattleCard {
      *  `{frameImage?,frameMode?,aspect?}`. `null` wears the tier's frame as is. */
     frameOverride: string | null;
     shelfOrder?: number | null;
+    /** Whether the house will lend this card to someone who owns none yet.
+     *  Only rank 1 is ever actually lent — the pool is filtered by rank, not
+     *  by this flag, so the keeper can mark a card before settling its rank. */
+    lendable: boolean;
     figurineId: string | null;
     figurineName: string | null;
     figurineSlug: string | null;
@@ -1964,7 +1968,49 @@ export interface SaveBattleCardRequest {
     artUrl?: string | null;
     artFocal?: string | null;
     frameOverride?: string | null;
+    lendable?: boolean;
     figurineId?: string | null;
+}
+
+// ── Стол гостя ───────────────────────────────────────────────────────────────
+//
+// Шесть мест: три на клетках своей половины (`y` 3..5), три в руке. Форма
+// измерена, не выбрана — `TASKS-BATTLE-ENGINE.md` §13.1.
+
+/** One place on the table, already resolved by the server.
+ *
+ *  Three states in two fields, and the room derives none of them:
+ *  `cardId` set and `gone` false — your own card; `cardId` null — the place is
+ *  empty and the house lends `lentCardId`; `cardId` set and `gone` true — your
+ *  card is off the shelf and the house lends in its stead. */
+export interface BattleDeckSlot {
+    cardId: string | null;
+    gone: boolean;
+    lentCardId: string | null;
+    /** Board places only. */
+    x?: number;
+    y?: number;
+}
+
+export interface BattleDeck {
+    board: BattleDeckSlot[];
+    hand: BattleDeckSlot[];
+    /** Whether the table has ever been laid. Not the same as an empty table. */
+    laid: boolean;
+    /** The house has nothing marked lendable, so empty places stay empty. */
+    nothingToLend: boolean;
+}
+
+export interface DeckPlacement {
+    card: string;
+    x: number;
+    y: number;
+}
+
+/** What the guest saves. The loan never travels here: it is not chosen. */
+export interface SaveBattleDeckRequest {
+    board: DeckPlacement[];
+    hand: string[];
 }
 
 export type BattleLayout = 'corners' | 'plaque';
@@ -2115,6 +2161,17 @@ export interface BattleWeigh {
     tierBudget: number;
     /** The price at which this weight would sit on the curve. */
     suggestedCost: number;
+    /** Whether the card is fit to publish, and what is worth knowing about it.
+     *  Computed by the same rule the save will refuse by, so the warning and
+     *  the refusal can never disagree. */
+    readiness: CardReadiness;
+}
+
+export interface CardReadiness {
+    /** While this is non-empty, the card cannot be published. */
+    blocking: string[];
+    /** Allowed, but worth knowing. */
+    notes: string[];
 }
 
 export interface AbilityWeight {
@@ -2131,7 +2188,10 @@ export interface ChallengePlacement {
     y: number;
 }
 
-/** A challenge sets BOTH sides: it is a study, not a duel. */
+export type BattlePlayerSide = 'scripted' | 'deck';
+
+/** A study sets BOTH sides. A meeting (`playerSide: 'deck'`) fills only the
+ *  keeper's, and the guest brings his own table. */
 export interface ChallengeSetup {
     playerBoard: ChallengePlacement[];
     playerHand: string[];
@@ -2150,6 +2210,9 @@ export interface BattleChallenge {
     botDepth: number;
     /** Paid once per challenge, never per victory. */
     rewardDust: number;
+    /** Who sets the guest's half. `scripted` — the keeper's own hand (a study,
+     *  which has a solution); `deck` — the guest's table (a meeting). */
+    playerSide: BattlePlayerSide;
     status: BattleCardStatus;
     sortOrder?: number | null;
     /** Whether this visitor has already been paid. Absent for a guest. */
@@ -2165,6 +2228,7 @@ export interface SaveBattleChallengeRequest {
     setup: ChallengeSetup;
     botDepth: number;
     rewardDust: number;
+    playerSide: BattlePlayerSide;
     status: BattleCardStatus;
 }
 
@@ -2218,8 +2282,14 @@ export interface BattleUnit {
     step: number;
     mend: number;
     channel: BattleChannel;
-    /** Whether it has already acted this turn. */
+    /** Whether it has already struck, mended — or walked, when the rules make a
+     *  walk spend the whole turn. */
     acted: boolean;
+    /** Whether it has already walked this turn. A body walks once, and by
+     *  default may still strike afterwards. */
+    moved: boolean;
+    /** Whether it has already struck back during the enemy's turn. */
+    retaliated: boolean;
     card: BattleBodyCard;
     health: { current: number; max: number };
     power: number;
@@ -2244,8 +2314,19 @@ export interface BattleMatchState {
     round: number;
     active: BattleSide;
     outcome: BattleOutcome | null;
-    rules: { secondSideCoin: number; openingAttacks: number };
+    rules: {
+        secondSideCoin: number;
+        openingAttacks: number;
+        /** Whether a walk spends the body's whole turn. False by default: a body
+         *  walks up and strikes in the same turn. */
+        walkSpendsTurn: boolean;
+        /** Whether a struck body strikes back when it reaches. */
+        retaliation: boolean;
+        /** Acts one side may take in a turn. 255 — as many as it likes. */
+        actsPerTurn: number;
+    };
     openingAttacksUsed: number;
+    actsThisTurn: number;
 }
 
 /**
@@ -2277,6 +2358,57 @@ export interface BattleMe {
     dust: number;
     feed: number;
     owned: BattleOwnedCard[];
+    /** What was given by hand, with its note. Dust settled from the beacons is
+     *  not here: it carries no note and is counted differently. */
+    gifts: BattleGift[];
+}
+
+/** A coin given by the keeper's own hand, and what it was given for. */
+export interface BattleGift {
+    currency: 'dust' | 'feed';
+    amount: number;
+    note: string | null;
+    at: string;
+}
+
+/** Cards given straight into a guest's collection, bypassing the purchase.
+ *  The wallet is untouched: this is a gift, not a sale. */
+export interface GiveBattleCardsRequest {
+    userId: string;
+    cardIds?: string[];
+    /** Every published card that can take the field. */
+    all?: boolean;
+    /** Level of the given copies. Overwrites an existing one — deliberately. */
+    level?: number;
+}
+
+export interface RevokeBattleCardsRequest {
+    userId: string;
+    cardIds?: string[];
+    all?: boolean;
+}
+
+export interface GiveBattleCardsResponse {
+    touched: number;
+}
+
+/** From the keeper's hand to one guest, for something actually done. */
+export interface GrantBattleCoinRequest {
+    userId: string;
+    currency: 'dust' | 'feed';
+    /** Signed. A minus is not a fine but a correction: the ledger is mended by
+     *  an opposite row, never by editing the row that was wrong. */
+    amount: number;
+    note: string;
+    /** The key of this ACT, not of its contents, minted by the panel — one per
+     *  opened form. Without it a double click gives twice; with a key made from
+     *  the contents, two real showings for one guest would merge into one. */
+    idemKey: string;
+}
+
+export interface GrantBattleCoinResponse {
+    balance: number;
+    grantedNow: boolean;
 }
 
 export interface BuyBattleCardRequest {
@@ -2371,6 +2503,8 @@ export interface BenchRequest {
     next?: BattleAction | null;
     /** Whether the far side answers by itself. */
     autoKeeper: boolean;
+    /** Какой рукой играет бот на столе: 1 — жадной, 2 — с перебором. */
+    botDepth?: number;
     /** Play the rest out with the bot on both sides. */
     playOut?: boolean;
 }
@@ -2381,6 +2515,70 @@ export interface Bench {
     events: BattleEvent[];
     actions: BattleAction[];
     outcome: BattleOutcome | null;
+}
+
+// ── Сыгранные партии ────────────────────────────────────────────────────────
+
+/** Одна сыгранная партия строкой. */
+export interface BattleMatchRow {
+    id: string;
+    guest: string;
+    challengeId: string | null;
+    titleRu: string | null;
+    titleEn: string | null;
+    /** `player` — победил гость, `keeper` — дом, `draw` — ничья, null — не доиграна. */
+    outcome: 'player' | 'keeper' | 'draw' | null;
+    rounds: number | null;
+    /** Длина журнала. Не то же, что круги: за круг ходов бывает несколько. */
+    moves: number;
+    startedAt: string;
+    finishedAt: string | null;
+}
+
+export interface BattleChallengeTally {
+    challengeId: string | null;
+    titleRu: string | null;
+    titleEn: string | null;
+    played: number;
+    guestWon: number;
+    keeperWon: number;
+    draws: number;
+    unfinished: number;
+}
+
+/** Сводка по карте: считана по замороженной расстановке каждой партии, а не по
+ *  нынешней полке. Карта, стоявшая по обе стороны, считается дважды — по разу
+ *  за сторону. */
+export interface BattleCardTally {
+    slug: string;
+    titleRu: string | null;
+    titleEn: string | null;
+    played: number;
+    won: number;
+    lost: number;
+    draws: number;
+}
+
+/** Одна ступень пересмотра записанной партии. */
+export interface MatchReplay {
+    state: BattleMatchState;
+    /** Что произошло на этой ступени. */
+    events: BattleEvent[];
+    actions: BattleAction[];
+    upto: number;
+    total: number;
+    outcome: BattleOutcome | null;
+    /** Правила менялись с тех пор, как партию сыграли, и запись перестала
+     *  переигрываться. Доска показана до места расхождения. */
+    diverged: boolean;
+}
+
+export interface BattleMatches {
+    rows: BattleMatchRow[];
+    byChallenge: BattleChallengeTally[];
+    byCard: BattleCardTally[];
+    /** Сколько партий прочитано: сводка считается по прочитанному. */
+    read: number;
 }
 
 /** A keyword in the dictionary. `pointValue` is where the balance rate lives. */

@@ -9,6 +9,7 @@
   // список законных действий, страница показывает первое и отправляет обратно
   // одно из вторых.
   import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
   import { fade } from 'svelte/transition';
   import { t, lang } from '$lib/i18n';
   import { api } from '$lib/api';
@@ -30,6 +31,13 @@
   let complaint = $state<string | null>(null);
   /** Какой этюд играется — чтобы «начать этот заново» знал, какой «этот». */
   let taken = $state<BattleChallenge | null>(null);
+  /**
+   * Разложен ли стол гостя. Нужно только ради одного: встреча, на которую
+   * человек идёт с неразложенным столом, ведёт НА СТОЛ, а не в партию и не в
+   * ошибку — он должен увидеть, что он приводит. Дальше «Взяться» ведёт прямо
+   * в партию.
+   */
+  let laid = $state(false);
 
   let signedIn = $derived(authStore.isLoggedIn);
 
@@ -45,18 +53,36 @@
     challenges = got;
     cards = deck;
     frames = dressing.frames;
+    const token = authStore.token;
+    if (!token) return;
+    // Стол читается отдельно и необязательно: полка этюдов не должна пропасть
+    // оттого, что стол не ответил.
+    try {
+      laid = (await api.getBattleDeck(token)).laid;
+    } catch {
+      laid = false;
+    }
   });
+
+  /** Встреча, на которую идут с неразложенным столом. */
+  const needsTable = (c: BattleChallenge) => c.playerSide === 'deck' && !laid;
 
   async function takeUp(challenge: BattleChallenge) {
     const token = authStore.token;
     if (!token) return;
+    if (needsTable(challenge)) {
+      void goto('/battles/table');
+      return;
+    }
     busy = true;
     complaint = null;
     taken = challenge;
     try {
       match = await api.beginBattleMatch(token, challenge.id);
-    } catch {
-      complaint = $t('battleActionLost');
+    } catch (e) {
+      complaint = String(e).includes('nothingToBring')
+        ? $t('battleNothingToBring')
+        : $t('battleActionLost');
     } finally {
       busy = false;
     }
@@ -104,8 +130,18 @@
   <meta name="robots" content="noindex" />
 </svelte:head>
 
-<!-- Партия просит трёх колонок (§9); полка этюдов — узкой страницы. -->
+<!-- Бой просит трёх колонок (§9); список боёв — узкой страницы. -->
 <div class="{match ? 'max-w-6xl' : 'max-w-4xl'} mx-auto px-5 py-12">
+  <!-- Навигации здесь не было вообще: со страницы боёв нельзя было ни вернуться
+       к картам, ни уйти собирать колоду. Ссылка на колоду нужна и тогда, когда
+       колода уже собрана, — иначе поменять её можно только через полку карт. -->
+  {#if !match}
+    <nav class="mb-6 flex flex-wrap gap-x-5 gap-y-1 text-[10px] uppercase tracking-[0.16em]">
+      <a href="/battles" class="text-[#6f3b24] hover:text-[#c65f3c]">{$t('battlesTableBack')}</a>
+      <a href="/battles/table" class="text-[#6f3b24] hover:text-[#c65f3c]">{$t('battlesTableTitle')} →</a>
+    </nav>
+  {/if}
+
   <h1 class="mb-2 text-3xl" style="font-family: 'Cormorant Garamond', Georgia, serif;">
     {$t('battleStudies')}
   </h1>
@@ -151,6 +187,11 @@
               {#if noteOf(challenge)}
                 <span class="block mt-0.5 text-xs leading-snug text-[#8a6a55]">{noteOf(challenge)}</span>
               {/if}
+              <!-- Два рода записей на одной полке: этюд расставлен рукой
+                   целиком, во встречу вы приводите своё. -->
+              <span class="block mt-0.5 text-[11px] italic text-[#8a6a55]">
+                {challenge.playerSide === 'deck' ? $t('battleMeetingNote') : $t('battleStudyNote')}
+              </span>
             </div>
             {#if challenge.rewardDust > 0}
               <span class="text-[11px] tabular-nums text-[#8a6a55] whitespace-nowrap">
@@ -165,7 +206,7 @@
               disabled={!signedIn || busy}
               onclick={() => takeUp(challenge)}
               class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5 disabled:opacity-40 whitespace-nowrap"
-            >{$t('battleStudyPlay')}</button>
+            >{needsTable(challenge) ? $t('battleLayYourTable') : $t('battleStudyPlay')}</button>
           </li>
         {/each}
       </ul>

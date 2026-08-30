@@ -168,6 +168,24 @@
     return out;
   });
 
+  /**
+   * Почему из руки нельзя выложить ни одной карты.
+   *
+   * Движок про это молчит: он присылает список законных действий, и если
+   * выложить нечего, «выложить» в нём просто нет. Отличить «не хватает маны» от
+   * «некуда ставить» по пустому списку невозможно, и человек видел только
+   * тускловатые карты, которые не нажимаются, — без единого слова о причине.
+   *
+   * Сравнение цены с маной здесь — не второе правило игры, а объяснение уже
+   * принятого сервером решения: играть по нему нельзя, оно только называет то,
+   * что и так видно на карте.
+   */
+  let handTrouble = $derived.by((): 'mana' | 'room' | null => {
+    if (!mine || !hand.length || playableHand.size > 0) return null;
+    const cheapest = Math.min(...hand.map((h) => h.cost));
+    return cheapest > position.player.mana ? 'mana' : 'room';
+  });
+
   let chosen = $derived(picked?.kind === 'unit' ? (position.units[picked.id] ?? null) : null);
 
   function tapCell(x: number, y: number) {
@@ -464,6 +482,7 @@
   // ── Журнал ────────────────────────────────────────────────────────────────
   const STEP_KEY: Record<string, TranslationKey> = {
     immunity: 'battleStepImmunity',
+    pointBlank: 'battleStepPointBlank',
     attackerBless: 'battleStepAttackerBless',
     attackerCurse: 'battleStepAttackerCurse',
     targetVulnerable: 'battleStepTargetVulnerable',
@@ -607,6 +626,12 @@
         </button>
       {/each}
     </div>
+    <!-- Причина словами. Без неё «карта не нажимается» неотличимо от поломки. -->
+    {#if handTrouble}
+      <p class="hand-why">
+        {handTrouble === 'mana' ? $t('battleNoManaYet') : $t('battleNoRoomYet')}
+      </p>
+    {/if}
   {/if}
 {/snippet}
 
@@ -620,12 +645,32 @@
     <p class="ledger-turn">
       {position.active === me ? $t('battleWhoseTurnYours') : $t('battleWhoseTurnKeeper')}
     </p>
+    <!--
+      «Сколько есть сейчас» имеет смысл только у той стороны, чей ход идёт. У
+      другой `mana` — это остаток с её прошлого хода, а в первом раунде, пока
+      она ещё не ходила ни разу, это просто ноль при непустом потолке: сторона,
+      ходящая второй, показывала «0/2», а на своём первом ходу получала 3.
+      Число, которое ни разу не было правдой.
+
+      Поэтому у активной стороны показывается «есть из потолка», а у неактивной
+      — только сам потолок. Дорисовывать ей «будет столько-то» здесь нельзя:
+      прибавку на ход считает движок, и вторая её реализация разошлась бы с ним.
+    -->
     <p class="ledger-line">
-      {$t('battleManaYours')} <span class="num">{position.player.mana}/{position.player.manaMax}</span>
+      {$t('battleManaYours')}
+      <span class="num">
+        {#if position.active === 'player'}{position.player.mana}/{position.player.manaMax}
+        {:else}{position.player.manaMax}{/if}
+      </span>
     </p>
     <p class="ledger-line">
-      {$t('battleManaKeeper')} <span class="num">{position.keeper.mana}/{position.keeper.manaMax}</span>
+      {$t('battleManaKeeper')}
+      <span class="num">
+        {#if position.active === 'keeper'}{position.keeper.mana}/{position.keeper.manaMax}
+        {:else}{position.keeper.manaMax}{/if}
+      </span>
     </p>
+    <p class="ledger-note">{$t('battleManaNote')}</p>
 
     <!-- Обе руки, лицом: этюд решают рассуждением. Порядок сверху вниз тот же,
          что на доске, — хранитель над гостем. -->
@@ -659,10 +704,15 @@
               class:cell--live={mine && here?.owner === me && ready.has(here.id)}
             >
               {#if here}
+                <!-- Погасшим показывается и тело, которое уже сходило, и тело,
+                     которому нечем ходить: с тех пор как шаг не тратит ход
+                     целиком, второе случается часто, и без этого оно выглядело
+                     бы свежим, не отзываясь на нажатие. -->
                 <span
                   class="figure"
                   style:--fit={dto ? aspectOf(dto) : DEFAULT_ASPECT}
-                  class:figure--spent={here.owner === me && here.acted}
+                  class:figure--spent={here.owner === me
+                    && (here.acted || (mine && !ready.has(here.id)))}
                   class:figure--falling={falling === here.id}
                   class:figure--flinch={flinch === here.id}
                   style={lunge?.unit === here.id
@@ -1207,9 +1257,32 @@
     border-color: #c65f3c;
   }
 
+  /* Выложить нельзя — и это должно читаться сразу, а не угадываться. Было
+     0.4 без каких-либо других отличий, и карта выглядела просто бледной. */
   .held--dim {
-    opacity: 0.4;
+    opacity: 0.32;
+    filter: grayscale(0.7);
     cursor: default;
+  }
+
+  .ledger-note {
+    margin: 0.35rem 0 0;
+    max-width: 30ch;
+    font-family: Georgia, 'Fraunces', serif;
+    font-size: 0.78rem;
+    font-style: italic;
+    line-height: 1.5;
+    color: #8a6a55;
+  }
+
+  .hand-why {
+    margin: 0.5rem 0 0;
+    max-width: 30ch;
+    font-family: Georgia, 'Fraunces', serif;
+    font-size: 0.82rem;
+    font-style: italic;
+    line-height: 1.5;
+    color: #8a6a55;
   }
 
   .turn {

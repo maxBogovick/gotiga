@@ -209,8 +209,8 @@ fn main() {
     println!("     разброс");
     for (name, rules) in [
         ("как сейчас", Rules::default()),
-        ("один удар · монета 2", Rules { second_side_coin: 2, opening_attacks: 1 }),
-        ("ни одного удара", Rules { second_side_coin: 0, opening_attacks: 0 }),
+        ("один удар · монета 2", Rules { second_side_coin: 2, opening_attacks: 1, ..Default::default() }),
+        ("ни одного удара", Rules { second_side_coin: 0, opening_attacks: 0, ..Default::default() }),
     ] {
         print!("{:>34}", name);
         let mut shares = Vec::new();
@@ -239,7 +239,7 @@ fn main() {
             for coin in [0i32, 1, 2, 3] {
                 v.push((
                     format!("ударов в первом круге {opening} · монета {coin}"),
-                    Rules { second_side_coin: coin, opening_attacks: opening },
+                    Rules { second_side_coin: coin, opening_attacks: opening, ..Default::default() },
                 ));
             }
         }

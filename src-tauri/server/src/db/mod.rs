@@ -6224,7 +6224,8 @@ impl Repository {
                c.kind, c.armor, c.ward, c.attack_channel, c.reach, c.step, c.speed, c.mend,
                c.abilities, c.budget_points, c.balance_index, c.rules_version,
                c.price_dust, c.price_feed, c.level_price_dust,
-               c.art_url, c.art_focal, c.frame_override, c.shelf_order, c.created_at, c.updated_at,
+               c.art_url, c.art_focal, c.frame_override, c.shelf_order, c.lendable,
+               c.created_at, c.updated_at,
                f.name AS figurine_name, f.slug AS figurine_slug,
                fi.file_path AS figurine_face_path, fi.id AS figurine_face_id,
                r.name_en AS race_name_en, r.name_ru AS race_name_ru, r.icon_url AS race_icon_url,
@@ -6335,9 +6336,9 @@ impl Repository {
                     kind, armor, ward, attack_channel, reach, step, speed, mend,
                     abilities, budget_points, balance_index,
                     price_dust, price_feed, level_price_dust,
-                    art_url, art_focal, frame_override
+                    art_url, art_focal, frame_override, lendable
                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,
-                         $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35)
+                         $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36)
                RETURNING *"#,
         )
         .bind(&w.slug)
@@ -6375,6 +6376,7 @@ impl Repository {
         .bind(w.art_url.as_deref())
         .bind(w.art_focal.as_deref())
         .bind(w.frame_override.as_deref())
+        .bind(w.lendable)
         .fetch_one(&self.pg_pool)
         .await?)
     }
@@ -6398,7 +6400,7 @@ impl Repository {
                     reach = $24, step = $25, speed = $26, mend = $27,
                     abilities = $28, budget_points = $29, balance_index = $30,
                     price_dust = $31, price_feed = $32, level_price_dust = $33,
-                    art_url = $34, art_focal = $35, frame_override = $36,
+                    art_url = $34, art_focal = $35, frame_override = $36, lendable = $37,
                     rules_version = rules_version + 1,
                     updated_at = NOW()
                WHERE id = $1
@@ -6440,6 +6442,7 @@ impl Repository {
         .bind(w.art_url.as_deref())
         .bind(w.art_focal.as_deref())
         .bind(w.frame_override.as_deref())
+        .bind(w.lendable)
         .fetch_optional(&self.pg_pool)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Battle card {id} not found")))
@@ -6609,6 +6612,57 @@ impl Repository {
         Ok(res.rows_affected() > 0)
     }
 
+    /// Дано из рук.
+    ///
+    /// Отдельно от `credit_battle_wallet`, а не параметром к нему, потому что
+    /// это другой род движения: у него есть записка, оно бывает со знаком минус
+    /// (ошибка в книге исправляется обратной строкой, а не правкой строки), и
+    /// ключ ему даёт не содержимое, а самый акт — иначе два состоявшихся показа
+    /// одному гостю слились бы в один.
+    pub async fn grant_battle_wallet(
+        &self,
+        user_id: Uuid,
+        currency: &str,
+        amount: i32,
+        note: Option<&str>,
+        idem_key: &str,
+    ) -> Result<bool> {
+        let res = sqlx::query(
+            "INSERT INTO battle_wallet_entries
+                 (user_id, currency, amount, reason, note, idem_key)
+             VALUES ($1,$2,$3,'hand',$4,$5)
+             ON CONFLICT (user_id, idem_key) DO NOTHING",
+        )
+        .bind(user_id)
+        .bind(currency)
+        .bind(amount)
+        .bind(note)
+        .bind(idem_key)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Что дому дали из рук — последние записки, новыми вперёд.
+    ///
+    /// Только `hand`: пыль, осевшая с маяков, записок не имеет и на полях
+    /// считается иначе (сколько осело с прошлого раза).
+    pub async fn list_battle_hand_grants(
+        &self,
+        user_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<crate::models::BattleGrantRow>> {
+        Ok(sqlx::query_as::<_, crate::models::BattleGrantRow>(
+            "SELECT currency, amount, note, created_at FROM battle_wallet_entries
+              WHERE user_id = $1 AND reason = 'hand' AND amount > 0
+              ORDER BY created_at DESC LIMIT $2",
+        )
+        .bind(user_id)
+        .bind(limit)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
     pub async fn battle_wallet_balance(&self, user_id: Uuid, currency: &str) -> Result<i64> {
         let row: (Option<i64>,) = sqlx::query_as(
             "SELECT SUM(amount)::bigint FROM battle_wallet_entries
@@ -6658,6 +6712,106 @@ impl Repository {
         .bind(user_id)
         .fetch_all(&self.pg_pool)
         .await?)
+    }
+
+    // ── Стол гостя ────────────────────────────────────────────────────────
+
+    /// `None` — гость не раскладывал стол ни разу. Это не то же самое, что
+    /// пустой стол: первый заход на встречу без разложенного стола ведёт на
+    /// стол, а не в партию.
+    pub async fn get_battle_deck(&self, user_id: Uuid) -> Result<Option<crate::models::BattleDeck>> {
+        Ok(
+            sqlx::query_as::<_, crate::models::BattleDeck>(
+                "SELECT * FROM battle_decks WHERE user_id = $1",
+            )
+            .bind(user_id)
+            .fetch_optional(&self.pg_pool)
+            .await?,
+        )
+    }
+
+    /// Стол переписывается целиком. Не по одному месту: половина сохранённой
+    /// расстановки — это не расстановка, а состояние, в котором её застали.
+    pub async fn upsert_battle_deck(&self, user_id: Uuid, layout: &str) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO battle_decks (user_id, layout) VALUES ($1, $2)
+             ON CONFLICT (user_id) DO UPDATE SET layout = EXCLUDED.layout, updated_at = NOW()",
+        )
+        .bind(user_id)
+        .bind(layout)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Что дом готов одолжить, всегда в одном порядке.
+    ///
+    /// Чин отбирается здесь, а не отметкой: хранитель волен пометить карту
+    /// заёмной заранее, до того как решит её чин. Здоровье — то же условие,
+    /// что и у стенда: тело без здоровья падает в тот же миг, как встанет.
+    pub async fn list_lendable_battle_cards(
+        &self,
+        tier: i16,
+        limit: i64,
+    ) -> Result<Vec<crate::models::BattleCardListed>> {
+        Ok(sqlx::query_as::<_, crate::models::BattleCardListed>(&format!(
+            "{} WHERE c.lendable AND c.status = 'published' AND c.tier = $1 AND c.health > 0
+             ORDER BY c.shelf_order NULLS LAST, c.created_at DESC, c.id DESC
+             LIMIT $2",
+            Self::BATTLE_CARD_SELECT
+        ))
+        .bind(tier)
+        .bind(limit)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Выдать карты в собрание напрямую, минуя покупку.
+    ///
+    /// Кошелька не касается: это подарок, а не покупка, и списывать за него
+    /// нечего. Уровень переписывается намеренно — инструмент нужен, чтобы
+    /// быстро привести собрание в нужное для проверки состояние, а не чтобы
+    /// бережно дополнять его.
+    pub async fn give_battle_cards(
+        &self,
+        user_id: Uuid,
+        card_ids: &[Uuid],
+        level: i16,
+    ) -> Result<u64> {
+        if card_ids.is_empty() {
+            return Ok(0);
+        }
+        let res = sqlx::query(
+            "INSERT INTO battle_owned_cards (user_id, card_id, level)
+             SELECT $1, id, $3 FROM UNNEST($2::uuid[]) AS t(id)
+             ON CONFLICT (user_id, card_id) DO UPDATE SET level = EXCLUDED.level",
+        )
+        .bind(user_id)
+        .bind(card_ids)
+        .bind(level)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected())
+    }
+
+    /// Забрать карты обратно. Пустой список — забрать все: проверка пустого
+    /// собрания (и заёма, который его закрывает) иначе недостижима.
+    pub async fn revoke_battle_cards(&self, user_id: Uuid, card_ids: &[Uuid]) -> Result<u64> {
+        let res = if card_ids.is_empty() {
+            sqlx::query("DELETE FROM battle_owned_cards WHERE user_id = $1")
+                .bind(user_id)
+                .execute(&self.pg_pool)
+                .await?
+        } else {
+            sqlx::query(
+                "DELETE FROM battle_owned_cards WHERE user_id = $1 AND card_id = ANY($2)",
+            )
+            .bind(user_id)
+            .bind(card_ids)
+            .execute(&self.pg_pool)
+            .await?
+        };
+        Ok(res.rows_affected())
     }
 
     /// Take the mark off a card that has now been looked at. Idempotent by
@@ -6909,41 +7063,91 @@ impl Repository {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// Переписать расстановку одного испытания.
+    ///
+    /// Узкий запрос, а не полный `upsert`: переезд слуга не должен уметь
+    /// тронуть ни заголовок, ни награду, ни статус — иначе однажды тронет.
+    /// Сыгранные партии, свежими вперёд, с именем гостя и названием испытания.
+    ///
+    /// `board_cache` намеренно не читается: он кэш, а для разбора нужны журнал
+    /// и расстановка. Тянуть за собой доску каждой партии — это мегабайты за
+    /// то, чего никто не покажет.
+    pub async fn admin_list_battle_matches(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<crate::models::BattleMatchRow>> {
+        Ok(sqlx::query_as::<_, crate::models::BattleMatchRow>(
+            "SELECT m.id, u.display_name AS guest, m.challenge_id,
+                    c.title_ru, c.title_en, m.outcome, m.rounds,
+                    m.setup, m.actions, m.created_at, m.finished_at
+               FROM battle_matches m
+               JOIN users u ON u.id = m.user_id
+               LEFT JOIN battle_challenges c ON c.id = m.challenge_id
+              ORDER BY m.created_at DESC
+              LIMIT $1",
+        )
+        .bind(limit)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn update_battle_challenge_setup(&self, id: Uuid, setup: &str) -> Result<()> {
+        sqlx::query("UPDATE battle_challenges SET setup = $2, updated_at = now() WHERE id = $1")
+            .bind(id)
+            .bind(setup)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn upsert_battle_challenge(
         &self,
         id: Option<Uuid>,
-        slug: &str,
-        title_en: &str,
-        title_ru: &str,
-        note_en: Option<&str>,
-        note_ru: Option<&str>,
-        setup: &str,
-        bot_depth: i16,
-        reward_dust: i32,
-        status: &str,
+        w: &crate::models::BattleChallengeWrite<'_>,
     ) -> Result<crate::models::BattleChallenge> {
         match id {
             None => Ok(sqlx::query_as::<_, crate::models::BattleChallenge>(
                 "INSERT INTO battle_challenges
-                     (slug, title_en, title_ru, note_en, note_ru, setup, bot_depth, reward_dust, status)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *",
+                     (slug, title_en, title_ru, note_en, note_ru, setup, bot_depth,
+                      reward_dust, player_side, status)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *",
             )
-            .bind(slug).bind(title_en).bind(title_ru).bind(note_en).bind(note_ru)
-            .bind(setup).bind(bot_depth).bind(reward_dust).bind(status)
+            .bind(w.slug).bind(w.title_en).bind(w.title_ru).bind(w.note_en).bind(w.note_ru)
+            .bind(w.setup).bind(w.bot_depth).bind(w.reward_dust).bind(w.player_side).bind(w.status)
             .fetch_one(&self.pg_pool)
             .await?),
             Some(id) => sqlx::query_as::<_, crate::models::BattleChallenge>(
                 "UPDATE battle_challenges SET slug=$2, title_en=$3, title_ru=$4,
                         note_en=$5, note_ru=$6, setup=$7, bot_depth=$8,
-                        reward_dust=$9, status=$10, updated_at = NOW()
+                        reward_dust=$9, player_side=$10, status=$11, updated_at = NOW()
                   WHERE id=$1 RETURNING *",
             )
-            .bind(id).bind(slug).bind(title_en).bind(title_ru).bind(note_en).bind(note_ru)
-            .bind(setup).bind(bot_depth).bind(reward_dust).bind(status)
+            .bind(id).bind(w.slug).bind(w.title_en).bind(w.title_ru).bind(w.note_en).bind(w.note_ru)
+            .bind(w.setup).bind(w.bot_depth).bind(w.reward_dust).bind(w.player_side).bind(w.status)
             .fetch_optional(&self.pg_pool)
             .await?
             .ok_or_else(|| AppError::NotFound(format!("Battle challenge {id} not found"))),
         }
+    }
+
+    /// Разложить полку этюдов одним запросом. `updated_at` намеренно не
+    /// трогается: переставить испытание — не переписать его.
+    pub async fn set_battle_challenge_order(&self, ids: &[Uuid]) -> Result<u64> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let orders: Vec<i32> = (0..ids.len() as i32).collect();
+        let res = sqlx::query(
+            "UPDATE battle_challenges AS c
+                SET sort_order = v.ord
+               FROM (SELECT * FROM UNNEST($1::uuid[], $2::int[]) AS t(id, ord)) AS v
+              WHERE c.id = v.id",
+        )
+        .bind(ids)
+        .bind(&orders)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected())
     }
 
     pub async fn delete_battle_challenge(&self, id: Uuid) -> Result<()> {
@@ -6974,6 +7178,20 @@ impl Repository {
         )
         .bind(user_id)
         .bind(challenge_id)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    /// Партия без проверки владельца. Только для стола хранителя: гостю партия
+    /// выдаётся `get_battle_match`, и та проверяет, что она его.
+    pub async fn admin_get_battle_match(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<crate::models::BattleMatch>> {
+        Ok(sqlx::query_as::<_, crate::models::BattleMatch>(
+            "SELECT * FROM battle_matches WHERE id = $1",
+        )
+        .bind(id)
         .fetch_optional(&self.pg_pool)
         .await?)
     }

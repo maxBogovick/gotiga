@@ -3435,6 +3435,7 @@ pub struct BattleCardListed {
     pub art_focal: Option<String>,
     pub frame_override: Option<String>,
     pub shelf_order: Option<i32>,
+    pub lendable: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub figurine_name: Option<String>,
@@ -3515,6 +3516,9 @@ pub struct BattleCardDto {
     pub frame_override: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shelf_order: Option<i32>,
+    /// Готов ли дом одолжить эту карту тому, у кого своего ещё нет.
+    /// Отбирается ещё и по чину: одалживается только первый.
+    pub lendable: bool,
     pub figurine_id: Option<String>,
     pub figurine_name: Option<String>,
     pub figurine_slug: Option<String>,
@@ -3573,6 +3577,11 @@ pub struct SaveBattleCardRequest {
     pub art_url: Option<String>,
     pub art_focal: Option<String>,
     pub frame_override: Option<String>,
+    /// Готов ли дом одолжить эту карту. Отсутствует в старом запросе — значит
+    /// «нет»: карта не становится заёмной от того, что её сохранили формой,
+    /// которая про заём не знает.
+    #[serde(default)]
+    pub lendable: bool,
     pub figurine_id: Option<String>,
 }
 
@@ -3621,6 +3630,7 @@ pub struct BattleCardWrite {
     pub art_url: Option<String>,
     pub art_focal: Option<String>,
     pub frame_override: Option<String>,
+    pub lendable: bool,
 }
 
 /// What the scales say about a card that has not been saved yet.
@@ -3642,6 +3652,21 @@ pub struct BattleWeighDto {
     pub tier_budget: f64,
     /// What the price would have to be for this weight to sit on the curve.
     pub suggested_cost: i16,
+    /// Годна ли карта к публикации, и что о ней стоит знать. Считается тем же
+    /// правилом, которым сохранение откажет, — чтобы подсказка и отказ не
+    /// разошлись.
+    pub readiness: CardReadinessDto,
+}
+
+/// Слова, а не текст: текст живёт в `i18n` на двух языках, а сервер, который
+/// его сочиняет, сочиняет его на одном.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CardReadinessDto {
+    /// Пока непусто — карту нельзя опубликовать.
+    pub blocking: Vec<String>,
+    /// Так можно, но стоит знать.
+    pub notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -3674,6 +3699,12 @@ pub struct BenchRequest {
     /// Whether the far side answers by itself after the move.
     #[serde(default)]
     pub auto_keeper: bool,
+    /// Какой рукой играет бот на столе: 1 — жадной, 2 — с перебором. Стол
+    /// затем и нужен, чтобы этюд проверялся той же рукой, какой его пройдёт
+    /// гость; без этого хранитель проверяет этюд на одном боте, а оставляет
+    /// на другом.
+    #[serde(default = "crate::battles::default_bot_depth")]
+    pub bot_depth: i16,
     /// Play the rest out with the bot on both sides and return the ending.
     ///
     /// Not "run it a thousand times": the engine has no chance in it, so a
@@ -3693,6 +3724,29 @@ pub struct BenchDto {
     /// The journal to send back next time.
     pub actions: Vec<battle_core::Action>,
     pub outcome: Option<String>,
+}
+
+/// Одна ступень пересмотра записанной партии.
+///
+/// Отдельно от `BenchDto` не ради поля-двух: у стола журнал ЖИВОЙ и растёт от
+/// запроса к запросу, а здесь он записан и неизменен, и вместо «что послать в
+/// следующий раз» нужно «сколько всего ступеней и на какой мы стоим».
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MatchReplayDto {
+    pub state: battle_core::MatchState,
+    /// Что произошло на этой ступени — то, что сцена проигрывает.
+    pub events: Vec<battle_core::Event>,
+    /// Весь журнал: сцена подписывает ступени, не зная правил.
+    pub actions: Vec<battle_core::Action>,
+    /// На какой ступени стоим и сколько их всего.
+    pub upto: usize,
+    pub total: usize,
+    pub outcome: Option<String>,
+    /// Партия перестала переигрываться: правила менялись с тех пор, как её
+    /// сыграли, и записанное действие больше не законно. Не ошибка, а факт о
+    /// записи — показать доску до этого места честнее, чем отказать целиком.
+    pub diverged: bool,
 }
 
 /// A keyword in the keeper's dictionary: Шипы, Немота, Покров, Яд.
@@ -3786,6 +3840,7 @@ pub struct BattleChallenge {
     pub bot_depth: i16,
     /// Paid once per challenge, never per victory.
     pub reward_dust: i32,
+    pub player_side: String,
     pub status: String,
     pub sort_order: Option<i32>,
     pub created_at: DateTime<Utc>,
@@ -3804,6 +3859,9 @@ pub struct BattleChallengeDto {
     pub setup: ChallengeSetup,
     pub bot_depth: i16,
     pub reward_dust: i32,
+    /// `scripted` — обе стороны заданы рукой (этюд, у него есть решение).
+    /// `deck` — хранитель ставит своё, гость приводит свой стол (встреча).
+    pub player_side: String,
     pub status: String,
     pub sort_order: Option<i32>,
     /// Whether this visitor has already been paid for this challenge. `None`
@@ -3825,7 +3883,35 @@ pub struct SaveBattleChallengeRequest {
     pub bot_depth: i16,
     #[serde(default)]
     pub reward_dust: i32,
+    /// Отсутствует в старом запросе — значит `scripted`: испытание не меняет
+    /// род от того, что его сохранили формой, которая про род не знает.
+    #[serde(default = "scripted")]
+    pub player_side: String,
     pub status: String,
+}
+
+fn scripted() -> String {
+    "scripted".into()
+}
+
+/// Испытание, как оно будет записано.
+///
+/// Струтура, а не одиннадцать позиционных аргументов, и по той же причине, по
+/// которой её завела карта: два соседних `&str` в длинном списке меняются
+/// местами рукой, и компилятор не скажет ни слова — а испытание, у которого
+/// состояние тихо держит род стороны, находит читатель месяцы спустя.
+#[derive(Debug, Clone)]
+pub struct BattleChallengeWrite<'a> {
+    pub slug: &'a str,
+    pub title_en: &'a str,
+    pub title_ru: &'a str,
+    pub note_en: Option<&'a str>,
+    pub note_ru: Option<&'a str>,
+    pub setup: &'a str,
+    pub bot_depth: i16,
+    pub reward_dust: i32,
+    pub player_side: &'a str,
+    pub status: &'a str,
 }
 
 fn one() -> i16 {
@@ -3847,6 +3933,90 @@ pub struct BattleMatch {
     pub rounds: Option<i16>,
     pub created_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
+}
+
+// ── Сыгранные партии, как их читает хранитель ────────────────────────────────
+//
+// Единственный источник правды о живой игре. До этого он был закрыт: партии
+// писались в базу, а посмотреть их было нечем — баланс правился симуляцией по
+// правилам, которых игроки не видели.
+
+/// Одна сыгранная партия строкой.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleMatchRow {
+    pub id: Uuid,
+    pub guest: String,
+    pub challenge_id: Option<Uuid>,
+    pub title_ru: Option<String>,
+    pub title_en: Option<String>,
+    pub outcome: Option<String>,
+    pub rounds: Option<i16>,
+    pub setup: String,
+    pub actions: String,
+    pub created_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleMatchRowDto {
+    pub id: String,
+    pub guest: String,
+    pub challenge_id: Option<String>,
+    pub title_ru: Option<String>,
+    pub title_en: Option<String>,
+    /// `player` — победил гость, `keeper` — дом, `draw` — ничья, пусто — партия
+    /// не доиграна.
+    pub outcome: Option<String>,
+    pub rounds: Option<i16>,
+    /// Длина журнала. Не то же, что круги: за один круг ходов бывает несколько.
+    pub moves: i64,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+}
+
+/// Сводка по одному испытанию.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleChallengeTally {
+    pub challenge_id: Option<String>,
+    pub title_ru: Option<String>,
+    pub title_en: Option<String>,
+    pub played: i64,
+    pub guest_won: i64,
+    pub keeper_won: i64,
+    pub draws: i64,
+    pub unfinished: i64,
+}
+
+/// Сводка по одной карте: сколько раз выходила на поле и чем это кончалось.
+///
+/// Считается по замороженной расстановке партии, где карта названа слугом, —
+/// то есть по тому, что действительно стояло на доске, а не по нынешней полке.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleCardTally {
+    pub slug: String,
+    pub title_ru: Option<String>,
+    pub title_en: Option<String>,
+    /// В скольких доигранных партиях карта была на поле.
+    pub played: i64,
+    /// Из них сколько выиграла её сторона.
+    pub won: i64,
+    pub lost: i64,
+    pub draws: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleMatchesDto {
+    pub rows: Vec<BattleMatchRowDto>,
+    pub by_challenge: Vec<BattleChallengeTally>,
+    pub by_card: Vec<BattleCardTally>,
+    /// Сколько партий прочитано. Полка не бесконечна, и сводка считается по
+    /// прочитанному — хранителю надо знать, по чему именно.
+    pub read: i64,
 }
 
 /// A match as the scene needs it.
@@ -3916,6 +4086,183 @@ pub struct BattleMeDto {
     pub dust: i64,
     pub feed: i64,
     pub owned: Vec<BattleOwnedCardDto>,
+    /// Что дали из рук, с записками. Пыль, осевшая с маяков, сюда не попадает:
+    /// у неё нет записки и считается она иначе.
+    pub gifts: Vec<BattleGiftDto>,
+}
+
+/// Строка книги, данная рукой хранителя.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct BattleGrantRow {
+    pub currency: String,
+    pub amount: i32,
+    pub note: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Подарок, как его читает полка.
+///
+/// Монета, сколько и — главное — за что. Число без записки было бы ровно тем,
+/// от чего эта комната отказывается: молча выросшим счётчиком.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleGiftDto {
+    pub currency: String,
+    pub amount: i32,
+    pub note: Option<String>,
+    pub at: String,
+}
+
+/// Выдать карты гостю напрямую.
+///
+/// Отдельно от покупки: покупка списывает монеты и проверяет цену, а это
+/// подарок — им приводят собрание в нужное состояние, чтобы проверить игру.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GiveBattleCardsRequest {
+    pub user_id: Uuid,
+    #[serde(default)]
+    pub card_ids: Vec<Uuid>,
+    /// Все опубликованные карты, которые могут выйти на поле.
+    #[serde(default)]
+    pub all: bool,
+    /// Уровень выданных копий. Перезаписывает имеющийся — намеренно.
+    #[serde(default = "one_level")]
+    pub level: i16,
+}
+
+fn one_level() -> i16 {
+    1
+}
+
+/// Забрать карты обратно. Пустой список и `all` — забрать все.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RevokeBattleCardsRequest {
+    pub user_id: Uuid,
+    #[serde(default)]
+    pub card_ids: Vec<Uuid>,
+    #[serde(default)]
+    pub all: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GiveBattleCardsResponse {
+    /// Сколько строк собрания затронуто.
+    pub touched: u64,
+}
+
+/// Из рук хранителя — одному гостю, за настоящее.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GrantBattleCoinRequest {
+    pub user_id: Uuid,
+    /// `dust` или `feed`.
+    pub currency: String,
+    /// Со знаком. Минус — это не штраф, а исправление: ошибка в книге правится
+    /// обратной строкой, а не правкой строки, которая была неверна.
+    pub amount: i32,
+    pub note: Option<String>,
+    /// Ключ этого АКТА, а не его содержимого, и его чеканит панель — по одному
+    /// на открытую форму. Иначе двойной щелчок раздал бы дважды, а два
+    /// состоявшихся показа одному гостю слились бы в один.
+    pub idem_key: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GrantBattleCoinResponse {
+    pub balance: i64,
+    /// Легла ли строка сейчас. Ложь — значит этот же ключ уже приходил.
+    pub granted_now: bool,
+}
+
+// ── Стол гостя ───────────────────────────────────────────────────────────────
+//
+// Шесть карт: три стоят на клетках своей половины, три в руке. Форма измерена,
+// не выбрана — см. миграцию `20260901000000_battle_decks.sql`.
+
+/// Одна карта колоды на клетке. Клетки пишутся клетками, а не порядком в
+/// массиве: расстановка — это выбор клеток, и «первая карта = левая дальняя»
+/// пришлось бы держать в голове игрока.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeckPlacement {
+    /// Идентификатор карты: владение записано на `card_id`, а не на слаг.
+    pub card: Uuid,
+    pub x: u8,
+    pub y: u8,
+}
+
+/// Стол, как он лежит в базе. Ровно то, что выбрал гость, — без заёма:
+/// заём принадлежит дому и досчитывается на каждое чтение, иначе он застыл бы
+/// в чужой колоде и пережил бы решение хранителя его отозвать.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeckLayout {
+    #[serde(default)]
+    pub board: Vec<DeckPlacement>,
+    #[serde(default)]
+    pub hand: Vec<Uuid>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct BattleDeck {
+    pub user_id: Uuid,
+    /// JSON, см. `DeckLayout`.
+    pub layout: String,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Одно место на столе — то, что комната рисует.
+///
+/// Три состояния в двух полях, и ни одно не выводится клиентом:
+///   * `card_id` есть, `gone` ложно  — ваша карта;
+///   * `card_id` пусто               — место пустое, и дом кладёт `lent_card_id`;
+///   * `card_id` есть, `gone` истинно — ваша карта снята с полки, и дом кладёт
+///     `lent_card_id` вместо неё. Молча выбросить её значило бы переписать
+///     чужую расстановку за спиной.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleDeckSlotDto {
+    /// Выбор гостя. `None` — место оставлено пустым.
+    pub card_id: Option<String>,
+    /// Выбранная карта больше не выходит на поле (снята с полки либо потеряла
+    /// здоровье). Показывается зачёркнутой, а не исчезает.
+    pub gone: bool,
+    /// Чем дом закрывает это место. `None` — закрывать нечего.
+    pub lent_card_id: Option<String>,
+    /// Только у мест на поле.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y: Option<u8>,
+}
+
+/// Весь стол одним ответом: комната не может нарисовать ни одного места, пока
+/// не знает, чьё оно, — та же причина, по которой `battle_me` отвечает разом.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleDeckDto {
+    pub board: Vec<BattleDeckSlotDto>,
+    pub hand: Vec<BattleDeckSlotDto>,
+    /// Раскладывал ли гость стол хоть раз. Первый заход на встречу ведёт на
+    /// стол, а не в партию: человек должен увидеть, что он приводит.
+    pub laid: bool,
+    /// Дому нечего одолжить — хранитель не отметил ни одной карты заёмной.
+    /// Комната говорит это вслух, а не рисует пустые места без объяснения.
+    pub nothing_to_lend: bool,
+}
+
+/// Что гость сохраняет. Заём сюда не приходит: его не выбирают.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveBattleDeckRequest {
+    #[serde(default)]
+    pub board: Vec<DeckPlacement>,
+    #[serde(default)]
+    pub hand: Vec<Uuid>,
 }
 
 /// Taking a card off the shelf.

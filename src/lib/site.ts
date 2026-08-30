@@ -22,6 +22,11 @@ export const SITEMAP_STATIC_ROUTES = [
     '/author',
     '/upcoming',
     '/cellar',
+    // Комната карт: не в шапке, но со своим canonical, og и CollectionPage.
+    // Страница, у которой есть адрес и нет его ни в одной карте сайта, —
+    // это адрес, который знает только тот, кто его уже знает. Этюды
+    // (`/battles/etude`) сюда не идут: они noindex и принадлежат человеку.
+    '/battles',
     ACQUIRE_PATH,
     IMPRESSIONS_PATH,
     PRIVACY_PATH,

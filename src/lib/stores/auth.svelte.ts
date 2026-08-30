@@ -15,6 +15,11 @@ function saveToken(token: string): void {
 
 const CLAIMS_PREFIX = 'gotiga_claims_';
 
+// Сколько пыли было в книге, когда полку смотрели в прошлый раз, — по одной
+// записи на гостя. Отметка на полях, а не кошелёк: баланс живёт на сервере, а
+// здесь лежит только то, с чем его сравнить.
+const PURSE_PREFIX = 'gotiga_battle_purse_';
+
 // Identity-sensitive receipts/tokens that must not outlive a deliberate logout:
 // commission claim tokens, a pending claim awaiting account-link, and the
 // plaintext visual-password reminder written at registration.
@@ -47,10 +52,10 @@ function removeKeys(keys: readonly string[]): void {
 // Anonymous booking/claim cancel tokens live under CLAIMS_PREFIX and work
 // without an account. Only purge them on a deliberate logout — never on an
 // automatic session-expiry, which would silently destroy the user's tokens.
-function clearClaims(): void {
+function clearByPrefix(prefix: string): void {
   if (!browser) return;
   Object.keys(localStorage)
-    .filter(k => k.startsWith(CLAIMS_PREFIX))
+    .filter(k => k.startsWith(prefix))
     .forEach(k => localStorage.removeItem(k));
 }
 
@@ -80,7 +85,11 @@ class AuthStore {
   // survives — a guest keeps using it.
   logout(): void {
     this.clearSession();
-    clearClaims();
+    clearByPrefix(CLAIMS_PREFIX);
+    // Отметка «сколько осело» — тоже расписка: она говорит, сколько у этого
+    // человека было. Уходит вместе с именем; следующий вход просто не с чем
+    // будет сравнивать, и полка промолчит, а не соврёт.
+    clearByPrefix(PURSE_PREFIX);
     removeKeys(SENSITIVE_KEYS);
   }
 
@@ -90,7 +99,8 @@ class AuthStore {
   // contact email, home cache, admin keys) are intentionally left untouched.
   purgeAllLocalData(): void {
     this.clearSession();
-    clearClaims();
+    clearByPrefix(CLAIMS_PREFIX);
+    clearByPrefix(PURSE_PREFIX);
     removeKeys(SENSITIVE_KEYS);
     removeKeys(BROWSING_KEYS);
   }

@@ -22,6 +22,19 @@ pub struct CardSnapshot {
     /// How much it mends in one act of mending. Zero — it does not mend.
     pub mend: i32,
     pub channel: Channel,
+    /// Бьёт ли это тело вообще.
+    ///
+    /// Отдельным полем, а не четвёртым каналом: канала три, и четвёртым он был
+    /// бы не «ещё один вид урона», а его отсутствие — то есть слово не из того
+    /// словаря. Котёл, знамя, лекарь без оружия стоят на поле и не наносят
+    /// ударов; до этого поля хранитель мог сказать «не бьёт» в форме, а карта
+    /// всё равно выходила и била.
+    #[serde(default = "strikes_by_default")]
+    pub strikes: bool,
+}
+
+fn strikes_by_default() -> bool {
+    true
 }
 
 impl CardSnapshot {
@@ -38,6 +51,7 @@ impl CardSnapshot {
             step: 1,
             mend: 0,
             channel: Channel::Physical,
+            strikes: true,
         }
     }
 
@@ -68,6 +82,12 @@ impl CardSnapshot {
 
     pub fn with_channel(mut self, channel: Channel) -> Self {
         self.channel = channel;
+        self
+    }
+
+    /// Тело, которое стоит на поле и не наносит ударов.
+    pub fn without_a_blow(mut self) -> Self {
+        self.strikes = false;
         self
     }
 }

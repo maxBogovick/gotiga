@@ -42,18 +42,24 @@
     BattleAction,
     BattleEvent,
     BattleMatch,
+    BattleMatches,
+    MatchReplay,
+    BattleChallenge,
+    BattlePlayerSide,
     Bench,
     ChallengeSetup,
     AbilityVerb,
     AbilityShape,
     AbilityTrigger,
     FigurineListItem,
+    AdminUserListItem,
+    BattleMe,
     SaveBattleCardRequest,
   } from '$lib/types/api';
 
   const REORDER_MS = 600;
 
-  let view = $state<'cards' | 'frames' | 'races' | 'keywords' | 'bench'>('cards');
+  let view = $state<'cards' | 'frames' | 'races' | 'keywords' | 'bench' | 'hand' | 'matches'>('cards');
   let cards = $state<BattleCardDto[]>([]);
   let frames = $state<BattleFrame[]>([...DEFAULT_FRAMES]);
   let figurines = $state<FigurineListItem[]>([]);
@@ -109,12 +115,21 @@
    * Шесть чисел тела. Списком, а не шестью копиями разметки: они отличаются
    * только пределами, и разъехаться им незачем.
    */
+  /**
+   * Пять чисел тела. Списком, а не пятью копиями разметки: они отличаются
+   * только пределами, и разъехаться им незачем.
+   *
+   * Скорости здесь больше нет. Она бралась в весах по 2 очка за ступень — 8 за
+   * пятую, весь бюджет первого чина, — а в движке её не существует: ход
+   * чередуется, очерёдности по скорости в игре нет. Поле у карты сохранено и
+   * значения не теряются (`cardBody` по-прежнему их отправляет), но задавать
+   * число, которое ни на что не влияет, форма больше не предлагает.
+   */
   const bodyStats = [
     { key: 'armor', label: 'adminBattlesArmor', min: 0, max: 20 },
     { key: 'ward', label: 'adminBattlesWard', min: 0, max: 20 },
     { key: 'reach', label: 'adminBattlesReach', min: 0, max: 5 },
     { key: 'step', label: 'adminBattlesStep', min: 0, max: 3 },
-    { key: 'speed', label: 'adminBattlesSpeed', min: 1, max: 5 },
     { key: 'mend', label: 'adminBattlesMend', min: 0, max: 20 },
   ] as const;
 
@@ -142,6 +157,12 @@
 
   const BENCH_WIDTH = 3;
   const BENCH_DEPTH = 6;
+
+  /** Сколько карт на столе гостя: три на доске и три в руке. То же число, что
+   *  `DECK_BOARD + DECK_HAND` на сервере, — здесь оно нужно, чтобы понять,
+   *  сколько заёмных карт дому надо иметь, чтобы стол не был шестью копиями
+   *  одной. */
+  const DECK_SIZE = 6;
 
   /** Кто может встать на поле: опубликованные и с ненулевым здоровьем. */
   let benchable = $derived(cards.filter((c) => c.status === 'published' && c.health > 0));
@@ -177,6 +198,7 @@
     benchSetup.playerBoard.length > 0 && benchSetup.keeperBoard.length > 0,
   );
 
+
   /** Стол притворяется партией, чтобы доску рисовал тот же компонент. */
   let benchMatch = $derived.by((): BattleMatch | null =>
     bench
@@ -193,7 +215,7 @@
       : null,
   );
 
-  async function benchCall(next: BattleAction | null, playOut = false) {
+  async function benchCall(next: BattleAction | null, playOut = false, autoKeeper?: boolean) {
     benchBusy = true;
     benchComplaint = null;
     try {
@@ -202,7 +224,10 @@
         actions: benchJournal,
         next,
         // За обе стороны — хранитель молчит и ждёт, пока за него сходят.
-        autoKeeper: !benchBoth,
+        autoKeeper: autoKeeper ?? !benchBoth,
+        // Той же рукой, какой этюд пройдёт гость: стол, проверяющий одним
+        // ботом то, что достанется другому, проверяет не то.
+        botDepth: etudeDepth,
         playOut,
       });
       bench = answer;
@@ -212,6 +237,21 @@
     } finally {
       benchBusy = false;
     }
+  }
+
+  /**
+   * Отменить последнее действие.
+   *
+   * Журнал и есть истина, доска — только кэш, поэтому отмена это «выбросить
+   * последнюю строку и пересобрать». Ответчик при этом молчит намеренно: иначе
+   * отменённый ход хранителя он тут же сделал бы снова, и кнопка выглядела бы
+   * сломанной. Если отмена вернула очередь хранителю — жмите ещё раз или
+   * походите за него.
+   */
+  function benchUndo() {
+    if (!benchJournal.length || benchBusy) return;
+    benchJournal = benchJournal.slice(0, -1);
+    void benchCall(null, false, false);
   }
 
   function benchStart() {
@@ -262,6 +302,320 @@
   const benchUnitName = (id: number) =>
     bench ? benchTitle(bench.state.units[id]?.card.name ?? String(id)) : String(id);
 
+  // ── Этюды ──────────────────────────────────────────────────────────────
+  //
+  // Этюд редактируется НА СТОЛЕ, а не в отдельной форме со своей второй
+  // сеткой. Причина не в экономии разметки: этюд — это расстановка, у которой
+  // есть решение, и единственный способ узнать, что решение есть, — разыграть
+  // её. Форма, в которой расставляют, но не играют, позволяет выложить
+  // непроходимый этюд и узнать об этом от гостя.
+  //
+  // Поэтому порядок работы такой: расставить → разыграть → оставить. Полка
+  // слева — это то, что оставили; поля наверху — то, чем оставленное
+  // подписано. Расстановку они не хранят: её всегда даёт `benchSetup`.
+
+  let challenges = $state<BattleChallenge[]>([]);
+  let etudeId = $state<string | null>(null);
+  let etudeTitleRu = $state('');
+  let etudeTitleEn = $state('');
+  let etudeNoteRu = $state('');
+  let etudeNoteEn = $state('');
+  /** Рука хранителя. Сложность — это она и только она: бот, которому дали
+   *  лишнюю ману, ломает и честность, и всякую возможность измерить силу
+   *  карты.
+   *
+   *  Ступеней две, а не три. Третья была измерена и не оказалась сильнее
+   *  второй, а попытка сделать её сильнее считала ход секундами вместо
+   *  миллисекунд. Обоснование — в `battle_core::bot::DEPTH_MAX`. */
+  const BOT_HANDS = [
+    { depth: 1, label: 'adminBattlesHandGreedy' },
+    { depth: 2, label: 'adminBattlesHandSearching' },
+  ] as const;
+  let etudeDepth = $state(1);
+  let etudeReward = $state(0);
+  let etudeStatus = $state<BattleCardStatus>('draft');
+  /** Кем задана сторона гостя. `scripted` — рукой (этюд, у него есть решение),
+   *  `deck` — столом гостя (встреча). У встречи половину гостя расставлять не
+   *  надо и нельзя: её приносит гость. */
+  let etudeSide = $state<BattlePlayerSide>('scripted');
+  /** Что нужно, чтобы это можно было оставить. У встречи — только половина
+   *  хранителя: половину гостя приносит его стол, и требовать её здесь значило
+   *  бы требовать чужого. То же правило, что и на сервере. */
+  let etudeReady = $derived(
+    etudeSide === 'deck' ? benchSetup.keeperBoard.length > 0 : benchReady,
+  );
+
+  /** Карта, названная расстановкой, но снятая с полки: `benchable` её больше
+   *  не предлагает, и без этой проверки она пропала бы из выпадающего списка
+   *  молча, а отказ пришёл бы с сервера при сохранении. */
+  const gone = (slug: string) => !!slug && !benchable.some((c) => c.slug === slug);
+
+  /** Все снятые карты, названные тем, что сейчас на столе. */
+  let benchGone = $derived([
+    ...new Set(
+      [
+        ...Object.values(benchBoard),
+        ...benchHands.player,
+        ...benchHands.keeper,
+      ].filter(gone),
+    ),
+  ]);
+
+  /** Разложить сохранённый этюд на столе. Журнал при этом сбрасывается:
+   *  разыгранная партия принадлежала прежней расстановке. */
+  function openEtude(challenge: BattleChallenge | null) {
+    etudeId = challenge?.id ?? null;
+    etudeTitleRu = challenge?.titleRu ?? '';
+    etudeTitleEn = challenge?.titleEn ?? '';
+    etudeNoteRu = challenge?.noteRu ?? '';
+    etudeNoteEn = challenge?.noteEn ?? '';
+    etudeDepth = challenge?.botDepth ?? 1;
+    etudeReward = challenge?.rewardDust ?? 0;
+    etudeStatus = challenge?.status ?? 'draft';
+    etudeSide = challenge?.playerSide ?? 'scripted';
+
+    benchJournal = [];
+    bench = null;
+    benchComplaint = null;
+    if (!challenge) {
+      benchBoard = {};
+      benchHands = { player: [], keeper: [] };
+      return;
+    }
+    const board: Record<string, string> = {};
+    for (const p of [...challenge.setup.keeperBoard, ...challenge.setup.playerBoard]) {
+      board[`${p.x},${p.y}`] = p.card;
+    }
+    benchBoard = board;
+    benchHands = {
+      player: [...challenge.setup.playerHand],
+      keeper: [...challenge.setup.keeperHand],
+    };
+  }
+
+  async function saveEtude() {
+    if (!etudeTitleRu.trim() && !etudeTitleEn.trim()) {
+      flash($t('adminBattlesEtudeNeedsTitle'), 6000);
+      return;
+    }
+    saving = true;
+    try {
+      // Расстановку даёт стол, а не отдельная копия: второй источник правды
+      // разошёлся бы с тем, что хранитель только что разыграл.
+      const saved = await api.adminSaveBattleChallenge(
+        {
+          titleEn: etudeTitleEn.trim(),
+          titleRu: etudeTitleRu.trim(),
+          noteEn: etudeNoteEn.trim() || null,
+          noteRu: etudeNoteRu.trim() || null,
+          setup: benchSetup,
+          botDepth: etudeDepth,
+          rewardDust: etudeReward,
+          playerSide: etudeSide,
+          status: etudeStatus,
+        },
+        etudeId ?? undefined,
+      );
+      challenges = await api.adminListBattleChallenges();
+      etudeId = saved.id;
+      flash($t('adminBattlesEtudeSaved'));
+    } catch (e) {
+      flash(String(e), 6000);
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function removeEtude() {
+    if (!etudeId || !confirm($t('adminBattlesEtudeDeleteConfirm'))) return;
+    try {
+      await api.adminDeleteBattleChallenge(etudeId);
+      challenges = await api.adminListBattleChallenges();
+      openEtude(null);
+      flash($t('adminBattlesEtudeDeleted'));
+    } catch (e) {
+      flash(String(e), 6000);
+    }
+  }
+
+  // ── Порядок полки этюдов ────────────────────────────────────────────────
+  //
+  // Своё состояние перетаскивания, а не общее с полкой карт: две полки видны
+  // в разных вкладках, но одна пара переменных на обе — это перетаскивание,
+  // которое помнит чужой список.
+  let etudeDragFrom = $state<number | null>(null);
+  let etudeDragOver = $state<number | null>(null);
+  let etudeOrderTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function onEtudeDrop(to: number) {
+    const from = etudeDragFrom;
+    etudeDragFrom = null;
+    etudeDragOver = null;
+    if (from == null || from === to) return;
+    const next = [...challenges];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    challenges = next;
+    // Придержано на удар: три перетащенных подряд этюда — это одна полка, а не
+    // три. Тот же приём и то же число, что у полки карт.
+    if (etudeOrderTimer) clearTimeout(etudeOrderTimer);
+    etudeOrderTimer = setTimeout(async () => {
+      try {
+        await api.adminReorderBattleChallenges(challenges.map((c) => c.id));
+        flash($t('adminBattlesReordered'));
+      } catch (e) {
+        flash(String(e), 6000);
+        challenges = await api.adminListBattleChallenges();
+      }
+    }, REORDER_MS);
+  }
+
+  // ── Из рук ──────────────────────────────────────────────────────────────
+  //
+  // Корм не оседает сам, как пыль: его даёт хранитель за настоящее —
+  // состоявшийся показ, опубликованное впечатление, заказ работы. Поэтому
+  // здесь нет ни ставки, ни правила: есть человек, число и записка.
+  //
+  // Записка обязательна и на сервере тоже. Корм без неё был бы просто выросшим
+  // счётчиком — ровно тем, от чего эта комната отказывается.
+
+  let guestQuery = $state('');
+  let guests = $state<AdminUserListItem[]>([]);
+  let guestChosen = $state<AdminUserListItem | null>(null);
+  let grantCoin = $state<'feed' | 'dust'>('feed');
+  let grantAmount = $state(1);
+  let grantNote = $state('');
+  let granting = $state(false);
+  /**
+   * Ключ ЭТОЙ выдачи — чеканится на открытие формы и заново после каждой
+   * состоявшейся. Отсюда, а не с сервера: сервер, чеканящий ключ сам, сделал
+   * бы двойной щелчок второй выдачей, а ключ из содержимого слил бы два
+   * состоявшихся показа одному гостю в один.
+   */
+  let grantKey = $state(crypto.randomUUID());
+
+  /** Что у выбранного гостя сейчас — ровно то, что видит он сам. Без этого
+   *  проверять нечего: не видно ни что выдалось, ни что уже было. */
+  let guestHas = $state<BattleMe | null>(null);
+  let giveLevel = $state(1);
+  let giving = $state(false);
+
+  async function readGuest() {
+    if (!guestChosen) {
+      guestHas = null;
+      return;
+    }
+    try {
+      guestHas = await api.adminReadBattleGuest(guestChosen.id);
+    } catch (e) {
+      guestHas = null;
+      flash(String(e), 6000);
+    }
+  }
+
+  async function chooseGuest(guest: AdminUserListItem) {
+    guestChosen = guest;
+    await readGuest();
+  }
+
+  async function giveAllCards() {
+    if (!guestChosen || giving) return;
+    giving = true;
+    try {
+      const res = await api.adminGiveBattleCards({
+        userId: guestChosen.id,
+        all: true,
+        level: giveLevel,
+      });
+      await readGuest();
+      flash(`${$t('adminBattlesGiveDone')} ${res.touched}`);
+    } catch (e) {
+      flash(String(e), 6000);
+    } finally {
+      giving = false;
+    }
+  }
+
+  async function takeAllCards() {
+    if (!guestChosen || giving) return;
+    if (!confirm($t('adminBattlesTakeConfirm'))) return;
+    giving = true;
+    try {
+      const res = await api.adminRevokeBattleCards({ userId: guestChosen.id, all: true });
+      await readGuest();
+      flash(`${$t('adminBattlesTakeDone')} ${res.touched}`);
+    } catch (e) {
+      flash(String(e), 6000);
+    } finally {
+      giving = false;
+    }
+  }
+
+  /** Обнулить монету. Строка книги со знаком минус, а не удаление строк:
+   *  книга неизменяема, и ошибка — да и сброс — правятся обратной строкой. */
+  async function zeroCoin(coin: 'dust' | 'feed') {
+    if (!guestChosen || !guestHas) return;
+    const has = coin === 'dust' ? guestHas.dust : guestHas.feed;
+    if (has === 0) return;
+    try {
+      await api.adminGrantBattleCoin({
+        userId: guestChosen.id,
+        currency: coin,
+        amount: -has,
+        note: $t('adminBattlesZeroNote'),
+        idemKey: crypto.randomUUID(),
+      });
+      await readGuest();
+      flash($t('adminBattlesZeroDone'));
+    } catch (e) {
+      flash(String(e), 6000);
+    }
+  }
+
+  let grantReady = $derived(
+    !!guestChosen && grantAmount !== 0 && grantNote.trim().length > 0,
+  );
+
+  async function findGuests() {
+    try {
+      const page = await api.adminListUsers({ search: guestQuery.trim(), perPage: 20 });
+      guests = page.items;
+    } catch (e) {
+      flash(String(e), 6000);
+    }
+  }
+
+  async function giveByHand() {
+    if (!guestChosen || !grantReady || granting) return;
+    granting = true;
+    try {
+      const res = await api.adminGrantBattleCoin({
+        userId: guestChosen.id,
+        currency: grantCoin,
+        amount: grantAmount,
+        note: grantNote.trim(),
+        idemKey: grantKey,
+      });
+      // Новый ключ — только после состоявшейся выдачи: пока она не прошла,
+      // повтор тем же ключом безвреден и это ровно то, что нужно.
+      grantKey = crypto.randomUUID();
+      grantNote = '';
+      await readGuest();
+      flash(
+        res.grantedNow
+          ? `${$t('adminBattlesHandGiven')} ${res.balance}`
+          : $t('adminBattlesHandAlready'),
+      );
+    } catch (e) {
+      flash(String(e), 6000);
+    } finally {
+      granting = false;
+    }
+  }
+
+  const etudeTitleOf = (c: BattleChallenge) =>
+    ($lang === 'ru' ? c.titleRu || c.titleEn : c.titleEn || c.titleRu);
+
   function emptyCard(): BattleCardDto {
     return {
       id: '',
@@ -301,6 +655,7 @@
       priceDust: null,
       priceFeed: null,
       levelPriceDust: null,
+      lendable: false,
       artUrl: null,
       artUrlOverride: null,
       artFocal: null,
@@ -777,6 +1132,103 @@
     draft.levelPriceDust = next;
   }
 
+  // ── Сыгранные партии ───────────────────────────────────────────────────
+  //
+  // Единственное окно в живую игру. До него партии писались в базу, а
+  // посмотреть их было нечем: баланс правился симуляцией по правилам, которых
+  // игроки не видели.
+  //
+  // Читается по щелчку на вкладку, а не при открытии стола: разбор пятисот
+  // партий не нужен тому, кто пришёл поправить рамку.
+
+  let matches = $state<BattleMatches | null>(null);
+  let matchesBusy = $state(false);
+
+  async function loadMatches() {
+    matchesBusy = true;
+    try {
+      matches = await api.adminReadBattleMatches();
+    } catch (e) {
+      flash(String(e), 6000);
+    } finally {
+      matchesBusy = false;
+    }
+  }
+
+  function openMatches() {
+    view = 'matches';
+    if (!matches) void loadMatches();
+  }
+
+  // ── Пересмотр одной партии ─────────────────────────────────────────────
+  //
+  // Доску рисует тот же `BattleScene`, что и комната гостей: увидеть надо
+  // ровно то, что видел человек. Правила берутся из записи, а не нынешние, —
+  // это делает сервер, здесь об этом знать нечего.
+  //
+  // Управление у сцены остаётся «за гостя», но список законных действий пуст,
+  // поэтому нажать нельзя ничего: пересмотр — это чтение.
+
+  let replayId = $state<string | null>(null);
+  let replay = $state<MatchReplay | null>(null);
+  let replayBusy = $state(false);
+
+  async function stepTo(id: string, upto: number) {
+    replayBusy = true;
+    try {
+      replay = await api.adminReplayBattleMatch(id, Math.max(0, upto));
+      replayId = id;
+    } catch (e) {
+      flash(String(e), 6000);
+    } finally {
+      replayBusy = false;
+    }
+  }
+
+  function closeReplay() {
+    replayId = null;
+    replay = null;
+  }
+
+  /** Партия притворяется живой, чтобы доску рисовал тот же компонент. */
+  let replayMatch = $derived.by((): BattleMatch | null =>
+    replay
+      ? {
+          id: 'replay',
+          challengeId: null,
+          seq: 0,
+          state: replay.state,
+          legalActions: [],
+          events: replay.events,
+          outcome: replay.outcome,
+          rewardDust: 0,
+        }
+      : null,
+  );
+
+  /** Доля побед одной стороны. Пусто, пока считать не из чего: «0 %» при нуле
+   *  партий — это не ноль, это отсутствие ответа. */
+  function share(part: number, whole: number): string {
+    return whole > 0 ? `${Math.round((100 * part) / whole)}%` : '—';
+  }
+
+  const OUTCOME_WORD: Record<string, TranslationKey> = {
+    player: 'adminBattlesOutcomeGuest',
+    keeper: 'adminBattlesOutcomeKeeper',
+    draw: 'adminBattlesOutcomeDraw',
+  };
+
+  const tallyTitle = (t: { titleRu: string | null; titleEn: string | null; slug?: string }) =>
+    ($lang === 'ru' ? t.titleRu || t.titleEn : t.titleEn || t.titleRu) || t.slug || '—';
+
+  const shortDate = (iso: string) =>
+    new Date(iso).toLocaleString($lang === 'ru' ? 'ru-RU' : 'en-GB', {
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
   // ── Ставки начисления за внимание ──────────────────────────────────────
   let dustRates = $state<BattleDustRates>({ liked: 2, seen: 1, read: 3 });
   let ratesSaving = $state(false);
@@ -889,6 +1341,7 @@
       priceDust: draft.priceDust,
       priceFeed: draft.priceFeed,
       levelPriceDust: draft.levelPriceDust,
+      lendable: draft.lendable,
       artUrl: draft.artUrlOverride?.trim() || null,
       artFocal: draft.artFocal,
       frameOverride: draft.frameOverride,
@@ -909,11 +1362,77 @@
       armor: draft.armor,
       ward: draft.ward,
       reach: draft.reach,
-      speed: draft.speed,
       mend: draft.mend,
       abilities: draft.abilities,
+      // Годность зависит и от них: без статуса подсказка не заметит перевода
+      // черновика на полку, без цен — нуля вместо пустого поля.
+      status: draft.status,
+      lendable: draft.lendable,
+      priceDust: draft.priceDust,
+      priceFeed: draft.priceFeed,
     }),
   );
+
+  /** Как карта зовётся НА ПОЛКЕ, а не в поле ввода. Связь этюдов идёт по
+   *  сохранённому слугу: пока правку не записали, они смотрят на старое имя. */
+  let savedSlug = $derived(cards.find((c) => c.id === selectedId)?.slug ?? '');
+
+  /** Этюды, которые называют эту карту. Считается здесь, а не спрашивается у
+   *  сервера: полка этюдов уже загружена целиком, и второй источник той же
+   *  правды разошёлся бы с первым. */
+  let etudesUsing = $derived(
+    savedSlug
+      ? challenges.filter(
+          (c) =>
+            [...c.setup.playerBoard, ...c.setup.keeperBoard].some((p) => p.card === savedSlug) ||
+            [...c.setup.playerHand, ...c.setup.keeperHand].some((slug) => slug === savedSlug),
+        )
+      : [],
+  );
+
+  /** Снять со стола: карта уходит с доски у всех, кто её называет. В отличие от
+   *  переименования это НЕ переезжает — этюд просто останется без тела. */
+  let willEmptyEtudes = $derived(etudesUsing.length > 0 && draft.status !== 'published');
+
+  /** Вылезла ли карта за бюджет своего чина. Считает сервер той же формулой,
+   *  которой откажет при сохранении; здесь — чтобы полоска покраснела раньше,
+   *  чем придёт отказ. */
+  let overBudget = $derived(!!weigh && weigh.totalPoints > tierBudget(draft.tier));
+  let budgetFill = $derived(
+    weigh ? Math.min(100, (weigh.totalPoints / tierBudget(draft.tier)) * 100) : 0,
+  );
+
+  /** Пока непусто — сохранить нельзя, и сервер откажет тем же словом. */
+  let blocking = $derived(weigh?.readiness.blocking ?? []);
+  let notes = $derived(weigh?.readiness.notes ?? []);
+
+  /**
+   * Чего не хватает комнате, чтобы игра работала целиком.
+   *
+   * Считается по уже загруженным спискам. Карты без здоровья сюда попадают
+   * только старые: завести новую такую сервер больше не даёт, а те, что были
+   * заведены раньше, сами не починятся.
+   */
+  let roomTrouble = $derived.by(() => {
+    if (loading) return [] as string[];
+    const out: string[] = [];
+    const shelf = cards.filter((c) => c.status === 'published');
+    if (!shelf.length) out.push('noCards');
+    const lifeless = shelf.filter((c) => c.health <= 0).length;
+    if (lifeless) out.push(`lifeless:${lifeless}`);
+    // Дом раздаёт заём, перебирая пул по кругу, поэтому одной отмеченной
+    // карты хватает, чтобы стол «работал», — и новый гость садится за шесть
+    // копий одного тела. Считаем до полного стола, а не до единицы.
+    const lendable = shelf.filter((c) => c.lendable && c.tier === 1 && c.health > 0).length;
+    if (!lendable) out.push('noLendable');
+    else if (lendable < DECK_SIZE) out.push(`fewLendable:${lendable}`);
+    if (!challenges.some((c) => c.status === 'published')) out.push('noBattles');
+    return out;
+  });
+
+  /** «lifeless:2» → «lifeless» + число. */
+  const troubleWord = (t: string) => t.split(':')[0];
+  const troubleCount = (t: string) => t.split(':')[1] ?? '';
 
   // Считает сервер, по той же формуле, что при сохранении. Задержка — чтобы
   // набор числа руками не превращался в очередь запросов.
@@ -946,7 +1465,16 @@
   }
 
   async function remove() {
-    if (!selectedId || !confirm($t('adminBattlesDeleteConfirm'))) return;
+    if (!selectedId) return;
+    // Спрашивается ровно то, что будет потеряно. Удаление карты, которую
+    // называют этюды, не переезжает никуда: они останутся без тела, и узнать
+    // об этом хранитель должен ДО, а не от гостя.
+    const warning = etudesUsing.length
+      ? `${$t('adminBattlesDeleteConfirm')}\n\n${$t('adminBattlesEtudesWillEmpty')} ${etudesUsing
+          .map(etudeTitleOf)
+          .join(', ')}`
+      : $t('adminBattlesDeleteConfirm');
+    if (!confirm(warning)) return;
     try {
       await api.adminDeleteBattleCard(selectedId);
       await loadCards();
@@ -1005,6 +1533,10 @@
       races = savedRaces;
       keywords = await api.getBattleKeywords();
       if (savedFrames.frames.length) frames = savedFrames.frames;
+      // Последним и намеренно: полка этюдов — самый молодой запрос на столе, и
+      // если он однажды откажет, стол не должен открыться в рамках по умолчанию
+      // из-за неприменённой строки выше.
+      challenges = await api.adminListBattleChallenges();
     } catch (e) {
       flash(String(e), 6000);
     } finally {
@@ -1037,11 +1569,36 @@
         onclick={() => (view = 'bench')}
         class="px-3 py-1 {view === 'bench' ? 'bg-[#34251c] text-[#f8f1e7]' : ''}"
       >{$t('adminBattlesBench')}</button>
+      <button
+        onclick={() => (view = 'hand')}
+        class="px-3 py-1 {view === 'hand' ? 'bg-[#34251c] text-[#f8f1e7]' : ''}"
+      >{$t('adminBattlesHand')}</button>
+      <button
+        onclick={openMatches}
+        class="px-3 py-1 {view === 'matches' ? 'bg-[#34251c] text-[#f8f1e7]' : ''}"
+      >{$t('adminBattlesMatches')}</button>
     </div>
     {#if message}
       <span class="ml-auto normal-case tracking-normal text-[11px] text-[#6f3b24]">{message}</span>
     {/if}
   </div>
+
+  <!-- Чего не хватает комнате. Стоит под вкладками, а не внутри одной из них:
+       нехватка заёмных карт видна в карточном редакторе, а мешает она на столе
+       гостя, и искать её там, где она мешает, поздно. -->
+  {#if roomTrouble.length}
+    <div class="px-4 py-2 border-b border-[#c65f3c]/25 bg-[#c65f3c]/[0.06]">
+      <p class="text-[10px] uppercase tracking-[0.16em] text-[#8f2f22]">{$t('adminBattlesRoomTitle')}</p>
+      <ul class="mt-1 space-y-0.5">
+        {#each roomTrouble as trouble (trouble)}
+          <li class="text-[11px] leading-relaxed text-[#6f3b24]">
+            {$t(`adminBattlesRoom${troubleWord(trouble)[0].toUpperCase()}${troubleWord(trouble).slice(1)}` as TranslationKey)}
+            {troubleCount(trouble)}
+          </li>
+        {/each}
+      </ul>
+    </div>
+  {/if}
 
   {#if view === 'frames'}
     <!-- ── Five frames, one per rank ────────────────────────────────────── -->
@@ -1321,9 +1878,169 @@
       про то, что на нём проверяют.
     -->
     <div class="flex-1 flex min-h-0">
+      <!-- ── Полка этюдов ─────────────────────────────────────────────────
+           То, что оставили. Щелчок раскладывает этюд на столе — вместе с
+           расстановкой, а не рядом с ней. -->
+      <aside class="w-56 flex-shrink-0 flex flex-col border-r border-[#34251c]/10">
+        <div class="p-3 border-b border-[#34251c]/10">
+          <button
+            onclick={() => openEtude(null)}
+            class="w-full px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
+          >{$t('adminBattlesEtudeNew')}</button>
+        </div>
+        <div class="flex-1 overflow-y-auto">
+          {#if !challenges.length}
+            <p class="p-3 text-xs italic text-[#5f4636]">{$t('adminBattlesEtudeEmpty')}</p>
+          {:else}
+            <p class="px-3 py-2 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminBattlesDragHint')}</p>
+            <ul class="pb-4">
+              {#each challenges as challenge, i (challenge.id)}
+                <li
+                  draggable="true"
+                  ondragstart={() => (etudeDragFrom = i)}
+                  ondragover={(e) => { e.preventDefault(); etudeDragOver = i; }}
+                  ondragleave={() => { if (etudeDragOver === i) etudeDragOver = null; }}
+                  ondrop={(e) => { e.preventDefault(); onEtudeDrop(i); }}
+                  ondragend={() => { etudeDragFrom = null; etudeDragOver = null; }}
+                  class="border-b border-[#34251c]/5 {etudeDragOver === i ? 'bg-[#c65f3c]/10' : ''} {etudeDragFrom === i ? 'opacity-40' : ''}"
+                >
+                  <button
+                    onclick={() => openEtude(challenge)}
+                    class="w-full text-left px-3 py-2.5 flex gap-2 items-start hover:bg-[#34251c]/[0.04] {etudeId === challenge.id ? 'bg-[#34251c]/[0.06]' : ''}"
+                  >
+                    <span class="mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 {STATUS_TONE[challenge.status]}"></span>
+                    <span class="min-w-0 flex-1">
+                      <span class="block text-[13px] leading-snug truncate" style="font-family: 'Cormorant Garamond', Georgia, serif;">
+                        {etudeTitleOf(challenge)}
+                      </span>
+                      <span class="block text-[10px] text-[#8a6a55]">
+                        {challenge.playerSide === 'deck'
+                          ? $t('adminBattlesEtudeSideDeck')
+                          : $t('adminBattlesEtudeSideScripted')}
+                        · {challenge.botDepth >= 2
+                          ? $t('adminBattlesHandSearching')
+                          : $t('adminBattlesHandGreedy')}
+                        {#if challenge.rewardDust > 0}
+                          · {challenge.rewardDust}
+                        {/if}
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
+      </aside>
+
       <div class="flex-1 overflow-y-auto p-6 min-w-0">
         <p class="max-w-[62ch] mb-1 text-xs leading-relaxed text-[#5f4636]">{$t('adminBattlesBenchHint')}</p>
         <p class="max-w-[62ch] mb-5 text-[11px] leading-relaxed text-[#8a6a55]">{$t('adminBattlesBenchNoHealth')}</p>
+
+        <!-- ── Чем расстановка подписана, если её оставить ────────────────
+             Поля стоят над столом, а расстановки не хранят: её всегда даёт
+             `benchSetup`. Сохранить можно только то, что стоит на столе
+             сейчас, — и только когда на обеих половинах кто-то есть, ровно
+             как проверяет сервер. -->
+        <div class="mb-6 pb-5 border-b border-[#34251c]/10">
+          <p class="mb-1 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]">
+            {etudeId ? $t('adminBattlesEtude') : $t('adminBattlesEtudeNew')}
+          </p>
+          <p class="max-w-[62ch] mb-3 text-[11px] leading-relaxed italic text-[#8a6a55]">{$t('adminBattlesEtudeHint')}</p>
+
+          <div class="flex flex-wrap gap-x-4 gap-y-3 items-end">
+            {#each [
+              { label: $t('adminBattlesEtudeTitle') + ' · RU', get: () => etudeTitleRu, set: (v: string) => (etudeTitleRu = v), wide: true },
+              { label: $t('adminBattlesEtudeTitle') + ' · EN', get: () => etudeTitleEn, set: (v: string) => (etudeTitleEn = v), wide: true },
+              { label: $t('adminBattlesEtudeNote') + ' · RU', get: () => etudeNoteRu, set: (v: string) => (etudeNoteRu = v), wide: false },
+              { label: $t('adminBattlesEtudeNote') + ' · EN', get: () => etudeNoteEn, set: (v: string) => (etudeNoteEn = v), wide: false },
+            ] as field (field.label)}
+              <label class="block {field.wide ? 'w-52' : 'w-64'}">
+                <span class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">{field.label}</span>
+                <input
+                  value={field.get()}
+                  oninput={(e) => field.set(e.currentTarget.value)}
+                  class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                />
+              </label>
+            {/each}
+
+            <label class="block w-44">
+              <span class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminBattlesEtudeDepth')}</span>
+              <select
+                bind:value={etudeDepth}
+                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+              >
+                {#each BOT_HANDS as hand (hand.depth)}
+                  <option value={hand.depth}>{$t(hand.label)}</option>
+                {/each}
+              </select>
+            </label>
+
+            <label class="block w-32">
+              <span class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminBattlesEtudeReward')}</span>
+              <input
+                type="number"
+                min="0"
+                max="1000"
+                bind:value={etudeReward}
+                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+              />
+            </label>
+
+            <label class="block w-44">
+              <span class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminBattlesEtudeSide')}</span>
+              <select
+                bind:value={etudeSide}
+                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+              >
+                <option value="scripted">{$t('adminBattlesEtudeSideScripted')}</option>
+                <option value="deck">{$t('adminBattlesEtudeSideDeck')}</option>
+              </select>
+            </label>
+
+            <label class="block w-32">
+              <span class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminBattlesStatus')}</span>
+              <select
+                bind:value={etudeStatus}
+                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+              >
+                <option value="draft">{$t('adminBattlesStatusDraft')}</option>
+                <option value="published">{$t('adminBattlesStatusPublished')}</option>
+                <option value="retired">{$t('adminBattlesStatusRetired')}</option>
+              </select>
+            </label>
+
+            <div class="flex gap-2">
+              <button
+                type="button"
+                disabled={!etudeReady || saving}
+                onclick={saveEtude}
+                class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] bg-[#34251c] text-[#f8f1e7] disabled:opacity-40"
+              >{$t('adminBattlesEtudeSave')}</button>
+              {#if etudeId}
+                <button
+                  type="button"
+                  onclick={removeEtude}
+                  class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20"
+                >{$t('adminBattlesEtudeDelete')}</button>
+              {/if}
+            </div>
+          </div>
+
+          <!-- Пыль за этюд, а не за победу: переигрывать можно сколько угодно,
+               заплатят однажды. Сказано здесь, чтобы число ставили осознанно. -->
+          <p class="mt-3 max-w-[62ch] text-[11px] leading-relaxed text-[#8a6a55]">{$t('adminBattlesEtudeRewardNote')}</p>
+          {#if etudeSide === 'deck'}
+            <p class="mt-2 max-w-[62ch] text-[11px] leading-relaxed text-[#8a6a55]">{$t('adminBattlesEtudeSideDeckNote')}</p>
+          {/if}
+
+          {#if benchGone.length}
+            <p class="mt-2 max-w-[62ch] text-[11px] leading-relaxed text-[#8f2f22]">
+              {$t('adminBattlesEtudeGone')}: {benchGone.map(benchTitle).join(', ')}
+            </p>
+          {/if}
+        </div>
 
         {#if benchComplaint}
           <p class="mb-4 text-xs text-[#8f2f22]">{benchComplaint}</p>
@@ -1349,6 +2066,14 @@
                     class="flex-1 min-w-0 px-1 py-1 text-[11px] bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
                   >
                     <option value="">·</option>
+                    <!-- Карта, снятая с полки после того, как этюд был
+                         сохранён, осталась бы без своей строки и пропала из
+                         списка молча. Ей даётся строка с пометкой: убрать её
+                         должен хранитель, а не выпадающий список. -->
+                    {#if gone(benchBoard[`${x},${y}`] ?? '')}
+                      {@const slug = benchBoard[`${x},${y}`]}
+                      <option value={slug}>{benchTitle(slug)} — {$t('adminBattlesEtudeGoneShort')}</option>
+                    {/if}
                     {#each benchable as c (c.id)}
                       <option value={c.slug}>{c.titleRu}</option>
                     {/each}
@@ -1381,7 +2106,7 @@
                     <button
                       type="button"
                       onclick={() => benchDropFromHand(row.side, i)}
-                      class="px-1.5 py-0.5 text-[11px] border border-[#34251c]/15 hover:bg-[#c65f3c]/10"
+                      class="px-1.5 py-0.5 text-[11px] border hover:bg-[#c65f3c]/10 {gone(slug) ? 'border-[#8f2f22]/40 text-[#8f2f22]' : 'border-[#34251c]/15'}"
                     >{benchTitle(slug)} ×</button>
                   {:else}
                     <span class="text-[11px] italic text-[#8a6a55]">{$t('adminBattlesBenchEmpty')}</span>
@@ -1408,6 +2133,12 @@
                 onclick={() => benchCall(null, true)}
                 class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 disabled:opacity-40"
               >{$t('adminBattlesBenchPlayOut')}</button>
+              <button
+                type="button"
+                disabled={!benchJournal.length || benchBusy}
+                onclick={benchUndo}
+                class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 disabled:opacity-40"
+              >{$t('adminBattlesBenchUndo')}</button>
               <button
                 type="button"
                 onclick={benchReset}
@@ -1451,6 +2182,353 @@
       </div>
     </div>
 
+  {:else if view === 'hand'}
+    <!--
+      ── Из рук ────────────────────────────────────────────────────────────
+      Единственный способ, каким в доме появляется корм. Не настройка комнаты
+      (те живут при рамках), а поступок, обращённый к одному человеку, —
+      поэтому своя комната, а не строка среди ставок.
+    -->
+    <div class="flex-1 overflow-y-auto p-6">
+      <p class="max-w-[62ch] mb-1 text-xs leading-relaxed text-[#5f4636]">{$t('adminBattlesHandHint')}</p>
+      <p class="max-w-[62ch] mb-6 text-[11px] leading-relaxed italic text-[#8a6a55]">{$t('adminBattlesHandNoteHint')}</p>
+
+      <div class="max-w-xl">
+        <!-- Кому. Поиск, а не длинный список: гостей больше, чем помещается. -->
+        <label for="hand-who" class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminBattlesHandWho')}</label>
+        <div class="flex gap-2">
+          <input
+            id="hand-who"
+            bind:value={guestQuery}
+            onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void findGuests(); } }}
+            placeholder={$t('adminBattlesHandSearch')}
+            class="flex-1 px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+          />
+          <button
+            type="button"
+            onclick={findGuests}
+            class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
+          >{$t('adminBattlesHandFind')}</button>
+        </div>
+
+        {#if guests.length}
+          <ul class="mt-2 max-h-52 overflow-y-auto border border-[#34251c]/10">
+            {#each guests as guest (guest.id)}
+              <li class="border-b border-[#34251c]/5 last:border-b-0">
+                <button
+                  type="button"
+                  onclick={() => chooseGuest(guest)}
+                  class="w-full text-left px-3 py-2 text-xs hover:bg-[#34251c]/[0.04] {guestChosen?.id === guest.id ? 'bg-[#34251c]/[0.06]' : ''}"
+                >
+                  <span style="font-family: 'Cormorant Garamond', Georgia, serif;">{guest.displayName}</span>
+                  <span class="block text-[10px] text-[#8a6a55]">{guest.email}</span>
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+
+        {#if guestChosen}
+          <p class="mt-4 text-xs text-[#5f4636]">
+            {$t('adminBattlesHandTo')}
+            <b style="font-family: 'Cormorant Garamond', Georgia, serif;">{guestChosen.displayName}</b>
+          </p>
+
+          <!-- Что у гостя сейчас. Без этого выдача — действие вслепую: не видно
+               ни что уже было, ни что изменилось. Это ровно то, что видит сам
+               гость, а не второй отчёт, который может с ним разойтись. -->
+          {#if guestHas}
+            <div class="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-[#5f4636]">
+              <span>
+                {$t('battlesCoinDust')}: <b class="tabular-nums">{guestHas.dust}</b>
+                {#if guestHas.dust !== 0}
+                  <button type="button" onclick={() => zeroCoin('dust')} class="ml-1 text-[10px] uppercase tracking-[0.14em] text-[#8a6a55] hover:text-[#c65f3c] underline">{$t('adminBattlesZero')}</button>
+                {/if}
+              </span>
+              <span>
+                {$t('battlesCoinFeed')}: <b class="tabular-nums">{guestHas.feed}</b>
+                {#if guestHas.feed !== 0}
+                  <button type="button" onclick={() => zeroCoin('feed')} class="ml-1 text-[10px] uppercase tracking-[0.14em] text-[#8a6a55] hover:text-[#c65f3c] underline">{$t('adminBattlesZero')}</button>
+                {/if}
+              </span>
+              <span>{$t('adminBattlesGuestCards')}: <b class="tabular-nums">{guestHas.owned.length}</b></span>
+            </div>
+          {/if}
+
+          <!-- Прямая выдача карт. Отдельно от монет, потому что это не покупка:
+               кошелёк не трогается, цена не проверяется. Нужна, чтобы привести
+               собрание в состояние, в котором игру можно проверить. -->
+          <div class="mt-5 pt-4 border-t border-[#34251c]/10">
+            <p class="mb-1 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminBattlesGive')}</p>
+            <p class="max-w-[62ch] mb-3 text-[11px] leading-relaxed italic text-[#8a6a55]">{$t('adminBattlesGiveHint')}</p>
+            <div class="flex flex-wrap items-end gap-3">
+              <label class="block w-32">
+                <span class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminBattlesGiveLevel')}</span>
+                <select
+                  bind:value={giveLevel}
+                  class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                >
+                  {#each TIERS as step (step)}
+                    <option value={step}>{step}</option>
+                  {/each}
+                </select>
+              </label>
+              <button
+                type="button"
+                disabled={giving}
+                onclick={giveAllCards}
+                class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] bg-[#34251c] text-[#f8f1e7] disabled:opacity-40"
+              >{$t('adminBattlesGiveAll')}</button>
+              <button
+                type="button"
+                disabled={giving || !guestHas?.owned.length}
+                onclick={takeAllCards}
+                class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 disabled:opacity-40"
+              >{$t('adminBattlesTakeAll')}</button>
+            </div>
+          </div>
+        {/if}
+
+        <div class="mt-4 flex flex-wrap items-end gap-3">
+          <label class="block w-40">
+            <span class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminBattlesHandCoin')}</span>
+            <select
+              bind:value={grantCoin}
+              class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+            >
+              <option value="feed">{$t('battlesCoinFeed')}</option>
+              <option value="dust">{$t('battlesCoinDust')}</option>
+            </select>
+          </label>
+          <label class="block w-32">
+            <span class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminBattlesHandAmount')}</span>
+            <input
+              type="number"
+              bind:value={grantAmount}
+              onfocus={selectOnFocus}
+              onwheel={blurOnWheel}
+              class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+            />
+          </label>
+        </div>
+
+        <label class="block mt-3">
+          <span class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminBattlesHandNote')}</span>
+          <textarea
+            bind:value={grantNote}
+            rows="2"
+            placeholder={$t('adminBattlesHandNotePlaceholder')}
+            class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+          ></textarea>
+        </label>
+
+        <button
+          type="button"
+          disabled={!grantReady || granting}
+          onclick={giveByHand}
+          class="mt-3 px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] bg-[#34251c] text-[#f8f1e7] disabled:opacity-40"
+        >{granting ? $t('adminBattlesHandGiving') : $t('adminBattlesHandGive')}</button>
+
+        <!-- Минус — не штраф, а поправка: книга неизменяема, и ошибка правится
+             обратной строкой, а не правкой строки, которая была неверна. -->
+        <p class="mt-4 max-w-[62ch] text-[11px] leading-relaxed text-[#8a6a55]">{$t('adminBattlesHandMinusNote')}</p>
+      </div>
+    </div>
+
+  {:else if view === 'matches'}
+    <!--
+      ── Сыгранные партии ──────────────────────────────────────────────────
+      Три взгляда на одно и то же, от общего к частному: чем кончаются этюды,
+      какие карты выходят на поле и что с ними случается, и наконец сами
+      партии списком. Разбор считается по ЗАМОРОЖЕННОЙ расстановке каждой
+      партии: карта могла быть с тех пор переписана, а выиграла та, что стояла
+      на доске.
+    -->
+    <div class="flex-1 overflow-y-auto p-6">
+      <div class="flex items-baseline gap-3 mb-1">
+        <p class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminBattlesMatches')}</p>
+        <button
+          type="button"
+          onclick={loadMatches}
+          disabled={matchesBusy}
+          class="text-[10px] uppercase tracking-[0.16em] text-[#6f3b24] underline disabled:opacity-40"
+        >{$t('adminBattlesMatchesRefresh')}</button>
+      </div>
+      <p class="max-w-[70ch] mb-6 text-xs leading-relaxed text-[#5f4636]">{$t('adminBattlesMatchesHint')}</p>
+
+      {#if matchesBusy && !matches}
+        <p class="text-xs text-[#5f4636]">…</p>
+      {:else if !matches || !matches.rows.length}
+        <p class="text-xs italic text-[#5f4636]">{$t('adminBattlesMatchesEmpty')}</p>
+      {:else}
+        <!-- ── Чем кончаются этюды ──────────────────────────────────────── -->
+        <p class="mb-2 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminBattlesByChallenge')}</p>
+        <table class="w-full mb-8 text-xs border-collapse">
+          <thead class="text-[10px] uppercase tracking-[0.14em] text-[#8a6a55]">
+            <tr class="border-b border-[#34251c]/15">
+              <th class="py-1.5 text-left font-normal">{$t('adminBattlesEtude')}</th>
+              <th class="py-1.5 text-right font-normal">{$t('adminBattlesPlayed')}</th>
+              <th class="py-1.5 text-right font-normal">{$t('adminBattlesGuestWon')}</th>
+              <th class="py-1.5 text-right font-normal">{$t('adminBattlesKeeperWon')}</th>
+              <th class="py-1.5 text-right font-normal">{$t('adminBattlesDraws')}</th>
+              <th class="py-1.5 text-right font-normal">{$t('adminBattlesUnfinished')}</th>
+              <th class="py-1.5 text-right font-normal">{$t('adminBattlesGuestShare')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each matches.byChallenge as row (row.challengeId ?? 'none')}
+              <tr class="border-b border-[#34251c]/5">
+                <td class="py-1.5" style="font-family: 'Cormorant Garamond', Georgia, serif;">
+                  {row.challengeId ? tallyTitle(row) : $t('adminBattlesNoEtude')}
+                </td>
+                <td class="py-1.5 text-right tabular-nums">{row.played}</td>
+                <td class="py-1.5 text-right tabular-nums">{row.guestWon}</td>
+                <td class="py-1.5 text-right tabular-nums">{row.keeperWon}</td>
+                <td class="py-1.5 text-right tabular-nums">{row.draws}</td>
+                <td class="py-1.5 text-right tabular-nums text-[#8a6a55]">{row.unfinished}</td>
+                <td class="py-1.5 text-right tabular-nums">
+                  {share(row.guestWon, row.guestWon + row.keeperWon + row.draws)}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+
+        <!-- ── Что случается с картами ──────────────────────────────────── -->
+        <p class="mb-1 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminBattlesByCard')}</p>
+        <p class="max-w-[70ch] mb-2 text-[11px] leading-relaxed italic text-[#8a6a55]">{$t('adminBattlesByCardHint')}</p>
+        <table class="w-full mb-8 text-xs border-collapse">
+          <thead class="text-[10px] uppercase tracking-[0.14em] text-[#8a6a55]">
+            <tr class="border-b border-[#34251c]/15">
+              <th class="py-1.5 text-left font-normal">{$t('adminBattlesCardsView')}</th>
+              <th class="py-1.5 text-right font-normal">{$t('adminBattlesPlayed')}</th>
+              <th class="py-1.5 text-right font-normal">{$t('adminBattlesWon')}</th>
+              <th class="py-1.5 text-right font-normal">{$t('adminBattlesLost')}</th>
+              <th class="py-1.5 text-right font-normal">{$t('adminBattlesDraws')}</th>
+              <th class="py-1.5 text-right font-normal">{$t('adminBattlesWinShare')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each matches.byCard as row (row.slug)}
+              <tr class="border-b border-[#34251c]/5">
+                <td class="py-1.5" style="font-family: 'Cormorant Garamond', Georgia, serif;">{tallyTitle(row)}</td>
+                <td class="py-1.5 text-right tabular-nums">{row.played}</td>
+                <td class="py-1.5 text-right tabular-nums">{row.won}</td>
+                <td class="py-1.5 text-right tabular-nums">{row.lost}</td>
+                <td class="py-1.5 text-right tabular-nums">{row.draws}</td>
+                <td class="py-1.5 text-right tabular-nums">{share(row.won, row.played)}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+
+        <!-- ── Пересмотр ────────────────────────────────────────────────
+             Стоит НАД списком, а не под ним: список длинный, и доска,
+             открывшаяся где-то внизу, осталась бы незамеченной. -->
+        {#if replay && replayId}
+          <div class="mb-8 p-4 border border-[#34251c]/15 bg-[#34251c]/[0.02]">
+            <div class="flex flex-wrap items-center gap-2 mb-3">
+              <span class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]">
+                {$t('adminBattlesReviewStep')} {replay.upto} / {replay.total}
+              </span>
+              <div class="flex gap-1">
+                {#each [
+                  { label: '⏮', to: 0, off: replay.upto === 0 },
+                  { label: '‹', to: replay.upto - 1, off: replay.upto === 0 },
+                  { label: '›', to: replay.upto + 1, off: replay.upto >= replay.total },
+                  { label: '⏭', to: replay.total, off: replay.upto >= replay.total },
+                ] as step (step.label)}
+                  <button
+                    type="button"
+                    disabled={replayBusy || step.off}
+                    onclick={() => stepTo(replayId!, step.to)}
+                    class="px-2.5 py-1 text-xs border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-30"
+                  >{step.label}</button>
+                {/each}
+              </div>
+              <button
+                type="button"
+                onclick={closeReplay}
+                class="ml-auto text-[10px] uppercase tracking-[0.16em] text-[#6f3b24] underline"
+              >{$t('adminBattlesReviewClose')}</button>
+            </div>
+
+            {#if replay.diverged}
+              <p class="mb-3 text-[11px] leading-relaxed text-[#8f2f22]">{$t('adminBattlesReviewDiverged')}</p>
+            {/if}
+
+            <div class="max-w-3xl">
+              {#if replayMatch}
+                <BattleScene
+                  match={replayMatch}
+                  {cards}
+                  {frames}
+                  busy={replayBusy}
+                  control="player"
+                  onact={() => {}}
+                />
+              {/if}
+            </div>
+
+            <!-- Что случилось именно на этой ступени. Разбор урона тем же
+                 словарём, что и на столе: видно, почему три, а не восемь. -->
+            {#if replay.events.length}
+              <ul class="mt-3 space-y-0.5 text-[11px] leading-relaxed text-[#5f4636]">
+                {#each replay.events as e, i (i)}
+                  <li>{benchLine(e)}</li>
+                {/each}
+              </ul>
+            {:else}
+              <p class="mt-3 text-[11px] italic text-[#8a6a55]">{$t('adminBattlesReviewOpening')}</p>
+            {/if}
+          </div>
+        {/if}
+
+        <!-- ── Сами партии ──────────────────────────────────────────────── -->
+        <p class="mb-2 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]">
+          {$t('adminBattlesMatchesList')} · {matches.read}
+        </p>
+        <table class="w-full text-xs border-collapse">
+          <thead class="text-[10px] uppercase tracking-[0.14em] text-[#8a6a55]">
+            <tr class="border-b border-[#34251c]/15">
+              <th class="py-1.5 text-left font-normal">{$t('adminBattlesWhen')}</th>
+              <th class="py-1.5 text-left font-normal">{$t('adminBattlesGuest')}</th>
+              <th class="py-1.5 text-left font-normal">{$t('adminBattlesEtude')}</th>
+              <th class="py-1.5 text-left font-normal">{$t('adminBattlesOutcome')}</th>
+              <th class="py-1.5 text-right font-normal">{$t('adminBattlesRoundsShort')}</th>
+              <th class="py-1.5 text-right font-normal">{$t('adminBattlesMoves')}</th>
+              <th class="py-1.5"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each matches.rows as row (row.id)}
+              <tr class="border-b border-[#34251c]/5">
+                <td class="py-1.5 tabular-nums text-[#8a6a55]">{shortDate(row.startedAt)}</td>
+                <td class="py-1.5" style="font-family: 'Cormorant Garamond', Georgia, serif;">{row.guest}</td>
+                <td class="py-1.5">{row.challengeId ? tallyTitle(row) : $t('adminBattlesNoEtude')}</td>
+                <td class="py-1.5">
+                  {#if row.outcome}
+                    {$t(OUTCOME_WORD[row.outcome])}
+                  {:else}
+                    <span class="italic text-[#8a6a55]">{$t('adminBattlesOutcomeUnfinished')}</span>
+                  {/if}
+                </td>
+                <td class="py-1.5 text-right tabular-nums">{row.rounds ?? '—'}</td>
+                <td class="py-1.5 text-right tabular-nums">{row.moves}</td>
+                <td class="py-1.5 text-right">
+                  <button
+                    type="button"
+                    disabled={replayBusy || !row.moves}
+                    onclick={() => stepTo(row.id, 0)}
+                    class="text-[10px] uppercase tracking-[0.16em] text-[#6f3b24] underline disabled:opacity-30 disabled:no-underline"
+                  >{$t('adminBattlesReview')}</button>
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      {/if}
+    </div>
   {:else if view === 'keywords'}
     <!--
       ── The keyword dictionary ────────────────────────────────────────────
@@ -1770,11 +2848,28 @@
                   <option value="published">{$t('adminBattlesStatusPublished')}</option>
                   <option value="retired">{$t('adminBattlesStatusRetired')}</option>
                 </select>
+                <!-- А вот это НЕ переезжает: снятая карта просто исчезает с
+                     доски у всех, кто её называет, и этюд остаётся без тела. -->
+                {#if willEmptyEtudes}
+                  <p class="mt-1 text-[11px] leading-snug text-[#8f2f22]">
+                    {$t('adminBattlesEtudesWillEmpty')} {etudesUsing.map(etudeTitleOf).join(', ')}
+                  </p>
+                {/if}
               </label>
 
               <label class="block">
                 <span class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminBattlesSlug')}</span>
                 <input bind:value={draft.slug} class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none" />
+                <!-- Слуг — это то, чем карту называют этюды. Раньше правка
+                     этого поля осиротила бы их молча; теперь переименование
+                     переезжает в них само, и сказать об этом надо здесь, где
+                     печатают, а не в примечании к выпуску. -->
+                {#if etudesUsing.length}
+                  <p class="mt-1 text-[11px] leading-snug text-[#5f4636]">
+                    {$t('adminBattlesInEtudes')} {etudesUsing.length}: {etudesUsing.map(etudeTitleOf).join(', ')}.
+                    <span class="italic text-[#8a6a55]">{$t('adminBattlesSlugCarried')}</span>
+                  </p>
+                {/if}
               </label>
 
               <!-- ── What the card says: typed here at a normal size, read live
@@ -1832,6 +2927,22 @@
                       else draft.effectRu = e.currentTarget.value || null;
                     }}
                     class="w-full px-2 py-1.5 text-sm leading-relaxed bg-transparent border border-[#34251c]/15 outline-none resize-y focus:border-[#34251c]/35"
+                  ></textarea>
+                </label>
+                <!-- Приписка. Карта её печатает, сервер принимает — а поля
+                     ввода не было нигде, и задать её можно было только
+                     запросом к API. -->
+                <label class="block">
+                  <span class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminBattlesLore')}</span>
+                  <textarea
+                    maxlength="400"
+                    rows="2"
+                    value={editLang === 'en' ? (draft.loreEn ?? '') : (draft.loreRu ?? '')}
+                    oninput={(e) => {
+                      if (editLang === 'en') draft.loreEn = e.currentTarget.value || null;
+                      else draft.loreRu = e.currentTarget.value || null;
+                    }}
+                    class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
                   ></textarea>
                 </label>
 
@@ -1923,6 +3034,11 @@
                     />
                   </label>
                 </div>
+                <!-- Мана карты печатается на лицевой стороне и не играет.
+                     Сказано рядом с полем, а не в общем описании: число, которое
+                     ни на что не влияет, должно признаваться в этом там, где его
+                     набирают. -->
+                <p class="mt-1.5 text-[11px] leading-snug italic text-[#8a6a55]">{$t('adminBattlesManaHint')}</p>
 
                 <!--
                   Тело для движка. Отделено от прозы выше не рамкой ради красоты:
@@ -1933,24 +3049,51 @@
                 <div class="mt-4 pt-3 border-t border-dashed border-[#34251c]/15">
                   <div class="flex items-baseline justify-between gap-3 mb-2">
                     <span class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminBattlesBody')}</span>
-                    {#if draft.balanceIndex != null && draft.budgetPoints != null}
-                      <span class="text-[11px] tabular-nums" style="color: {verdictColour(draft.balanceIndex)}">
-                        {draft.budgetPoints.toFixed(1)} · {verdictWord(draft.balanceIndex)}
-                        <span class="text-[#8a6a55]">({$t('adminBattlesBudget')} {tierBudget(draft.tier)})</span>
+                    <!-- Живое число, а не сохранённое. Прежде здесь стояло то,
+                         что вернул сервер при ПОСЛЕДНЕМ сохранении, а строчкой
+                         ниже — живое: два вердикта одним словом из разных
+                         моментов времени, и у новой карты первое молчало
+                         навсегда. -->
+                    {#if weigh}
+                      <span class="text-[11px] tabular-nums" style="color: {verdictColour(weigh.balanceIndex)}">
+                        {weigh.totalPoints.toFixed(1)} · {verdictWord(weigh.balanceIndex)}
                       </span>
                     {:else}
                       <span class="text-[11px] text-[#8a6a55]">{$t('adminBattlesScalesPending')}</span>
                     {/if}
                   </div>
                   <p class="mb-2.5 text-[11px] leading-snug text-[#8a6a55]">{$t('adminBattlesBodyHint')}</p>
+                  <!-- Бюджет чина. Забор, а не весы: сумма очков крупно права
+                       («не больше двадцати на третий чин»), а тонко — нет, и
+                       вопрос «сыграет ли это» она не решает. Поэтому полоска
+                       показывает только, не вылезла ли карта за свой чин. -->
+                  <div class="mb-3">
+                    <div class="flex items-baseline justify-between text-[10px] uppercase tracking-[0.14em]">
+                      <span class="text-[#8a6a55]">{$t('adminBattlesBudget')}</span>
+                      <span class="tabular-nums" style="color: {overBudget ? '#8f2f22' : '#5f4636'}">
+                        {weigh ? weigh.totalPoints.toFixed(1) : '—'} / {tierBudget(draft.tier)}
+                      </span>
+                    </div>
+                    <div class="mt-1 h-1.5 bg-[#34251c]/10">
+                      <div
+                        class="h-full"
+                        style="width: {budgetFill}%; background: {overBudget ? '#8f2f22' : '#4a6141'}"
+                      ></div>
+                    </div>
+                  </div>
 
                   <div class="flex gap-3 mb-2">
                     <label class="block flex-1">
                       <span class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminBattlesKind')}</span>
                       <select bind:value={draft.kind} class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35">
                         <option value="unit">{$t('adminBattlesKindUnit')}</option>
-                        <option value="spell">{$t('adminBattlesKindSpell')}</option>
-                        <option value="relic">{$t('adminBattlesKindRelic')}</option>
+                        <!-- Помечены, а не убраны: вид карты хранится и ждёт
+                             движка, но обещать, что он играет, форма не должна.
+                             Опубликовать их и сейчас нельзя — обе требуют
+                             здоровья больше нуля, а со здоровьем становятся
+                             обычным телом на клетке. -->
+                        <option value="spell">{$t('adminBattlesKindSpell')} — {$t('adminBattlesKindDead')}</option>
+                        <option value="relic">{$t('adminBattlesKindRelic')} — {$t('adminBattlesKindDead')}</option>
                       </select>
                     </label>
                     <label class="block flex-1">
@@ -2223,6 +3366,18 @@
                     </label>
                   {/each}
                 </div>
+
+                <!-- Заём. Стоит рядом с ценами, потому что это тоже про то, как
+                     карта попадает к человеку, — только даром и на время. Без
+                     заёма стол это запертая дверь ровно для того, кто пришёл
+                     впервые: партия просит шести карт, а у него ноль. -->
+                <label class="mt-4 flex items-start gap-2 text-[11px] leading-relaxed text-[#5f4636]">
+                  <input type="checkbox" class="mt-0.5" bind:checked={draft.lendable} />
+                  <span>
+                    {$t('adminBattlesLendable')}
+                    <span class="block text-[#8a6a55] italic">{$t('adminBattlesLendableHint')}</span>
+                  </span>
+                </label>
               </div>
 
               <label class="block">
@@ -2239,10 +3394,33 @@
                 </select>
               </label>
 
+              <!-- Годность карты: препятствия и замечания. Стоит у кнопки, а
+                   не в отдельной вкладке, потому что читать это надо ровно
+                   перед сохранением. Слова приходят с сервера тем же разбором,
+                   которым он откажет, — подсказка и отказ не разойдутся. -->
+              {#if blocking.length}
+                <div class="pt-2 space-y-1">
+                  {#each blocking as fault (fault)}
+                    <p class="text-[11px] leading-relaxed text-[#8f2f22]">
+                      {$t(`adminBattlesFault${fault[0].toUpperCase()}${fault.slice(1)}` as TranslationKey)}
+                    </p>
+                  {/each}
+                </div>
+              {/if}
+              {#if notes.length}
+                <div class="pt-2 space-y-1">
+                  {#each notes as note (note)}
+                    <p class="text-[11px] leading-relaxed italic text-[#8a6a55]">
+                      {$t(`adminBattlesNote${note[0].toUpperCase()}${note.slice(1)}` as TranslationKey)}
+                    </p>
+                  {/each}
+                </div>
+              {/if}
+
               <div class="flex items-center gap-3 pt-2">
                 <button
                   onclick={save}
-                  disabled={saving}
+                  disabled={saving || blocking.length > 0 || workTaken}
                   class="px-4 py-2 text-[10px] uppercase tracking-[0.16em] bg-[#34251c] text-[#f8f1e7] disabled:opacity-40"
                 >{$t('adminBattlesSave')}</button>
                 {#if selectedId}

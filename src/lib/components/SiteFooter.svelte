@@ -15,10 +15,14 @@
     { href: '/workshop', label: $t('navWorkshop') },
     { href: '/author', label: $t('navAuthor') },
   ]);
+  // Полка карт стоит здесь по той же причине, что и «В работе»: это комната,
+  // которой нет в шапке, и подвал — её единственный адрес. Без него на неё не
+  // ведёт вообще ничто, и комната существует только для того, кто знает путь.
   let notes = $derived([
     { href: '/acquire', label: $t('navAcquire') },
     { href: '/impressions', label: $t('navImpressions') },
     { href: '/upcoming', label: $t('navUpcoming') },
+    { href: '/battles', label: $t('navBattles') },
   ]);
 
   let year = $derived(new Date().getFullYear());

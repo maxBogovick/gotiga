@@ -34,6 +34,50 @@
   /** Карта, которую сейчас принимают: церемония играет над полкой. */
   let taking = $state<BattleCardDto | null>(null);
 
+  // ── Сколько осело с прошлого раза ────────────────────────────────────────
+  //
+  // Пыль капает с маяков на работах и небылицах, и до сих пор человек никогда
+  // не узнавал, за что выросло число. Сказано это ЗДЕСЬ, на полке, а не там,
+  // где капает: всплывающее «+1» над работой превратило бы разглядывание
+  // вещи в добычу — ровно то, против чего построена комната. Полка — место,
+  // где пыль тратят; там ей и место быть посчитанной.
+  //
+  // Отметка на полях: только прибыль, только один раз за визит, и на первом
+  // заходе — молчание, а не «осело 0». Тот же счёт, что у книги посещений:
+  // не с чем сравнить — значит нечего сказать.
+  const PURSE_KEY = 'gotiga_battle_purse_';
+
+  let settled = $state<number | null>(null);
+  /** Разница считается один раз за визит: покупка карты — не «осело меньше». */
+  let counted = false;
+
+  function markPurse(dust: number) {
+    const who = authStore.user?.id;
+    if (!who) return;
+    const key = PURSE_KEY + who;
+    let before: number | null = null;
+    try {
+      const raw = localStorage.getItem(key);
+      before = raw === null ? null : Number(raw);
+    } catch {
+      // Приватное окно, запрещённые site data — отметки просто не будет.
+    }
+    if (!counted) {
+      counted = true;
+      if (before !== null && Number.isFinite(before) && dust > before) {
+        settled = dust - before;
+      }
+    }
+    // Записывается на каждое чтение книги, а не только на первое: иначе
+    // потраченное на карту оставило бы засечку выше баланса, и следующий приход
+    // пыли пришлось бы догонять до неё молча.
+    try {
+      localStorage.setItem(key, String(dust));
+    } catch {
+      // См. выше: отметка — удобство, а не учёт.
+    }
+  }
+
   async function readWallet() {
     const token = authStore.token;
     if (!token) {
@@ -42,6 +86,7 @@
     }
     try {
       me = await api.getBattleMe(token);
+      markPurse(me.dust);
     } catch {
       // Полка от этого не ломается: без книги она просто вся в пыли.
       me = null;
@@ -197,7 +242,14 @@
       </p>
       <h1 class="page-title">{$t('battlesPageTitle')}</h1>
       <p class="page-rule">{$t('battlesPageRule')}</p>
-      <!-- Соседняя комната: те же карты, но расставленные и играющие. -->
+      <!-- Одна строка, объясняющая, что здесь вообще можно делать. Без неё
+           страница показывала карты с ценами и не говорила, зачем они. -->
+      <p class="page-rule">{$t('battlesPageWhat')}</p>
+      <!-- Соседние комнаты: где карты лежат разложенными и где они играют.
+           Стол идёт первым — своё собрание смотрят раньше, чем садятся играть. -->
+      <p class="page-rule">
+        <a href="/battles/table" class="study-link">{$t('battlesTableTitle')} →</a>
+      </p>
       <p class="page-rule"><a href="/battles/etude" class="study-link">{$t('battleStudies')} →</a></p>
     </header>
 
@@ -211,6 +263,18 @@
         <span class="coin coin--feed"></span>{$t('battlesCoinFeed')}
       </p>
       <p class="coins-note">{$t('battlesCoinsNote')}</p>
+      <!-- Правило про уровень сказано ЗДЕСЬ, а не под каждой картой: комната
+           объясняет свою экономику один раз и тем же голосом, что и монеты,
+           а сорок повторений одной строки вниз по полке — шум.
+
+           Сказать его обязательно. Уровень намеренно не влияет на бой
+           (`TASKS-BATTLE-ENGINE.md` §1.6) — и это единственная причина, по
+           которой его вообще можно купить за пыль: внимание, покупающее силу,
+           было бы pay-to-win с ценником в часах. Но до сих пор правило жило
+           только в комментарии к `raise_battle_card_level`, то есть человек,
+           платящий за ступень, о нём не знал. Молчащее верное правило
+           работает как обман. -->
+      <p class="coins-note">{$t('battlesLevelIsNotStrength')}</p>
       <!-- Баланс — две мелкие отметки на полях, а не шапка магазина. -->
       {#if me}
         <p class="purse" in:fade={{ duration: 400 }}>
@@ -218,6 +282,28 @@
           <span class="coin-sep">·</span>
           {$t('battlesYourFeed')} <span class="purse-num">{me.feed}</span>
         </p>
+        {#if settled !== null}
+          <p class="settled" in:fade={{ duration: 600 }}>
+            {$t('battlesSettledSince')} <span class="purse-num">{settled}</span>
+          </p>
+        {/if}
+        <!-- Данное из рук приходит с запиской, и записка здесь важнее числа:
+             корм не оседает сам, его дают за настоящее, и «за что» — это и
+             есть вся разница между второй монетой и первой. Без этого выдача
+             была бы молча выросшим счётчиком. -->
+        {#if me.gifts.length}
+          <ul class="gifts" in:fade={{ duration: 600 }}>
+            {#each me.gifts as gift (gift.at)}
+              <li class="gift">
+                <span class="gift-coin">
+                  {gift.currency === 'dust' ? $t('battlesCoinDust') : $t('battlesCoinFeed')}
+                </span>
+                <span class="purse-num">{gift.amount}</span>
+                {#if gift.note}<span class="gift-note">— {gift.note}</span>{/if}
+              </li>
+            {/each}
+          </ul>
+        {/if}
       {/if}
     </aside>
 
@@ -586,6 +672,42 @@
   .purse-num {
     font-variant-numeric: tabular-nums;
     color: #34251c;
+  }
+
+  /* Записки на полях — рукой, а не строкой прейскуранта. */
+  .gifts {
+    margin: 0.5rem 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .gift {
+    margin-top: 0.15rem;
+    font-family: Georgia, 'Fraunces', serif;
+    font-size: 0.82rem;
+    color: #8a6a55;
+  }
+
+  .gift-coin {
+    font-family: inherit;
+    font-size: 0.66rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #6f3b24;
+  }
+
+  .gift-note {
+    font-style: italic;
+    color: #5f4636;
+  }
+
+  /* Отметка на полях, а не объявление: тише кошелька, которому она приписка. */
+  .settled {
+    margin: 0.25rem 0 0;
+    font-family: Georgia, 'Fraunces', serif;
+    font-size: 0.82rem;
+    font-style: italic;
+    color: #8a6a55;
   }
 
   .complaint {

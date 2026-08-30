@@ -4272,6 +4272,26 @@ pub async fn get_battle_me(
     Ok(Json(service.battle_me(user.id).await?))
 }
 
+/// Стол гостя — с досчитанным заёмом. Принадлежит человеку, как и партия.
+pub async fn get_battle_deck(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<Json<crate::models::BattleDeckDto>> {
+    let user = current_user(&service, &headers).await?;
+    Ok(Json(service.read_battle_deck(user.id).await?))
+}
+
+/// Разложить стол. Целиком, а не по одному месту: половина сохранённой
+/// расстановки — не расстановка, а состояние, в котором её застали.
+pub async fn save_battle_deck(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(body): Json<crate::models::SaveBattleDeckRequest>,
+) -> Result<Json<crate::models::BattleDeckDto>> {
+    let user = current_user(&service, &headers).await?;
+    Ok(Json(service.save_battle_deck(user.id, &body).await?))
+}
+
 pub async fn buy_battle_card(
     State(service): State<AppService>,
     headers: HeaderMap,
@@ -4371,6 +4391,30 @@ pub async fn admin_bench_battle(
     Ok(Json(service.bench_battle(body).await?))
 }
 
+/// Сыгранные партии и сводка по ним. Единственное окно в живую игру:
+/// до него баланс правился симуляцией по правилам, которых игроки не видели.
+pub async fn admin_read_battle_matches(
+    State(service): State<AppService>,
+) -> Result<Json<crate::models::BattleMatchesDto>> {
+    Ok(Json(service.admin_read_battle_matches().await?))
+}
+
+#[derive(serde::Deserialize)]
+pub struct ReplayQuery {
+    /// До какой ступени доиграть. Ноль — расстановка до первого хода.
+    #[serde(default)]
+    pub upto: usize,
+}
+
+/// Пересмотр одной записанной партии на доске.
+pub async fn admin_replay_battle_match(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Query(q): Query<ReplayQuery>,
+) -> Result<Json<crate::models::MatchReplayDto>> {
+    Ok(Json(service.admin_replay_battle_match(id, q.upto).await?))
+}
+
 pub async fn admin_list_battle_challenges(
     State(service): State<AppService>,
 ) -> Result<Json<Vec<BattleChallengeDto>>> {
@@ -4391,6 +4435,46 @@ pub async fn admin_update_battle_challenge(
     Json(body): Json<SaveBattleChallengeRequest>,
 ) -> Result<Json<BattleChallengeDto>> {
     Ok(Json(service.admin_save_battle_challenge(Some(id), body).await?))
+}
+
+/// Что у гостя сейчас — ровно то, что видит он сам.
+pub async fn admin_read_battle_guest(
+    State(service): State<AppService>,
+    Path(user_id): Path<Uuid>,
+) -> Result<Json<crate::models::BattleMeDto>> {
+    Ok(Json(service.admin_read_battle_guest(user_id).await?))
+}
+
+/// Выдать карты гостю напрямую, минуя покупку.
+pub async fn admin_give_battle_cards(
+    State(service): State<AppService>,
+    Json(body): Json<crate::models::GiveBattleCardsRequest>,
+) -> Result<Json<crate::models::GiveBattleCardsResponse>> {
+    Ok(Json(service.admin_give_battle_cards(&body).await?))
+}
+
+/// Забрать карты обратно.
+pub async fn admin_revoke_battle_cards(
+    State(service): State<AppService>,
+    Json(body): Json<crate::models::RevokeBattleCardsRequest>,
+) -> Result<Json<crate::models::GiveBattleCardsResponse>> {
+    Ok(Json(service.admin_revoke_battle_cards(&body).await?))
+}
+
+/// Из рук хранителя — одному гостю, за настоящее.
+pub async fn admin_grant_battle_coin(
+    State(service): State<AppService>,
+    Json(body): Json<crate::models::GrantBattleCoinRequest>,
+) -> Result<Json<crate::models::GrantBattleCoinResponse>> {
+    Ok(Json(service.admin_grant_battle_coin(&body).await?))
+}
+
+pub async fn admin_reorder_battle_challenges(
+    State(service): State<AppService>,
+    Json(body): Json<ReorderBattleCardsRequest>,
+) -> Result<StatusCode> {
+    service.admin_reorder_battle_challenges(body.ids).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn admin_delete_battle_challenge(

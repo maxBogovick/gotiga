@@ -940,6 +940,24 @@
             </button>
           </div>
         {/if}
+
+        <!--
+          Соседняя комната, названная её собственными словами: карта — это
+          работа дома, увиденная с другой стороны. В шапке её нет и не будет —
+          а здесь человек и так смотрит на все работы разом, и приглашение
+          стоит ровно там, где оно что-то значит. Тише кнопки «ещё»: это не
+          призыв, а приписка под полкой.
+        -->
+        <div class="mt-24 flex justify-center" in:fade>
+          <a
+            href="/battles"
+            class="group inline-flex items-center gap-3 text-[#7c6554] hover:text-[#34251c] font-['Instrument Sans'] text-[11px] tracking-[0.14em] uppercase transition-colors duration-500"
+          >
+            <span class="w-10 h-px bg-[#34251c]/20 group-hover:bg-[#34251c]/45 transition-colors"></span>
+            <span>{$t('archiveToBattles')}</span>
+            <span class="transition-transform group-hover:translate-x-0.5">→</span>
+          </a>
+        </div>
       {:else if data.loadError}
         <div class="flex flex-col items-center justify-center py-32 border border-dashed border-[#c65f3c]/25 rounded-lg" in:fade>
           <p class="font-['Fraunces'] text-3xl text-[#6f3b24] mb-2 opacity-85">{$t('loadErrorTitle')}</p>
