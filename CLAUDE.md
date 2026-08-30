@@ -12,7 +12,7 @@ All API calls go through the `api` object in `src/lib/api.ts`. Never call fetch 
 `/` home · `/figurines` archive · `/figurines/[id]` detail · `/author` · `/workshop` · `/upcoming` (not in nav) · `/gazette` · `/tales` shelf of tall tales · `/battles` card shelf (not in nav) · `/battles/etude` studies — a match against the keeper (no SSR: a match belongs to a person) · `/admin`
 
 ## Key localStorage keys
-`gotiga_api_key` · `gotiga_server_url` · `gotiga_wishlist` · `gotiga_viewed` · `gotiga_claims_${id}`
+`gotiga_api_key` · `gotiga_server_url` · `gotiga_wishlist` · `gotiga_viewed` · `gotiga_claims_${id}` · `gotiga_battle_purse_${userId}`
 
 ## Types that matter
 `FigurineStatus`: available | sold | reserved | in_progress  
