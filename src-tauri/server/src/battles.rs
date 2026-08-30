@@ -1029,6 +1029,11 @@ pub struct BattleFrame {
     ///             set a little wrong is hidden rather than exposed.
     /// `behind`  — the picture is the card's ground. For a frame with no hole in
     ///             it, where an overlay would simply cover everything.
+    /// `sliced`  — no single photograph at all: the frame is built from
+    ///             `corner_image` and the two `side_image_*` instead, laid
+    ///             like `overlay` (the card shows through the middle) but
+    ///             assembled from parts the keeper can stretch and re-mirror
+    ///             independently, rather than one picture stretched whole.
     #[serde(default)]
     pub frame_mode: String,
     /// A texture for the card's ground — the paper the content is written on.
@@ -1041,6 +1046,36 @@ pub struct BattleFrame {
     /// texture the renderer already draws.
     #[serde(default)]
     pub back_image: String,
+    /// One corner's ornament, `frameMode: "sliced"` only. Mirrored (never
+    /// rotated, so an asymmetric flourish stays right-side up) into all four
+    /// corners — the keeper uploads one picture, not four.
+    #[serde(default)]
+    pub corner_image: String,
+    /// The top edge's ornament, `sliced` only. Stretched along the card's
+    /// width between the two corners and mirrored top-to-bottom for the foot,
+    /// the same pairing `applyInsetDelta` already treats top and bottom as.
+    #[serde(default)]
+    pub side_image_h: String,
+    /// The left edge's ornament, `sliced` only. Stretched along the card's
+    /// height and mirrored left-to-right for the other side.
+    #[serde(default)]
+    pub side_image_v: String,
+    /// An accent laid over the corner band, `sliced` only — same mirroring as
+    /// `corner_image` (one picture into all four corners), but drawn in a
+    /// layer above the whole 9-slice assembly rather than as one of its own
+    /// nine pieces, and shown at its own size (never stretched to fill the
+    /// band) so it reads as an added flourish, not a second corner.
+    #[serde(default)]
+    pub corner_extra: String,
+    /// An accent centred on the top edge, `sliced` only — mirrored to the
+    /// foot the same way `side_image_h` is, laid over the assembled frame,
+    /// sized to the band rather than stretched along it.
+    #[serde(default)]
+    pub side_mid_h: String,
+    /// An accent centred on the left edge, `sliced` only — mirrored to the
+    /// right side the same way `side_image_v` is.
+    #[serde(default)]
+    pub side_mid_v: String,
     /// Where the card's content sits inside that photograph, as a percentage of
     /// the card on each side. A carved frame has thick sides; this is how the
     /// keeper says where the window actually is.
@@ -1110,7 +1145,7 @@ pub struct BattleFrame {
 }
 
 pub const LAYOUTS: &[&str] = &["corners", "plaque"];
-pub const FRAME_MODES: &[&str] = &["overlay", "behind"];
+pub const FRAME_MODES: &[&str] = &["overlay", "behind", "sliced"];
 pub const BADGE_SHAPES: &[&str] = &["circle", "square", "diamond", "hex", "shield"];
 
 pub fn valid_layout(layout: &str) -> bool {
@@ -1171,6 +1206,12 @@ fn painted(
         frame_mode: "overlay".into(),
         paper_image: String::new(),
         back_image: String::new(),
+        corner_image: String::new(),
+        side_image_h: String::new(),
+        side_image_v: String::new(),
+        corner_extra: String::new(),
+        side_mid_h: String::new(),
+        side_mid_v: String::new(),
         inset_top: 0.0,
         inset_right: 0.0,
         inset_bottom: 0.0,
@@ -1261,6 +1302,12 @@ pub fn normalize_frames(mut saved: Vec<BattleFrame>) -> Vec<BattleFrame> {
                     found.frame_image = found.frame_image.trim().to_string();
                     found.paper_image = found.paper_image.trim().to_string();
                     found.back_image = found.back_image.trim().to_string();
+                    found.corner_image = found.corner_image.trim().to_string();
+                    found.side_image_h = found.side_image_h.trim().to_string();
+                    found.side_image_v = found.side_image_v.trim().to_string();
+                    found.corner_extra = found.corner_extra.trim().to_string();
+                    found.side_mid_h = found.side_mid_h.trim().to_string();
+                    found.side_mid_v = found.side_mid_v.trim().to_string();
                     found.title_font = found.title_font.trim().to_string();
                     found.title_ink = found.title_ink.trim().to_string();
                     found.aspect = if found.aspect > 0.0 {

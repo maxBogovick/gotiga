@@ -810,6 +810,103 @@
     }
   }
 
+  /** One corner's ornament, `sliced` mode only — mirrored into all four
+   *  corners by the renderer, so the keeper uploads exactly one picture. */
+  async function uploadCornerArt() {
+    const file = await pickImageFile();
+    if (!file) return;
+    uploading = true;
+    try {
+      const art = await api.adminUploadBattleFrameArt(file);
+      frames[frameIndex].cornerImage = art.url;
+    } catch (e) {
+      flash(String(e), 6000);
+    } finally {
+      uploading = false;
+    }
+  }
+
+  /** The top edge's ornament, `sliced` mode only — mirrored top-to-bottom for
+   *  the foot by the renderer. */
+  async function uploadSideHArt() {
+    const file = await pickImageFile();
+    if (!file) return;
+    uploading = true;
+    try {
+      const art = await api.adminUploadBattleFrameArt(file);
+      frames[frameIndex].sideImageH = art.url;
+    } catch (e) {
+      flash(String(e), 6000);
+    } finally {
+      uploading = false;
+    }
+  }
+
+  /** The left edge's ornament, `sliced` mode only — mirrored left-to-right for
+   *  the other side by the renderer. */
+  async function uploadSideVArt() {
+    const file = await pickImageFile();
+    if (!file) return;
+    uploading = true;
+    try {
+      const art = await api.adminUploadBattleFrameArt(file);
+      frames[frameIndex].sideImageV = art.url;
+    } catch (e) {
+      flash(String(e), 6000);
+    } finally {
+      uploading = false;
+    }
+  }
+
+  /** An accent over the corner band, `sliced` mode only — drawn above the
+   *  base nine pieces and mirrored into all four corners the same way the
+   *  corner picture itself is. */
+  async function uploadCornerExtraArt() {
+    const file = await pickImageFile();
+    if (!file) return;
+    uploading = true;
+    try {
+      const art = await api.adminUploadBattleFrameArt(file);
+      frames[frameIndex].cornerExtra = art.url;
+    } catch (e) {
+      flash(String(e), 6000);
+    } finally {
+      uploading = false;
+    }
+  }
+
+  /** An accent centred on the top edge, `sliced` mode only — mirrored to the
+   *  foot the same way the top edge picture itself is. */
+  async function uploadSideMidHArt() {
+    const file = await pickImageFile();
+    if (!file) return;
+    uploading = true;
+    try {
+      const art = await api.adminUploadBattleFrameArt(file);
+      frames[frameIndex].sideMidH = art.url;
+    } catch (e) {
+      flash(String(e), 6000);
+    } finally {
+      uploading = false;
+    }
+  }
+
+  /** An accent centred on the left edge, `sliced` mode only — mirrored to the
+   *  right the same way the left edge picture itself is. */
+  async function uploadSideMidVArt() {
+    const file = await pickImageFile();
+    if (!file) return;
+    uploading = true;
+    try {
+      const art = await api.adminUploadBattleFrameArt(file);
+      frames[frameIndex].sideMidV = art.url;
+    } catch (e) {
+      flash(String(e), 6000);
+    } finally {
+      uploading = false;
+    }
+  }
+
   /** A slider set to `value` — mirrored onto the opposite side by the same
    *  amount, same as dragging the inset handle on the card itself. */
   function setInset(kind: InsetKey, value: number) {
@@ -1670,39 +1767,169 @@
               </label>
             </div>
 
-            <!-- The photograph of a real frame. -->
+            <!-- The photograph of a real frame — one whole picture, or, in
+                 `sliced` mode, built from a corner and two side pictures the
+                 keeper stretches and mirrors independently. -->
             <div class="pt-5 border-t border-[#34251c]/10">
               <p class="mb-3 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminBattlesFrameArt')}</p>
               <p class="max-w-[62ch] mb-3 text-[11px] leading-relaxed italic text-[#8a6a55]">{$t('adminBattlesFrameArtHint')}</p>
-              <div class="flex flex-wrap items-end gap-3">
-                <button
-                  onclick={uploadFrameArt}
-                  disabled={uploading}
-                  class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
-                >{uploading ? '…' : $t('adminBattlesFrameArtUpload')}</button>
-                <label class="block flex-1 min-w-[16rem]">
-                  <span class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">
-                    {#if !frames[frameIndex].frameImage.trim()}{$t('adminBattlesFrameArtNone')}{:else}URL{/if}
-                  </span>
-                  <input bind:value={frames[frameIndex].frameImage} placeholder="/static/frames/…" class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35" />
-                </label>
-                <label class="block">
-                  <span class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminBattlesFrameMode')}</span>
-                  <select bind:value={frames[frameIndex].frameMode} class="px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none">
-                    {#each FRAME_MODES as mode (mode)}
-                      <option value={mode}>
-                        {mode === 'overlay' ? $t('adminBattlesFrameOverlay') : $t('adminBattlesFrameBehind')}
-                      </option>
-                    {/each}
-                  </select>
-                </label>
-                {#if frames[frameIndex].frameImage.trim()}
+
+              <label class="block w-56 mb-3">
+                <span class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminBattlesFrameMode')}</span>
+                <select bind:value={frames[frameIndex].frameMode} class="px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none">
+                  {#each FRAME_MODES as mode (mode)}
+                    <option value={mode}>
+                      {mode === 'overlay' ? $t('adminBattlesFrameOverlay')
+                        : mode === 'behind' ? $t('adminBattlesFrameBehind')
+                        : $t('adminBattlesFrameSliced')}
+                    </option>
+                  {/each}
+                </select>
+              </label>
+
+              {#if frames[frameIndex].frameMode === 'sliced'}
+                <p class="max-w-[62ch] mb-3 text-[11px] leading-relaxed italic text-[#8a6a55]">{$t('adminBattlesFrameSlicedHint')}</p>
+                <div class="flex flex-wrap items-end gap-3 mb-3">
                   <button
-                    onclick={() => (frames[frameIndex].frameImage = '')}
-                    class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
-                  >{$t('adminBattlesFrameArtClear')}</button>
-                {/if}
-              </div>
+                    onclick={uploadCornerArt}
+                    disabled={uploading}
+                    class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
+                  >{uploading ? '…' : $t('adminBattlesCornerUpload')}</button>
+                  <label class="block flex-1 min-w-[16rem]">
+                    <span class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">
+                      {#if !frames[frameIndex].cornerImage.trim()}{$t('adminBattlesCornerNone')}{:else}URL{/if}
+                    </span>
+                    <input bind:value={frames[frameIndex].cornerImage} placeholder="/static/frames/…" class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35" />
+                  </label>
+                  {#if frames[frameIndex].cornerImage.trim()}
+                    <button
+                      onclick={() => (frames[frameIndex].cornerImage = '')}
+                      class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
+                    >{$t('adminBattlesFrameArtClear')}</button>
+                  {/if}
+                </div>
+                <div class="flex flex-wrap items-end gap-3 mb-3">
+                  <button
+                    onclick={uploadSideHArt}
+                    disabled={uploading}
+                    class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
+                  >{uploading ? '…' : $t('adminBattlesSideHUpload')}</button>
+                  <label class="block flex-1 min-w-[16rem]">
+                    <span class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">
+                      {#if !frames[frameIndex].sideImageH.trim()}{$t('adminBattlesSideHNone')}{:else}URL{/if}
+                    </span>
+                    <input bind:value={frames[frameIndex].sideImageH} placeholder="/static/frames/…" class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35" />
+                  </label>
+                  {#if frames[frameIndex].sideImageH.trim()}
+                    <button
+                      onclick={() => (frames[frameIndex].sideImageH = '')}
+                      class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
+                    >{$t('adminBattlesFrameArtClear')}</button>
+                  {/if}
+                </div>
+                <div class="flex flex-wrap items-end gap-3 mb-5">
+                  <button
+                    onclick={uploadSideVArt}
+                    disabled={uploading}
+                    class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
+                  >{uploading ? '…' : $t('adminBattlesSideVUpload')}</button>
+                  <label class="block flex-1 min-w-[16rem]">
+                    <span class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">
+                      {#if !frames[frameIndex].sideImageV.trim()}{$t('adminBattlesSideVNone')}{:else}URL{/if}
+                    </span>
+                    <input bind:value={frames[frameIndex].sideImageV} placeholder="/static/frames/…" class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35" />
+                  </label>
+                  {#if frames[frameIndex].sideImageV.trim()}
+                    <button
+                      onclick={() => (frames[frameIndex].sideImageV = '')}
+                      class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
+                    >{$t('adminBattlesFrameArtClear')}</button>
+                  {/if}
+                </div>
+
+                <!-- Accents, drawn above the nine pieces above rather than as
+                     one of them — each its own optional upload, at its own
+                     size, never stretched. -->
+                <p class="mb-3 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminBattlesOrnaments')}</p>
+                <p class="max-w-[62ch] mb-3 text-[11px] leading-relaxed italic text-[#8a6a55]">{$t('adminBattlesOrnamentsHint')}</p>
+                <div class="flex flex-wrap items-end gap-3 mb-3">
+                  <button
+                    onclick={uploadCornerExtraArt}
+                    disabled={uploading}
+                    class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
+                  >{uploading ? '…' : $t('adminBattlesCornerExtraUpload')}</button>
+                  <label class="block flex-1 min-w-[16rem]">
+                    <span class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">
+                      {#if !frames[frameIndex].cornerExtra.trim()}{$t('adminBattlesCornerExtraNone')}{:else}URL{/if}
+                    </span>
+                    <input bind:value={frames[frameIndex].cornerExtra} placeholder="/static/frames/…" class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35" />
+                  </label>
+                  {#if frames[frameIndex].cornerExtra.trim()}
+                    <button
+                      onclick={() => (frames[frameIndex].cornerExtra = '')}
+                      class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
+                    >{$t('adminBattlesFrameArtClear')}</button>
+                  {/if}
+                </div>
+                <div class="flex flex-wrap items-end gap-3 mb-3">
+                  <button
+                    onclick={uploadSideMidHArt}
+                    disabled={uploading}
+                    class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
+                  >{uploading ? '…' : $t('adminBattlesSideMidHUpload')}</button>
+                  <label class="block flex-1 min-w-[16rem]">
+                    <span class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">
+                      {#if !frames[frameIndex].sideMidH.trim()}{$t('adminBattlesSideMidHNone')}{:else}URL{/if}
+                    </span>
+                    <input bind:value={frames[frameIndex].sideMidH} placeholder="/static/frames/…" class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35" />
+                  </label>
+                  {#if frames[frameIndex].sideMidH.trim()}
+                    <button
+                      onclick={() => (frames[frameIndex].sideMidH = '')}
+                      class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
+                    >{$t('adminBattlesFrameArtClear')}</button>
+                  {/if}
+                </div>
+                <div class="flex flex-wrap items-end gap-3">
+                  <button
+                    onclick={uploadSideMidVArt}
+                    disabled={uploading}
+                    class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
+                  >{uploading ? '…' : $t('adminBattlesSideMidVUpload')}</button>
+                  <label class="block flex-1 min-w-[16rem]">
+                    <span class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">
+                      {#if !frames[frameIndex].sideMidV.trim()}{$t('adminBattlesSideMidVNone')}{:else}URL{/if}
+                    </span>
+                    <input bind:value={frames[frameIndex].sideMidV} placeholder="/static/frames/…" class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35" />
+                  </label>
+                  {#if frames[frameIndex].sideMidV.trim()}
+                    <button
+                      onclick={() => (frames[frameIndex].sideMidV = '')}
+                      class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
+                    >{$t('adminBattlesFrameArtClear')}</button>
+                  {/if}
+                </div>
+              {:else}
+                <div class="flex flex-wrap items-end gap-3">
+                  <button
+                    onclick={uploadFrameArt}
+                    disabled={uploading}
+                    class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
+                  >{uploading ? '…' : $t('adminBattlesFrameArtUpload')}</button>
+                  <label class="block flex-1 min-w-[16rem]">
+                    <span class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">
+                      {#if !frames[frameIndex].frameImage.trim()}{$t('adminBattlesFrameArtNone')}{:else}URL{/if}
+                    </span>
+                    <input bind:value={frames[frameIndex].frameImage} placeholder="/static/frames/…" class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35" />
+                  </label>
+                  {#if frames[frameIndex].frameImage.trim()}
+                    <button
+                      onclick={() => (frames[frameIndex].frameImage = '')}
+                      class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
+                    >{$t('adminBattlesFrameArtClear')}</button>
+                  {/if}
+                </div>
+              {/if}
 
               <!-- What shows through the hole in a cut-out frame. -->
               <div class="flex flex-wrap items-end gap-3 mt-4">
