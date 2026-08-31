@@ -1,0 +1,16 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "mix_task",
+      "request": "launch",
+      "name": "mix test",
+      "task": "test",
+      "projectDir": "${workspaceFolder}/live_drop",
+      "requireFiles": [
+        "test/**/test_helper.exs",
+        "test/**/*_test.exs"
+      ]
+    }
+  ]
+}

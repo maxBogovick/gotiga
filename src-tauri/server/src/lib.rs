@@ -18,4 +18,5 @@ pub mod models;
 pub mod observability;
 pub mod search;
 pub mod services;
+pub mod sheet;
 pub mod slug;

@@ -5,8 +5,8 @@
 //! auto-publishes a raw headline as if the house had written it. World cuttings
 //! sit in a private inbox until the keeper pins them.
 
-use chrono::{DateTime, NaiveDate, Utc};
 use crate::slug::slugify;
+use chrono::{DateTime, NaiveDate, Utc};
 
 pub const LEAF_KINDS: &[&str] = &[
     "arrival",
@@ -313,9 +313,13 @@ fn blocks_between<'a>(xml: &'a str, open: &str, close: &str) -> Vec<&'a str> {
     while let Some(i) = lower[from..].find(&open_l) {
         let start = from + i;
         let after_open = start + open.len();
-        let Some(gt) = xml[after_open..].find('>') else { break };
+        let Some(gt) = xml[after_open..].find('>') else {
+            break;
+        };
         let content_start = after_open + gt + 1;
-        let Some(j) = lower[content_start..].find(&close_l) else { break };
+        let Some(j) = lower[content_start..].find(&close_l) else {
+            break;
+        };
         out.push(&xml[content_start..content_start + j]);
         from = content_start + j + close.len();
     }
@@ -533,13 +537,19 @@ mod tests {
             normalize_expected("arrival", Some("2026-03-12"), Some("2026-05-04")).unwrap(),
             (None, None)
         );
-        assert_eq!(normalize_expected("sketch", None, None).unwrap(), (None, None));
+        assert_eq!(
+            normalize_expected("sketch", None, None).unwrap(),
+            (None, None)
+        );
     }
 
     #[test]
     fn slug_avoids_taken() {
         let taken = vec!["laid-out-today".into(), "laid-out-today-2".into()];
-        assert_eq!(unique_slug(None, "Laid out today", &taken), "laid-out-today-3");
+        assert_eq!(
+            unique_slug(None, "Laid out today", &taken),
+            "laid-out-today-3"
+        );
         assert_eq!(unique_slug(Some("custom"), "X", &[]), "custom");
         assert_eq!(unique_slug(Some("2026"), "X", &[]), "leaf-2026");
         assert_eq!(unique_slug(Some("watch"), "X", &[]), "leaf-watch");
@@ -612,9 +622,21 @@ mod tests {
 
     #[test]
     fn guesses_house_stamps() {
-        assert_eq!(guess_mark_key("Colossal", "https://www.thisiscolossal.com/feed/"), "pillar");
-        assert_eq!(guess_mark_key("Hyperallergic", "https://hyperallergic.com/feed/"), "hive");
-        assert_eq!(guess_mark_key("Designboom", "https://www.designboom.com/feed/"), "boom");
-        assert_eq!(guess_mark_key("A quiet journal", "https://example.com/rss"), "letter");
+        assert_eq!(
+            guess_mark_key("Colossal", "https://www.thisiscolossal.com/feed/"),
+            "pillar"
+        );
+        assert_eq!(
+            guess_mark_key("Hyperallergic", "https://hyperallergic.com/feed/"),
+            "hive"
+        );
+        assert_eq!(
+            guess_mark_key("Designboom", "https://www.designboom.com/feed/"),
+            "boom"
+        );
+        assert_eq!(
+            guess_mark_key("A quiet journal", "https://example.com/rss"),
+            "letter"
+        );
     }
 }

@@ -2016,6 +2016,101 @@ export interface SaveBattleDeckRequest {
 export type BattleLayout = 'corners' | 'plaque';
 export type BattleFrameMode = 'overlay' | 'behind' | 'sliced';
 
+/** How a piece's picture fills the box it was given. */
+export type SliceFit = 'stretch' | 'contain' | 'cover' | 'tile';
+/** How the ONE uploaded picture reaches the other corners, or the facing side. */
+export type SliceTurn = 'mirror' | 'rotate' | 'none';
+/** The six slots a `sliced` frame is built from. */
+export type SliceSlot = 'corner' | 'sideH' | 'sideV' | 'cornerExtra' | 'sideMidH' | 'sideMidV';
+/** Where a copy of a picture landed. A corner slot has four, the horizontal
+ *  slots two, the vertical ones the other two. */
+export type SliceSide = 'tl' | 'tr' | 'bl' | 'br' | 'top' | 'bottom' | 'left' | 'right';
+
+/**
+ * Where ONE copy of a piece sits — the top-left corner, or the foot, or the
+ * right side, each on its own.
+ *
+ * The four insets say where the card's window is. They used to say where every
+ * ornament was as well, which is why a frame built from parts could never be
+ * joined: a corner filled exactly its `insetLeft × insetTop` box and an edge ran
+ * exactly between two corners, so the seam fell wherever the window wanted it.
+ * Carving does not tile — a corner sits ON its edge and an accent bleeds over
+ * both. A copy therefore keeps its band only as an ORIGIN, and these numbers
+ * take it from there.
+ *
+ * All four are percentages OF THE CARD, the same unit the insets are in, and
+ * are read along the CARD's axes whichever way the band runs.
+ */
+export interface SlicePlace {
+    /** Past its band along the card's width. Positive = overlap the neighbour;
+     *  negative = pull back and leave a gap. */
+    growX: number;
+    growY: number;
+    /** Slid INWARD from its own anchor — the corner it hangs off, or the edge
+     *  it lies along — so one number means the same thing on all sixteen
+     *  copies and a frame edited symmetrically stays symmetric. */
+    nudgeX: number;
+    nudgeY: number;
+    /** Whether this copy is drawn at all. A medallion belongs over the lintel
+     *  and nowhere else quite as often as it belongs over both. */
+    shown: boolean;
+}
+
+/**
+ * One picture of a `sliced` frame, and how each of its copies lies.
+ *
+ * Each copy is placed SEPARATELY: the left side of a carving is rarely the
+ * mirror of its right — the herbs hanging along the top take more room than the
+ * moss along the foot — and one number for all four would put that fit out of
+ * reach, the same reason the four insets were never one number either.
+ *
+ * What is NOT per side is the picture itself: `layer`, `fit` and `turn`
+ * describe the one upload, not where a copy of it landed.
+ */
+export interface SlicePiece {
+    /** Which layer of the carving it paints in, 1..9. */
+    layer: number;
+    fit: SliceFit;
+    turn: SliceTurn;
+    /** Whether taking hold of one copy moves them all. On by default: a frame
+     *  is symmetric until the keeper says otherwise. */
+    linked: boolean;
+    /** Keyed by the copies this slot actually has, and only those. */
+    places: Partial<Record<SliceSide, SlicePlace>>;
+}
+
+export type SlicePieces = Record<SliceSlot, SlicePiece>;
+
+/**
+ * Where a picture's copies land, and in what shape — the five shapes the six
+ * named slots already have between them.
+ *
+ * `corner` four corner boxes · `edgeH`/`edgeV` an edge run whole · `midH`/`midV`
+ * a medallion centred on an edge.
+ */
+export type SliceKind = 'corner' | 'edgeH' | 'edgeV' | 'midH' | 'midV';
+
+/**
+ * An ornament the keeper added beyond the six named slots — a second medallion,
+ * a clasp, a hanging leaf.
+ *
+ * The six slots are the frame's ANATOMY, named because a dress worn onto
+ * another rank has to mean the same thing there. An ornament is not anatomy: it
+ * is a flourish this one frame happens to want, and there is no honest fixed
+ * number of those. So they are a list, and each says its own `kind`, which is
+ * the only thing a named slot got for free.
+ *
+ * It IS a `SlicePiece` — placed, layered, fitted, turned and dragged by exactly
+ * the code the six are.
+ */
+export interface SliceOrnament extends SlicePiece {
+    /** Made by the keeper's desk, kept by the server. What a drag and the
+     *  list's own order point at, so it must survive a save — never an index. */
+    id: string;
+    image: string;
+    kind: SliceKind;
+}
+
 /**
  * One rank's dress. Design lives in the frame, content lives in the card.
  *
@@ -2067,6 +2162,13 @@ export interface BattleFrame {
     /** An accent centred on the left edge, `sliced` only — mirrored to the
      *  right side like `sideImageV`. */
     sideMidV: string;
+    /** How each of those six pieces sits in its band — grown past it, slid
+     *  along it, layered over its neighbour. The defaults are exactly the
+     *  placement the slots had when they were hard-coded. */
+    slices: SlicePieces;
+    /** Flourishes beyond the six named slots. Empty on every frame that never
+     *  asked for one. */
+    ornaments: SliceOrnament[];
     /** Where the content sits inside that photograph, in % of the card — and,
      *  in `sliced` mode, the actual width each of the four ornament bands is
      *  drawn at. */
@@ -2109,6 +2211,24 @@ export interface BattleFrames {
     frames: BattleFrame[];
 }
 
+/**
+ * A frame the keeper put aside under a name of their own, to wear again
+ * somewhere else — on another rank, on a race's level, on a single card.
+ * Nothing renders a preset: it is a dress in a drawer, never a sixth rank.
+ * The `tier` inside `frame` is meaningless here and is dropped the moment the
+ * dress is worn.
+ */
+export interface BattleFramePreset {
+    id: string;
+    /** The keeper's own name for it — admin-only, so one language is enough. */
+    name: string;
+    frame: BattleFrame;
+}
+
+export interface BattleFramePresets {
+    presets: BattleFramePreset[];
+}
+
 /** A race in the keeper's dictionary. Shared by many cards, so renaming it
  *  renames it everywhere at once. */
 export interface BattleRace {
@@ -2127,6 +2247,148 @@ export interface BattleRace {
     sortOrder?: number | null;
     /** How many cards stand under it — what a rename or a removal would touch. */
     cardCount: number;
+}
+
+/**
+ * What a part is for. The five slots a `sliced` frame has, plus `art` for a
+ * picture and `other` for the rest. A word the keeper filters by — never a
+ * thing the game looks up, which is why it is a value and not a dictionary.
+ */
+export type BattleAssetRole = 'corner' | 'sideH' | 'sideV' | 'accent' | 'art' | 'other';
+
+/**
+ * A sheet of frame parts as it arrived, kept whole in its original bytes so
+ * the cut can be redone with other settings without asking for the file again.
+ */
+export interface BattleAssetSheet {
+    id: string;
+    name: string;
+    sourceUrl: string;
+    width: number;
+    height: number;
+    /** JSON of the settings that last cut it; `null` = never cut. */
+    settings?: string | null;
+    sortOrder?: number | null;
+    createdAt: string;
+    /** How many parts came off it — what clearing it away would leave loose. */
+    partCount: number;
+}
+
+/** One cut-out part in the store. */
+export interface BattleAsset {
+    id: string;
+    /** Where it came from, not who owns it: a sheet can be cleared away and
+     *  the part stays, because a frame may already be wearing it. */
+    sheetId?: string | null;
+    sheetName?: string | null;
+    name: string;
+    role: BattleAssetRole;
+    url: string;
+    width: number;
+    height: number;
+    sortOrder?: number | null;
+    createdAt: string;
+}
+
+/**
+ * The knobs of the cut. Every default is a measurement rather than a choice —
+ * the server fills in whatever is left out, and hands the effective values
+ * back with the proposal, so the desk never keeps its own copy of them.
+ */
+export interface BattleSliceSettings {
+    /** Alpha above this is artwork, below it is leftover glow. Not zero: the
+     *  glow is what ties a caption to the bar above it. */
+    alphaThreshold: number;
+    /** Background is lighter than this (0..1)... */
+    bgValue: number;
+    /** ...and more drained than this (0..1). */
+    bgSat: number;
+    /** Across how wide a gap two pieces are glued back into one object. */
+    mergeGap: number;
+    /** Smaller than this is grit, not an object. */
+    minArea: number;
+    /** Captions are no taller than this... */
+    textMaxH: number;
+    /** ...and carry less gold and gemstone than this share. */
+    textColor: number;
+    /** Keep captions as parts instead of setting them aside. */
+    keepText: boolean;
+    /** Margin left around each crop. */
+    pad: number;
+    /** Edge softening, px. Only used on a sheet with no alpha of its own. */
+    feather: number;
+    /** How far colour is stretched out under the transparent edge. */
+    bleed: number;
+}
+
+/** One part of a proposed cut. Nothing has been written to disk yet. */
+export interface BattleSheetPart {
+    index: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    /** Set aside as a caption. Still numbered and still shown — the only way
+     *  to check a cut is to see everything it found, rejects included. */
+    isText: boolean;
+    role: BattleAssetRole;
+    /** A shrunk `data:` picture, so re-cutting a sheet twenty times leaves no
+     *  files behind. */
+    preview: string;
+}
+
+export interface BattleSheetCut {
+    width: number;
+    height: number;
+    /** Which route the ground came off by. Explains every other number here. */
+    source: 'alpha' | 'background';
+    /** What the cut actually ran with, defaults filled in. */
+    settings: BattleSliceSettings;
+    parts: BattleSheetPart[];
+}
+
+/**
+ * A rectangle drawn by hand on a finished piece, in FRACTIONS of that piece
+ * (0..1), never pixels.
+ *
+ * The keeper draws on whatever size the screen happened to show — a shrunk
+ * review thumbnail one time, the full picture the next. A fraction means the
+ * same thing at both, so nothing has to remember which scale it was drawn at.
+ *
+ * Rough is enough: what comes out is trimmed to the artwork inside the
+ * rectangle, exactly the way every automatic cut is trimmed.
+ */
+export interface BattleSplitRect {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    name?: string;
+    role?: BattleAssetRole;
+}
+
+/** One part of a proposed cut at its full size, for drawing on. Fetched only
+ *  when the board opens — the review grid carries shrunk previews. */
+export interface BattleSheetPartFull {
+    index: number;
+    width: number;
+    height: number;
+    image: string;
+}
+
+/** One part the keeper decided to keep. `width`/`height` are echoed back from
+ *  the proposal: numbering only means the same thing under the same settings,
+ *  so the server checks the shape before saving it under a chosen name. */
+export interface BattleAssetPick {
+    index: number;
+    name?: string;
+    role?: BattleAssetRole;
+    width: number;
+    height: number;
+    /** Rectangles drawn on this part by hand. Each becomes a part of its own,
+     *  and the part itself is saved too — the rectangles are additions, not a
+     *  replacement, because a glued piece is sometimes worth keeping whole. */
+    rects?: BattleSplitRect[];
 }
 
 export type BattleCardKind = 'unit' | 'spell' | 'relic';

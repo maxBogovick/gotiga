@@ -11,6 +11,7 @@
 
 use crate::slug::slugify;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 pub const CARD_STATUSES: &[&str] = &["draft", "published", "retired"];
 
@@ -334,18 +335,45 @@ pub const KEYWORD_RULES_MAX: usize = 300;
 /// The closed list of verbs. A new card brings a new combination, never a new
 /// verb — that is the whole reason the engine can be written once.
 pub const ABILITY_VERBS: &[&str] = &[
-    "damage", "dot", "heal", "hot", "shield", "zone", "bless", "curse", "control",
-    "silence", "disarm", "charm", "veil", "guard", "immune", "thorns", "move",
-    "summon", "sacrifice", "cleanse", "dispel", "mana",
+    "damage",
+    "dot",
+    "heal",
+    "hot",
+    "shield",
+    "zone",
+    "bless",
+    "curse",
+    "control",
+    "silence",
+    "disarm",
+    "charm",
+    "veil",
+    "guard",
+    "immune",
+    "thorns",
+    "move",
+    "summon",
+    "sacrifice",
+    "cleanse",
+    "dispel",
+    "mana",
 ];
 
 /// How many the effect reaches. `chain` and `radius` carry a number in `radius`.
-pub const ABILITY_SHAPES: &[&str] =
-    &["self", "one", "adjacent", "chain", "line", "radius", "side", "cell"];
+pub const ABILITY_SHAPES: &[&str] = &[
+    "self", "one", "adjacent", "chain", "line", "radius", "side", "cell",
+];
 
 /// When it happens.
 pub const ABILITY_TRIGGERS: &[&str] = &[
-    "active", "onPlay", "onHit", "onDamaged", "onDeath", "turnStart", "aura", "once",
+    "active",
+    "onPlay",
+    "onHit",
+    "onDamaged",
+    "onDeath",
+    "turnStart",
+    "aura",
+    "once",
 ];
 
 pub fn default_kind() -> String {
@@ -897,17 +925,28 @@ pub fn normalize_focal(raw: Option<&str>) -> Option<String> {
     serde_json::to_string(&focal).ok()
 }
 
-/// A single card's exception to the tier's shared frame — "wear a picture of
-/// your own" without touching the frame every other card of that rank still
-/// wears. Every field optional and `None` when absent, unlike `BattleFrame`
-/// itself: this is a patch, not a whole dressing, and a field left out here
-/// means "keep the tier's own", not "keep it empty".
+/// A dress worn instead of the tier's own — by one card, or by one level of a
+/// race's copies. Every field optional and `None` when absent, unlike
+/// `BattleFrame` itself: this is a patch, and a field left out means "keep the
+/// tier's own", not "keep it empty".
+///
+/// It carries as much or as little as the keeper actually chose. A picture
+/// uploaded onto one card names a picture and its window and nothing else; a
+/// whole frame taken out of the presets drawer names the entire design, down
+/// to the paper and the badges, because that is what "wear this frame" means
+/// to the person who saved it. What NEVER travels is the rank and its name:
+/// those belong to the dictionary, and a dress that could rename a rank would
+/// be a sixth rank in disguise.
 ///
 /// The four insets travel with the picture rather than staying tier-only: a
-/// picture chosen just for this card (or, for a race's `level_frames`, just
-/// for this level) was never measured against the tier's own window, so
-/// keeping the tier's insets would centre the content on ornament that isn't
-/// there and cut into ornament that is.
+/// picture chosen just for this card (or just for this level) was never
+/// measured against the tier's own window, so keeping the tier's insets would
+/// centre the content on ornament that isn't there and cut into ornament that
+/// is.
+///
+/// An empty string here is a choice, not an absence — a frame built from
+/// slices says "no single photograph" by naming an empty `frame_image`, and
+/// dropping that would leave the rank's own picture stretched underneath it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FrameOverride {
@@ -915,6 +954,51 @@ pub struct FrameOverride {
     pub frame_image: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frame_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paper: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ink: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub border: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub foil: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paper_image: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub back_image: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corner_image: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub side_image_h: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub side_image_v: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corner_extra: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub side_mid_h: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub side_mid_v: Option<String>,
+    /// The whole placement of all six pieces, or none of it. A dress that
+    /// names one piece's layer and leaves the other five to the rank would be
+    /// a frame assembled from two different keepers' decisions; a dress either
+    /// brings its own assembly or wears the rank's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slices: Option<SlicePieces>,
+    /// The whole list of flourishes, or none of it — same rule as `slices`, and
+    /// for the same reason: half a rank's ornaments and half a preset's would
+    /// be a frame nobody chose.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ornaments: Option<Vec<SliceOrnament>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_font: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_ink: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_shape: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub power_shape: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aspect: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -925,50 +1009,166 @@ pub struct FrameOverride {
     pub inset_bottom: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inset_left: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header_share: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub art_share: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub foot_share: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_x: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_y: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub power_x: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub power_y: Option<f32>,
 }
 
 /// The clamps a `FrameOverride` patch must pass however it arrives — alone or
 /// as one slot of a race's `level_frames`. `None` for "no override at all": a
-/// broken or empty patch is the same as none, never a patch that blanks the
-/// tier's own picture.
+/// patch that names nothing is the same as no patch.
 ///
-/// Each inset is clamped on its own, unlike a tier's own (`clamp_pair`, which
-/// also caps top+bottom together): a race's own picture isn't mirrored
+/// The numbers are held to the very ranges a rank's own frame is held to, for
+/// the plain reason that they end up on the same card. What differs is the
+/// insets: each is clamped on its own, unlike a tier's own (`clamp_pair`,
+/// which also caps top+bottom together), because a dress isn't mirrored
 /// top-to-bottom by `applyInsetDelta` in the first place, so there is no pair
 /// to check the sum of.
 fn clean_frame_override(parsed: FrameOverride) -> Option<FrameOverride> {
-    let frame_image = parsed
-        .frame_image
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string);
-    let frame_mode = parsed.frame_mode.filter(|m| valid_frame_mode(m));
-    let aspect = parsed.aspect.map(|a| a.clamp(0.3, 2.0));
+    let text = |v: Option<String>| v.map(|s| s.trim().to_string());
     let inset = |v: Option<f32>| v.filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 45.0));
-    let inset_top = inset(parsed.inset_top);
-    let inset_right = inset(parsed.inset_right);
-    let inset_bottom = inset(parsed.inset_bottom);
-    let inset_left = inset(parsed.inset_left);
-    if frame_image.is_none()
-        && frame_mode.is_none()
-        && aspect.is_none()
-        && inset_top.is_none()
-        && inset_right.is_none()
-        && inset_bottom.is_none()
-        && inset_left.is_none()
-    {
+    let band = |v: Option<f32>| v.filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 0.3));
+    let pos = |v: Option<f32>| v.filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 100.0));
+
+    let cleaned = FrameOverride {
+        frame_image: text(parsed.frame_image),
+        frame_mode: parsed.frame_mode.filter(|m| valid_frame_mode(m)),
+        paper: text(parsed.paper),
+        ink: text(parsed.ink),
+        border: text(parsed.border),
+        foil: text(parsed.foil),
+        paper_image: text(parsed.paper_image),
+        back_image: text(parsed.back_image),
+        corner_image: text(parsed.corner_image),
+        side_image_h: text(parsed.side_image_h),
+        side_image_v: text(parsed.side_image_v),
+        corner_extra: text(parsed.corner_extra),
+        side_mid_h: text(parsed.side_mid_h),
+        side_mid_v: text(parsed.side_mid_v),
+        slices: parsed.slices.map(normalize_slices),
+        ornaments: parsed.ornaments.map(normalize_ornaments),
+        title_font: text(parsed.title_font),
+        title_ink: text(parsed.title_ink),
+        layout: parsed.layout.filter(|l| valid_layout(l)),
+        cost_shape: parsed.cost_shape.filter(|sh| valid_badge_shape(sh)),
+        power_shape: parsed.power_shape.filter(|sh| valid_badge_shape(sh)),
+        aspect: parsed
+            .aspect
+            .filter(|a| a.is_finite())
+            .map(|a| a.clamp(0.3, 2.0)),
+        inset_top: inset(parsed.inset_top),
+        inset_right: inset(parsed.inset_right),
+        inset_bottom: inset(parsed.inset_bottom),
+        inset_left: inset(parsed.inset_left),
+        header_share: band(parsed.header_share),
+        // A photograph band of nothing would leave the card's own picture
+        // nowhere to be, so unlike the other two this one has a floor.
+        art_share: parsed
+            .art_share
+            .filter(|v| v.is_finite())
+            .map(|v| v.clamp(0.12, 0.85)),
+        foot_share: band(parsed.foot_share),
+        cost_x: pos(parsed.cost_x),
+        cost_y: pos(parsed.cost_y),
+        power_x: pos(parsed.power_x),
+        power_y: pos(parsed.power_y),
+    };
+    if cleaned.says_nothing() {
         return None;
     }
-    Some(FrameOverride {
-        frame_image,
-        frame_mode,
-        aspect,
-        inset_top,
-        inset_right,
-        inset_bottom,
-        inset_left,
-    })
+    Some(cleaned)
+}
+
+impl FrameOverride {
+    /// A patch that names not one field is not a patch. Written out in full
+    /// rather than by counting `Some`s in a serialised map, so a field added
+    /// to the struct and forgotten here fails to compile instead of quietly
+    /// never being worn.
+    fn says_nothing(&self) -> bool {
+        let FrameOverride {
+            frame_image,
+            frame_mode,
+            paper,
+            ink,
+            border,
+            foil,
+            paper_image,
+            back_image,
+            corner_image,
+            side_image_h,
+            side_image_v,
+            corner_extra,
+            side_mid_h,
+            side_mid_v,
+            slices,
+            ornaments,
+            title_font,
+            title_ink,
+            layout,
+            cost_shape,
+            power_shape,
+            aspect,
+            inset_top,
+            inset_right,
+            inset_bottom,
+            inset_left,
+            header_share,
+            art_share,
+            foot_share,
+            cost_x,
+            cost_y,
+            power_x,
+            power_y,
+        } = self;
+        [
+            frame_image.is_none(),
+            frame_mode.is_none(),
+            paper.is_none(),
+            ink.is_none(),
+            border.is_none(),
+            foil.is_none(),
+            paper_image.is_none(),
+            back_image.is_none(),
+            corner_image.is_none(),
+            side_image_h.is_none(),
+            side_image_v.is_none(),
+            corner_extra.is_none(),
+            side_mid_h.is_none(),
+            side_mid_v.is_none(),
+            slices.is_none(),
+            ornaments.is_none(),
+            title_font.is_none(),
+            title_ink.is_none(),
+            layout.is_none(),
+            cost_shape.is_none(),
+            power_shape.is_none(),
+            aspect.is_none(),
+            inset_top.is_none(),
+            inset_right.is_none(),
+            inset_bottom.is_none(),
+            inset_left.is_none(),
+            header_share.is_none(),
+            art_share.is_none(),
+            foot_share.is_none(),
+            cost_x.is_none(),
+            cost_y.is_none(),
+            power_x.is_none(),
+            power_y.is_none(),
+        ]
+        .iter()
+        .all(|missing| *missing)
+    }
 }
 
 pub fn normalize_frame_override(raw: Option<&str>) -> Option<String> {
@@ -984,7 +1184,13 @@ pub fn normalize_frame_override(raw: Option<&str>) -> Option<String> {
 pub fn normalize_level_frames(raw: Option<&str>) -> Option<String> {
     let parsed: Vec<Option<FrameOverride>> = serde_json::from_str(raw?.trim()).ok()?;
     let mut slots: Vec<Option<FrameOverride>> = (0..5)
-        .map(|i| parsed.get(i).cloned().flatten().and_then(clean_frame_override))
+        .map(|i| {
+            parsed
+                .get(i)
+                .cloned()
+                .flatten()
+                .and_then(clean_frame_override)
+        })
         .collect();
     if slots.iter().all(Option::is_none) {
         return None;
@@ -1005,6 +1211,304 @@ pub fn normalize_level_frames(raw: Option<&str>) -> Option<String> {
 /// need a transparent window, and this house re-encodes every uploaded image to
 /// JPEG, which has no alpha — an overlay frame would arrive with its window
 /// filled in. Laid behind, an ordinary photograph works.
+/// Where ONE copy of a piece sits — the top-left corner, or the foot, or the
+/// right side, each on its own.
+///
+/// Four percentages OF THE CARD, the same unit the insets are in. `grow`
+/// swells the copy past its band (positive = it overlaps its neighbour,
+/// negative = it pulls back and leaves a gap); `nudge` slides it INWARD from
+/// its own anchor — the corner it hangs off, or the edge it lies along — so
+/// one number means the same thing on all sixteen copies and a frame edited
+/// symmetrically stays symmetric.
+///
+/// Read along the CARD's axes whichever way the band runs: `grow_x` across its
+/// width, `grow_y` down its height.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SlicePlace {
+    #[serde(default)]
+    pub grow_x: f32,
+    #[serde(default)]
+    pub grow_y: f32,
+    #[serde(default)]
+    pub nudge_x: f32,
+    #[serde(default)]
+    pub nudge_y: f32,
+    /// Whether this copy is drawn at all. A medallion belongs over the lintel
+    /// and nowhere else quite as often as it belongs over both, and "upload the
+    /// picture again with half of it erased" is not an answer. `Option` so a
+    /// placement saved before a copy could be put out reads as lit, not dark.
+    #[serde(default)]
+    pub shown: Option<bool>,
+}
+
+/// One picture of a `sliced` frame, and how each of its copies lies.
+///
+/// The four insets say where the card's window is. They used to say where every
+/// ornament was as well, which is why a frame built from parts could never be
+/// JOINED: a corner filled exactly its `inset_left × inset_top` box, an edge ran
+/// exactly between two corners, and the seam between them was wherever the
+/// window happened to want it. Real carving does not tile — the corner sits ON
+/// the edge, the edge runs UNDER the corner, and an accent bleeds over both.
+///
+/// So a copy keeps its band as its ORIGIN and is free of it after that, and
+/// each copy is free SEPARATELY: a `places` entry per side. The left side of a
+/// carving is rarely the mirror of its right — the herbs hanging along the top
+/// take more room than the moss along the foot — and one number for all four
+/// would put that fit out of the keeper's reach, which is the same reason the
+/// four insets were never one number either.
+///
+/// What does NOT go per side is the picture itself: `layer`, `fit` and `turn`
+/// describe the one upload, not where a copy of it landed.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SlicePiece {
+    /// Which layer of the carving it paints in, 1..9 — what lets a corner cap
+    /// its edges instead of being cut by them. `Option` because 0 is not a
+    /// layer: absent means "the one this slot has always had".
+    #[serde(default)]
+    pub layer: Option<i16>,
+    /// `stretch` — filled to the box, the way a 9-slice always has been.
+    /// `contain` — laid inside it whole, at its own proportions.
+    /// `cover`   — filled, cropped rather than squashed.
+    /// `tile`    — repeated along the band instead of pulled along it, which
+    ///             is what a running vine actually wants.
+    /// Empty = the slot's own default.
+    #[serde(default)]
+    pub fit: String,
+    /// How the one uploaded picture reaches the other corners (or the facing
+    /// side): `mirror` (the house default — an asymmetric flourish stays
+    /// right-side up), `rotate` (quarter turns, for art drawn as a corner
+    /// round), `none` (the same orientation everywhere). Empty = `mirror`.
+    #[serde(default)]
+    pub turn: String,
+    /// Whether taking hold of one copy moves them all. On by default, because
+    /// a frame is symmetric until the keeper says otherwise, and because it is
+    /// the behaviour every copy shared before they could differ at all.
+    /// `Option` so "saved with the link off" and "saved before there was a
+    /// link" are not the same thing.
+    #[serde(default)]
+    pub linked: Option<bool>,
+    /// Where each copy lies. A corner slot is keyed `tl`/`tr`/`bl`/`br`, a
+    /// horizontal slot `top`/`bottom`, a vertical one `left`/`right`. A map and
+    /// not a struct of eight, because a corner has no `top` copy and a struct
+    /// would have to carry one anyway.
+    #[serde(default)]
+    pub places: BTreeMap<String, SlicePlace>,
+}
+
+/// The six slots a `sliced` frame has, each with its own picture and placement.
+/// Not a list of arbitrary layers: the slots are fixed and named, so a dress
+/// can be worn onto another rank and still mean the same thing.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SlicePieces {
+    #[serde(default)]
+    pub corner: SlicePiece,
+    #[serde(default)]
+    pub side_h: SlicePiece,
+    #[serde(default)]
+    pub side_v: SlicePiece,
+    #[serde(default)]
+    pub corner_extra: SlicePiece,
+    #[serde(default)]
+    pub side_mid_h: SlicePiece,
+    #[serde(default)]
+    pub side_mid_v: SlicePiece,
+}
+
+/// An ornament the keeper added beyond the six named slots — a second
+/// medallion, a clasp, a hanging leaf.
+///
+/// The six slots are the frame's ANATOMY: two corners' worth of picture and two
+/// edges', named because a dress worn onto another rank has to mean the same
+/// thing there. An ornament is not anatomy — it is a flourish this one frame
+/// happens to want, and there is no honest fixed number of those. So they are a
+/// list, and they carry their own `kind` because that is the only thing the
+/// named slots got for free: where a picture's copies land.
+///
+/// Everything else about it is an ordinary `SlicePiece`, flattened into the
+/// same object, so an ornament is placed, layered, fitted, turned and dragged
+/// by exactly the code the six are.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SliceOrnament {
+    /// The keeper's desk makes this; the server only keeps it. It is what a
+    /// drag, a preset and the list's own order all point at, so it must survive
+    /// a save — which is why it is not an index.
+    pub id: String,
+    pub image: String,
+    /// Where its copies land, and in what shape:
+    /// `corner` — four boxes, one per corner.
+    /// `edgeH`  — two, each running the whole lintel or sill.
+    /// `edgeV`  — two, running the left and right sides.
+    /// `midH`   — two medallions, centred on the lintel and the sill.
+    /// `midV`   — two, centred on the left and right sides.
+    /// The five shapes the six named slots already have between them, offered
+    /// by name because an added flourish has no name to be read off.
+    #[serde(default)]
+    pub kind: String,
+    #[serde(flatten)]
+    pub piece: SlicePiece,
+}
+
+pub const ORNAMENT_KINDS: &[&str] = &["corner", "edgeH", "edgeV", "midH", "midV"];
+/// Enough for a frame that wants flourishes, few enough that the settings blob
+/// stays a thing a person could read.
+pub const ORNAMENTS_MAX: usize = 12;
+
+pub const SLICE_FITS: &[&str] = &["stretch", "contain", "cover", "tile"];
+pub const SLICE_TURNS: &[&str] = &["mirror", "rotate", "none"];
+/// Which copies each kind of slot has. A corner picture lands in four places, a
+/// horizontal one in two, a vertical one in the other two.
+pub const CORNER_SIDES: &[&str] = &["tl", "tr", "bl", "br"];
+pub const SIDES_H: &[&str] = &["top", "bottom"];
+pub const SIDES_V: &[&str] = &["left", "right"];
+
+/// How far past its band a copy may reach, in % of the card. Wide enough for a
+/// corner to swallow a whole edge band, short of turning an ornament into a
+/// second card face.
+pub const SLICE_GROW_MAX: f32 = 40.0;
+/// How many layers the carving has. Wide enough that a list of pieces can give
+/// every one of them its own — the order is set by dragging that list, and two
+/// pieces sharing a layer would fall back to the order they happen to be
+/// written in, which is an order nobody chose and nobody can see.
+pub const SLICE_LAYERS: i16 = 24;
+
+fn zeroed(sides: &[&str]) -> BTreeMap<String, SlicePlace> {
+    sides
+        .iter()
+        .map(|s| ((*s).to_string(), SlicePlace::default()))
+        .collect()
+}
+
+/// The placement every slot has always had, written down. The two base edges
+/// paint over the corners because that is the order the pieces were in the
+/// markup before any of this was a number; the three accents sit above both and
+/// are laid in whole rather than stretched, because that is what makes an
+/// accent an accent. Every copy starts on its own band and linked to its mates.
+pub fn default_slices() -> SlicePieces {
+    let base = |layer: i16, sides: &[&str]| SlicePiece {
+        layer: Some(layer),
+        fit: "stretch".into(),
+        turn: "mirror".into(),
+        linked: Some(true),
+        places: zeroed(sides),
+    };
+    let accent = |sides: &[&str]| SlicePiece {
+        fit: "contain".into(),
+        ..base(5, sides)
+    };
+    SlicePieces {
+        corner: base(2, CORNER_SIDES),
+        side_h: base(3, SIDES_H),
+        side_v: base(3, SIDES_V),
+        corner_extra: accent(CORNER_SIDES),
+        side_mid_h: accent(SIDES_H),
+        side_mid_v: accent(SIDES_V),
+    }
+}
+
+fn normalize_place(found: SlicePlace) -> SlicePlace {
+    let span = |v: f32| {
+        if v.is_finite() {
+            v.clamp(-SLICE_GROW_MAX, SLICE_GROW_MAX)
+        } else {
+            0.0
+        }
+    };
+    SlicePlace {
+        grow_x: span(found.grow_x),
+        grow_y: span(found.grow_y),
+        nudge_x: span(found.nudge_x),
+        nudge_y: span(found.nudge_y),
+        shown: Some(found.shown.unwrap_or(true)),
+    }
+}
+
+fn normalize_piece(mut found: SlicePiece, fallback: SlicePiece, sides: &[&str]) -> SlicePiece {
+    found.layer = Some(match found.layer {
+        Some(v) if (1..=SLICE_LAYERS).contains(&v) => v,
+        _ => fallback.layer.unwrap_or(1),
+    });
+    if SLICE_FITS.contains(&found.fit.trim()) {
+        found.fit = found.fit.trim().to_string();
+    } else {
+        found.fit = fallback.fit;
+    }
+    if SLICE_TURNS.contains(&found.turn.trim()) {
+        found.turn = found.turn.trim().to_string();
+    } else {
+        found.turn = fallback.turn;
+    }
+    found.linked = Some(found.linked.unwrap_or(true));
+    // Exactly the copies this slot actually has — no more (a `top` on a corner
+    // is a place nothing renders) and no fewer (a missing copy is one the
+    // keeper could never take hold of).
+    found.places = sides
+        .iter()
+        .map(|side| {
+            let place = found.places.remove(*side).unwrap_or_default();
+            ((*side).to_string(), normalize_place(place))
+        })
+        .collect();
+    found
+}
+
+/// Which copies a kind of ornament has. The named slots know this from their
+/// own names; an added one has to say.
+pub fn ornament_sides(kind: &str) -> &'static [&'static str] {
+    match kind {
+        "edgeH" | "midH" => SIDES_H,
+        "edgeV" | "midV" => SIDES_V,
+        _ => CORNER_SIDES,
+    }
+}
+
+/// The keeper's own flourishes, pulled into range. An ornament with no id or no
+/// picture is dropped rather than kept as a thing that renders nothing and
+/// cannot be pointed at; two with the same id would make a drag ambiguous, so
+/// the later one goes. The list is capped because a frame is a frame.
+pub fn normalize_ornaments(found: Vec<SliceOrnament>) -> Vec<SliceOrnament> {
+    let fallback = default_slices().corner_extra;
+    let mut seen: Vec<String> = Vec::new();
+    found
+        .into_iter()
+        .filter_map(|mut one| {
+            one.id = one.id.trim().to_string();
+            one.image = one.image.trim().to_string();
+            if one.id.is_empty() || one.image.is_empty() || seen.contains(&one.id) {
+                return None;
+            }
+            seen.push(one.id.clone());
+            if !ORNAMENT_KINDS.contains(&one.kind.trim()) {
+                one.kind = "corner".into();
+            } else {
+                one.kind = one.kind.trim().to_string();
+            }
+            let sides = ornament_sides(&one.kind);
+            one.piece = normalize_piece(one.piece, fallback.clone(), sides);
+            Some(one)
+        })
+        .take(ORNAMENTS_MAX)
+        .collect()
+}
+
+/// Every slot pulled into range against the placement it has always had, so a
+/// frame saved before pieces could overlap comes back rendering exactly as it
+/// did — the defaults ARE the old hard-coded behaviour.
+pub fn normalize_slices(found: SlicePieces) -> SlicePieces {
+    let fallback = default_slices();
+    SlicePieces {
+        corner: normalize_piece(found.corner, fallback.corner, CORNER_SIDES),
+        side_h: normalize_piece(found.side_h, fallback.side_h, SIDES_H),
+        side_v: normalize_piece(found.side_v, fallback.side_v, SIDES_V),
+        corner_extra: normalize_piece(found.corner_extra, fallback.corner_extra, CORNER_SIDES),
+        side_mid_h: normalize_piece(found.side_mid_h, fallback.side_mid_h, SIDES_H),
+        side_mid_v: normalize_piece(found.side_mid_v, fallback.side_mid_v, SIDES_V),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BattleFrame {
@@ -1076,6 +1580,15 @@ pub struct BattleFrame {
     /// right side the same way `side_image_v` is.
     #[serde(default)]
     pub side_mid_v: String,
+    /// How each of those six pieces sits in its band — grown past it, slid
+    /// along it, layered over its neighbour. Absent means the placement the
+    /// slots have always had, which is why an old frame needs no migration.
+    #[serde(default)]
+    pub slices: SlicePieces,
+    /// Flourishes beyond the six named slots. Empty on every frame that never
+    /// asked for one, which is why nothing needed a migration.
+    #[serde(default)]
+    pub ornaments: Vec<SliceOrnament>,
     /// Where the card's content sits inside that photograph, as a percentage of
     /// the card on each side. A carved frame has thick sides; this is how the
     /// keeper says where the window actually is.
@@ -1174,6 +1687,63 @@ impl Default for BattleFrames {
     }
 }
 
+/// A dress the keeper put aside under a name of their own, to wear again
+/// elsewhere. Not a sixth rank: nothing renders a preset. It is a whole frame
+/// design kept in a drawer, and the keeper takes it out onto a rank, a race's
+/// level, or one card.
+///
+/// The `tier` inside `frame` means nothing here — a preset belongs to no rank —
+/// but it is kept rather than dropped so the same struct, and the same
+/// normalisation, serves both drawer and dictionary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleFramePreset {
+    pub id: String,
+    /// The keeper's own name for it. Admin-only, so one language is enough —
+    /// no visitor ever reads this.
+    pub name: String,
+    pub frame: BattleFrame,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleFramePresets {
+    #[serde(default)]
+    pub presets: Vec<BattleFramePreset>,
+}
+
+/// A drawer, not an archive. Past this many the keeper is hoarding dresses
+/// rather than choosing between them, and the setting they all live in has a
+/// size of its own to respect.
+pub const PRESETS_MAX: usize = 24;
+pub const PRESET_NAME_MAX: usize = 60;
+
+/// The drawer, tidied: a preset with no name or no id is not a preset, the
+/// same id never appears twice, each dress is pulled into range by the very
+/// rules a rank's own frame obeys, and the drawer has a bottom.
+pub fn normalize_presets(saved: Vec<BattleFramePreset>) -> Vec<BattleFramePreset> {
+    let defaults = default_frames();
+    let mut seen: Vec<String> = Vec::new();
+    let mut out: Vec<BattleFramePreset> = Vec::new();
+    for mut preset in saved {
+        preset.id = preset.id.trim().to_string();
+        preset.name = preset.name.trim().chars().take(PRESET_NAME_MAX).collect();
+        if preset.id.is_empty() || preset.name.is_empty() || seen.contains(&preset.id) {
+            continue;
+        }
+        seen.push(preset.id.clone());
+        let tier = clamp_tier(preset.frame.tier);
+        preset.frame.tier = tier;
+        let fallback = defaults[(tier - 1) as usize].clone();
+        preset.frame = normalize_frame(preset.frame, fallback);
+        out.push(preset);
+        if out.len() == PRESETS_MAX {
+            break;
+        }
+    }
+    out
+}
+
 /// A card that is not dressed in a photograph. 5 : 7, the ratio of a card held
 /// in a hand.
 pub const DEFAULT_ASPECT: f32 = 5.0 / 7.0;
@@ -1212,6 +1782,8 @@ fn painted(
         corner_extra: String::new(),
         side_mid_h: String::new(),
         side_mid_v: String::new(),
+        slices: default_slices(),
+        ornaments: Vec::new(),
         inset_top: 0.0,
         inset_right: 0.0,
         inset_bottom: 0.0,
@@ -1238,9 +1810,33 @@ pub fn default_frames() -> Vec<BattleFrame> {
     vec![
         painted(1, "Humble", "Скромная", "#f8f1e7", "#34251c", "#d8c6b1", ""),
         painted(2, "Sturdy", "Крепкая", "#f3e9db", "#34251c", "#c3ad93", ""),
-        painted(3, "Remembered", "Памятная", "#eeddc8", "#34251c", "#a8845f", "rgba(198,95,60,0.16)"),
-        painted(4, "Rare", "Редкая", "#e6cfb2", "#2a1a11", "#6f3b24", "rgba(198,95,60,0.28)"),
-        painted(5, "Epic", "Эпическая", "#3a2a1e", "#f3e4cd", "#c99a52", "rgba(214,178,110,0.42)"),
+        painted(
+            3,
+            "Remembered",
+            "Памятная",
+            "#eeddc8",
+            "#34251c",
+            "#a8845f",
+            "rgba(198,95,60,0.16)",
+        ),
+        painted(
+            4,
+            "Rare",
+            "Редкая",
+            "#e6cfb2",
+            "#2a1a11",
+            "#6f3b24",
+            "rgba(198,95,60,0.28)",
+        ),
+        painted(
+            5,
+            "Epic",
+            "Эпическая",
+            "#3a2a1e",
+            "#f3e4cd",
+            "#c99a52",
+            "rgba(214,178,110,0.42)",
+        ),
     ]
 }
 
@@ -1262,94 +1858,103 @@ pub fn normalize_frames(mut saved: Vec<BattleFrame>) -> Vec<BattleFrame> {
                 Some(at) => {
                     let mut found = saved.remove(at);
                     found.tier = fallback.tier;
-                    if found.name_en.trim().is_empty() {
-                        found.name_en = fallback.name_en;
-                    }
-                    if found.name_ru.trim().is_empty() {
-                        found.name_ru = fallback.name_ru;
-                    }
-                    if found.paper.trim().is_empty() {
-                        found.paper = fallback.paper;
-                    }
-                    if found.ink.trim().is_empty() {
-                        found.ink = fallback.ink;
-                    }
-                    if found.border.trim().is_empty() {
-                        found.border = fallback.border;
-                    }
-                    if !valid_layout(&found.layout) {
-                        found.layout = fallback.layout;
-                    }
-                    if !valid_badge_shape(&found.cost_shape) {
-                        found.cost_shape = fallback.cost_shape;
-                    }
-                    if !valid_badge_shape(&found.power_shape) {
-                        found.power_shape = fallback.power_shape;
-                    }
-                    if !valid_frame_mode(&found.frame_mode) {
-                        // A frame saved before cards could wear a cut-out has no
-                        // mode, and back then a picture was always the card's
-                        // ground. Defaulting it to `overlay` would lay that solid
-                        // picture over the card and hide everything on it — so an
-                        // unset mode on a frame that already HAS a picture means
-                        // `behind`, whatever the default for a fresh frame is.
-                        found.frame_mode = if found.frame_image.trim().is_empty() {
-                            fallback.frame_mode
-                        } else {
-                            "behind".into()
-                        };
-                    }
-                    found.frame_image = found.frame_image.trim().to_string();
-                    found.paper_image = found.paper_image.trim().to_string();
-                    found.back_image = found.back_image.trim().to_string();
-                    found.corner_image = found.corner_image.trim().to_string();
-                    found.side_image_h = found.side_image_h.trim().to_string();
-                    found.side_image_v = found.side_image_v.trim().to_string();
-                    found.corner_extra = found.corner_extra.trim().to_string();
-                    found.side_mid_h = found.side_mid_h.trim().to_string();
-                    found.side_mid_v = found.side_mid_v.trim().to_string();
-                    found.title_font = found.title_font.trim().to_string();
-                    found.title_ink = found.title_ink.trim().to_string();
-                    found.aspect = if found.aspect > 0.0 {
-                        found.aspect.clamp(0.45, 1.4)
-                    } else {
-                        fallback.aspect
-                    };
-                    found.art_share = if found.art_share > 0.0 {
-                        found.art_share.clamp(0.12, 0.85)
-                    } else {
-                        fallback.art_share
-                    };
-                    let mut header = clamp_band(found.header_share, fallback.header_share);
-                    let mut foot = clamp_band(found.foot_share, fallback.foot_share);
-                    // Capped together with the photograph so the properties band
-                    // always keeps room; scaled in proportion rather than
-                    // truncated, so the keeper's balance between them survives.
-                    let taken = header + found.art_share + foot;
-                    if taken > 0.9 {
-                        let scale = 0.9 / taken;
-                        header *= scale;
-                        foot *= scale;
-                        found.art_share *= scale;
-                    }
-                    found.header_share = Some(header);
-                    found.foot_share = Some(foot);
-                    let (top, bottom) = clamp_pair(found.inset_top, found.inset_bottom);
-                    let (left, right) = clamp_pair(found.inset_left, found.inset_right);
-                    found.inset_top = top;
-                    found.inset_bottom = bottom;
-                    found.inset_left = left;
-                    found.inset_right = right;
-                    found.cost_x = Some(clamp_pos(found.cost_x, fallback.cost_x));
-                    found.cost_y = Some(clamp_pos(found.cost_y, fallback.cost_y));
-                    found.power_x = Some(clamp_pos(found.power_x, fallback.power_x));
-                    found.power_y = Some(clamp_pos(found.power_y, fallback.power_y));
-                    found
+                    normalize_frame(found, fallback)
                 }
                 None => fallback,
             }
         })
         .collect()
+}
+
+/// One frame pulled into range against the rank it stands for. Split out of
+/// `normalize_frames` because a saved preset is the same design with no rank
+/// of its own to be found by, and two copies of these rules would drift.
+pub fn normalize_frame(mut found: BattleFrame, fallback: BattleFrame) -> BattleFrame {
+    if found.name_en.trim().is_empty() {
+        found.name_en = fallback.name_en;
+    }
+    if found.name_ru.trim().is_empty() {
+        found.name_ru = fallback.name_ru;
+    }
+    if found.paper.trim().is_empty() {
+        found.paper = fallback.paper;
+    }
+    if found.ink.trim().is_empty() {
+        found.ink = fallback.ink;
+    }
+    if found.border.trim().is_empty() {
+        found.border = fallback.border;
+    }
+    if !valid_layout(&found.layout) {
+        found.layout = fallback.layout;
+    }
+    if !valid_badge_shape(&found.cost_shape) {
+        found.cost_shape = fallback.cost_shape;
+    }
+    if !valid_badge_shape(&found.power_shape) {
+        found.power_shape = fallback.power_shape;
+    }
+    if !valid_frame_mode(&found.frame_mode) {
+        // A frame saved before cards could wear a cut-out has no
+        // mode, and back then a picture was always the card's
+        // ground. Defaulting it to `overlay` would lay that solid
+        // picture over the card and hide everything on it — so an
+        // unset mode on a frame that already HAS a picture means
+        // `behind`, whatever the default for a fresh frame is.
+        found.frame_mode = if found.frame_image.trim().is_empty() {
+            fallback.frame_mode
+        } else {
+            "behind".into()
+        };
+    }
+    found.frame_image = found.frame_image.trim().to_string();
+    found.paper_image = found.paper_image.trim().to_string();
+    found.back_image = found.back_image.trim().to_string();
+    found.corner_image = found.corner_image.trim().to_string();
+    found.side_image_h = found.side_image_h.trim().to_string();
+    found.side_image_v = found.side_image_v.trim().to_string();
+    found.corner_extra = found.corner_extra.trim().to_string();
+    found.side_mid_h = found.side_mid_h.trim().to_string();
+    found.side_mid_v = found.side_mid_v.trim().to_string();
+    found.slices = normalize_slices(found.slices);
+    found.ornaments = normalize_ornaments(found.ornaments);
+    found.title_font = found.title_font.trim().to_string();
+    found.title_ink = found.title_ink.trim().to_string();
+    found.aspect = if found.aspect > 0.0 {
+        found.aspect.clamp(0.45, 1.4)
+    } else {
+        fallback.aspect
+    };
+    found.art_share = if found.art_share > 0.0 {
+        found.art_share.clamp(0.12, 0.85)
+    } else {
+        fallback.art_share
+    };
+    let mut header = clamp_band(found.header_share, fallback.header_share);
+    let mut foot = clamp_band(found.foot_share, fallback.foot_share);
+    // Capped together with the photograph so the properties band
+    // always keeps room; scaled in proportion rather than
+    // truncated, so the keeper's balance between them survives.
+    let taken = header + found.art_share + foot;
+    if taken > 0.9 {
+        let scale = 0.9 / taken;
+        header *= scale;
+        foot *= scale;
+        found.art_share *= scale;
+    }
+    found.header_share = Some(header);
+    found.foot_share = Some(foot);
+    let (top, bottom) = clamp_pair(found.inset_top, found.inset_bottom);
+    let (left, right) = clamp_pair(found.inset_left, found.inset_right);
+    found.inset_top = top;
+    found.inset_bottom = bottom;
+    found.inset_left = left;
+    found.inset_right = right;
+    found.cost_x = Some(clamp_pos(found.cost_x, fallback.cost_x));
+    found.cost_y = Some(clamp_pos(found.cost_y, fallback.cost_y));
+    found.power_x = Some(clamp_pos(found.power_x, fallback.power_x));
+    found.power_y = Some(clamp_pos(found.power_y, fallback.power_y));
+    found
 }
 
 /// One band's share of the card. Absent takes the default; present is honoured,
@@ -1379,8 +1984,16 @@ fn clamp_pos(given: Option<f32>, fallback: Option<f32>) -> f32 {
 fn clamp_pair(a: f32, b: f32) -> (f32, f32) {
     const MOST: f32 = 45.0;
     const TOGETHER: f32 = 85.0;
-    let a = if a.is_finite() { a.clamp(0.0, MOST) } else { 0.0 };
-    let b = if b.is_finite() { b.clamp(0.0, MOST) } else { 0.0 };
+    let a = if a.is_finite() {
+        a.clamp(0.0, MOST)
+    } else {
+        0.0
+    };
+    let b = if b.is_finite() {
+        b.clamp(0.0, MOST)
+    } else {
+        0.0
+    };
     if a + b <= TOGETHER {
         return (a, b);
     }
@@ -1430,7 +2043,10 @@ mod tests {
     #[test]
     fn a_published_card_may_not_outweigh_its_rank() {
         assert_eq!(tier_budget(1), 8.0);
-        assert!(card_blockers("published", 10, 2, 8.0, 1).is_empty(), "ровно в бюджет — можно");
+        assert!(
+            card_blockers("published", 10, 2, 8.0, 1).is_empty(),
+            "ровно в бюджет — можно"
+        );
         assert_eq!(
             card_blockers("published", 10, 2, 8.01, 1),
             vec!["overTierBudget"],
@@ -1475,7 +2091,10 @@ mod tests {
         // Хранитель видит 8.0 и должен иметь право сохранить. Без округления
         // до сотых карта ровно в бюджет отказывалась бы из-за двоичной пыли.
         let almost = 8.0_f64 + 1e-14;
-        assert!(almost > 8.0, "именно та пыль, ради которой округление и есть");
+        assert!(
+            almost > 8.0,
+            "именно та пыль, ради которой округление и есть"
+        );
         assert!(card_blockers("published", 10, 2, almost, 1).is_empty());
         // А настоящий перебор — ловится.
         assert!(!card_blockers("published", 10, 2, 8.02, 1).is_empty());
@@ -1485,12 +2104,17 @@ mod tests {
     fn three_and_three_is_the_table() {
         let (a, b, c) = (card(), card(), card());
         let (d, e, f) = (card(), card(), card());
-        assert_eq!(table(&[(a, 0, 4), (b, 1, 4), (c, 2, 4)], &[d, e, f], &[]), Ok(()));
+        assert_eq!(
+            table(&[(a, 0, 4), (b, 1, 4), (c, 2, 4)], &[d, e, f], &[]),
+            Ok(())
+        );
     }
 
     #[test]
     fn a_fourth_body_does_not_fit() {
-        let placed: Vec<_> = (0..4).map(|i| (card(), i as u8 % 3, 3 + i as u8 / 3)).collect();
+        let placed: Vec<_> = (0..4)
+            .map(|i| (card(), i as u8 % 3, 3 + i as u8 / 3))
+            .collect();
         assert_eq!(table(&placed, &[], &[]), Err(DeckFault::TooManyOnBoard));
     }
 
@@ -1504,7 +2128,10 @@ mod tests {
     /// туда своё тело значило бы начать партию в его тылу.
     #[test]
     fn the_keepers_half_is_not_yours() {
-        assert_eq!(table(&[(card(), 1, 2)], &[], &[]), Err(DeckFault::NotYourHalf));
+        assert_eq!(
+            table(&[(card(), 1, 2)], &[], &[]),
+            Err(DeckFault::NotYourHalf)
+        );
         assert!(own_half(1, 3) && own_half(1, 5));
         assert!(!own_half(1, 6) && !own_half(3, 4));
     }
@@ -1512,7 +2139,10 @@ mod tests {
     #[test]
     fn two_bodies_do_not_share_a_cell() {
         let (a, b) = (card(), card());
-        assert_eq!(table(&[(a, 1, 4), (b, 1, 4)], &[], &[]), Err(DeckFault::CellTaken));
+        assert_eq!(
+            table(&[(a, 1, 4), (b, 1, 4)], &[], &[]),
+            Err(DeckFault::CellTaken)
+        );
     }
 
     /// Дублей не бывает по построению (`UNIQUE (user_id, card_id)`), но клиент
@@ -1521,7 +2151,10 @@ mod tests {
     #[test]
     fn one_card_stands_in_one_place() {
         let a = card();
-        assert_eq!(table(&[(a, 0, 4)], &[a], &[]), Err(DeckFault::SameCardTwice));
+        assert_eq!(
+            table(&[(a, 0, 4)], &[a], &[]),
+            Err(DeckFault::SameCardTwice)
+        );
     }
 
     #[test]
@@ -1548,9 +2181,16 @@ mod tests {
     #[test]
     fn two_cards_of_rank_four_and_no_more() {
         let (a, b, c) = (card(), card(), card());
-        assert_eq!(table(&[(a, 0, 4), (b, 1, 4)], &[], &[(a, 4), (b, 4)]), Ok(()));
         assert_eq!(
-            table(&[(a, 0, 4), (b, 1, 4), (c, 2, 4)], &[], &[(a, 4), (b, 4), (c, 4)]),
+            table(&[(a, 0, 4), (b, 1, 4)], &[], &[(a, 4), (b, 4)]),
+            Ok(())
+        );
+        assert_eq!(
+            table(
+                &[(a, 0, 4), (b, 1, 4), (c, 2, 4)],
+                &[],
+                &[(a, 4), (b, 4), (c, 4)]
+            ),
             Err(DeckFault::TooManyOfRankFour)
         );
     }
@@ -1585,7 +2225,10 @@ mod tests {
     #[test]
     fn effect_is_cut_not_refused() {
         let long = "ы".repeat(400);
-        assert_eq!(clamp_effect(Some(&long)).unwrap().chars().count(), EFFECT_MAX);
+        assert_eq!(
+            clamp_effect(Some(&long)).unwrap().chars().count(),
+            EFFECT_MAX
+        );
     }
 
     #[test]
@@ -1605,6 +2248,171 @@ mod tests {
         let back: ArtFocal = serde_json::from_str(&out).unwrap();
         assert_eq!((back.x, back.y, back.zoom), (1.0, 0.0, 3.0));
         assert!(normalize_focal(Some("not json")).is_none());
+    }
+
+    /// The whole promise of the placement numbers: a frame saved before pieces
+    /// could overlap carries none of them, and must come back rendering exactly
+    /// as it did — the defaults ARE the old hard-coded assembly, which is why
+    /// there is no migration anywhere near this feature.
+    #[test]
+    fn a_frame_with_no_placement_keeps_the_assembly_it_always_had() {
+        let raw = r##"[{"tier":3,"nameEn":"","nameRu":"","paper":"","ink":"","border":"",
+            "frameMode":"sliced","cornerImage":"/s/c.webp","sideImageH":"/s/h.webp"}]"##;
+        let saved: Vec<BattleFrame> = serde_json::from_str(raw).unwrap();
+        let slices = normalize_frames(saved)[2].slices.clone();
+        // The two base edges paint over the corners, as the markup order did.
+        assert_eq!(slices.corner.layer, Some(2));
+        assert_eq!(slices.side_h.layer, Some(3));
+        assert_eq!(slices.side_v.layer, Some(3));
+        // The accents sit above both, laid in whole rather than stretched.
+        assert_eq!(slices.corner_extra.layer, Some(5));
+        assert_eq!(slices.corner_extra.fit, "contain");
+        assert_eq!(slices.side_h.fit, "stretch");
+        assert_eq!(slices.corner.turn, "mirror");
+        assert!(slices.corner.linked.unwrap());
+        // Every copy the slot actually has, and only those: a corner picture
+        // lands in four places, and a `top` on it is a place nothing renders.
+        assert_eq!(
+            slices.corner.places.keys().collect::<Vec<_>>(),
+            ["bl", "br", "tl", "tr"]
+        );
+        assert_eq!(slices.side_h.places.keys().collect::<Vec<_>>(), ["bottom", "top"]);
+        assert_eq!(slices.corner.places["tl"].grow_x, 0.0);
+    }
+
+    /// A piece may reach past its band — that is the point — but not so far
+    /// that an ornament becomes a second card face. Nonsense falls back to the
+    /// slot's own placement rather than poisoning the layout.
+    /// A copy may reach past its band — that is the point — but not so far that
+    /// an ornament becomes a second card face. Nonsense falls back to the
+    /// slot's own placement rather than poisoning the layout. And the two
+    /// halves of a side are genuinely apart: the left may overlap while the
+    /// right pulls back.
+    #[test]
+    fn a_piece_may_overlap_its_neighbour_but_not_the_whole_card() {
+        let raw = r##"{"corner":{"layer":7,"fit":"tile","turn":"rotate","linked":false,
+              "places":{"tl":{"growX":900,"growY":-3.5},"br":{"nudgeX":4},"top":{"growX":9}}},
+            "sideH":{"layer":0,"fit":"squish","turn":""},
+            "sideMidV":{"layer":1,"places":{"left":{"nudgeX":-2}}}}"##;
+        let given: SlicePieces = serde_json::from_str(raw).unwrap();
+        let slices = normalize_slices(given);
+        assert_eq!(slices.corner.places["tl"].grow_x, SLICE_GROW_MAX);
+        assert_eq!(slices.corner.places["tl"].grow_y, -3.5);
+        // The other three corners are untouched by what was done to the first.
+        assert_eq!(slices.corner.places["tr"].grow_x, 0.0);
+        assert_eq!(slices.corner.places["br"].nudge_x, 4.0);
+        // A corner has no `top` copy, whatever a hand-written dress claims.
+        assert!(!slices.corner.places.contains_key("top"));
+        assert_eq!(slices.corner.layer, Some(7));
+        assert_eq!(slices.corner.fit, "tile");
+        assert_eq!(slices.corner.turn, "rotate");
+        assert_eq!(slices.corner.linked, Some(false));
+        // Zero is not a layer and "squish" is not a fit: both take the slot's own.
+        assert_eq!(slices.side_h.layer, Some(3));
+        assert_eq!(slices.side_h.fit, "stretch");
+        assert_eq!(slices.side_h.turn, "mirror");
+        // The link is on unless the keeper turned it off.
+        assert_eq!(slices.side_h.linked, Some(true));
+        // An accent CAN be sent under the assembly — the layer is not a rank.
+        assert_eq!(slices.side_mid_v.layer, Some(1));
+        assert_eq!(slices.side_mid_v.places["left"].nudge_x, -2.0);
+        assert_eq!(slices.side_mid_v.places["right"].nudge_x, 0.0);
+        assert_eq!(slices.side_mid_v.fit, "contain");
+    }
+
+    /// A dress brings its whole assembly or none of it: a patch naming only
+    /// the placement is still a patch, and it travels intact.
+    #[test]
+    fn a_dress_may_carry_nothing_but_its_assembly() {
+        let raw = r##"{"slices":{"corner":{"layer":9,"places":{"tl":{"growX":6}}}}}"##;
+        let parsed: FrameOverride = serde_json::from_str(raw).unwrap();
+        let cleaned = clean_frame_override(parsed).expect("a placement is something");
+        let slices = cleaned.slices.expect("carried");
+        assert_eq!(slices.corner.layer, Some(9));
+        assert_eq!(slices.corner.places["tl"].grow_x, 6.0);
+        // Untouched slots come back as the assembly they have always had, so a
+        // dress worn onto another rank cannot leave one piece half-decided.
+        assert_eq!(slices.side_h.layer, Some(3));
+    }
+
+    /// The one thing a keeper notices instantly when it breaks: they drag,
+    /// they press save, and what comes back is what they dragged. Written as a
+    /// round trip through the very serialisation the endpoint uses, because
+    /// every way this has gone wrong has gone wrong in the shape of the JSON
+    /// and not in the arithmetic.
+    #[test]
+    fn what_the_keeper_dragged_survives_being_saved() {
+        let mut frame = default_frames()[2].clone();
+        frame.frame_mode = "sliced".into();
+        frame.corner_image = "/static/assets/c.webp".into();
+        frame.side_mid_h = "/static/assets/book.webp".into();
+        frame.slices.corner.layer = Some(4);
+        frame.slices.corner.linked = Some(false);
+        frame.slices.corner.places.insert(
+            "tl".into(),
+            SlicePlace { grow_x: 5.5, grow_y: 2.0, nudge_x: -1.5, nudge_y: 0.0, shown: Some(true) },
+        );
+        // A medallion over the lintel and nothing on the sill.
+        frame.slices.side_mid_h.places.insert(
+            "bottom".into(),
+            SlicePlace { shown: Some(false), ..SlicePlace::default() },
+        );
+        frame.ornaments = vec![SliceOrnament {
+            id: "clasp".into(),
+            image: "/static/assets/clasp.webp".into(),
+            kind: "edgeV".into(),
+            piece: SlicePiece { layer: Some(7), ..SlicePiece::default() },
+        }];
+
+        let wire = serde_json::to_string(&BattleFrames { frames: vec![frame] }).unwrap();
+        let back: BattleFrames = serde_json::from_str(&wire).unwrap();
+        let saved = normalize_frames(back.frames);
+        let third = &saved[2];
+
+        assert_eq!(third.slices.corner.layer, Some(4));
+        assert_eq!(third.slices.corner.linked, Some(false));
+        assert_eq!(third.slices.corner.places["tl"].grow_x, 5.5);
+        assert_eq!(third.slices.corner.places["tl"].nudge_x, -1.5);
+        // Untouched copies are still lit, and the one put out stays out.
+        assert_eq!(third.slices.side_mid_h.places["top"].shown, Some(true));
+        assert_eq!(third.slices.side_mid_h.places["bottom"].shown, Some(false));
+        assert_eq!(third.ornaments.len(), 1);
+        assert_eq!(third.ornaments[0].id, "clasp");
+        assert_eq!(third.ornaments[0].kind, "edgeV");
+        assert_eq!(third.ornaments[0].piece.layer, Some(7));
+        // An `edgeV` ornament has the two side copies and no corners.
+        assert_eq!(
+            third.ornaments[0].piece.places.keys().collect::<Vec<_>>(),
+            ["left", "right"]
+        );
+    }
+
+    /// A flourish that renders nothing, or that a drag could not tell from
+    /// another, is not kept — and a frame is a frame, not a scrapbook.
+    #[test]
+    fn the_keepers_own_flourishes_are_kept_countable() {
+        let given = vec![
+            SliceOrnament { id: " leaf ".into(), image: " /a.webp ".into(), kind: "midH".into(), ..Default::default() },
+            SliceOrnament { id: "leaf".into(), image: "/b.webp".into(), kind: "corner".into(), ..Default::default() },
+            SliceOrnament { id: "".into(), image: "/c.webp".into(), kind: "edgeV".into(), ..Default::default() },
+            SliceOrnament { id: "bare".into(), image: "".into(), kind: "edgeV".into(), ..Default::default() },
+            SliceOrnament { id: "odd".into(), image: "/d.webp".into(), kind: "sideways".into(), ..Default::default() },
+        ];
+        let kept = normalize_ornaments(given);
+        assert_eq!(
+            kept.iter().map(|o| o.id.as_str()).collect::<Vec<_>>(),
+            ["leaf", "odd"]
+        );
+        assert_eq!(kept[0].image, "/a.webp");
+        assert_eq!(kept[0].kind, "midH");
+        // An unreadable kind is a corner, which is the shape every ornament can
+        // at least be seen in.
+        assert_eq!(kept[1].kind, "corner");
+
+        let many: Vec<SliceOrnament> = (0..40)
+            .map(|i| SliceOrnament { id: format!("n{i}"), image: "/x.webp".into(), kind: "corner".into(), ..Default::default() })
+            .collect();
+        assert_eq!(normalize_ornaments(many).len(), ORNAMENTS_MAX);
     }
 
     #[test]
@@ -1639,6 +2447,93 @@ mod tests {
         assert_eq!(frames[1].layout, "corners");
         // An empty mode is not a mode; a frame must know how it is worn.
         assert_eq!(frames[1].frame_mode, "overlay");
+    }
+
+    #[test]
+    fn a_whole_saved_frame_survives_being_worn() {
+        // The point of presets: a dress taken out of the drawer names the
+        // entire design, and the save must not quietly cut it back down to a
+        // picture and a window the way it used to.
+        let raw = r##"{"frameImage":"","frameMode":"sliced","paper":"#eeddc8",
+            "cornerImage":"/static/uploads/frames/c.webp","sideImageH":"/s/h.webp",
+            "artShare":0.5,"headerShare":0.08,"layout":"plaque","costShape":"shield",
+            "insetTop":9,"insetLeft":8}"##;
+        let kept = normalize_frame_override(Some(raw)).expect("a whole dress is a dress");
+        let back: FrameOverride = serde_json::from_str(&kept).unwrap();
+        assert_eq!(back.corner_image.as_deref(), Some("/static/uploads/frames/c.webp"));
+        assert_eq!(back.paper.as_deref(), Some("#eeddc8"));
+        assert_eq!(back.layout.as_deref(), Some("plaque"));
+        assert_eq!(back.cost_shape.as_deref(), Some("shield"));
+        assert_eq!(back.art_share, Some(0.5));
+        // Empty is a choice, not an absence: a sliced dress says "no single
+        // photograph" this way, and dropping it would leave the rank's own
+        // picture stretched underneath the slices.
+        assert_eq!(back.frame_image.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn a_dress_that_names_nothing_is_no_dress() {
+        assert!(normalize_frame_override(Some("{}")).is_none());
+        assert!(normalize_frame_override(Some(r#"{"frameMode":"gilded"}"#)).is_none());
+    }
+
+    #[test]
+    fn a_dress_is_held_to_the_ranges_a_rank_is() {
+        let raw = r#"{"artShare":9,"headerShare":9,"insetTop":90,"costX":900,"aspect":9}"#;
+        let kept = normalize_frame_override(Some(raw)).unwrap();
+        let back: FrameOverride = serde_json::from_str(&kept).unwrap();
+        assert_eq!(back.art_share, Some(0.85));
+        assert_eq!(back.header_share, Some(0.3));
+        assert_eq!(back.inset_top, Some(45.0));
+        assert_eq!(back.cost_x, Some(100.0));
+        assert_eq!(back.aspect, Some(2.0));
+    }
+
+    #[test]
+    fn the_drawer_keeps_only_what_can_be_worn_again() {
+        let dress = |id: &str, name: &str| BattleFramePreset {
+            id: id.into(),
+            name: name.into(),
+            frame: painted(3, "a", "а", "#fff", "#000", "#ccc", ""),
+        };
+        let kept = normalize_presets(vec![
+            dress("one", "  Резной дуб  "),
+            // A dress with no name could never be taken out again.
+            dress("two", "   "),
+            dress("", "Безымянный ящик"),
+            // The same drawer twice is one drawer.
+            dress("one", "Он же"),
+        ]);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].name, "Резной дуб");
+    }
+
+    #[test]
+    fn the_drawer_has_a_bottom() {
+        let many: Vec<_> = (0..PRESETS_MAX + 5)
+            .map(|i| BattleFramePreset {
+                id: format!("p{i}"),
+                name: format!("Наряд {i}"),
+                frame: painted(1, "a", "а", "#fff", "#000", "#ccc", ""),
+            })
+            .collect();
+        assert_eq!(normalize_presets(many).len(), PRESETS_MAX);
+    }
+
+    #[test]
+    fn a_saved_dress_obeys_the_rules_a_rank_obeys() {
+        // Same clamps, because it is the same function — a preset that could
+        // hold numbers a rank refuses would break the card it is worn on.
+        let mut frame = painted(2, "a", "а", "#fff", "#000", "#ccc", "");
+        frame.art_share = 5.0;
+        frame.inset_top = 90.0;
+        let kept = normalize_presets(vec![BattleFramePreset {
+            id: "x".into(),
+            name: "Слишком".into(),
+            frame,
+        }]);
+        assert!(kept[0].frame.art_share <= 0.85);
+        assert!(kept[0].frame.inset_top <= 45.0);
     }
 
     #[test]
@@ -1908,8 +2803,18 @@ mod tests {
     fn traits_drop_the_nameless_and_cut_the_long() {
         let long = "я".repeat(400);
         let traits = vec![
-            CardTrait { name_en: "Wind".into(), name_ru: "Вихрь".into(), text_en: long.clone(), text_ru: "х".into() },
-            CardTrait { name_en: "  ".into(), name_ru: "".into(), text_en: "orphan".into(), text_ru: "".into() },
+            CardTrait {
+                name_en: "Wind".into(),
+                name_ru: "Вихрь".into(),
+                text_en: long.clone(),
+                text_ru: "х".into(),
+            },
+            CardTrait {
+                name_en: "  ".into(),
+                name_ru: "".into(),
+                text_en: "orphan".into(),
+                text_ru: "".into(),
+            },
         ];
         let stored = normalize_traits(&traits).unwrap();
         let back = read_traits(Some(&stored));

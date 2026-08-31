@@ -1,3 +1,10 @@
 {
-  "svelte.enable-ts-plugin": true
+  "svelte.enable-ts-plugin": true,
+  "elixirLS.projectDir": "live_drop",
+  "elixirLS.dialyzerEnabled": false,
+  "[elixir]": {
+    "editor.defaultFormatter": "elixir-lsp.elixir-ls",
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true
+  }
 }

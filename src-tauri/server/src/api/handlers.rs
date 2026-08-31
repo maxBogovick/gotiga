@@ -235,11 +235,18 @@ fn convert_image(
         // Alpha is simply dropped, the same simplification `build_image_variants`
         // already makes for every JPEG rendition — a faithful re-encode, not a
         // background compositor.
-        "jpeg" => Ok(("image/jpeg", "jpg", encode_jpeg_bytes(&decoded.to_rgb8(), 95)?)),
+        "jpeg" => Ok((
+            "image/jpeg",
+            "jpg",
+            encode_jpeg_bytes(&decoded.to_rgb8(), 95)?,
+        )),
         "png" => {
             let mut bytes = Vec::new();
             decoded
-                .write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
+                .write_to(
+                    &mut std::io::Cursor::new(&mut bytes),
+                    image::ImageFormat::Png,
+                )
                 .map_err(|e| AppError::Internal(format!("Failed to encode image: {}", e)))?;
             Ok(("image/png", "png", bytes))
         }
@@ -1372,9 +1379,7 @@ fn fit_within(image: &image::DynamicImage, max_px: u32) -> image::RgbImage {
     if image.width() <= max_px && image.height() <= max_px {
         image.to_rgb8()
     } else {
-        image
-            .resize(max_px, max_px, FilterType::Lanczos3)
-            .to_rgb8()
+        image.resize(max_px, max_px, FilterType::Lanczos3).to_rgb8()
     }
 }
 
@@ -1440,8 +1445,8 @@ pub async fn backfill_background_image(upload_dir: String) {
     let medium_jpg_path = bg_dir.join(BACKGROUND_MEDIUM_JPEG);
     let medium_webp_path = bg_dir.join(BACKGROUND_MEDIUM_WEBP);
     let webp_ok = fs::metadata(&webp_path).await.is_ok();
-    let medium_ok =
-        fs::metadata(&medium_jpg_path).await.is_ok() && fs::metadata(&medium_webp_path).await.is_ok();
+    let medium_ok = fs::metadata(&medium_jpg_path).await.is_ok()
+        && fs::metadata(&medium_webp_path).await.is_ok();
     if webp_ok && medium_ok {
         return;
     }
@@ -1558,13 +1563,17 @@ pub async fn upload_main_background(
                 .map_err(AppError::Io)?;
 
             let medium_jpg_path = format!("{}/{}", bg_dir, BACKGROUND_MEDIUM_JPEG);
-            let mut medium_jpg = fs::File::create(&medium_jpg_path).await.map_err(AppError::Io)?;
+            let mut medium_jpg = fs::File::create(&medium_jpg_path)
+                .await
+                .map_err(AppError::Io)?;
             medium_jpg
                 .write_all(&variant.medium_jpeg)
                 .await
                 .map_err(AppError::Io)?;
             let medium_webp_path = format!("{}/{}", bg_dir, BACKGROUND_MEDIUM_WEBP);
-            let mut medium_webp = fs::File::create(&medium_webp_path).await.map_err(AppError::Io)?;
+            let mut medium_webp = fs::File::create(&medium_webp_path)
+                .await
+                .map_err(AppError::Io)?;
             medium_webp
                 .write_all(&variant.medium_webp)
                 .await
@@ -2041,14 +2050,21 @@ pub async fn set_figurine_like(
         .await?;
     let figurine_id = service.resolve_figurine_uuid(&handle).await?;
     let user_id = if let Some(token) = bearer_token(&headers) {
-        service.get_user_from_session(token).await.ok().map(|u| u.id)
+        service
+            .get_user_from_session(token)
+            .await
+            .ok()
+            .map(|u| u.id)
     } else {
         None
     };
     let (liked, like_count) = service
         .set_figurine_like(figurine_id, &req.visitor_token, user_id, req.liked)
         .await?;
-    Ok(Json(crate::models::LikeToggleResponse { liked, like_count }))
+    Ok(Json(crate::models::LikeToggleResponse {
+        liked,
+        like_count,
+    }))
 }
 
 /// Admin-only ranking of every figurine by mark count. Never exposed publicly.
@@ -2444,7 +2460,9 @@ pub async fn feed_rss(
 }
 
 fn gazette_rss_stamp(leaf: &GazetteLeafDto) -> &str {
-    leaf.published_at.as_deref().unwrap_or(leaf.created_at.as_str())
+    leaf.published_at
+        .as_deref()
+        .unwrap_or(leaf.created_at.as_str())
 }
 
 fn gazette_rss_title(leaf: &GazetteLeafDto) -> String {
@@ -3753,9 +3771,7 @@ pub async fn admin_remove_contact_message(
 
 // === CABINET GAZETTE ===
 
-pub async fn get_gazette_home(
-    State(service): State<AppService>,
-) -> Result<Json<GazetteHomeDto>> {
+pub async fn get_gazette_home(State(service): State<AppService>) -> Result<Json<GazetteHomeDto>> {
     Ok(Json(service.get_gazette_home().await?))
 }
 
@@ -3906,17 +3922,16 @@ pub async fn admin_list_gazette_cuttings(
     State(service): State<AppService>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<GazetteCuttingsPage>> {
-    let bucket = if params.get("dismissed").map(|v| v == "true").unwrap_or(false) {
+    let bucket = if params
+        .get("dismissed")
+        .map(|v| v == "true")
+        .unwrap_or(false)
+    {
         "aside"
     } else {
-        params
-            .get("bucket")
-            .map(|s| s.as_str())
-            .unwrap_or("inbox")
+        params.get("bucket").map(|s| s.as_str()).unwrap_or("inbox")
     };
-    let feed_id = params
-        .get("feedId")
-        .and_then(|s| Uuid::parse_str(s).ok());
+    let feed_id = params.get("feedId").and_then(|s| Uuid::parse_str(s).ok());
     let page = params
         .get("page")
         .and_then(|p| p.parse::<i64>().ok())
@@ -3990,13 +4005,7 @@ pub async fn watch_gazette_leaf(
     };
     Ok(Json(
         service
-            .watch_gazette_leaf(
-                &slug,
-                body,
-                user_id,
-                email.as_deref(),
-                name.as_deref(),
-            )
+            .watch_gazette_leaf(&slug, body, user_id, email.as_deref(), name.as_deref())
             .await?,
     ))
 }
@@ -4107,6 +4116,21 @@ pub async fn admin_save_battle_frames(
     Ok(Json(service.save_battle_frames(body).await?))
 }
 
+/// The keeper's saved dresses. Not on the public frames route: a preset is
+/// something the desk keeps in a drawer, not something a card wears.
+pub async fn admin_get_battle_frame_presets(
+    State(service): State<AppService>,
+) -> Result<Json<crate::battles::BattleFramePresets>> {
+    Ok(Json(service.get_battle_frame_presets().await?))
+}
+
+pub async fn admin_save_battle_frame_presets(
+    State(service): State<AppService>,
+    Json(body): Json<crate::battles::BattleFramePresets>,
+) -> Result<Json<crate::battles::BattleFramePresets>> {
+    Ok(Json(service.save_battle_frame_presets(body).await?))
+}
+
 /// Upload one card-frame picture, keeping its transparency.
 ///
 /// Deliberately NOT the ordinary `/upload`: that writes four JPEG renditions,
@@ -4156,6 +4180,215 @@ pub async fn admin_upload_battle_frame_art(
     Err(AppError::BadRequest("No file field found".to_string()))
 }
 
+// === BATTLE ASSETS ===
+
+pub async fn admin_list_battle_asset_sheets(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<BattleAssetSheetDto>>> {
+    Ok(Json(service.list_battle_asset_sheets().await?))
+}
+
+/// The sheet is stored in the bytes it arrived in — no rendition, no resize.
+/// A JPEG copy of a sheet with an alpha channel would throw away the very
+/// thing the cut reads.
+pub async fn admin_add_battle_asset_sheet(
+    State(service): State<AppService>,
+    mut multipart: Multipart,
+) -> Result<(StatusCode, Json<BattleAssetSheetDto>)> {
+    let mut name: Option<String> = None;
+    let mut file_name: Option<String> = None;
+    let mut data: Option<Bytes> = None;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::BadRequest(e.to_string()))?
+    {
+        match field.name().unwrap_or("") {
+            "name" => name = field.text().await.ok().filter(|s| !s.trim().is_empty()),
+            "file" => {
+                file_name = field.file_name().map(|f| f.to_string());
+                data = Some(
+                    field
+                        .bytes()
+                        .await
+                        .map_err(|e| AppError::BadRequest(e.to_string()))?,
+                );
+            }
+            _ => {}
+        }
+    }
+
+    let data = data.ok_or_else(|| AppError::BadRequest("No file field found".to_string()))?;
+    if data.len() > MAX_IMAGE_BYTES {
+        return Err(AppError::BadRequest("Image file is too large".into()));
+    }
+    // Falling back to the file's own name, stem only: an upload with nothing
+    // typed still arrives with something a keeper recognises.
+    let fallback = file_name
+        .as_deref()
+        .map(|f| f.rsplit('/').next().unwrap_or(f))
+        .and_then(|f| f.rsplit_once('.').map(|(stem, _)| stem).or(Some(f)))
+        .unwrap_or("Лист")
+        .to_string();
+    let sheet = service
+        .admin_add_battle_asset_sheet(name.as_deref().unwrap_or(&fallback), data.to_vec())
+        .await?;
+    Ok((StatusCode::CREATED, Json(sheet)))
+}
+
+pub async fn admin_rename_battle_asset_sheet(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<SaveBattleAssetSheetRequest>,
+) -> Result<Json<BattleAssetSheetDto>> {
+    Ok(Json(
+        service.admin_rename_battle_asset_sheet(id, &body.name).await?,
+    ))
+}
+
+pub async fn admin_delete_battle_asset_sheet(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    service.admin_delete_battle_asset_sheet(id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Show what a cut would produce, without writing a file. POST rather than GET
+/// because the settings are a body, not a query string — and because a
+/// proposal is a piece of work, not a lookup.
+pub async fn admin_slice_battle_asset_sheet(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<SliceSheetRequest>,
+) -> Result<Json<BattleSheetCutDto>> {
+    Ok(Json(
+        service
+            .admin_slice_battle_asset_sheet(id, body.settings)
+            .await?,
+    ))
+}
+
+pub async fn admin_cut_battle_asset_sheet(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<CutSheetRequest>,
+) -> Result<(StatusCode, Json<Vec<BattleAssetDto>>)> {
+    let saved = service
+        .admin_cut_battle_asset_sheet(id, body.settings, body.picks)
+        .await?;
+    Ok((StatusCode::CREATED, Json(saved)))
+}
+
+/// One part of a proposed cut at full size, for drawing rectangles on. The
+/// review grid's previews are shrunk to fit eighty of them in one reply; this
+/// fetches the single piece being worked on.
+pub async fn admin_battle_sheet_part(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<BattleSheetPartRequest>,
+) -> Result<Json<BattleSheetPartFullDto>> {
+    Ok(Json(
+        service
+            .admin_battle_sheet_part(id, body.settings, body.index)
+            .await?,
+    ))
+}
+
+/// Take hand-drawn rectangles off a part already in the store. The part
+/// itself stays: the rectangles are additions, not a replacement.
+pub async fn admin_split_battle_asset(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<SplitBattleAssetRequest>,
+) -> Result<(StatusCode, Json<Vec<BattleAssetDto>>)> {
+    let saved = service.admin_split_battle_asset(id, body.rects).await?;
+    Ok((StatusCode::CREATED, Json(saved)))
+}
+
+pub async fn admin_list_battle_assets(
+    State(service): State<AppService>,
+    Query(query): Query<ListBattleAssetsQuery>,
+) -> Result<Json<Vec<BattleAssetDto>>> {
+    let sheet = match query.sheet_id.as_deref().map(str::trim) {
+        None | Some("") => AssetSheetFilter::Any,
+        Some("loose") => AssetSheetFilter::Loose,
+        Some(raw) => AssetSheetFilter::One(
+            Uuid::parse_str(raw).map_err(|_| AppError::BadRequest("That is not a sheet id".into()))?,
+        ),
+    };
+    Ok(Json(
+        service.list_battle_assets(sheet, query.role, query.q).await?,
+    ))
+}
+
+pub async fn admin_add_battle_asset(
+    State(service): State<AppService>,
+    mut multipart: Multipart,
+) -> Result<(StatusCode, Json<BattleAssetDto>)> {
+    let mut name: Option<String> = None;
+    let mut role: Option<String> = None;
+    let mut data: Option<Bytes> = None;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::BadRequest(e.to_string()))?
+    {
+        match field.name().unwrap_or("") {
+            "name" => name = field.text().await.ok().filter(|s| !s.trim().is_empty()),
+            "role" => role = field.text().await.ok().filter(|s| !s.trim().is_empty()),
+            "file" => {
+                data = Some(
+                    field
+                        .bytes()
+                        .await
+                        .map_err(|e| AppError::BadRequest(e.to_string()))?,
+                );
+            }
+            _ => {}
+        }
+    }
+
+    let data = data.ok_or_else(|| AppError::BadRequest("No file field found".to_string()))?;
+    if data.len() > MAX_IMAGE_BYTES {
+        return Err(AppError::BadRequest("Image file is too large".into()));
+    }
+    let asset = service
+        .admin_add_battle_asset(
+            name.as_deref().unwrap_or("Деталь"),
+            role.as_deref(),
+            data.to_vec(),
+        )
+        .await?;
+    Ok((StatusCode::CREATED, Json(asset)))
+}
+
+pub async fn admin_update_battle_asset(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<SaveBattleAssetRequest>,
+) -> Result<Json<BattleAssetDto>> {
+    Ok(Json(service.admin_update_battle_asset(id, body).await?))
+}
+
+pub async fn admin_delete_battle_asset(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    service.admin_delete_battle_asset(id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_reorder_battle_assets(
+    State(service): State<AppService>,
+    Json(body): Json<ReorderBattleCardsRequest>,
+) -> Result<StatusCode> {
+    service.admin_reorder_battle_assets(body.ids).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 // === TOOLS ===
 
 /// Convert one image to another common format and hand the result straight
@@ -4197,7 +4430,8 @@ pub async fn admin_convert_image(mut multipart: Multipart) -> Result<impl IntoRe
         }
     }
 
-    let format = format.ok_or_else(|| AppError::BadRequest("No target format given".to_string()))?;
+    let format =
+        format.ok_or_else(|| AppError::BadRequest("No target format given".to_string()))?;
     let file_name = file_name.unwrap_or_else(|| "image".to_string());
     let data = file_data.ok_or_else(|| AppError::BadRequest("No file field found".to_string()))?;
     if data.len() > MAX_IMAGE_BYTES {
@@ -4243,10 +4477,7 @@ pub async fn admin_weigh_battle_card(
 /// A match belongs to a person: the ledger it can credit is theirs, and the
 /// board it moves is theirs. Anonymous play would mean a wallet in the browser,
 /// which is the same as infinite money.
-async fn current_user(
-    service: &AppService,
-    headers: &HeaderMap,
-) -> Result<crate::models::User> {
+async fn current_user(service: &AppService, headers: &HeaderMap) -> Result<crate::models::User> {
     let token = bearer_token(headers).ok_or(AppError::Unauthorized)?;
     service.get_user_from_session(token).await
 }
@@ -4258,7 +4489,11 @@ pub async fn list_battle_challenges(
     headers: HeaderMap,
 ) -> Result<Json<Vec<BattleChallengeDto>>> {
     let user_id = match bearer_token(&headers) {
-        Some(token) => service.get_user_from_session(token).await.ok().map(|u| u.id),
+        Some(token) => service
+            .get_user_from_session(token)
+            .await
+            .ok()
+            .map(|u| u.id),
         None => None,
     };
     Ok(Json(service.list_battle_challenges(user_id, true).await?))
@@ -4336,7 +4571,9 @@ pub async fn grant_battle_attention(
         .check_rate_limit("battle_attention", &extract_ip(&headers), 120, 3600)
         .await?;
     Ok(Json(
-        service.grant_attention_dust(user.id, &req.kind, req.id).await?,
+        service
+            .grant_attention_dust(user.id, &req.kind, req.id)
+            .await?,
     ))
 }
 
@@ -4434,7 +4671,9 @@ pub async fn admin_update_battle_challenge(
     Path(id): Path<Uuid>,
     Json(body): Json<SaveBattleChallengeRequest>,
 ) -> Result<Json<BattleChallengeDto>> {
-    Ok(Json(service.admin_save_battle_challenge(Some(id), body).await?))
+    Ok(Json(
+        service.admin_save_battle_challenge(Some(id), body).await?,
+    ))
 }
 
 /// Что у гостя сейчас — ровно то, что видит он сам.

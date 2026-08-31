@@ -4357,7 +4357,11 @@ impl Default for BattleDustRates {
     /// challenge (25): attention is the slow, wide source and a study is the
     /// deliberate one, and the order between them should be felt.
     fn default() -> Self {
-        Self { liked: 2, seen: 1, read: 3 }
+        Self {
+            liked: 2,
+            seen: 1,
+            read: 3,
+        }
     }
 }
 
@@ -4437,4 +4441,270 @@ pub struct SaveBattleRaceRequest {
     pub note_ru: Option<String>,
     pub icon_url: Option<String>,
     pub level_frames: Option<String>,
+}
+
+// === BATTLE ASSETS ===
+
+/// A sheet of frame parts as it arrived, kept whole so the cut can be redone.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct BattleAssetSheet {
+    pub id: Uuid,
+    pub name: String,
+    /// Already a public URL, like a frame's or a race icon's.
+    pub source_url: String,
+    pub width: i32,
+    pub height: i32,
+    /// The settings that last cut this sheet, as JSON. `None` means it has
+    /// never been cut, and the measured defaults apply.
+    pub settings: Option<String>,
+    pub sort_order: Option<i32>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// A sheet read for the desk, carrying how many parts came off it.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct BattleAssetSheetListed {
+    pub id: Uuid,
+    pub name: String,
+    pub source_url: String,
+    pub width: i32,
+    pub height: i32,
+    pub settings: Option<String>,
+    pub sort_order: Option<i32>,
+    pub created_at: DateTime<Utc>,
+    pub part_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleAssetSheetDto {
+    pub id: String,
+    pub name: String,
+    pub source_url: String,
+    pub width: i32,
+    pub height: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort_order: Option<i32>,
+    pub created_at: DateTime<Utc>,
+    /// How many parts stand under this sheet. The keeper sees what clearing it
+    /// away would leave loose before doing it.
+    pub part_count: i64,
+}
+
+/// One cut-out part in the store.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct BattleAsset {
+    pub id: Uuid,
+    /// Where it came from, not who owns it: a sheet can be cleared away and
+    /// the part stays, because a frame may already be wearing it.
+    pub sheet_id: Option<Uuid>,
+    pub name: String,
+    pub role: String,
+    pub url: String,
+    pub width: i32,
+    pub height: i32,
+    pub sort_order: Option<i32>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleAssetDto {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sheet_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sheet_name: Option<String>,
+    pub name: String,
+    pub role: String,
+    pub url: String,
+    pub width: i32,
+    pub height: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort_order: Option<i32>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// One part of a proposed cut, before anything is written to disk.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleSheetPartDto {
+    pub index: u32,
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+    /// Set aside as a caption. Still numbered and still shown — the only way
+    /// to check a cut is to see everything it found, including the rejects.
+    pub is_text: bool,
+    pub role: String,
+    /// A shrunk `data:` picture. The proposal never touches the upload
+    /// directory, so a keeper can re-cut a sheet twenty times without leaving
+    /// twenty sets of files behind.
+    pub preview: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleSheetCutDto {
+    pub width: u32,
+    pub height: u32,
+    /// Which route the ground came off by — `alpha` or `background`. Reported
+    /// because it explains every other number the keeper is reading.
+    pub source: String,
+    /// The settings this cut actually ran with, filled in from the measured
+    /// defaults. Echoed back so the desk shows the knobs at their real values
+    /// without keeping a second copy of the defaults that could drift from
+    /// these.
+    pub settings: crate::sheet::SliceSettings,
+    pub parts: Vec<BattleSheetPartDto>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SliceSheetRequest {
+    #[serde(default)]
+    pub settings: crate::sheet::SliceSettings,
+}
+
+/// One part the keeper decided to keep, named and filed.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleAssetPick {
+    pub index: u32,
+    pub name: Option<String>,
+    pub role: Option<String>,
+    /// Echoed back from the proposal. Numbering only means the same thing
+    /// under the same settings, so the cut checks the shape it is about to
+    /// save against the shape the keeper was looking at.
+    pub width: u32,
+    pub height: u32,
+    /// Rectangles drawn on this part by hand. Each becomes a part of its own,
+    /// and the part itself is saved too: a glued piece is sometimes still
+    /// worth keeping whole.
+    #[serde(default)]
+    pub rects: Vec<BattleAssetSplitRect>,
+}
+
+/// One rectangle the keeper drew by hand on a finished piece.
+///
+/// Where the automatic cut cannot know that two corners touching at a leaf
+/// were meant to be two things, this is how they are told apart: the keeper
+/// draws, and each rectangle becomes its own part. Rough is enough — what
+/// comes out is trimmed to the artwork inside, the same as every other cut.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleAssetSplitRect {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    pub name: Option<String>,
+    pub role: Option<String>,
+}
+
+impl BattleAssetSplitRect {
+    pub fn frame(&self) -> crate::sheet::FractionRect {
+        crate::sheet::FractionRect {
+            x: self.x,
+            y: self.y,
+            w: self.w,
+            h: self.h,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SplitBattleAssetRequest {
+    pub rects: Vec<BattleAssetSplitRect>,
+}
+
+/// Ask for one part of a proposed cut at its full size.
+///
+/// The review grid carries shrunk previews — enough to recognise a corner,
+/// not enough to draw on. Drawing needs the picture itself, and only for the
+/// one piece being worked on, so it is fetched when the board opens rather
+/// than sent with all eighty.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleSheetPartRequest {
+    #[serde(default)]
+    pub settings: crate::sheet::SliceSettings,
+    pub index: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleSheetPartFullDto {
+    pub index: u32,
+    pub width: u32,
+    pub height: u32,
+    /// A `data:` picture again, and for the same reason as the previews: a
+    /// piece the keeper is only looking at must not leave a file behind.
+    pub image: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CutSheetRequest {
+    #[serde(default)]
+    pub settings: crate::sheet::SliceSettings,
+    pub picks: Vec<BattleAssetPick>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveBattleAssetSheetRequest {
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveBattleAssetRequest {
+    pub name: Option<String>,
+    pub role: Option<String>,
+    /// Moving a part to another sheet, or off every sheet. Absent leaves it
+    /// where it is; present-and-null makes it loose.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sheet_id: Option<Option<String>>,
+}
+
+/// A part read for the desk, carrying the name of the sheet it came off.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct BattleAssetListed {
+    pub id: Uuid,
+    pub sheet_id: Option<Uuid>,
+    pub name: String,
+    pub role: String,
+    pub url: String,
+    pub width: i32,
+    pub height: i32,
+    pub sort_order: Option<i32>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub sheet_name: Option<String>,
+}
+
+/// Which sheet's parts are being asked for. `Loose` is not the same question as
+/// `Any`: a part with no sheet is an ordinary state, not a missing filter.
+#[derive(Debug, Clone, Copy)]
+pub enum AssetSheetFilter {
+    Any,
+    Loose,
+    One(Uuid),
+}
+
+/// Which parts the desk is asking for. `sheetId=loose` is its own question:
+/// a part with no sheet is an ordinary state, not an absent filter.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListBattleAssetsQuery {
+    pub sheet_id: Option<String>,
+    pub role: Option<String>,
+    pub q: Option<String>,
 }

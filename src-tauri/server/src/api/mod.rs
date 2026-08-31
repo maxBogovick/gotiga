@@ -176,10 +176,7 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 get(handlers::list_gazette_for_work),
             )
             .route("/gazette", get(handlers::list_gazette))
-            .route(
-                "/gazette/:slug/watch",
-                post(handlers::watch_gazette_leaf),
-            )
+            .route("/gazette/:slug/watch", post(handlers::watch_gazette_leaf))
             .route(
                 "/gazette/watch/:token",
                 get(handlers::get_gazette_watch).post(handlers::leave_gazette_watch),
@@ -203,7 +200,10 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 post(handlers::begin_battle_match),
             )
             .route("/battles/matches/:id", get(handlers::get_battle_match))
-            .route("/battles/matches/:id/act", post(handlers::act_in_battle_match))
+            .route(
+                "/battles/matches/:id/act",
+                post(handlers::act_in_battle_match),
+            )
             // Кошелёк и владение. Всё под сессией: книга лежит на сервере
             // именно потому, что кошелёк в localStorage — бесконечные деньги.
             .route("/battles/me", get(handlers::get_battle_me))
@@ -214,7 +214,10 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             )
             .route("/battles/buy", post(handlers::buy_battle_card))
             .route("/battles/raise", post(handlers::raise_battle_card_level))
-            .route("/battles/cards/:id/seen", post(handlers::mark_battle_card_seen))
+            .route(
+                "/battles/cards/:id/seen",
+                post(handlers::mark_battle_card_seen),
+            )
             .route("/battles/attention", post(handlers::grant_battle_attention))
             // === PUBLIC LOGIN ===
             .route("/admin/login", post(handlers::admin_login))
@@ -541,9 +544,10 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             )
             .route(
                 "/admin/gazette/tales/order",
-                post(handlers::admin_reorder_tales).route_layer(
-                    middleware::from_fn_with_state(config.clone(), auth_middleware),
-                ),
+                post(handlers::admin_reorder_tales).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
             )
             .route(
                 "/admin/gazette/:id",
@@ -588,6 +592,17 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                     middleware::from_fn_with_state(config.clone(), auth_middleware),
                 ),
             )
+            // Ящик хранителя: сохранённые наряды рамок. Не на публичном
+            // маршруте рамок — их никто, кроме стола, не носит.
+            .route(
+                "/admin/battles/frames/presets",
+                get(handlers::admin_get_battle_frame_presets)
+                    .post(handlers::admin_save_battle_frame_presets)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
             // Ставки начисления за внимание. Настройка хранителя, а не схема:
             // числа подбираются на живом доме, а не закладываются в миграцию.
             .route(
@@ -604,9 +619,10 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             // a big PNG before it is re-encoded.
             .route(
                 "/admin/battles/bench",
-                post(handlers::admin_bench_battle).route_layer(
-                    middleware::from_fn_with_state(config.clone(), auth_middleware),
-                ),
+                post(handlers::admin_bench_battle).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
             )
             .route(
                 "/admin/battles/matches/{id}/replay",
@@ -633,9 +649,10 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             // только начислив монеты, войдя под гостем и купив карты по одной.
             .route(
                 "/admin/battles/guest/:id",
-                get(handlers::admin_read_battle_guest).route_layer(
-                    middleware::from_fn_with_state(config.clone(), auth_middleware),
-                ),
+                get(handlers::admin_read_battle_guest).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
             )
             .route(
                 "/admin/battles/cards/give",
@@ -717,6 +734,87 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 "/admin/battles/races/:id",
                 put(handlers::admin_update_battle_race)
                     .delete(handlers::admin_delete_battle_race)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            // === ASSETS ===
+            // The store of frame parts, and the sheets they were cut from.
+            // Every static segment stands before `/:id`, so "sheets" and
+            // "order" are never read as an id.
+            .route(
+                "/admin/battles/assets/sheets",
+                get(handlers::admin_list_battle_asset_sheets)
+                    .post(handlers::admin_add_battle_asset_sheet)
+                    // A sheet is kept whole and unresized, so it arrives at
+                    // full size — the ordinary image limit is not enough.
+                    .route_layer(DefaultBodyLimit::max(MEDIA_UPLOAD_LIMIT))
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            .route(
+                "/admin/battles/assets/sheets/:id",
+                put(handlers::admin_rename_battle_asset_sheet)
+                    .delete(handlers::admin_delete_battle_asset_sheet)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            // Proposes a cut and writes nothing; the keeper re-cuts until the
+            // numbers look right.
+            .route(
+                "/admin/battles/assets/sheets/:id/slice",
+                post(handlers::admin_slice_battle_asset_sheet).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            // ...and this one takes the chosen parts off for keeps.
+            .route(
+                "/admin/battles/assets/sheets/:id/cut",
+                post(handlers::admin_cut_battle_asset_sheet).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            // One part at full size — what the drawing board needs and the
+            // review grid's shrunk previews cannot give.
+            .route(
+                "/admin/battles/assets/sheets/:id/part",
+                post(handlers::admin_battle_sheet_part).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/battles/assets/order",
+                post(handlers::admin_reorder_battle_assets).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/battles/assets",
+                get(handlers::admin_list_battle_assets)
+                    .post(handlers::admin_add_battle_asset)
+                    .route_layer(DefaultBodyLimit::max(MEDIA_UPLOAD_LIMIT))
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            // Before `/:id` is reached for anything else — a split is an act
+            // on one part, not a part id of its own.
+            .route(
+                "/admin/battles/assets/:id/split",
+                post(handlers::admin_split_battle_asset).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/battles/assets/:id",
+                put(handlers::admin_update_battle_asset)
+                    .delete(handlers::admin_delete_battle_asset)
                     .route_layer(middleware::from_fn_with_state(
                         config.clone(),
                         auth_middleware,
@@ -1184,7 +1282,17 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
         .route("/feed.xml", get(handlers::feed_rss))
         // Live RSS of gazette leaves — separate from the Pinterest works channel.
         .route("/gazette/feed.xml", get(handlers::gazette_feed_rss));
-    for subdir in ["images", "videos", "audio", "backgrounds", "avatars", "frames"] {
+    for subdir in [
+        "images",
+        "videos",
+        "audio",
+        "backgrounds",
+        "avatars",
+        "frames",
+        // The sheets of frame parts, and the parts cut off them.
+        "sheets",
+        "assets",
+    ] {
         app = app.nest_service(
             &format!("/static/{}", subdir),
             ServeDir::new(upload_dir.join(subdir)),

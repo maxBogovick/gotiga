@@ -13,6 +13,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
+use base64::Engine as _;
 use uuid::Uuid;
 
 type RateLimiter = Arc<Mutex<HashMap<String, Vec<Instant>>>>;
@@ -3048,7 +3049,11 @@ impl AppService {
             .set_figurine_like(figurine_id, token, user_id, liked)
             .await?;
         Self::log_domain_event(
-            if liked { "figurine_liked" } else { "figurine_unliked" },
+            if liked {
+                "figurine_liked"
+            } else {
+                "figurine_unliked"
+            },
             "figurine",
             figurine_id,
             "ok",
@@ -5566,7 +5571,11 @@ impl AppService {
         Ok(())
     }
 
-    async fn send_sketch_watch_letters(&self, figurine_id: Uuid, figurine_name: &str) -> Result<()> {
+    async fn send_sketch_watch_letters(
+        &self,
+        figurine_id: Uuid,
+        figurine_name: &str,
+    ) -> Result<()> {
         let pending = self
             .repo
             .list_unnotified_gazette_watches_for_figurine(figurine_id)
@@ -5588,7 +5597,11 @@ impl AppService {
             if !seen.insert(key) {
                 continue;
             }
-            if self.send_sketch_laid_email(&watch, figurine_name, &handle).await.is_ok() {
+            if self
+                .send_sketch_laid_email(&watch, figurine_name, &handle)
+                .await
+                .is_ok()
+            {
                 sent.push(watch.email);
             }
         }
@@ -6478,11 +6491,7 @@ impl AppService {
         })
     }
 
-    pub async fn list_gazette_public(
-        &self,
-        page: i64,
-        per_page: i64,
-    ) -> Result<GazetteLeavesPage> {
+    pub async fn list_gazette_public(&self, page: i64, per_page: i64) -> Result<GazetteLeavesPage> {
         let per_page = per_page.clamp(1, 500);
         let page = page.max(1);
         let offset = (page - 1) * per_page;
@@ -6591,7 +6600,10 @@ impl AppService {
             .list_gazette_leaves_admin(status, kind, per_page, offset)
             .await?;
         Ok(GazetteLeavesPage {
-            items: items.into_iter().map(Self::gazette_leaf_dto_admin).collect(),
+            items: items
+                .into_iter()
+                .map(Self::gazette_leaf_dto_admin)
+                .collect(),
             total,
             page,
             per_page,
@@ -6611,12 +6623,26 @@ impl AppService {
         let rec = self
             .repo
             .insert_gazette_leaf(
-                &p.slug, &p.kind, &p.status, &p.title_en, &p.title_ru,
-                p.dek_en.as_deref(), p.dek_ru.as_deref(),
-                p.body_en.as_deref(), p.body_ru.as_deref(),
-                p.figurine_id, p.href.as_deref(), p.source_name.as_deref(),
-                p.source_url.as_deref(), p.image_url.as_deref(), &p.image_urls,
-                p.pinned, p.published_at, p.scheduled_at, p.expected_from, p.expected_to,
+                &p.slug,
+                &p.kind,
+                &p.status,
+                &p.title_en,
+                &p.title_ru,
+                p.dek_en.as_deref(),
+                p.dek_ru.as_deref(),
+                p.body_en.as_deref(),
+                p.body_ru.as_deref(),
+                p.figurine_id,
+                p.href.as_deref(),
+                p.source_name.as_deref(),
+                p.source_url.as_deref(),
+                p.image_url.as_deref(),
+                &p.image_urls,
+                p.pinned,
+                p.published_at,
+                p.scheduled_at,
+                p.expected_from,
+                p.expected_to,
             )
             .await?;
         Self::log_domain_event("gazette_leaf_created", "gazette_leaf", rec.id, "ok");
@@ -6639,12 +6665,27 @@ impl AppService {
         let rec = self
             .repo
             .update_gazette_leaf(
-                id, &p.slug, &p.kind, &p.status, &p.title_en, &p.title_ru,
-                p.dek_en.as_deref(), p.dek_ru.as_deref(),
-                p.body_en.as_deref(), p.body_ru.as_deref(),
-                p.figurine_id, p.href.as_deref(), p.source_name.as_deref(),
-                p.source_url.as_deref(), p.image_url.as_deref(), &p.image_urls,
-                p.pinned, p.published_at, p.scheduled_at, p.expected_from, p.expected_to,
+                id,
+                &p.slug,
+                &p.kind,
+                &p.status,
+                &p.title_en,
+                &p.title_ru,
+                p.dek_en.as_deref(),
+                p.dek_ru.as_deref(),
+                p.body_en.as_deref(),
+                p.body_ru.as_deref(),
+                p.figurine_id,
+                p.href.as_deref(),
+                p.source_name.as_deref(),
+                p.source_url.as_deref(),
+                p.image_url.as_deref(),
+                &p.image_urls,
+                p.pinned,
+                p.published_at,
+                p.scheduled_at,
+                p.expected_from,
+                p.expected_to,
             )
             .await?;
         Self::log_domain_event("gazette_leaf_updated", "gazette_leaf", rec.id, "ok");
@@ -6732,7 +6773,10 @@ impl AppService {
         })
     }
 
-    pub async fn get_gazette_watch_by_token(&self, token: &str) -> Result<Option<GazetteWatchInfo>> {
+    pub async fn get_gazette_watch_by_token(
+        &self,
+        token: &str,
+    ) -> Result<Option<GazetteWatchInfo>> {
         let Some(w) = self.repo.get_gazette_watch_by_token(token).await? else {
             return Ok(None);
         };
@@ -6752,7 +6796,11 @@ impl AppService {
         Ok(())
     }
 
-    pub async fn list_user_gazette_watches(&self, user_id: Uuid, email: &str) -> Result<Vec<GazetteWatchDto>> {
+    pub async fn list_user_gazette_watches(
+        &self,
+        user_id: Uuid,
+        email: &str,
+    ) -> Result<Vec<GazetteWatchDto>> {
         let _ = self.repo.link_gazette_watches_to_user(user_id, email).await;
         let rows = self.repo.list_gazette_watches_for_user(user_id).await?;
         Ok(rows
@@ -6841,7 +6889,9 @@ impl AppService {
         let title = req.title.trim();
         let url = req.url.trim();
         if title.is_empty() || url.is_empty() {
-            return Err(AppError::BadRequest("Feed title and url are required".into()));
+            return Err(AppError::BadRequest(
+                "Feed title and url are required".into(),
+            ));
         }
         if !(url.starts_with("http://") || url.starts_with("https://")) {
             return Err(AppError::BadRequest("Feed url must be http(s)".into()));
@@ -6875,7 +6925,9 @@ impl AppService {
         let title = req.title.trim();
         let url = req.url.trim();
         if title.is_empty() || url.is_empty() {
-            return Err(AppError::BadRequest("Feed title and url are required".into()));
+            return Err(AppError::BadRequest(
+                "Feed title and url are required".into(),
+            ));
         }
         let existing = self
             .repo
@@ -6895,19 +6947,16 @@ impl AppService {
             None => existing.mark_url,
             Some(s) => {
                 let t = s.trim();
-                if t.is_empty() { None } else { Some(t.to_string()) }
+                if t.is_empty() {
+                    None
+                } else {
+                    Some(t.to_string())
+                }
             }
         };
         let rec = self
             .repo
-            .update_gazette_feed(
-                id,
-                title,
-                url,
-                req.enabled,
-                &mark_key,
-                mark_url.as_deref(),
-            )
+            .update_gazette_feed(id, title, url, req.enabled, &mark_key, mark_url.as_deref())
             .await?;
         Ok(Self::gazette_feed_dto(rec))
     }
@@ -6942,18 +6991,27 @@ impl AppService {
             match result {
                 Err(e) => {
                     let msg = format!("{}: {e}", feed.title);
-                    let _ = self.repo.mark_gazette_feed_fetched(feed.id, Some(&msg)).await;
+                    let _ = self
+                        .repo
+                        .mark_gazette_feed_fetched(feed.id, Some(&msg))
+                        .await;
                     errors.push(msg);
                 }
                 Ok(res) if !res.status().is_success() => {
                     let msg = format!("{}: HTTP {}", feed.title, res.status());
-                    let _ = self.repo.mark_gazette_feed_fetched(feed.id, Some(&msg)).await;
+                    let _ = self
+                        .repo
+                        .mark_gazette_feed_fetched(feed.id, Some(&msg))
+                        .await;
                     errors.push(msg);
                 }
                 Ok(res) => match res.text().await {
                     Err(e) => {
                         let msg = format!("{}: {e}", feed.title);
-                        let _ = self.repo.mark_gazette_feed_fetched(feed.id, Some(&msg)).await;
+                        let _ = self
+                            .repo
+                            .mark_gazette_feed_fetched(feed.id, Some(&msg))
+                            .await;
                         errors.push(msg);
                     }
                     Ok(xml) => {
@@ -6965,7 +7023,10 @@ impl AppService {
                             }
                             Err(e) => {
                                 let msg = format!("{}: {e}", feed.title);
-                                let _ = self.repo.mark_gazette_feed_fetched(feed.id, Some(&msg)).await;
+                                let _ = self
+                                    .repo
+                                    .mark_gazette_feed_fetched(feed.id, Some(&msg))
+                                    .await;
                                 errors.push(msg);
                             }
                         }
@@ -7265,10 +7326,7 @@ impl AppService {
         let taken = self.repo.list_battle_card_slugs_except(None).await?;
         let p = Self::prepare_battle_card_save(&req, &taken)?;
         self.assert_work_is_free(p.figurine_id, None).await?;
-        let rec = self
-            .repo
-            .insert_battle_card(&p)
-            .await?;
+        let rec = self.repo.insert_battle_card(&p).await?;
         Self::log_domain_event("battle_card_created", "battle_card", rec.id, "ok");
         self.battle_card_or_fetch(rec.id).await
     }
@@ -7286,10 +7344,7 @@ impl AppService {
         // осиротило бы каждое из них: карта пропала бы с доски молча, а узнал
         // бы об этом гость.
         let was = self.repo.get_battle_card_admin(id).await?.map(|c| c.slug);
-        let rec = self
-            .repo
-            .update_battle_card(id, &p)
-            .await?;
+        let rec = self.repo.update_battle_card(id, &p).await?;
         if let Some(old) = was.filter(|old| *old != rec.slug) {
             let moved = self.carry_slug_into_challenges(&old, &rec.slug).await?;
             if moved > 0 {
@@ -7318,13 +7373,21 @@ impl AppService {
                 continue;
             };
             let mut touched = false;
-            for place in setup.player_board.iter_mut().chain(setup.keeper_board.iter_mut()) {
+            for place in setup
+                .player_board
+                .iter_mut()
+                .chain(setup.keeper_board.iter_mut())
+            {
                 if place.card == from {
                     place.card = to.to_string();
                     touched = true;
                 }
             }
-            for slug in setup.player_hand.iter_mut().chain(setup.keeper_hand.iter_mut()) {
+            for slug in setup
+                .player_hand
+                .iter_mut()
+                .chain(setup.keeper_hand.iter_mut())
+            {
                 if slug == from {
                     *slug = to.to_string();
                     touched = true;
@@ -7335,7 +7398,9 @@ impl AppService {
             }
             let json = serde_json::to_string(&setup)
                 .map_err(|_| AppError::Internal("Arrangement will not serialise".into()))?;
-            self.repo.update_battle_challenge_setup(challenge.id, &json).await?;
+            self.repo
+                .update_battle_challenge_setup(challenge.id, &json)
+                .await?;
             moved += 1;
         }
         Ok(moved)
@@ -7363,7 +7428,11 @@ impl AppService {
 
     /// One card per work. Told plainly, because the alternative is a raw
     /// unique-index violation and a keeper who cannot tell what went wrong.
-    async fn assert_work_is_free(&self, figurine_id: Option<Uuid>, except: Option<Uuid>) -> Result<()> {
+    async fn assert_work_is_free(
+        &self,
+        figurine_id: Option<Uuid>,
+        except: Option<Uuid>,
+    ) -> Result<()> {
         let Some(work) = figurine_id else {
             return Ok(());
         };
@@ -7376,8 +7445,10 @@ impl AppService {
     }
 
     pub async fn get_battle_frames(&self) -> Result<crate::battles::BattleFrames> {
-        let saved: crate::battles::BattleFrames =
-            parse_json_setting("battle_frames", self.repo.get_setting("battle_frames").await?)?;
+        let saved: crate::battles::BattleFrames = parse_json_setting(
+            "battle_frames",
+            self.repo.get_setting("battle_frames").await?,
+        )?;
         Ok(crate::battles::BattleFrames {
             frames: crate::battles::normalize_frames(saved.frames),
         })
@@ -7396,6 +7467,39 @@ impl AppService {
             return Err(AppError::BadRequest("Battle frames are too large".into()));
         }
         self.repo.upsert_setting("battle_frames", &json).await?;
+        Ok(normalized)
+    }
+
+    /// The keeper's drawer of saved dresses. Admin-only on purpose: a preset
+    /// is a tool of the desk, and no visitor's page is made better by carrying
+    /// two dozen frames nothing on it wears.
+    pub async fn get_battle_frame_presets(&self) -> Result<crate::battles::BattleFramePresets> {
+        let saved: crate::battles::BattleFramePresets = parse_json_setting(
+            "battle_frame_presets",
+            self.repo.get_setting("battle_frame_presets").await?,
+        )?;
+        Ok(crate::battles::BattleFramePresets {
+            presets: crate::battles::normalize_presets(saved.presets),
+        })
+    }
+
+    pub async fn save_battle_frame_presets(
+        &self,
+        config: crate::battles::BattleFramePresets,
+    ) -> Result<crate::battles::BattleFramePresets> {
+        let normalized = crate::battles::BattleFramePresets {
+            presets: crate::battles::normalize_presets(config.presets),
+        };
+        let json =
+            serde_json::to_string(&normalized).map_err(|e| AppError::Internal(e.to_string()))?;
+        if json.len() > 128 * 1024 {
+            return Err(AppError::BadRequest(
+                "Battle frame presets are too large".into(),
+            ));
+        }
+        self.repo
+            .upsert_setting("battle_frame_presets", &json)
+            .await?;
         Ok(normalized)
     }
 
@@ -7431,7 +7535,8 @@ impl AppService {
             self.repo.battle_wallet_balance(user_id, "dust"),
             self.repo.battle_wallet_balance(user_id, "feed"),
             self.repo.list_owned_battle_cards(user_id),
-            self.repo.list_battle_hand_grants(user_id, crate::battles::GIFTS_SHOWN),
+            self.repo
+                .list_battle_hand_grants(user_id, crate::battles::GIFTS_SHOWN),
         )?;
         Ok(crate::models::BattleMeDto {
             dust,
@@ -7493,7 +7598,10 @@ impl AppService {
         if ids.is_empty() {
             return Ok(crate::models::GiveBattleCardsResponse { touched: 0 });
         }
-        let touched = self.repo.give_battle_cards(req.user_id, &ids, level).await?;
+        let touched = self
+            .repo
+            .give_battle_cards(req.user_id, &ids, level)
+            .await?;
         Self::log_domain_event("battle_cards_given", "user", req.user_id, "ok");
         Ok(crate::models::GiveBattleCardsResponse { touched })
     }
@@ -7506,7 +7614,11 @@ impl AppService {
         &self,
         req: &crate::models::RevokeBattleCardsRequest,
     ) -> Result<crate::models::GiveBattleCardsResponse> {
-        let ids = if req.all { Vec::new() } else { req.card_ids.clone() };
+        let ids = if req.all {
+            Vec::new()
+        } else {
+            req.card_ids.clone()
+        };
         if !req.all && ids.is_empty() {
             return Ok(crate::models::GiveBattleCardsResponse { touched: 0 });
         }
@@ -7532,7 +7644,9 @@ impl AppService {
             return Err(AppError::BadRequest("Unknown coin".into()));
         }
         if req.amount == 0 || req.amount.abs() > crate::battles::GRANT_MAX {
-            return Err(AppError::BadRequest("A grant of nothing is not a grant".into()));
+            return Err(AppError::BadRequest(
+                "A grant of nothing is not a grant".into(),
+            ));
         }
         let note = req.note.as_deref().map(str::trim).filter(|s| !s.is_empty());
         if note.is_none() {
@@ -7542,7 +7656,9 @@ impl AppService {
         // чеканящий его сам, сделал бы двойной щелчок второй выдачей.
         let key = req.idem_key.trim();
         if key.is_empty() || key.len() > 100 {
-            return Err(AppError::BadRequest("A grant needs a key of its own".into()));
+            return Err(AppError::BadRequest(
+                "A grant needs a key of its own".into(),
+            ));
         }
         let note = crate::battles::clamp_note(note);
         let granted_now = self
@@ -7555,11 +7671,17 @@ impl AppService {
                 &format!("hand:{key}"),
             )
             .await?;
-        let balance = self.repo.battle_wallet_balance(req.user_id, &req.currency).await?;
+        let balance = self
+            .repo
+            .battle_wallet_balance(req.user_id, &req.currency)
+            .await?;
         if granted_now {
             Self::log_domain_event("battle_coin_granted", "user", req.user_id, "ok");
         }
-        Ok(crate::models::GrantBattleCoinResponse { balance, granted_now })
+        Ok(crate::models::GrantBattleCoinResponse {
+            balance,
+            granted_now,
+        })
     }
 
     // ── Стол гостя ────────────────────────────────────────────────────────
@@ -7667,7 +7789,12 @@ impl AppService {
             .chain(&hand)
             .any(|s| s.lent_card_id.is_none() && (s.card_id.is_none() || s.gone));
 
-        Ok(crate::models::BattleDeckDto { board, hand, laid, nothing_to_lend })
+        Ok(crate::models::BattleDeckDto {
+            board,
+            hand,
+            laid,
+            nothing_to_lend,
+        })
     }
 
     /// Что дом одолжит этому гостю, в одном и том же порядке.
@@ -7682,8 +7809,8 @@ impl AppService {
             .into_iter()
             .map(|o| o.card_id)
             .collect();
-        let limit = (crate::battles::DECK_BOARD + crate::battles::DECK_HAND) as i64
-            + held.len() as i64;
+        let limit =
+            (crate::battles::DECK_BOARD + crate::battles::DECK_HAND) as i64 + held.len() as i64;
         // Порядок один и тот же на каждое чтение: стол, который тасует заём при
         // каждом открытии, — это стол, на который нельзя посмотреть дважды.
         Ok(self
@@ -7720,8 +7847,7 @@ impl AppService {
             .filter_map(|c| c.id.parse().ok().map(|id| (id, c.tier)))
             .collect();
 
-        let board: Vec<(Uuid, u8, u8)> =
-            req.board.iter().map(|p| (p.card, p.x, p.y)).collect();
+        let board: Vec<(Uuid, u8, u8)> = req.board.iter().map(|p| (p.card, p.x, p.y)).collect();
         // Отказ называет причину словом, а не текстом: текст живёт в `i18n`, и
         // сервер, который его сочиняет, сочиняет его на одном языке.
         crate::battles::check_deck(&board, &req.hand, &owned, &tier_of)
@@ -7731,7 +7857,11 @@ impl AppService {
             board: req
                 .board
                 .iter()
-                .map(|p| crate::models::DeckPlacement { card: p.card, x: p.x, y: p.y })
+                .map(|p| crate::models::DeckPlacement {
+                    card: p.card,
+                    x: p.x,
+                    y: p.y,
+                })
                 .collect(),
             hand: req.hand.clone(),
         };
@@ -7823,7 +7953,9 @@ impl AppService {
             .find(|o| o.card_id == req.card_id)
             .ok_or_else(|| AppError::BadRequest("This card is not yours".into()))?;
         if held.level >= 5 {
-            return Err(AppError::BadRequest("This copy is as high as it goes".into()));
+            return Err(AppError::BadRequest(
+                "This copy is as high as it goes".into(),
+            ));
         }
 
         // Ступень читается из уровня, а не из запроса: клиент, который умеет
@@ -7943,7 +8075,8 @@ impl AppService {
         {
             None => None,
             Some(s) => Some(
-                Uuid::parse_str(s).map_err(|_| AppError::BadRequest("Invalid figurineId".into()))?,
+                Uuid::parse_str(s)
+                    .map_err(|_| AppError::BadRequest("Invalid figurineId".into()))?,
             ),
         };
         let race_id = match req
@@ -7953,9 +8086,9 @@ impl AppService {
             .filter(|s| !s.is_empty())
         {
             None => None,
-            Some(s) => {
-                Some(Uuid::parse_str(s).map_err(|_| AppError::BadRequest("Invalid raceId".into()))?)
-            }
+            Some(s) => Some(
+                Uuid::parse_str(s).map_err(|_| AppError::BadRequest("Invalid raceId".into()))?,
+            ),
         };
         let kind = if crate::battles::valid_kind(req.kind.trim()) {
             req.kind.trim().to_string()
@@ -7990,11 +8123,10 @@ impl AppService {
             reach,
             step,
             mend,
-        )
-            + crate::battles::read_abilities(abilities.as_deref())
-                .iter()
-                .map(|a| crate::battles::ability_points(a, tier))
-                .sum::<f64>();
+        ) + crate::battles::read_abilities(abilities.as_deref())
+            .iter()
+            .map(|a| crate::battles::ability_points(a, tier))
+            .sum::<f64>();
         let index = crate::battles::balance_index(points, cost);
 
         Ok(BattleCardWrite {
@@ -8407,7 +8539,8 @@ impl AppService {
         //
         // У встречи проверяется только половина хранителя: половину гостя
         // приносит его стол, и требовать её здесь значило бы требовать чужого.
-        self.assert_setup_can_be_raised(&req.setup, &req.player_side).await?;
+        self.assert_setup_can_be_raised(&req.setup, &req.player_side)
+            .await?;
 
         let taken = self.repo.list_battle_challenge_slugs_except(id).await?;
         let setup = serde_json::to_string(&req.setup)
@@ -8421,8 +8554,16 @@ impl AppService {
                     slug: &slug,
                     title_en: &title_en,
                     title_ru: &title_ru,
-                    note_en: req.note_en.as_deref().map(str::trim).filter(|s| !s.is_empty()),
-                    note_ru: req.note_ru.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+                    note_en: req
+                        .note_en
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty()),
+                    note_ru: req
+                        .note_ru
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty()),
                     setup: &setup,
                     bot_depth: crate::battles::clamp_bot_depth(req.bot_depth),
                     reward_dust: req.reward_dust.clamp(0, 1000),
@@ -8485,7 +8626,9 @@ impl AppService {
             }
         }
         if setup.keeper_board.is_empty() {
-            return Err(AppError::BadRequest("The keeper needs someone standing".into()));
+            return Err(AppError::BadRequest(
+                "The keeper needs someone standing".into(),
+            ));
         }
         // Половина гостя обязательна только у этюда. У встречи её приносит стол,
         // и требовать её от хранителя значило бы требовать чужого.
@@ -8555,9 +8698,7 @@ impl AppService {
             .board
             .iter()
             .filter(|s| !s.gone)
-            .filter_map(|s| {
-                Some((s.card_id.as_deref()?.parse().ok()?, s.x?, s.y?))
-            })
+            .filter_map(|s| Some((s.card_id.as_deref()?.parse().ok()?, s.x?, s.y?)))
             .collect();
         let kept_hand: Vec<Uuid> = table
             .hand
@@ -8593,8 +8734,12 @@ impl AppService {
         };
         let mut board = Vec::new();
         for slot in &table.board {
-            let Some(id) = Self::slot_takes_the_field(slot) else { continue };
-            let (Some(x), Some(y)) = (slot.x, slot.y) else { continue };
+            let Some(id) = Self::slot_takes_the_field(slot) else {
+                continue;
+            };
+            let (Some(x), Some(y)) = (slot.x, slot.y) else {
+                continue;
+            };
             let cell = battle_core::Cell::new(x, y)
                 .ok_or_else(|| AppError::BadRequest("deck:notYourHalf".into()))?;
             board.push((body(id)?, cell));
@@ -8626,8 +8771,14 @@ impl AppService {
     /// Одно место стола, сведённое к одной карте: свой выбор, а если его нет
     /// или он снят с полки — то, что дом одолжил.
     fn slot_takes_the_field(slot: &crate::models::BattleDeckSlotDto) -> Option<Uuid> {
-        let chosen = if slot.gone { None } else { slot.card_id.as_deref() };
-        chosen.or(slot.lent_card_id.as_deref()).and_then(|s| s.parse().ok())
+        let chosen = if slot.gone {
+            None
+        } else {
+            slot.card_id.as_deref()
+        };
+        chosen
+            .or(slot.lent_card_id.as_deref())
+            .and_then(|s| s.parse().ok())
     }
 
     /// Fold a journal back into a board. The only definition of "the state of a
@@ -8639,9 +8790,7 @@ impl AppService {
         let mut state = battle_core::MatchState::begin(setup.clone());
         for action in actions {
             state = battle_core::reduce(&state, action)
-                .map_err(|e| {
-                    AppError::Internal(format!("Recorded match will not replay: {e:?}"))
-                })?
+                .map_err(|e| AppError::Internal(format!("Recorded match will not replay: {e:?}")))?
                 .0;
         }
         Ok(state)
@@ -8686,7 +8835,11 @@ impl AppService {
         user_id: Uuid,
         challenge_id: Uuid,
     ) -> Result<BattleMatchDto> {
-        if let Some(open) = self.repo.find_open_battle_match(user_id, challenge_id).await? {
+        if let Some(open) = self
+            .repo
+            .find_open_battle_match(user_id, challenge_id)
+            .await?
+        {
             let state = Self::match_state(&open)?;
             return Ok(Self::match_dto(&open, state, Vec::new(), 0));
         }
@@ -8780,9 +8933,9 @@ impl AppService {
         // писалось в базу, показывалось на полке этюдов и не читалось никем:
         // единственная ручка сложности всего PvE ничего не делала.
         let depth = match rec.challenge_id {
-            Some(id) => crate::battles::clamp_bot_depth(
-                self.repo.get_battle_challenge(id).await?.bot_depth,
-            ),
+            Some(id) => {
+                crate::battles::clamp_bot_depth(self.repo.get_battle_challenge(id).await?.bot_depth)
+            }
             None => crate::battles::BOT_DEPTH_MIN,
         };
         let mut guard = 0;
@@ -8873,8 +9026,10 @@ impl AppService {
         while state.outcome.is_none()
             && (req.play_out || (req.auto_keeper && state.active == battle_core::Side::Keeper))
         {
-            let action =
-                battle_core::bot::choose_at(&state, crate::battles::clamp_bot_depth(req.bot_depth) as u8);
+            let action = battle_core::bot::choose_at(
+                &state,
+                crate::battles::clamp_bot_depth(req.bot_depth) as u8,
+            );
             let (next, produced) = battle_core::reduce(&state, &action)
                 .map_err(|e| AppError::Internal(format!("Bot played an illegal move: {e:?}")))?;
             state = next;
@@ -9016,7 +9171,9 @@ impl AppService {
         };
         // A negative rate is nonsense in every direction, and a runaway one
         // would quietly overload every card naming the keyword.
-        let point_value = req.point_value.filter(|v| v.is_finite() && *v >= 0.0 && *v <= 100.0);
+        let point_value = req
+            .point_value
+            .filter(|v| v.is_finite() && *v >= 0.0 && *v <= 100.0);
         Ok(PreparedKeyword {
             slug: crate::battles::unique_slug(req.slug.as_deref(), &name_en, taken),
             name_en,
@@ -9108,6 +9265,579 @@ impl AppService {
         self.repo.delete_battle_race(id).await?;
         Self::log_domain_event("battle_race_deleted", "battle_race", id, "ok");
         Ok(())
+    }
+
+    // === BATTLE ASSETS ===
+
+    /// Matches the CHECK on both `name` columns.
+    const ASSET_NAME_MAX: usize = 80;
+    /// The box a proposal's preview is shrunk into. Big enough to tell a
+    /// corner from an ornament, small enough that eighty of them fit in one
+    /// response without it becoming a download.
+    const PART_PREVIEW_PX: u32 = 220;
+    /// Mirrors the CHECK on `battle_assets.role`. The five slots a `sliced`
+    /// frame has, plus a picture and a catch-all.
+    /// How many rectangles one drawing may carry. Generous — a busy sheet of
+    /// charms can hold a dozen — but bounded, so a broken client cannot ask
+    /// for a thousand crops of one picture.
+    const SPLIT_RECTS_MAX: usize = 32;
+    /// What counts as artwork when a hand-drawn rectangle is trimmed. The
+    /// piece has already had its ground taken off, so anything faintly there
+    /// is real.
+    const SPLIT_ALPHA_FLOOR: u8 = 8;
+    const ASSET_ROLES: [&'static str; 6] =
+        ["corner", "sideH", "sideV", "accent", "art", "other"];
+
+    fn asset_sheet_dto(row: BattleAssetSheetListed) -> BattleAssetSheetDto {
+        BattleAssetSheetDto {
+            id: row.id.to_string(),
+            name: row.name,
+            source_url: row.source_url,
+            width: row.width,
+            height: row.height,
+            settings: row.settings,
+            sort_order: row.sort_order,
+            created_at: row.created_at,
+            part_count: row.part_count,
+        }
+    }
+
+    fn asset_dto(row: BattleAssetListed) -> BattleAssetDto {
+        BattleAssetDto {
+            id: row.id.to_string(),
+            sheet_id: row.sheet_id.map(|id| id.to_string()),
+            sheet_name: row.sheet_name,
+            name: row.name,
+            role: row.role,
+            url: row.url,
+            width: row.width,
+            height: row.height,
+            sort_order: row.sort_order,
+            created_at: row.created_at,
+        }
+    }
+
+    fn clean_asset_name(raw: &str, fallback: &str) -> String {
+        let trimmed: String = raw.trim().chars().take(Self::ASSET_NAME_MAX).collect();
+        if trimmed.is_empty() {
+            fallback.chars().take(Self::ASSET_NAME_MAX).collect()
+        } else {
+            trimmed
+        }
+    }
+
+    /// An unknown role is refused rather than quietly turned into `other`:
+    /// filing a part under the wrong slot is worse than being told no.
+    fn clean_asset_role(raw: Option<&str>, fallback: &str) -> Result<String> {
+        let value = raw.map(|r| r.trim()).filter(|r| !r.is_empty());
+        match value {
+            None => Ok(fallback.to_string()),
+            Some(r) if Self::ASSET_ROLES.contains(&r) => Ok(r.to_string()),
+            Some(r) => Err(AppError::BadRequest(format!("Unknown asset role: {r}"))),
+        }
+    }
+
+    pub async fn list_battle_asset_sheets(&self) -> Result<Vec<BattleAssetSheetDto>> {
+        let rows = self.repo.list_battle_asset_sheets().await?;
+        Ok(rows.into_iter().map(Self::asset_sheet_dto).collect())
+    }
+
+    pub async fn admin_add_battle_asset_sheet(
+        &self,
+        name: &str,
+        bytes: Vec<u8>,
+    ) -> Result<BattleAssetSheetDto> {
+        // The format is read from the bytes, never from the filename: an
+        // extension is a claim, and this one decides where the file lands.
+        let format = image::guess_format(&bytes)
+            .map_err(|e| AppError::BadRequest(format!("Unrecognised image: {e}")))?;
+        let extension = format.extensions_str().first().copied().unwrap_or("bin");
+        let probe = image::load_from_memory(&bytes)
+            .map_err(|e| AppError::BadRequest(format!("Invalid image file: {e}")))?;
+        let (width, height) = (probe.width(), probe.height());
+        if width as u64 * height as u64 > crate::sheet::SHEET_MAX_PIXELS {
+            return Err(AppError::BadRequest(format!(
+                "Sheet is too large: {} pixels, limit is {}",
+                width as u64 * height as u64,
+                crate::sheet::SHEET_MAX_PIXELS
+            )));
+        }
+        drop(probe);
+
+        let relative = format!("sheets/{}.{}", Uuid::new_v4(), extension);
+        self.write_upload(&relative, &bytes).await?;
+        let rec = self
+            .repo
+            .insert_battle_asset_sheet(
+                &Self::clean_asset_name(name, "Лист"),
+                &format!("/static/{}", relative),
+                width as i32,
+                height as i32,
+            )
+            .await?;
+        Self::log_domain_event("battle_asset_sheet_added", "battle_asset_sheet", rec.id, "ok");
+        self.find_asset_sheet(rec.id).await
+    }
+
+    pub async fn admin_rename_battle_asset_sheet(
+        &self,
+        id: Uuid,
+        name: &str,
+    ) -> Result<BattleAssetSheetDto> {
+        let rec = self
+            .repo
+            .rename_battle_asset_sheet(id, &Self::clean_asset_name(name, "Лист"))
+            .await?;
+        self.find_asset_sheet(rec.id).await
+    }
+
+    /// Clearing a sheet away leaves its parts standing, loose. Said here as
+    /// well as in the schema, because that is the thing a keeper is right to
+    /// fear before clicking — a frame may already be wearing one of them.
+    pub async fn admin_delete_battle_asset_sheet(&self, id: Uuid) -> Result<()> {
+        let sheet = self.repo.get_battle_asset_sheet(id).await?;
+        self.repo.delete_battle_asset_sheet(id).await?;
+        self.remove_upload(&sheet.source_url).await;
+        Self::log_domain_event("battle_asset_sheet_deleted", "battle_asset_sheet", id, "ok");
+        Ok(())
+    }
+
+    /// Cut the sheet and show what would come off it — without writing a
+    /// single file. The keeper re-cuts until the numbers look right, and only
+    /// then commits.
+    pub async fn admin_slice_battle_asset_sheet(
+        &self,
+        id: Uuid,
+        settings: crate::sheet::SliceSettings,
+    ) -> Result<BattleSheetCutDto> {
+        let cut = self.cut_sheet(id, settings.clone()).await?;
+        let parts = cut
+            .parts
+            .iter()
+            .map(|part| {
+                let thumb = crate::sheet::thumbnail(&part.image, Self::PART_PREVIEW_PX);
+                let webp = crate::sheet::to_webp(&thumb, 80.0);
+                BattleSheetPartDto {
+                    index: part.index,
+                    x: part.x,
+                    y: part.y,
+                    width: part.width,
+                    height: part.height,
+                    is_text: part.is_text,
+                    role: Self::role_name(part.role).to_string(),
+                    preview: format!(
+                        "data:image/webp;base64,{}",
+                        base64::engine::general_purpose::STANDARD.encode(&webp)
+                    ),
+                }
+            })
+            .collect();
+        Ok(BattleSheetCutDto {
+            width: cut.width,
+            height: cut.height,
+            source: match cut.source {
+                crate::sheet::MaskSource::Alpha => "alpha".into(),
+                crate::sheet::MaskSource::Background => "background".into(),
+            },
+            settings,
+            parts,
+        })
+    }
+
+    /// Take the chosen parts off the sheet for keeps.
+    ///
+    /// The cut is run again rather than cached from the proposal: a cached
+    /// proposal would be a second source of truth about what the keeper saw,
+    /// and it would have to be invalidated by hand. Instead the settings come
+    /// back with the picks, and every pick carries the shape it was shown at —
+    /// so a mismatch is caught rather than silently saving a different part
+    /// under the name of the one the keeper chose.
+    pub async fn admin_cut_battle_asset_sheet(
+        &self,
+        id: Uuid,
+        settings: crate::sheet::SliceSettings,
+        picks: Vec<BattleAssetPick>,
+    ) -> Result<Vec<BattleAssetDto>> {
+        if picks.is_empty() {
+            return Err(AppError::BadRequest("Nothing was chosen".into()));
+        }
+        let remembered = serde_json::to_string(&settings)
+            .map_err(|e| AppError::Internal(format!("Settings do not serialise: {e}")))?;
+        let cut = self.cut_sheet(id, settings).await?;
+        let mut order = self.repo.next_battle_asset_order(Some(id)).await?;
+        let mut saved = Vec::with_capacity(picks.len());
+
+        for pick in picks.iter() {
+            let part = cut
+                .parts
+                .iter()
+                .find(|p| p.index == pick.index)
+                .ok_or_else(|| {
+                    AppError::BadRequest(format!("The sheet has no part {}", pick.index))
+                })?;
+            if part.width != pick.width || part.height != pick.height {
+                return Err(AppError::BadRequest(format!(
+                    "Part {} is now {}x{}, not {}x{} — the sheet was cut with other settings; \
+                     look at it again",
+                    pick.index, part.width, part.height, pick.width, pick.height
+                )));
+            }
+            let name = Self::clean_asset_name(
+                pick.name.as_deref().unwrap_or(""),
+                &format!("{:02}", pick.index),
+            );
+            let role = Self::clean_asset_role(
+                pick.role.as_deref(),
+                Self::role_name(part.role),
+            )?;
+            let rec = self
+                .save_asset_image(Some(id), &name, &role, &part.image, order)
+                .await?;
+            order += 1;
+            saved.push(rec.id);
+
+            // ...and whatever the keeper drew on it. The part itself was just
+            // saved and stays saved: the rectangles are additions, not a
+            // replacement.
+            if pick.rects.len() > Self::SPLIT_RECTS_MAX {
+                return Err(AppError::BadRequest(format!(
+                    "At most {} rectangles on one part",
+                    Self::SPLIT_RECTS_MAX
+                )));
+            }
+            for (n, rect) in pick.rects.iter().enumerate() {
+                let cropped = crate::sheet::crop_to_content(
+                    &part.image,
+                    &rect.frame(),
+                    Self::SPLIT_ALPHA_FLOOR,
+                )
+                .ok_or_else(|| {
+                    AppError::BadRequest(format!(
+                        "Rectangle {} on part {} caught nothing but air",
+                        n + 1,
+                        pick.index
+                    ))
+                })?;
+                let piece_name = Self::clean_asset_name(
+                    rect.name.as_deref().unwrap_or(""),
+                    &format!("{} · {}", name, n + 1),
+                );
+                let piece_role = Self::clean_asset_role(rect.role.as_deref(), &role)?;
+                let piece = self
+                    .save_asset_image(Some(id), &piece_name, &piece_role, &cropped, order)
+                    .await?;
+                order += 1;
+                saved.push(piece.id);
+            }
+        }
+
+        self.repo
+            .save_battle_asset_sheet_settings(id, &remembered)
+            .await?;
+        Self::log_domain_event("battle_assets_cut", "battle_asset_sheet", id, "ok");
+
+        let all = self
+            .repo
+            .list_battle_assets(AssetSheetFilter::One(id), None, None)
+            .await?;
+        Ok(all
+            .into_iter()
+            .filter(|row| saved.contains(&row.id))
+            .map(Self::asset_dto)
+            .collect())
+    }
+
+    pub async fn list_battle_assets(
+        &self,
+        sheet: AssetSheetFilter,
+        role: Option<String>,
+        query: Option<String>,
+    ) -> Result<Vec<BattleAssetDto>> {
+        let role = role.map(|r| r.trim().to_string()).filter(|r| !r.is_empty());
+        if let Some(r) = role.as_deref()
+            && !Self::ASSET_ROLES.contains(&r)
+        {
+            return Err(AppError::BadRequest(format!("Unknown asset role: {r}")));
+        }
+        let query = query.map(|q| q.trim().to_string()).filter(|q| !q.is_empty());
+        let rows = self
+            .repo
+            .list_battle_assets(sheet, role.as_deref(), query.as_deref())
+            .await?;
+        Ok(rows.into_iter().map(Self::asset_dto).collect())
+    }
+
+    /// A part that arrived on its own, with no sheet behind it. Cut elsewhere,
+    /// or drawn as one piece — either way an ordinary member of the store.
+    pub async fn admin_add_battle_asset(
+        &self,
+        name: &str,
+        role: Option<&str>,
+        bytes: Vec<u8>,
+    ) -> Result<BattleAssetDto> {
+        let decoded = image::load_from_memory(&bytes)
+            .map_err(|e| AppError::BadRequest(format!("Invalid image file: {e}")))?;
+        if decoded.width() as u64 * decoded.height() as u64 > crate::sheet::SHEET_MAX_PIXELS {
+            return Err(AppError::BadRequest("Image dimensions are too large".into()));
+        }
+        let rgba = decoded.to_rgba8();
+        let (width, height) = (rgba.width(), rgba.height());
+        let webp = crate::sheet::to_webp(&rgba, 88.0);
+        let relative = format!("assets/{}.webp", Uuid::new_v4());
+        self.write_upload(&relative, &webp).await?;
+
+        let order = self.repo.next_battle_asset_order(None).await?;
+        let rec = self
+            .repo
+            .insert_battle_asset(
+                None,
+                &Self::clean_asset_name(name, "Деталь"),
+                &Self::clean_asset_role(role, "other")?,
+                &format!("/static/{}", relative),
+                width as i32,
+                height as i32,
+                order,
+            )
+            .await?;
+        Self::log_domain_event("battle_asset_added", "battle_asset", rec.id, "ok");
+        self.find_asset(rec.id).await
+    }
+
+    pub async fn admin_update_battle_asset(
+        &self,
+        id: Uuid,
+        req: SaveBattleAssetRequest,
+    ) -> Result<BattleAssetDto> {
+        let name = req
+            .name
+            .as_deref()
+            .map(|n| Self::clean_asset_name(n, ""))
+            .filter(|n| !n.is_empty());
+        let role = match req.role.as_deref() {
+            None => None,
+            Some(r) => Some(Self::clean_asset_role(Some(r), "other")?),
+        };
+        // Absent leaves the part where it is; present-and-null makes it loose.
+        let (move_sheet, sheet_id) = match req.sheet_id {
+            None => (false, None),
+            Some(None) => (true, None),
+            Some(Some(raw)) => (
+                true,
+                Some(Uuid::parse_str(&raw).map_err(|_| {
+                    AppError::BadRequest("That is not a sheet id".into())
+                })?),
+            ),
+        };
+        let rec = self
+            .repo
+            .update_battle_asset(id, name.as_deref(), role.as_deref(), move_sheet, sheet_id)
+            .await?;
+        self.find_asset(rec.id).await
+    }
+
+    pub async fn admin_delete_battle_asset(&self, id: Uuid) -> Result<()> {
+        let removed = self.repo.delete_battle_asset(id).await?;
+        self.remove_upload(&removed.url).await;
+        Self::log_domain_event("battle_asset_deleted", "battle_asset", id, "ok");
+        Ok(())
+    }
+
+    pub async fn admin_reorder_battle_assets(&self, ids: Vec<Uuid>) -> Result<()> {
+        let mut seen = HashSet::with_capacity(ids.len());
+        if !ids.iter().all(|id| seen.insert(*id)) {
+            return Err(AppError::BadRequest(
+                "A part cannot stand in two places".into(),
+            ));
+        }
+        self.repo.set_battle_asset_order(&ids).await?;
+        Ok(())
+    }
+
+    /// Write one picture into the store as a part. The single place a part's
+    /// file is made, so a cut, a hand-drawn rectangle and a lone upload can
+    /// never disagree about format or quality.
+    async fn save_asset_image(
+        &self,
+        sheet_id: Option<Uuid>,
+        name: &str,
+        role: &str,
+        image: &image::RgbaImage,
+        order: i32,
+    ) -> Result<BattleAsset> {
+        let webp = crate::sheet::to_webp(image, 88.0);
+        let relative = format!("assets/{}.webp", Uuid::new_v4());
+        self.write_upload(&relative, &webp).await?;
+        self.repo
+            .insert_battle_asset(
+                sheet_id,
+                name,
+                role,
+                &format!("/static/{}", relative),
+                image.width() as i32,
+                image.height() as i32,
+                order,
+            )
+            .await
+    }
+
+    /// One part of a proposed cut, at its full size, for drawing on.
+    pub async fn admin_battle_sheet_part(
+        &self,
+        id: Uuid,
+        settings: crate::sheet::SliceSettings,
+        index: u32,
+    ) -> Result<BattleSheetPartFullDto> {
+        let cut = self.cut_sheet(id, settings).await?;
+        let part = cut
+            .parts
+            .into_iter()
+            .find(|p| p.index == index)
+            .ok_or_else(|| AppError::BadRequest(format!("The sheet has no part {index}")))?;
+        let webp = crate::sheet::to_webp(&part.image, 90.0);
+        Ok(BattleSheetPartFullDto {
+            index: part.index,
+            width: part.width,
+            height: part.height,
+            image: format!(
+                "data:image/webp;base64,{}",
+                base64::engine::general_purpose::STANDARD.encode(&webp)
+            ),
+        })
+    }
+
+    /// Take hand-drawn rectangles off a part that is already in the store.
+    ///
+    /// The part itself stays where it is. A glued piece is sometimes worth
+    /// keeping whole — a book and the bar beside it may yet be wanted as one
+    /// picture — and deciding that for the keeper would be deciding it wrong
+    /// half the time.
+    pub async fn admin_split_battle_asset(
+        &self,
+        id: Uuid,
+        rects: Vec<BattleAssetSplitRect>,
+    ) -> Result<Vec<BattleAssetDto>> {
+        if rects.is_empty() {
+            return Err(AppError::BadRequest("No rectangles were drawn".into()));
+        }
+        if rects.len() > Self::SPLIT_RECTS_MAX {
+            return Err(AppError::BadRequest(format!(
+                "At most {} rectangles at a time",
+                Self::SPLIT_RECTS_MAX
+            )));
+        }
+        let parent = self.repo.get_battle_asset(id).await?;
+        let path = Path::new(&self.config.upload_dir)
+            .join(parent.url.trim_start_matches("/static/"));
+        let bytes = tokio::fs::read(&path).await.map_err(|e| {
+            AppError::NotFound(format!("The part's file is gone ({}): {e}", path.display()))
+        })?;
+        let source = tokio::task::spawn_blocking(move || {
+            image::load_from_memory(&bytes).map(|img| img.to_rgba8())
+        })
+        .await
+        .map_err(|e| AppError::Internal(format!("Split task failed: {e}")))?
+        .map_err(|e| AppError::BadRequest(format!("Invalid part file: {e}")))?;
+
+        let mut order = self.repo.next_battle_asset_order(parent.sheet_id).await?;
+        let mut saved = Vec::with_capacity(rects.len());
+        for (n, rect) in rects.iter().enumerate() {
+            let cropped =
+                crate::sheet::crop_to_content(&source, &rect.frame(), Self::SPLIT_ALPHA_FLOOR)
+                    .ok_or_else(|| {
+                        AppError::BadRequest(format!(
+                            "Rectangle {} caught nothing but air",
+                            n + 1
+                        ))
+                    })?;
+            let name = Self::clean_asset_name(
+                rect.name.as_deref().unwrap_or(""),
+                &format!("{} · {}", parent.name, n + 1),
+            );
+            let role = Self::clean_asset_role(rect.role.as_deref(), &parent.role)?;
+            let rec = self
+                .save_asset_image(parent.sheet_id, &name, &role, &cropped, order)
+                .await?;
+            order += 1;
+            saved.push(rec.id);
+        }
+        Self::log_domain_event("battle_asset_split", "battle_asset", id, "ok");
+
+        let all = self
+            .repo
+            .list_battle_assets(AssetSheetFilter::Any, None, None)
+            .await?;
+        Ok(all
+            .into_iter()
+            .filter(|row| saved.contains(&row.id))
+            .map(Self::asset_dto)
+            .collect())
+    }
+
+    fn role_name(role: crate::sheet::RoleGuess) -> &'static str {
+        match role {
+            crate::sheet::RoleGuess::Corner => "corner",
+            crate::sheet::RoleGuess::SideH => "sideH",
+            crate::sheet::RoleGuess::SideV => "sideV",
+            crate::sheet::RoleGuess::Accent => "accent",
+        }
+    }
+
+    /// Read the stored sheet and cut it. CPU-bound from decode to encode, so
+    /// it runs off the async workers.
+    async fn cut_sheet(
+        &self,
+        id: Uuid,
+        settings: crate::sheet::SliceSettings,
+    ) -> Result<crate::sheet::Sliced> {
+        let sheet = self.repo.get_battle_asset_sheet(id).await?;
+        let path = Path::new(&self.config.upload_dir)
+            .join(sheet.source_url.trim_start_matches("/static/"));
+        let bytes = tokio::fs::read(&path).await.map_err(|e| {
+            AppError::NotFound(format!("The sheet's file is gone ({}): {e}", path.display()))
+        })?;
+        tokio::task::spawn_blocking(move || crate::sheet::slice(&bytes, &settings))
+            .await
+            .map_err(|e| AppError::Internal(format!("Sheet cutting task failed: {e}")))?
+            .map_err(|e| AppError::BadRequest(e.to_string()))
+    }
+
+    async fn find_asset_sheet(&self, id: Uuid) -> Result<BattleAssetSheetDto> {
+        self.list_battle_asset_sheets()
+            .await?
+            .into_iter()
+            .find(|s| s.id == id.to_string())
+            .ok_or_else(|| AppError::NotFound(format!("Battle asset sheet {id} not found")))
+    }
+
+    async fn find_asset(&self, id: Uuid) -> Result<BattleAssetDto> {
+        let rows = self
+            .repo
+            .list_battle_assets(AssetSheetFilter::Any, None, None)
+            .await?;
+        rows.into_iter()
+            .find(|a| a.id == id)
+            .map(Self::asset_dto)
+            .ok_or_else(|| AppError::NotFound(format!("Battle asset {id} not found")))
+    }
+
+    async fn write_upload(&self, relative: &str, bytes: &[u8]) -> Result<()> {
+        let path = Path::new(&self.config.upload_dir).join(relative);
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await.map_err(AppError::Io)?;
+        }
+        tokio::fs::write(&path, bytes).await.map_err(AppError::Io)?;
+        Ok(())
+    }
+
+    /// Best-effort: a row that is already gone must not be resurrected by a
+    /// missing file, and a file left behind is a job for the media sweep.
+    async fn remove_upload(&self, public_url: &str) {
+        let relative = public_url.trim_start_matches("/static/");
+        if relative.is_empty() || relative == public_url {
+            return;
+        }
+        let path = Path::new(&self.config.upload_dir).join(relative);
+        let _ = tokio::fs::remove_file(&path).await;
     }
 
     pub async fn admin_reorder_battle_races(&self, ids: Vec<Uuid>) -> Result<()> {

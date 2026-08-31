@@ -14,7 +14,7 @@
   // an ordinary form next to the card instead, writing the same `card`
   // object this component reads, so the preview still never lies. It is off
   // everywhere except the admin card editor.
-  import type { BattleCard, BattleFrame } from '$lib/types/api';
+  import type { BattleCard, BattleFrame, SliceSide } from '$lib/types/api';
   import { t, lang } from '$lib/i18n';
   import {
     cardCopy,
@@ -36,7 +36,14 @@
     DEFAULT_POWER_X,
     DEFAULT_POWER_Y,
     BADGE_SHAPES,
+    KIND_SIDES,
+    SLICE_GROW_MAX,
+    SLICE_SIDE_AXES,
     applyInsetDelta,
+    carvedCopies,
+    kindOf,
+    livePiece,
+    sliceSigns,
     type InsetKey,
     type FrameOverride,
   } from '$lib/battles';
@@ -55,6 +62,9 @@
     editLang = null,
     frameEditable = false,
     frameEditTarget = null,
+    sliceHeld = $bindable(null),
+    onEditStart,
+    onEditEnd,
     raceIconEditable = false,
     onEditRace,
     onIconUpload,
@@ -93,6 +103,23 @@
      *  don't mirror to the opposite side either — a race's own picture is
      *  rarely symmetric. */
     frameEditTarget?: FrameOverride | null;
+    /** Which COPY of which piece is currently in hand — the top-left corner,
+     *  say, and not the corner picture in general, since the four corners are
+     *  placed apart. `id` is a named slot or an added ornament's own id, which
+     *  is the whole reason it is a string: the keeper's flourishes and the
+     *  frame's anatomy are dragged by one piece of code. Bindable, because it
+     *  is picked both ways — on the card by taking hold of the copy, and in the
+     *  sidebar by choosing a side — and one value cannot disagree with itself. */
+    sliceHeld?: { id: string; side: SliceSide } | null;
+    /** Called once at the START of every gesture that edits the frame — a
+     *  slice taken hold of, an inset handle, a band seam, a badge. The desk
+     *  takes its undo snapshot here, which is the only moment the state before
+     *  the edit still exists. */
+    onEditStart?: () => void;
+    /** Called when a gesture is done. The desk moves the held piece's own
+     *  toolbar here rather than every frame of the drag: a bar jumping under
+     *  the pointer is worse than one that catches up. */
+    onEditEnd?: () => void;
     /** The header icon alone is a live uploader, independent of `editable` —
      *  what the Races tab's own sample card sets, where nothing else here is
      *  this card's to edit. */
@@ -352,6 +379,7 @@
 
   function shareDragStart(kind: ShareKey, event: PointerEvent & { currentTarget: HTMLElement }) {
     if (!frameEditable) return;
+    onEditStart?.();
     event.preventDefault();
     event.stopPropagation();
     frameDragKind = kind;
@@ -371,6 +399,7 @@
 
   function insetDragStart(kind: InsetKey, event: PointerEvent & { currentTarget: HTMLElement }) {
     if (!frameEditable) return;
+    onEditStart?.();
     event.preventDefault();
     event.stopPropagation();
     frameDragKind = kind;
@@ -408,9 +437,200 @@
   function frameDragEnd(event: PointerEvent & { currentTarget: HTMLElement }) {
     if (!frameDragKind) return;
     frameDragKind = null;
+    onEditEnd?.();
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
+  }
+
+  // ── Резьба, собираемая руками ─────────────────────────────────────────────
+  //
+  // Число в поле сбоку — точная запись того, что глаз проверяет на картинке:
+  // сходится ли угол со стороной. Поэтому деталь берут прямо на карте, а поля
+  // остаются вторым, точным входом — как у ценника и силы, где перетаскивание
+  // и числовой редактор живут на одной кнопке.
+  //
+  // Берут ОТДЕЛЬНУЮ КОПИЮ: левый верхний угол — не то же самое, что правый
+  // нижний, и левая сторона — не зеркало правой. Пока все копии ходили одним
+  // числом, подогнать раму, у которой верх шире низа, было нельзя. Копии всё
+  // так же ходят вместе, пока связка включена, — просто теперь это выбор, а не
+  // устройство.
+
+  /** Off while dressing a race's level, for the same reason the band seams
+   *  are: a picture chosen for one level is not the place to re-cut the rank's
+   *  carving. The pieces stay chrome everywhere else on the site. */
+  let sliceEditable = $derived(frameEditable && !frameEditTarget && sliced);
+
+  /** Every copy of every piece the frame is built from — named slots and the
+   *  keeper's own flourishes in ONE list, each already carrying the inline
+   *  style that places it. One list and one style so there is exactly one
+   *  renderer: a preview with a second one is a preview that eventually lies. */
+  let copies = $derived(sliced ? carvedCopies(frame) : []);
+
+  /** What a drag on the held copy is doing: moving it, or growing it past its
+   *  band. Two gestures, two grips, no modifier key to remember. */
+  let sliceDrag = $state<'move' | 'size' | null>(null);
+  /** A press that never moved is a pick, not a drag — the way through to a
+   *  copy lying under another. */
+  let sliceMoved = false;
+  /** Whether this press landed on a spot the copy already in hand covers.
+   *  Two things hang off it: what stays in hand for the drag, and whether
+   *  letting go without moving asks for the copy underneath. */
+  let sliceAgain = false;
+
+  /** One copy on the card, found by what it IS rather than by a class table
+   *  that would have to be kept in step with the markup — and that could not
+   *  name an ornament the keeper invented five seconds ago at all. */
+  function copyEl(id: string, side: SliceSide): Element | null {
+    return root?.querySelector(`[data-piece="${CSS.escape(id)}"][data-side="${side}"]`) ?? null;
+  }
+
+  /**
+   * Where the held copy's inner corner is, in % of the card — the one place
+   * the size grip may sit.
+   *
+   * Measured rather than computed a second time, and for a reason that is not
+   * laziness: the grip cannot live INSIDE the copy it sizes. A piece carries a
+   * `layer`, a `z-index` on a positioned element opens a stacking context, and
+   * a child can never climb out of its parent's — so a grip inside a corner at
+   * layer 2 sits under the accent at layer 5 that covers the same band, visible
+   * and untouchable. Out here, above the whole assembly, it is always
+   * reachable; and measuring keeps its place honest however the copy is grown,
+   * slid or turned.
+   */
+  let gripAt = $state<{ x: number; y: number } | null>(null);
+
+  $effect(() => {
+    if (!sliceEditable || !sliceHeld) {
+      gripAt = null;
+      return;
+    }
+    // Re-measured whenever the assembly moves — including every frame of a
+    // drag, since that is exactly when the grip must keep up with its copy.
+    void copies;
+    const el = root;
+    const at = copyEl(sliceHeld.id, sliceHeld.side);
+    if (!el || !at) {
+      gripAt = null;
+      return;
+    }
+    const card = el.getBoundingClientRect();
+    const box = at.getBoundingClientRect();
+    if (!card.width || !card.height) return;
+    // The corner of the box that faces the card's inside — the same corner the
+    // sign table calls `grip`, so pulling it always follows the pointer.
+    const axes = SLICE_SIDE_AXES[sliceHeld.side];
+    gripAt = {
+      x: ((box[axes.gripX] - card.left) / card.width) * 100,
+      y: ((box[axes.gripY] - card.top) / card.height) * 100,
+    };
+  });
+
+  function sliceTake(
+    id: string,
+    side: SliceSide,
+    how: 'move' | 'size',
+    event: PointerEvent & { currentTarget: HTMLElement },
+  ) {
+    if (!sliceEditable) return;
+    onEditStart?.();
+    event.preventDefault();
+    // The grip is its own element above the piece: without this, one press
+    // would start both a size drag and a move drag on the same pointer.
+    event.stopPropagation();
+    // What is in hand STAYS in hand while the keeper keeps pressing where it
+    // lies. Without this a base corner could never be moved once its accent
+    // was uploaded: the accent covers the whole band, so every press would
+    // take the accent back, and the copy underneath would be visible and
+    // untouchable. Pressing anywhere the held copy does not reach picks up
+    // whatever is there instead, so a far copy still takes one press.
+    sliceAgain = !!sliceHeld && partsUnder(event.clientX, event.clientY).some(sameAsHeld);
+    if (!sliceAgain) sliceHeld = { id, side };
+    sliceDrag = how;
+    sliceMoved = false;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function sameAsHeld(part: { id: string; side: SliceSide }) {
+    return !!sliceHeld && part.id === sliceHeld.id && part.side === sliceHeld.side;
+  }
+
+  /**
+   * Both gestures are the same two numbers read the same way — but which WAY
+   * is the copy's own: dragging a top-left corner rightward widens it, and
+   * dragging a top-right corner rightward has to narrow it, or the ornament
+   * would run off the card while the pointer said "bigger".
+   *
+   * With the link on, the delta is read ONCE through the held copy's signs and
+   * then written into every copy of the piece — the same number in all of them,
+   * which is exactly what the pieces had when they shared one, and therefore a
+   * frame that stays symmetric. (Passing the raw pointer delta to each copy's
+   * own signs instead would slide all four the same way across the screen,
+   * which is a frame sliding off its card, not a frame being widened.) With
+   * the link off, only the copy in hand moves.
+   */
+  function sliceDragMove(event: PointerEvent) {
+    if (!sliceDrag || !sliceHeld) return;
+    const rect = root?.getBoundingClientRect();
+    if (!rect?.width || !rect.height) return;
+    const dx = (event.movementX / rect.width) * 100;
+    const dy = (event.movementY / rect.height) * 100;
+    if (!dx && !dy) return;
+    const target = rankFrame();
+    const piece = livePiece(target, sliceHeld.id);
+    const kind = kindOf(target, sliceHeld.id);
+    if (!piece || !kind) return;
+    sliceMoved = true;
+    const moving = piece.linked !== false ? KIND_SIDES[kind] : [sliceHeld.side];
+    const sign = sliceSigns(sliceHeld.side);
+    const held = (v: number) => Math.min(SLICE_GROW_MAX, Math.max(-SLICE_GROW_MAX, v));
+    for (const side of moving) {
+      if (!piece.places[side]) {
+        piece.places[side] = { growX: 0, growY: 0, nudgeX: 0, nudgeY: 0, shown: true };
+      }
+      const at = piece.places[side];
+      if (sliceDrag === 'size') {
+        at.growX = held(at.growX + dx * sign.growX);
+        at.growY = held(at.growY + dy * sign.growY);
+      } else {
+        at.nudgeX = held(at.nudgeX + dx * sign.nudgeX);
+        at.nudgeY = held(at.nudgeY + dy * sign.nudgeY);
+      }
+    }
+  }
+
+  /** Every drawn copy whose box covers this point, the topmost first. Read off
+   *  the rendered boxes rather than recomputed from the insets, so it can never
+   *  disagree with what the keeper is actually looking at — and a copy the
+   *  keeper put out is not drawn, so it is not here either. */
+  function partsUnder(x: number, y: number): { id: string; side: SliceSide }[] {
+    if (!root) return [];
+    return copies
+      .filter((copy) => {
+        const box = copyEl(copy.id, copy.side)?.getBoundingClientRect();
+        return !!box && x >= box.left && x <= box.right && y >= box.top && y <= box.bottom;
+      })
+      .sort((a, b) => b.layer - a.layer)
+      .map(({ id, side }) => ({ id, side }));
+  }
+
+  /** Letting go without having moved anything steps DOWN through the copies
+   *  stacked under the pointer, and wraps. The first press on a spot takes
+   *  the topmost copy there, as a press should; it is the SECOND that asks
+   *  for the one beneath — which is how an accent and the corner under it are
+   *  told apart at all, sharing as they do exactly one box. */
+  function sliceDragEnd(event: PointerEvent & { currentTarget: HTMLElement }) {
+    if (!sliceDrag) return;
+    sliceDrag = null;
+    onEditEnd?.();
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    if (sliceMoved || !sliceAgain) return;
+    const stack = partsUnder(event.clientX, event.clientY);
+    if (stack.length < 2) return;
+    const at = stack.findIndex(sameAsHeld);
+    sliceHeld = stack[(at + 1) % stack.length];
   }
 
   // ── Cost and power, dragged instead of dialled ─────────────────────────────
@@ -828,39 +1048,52 @@
     {#if sliced}
       <!-- The carving, built from a corner and two side pictures instead of
            one stretched whole. Same job as `.carving` below — a hole the card
-           shows through, last in the stack, deaf to the pointer — but each
-           piece is sized off the frame's own four insets, so the keeper can
-           re-stretch one side without disturbing the others. Corners are
-           mirrored (never rotated) so an asymmetric flourish stays right-side
-           up; the two side pictures are mirrored the same way `applyInsetDelta`
-           already pairs top with bottom and left with right. -->
-      <div class="sliced-carving" aria-hidden="true">
-        <span class="slice-corner slice-corner--tl"></span>
-        <span class="slice-corner slice-corner--tr"></span>
-        <span class="slice-corner slice-corner--bl"></span>
-        <span class="slice-corner slice-corner--br"></span>
-        <span class="slice-edge slice-edge--top"></span>
-        <span class="slice-edge slice-edge--bottom"></span>
-        <span class="slice-edge slice-edge--left"></span>
-        <span class="slice-edge slice-edge--right"></span>
-      </div>
-      <!-- Small accents on top of the assembled frame — a corner flourish and
-           a mid-edge medallion, each its own upload, each mirrored the same
-           way the piece it sits on is. A later sibling of `.sliced-carving`
-           at the same z-index paints over it without needing a taller
-           z-index of its own; shown at their own size (`background-size:
-           contain`), never stretched to fill the band the way the nine base
-           pieces are, so an accent stays an accent rather than a second
-           frame. -->
-      <div class="frame-ornaments" aria-hidden="true">
-        <span class="ornament ornament--corner ornament--corner-tl"></span>
-        <span class="ornament ornament--corner ornament--corner-tr"></span>
-        <span class="ornament ornament--corner ornament--corner-bl"></span>
-        <span class="ornament ornament--corner ornament--corner-br"></span>
-        <span class="ornament ornament--mid-top"></span>
-        <span class="ornament ornament--mid-bottom"></span>
-        <span class="ornament ornament--mid-left"></span>
-        <span class="ornament ornament--mid-right"></span>
+           shows through, deaf to the pointer — but assembled from sixteen
+           pieces, each of which takes its band from the frame's four insets
+           only as a STARTING point and is then grown past it, slid along it
+           and layered over its neighbour by that slot's own placement. Carving
+           does not tile: a corner sits ON its edge, and that overlap is the
+           whole reason these numbers exist.
+
+           One container, not two, and that is load-bearing: `z-index` on a
+           positioned element opens a stacking context, so two layers would put
+           every accent above every base piece forever, and a corner could never
+           be asked to sit under the edge it meets. Inside one context the six
+           `layer` numbers decide the whole order. -->
+      <div class="sliced-carving" class:sliced-carving--live={sliceEditable} aria-hidden="true">
+        {#each copies as copy (copy.id + ':' + copy.side)}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <span
+            class="carve"
+            data-piece={copy.id}
+            data-side={copy.side}
+            style={copy.style}
+            class:slice-live={sliceEditable}
+            class:slice-mate={sliceHeld?.id === copy.id}
+            class:slice-shown={sliceHeld?.id === copy.id && sliceHeld.side === copy.side}
+            onpointerdown={(e) => sliceTake(copy.id, copy.side, 'move', e)}
+            onpointermove={sliceDragMove}
+            onpointerup={sliceDragEnd}
+            onpointercancel={sliceDragEnd}
+          ></span>
+        {/each}
+        {#if sliceEditable && sliceHeld && gripAt}
+          <!-- Второе число той же копии: не «где лежит», а «насколько
+               заходит». Последним и выше всей сборки — см. `gripAt`.
+               `@const` не для красоты: `sliceHeld` — изменяемая связка, и
+               внутри замыкания сужение до непустого значения теряется. -->
+          {@const held = sliceHeld}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <span
+            class="slice-grip"
+            style="left:{gripAt.x}%; top:{gripAt.y}%"
+            title={$t('adminBattlesSliceGrowX')}
+            onpointerdown={(e) => sliceTake(held.id, held.side, 'size', e)}
+            onpointermove={sliceDragMove}
+            onpointerup={sliceDragEnd}
+            onpointercancel={sliceDragEnd}
+          ></span>
+        {/if}
       </div>
     {:else}
       <!-- The carving, laid over the card. A cut-out frame is a picture with a
@@ -995,8 +1228,10 @@
     pointer-events: none;
   }
 
-  /* The sliced carving's own layer — same box, same stacking order as
-     `.carving` above, just built from eight pieces instead of one image. */
+  /* The sliced carving's own layer — same box and same place in the stack as
+     `.carving` above, built from as many pieces as the frame has. A stacking
+     context of its own: the `layer` numbers inside it order the pieces against
+     EACH OTHER and can never reach past the badges above. */
   .sliced-carving {
     position: absolute;
     inset: 0;
@@ -1004,187 +1239,74 @@
     pointer-events: none;
   }
 
-  /* Each piece is sized directly off the frame's own four insets — the same
-     numbers that place `.content`'s window — so a keeper dragging a side
-     wider grows that piece's own band without means to touch the others. */
-  .slice-corner,
-  .slice-edge {
+  /* One rule for every copy of every piece. Where each sits — its box, its
+     picture, its layer, its turn — arrives as an inline style from
+     `carvedCopies`, because the six named slots are five shapes between them
+     and an ornament the keeper adds is one of the same five: sixteen CSS rules
+     could not name a piece invented five seconds ago, and a second renderer
+     for the added ones would be a preview that eventually lies.
+
+     Every copy starts from its band — the same four insets that place
+     `.content`'s window — and is then grown past it, slid along it and layered
+     over its neighbour by ITS OWN four numbers. Its own, and not its piece's:
+     the left side of a carving is rarely the mirror of its right, and one
+     number for both would put that fit out of reach the same way one number
+     for all four insets would. */
+  .carve {
     position: absolute;
     background-repeat: no-repeat;
-    background-size: 100% 100%;
   }
 
-  /* One picture, mirrored rather than rotated into the other three corners —
-     an asymmetric flourish (a vine that climbs one way) stays right-side up
-     wherever it lands. */
-  .slice-corner--tl {
-    top: 0;
-    left: 0;
-    width: var(--pad-left, 0);
-    height: var(--pad-top, 0);
-    background-image: var(--corner-image);
+  /* ── Резьба под рукой хранителя ──────────────────────────────────────────
+     Всё ниже живёт только в предпросмотре: на полке резьба остаётся хромом и
+     не берёт ни щелчка. Указатель отдан каждой копии по отдельности — берут
+     ту, которую видят, и едет она одна или со своими, смотря по связке. */
+  .sliced-carving--live .slice-live {
+    pointer-events: auto;
+    cursor: move;
   }
 
-  .slice-corner--tr {
-    top: 0;
-    right: 0;
-    width: var(--pad-right, 0);
-    height: var(--pad-top, 0);
-    background-image: var(--corner-image);
-    transform: scaleX(-1);
-  }
-
-  .slice-corner--bl {
-    bottom: 0;
-    left: 0;
-    width: var(--pad-left, 0);
-    height: var(--pad-bottom, 0);
-    background-image: var(--corner-image);
-    transform: scaleY(-1);
-  }
-
-  .slice-corner--br {
-    bottom: 0;
-    right: 0;
-    width: var(--pad-right, 0);
-    height: var(--pad-bottom, 0);
-    background-image: var(--corner-image);
-    transform: scale(-1, -1);
-  }
-
-  /* The top edge, stretched between the two corners; the foot is the same
-     picture mirrored vertically, the same pairing the inset handles already
-     move together by default. */
-  .slice-edge--top,
-  .slice-edge--bottom {
-    left: var(--pad-left, 0);
-    right: var(--pad-right, 0);
-    background-image: var(--side-image-h);
-  }
-
-  .slice-edge--top {
-    top: 0;
-    height: var(--pad-top, 0);
-  }
-
-  .slice-edge--bottom {
-    bottom: 0;
-    height: var(--pad-bottom, 0);
-    transform: scaleY(-1);
-  }
-
-  .slice-edge--left,
-  .slice-edge--right {
-    top: var(--pad-top, 0);
-    bottom: var(--pad-bottom, 0);
-    background-image: var(--side-image-v);
-  }
-
-  .slice-edge--left {
-    left: 0;
-    width: var(--pad-left, 0);
-  }
-
-  .slice-edge--right {
-    right: 0;
-    width: var(--pad-right, 0);
-    transform: scaleX(-1);
-  }
-
-  /* The accent layer — a later sibling of `.sliced-carving`, same z-index, so
-     it always paints on top of the nine base pieces without a taller
-     z-index of its own. */
-  .frame-ornaments {
+  /* Пунктир по коробке копии. Взятая обведена сплошнее своих: пока связка
+     включена, поедут все, и это должно быть видно до того, как поедут. */
+  .sliced-carving--live .carve::after {
+    content: '';
     position: absolute;
     inset: 0;
-    z-index: 3;
+    border: 1px dashed color-mix(in oklab, var(--ink) 60%, transparent);
+    opacity: 0;
     pointer-events: none;
+    transition: opacity 150ms ease;
   }
 
-  /* Shown at their own size and centred, never stretched to fill the band —
-     an accent, not a second copy of the piece underneath it. */
-  .ornament {
+  .sliced-carving--live .slice-live:hover::after {
+    opacity: 0.5;
+  }
+
+  .sliced-carving--live .slice-mate::after {
+    opacity: 0.45;
+  }
+
+  .sliced-carving--live .slice-shown::after {
+    opacity: 1;
+    border-style: solid;
+    border-color: color-mix(in oklab, var(--ink) 75%, transparent);
+  }
+
+  /* Второе число той же копии — насколько она заходит за свою полосу. Стоит на
+     том углу её коробки, который смотрит внутрь карты, и тянется в обе стороны
+     сразу, потому что и нахлёст у копии ровно два числа. Сосед деталей, а не
+     ребёнок: `layer` открывает контекст наложения, и захват внутри угла со
+     слоем 2 ушёл бы под акцент со слоем 5. */
+  .slice-grip {
     position: absolute;
-    background-repeat: no-repeat;
-    background-position: center;
-    background-size: contain;
-  }
-
-  /* Same box as the matching `.slice-corner` piece, so the accent can never
-     spill past the corner band onto the card's own content. Mirrored, never
-     rotated, for the same reason `--corner-image` is. */
-  .ornament--corner-tl {
-    top: 0;
-    left: 0;
-    width: var(--pad-left, 0);
-    height: var(--pad-top, 0);
-    background-image: var(--corner-extra-image);
-  }
-
-  .ornament--corner-tr {
-    top: 0;
-    right: 0;
-    width: var(--pad-right, 0);
-    height: var(--pad-top, 0);
-    background-image: var(--corner-extra-image);
-    transform: scaleX(-1);
-  }
-
-  .ornament--corner-bl {
-    bottom: 0;
-    left: 0;
-    width: var(--pad-left, 0);
-    height: var(--pad-bottom, 0);
-    background-image: var(--corner-extra-image);
-    transform: scaleY(-1);
-  }
-
-  .ornament--corner-br {
-    bottom: 0;
-    right: 0;
-    width: var(--pad-right, 0);
-    height: var(--pad-bottom, 0);
-    background-image: var(--corner-extra-image);
-    transform: scale(-1, -1);
-  }
-
-  /* Centred on the band, sized square to the band's own width — a medallion
-     that reads at the scale of the border it rides on, confined to the
-     band's own height so it never reaches into the card's content. */
-  .ornament--mid-top {
-    top: 0;
-    left: 50%;
-    width: var(--pad-top, 0);
-    height: var(--pad-top, 0);
-    transform: translateX(-50%);
-    background-image: var(--side-mid-h-image);
-  }
-
-  .ornament--mid-bottom {
-    bottom: 0;
-    left: 50%;
-    width: var(--pad-bottom, 0);
-    height: var(--pad-bottom, 0);
-    transform: translateX(-50%) scaleY(-1);
-    background-image: var(--side-mid-h-image);
-  }
-
-  .ornament--mid-left {
-    left: 0;
-    top: 50%;
-    width: var(--pad-left, 0);
-    height: var(--pad-left, 0);
-    transform: translateY(-50%);
-    background-image: var(--side-mid-v-image);
-  }
-
-  .ornament--mid-right {
-    right: 0;
-    top: 50%;
-    width: var(--pad-right, 0);
-    height: var(--pad-right, 0);
-    transform: translateY(-50%) scaleX(-1);
-    background-image: var(--side-mid-v-image);
+    z-index: 20;
+    width: 3.4cqi;
+    height: 3.4cqi;
+    margin: -1.7cqi 0 0 -1.7cqi;
+    background: var(--paper);
+    border: 1px solid color-mix(in oklab, var(--ink) 70%, transparent);
+    cursor: nwse-resize;
+    pointer-events: auto;
   }
 
   /* The same box as `.content` (same inset formula, same conditional padding

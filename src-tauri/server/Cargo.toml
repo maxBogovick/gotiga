@@ -51,6 +51,9 @@ candle-transformers = "0.9"
 # off still trims the http/progressbar/training extras we don't use.
 tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
 webp = "0.3"
+# Only for the slicing proposal: a preview lives in the JSON as a data: URL and
+# never touches the upload directory, so re-cutting a sheet leaves nothing behind.
+base64 = "0.22"
 # Edit distance for Elasticsearch-style AUTO fuzziness against the cabinet vocabulary.
 strsim = "0.11"
 # Script folding (Cyrillic → Latin) for bilingual queries — ICU-like, not a hand map.

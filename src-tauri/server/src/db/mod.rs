@@ -5476,8 +5476,20 @@ impl Repository {
         let query = format!(
             "{} {where_sql} ORDER BY l.updated_at DESC LIMIT ${} OFFSET ${}",
             Self::GAZETTE_LEAF_SELECT,
-            if status.is_some() && kind.is_some() { 3 } else if status.is_some() || kind.is_some() { 2 } else { 1 },
-            if status.is_some() && kind.is_some() { 4 } else if status.is_some() || kind.is_some() { 3 } else { 2 },
+            if status.is_some() && kind.is_some() {
+                3
+            } else if status.is_some() || kind.is_some() {
+                2
+            } else {
+                1
+            },
+            if status.is_some() && kind.is_some() {
+                4
+            } else if status.is_some() || kind.is_some() {
+                3
+            } else {
+                2
+            },
         );
         let mut q = sqlx::query_as::<_, crate::models::GazetteLeafListed>(&query);
         if let Some(s) = status {
@@ -5488,9 +5500,7 @@ impl Repository {
         }
         let items = q.bind(limit).bind(offset).fetch_all(&self.pg_pool).await?;
 
-        let count_sql = format!(
-            "SELECT COUNT(*) FROM gazette_leaves l {where_sql}"
-        );
+        let count_sql = format!("SELECT COUNT(*) FROM gazette_leaves l {where_sql}");
         let mut cq = sqlx::query_as::<_, (i64,)>(&count_sql);
         if let Some(s) = status {
             cq = cq.bind(s);
@@ -5506,13 +5516,15 @@ impl Repository {
         &self,
         id: Uuid,
     ) -> Result<Option<crate::models::GazetteLeafListed>> {
-        Ok(sqlx::query_as::<_, crate::models::GazetteLeafListed>(&format!(
-            "{} WHERE l.id = $1",
-            Self::GAZETTE_LEAF_SELECT
-        ))
-        .bind(id)
-        .fetch_optional(&self.pg_pool)
-        .await?)
+        Ok(
+            sqlx::query_as::<_, crate::models::GazetteLeafListed>(&format!(
+                "{} WHERE l.id = $1",
+                Self::GAZETTE_LEAF_SELECT
+            ))
+            .bind(id)
+            .fetch_optional(&self.pg_pool)
+            .await?,
+        )
     }
 
     pub async fn list_gazette_slugs_except(&self, except: Option<Uuid>) -> Result<Vec<String>> {
@@ -5872,11 +5884,7 @@ impl Repository {
         Ok(())
     }
 
-    pub async fn mark_gazette_feed_fetched(
-        &self,
-        id: Uuid,
-        error: Option<&str>,
-    ) -> Result<()> {
+    pub async fn mark_gazette_feed_fetched(&self, id: Uuid, error: Option<&str>) -> Result<()> {
         sqlx::query(
             "UPDATE gazette_feeds SET last_fetched_at = NOW(), last_error = $2 WHERE id = $1",
         )
@@ -6188,7 +6196,9 @@ impl Repository {
             .await?
             .rows_affected();
         if affected == 0 {
-            return Err(AppError::NotFound(format!("Gazette cutting {id} not found")));
+            return Err(AppError::NotFound(format!(
+                "Gazette cutting {id} not found"
+            )));
         }
         Ok(())
     }
@@ -6206,7 +6216,9 @@ impl Repository {
             .await?
             .rows_affected();
         if affected == 0 {
-            return Err(AppError::NotFound(format!("Gazette cutting {id} not found")));
+            return Err(AppError::NotFound(format!(
+                "Gazette cutting {id} not found"
+            )));
         }
         Ok(())
     }
@@ -6247,15 +6259,17 @@ impl Repository {
         &self,
         limit: i64,
     ) -> Result<Vec<crate::models::BattleCardListed>> {
-        Ok(sqlx::query_as::<_, crate::models::BattleCardListed>(&format!(
-            "{} WHERE c.status = 'published'
+        Ok(
+            sqlx::query_as::<_, crate::models::BattleCardListed>(&format!(
+                "{} WHERE c.status = 'published'
              ORDER BY c.shelf_order NULLS LAST, c.tier DESC, c.created_at DESC, c.id DESC
              LIMIT $1",
-            Self::BATTLE_CARD_SELECT
-        ))
-        .bind(limit)
-        .fetch_all(&self.pg_pool)
-        .await?)
+                Self::BATTLE_CARD_SELECT
+            ))
+            .bind(limit)
+            .fetch_all(&self.pg_pool)
+            .await?,
+        )
     }
 
     /// The keeper's desk: drafts and retired cards too, same order.
@@ -6263,27 +6277,31 @@ impl Repository {
         &self,
         limit: i64,
     ) -> Result<Vec<crate::models::BattleCardListed>> {
-        Ok(sqlx::query_as::<_, crate::models::BattleCardListed>(&format!(
-            "{} ORDER BY c.shelf_order NULLS LAST, c.tier DESC, c.created_at DESC, c.id DESC
+        Ok(
+            sqlx::query_as::<_, crate::models::BattleCardListed>(&format!(
+                "{} ORDER BY c.shelf_order NULLS LAST, c.tier DESC, c.created_at DESC, c.id DESC
              LIMIT $1",
-            Self::BATTLE_CARD_SELECT
-        ))
-        .bind(limit)
-        .fetch_all(&self.pg_pool)
-        .await?)
+                Self::BATTLE_CARD_SELECT
+            ))
+            .bind(limit)
+            .fetch_all(&self.pg_pool)
+            .await?,
+        )
     }
 
     pub async fn get_battle_card_admin(
         &self,
         id: Uuid,
     ) -> Result<Option<crate::models::BattleCardListed>> {
-        Ok(sqlx::query_as::<_, crate::models::BattleCardListed>(&format!(
-            "{} WHERE c.id = $1",
-            Self::BATTLE_CARD_SELECT
-        ))
-        .bind(id)
-        .fetch_optional(&self.pg_pool)
-        .await?)
+        Ok(
+            sqlx::query_as::<_, crate::models::BattleCardListed>(&format!(
+                "{} WHERE c.id = $1",
+                Self::BATTLE_CARD_SELECT
+            ))
+            .bind(id)
+            .fetch_optional(&self.pg_pool)
+            .await?,
+        )
     }
 
     pub async fn list_battle_card_slugs_except(&self, except: Option<Uuid>) -> Result<Vec<String>> {
@@ -6719,15 +6737,16 @@ impl Repository {
     /// `None` — гость не раскладывал стол ни разу. Это не то же самое, что
     /// пустой стол: первый заход на встречу без разложенного стола ведёт на
     /// стол, а не в партию.
-    pub async fn get_battle_deck(&self, user_id: Uuid) -> Result<Option<crate::models::BattleDeck>> {
-        Ok(
-            sqlx::query_as::<_, crate::models::BattleDeck>(
-                "SELECT * FROM battle_decks WHERE user_id = $1",
-            )
-            .bind(user_id)
-            .fetch_optional(&self.pg_pool)
-            .await?,
+    pub async fn get_battle_deck(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Option<crate::models::BattleDeck>> {
+        Ok(sqlx::query_as::<_, crate::models::BattleDeck>(
+            "SELECT * FROM battle_decks WHERE user_id = $1",
         )
+        .bind(user_id)
+        .fetch_optional(&self.pg_pool)
+        .await?)
     }
 
     /// Стол переписывается целиком. Не по одному месту: половина сохранённой
@@ -6754,16 +6773,18 @@ impl Repository {
         tier: i16,
         limit: i64,
     ) -> Result<Vec<crate::models::BattleCardListed>> {
-        Ok(sqlx::query_as::<_, crate::models::BattleCardListed>(&format!(
-            "{} WHERE c.lendable AND c.status = 'published' AND c.tier = $1 AND c.health > 0
+        Ok(
+            sqlx::query_as::<_, crate::models::BattleCardListed>(&format!(
+                "{} WHERE c.lendable AND c.status = 'published' AND c.tier = $1 AND c.health > 0
              ORDER BY c.shelf_order NULLS LAST, c.created_at DESC, c.id DESC
              LIMIT $2",
-            Self::BATTLE_CARD_SELECT
-        ))
-        .bind(tier)
-        .bind(limit)
-        .fetch_all(&self.pg_pool)
-        .await?)
+                Self::BATTLE_CARD_SELECT
+            ))
+            .bind(tier)
+            .bind(limit)
+            .fetch_all(&self.pg_pool)
+            .await?,
+        )
     }
 
     /// Выдать карты в собрание напрямую, минуя покупку.
@@ -6803,13 +6824,11 @@ impl Repository {
                 .execute(&self.pg_pool)
                 .await?
         } else {
-            sqlx::query(
-                "DELETE FROM battle_owned_cards WHERE user_id = $1 AND card_id = ANY($2)",
-            )
-            .bind(user_id)
-            .bind(card_ids)
-            .execute(&self.pg_pool)
-            .await?
+            sqlx::query("DELETE FROM battle_owned_cards WHERE user_id = $1 AND card_id = ANY($2)")
+                .bind(user_id)
+                .bind(card_ids)
+                .execute(&self.pg_pool)
+                .await?
         };
         Ok(res.rows_affected())
     }
@@ -7032,10 +7051,7 @@ impl Repository {
             .await?)
     }
 
-    pub async fn get_battle_challenge(
-        &self,
-        id: Uuid,
-    ) -> Result<crate::models::BattleChallenge> {
+    pub async fn get_battle_challenge(&self, id: Uuid) -> Result<crate::models::BattleChallenge> {
         sqlx::query_as::<_, crate::models::BattleChallenge>(
             "SELECT * FROM battle_challenges WHERE id = $1",
         )
@@ -7112,8 +7128,16 @@ impl Repository {
                       reward_dust, player_side, status)
                  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *",
             )
-            .bind(w.slug).bind(w.title_en).bind(w.title_ru).bind(w.note_en).bind(w.note_ru)
-            .bind(w.setup).bind(w.bot_depth).bind(w.reward_dust).bind(w.player_side).bind(w.status)
+            .bind(w.slug)
+            .bind(w.title_en)
+            .bind(w.title_ru)
+            .bind(w.note_en)
+            .bind(w.note_ru)
+            .bind(w.setup)
+            .bind(w.bot_depth)
+            .bind(w.reward_dust)
+            .bind(w.player_side)
+            .bind(w.status)
             .fetch_one(&self.pg_pool)
             .await?),
             Some(id) => sqlx::query_as::<_, crate::models::BattleChallenge>(
@@ -7122,8 +7146,17 @@ impl Repository {
                         reward_dust=$9, player_side=$10, status=$11, updated_at = NOW()
                   WHERE id=$1 RETURNING *",
             )
-            .bind(id).bind(w.slug).bind(w.title_en).bind(w.title_ru).bind(w.note_en).bind(w.note_ru)
-            .bind(w.setup).bind(w.bot_depth).bind(w.reward_dust).bind(w.player_side).bind(w.status)
+            .bind(id)
+            .bind(w.slug)
+            .bind(w.title_en)
+            .bind(w.title_ru)
+            .bind(w.note_en)
+            .bind(w.note_ru)
+            .bind(w.setup)
+            .bind(w.bot_depth)
+            .bind(w.reward_dust)
+            .bind(w.player_side)
+            .bind(w.status)
             .fetch_optional(&self.pg_pool)
             .await?
             .ok_or_else(|| AppError::NotFound(format!("Battle challenge {id} not found"))),
@@ -7157,7 +7190,9 @@ impl Repository {
             .await?
             .rows_affected();
         if affected == 0 {
-            return Err(AppError::NotFound(format!("Battle challenge {id} not found")));
+            return Err(AppError::NotFound(format!(
+                "Battle challenge {id} not found"
+            )));
         }
         Ok(())
     }
@@ -7375,6 +7410,242 @@ impl Repository {
             "UPDATE battle_keywords AS k SET sort_order = v.ord
                FROM (SELECT * FROM UNNEST($1::uuid[], $2::int[]) AS t(id, ord)) AS v
               WHERE k.id = v.id",
+        )
+        .bind(ids)
+        .bind(&orders)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected())
+    }
+
+    // === BATTLE ASSETS ===
+
+    pub async fn list_battle_asset_sheets(
+        &self,
+    ) -> Result<Vec<crate::models::BattleAssetSheetListed>> {
+        Ok(
+            sqlx::query_as::<_, crate::models::BattleAssetSheetListed>(
+                "SELECT s.id, s.name, s.source_url, s.width, s.height, s.settings,
+                        s.sort_order, s.created_at,
+                        (SELECT COUNT(*) FROM battle_assets a WHERE a.sheet_id = s.id)::bigint
+                            AS part_count
+                   FROM battle_asset_sheets s
+                  ORDER BY s.sort_order NULLS LAST, s.created_at DESC, s.id",
+            )
+            .fetch_all(&self.pg_pool)
+            .await?,
+        )
+    }
+
+    pub async fn get_battle_asset_sheet(
+        &self,
+        id: Uuid,
+    ) -> Result<crate::models::BattleAssetSheet> {
+        sqlx::query_as::<_, crate::models::BattleAssetSheet>(
+            "SELECT * FROM battle_asset_sheets WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pg_pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Battle asset sheet {id} not found")))
+    }
+
+    pub async fn insert_battle_asset_sheet(
+        &self,
+        name: &str,
+        source_url: &str,
+        width: i32,
+        height: i32,
+    ) -> Result<crate::models::BattleAssetSheet> {
+        Ok(sqlx::query_as::<_, crate::models::BattleAssetSheet>(
+            "INSERT INTO battle_asset_sheets (name, source_url, width, height)
+             VALUES ($1,$2,$3,$4) RETURNING *",
+        )
+        .bind(name)
+        .bind(source_url)
+        .bind(width)
+        .bind(height)
+        .fetch_one(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn rename_battle_asset_sheet(
+        &self,
+        id: Uuid,
+        name: &str,
+    ) -> Result<crate::models::BattleAssetSheet> {
+        sqlx::query_as::<_, crate::models::BattleAssetSheet>(
+            "UPDATE battle_asset_sheets SET name = $2, updated_at = NOW()
+              WHERE id = $1 RETURNING *",
+        )
+        .bind(id)
+        .bind(name)
+        .fetch_optional(&self.pg_pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Battle asset sheet {id} not found")))
+    }
+
+    /// Remembering how a sheet was last cut. Written on every cut, so the next
+    /// time the keeper opens it the knobs stand where they were left.
+    pub async fn save_battle_asset_sheet_settings(
+        &self,
+        id: Uuid,
+        settings: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE battle_asset_sheets SET settings = $2, updated_at = NOW() WHERE id = $1",
+        )
+        .bind(id)
+        .bind(settings)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Clearing a sheet away leaves its parts standing, loose — the foreign key
+    /// is ON DELETE SET NULL. A frame may already be wearing one of them.
+    pub async fn delete_battle_asset_sheet(&self, id: Uuid) -> Result<()> {
+        let affected = sqlx::query("DELETE FROM battle_asset_sheets WHERE id = $1")
+            .bind(id)
+            .execute(&self.pg_pool)
+            .await?
+            .rows_affected();
+        if affected == 0 {
+            return Err(AppError::NotFound(format!(
+                "Battle asset sheet {id} not found"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Every filter in one statement rather than a hand-built query: a NULL
+    /// bind means "no opinion", so the three questions the desk actually asks
+    /// — which sheet, which role, which name — compose without string surgery.
+    pub async fn list_battle_assets(
+        &self,
+        sheet: crate::models::AssetSheetFilter,
+        role: Option<&str>,
+        query: Option<&str>,
+    ) -> Result<Vec<crate::models::BattleAssetListed>> {
+        let (one, loose) = match sheet {
+            crate::models::AssetSheetFilter::Any => (None, false),
+            crate::models::AssetSheetFilter::Loose => (None, true),
+            crate::models::AssetSheetFilter::One(id) => (Some(id), false),
+        };
+        Ok(sqlx::query_as::<_, crate::models::BattleAssetListed>(
+            "SELECT a.id, a.sheet_id, a.name, a.role, a.url, a.width, a.height,
+                    a.sort_order, a.created_at, a.updated_at, s.name AS sheet_name
+               FROM battle_assets a
+               LEFT JOIN battle_asset_sheets s ON s.id = a.sheet_id
+              WHERE ($1::uuid IS NULL OR a.sheet_id = $1)
+                AND ($2::bool IS NOT TRUE OR a.sheet_id IS NULL)
+                AND ($3::text IS NULL OR a.role = $3)
+                AND ($4::text IS NULL OR a.name ILIKE '%' || $4 || '%')
+              ORDER BY a.sort_order NULLS LAST, a.created_at DESC, a.id",
+        )
+        .bind(one)
+        .bind(loose)
+        .bind(role)
+        .bind(query)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn get_battle_asset(&self, id: Uuid) -> Result<crate::models::BattleAsset> {
+        sqlx::query_as::<_, crate::models::BattleAsset>(
+            "SELECT * FROM battle_assets WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pg_pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Battle asset {id} not found")))
+    }
+
+    /// Where the next part lands when it joins a sheet: after everything
+    /// already there, so a second cut appends instead of shuffling.
+    pub async fn next_battle_asset_order(&self, sheet_id: Option<Uuid>) -> Result<i32> {
+        let row: (Option<i32>,) = sqlx::query_as(
+            "SELECT MAX(sort_order) FROM battle_assets
+              WHERE ($1::uuid IS NULL AND sheet_id IS NULL) OR sheet_id = $1",
+        )
+        .bind(sheet_id)
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(row.0.unwrap_or(-1) + 1)
+    }
+
+    pub async fn insert_battle_asset(
+        &self,
+        sheet_id: Option<Uuid>,
+        name: &str,
+        role: &str,
+        url: &str,
+        width: i32,
+        height: i32,
+        sort_order: i32,
+    ) -> Result<crate::models::BattleAsset> {
+        Ok(sqlx::query_as::<_, crate::models::BattleAsset>(
+            "INSERT INTO battle_assets (sheet_id, name, role, url, width, height, sort_order)
+             VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *",
+        )
+        .bind(sheet_id)
+        .bind(name)
+        .bind(role)
+        .bind(url)
+        .bind(width)
+        .bind(height)
+        .bind(sort_order)
+        .fetch_one(&self.pg_pool)
+        .await?)
+    }
+
+    /// COALESCE on every field: the desk edits one thing at a time, and a
+    /// rename must not silently re-file the part under another role.
+    pub async fn update_battle_asset(
+        &self,
+        id: Uuid,
+        name: Option<&str>,
+        role: Option<&str>,
+        move_sheet: bool,
+        sheet_id: Option<Uuid>,
+    ) -> Result<crate::models::BattleAsset> {
+        sqlx::query_as::<_, crate::models::BattleAsset>(
+            "UPDATE battle_assets
+                SET name = COALESCE($2, name),
+                    role = COALESCE($3, role),
+                    sheet_id = CASE WHEN $4 THEN $5 ELSE sheet_id END,
+                    updated_at = NOW()
+              WHERE id = $1 RETURNING *",
+        )
+        .bind(id)
+        .bind(name)
+        .bind(role)
+        .bind(move_sheet)
+        .bind(sheet_id)
+        .fetch_optional(&self.pg_pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Battle asset {id} not found")))
+    }
+
+    pub async fn delete_battle_asset(&self, id: Uuid) -> Result<crate::models::BattleAsset> {
+        sqlx::query_as::<_, crate::models::BattleAsset>(
+            "DELETE FROM battle_assets WHERE id = $1 RETURNING *",
+        )
+        .bind(id)
+        .fetch_optional(&self.pg_pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Battle asset {id} not found")))
+    }
+
+    pub async fn set_battle_asset_order(&self, ids: &[Uuid]) -> Result<u64> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let orders: Vec<i32> = (0..ids.len() as i32).collect();
+        let res = sqlx::query(
+            "UPDATE battle_assets AS a SET sort_order = v.ord
+               FROM (SELECT * FROM UNNEST($1::uuid[], $2::int[]) AS t(id, ord)) AS v
+              WHERE a.id = v.id",
         )
         .bind(ids)
         .bind(&orders)

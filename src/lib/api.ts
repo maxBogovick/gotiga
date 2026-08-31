@@ -60,6 +60,7 @@ import type {
     ThemeConfig,
     BattleCard,
     BattleFrames,
+    BattleFramePresets,
     BattleMe,
     BattleDustRates,
     BattleAttentionResponse,
@@ -67,7 +68,15 @@ import type {
     BuyBattleCardResponse,
     RaiseBattleCardRequest,
     RaiseBattleCardResponse,
+    BattleAsset,
+    BattleAssetPick,
+    BattleAssetRole,
+    BattleAssetSheet,
     BattleRace,
+    BattleSheetCut,
+    BattleSheetPartFull,
+    BattleSliceSettings,
+    BattleSplitRect,
     SaveBattleRaceRequest,
     BattleKeyword,
     SaveBattleKeywordRequest,
@@ -439,6 +448,17 @@ export function resolveBackgroundSrcset(
 function webPublicUrl(url: unknown): string | null {
     if (typeof url !== 'string') return null;
     return resolveMediaUrl(url);
+}
+
+/** Both of these carry a `/static/…` path from the server; the desk needs a
+ *  URL a browser can load, which differs between the packaged app and the web
+ *  build. Same treatment as every other stored picture. */
+function webBattleAssetSheet<T extends { sourceUrl: string }>(row: T): T {
+    return { ...row, sourceUrl: webPublicUrl(row.sourceUrl) ?? row.sourceUrl };
+}
+
+function webBattleAsset<T extends { url: string }>(row: T): T {
+    return { ...row, url: webPublicUrl(row.url) ?? row.url };
 }
 
 class ApiError extends Error {
@@ -2613,6 +2633,187 @@ export const api = {
      * show through. Returns the picture's own size so the desk can set the
      * card's ratio from it, and whether it has a hole in it at all.
      */
+    // === ASSETS ===
+    // The store of frame parts, and the sheets they were cut from.
+
+    async adminListBattleAssetSheets(): Promise<BattleAssetSheet[]> {
+        const rows = await webFetch<BattleAssetSheet[]>('/admin/battles/assets/sheets', {
+            headers: authHeaders(),
+        });
+        return (rows ?? []).map(webBattleAssetSheet);
+    },
+
+    /**
+     * Put a sheet of parts away whole.
+     *
+     * Not `importMediaWithVariants`, and not even a re-encode: a sheet is kept
+     * in the bytes it arrived in. A JPEG rendition of a sheet with an alpha
+     * channel would throw away the very thing the cut reads.
+     */
+    async adminAddBattleAssetSheet(file: File, name?: string): Promise<BattleAssetSheet> {
+        const form = new FormData();
+        form.append('file', file);
+        if (name?.trim()) form.append('name', name.trim());
+        const res = await fetch(`${webApiBase()}/admin/battles/assets/sheets`, {
+            method: 'POST',
+            headers: authHeaders(),
+            body: form,
+        });
+        if (!res.ok) throw new ApiError(res.status, await res.text().catch(() => ''));
+        return webBattleAssetSheet(await res.json());
+    },
+
+    async adminRenameBattleAssetSheet(id: string, name: string): Promise<BattleAssetSheet> {
+        return webBattleAssetSheet(
+            await webFetch<BattleAssetSheet>(`/admin/battles/assets/sheets/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', ...authHeaders() },
+                body: JSON.stringify({ name }),
+            }),
+        );
+    },
+
+    /** Clears the sheet away; its parts stay, loose. A frame may be wearing one. */
+    async adminDeleteBattleAssetSheet(id: string): Promise<void> {
+        await webFetch(`/admin/battles/assets/sheets/${id}`, {
+            method: 'DELETE',
+            headers: authHeaders(),
+        });
+    },
+
+    /**
+     * Ask what a cut would produce. Writes nothing — the previews come back as
+     * `data:` pictures, so re-cutting a sheet twenty times leaves no files
+     * behind. The reply carries the settings it actually used.
+     */
+    async adminSliceBattleAssetSheet(
+        id: string,
+        settings?: Partial<BattleSliceSettings>,
+    ): Promise<BattleSheetCut> {
+        return webFetch(`/admin/battles/assets/sheets/${id}/slice`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ settings: settings ?? {} }),
+        });
+    },
+
+    /**
+     * Take the chosen parts off for keeps. The settings come back with the
+     * picks because a part's number only means the same thing under the same
+     * settings — the server checks each pick's shape before saving it.
+     */
+    async adminCutBattleAssetSheet(
+        id: string,
+        settings: BattleSliceSettings,
+        picks: BattleAssetPick[],
+    ): Promise<BattleAsset[]> {
+        const rows = await webFetch<BattleAsset[]>(`/admin/battles/assets/sheets/${id}/cut`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ settings, picks }),
+        });
+        return (rows ?? []).map(webBattleAsset);
+    },
+
+    /**
+     * One part of a proposed cut at full size, to draw rectangles on.
+     *
+     * Separate from the proposal because a preview small enough to send eighty
+     * of at once is too small to aim at, and a proposal big enough to aim at
+     * would be a download. Fetched for the one piece being worked on.
+     */
+    async adminBattleSheetPart(
+        sheetId: string,
+        settings: BattleSliceSettings,
+        index: number,
+    ): Promise<BattleSheetPartFull> {
+        return webFetch(`/admin/battles/assets/sheets/${sheetId}/part`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ settings, index }),
+        });
+    },
+
+    /** Take hand-drawn rectangles off a part already in the store. The part
+     *  itself stays where it is. */
+    async adminSplitBattleAsset(id: string, rects: BattleSplitRect[]): Promise<BattleAsset[]> {
+        const rows = await webFetch<BattleAsset[]>(`/admin/battles/assets/${id}/split`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ rects }),
+        });
+        return (rows ?? []).map(webBattleAsset);
+    },
+
+    /** `sheetId: 'loose'` asks for the parts that stand under no sheet — its
+     *  own question, not an absent filter. */
+    async adminListBattleAssets(opts?: {
+        sheetId?: string;
+        role?: BattleAssetRole;
+        q?: string;
+    }): Promise<BattleAsset[]> {
+        const params = new URLSearchParams();
+        if (opts?.sheetId) params.set('sheetId', opts.sheetId);
+        if (opts?.role) params.set('role', opts.role);
+        if (opts?.q?.trim()) params.set('q', opts.q.trim());
+        const query = params.toString();
+        const rows = await webFetch<BattleAsset[]>(
+            `/admin/battles/assets${query ? `?${query}` : ''}`,
+            { headers: authHeaders() },
+        );
+        return (rows ?? []).map(webBattleAsset);
+    },
+
+    /** A part that arrived on its own, with no sheet behind it. */
+    async adminAddBattleAsset(
+        file: File,
+        name?: string,
+        role?: BattleAssetRole,
+    ): Promise<BattleAsset> {
+        const form = new FormData();
+        form.append('file', file);
+        if (name?.trim()) form.append('name', name.trim());
+        if (role) form.append('role', role);
+        const res = await fetch(`${webApiBase()}/admin/battles/assets`, {
+            method: 'POST',
+            headers: authHeaders(),
+            body: form,
+        });
+        if (!res.ok) throw new ApiError(res.status, await res.text().catch(() => ''));
+        return webBattleAsset(await res.json());
+    },
+
+    /** Every field is optional: the desk edits one thing at a time. Passing
+     *  `sheetId: null` makes the part loose; leaving it out moves nothing. */
+    async adminSaveBattleAsset(
+        id: string,
+        body: { name?: string; role?: BattleAssetRole; sheetId?: string | null },
+    ): Promise<BattleAsset> {
+        return webBattleAsset(
+            await webFetch<BattleAsset>(`/admin/battles/assets/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', ...authHeaders() },
+                body: JSON.stringify(body),
+            }),
+        );
+    },
+
+    async adminDeleteBattleAsset(id: string): Promise<void> {
+        await webFetch(`/admin/battles/assets/${id}`, {
+            method: 'DELETE',
+            headers: authHeaders(),
+        });
+    },
+
+    /** Rewrite the order; position is the index in `ids`. */
+    async adminReorderBattleAssets(ids: string[]): Promise<void> {
+        await webFetch('/admin/battles/assets/order', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ ids }),
+        });
+    },
+
     async adminUploadBattleFrameArt(
         file: File,
     ): Promise<{ url: string; width: number; height: number; hasAlpha: boolean }> {
@@ -2635,6 +2836,23 @@ export const api = {
 
     async adminSaveBattleFrames(config: BattleFrames): Promise<BattleFrames> {
         return webFetch('/admin/battles/frames', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(config),
+        });
+    },
+
+    /**
+     * The keeper's drawer of saved frames. Admin-only, unlike the five ranks:
+     * a preset is a tool of the desk, and no visitor's page is made better by
+     * carrying two dozen dresses nothing on it wears.
+     */
+    async adminGetBattleFramePresets(): Promise<BattleFramePresets> {
+        return webFetch('/admin/battles/frames/presets', { headers: authHeaders() });
+    },
+
+    async adminSaveBattleFramePresets(config: BattleFramePresets): Promise<BattleFramePresets> {
+        return webFetch('/admin/battles/frames/presets', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify(config),
