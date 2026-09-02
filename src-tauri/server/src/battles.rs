@@ -925,6 +925,16 @@ pub fn normalize_focal(raw: Option<&str>) -> Option<String> {
     serde_json::to_string(&focal).ok()
 }
 
+/// A dress used to be three optional fields (`frameImage`, `frameMode`,
+/// `aspect`) and 2000 characters held it. It now carries the whole design,
+/// and 2000 cuts a carved frame in half — which is how a card that had taken
+/// a dress out of the drawer came back as constraint `23514`. Wide enough
+/// for that whole object with room for fields not yet named; still a bound,
+/// so the column cannot become a second settings blob.
+pub const FRAME_OVERRIDE_MAX: usize = 48_000;
+/// Five of the same object, one per level of an owned copy.
+pub const LEVEL_FRAMES_MAX: usize = FRAME_OVERRIDE_MAX * 5;
+
 /// A dress worn instead of the tier's own — by one card, or by one level of a
 /// race's copies. Every field optional and `None` when absent, unlike
 /// `BattleFrame` itself: this is a patch, and a field left out means "keep the
@@ -2469,6 +2479,64 @@ mod tests {
         // photograph" this way, and dropping it would leave the rank's own
         // picture stretched underneath the slices.
         assert_eq!(back.frame_image.as_deref(), Some(""));
+    }
+
+    /// The old column check was 2000 characters, sized for `{frameImage,
+    /// frameMode, aspect}`. A dress taken out of the drawer names the whole
+    /// carving, and that is several times 2000 — which is how saving a card
+    /// came back as 23514. The new bound has to hold a fully dressed frame
+    /// with every flourish the desk allows, or the same 500 returns the
+    /// moment a keeper adds one more medallion.
+    #[test]
+    fn a_carved_dress_fits_in_the_column() {
+        let mut frame = default_frames()[2].clone();
+        frame.frame_mode = "sliced".into();
+        let url = |n: &str| format!("/static/frames/015bc772-889e-4061-8637-958576558e{n}.webp");
+        frame.frame_image = url("01");
+        frame.paper_image = url("02");
+        frame.back_image = url("03");
+        frame.corner_image = url("04");
+        frame.side_image_h = url("05");
+        frame.side_image_v = url("06");
+        frame.corner_extra = url("07");
+        frame.side_mid_h = url("08");
+        frame.side_mid_v = url("09");
+        frame.slices = default_slices();
+        frame.ornaments = (0..ORNAMENTS_MAX)
+            .map(|i| SliceOrnament {
+                id: format!("aaaaaaaa-bbbb-4ccc-8ddd-{i:012}"),
+                image: url(&format!("a{i:02}")),
+                kind: "corner".into(),
+                piece: default_slices().corner_extra,
+            })
+            .collect();
+        let raw = serde_json::to_string(&frame).unwrap();
+        let kept = normalize_frame_override(Some(&raw)).expect("a carved dress is a dress");
+        let n = kept.chars().count();
+        assert!(
+            n > 2000,
+            "the old check would have accepted this, which is not why we are here: {n} chars"
+        );
+        assert!(
+            n <= FRAME_OVERRIDE_MAX,
+            "a fully carved dress with every flourish is {n} characters; the column holds {FRAME_OVERRIDE_MAX}"
+        );
+
+        let one: FrameOverride = serde_json::from_str(&kept).unwrap();
+        let five = vec![
+            Some(one.clone()),
+            Some(one.clone()),
+            Some(one.clone()),
+            Some(one.clone()),
+            Some(one),
+        ];
+        let kept_levels = normalize_level_frames(Some(&serde_json::to_string(&five).unwrap()))
+            .expect("five dresses");
+        let levels = kept_levels.chars().count();
+        assert!(
+            levels <= LEVEL_FRAMES_MAX,
+            "five carved dresses are {levels} characters; the race column holds {LEVEL_FRAMES_MAX}"
+        );
     }
 
     #[test]

@@ -43,9 +43,12 @@
     carvedCopies,
     kindOf,
     livePiece,
+    sliceResizeDelta,
     sliceSigns,
     type InsetKey,
     type FrameOverride,
+    type SliceResizeX,
+    type SliceResizeY,
   } from '$lib/battles';
   import { api } from '$lib/api';
   import AppImage from '$lib/components/AppImage.svelte';
@@ -468,8 +471,15 @@
   let copies = $derived(sliced ? carvedCopies(frame) : []);
 
   /** What a drag on the held copy is doing: moving it, or growing it past its
-   *  band. Two gestures, two grips, no modifier key to remember. */
+   *  band. Two gestures, two grips, no modifier key to remember. A size drag
+   *  names which edges of the box are in hand, so a side changes only that
+   *  axis and a corner still changes both. */
   let sliceDrag = $state<'move' | 'size' | null>(null);
+  let sliceSizeX = $state<SliceResizeX | null>(null);
+  let sliceSizeY = $state<SliceResizeY | null>(null);
+  /** Held for the length of a size drag so the arrows stay under the pointer
+   *  even after it leaves the thin hit strip. */
+  let sliceCursor = $state<string | null>(null);
   /** A press that never moved is a pick, not a drag — the way through to a
    *  copy lying under another. */
   let sliceMoved = false;
@@ -486,51 +496,97 @@
   }
 
   /**
-   * Where the held copy's inner corner is, in % of the card — the one place
-   * the size grip may sit.
+   * Where the held copy's box is, in % of the card — the one place the size
+   * handles may sit, one per edge and one per corner.
    *
    * Measured rather than computed a second time, and for a reason that is not
-   * laziness: the grip cannot live INSIDE the copy it sizes. A piece carries a
-   * `layer`, a `z-index` on a positioned element opens a stacking context, and
-   * a child can never climb out of its parent's — so a grip inside a corner at
-   * layer 2 sits under the accent at layer 5 that covers the same band, visible
-   * and untouchable. Out here, above the whole assembly, it is always
-   * reachable; and measuring keeps its place honest however the copy is grown,
-   * slid or turned.
+   * laziness: the handles cannot live INSIDE the copy they size. A piece
+   * carries a `layer`, a `z-index` on a positioned element opens a stacking
+   * context, and a child can never climb out of its parent's — so a handle
+   * inside a corner at layer 2 sits under the accent at layer 5 that covers
+   * the same band, visible and untouchable. Out here, above the whole
+   * assembly, they are always reachable; and measuring keeps their place
+   * honest however the copy is grown, slid or turned.
    */
-  let gripAt = $state<{ x: number; y: number } | null>(null);
+  let gripBox = $state<{ left: number; top: number; width: number; height: number } | null>(null);
 
   $effect(() => {
     if (!sliceEditable || !sliceHeld) {
-      gripAt = null;
+      gripBox = null;
       return;
     }
     // Re-measured whenever the assembly moves — including every frame of a
-    // drag, since that is exactly when the grip must keep up with its copy.
+    // drag, since that is exactly when the handles must keep up with their copy.
     void copies;
     const el = root;
     const at = copyEl(sliceHeld.id, sliceHeld.side);
     if (!el || !at) {
-      gripAt = null;
+      gripBox = null;
       return;
     }
     const card = el.getBoundingClientRect();
     const box = at.getBoundingClientRect();
     if (!card.width || !card.height) return;
-    // The corner of the box that faces the card's inside — the same corner the
-    // sign table calls `grip`, so pulling it always follows the pointer.
-    const axes = SLICE_SIDE_AXES[sliceHeld.side];
-    gripAt = {
-      x: ((box[axes.gripX] - card.left) / card.width) * 100,
-      y: ((box[axes.gripY] - card.top) / card.height) * 100,
+    gripBox = {
+      left: ((box.left - card.left) / card.width) * 100,
+      top: ((box.top - card.top) / card.height) * 100,
+      width: (box.width / card.width) * 100,
+      height: (box.height / card.height) * 100,
     };
   });
+
+  /** The eight places a box can be asked to grow from. Edges first, corners
+   *  on top of them (higher z-index in the markup's own CSS) so a corner
+   *  press is never stolen by the side it sits on. */
+  const SLICE_RESIZE_HANDLES: {
+    id: string;
+    x: SliceResizeX | null;
+    y: SliceResizeY | null;
+    cursor: string;
+  }[] = [
+    { id: 'n', x: null, y: 'top', cursor: 'ns-resize' },
+    { id: 's', x: null, y: 'bottom', cursor: 'ns-resize' },
+    { id: 'e', x: 'right', y: null, cursor: 'ew-resize' },
+    { id: 'w', x: 'left', y: null, cursor: 'ew-resize' },
+    { id: 'nw', x: 'left', y: 'top', cursor: 'nwse-resize' },
+    { id: 'ne', x: 'right', y: 'top', cursor: 'nesw-resize' },
+    { id: 'sw', x: 'left', y: 'bottom', cursor: 'nesw-resize' },
+    { id: 'se', x: 'right', y: 'bottom', cursor: 'nwse-resize' },
+  ];
+
+  function resizeHandleStyle(
+    box: { left: number; top: number; width: number; height: number },
+    handle: (typeof SLICE_RESIZE_HANDLES)[number],
+  ): string {
+    const parts = [`cursor:${handle.cursor}`];
+    if (handle.x && handle.y) {
+      parts.push(
+        `left:${handle.x === 'left' ? box.left : box.left + box.width}%`,
+        `top:${handle.y === 'top' ? box.top : box.top + box.height}%`,
+      );
+    } else if (handle.x) {
+      parts.push(
+        `left:${handle.x === 'left' ? box.left : box.left + box.width}%`,
+        `top:${box.top}%`,
+        `height:${box.height}%`,
+      );
+    } else {
+      parts.push(
+        `top:${handle.y === 'top' ? box.top : box.top + box.height}%`,
+        `left:${box.left}%`,
+        `width:${box.width}%`,
+      );
+    }
+    return parts.join(';');
+  }
 
   function sliceTake(
     id: string,
     side: SliceSide,
     how: 'move' | 'size',
     event: PointerEvent & { currentTarget: HTMLElement },
+    sizeX: SliceResizeX | null = null,
+    sizeY: SliceResizeY | null = null,
   ) {
     if (!sliceEditable) return;
     onEditStart?.();
@@ -547,6 +603,12 @@
     sliceAgain = !!sliceHeld && partsUnder(event.clientX, event.clientY).some(sameAsHeld);
     if (!sliceAgain) sliceHeld = { id, side };
     sliceDrag = how;
+    sliceSizeX = how === 'size' ? sizeX : null;
+    sliceSizeY = how === 'size' ? sizeY : null;
+    sliceCursor =
+      how === 'size'
+        ? (SLICE_RESIZE_HANDLES.find((h) => h.x === sizeX && h.y === sizeY)?.cursor ?? null)
+        : null;
     sliceMoved = false;
     event.currentTarget.setPointerCapture(event.pointerId);
   }
@@ -584,14 +646,20 @@
     const moving = piece.linked !== false ? KIND_SIDES[kind] : [sliceHeld.side];
     const sign = sliceSigns(sliceHeld.side);
     const held = (v: number) => Math.min(SLICE_GROW_MAX, Math.max(-SLICE_GROW_MAX, v));
+    const delta =
+      sliceDrag === 'size'
+        ? sliceResizeDelta(kind, sliceHeld.side, sliceSizeX, sliceSizeY, dx, dy)
+        : null;
     for (const side of moving) {
       if (!piece.places[side]) {
         piece.places[side] = { growX: 0, growY: 0, nudgeX: 0, nudgeY: 0, shown: true };
       }
       const at = piece.places[side];
-      if (sliceDrag === 'size') {
-        at.growX = held(at.growX + dx * sign.growX);
-        at.growY = held(at.growY + dy * sign.growY);
+      if (delta) {
+        at.growX = held(at.growX + delta.growX);
+        at.growY = held(at.growY + delta.growY);
+        at.nudgeX = held(at.nudgeX + delta.nudgeX);
+        at.nudgeY = held(at.nudgeY + delta.nudgeY);
       } else {
         at.nudgeX = held(at.nudgeX + dx * sign.nudgeX);
         at.nudgeY = held(at.nudgeY + dy * sign.nudgeY);
@@ -621,12 +689,19 @@
    *  told apart at all, sharing as they do exactly one box. */
   function sliceDragEnd(event: PointerEvent & { currentTarget: HTMLElement }) {
     if (!sliceDrag) return;
+    const wasSize = sliceDrag === 'size';
     sliceDrag = null;
+    sliceSizeX = null;
+    sliceSizeY = null;
+    sliceCursor = null;
     onEditEnd?.();
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
-    if (sliceMoved || !sliceAgain) return;
+    // A press on a size handle is asking the box, not the stack: cycling
+    // through to the copy underneath would steal the very gesture that
+    // just named an edge.
+    if (sliceMoved || !sliceAgain || wasSize) return;
     const stack = partsUnder(event.clientX, event.clientY);
     if (stack.length < 2) return;
     const at = stack.findIndex(sameAsHeld);
@@ -713,9 +788,11 @@
 <article
   bind:this={root}
   class="slot"
+  class:slice-sizing={!!sliceCursor}
   data-tier={card.tier}
   data-layout={frame.layout}
   style={varStyle}
+  style:cursor={sliceCursor}
   style:view-transition-name={transition ? cardTransitionName(card) : undefined}
   onpointermove={track}
   onpointerleave={rest}
@@ -1077,22 +1154,32 @@
             onpointercancel={sliceDragEnd}
           ></span>
         {/each}
-        {#if sliceEditable && sliceHeld && gripAt}
-          <!-- Второе число той же копии: не «где лежит», а «насколько
-               заходит». Последним и выше всей сборки — см. `gripAt`.
-               `@const` не для красоты: `sliceHeld` — изменяемая связка, и
-               внутри замыкания сужение до непустого значения теряется. -->
+        {#if sliceEditable && sliceHeld && gripBox}
+          <!-- Восемь мест той же коробки: четыре стороны и четыре угла.
+               Соседи сборки, а не дети — см. `gripBox`. Квадратик во
+               внутреннем углу остаётся тем, чем был: второе число копии,
+               видимое без наведения. `@const` не для красоты: `sliceHeld`
+               — изменяемая связка, и внутри замыкания сужение до
+               непустого значения теряется. -->
           {@const held = sliceHeld}
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <span
-            class="slice-grip"
-            style="left:{gripAt.x}%; top:{gripAt.y}%"
-            title={$t('adminBattlesSliceGrowX')}
-            onpointerdown={(e) => sliceTake(held.id, held.side, 'size', e)}
-            onpointermove={sliceDragMove}
-            onpointerup={sliceDragEnd}
-            onpointercancel={sliceDragEnd}
-          ></span>
+          {@const box = gripBox}
+          {@const axes = SLICE_SIDE_AXES[held.side]}
+          {#each SLICE_RESIZE_HANDLES as handle (handle.id)}
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <span
+              class="slice-resize"
+              class:slice-resize--corner={!!handle.x && !!handle.y}
+              class:slice-resize--edge-x={!handle.y}
+              class:slice-resize--edge-y={!handle.x}
+              class:slice-resize--knob={handle.x === axes.gripX && handle.y === axes.gripY}
+              style={resizeHandleStyle(box, handle)}
+              title={$t('adminBattlesSliceResize')}
+              onpointerdown={(e) => sliceTake(held.id, held.side, 'size', e, handle.x, handle.y)}
+              onpointermove={sliceDragMove}
+              onpointerup={sliceDragEnd}
+              onpointercancel={sliceDragEnd}
+            ></span>
+          {/each}
         {/if}
       </div>
     {:else}
@@ -1266,6 +1353,12 @@
     cursor: move;
   }
 
+  .slice-sizing,
+  .slice-sizing .slice-live,
+  .slice-sizing .slice-resize {
+    cursor: inherit;
+  }
+
   /* Пунктир по коробке копии. Взятая обведена сплошнее своих: пока связка
      включена, поедут все, и это должно быть видно до того, как поедут. */
   .sliced-carving--live .carve::after {
@@ -1292,21 +1385,62 @@
     border-color: color-mix(in oklab, var(--ink) 75%, transparent);
   }
 
-  /* Второе число той же копии — насколько она заходит за свою полосу. Стоит на
-     том углу её коробки, который смотрит внутрь карты, и тянется в обе стороны
-     сразу, потому что и нахлёст у копии ровно два числа. Сосед деталей, а не
-     ребёнок: `layer` открывает контекст наложения, и захват внутри угла со
-     слоем 2 ушёл бы под акцент со слоем 5. */
-  .slice-grip {
+  /* Восемь мест той же коробки. Соседи деталей, а не дети: `layer` открывает
+     контекст наложения, и захват внутри угла со слоем 2 ушёл бы под акцент
+     со слоем 5. Стороны невидимы до наведения — курсор и есть подсказка;
+     внутренний угол остаётся квадратиком, каким был. */
+  .slice-resize {
     position: absolute;
     z-index: 20;
+    pointer-events: auto;
+    touch-action: none;
+    user-select: none;
+  }
+
+  .slice-resize--edge-x {
+    width: 3.6cqi;
+    margin-left: -1.8cqi;
+  }
+
+  .slice-resize--edge-y {
+    height: 3.6cqi;
+    margin-top: -1.8cqi;
+  }
+
+  .slice-resize--corner {
+    z-index: 21;
     width: 3.4cqi;
     height: 3.4cqi;
     margin: -1.7cqi 0 0 -1.7cqi;
+  }
+
+  .slice-resize--corner:hover,
+  .slice-resize--knob {
     background: var(--paper);
     border: 1px solid color-mix(in oklab, var(--ink) 70%, transparent);
-    cursor: nwse-resize;
-    pointer-events: auto;
+  }
+
+  .slice-resize--edge-x:hover::after,
+  .slice-resize--edge-y:hover::after {
+    content: '';
+    position: absolute;
+    background: color-mix(in oklab, var(--ink) 55%, transparent);
+  }
+
+  .slice-resize--edge-x:hover::after {
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 1px;
+    margin-left: -0.5px;
+  }
+
+  .slice-resize--edge-y:hover::after {
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 1px;
+    margin-top: -0.5px;
   }
 
   /* The same box as `.content` (same inset formula, same conditional padding

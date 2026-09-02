@@ -48,6 +48,7 @@
   import BattleCard from "$lib/components/BattleCard.svelte";
   import BattleAssetsPanel from "$lib/components/admin/BattleAssetsPanel.svelte";
   import BattleAssetPicker from "$lib/components/admin/BattleAssetPicker.svelte";
+  import BattleFramePicker from "$lib/components/admin/BattleFramePicker.svelte";
   import type {
     BattleAssetRole,
     BattleCard as BattleCardDto,
@@ -137,6 +138,18 @@
    *  from the frames view's own list so choosing one in the race editor never
    *  moves what the rank editor is showing. */
   let presetChosen = $state<string | null>(null);
+  /**
+   * Какой наряд вынут из ящика НА ЭТОТ ЧИН — то есть с чего начата работа.
+   *
+   * Без этого стол помнил только «надето» и тут же забывал, откуда: хранитель
+   * брал наряд, дописывал к нему завиток, жал «Сохранить» — и сохранялся ЧИН,
+   * а наряд в ящике оставался вчерашним. Второй раз его доставали, и завитка
+   * там не было. Единственный способ было положить его обратно — вспомнить имя
+   * по буквам и напечатать заново, иначе в ящике заводился близнец.
+   *
+   * Теперь ящик знает, что открыт, и «обновить» стоит рядом с ним.
+   */
+  let presetOpen = $state<string | null>(null);
 
   let dragFrom = $state<number | null>(null);
   let dragOver = $state<number | null>(null);
@@ -1222,17 +1235,6 @@
     return rows.sort((a, b) => b.piece.layer - a.piece.layer || b.at - a.at);
   });
 
-  /** Лицо отложенного наряда: его картинка, если она есть, — угол у собранной
-   *  из частей, целая фотография у прочих. Иначе остаётся только бумага и
-   *  кайма, которые всё равно рисуются под этим квадратиком. */
-  function presetFace(preset: BattleFramePreset): string {
-    const art =
-      preset.frame.frameMode === 'sliced'
-        ? preset.frame.cornerImage?.trim() || preset.frame.sideImageH?.trim()
-        : preset.frame.frameImage?.trim();
-    return art ? `url("${art}")` : 'none';
-  }
-
   // Полоска встаёт ЧУТЬ НИЖЕ КУРСОРА — у того места, куда хранитель только что
   // нажал.
   //
@@ -1246,16 +1248,116 @@
   // центрирует карту и меняет ширину вместе с колонкой, и число, посчитанное
   // от него, уезжает ровно на половину этой разницы.
   let cardBox = $state<HTMLElement | null>(null);
+  /** Стол. Полоска лежит В НЁМ, а не в карте: карта меняет ширину от
+   *  увеличения и от колонки, и прибитая к ней полоска переезжала бы вместе с
+   *  ней — а прибивают её как раз затем, чтобы она никуда не девалась. */
+  let stageBox = $state<HTMLElement | null>(null);
+  /** Насколько стол прокручен. Место полоски считается в его СОДЕРЖИМОМ, а
+   *  прибитое держится за видимую часть, — значит, прокрутку надо знать, иначе
+   *  увеличенную карту не увезти из-под неподвижной полоски. */
+  let stageScroll = $state({ x: 0, y: 0 });
   let barTick = $state(0);
   let barWide = $state(0);
+  let barTall = $state(0);
   /** Где нажали, в координатах карты. Пусто, когда деталь взяли из списка
    *  сбоку: тогда курсор был не на карте и указывать нечего. */
   let pokedAt = $state<{ x: number; y: number } | null>(null);
   let barAt = $state<{ x: number; y: number } | null>(null);
 
+  /**
+   * Куда полоску поставили рукой, в координатах ВИДИМОЙ части стола.
+   *
+   * Пусто — полоска ходит за курсором, как и ходила. Непусто — стоит там, где
+   * её оставили, не пропадает, когда из руки всё выпустили, и всё равно
+   * работает с тем, что в руке сейчас: место — не выбор детали.
+   *
+   * Оно и есть весь признак «прибита»: отдельный флажок рядом с координатами
+   * рано или поздно разошёлся бы с ними — прибита, а места нет.
+   */
+  const BAR_PIN_KEY = "gotiga_battle_barpin";
+  let barPin = $state<{ x: number; y: number } | null>(null);
+
+  function rememberBar() {
+    try {
+      if (barPin) localStorage.setItem(BAR_PIN_KEY, JSON.stringify(barPin));
+      else localStorage.removeItem(BAR_PIN_KEY);
+    } catch {
+      // Приватное окно или запрет на хранение. Полоска работает и без памяти.
+    }
+  }
+
+  onMount(() => {
+    try {
+      const raw = localStorage.getItem(BAR_PIN_KEY);
+      const put = raw ? JSON.parse(raw) : null;
+      if (put && Number.isFinite(put.x) && Number.isFinite(put.y))
+        barPin = { x: put.x, y: put.y };
+    } catch {
+      barPin = null;
+    }
+  });
+
+  /** Прибить туда, где полоска стоит сейчас, — или отпустить обратно под
+   *  курсор. Место снимается с самой полоски, а не считается заново: прибивают
+   *  ровно то, на что смотрят. */
+  function pinBar() {
+    if (barPin) {
+      barPin = null;
+      rememberBar();
+      return;
+    }
+    const stage = stageBox?.getBoundingClientRect();
+    const bar = stageBox?.querySelector("[data-piece-bar]");
+    if (!stage || !bar) return;
+    const box = bar.getBoundingClientRect();
+    barPin = {
+      x: box.left + box.width / 2 - stage.left,
+      y: box.top - stage.top,
+    };
+    rememberBar();
+  }
+
+  /** Смещение от курсора до полоски, пока её тащат. За рукоять берут где
+   *  придётся, и без этого полоска прыгала бы к курсору серединой. */
+  let barGrab: { x: number; y: number } | null = null;
+
+  function grabBar(event: PointerEvent) {
+    const hand = event.currentTarget as HTMLElement;
+    const bar = hand.closest("[data-piece-bar]");
+    if (!bar) return;
+    const box = bar.getBoundingClientRect();
+    barGrab = {
+      x: box.left + box.width / 2 - event.clientX,
+      y: box.top - event.clientY,
+    };
+    hand.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }
+
+  function dragBar(event: PointerEvent) {
+    const stage = stageBox?.getBoundingClientRect();
+    if (!barGrab || !stage) return;
+    // Тащат — значит, стоять ей здесь: иначе первое же нажатие по карте
+    // забрало бы её обратно под курсор, и перенести полоску было бы нельзя.
+    barPin = {
+      x: event.clientX + barGrab.x - stage.left,
+      y: event.clientY + barGrab.y - stage.top,
+    };
+  }
+
+  function dropBar() {
+    if (!barGrab) return;
+    barGrab = null;
+    rememberBar();
+  }
+
   function poke(event: PointerEvent) {
     const card = cardBox?.getBoundingClientRect();
     if (!card) return;
+    // Нажатие по самой полоске сюда не приходит: она лежит на столе рядом с
+    // картой, а не в ней. Пока она была внутри, каждое нажатие по её же
+    // кнопке уводило её на восемнадцать точек вниз — из-под пальца, ещё до
+    // отпускания, — и нажать на неё было нельзя вовсе.
     pokedAt = { x: event.clientX - card.left, y: event.clientY - card.top };
   }
 
@@ -1271,9 +1373,14 @@
       return;
     }
     const card = room.getBoundingClientRect();
-    if (!card.width) return;
+    const desk = stageBox?.getBoundingClientRect();
+    if (!card.width || !desk) return;
+    // Из координат карты — в координаты содержимого стола, где полоска и
+    // лежит. Прокрутка входит в обе половины и потому не меняет число.
+    const dx = card.left - desk.left + (stageBox?.scrollLeft ?? 0);
+    const dy = card.top - desk.top + (stageBox?.scrollTop ?? 0);
     if (pokedAt) {
-      barAt = { x: pokedAt.x, y: pokedAt.y + 18 };
+      barAt = { x: pokedAt.x + dx, y: pokedAt.y + dy + 18 };
       return;
     }
     // Взяли из списка — курсора на карте не было. Тогда у НАЧАЛА детали: у
@@ -1286,13 +1393,13 @@
     // тогда, когда через неё и берут картинку. Такая деталь получает полоску
     // посреди карты: место неточное, но зато оно есть.
     if (!at) {
-      barAt = { x: card.width / 2, y: card.height / 2 };
+      barAt = { x: card.width / 2 + dx, y: card.height / 2 + dy };
       return;
     }
     const box = at.getBoundingClientRect();
     barAt = {
-      x: box.left + box.width / 2 - card.left,
-      y: box.top - card.top + Math.min(box.height / 2, 18),
+      x: box.left + box.width / 2 - card.left + dx,
+      y: box.top - card.top + Math.min(box.height / 2, 18) + dy,
     };
   });
 
@@ -1306,17 +1413,40 @@
    * добрых полторы сотни точек с каждой стороны, и свисать на них полоске
    * ничто не мешает.
    */
-  function barLeft(x: number, room: HTMLElement | null): number {
-    const card = room?.getBoundingClientRect();
-    const stage = room?.parentElement?.getBoundingClientRect();
+  function barLeft(x: number): number {
+    const stage = stageBox;
     const half = barWide / 2;
-    if (!card || !stage || !barWide) return x;
-    // Границы стола, переведённые в координаты карты.
-    const from = stage.left - card.left + half + 4;
-    const to = stage.right - card.left - half - 4;
+    if (!stage || !barWide) return x;
+    // Видимая часть стола, в координатах его содержимого.
+    const from = stageScroll.x + half + 4;
+    const to = stageScroll.x + stage.clientWidth - half - 4;
     if (from > to) return x;
     return Math.min(Math.max(x, from), to);
   }
+
+  /** Вниз полоска не зажималась никогда: под курсором ей место и у нижнего
+   *  края. Прибитую зажимать приходится — окно с тех пор могли уменьшить, а
+   *  полоска, оказавшаяся за краем, недостижима. */
+  function barTop(y: number): number {
+    const stage = stageBox;
+    if (!stage || !barTall) return y;
+    const from = stageScroll.y + 4;
+    const to = stageScroll.y + stage.clientHeight - barTall - 4;
+    if (from > to) return y;
+    return Math.min(Math.max(y, from), to);
+  }
+
+  /** Где полоска стоит: прибитая — там, где её оставили (место держится за
+   *  видимую часть стола, поэтому прокрутка её не уносит), прочая — под тем
+   *  местом, куда нажали. */
+  let barSpot = $derived.by<{ x: number; y: number } | null>(() => {
+    if (barPin)
+      return {
+        x: barLeft(barPin.x + stageScroll.x),
+        y: barTop(barPin.y + stageScroll.y),
+      };
+    return barAt && { x: barLeft(barAt.x), y: barAt.y };
+  });
 
   /** Что сейчас в руке, строкой списка. */
   let heldRow = $derived(stack.find((row) => row.id === sliceHeld?.id) ?? null);
@@ -2240,10 +2370,14 @@
       frames = saved.frames.map(completeSlices);
       const back = JSON.stringify(frames);
       stored = back;
-      if (back === sent) {
+      // Решает РАЗБОР, а не сравнение строк: строки расходятся и тогда, когда
+      // сервер положил число в свою ячейку одинарной точности и вернул его же,
+      // на седьмом знаке. Пусто в разборе — значит, ничего не потеряно.
+      const lost =
+        back === sent ? "" : whatChanged(JSON.parse(sent), JSON.parse(back));
+      if (!lost) {
         flash($t("adminBattlesFramesSaved"));
       } else {
-        const lost = whatChanged(JSON.parse(sent), JSON.parse(back));
         flash(`${$t("adminBattlesFramesSavedPartly")} ${lost}`, 12000);
       }
     } catch (e) {
@@ -2251,6 +2385,25 @@
     } finally {
       saving = false;
     }
+  }
+
+  /**
+   * Одно ли это число — по мерке СЕРВЕРА, а не по мерке браузера.
+   *
+   * Числа рамы на сервере одинарной точности, в браузере — двойной. Всякое
+   * перетаскивание складывает доли пикселя в двойной, отсылает `2.9166668666…`
+   * и получает обратно `2.916667`: то же самое число, положенное в ту ячейку,
+   * какая для него и заведена. Строгое сравнение объявляло это расхождением —
+   * и стол честно кричал «сохранено не всё», перечисляя ровно те числа, что
+   * хранитель только что и тянул. Разница там в одну десятимиллионную процента
+   * ширины карты: её нет ни на экране, ни в базе, ни в чьих-либо глазах.
+   *
+   * Поэтому сравнивается округлённое до одинарной точности. Настоящую потерю —
+   * поле, которое сервер выбросил, потому что не знает его, — это по-прежнему
+   * ловит: там не соседнее число, там `undefined`.
+   */
+  function sameNumber(sent: number, back: unknown): boolean {
+    return typeof back === "number" && Math.fround(sent) === Math.fround(back);
   }
 
   /** Первые несколько мест, где ответ разошёлся с отправленным. Путём, а не
@@ -2264,6 +2417,10 @@
   ): string {
     if (found.length >= 6) return found.join(", ");
     if (sent === back) return found.join(", ");
+    if (typeof sent === "number") {
+      if (!sameNumber(sent, back)) found.push(path || "?");
+      return found.join(", ");
+    }
     const bothObjects =
       sent && back && typeof sent === "object" && typeof back === "object";
     if (!bothObjects) {
@@ -2299,6 +2456,8 @@
       presets = saved.presets;
       if (presetChosen && !presets.some((p) => p.id === presetChosen))
         presetChosen = null;
+      if (presetOpen && !presets.some((p) => p.id === presetOpen))
+        presetOpen = null;
       flash($t(note));
     } catch (e) {
       flash(String(e), 6000);
@@ -2327,9 +2486,71 @@
       ? presets.map((p) => (p.id === already.id ? kept : p))
       : [...presets, kept];
     presetName = "";
+    // Отложенный наряд — это тот, с которым теперь и работают: следующая правка
+    // должна ложиться обратно в него, а не заводить в ящике второго с почти
+    // тем же именем.
+    presetOpen = kept.id;
     savePresets(
       next,
       already ? "adminBattlesPresetReplaced" : "adminBattlesPresetKept",
+    );
+  }
+
+  /** Наряд, вынутый на этот чин, — если он ещё в ящике. */
+  let presetWorn = $derived(presets.find((p) => p.id === presetOpen) ?? null);
+
+  /**
+   * Сравнить два наряда, не полагаясь на порядок полей.
+   *
+   * Обычный `JSON.stringify` тут врёт дважды: с сервера рама приходит в одном
+   * порядке ключей, а `completeSlices` перекладывает `slices` и `ornaments` в
+   * конец; и числа на сервере одинарной точности, а на столе двойной. Ключи
+   * сортируются, числа округляются до серверных — тогда строка зависит только
+   * от того, что на раме действительно нарисовано.
+   */
+  function canon(value: unknown): string {
+    // Число — по мерке сервера: наряд, только что отложенный, возвращается
+    // округлённым до одинарной точности, а на столе лежит двойная. Без этого
+    // «изменён» загоралось бы сразу после сохранения и не гасло никогда.
+    if (typeof value === "number") return String(Math.fround(value));
+    if (!value || typeof value !== "object") return JSON.stringify(value) ?? "";
+    if (Array.isArray(value)) return `[${value.map(canon).join(",")}]`;
+    const at = value as Record<string, unknown>;
+    return `{${Object.keys(at)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canon(at[key])}`)
+      .join(",")}}`;
+  }
+
+  /** Разошёлся ли чин с нарядом, который на него надели. Ровно то место, где
+   *  хранителю нужно решить: положить правку обратно в ящик или оставить её
+   *  этому чину. Пока об этом молчали, решение принималось само — и не в его
+   *  пользу. */
+  let presetChanged = $derived.by(() => {
+    const frame = frames[frameIndex];
+    if (!presetWorn || !frame) return false;
+    // Обе стороны через `completeSlices`: наряд, отложенный до того, как у
+    // деталей появились места, донёс бы отсутствие мест как различие — а это
+    // не различие, а старая запись того же самого.
+    return (
+      canon(dressOf(completeSlices($state.snapshot(frame)))) !==
+      canon(dressOf(completeSlices(presetWorn.frame)))
+    );
+  });
+
+  /** Положить правку обратно в тот наряд, из которого её начали. Имя остаётся
+   *  прежним: обновляют наряд, а не заводят похожий. */
+  function updateOpenPreset() {
+    const frame = frames[frameIndex];
+    if (!presetWorn || !frame) return;
+    const kept: BattleFramePreset = {
+      id: presetWorn.id,
+      name: presetWorn.name,
+      frame: $state.snapshot(frame),
+    };
+    savePresets(
+      presets.map((p) => (p.id === kept.id ? kept : p)),
+      "adminBattlesPresetUpdated",
     );
   }
 
@@ -2358,7 +2579,12 @@
   function wearPresetOnRank(preset: BattleFramePreset) {
     const frame = frames[frameIndex];
     if (!frame) return;
+    mark();
     frames[frameIndex] = completeSlices({ ...frame, ...dressOf(preset.frame) });
+    // В руке могло остаться украшение, которого на новом наряде нет: стол
+    // держал бы деталь, которой на карте больше не рисуется.
+    if (sliceHeld && !kindOf(frames[frameIndex], sliceHeld.id)) sliceHeld = null;
+    presetOpen = preset.id;
     flash($t("adminBattlesPresetWorn"));
   }
 
@@ -2366,14 +2592,19 @@
    *  change in that editor. */
   function wearPresetOnLevel(index: number) {
     if (!presetTaken) return;
-    raceLevelFrames[index] = dressOf(presetTaken.frame);
+    // Снимок, а не сам наряд: `dressOf` копирует поля вширь, и `slices` с
+    // `ornaments` остались бы ТЕМИ ЖЕ объектами, что лежат в ящике, — тогда
+    // потянутый на уровне вырез молча правил бы отложенный наряд.
+    raceLevelFrames[index] = dressOf($state.snapshot(presetTaken.frame));
   }
 
   function wearPresetOnAllLevels() {
     if (!presetTaken) return;
     // A copy each: five levels sharing one object would move together under
     // the inset handles, which is precisely what per-level dressing is for.
-    raceLevelFrames = raceLevelFrames.map(() => dressOf(presetTaken!.frame));
+    raceLevelFrames = raceLevelFrames.map(() =>
+      dressOf($state.snapshot(presetTaken!.frame)),
+    );
   }
 
   /** Onto this one card, over whatever its rank and race already say. */
@@ -2577,6 +2808,12 @@
         />
       {:else if name === "reset"}
         <path d="M13 8a5 5 0 1 1-1.65-3.7M13.1 2.4v3.6H9.5" />
+      {:else if name === "move"}
+        <path
+          d="M8 1.9v12.2M1.9 8h12.2M5.9 4 8 1.9 10.1 4M5.9 12 8 14.1 10.1 12M4 5.9 1.9 8 4 10.1M12 5.9 14.1 8 12 10.1"
+        />
+      {:else if name === "pin"}
+        <path d="M5.2 2.1h5.6M6.9 2.1v4.4L4.6 9.7h6.8L9.1 6.5V2.1M8 9.7v4.2" />
       {:else if name === "keep"}
         <path
           d="M3.4 2.6h7.2l3 3v7.8H3.4zM5.6 2.6v3.8h4.8V2.6M5.6 13.4V9.6h4.8v3.8"
@@ -2737,6 +2974,10 @@
                 onclick={() => {
                   frameIndex = i;
                   sliceHeld = null;
+                  // Открытый наряд — про ТОТ чин, с которого его сняли. На
+                  // соседнем он ничего не значит, и «обновить» у чужой рамы
+                  // положило бы в ящик не то, что доставали.
+                  presetOpen = null;
                 }}
                 class="px-3 py-1 text-[11px] {frameIndex === i
                   ? 'bg-[#34251c] text-[#f8f1e7]'
@@ -2808,6 +3049,12 @@
           aria-label={$t("adminBattlesPreview")}
           tabindex="0"
           onkeydown={stageKeys}
+          bind:this={stageBox}
+          onscroll={() =>
+            (stageScroll = {
+              x: stageBox?.scrollLeft ?? 0,
+              y: stageBox?.scrollTop ?? 0,
+            })}
           class="relative flex-1 overflow-auto p-8 outline-none"
         >
           <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -2828,20 +3075,55 @@
               onEditEnd={() => barTick++}
               bind:sliceHeld
             />
+          </div>
 
-            <!-- Полоска взятой детали. Стоит у неё, а не в колонке: за картинкой
+          <!-- Полоска взятой детали. Стоит у неё, а не в колонке: за картинкой
                со склада и за «убрать» ходили через шесть блоков подряд.
-               Перехват нажатия снимает слепок для отмены до правки, а отпускание
-               двигает саму полоску вслед за тем, что она только что изменила. -->
-            {#if heldRow && barAt}
-              <!-- svelte-ignore a11y_no_static_element_interactions -->
-              <div
-                bind:clientWidth={barWide}
-                onpointerdowncapture={mark}
-                onpointerupcapture={() => barTick++}
-                style="left:{barLeft(barAt.x, cardBox)}px; top:{barAt.y}px"
-                class="absolute z-20 flex -translate-x-1/2 items-center gap-0.5 p-1 bg-[#f8f1e7] border border-[#34251c]/25 shadow-[0_2px_10px_rgba(52,37,28,0.18)]"
+               Перехват нажатия снимает слепок для отмены до правки, а
+               отпускание двигает саму полоску вслед за тем, что она только
+               что изменила.
+
+               Лежит НА СТОЛЕ, а не в карте: прибитую полоску карта возила бы
+               за собой на каждом увеличении, а прибивают её ровно затем,
+               чтобы она стояла. Прибитая не пропадает и с пустой рукой —
+               место остаётся местом, — но делает всегда то, что в руке
+               сейчас. -->
+          {#if barSpot && (heldRow || barPin)}
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+              data-piece-bar
+              bind:clientWidth={barWide}
+              bind:clientHeight={barTall}
+              onpointerdowncapture={mark}
+              onpointerupcapture={() => barTick++}
+              style="left:{barSpot.x}px; top:{barSpot.y}px"
+              class="absolute z-20 flex -translate-x-1/2 items-center gap-0.5 p-1 bg-[#f8f1e7] border border-[#34251c]/25 shadow-[0_2px_10px_rgba(52,37,28,0.18)]"
+            >
+              <!-- Рукоять и гвоздь. Полоску таскают за рукоять и прибивают
+                   гвоздём: прибитая стоит на своём месте, а не выскакивает
+                   каждый раз там, где нажали. -->
+              <button
+                onpointerdown={grabBar}
+                onpointermove={dragBar}
+                onpointerup={dropBar}
+                onpointercancel={dropBar}
+                title={$t("adminBattlesBarMove")}
+                class="p-1.5 cursor-move touch-none text-[#8a6a55] hover:bg-[#34251c]/8"
+                >{@render icon("move")}</button
               >
+              <button
+                onclick={pinBar}
+                title={barPin
+                  ? $t("adminBattlesBarUnpin")
+                  : $t("adminBattlesBarPin")}
+                class="p-1.5 hover:bg-[#34251c]/8 {barPin
+                  ? 'text-[#c65f3c]'
+                  : 'text-[#8a6a55]'}">{@render icon("pin")}</button
+              >
+
+              <span class="w-px h-5 mx-0.5 bg-[#34251c]/15"></span>
+
+              {#if heldRow}
                 <button
                   onclick={() => uploadPiece(heldRow!)}
                   disabled={uploading}
@@ -2950,9 +3232,18 @@
                   class="p-1.5 text-[#8f2f22] hover:bg-[#c65f3c]/12 disabled:opacity-30"
                   >{@render icon("trash")}</button
                 >
-              </div>
-            {/if}
-          </div>
+              {:else}
+                <!-- Прибитая полоска с пустой рукой. Кнопкам нечего делать,
+                     но место — это и есть то, за чем её прибивали: пусть
+                     стоит и ждёт, а не пропадает, чтобы появиться в другом
+                     углу. -->
+                <span
+                  class="px-2 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                  >{$t("adminBattlesBarIdle")}</span
+                >
+              {/if}
+            </div>
+          {/if}
         </div>
       </section>
 
@@ -2966,48 +3257,47 @@
         onfocusincapture={mark}
       >
         {#if frames[frameIndex]}
-          <!-- Наряды из ящика. Стоят ПЕРВЫМИ и лицом, а не строкой в списке
-               внизу: с готовой рамы работу начинают чаще, чем с пустой, и
-               выбирать её из имён — это выбирать вслепую. -->
+          <!-- Ящик нарядов. Стоит ПЕРВЫМ: с готовой рамы работу начинают чаще,
+               чем с пустой. Один список, а не полоса квадратиков вбок — лицо и
+               имя рядом, и видно, какой наряд открыт сейчас.
+
+               Под ним — «обновить». Он и есть весь смысл того, что ящик помнит
+               открытый наряд: правку, начатую с готовой рамы, кладут обратно в
+               неё, а не в близнеца с почти тем же именем. -->
           <div class="p-4 border-b border-[#34251c]/10">
             <p
               class="mb-2 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
             >
               {$t("adminBattlesPresets")}
             </p>
-            {#if presets.length}
-              <div class="flex gap-2 pb-1 overflow-x-auto">
-                {#each presets as preset (preset.id)}
-                  <div class="relative flex-shrink-0 w-[4.75rem] group">
-                    <button
-                      onclick={() => wearPresetOnRank(preset)}
-                      title={$t("adminBattlesPresetWear")}
-                      class="block w-full text-left"
-                    >
-                      <span
-                        class="block h-12 border bg-center bg-contain bg-no-repeat"
-                        style="background-color:{preset.frame
-                          .paper}; border-color:{preset.frame
-                          .border}; background-image:{presetFace(preset)}"
-                      ></span>
-                      <span class="block mt-1 text-[9px] leading-tight truncate"
-                        >{preset.name}</span
-                      >
-                    </button>
-                    <button
-                      onclick={() => forgetPreset(preset)}
-                      disabled={saving}
-                      title={$t("adminBattlesPresetForget")}
-                      class="absolute -top-1.5 -right-1.5 w-4 h-4 flex items-center justify-center text-[10px] leading-none bg-[#f8f1e7] border border-[#34251c]/25 text-[#8f2f22] opacity-0 group-hover:opacity-100 focus:opacity-100 disabled:opacity-30"
-                      >×</button
-                    >
-                  </div>
-                {/each}
+            <BattleFramePicker
+              {presets}
+              bind:chosen={presetOpen}
+              onchoose={wearPresetOnRank}
+              onforget={forgetPreset}
+              disabled={saving}
+              label={$t("adminBattlesPresetWear")}
+            />
+            {#if presetWorn}
+              <div class="flex items-center gap-2 mt-2">
+                <button
+                  onclick={updateOpenPreset}
+                  disabled={saving || !presetChanged}
+                  title={$t("adminBattlesPresetUpdateHint")}
+                  class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5 disabled:opacity-40"
+                  >{@render icon("keep")}{$t(
+                    "adminBattlesPresetUpdate",
+                  )}</button
+                >
+                {#if presetChanged}
+                  <span
+                    class="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-[#8f2f22]"
+                  >
+                    <span class="w-1.5 h-1.5 rounded-full bg-[#c65f3c]"></span>
+                    {$t("adminBattlesPresetDrifted")}
+                  </span>
+                {/if}
               </div>
-            {:else}
-              <p class="text-[11px] italic text-[#8a6a55]">
-                {$t("adminBattlesPresetsEmpty")}
-              </p>
             {/if}
             <div class="flex items-center gap-2 mt-2">
               <input
@@ -3022,7 +3312,7 @@
                 disabled={saving || !presetName.trim()}
                 title={$t("adminBattlesPresetKeep")}
                 class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5 disabled:opacity-40"
-                >{@render icon("keep")}{$t("adminBattlesPresetKeep")}</button
+                >{@render icon("keep")}{$t("adminBattlesPresetKeepNew")}</button
               >
             </div>
           </div>
@@ -4980,22 +5270,19 @@
         <!-- Или взять готовое из ящика — целиком, а не одной картинкой:
              рамка, собранная из частей, иначе на расу бы не переехала. -->
         {#if presets.length}
-          <label class="block mt-5">
-            <span
-              class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-              >{$t("adminBattlesPresetChoose")}</span
+          <div class="mt-5">
+            <p
+              class="mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
             >
-            <select
-              value={presetChosen ?? ""}
-              onchange={(e) => (presetChosen = e.currentTarget.value || null)}
-              class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none"
-            >
-              <option value="">{$t("adminBattlesPresetNone")}</option>
-              {#each presets as preset (preset.id)}
-                <option value={preset.id}>{preset.name}</option>
-              {/each}
-            </select>
-          </label>
+              {$t("adminBattlesPresetChoose")}
+            </p>
+            <BattleFramePicker
+              {presets}
+              bind:chosen={presetChosen}
+              allowNone
+              label={$t("adminBattlesPresetChoose")}
+            />
+          </div>
           <div class="flex flex-wrap items-center gap-2 mt-2">
             <button
               onclick={() => wearPresetOnLevel(raceLevelPreview - 1)}
@@ -6163,17 +6450,12 @@
                   >
                     {$t("adminBattlesPresetCardHint")}
                   </p>
-                  <select
-                    value={presetChosen ?? ""}
-                    onchange={(e) =>
-                      (presetChosen = e.currentTarget.value || null)}
-                    class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none"
-                  >
-                    <option value="">{$t("adminBattlesPresetNone")}</option>
-                    {#each presets as preset (preset.id)}
-                      <option value={preset.id}>{preset.name}</option>
-                    {/each}
-                  </select>
+                  <BattleFramePicker
+                    {presets}
+                    bind:chosen={presetChosen}
+                    allowNone
+                    label={$t("adminBattlesPresetChoose")}
+                  />
                   <div class="flex flex-wrap items-center gap-2 mt-2">
                     <button
                       onclick={wearPresetOnCard}

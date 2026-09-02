@@ -107,7 +107,10 @@ export const SLICE_SIDES: Record<SliceSlot, SliceSide[]> = {
  * ONE table, because everything directional is read off it and two would drift:
  * the anchor decides which way `nudge` counts (always inward, so mirrored
  * copies move together rather than apart), and the grip corner decides which
- * way `grow` counts — and it is also literally where the size grip is drawn.
+ * way `grow` counts — it is the inner corner of the box, the one the visible
+ * size knob still sits on. The other three sides of that same box are the
+ * same two numbers asked from a different edge; `sliceResizeDelta` reads
+ * them off here so a sign can never disagree with the handle.
  */
 export const SLICE_SIDE_AXES: Record<
   SliceSide,
@@ -136,6 +139,74 @@ export function sliceSigns(side: SliceSide) {
     growX: axes.gripX === 'right' ? 1 : -1,
     growY: axes.gripY === 'bottom' ? 1 : -1,
   };
+}
+
+export type SliceResizeX = 'left' | 'right';
+export type SliceResizeY = 'top' | 'bottom';
+
+/**
+ * How a drag on one or two edges of a copy's box turns into grow/nudge.
+ *
+ * The edge under the pointer follows it; the opposite edge stays planted.
+ * That is what "resize from this border" means, and why a single inner-corner
+ * handle was never enough: the other three sides of the same box had no way
+ * to be asked.
+ *
+ * The numbers are still the held copy's, copied verbatim onto its linked
+ * mates — the same rule a move already uses.
+ */
+export function sliceResizeDelta(
+  kind: SliceKind,
+  side: SliceSide,
+  xEdge: SliceResizeX | null,
+  yEdge: SliceResizeY | null,
+  dx: number,
+  dy: number,
+): Pick<SlicePlace, 'growX' | 'growY' | 'nudgeX' | 'nudgeY'> {
+  const x = xEdge ? resizeAxis(kind, side, 'x', xEdge, dx) : { grow: 0, nudge: 0 };
+  const y = yEdge ? resizeAxis(kind, side, 'y', yEdge, dy) : { grow: 0, nudge: 0 };
+  return { growX: x.grow, nudgeX: x.nudge, growY: y.grow, nudgeY: y.nudge };
+}
+
+function resizeAxis(
+  kind: SliceKind,
+  side: SliceSide,
+  axis: 'x' | 'y',
+  edge: SliceResizeX | SliceResizeY,
+  d: number,
+): { grow: number; nudge: number } {
+  const axes = SLICE_SIDE_AXES[side];
+  const sign = sliceSigns(side);
+  const grip = axis === 'x' ? axes.gripX : axes.gripY;
+  const fromGrip = edge === grip;
+  const growSign = axis === 'x' ? sign.growX : sign.growY;
+  const nudgeSign = axis === 'x' ? sign.nudgeX : sign.nudgeY;
+
+  // A medallion is centred on its edge: width/height grows both ways from
+  // the midpoint, so planting the far side means the centre has to walk
+  // with the pointer at half speed.
+  const centred =
+    (kind === 'midH' && axis === 'x') || (kind === 'midV' && axis === 'y');
+  if (centred) {
+    const start = axis === 'x' ? 'left' : 'top';
+    return edge === start ? { grow: -d, nudge: d / 2 } : { grow: d, nudge: d / 2 };
+  }
+
+  // An edge's LENGTH is taken off both ends. Half the delta goes to grow
+  // and half to the shift, so the held end moves 1:1 and the far one stays.
+  const dual =
+    (kind === 'edgeH' && axis === 'x') || (kind === 'edgeV' && axis === 'y');
+  if (dual) {
+    return fromGrip
+      ? { grow: d / 2, nudge: d / 2 }
+      : { grow: -d / 2, nudge: d / 2 };
+  }
+
+  // Thickness, a corner, a medallion's band: size is measured from one
+  // anchor, so the grip-side is grow alone (what the old handle wrote) and
+  // the anchor-side keeps the inner edge planted by writing both.
+  if (fromGrip) return { grow: d * growSign, nudge: 0 };
+  return { grow: -d * growSign, nudge: d * nudgeSign };
 }
 
 function piece(kind: SliceKind, layer: number, fit: SliceFit = 'stretch'): SlicePiece {
