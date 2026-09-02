@@ -60,9 +60,16 @@ import type {
     ThemeConfig,
     BattleCard,
     BattleFrames,
+    BattleMotions,
     BattleFramePresets,
     BattleMe,
     BattleDustRates,
+    BattleEnter,
+    BattleErrand,
+    AdminBattleErrand,
+    SaveBattleErrandRequest,
+    BattleWelcomeGift,
+    BattleClock,
     BattleAttentionResponse,
     BuyBattleCardRequest,
     BuyBattleCardResponse,
@@ -2256,6 +2263,21 @@ export const api = {
         }
     },
 
+    /**
+     * Свод движений: чем комната показывает удар, чару, выстрел и лечение.
+     *
+     * Пустой свод — не поломка, а обычное дело: сцена тогда играет умолчания
+     * дома, то есть ровно то, что делала до движка. Поэтому и здесь отказ
+     * сети — пустой список, а не исключение посреди хода.
+     */
+    async getBattleMotions(loadFetch?: typeof fetch): Promise<BattleMotions> {
+        try {
+            return await webFetch('/battles/motions', undefined, loadFetch);
+        } catch {
+            return { motions: [] };
+        }
+    },
+
     /** The race dictionary. Same for every visitor, so cached like the shelf. */
     async getBattleRaces(loadFetch?: typeof fetch): Promise<BattleRace[]> {
         try {
@@ -2269,6 +2291,32 @@ export const api = {
     //
     // Всё под именем. Книга лежит на сервере ровно потому, что кошелёк в
     // localStorage — это бесконечные деньги.
+
+    /**
+     * Войти в комнату: дар первого входа и проявка.
+     *
+     * `seen` — работы, которые человек смотрел до того, как комната для него
+     * открылась (`gotiga_viewed`). Сервер проверяет каждую по своей базе и
+     * платит за неё однажды; прислать список можно сколько угодно раз.
+     *
+     * Не часть чтения полки намеренно: это движение пишет в книгу, а страница,
+     * чтение которой печатает деньги, рано или поздно будет прочитана в цикле.
+     */
+    async enterBattleRoom(sessionToken: string, seen: string[]): Promise<BattleEnter> {
+        return webFetch('/battles/enter', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
+            body: JSON.stringify({ seen }),
+        });
+    },
+
+    /** Лист поручений. Только отчёт: платят те движения, которые и так
+     *  случаются, а не чтение страницы. */
+    async getBattleErrands(sessionToken: string): Promise<BattleErrand[]> {
+        return webFetch('/battles/errands', {
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
 
     /** Баланс и владение одним запросом: полка рисуется целиком или мигает. */
     async getBattleMe(sessionToken: string): Promise<BattleMe> {
@@ -2370,13 +2418,65 @@ export const api = {
         }
     },
 
+    async adminGetBattleClock(): Promise<BattleClock> {
+        return webFetch('/admin/battles/clock', { headers: authHeaders() });
+    },
+
+    async adminSaveBattleClock(clock: BattleClock): Promise<BattleClock> {
+        return webFetch('/admin/battles/clock', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(clock),
+        });
+    },
+
+    async adminListBattleErrands(): Promise<AdminBattleErrand[]> {
+        return webFetch('/admin/battles/errands', { headers: authHeaders() });
+    },
+
+    async adminSaveBattleErrand(req: SaveBattleErrandRequest): Promise<AdminBattleErrand> {
+        return webFetch('/admin/battles/errands', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(req),
+        });
+    },
+
+    async adminDeleteBattleErrand(id: string): Promise<void> {
+        await webFetch(`/admin/battles/errands/${id}`, {
+            method: 'DELETE',
+            headers: authHeaders(),
+        });
+    },
+
+    async adminReorderBattleErrands(ids: string[]): Promise<void> {
+        await webFetch('/admin/battles/errands/reorder', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ ids }),
+        });
+    },
+
+    async adminGetBattleGift(): Promise<BattleWelcomeGift> {
+        return webFetch('/admin/battles/gift', { headers: authHeaders() });
+    },
+
+    async adminSaveBattleGift(gift: BattleWelcomeGift): Promise<BattleWelcomeGift> {
+        return webFetch('/admin/battles/gift', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(gift),
+        });
+    },
+
     async adminGetBattleDustRates(): Promise<BattleDustRates> {
-        return webFetch('/admin/battles/dust-rates');
+        return webFetch('/admin/battles/dust-rates', { headers: authHeaders() });
     },
 
     async adminSaveBattleDustRates(rates: BattleDustRates): Promise<BattleDustRates> {
         return webFetch('/admin/battles/dust-rates', {
             method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify(rates),
         });
     },
@@ -2409,6 +2509,25 @@ export const api = {
     /** Begins a match — or continues the one this guest left going. */
     async beginBattleMatch(sessionToken: string, challengeId: string): Promise<BattleMatch> {
         return webFetch(`/battles/challenges/${challengeId}/begin`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    /** Give the field: the open match ends as the keeper's, without a move. */
+    async yieldBattleMatch(sessionToken: string, id: string): Promise<BattleMatch> {
+        return webFetch(`/battles/matches/${id}/yield`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    /**
+     * Start this challenge from the first position. An open match is dropped,
+     * not counted as a loss — they asked to play it again, they did not yield.
+     */
+    async restartBattleMatch(sessionToken: string, challengeId: string): Promise<BattleMatch> {
+        return webFetch(`/battles/challenges/${challengeId}/restart`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${sessionToken}` },
         });
@@ -2836,6 +2955,16 @@ export const api = {
 
     async adminSaveBattleFrames(config: BattleFrames): Promise<BattleFrames> {
         return webFetch('/admin/battles/frames', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(config),
+        });
+    },
+
+    /** Свод движений со стола. Читается публичным маршрутом — второй,
+     *  админский, был бы вторым местом, где однажды разойдётся нормализация. */
+    async adminSaveBattleMotions(config: BattleMotions): Promise<BattleMotions> {
+        return webFetch('/admin/battles/motions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify(config),

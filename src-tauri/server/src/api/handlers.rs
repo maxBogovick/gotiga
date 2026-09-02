@@ -4180,6 +4180,22 @@ pub async fn admin_upload_battle_frame_art(
     Err(AppError::BadRequest("No file field found".to_string()))
 }
 
+// === ДВИЖЕНИЯ ===
+
+/// Свод движений — публично, как и рамки: сцена читает его на каждом событии.
+pub async fn get_battle_motions(
+    State(service): State<AppService>,
+) -> Result<Json<crate::battles::BattleMotions>> {
+    Ok(Json(service.get_battle_motions().await?))
+}
+
+pub async fn admin_save_battle_motions(
+    State(service): State<AppService>,
+    Json(body): Json<crate::battles::BattleMotions>,
+) -> Result<Json<crate::battles::BattleMotions>> {
+    Ok(Json(service.save_battle_motions(body).await?))
+}
+
 // === BATTLE ASSETS ===
 
 pub async fn admin_list_battle_asset_sheets(
@@ -4577,6 +4593,88 @@ pub async fn grant_battle_attention(
     ))
 }
 
+/// Войти в комнату: дар первого входа и проявка.
+///
+/// POST, а не чтение полки, намеренно — см. `enter_battle_room`: страница,
+/// чтение которой пишет строки в книгу, рано или поздно будет прочитана в цикле.
+pub async fn enter_battle_room(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(req): Json<crate::models::BattleEnterRequest>,
+) -> Result<Json<crate::models::BattleEnterResponse>> {
+    let user = current_user(&service, &headers).await?;
+    // Оба движения защищены ключом книги, так что предел здесь — про таблицу,
+    // а не про деньги: входить в комнату шестьдесят раз в час незачем.
+    service
+        .check_rate_limit("battle_enter", &extract_ip(&headers), 60, 3600)
+        .await?;
+    Ok(Json(service.enter_battle_room(user.id, req).await?))
+}
+
+/// Лист поручений. Только отчёт: ни одной строки в книгу.
+pub async fn list_battle_errands(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::models::BattleErrandDto>>> {
+    let user = current_user(&service, &headers).await?;
+    Ok(Json(service.list_battle_errands(user.id).await?))
+}
+
+pub async fn admin_list_battle_errands(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<crate::models::AdminBattleErrandDto>>> {
+    Ok(Json(service.admin_list_battle_errands().await?))
+}
+
+pub async fn admin_save_battle_errand(
+    State(service): State<AppService>,
+    Json(req): Json<crate::models::SaveBattleErrandRequest>,
+) -> Result<Json<crate::models::AdminBattleErrandDto>> {
+    Ok(Json(service.admin_save_battle_errand(req).await?))
+}
+
+pub async fn admin_delete_battle_errand(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    service.admin_delete_battle_errand(id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_reorder_battle_errands(
+    State(service): State<AppService>,
+    Json(req): Json<crate::models::ReorderBattleErrandsRequest>,
+) -> Result<StatusCode> {
+    service.admin_reorder_battle_errands(&req.ids).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_get_battle_clock(
+    State(service): State<AppService>,
+) -> Result<Json<crate::models::BattleClock>> {
+    Ok(Json(service.get_battle_clock().await?))
+}
+
+pub async fn admin_save_battle_clock(
+    State(service): State<AppService>,
+    Json(req): Json<crate::models::BattleClock>,
+) -> Result<Json<crate::models::BattleClock>> {
+    Ok(Json(service.save_battle_clock(req).await?))
+}
+
+pub async fn admin_get_battle_gift(
+    State(service): State<AppService>,
+) -> Result<Json<crate::models::BattleGift>> {
+    Ok(Json(service.get_battle_gift().await?))
+}
+
+pub async fn admin_save_battle_gift(
+    State(service): State<AppService>,
+    Json(req): Json<crate::models::BattleGift>,
+) -> Result<Json<crate::models::BattleGift>> {
+    Ok(Json(service.save_battle_gift(req).await?))
+}
+
 pub async fn admin_get_battle_dust_rates(
     State(service): State<AppService>,
 ) -> Result<Json<crate::models::BattleDustRates>> {
@@ -4597,6 +4695,28 @@ pub async fn begin_battle_match(
 ) -> Result<(StatusCode, Json<BattleMatchDto>)> {
     let user = current_user(&service, &headers).await?;
     let dto = service.begin_battle_match(user.id, challenge_id).await?;
+    Ok((StatusCode::CREATED, Json(dto)))
+}
+
+/// Give the field: the open match ends as the keeper's, without a move.
+pub async fn yield_battle_match(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<Json<BattleMatchDto>> {
+    let user = current_user(&service, &headers).await?;
+    Ok(Json(service.yield_battle_match(user.id, id).await?))
+}
+
+/// Start this challenge from the first position. An open match is dropped,
+/// not counted as a loss — they asked to play it again, they did not yield.
+pub async fn restart_battle_match(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(challenge_id): Path<Uuid>,
+) -> Result<(StatusCode, Json<BattleMatchDto>)> {
+    let user = current_user(&service, &headers).await?;
+    let dto = service.restart_battle_match(user.id, challenge_id).await?;
     Ok((StatusCode::CREATED, Json(dto)))
 }
 

@@ -6236,12 +6236,14 @@ impl Repository {
                c.kind, c.armor, c.ward, c.attack_channel, c.reach, c.step, c.speed, c.mend,
                c.abilities, c.budget_points, c.balance_index, c.rules_version,
                c.price_dust, c.price_feed, c.level_price_dust,
-               c.art_url, c.art_focal, c.frame_override, c.shelf_order, c.lendable,
+               c.art_url, c.art_focal, c.frame_override, c.motion_wear,
+               c.shelf_order, c.lendable,
                c.created_at, c.updated_at,
                f.name AS figurine_name, f.slug AS figurine_slug,
                fi.file_path AS figurine_face_path, fi.id AS figurine_face_id,
                r.name_en AS race_name_en, r.name_ru AS race_name_ru, r.icon_url AS race_icon_url,
-               r.level_frames AS race_level_frames
+               r.level_frames AS race_level_frames,
+               r.motion_wear AS race_motion_wear
         FROM battle_cards c
         LEFT JOIN figurines f ON f.id = c.figurine_id
         LEFT JOIN battle_races r ON r.id = c.race_id
@@ -6354,9 +6356,9 @@ impl Repository {
                     kind, armor, ward, attack_channel, reach, step, speed, mend,
                     abilities, budget_points, balance_index,
                     price_dust, price_feed, level_price_dust,
-                    art_url, art_focal, frame_override, lendable
+                    art_url, art_focal, frame_override, motion_wear, lendable
                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,
-                         $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36)
+                         $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37)
                RETURNING *"#,
         )
         .bind(&w.slug)
@@ -6394,6 +6396,7 @@ impl Repository {
         .bind(w.art_url.as_deref())
         .bind(w.art_focal.as_deref())
         .bind(w.frame_override.as_deref())
+        .bind(w.motion_wear.as_deref())
         .bind(w.lendable)
         .fetch_one(&self.pg_pool)
         .await?)
@@ -6418,7 +6421,8 @@ impl Repository {
                     reach = $24, step = $25, speed = $26, mend = $27,
                     abilities = $28, budget_points = $29, balance_index = $30,
                     price_dust = $31, price_feed = $32, level_price_dust = $33,
-                    art_url = $34, art_focal = $35, frame_override = $36, lendable = $37,
+                    art_url = $34, art_focal = $35, frame_override = $36,
+                    motion_wear = $37, lendable = $38,
                     rules_version = rules_version + 1,
                     updated_at = NOW()
                WHERE id = $1
@@ -6460,6 +6464,7 @@ impl Repository {
         .bind(w.art_url.as_deref())
         .bind(w.art_focal.as_deref())
         .bind(w.frame_override.as_deref())
+        .bind(w.motion_wear.as_deref())
         .bind(w.lendable)
         .fetch_optional(&self.pg_pool)
         .await?
@@ -6504,7 +6509,7 @@ impl Repository {
     pub async fn list_battle_races(&self) -> Result<Vec<crate::models::BattleRaceListed>> {
         Ok(sqlx::query_as::<_, crate::models::BattleRaceListed>(
             "SELECT r.id, r.slug, r.name_en, r.name_ru, r.note_en, r.note_ru, r.icon_url,
-                    r.level_frames, r.sort_order,
+                    r.level_frames, r.motion_wear, r.sort_order,
                     (SELECT COUNT(*) FROM battle_cards c WHERE c.race_id = r.id)::bigint
                         AS card_count
                FROM battle_races r
@@ -6537,10 +6542,12 @@ impl Repository {
         note_ru: Option<&str>,
         icon_url: Option<&str>,
         level_frames: Option<&str>,
+        motion_wear: Option<&str>,
     ) -> Result<crate::models::BattleRace> {
         Ok(sqlx::query_as::<_, crate::models::BattleRace>(
-            "INSERT INTO battle_races (slug, name_en, name_ru, note_en, note_ru, icon_url, level_frames)
-             VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *",
+            "INSERT INTO battle_races (slug, name_en, name_ru, note_en, note_ru, icon_url,
+                                       level_frames, motion_wear)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *",
         )
         .bind(slug)
         .bind(name_en)
@@ -6549,6 +6556,7 @@ impl Repository {
         .bind(note_ru)
         .bind(icon_url)
         .bind(level_frames)
+        .bind(motion_wear)
         .fetch_one(&self.pg_pool)
         .await?)
     }
@@ -6563,10 +6571,12 @@ impl Repository {
         note_ru: Option<&str>,
         icon_url: Option<&str>,
         level_frames: Option<&str>,
+        motion_wear: Option<&str>,
     ) -> Result<crate::models::BattleRace> {
         sqlx::query_as::<_, crate::models::BattleRace>(
             "UPDATE battle_races SET slug = $2, name_en = $3, name_ru = $4,
-                    note_en = $5, note_ru = $6, icon_url = $7, level_frames = $8, updated_at = NOW()
+                    note_en = $5, note_ru = $6, icon_url = $7, level_frames = $8,
+                    motion_wear = $9, updated_at = NOW()
               WHERE id = $1 RETURNING *",
         )
         .bind(id)
@@ -6577,6 +6587,7 @@ impl Repository {
         .bind(note_ru)
         .bind(icon_url)
         .bind(level_frames)
+        .bind(motion_wear)
         .fetch_optional(&self.pg_pool)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Battle race {id} not found")))
@@ -6661,24 +6672,368 @@ impl Repository {
         Ok(res.rows_affected() > 0)
     }
 
-    /// Что дому дали из рук — последние записки, новыми вперёд.
+    // === ПОРУЧЕНИЯ ===
+
+    /// Лист, как его видит гость: только опубликованные, в порядке хранителя.
+    pub async fn list_published_battle_errands(
+        &self,
+    ) -> Result<Vec<crate::models::BattleErrand>> {
+        Ok(sqlx::query_as::<_, crate::models::BattleErrand>(
+            "SELECT * FROM battle_errands
+              WHERE status = 'published'
+              ORDER BY sort_order NULLS LAST, created_at",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Отметить приход.
     ///
-    /// Только `hand`: пыль, осевшая с маяков, записок не имеет и на полях
-    /// считается иначе (сколько осело с прошлого раза).
+    /// День — по часам дома, поэтому он приходит СЮДА уже посчитанным: база не
+    /// знает, где живёт дом, и `CURRENT_DATE` записал бы московский вечер
+    /// вчерашним днём.
+    ///
+    /// Ключ (гость, день) и есть вся защита от двойной записи: заходить можно
+    /// хоть двадцать раз, строка ляжет одна.
+    pub async fn mark_battle_visit(&self, user_id: Uuid, day: chrono::NaiveDate) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO battle_visits (user_id, day) VALUES ($1, $2)
+             ON CONFLICT (user_id, day) DO NOTHING",
+        )
+        .bind(user_id)
+        .bind(day)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Весь справочник, включая черновики: стол хранителя видит и то, чего
+    /// гость ещё не видит.
+    pub async fn list_battle_errands_admin(&self) -> Result<Vec<crate::models::BattleErrand>> {
+        Ok(sqlx::query_as::<_, crate::models::BattleErrand>(
+            "SELECT * FROM battle_errands ORDER BY sort_order NULLS LAST, created_at",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Сколько каждое поручение уже выдало: гостей и монет.
+    ///
+    /// Считается по КЛЮЧУ, а не по `ref_id`: удалённое поручение уносит с собой
+    /// строку справочника, но не строки книги — а книга и есть то, что было
+    /// заплачено на самом деле. Ключ повторяющегося поручения несёт ещё и окно
+    /// (`errand:{slug}:{день}`), поэтому slug берётся вторым куском.
+    pub async fn battle_errand_payouts(&self) -> Result<Vec<(String, i64, i64)>> {
+        Ok(sqlx::query_as::<_, (String, i64, i64)>(
+            "SELECT split_part(idem_key, ':', 2) AS slug,
+                    COUNT(DISTINCT user_id)::bigint,
+                    COALESCE(SUM(amount), 0)::bigint
+               FROM battle_wallet_entries
+              WHERE reason = 'errand'
+              GROUP BY 1",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn upsert_battle_errand(
+        &self,
+        id: Option<Uuid>,
+        w: &crate::models::SaveBattleErrandRequest,
+    ) -> Result<crate::models::BattleErrand> {
+        let sql = if id.is_some() {
+            "UPDATE battle_errands SET
+                 slug = $2, title_en = $3, title_ru = $4, note_en = $5, note_ru = $6,
+                 rule = $7, threshold = $8, currency = $9, amount = $10,
+                 period = $11, starts_at = $12, ends_at = $13, status = $14,
+                 sort_order = $15, by_hand = $16, updated_at = NOW()
+              WHERE id = $1
+              RETURNING *"
+        } else {
+            "INSERT INTO battle_errands
+                 (id, slug, title_en, title_ru, note_en, note_ru, rule, threshold,
+                  currency, amount, period, starts_at, ends_at, status, sort_order, by_hand)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+             RETURNING *"
+        };
+        let row = sqlx::query_as::<_, crate::models::BattleErrand>(sql)
+            .bind(id.unwrap_or_else(Uuid::new_v4))
+            .bind(&w.slug)
+            .bind(&w.title_en)
+            .bind(&w.title_ru)
+            .bind(w.note_en.as_deref())
+            .bind(w.note_ru.as_deref())
+            .bind(&w.rule)
+            .bind(w.threshold)
+            .bind(&w.currency)
+            .bind(w.amount)
+            .bind(&w.period)
+            .bind(w.starts_at)
+            .bind(w.ends_at)
+            .bind(&w.status)
+            .bind(w.sort_order)
+            .bind(w.by_hand)
+            .fetch_optional(&self.pg_pool)
+            .await?;
+        row.ok_or_else(|| AppError::NotFound("Battle errand not found".into()))
+    }
+
+    /// Убрать поручение из справочника.
+    ///
+    /// Книгу это не трогает: заплаченное остаётся заплаченным, и ключ никуда не
+    /// девается. Заведённое заново под тем же slug'ом второй раз не заплатит —
+    /// и это правильно, а не досадно.
+    pub async fn delete_battle_errand(&self, id: Uuid) -> Result<()> {
+        let affected = sqlx::query("DELETE FROM battle_errands WHERE id = $1")
+            .bind(id)
+            .execute(&self.pg_pool)
+            .await?
+            .rows_affected();
+        if affected == 0 {
+            return Err(AppError::NotFound(format!("Battle errand {id} not found")));
+        }
+        Ok(())
+    }
+
+    pub async fn reorder_battle_errands(&self, ids: &[Uuid]) -> Result<()> {
+        let mut tx = self.pg_pool.begin().await?;
+        for (i, id) in ids.iter().enumerate() {
+            sqlx::query("UPDATE battle_errands SET sort_order = $2, updated_at = NOW() WHERE id = $1")
+                .bind(id)
+                .bind(i as i32)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Что дом насчитал по гостю за окно.
+    ///
+    /// `since = None` — за всё время (разовое поручение). Иначе считается
+    /// только то, что случилось ВНУТРИ окна: «посмотреть три работы сегодня»,
+    /// засчитанное вчерашними, платило бы каждый день ни за что, и это
+    /// единственная ошибка во всей механике, которую нельзя отозвать.
+    ///
+    /// Условия о состоянии (`cards_owned`, `card_level`, `deck_laid`) окна не
+    /// знают по существу: у снимка нет времени. Стол не даёт поставить их на
+    /// повторяющееся поручение — см. `battles::ERRAND_RULES_STATEFUL`.
+    pub async fn battle_errand_tally(
+        &self,
+        user_id: Uuid,
+        since: Option<DateTime<Utc>>,
+    ) -> Result<crate::models::BattleErrandTally> {
+        // Одним заходом по книге: три вида внимания и потраченная пыль лежат в
+        // одной таблице, и четыре запроса за ними были бы четырьмя проходами.
+        let wallet: (i64, i64, i64, i64) = sqlx::query_as(
+            "SELECT
+                 COALESCE(SUM(CASE WHEN reason = 'seen'  THEN 1 ELSE 0 END), 0)::bigint,
+                 COALESCE(SUM(CASE WHEN reason = 'liked' THEN 1 ELSE 0 END), 0)::bigint,
+                 COALESCE(SUM(CASE WHEN reason = 'read'  THEN 1 ELSE 0 END), 0)::bigint,
+                 COALESCE(-SUM(CASE WHEN currency = 'dust' AND amount < 0
+                                    THEN amount ELSE 0 END), 0)::bigint
+               FROM battle_wallet_entries
+              WHERE user_id = $1 AND ($2::timestamptz IS NULL OR created_at >= $2)",
+        )
+        .bind(user_id)
+        .bind(since)
+        .fetch_one(&self.pg_pool)
+        .await?;
+
+        // Собрание — это состояние, и окно ему не применяется намеренно.
+        let owned: (i64, i64) = sqlx::query_as(
+            "SELECT COUNT(*)::bigint, COALESCE(MAX(level), 0)::bigint
+               FROM battle_owned_cards WHERE user_id = $1",
+        )
+        .bind(user_id)
+        .fetch_one(&self.pg_pool)
+        .await?;
+
+        let deck: (bool,) =
+            sqlx::query_as("SELECT EXISTS(SELECT 1 FROM battle_decks WHERE user_id = $1)")
+                .bind(user_id)
+                .fetch_one(&self.pg_pool)
+                .await?;
+
+        let matches: (i64, i64, i64) = sqlx::query_as(
+            "SELECT
+                 COUNT(*) FILTER (WHERE outcome IS NOT NULL)::bigint,
+                 COUNT(*) FILTER (WHERE outcome = 'player')::bigint,
+                 COUNT(DISTINCT challenge_id) FILTER (WHERE outcome = 'player')::bigint
+               FROM battle_matches
+              WHERE user_id = $1 AND ($2::timestamptz IS NULL OR created_at >= $2)",
+        )
+        .bind(user_id)
+        .bind(since)
+        .fetch_one(&self.pg_pool)
+        .await?;
+
+        // Отмеченные хранителем, а не написанные: иначе поручение «оставьте
+        // впечатление» — кран, отвечающий пылью на любой набор букв.
+        let comments: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*)::bigint FROM figurine_comments
+              WHERE user_id = $1 AND is_approved
+                AND ($2::timestamptz IS NULL OR created_at >= $2)",
+        )
+        .bind(user_id)
+        .bind(since)
+        .fetch_one(&self.pg_pool)
+        .await?;
+
+        let bookings: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*)::bigint FROM figurine_bookings
+              WHERE user_id = $1 AND status::text = 'completed'
+                AND ($2::timestamptz IS NULL OR created_at >= $2)",
+        )
+        .bind(user_id)
+        .bind(since)
+        .fetch_one(&self.pg_pool)
+        .await?;
+
+        let orders: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*)::bigint FROM orders
+              WHERE user_id = $1 AND ($2::timestamptz IS NULL OR created_at >= $2)",
+        )
+        .bind(user_id)
+        .bind(since)
+        .fetch_one(&self.pg_pool)
+        .await?;
+
+        // Считается по `visited_at`, а не по `day`: тогда окно здесь — то же
+        // сравнение времени, что у всех прочих условий, а не особый случай с
+        // приведением дат к местному календарю во второй раз.
+        let visits: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*)::bigint FROM battle_visits
+              WHERE user_id = $1 AND ($2::timestamptz IS NULL OR visited_at >= $2)",
+        )
+        .bind(user_id)
+        .bind(since)
+        .fetch_one(&self.pg_pool)
+        .await?;
+
+        Ok(crate::models::BattleErrandTally {
+            works_seen: wallet.0,
+            works_liked: wallet.1,
+            tales_read: wallet.2,
+            dust_spent: wallet.3,
+            cards_owned: owned.0,
+            card_level: owned.1,
+            deck_laid: i64::from(deck.0),
+            matches_finished: matches.0,
+            matches_won: matches.1,
+            challenges_won: matches.2,
+            comments_left: comments.0,
+            bookings_done: bookings.0,
+            orders_made: orders.0,
+            visits: visits.0,
+        })
+    }
+
+    /// Дар первого входа.
+    ///
+    /// Отдельно от `grant_battle_wallet` по той же причине, по какой тот отделён
+    /// от `credit_battle_wallet`: это движение другого рода. У него нет записки —
+    /// слова подбирает страница, иначе они легли бы в книгу на одном языке и
+    /// остались бы на нём навсегда, — и повод у него один на всю жизнь книги.
+    ///
+    /// Ключ у каждой монеты свой. Хранитель, поднявший дар с нуля до единицы
+    /// через месяц, доплатит эту монету и тем, кто уже вошёл, — а не заплатит
+    /// весь дар второй раз.
+    pub async fn welcome_battle_wallet(
+        &self,
+        user_id: Uuid,
+        currency: &str,
+        amount: i32,
+    ) -> Result<bool> {
+        let res = sqlx::query(
+            "INSERT INTO battle_wallet_entries
+                 (user_id, currency, amount, reason, idem_key)
+             VALUES ($1, $2, $3, 'welcome', $4)
+             ON CONFLICT (user_id, idem_key) DO NOTHING",
+        )
+        .bind(user_id)
+        .bind(currency)
+        .bind(amount)
+        .bind(format!("welcome:{currency}"))
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Проявка: засчитать разом работы, которые гость смотрел до того, как
+    /// комната для него открылась.
+    ///
+    /// Одним запросом, а не циклом: проверка существования, проверка открытости
+    /// и защита от повтора — всё это уже умеет база, и шестьдесят обращений
+    /// подряд за тем же самым были бы разве что медленнее.
+    ///
+    /// Возвращает, сколько строк ЛЕГЛО, а не сколько прислали: работа, за
+    /// которую уже платили, и работа, которой нет, отсюда неотличимы — и
+    /// человеку в обоих случаях нечего сказать.
+    pub async fn credit_battle_seen_bulk(
+        &self,
+        user_id: Uuid,
+        ids: &[Uuid],
+        amount: i32,
+    ) -> Result<i64> {
+        if ids.is_empty() || amount <= 0 {
+            return Ok(0);
+        }
+        let res = sqlx::query(
+            "INSERT INTO battle_wallet_entries
+                 (user_id, currency, amount, reason, ref_id, idem_key)
+             SELECT $1, 'dust', $2, 'seen', f.id, 'seen:' || f.id
+               FROM figurines f
+              WHERE f.id = ANY($3) AND f.is_visible
+             ON CONFLICT (user_id, idem_key) DO NOTHING",
+        )
+        .bind(user_id)
+        .bind(amount)
+        .bind(ids)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected() as i64)
+    }
+
+    /// Что дому дали не за внимание — последние записки, новыми вперёд.
+    ///
+    /// `hand` — из рук хранителя, `welcome` — дар первого входа. Пыль, осевшая
+    /// с маяков, сюда не попадает: у неё нет ни записки, ни повода её назвать,
+    /// и на полях она считается иначе (сколько осело с прошлого раза).
     pub async fn list_battle_hand_grants(
         &self,
         user_id: Uuid,
         limit: i64,
     ) -> Result<Vec<crate::models::BattleGrantRow>> {
         Ok(sqlx::query_as::<_, crate::models::BattleGrantRow>(
-            "SELECT currency, amount, note, created_at FROM battle_wallet_entries
-              WHERE user_id = $1 AND reason = 'hand' AND amount > 0
+            "SELECT currency, amount, reason, note, created_at FROM battle_wallet_entries
+              WHERE user_id = $1 AND reason IN ('hand', 'welcome') AND amount > 0
               ORDER BY created_at DESC LIMIT $2",
         )
         .bind(user_id)
         .bind(limit)
         .fetch_all(&self.pg_pool)
         .await?)
+    }
+
+    /// Существует ли вещь, за внимание к которой просят пыль, и открыта ли она.
+    ///
+    /// Маячок верит странице на слово: она присылает вид и id. Без этой проверки
+    /// придуманный UUID — это выдуманная пыль, а проявка (`BATTLE-ERRANDS.md`),
+    /// шлющая целый список разом, делает дыру ровно в пятьдесят раз шире.
+    ///
+    /// Неизвестный вид — не ошибка, а «нет»: маячок молчит по построению, и
+    /// ошибку здесь всё равно некому показать.
+    pub async fn battle_attention_target_public(&self, kind: &str, id: Uuid) -> Result<bool> {
+        let sql = match kind {
+            "seen" | "liked" => "SELECT EXISTS(SELECT 1 FROM figurines WHERE id = $1 AND is_visible)",
+            "read" => {
+                "SELECT EXISTS(SELECT 1 FROM gazette_leaves WHERE id = $1 AND status = 'published')"
+            }
+            _ => return Ok(false),
+        };
+        let row: (bool,) = sqlx::query_as(sql).bind(id).fetch_one(&self.pg_pool).await?;
+        Ok(row.0)
     }
 
     pub async fn battle_wallet_balance(&self, user_id: Uuid, currency: &str) -> Result<i64> {
@@ -7125,8 +7480,8 @@ impl Repository {
             None => Ok(sqlx::query_as::<_, crate::models::BattleChallenge>(
                 "INSERT INTO battle_challenges
                      (slug, title_en, title_ru, note_en, note_ru, setup, bot_depth,
-                      reward_dust, player_side, status)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *",
+                      reward_dust, player_side, status, reward_finish_dust)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *",
             )
             .bind(w.slug)
             .bind(w.title_en)
@@ -7138,12 +7493,14 @@ impl Repository {
             .bind(w.reward_dust)
             .bind(w.player_side)
             .bind(w.status)
+            .bind(w.reward_finish_dust)
             .fetch_one(&self.pg_pool)
             .await?),
             Some(id) => sqlx::query_as::<_, crate::models::BattleChallenge>(
                 "UPDATE battle_challenges SET slug=$2, title_en=$3, title_ru=$4,
                         note_en=$5, note_ru=$6, setup=$7, bot_depth=$8,
-                        reward_dust=$9, player_side=$10, status=$11, updated_at = NOW()
+                        reward_dust=$9, player_side=$10, status=$11,
+                        reward_finish_dust=$12, updated_at = NOW()
                   WHERE id=$1 RETURNING *",
             )
             .bind(id)
@@ -7157,6 +7514,7 @@ impl Repository {
             .bind(w.reward_dust)
             .bind(w.player_side)
             .bind(w.status)
+            .bind(w.reward_finish_dust)
             .fetch_optional(&self.pg_pool)
             .await?
             .ok_or_else(|| AppError::NotFound(format!("Battle challenge {id} not found"))),
@@ -7215,6 +7573,64 @@ impl Repository {
         .bind(challenge_id)
         .fetch_optional(&self.pg_pool)
         .await?)
+    }
+
+    /// Open matches for this visitor, keyed by the challenge they belong to.
+    /// The shelf of studies uses it to print «continue» on the ones left going.
+    pub async fn list_open_battle_match_ids(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<(Uuid, Uuid)>> {
+        let rows: Vec<(Option<Uuid>, Uuid)> = sqlx::query_as(
+            "SELECT challenge_id, id FROM battle_matches
+              WHERE user_id = $1 AND outcome IS NULL AND challenge_id IS NOT NULL",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pg_pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|(challenge_id, match_id)| challenge_id.map(|cid| (cid, match_id)))
+            .collect())
+    }
+
+    /// Give the field: the row finishes as a keeper win, without a move.
+    /// The board cache is stamped so a later read does not resurrect the live board.
+    pub async fn yield_battle_match(
+        &self,
+        id: Uuid,
+        user_id: Uuid,
+        board_cache: &str,
+    ) -> Result<Option<crate::models::BattleMatch>> {
+        Ok(sqlx::query_as::<_, crate::models::BattleMatch>(
+            "UPDATE battle_matches
+                SET outcome = 'keeper', board_cache = $3, finished_at = NOW()
+              WHERE id = $1 AND user_id = $2 AND outcome IS NULL
+              RETURNING *",
+        )
+        .bind(id)
+        .bind(user_id)
+        .bind(board_cache)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    /// Drop the unfinished match so a replay can insert a new one.
+    /// Not a loss: they asked to start this over, they did not give the field.
+    pub async fn drop_open_battle_match(
+        &self,
+        user_id: Uuid,
+        challenge_id: Uuid,
+    ) -> Result<()> {
+        sqlx::query(
+            "DELETE FROM battle_matches
+              WHERE user_id = $1 AND challenge_id = $2 AND outcome IS NULL",
+        )
+        .bind(user_id)
+        .bind(challenge_id)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
     }
 
     /// Партия без проверки владельца. Только для стола хранителя: гостю партия

@@ -34,6 +34,7 @@
     sideV: 'adminAssetsRoleSideV',
     accent: 'adminAssetsRoleAccent',
     art: 'adminAssetsRoleArt',
+    motion: 'adminAssetsRoleMotion',
     other: 'adminAssetsRoleOther',
   };
   /** Меньше этого по любой стороне — не рамка, а промах мышью. */

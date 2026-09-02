@@ -191,6 +191,7 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             // what a given person owns is not, and lives behind a session.
             .route("/battles/cards", get(handlers::list_battle_cards))
             .route("/battles/frames", get(handlers::get_battle_frames))
+            .route("/battles/motions", get(handlers::get_battle_motions))
             .route("/battles/races", get(handlers::list_battle_races))
             .route("/battles/keywords", get(handlers::list_battle_keywords))
             // Полка испытаний видна и без имени; играть — только с именем.
@@ -203,6 +204,14 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             .route(
                 "/battles/matches/:id/act",
                 post(handlers::act_in_battle_match),
+            )
+            .route(
+                "/battles/matches/:id/yield",
+                post(handlers::yield_battle_match),
+            )
+            .route(
+                "/battles/challenges/:id/restart",
+                post(handlers::restart_battle_match),
             )
             // Кошелёк и владение. Всё под сессией: книга лежит на сервере
             // именно потому, что кошелёк в localStorage — бесконечные деньги.
@@ -219,6 +228,12 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 post(handlers::mark_battle_card_seen),
             )
             .route("/battles/attention", post(handlers::grant_battle_attention))
+            // Вход в комнату: дар и проявка. Пишет в книгу — потому POST, а не
+            // часть чтения полки.
+            .route("/battles/enter", post(handlers::enter_battle_room))
+            // Лист поручений. GET и ничего не пишет намеренно: платят те
+            // движения, которые и так случаются, а не чтение страницы.
+            .route("/battles/errands", get(handlers::list_battle_errands))
             // === PUBLIC LOGIN ===
             .route("/admin/login", post(handlers::admin_login))
             // === PROTECTED WRITE — use route_layer so auth only runs on matched routes ===
@@ -592,6 +607,14 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                     middleware::from_fn_with_state(config.clone(), auth_middleware),
                 ),
             )
+            // Свод движений. Читается публично (сцене он нужен на каждом
+            // событии), пишется только со стола.
+            .route(
+                "/admin/battles/motions",
+                post(handlers::admin_save_battle_motions).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
             // Ящик хранителя: сохранённые наряды рамок. Не на публичном
             // маршруте рамок — их никто, кроме стола, не носит.
             .route(
@@ -613,6 +636,51 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                         config.clone(),
                         auth_middleware,
                     )),
+            )
+            // Дар первого входа. Там же, где ставки: и то и другое — числа,
+            // которые подбираются на живом доме.
+            .route(
+                "/admin/battles/gift",
+                get(handlers::admin_get_battle_gift)
+                    .post(handlers::admin_save_battle_gift)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            // Часы дома: по ним поворачивается «сегодня» у повторяющихся
+            // поручений. Одно число, и его должно быть видно там же, где ставки.
+            .route(
+                "/admin/battles/clock",
+                get(handlers::admin_get_battle_clock)
+                    .post(handlers::admin_save_battle_clock)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            // Справочник поручений. Числа и слова подбираются на живом доме, и
+            // новое поручение из существующего условия заводится здесь, без кода.
+            .route(
+                "/admin/battles/errands",
+                get(handlers::admin_list_battle_errands)
+                    .post(handlers::admin_save_battle_errand)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            .route(
+                "/admin/battles/errands/reorder",
+                post(handlers::admin_reorder_battle_errands).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/battles/errands/:id",
+                delete(handlers::admin_delete_battle_errand).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
             )
             // Frame pictures keep their transparency, so they cannot go through
             // the ordinary image upload. Its own body limit: a carved frame is
@@ -1356,6 +1424,7 @@ fn is_public_cacheable(path: &str) -> bool {
         "/gazette/blotter",
         "/battles/cards",
         "/battles/frames",
+        "/battles/motions",
         "/battles/races",
         "/battles/keywords",
         "/battles/challenges",

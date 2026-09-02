@@ -5952,6 +5952,15 @@ impl AppService {
                 .await;
         }
 
+        // Одобренный отзыв закрывает задание «Оставить отзыв о работе», и
+        // закрыть его надо ЗДЕСЬ. Задания досчитываются на действиях самого
+        // игрока, а одобрение — действие автора: без этого награда ждала бы
+        // следующего захода игрока на страницу игры, то есть выглядела бы как
+        // «отзыв оставил, а ничего не изменилось».
+        if is_approved && let Some(author) = prev.user_id {
+            self.settle_errands_quietly(author).await;
+        }
+
         Self::log_domain_event("comment_moderated", "comment", id, "ok");
         Ok(AdminCommentDto {
             id: prev.id.to_string(),
@@ -7238,6 +7247,7 @@ impl AppService {
             race_name_ru: row.race_name_ru,
             race_icon_url: row.race_icon_url,
             race_level_frames: row.race_level_frames,
+            race_motion_wear: row.race_motion_wear,
             type_en: row.type_en,
             type_ru: row.type_ru,
             title_en: row.title_en,
@@ -7271,6 +7281,7 @@ impl AppService {
             art_url_override: if admin { own } else { None },
             art_focal: row.art_focal,
             frame_override: row.frame_override,
+            motion_wear: row.motion_wear,
             shelf_order: row.shelf_order,
             lendable: row.lendable,
             figurine_id: row.figurine_id.map(|id| id.to_string()),
@@ -7503,6 +7514,45 @@ impl AppService {
         Ok(normalized)
     }
 
+    // === ДВИЖЕНИЯ ===
+    //
+    // Свод живёт настройкой, а не таблицей, ровно по той же причине, что и
+    // рамки чинов: это словарь дома, один на всю комнату, и читается он ЦЕЛИКОМ
+    // при каждом входе в этюд. Таблица дала бы страницу, сортировку и запрос на
+    // строку — три вещи, которых у словаря из полусотни записей быть не должно.
+
+    /// Что играет комната. Публично: без свода сцена не покажет ни удара, ни
+    /// лечения, а второй круг за ним посреди хода — это круг, который однажды
+    /// не успеет.
+    ///
+    /// Пустой свод — не поломка: сцена тогда играет умолчания дома, то есть
+    /// ровно то, что делала до движка (`BATTLE-MOTION.md` §4).
+    pub async fn get_battle_motions(&self) -> Result<crate::battles::BattleMotions> {
+        let saved: crate::battles::BattleMotions = parse_json_setting(
+            "battle_motions",
+            self.repo.get_setting("battle_motions").await?,
+        )?;
+        Ok(crate::battles::BattleMotions {
+            motions: crate::battles::normalize_motions(saved.motions),
+        })
+    }
+
+    pub async fn save_battle_motions(
+        &self,
+        config: crate::battles::BattleMotions,
+    ) -> Result<crate::battles::BattleMotions> {
+        let normalized = crate::battles::BattleMotions {
+            motions: crate::battles::normalize_motions(config.motions),
+        };
+        let json =
+            serde_json::to_string(&normalized).map_err(|e| AppError::Internal(e.to_string()))?;
+        if json.len() > 128 * 1024 {
+            return Err(AppError::BadRequest("Battle motions are too large".into()));
+        }
+        self.repo.upsert_setting("battle_motions", &json).await?;
+        Ok(normalized)
+    }
+
     // === КОШЕЛЁК, ВЛАДЕНИЕ, ЦЕРЕМОНИЯ ===
 
     pub async fn get_battle_dust_rates(&self) -> Result<crate::models::BattleDustRates> {
@@ -7526,6 +7576,546 @@ impl AppService {
         let json = serde_json::to_string(&clean).map_err(|e| AppError::Internal(e.to_string()))?;
         self.repo.upsert_setting("battle_dust_rates", &json).await?;
         Ok(clean)
+    }
+
+    // === ПОРУЧЕНИЯ ===
+    //
+    // Поручение не создаёт дело — оно называет заранее то, что дом и так считал
+    // молча. Платит из той же дописываемой книги, ключом `errand:{slug}`, так
+    // что «ровно однажды» достаётся даром и никакой второй машины выплат нет.
+
+    /// Заплатить за всё, что гость успел закрыть.
+    ///
+    /// Зовётся из тех POST'ов, которые и так случаются: вход в комнату, маячок
+    /// внимания, покупка, ступень, сохранение стола, ход в партии. Внутри
+    /// чтения не зовётся никогда — страница, чтение которой печатает деньги,
+    /// рано или поздно будет прочитана в цикле.
+    ///
+    /// Возвращает то, что заплачено ИМЕННО СЕЙЧАС: из этого складывается окно
+    /// встречи, и оно должно молчать, когда сказать нечего.
+    pub async fn settle_errands(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<crate::models::BattleErrandDto>> {
+        let errands = self.repo.list_published_battle_errands().await?;
+        if errands.is_empty() {
+            return Ok(Vec::new());
+        }
+        let windows = self.errand_windows(&errands).await?;
+        let tallies = self.errand_tallies(user_id, &windows).await?;
+
+        let mut paid = Vec::new();
+        for (errand, window) in errands.iter().zip(&windows) {
+            // Закрытое окно — не «ноль», а «нечего»: срок, который ещё не начался
+            // или уже кончился, не должен ни платить, ни считаться.
+            let Some((since, tail)) = window else { continue };
+            // Дело дом не платит никогда. Корм за поступок даёт хранитель рукой,
+            // и автоматическая выплата стёрла бы всю разницу между двумя
+            // монетами: одна за время, другая за поступок.
+            if errand.by_hand {
+                continue;
+            }
+            let Some(tally) = tallies.get(since) else { continue };
+            if tally.by_rule(&errand.rule) < i64::from(errand.threshold) {
+                continue;
+            }
+            if self
+                .repo
+                .credit_battle_wallet(
+                    user_id,
+                    &errand.currency,
+                    errand.amount,
+                    "errand",
+                    Some(errand.id),
+                    &crate::battles::errand_key(&errand.slug, tail),
+                )
+                .await?
+            {
+                paid.push(Self::errand_dto(errand, tally, true));
+            }
+        }
+        Ok(paid)
+    }
+
+    /// Окно каждого поручения, по порядку списка.
+    ///
+    /// Считается один раз на весь проход: часы дома читаются из настроек, а
+    /// «сейчас» берётся ОДНО на все поручения — иначе полночь, наступившая между
+    /// двумя строками цикла, развела бы соседние поручения по разным суткам.
+    async fn errand_windows(
+        &self,
+        errands: &[crate::models::BattleErrand],
+    ) -> Result<Vec<Option<(Option<DateTime<Utc>>, String)>>> {
+        let clock = self.get_battle_clock().await?;
+        let now = Utc::now();
+        Ok(errands
+            .iter()
+            .map(|e| {
+                crate::battles::errand_window(
+                    &e.period,
+                    now,
+                    clock.offset_min,
+                    e.starts_at,
+                    e.ends_at,
+                )
+            })
+            .collect())
+    }
+
+    /// Счёт на каждое РАЗЛИЧНОЕ окно, а не на каждое поручение.
+    ///
+    /// Девять разовых поручений спрашивают одни и те же семь чисел; ежедневное
+    /// спрашивает их же, но с полуночи. Различных окон обычно два-три, и запросов
+    /// столько же.
+    async fn errand_tallies(
+        &self,
+        user_id: Uuid,
+        windows: &[Option<(Option<DateTime<Utc>>, String)>],
+    ) -> Result<std::collections::HashMap<Option<DateTime<Utc>>, crate::models::BattleErrandTally>>
+    {
+        let mut wanted: Vec<Option<DateTime<Utc>>> =
+            windows.iter().flatten().map(|(since, _)| *since).collect();
+        wanted.sort();
+        wanted.dedup();
+        let mut out = std::collections::HashMap::new();
+        for since in wanted {
+            out.insert(since, self.repo.battle_errand_tally(user_id, since).await?);
+        }
+        Ok(out)
+    }
+
+    // === ПОРУЧЕНИЯ: СТОЛ ХРАНИТЕЛЯ ===
+
+    pub async fn admin_list_battle_errands(
+        &self,
+    ) -> Result<Vec<crate::models::AdminBattleErrandDto>> {
+        let (rows, payouts) = tokio::try_join!(
+            self.repo.list_battle_errands_admin(),
+            self.repo.battle_errand_payouts(),
+        )?;
+        let paid: std::collections::HashMap<String, (i64, i64)> = payouts
+            .into_iter()
+            .map(|(slug, guests, coins)| (slug, (guests, coins)))
+            .collect();
+        Ok(rows
+            .iter()
+            .map(|e| Self::admin_errand_dto(e, &paid))
+            .collect())
+    }
+
+    fn admin_errand_dto(
+        e: &crate::models::BattleErrand,
+        paid: &std::collections::HashMap<String, (i64, i64)>,
+    ) -> crate::models::AdminBattleErrandDto {
+        let (guests, coins) = paid.get(&e.slug).copied().unwrap_or((0, 0));
+        crate::models::AdminBattleErrandDto {
+            id: e.id.to_string(),
+            slug: e.slug.clone(),
+            title_en: e.title_en.clone(),
+            title_ru: e.title_ru.clone(),
+            note_en: e.note_en.clone(),
+            note_ru: e.note_ru.clone(),
+            rule: e.rule.clone(),
+            threshold: e.threshold,
+            currency: e.currency.clone(),
+            amount: e.amount,
+            period: e.period.clone(),
+            starts_at: e.starts_at.map(|t| t.to_rfc3339()),
+            ends_at: e.ends_at.map(|t| t.to_rfc3339()),
+            status: e.status.clone(),
+            by_hand: e.by_hand,
+            sort_order: e.sort_order,
+            paid_guests: guests,
+            paid_coins: coins,
+            slug_locked: guests > 0,
+        }
+    }
+
+    /// Завести поручение или поправить существующее.
+    ///
+    /// Отказ называет причину СЛОВОМ, а не текстом: текст живёт в `i18n`, и
+    /// сервер, который его сочиняет, сочиняет его на одном языке.
+    ///
+    /// Правка суммы прошлое не переписывает — книга только дописывается, и тот,
+    /// кому уже заплатили десять, останется с десятью. Это сказано на самом
+    /// столе словами, а не оставлено догадываться.
+    pub async fn admin_save_battle_errand(
+        &self,
+        req: crate::models::SaveBattleErrandRequest,
+    ) -> Result<crate::models::AdminBattleErrandDto> {
+        let (existing, payouts) = tokio::try_join!(
+            self.repo.list_battle_errands_admin(),
+            self.repo.battle_errand_payouts(),
+        )?;
+        let paid: std::collections::HashMap<String, (i64, i64)> = payouts
+            .into_iter()
+            .map(|(slug, guests, coins)| (slug, (guests, coins)))
+            .collect();
+
+        let mine = req
+            .id
+            .and_then(|id| existing.iter().find(|e| e.id == id));
+        if req.id.is_some() && mine.is_none() {
+            return Err(AppError::NotFound("Battle errand not found".into()));
+        }
+
+        let clean = Self::prepare_errand(&req, mine, &existing, &paid)?;
+        let saved = self.repo.upsert_battle_errand(req.id, &clean).await?;
+        Ok(Self::admin_errand_dto(&saved, &paid))
+    }
+
+    /// Всё, что хранитель напечатал, приведённое к тому, что комната выдержит.
+    fn prepare_errand(
+        req: &crate::models::SaveBattleErrandRequest,
+        mine: Option<&crate::models::BattleErrand>,
+        all: &[crate::models::BattleErrand],
+        paid: &std::collections::HashMap<String, (i64, i64)>,
+    ) -> Result<crate::models::SaveBattleErrandRequest> {
+        let slug = crate::battles::clean_errand_slug(&req.slug);
+        if slug.is_empty() {
+            return Err(AppError::BadRequest("errand:slug".into()));
+        }
+        // Ключ книги собран из slug'а. Переименование после первой выплаты —
+        // это НОВОЕ поручение, за которое заплатят второй раз всем, кто его уже
+        // прошёл, и заметит это не тот, кто переименовывал.
+        if let Some(old) = mine {
+            let locked = paid.get(&old.slug).map(|p| p.0 > 0).unwrap_or(false);
+            if locked && slug != old.slug {
+                return Err(AppError::BadRequest("errand:slugLocked".into()));
+            }
+        }
+        if all
+            .iter()
+            .any(|e| e.slug == slug && Some(e.id) != req.id)
+        {
+            return Err(AppError::BadRequest("errand:slugTaken".into()));
+        }
+
+        if !crate::battles::errand_rule_known(&req.rule) {
+            return Err(AppError::BadRequest("errand:rule".into()));
+        }
+
+        let period = if req.period.is_empty() {
+            "once".to_string()
+        } else {
+            req.period.clone()
+        };
+        if !crate::battles::valid_errand_period(&period) {
+            return Err(AppError::BadRequest("errand:period".into()));
+        }
+        // Условие о СОСТОЯНИИ не знает окна по существу: у снимка нет времени.
+        // Повторяющееся поручение с таким условием платило бы каждый период за
+        // то, что человек сделал однажды, — и это единственное место, где
+        // повторение молча опустошает книгу.
+        if period != "once" && crate::battles::errand_rule_stateful(&req.rule) {
+            return Err(AppError::BadRequest("errand:statefulRepeat".into()));
+        }
+        // Дело не повторяется: повторять нечего, машина его не платит, и период
+        // у него был бы состоянием, которое ничего не значит и однажды собьёт
+        // с толку.
+        let period = if req.by_hand { "once".to_string() } else { period };
+        if period == "window" {
+            let Some(from) = req.starts_at else {
+                return Err(AppError::BadRequest("errand:window".into()));
+            };
+            if let Some(to) = req.ends_at {
+                if to <= from {
+                    return Err(AppError::BadRequest("errand:window".into()));
+                }
+            }
+        }
+
+        // Состояний у поручения два, и `valid_status` тут не годится: он про
+        // карты, у которых есть ещё и «в отставке».
+        let status = match req.status.as_str() {
+            "draft" | "published" => req.status.clone(),
+            _ => return Err(AppError::BadRequest("errand:status".into())),
+        };
+
+        // Потолок повторяющихся — часть кода, а не совет (`BATTLE-ERRANDS.md` §5).
+        if period != "once" && status == "published" {
+            let others = all
+                .iter()
+                .filter(|e| {
+                    Some(e.id) != req.id && e.status == "published" && e.period != "once"
+                })
+                .count();
+            if others >= crate::battles::ERRANDS_REPEATING_MAX {
+                return Err(AppError::BadRequest("errand:repeatingMax".into()));
+            }
+        }
+
+        if !crate::battles::CURRENCIES.contains(&req.currency.as_str()) {
+            return Err(AppError::BadRequest("errand:currency".into()));
+        }
+        let amount = req.amount;
+        if amount < 1 || amount > crate::battles::ERRAND_AMOUNT_MAX {
+            return Err(AppError::BadRequest("errand:amount".into()));
+        }
+        let threshold = req.threshold;
+        if threshold < 1 || threshold > crate::battles::ERRAND_THRESHOLD_MAX {
+            return Err(AppError::BadRequest("errand:threshold".into()));
+        }
+
+        let title_en = Self::clamp_text(&req.title_en, crate::battles::ERRAND_TITLE_MAX);
+        let title_ru = Self::clamp_text(&req.title_ru, crate::battles::ERRAND_TITLE_MAX);
+        // Оба языка, а не «хотя бы один»: пустой английский когда-то заполняли
+        // русским, и английская полка печатала кириллицу как английский.
+        if title_en.is_empty() || title_ru.is_empty() {
+            return Err(AppError::BadRequest("errand:title".into()));
+        }
+        let note = |v: &Option<String>| -> Option<String> {
+            v.as_deref()
+                .map(|t| Self::clamp_text(t, crate::battles::ERRAND_NOTE_MAX))
+                .filter(|t| !t.is_empty())
+        };
+
+        Ok(crate::models::SaveBattleErrandRequest {
+            id: req.id,
+            slug,
+            title_en,
+            title_ru,
+            note_en: note(&req.note_en),
+            note_ru: note(&req.note_ru),
+            rule: req.rule.clone(),
+            threshold,
+            currency: req.currency.clone(),
+            amount,
+            period,
+            starts_at: req.starts_at,
+            ends_at: req.ends_at,
+            status,
+            by_hand: req.by_hand,
+            sort_order: req.sort_order,
+        })
+    }
+
+    /// Обрезает, а не отказывает: заголовок на символ длиннее не стоит потерянного
+    /// черновика.
+    fn clamp_text(raw: &str, max: usize) -> String {
+        let t = raw.trim();
+        if t.chars().count() <= max {
+            return t.to_string();
+        }
+        t.chars().take(max).collect::<String>().trim_end().to_string()
+    }
+
+    pub async fn admin_delete_battle_errand(&self, id: Uuid) -> Result<()> {
+        self.repo.delete_battle_errand(id).await
+    }
+
+    pub async fn admin_reorder_battle_errands(&self, ids: &[Uuid]) -> Result<()> {
+        self.repo.reorder_battle_errands(ids).await
+    }
+
+    /// Лист поручений: только отчёт, ни одной строки в книгу.
+    pub async fn list_battle_errands(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<crate::models::BattleErrandDto>> {
+        let (errands, keys) = tokio::try_join!(
+            self.repo.list_published_battle_errands(),
+            self.repo.battle_wallet_keys(user_id),
+        )?;
+        let paid: std::collections::HashSet<String> = keys.into_iter().collect();
+        let windows = self.errand_windows(&errands).await?;
+        let tallies = self.errand_tallies(user_id, &windows).await?;
+
+        // Окна те же, что и при выплате, и это обязательно: список, считающий
+        // прогресс иначе, чем платит книга, показывал бы «4 из 5» рядом с уже
+        // закрытым поручением.
+        Ok(errands
+            .iter()
+            .zip(&windows)
+            .filter_map(|(e, window)| {
+                let (since, tail) = window.as_ref()?;
+                let tally = tallies.get(since)?;
+                let done = paid.contains(&crate::battles::errand_key(&e.slug, tail));
+                Some(Self::errand_dto(e, tally, done))
+            })
+            .collect())
+    }
+
+    fn errand_dto(
+        errand: &crate::models::BattleErrand,
+        tally: &crate::models::BattleErrandTally,
+        done: bool,
+    ) -> crate::models::BattleErrandDto {
+        // У дела прогресса нет намеренно. Показать «1 из 1» рядом со строкой,
+        // которую дом не оплатит, значит пообещать выплату и не сделать её —
+        // а «сделано» без монеты хуже, чем ничего.
+        let done = done && !errand.by_hand;
+        // Прогресс обрезан порогом: «7 из 5» — не отчёт, а недоразумение, и
+        // закрытое поручение должно показывать свой порог, а не то, сколько
+        // человек нагулял сверх него потом.
+        let have = tally
+            .by_rule(&errand.rule)
+            .min(i64::from(errand.threshold))
+            .max(0);
+        crate::models::BattleErrandDto {
+            id: errand.id.to_string(),
+            slug: errand.slug.clone(),
+            by_hand: errand.by_hand,
+            title_en: errand.title_en.clone(),
+            title_ru: errand.title_ru.clone(),
+            note_en: errand.note_en.clone(),
+            note_ru: errand.note_ru.clone(),
+            rule: errand.rule.clone(),
+            threshold: errand.threshold,
+            currency: errand.currency.clone(),
+            amount: errand.amount,
+            period: errand.period.clone(),
+            have: if errand.by_hand {
+                0
+            } else {
+                i32::try_from(have).unwrap_or(errand.threshold)
+            },
+            done,
+        }
+    }
+
+    /// Отметить, что человек заходил сегодня.
+    ///
+    /// День — по часам дома: московский вечер и есть сегодняшний день, а не
+    /// вчерашний, каким его считает UTC.
+    ///
+    /// Не роняет вход: комната, не открывшаяся оттого, что не записалась
+    /// отметка о приходе, — это ровно наоборот.
+    async fn mark_visit_quietly(&self, user_id: Uuid) {
+        let offset = match self.get_battle_clock().await {
+            Ok(c) => c.offset_min,
+            Err(_) => crate::models::BattleClock::default().offset_min,
+        };
+        let Some(off) = chrono::FixedOffset::east_opt(offset * 60) else {
+            return;
+        };
+        let day = Utc::now().with_timezone(&off).date_naive();
+        if let Err(e) = self.repo.mark_battle_visit(user_id, day).await {
+            tracing::warn!(%user_id, "приход не записался: {e}");
+        }
+    }
+
+    /// Расплатиться по поручениям, не роняя того, кто позвал.
+    ///
+    /// Покупка карты не должна отказать оттого, что справочник поручений не
+    /// прочитался: человек заплатил за карту, а не за лист. Ошибка уходит в
+    /// журнал, и следующий же POST досчитает — книга дописываемая, терять
+    /// нечего.
+    async fn settle_errands_quietly(&self, user_id: Uuid) -> Vec<crate::models::BattleErrandDto> {
+        match self.settle_errands(user_id).await {
+            Ok(paid) => paid,
+            Err(e) => {
+                tracing::warn!(%user_id, "поручения не досчитались: {e}");
+                Vec::new()
+            }
+        }
+    }
+
+    pub async fn get_battle_clock(&self) -> Result<crate::models::BattleClock> {
+        parse_json_setting("battle_clock", self.repo.get_setting("battle_clock").await?)
+    }
+
+    pub async fn save_battle_clock(
+        &self,
+        clock: crate::models::BattleClock,
+    ) -> Result<crate::models::BattleClock> {
+        // Смещение больше суток — не часовой пояс, а испорченная настройка, от
+        // которой «сегодня» уезжает в позавчера.
+        let clean = crate::models::BattleClock {
+            offset_min: clock.offset_min.clamp(-14 * 60, 14 * 60),
+        };
+        let json = serde_json::to_string(&clean)
+            .map_err(|_| AppError::Internal("Часы не сериализуются".into()))?;
+        self.repo.upsert_setting("battle_clock", &json).await?;
+        Ok(clean)
+    }
+
+    pub async fn get_battle_gift(&self) -> Result<crate::models::BattleGift> {
+        parse_json_setting("battle_gift", self.repo.get_setting("battle_gift").await?)
+    }
+
+    pub async fn save_battle_gift(
+        &self,
+        gift: crate::models::BattleGift,
+    ) -> Result<crate::models::BattleGift> {
+        // Отрицательный дар — это не строгость, а испорченная книга: комната
+        // встречала бы человека долгом. Обрезается молча, как и ставки.
+        let clean = crate::models::BattleGift {
+            dust: gift.dust.clamp(0, 100_000),
+            feed: gift.feed.clamp(0, 100_000),
+        };
+        let json = serde_json::to_string(&clean)
+            .map_err(|_| AppError::Internal("Дар не сериализуется".into()))?;
+        self.repo.upsert_setting("battle_gift", &json).await?;
+        Ok(clean)
+    }
+
+    /// Войти в комнату.
+    ///
+    /// Два движения, оба — однажды по построению, и оба на одной и той же
+    /// дописываемой книге:
+    ///
+    /// **Дар.** Гость без истории приходит с нулём, а дешёвая карта с настоящим
+    /// телом стоит двенадцать. Церемония получения карты — и есть продукт
+    /// комнаты (`TASKS-BATTLES.md` §0.6), и она должна случиться в первую
+    /// минуту, а не на третий визит.
+    ///
+    /// **Проявка.** Ноль на первом входе — почти всегда ложь: человек, дошедший
+    /// до полки, почти наверняка уже смотрел работы, и маячок за них не
+    /// сработал, потому что тогда он был без имени. Список ведёт браузер;
+    /// сервер проверяет каждую работу по своей базе и платит за неё однажды.
+    /// Так ноль превращается в число, у которого есть история: не «дом дал вам
+    /// тридцать», а «вы смотрели тридцать работ, дом их считал».
+    ///
+    /// Это POST, а не чтение полки, именно поэтому: чтение страницы не может
+    /// быть источником денег.
+    pub async fn enter_battle_room(
+        &self,
+        user_id: Uuid,
+        req: crate::models::BattleEnterRequest,
+    ) -> Result<crate::models::BattleEnterResponse> {
+        let gift = self.get_battle_gift().await?;
+        let mut given = crate::models::BattleGift { dust: 0, feed: 0 };
+        if gift.dust > 0 && self.repo.welcome_battle_wallet(user_id, "dust", gift.dust).await? {
+            given.dust = gift.dust;
+        }
+        if gift.feed > 0 && self.repo.welcome_battle_wallet(user_id, "feed", gift.feed).await? {
+            given.feed = gift.feed;
+        }
+
+        let rates = self.get_battle_dust_rates().await?;
+        let seen: Vec<uuid::Uuid> = req
+            .seen
+            .iter()
+            .filter_map(|s| uuid::Uuid::parse_str(s).ok())
+            .take(crate::battles::DEVELOP_MAX)
+            .collect();
+        let developed_works = self
+            .repo
+            .credit_battle_seen_bulk(user_id, &seen, rates.seen)
+            .await?;
+        let developed_works = i32::try_from(developed_works).unwrap_or(i32::MAX);
+
+        // Приход отмечается ДО счёта: иначе поручение «зашли сегодня» закрылось
+        // бы только на следующем заходе, то есть завтра.
+        self.mark_visit_quietly(user_id).await;
+
+        // Считается ПОСЛЕ дара и проявки: «взять первую карту» человек мог
+        // закрыть ещё вчера, а «оглядеться» — только что, этой самой проявкой.
+        let paid = self.settle_errands_quietly(user_id).await;
+
+        let (me, errands) = tokio::try_join!(
+            self.battle_me(user_id),
+            self.list_battle_errands(user_id),
+        )?;
+        Ok(crate::models::BattleEnterResponse {
+            me,
+            gift: (given.dust > 0 || given.feed > 0).then_some(given),
+            developed_works,
+            developed_dust: developed_works.saturating_mul(rates.seen),
+            paid,
+            errands,
+        })
     }
 
     /// Balances and holdings in one answer: the shelf cannot draw a single card
@@ -7554,6 +8144,7 @@ impl AppService {
                 .map(|g| crate::models::BattleGiftDto {
                     currency: g.currency,
                     amount: g.amount,
+                    reason: g.reason,
                     note: g.note,
                     at: g.created_at.to_rfc3339(),
                 })
@@ -7868,6 +8459,9 @@ impl AppService {
         let json = serde_json::to_string(&layout)
             .map_err(|_| AppError::Internal("Table will not serialise".into()))?;
         self.repo.upsert_battle_deck(user_id, &json).await?;
+        // Стол разложен — поручение об этом закрывается здесь, а не на чтении
+        // полки: платит то движение, которое и так случилось.
+        self.settle_errands_quietly(user_id).await;
         self.read_battle_deck(user_id).await
     }
 
@@ -7910,6 +8504,11 @@ impl AppService {
             .repo
             .battle_wallet_balance(user_id, &req.currency)
             .await?;
+        // Собрание выросло: «первая карта» и «три карты» могли закрыться прямо
+        // сейчас. Баланс уже прочитан выше и потому не досчитает эту выплату —
+        // полка перечитывает кошелёк сразу после покупки, и второе число здесь
+        // было бы обманом ради одного лишнего запроса.
+        self.settle_errands_quietly(user_id).await;
         Ok(crate::models::BuyBattleCardResponse {
             card_id: req.card_id.to_string(),
             level: 1,
@@ -7973,6 +8572,7 @@ impl AppService {
             .repo
             .raise_battle_card_level(user_id, req.card_id, held.level, price)
             .await?;
+        self.settle_errands_quietly(user_id).await;
         let balance = self.repo.battle_wallet_balance(user_id, "dust").await?;
         Ok(crate::models::RaiseBattleCardResponse {
             card_id: req.card_id.to_string(),
@@ -8008,7 +8608,10 @@ impl AppService {
             "read" => rates.read,
             _ => 0,
         };
-        let settled = if amount > 0 {
+        // Вещь, за которую платят, должна существовать и быть открытой.
+        // Без этого придуманный UUID — это выдуманная пыль, и ключ книги её не
+        // ловит: он стережёт от второй выплаты, а не от первой выдуманной.
+        let settled = if amount > 0 && self.repo.battle_attention_target_public(kind, id).await? {
             self.repo
                 .credit_battle_wallet(
                     user_id,
@@ -8022,6 +8625,13 @@ impl AppService {
         } else {
             false
         };
+        // Внимание — самый частый повод, и почти вся тропа стоит на нём.
+        // Считается до чтения баланса, чтобы вернувшееся число уже включало
+        // закрытое поручение: иначе полка показала бы старую сумму и догнала бы
+        // её молча на следующем заходе.
+        if settled {
+            self.settle_errands_quietly(user_id).await;
+        }
         let balance = self.repo.battle_wallet_balance(user_id, "dust").await?;
         Ok(crate::models::BattleAttentionResponse {
             dust: if settled { amount } else { 0 },
@@ -8049,17 +8659,15 @@ impl AppService {
         if let Some(fault) = Self::card_readiness(req).blocking.first() {
             return Err(AppError::BadRequest(format!("card:{fault}")));
         }
-        let mut title_en = crate::battles::clamp_title(&req.title_en);
-        let mut title_ru = crate::battles::clamp_title(&req.title_ru);
+        let title_en = crate::battles::clamp_title(&req.title_en);
+        let title_ru = crate::battles::clamp_title(&req.title_ru);
         if title_en.is_empty() && title_ru.is_empty() {
             return Err(AppError::BadRequest("A title is required".into()));
         }
-        if title_en.is_empty() {
-            title_en = title_ru.clone();
-        }
-        if title_ru.is_empty() {
-            title_ru = title_en.clone();
-        }
+        // An empty English title used to be filled from the Russian one, and
+        // the English shelf then printed Cyrillic as if it were English.
+        // A draft may still have one language; publishing both is a blocker
+        // in `prose_blockers`, not a silent copy.
         let price_dust = crate::battles::clamp_price(req.price_dust);
         let price_feed = crate::battles::clamp_price(req.price_feed);
         if price_dust.is_none() && price_feed.is_none() {
@@ -8130,7 +8738,15 @@ impl AppService {
         let index = crate::battles::balance_index(points, cost);
 
         Ok(BattleCardWrite {
-            slug: crate::battles::unique_slug(req.slug.as_deref(), &title_en, taken),
+            slug: crate::battles::unique_slug(
+                req.slug.as_deref(),
+                if title_en.is_empty() {
+                    &title_ru
+                } else {
+                    &title_en
+                },
+                taken,
+            ),
             figurine_id,
             race_id,
             status: req.status.clone(),
@@ -8170,6 +8786,7 @@ impl AppService {
                 .map(str::to_string),
             art_focal: crate::battles::normalize_focal(req.art_focal.as_deref()),
             frame_override: crate::battles::normalize_frame_override(req.frame_override.as_deref()),
+            motion_wear: crate::battles::normalize_motion_wear(req.motion_wear.as_deref()),
             lendable: req.lendable,
         })
     }
@@ -8181,28 +8798,49 @@ impl AppService {
     /// enters reach 9 should see the number for reach 5.
     /// Годность карты — одним разбором и для весов, и для отказа при сохранении.
     fn card_readiness(req: &SaveBattleCardRequest) -> crate::models::CardReadinessDto {
-        crate::models::CardReadinessDto {
-            blocking: crate::battles::card_blockers(
+        let title_en = crate::battles::clamp_title(&req.title_en);
+        let title_ru = crate::battles::clamp_title(&req.title_ru);
+        let effect_en = crate::battles::clamp_effect(req.effect_en.as_deref());
+        let effect_ru = crate::battles::clamp_effect(req.effect_ru.as_deref());
+        let mut blocking: Vec<String> = crate::battles::card_blockers(
+            &req.status,
+            crate::battles::clamp_stat(req.health),
+            crate::battles::clamp_cost(req.cost),
+            Self::weigh_points(req).0,
+            crate::battles::clamp_tier(req.tier),
+        )
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+        blocking.extend(
+            crate::battles::prose_blockers(
                 &req.status,
-                crate::battles::clamp_stat(req.health),
-                crate::battles::clamp_cost(req.cost),
-                Self::weigh_points(req).0,
-                crate::battles::clamp_tier(req.tier),
+                &title_en,
+                &title_ru,
+                effect_en.as_deref(),
+                effect_ru.as_deref(),
+                &req.traits,
+                crate::battles::normalize_abilities(&req.abilities).is_some(),
             )
             .into_iter()
-            .map(str::to_string)
-            .collect(),
-            notes: crate::battles::card_notes(
-                &req.status,
-                crate::battles::clamp_tier(req.tier),
-                req.lendable,
-                crate::battles::clamp_price(req.price_dust),
-                crate::battles::clamp_price(req.price_feed),
-            )
-            .into_iter()
-            .map(str::to_string)
-            .collect(),
+            .map(str::to_string),
+        );
+        let mut notes: Vec<String> = crate::battles::card_notes(
+            &req.status,
+            crate::battles::clamp_tier(req.tier),
+            req.lendable,
+            crate::battles::clamp_price(req.price_dust),
+            crate::battles::clamp_price(req.price_feed),
+        )
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+        if crate::battles::type_is_numeric(req.type_en.as_deref())
+            || crate::battles::type_is_numeric(req.type_ru.as_deref())
+        {
+            notes.push("numericType".into());
         }
+        crate::models::CardReadinessDto { blocking, notes }
     }
 
     /// Вес карты: тело, способности и сумма. Одним счётом и для весов, и для
@@ -8472,9 +9110,19 @@ impl AppService {
         format!("battle:{challenge_id}")
     }
 
+    /// Ключ за доведённое до конца.
+    ///
+    /// Свой, и по-прежнему ОДИН на этюд: переигрывать можно сколько угодно,
+    /// заплатят однажды. Прежний ключ победы не тронут — под ним уже лежат
+    /// выплаты, и приписать к ним хвост значило бы заплатить всё второй раз.
+    fn challenge_finish_key(challenge_id: Uuid) -> String {
+        format!("battle:{challenge_id}:finish")
+    }
+
     fn challenge_dto(
         row: crate::models::BattleChallenge,
         paid_keys: Option<&[String]>,
+        open_match_id: Option<String>,
     ) -> BattleChallengeDto {
         let key = Self::challenge_key(row.id);
         BattleChallengeDto {
@@ -8487,10 +9135,12 @@ impl AppService {
             setup: serde_json::from_str(&row.setup).unwrap_or_default(),
             bot_depth: crate::battles::clamp_bot_depth(row.bot_depth),
             reward_dust: row.reward_dust,
+            reward_finish_dust: row.reward_finish_dust,
             player_side: row.player_side,
             status: row.status,
             sort_order: row.sort_order,
             already_paid: paid_keys.map(|keys| keys.iter().any(|k| *k == key)),
+            open_match_id,
         }
     }
 
@@ -8505,9 +9155,22 @@ impl AppService {
             Some(id) => Some(self.repo.battle_wallet_keys(id).await?),
             None => None,
         };
+        let open: HashMap<Uuid, String> = match user_id {
+            Some(id) => self
+                .repo
+                .list_open_battle_match_ids(id)
+                .await?
+                .into_iter()
+                .map(|(challenge_id, match_id)| (challenge_id, match_id.to_string()))
+                .collect(),
+            None => HashMap::new(),
+        };
         Ok(rows
             .into_iter()
-            .map(|r| Self::challenge_dto(r, paid.as_deref()))
+            .map(|r| {
+                let open_match_id = open.get(&r.id).cloned();
+                Self::challenge_dto(r, paid.as_deref(), open_match_id)
+            })
             .collect())
     }
 
@@ -8567,13 +9230,14 @@ impl AppService {
                     setup: &setup,
                     bot_depth: crate::battles::clamp_bot_depth(req.bot_depth),
                     reward_dust: req.reward_dust.clamp(0, 1000),
+                    reward_finish_dust: req.reward_finish_dust.clamp(0, 1000),
                     player_side: &req.player_side,
                     status: &req.status,
                 },
             )
             .await?;
         Self::log_domain_event("battle_challenge_saved", "battle_challenge", rec.id, "ok");
-        Ok(Self::challenge_dto(rec, None))
+        Ok(Self::challenge_dto(rec, None, None))
     }
 
     /// Порядок полки этюдов. Та же проверка, что и у карт: испытание не может
@@ -8883,6 +9547,41 @@ impl AppService {
         Ok(Self::match_dto(&rec, state, Vec::new(), 0))
     }
 
+    /// Give the field: the open match ends as a keeper win, without a move.
+    /// Dust is not granted — they did not take the field, they left it.
+    pub async fn yield_battle_match(&self, user_id: Uuid, id: Uuid) -> Result<BattleMatchDto> {
+        let rec = self.repo.get_battle_match(id, user_id).await?;
+        if rec.outcome.is_some() {
+            let state = Self::match_state(&rec)?;
+            return Ok(Self::match_dto(&rec, state, Vec::new(), 0));
+        }
+        let mut state = Self::match_state(&rec)?;
+        state.outcome = Some(battle_core::Outcome::Keeper);
+        let cache = serde_json::to_string(&state)
+            .map_err(|_| AppError::Internal("Board will not serialise".into()))?;
+        let Some(saved) = self.repo.yield_battle_match(id, user_id, &cache).await? else {
+            let rec = self.repo.get_battle_match(id, user_id).await?;
+            let state = Self::match_state(&rec)?;
+            return Ok(Self::match_dto(&rec, state, Vec::new(), 0));
+        };
+        Self::log_domain_event("battle_match_yielded", "battle_match", id, "ok");
+        Ok(Self::match_dto(&saved, state, Vec::new(), 0))
+    }
+
+    /// Start this challenge from the first position, dropping the open match
+    /// if there is one. A replay after a finished match is the same call:
+    /// there is nothing to drop, and `begin` inserts a new row.
+    pub async fn restart_battle_match(
+        &self,
+        user_id: Uuid,
+        challenge_id: Uuid,
+    ) -> Result<BattleMatchDto> {
+        self.repo
+            .drop_open_battle_match(user_id, challenge_id)
+            .await?;
+        self.begin_battle_match(user_id, challenge_id).await
+    }
+
     pub async fn read_battle_match(&self, user_id: Uuid, id: Uuid) -> Result<BattleMatchDto> {
         let rec = self.repo.get_battle_match(id, user_id).await?;
         let state = Self::match_state(&rec)?;
@@ -8974,27 +9673,58 @@ impl AppService {
             return Ok(Self::match_dto(&rec, state, Vec::new(), 0));
         };
 
+        // Две выплаты, два ключа, оба по одному на этюд.
+        //
+        // За доведённое до конца платят ВСЕГДА, победа или нет: до сих пор
+        // новичок, проигравший хранителю первую партию, не получал ровно
+        // ничего — человек сел за доску, дошёл до исхода, и комната промолчала.
+        // Ферму это не открывает: ключ прежний, один на этюд, сколько бы раз
+        // его ни переигрывали.
         let mut reward = 0;
-        if outcome == Some("player") {
-            if let Some(challenge_id) = rec.challenge_id {
-                let challenge = self.repo.get_battle_challenge(challenge_id).await?;
-                if challenge.reward_dust > 0
-                    && self
-                        .repo
-                        .credit_battle_wallet(
-                            user_id,
-                            "dust",
-                            challenge.reward_dust,
-                            "battle_challenge",
-                            Some(challenge_id),
-                            &Self::challenge_key(challenge_id),
-                        )
-                        .await?
-                {
-                    reward = challenge.reward_dust;
-                    Self::log_domain_event("battle_reward_paid", "battle_match", id, "ok");
-                }
+        if let (Some(challenge_id), Some(done)) = (rec.challenge_id, outcome) {
+            let challenge = self.repo.get_battle_challenge(challenge_id).await?;
+
+            if challenge.reward_finish_dust > 0
+                && self
+                    .repo
+                    .credit_battle_wallet(
+                        user_id,
+                        "dust",
+                        challenge.reward_finish_dust,
+                        "battle_finish",
+                        Some(challenge_id),
+                        &Self::challenge_finish_key(challenge_id),
+                    )
+                    .await?
+            {
+                reward += challenge.reward_finish_dust;
+                Self::log_domain_event("battle_finish_paid", "battle_match", id, "ok");
             }
+
+            if done == "player"
+                && challenge.reward_dust > 0
+                && self
+                    .repo
+                    .credit_battle_wallet(
+                        user_id,
+                        "dust",
+                        challenge.reward_dust,
+                        "battle_challenge",
+                        Some(challenge_id),
+                        &Self::challenge_key(challenge_id),
+                    )
+                    .await?
+            {
+                reward += challenge.reward_dust;
+                Self::log_domain_event("battle_reward_paid", "battle_match", id, "ok");
+            }
+        }
+
+        // Партия дошла до исхода — «довести этюд до конца» закрывается здесь.
+        // Победа или нет: сегодня проигравший первую партию не получает ровно
+        // ничего, и это худший из возможных ответов на первую же попытку.
+        if outcome.is_some() {
+            self.settle_errands_quietly(user_id).await;
         }
 
         Ok(Self::match_dto(&saved, state, events, reward))
@@ -9202,6 +9932,7 @@ impl AppService {
             note_ru: row.note_ru,
             icon_url: row.icon_url,
             level_frames: row.level_frames,
+            motion_wear: row.motion_wear,
             sort_order: row.sort_order,
             card_count: row.card_count,
         }
@@ -9228,6 +9959,7 @@ impl AppService {
                 p.note_ru.as_deref(),
                 p.icon_url.as_deref(),
                 p.level_frames.as_deref(),
+                p.motion_wear.as_deref(),
             )
             .await?;
         Self::log_domain_event("battle_race_created", "battle_race", rec.id, "ok");
@@ -9252,6 +9984,7 @@ impl AppService {
                 p.note_ru.as_deref(),
                 p.icon_url.as_deref(),
                 p.level_frames.as_deref(),
+                p.motion_wear.as_deref(),
             )
             .await?;
         Self::log_domain_event("battle_race_updated", "battle_race", rec.id, "ok");
@@ -9285,8 +10018,11 @@ impl AppService {
     /// piece has already had its ground taken off, so anything faintly there
     /// is real.
     const SPLIT_ALPHA_FLOOR: u8 = 8;
-    const ASSET_ROLES: [&'static str; 6] =
-        ["corner", "sideH", "sideV", "accent", "art", "other"];
+    /// Седьмое слово — `motion`: деталь, из которой собрано движение (стрела,
+    /// вспышка, полоса кадров). Роль — это слово, которым хранитель ИЩЕТ, а не
+    /// то, что смотрит игра; без него стрела терялась бы среди накладок рам.
+    const ASSET_ROLES: [&'static str; 7] =
+        ["corner", "sideH", "sideV", "accent", "art", "motion", "other"];
 
     fn asset_sheet_dto(row: BattleAssetSheetListed) -> BattleAssetSheetDto {
         BattleAssetSheetDto {
@@ -9867,16 +10603,12 @@ impl AppService {
                 .take(crate::battles::RACE_NAME_MAX)
                 .collect()
         };
-        let mut name_en = cut(&req.name_en);
-        let mut name_ru = cut(&req.name_ru);
-        if name_en.is_empty() && name_ru.is_empty() {
-            return Err(AppError::BadRequest("A race needs a name".into()));
-        }
-        if name_en.is_empty() {
-            name_en = name_ru.clone();
-        }
-        if name_ru.is_empty() {
-            name_ru = name_en.clone();
+        let name_en = cut(&req.name_en);
+        let name_ru = cut(&req.name_ru);
+        if name_en.is_empty() || name_ru.is_empty() {
+            return Err(AppError::BadRequest(
+                "A race needs a name in both languages".into(),
+            ));
         }
         let note = |raw: Option<&str>| -> Option<String> {
             raw.map(str::trim)
@@ -9890,6 +10622,7 @@ impl AppService {
             .filter(|s| !s.is_empty())
             .map(str::to_string);
         let level_frames = crate::battles::normalize_level_frames(req.level_frames.as_deref());
+        let motion_wear = crate::battles::normalize_motion_wear(req.motion_wear.as_deref());
         Ok(PreparedRace {
             slug: crate::battles::unique_slug(req.slug.as_deref(), &name_en, taken),
             name_en,
@@ -9898,6 +10631,7 @@ impl AppService {
             note_ru: note(req.note_ru.as_deref()),
             icon_url,
             level_frames,
+            motion_wear,
         })
     }
 }
@@ -9925,6 +10659,7 @@ struct PreparedRace {
     note_ru: Option<String>,
     icon_url: Option<String>,
     level_frames: Option<String>,
+    motion_wear: Option<String>,
 }
 
 /// The card as it will be written, after clamping. Mirrors `PreparedGazetteLeaf`:

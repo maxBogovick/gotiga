@@ -21,6 +21,7 @@
     sideV: 'adminAssetsRoleSideV',
     accent: 'adminAssetsRoleAccent',
     art: 'adminAssetsRoleArt',
+    motion: 'adminAssetsRoleMotion',
     other: 'adminAssetsRoleOther',
   };
 

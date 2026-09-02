@@ -1868,6 +1868,9 @@ export interface BattleCard {
     /** The race's own dress per level, joined in the same way as the icon:
      *  JSON array of 5 `{frameImage?,frameMode?,aspect?}` patches, or `null`. */
     raceLevelFrames: string | null;
+    /** Движения расы, приложенные тем же швом: сцене они нужны на каждом
+     *  событии, а второй запрос за справочником рас ради этого не успеет. */
+    raceMotionWear?: string | null;
     typeEn: string | null;
     typeRu: string | null;
     titleEn: string;
@@ -1922,6 +1925,9 @@ export interface BattleCard {
     /** This card's own exception to the tier's shared frame: JSON
      *  `{frameImage?,frameMode?,aspect?}`. `null` wears the tier's frame as is. */
     frameOverride: string | null;
+    /** Чем эта карта показывает удар, чару, лечение — JSON `MotionWear`.
+     *  `null` — умолчания дома. */
+    motionWear?: string | null;
     shelfOrder?: number | null;
     /** Whether the house will lend this card to someone who owns none yet.
      *  Only rank 1 is ever actually lent — the pool is filtered by rank, not
@@ -1968,6 +1974,7 @@ export interface SaveBattleCardRequest {
     artUrl?: string | null;
     artFocal?: string | null;
     frameOverride?: string | null;
+    motionWear?: string | null;
     lendable?: boolean;
     figurineId?: string | null;
 }
@@ -2244,6 +2251,8 @@ export interface BattleRace {
      *  `{frameImage?,frameMode?,aspect?}` patches, or `null` to wear the
      *  tier's frame at every level. */
     levelFrames: string | null;
+    /** Движения этой расы — JSON `{blow?,…}`. Стоит между картой и домом. */
+    motionWear?: string | null;
     sortOrder?: number | null;
     /** How many cards stand under it — what a rename or a removal would touch. */
     cardCount: number;
@@ -2254,7 +2263,82 @@ export interface BattleRace {
  * picture and `other` for the rest. A word the keeper filters by — never a
  * thing the game looks up, which is why it is a value and not a dictionary.
  */
-export type BattleAssetRole = 'corner' | 'sideH' | 'sideV' | 'accent' | 'art' | 'other';
+export type BattleAssetRole =
+    | 'corner'
+    | 'sideH'
+    | 'sideV'
+    | 'accent'
+    | 'art'
+    /** A part a motion is built from: an arrow, a flash, a strip of frames. */
+    | 'motion'
+    | 'other';
+
+// ── Движения ─────────────────────────────────────────────────────────────────
+//
+// Чем показывается удар, чара, выстрел и лечение. ТЗ — `BATTLE-MOTION.md`.
+//
+// Читая это, надо знать одно: движок не знает слов «стрелок» и «маг». Стрелок —
+// это карта, которой хранитель надел на повод `blow` движение с летящим жестом.
+
+/** Ради чего движение играется. Читается ТОЛЬКО из события — ни одного
+ *  сравнения правил на клиенте. */
+export type MotionOccasion = 'blow' | 'spell' | 'mend' | 'arrive' | 'fall' | 'unseen';
+
+/** Кому происходит жест. `flight` — то, что летит от бьющего к цели. */
+export type GestureWhom = 'striker' | 'target' | 'flight' | 'field';
+
+/** Что делает тело. Список ЗАКРЫТ по той же причине, по которой закрыт список
+ *  глаголов способностей: новое движение — новое сочетание, не новый жест. */
+export type GestureBody =
+    | 'none'
+    | 'lunge'
+    | 'flinch'
+    | 'shiver'
+    | 'sink'
+    | 'rise'
+    | 'swell'
+    | 'bow';
+
+export type GestureTurn = 'none' | 'toTarget' | 'mirror';
+export type GestureFade = 'hold' | 'in' | 'out' | 'inOut';
+
+/** Один жест: до двух половин сразу — тело может двинуться, рисунок может лечь. */
+export interface MotionGesture {
+    whom: GestureWhom;
+    body: GestureBody;
+    /** Пусто — чистое движение, и это умолчание дома. */
+    image: string;
+    /** Полоса кадров: сколько кадров в ширину. 1 — неподвижная картинка. */
+    frames: number;
+    /** Величина рисунка в % клетки. */
+    size: number;
+    nudgeX: number;
+    nudgeY: number;
+    /** Когда начинается и сколько длится, в мс от начала движения. */
+    at: number;
+    dur: number;
+    turn: GestureTurn;
+    fade: GestureFade;
+    layer: number;
+}
+
+export interface Motion {
+    /** Делает стол, сервер только хранит: на него показывают карта, раса и
+     *  порядок в ящике, поэтому он обязан пережить сохранение. */
+    id: string;
+    nameEn: string;
+    nameRu: string;
+    occasion: MotionOccasion;
+    gestures: MotionGesture[];
+}
+
+export interface BattleMotions {
+    motions: Motion[];
+}
+
+/** Что карта (или раса) надела на каждый повод. Не названный повод — умолчание
+ *  дома, то есть ровно то, что комната делала до движка. */
+export type MotionWear = Partial<Record<MotionOccasion, string>>;
 
 /**
  * A sheet of frame parts as it arrived, kept whole in its original bytes so
@@ -2494,6 +2578,9 @@ export interface BattleChallenge {
     botDepth: number;
     /** Paid once per challenge, never per victory. */
     rewardDust: number;
+    /** За доведённое до конца — победа или нет. Своё число и свой ключ: раньше
+     *  проигравший первую партию не получал ровно ничего. */
+    rewardFinishDust: number;
     /** Who sets the guest's half. `scripted` — the keeper's own hand (a study,
      *  which has a solution); `deck` — the guest's table (a meeting). */
     playerSide: BattlePlayerSide;
@@ -2501,6 +2588,8 @@ export interface BattleChallenge {
     sortOrder?: number | null;
     /** Whether this visitor has already been paid. Absent for a guest. */
     alreadyPaid?: boolean;
+    /** The match still going on this challenge, if any. Absent for a guest. */
+    openMatchId?: string;
 }
 
 export interface SaveBattleChallengeRequest {
@@ -2512,6 +2601,7 @@ export interface SaveBattleChallengeRequest {
     setup: ChallengeSetup;
     botDepth: number;
     rewardDust: number;
+    rewardFinishDust: number;
     playerSide: BattlePlayerSide;
     status: BattleCardStatus;
 }
@@ -2647,12 +2737,116 @@ export interface BattleMe {
     gifts: BattleGift[];
 }
 
-/** A coin given by the keeper's own hand, and what it was given for. */
+/** A coin that did not settle from a beacon, and what it was given for. */
 export interface BattleGift {
     currency: 'dust' | 'feed';
     amount: number;
+    /** `hand` — from the keeper's own hand, with a note. `welcome` — the gift of
+     *  the first entering, which carries no note on purpose: the page picks the
+     *  words, or they would sit in the ledger in one language for ever. */
+    reason: 'hand' | 'welcome';
     note: string | null;
     at: string;
+}
+
+/** Поручение на столе хранителя: то же, плюс последствия правки. */
+export interface AdminBattleErrand {
+    id: string;
+    slug: string;
+    titleEn: string;
+    titleRu: string;
+    noteEn: string | null;
+    noteRu: string | null;
+    rule: string;
+    threshold: number;
+    currency: 'dust' | 'feed';
+    amount: number;
+    period: 'once' | 'daily' | 'weekly' | 'window';
+    startsAt: string | null;
+    endsAt: string | null;
+    status: 'draft' | 'published';
+    byHand: boolean;
+    sortOrder: number | null;
+    /** Скольким гостям уже заплатило и сколько монет ушло. */
+    paidGuests: number;
+    paidCoins: number;
+    /** Ключ книги собран из slug'а: после первой выплаты он неизменен. */
+    slugLocked: boolean;
+}
+
+export interface SaveBattleErrandRequest {
+    id?: string | null;
+    slug: string;
+    titleEn: string;
+    titleRu: string;
+    noteEn: string | null;
+    noteRu: string | null;
+    rule: string;
+    threshold: number;
+    currency: 'dust' | 'feed';
+    amount: number;
+    period: 'once' | 'daily' | 'weekly' | 'window';
+    startsAt: string | null;
+    endsAt: string | null;
+    status: 'draft' | 'published';
+    byHand: boolean;
+    sortOrder: number | null;
+}
+
+/** Часы дома: смещение в минутах от UTC.
+ *
+ *  По ним поворачивается «сегодня» у повторяющихся поручений — чтобы «зашли
+ *  сегодня» обновлялось в местную полночь, а не в три часа ночи. */
+export interface BattleClock {
+    offsetMin: number;
+}
+
+/** Дар первого входа — сколько дом кладёт в пустой кошелёк. */
+export interface BattleWelcomeGift {
+    dust: number;
+    feed: number;
+}
+
+/** Что случилось при входе в комнату: дар, проявка и закрытые поручения. */
+export interface BattleEnter {
+    me: BattleMe;
+    /** Выданное именно сейчас. `null` — дар уже был. */
+    gift: BattleWelcomeGift | null;
+    /** Работы, которые дом досчитал сейчас, и пыль за них. Врозь, потому что
+     *  человеку говорят про работы, а в кошелёк ложится пыль. */
+    developedWorks: number;
+    developedDust: number;
+    /** Поручения, закрытые и оплаченные прямо сейчас. Из них складывается окно
+     *  встречи: нечего сказать — окна нет. */
+    paid: BattleErrand[];
+    /** Весь лист, здесь же: окно показывает ближайшие незакрытые поручения, и
+     *  спрашивать их вторым запросом значит открыть окно пустым. */
+    errands: BattleErrand[];
+}
+
+/** Поручение — названное заранее то, что дом и так считает.
+ *
+ *  Прогресс числом, а не долей: полоса — это счётчик, а комната объясняет себя
+ *  словами. «3 из 5» человек читает; закрашенный прямоугольник он только видит. */
+export interface BattleErrand {
+    id: string;
+    slug: string;
+    titleEn: string;
+    titleRu: string;
+    noteEn: string | null;
+    noteRu: string | null;
+    /** Слово из словаря условий — по нему же выбирается, куда вести человека. */
+    rule: string;
+    threshold: number;
+    currency: 'dust' | 'feed';
+    amount: number;
+    period: 'once' | 'daily' | 'weekly' | 'window';
+    /** Сколько уже есть, обрезано порогом. У дела всегда 0. */
+    have: number;
+    done: boolean;
+    /** Дело: названо заранее, но платит его автор рукой. Ни прогресса, ни
+     *  отметки «сделано», ни кнопки «получить» у него нет. */
+    byHand: boolean;
 }
 
 /** Cards given straight into a guest's collection, bypassing the purchase.
@@ -2755,7 +2949,16 @@ export type BattleEvent =
           };
       }
     | { immune: { target: number; by: number | null; channel: BattleChannel } }
-    | { healed: { target: number; amount: number } }
+    | {
+          healed: {
+              target: number;
+              /** Кто залечил. `null` — оберег, зона, чара без автора. Носится
+               *  ради сцены ровно по той же причине, что `by` у урона:
+               *  движение лечения начинается у лекаря. */
+              by: number | null;
+              amount: number;
+          };
+      }
     | { died: { target: number } }
     | { turnEnded: { side: BattleSide; round: number } }
     | { finished: { outcome: BattleOutcome } };
@@ -2770,7 +2973,8 @@ export interface BattleMatch {
     /** What just happened, for the scene to play through. */
     events: BattleEvent[];
     outcome: BattleOutcome | null;
-    /** Dust credited by this very request. Zero on every later reading. */
+    /** Dust credited by this very request — обе выплаты сложены в одно число.
+     *  Zero on every later reading. */
     rewardDust: number;
 }
 
@@ -2898,4 +3102,5 @@ export interface SaveBattleRaceRequest {
     noteRu?: string | null;
     iconUrl?: string | null;
     levelFrames?: string | null;
+    motionWear?: string | null;
 }

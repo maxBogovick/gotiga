@@ -10,8 +10,9 @@
   // одно из вторых.
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
+  import { page } from '$app/state';
   import { fade } from 'svelte/transition';
-  import { t, lang } from '$lib/i18n';
+  import { t, lang, brandName } from '$lib/i18n';
   import { api } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
   import BattleScene from '$lib/components/BattleScene.svelte';
@@ -21,11 +22,14 @@
     BattleChallenge,
     BattleFrame,
     BattleMatch,
+    Motion,
   } from '$lib/types/api';
 
   let challenges = $state<BattleChallenge[]>([]);
   let cards = $state<BattleCard[]>([]);
   let frames = $state<BattleFrame[]>([]);
+  /** Свод движений. Пустой — комната играет умолчания дома. */
+  let motions = $state<Motion[]>([]);
   let match = $state<BattleMatch | null>(null);
   let busy = $state(false);
   let complaint = $state<string | null>(null);
@@ -38,34 +42,63 @@
    * в партию.
    */
   let laid = $state(false);
+  /** onMount finished — `?play=` must not fire while `laid` is still the default. */
+  let ready = $state(false);
+  let openedPlay = false;
+  /** Спросить, оставить открытую партию или отдать поле. */
+  let leaving = $state(false);
 
   let signedIn = $derived(authStore.isLoggedIn);
 
   const titleOf = (c: BattleChallenge) => ($lang === 'ru' ? c.titleRu : c.titleEn);
   const noteOf = (c: BattleChallenge) => ($lang === 'ru' ? c.noteRu : c.noteEn);
 
+  function loginFrom(challenge?: BattleChallenge) {
+    const dest = challenge ? `/battles/etude?play=${challenge.id}` : '/battles/etude';
+    return `/login?from=${encodeURIComponent(dest)}`;
+  }
+
   onMount(async () => {
-    const [got, deck, dressing] = await Promise.all([
+    const [got, deck, dressing, moving] = await Promise.all([
       api.getBattleChallenges(authStore.token),
       api.getBattleCards(),
       api.getBattleFrames(),
+      api.getBattleMotions(),
     ]);
     challenges = got;
     cards = deck;
     frames = dressing.frames;
+    motions = moving.motions;
     const token = authStore.token;
-    if (!token) return;
-    // Стол читается отдельно и необязательно: полка этюдов не должна пропасть
-    // оттого, что стол не ответил.
-    try {
-      laid = (await api.getBattleDeck(token)).laid;
-    } catch {
-      laid = false;
+    if (token) {
+      // Стол читается отдельно и необязательно: полка этюдов не должна пропасть
+      // оттого, что стол не ответил.
+      try {
+        laid = (await api.getBattleDeck(token)).laid;
+      } catch {
+        laid = false;
+      }
     }
+    ready = true;
+  });
+
+  $effect(() => {
+    const id = page.url.searchParams.get('play');
+    if (!ready || openedPlay || !id || !signedIn || busy || match) return;
+    const found = challenges.find((c) => c.id === id);
+    if (!found) return;
+    openedPlay = true;
+    void takeUp(found);
   });
 
   /** Встреча, на которую идут с неразложенным столом. */
   const needsTable = (c: BattleChallenge) => c.playerSide === 'deck' && !laid;
+
+  function playWord(challenge: BattleChallenge) {
+    if (challenge.openMatchId) return $t('battleStudyContinue');
+    if (needsTable(challenge)) return $t('battleLayYourTable');
+    return $t('battleStudyPlay');
+  }
 
   async function takeUp(challenge: BattleChallenge) {
     const token = authStore.token;
@@ -88,9 +121,23 @@
     }
   }
 
-  /** Тот же этюд с начала. Пыль за него уже отдана однажды — играют ради партии. */
-  function again() {
-    if (taken) void takeUp(taken);
+  /** Тот же этюд с начала. Открытая партия сбрасывается, не считается проигрышем. */
+  async function again() {
+    const token = authStore.token;
+    if (!token || !taken) return;
+    busy = true;
+    complaint = null;
+    leaving = false;
+    try {
+      match = await api.restartBattleMatch(token, taken.id);
+      challenges = await api.getBattleChallenges(token);
+    } catch (e) {
+      complaint = String(e).includes('nothingToBring')
+        ? $t('battleNothingToBring')
+        : $t('battleActionLost');
+    } finally {
+      busy = false;
+    }
   }
 
   async function play(action: BattleAction) {
@@ -118,98 +165,444 @@
     }
   }
 
+  function askLeave() {
+    if (match && !match.outcome) {
+      leaving = true;
+      return;
+    }
+    putBack();
+  }
+
+  function keepMatch() {
+    leaving = false;
+    putBack();
+  }
+
+  async function giveField() {
+    const token = authStore.token;
+    if (!token || !match) return;
+    busy = true;
+    leaving = false;
+    complaint = null;
+    try {
+      match = await api.yieldBattleMatch(token, match.id);
+      challenges = await api.getBattleChallenges(token);
+    } catch {
+      complaint = $t('battleActionLost');
+    } finally {
+      busy = false;
+    }
+  }
+
   function putBack() {
     match = null;
     taken = null;
     complaint = null;
+    leaving = false;
+  }
+
+  function onkey(e: KeyboardEvent) {
+    if (e.key === 'Escape' && leaving) {
+      leaving = false;
+      e.stopPropagation();
+    }
   }
 </script>
 
+<svelte:window onkeydown={onkey} />
+
 <svelte:head>
-  <title>{$t('battleStudies')}</title>
+  <title>{$t('battlesPageTitle')} — {$brandName}</title>
   <meta name="robots" content="noindex" />
 </svelte:head>
 
-<!-- Бой просит трёх колонок (§9); список боёв — узкой страницы. -->
-<div class="{match ? 'max-w-6xl' : 'max-w-4xl'} mx-auto px-5 py-12">
-  <!-- Навигации здесь не было вообще: со страницы боёв нельзя было ни вернуться
-       к картам, ни уйти собирать колоду. Ссылка на колоду нужна и тогда, когда
-       колода уже собрана, — иначе поменять её можно только через полку карт. -->
-  {#if !match}
-    <nav class="mb-6 flex flex-wrap gap-x-5 gap-y-1 text-[10px] uppercase tracking-[0.16em]">
-      <a href="/battles" class="text-[#6f3b24] hover:text-[#c65f3c]">{$t('battlesTableBack')}</a>
-      <a href="/battles/table" class="text-[#6f3b24] hover:text-[#c65f3c]">{$t('battlesTableTitle')} →</a>
-    </nav>
-  {/if}
+<div class="root">
+  <div class="grain" aria-hidden="true"></div>
+  <div class="page" class:page--match={!!match}>
+    {#if !match}
+      <nav class="back-nav">
+        <a href="/battles" class="back-link">{$t('battlesTableBack')}</a>
+        <a href="/battles/table" class="back-link">{$t('battlesTableTitle')} →</a>
+      </nav>
 
-  <h1 class="mb-2 text-3xl" style="font-family: 'Cormorant Garamond', Georgia, serif;">
-    {$t('battleStudies')}
-  </h1>
-  <p class="mb-8 max-w-[62ch] text-sm leading-relaxed text-[#5f4636]">{$t('battleStudiesRule')}</p>
-
-  {#if complaint}
-    <p class="mb-5 text-sm text-[#8f2f22]" transition:fade={{ duration: 150 }}>{complaint}</p>
-  {/if}
-
-  {#if match}
-    <div class="mb-6">
-      <button
-        onclick={putBack}
-        class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] hover:text-[#c65f3c]"
-      >← {$t('battleLeave')}</button>
-    </div>
-
-    <BattleScene
-      {match}
-      {cards}
-      {frames}
-      {busy}
-      onact={play}
-      onleave={putBack}
-      onreplay={taken ? again : undefined}
-    />
-
-  {:else}
-    {#if !signedIn}
-      <p class="mb-6 text-sm italic text-[#5f4636]">{$t('battleStudySignIn')}</p>
+      <header class="masthead">
+        <p class="eyebrow"><span class="eyebrow-rule"></span>{$t('battlesPageKicker')}</p>
+        <h1 class="page-title">{$t('battlesPageTitle')}</h1>
+        <p class="page-rule">{$t('battleStudiesRule')}</p>
+      </header>
     {/if}
 
-    {#if !challenges.length}
-      <p class="text-sm italic text-[#5f4636]">{$t('battleStudiesEmpty')}</p>
+    {#if complaint}
+      <p class="fault" transition:fade={{ duration: 150 }}>{complaint}</p>
+    {/if}
+
+    {#if match}
+      <div class="leave-row">
+        <button type="button" class="leave" onclick={askLeave}>← {$t('battleLeave')}</button>
+      </div>
+
+      <BattleScene
+        {match}
+        {cards}
+        {frames}
+        {motions}
+        {busy}
+        onact={play}
+        onleave={putBack}
+        onreplay={taken ? again : undefined}
+      />
+
     {:else}
-      <ul class="border-t border-[#34251c]/10">
-        {#each challenges as challenge (challenge.id)}
-          <li class="flex items-baseline gap-4 py-3 border-b border-[#34251c]/10">
-            <div class="flex-1 min-w-0">
-              <span class="text-base" style="font-family: 'Cormorant Garamond', Georgia, serif;">
-                {titleOf(challenge)}
-              </span>
-              {#if noteOf(challenge)}
-                <span class="block mt-0.5 text-xs leading-snug text-[#8a6a55]">{noteOf(challenge)}</span>
-              {/if}
-              <!-- Два рода записей на одной полке: этюд расставлен рукой
-                   целиком, во встречу вы приводите своё. -->
-              <span class="block mt-0.5 text-[11px] italic text-[#8a6a55]">
-                {challenge.playerSide === 'deck' ? $t('battleMeetingNote') : $t('battleStudyNote')}
-              </span>
-            </div>
-            {#if challenge.rewardDust > 0}
-              <span class="text-[11px] tabular-nums text-[#8a6a55] whitespace-nowrap">
-                {#if challenge.alreadyPaid}
-                  {$t('battleStudyPaid')}
-                {:else}
-                  {challenge.rewardDust} {$t('battleStudyReward')}
+      {#if !signedIn}
+        <p class="sign">
+          <a href={loginFrom()}>{$t('battleStudySignIn')}</a>
+        </p>
+      {/if}
+
+      {#if !challenges.length}
+        <p class="empty">{$t('battleStudiesEmpty')}</p>
+      {:else}
+        <ul class="list">
+          {#each challenges as challenge (challenge.id)}
+            <li class="row">
+              <div class="copy">
+                <span class="name">{titleOf(challenge)}</span>
+                {#if noteOf(challenge)}
+                  <span class="note">{noteOf(challenge)}</span>
                 {/if}
-              </span>
-            {/if}
-            <button
-              disabled={!signedIn || busy}
-              onclick={() => takeUp(challenge)}
-              class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5 disabled:opacity-40 whitespace-nowrap"
-            >{needsTable(challenge) ? $t('battleLayYourTable') : $t('battleStudyPlay')}</button>
-          </li>
-        {/each}
-      </ul>
+                <!-- Два рода записей на одной полке: этюд расставлен рукой
+                     целиком, во встречу вы приводите своё. -->
+                <span class="kind">
+                  {challenge.playerSide === 'deck' ? $t('battleMeetingNote') : $t('battleStudyNote')}
+                </span>
+              </div>
+              {#if challenge.rewardDust > 0 || challenge.rewardFinishDust > 0}
+                <span class="reward">
+                  {#if challenge.alreadyPaid}
+                    {$t('battleStudyPaid')}
+                  {:else}
+                    {#if challenge.rewardDust > 0}
+                      {challenge.rewardDust} {$t('battleStudyReward')}
+                    {/if}
+                    <!-- Сказано ЗАРАНЕЕ, а не после проигрыша: человек, знающий,
+                         что за доведённую до конца партию платят, садится за
+                         доску иначе, чем тот, кто думает, что играет за всё или
+                         ничего. -->
+                    {#if challenge.rewardFinishDust > 0}
+                      <span class="reward-finish"
+                        >{challenge.rewardFinishDust} {$t('battleStudyFinishReward')}</span
+                      >
+                    {/if}
+                  {/if}
+                </span>
+              {/if}
+              {#if signedIn}
+                <button
+                  type="button"
+                  class="play"
+                  disabled={busy}
+                  onclick={() => takeUp(challenge)}
+                >{playWord(challenge)}</button>
+              {:else}
+                <a class="play play--door" href={loginFrom(challenge)}>{$t('battleStudySignInStart')}</a>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+      {/if}
     {/if}
-  {/if}
+  </div>
 </div>
+
+{#if leaving}
+  <div
+    class="veil"
+    role="presentation"
+    onclick={() => (leaving = false)}
+    transition:fade={{ duration: 200 }}
+  >
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <div
+      class="ask"
+      role="dialog"
+      aria-modal="true"
+      aria-label={$t('battleLeave')}
+      tabindex="-1"
+      onclick={(e) => e.stopPropagation()}
+    >
+      <p class="ask-word">{$t('battleLeaveAsk')}</p>
+      <p class="ask-doors">
+        <button type="button" class="ask-keep" onclick={keepMatch}>{$t('battleLeaveKeep')}</button>
+        <button type="button" class="ask-yield" onclick={giveField}>{$t('battleLeaveYield')}</button>
+      </p>
+    </div>
+  </div>
+{/if}
+
+<style>
+  .root {
+    position: relative;
+    min-height: 100vh;
+    background: #f8f1e7;
+    color: #34251c;
+  }
+
+  .grain {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.05;
+    background-image: radial-gradient(#34251c 0.5px, transparent 0.5px);
+    background-size: 4px 4px;
+  }
+
+  .page {
+    position: relative;
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 3rem 1.5rem 6rem;
+  }
+
+  .page--match {
+    max-width: 92rem;
+    padding: 1.15rem 1.5rem 1.5rem;
+  }
+
+  .back-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.4rem 1.6rem;
+    margin-bottom: 2.5rem;
+  }
+
+  .back-link {
+    font-size: 0.72rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: #6f3b24;
+    text-decoration: none;
+  }
+
+  .back-link:hover {
+    color: #c65f3c;
+  }
+
+  .eyebrow {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    margin: 0 0 1rem;
+    font-size: 0.68rem;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: #6f3b24;
+  }
+
+  .eyebrow-rule {
+    width: 3.5rem;
+    height: 1px;
+    background: #d8c6b1;
+  }
+
+  .page-title {
+    margin: 0;
+    font-family: Georgia, 'Fraunces', serif;
+    font-size: clamp(2rem, 5vw, 3.2rem);
+    font-weight: 400;
+    line-height: 1.1;
+  }
+
+  .page-rule {
+    max-width: 56ch;
+    margin: 1rem 0 0;
+    font-family: Georgia, 'Fraunces', serif;
+    font-size: 1rem;
+    line-height: 1.6;
+    opacity: 0.74;
+  }
+
+  .fault {
+    margin: 0 0 1.25rem;
+    font-size: 0.9rem;
+    color: #8f2f22;
+  }
+
+  .sign,
+  .empty {
+    margin: 1.5rem 0 0;
+    font-family: Georgia, 'Fraunces', serif;
+    font-size: 0.95rem;
+    font-style: italic;
+    color: #5f4636;
+  }
+
+  .sign a {
+    color: inherit;
+    text-decoration: underline;
+    text-underline-offset: 0.18em;
+  }
+
+  .sign a:hover {
+    color: #c65f3c;
+  }
+
+  .list {
+    margin: 2rem 0 0;
+    padding: 0;
+    list-style: none;
+    border-top: 1px solid #d8c6b1;
+  }
+
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.7rem 1.1rem;
+    padding: 0.9rem 0;
+    border-bottom: 1px solid #d8c6b1;
+  }
+
+  .copy {
+    flex: 1 1 14rem;
+    min-width: 0;
+  }
+
+  .name {
+    font-family: Georgia, 'Fraunces', serif;
+    font-size: 1.15rem;
+  }
+
+  .note,
+  .kind {
+    display: block;
+    margin-top: 0.2rem;
+    font-size: 0.78rem;
+    line-height: 1.45;
+    color: #8a6a55;
+  }
+
+  .kind {
+    font-style: italic;
+  }
+
+  .reward-finish {
+    display: block;
+    opacity: 0.75;
+  }
+
+  .reward {
+    font-size: 0.72rem;
+    font-variant-numeric: tabular-nums;
+    color: #8a6a55;
+    white-space: nowrap;
+  }
+
+  .play {
+    padding: 0.4rem 0.7rem;
+    font: inherit;
+    font-size: 0.68rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: #6f3b24;
+    background: none;
+    border: 1px solid #d8c6b1;
+    text-decoration: none;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .play:hover:not(:disabled) {
+    color: #c65f3c;
+    border-color: #c65f3c;
+  }
+
+  .play:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+
+  .play--door {
+    display: inline-block;
+  }
+
+  .leave-row {
+    margin-bottom: 0.7rem;
+  }
+
+  .leave {
+    padding: 0;
+    font: inherit;
+    font-size: 0.68rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: #8a6a55;
+    background: none;
+    border: 0;
+    cursor: pointer;
+  }
+
+  .leave:hover {
+    color: #c65f3c;
+  }
+
+  .veil {
+    position: fixed;
+    inset: 0;
+    z-index: 90;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    background: rgba(52, 37, 28, 0.55);
+    backdrop-filter: blur(2px);
+  }
+
+  .ask {
+    max-width: 28rem;
+    padding: 1.6rem 1.7rem 1.4rem;
+    background: #f8f1e7;
+    border: 1px solid #d8c6b1;
+    outline: 1px solid #d8c6b1;
+    outline-offset: 4px;
+    transform: rotate(-1deg);
+  }
+
+  .ask-word {
+    margin: 0;
+    font-family: Georgia, 'Fraunces', serif;
+    font-size: 1.05rem;
+    line-height: 1.5;
+  }
+
+  .ask-doors {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem 1.4rem;
+    margin: 1.1rem 0 0;
+  }
+
+  .ask-keep,
+  .ask-yield {
+    padding: 0;
+    font: inherit;
+    font-size: 0.68rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    background: none;
+    border: 0;
+    cursor: pointer;
+  }
+
+  .ask-keep {
+    color: #6f3b24;
+  }
+
+  .ask-yield {
+    color: #8a6a55;
+  }
+
+  .ask-keep:hover,
+  .ask-yield:hover {
+    color: #c65f3c;
+  }
+</style>

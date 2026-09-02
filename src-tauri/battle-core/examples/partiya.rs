@@ -97,7 +97,7 @@ fn main() {
                     st.unit(*unit).unwrap().name(),
                     from.x, from.y, to.x, to.y
                 ),
-                Event::Healed { target, amount } => println!(
+                Event::Healed { target, amount, .. } => println!(
                     "{:>10}   {} залечен на {amount}",
                     "",
                     st.unit(*target).unwrap().name()

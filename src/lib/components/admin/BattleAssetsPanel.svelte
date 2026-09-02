@@ -23,13 +23,14 @@
 
   let { flash } = $props<{ flash: (message: string, ms?: number) => void }>();
 
-  const ROLES: BattleAssetRole[] = ['corner', 'sideH', 'sideV', 'accent', 'art', 'other'];
+  const ROLES: BattleAssetRole[] = ['corner', 'sideH', 'sideV', 'accent', 'art', 'motion', 'other'];
   const ROLE_LABEL: Record<BattleAssetRole, string> = {
     corner: 'adminAssetsRoleCorner',
     sideH: 'adminAssetsRoleSideH',
     sideV: 'adminAssetsRoleSideV',
     accent: 'adminAssetsRoleAccent',
     art: 'adminAssetsRoleArt',
+    motion: 'adminAssetsRoleMotion',
     other: 'adminAssetsRoleOther',
   };
   // Придержано на удар, как и на полке карт: три перетащенные подряд детали —

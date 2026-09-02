@@ -227,7 +227,7 @@ fn mending_does_not_raise_a_body_above_what_its_card_says() {
     let mending = resolve_mend(&t, 5);
     assert_eq!(mending.offered, 5);
     assert_eq!(mending.restored, 2, "лишнее не переносится");
-    apply_mend(&mut t, &mending);
+    apply_mend(None, &mut t, &mending);
     assert_eq!(t.health.current, 10);
 }
 
@@ -236,7 +236,7 @@ fn mending_an_unwounded_body_does_nothing_and_says_nothing() {
     let mut t = Unit::new(2, 10, 0);
     let mending = resolve_mend(&t, 5);
     assert_eq!(mending.restored, 0);
-    assert!(apply_mend(&mut t, &mending).is_empty(), "события на пустом месте нет");
+    assert!(apply_mend(None, &mut t, &mending).is_empty(), "события на пустом месте нет");
 }
 
 #[test]
@@ -277,6 +277,6 @@ fn a_mending_of_a_negative_amount_puts_nothing_back() {
     t.health.current = 4;
     let mending = resolve_mend(&t, -5);
     assert_eq!(mending.restored, 0);
-    apply_mend(&mut t, &mending);
+    apply_mend(None, &mut t, &mending);
     assert_eq!(t.health.current, 4);
 }

@@ -3370,6 +3370,11 @@ pub struct BattleCard {
     /// This card's own exception to the tier's shared frame. JSON, see
     /// `battles::FrameOverride`. `None` wears the tier's frame unmodified.
     pub frame_override: Option<String>,
+    /// Чем эта карта показывает удар, чару, лечение и прочее — JSON
+    /// `{blow?, spell?, mend?, arrive?, fall?, unseen?}` с именами движений из
+    /// свода, см. `battles::MotionWear`. `None` — умолчания дома, то есть
+    /// ровно то, что комната делала до движка.
+    pub motion_wear: Option<String>,
     pub shelf_order: Option<i32>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -3434,6 +3439,7 @@ pub struct BattleCardListed {
     pub art_url: Option<String>,
     pub art_focal: Option<String>,
     pub frame_override: Option<String>,
+    pub motion_wear: Option<String>,
     pub shelf_order: Option<i32>,
     pub lendable: bool,
     pub created_at: DateTime<Utc>,
@@ -3451,6 +3457,10 @@ pub struct BattleCardListed {
     /// The race's own dress per level, joined in the same way as the icon —
     /// JSON, see `battles::normalize_level_frames`.
     pub race_level_frames: Option<String>,
+    /// Движения расы, приложенные тем же швом. Сцене они нужны на каждом
+    /// событии, а второй запрос за справочником рас ради этого — это запрос,
+    /// который однажды не успеет.
+    pub race_motion_wear: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3467,6 +3477,8 @@ pub struct BattleCardDto {
     pub race_name_ru: Option<String>,
     pub race_icon_url: Option<String>,
     pub race_level_frames: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub race_motion_wear: Option<String>,
     pub type_en: Option<String>,
     pub type_ru: Option<String>,
     pub title_en: String,
@@ -3514,6 +3526,12 @@ pub struct BattleCardDto {
     /// This card's own exception to the tier's shared frame. JSON, see
     /// `battles::FrameOverride`. `None` wears the tier's frame unmodified.
     pub frame_override: Option<String>,
+    /// Чем эта карта показывает удар, чару, лечение и прочее — JSON
+    /// `{blow?, spell?, mend?, arrive?, fall?, unseen?}` с именами движений из
+    /// свода, см. `battles::MotionWear`. `None` — умолчания дома, то есть
+    /// ровно то, что комната делала до движка.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub motion_wear: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shelf_order: Option<i32>,
     /// Готов ли дом одолжить эту карту тому, у кого своего ещё нет.
@@ -3577,6 +3595,8 @@ pub struct SaveBattleCardRequest {
     pub art_url: Option<String>,
     pub art_focal: Option<String>,
     pub frame_override: Option<String>,
+    #[serde(default)]
+    pub motion_wear: Option<String>,
     /// Готов ли дом одолжить эту карту. Отсутствует в старом запросе — значит
     /// «нет»: карта не становится заёмной от того, что её сохранили формой,
     /// которая про заём не знает.
@@ -3630,6 +3650,7 @@ pub struct BattleCardWrite {
     pub art_url: Option<String>,
     pub art_focal: Option<String>,
     pub frame_override: Option<String>,
+    pub motion_wear: Option<String>,
     pub lendable: bool,
 }
 
@@ -3840,6 +3861,9 @@ pub struct BattleChallenge {
     pub bot_depth: i16,
     /// Paid once per challenge, never per victory.
     pub reward_dust: i32,
+    /// За доведённое до конца — победа или нет. Своё число и свой ключ: до сих
+    /// пор проигравший первую партию не получал ровно ничего.
+    pub reward_finish_dust: i32,
     pub player_side: String,
     pub status: String,
     pub sort_order: Option<i32>,
@@ -3859,6 +3883,7 @@ pub struct BattleChallengeDto {
     pub setup: ChallengeSetup,
     pub bot_depth: i16,
     pub reward_dust: i32,
+    pub reward_finish_dust: i32,
     /// `scripted` — обе стороны заданы рукой (этюд, у него есть решение).
     /// `deck` — хранитель ставит своё, гость приводит свой стол (встреча).
     pub player_side: String,
@@ -3868,6 +3893,10 @@ pub struct BattleChallengeDto {
     /// for a guest, who is not being paid for anything yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub already_paid: Option<bool>,
+    /// The match this visitor still has going on this challenge, if any.
+    /// `None` for a guest, and when the last one already has an outcome.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open_match_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3883,6 +3912,8 @@ pub struct SaveBattleChallengeRequest {
     pub bot_depth: i16,
     #[serde(default)]
     pub reward_dust: i32,
+    #[serde(default)]
+    pub reward_finish_dust: i32,
     /// Отсутствует в старом запросе — значит `scripted`: испытание не меняет
     /// род от того, что его сохранили формой, которая про род не знает.
     #[serde(default = "scripted")]
@@ -3910,6 +3941,7 @@ pub struct BattleChallengeWrite<'a> {
     pub setup: &'a str,
     pub bot_depth: i16,
     pub reward_dust: i32,
+    pub reward_finish_dust: i32,
     pub player_side: &'a str,
     pub status: &'a str,
 }
@@ -4039,6 +4071,9 @@ pub struct BattleMatchDto {
     pub outcome: Option<String>,
     /// Dust credited by this very request. Zero on every later reading — the
     /// reward belongs to the challenge, not to the victory.
+    ///
+    /// Обе выплаты сложены в одно число: человек видит, сколько осело за этот
+    /// ход, а не разбор бухгалтерии — за конец отдельно, за победу отдельно.
     pub reward_dust: i32,
 }
 
@@ -4096,6 +4131,8 @@ pub struct BattleMeDto {
 pub struct BattleGrantRow {
     pub currency: String,
     pub amount: i32,
+    /// `hand` — дано хранителем, `welcome` — дар первого входа.
+    pub reason: String,
     pub note: Option<String>,
     pub created_at: DateTime<Utc>,
 }
@@ -4109,6 +4146,10 @@ pub struct BattleGrantRow {
 pub struct BattleGiftDto {
     pub currency: String,
     pub amount: i32,
+    /// Почему дано. Записку пишет хранитель (`hand`); у дара первого входа
+    /// (`welcome`) записки в книге нет намеренно — слова подбирает страница,
+    /// иначе они легли бы в книгу на одном языке и остались бы на нём навсегда.
+    pub reason: String,
     pub note: Option<String>,
     pub at: String,
 }
@@ -4365,6 +4406,259 @@ impl Default for BattleDustRates {
     }
 }
 
+/// Поручение, как оно лежит в справочнике хранителя.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct BattleErrand {
+    pub id: Uuid,
+    /// Из него собирается ключ книги — потому неизменен после первой выплаты.
+    pub slug: String,
+    pub title_en: String,
+    pub title_ru: String,
+    pub note_en: Option<String>,
+    pub note_ru: Option<String>,
+    /// Слово из `battles::ERRAND_RULES`. Неизвестное ничего не платит.
+    pub rule: String,
+    pub threshold: i32,
+    pub currency: String,
+    pub amount: i32,
+    pub period: String,
+    pub starts_at: Option<DateTime<Utc>>,
+    pub ends_at: Option<DateTime<Utc>>,
+    pub status: String,
+    /// Дом его НЕ платит: корм за поступок даёт хранитель руками.
+    pub by_hand: bool,
+    pub sort_order: Option<i32>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Поручение, как его читает лист на полке.
+///
+/// Прогресс числом, а не долей: полоса — это счётчик, а комната объясняет себя
+/// словами. «3 из 5» человек читает; закрашенный прямоугольник он только видит.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleErrandDto {
+    pub id: String,
+    pub slug: String,
+    pub title_en: String,
+    pub title_ru: String,
+    pub note_en: Option<String>,
+    pub note_ru: Option<String>,
+    pub rule: String,
+    pub threshold: i32,
+    pub currency: String,
+    pub amount: i32,
+    pub period: String,
+    /// Сколько уже есть. Обрезано порогом: «7 из 5» — не отчёт, а недоразумение.
+    pub have: i32,
+    /// Заплачено в этом окне.
+    pub done: bool,
+    /// Дело: названо заранее, но платит его хранитель рукой. Ни прогресса, ни
+    /// отметки «сделано» у него нет — и кнопки «получить» тоже.
+    pub by_hand: bool,
+}
+
+/// Поручение на столе хранителя.
+///
+/// Отличается от гостевого ровно двумя вещами, и обе — про последствия правки:
+/// сколько поручение уже выдало и можно ли ещё переименовать его slug.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminBattleErrandDto {
+    pub id: String,
+    pub slug: String,
+    pub title_en: String,
+    pub title_ru: String,
+    pub note_en: Option<String>,
+    pub note_ru: Option<String>,
+    pub rule: String,
+    pub threshold: i32,
+    pub currency: String,
+    pub amount: i32,
+    pub period: String,
+    pub starts_at: Option<String>,
+    pub ends_at: Option<String>,
+    pub status: String,
+    pub by_hand: bool,
+    pub sort_order: Option<i32>,
+    /// Скольким гостям это уже заплатило и сколько монет ушло. Без этих двух
+    /// чисел перекос обнаруживается по жалобе, а не по отчёту.
+    pub paid_guests: i64,
+    pub paid_coins: i64,
+    /// Ключ книги собран из slug'а, и переименование после первой выплаты —
+    /// это новое поручение, за которое заплатят второй раз.
+    pub slug_locked: bool,
+}
+
+/// Что хранитель напечатал. Пустой `id` — новое поручение.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveBattleErrandRequest {
+    pub id: Option<Uuid>,
+    pub slug: String,
+    pub title_en: String,
+    pub title_ru: String,
+    pub note_en: Option<String>,
+    pub note_ru: Option<String>,
+    pub rule: String,
+    pub threshold: i32,
+    pub currency: String,
+    pub amount: i32,
+    #[serde(default)]
+    pub period: String,
+    pub starts_at: Option<DateTime<Utc>>,
+    pub ends_at: Option<DateTime<Utc>>,
+    pub status: String,
+    #[serde(default)]
+    pub by_hand: bool,
+    pub sort_order: Option<i32>,
+}
+
+/// Лист, сверху вниз. Место — это индекс в списке.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReorderBattleErrandsRequest {
+    pub ids: Vec<Uuid>,
+}
+
+/// Что дом насчитал по гостю, чтобы свериться с порогами.
+///
+/// Снимается разом на всё окно, а не по запросу на поручение: девять поручений
+/// тропы спрашивают одни и те же семь чисел.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BattleErrandTally {
+    pub works_seen: i64,
+    pub works_liked: i64,
+    pub tales_read: i64,
+    pub comments_left: i64,
+    pub cards_owned: i64,
+    pub card_level: i64,
+    pub deck_laid: i64,
+    pub matches_finished: i64,
+    pub matches_won: i64,
+    pub challenges_won: i64,
+    pub dust_spent: i64,
+    pub bookings_done: i64,
+    pub orders_made: i64,
+    pub visits: i64,
+}
+
+impl BattleErrandTally {
+    /// Ноль на неизвестное слово, а не отказ: справочник живёт в базе, и
+    /// поручение с опечаткой должно молчать, а не ронять полку.
+    pub fn by_rule(&self, rule: &str) -> i64 {
+        match rule {
+            "works_seen" => self.works_seen,
+            "works_liked" => self.works_liked,
+            "tales_read" => self.tales_read,
+            "comments_left" => self.comments_left,
+            "cards_owned" => self.cards_owned,
+            "card_level" => self.card_level,
+            "deck_laid" => self.deck_laid,
+            "matches_finished" => self.matches_finished,
+            "matches_won" => self.matches_won,
+            "challenges_won" => self.challenges_won,
+            "dust_spent" => self.dust_spent,
+            "bookings_done" => self.bookings_done,
+            "orders_made" => self.orders_made,
+            "visits" => self.visits,
+            _ => 0,
+        }
+    }
+}
+
+/// Дар первого входа.
+///
+/// Не приветственный бонус лавки, а единственный способ дать церемонии
+/// получения карты случиться в первую минуту (`TASKS-BATTLES.md` §0.6): гость
+/// без истории приходит с нулём, а дешёвая карта с настоящим телом стоит 12.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleGift {
+    pub dust: i32,
+    pub feed: i32,
+}
+
+impl Default for BattleGift {
+    /// Десять и один — не вкус, а замер полки.
+    ///
+    /// Десять ставит человека на ОДИН осознанный шаг от первой карты (12), а не
+    /// на ноль шагов и не на десять. Сорок отменило бы комнату: карта досталась
+    /// бы ни за что, и вторая уже не понадобилась бы. Один-два покупают
+    /// «мусор 1/1» из замера полки — худшее первое впечатление из возможных.
+    ///
+    /// Корм — один, и купить на него нельзя ничего (Тварь стоит пять). Это
+    /// намеренно: одна строка в списке подарков учит, что вторая монета
+    /// существует. Ноль корма учит только тому, что она слух.
+    fn default() -> Self {
+        Self { dust: 10, feed: 1 }
+    }
+}
+
+/// Часы дома.
+///
+/// Смещением в минутах, а не именем зоны, и это осознанный размен. Имя зоны
+/// потребовало бы `chrono-tz` ради одного числа; постоянное смещение точно там,
+/// где перевода часов нет, — а часы этого дома московские, и перевода в них нет
+/// с 2014 года. Если дом однажды переедет в зону с переводом, менять надо будет
+/// не число, а крейт, и вот тогда это станет видно сразу.
+///
+/// Нужно ровно затем, чтобы поручение «зашли сегодня» обновлялось в местную
+/// полночь, а не в три часа ночи.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleClock {
+    pub offset_min: i32,
+}
+
+impl Default for BattleClock {
+    fn default() -> Self {
+        Self { offset_min: 180 }
+    }
+}
+
+/// Войти в комнату.
+///
+/// `seen` — проявка: работы, которые гость смотрел до того, как комната для
+/// него открылась. Список ведёт браузер (`gotiga_viewed`), и потому это
+/// действие, а не чтение: за него пишутся строки в книгу.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleEnterRequest {
+    /// Строками, а не `Uuid`, и это не небрежность.
+    ///
+    /// Список ведёт БРАУЗЕР, годами, и в нём лежит что угодно: слаг, записанный
+    /// до перехода на слаги, обрывок от чужой вкладки, мусор из приватного
+    /// окна. Строгий `Vec<Uuid>` заворачивал ВЕСЬ запрос с 422 — причём до
+    /// проверки входа, — и одна кривая запись отменяла человеку дар первого
+    /// входа. Непригодное отсеивается молча: это маячок, а не форма.
+    #[serde(default)]
+    pub seen: Vec<String>,
+}
+
+/// Что случилось при входе.
+///
+/// Оба числа проявки нужны врозь: человеку говорят про РАБОТЫ («дом досчитал
+/// тридцать работ»), а в кошелёк ложится пыль, и одно из другого не выводится —
+/// ставка правится хранителем.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleEnterResponse {
+    pub me: BattleMeDto,
+    /// Дар, выданный именно сейчас. `null` — он уже был.
+    pub gift: Option<BattleGift>,
+    pub developed_works: i32,
+    pub developed_dust: i32,
+    /// Поручения, закрытые и оплаченные прямо сейчас. Из них и складывается
+    /// окно встречи: нечего сказать — окна нет.
+    pub paid: Vec<BattleErrandDto>,
+    /// Весь лист. Здесь же, а не вторым запросом: окно показывает ближайшие
+    /// незакрытые поручения, и спрашивать их отдельно значит открыть окно
+    /// пустым и дописать в него строки на глазах у человека.
+    pub errands: Vec<BattleErrandDto>,
+}
+
 /// The shelf, left to right. Position is the index in the list.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -4390,6 +4684,10 @@ pub struct BattleRace {
     /// `battles::normalize_level_frames`. `None` wears the tier's frame at
     /// every level.
     pub level_frames: Option<String>,
+    /// Движения этой расы, тем же JSON, что у карты. Стоит МЕЖДУ картой и
+    /// домом: все лучники расы стреляют её стрелой, пока отдельная карта не
+    /// скажет иначе.
+    pub motion_wear: Option<String>,
     pub sort_order: Option<i32>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -4408,6 +4706,7 @@ pub struct BattleRaceListed {
     pub note_ru: Option<String>,
     pub icon_url: Option<String>,
     pub level_frames: Option<String>,
+    pub motion_wear: Option<String>,
     pub sort_order: Option<i32>,
     pub card_count: i64,
 }
@@ -4424,6 +4723,11 @@ pub struct BattleRaceDto {
     pub icon_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub level_frames: Option<String>,
+    /// Движения этой расы, тем же JSON, что у карты. Стоит МЕЖДУ картой и
+    /// домом: все лучники расы стреляют её стрелой, пока отдельная карта не
+    /// скажет иначе.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub motion_wear: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort_order: Option<i32>,
     /// How many cards stand under this race. The keeper sees what a rename or a
@@ -4441,6 +4745,8 @@ pub struct SaveBattleRaceRequest {
     pub note_ru: Option<String>,
     pub icon_url: Option<String>,
     pub level_frames: Option<String>,
+    #[serde(default)]
+    pub motion_wear: Option<String>,
 }
 
 // === BATTLE ASSETS ===

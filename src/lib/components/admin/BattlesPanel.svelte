@@ -49,13 +49,20 @@
   import BattleAssetsPanel from "$lib/components/admin/BattleAssetsPanel.svelte";
   import BattleAssetPicker from "$lib/components/admin/BattleAssetPicker.svelte";
   import BattleFramePicker from "$lib/components/admin/BattleFramePicker.svelte";
+  import BattleErrandsPanel from "$lib/components/admin/BattleErrandsPanel.svelte";
+  import BattleMotionsPanel from "$lib/components/admin/BattleMotionsPanel.svelte";
+  import BattleMotionWear from "$lib/components/admin/BattleMotionWear.svelte";
   import type {
     BattleAssetRole,
     BattleCard as BattleCardDto,
     BattleDustRates,
+    BattleWelcomeGift,
+    BattleClock,
+    AdminBattleErrand,
     BattleCardStatus,
     BattleFrame,
     BattleFramePreset,
+    Motion,
     SliceFit,
     SliceKind,
     SliceOrnament,
@@ -89,15 +96,20 @@
   let view = $state<
     | "cards"
     | "frames"
+    | "motions"
     | "assets"
     | "races"
     | "keywords"
     | "bench"
     | "hand"
     | "matches"
+    | "errands"
   >("cards");
   let cards = $state<BattleCardDto[]>([]);
   let frames = $state<BattleFrame[]>(DEFAULT_FRAMES.map(completeSlices));
+  /** Свод движений. Столу он нужен ради двух вещей сразу: надеть движение на
+   *  карту и проиграть его на скамье — та же комната, тот же проигрыватель. */
+  let motions = $state<Motion[]>([]);
   let figurines = $state<FigurineListItem[]>([]);
   let races = $state<BattleRace[]>([]);
   let keywords = $state<BattleKeyword[]>([]);
@@ -169,6 +181,9 @@
   let raceNoteEn = $state("");
   let raceNoteRu = $state("");
   let raceIconUrl = $state("");
+  /** Движения расы. Стоят между картой и домом: все лучники расы стреляют её
+   *  стрелой, пока отдельная карта не скажет иначе. */
+  let raceMotionWear = $state<string | null>(null);
   /** This race's own dress per level of an owned copy — 5 slots, index 0 = level 1. */
   let raceLevelFrames = $state<(FrameOverride | null)[]>([
     null,
@@ -421,6 +436,8 @@
   ] as const;
   let etudeDepth = $state(1);
   let etudeReward = $state(0);
+  /** За доведённое до конца — платится и проигравшему. */
+  let etudeFinish = $state(0);
   let etudeStatus = $state<BattleCardStatus>("draft");
   /** Кем задана сторона гостя. `scripted` — рукой (этюд, у него есть решение),
    *  `deck` — столом гостя (встреча). У встречи половину гостя расставлять не
@@ -460,6 +477,7 @@
     etudeNoteEn = challenge?.noteEn ?? "";
     etudeDepth = challenge?.botDepth ?? 1;
     etudeReward = challenge?.rewardDust ?? 0;
+    etudeFinish = challenge?.rewardFinishDust ?? 0;
     etudeStatus = challenge?.status ?? "draft";
     etudeSide = challenge?.playerSide ?? "scripted";
 
@@ -503,6 +521,7 @@
           setup: benchSetup,
           botDepth: etudeDepth,
           rewardDust: etudeReward,
+          rewardFinishDust: etudeFinish,
           playerSide: etudeSide,
           status: etudeStatus,
         },
@@ -758,6 +777,7 @@
       artUrlOverride: null,
       artFocal: null,
       frameOverride: null,
+      motionWear: null,
       shelfOrder: null,
       figurineId: null,
       figurineName: null,
@@ -1679,6 +1699,7 @@
     raceNoteEn = race?.noteEn ?? "";
     raceNoteRu = race?.noteRu ?? "";
     raceIconUrl = race?.iconUrl ?? "";
+    raceMotionWear = race?.motionWear ?? null;
     raceLevelFrames = parseLevelFrames(race?.levelFrames);
     raceLevelPreview = 1;
   }
@@ -1696,6 +1717,7 @@
           levelFrames: raceLevelFrames.some((f) => f)
             ? JSON.stringify(raceLevelFrames)
             : null,
+          motionWear: raceMotionWear,
         },
         raceDraftId ?? undefined,
       );
@@ -1780,6 +1802,7 @@
     draft.raceNameRu = picked?.nameRu ?? null;
     draft.raceIconUrl = picked?.iconUrl ?? null;
     draft.raceLevelFrames = picked?.levelFrames ?? null;
+    draft.raceMotionWear = picked?.motionWear ?? null;
   }
 
   const TRAITS_MAX = 8;
@@ -2058,11 +2081,84 @@
   let dustRates = $state<BattleDustRates>({ liked: 2, seen: 1, read: 3 });
   let ratesSaving = $state(false);
 
+  // ── Дар первого входа ──────────────────────────────────────────────────
+  //
+  // Стоит рядом со ставками, потому что это то же самое: числа, которые
+  // подбираются на живом доме, а не закладываются в миграцию. Умолчания здесь
+  // повторяют серверные — стол, который до ответа показывает нули, соврал бы
+  // хранителю ровно про то, что тот пришёл править.
+  let gift = $state<BattleWelcomeGift>({ dust: 10, feed: 1 });
+  let giftSaving = $state(false);
+
+  // ── Часы дома ──────────────────────────────────────────────────────────
+  //
+  // По ним поворачивается «сегодня» у повторяющихся поручений. Одно число —
+  // и оно стоит здесь, а не в столе поручений, потому что это настройка
+  // комнаты целиком, как ставки и дар: у каждого поручения свои часы были бы
+  // не настройкой, а способом однажды запутаться.
+  let clock = $state<BattleClock>({ offsetMin: 180 });
+  let clockSaving = $state(false);
+
+  // ── Дела, выдаваемые рукой ─────────────────────────────────────────────
+  //
+  // Те самые поручения, что названы гостю на полке и которые дом не платит.
+  // Здесь они — заготовки выдачи: щелчок заполняет монету, число и записку,
+  // чтобы «состоявшийся показ» стоил везде одинаково и назывался одинаково.
+  // Перебивать заполненное можно: заготовка — это память, а не правило.
+  let deeds = $state<AdminBattleErrand[]>([]);
+
   async function loadDustRates() {
     try {
       dustRates = await api.adminGetBattleDustRates();
     } catch {
       // Настройка не прочиталась — стол показывает умолчания и не мешает.
+    }
+    try {
+      gift = await api.adminGetBattleGift();
+    } catch {
+      // То же: дар читается отдельно, и одно не должно ронять другое.
+    }
+    try {
+      clock = await api.adminGetBattleClock();
+    } catch {
+      // И часы тоже: три настройки, три отдельных чтения.
+    }
+    try {
+      deeds = (await api.adminListBattleErrands()).filter(
+        (e) => e.byHand && e.status === "published",
+      );
+    } catch {
+      // Заготовки — удобство. Без них выдача работает как раньше, руками.
+    }
+  }
+
+  function takeDeed(deed: AdminBattleErrand) {
+    grantCoin = deed.currency;
+    grantAmount = deed.amount;
+    grantNote = $lang === "ru" ? deed.titleRu : deed.titleEn;
+  }
+
+  async function saveClock() {
+    clockSaving = true;
+    try {
+      clock = await api.adminSaveBattleClock(clock);
+      flash($t("adminBattlesClockSaved"), 2500);
+    } catch (e) {
+      flash(String(e), 6000);
+    } finally {
+      clockSaving = false;
+    }
+  }
+
+  async function saveGift() {
+    giftSaving = true;
+    try {
+      gift = await api.adminSaveBattleGift(gift);
+      flash($t("adminBattlesGiftSaved"), 2500);
+    } catch (e) {
+      flash(String(e), 6000);
+    } finally {
+      giftSaving = false;
     }
   }
 
@@ -2176,9 +2272,17 @@
       artUrl: draft.artUrlOverride?.trim() || null,
       artFocal: draft.artFocal,
       frameOverride: draft.frameOverride,
+      motionWear: draft.motionWear ?? null,
       figurineId: draft.figurineId || null,
     };
   }
+
+  /** Наряд движений расы, за которой карта записана СЕЙЧАС — не тот, что
+   *  приехал с карты: расу в форме меняют, и подпись «как у расы» обязана
+   *  меняться вместе с ней, иначе она показывает вчерашнюю. */
+  let raceWear = $derived(
+    (draft.raceId && races.find((r) => r.id === draft.raceId)?.motionWear) || null,
+  );
 
   let weigh = $state<BattleWeigh | null>(null);
   let weighTimer: ReturnType<typeof setTimeout> | undefined;
@@ -2628,15 +2732,17 @@
     // мерка, снятая после, записала бы эти правки в «сохранённое».
     const opening = JSON.stringify(frames);
     try {
-      const [, figs, savedFrames, savedRaces] = await Promise.all([
+      const [, figs, savedFrames, savedRaces, savedMotions] = await Promise.all([
         loadCards(),
         api.getAllFigurines(),
         api.getBattleFrames(),
         api.getBattleRaces(),
+        api.getBattleMotions(),
         loadDustRates(),
       ]);
       figurines = figs;
       races = savedRaces;
+      motions = savedMotions.motions;
       keywords = await api.getBattleKeywords();
       if (savedFrames.frames.length) {
         frames = savedFrames.frames.map(completeSlices);
@@ -2681,6 +2787,12 @@
           : ''}">{$t("adminBattlesFramesView")}</button
       >
       <button
+        onclick={() => (view = "motions")}
+        class="px-3 py-1 {view === 'motions'
+          ? 'bg-[#34251c] text-[#f8f1e7]'
+          : ''}">{$t("adminBattlesMotionsView")}</button
+      >
+      <button
         onclick={() => (view = "assets")}
         class="px-3 py-1 {view === 'assets'
           ? 'bg-[#34251c] text-[#f8f1e7]'
@@ -2714,6 +2826,12 @@
         class="px-3 py-1 {view === 'matches'
           ? 'bg-[#34251c] text-[#f8f1e7]'
           : ''}">{$t("adminBattlesMatches")}</button
+      >
+      <button
+        onclick={() => (view = "errands")}
+        class="px-3 py-1 {view === 'errands'
+          ? 'bg-[#34251c] text-[#f8f1e7]'
+          : ''}">{$t("adminBattlesErrands")}</button
       >
     </div>
     {#if message}
@@ -3985,6 +4103,97 @@
                 >
               </div>
             </div>
+
+            <!-- Дар первого входа. Ставки говорят, что дом платит за внимание;
+                 дар говорит, с чего человек начинает, когда внимания ещё нет. -->
+            <div class="mb-8 pb-6 border-b border-[#34251c]/10">
+              <p
+                class="mb-1 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
+              >
+                {$t("adminBattlesGift")}
+              </p>
+              <p
+                class="max-w-[62ch] mb-3 text-[11px] leading-relaxed italic text-[#8a6a55]"
+              >
+                {$t("adminBattlesGiftHint")}
+              </p>
+              <div class="flex flex-wrap items-end gap-3">
+                {#each [{ key: "dust" as const, label: $t("adminBattlesGiftDust") }, { key: "feed" as const, label: $t("adminBattlesGiftFeed") }] as row (row.key)}
+                  <label class="block w-40">
+                    <span
+                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                      >{row.label}</span
+                    >
+                    <input
+                      type="number"
+                      min="0"
+                      value={gift[row.key]}
+                      oninput={(e) =>
+                        (gift[row.key] = Math.max(
+                          0,
+                          Math.round(Number(e.currentTarget.value) || 0),
+                        ))}
+                      onfocus={selectOnFocus}
+                      onwheel={blurOnWheel}
+                      class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                    />
+                  </label>
+                {/each}
+                <button
+                  type="button"
+                  disabled={giftSaving}
+                  onclick={saveGift}
+                  class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5 disabled:opacity-40"
+                  >{$t("adminBattlesGiftSave")}</button
+                >
+              </div>
+            </div>
+
+            <!-- Часы дома. Одно число, от которого зависит, когда у человека
+                 наступает «завтра» в повторяющихся поручениях. -->
+            <div class="mb-8 pb-6 border-b border-[#34251c]/10">
+              <p
+                class="mb-1 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
+              >
+                {$t("adminBattlesClock")}
+              </p>
+              <p
+                class="max-w-[62ch] mb-3 text-[11px] leading-relaxed italic text-[#8a6a55]"
+              >
+                {$t("adminBattlesClockHint")}
+              </p>
+              <div class="flex flex-wrap items-end gap-3">
+                <label class="block w-40">
+                  <span
+                    class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                    >{$t("adminBattlesClockOffset")}</span
+                  >
+                  <input
+                    type="number"
+                    step="30"
+                    value={clock.offsetMin}
+                    oninput={(e) =>
+                      (clock.offsetMin = Math.round(
+                        Number(e.currentTarget.value) || 0,
+                      ))}
+                    onfocus={selectOnFocus}
+                    onwheel={blurOnWheel}
+                    class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                  />
+                </label>
+                <p class="pb-1.5 text-[11px] text-[#8a6a55]">
+                  {$t("adminBattlesClockNow")}
+                  {new Date(Date.now() + (clock.offsetMin + new Date().getTimezoneOffset()) * 60000).toLocaleString($lang === "ru" ? "ru-RU" : "en-GB")}
+                </p>
+                <button
+                  type="button"
+                  disabled={clockSaving}
+                  onclick={saveClock}
+                  class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5 disabled:opacity-40"
+                  >{$t("adminBattlesClockSave")}</button
+                >
+              </div>
+            </div>
           </div>
         </details>
       </aside>
@@ -4149,6 +4358,24 @@
                 min="0"
                 max="1000"
                 bind:value={etudeReward}
+                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+              />
+            </label>
+
+            <!-- За доведённое до конца. Платится и проигравшему: до сих пор
+                 новичок, проигравший первую партию, не получал ровно ничего —
+                 худший из возможных ответов на первую же попытку сыграть.
+                 Ключ у неё свой, так что фермы это не открывает. -->
+            <label class="block w-32">
+              <span
+                class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                >{$t("adminBattlesEtudeFinish")}</span
+              >
+              <input
+                type="number"
+                min="0"
+                max="1000"
+                bind:value={etudeFinish}
                 class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
               />
             </label>
@@ -4386,6 +4613,7 @@
                 match={benchMatch}
                 {cards}
                 {frames}
+                {motions}
                 busy={benchBusy}
                 control={benchBoth ? "both" : "player"}
                 onact={(a) => benchCall(a)}
@@ -4570,6 +4798,29 @@
                 class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 disabled:opacity-40"
                 >{$t("adminBattlesTakeAll")}</button
               >
+            </div>
+          </div>
+        {/if}
+
+        <!-- Заготовки дел. Названы гостю на полке — значит, и выдаваться должны
+             тем же числом и теми же словами, иначе полка обещает одно, а книга
+             показывает другое. -->
+        {#if deeds.length}
+          <div class="mt-5">
+            <p class="mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">
+              {$t("adminBattlesDeeds")}
+            </p>
+            <div class="flex flex-wrap gap-2">
+              {#each deeds as deed (deed.id)}
+                <button
+                  type="button"
+                  onclick={() => takeDeed(deed)}
+                  class="px-2.5 py-1 text-[11px] border border-[#34251c]/20 hover:bg-[#34251c]/5"
+                >
+                  {$lang === "ru" ? deed.titleRu : deed.titleEn}
+                  <span class="ml-1 text-[#6f3b24]">{deed.amount}</span>
+                </button>
+              {/each}
             </div>
           </div>
         {/if}
@@ -4820,6 +5071,7 @@
                   match={replayMatch}
                   {cards}
                   {frames}
+                  {motions}
                   busy={replayBusy}
                   control="player"
                   onact={() => {}}
@@ -5066,9 +5318,15 @@
         </div>
       </div>
     </div>
+  {:else if view === "errands"}
+    <!-- Стол поручений живёт отдельным файлом: эта панель и без него на пять
+         тысяч строк, а справочник поручений ничего из неё не переиспользует. -->
+    <BattleErrandsPanel />
   {:else if view === "assets"}
     <!-- ── Склад деталей рамки ──────────────────────────────────────────── -->
     <BattleAssetsPanel {flash} />
+  {:else if view === "motions"}
+    <BattleMotionsPanel {flash} />
   {:else if view === "races"}
     <!-- ── The race dictionary ──────────────────────────────────────────── -->
     <div class="flex-1 flex min-h-0">
@@ -5197,6 +5455,16 @@
       <aside
         class="w-80 flex-shrink-0 p-5 border-l border-[#34251c]/10 overflow-y-auto"
       >
+        <!-- Движения расы. Стоят у значка, а не в отдельном месте: и то и
+             другое — то, что раса раздаёт всем своим картам сразу. -->
+        <div class="mb-4 pb-4 border-b border-[#34251c]/10">
+          <BattleMotionWear
+            wear={raceMotionWear}
+            {motions}
+            onChange={(raw) => (raceMotionWear = raw)}
+          />
+        </div>
+
         <p class="mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">
           {$t("adminBattlesRaceIcon")}
         </p>
@@ -6219,8 +6487,10 @@
                   onchange={(e) => {
                     const id = e.currentTarget.value || null;
                     draft.figurineId = id;
-                    const fig = id ? figurines.find((f) => f.id === id) : null;
-                    if (fig && !draft.titleEn.trim()) draft.titleEn = fig.name;
+                    // The work's catalogue name is the link under the card,
+                    // never the card's own title. Filling titleEn from it is
+                    // how "Small doll Baba Yaga" sat where the card's name
+                    // should have been.
                   }}
                   class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none"
                 >
@@ -6473,6 +6743,18 @@
                   </div>
                 </div>
               {/if}
+
+              <!-- Чем эта карта показывает удар, чару, лечение. Стоит рядом с
+                   нарядом, а не в отдельной вкладке: и то и другое — как карта
+                   ВЫГЛЯДИТ, и надеваются они одним и тем же жестом. -->
+              <div class="pt-3 border-t border-[#34251c]/10">
+                <BattleMotionWear
+                  wear={draft.motionWear}
+                  {motions}
+                  inherited={raceWear}
+                  onChange={(raw) => (draft.motionWear = raw)}
+                />
+              </div>
 
               <!-- Годность карты: препятствия и замечания. Стоит у кнопки, а
                    не в отдельной вкладке, потому что читать это надо ровно

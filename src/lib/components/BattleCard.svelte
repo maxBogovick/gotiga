@@ -42,6 +42,10 @@
     applyInsetDelta,
     carvedCopies,
     kindOf,
+    kindLabelKey,
+    channelLabelKey,
+    bodyPassport,
+    BODY_STAT_LABELS,
     livePiece,
     sliceResizeDelta,
     sliceSigns,
@@ -144,7 +148,22 @@
   let focal = $derived(parseFocal(card.artFocal));
   let prices = $derived(pricesOf(card));
   let head = $derived(headerCopy(card, editLang2));
-  let traits = $derived((card.traits ?? []).map((t) => traitCopy(t, editLang2)));
+  let traits = $derived(
+    (card.traits ?? []).map((t) => traitCopy(t, editLang2)).filter((t) => t.name),
+  );
+  let kindWord = $derived($t(kindLabelKey(card.kind)));
+  let channelWord = $derived(
+    (() => {
+      const key = channelLabelKey(card.attackChannel);
+      return key ? $t(key) : '';
+    })(),
+  );
+  let passport = $derived(bodyPassport(card));
+  /** A colon-and-text trait is a rule. Until `abilities` names one, the face
+   *  must not look as if the engine will honour it. The keeper's form still
+   *  holds the prose; the card they preview is the card the guest will see. */
+  let printTraitRule = $derived((card.abilities?.length ?? 0) > 0);
+  let printEffectAsRule = $derived((card.abilities?.length ?? 0) > 0);
   let rank = $derived(frameName(frame, $lang));
   let dressed = $derived(isDressed(frame));
   let overlaid = $derived(isOverlaid(frame));
@@ -789,6 +808,7 @@
   bind:this={root}
   class="slot"
   class:slice-sizing={!!sliceCursor}
+  class:slot--flush-foot={frame.layout === 'corners' && !frameEditable}
   data-tier={card.tier}
   data-layout={frame.layout}
   style={varStyle}
@@ -796,7 +816,7 @@
   style:view-transition-name={transition ? cardTransitionName(card) : undefined}
   onpointermove={track}
   onpointerleave={rest}
-  aria-label="{copy.title} — {rank}"
+  aria-label="{copy.title || rank} — {rank}"
 >
  <div
    class="card"
@@ -811,23 +831,31 @@
     <!-- 1. The header: what this is, and what kind of thing it is. -->
     <header class="band band--head">
       {#if editable || raceIconEditable || card.raceIconUrl}
-        <button
-          type="button"
-          class="race-icon"
-          class:race-icon--live={editable || raceIconEditable}
-          disabled={!editable && !raceIconEditable}
-          onclick={handleIconClick}
-          aria-label={raceIconEditable ? $t('adminBattlesRaceIconUpload') : $t('adminBattlesRaceJump')}
-        >
-          {#if card.raceIconUrl}
+        {#if editable || raceIconEditable}
+          <button
+            type="button"
+            class="race-icon race-icon--live"
+            onclick={handleIconClick}
+            aria-label={raceIconEditable ? $t('adminBattlesRaceIconUpload') : $t('adminBattlesRaceJump')}
+          >
+            {#if card.raceIconUrl}
+              <img src={card.raceIconUrl} alt="" class="race-icon-img" />
+            {/if}
+          </button>
+        {:else}
+          <span class="race-icon">
             <img src={card.raceIconUrl} alt="" class="race-icon-img" />
-          {/if}
-        </button>
+          </span>
+        {/if}
       {/if}
 
       {#if head.race}<span class="race">{head.race}</span>{/if}
-      {#if head.race && head.type}<span class="head-sep">·</span>{/if}
-      {#if head.type}<span class="kind">{head.type}</span>{/if}
+      {#if head.race}<span class="head-sep">·</span>{/if}
+      <span class="kind">{kindWord}</span>
+      {#if channelWord}
+        <span class="head-sep">·</span>
+        <span class="kind">{channelWord}</span>
+      {/if}
 
       <!-- Notches, not a number: at shelf size a digit disappears and a row of
            marks does not. This is the level of your copy — never the card's
@@ -910,26 +938,29 @@
           {#each traits as trait, i (i)}
             <li class="trait">
               <span class="trait-name">
-                {trait.name}{#if trait.other}<span class="trait-other">({trait.other})</span>{/if}{#if trait.text}:{/if}
+                {trait.name}{#if trait.other}<span class="trait-other">({trait.other})</span>{/if}{#if printTraitRule && trait.text}:{/if}
               </span>
-              {#if trait.text}<span class="trait-text"> {trait.text}</span>{/if}
+              {#if printTraitRule && trait.text}<span class="trait-text"> {trait.text}</span>{/if}
             </li>
           {/each}
         </ul>
       {/if}
 
       {#if copy.effect}
-        <p class="effect">{copy.effect}</p>
+        <p class="effect" class:effect--voice={!printEffectAsRule}>{copy.effect}</p>
       {/if}
 
       {#if copy.lore}
         <p class="lore">{copy.lore}</p>
       {/if}
 
-      <p class="numbers">
-        <span class="number">{$t('battlesHealthLabel')} <b>{card.health}</b></span>
-        <span class="number">{$t('battlesManaLabel')} <b>{card.mana}</b></span>
-      </p>
+      {#if passport.length}
+        <p class="numbers">
+          {#each passport as row (row.field)}
+            <span class="number">{$t(BODY_STAT_LABELS[row.field])} <b>{row.value}</b></span>
+          {/each}
+        </p>
+      {/if}
     </div>
 
     <!-- 4. The footer. -->
@@ -1042,35 +1073,45 @@
          `.content`'s own stacking context can never paint over a sibling
          layer no matter its local z-index — only a layer of its own can. -->
     <div class="badges-layer">
-      <!-- Cost, top left by default. Held and dragged, the badge follows the
-           pointer; clicked without moving, its own X/Y editor opens instead —
-           in a fanned hand the left edge is the sliver you can actually see,
-           which is where every game held in a hand puts it. -->
-      <button
-        type="button"
-        class="corner corner--cost corner--shape-{frame.costShape ?? 'circle'}"
-        class:corner--editable={frameEditable && !frameEditTarget}
-        disabled={!frameEditable || !!frameEditTarget}
-        style="left:{frame.costX ?? DEFAULT_COST_X}%; top:{frame.costY ?? DEFAULT_COST_Y}%"
-        title={$t('battlesCostLabel')}
-        onpointerdown={(e) => badgeDragStart('cost', e)}
-        onpointermove={badgeDragMove}
-        onpointerup={badgeDragEnd}
-        onpointercancel={badgeDragEnd}
-      >{card.cost}</button>
-      <!-- Power, dragged and edited the same way as cost. -->
-      <button
-        type="button"
-        class="corner corner--power corner--shape-{frame.powerShape ?? 'circle'}"
-        class:corner--editable={frameEditable && !frameEditTarget}
-        disabled={!frameEditable || !!frameEditTarget}
-        style="left:{frame.powerX ?? DEFAULT_POWER_X}%; top:{frame.powerY ?? DEFAULT_POWER_Y}%"
-        title={$t('battlesPowerLabel')}
-        onpointerdown={(e) => badgeDragStart('power', e)}
-        onpointermove={badgeDragMove}
-        onpointerup={badgeDragEnd}
-        onpointercancel={badgeDragEnd}
-      >{card.power}</button>
+      {#snippet badge(kind: BadgeKind)}
+        {@const label = kind === 'cost' ? $t('battlesCostLabel') : $t('battlesPowerLabel')}
+        {@const value = kind === 'cost' ? card.cost : card.power}
+        {@const x = kind === 'cost' ? (frame.costX ?? DEFAULT_COST_X) : (frame.powerX ?? DEFAULT_POWER_X)}
+        {@const y = kind === 'cost' ? (frame.costY ?? DEFAULT_COST_Y) : (frame.powerY ?? DEFAULT_POWER_Y)}
+        {@const shape = kind === 'cost' ? (frame.costShape ?? 'circle') : (frame.powerShape ?? 'circle')}
+        {@const live = frameEditable && !frameEditTarget}
+        {@const named = `${label} ${value}`}
+        <span
+          class="corner-mark"
+          class:corner-mark--power={kind === 'power'}
+          style="left:{x}%; top:{y}%"
+        >
+          {#if live}
+            <button
+              type="button"
+              class="corner corner--{kind} corner--shape-{shape} corner--editable"
+              aria-label={named}
+              onpointerdown={(e) => badgeDragStart(kind, e)}
+              onpointermove={badgeDragMove}
+              onpointerup={badgeDragEnd}
+              onpointercancel={badgeDragEnd}
+            >
+              <span class="corner-num">{value}</span>
+            </button>
+          {:else}
+            <span
+              class="corner corner--{kind} corner--shape-{shape}"
+              role="img"
+              aria-label={named}
+            >
+              <span class="corner-num">{value}</span>
+            </span>
+          {/if}
+          <span class="corner-word" aria-hidden="true">{label}</span>
+        </span>
+      {/snippet}
+      {@render badge('cost')}
+      {@render badge('power')}
     </div>
   {/if}
 
@@ -1520,8 +1561,26 @@
       rotateX(calc((0.5 - var(--my)) * 7deg));
   }
 
-  .corner {
+  .corner-mark {
     position: absolute;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    /* Centre of the disc, same as the old `.corner` left/top: a drag writes
+       the badge's own centre, and the caption hangs off that, not off a
+       second pair of numbers. */
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+  }
+
+  /* Power sits on the sill: hanging the word below it would leave the card. */
+  .corner-mark--power {
+    flex-direction: column-reverse;
+  }
+
+  .corner {
+    position: relative;
     z-index: 2;
     display: grid;
     place-items: center;
@@ -1530,16 +1589,41 @@
     margin: 0;
     padding: 0;
     font: inherit;
-    font-size: 7cqi;
     line-height: 1;
     color: var(--paper);
     background: var(--ink);
     border: none;
-    /* `left`/`top` are the badge's own CENTRE, in % of the card, so a drag can
-       move it in either direction from wherever it starts without the badge's
-       own size skewing the math. */
-    transform: translate(-50%, -50%);
     cursor: default;
+    pointer-events: auto;
+  }
+
+  .corner-num {
+    font-size: 7cqi;
+    line-height: 1;
+  }
+
+  .corner-word {
+    margin-top: 0.7cqi;
+    font-size: 3.2cqi;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    line-height: 1;
+    color: var(--ink);
+    white-space: nowrap;
+    opacity: 0.78;
+  }
+
+  .corner-mark--power .corner-word {
+    margin-top: 0;
+    margin-bottom: 0.7cqi;
+  }
+
+  /* On the taking sheet the passport names cost and power. Hanging the word
+     off the disc at 400px puts СИЛА in the numbers and СТОИМОСТЬ in the art. */
+  @container (min-width: 281px) {
+    .corner-word {
+      display: none;
+    }
   }
 
   /* The badge's own outline — a coin is only the default, not the only shape
@@ -1602,6 +1686,16 @@
     flex: 0 0 var(--foot-share, 10%);
   }
 
+  /* Corners wear cost and power outside the window; the foot was reserving
+     a tenth of the card for nothing. Keep the band in the Frames tab, where
+     the seam is a handle. */
+  .slot--flush-foot .band--foot {
+    flex: 0 0 0;
+    min-height: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+
   .band--head,
   .band--foot {
     position: relative;
@@ -1660,9 +1754,10 @@
   }
 
   .traits {
-    /* Gives way before the numbers do — a clipped property still reads, a
-       missing Health does not. */
-    flex: 0 1 auto;
+    /* One line of its own, never a zero-height flex leftover. The numbers sit
+       below with `margin-top: auto`; shrinking this band to nothing was how
+       Creature and Granny lost their traits on the shelf. */
+    flex: 0 0 auto;
     margin: 2.5cqi 0 0;
     padding: 0;
     list-style: none;
@@ -1693,14 +1788,25 @@
   .numbers {
     display: flex;
     flex: 0 0 auto;
-    gap: 3cqi;
+    flex-wrap: wrap;
+    gap: 1.2cqi 3cqi;
     margin: auto 0 0;
     padding-top: 2.5cqi;
     font-size: 4cqi;
     letter-spacing: 0.1em;
     text-transform: uppercase;
     color: var(--ink);
-    opacity: 0.8;
+    opacity: 0.88;
+  }
+
+  /* Power keeps its corner, the way cost keeps the header. Without this the
+     last number (Step, Mend) sits under the disc and overflow clips it;
+     the effect used to run through the same disc. */
+  .slot[data-layout='corners'] .numbers,
+  .slot[data-layout='corners'] .effect,
+  .slot[data-layout='corners'] .lore,
+  .slot[data-layout='corners'] .traits {
+    padding-right: 17cqi;
   }
 
   .number b {
@@ -1822,12 +1928,45 @@
     line-height: 1.35;
   }
 
-  /* On a shelf the card is a thumbnail: it carries its name, its effect and its
-     numbers. The note underneath is for the card seen large. This is what the
-     container query is for, rather than shipping a second "compact" component. */
-  @container (max-width: 240px) {
+  /* No ability behind the line: this is the house's voice, not a rule.
+     Granny's hen counts turns in the lore register until a verb exists. */
+  .effect--voice {
+    padding-top: 0;
+    border-top: none;
+    font-size: 4.4cqi;
+    line-height: 1.4;
+    font-style: italic;
+    opacity: 0.78;
+  }
+
+  /* On a shelf the card is a thumbnail: name, a line of traits, the effect,
+     the body passport. The note underneath is for the card seen large.
+     280px, not 240: the shelf slot is ~261px, and 240 left the lore fighting
+     the traits for the last 81px of the window. The taking sheet is 400px,
+     so lore and the full trait list still live there. */
+  @container (max-width: 280px) {
     .lore {
       display: none;
+    }
+
+    .trait-other {
+      display: none;
+    }
+
+    .traits {
+      max-height: calc(4.2cqi * 1.34);
+    }
+
+    .trait:not(:first-child) {
+      display: none;
+    }
+
+    .trait {
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 1;
+      line-clamp: 1;
+      overflow: hidden;
     }
 
     .effect {
@@ -1853,7 +1992,8 @@
     .numbers,
     .rank,
     .new-mark,
-    .corner {
+    .corner,
+    .corner-mark {
       display: none;
     }
 

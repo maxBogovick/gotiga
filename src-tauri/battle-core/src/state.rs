@@ -776,7 +776,7 @@ pub fn reduce(state: &MatchState, action: &Action) -> Result<(MatchState, Vec<Ev
 
             let mending = crate::heal::resolve_mend(&t, h.mend);
             st.units[h.id as usize].acted = true;
-            events.extend(crate::heal::apply_mend(&mut st.units[t.id as usize], &mending));
+            events.extend(crate::heal::apply_mend(Some(h.id), &mut st.units[t.id as usize], &mending));
         }
 
         Action::Attack { attacker, target } => {

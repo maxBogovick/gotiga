@@ -10,9 +10,26 @@
   // произвол, объяснено там.
   import { onMount, untrack } from 'svelte';
   import { fade } from 'svelte/transition';
-  import { t, type TranslationKey } from '$lib/i18n';
+  import { t, lang, type TranslationKey } from '$lib/i18n';
   import BattleCard from '$lib/components/BattleCard.svelte';
-  import { DEFAULT_ASPECT, frameForCard } from '$lib/battles';
+  import BattleSheet from '$lib/components/BattleSheet.svelte';
+  import BattleMotionStage from '$lib/components/BattleMotionStage.svelte';
+  import WaxSeal from '$lib/components/WaxSeal.svelte';
+  import {
+    DEFAULT_ASPECT,
+    BODY_STAT_LABELS,
+    bodyPassport,
+    cardCopy,
+    channelLabelKey,
+    frameForCard,
+    kindLabelKey,
+    MOTION_MS_MAX,
+    motionFor,
+    motionSpan,
+    occasionOf,
+    stage,
+    type Staged,
+  } from '$lib/battles';
   import type {
     BattleAction,
     BattleCard as BattleCardDto,
@@ -22,12 +39,14 @@
     BattleMatch,
     BattleMatchState,
     BattleUnit,
+    Motion,
   } from '$lib/types/api';
 
   let {
     match,
     cards = [],
     frames = null,
+    motions = null,
     busy = false,
     control = 'player',
     onact,
@@ -38,6 +57,9 @@
     cards?: BattleCardDto[];
     /** Рамки чинов. Без них карта наденет рамку по умолчанию. */
     frames?: BattleFrame[] | null;
+    /** Свод движений. Пустой — комната играет умолчания дома, то есть ровно
+     *  то, что делала до движка (`BATTLE-MOTION.md` §4). */
+    motions?: Motion[] | null;
     busy?: boolean;
     /** `both` — стол хранителя: ходить можно за обе стороны. */
     control?: 'player' | 'both';
@@ -49,14 +71,22 @@
 
   const WIDTH = 3;
   const DEPTH = 6;
+  /** Комната, в которой стол ложится вдоль: шесть портретов в ряд на более
+   *  узкой — штампы. Совпадает с `.scene--along`, не с контейнерным 900 px:
+   *  три колонки сцены появляются раньше, чем доске хватает ширины. */
+  const ALONG = 1100;
 
   // ── Темп ──────────────────────────────────────────────────────────────────
-  // Числа из BATTLE-SCENE.md §6. Держатся здесь, рядом друг с другом, чтобы
-  // менять их можно было как один ритм, а не по одному в четырёх местах.
-  const BEAT = { played: 300, moved: 350, damaged: 400, healed: 300, died: 500 };
+  //
+  // Числа из BATTLE-SCENE.md §6 переехали в свод движений: длительность такта
+  // теперь говорит САМО движение (`BATTLE-MOTION.md` §3.4), а не константа
+  // здесь. Умолчания дома дают ровно те же 300/400/300/500, так что комната от
+  // переезда не изменилась — это проверено в `battles.rs`.
+  //
+  // Шаг остался числом: перемещение по клеткам — не движение из свода, а
+  // перекладка, и словаря жестов у неё нет.
+  const BEAT_MOVED = 350;
   const REST = 500;
-  const LUNGE_OUT = 220;
-  const LUNGE_BACK = 180;
 
   /** `prefers-reduced-motion` — не украшение, а обязательство: при нём весь ход
    *  применяется мгновенно, а разбор остаётся доступен. */
@@ -85,6 +115,9 @@
   let before: BattleMatchState | null = null;
   /** Для доски: пока журнал играет, она не принимает касаний. */
   let playing = $state(false);
+  /** События, которые сцена уже показала. Не `match.events`: пакет приходит
+   *  целиком, а журнал не должен выдавать ход хранителя до его такта. */
+  let told = $state<BattleEvent[]>([]);
   /** То же самое, но не руна: эффект ниже обязан читать это без подписки. */
   let running = false;
   let run = 0;
@@ -92,9 +125,11 @@
   let me = $derived(control === 'both' ? position.active : 'player');
   let mine = $derived(position.active === me && !position.outcome && !busy && !playing);
 
-  const titleOf = (slug: string) =>
-    cards.find((c) => c.slug === slug)?.titleRu || slug;
   const dtoOf = (slug: string) => cards.find((c) => c.slug === slug) ?? null;
+  const titleOf = (slug: string) => {
+    const dto = dtoOf(slug);
+    return dto ? cardCopy(dto, $lang).title || slug : slug;
+  };
 
   /** Отношение сторон рамки этой карты. Клетке нужно знать его заранее: карта,
    *  которой позволено мерить себя по содержимому, из клетки вылезает. */
@@ -116,6 +151,8 @@
   // ── Выбор ─────────────────────────────────────────────────────────────────
   type Picked = { kind: 'unit'; id: number } | { kind: 'hand'; index: number } | null;
   let picked = $state<Picked>(null);
+  /** Тот же лист, что с полки и со стола. Не `state`: `$state` тогда подписка. */
+  let sheet = $state<BattleCardDto | null>(null);
 
   /** Клетки, куда выбранное может встать или шагнуть. */
   let openCells = $derived.by(() => {
@@ -187,34 +224,55 @@
   });
 
   let chosen = $derived(picked?.kind === 'unit' ? (position.units[picked.id] ?? null) : null);
+  let chosenDto = $derived(chosen ? dtoOf(chosen.card.name) : null);
+  let chosenFace = $derived(chosenDto ? cardCopy(chosenDto, $lang) : null);
+  let chosenPass = $derived(chosenDto ? bodyPassport(chosenDto) : []);
+  let chosenKind = $derived(chosenDto ? $t(kindLabelKey(chosenDto.kind)) : '');
+  let chosenChannel = $derived(
+    chosenDto
+      ? (() => {
+          const key = channelLabelKey(chosenDto.attackChannel);
+          return key ? $t(key) : '';
+        })()
+      : '',
+  );
 
   function tapCell(x: number, y: number) {
-    if (!mine) return;
+    if (playing) return;
     const here = unitAt(x, y);
 
-    if (here && openUnits.has(here.id)) {
-      const how = openUnits.get(here.id);
-      const source = picked as { kind: 'unit'; id: number };
-      onact(
-        how === 'attack'
-          ? { attack: { attacker: source.id, target: here.id } }
-          : { mend: { healer: source.id, target: here.id } },
-      );
-      return;
+    if (mine) {
+      if (here && openUnits.has(here.id)) {
+        const how = openUnits.get(here.id);
+        const source = picked as { kind: 'unit'; id: number };
+        onact(
+          how === 'attack'
+            ? { attack: { attacker: source.id, target: here.id } }
+            : { mend: { healer: source.id, target: here.id } },
+        );
+        return;
+      }
+
+      if (!here && picked && openCells.has(`${x},${y}`)) {
+        const cell: BattleCell = { x, y };
+        onact(
+          picked.kind === 'hand'
+            ? { play: { handIndex: picked.index, cell } }
+            : { move: { unit: picked.id, to: cell } },
+        );
+        return;
+      }
+
+      // Готовое своё тело — выбор для хода. Подсветка клеток только у него.
+      if (here && here.owner === me && ready.has(here.id)) {
+        picked =
+          picked?.kind === 'unit' && picked.id === here.id ? null : { kind: 'unit', id: here.id };
+        return;
+      }
     }
 
-    if (!here && picked && openCells.has(`${x},${y}`)) {
-      const cell: BattleCell = { x, y };
-      onact(
-        picked.kind === 'hand'
-          ? { play: { handIndex: picked.index, cell } }
-          : { move: { unit: picked.id, to: cell } },
-      );
-      return;
-    }
-
-    // Иначе — просто выбор своего тела, или снятие выбора. Пустое место снимает.
-    if (here && here.owner === me && ready.has(here.id)) {
+    // Любое тело можно открыть, чтобы прочитать. Ходов это не предлагает.
+    if (here) {
       picked =
         picked?.kind === 'unit' && picked.id === here.id ? null : { kind: 'unit', id: here.id };
     } else {
@@ -228,9 +286,15 @@
   }
 
   function onkey(e: KeyboardEvent) {
-    if (e.key === 'Escape' && picked) {
+    if (e.key !== 'Escape') return;
+    if (sheet) {
+      sheet = null;
+      e.stopImmediatePropagation();
+      return;
+    }
+    if (picked) {
       picked = null;
-      e.stopPropagation();
+      e.stopImmediatePropagation();
     }
   }
 
@@ -254,11 +318,63 @@
   let traceKey = 0;
 
   // ── Движение ──────────────────────────────────────────────────────────────
-  // Одно тело подаётся, другое вздрагивает, третье оседает. Пишется свойствами,
-  // а не классами, потому что подача — это направление, а его знает только сцена.
-  let lunge = $state<{ unit: number; dx: number; dy: number } | null>(null);
-  let flinch = $state<number | null>(null);
-  let falling = $state<number | null>(null);
+  //
+  // Что играется прямо сейчас: какие два тела заняты и что с ними делается.
+  // Стиль приходит готовой строкой из `stage()` — сцена его не собирает, иначе
+  // стол хранителя показывал бы одно, а комната другое.
+  let acting = $state<{ striker: number | null; target: number | null; play: Staged } | null>(
+    null,
+  );
+
+  /** Стиль для тела на клетке: пусто, если оно сейчас не занято. */
+  const stirOf = (id: number): string | undefined => {
+    if (!acting) return undefined;
+    if (acting.striker === id && acting.play.striker) return acting.play.striker;
+    if (acting.target === id && acting.play.target) return acting.play.target;
+    return undefined;
+  };
+
+  /**
+   * Мгновение, в которое позиция меняется, — начало ПЕРВОГО жеста, обращённого
+   * к цели.
+   *
+   * Не середина и не конец: у подачи это 220-я миллисекунда, когда бьющий
+   * дошёл, а у выстрела — та, на которой стрела долетела. Одно правило, и оно
+   * работает для обоих, потому что «когда цель дрогнула» и есть «когда до неё
+   * дошло». Жестов к цели нет вовсе — значит, сразу.
+   */
+  const contactOf = (motion: Motion | null): number => {
+    const aimed = motion?.gestures.filter((g) => g.whom === 'target') ?? [];
+    return aimed.length ? Math.min(...aimed.map((g) => g.at || 0)) : 0;
+  };
+
+  /** Разложить событие на сцене. Клетки берутся из показанной позиции: тело,
+   *  которое ещё не сдвинулось, стоит там, где его видно. */
+  function put(
+    pos: BattleMatchState,
+    motion: Motion | null,
+    striker: number | null,
+    target: number | null,
+  ): Staged {
+    const spotOf = (id: number | null) =>
+      id == null ? null : (pos.board.find((s) => s.unit === id)?.cell ?? null);
+    const play = stage(motion, spotOf(striker), spotOf(target), {
+      spanX: along ? DEPTH : WIDTH,
+      spanY: along ? WIDTH : DEPTH,
+      along,
+      calm,
+    });
+    acting = { striker, target, play };
+    return play;
+  }
+
+  /** Какое движение играет это тело на этом поводе. Цепочка — в `battles.ts`. */
+  const motionOf = (pos: BattleMatchState, unit: number | null, event: BattleEvent) => {
+    const occasion = occasionOf(event);
+    if (!occasion) return null;
+    const dto = unit == null ? null : dtoOf(pos.units[unit]?.card.name ?? '');
+    return motionFor(occasion, dto, motions);
+  };
 
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -306,7 +422,15 @@
   }
 
   /** След от бьющего к цели — если известно, кто бил и где обе стороны стоят. */
-  function markTrace(pos: BattleMatchState, by: number | null, target: number, e: BattleEvent) {
+  function markTrace(
+    pos: BattleMatchState,
+    by: number | null,
+    target: number,
+    e: BattleEvent,
+    /** Сколько след держится в полную силу — столько же, сколько само
+     *  движение: погасший раньше стрелы след рассказывает не про этот удар. */
+    full = 400,
+  ) {
     if (by == null) return;
     const spotOf = (id: number) => pos.board.find((s) => s.unit === id)?.cell ?? null;
     const from = spotOf(by);
@@ -327,73 +451,90 @@
     traces = [...traces, trace];
     if (!calm) {
       const key = trace.key;
+      // «В полную силу» держится ровно столько, сколько длится само движение:
+      // след, погасший раньше стрелы, — это след не про этот удар.
       setTimeout(() => {
         traces = traces.map((x) => (x.key === key ? { ...x, fresh: false } : x));
-      }, BEAT.damaged);
+      }, Math.max(200, full));
     } else {
       trace.fresh = false;
     }
   }
 
-  /** Показать одно событие: движение, потом перепись, потом пауза. */
+  /**
+   * Показать одно событие: разложить движение, переписать позицию в мгновение
+   * касания, доиграть остаток.
+   *
+   * Порядок один на все поводы, и это существенно: пока подача, вздрагивание и
+   * оседание были тремя ветками с тремя константами, стрела не помещалась
+   * никуда — её пришлось бы делать четвёртой. Теперь ветвление осталось ровно
+   * там, где события ПРАВДА разные: у выставления тело сначала появляется, у
+   * падения — исчезает последним.
+   */
   async function beat(pos: BattleMatchState, e: BattleEvent, token: number) {
     const alive = () => run === token;
 
+    // Шаг — не движение из свода, а перекладка: тело переезжает на другую
+    // клетку, и жеста для этого в словаре нет.
     if ('moved' in e) {
       transcribe(pos, e);
       live = copy(pos);
-      if (!calm) await sleep(BEAT.moved);
+      if (!calm) await sleep(BEAT_MOVED);
       return alive();
     }
 
     if ('damaged' in e || 'immune' in e) {
       const target = 'damaged' in e ? e.damaged.target : e.immune.target;
       const by = 'damaged' in e ? e.damaged.by : e.immune.by;
-      markTrace(pos, by, target, e);
+      const motion = motionOf(pos, by ?? target, e);
+      const span = calm ? 0 : (motion ? Math.min(MOTION_MS_MAX, motionSpan(motion)) : 0);
+      markTrace(pos, by, target, e, span);
 
-      if (!calm && by != null) {
-        const a = pos.board.find((s) => s.unit === by)?.cell;
-        const b = pos.board.find((s) => s.unit === target)?.cell;
-        if (a && b) {
-          // Треть клетки в сторону цели: удар должен читаться без единого числа,
-          // и должно быть видно, кто ударил, — при дальности 4 иначе никак.
-          const len = Math.max(1, Math.abs(b.x - a.x) + Math.abs(b.y - a.y));
-          lunge = { unit: by, dx: ((b.x - a.x) / len) * 33, dy: ((b.y - a.y) / len) * 33 };
-          await sleep(LUNGE_OUT);
-          if (!alive()) return false;
-        }
+      put(pos, motion, by, target);
+      const contact = calm ? 0 : Math.min(contactOf(motion), span);
+      if (contact > 0) {
+        await sleep(contact);
+        if (!alive()) return false;
       }
 
       // Урон показывается тем, что меняется здоровье цели. Ничего не взлетает.
       transcribe(pos, e);
       live = copy(pos);
-      if ('damaged' in e && !calm) {
-        flinch = target;
-        setTimeout(() => (flinch = null), 160);
-      }
-      if (!calm) {
-        lunge = null;
-        await sleep(LUNGE_BACK);
-      }
+
+      if (span > contact) await sleep(span - contact);
+      acting = null;
       return alive();
     }
 
     if ('died' in e) {
+      // Единственное событие, у которого перепись стоит ПОСЛЕ: тело обязано
+      // быть видно, пока оседает, а перепись убирает его с доски.
+      const motion = motionOf(pos, e.died.target, e);
+      put(pos, motion, null, e.died.target);
       if (!calm) {
-        falling = e.died.target;
-        await sleep(BEAT.died);
-        falling = null;
+        await sleep(motionSpan(motion));
+        acting = null;
         if (!alive()) return false;
       }
+      acting = null;
       transcribe(pos, e);
       live = copy(pos);
       return alive();
     }
 
+    // Выставление и лечение: тело должно существовать (или уже быть залечено),
+    // прежде чем ему что-то показывать.
     transcribe(pos, e);
     live = copy(pos);
-    if (!calm && ('played' in e || 'healed' in e)) {
-      await sleep('played' in e ? BEAT.played : BEAT.healed);
+    if ('played' in e || 'healed' in e) {
+      const striker = 'healed' in e ? e.healed.by : null;
+      const target = 'played' in e ? e.played.unit : e.healed.target;
+      const motion = motionOf(pos, striker ?? target, e);
+      // Выставление показывается на самом вышедшем теле, а не на бьющем:
+      // у него нет ни автора, ни цели, есть только оно само.
+      put(pos, motion, 'played' in e ? target : striker, 'played' in e ? null : target);
+      if (!calm) await sleep(motionSpan(motion));
+      acting = null;
     }
     return alive();
   }
@@ -412,6 +553,9 @@
 
     for (let i = 0; i < cut; i++) transcribe(pos, events[i]);
     const tail = events.slice(cut);
+    // Своя половина уже на доске — и в журнале сразу. Хвост хранителя
+    // дописывается по мере `beat()`, а не всем пакетом заранее.
+    told = events.slice(0, cut);
 
     if (!tail.length || calm) {
       for (const e of tail) {
@@ -419,6 +563,7 @@
         if (d) markTrace(pos, d.by, d.target, e);
         transcribe(pos, e);
       }
+      told = events;
       live = null;
       before = match.state;
       return;
@@ -428,6 +573,7 @@
     running = true;
     playing = true;
     picked = null;
+    sheet = null;
     for (const e of tail) {
       // Пауза — между тем, что видно. Конец хода и итог ничего не показывают,
       // и полсекунды тишины перед ними человек читает как задержку, а не как ритм.
@@ -436,6 +582,7 @@
         if (run !== token) return;
       }
       if (!(await beat(pos, e, token))) return;
+      told = [...told, e];
     }
     if (run !== token) return;
     running = false;
@@ -459,11 +606,11 @@
 
   function arrive(events: BattleEvent[]) {
     picked = null;
+    sheet = null;
     reading = null;
-    lunge = null;
-    flinch = null;
-    falling = null;
+    acting = null;
     traces = [];
+    told = [];
 
     if (before === null || running) {
       // Первый показ — или посылка догнала предыдущую, пока играла прошлая:
@@ -503,7 +650,7 @@
 
   type Line = { text: string; trail: Trace['trail']; total: number; head: string };
   let journal = $derived.by<Line[]>(() =>
-    match.events.map((e) => {
+    told.map((e) => {
       const bare = (text: string): Line => ({ text, trail: [], total: 0, head: '' });
       if ('played' in e) return bare(`${nameOf(e.played.unit)} — ${$t('battleLogPlayed')}`);
       if ('moved' in e) return bare(`${nameOf(e.moved.unit)} — ${$t('battleLogMoved')}`);
@@ -533,17 +680,21 @@
 
   // ── Доска по высоте окна ──────────────────────────────────────────────────
   //
-  // Ширина доски считается из высоты: шесть рядов клеток 3:4 дают
-  // `H = 8·(W − зазоры)/3`, откуда `W = 0.375·H`. Значит, надо знать, сколько
-  // высоты занято НЕ доской, — и это единственное, что нельзя написать в CSS:
-  // над доской стоит шапка дома и поля страницы, а сцена о них не знает.
+  // Пока стол стоит вертикально, ширина считается из высоты: шесть рядов
+  // клеток 3:4 дают `H = 8·(W − зазоры)/3`, откуда `W = 0.375·H`. Значит, надо
+  // знать, сколько высоты занято НЕ доской, — и это единственное, что нельзя
+  // написать в CSS: над доской стоит шапка дома и поля страницы, а сцена о них
+  // не знает. Когда стол вдоль комнаты, ширина берётся из колонки, и замер
+  // не нужен.
   //
   // Поэтому замер, а не константа. Обе величины не зависят от ширины доски
   // (руки на широком экране стоят в боковой колонке), так что обратной связи
   // нет и мерить приходится только при изменении окна.
   let fieldEl = $state<HTMLElement | null>(null);
   let tableEl = $state<HTMLElement | null>(null);
+  let roomEl = $state<HTMLElement | null>(null);
   let room = $state(272);
+  let along = $state(false);
 
   function measureRoom() {
     if (!fieldEl || !tableEl) return;
@@ -576,8 +727,28 @@
     return () => window.removeEventListener('resize', again);
   });
 
+  $effect(() => {
+    const el = roomEl;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const apply = (w: number) => {
+      along = w >= ALONG;
+    };
+    apply(el.getBoundingClientRect().width);
+    const ro = new ResizeObserver((entries) => {
+      apply(entries[0]?.contentRect.width ?? 0);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  });
+
   const rows = Array.from({ length: DEPTH }, (_, y) => y);
   const cols = Array.from({ length: WIDTH }, (_, x) => x);
+  /** Порядок клеток на экране. Движок не знает про это: x и y те же. */
+  let spots = $derived(
+    along
+      ? cols.flatMap((x) => rows.map((y) => ({ x, y })))
+      : rows.flatMap((y) => cols.map((x) => ({ x, y }))),
+  );
 </script>
 
 <svelte:window onkeydown={onkey} />
@@ -626,19 +797,13 @@
         </button>
       {/each}
     </div>
-    <!-- Причина словами. Без неё «карта не нажимается» неотличимо от поломки. -->
-    {#if handTrouble}
-      <p class="hand-why">
-        {handTrouble === 'mana' ? $t('battleNoManaYet') : $t('battleNoRoomYet')}
-      </p>
-    {/if}
   {/if}
 {/snippet}
 
 <!-- Комната и стол — разные элементы: элемент не может спрашивать свой
      собственный контейнер, и запрос ниже молча мерил бы страницу. -->
-<div class="room">
-<div class="scene" class:scene--held={playing}>
+<div class="room" bind:this={roomEl}>
+<div class="scene" class:scene--held={playing} class:scene--along={along}>
   <!-- Слева: круг, чей ход, мана обеих сторон. -->
   <aside class="ledger">
     <p class="ledger-line">{$t('battleRound')} {position.round}</p>
@@ -672,11 +837,10 @@
     </p>
     <p class="ledger-note">{$t('battleManaNote')}</p>
 
-    <!-- Обе руки, лицом: этюд решают рассуждением. Порядок сверху вниз тот же,
-         что на доске, — хранитель над гостем. -->
+    <!-- Рука хранителя в этой колонке на широком экране: тогда под доской
+         остаются только свои карты и ход, и они помещаются в окно. -->
     <div class="ledger-hands">
       {@render keeperHand()}
-      {@render ownHand()}
     </div>
   </aside>
 
@@ -684,43 +848,44 @@
     <div class="table-hand table-hand--theirs">{@render keeperHand()}</div>
 
     <div class="field" bind:this={fieldEl}>
+      <div class="cloth">
+      <div class="face">
       <div class="grid">
-        {#each rows as y (y)}
-          {#each cols as x (x)}
-            {@const here = unitAt(x, y)}
-            {@const open2 = openCells.has(`${x},${y}`)}
-            {@const target = here ? openUnits.get(here.id) : undefined}
-            {@const dto = here ? dtoOf(here.card.name) : null}
-            <button
-              type="button"
-              disabled={!mine}
-              onclick={() => tapCell(x, y)}
-              aria-label={here ? titleOf(here.card.name) : `${x},${y}`}
-              class="cell"
-              class:cell--open={open2}
-              class:cell--picked={picked?.kind === 'unit' && here?.id === picked.id}
-              class:cell--attack={target === 'attack'}
-              class:cell--mend={target === 'mend'}
-              class:cell--live={mine && here?.owner === me && ready.has(here.id)}
-            >
+        {#each spots as { x, y } (`${x},${y}`)}
+          {@const here = unitAt(x, y)}
+          {@const open2 = openCells.has(`${x},${y}`)}
+          {@const target = here ? openUnits.get(here.id) : undefined}
+          {@const dto = here ? dtoOf(here.card.name) : null}
+          <button
+            type="button"
+            disabled={playing}
+            onclick={() => tapCell(x, y)}
+            aria-label={here ? titleOf(here.card.name) : `${x},${y}`}
+            class="cell"
+            class:cell--open={open2}
+            class:cell--picked={picked?.kind === 'unit' && here?.id === picked.id}
+            class:cell--attack={target === 'attack'}
+            class:cell--mend={target === 'mend'}
+            class:cell--live={mine && here?.owner === me && ready.has(here.id)}
+          >
               {#if here}
                 <!-- Погасшим показывается и тело, которое уже сходило, и тело,
                      которому нечем ходить: с тех пор как шаг не тратит ход
                      целиком, второе случается часто, и без этого оно выглядело
                      бы свежим, не отзываясь на нажатие. -->
+                <!-- Шевеление приходит готовой строкой из `stage()`: и
+                     подача, и вздрагивание, и оседание — один и тот же путь,
+                     потому что для сцены они одно и то же, движение из свода. -->
                 <span
                   class="figure"
                   style:--fit={dto ? aspectOf(dto) : DEFAULT_ASPECT}
                   class:figure--spent={here.owner === me
                     && (here.acted || (mine && !ready.has(here.id)))}
-                  class:figure--falling={falling === here.id}
-                  class:figure--flinch={flinch === here.id}
-                  style={lunge?.unit === here.id
-                    ? `--lx:${lunge.dx}%;--ly:${lunge.dy}%`
-                    : undefined}
-                  class:figure--lunge={lunge?.unit === here.id}
+                  style={stirOf(here.id)}
                 >
                   {#if dto}
+                    <!-- transition off: two copies of one work share a card id,
+                         and two `view-transition-name`s abort the morph. -->
                     <BattleCard card={dto} {frames} owned={true} transition={false} interactive={false} />
                   {:else}
                     <span class="figure-name">{titleOf(here.card.name)}</span>
@@ -741,25 +906,36 @@
               {/if}
             </button>
           {/each}
-        {/each}
         <span class="midline" aria-hidden="true"></span>
       </div>
 
+      <!-- Нарисованное: стрела в полёте, вспышка на цели, полоса кадров.
+           Лежит в тех же `inset: 0` от поля, что следы и печать, — поле шире
+           доски увело бы всё вбок. -->
+      <BattleMotionStage motes={acting?.play.motes ?? []} />
+
       <!-- Следы ударов. viewBox под сетку клеток: линия декоративна, и доли
            пикселя, которые съедают зазоры, ей ничего не стоят. -->
-      <svg class="traces" viewBox="0 0 {WIDTH} {DEPTH}" preserveAspectRatio="none" aria-hidden="true">
+      <svg
+        class="traces"
+        viewBox="0 0 {along ? DEPTH : WIDTH} {along ? WIDTH : DEPTH}"
+        preserveAspectRatio="none"
+        aria-hidden="true"
+      >
         {#each traces as tr (tr.key)}
+          {@const x1 = (along ? tr.from.y : tr.from.x) + 0.5}
+          {@const y1 = (along ? tr.from.x : tr.from.y) + 0.5}
+          {@const x2 = (along ? tr.to.y : tr.to.x) + 0.5}
+          {@const y2 = (along ? tr.to.x : tr.to.y) + 0.5}
           <line
             class="trace"
             class:trace--fresh={tr.fresh}
-            x1={tr.from.x + 0.5} y1={tr.from.y + 0.5}
-            x2={tr.to.x + 0.5} y2={tr.to.y + 0.5}
+            {x1} {y1} {x2} {y2}
             vector-effect="non-scaling-stroke"
           />
           <line
             class="trace-grip"
-            x1={tr.from.x + 0.5} y1={tr.from.y + 0.5}
-            x2={tr.to.x + 0.5} y2={tr.to.y + 0.5}
+            {x1} {y1} {x2} {y2}
             vector-effect="non-scaling-stroke"
             role="presentation"
             onmouseenter={() => (reading = tr.key)}
@@ -771,9 +947,13 @@
       {#if reading !== null}
         {@const tr = traces.find((x) => x.key === reading)}
         {#if tr}
+          {@const spanX = along ? DEPTH : WIDTH}
+          {@const spanY = along ? WIDTH : DEPTH}
+          {@const midX = along ? tr.from.y + tr.to.y : tr.from.x + tr.to.x}
+          {@const midY = along ? tr.from.x + tr.to.x : tr.from.y + tr.to.y}
           <div
             class="breakdown"
-            style="--bx:{((tr.from.x + tr.to.x + 1) / 2 / WIDTH) * 100}%;--by:{((tr.from.y + tr.to.y + 1) / 2 / DEPTH) * 100}%"
+            style="--bx:{((midX + 1) / 2 / spanX) * 100}%;--by:{((midY + 1) / 2 / spanY) * 100}%"
           >
             <p class="breakdown-head">{tr.by} → {tr.at}</p>
             {#if tr.immune}
@@ -794,10 +974,11 @@
         {/if}
       {/if}
 
-      <!-- Исход. Сургучная печать, тот же приём, что при покупке карты. -->
+      <!-- Исход. Сургучная печать, тот же оттиск, что при получении карты. -->
       {#if position.outcome && !playing}
         <div class="seal-wrap" transition:fade={{ duration: 200 }}>
-          <div class="seal" class:seal--dim={position.outcome !== 'player'}>
+          <div class="verdict" class:verdict--dim={position.outcome !== 'player'}>
+            <WaxSeal size="6.5rem" dim={position.outcome !== 'player'} />
             <p class="seal-word">
               {position.outcome === 'player'
                 ? $t('battleWonByPlayer')
@@ -817,18 +998,27 @@
           </div>
         </div>
       {/if}
+      </div>
+      </div>
     </div>
 
-    <!-- Своя рука, ближе к рукам: на телефоне это буквально так. -->
-    <div class="table-hand table-hand--mine">{@render ownHand()}</div>
-
-    <div class="turn">
-      <button type="button" disabled={!mine} onclick={() => onact('endTurn')} class="end">
-        {$t('battleEndTurn')}
-      </button>
-      {#if busy || playing}
-        <span class="waiting">{$t('battleKeeperThinks')}</span>
-      {/if}
+    <!-- Своя рука и ход — одна полоса: иначе абзац про ману и кнопка уезжают
+         под складку, а их как раз нажимают чаще всего. -->
+    <div class="foot">
+      <div class="table-hand table-hand--mine">{@render ownHand()}</div>
+      <div class="turn">
+        {#if handTrouble}
+          <p class="hand-why">
+            {handTrouble === 'mana' ? $t('battleNoManaYet') : $t('battleNoRoomYet')}
+          </p>
+        {/if}
+        <button type="button" disabled={!mine} onclick={() => onact('endTurn')} class="end">
+          {$t('battleEndTurn')}
+        </button>
+        {#if playing}
+          <span class="waiting">{$t('battleKeeperThinks')}</span>
+        {/if}
+      </div>
     </div>
   </div>
 
@@ -836,18 +1026,49 @@
     <!-- Карточка выбранного: спокойная и неподвижная, не всплывающая подсказка. -->
     {#if chosen}
       <div class="chosen">
-        <p class="chosen-name">{titleOf(chosen.card.name)}</p>
+        <div class="chosen-head">
+          {#if chosenDto}
+            <button type="button" class="chosen-name" onclick={() => (sheet = chosenDto)}>
+              {titleOf(chosen.card.name)}
+            </button>
+            <button type="button" class="chosen-leaf" onclick={() => (sheet = chosenDto)}>
+              {$t('battlesTableReadCard')}
+            </button>
+          {:else}
+            <p class="chosen-name">{titleOf(chosen.card.name)}</p>
+          {/if}
+        </div>
+        {#if chosenKind}
+          <p class="chosen-kind">
+            {chosenKind}{#if chosenChannel}<span class="sep">·</span>{chosenChannel}{/if}
+          </p>
+        {/if}
         <dl class="chosen-stats">
-          <div><dt>{$t('battlesHealthLabel')}</dt><dd class="num">{chosen.health.current}/{chosen.health.max}</dd></div>
-          <div><dt>{$t('battlesPowerLabel')}</dt><dd class="num">{chosen.power}</dd></div>
-          <div><dt>{$t('battleStatArmour')}</dt><dd class="num">{chosen.armor}</dd></div>
-          <div><dt>{$t('battleStatWard')}</dt><dd class="num">{chosen.ward}</dd></div>
-          <div><dt>{$t('battleStatReach')}</dt><dd class="num">{chosen.reach}</dd></div>
-          <div><dt>{$t('battleStatStep')}</dt><dd class="num">{chosen.step}</dd></div>
-          {#if chosen.mend > 0}
-            <div><dt>{$t('battleStatMend')}</dt><dd class="num">{chosen.mend}</dd></div>
+          <div>
+            <dt>{$t('battlesHealthLabel')}</dt>
+            <dd class="num">{chosen.health.current}/{chosen.health.max}</dd>
+          </div>
+          {#if chosenDto}
+            <div><dt>{$t('battlesCostLabel')}</dt><dd class="num">{chosenDto.cost}</dd></div>
+            <div><dt>{$t('battlesPowerLabel')}</dt><dd class="num">{chosenDto.power}</dd></div>
+            {#each chosenPass.filter((row) => row.field !== 'health') as row (row.field)}
+              <div>
+                <dt>{$t(BODY_STAT_LABELS[row.field])}</dt>
+                <dd class="num">{row.value}</dd>
+              </div>
+            {/each}
+          {:else}
+            <div><dt>{$t('battlesPowerLabel')}</dt><dd class="num">{chosen.power}</dd></div>
+            {#if chosen.armor > 0}<div><dt>{$t('battleStatArmour')}</dt><dd class="num">{chosen.armor}</dd></div>{/if}
+            {#if chosen.ward > 0}<div><dt>{$t('battleStatWard')}</dt><dd class="num">{chosen.ward}</dd></div>{/if}
+            {#if chosen.reach > 0}<div><dt>{$t('battleStatReach')}</dt><dd class="num">{chosen.reach}</dd></div>{/if}
+            {#if chosen.step > 0}<div><dt>{$t('battleStatStep')}</dt><dd class="num">{chosen.step}</dd></div>{/if}
+            {#if chosen.mend > 0}<div><dt>{$t('battleStatMend')}</dt><dd class="num">{chosen.mend}</dd></div>{/if}
           {/if}
         </dl>
+        {#if chosenFace?.effect}
+          <p class="chosen-effect">{chosenFace.effect}</p>
+        {/if}
         {#if chosen.statuses.length}
           <ul class="chosen-riders">
             {#each chosen.statuses as st, i (i)}
@@ -858,7 +1079,7 @@
       </div>
     {/if}
 
-    <div class="journal">
+    <div class="journal" class:journal--vacant={!journal.length}>
       <p class="journal-label">{$t('battleJournal')}</p>
       {#if !journal.length}
         <p class="journal-empty">{$t('battleJournalEmpty')}</p>
@@ -897,6 +1118,10 @@
 </div>
 </div>
 
+{#if sheet}
+  <BattleSheet card={sheet} {frames} taking={false} onclose={() => (sheet = null)} />
+{/if}
+
 <style>
   .room {
     container-type: inline-size;
@@ -927,10 +1152,10 @@
        добавляет веса, а стоит он в этом файле выше общего правила — значит,
        перебить его может только вес. */
     .scene .ledger-hands {
-      display: contents;
+      display: block;
     }
 
-    .table-hand {
+    .table-hand--theirs {
       display: none;
     }
 
@@ -944,19 +1169,63 @@
     }
 
     .field,
-    .turn {
+    .foot {
       width: var(--board);
       margin-inline: auto;
     }
+  }
+
+  /* Стол вдоль комнаты: те же 18 клеток, половины слева и справа. Класс, а не
+     второй контейнерный порог: порядок клеток в разметке должен совпасть с
+     колонками, и это знает только сцена. */
+  .scene.scene--along {
+    display: grid;
+    grid-template-columns: 11rem minmax(0, 1fr) minmax(12rem, 16rem);
+    align-items: start;
+    gap: 1rem 1.25rem;
+  }
+
+  .scene--along .ledger-hands {
+    display: block;
+  }
+
+  .scene--along .table-hand--theirs {
+    display: none;
+  }
+
+  .scene--along .table {
+    max-width: none;
+    width: 100%;
+  }
+
+  /* Шесть колонок 3:4 дают H ≈ ⅔·W. Ширину берём из остатка высоты, иначе
+     поле занимает окно целиком, а рука и ход уезжают под складку. */
+  .scene--along .field,
+  .scene--along .foot {
+    width: min(100%, 42rem, calc((100dvh - var(--room, 14rem)) * 1.5));
+    margin-inline: auto;
+  }
+
+  .scene--along .grid {
+    grid-template-columns: repeat(6, 1fr);
+  }
+
+  .scene--along .midline {
+    left: 50%;
+    right: auto;
+    top: 0;
+    bottom: 0;
+    border-top: none;
+    border-left: 1px dashed rgba(52, 37, 28, 0.2);
   }
 
   .ledger {
     display: flex;
     flex-direction: column;
     gap: 0.35rem;
-    font-size: 11px;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
+    font-family: Georgia, 'Fraunces', serif;
+    font-size: 13px;
+    letter-spacing: 0.04em;
     color: #8a6a55;
   }
 
@@ -979,8 +1248,8 @@
     flex-direction: column;
     gap: 0.75rem;
     min-width: 0;
-    /* Доска — колонка около 420 px, и на широком экране тоже: поле 3×6
-       вертикально само по себе, растягивать его некуда. */
+    /* Пока стол стоит вертикально — колонка около 420 px: поле 3×6 само по
+       себе высокое, растягивать его некуда. Вдоль комнаты потолок снимается. */
     max-width: 26rem;
   }
 
@@ -1009,10 +1278,14 @@
   .cell {
     position: relative;
     aspect-ratio: 3 / 4;
-    border: 1px solid rgba(52, 37, 28, 0.12);
+    border: 1px solid transparent;
     background: transparent;
     text-align: left;
     transition: background-color 200ms ease, border-color 200ms ease;
+  }
+
+  .cell:not(:has(.figure)):not(.cell--open):not(.cell--attack):not(.cell--mend):not(.cell--picked) {
+    background: radial-gradient(circle at 50% 50%, rgba(52, 37, 28, 0.1) 1.2px, transparent 1.7px);
   }
 
   /* Куда можно шагнуть: клетка светлеет на тон, кромка становится сплошной. */
@@ -1087,27 +1360,11 @@
     opacity: 0.55;
   }
 
-  .figure--lunge {
-    transform: translate(var(--lx, 0), var(--ly, 0));
-    transition: transform 220ms cubic-bezier(0.2, 0.8, 0.25, 1);
-  }
-
-  .figure--flinch {
-    animation: flinch 160ms ease;
-  }
-
-  @keyframes flinch {
-    0% { transform: translate(0, 0); }
-    40% { transform: translate(3px, 0); }
-    100% { transform: translate(0, 0); }
-  }
-
-  /* Бледнеет и оседает. Ни черепа, ни крестика, ни слова «убит». */
-  .figure--falling {
-    opacity: 0;
-    transform: translateY(6px);
-    transition: opacity 500ms ease, transform 500ms ease;
-  }
+  /* Подача, вздрагивание и оседание жили здесь тремя правилами и одним
+     `@keyframes`. Теперь они — три записи словаря жестов в
+     `BattleMotionStage.svelte`, а сюда приходят готовой строкой `animation`.
+     Причина не в красоте: три правила не могли назвать движение, которое
+     хранитель завёл пять секунд назад. */
 
   .figure-name,
   .held-name {
@@ -1230,8 +1487,9 @@
 
   .hand {
     display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    gap: 0;
   }
 
   .hand-label {
@@ -1243,7 +1501,8 @@
 
   .held {
     display: block;
-    width: 4.5rem;
+    width: 4.4rem;
+    margin-inline: -0.35rem;
     padding: 0;
     background: transparent;
     border: 1px solid transparent;
@@ -1251,6 +1510,12 @@
 
   .held--mine {
     cursor: pointer;
+  }
+
+  .held--picked,
+  .held--mine:hover {
+    z-index: 2;
+    margin-inline: 0.1rem;
   }
 
   .held--picked {
@@ -1265,6 +1530,15 @@
     cursor: default;
   }
 
+  .ledger-hands .hand {
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  .ledger-hands .held {
+    margin-inline: 0;
+  }
+
   .ledger-note {
     margin: 0.35rem 0 0;
     max-width: 30ch;
@@ -1276,28 +1550,47 @@
   }
 
   .hand-why {
-    margin: 0.5rem 0 0;
-    max-width: 30ch;
+    margin: 0;
+    max-width: 18rem;
     font-family: Georgia, 'Fraunces', serif;
-    font-size: 0.82rem;
+    font-size: 0.72rem;
     font-style: italic;
-    line-height: 1.5;
+    line-height: 1.35;
     color: #8a6a55;
+  }
+
+  .foot {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 0.85rem 1.1rem;
+    min-width: 0;
+  }
+
+  .foot .table-hand--mine {
+    flex: 1 1 auto;
+    min-width: 0;
   }
 
   .turn {
     display: flex;
-    align-items: center;
-    gap: 0.75rem;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.35rem;
+    flex: 0 0 auto;
+    max-width: 16rem;
   }
 
   .end {
-    font-family: inherit;
-    padding: 0.5rem 1rem;
-    border: 1px solid rgba(52, 37, 28, 0.25);
-    font-size: 10px;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
+    font-family: Georgia, 'Fraunces', serif;
+    font-style: italic;
+    font-size: 15px;
+    letter-spacing: 0.02em;
+    padding: 0.1rem 0;
+    border: none;
+    border-bottom: 1px solid #d8c6b1;
+    background: none;
+    white-space: nowrap;
   }
 
   .end:disabled {
@@ -1305,7 +1598,9 @@
   }
 
   .end:not(:disabled):hover {
-    background: rgba(52, 37, 28, 0.05);
+    background: none;
+    border-bottom-color: #6f3b24;
+    color: #6f3b24;
   }
 
   .waiting {
@@ -1332,10 +1627,65 @@
     border: 1px solid #d8c6b1;
   }
 
-  .chosen-name {
+  .chosen-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.6rem;
     margin-bottom: 0.4rem;
-    font-family: 'Cormorant Garamond', Georgia, serif;
+  }
+
+  .chosen-name {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    font-family: Georgia, 'Fraunces', serif;
     font-size: 16px;
+    text-align: left;
+    color: inherit;
+    cursor: pointer;
+  }
+
+  p.chosen-name {
+    cursor: default;
+  }
+
+  button.chosen-name:hover {
+    color: #6f3b24;
+  }
+
+  .chosen-leaf {
+    flex-shrink: 0;
+    margin: 0;
+    padding: 0.12em 0.5em;
+    font: inherit;
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #34251c;
+    background: #f8f1e7;
+    border: 1px solid #d8c6b1;
+    cursor: pointer;
+  }
+
+  .chosen-leaf:hover {
+    border-color: #6f3b24;
+  }
+
+  .chosen-kind {
+    margin: 0 0 0.55rem;
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #8a6a55;
+  }
+
+  .chosen-kind .sep {
+    margin: 0 0.35em;
+    opacity: 0.55;
   }
 
   .chosen-stats {
@@ -1356,6 +1706,17 @@
     letter-spacing: 0.12em;
     text-transform: uppercase;
     color: #8a6a55;
+  }
+
+  .chosen-effect {
+    margin: 0.65rem 0 0;
+    padding-top: 0.5rem;
+    border-top: 1px solid rgba(52, 37, 28, 0.12);
+    font-family: Georgia, 'Fraunces', serif;
+    font-size: 13px;
+    font-style: italic;
+    line-height: 1.45;
+    color: #5f4636;
   }
 
   .chosen-riders {
@@ -1408,9 +1769,13 @@
 
   /* Поле 3×6 выше окна, поэтому печать держится в виду, а не в середине доски:
      оттиск, за которым надо прокручивать, — это не оттиск. */
-  .seal {
+  .verdict {
     position: sticky;
     top: max(1.5rem, calc(50vh - 7rem));
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.85rem;
     width: max-content;
     max-width: 100%;
     margin: 0 auto;
@@ -1421,27 +1786,17 @@
     outline: 1px solid #d8c6b1;
     outline-offset: 4px;
     box-shadow: 0 6px 28px rgba(52, 37, 28, 0.2);
-    animation: press 600ms cubic-bezier(0.2, 0.8, 0.25, 1) both;
+    transform: rotate(-1deg);
   }
 
-  /* Поле за хранителем — та же печать, но тусклее и без поворота. */
-  .seal--dim {
-    opacity: 0.8;
-    animation: press-flat 600ms ease both;
-  }
-
-  @keyframes press {
-    from { transform: scale(1.14) rotate(-4deg); opacity: 0; }
-    to { transform: scale(1) rotate(-1deg); opacity: 1; }
-  }
-
-  @keyframes press-flat {
-    from { transform: scale(1.1); opacity: 0; }
-    to { transform: scale(1); opacity: 1; }
+  .verdict--dim {
+    opacity: 0.88;
+    transform: none;
   }
 
   .seal-word {
-    font-family: 'Cormorant Garamond', Georgia, serif;
+    margin: 0;
+    font-family: Georgia, 'Fraunces', serif;
     font-size: 20px;
     color: #34251c;
   }
@@ -1472,20 +1827,23 @@
     color: #c65f3c;
   }
 
+  /* Обязательство, а не украшение. `stage()` при этой настройке не отдаёт ни
+     одного жеста и ни одной копии, так что гасить здесь нечего — кроме того,
+     что сцена рисует сама. */
   @media (prefers-reduced-motion: reduce) {
     .figure,
     .cell,
     .trace {
       transition: none;
     }
-
-    .figure--flinch {
-      animation: none;
-    }
-
-    .seal,
-    .seal--dim {
-      animation: none;
-    }
   }
+
+  .cloth {
+    min-width: 0;
+  }
+
+  .face {
+    position: relative;
+  }
+
 </style>

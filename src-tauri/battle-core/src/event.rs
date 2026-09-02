@@ -42,7 +42,19 @@ pub enum Event {
     /// Felt as nothing at all — a different picture from zero damage, and the
     /// scene should say so.
     Immune { target: UnitId, by: Option<UnitId>, channel: Channel },
-    Healed { target: UnitId, amount: i32 },
+    Healed {
+        target: UnitId,
+        /// Кто залечил, когда залечил кто-то. `None` — оберег, зона, чара без
+        /// автора.
+        ///
+        /// Несётся ради сцены, не ради правил, и ровно по той же причине, по
+        /// которой это поле получил `Damaged`: движение лечения начинается у
+        /// лекаря, и без имени бьющего его негде начать. До этого поля событие
+        /// называло только того, кому стало легче, — а на доске из шести рядов
+        /// это здоровье, выросшее само по себе.
+        by: Option<UnitId>,
+        amount: i32,
+    },
     Died { target: UnitId },
     TurnEnded { side: Side, round: u8 },
     Finished { outcome: Outcome },

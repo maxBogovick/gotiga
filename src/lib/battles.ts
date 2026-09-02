@@ -1,8 +1,9 @@
 // Скромные эпические битвы — the shelf of cards.
 //
 // A card is a work of the house seen from another side. What the room shows
-// first is not a price list but a shelf: cards you have stand face up, the rest
-// lie face down in dust with what they would cost written on the back.
+// first is not a price list but a shelf of faces: every card is shown, or a
+// person cannot be interested in it. What you hold is marked under it, not
+// by turning the others to the wall.
 //
 // Two ranges that look alike and are not the same thing:
 //   * `tier`  — the card's rank, 1..5. A property of the card, set by the keeper.
@@ -12,6 +13,17 @@
 import type {
   BattleBadgeShape,
   BattleCard,
+  BattleCardKind,
+  BattleChannel,
+  BattleEvent,
+  GestureBody,
+  GestureFade,
+  GestureTurn,
+  GestureWhom,
+  Motion,
+  MotionGesture,
+  MotionOccasion,
+  MotionWear,
   BattleFrame,
   BattleFrameMode,
   BattleLayout,
@@ -27,7 +39,7 @@ import type {
   SliceTurn,
 } from '$lib/types/api';
 import { fontStack } from '$lib/fonts';
-import type { Lang } from '$lib/i18n';
+import type { Lang, TranslationKey } from '$lib/i18n';
 
 export const TIERS = [1, 2, 3, 4, 5] as const;
 
@@ -802,21 +814,40 @@ export function frameName(frame: BattleFrame, lang: Lang): string {
 }
 
 /**
- * The reader's own language wins, and an empty one never blanks the card —
- * the same two-way fallback the gazette uses, for the same reason: a card
- * written only in Russian must still read as something in English.
+ * The line written for this language, and no other.
+ *
+ * Gazette copy may fall across languages so a Russian-only leaf still reads
+ * in English. A card on the shelf must not: an empty `titleEn` used to print
+ * as Cyrillic on the English shelf, and a race named only «Шмаг» sat in
+ * `nameEn` as if it were English. If the keeper has not written this
+ * language, the card is silent in it.
+ *
+ * Cyrillic sitting in an English field (the old silent copy) is treated as
+ * missing, not as English.
  */
+function lineInLang(own: string | null | undefined, lang: Lang): string {
+  const s = own?.trim() ?? '';
+  if (!s) return '';
+  if (lang === 'en' && mostlyCyrillic(s)) return '';
+  return s;
+}
+
+function mostlyCyrillic(s: string): boolean {
+  const letters = [...s].filter((ch) => /\p{L}/u.test(ch));
+  if (!letters.length) return false;
+  const cyr = letters.filter((ch) => /\p{Script=Cyrillic}/u.test(ch)).length;
+  return cyr * 2 >= letters.length;
+}
+
 export function cardCopy(
   card: BattleCard,
   lang: Lang,
 ): { title: string; effect: string; lore: string } {
   const ru = lang === 'ru';
-  const pick = (a: string | null | undefined, b: string | null | undefined) =>
-    ((ru ? a?.trim() || b?.trim() : b?.trim() || a?.trim()) ?? '');
   return {
-    title: pick(card.titleRu, card.titleEn),
-    effect: pick(card.effectRu, card.effectEn),
-    lore: pick(card.loreRu, card.loreEn),
+    title: lineInLang(ru ? card.titleRu : card.titleEn, lang),
+    effect: lineInLang(ru ? card.effectRu : card.effectEn, lang),
+    lore: lineInLang(ru ? card.loreRu : card.loreEn, lang),
   };
 }
 
@@ -827,20 +858,21 @@ export function traitCopy(
   lang: Lang,
 ): { name: string; other: string; text: string } {
   const ru = lang === 'ru';
-  const name = (ru ? trait.nameRu : trait.nameEn)?.trim() || '';
-  const other = (ru ? trait.nameEn : trait.nameRu)?.trim() || '';
-  const text = ((ru ? trait.textRu?.trim() || trait.textEn?.trim() : trait.textEn?.trim() || trait.textRu?.trim()) ?? '');
-  return { name: name || other, other: name && other && name !== other ? other : '', text };
+  const name = lineInLang(ru ? trait.nameRu : trait.nameEn, lang);
+  const other = lineInLang(ru ? trait.nameEn : trait.nameRu, ru ? 'en' : 'ru');
+  const text = lineInLang(ru ? trait.textRu : trait.textEn, lang);
+  return { name, other: name && other && name !== other ? other : '', text };
 }
 
-/** The header band: what this is, and what kind of thing it is. */
+/** The header band: what this is. Kind is a dictionary word, printed elsewhere;
+ *  free `type` is no longer the header, and a digit in the field is not a type. */
 export function headerCopy(card: BattleCard, lang: Lang): { race: string; type: string } {
   const ru = lang === 'ru';
-  const pick = (a: string | null | undefined, b: string | null | undefined) =>
-    ((ru ? a?.trim() || b?.trim() : b?.trim() || a?.trim()) ?? '');
+  const typeRaw = lineInLang(ru ? card.typeRu : card.typeEn, lang);
+  const type = /^\d+$/.test(typeRaw) ? '' : typeRaw;
   return {
-    race: pick(card.raceNameRu, card.raceNameEn),
-    type: pick(card.typeRu, card.typeEn),
+    race: lineInLang(ru ? card.raceNameRu : card.raceNameEn, lang),
+    type,
   };
 }
 
@@ -879,13 +911,73 @@ export function focalStyle(raw: string | null | undefined): string {
  * What a card costs, in the coins it can actually be had for.
  *
  * `null` is not zero: it means this card is not to be had for that coin at all,
- * and the room must not print "0" where it means "never".
+ * and the room must not print "0" where it means "never". A stored `0` is the
+ * same silence — Granny's raven feed was `0`, not `null`, and printing it
+ * named a coin that is not a price.
  */
 export function pricesOf(card: BattleCard): { coin: Coin; amount: number }[] {
   const out: { coin: Coin; amount: number }[] = [];
-  if (card.priceDust != null) out.push({ coin: 'dust', amount: card.priceDust });
-  if (card.priceFeed != null) out.push({ coin: 'feed', amount: card.priceFeed });
+  if (card.priceDust != null && card.priceDust > 0) {
+    out.push({ coin: 'dust', amount: card.priceDust });
+  }
+  if (card.priceFeed != null && card.priceFeed > 0) {
+    out.push({ coin: 'feed', amount: card.priceFeed });
+  }
   return out;
+}
+
+/** One dictionary word for the header: body, spell, or relic — never the free `type`. */
+export function kindLabelKey(
+  kind: BattleCardKind,
+): 'battlesKindUnit' | 'battlesKindSpell' | 'battlesKindRelic' {
+  if (kind === 'spell') return 'battlesKindSpell';
+  if (kind === 'relic') return 'battlesKindRelic';
+  return 'battlesKindUnit';
+}
+
+/**
+ * The channel of the ordinary blow. Bodily is the default and stays silent;
+ * anything else is a word the reader has not already assumed.
+ */
+export function channelLabelKey(
+  channel: BattleChannel,
+): 'battlesChannelMagic' | 'battlesChannelPure' | 'battlesChannelNone' | null {
+  if (channel === 'magic') return 'battlesChannelMagic';
+  if (channel === 'pure') return 'battlesChannelPure';
+  if (channel === 'none') return 'battlesChannelNone';
+  return null;
+}
+
+export type BodyStatField = 'health' | 'mana' | 'armor' | 'ward' | 'reach' | 'step' | 'mend';
+
+/** i18n keys for the body passport — the scene already owns these words. */
+export const BODY_STAT_LABELS = {
+  health: 'battlesHealthLabel',
+  mana: 'battlesManaLabel',
+  armor: 'battleStatArmour',
+  ward: 'battleStatWard',
+  reach: 'battleStatReach',
+  step: 'battleStatStep',
+  mend: 'battleStatMend',
+} as const satisfies Record<BodyStatField, TranslationKey>;
+
+/**
+ * The numbers a person needs to see the body they will play. Zeros stay off
+ * the paper, the same way `pricesOf` will not print a coin that is not a price.
+ */
+export function bodyPassport(
+  card: Pick<BattleCard, BodyStatField>,
+): { field: BodyStatField; value: number }[] {
+  const rows: { field: BodyStatField; value: number }[] = [
+    { field: 'health', value: card.health },
+    { field: 'mana', value: card.mana },
+    { field: 'armor', value: card.armor },
+    { field: 'ward', value: card.ward },
+    { field: 'reach', value: card.reach },
+    { field: 'step', value: card.step },
+    { field: 'mend', value: card.mend },
+  ];
+  return rows.filter((row) => row.value);
 }
 
 /**
@@ -921,4 +1013,447 @@ export function pickImageFile(): Promise<File | null> {
     // that never happened.
     input.click();
   });
+}
+
+/**
+ * Куда вести человека, чтобы он закрыл это поручение.
+ *
+ * Выбирается по УСЛОВИЮ, а не по slug'у: поручения заводит хранитель, и адрес,
+ * привязанный к имени, перестанет работать на первом же новом поручении — а
+ * условий всего тринадцать, и они живут в коде.
+ *
+ * `null` — «здесь и есть»: карты берут и поднимают на самой полке, и ссылка на
+ * страницу, на которой человек стоит, — это ссылка в никуда.
+ */
+export function errandHref(rule: string): string | null {
+  switch (rule) {
+    case 'works_seen':
+    case 'works_liked':
+    case 'comments_left':
+    case 'bookings_done':
+    case 'orders_made':
+      return '/figurines';
+    case 'tales_read':
+      return '/tales';
+    case 'deck_laid':
+      return '/battles/table';
+    case 'matches_finished':
+    case 'matches_won':
+    case 'challenges_won':
+      return '/battles/etude';
+    default:
+      return null;
+  }
+}
+
+// ── Движения ─────────────────────────────────────────────────────────────────
+//
+// Чем показывается удар, чара, выстрел и лечение. ТЗ — `BATTLE-MOTION.md`.
+//
+// Здесь ОДИН отрисовщик на всё: `stage()` возвращает и стиль каждого рисунка, и
+// стиль каждого шевелящегося тела, готовыми строками. Сцена и стол хранителя
+// делают из этого один `{#each}` и два `style=` — ровно как `carvedCopies()`
+// для резьбы рамы, и по той же причине: второй отрисовщик — это превью,
+// которое однажды соврёт.
+
+export const MOTION_OCCASIONS: MotionOccasion[] = [
+  'blow',
+  'spell',
+  'mend',
+  'arrive',
+  'fall',
+  'unseen',
+];
+export const GESTURE_WHOMS: GestureWhom[] = ['striker', 'target', 'flight', 'field'];
+export const GESTURE_BODIES: GestureBody[] = [
+  'none',
+  'lunge',
+  'flinch',
+  'shiver',
+  'sink',
+  'rise',
+  'swell',
+  'bow',
+];
+export const GESTURE_TURNS: GestureTurn[] = ['none', 'toTarget', 'mirror'];
+export const GESTURE_FADES: GestureFade[] = ['hold', 'in', 'out', 'inOut'];
+
+/** Потолок длительности. Тот же, что на сервере: ход хранителя из трёх
+ *  действий обязан укладываться в две-три секунды, а этюд переигрывают. */
+export const MOTION_MS_MAX = 1200;
+export const MOTION_FRAMES_MAX = 24;
+export const GESTURES_MAX = 12;
+export const MOTIONS_MAX = 48;
+export const GESTURE_SIZE_MAX = 300;
+export const GESTURE_NUDGE_MAX = 200;
+export const GESTURE_LAYERS = 12;
+
+/** Отношение сторон клетки на доске: 3 в ширину, 4 в высоту
+ *  (`BATTLE-SCENE.md` §10.1). Нужно ровно затем, чтобы стрела летела под тем
+ *  углом, под каким её видит глаз, а не под тем, какой у клеток в координатах
+ *  движка: угол в клетках и угол на экране — разные числа. */
+const CELL_TALL = 4 / 3;
+
+export function newGesture(whom: GestureWhom = 'striker'): MotionGesture {
+  return {
+    whom,
+    body: whom === 'flight' || whom === 'field' ? 'none' : 'lunge',
+    image: '',
+    frames: 1,
+    size: 60,
+    nudgeX: 0,
+    nudgeY: 0,
+    at: 0,
+    dur: 300,
+    turn: whom === 'flight' ? 'toTarget' : 'none',
+    fade: whom === 'flight' ? 'hold' : 'inOut',
+    layer: 5,
+  };
+}
+
+export function newMotion(occasion: MotionOccasion = 'blow'): Motion {
+  return {
+    id:
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `m${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+    nameEn: '',
+    nameRu: '',
+    occasion,
+    gestures: [newGesture('striker')],
+  };
+}
+
+function gesture(
+  whom: GestureWhom,
+  body: GestureBody,
+  at: number,
+  dur: number,
+): MotionGesture {
+  return { ...newGesture(whom), body, at, dur, fade: 'hold' };
+}
+
+/**
+ * Умолчания дома — и доказательство, что комната не изменилась.
+ *
+ * Числа сверены с `BATTLE-SCENE.md` §6 и с тем, что стояло в сцене до движка:
+ * подача 220 + 180 = 400, вздрагивание 160 с 220-й миллисекунды, лечение 300,
+ * выставление 300, падение 500. Совпадает до миллисекунды, и это не совпадение,
+ * а условие (`BATTLE-MOTION.md` §4): движок, в котором подача к цели
+ * невыразима, — чужой движок, как бы красиво он ни показывал стрелу.
+ *
+ * Зеркало `default_motions()` на сервере. Как и пять рамок в `DEFAULT_FRAMES`,
+ * держится здесь ради того, чтобы комната играла и до первого сохранения свода.
+ */
+export const DEFAULT_MOTIONS: Motion[] = [
+  {
+    id: 'house-blow',
+    nameEn: 'A blow',
+    nameRu: 'Удар',
+    occasion: 'blow',
+    gestures: [
+      // Подача и возврат — ОДИН жест: 220 туда и 180 обратно живут в его
+      // собственной кривой, а не в двух записях. Двумя записями хранитель
+      // однажды сотрёт вторую и оставит тело поданным.
+      gesture('striker', 'lunge', 0, 400),
+      gesture('target', 'flinch', 220, 160),
+    ],
+  },
+  {
+    id: 'house-mend',
+    nameEn: 'Mending',
+    nameRu: 'Лечение',
+    occasion: 'mend',
+    gestures: [gesture('target', 'rise', 0, 300)],
+  },
+  {
+    id: 'house-arrive',
+    nameEn: 'Taking the field',
+    nameRu: 'Выставление',
+    occasion: 'arrive',
+    gestures: [gesture('striker', 'swell', 0, 300)],
+  },
+  {
+    id: 'house-fall',
+    nameEn: 'Falling',
+    nameRu: 'Падение',
+    occasion: 'fall',
+    gestures: [gesture('target', 'sink', 0, 500)],
+  },
+  {
+    id: 'house-unseen',
+    nameEn: 'No author',
+    nameRu: 'Без автора',
+    occasion: 'unseen',
+    gestures: [gesture('target', 'shiver', 0, 160)],
+  },
+];
+
+export function motionSpan(motion: Motion | null): number {
+  if (!motion || !motion.gestures.length) return 0;
+  return Math.min(
+    MOTION_MS_MAX,
+    Math.max(...motion.gestures.map((g) => (g.at || 0) + (g.dur || 0))),
+  );
+}
+
+export function motionTitle(motion: Motion, lang: Lang): string {
+  const own = lang === 'ru' ? motion.nameRu : motion.nameEn;
+  return own || motion.nameRu || motion.nameEn || motion.id;
+}
+
+export function parseMotionWear(raw: string | null | undefined): MotionWear {
+  if (!raw) return {};
+  try {
+    const found = JSON.parse(raw) as MotionWear;
+    return found && typeof found === 'object' ? found : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Пустой наряд — это отсутствие наряда, а не `{}` в базе. */
+export function stringifyMotionWear(wear: MotionWear): string | null {
+  const kept: MotionWear = {};
+  for (const occasion of MOTION_OCCASIONS) {
+    const id = wear[occasion]?.trim();
+    if (id) kept[occasion] = id;
+  }
+  return Object.keys(kept).length ? JSON.stringify(kept) : null;
+}
+
+/**
+ * Повод — ради чего играется движение. Читается ТОЛЬКО из события.
+ *
+ * Ни одного сравнения правил здесь нет и быть не должно (`BATTLE-SCENE.md`
+ * §11.10): «стрелок» не выводится из дальности, потому что копейщик с
+ * дальностью 2 не стреляет. Стрелок — это карта, которой хранитель надел на
+ * повод `blow` движение с летящим жестом, и знать про это движку незачем.
+ */
+export function occasionOf(event: BattleEvent): MotionOccasion | null {
+  if ('played' in event) return 'arrive';
+  if ('died' in event) return 'fall';
+  if ('healed' in event) return event.healed.by == null ? 'unseen' : 'mend';
+  if ('damaged' in event || 'immune' in event) {
+    const by = 'damaged' in event ? event.damaged.by : event.immune.by;
+    if (by == null) return 'unseen';
+    // `source` приходит в событии готовым словом — это не вывод правила, а
+    // чтение того, что движок уже сказал.
+    return 'damaged' in event && event.damaged.source === 'ability' ? 'spell' : 'blow';
+  }
+  return null;
+}
+
+/**
+ * Какое движение играется на этом поводе у этой карты.
+ *
+ * Цепочка буква в букву та же, что у наряда (`frameForCard`): карта → раса →
+ * дом. Вторую цепочку хранителю пришлось бы держать в голове отдельно.
+ *
+ * Имя, которого в своде нет, молча уступает умолчанию: свод и карты сохраняются
+ * порознь, и движение, стёртое из ящика, не должно ронять карту.
+ */
+export function motionFor(
+  occasion: MotionOccasion,
+  card: BattleCard | null | undefined,
+  motions: Motion[] | null | undefined,
+): Motion | null {
+  const drawer = motions?.length ? motions : [];
+  const found = (id: string | undefined): Motion | null =>
+    (id && drawer.find((m) => m.id === id)) || null;
+
+  const own = parseMotionWear(card?.motionWear);
+  const kin = parseMotionWear(card?.raceMotionWear);
+  const chosen = found(own[occasion]) ?? found(kin[occasion]);
+  if (chosen) return chosen;
+
+  // Чара, которой карта не назвала, показывается ударом: у большинства карт
+  // способность — это тот же замах, и заводить ей отдельную запись ради того,
+  // чтобы она выглядела как удар, незачем.
+  if (occasion === 'spell') {
+    const asBlow = found(own.blow) ?? found(kin.blow);
+    if (asBlow) return asBlow;
+  }
+
+  const houseOccasion: MotionOccasion = occasion === 'spell' ? 'blow' : occasion;
+  return DEFAULT_MOTIONS.find((m) => m.occasion === houseOccasion) ?? null;
+}
+
+// ── Отрисовка движения ───────────────────────────────────────────────────────
+
+/** Где на доске стоит клетка. Координаты движка, а не экрана: `along`
+ *  разворачивает их здесь, в одном месте. */
+export interface StageSpot {
+  x: number;
+  y: number;
+}
+
+export interface StagedMote {
+  key: string;
+  layer: number;
+  /** Готовый инлайновый стиль: коробка, картинка, полоса, слой, поворот. */
+  style: string;
+}
+
+export interface Staged {
+  /** Сколько всё это длится. Столько сцена и ждёт — не константу. */
+  span: number;
+  /** Стиль для тела бьющего. Пусто — оно не шевелится. */
+  striker: string;
+  target: string;
+  motes: StagedMote[];
+}
+
+const EMPTY_STAGE: Staged = { span: 0, striker: '', target: '', motes: [] };
+
+/** Кривая подачи. Та же, что была написана в сцене до движка. */
+const EASE = 'cubic-bezier(0.2, 0.8, 0.25, 1)';
+
+/**
+ * Полоса кадров, посчитанная точно.
+ *
+ * `background-position-x: p%` при ширине картинки в `n` ширин коробки сдвигает
+ * её на `(1 − n)·p` коробок, то есть кадр `k` стоит при `p = k/(n−1)`. А
+ * `steps(n)` от нуля до `E` выдаёт значения `k·E/n`. Значит `E = 100·n/(n−1)`,
+ * и никакое другое: с привычным «до 100%» кадры разъезжаются на всём, что
+ * длиннее двух, и полоса из восьми показывает семь с половиной.
+ */
+function stripEnd(frames: number): number {
+  return frames > 1 ? (100 * frames) / (frames - 1) : 0;
+}
+
+function fadeName(fade: GestureFade): string {
+  return fade === 'hold' ? '' : `gotiga-fade-${fade}`;
+}
+
+/**
+ * Всё, что надо нарисовать и пошевелить ради одного события.
+ *
+ * `from` — клетка бьющего, `to` — клетка цели; любая может отсутствовать (у
+ * урона без автора бьющего нет). `along` — стол лежит вдоль комнаты, и тогда
+ * ось глубины идёт по экрану вширь. `calm` — `prefers-reduced-motion`: не
+ * украшение, а обязательство, и здесь оно означает пустую сцену, а не быструю.
+ */
+export function stage(
+  motion: Motion | null,
+  from: StageSpot | null,
+  to: StageSpot | null,
+  opts: { spanX: number; spanY: number; along: boolean; calm: boolean },
+): Staged {
+  if (!motion || opts.calm) return EMPTY_STAGE;
+  const { spanX, spanY, along } = opts;
+
+  // Экранные координаты клеток. Разворот живёт здесь и только здесь.
+  const screen = (spot: StageSpot | null) =>
+    spot ? { x: along ? spot.y : spot.x, y: along ? spot.x : spot.y } : null;
+  const a = screen(from);
+  const b = screen(to);
+
+  // Направление подачи — в процентах от фигуры, как и было в сцене: треть
+  // клетки в сторону цели. Единственная арифметика правил здесь — рисование.
+  let lx = 0;
+  let ly = 0;
+  let angle = 0;
+  if (a && b) {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.max(1, Math.abs(dx) + Math.abs(dy));
+    lx = (dx / len) * 33;
+    ly = (dy / len) * 33;
+    // Угол берётся на ЭКРАНЕ, а не в клетках: клетка 3:4, и стрела, повёрнутая
+    // по координатам движка, летит мимо собственной цели.
+    angle = (Math.atan2(dy * CELL_TALL, dx) * 180) / Math.PI;
+  }
+
+  const stir: Record<'striker' | 'target', string[]> = { striker: [], target: [] };
+  const motes: StagedMote[] = [];
+  let key = 0;
+
+  for (const g of motion.gestures) {
+    const at = Math.max(0, g.at || 0);
+    const dur = Math.max(0, g.dur || 0);
+
+    if (g.body && g.body !== 'none' && (g.whom === 'striker' || g.whom === 'target')) {
+      // Несколько шевелений одного тела складываются в один список анимаций —
+      // так их и записывает CSS. Если две из них двигают одно и то же, побеждает
+      // последняя: это предсказуемо и это же видно в списке жестов.
+      stir[g.whom].push(`gotiga-${g.body} ${dur}ms ${EASE} ${at}ms both`);
+    }
+
+    if (!g.image) continue;
+
+    const frames = Math.max(1, Math.min(MOTION_FRAMES_MAX, g.frames || 1));
+    const size = Math.max(0, g.size || 0);
+    // Коробка рисунка в долях ПОЛЯ: клетка — это `100/spanX` его ширины и
+    // `100/spanY` его высоты, и величина жеста задана в процентах клетки.
+    const w = size / spanX;
+    const h = size / spanY;
+    const spot = g.whom === 'target' ? b : a;
+
+    const parts: string[] = ['position:absolute'];
+    const anims: string[] = [];
+
+    if (g.whom === 'field') {
+      parts.push('inset:0');
+    } else if (!spot) {
+      // Некому и не над кем: жест просто не выходит. Не ошибка — обычный урон
+      // без автора.
+      continue;
+    } else {
+      const cx = ((spot.x + 0.5) / spanX) * 100 + g.nudgeX / spanX;
+      const cy = ((spot.y + 0.5) / spanY) * 100 + g.nudgeY / spanY;
+      parts.push(`left:${(cx - w / 2).toFixed(3)}%`, `top:${(cy - h / 2).toFixed(3)}%`);
+      parts.push(`width:${w.toFixed(3)}%`, `height:${h.toFixed(3)}%`);
+    }
+
+    parts.push(`background-image:url("${cssUrl(g.image)}")`);
+    parts.push('background-repeat:no-repeat');
+    if (frames > 1) {
+      parts.push(`background-size:${frames * 100}% 100%`);
+      parts.push(`--strip-end:${stripEnd(frames).toFixed(4)}%`);
+      anims.push(`gotiga-strip ${dur}ms steps(${frames}) ${at}ms both`);
+    } else {
+      parts.push('background-size:contain', 'background-position:center');
+    }
+
+    const turn =
+      g.turn === 'toTarget' ? `${angle.toFixed(2)}deg` : g.turn === 'mirror' ? '180deg' : '0deg';
+    parts.push(`--turn:${turn}`);
+
+    if (g.whom === 'flight' && a && b) {
+      // Перелёт задаётся в процентах СОБСТВЕННОЙ ширины рисунка: проценты в
+      // `translate` меряются по самому элементу, а не по полю. Клетка по
+      // экрану — это `100/size` его ширин, значит клетка пути — `10000/size`
+      // процентов. Точно, а не приближённо.
+      const own = size > 0 ? 10000 / size : 0;
+      parts.push(`--mx:${((b.x - a.x) * own).toFixed(2)}%`);
+      parts.push(`--my:${((b.y - a.y) * own).toFixed(2)}%`);
+      anims.push(`gotiga-fly ${dur}ms ${EASE} ${at}ms both`);
+    }
+
+    const fading = fadeName(g.fade);
+    if (fading) anims.push(`${fading} ${dur}ms linear ${at}ms both`);
+
+    const layer = Math.max(1, Math.min(GESTURE_LAYERS, g.layer || 1));
+    parts.push(`z-index:${layer}`);
+    // Поворот ставится ВСЕГДА, а не только когда анимации нет: полоса кадров
+    // не трогает `transform`, и рисунок с ней терял бы свой угол. Перелёт свой
+    // поворот несёт внутри собственных кадров и потому эту строку перебивает.
+    parts.push('transform:rotate(var(--turn))');
+    if (anims.length) parts.push(`animation:${anims.join(',')}`);
+
+    motes.push({ key: `${motion.id}-${key++}`, layer, style: parts.join(';') });
+  }
+
+  const dress = (who: 'striker' | 'target') =>
+    stir[who].length
+      ? `--lx:${lx.toFixed(2)}%;--ly:${ly.toFixed(2)}%;animation:${stir[who].join(',')}`
+      : '';
+
+  return {
+    span: motionSpan(motion),
+    striker: dress('striker'),
+    target: dress('target'),
+    motes,
+  };
 }

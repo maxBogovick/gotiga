@@ -9,6 +9,7 @@
 //!   * `tier`  — the card's rank, 1..5. A property of the card.
 //!   * `level` — the state of one person's copy, 1..5. A property of owning it.
 
+use chrono::{DateTime, Datelike, FixedOffset, TimeZone, Utc};
 use crate::slug::slugify;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -151,7 +152,179 @@ pub fn card_notes(
 // ── Из рук ───────────────────────────────────────────────────────────────────
 
 /// Сколько записок показывает полка. Немного и намеренно: это поля, а не лента.
+/// Словарь условий, которые дом умеет померить (`BATTLE-ERRANDS.md` §3).
+///
+/// Новое ПОРУЧЕНИЕ из существующего условия — целиком стол хранителя, без кода.
+/// Новое УСЛОВИЕ — код: то, что нельзя померить по строкам базы, нельзя и
+/// заплатить автоматически. Обещание «любой квест из админки» соврало бы в тот
+/// же день, когда хранителю захочется поручение «посмотреть работу внимательно».
+///
+/// Неизвестное слово ничего не платит и ничего не ломает: миграция нарочно не
+/// повторяет этот список вторым CHECK'ом, который разошёлся бы с ним на первом
+/// же добавлении.
+pub const ERRAND_RULES: &[&str] = &[
+    "works_seen",
+    "works_liked",
+    "tales_read",
+    "comments_left",
+    "cards_owned",
+    "card_level",
+    "deck_laid",
+    "matches_finished",
+    "matches_won",
+    "challenges_won",
+    "dust_spent",
+    "bookings_done",
+    "orders_made",
+    "visits",
+];
+
+/// Условия о СОСТОЯНИИ, а не о событии.
+///
+/// «Карт в собрании», «уровень карты», «стол разложен» — это снимок, у которого
+/// нет времени. Окно им ничего не сужает, и повторяющееся поручение с таким
+/// условием платило бы КАЖДЫЙ период за то, что человек однажды сделал: три
+/// карты, купленные в марте, — это три карты и в апреле, и в мае.
+///
+/// Отсюда правило, которое стол обязан держать: состояние бывает только
+/// разовым. Это не вкус, а единственное место, где повторяющееся поручение
+/// молча опустошает книгу.
+pub const ERRAND_RULES_STATEFUL: &[&str] = &["cards_owned", "card_level", "deck_laid"];
+
+pub fn errand_rule_known(rule: &str) -> bool {
+    ERRAND_RULES.contains(&rule)
+}
+
+pub fn errand_rule_stateful(rule: &str) -> bool {
+    ERRAND_RULES_STATEFUL.contains(&rule)
+}
+
+pub const ERRAND_PERIODS: &[&str] = &["once", "daily", "weekly", "window"];
+
+/// Сколько повторяющихся поручений может стоять на полке разом.
+///
+/// Не совет хранителю, а часть кода (`BATTLE-ERRANDS.md` §5). Лист из пятнадцати
+/// ежедневных дел — это уже не дом, а сменная работа, и удержать это дисциплиной
+/// нельзя: съедает первый же вечер, когда захочется «ну ещё одно».
+pub const ERRANDS_REPEATING_MAX: usize = 3;
+
+pub const ERRAND_SLUG_MAX: usize = 60;
+pub const ERRAND_TITLE_MAX: usize = 120;
+pub const ERRAND_NOTE_MAX: usize = 400;
+pub const ERRAND_AMOUNT_MAX: i32 = 100_000;
+pub const ERRAND_THRESHOLD_MAX: i32 = 100_000;
+
+/// Имя, из которого собирается ключ книги.
+///
+/// Только то, что переживёт склейку с датой окна: строчные, цифры и дефис.
+/// Двоеточие запрещено особо — оно РАЗДЕЛИТЕЛЬ в ключе, и slug с двоеточием
+/// сделал бы `errand:a:b` неотличимым от недельного окна поручения `a`.
+pub fn clean_errand_slug(raw: &str) -> String {
+    let mut out = String::new();
+    let mut dash = false;
+    for ch in raw.trim().to_lowercase().chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+            dash = false;
+        } else if !dash && !out.is_empty() {
+            out.push('-');
+            dash = true;
+        }
+        if out.len() >= ERRAND_SLUG_MAX {
+            break;
+        }
+    }
+    while out.ends_with('-') {
+        out.pop();
+    }
+    out
+}
+
+/// Начало окна и хвост ключа книги — или `None`, если поручение сейчас закрыто.
+///
+/// Здесь ошибка необратима, и потому это чистая функция: ни базы, ни часов —
+/// «сейчас» приходит параметром, и проверить её можно, не поднимая сервера.
+///
+/// Два числа возвращаются вместе не случайно. Они обязаны быть согласованы:
+/// хвост ключа решает, ЗА ЧТО уже заплатили, а начало окна — ЧТО считать. Взятые
+/// врозь, они однажды разойдутся, и поручение заплатит за вчерашнее.
+///
+/// Разовое окна не имеет: считается всё время, и хвост пустой — ключ остаётся
+/// тем самым `errand:{slug}`, под которым уже лежат выплаты тропы. Никакой
+/// миграции ключей это не потребовало и не должно.
+pub fn errand_window(
+    period: &str,
+    now: DateTime<Utc>,
+    offset_min: i32,
+    starts_at: Option<DateTime<Utc>>,
+    ends_at: Option<DateTime<Utc>>,
+) -> Option<(Option<DateTime<Utc>>, String)> {
+    let off = FixedOffset::east_opt(offset_min * 60)?;
+    let local = now.with_timezone(&off);
+    let at_local_midnight = |d: chrono::NaiveDate| -> Option<DateTime<Utc>> {
+        // У постоянного смещения полуночь всегда одна: `single()` здесь не
+        // может не сойтись, и его отказ означал бы испорченное смещение.
+        Some(
+            off.from_local_datetime(&d.and_hms_opt(0, 0, 0)?)
+                .single()?
+                .with_timezone(&Utc),
+        )
+    };
+
+    match period {
+        "once" => Some((None, String::new())),
+        "daily" => Some((
+            Some(at_local_midnight(local.date_naive())?),
+            format!(":{}", local.format("%Y-%m-%d")),
+        )),
+        "weekly" => {
+            let iso = local.iso_week();
+            let monday =
+                chrono::NaiveDate::from_isoywd_opt(iso.year(), iso.week(), chrono::Weekday::Mon)?;
+            Some((
+                Some(at_local_midnight(monday)?),
+                format!(":{}-W{:02}", iso.year(), iso.week()),
+            ))
+        }
+        "window" => {
+            let from = starts_at?;
+            if now < from {
+                return None;
+            }
+            if ends_at.is_some_and(|to| now >= to) {
+                return None;
+            }
+            // Ключом служит само начало: сдвинутый срок — это другой срок, и
+            // платить по нему второй раз хранитель решил сам, подвинув дату.
+            Some((Some(from), format!(":{}", from.timestamp())))
+        }
+        _ => None,
+    }
+}
+
+/// Ключ книги целиком.
+pub fn errand_key(slug: &str, suffix: &str) -> String {
+    format!("errand:{slug}{suffix}")
+}
+
+pub fn valid_errand_period(period: &str) -> bool {
+    ERRAND_PERIODS.contains(&period)
+}
+
+/// Сколько ближайших поручений показывает окно встречи.
+///
+/// Пять читают, пятнадцать — нет. Лист на полке показывает всё; окно — это
+/// приглашение, а не опись.
+pub const ERRANDS_IN_GREETING: usize = 5;
+
 pub const GIFTS_SHOWN: i64 = 5;
+
+/// Сколько работ проявка берёт за один вход.
+///
+/// Браузер и так держит не больше пятидесяти (`gotiga_viewed` режется на 50), и
+/// потолок здесь — не про удобство, а про то, что список приходит от страницы:
+/// длина, которую сервер не ограничил, однажды придёт длиной в миллион.
+pub const DEVELOP_MAX: usize = 60;
 
 /// Потолок одной выдачи. Не про баланс — про опечатку: лишний ноль в поле
 /// хранителя не должен становиться экономикой.
@@ -469,7 +642,18 @@ pub fn clamp_lore(raw: Option<&str>) -> Option<String> {
     clamp_text(raw, LORE_MAX)
 }
 
+/// A type is a word (creature, relic), never a number left in the field.
+/// Гагатыч arrived with `typeRu = "10"` — a digit is not a kind of thing.
+pub fn type_is_numeric(raw: Option<&str>) -> bool {
+    raw.map(str::trim)
+        .filter(|s| !s.is_empty())
+        .is_some_and(|s| s.chars().all(|c| c.is_ascii_digit()))
+}
+
 pub fn clamp_type(raw: Option<&str>) -> Option<String> {
+    if type_is_numeric(raw) {
+        return None;
+    }
     clamp_text(raw, TYPE_MAX)
 }
 
@@ -517,6 +701,46 @@ pub fn normalize_traits(traits: &[CardTrait]) -> Option<String> {
 pub fn read_traits(raw: Option<&str>) -> Vec<CardTrait> {
     raw.and_then(|j| serde_json::from_str(j).ok())
         .unwrap_or_default()
+}
+
+/// Words on a published card that would lie to the person who takes it.
+///
+/// The numbers in `card_blockers` catch a body that cannot be played. These
+/// catch a card that *looks* as if it does something the engine will not do,
+/// or that has no name in the language the shelf is written in. A draft may
+/// still be unfinished; once it is published, both languages and an effect
+/// line are owed, and a trait with a rule is owed an ability or it is not
+/// a rule.
+pub fn prose_blockers(
+    status: &str,
+    title_en: &str,
+    title_ru: &str,
+    effect_en: Option<&str>,
+    effect_ru: Option<&str>,
+    traits: &[CardTrait],
+    has_abilities: bool,
+) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    if status != "published" {
+        return out;
+    }
+    if title_en.trim().is_empty() || title_ru.trim().is_empty() {
+        out.push("noTitle");
+    }
+    if blank_line(effect_en) || blank_line(effect_ru) {
+        out.push("noEffect");
+    }
+    let speaks = traits
+        .iter()
+        .any(|t| !t.text_en.trim().is_empty() || !t.text_ru.trim().is_empty());
+    if speaks && !has_abilities {
+        out.push("traitsWithoutAbilities");
+    }
+    out
+}
+
+fn blank_line(raw: Option<&str>) -> bool {
+    raw.map(str::trim).filter(|s| !s.is_empty()).is_none()
 }
 
 /// One executable ability, beside the prose in `traits`.
@@ -2011,9 +2235,456 @@ fn clamp_pair(a: f32, b: f32) -> (f32, f32) {
     (a * scale, b * scale)
 }
 
+// ── Движения ─────────────────────────────────────────────────────────────────
+//
+// Чем показывается удар, чара, выстрел и лечение. ТЗ целиком — `BATTLE-MOTION.md`.
+//
+// Главное, что надо знать, читая это: движок НЕ ЗНАЕТ слов «стрелок» и «маг».
+// Стрелок — это карта, которой хранитель надел на повод `blow` движение, где
+// есть летящий жест с нарисованной стрелой. Четыре названные вещи — четыре
+// записи в ящике, а не четыре ветки здесь: иначе пятая просьба стоила бы вечер
+// программиста, а не вечер хранителя, и движка бы не получилось.
+
+/// Повод — то, ради чего движение играется. Читается ТОЛЬКО из события
+/// (`BATTLE-MOTION.md` §3.3): ни одного сравнения правил на клиенте.
+pub const MOTION_OCCASIONS: &[&str] = &["blow", "spell", "mend", "arrive", "fall", "unseen"];
+
+/// Кому происходит жест. `flight` — то, что летит от бьющего к цели; у него нет
+/// тела, и `normalize_motion` обнуляет ему `body`.
+pub const GESTURE_WHOM: &[&str] = &["striker", "target", "flight", "field"];
+
+/// Что делает тело. Список ЗАКРЫТ, и это не скупость.
+///
+/// У дома уже есть ответ на этот вопрос, записанный про способности: «новая
+/// карта — это новое сочетание, а не новый глагол» (`ABILITY_VERBS`). Здесь то
+/// же самое. Новый жест — правка кода, и это правильно: жест обязан работать на
+/// всех шестнадцати клетках, в обе стороны, на телефоне и при столе вдоль
+/// комнаты, а такое проверяют, а не настраивают формой.
+pub const GESTURE_BODIES: &[&str] = &[
+    "none", "lunge", "flinch", "shiver", "sink", "rise", "swell", "bow",
+];
+
+pub const GESTURE_TURNS: &[&str] = &["none", "toTarget", "mirror"];
+pub const GESTURE_FADES: &[&str] = &["hold", "in", "out", "inOut"];
+
+/// Потолок длительности одного движения.
+///
+/// Не вкус: ход хранителя из трёх действий обязан укладываться в две-три
+/// секунды (`BATTLE-SCENE.md` §6), а этюд переигрывают. Движение на четыре
+/// секунды превращает переигрывание в наказание, и держать этот потолок должен
+/// сервер, а не форма: форму можно обойти, сервер — нет.
+pub const MOTION_MS_MAX: i16 = 1_200;
+/// Сколько кадров может быть в полосе. Дальше картинка перестаёт быть деталью и
+/// становится видео, а видео отвергнуто (`BATTLE-MOTION.md` §7).
+pub const MOTION_FRAMES_MAX: i16 = 24;
+/// Сколько жестов в одном движении. Больше — это уже не жест, а сцена.
+pub const GESTURES_MAX: usize = 12;
+/// Сколько движений помещается в ящик.
+pub const MOTIONS_MAX: usize = 48;
+pub const MOTION_NAME_MAX: usize = 60;
+/// Насколько крупным может быть рисунок — в % клетки. Втрое — это накрыть
+/// соседей, и дальше некуда.
+pub const GESTURE_SIZE_MAX: f32 = 300.0;
+/// На сколько рисунок можно сдвинуть от своего места, в % клетки.
+pub const GESTURE_NUDGE_MAX: f32 = 200.0;
+pub const GESTURE_LAYERS: i16 = 12;
+
+/// Один жест: до двух половин сразу — тело может двинуться, рисунок может лечь.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MotionGesture {
+    /// Кому. Из `GESTURE_WHOM`.
+    #[serde(default)]
+    pub whom: String,
+    /// Что делает тело. Из `GESTURE_BODIES`. `none` — тело стоит.
+    #[serde(default)]
+    pub body: String,
+    /// Рисунок. Пусто — чистое движение, и это умолчание дома.
+    #[serde(default)]
+    pub image: String,
+    /// Полоса кадров: сколько кадров в ширину. 1 — неподвижная картинка.
+    #[serde(default)]
+    pub frames: i16,
+    /// Величина рисунка в % клетки.
+    #[serde(default)]
+    pub size: f32,
+    #[serde(default)]
+    pub nudge_x: f32,
+    #[serde(default)]
+    pub nudge_y: f32,
+    /// Когда начинается и сколько длится, в мс от начала движения.
+    #[serde(default)]
+    pub at: i16,
+    #[serde(default)]
+    pub dur: i16,
+    /// Как повёрнут рисунок. `toTarget` — вдоль линии от бьющего к цели: это то,
+    /// чем стрела отличается от кляксы.
+    #[serde(default)]
+    pub turn: String,
+    #[serde(default)]
+    pub fade: String,
+    #[serde(default)]
+    pub layer: i16,
+}
+
+impl Default for MotionGesture {
+    fn default() -> Self {
+        Self {
+            whom: "striker".into(),
+            body: "none".into(),
+            image: String::new(),
+            frames: 1,
+            size: 60.0,
+            nudge_x: 0.0,
+            nudge_y: 0.0,
+            at: 0,
+            dur: 300,
+            turn: "none".into(),
+            fade: "hold".into(),
+            layer: 5,
+        }
+    }
+}
+
+/// Движение целиком: имя, повод и список жестов.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Motion {
+    /// Делает стол хранителя, сервер только хранит. На него показывают карта,
+    /// раса и порядок в ящике, поэтому он обязан пережить сохранение — по той
+    /// же причине, по которой id есть у украшения рамы.
+    pub id: String,
+    #[serde(default)]
+    pub name_en: String,
+    #[serde(default)]
+    pub name_ru: String,
+    /// Ради чего играется. Из `MOTION_OCCASIONS`.
+    #[serde(default)]
+    pub occasion: String,
+    #[serde(default)]
+    pub gestures: Vec<MotionGesture>,
+}
+
+impl Motion {
+    /// Сколько длится. Не хранится, а считается: хранимая длина разошлась бы с
+    /// жестами в первый же вечер, а ждёт сцена именно её.
+    pub fn span(&self) -> i16 {
+        self.gestures
+            .iter()
+            .map(|g| g.at.saturating_add(g.dur))
+            .max()
+            .unwrap_or(0)
+            .min(MOTION_MS_MAX)
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleMotions {
+    #[serde(default)]
+    pub motions: Vec<Motion>,
+}
+
+/// Что карта (или раса) надела на каждый повод. Пустое поле — умолчание дома.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MotionWear {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blow: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spell: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mend: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arrive: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fall: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unseen: Option<String>,
+}
+
+impl MotionWear {
+    fn is_bare(&self) -> bool {
+        self.blow.is_none()
+            && self.spell.is_none()
+            && self.mend.is_none()
+            && self.arrive.is_none()
+            && self.fall.is_none()
+            && self.unseen.is_none()
+    }
+}
+
+fn word(found: &str, allowed: &[&str], fallback: &str) -> String {
+    if allowed.contains(&found) {
+        found.to_string()
+    } else {
+        fallback.to_string()
+    }
+}
+
+fn span(v: f32, most: f32) -> f32 {
+    if v.is_finite() { v.clamp(-most, most) } else { 0.0 }
+}
+
+pub fn normalize_gesture(mut g: MotionGesture) -> MotionGesture {
+    g.whom = word(&g.whom, GESTURE_WHOM, "striker");
+    g.body = word(&g.body, GESTURE_BODIES, "none");
+    // У летящего нет тела, которое можно было бы двинуть. Не отказ, а
+    // вычёркивание: так же `normalize_slices` выбрасывает копию `top` у
+    // углового слота — место, которого у этой формы не бывает, не хранится.
+    if g.whom == "flight" || g.whom == "field" {
+        g.body = "none".into();
+    }
+    g.turn = word(&g.turn, GESTURE_TURNS, "none");
+    g.fade = word(&g.fade, GESTURE_FADES, "hold");
+    g.image = g.image.trim().chars().take(600).collect();
+    // Полоса кадров без картинки — не полоса.
+    g.frames = if g.image.is_empty() { 1 } else { g.frames.clamp(1, MOTION_FRAMES_MAX) };
+    g.size = span(g.size, GESTURE_SIZE_MAX).max(0.0);
+    g.nudge_x = span(g.nudge_x, GESTURE_NUDGE_MAX);
+    g.nudge_y = span(g.nudge_y, GESTURE_NUDGE_MAX);
+    g.at = g.at.clamp(0, MOTION_MS_MAX);
+    g.dur = g.dur.clamp(0, MOTION_MS_MAX);
+    // Начало плюс длина не могут вылезти за потолок: потолок держит ход
+    // хранителя, а не отдельный жест.
+    if g.at.saturating_add(g.dur) > MOTION_MS_MAX {
+        g.dur = MOTION_MS_MAX - g.at;
+    }
+    g.layer = g.layer.clamp(1, GESTURE_LAYERS);
+    g
+}
+
+/// Одно движение, приведённое в годный вид. Жест, у которого не осталось ни
+/// движения тела, ни рисунка, выбрасывается: он ничего не показывает, а в
+/// списке занимает строку и время.
+pub fn normalize_motion(mut m: Motion) -> Motion {
+    m.id = m.id.trim().chars().take(64).collect();
+    m.name_en = m.name_en.trim().chars().take(MOTION_NAME_MAX).collect();
+    m.name_ru = m.name_ru.trim().chars().take(MOTION_NAME_MAX).collect();
+    m.occasion = word(&m.occasion, MOTION_OCCASIONS, "blow");
+    m.gestures = m
+        .gestures
+        .into_iter()
+        .take(GESTURES_MAX)
+        .map(normalize_gesture)
+        .filter(|g| !(g.body == "none" && g.image.is_empty()))
+        .collect();
+    m
+}
+
+/// Ящик целиком. Безымянное и повторённое выбрасывается — по тем же причинам,
+/// что и у украшений рамы: на id показывают карта, раса и перетаскивание, а
+/// два движения с одним id — это движение, которое хранитель однажды не найдёт.
+pub fn normalize_motions(saved: Vec<Motion>) -> Vec<Motion> {
+    let mut seen: Vec<String> = Vec::new();
+    let mut out = Vec::new();
+    for m in saved.into_iter().take(MOTIONS_MAX) {
+        let m = normalize_motion(m);
+        if m.id.is_empty() || seen.contains(&m.id) {
+            continue;
+        }
+        // Движение без единого жеста ничего не показывает. Хранить его — значит
+        // однажды надеть его на карту и не понять, почему ничего не произошло.
+        if m.gestures.is_empty() {
+            continue;
+        }
+        seen.push(m.id.clone());
+        out.push(m);
+    }
+    out
+}
+
+/// Что карта надела, приведённое в годный вид.
+///
+/// Существование движения здесь НЕ проверяется, и это осознанно: свод и карты
+/// сохраняются порознь, а движение, стёртое из ящика, не должно ронять карту.
+/// Неизвестное имя на показе просто уступает умолчанию дома
+/// (`BATTLE-MOTION.md` §9.9) — так же, как незнакомый признак шага в разборе
+/// показывается как есть, а не заменяется чужим словом.
+pub fn normalize_motion_wear(raw: Option<&str>) -> Option<String> {
+    let text = raw?.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let found: MotionWear = serde_json::from_str(text).ok()?;
+    let cut = |v: Option<String>| -> Option<String> {
+        let id: String = v?.trim().chars().take(64).collect();
+        if id.is_empty() { None } else { Some(id) }
+    };
+    let wear = MotionWear {
+        blow: cut(found.blow),
+        spell: cut(found.spell),
+        mend: cut(found.mend),
+        arrive: cut(found.arrive),
+        fall: cut(found.fall),
+        unseen: cut(found.unseen),
+    };
+    // Пустой наряд — это отсутствие наряда, а не `{}` в базе.
+    if wear.is_bare() {
+        return None;
+    }
+    serde_json::to_string(&wear).ok()
+}
+
+fn gesture(whom: &str, body: &str, at: i16, dur: i16) -> MotionGesture {
+    MotionGesture {
+        whom: whom.into(),
+        body: body.into(),
+        at,
+        dur,
+        ..MotionGesture::default()
+    }
+}
+
+/// Умолчания дома — и одновременно доказательство, что комната не изменилась.
+///
+/// Числа сверены с `BATTLE-SCENE.md` §6 и с тем, что стояло в сцене до движка:
+/// `BEAT = { played: 300, damaged: 400, healed: 300, died: 500 }`, подача
+/// 220 + 180, вздрагивание 160. Совпадает до миллисекунды, и это не совпадение,
+/// а условие: движок, в котором подача к цели невыразима, — чужой движок, как
+/// бы красиво он ни показывал стрелу (`BATTLE-MOTION.md` §4).
+///
+/// Раздаются не как записи ящика, а как то, что играется, когда ящик пуст:
+/// хранителю не приходится заводить пять движений, чтобы комната заработала.
+pub fn default_motions() -> Vec<Motion> {
+    vec![
+        Motion {
+            id: "house-blow".into(),
+            name_en: "A blow".into(),
+            name_ru: "Удар".into(),
+            occasion: "blow".into(),
+            gestures: vec![
+                // Подача и возврат — ОДИН жест: 220 туда и 180 обратно живут в
+                // его собственной кривой, а не в двух записях. Двумя записями
+                // хранитель однажды сотрёт вторую и оставит тело поданным.
+                gesture("striker", "lunge", 0, 400),
+                gesture("target", "flinch", 220, 160),
+            ],
+        },
+        Motion {
+            id: "house-mend".into(),
+            name_en: "Mending".into(),
+            name_ru: "Лечение".into(),
+            occasion: "mend".into(),
+            gestures: vec![gesture("target", "rise", 0, 300)],
+        },
+        Motion {
+            id: "house-arrive".into(),
+            name_en: "Taking the field".into(),
+            name_ru: "Выставление".into(),
+            occasion: "arrive".into(),
+            gestures: vec![gesture("striker", "swell", 0, 300)],
+        },
+        Motion {
+            id: "house-fall".into(),
+            name_en: "Falling".into(),
+            name_ru: "Падение".into(),
+            occasion: "fall".into(),
+            gestures: vec![gesture("target", "sink", 0, 500)],
+        },
+        Motion {
+            id: "house-unseen".into(),
+            name_en: "No author".into(),
+            name_ru: "Без автора".into(),
+            occasion: "unseen".into(),
+            gestures: vec![gesture("target", "shiver", 0, 160)],
+        },
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Окна поручений ────────────────────────────────────────────────
+    //
+    // Здесь ошибка необратима: заплаченное не отзывается. Проверяется чистой
+    // функцией и на границах, а не «на живом заходе», где сутки ждать.
+
+    fn at(s: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
+    }
+
+    /// Разовое не имеет окна и не меняет ключ: под `errand:{slug}` уже лежат
+    /// выплаты тропы, и хвост, приписанный к ним, заплатил бы всё второй раз.
+    #[test]
+    fn once_keeps_the_old_key() {
+        let (since, tail) = errand_window("once", at("2026-09-02T10:00:00Z"), 180, None, None).unwrap();
+        assert!(since.is_none());
+        assert_eq!(tail, "");
+        assert_eq!(errand_key("look-around", &tail), "errand:look-around");
+    }
+
+    /// День считается по часам ДОМА. В 22:30 UTC в Москве уже завтра — и
+    /// поручение «зашли сегодня» обязано это знать, иначе оно обновляется у
+    /// человека посреди вечера.
+    #[test]
+    fn a_day_turns_by_the_house_clock() {
+        let evening = at("2026-09-02T22:30:00Z"); // 01:30 третьего в Москве
+        let (since, tail) = errand_window("daily", evening, 180, None, None).unwrap();
+        assert_eq!(tail, ":2026-09-03");
+        // Начало окна — местная полночь, то есть 21:00 UTC второго.
+        assert_eq!(since.unwrap(), at("2026-09-02T21:00:00Z"));
+        assert!(since.unwrap() <= evening, "окно не может начаться после «сейчас»");
+    }
+
+    /// Тот же миг по UTC — вчерашний день, и ключ другой.
+    #[test]
+    fn the_same_moment_differs_by_clock() {
+        let evening = at("2026-09-02T22:30:00Z");
+        let (_, moscow) = errand_window("daily", evening, 180, None, None).unwrap();
+        let (_, utc) = errand_window("daily", evening, 0, None, None).unwrap();
+        assert_ne!(moscow, utc);
+        assert_eq!(utc, ":2026-09-02");
+    }
+
+    /// Неделя начинается с понедельника, и воскресенье принадлежит прошлой.
+    #[test]
+    fn a_week_starts_on_monday() {
+        // 2026-09-02 — среда.
+        let (since, tail) = errand_window("weekly", at("2026-09-02T12:00:00Z"), 180, None, None).unwrap();
+        assert_eq!(tail, ":2026-W36");
+        assert_eq!(since.unwrap(), at("2026-08-30T21:00:00Z")); // понедельник 31-го, 00:00 МСК
+        // Воскресенье той же недели — тот же ключ, а следующий понедельник — уже другой.
+        let (_, sunday) = errand_window("weekly", at("2026-09-06T12:00:00Z"), 180, None, None).unwrap();
+        let (_, monday) = errand_window("weekly", at("2026-09-07T12:00:00Z"), 180, None, None).unwrap();
+        assert_eq!(sunday, tail);
+        assert_ne!(monday, tail);
+    }
+
+    /// Срок закрыт до начала и после конца — и это «нет», а не окно нулевой
+    /// длины: закрытое поручение не должно ни платить, ни показываться.
+    #[test]
+    fn a_window_is_shut_outside_its_dates() {
+        let from = at("2026-09-01T00:00:00Z");
+        let to = at("2026-09-10T00:00:00Z");
+        assert!(errand_window("window", at("2026-08-31T23:59:00Z"), 180, Some(from), Some(to)).is_none());
+        assert!(errand_window("window", at("2026-09-10T00:00:00Z"), 180, Some(from), Some(to)).is_none());
+        let (since, tail) =
+            errand_window("window", at("2026-09-05T00:00:00Z"), 180, Some(from), Some(to)).unwrap();
+        assert_eq!(since.unwrap(), from);
+        assert_eq!(tail, format!(":{}", from.timestamp()));
+    }
+
+    /// Срок без начала — не срок. Молчание вместо выплаты по пустому окну.
+    #[test]
+    fn a_window_without_a_start_is_shut() {
+        assert!(errand_window("window", at("2026-09-05T00:00:00Z"), 180, None, None).is_none());
+    }
+
+    #[test]
+    fn an_unknown_period_pays_nothing() {
+        assert!(errand_window("hourly", at("2026-09-02T12:00:00Z"), 180, None, None).is_none());
+    }
+
+    /// Slug не может внести двоеточие: оно разделитель ключа, и `a:b` сделало бы
+    /// разовое поручение неотличимым от недельного окна поручения `a`.
+    #[test]
+    fn a_slug_cannot_forge_a_window() {
+        assert_eq!(clean_errand_slug("look:around"), "look-around");
+        assert_eq!(clean_errand_slug("  Two   Words! "), "two-words");
+        assert_eq!(clean_errand_slug("---"), "");
+    }
 
     // ── Стол гостя ────────────────────────────────────────────────────
     //
@@ -2108,6 +2779,81 @@ mod tests {
         assert!(card_blockers("published", 10, 2, almost, 1).is_empty());
         // А настоящий перебор — ловится.
         assert!(!card_blockers("published", 10, 2, 8.02, 1).is_empty());
+    }
+
+    #[test]
+    fn a_draft_may_lack_an_english_title() {
+        assert!(prose_blockers("draft", "", "Ведьма", None, None, &[], false).is_empty());
+    }
+
+    #[test]
+    fn a_published_card_owes_both_titles_and_an_effect() {
+        assert_eq!(
+            prose_blockers("published", "", "Гагатыч", Some("a line"), Some("строка"), &[], false),
+            vec!["noTitle"]
+        );
+        assert_eq!(
+            prose_blockers(
+                "published",
+                "The Witch",
+                "Ведьма",
+                None,
+                Some("свечи"),
+                &[],
+                false
+            ),
+            vec!["noEffect"]
+        );
+        assert!(prose_blockers(
+            "published",
+            "The Witch",
+            "Ведьма",
+            Some("candles lean away"),
+            Some("свечи отклоняются"),
+            &[],
+            false
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn a_trait_that_sounds_like_a_rule_needs_an_ability() {
+        let trait_ = CardTrait {
+            name_en: "Wind of Soul".into(),
+            name_ru: "Вихрь Души".into(),
+            text_en: "ignores 1 damage".into(),
+            text_ru: "игнорирует 1 урона".into(),
+        };
+        assert_eq!(
+            prose_blockers(
+                "published",
+                "The Creature",
+                "Творение",
+                Some("parts"),
+                Some("части"),
+                &[trait_.clone()],
+                false
+            ),
+            vec!["traitsWithoutAbilities"]
+        );
+        assert!(prose_blockers(
+            "published",
+            "The Creature",
+            "Творение",
+            Some("parts"),
+            Some("части"),
+            &[trait_],
+            true
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn a_type_that_is_a_number_is_dropped() {
+        assert!(type_is_numeric(Some("10")));
+        assert!(!type_is_numeric(Some("Creature")));
+        assert_eq!(clamp_type(Some("10")), None);
+        assert_eq!(clamp_type(Some("Creature")).as_deref(), Some("Creature"));
     }
 
     #[test]
@@ -2731,6 +3477,7 @@ mod tests {
             race_name_ru: None,
             race_icon_url: None,
             race_level_frames: None,
+            race_motion_wear: None,
             type_en: None,
             type_ru: None,
             title_en: "Witch".into(),
@@ -2763,6 +3510,7 @@ mod tests {
             art_url_override: None,
             art_focal: None,
             frame_override: None,
+            motion_wear: None,
             shelf_order: None,
             lendable: false,
             figurine_id: None,
@@ -2908,6 +3656,114 @@ mod tests {
         assert_eq!(frames[3].frame_mode, "behind");
         // A fresh frame with no picture keeps the modern default.
         assert_eq!(frames[0].frame_mode, "overlay");
+    }
+
+    // ── Движения ───────────────────────────────────────────────────────
+    //
+    // Главная проверка здесь — не про обрезание чисел, а про то, что комната
+    // не изменилась: умолчания дома обязаны совпадать с `BATTLE-SCENE.md` §6
+    // до миллисекунды.
+
+    #[test]
+    fn house_motions_keep_the_tempo_the_room_already_had() {
+        let by = |id: &str| default_motions().into_iter().find(|m| m.id == id).unwrap();
+        // BEAT.damaged = 400, подача 220 + 180.
+        assert_eq!(by("house-blow").span(), 400);
+        // BEAT.healed = 300, BEAT.played = 300, BEAT.died = 500.
+        assert_eq!(by("house-mend").span(), 300);
+        assert_eq!(by("house-arrive").span(), 300);
+        assert_eq!(by("house-fall").span(), 500);
+        // Вздрагивание цели — 160 мс, и начинается оно на 220-й, когда бьющий
+        // дошёл: раньше — и цель дёргается от ещё не случившегося.
+        let blow = by("house-blow");
+        let flinch = blow.gestures.iter().find(|g| g.whom == "target").unwrap();
+        assert_eq!((flinch.at, flinch.dur), (220, 160));
+    }
+
+    #[test]
+    fn every_house_motion_is_kept_by_its_own_normalizer() {
+        // Умолчание, которое не переживает нормализацию, — это умолчание,
+        // которое хранитель однажды сохранит и потеряет.
+        let kept = normalize_motions(default_motions());
+        assert_eq!(kept.len(), default_motions().len());
+    }
+
+    #[test]
+    fn a_flying_gesture_has_no_body_to_move() {
+        let g = normalize_gesture(MotionGesture {
+            whom: "flight".into(),
+            body: "lunge".into(),
+            image: "/static/assets/arrow.webp".into(),
+            ..MotionGesture::default()
+        });
+        assert_eq!(g.body, "none");
+    }
+
+    #[test]
+    fn a_motion_can_never_outlast_the_keepers_turn() {
+        let m = normalize_motion(Motion {
+            id: "long".into(),
+            occasion: "blow".into(),
+            gestures: vec![MotionGesture {
+                whom: "target".into(),
+                body: "shiver".into(),
+                at: 1_000,
+                dur: 3_000,
+                ..MotionGesture::default()
+            }],
+            ..Motion::default()
+        });
+        assert_eq!(m.span(), MOTION_MS_MAX);
+        assert_eq!(m.gestures[0].dur, MOTION_MS_MAX - 1_000);
+    }
+
+    #[test]
+    fn a_gesture_that_shows_nothing_is_not_kept() {
+        let m = normalize_motion(Motion {
+            id: "empty".into(),
+            occasion: "blow".into(),
+            gestures: vec![MotionGesture {
+                whom: "striker".into(),
+                body: "none".into(),
+                image: String::new(),
+                ..MotionGesture::default()
+            }],
+            ..Motion::default()
+        });
+        assert!(m.gestures.is_empty());
+        // ...и движение без единого жеста в ящик не попадает: надеть его на
+        // карту значило бы однажды не понять, почему ничего не произошло.
+        assert!(normalize_motions(vec![m]).is_empty());
+    }
+
+    #[test]
+    fn two_motions_with_one_name_are_one() {
+        let twin = |id: &str| Motion {
+            id: id.into(),
+            occasion: "blow".into(),
+            gestures: vec![gesture("striker", "lunge", 0, 200)],
+            ..Motion::default()
+        };
+        let kept = normalize_motions(vec![twin("a"), twin("a"), twin("b")]);
+        assert_eq!(kept.len(), 2);
+    }
+
+    #[test]
+    fn an_empty_wear_is_no_wear_at_all() {
+        assert!(normalize_motion_wear(Some("{}")).is_none());
+        assert!(normalize_motion_wear(Some(r#"{"blow":"  "}"#)).is_none());
+        assert!(normalize_motion_wear(Some("not json")).is_none());
+        let kept = normalize_motion_wear(Some(r#"{"blow":"arrow","tier":3}"#)).unwrap();
+        assert!(kept.contains("arrow"));
+        // Чужое поле не переживает круг: наряд — это шесть поводов и ничего больше.
+        assert!(!kept.contains("tier"));
+    }
+
+    #[test]
+    fn a_wear_naming_a_motion_nobody_has_is_still_kept() {
+        // Свод и карты сохраняются порознь. Движение, стёртое из ящика, не
+        // должно ронять карту: на показе неизвестное имя уступает умолчанию.
+        assert!(normalize_motion_wear(Some(r#"{"blow":"gone-yesterday"}"#)).is_some());
     }
 
     #[test]

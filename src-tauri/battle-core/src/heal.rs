@@ -10,7 +10,7 @@
 //! deepens it), this grows the same array `damage.rs` already has.
 
 use crate::event::Event;
-use crate::unit::Unit;
+use crate::unit::{Unit, UnitId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,10 +29,14 @@ pub fn resolve_mend(target: &Unit, amount: i32) -> Mending {
 }
 
 /// Write a mending into a body, and say what happened.
-pub fn apply_mend(target: &mut Unit, mending: &Mending) -> Vec<Event> {
+///
+/// `by` is carried through rather than looked up afterwards: the scene shows
+/// mending as a movement that starts at the mender, and the only place that
+/// still knows who offered it is the call site.
+pub fn apply_mend(by: Option<UnitId>, target: &mut Unit, mending: &Mending) -> Vec<Event> {
     if mending.restored == 0 {
         return Vec::new();
     }
     target.health.current += mending.restored;
-    vec![Event::Healed { target: target.id, amount: mending.restored }]
+    vec![Event::Healed { target: target.id, by, amount: mending.restored }]
 }

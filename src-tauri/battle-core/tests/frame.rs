@@ -869,7 +869,7 @@ fn a_mender_puts_back_what_was_taken() {
     assert_eq!(st.unit(0).unwrap().health.current, 5);
     let (st, events) = act(&st, Action::Mend { healer: 1, target: 0 });
     assert_eq!(st.unit(0).unwrap().health.current, 8);
-    assert_eq!(events, vec![Event::Healed { target: 0, amount: 3 }]);
+    assert_eq!(events, vec![Event::Healed { target: 0, by: Some(1), amount: 3 }]);
 }
 
 #[test]
