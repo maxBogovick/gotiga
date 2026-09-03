@@ -2290,6 +2290,8 @@ export type GestureWhom = 'striker' | 'target' | 'flight' | 'field';
 /** Что делает тело. Список ЗАКРЫТ по той же причине, по которой закрыт список
  *  глаголов способностей: новое движение — новое сочетание, не новый жест. */
 export type GestureBody =
+    // Движение. Двигают `transform`, поэтому два таких жеста на одном теле не
+    // складываются — побеждает последний.
     | 'none'
     | 'lunge'
     | 'flinch'
@@ -2297,7 +2299,18 @@ export type GestureBody =
     | 'sink'
     | 'rise'
     | 'swell'
-    | 'bow';
+    | 'bow'
+    | 'draw'
+    | 'recoil'
+    | 'heave'
+    | 'shudder'
+    | 'sway'
+    | 'loom'
+    // Свет. Двигают `filter`, поэтому СКЛАДЫВАЮТСЯ с движением: «кренится и
+    // светлеет» — это два жеста одному телу, а не рисунок.
+    | 'kindle'
+    | 'blanch'
+    | 'wither';
 
 export type GestureTurn = 'none' | 'toTarget' | 'mirror';
 export type GestureFade = 'hold' | 'in' | 'out' | 'inOut';

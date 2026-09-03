@@ -2261,7 +2261,18 @@ pub const GESTURE_WHOM: &[&str] = &["striker", "target", "flight", "field"];
 /// всех шестнадцати клетках, в обе стороны, на телефоне и при столе вдоль
 /// комнаты, а такое проверяют, а не настраивают формой.
 pub const GESTURE_BODIES: &[&str] = &[
+    // Движение.
     "none", "lunge", "flinch", "shiver", "sink", "rise", "swell", "bow",
+    "draw", "recoil", "heave", "shudder", "sway", "loom",
+    // Свет. Отдельная порода, и это существенно: свет меняет `filter`, а не
+    // `transform`, поэтому он СКЛАДЫВАЕТСЯ с движением, а два движения одного
+    // тела — нет (побеждает последнее). Чара — это «кренится И светлеет»
+    // одним телом, и без этой пары её пришлось бы рисовать.
+    //
+    // И это ответ на «эффектную вспышку»: у дома уже есть язык света на
+    // фотографии (`RakingLight`, `CandleReveal`), а вспышки нет. Свеча вместо
+    // искры — не уступка, а то же решение, что и везде здесь.
+    "kindle", "blanch", "wither",
 ];
 
 pub const GESTURE_TURNS: &[&str] = &["none", "toTarget", "mirror"];
@@ -2426,6 +2437,55 @@ fn span(v: f32, most: f32) -> f32 {
     if v.is_finite() { v.clamp(-most, most) } else { 0.0 }
 }
 
+fn is_light(body: &str) -> bool {
+    matches!(body, "kindle" | "blanch" | "wither")
+}
+
+fn is_move(body: &str) -> bool {
+    body != "none" && !is_light(body)
+}
+
+/// Полёт и поле без картинки — это слот, а не пустой жест: в него кладут
+/// стрелу. Телу без движения и без рисунка слот не нужен, его выбрасываем.
+fn keep_gesture(g: &MotionGesture) -> bool {
+    if g.whom == "flight" || g.whom == "field" {
+        return true;
+    }
+    !(g.body == "none" && g.image.is_empty())
+}
+
+/// Два движения на одном теле не складываются: оба пишут `transform`, и CSS
+/// отдаёт последнее. Свет (`filter`) складывается с движением, но не со вторым
+/// светом. Держим по одному каждого на бьющем и на цели — последнее в списке.
+fn one_stir_per_body(gestures: Vec<MotionGesture>) -> Vec<MotionGesture> {
+    let last = |whom: &str, pred: fn(&str) -> bool| {
+        gestures
+            .iter()
+            .rposition(|g| g.whom == whom && pred(&g.body))
+    };
+    let sm = last("striker", is_move);
+    let tm = last("target", is_move);
+    let sl = last("striker", is_light);
+    let tl = last("target", is_light);
+    gestures
+        .into_iter()
+        .enumerate()
+        .filter(|(i, g)| {
+            if g.whom != "striker" && g.whom != "target" {
+                return true;
+            }
+            if is_move(&g.body) {
+                return Some(*i) == if g.whom == "striker" { sm } else { tm };
+            }
+            if is_light(&g.body) {
+                return Some(*i) == if g.whom == "striker" { sl } else { tl };
+            }
+            true
+        })
+        .map(|(_, g)| g)
+        .collect()
+}
+
 pub fn normalize_gesture(mut g: MotionGesture) -> MotionGesture {
     g.whom = word(&g.whom, GESTURE_WHOM, "striker");
     g.body = word(&g.body, GESTURE_BODIES, "none");
@@ -2454,21 +2514,25 @@ pub fn normalize_gesture(mut g: MotionGesture) -> MotionGesture {
     g
 }
 
-/// Одно движение, приведённое в годный вид. Жест, у которого не осталось ни
-/// движения тела, ни рисунка, выбрасывается: он ничего не показывает, а в
-/// списке занимает строку и время.
+/// Одно движение, приведённое в годный вид.
+///
+/// Пустой слот полёта или поля оставляем: это место под стрелу, а не жест,
+/// который ничего не показывает. Телу без движения и без рисунка слот не нужен.
+/// Два замаха на одном теле сводим к последнему — иначе стол врёт, а комната
+/// играет только одно.
 pub fn normalize_motion(mut m: Motion) -> Motion {
     m.id = m.id.trim().chars().take(64).collect();
     m.name_en = m.name_en.trim().chars().take(MOTION_NAME_MAX).collect();
     m.name_ru = m.name_ru.trim().chars().take(MOTION_NAME_MAX).collect();
     m.occasion = word(&m.occasion, MOTION_OCCASIONS, "blow");
-    m.gestures = m
+    let gestures: Vec<MotionGesture> = m
         .gestures
         .into_iter()
         .take(GESTURES_MAX)
         .map(normalize_gesture)
-        .filter(|g| !(g.body == "none" && g.image.is_empty()))
+        .filter(keep_gesture)
         .collect();
+    m.gestures = one_stir_per_body(gestures);
     m
 }
 
@@ -3734,6 +3798,62 @@ mod tests {
         // ...и движение без единого жеста в ящик не попадает: надеть его на
         // карту значило бы однажды не понять, почему ничего не произошло.
         assert!(normalize_motions(vec![m]).is_empty());
+    }
+
+    #[test]
+    fn an_empty_flight_is_a_slot_and_is_kept() {
+        // Выстрел без стрелы всё равно должен нести место, куда стрелу кладут.
+        // Выбросить слот — значит заставить хранителя заводить жест заново.
+        let m = normalize_motion(Motion {
+            id: "shot".into(),
+            occasion: "blow".into(),
+            gestures: vec![
+                gesture("striker", "draw", 0, 420),
+                MotionGesture {
+                    whom: "flight".into(),
+                    body: "none".into(),
+                    image: String::new(),
+                    at: 80,
+                    dur: 320,
+                    ..MotionGesture::default()
+                },
+            ],
+            ..Motion::default()
+        });
+        assert_eq!(m.gestures.len(), 2);
+        assert_eq!(m.gestures[1].whom, "flight");
+        assert!(m.gestures[1].image.is_empty());
+    }
+
+    #[test]
+    fn two_moves_on_one_body_keep_the_last() {
+        // Оба пишут transform — первое никогда не сыграет. Нормализатор
+        // вычёркивает его, чтобы стол не показывал мёртвый жест.
+        let m = normalize_motion(Motion {
+            id: "heavy".into(),
+            occasion: "blow".into(),
+            gestures: vec![
+                gesture("target", "recoil", 320, 260),
+                gesture("target", "shudder", 320, 300),
+            ],
+            ..Motion::default()
+        });
+        assert_eq!(m.gestures.len(), 1);
+        assert_eq!(m.gestures[0].body, "shudder");
+    }
+
+    #[test]
+    fn a_light_stacks_with_a_move_on_the_same_body() {
+        let m = normalize_motion(Motion {
+            id: "charm".into(),
+            occasion: "spell".into(),
+            gestures: vec![
+                gesture("striker", "sway", 0, 460),
+                gesture("striker", "kindle", 0, 460),
+            ],
+            ..Motion::default()
+        });
+        assert_eq!(m.gestures.len(), 2);
     }
 
     #[test]

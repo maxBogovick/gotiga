@@ -1298,7 +1298,7 @@ export const ru: Record<TranslationKey, string> = {
   battleManaKeeper:      'Мана противника',
   battleManaNote:        'Мана нужна, только чтобы выложить карту из руки. Ходить и бить — бесплатно.',
   battleSpent:           'уже ходил',
-  battleNoManaYet:       'Пока не хватает маны ни на одну карту в руке. Закончите ход — на следующем ходу маны станет больше.',
+  battleNoManaYet:       'Не хватает маны ни на одну карту. На следующем ходу её станет больше.',
   battleNoRoomYet:       'Ставить некуда: на вашей половине нет свободных клеток.',
   battleEndTurn:         'Закончить ход',
   battleKeeperThinks:    'Противник думает…',

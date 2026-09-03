@@ -46,6 +46,13 @@
   } from "$lib/battles";
   import { SITE_FONTS } from "$lib/fonts";
   import BattleCard from "$lib/components/BattleCard.svelte";
+  import BattleIcon from "$lib/components/admin/BattleIcon.svelte";
+  import SheetHead from "$lib/components/admin/sheet/SheetHead.svelte";
+  import SheetPanel from "$lib/components/admin/sheet/SheetPanel.svelte";
+  import SheetField from "$lib/components/admin/sheet/SheetField.svelte";
+  import Medallion from "$lib/components/admin/sheet/Medallion.svelte";
+  import StatPlate from "$lib/components/admin/sheet/StatPlate.svelte";
+  import StatCell from "$lib/components/admin/sheet/StatCell.svelte";
   import BattleAssetsPanel from "$lib/components/admin/BattleAssetsPanel.svelte";
   import BattleAssetPicker from "$lib/components/admin/BattleAssetPicker.svelte";
   import BattleFramePicker from "$lib/components/admin/BattleFramePicker.svelte";
@@ -210,11 +217,11 @@
    * число, которое ни на что не влияет, форма больше не предлагает.
    */
   const bodyStats = [
-    { key: "armor", label: "adminBattlesArmor", min: 0, max: 20 },
-    { key: "ward", label: "adminBattlesWard", min: 0, max: 20 },
-    { key: "reach", label: "adminBattlesReach", min: 0, max: 5 },
-    { key: "step", label: "adminBattlesStep", min: 0, max: 3 },
-    { key: "mend", label: "adminBattlesMend", min: 0, max: 20 },
+    { key: "armor", label: "adminBattlesArmor", icon: "shield", min: 0, max: 20 },
+    { key: "ward", label: "adminBattlesWard", icon: "ward", min: 0, max: 20 },
+    { key: "reach", label: "adminBattlesReach", icon: "reach", min: 0, max: 5 },
+    { key: "step", label: "adminBattlesStep", icon: "boot", min: 0, max: 3 },
+    { key: "mend", label: "adminBattlesMend", icon: "sprig", min: 0, max: 20 },
   ] as const;
 
   /** Тот же порог, что в `battles.rs`: выше 1.15 перегруз, ниже 0.85 мертва. */
@@ -2287,26 +2294,25 @@
   let weigh = $state<BattleWeigh | null>(null);
   let weighTimer: ReturnType<typeof setTimeout> | undefined;
 
-  /** Всё, что меняет вес. Читается целиком, иначе эффект не переподпишется. */
-  let weighKey = $derived(
-    JSON.stringify({
-      tier: draft.tier,
-      cost: draft.cost,
-      health: draft.health,
-      power: draft.power,
-      armor: draft.armor,
-      ward: draft.ward,
-      reach: draft.reach,
-      mend: draft.mend,
-      abilities: draft.abilities,
-      // Годность зависит и от них: без статуса подсказка не заметит перевода
-      // черновика на полку, без цен — нуля вместо пустого поля.
-      status: draft.status,
-      lendable: draft.lendable,
-      priceDust: draft.priceDust,
-      priceFeed: draft.priceFeed,
-    }),
-  );
+  /**
+   * Когда весы спросить заново — то есть ВСЁ, что уезжает на сервер.
+   *
+   * Здесь стоял список полей, набранный руками: чин, цена, здоровье, сила и
+   * ещё несколько. Он был верен ровно как «всё, что меняет ВЕС», — и перестал
+   * быть верным в тот день, когда тем же ответом поехала годность. Годность
+   * считается по имени, по строке эффекта и по свойствам, а их в списке не
+   * было, потому что на вес они не влияют. Получалось так: опубликованная
+   * карта требует имени на обоих языках, хранитель его набирает — и ничего не
+   * происходит. Запрос не уходит, ответ прежний, надпись стоит, кнопка серая.
+   * Заполнить было нельзя ничем.
+   *
+   * Поэтому мерка снимается с самого тела запроса. Оно уже собрано в одном
+   * месте и ровно для того, чтобы весы и кнопка не расходились; список полей
+   * рядом с ним — это второе место, где сказано то же самое, и второе место
+   * однажды отстаёт. Лишние запросы (наводка, наряд) стоят одного маленького
+   * POST раз в четверть секунды и не стоят ни одного часа на такую поломку.
+   */
+  let weighKey = $derived(JSON.stringify(cardBody()));
 
   /** Как карта зовётся НА ПОЛКЕ, а не в поле ввода. Связь этюдов идёт по
    *  сохранённому слугу: пока правку не записали, они смотрят на старое имя. */
@@ -2349,6 +2355,68 @@
 
   /** Пока непусто — сохранить нельзя, и сервер откажет тем же словом. */
   let blocking = $derived(weigh?.readiness.blocking ?? []);
+
+  /**
+   * Куда на листе показывает каждый отказ.
+   *
+   * Разделение здесь такое же, как между картой и рамой, и держать его надо
+   * так же твёрдо: сервер решает, ЧТО не так, — стол знает только, ГДЕ это
+   * лежит. Второй раз проверять «пусто ли имя», чтобы решить, отказывать ли,
+   * значит завести второе правило, которое однажды разойдётся с первым. А
+   * знать, что отказ по имени показывает на поле имени, — не правило, а карта
+   * комнаты, и без неё жалоба внизу листа не помогает никому.
+   */
+  const FAULT_AT: Record<string, string> = {
+    noTitle: "fault-title",
+    noEffect: "fault-effect",
+    traitsWithoutAbilities: "fault-abilities",
+    noHealth: "fault-health",
+    costBeyondMana: "fault-cost",
+    overTierBudget: "fault-body",
+  };
+  let faults = $derived(new Set(blocking));
+
+  /** На каком языке пусто. Спрашивается ТОЛЬКО чтобы навести на нужную
+   *  сторону переключателя: отказал уже сервер, здесь выбирают, куда вести. */
+  function blankSide(field: "title" | "effect"): "en" | "ru" | null {
+    const en = ((field === "title" ? draft.titleEn : draft.effectEn) ?? "").trim();
+    const ru = ((field === "title" ? draft.titleRu : draft.effectRu) ?? "").trim();
+    // Сперва то, что перед глазами. Пусто здесь — вести некуда, поле уже под
+    // курсором; иначе на пустых обеих сторонах отказ говорил бы «заполнено, но
+    // пусто на другом языке», стоя над пустым полем.
+    if (!(editLang === "en" ? en : ru)) return null;
+    if (!en) return "en";
+    if (!ru) return "ru";
+    return null;
+  }
+
+  /** Отвести к полю, на которое показывает отказ. Языковую сторону меняем до
+   *  прокрутки: иначе хранитель приезжает к полю, которое уже заполнил. */
+  function goToFault(fault: string) {
+    if (fault === "noTitle" || fault === "noEffect") {
+      const side = blankSide(fault === "noTitle" ? "title" : "effect");
+      if (side) editLang = side;
+    }
+    const at = FAULT_AT[fault];
+    if (!at) return;
+    // Плавность — не украшение: `prefers-reduced-motion` в доме обязательство.
+    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    requestAnimationFrame(() => {
+      const box = document.getElementById(at);
+      if (!box) return;
+      box.scrollIntoView({
+        block: "center",
+        behavior: still ? "auto" : "smooth",
+      });
+      box.querySelector<HTMLElement>("input, textarea, select")?.focus();
+    });
+  }
+
+  /** Слово отказа — то же, которым откажет сервер. */
+  const faultWord = (fault: string) =>
+    $t(
+      `adminBattlesFault${fault[0].toUpperCase()}${fault.slice(1)}` as TranslationKey,
+    );
   let notes = $derived(weigh?.readiness.notes ?? []);
 
   /**
@@ -2866,79 +2934,6 @@
   <!-- Как лежит одна деталь. Один и тот же набор для всех шести слотов, потому
        что нестыковка была у всех шести одна и та же: полоса знала, где деталь
        начинается, и на этом всё кончалось. -->
-  <!-- Значки. Рисуются здесь, а не приходят библиотекой: их дюжина, они
-       одной толщины с линиями стола и красятся его же чернилами. -->
-  {#snippet icon(name: string)}
-    <svg
-      viewBox="0 0 16 16"
-      width="14"
-      height="14"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="1.25"
-      stroke-linecap="round"
-      stroke-linejoin="round"
-      aria-hidden="true"
-    >
-      {#if name === "store"}
-        <path
-          d="M2 5.5h12M3.4 2.5h9.2L14 5.5H2ZM3 5.5v8h10v-8M6.3 13.5V9.3h3.4v4.2"
-        />
-      {:else if name === "upload"}
-        <path d="M8 10.5V2.6M4.8 5.8 8 2.6l3.2 3.2M2.6 10.6v2.8h10.8v-2.8" />
-      {:else if name === "copy"}
-        <path d="M6 6h7.4v7.4H6zM10 6V2.6H2.6V10H6" />
-      {:else if name === "cut"}
-        <path
-          d="m4.2 2.8 7.6 8.4M11.8 2.8 4.2 11.2M5.9 12.4a1.6 1.6 0 1 1-3.2 0 1.6 1.6 0 0 1 3.2 0ZM13.3 12.4a1.6 1.6 0 1 1-3.2 0 1.6 1.6 0 0 1 3.2 0Z"
-        />
-      {:else if name === "paste"}
-        <path
-          d="M5.8 3.2H4.2a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h7.6a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-1.6M6.2 1.9h3.6v2.4H6.2z"
-        />
-      {:else if name === "twin"}
-        <path
-          d="M6.6 6.6h6.8v6.8H6.6zM9.8 6.6V2.6H2.6v7.2h4M8.6 10h2.8M10 8.6v2.8"
-        />
-      {:else if name === "eye"}
-        <path
-          d="M1.6 8S4 3.7 8 3.7 14.4 8 14.4 8 12 12.3 8 12.3 1.6 8 1.6 8Zm8.1 0a1.7 1.7 0 1 1-3.4 0 1.7 1.7 0 0 1 3.4 0Z"
-        />
-      {:else if name === "eye-off"}
-        <path
-          d="m2.6 2.6 10.8 10.8M6.4 6.5A1.7 1.7 0 0 0 8 9.7c.45 0 .86-.17 1.17-.46M4.4 4.7C2.7 5.9 1.6 8 1.6 8S4 12.3 8 12.3c.94 0 1.8-.24 2.55-.6M12.3 10.2C13.7 9.1 14.4 8 14.4 8S12 3.7 8 3.7c-.36 0-.71.03-1.05.09"
-        />
-      {:else if name === "link"}
-        <path
-          d="m6.4 9.6 3.2-3.2M6.9 4.7 8.1 3.5a2.55 2.55 0 0 1 3.6 3.6l-1.2 1.2M9.1 11.3 7.9 12.5a2.55 2.55 0 0 1-3.6-3.6l1.2-1.2"
-        />
-      {:else if name === "unlink"}
-        <path
-          d="M6.9 4.7 8.1 3.5a2.55 2.55 0 0 1 3.6 3.6l-1.2 1.2M9.1 11.3 7.9 12.5a2.55 2.55 0 0 1-3.6-3.6l1.2-1.2M2.6 2.6l10.8 10.8"
-        />
-      {:else if name === "up"}
-        <path d="M8 12.6V3.5M4.7 6.8 8 3.5l3.3 3.3" />
-      {:else if name === "down"}
-        <path d="M8 3.4v9.1M4.7 9.2 8 12.5l3.3-3.3" />
-      {:else if name === "trash"}
-        <path
-          d="M2.6 4.4h10.8M6.1 4.4V2.9h3.8v1.5M4.1 4.4l.7 9.1h6.4l.7-9.1M6.6 6.9v4.2M9.4 6.9v4.2"
-        />
-      {:else if name === "reset"}
-        <path d="M13 8a5 5 0 1 1-1.65-3.7M13.1 2.4v3.6H9.5" />
-      {:else if name === "move"}
-        <path
-          d="M8 1.9v12.2M1.9 8h12.2M5.9 4 8 1.9 10.1 4M5.9 12 8 14.1 10.1 12M4 5.9 1.9 8 4 10.1M12 5.9 14.1 8 12 10.1"
-        />
-      {:else if name === "pin"}
-        <path d="M5.2 2.1h5.6M6.9 2.1v4.4L4.6 9.7h6.8L9.1 6.5V2.1M8 9.7v4.2" />
-      {:else if name === "keep"}
-        <path
-          d="M3.4 2.6h7.2l3 3v7.8H3.4zM5.6 2.6v3.8h4.8V2.6M5.6 13.4V9.6h4.8v3.8"
-        />
-      {/if}
-    </svg>
-  {/snippet}
 
   {#snippet placement(id: string, kind: SliceKind, piece: SlicePiece)}
     {@const sides = KIND_SIDES[kind]}
@@ -3227,7 +3222,7 @@
                 onpointercancel={dropBar}
                 title={$t("adminBattlesBarMove")}
                 class="p-1.5 cursor-move touch-none text-[#8a6a55] hover:bg-[#34251c]/8"
-                >{@render icon("move")}</button
+                ><BattleIcon name="move" /></button
               >
               <button
                 onclick={pinBar}
@@ -3236,7 +3231,7 @@
                   : $t("adminBattlesBarPin")}
                 class="p-1.5 hover:bg-[#34251c]/8 {barPin
                   ? 'text-[#c65f3c]'
-                  : 'text-[#8a6a55]'}">{@render icon("pin")}</button
+                  : 'text-[#8a6a55]'}"><BattleIcon name="pin" /></button
               >
 
               <span class="w-px h-5 mx-0.5 bg-[#34251c]/15"></span>
@@ -3247,7 +3242,7 @@
                   disabled={uploading}
                   title={$t("adminBattlesFrameArtUpload")}
                   class="p-1.5 hover:bg-[#34251c]/8 disabled:opacity-30"
-                  >{@render icon("upload")}</button
+                  ><BattleIcon name="upload" /></button
                 >
                 <button
                   onclick={() =>
@@ -3259,7 +3254,7 @@
                     )}
                   title={$t("adminAssetsPick")}
                   class="p-1.5 hover:bg-[#34251c]/8"
-                  >{@render icon("store")}</button
+                  ><BattleIcon name="store" /></button
                 >
 
                 <span class="w-px h-5 mx-0.5 bg-[#34251c]/15"></span>
@@ -3269,14 +3264,14 @@
                   disabled={!heldRow.image}
                   title={$t("adminBattlesPieceCopy")}
                   class="p-1.5 hover:bg-[#34251c]/8 disabled:opacity-30"
-                  >{@render icon("copy")}</button
+                  ><BattleIcon name="copy" /></button
                 >
                 <button
                   onclick={() => cutPiece(heldRow!)}
                   disabled={!heldRow.image}
                   title={$t("adminBattlesPieceCut")}
                   class="p-1.5 hover:bg-[#34251c]/8 disabled:opacity-30"
-                  >{@render icon("cut")}</button
+                  ><BattleIcon name="cut" /></button
                 >
                 <button
                   onclick={() => pastePiece(heldRow!)}
@@ -3285,14 +3280,14 @@
                     ? $t("adminBattlesPiecePaste")
                     : $t("adminBattlesPieceNothingCopied")}
                   class="p-1.5 hover:bg-[#34251c]/8 disabled:opacity-30"
-                  >{@render icon("paste")}</button
+                  ><BattleIcon name="paste" /></button
                 >
                 <button
                   onclick={() => twinPiece(heldRow!)}
                   disabled={!heldRow.image}
                   title={$t("adminBattlesPieceTwin")}
                   class="p-1.5 hover:bg-[#34251c]/8 disabled:opacity-30"
-                  >{@render icon("twin")}</button
+                  ><BattleIcon name="twin" /></button
                 >
 
                 <span class="w-px h-5 mx-0.5 bg-[#34251c]/15"></span>
@@ -3301,13 +3296,13 @@
                   onclick={() => restack(heldRow!.id, -1)}
                   title={$t("adminBattlesStackUp")}
                   class="p-1.5 hover:bg-[#34251c]/8"
-                  >{@render icon("up")}</button
+                  ><BattleIcon name="up" /></button
                 >
                 <button
                   onclick={() => restack(heldRow!.id, 1)}
                   title={$t("adminBattlesStackDown")}
                   class="p-1.5 hover:bg-[#34251c]/8"
-                  >{@render icon("down")}</button
+                  ><BattleIcon name="down" /></button
                 >
                 <button
                   onclick={toggleHeldCopy}
@@ -3315,7 +3310,7 @@
                   class="p-1.5 hover:bg-[#34251c]/8 {heldShown()
                     ? ''
                     : 'text-[#c65f3c]'}"
-                  >{@render icon(heldShown() ? "eye" : "eye-off")}</button
+                  ><BattleIcon name={heldShown() ? "eye" : "eye-off"} /></button
                 >
                 <button
                   onclick={() =>
@@ -3325,9 +3320,7 @@
                   false
                     ? 'text-[#c65f3c]'
                     : ''}"
-                  >{@render icon(
-                    heldRow.piece.linked === false ? "unlink" : "link",
-                  )}</button
+                  ><BattleIcon name={heldRow.piece.linked === false ? "unlink" : "link"} /></button
                 >
 
                 <span class="w-px h-5 mx-0.5 bg-[#34251c]/15"></span>
@@ -3336,7 +3329,7 @@
                   onclick={() => resetSlice(heldRow!.id)}
                   title={$t("adminBattlesSliceReset")}
                   class="p-1.5 hover:bg-[#34251c]/8"
-                  >{@render icon("reset")}</button
+                  ><BattleIcon name="reset" /></button
                 >
                 <button
                   onclick={() =>
@@ -3348,7 +3341,7 @@
                     ? $t("adminBattlesOrnamentDrop")
                     : $t("adminBattlesFrameArtClear")}
                   class="p-1.5 text-[#8f2f22] hover:bg-[#c65f3c]/12 disabled:opacity-30"
-                  >{@render icon("trash")}</button
+                  ><BattleIcon name="trash" /></button
                 >
               {:else}
                 <!-- Прибитая полоска с пустой рукой. Кнопкам нечего делать,
@@ -3403,7 +3396,7 @@
                   disabled={saving || !presetChanged}
                   title={$t("adminBattlesPresetUpdateHint")}
                   class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5 disabled:opacity-40"
-                  >{@render icon("keep")}{$t(
+                  ><BattleIcon name="keep" />{$t(
                     "adminBattlesPresetUpdate",
                   )}</button
                 >
@@ -3430,7 +3423,7 @@
                 disabled={saving || !presetName.trim()}
                 title={$t("adminBattlesPresetKeep")}
                 class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5 disabled:opacity-40"
-                >{@render icon("keep")}{$t("adminBattlesPresetKeepNew")}</button
+                ><BattleIcon name="keep" />{$t("adminBattlesPresetKeepNew")}</button
               >
             </div>
           </div>
@@ -5326,7 +5319,7 @@
     <!-- ── Склад деталей рамки ──────────────────────────────────────────── -->
     <BattleAssetsPanel {flash} />
   {:else if view === "motions"}
-    <BattleMotionsPanel {flash} />
+    <BattleMotionsPanel {flash} onSaved={(list) => (motions = list)} />
   {:else if view === "races"}
     <!-- ── The race dictionary ──────────────────────────────────────────── -->
     <div class="flex-1 flex min-h-0">
@@ -5462,6 +5455,7 @@
             wear={raceMotionWear}
             {motions}
             onChange={(raw) => (raceMotionWear = raw)}
+            onOpenBox={() => (view = "motions")}
           />
         </div>
 
@@ -5657,147 +5651,211 @@
         </div>
       </aside>
 
-      <!-- ── The card itself: the editor ───────────────────────────────── -->
-      <div class="flex-1 flex flex-col min-h-0">
-        <div
-          class="flex items-center gap-4 px-5 py-2 border-b border-[#34251c]/10"
-        >
-          <div
-            class="flex border border-[#34251c]/15 text-[10px] uppercase tracking-[0.16em]"
-          >
-            <button
-              onclick={() => (editLang = "ru")}
-              class="px-2.5 py-1 {editLang === 'ru'
-                ? 'bg-[#34251c] text-[#f8f1e7]'
-                : ''}">RU</button
-            >
-            <button
-              onclick={() => (editLang = "en")}
-              class="px-2.5 py-1 {editLang === 'en'
-                ? 'bg-[#34251c] text-[#f8f1e7]'
-                : ''}">EN</button
-            >
-          </div>
-          <span class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
-            >{$t("adminBattlesEditLang")}</span
-          >
-          <label
-            class="flex items-center gap-2 ml-auto text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
-          >
-            <input type="checkbox" bind:checked={facedown} />
-            {$t("adminBattlesPreviewDown")}
-          </label>
-        </div>
+      <!-- ── Лист карты ──────────────────────────────────────────────────
+           Была карта посередине и колонка в двадцать пять блоков справа: всё,
+           что не поместилось на лицо, лежало одной лентой, разделённой
+           пунктиром, и найти в ней «дальность» можно было только чтением
+           подряд. Лист называет области и даёт им край, поэтому глаз находит
+           нужную до того, как разберёт слова.
 
-        <div class="flex-1 flex min-h-0">
-          <div
-            class="flex-1 overflow-y-auto p-8 flex items-start justify-center"
+           Карта переехала вправо и прибита к верху: правят её саму, и она
+           должна быть видна с любого места листа, а не только с начала. -->
+      <div class="flex-1 flex flex-col min-h-0 overflow-y-auto">
+        <div class="flex-1 w-full max-w-[1320px] mx-auto px-8 pt-7 pb-6">
+          <SheetHead
+            title={titleOf(draft) || $t("adminBattlesSheetUntitled")}
+            tag={`${$t("adminBattlesTier")} ${draft.tier}`}
+            lead={$t("adminBattlesSheetLead")}
           >
-            <div class="w-full max-w-[460px]">
-              <BattleCard
-                bind:card={draft}
-                {frames}
-                editable={true}
-                frameEditable={true}
-                {editLang}
-                owned={!facedown}
-                level={previewLevel}
-                interactive={false}
-                transition={false}
-                onEditRace={jumpToRace}
-                onError={(e) => flash(e, 6000)}
-              />
+            <div
+              class="flex border border-[#34251c]/15 text-[10px] uppercase tracking-[0.16em]"
+            >
+              <button
+                onclick={() => (editLang = "ru")}
+                class="px-2.5 py-1 {editLang === 'ru'
+                  ? 'bg-[#34251c] text-[#f8f1e7]'
+                  : ''}"
+                title={$t("adminBattlesEditLang")}>RU</button
+              >
+              <button
+                onclick={() => (editLang = "en")}
+                class="px-2.5 py-1 {editLang === 'en'
+                  ? 'bg-[#34251c] text-[#f8f1e7]'
+                  : ''}"
+                title={$t("adminBattlesEditLang")}>EN</button
+              >
             </div>
-          </div>
+            <label
+              class="flex items-center gap-2 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
+            >
+              <input type="checkbox" bind:checked={facedown} />
+              {$t("adminBattlesPreviewDown")}
+            </label>
+          </SheetHead>
 
-          <!-- ── Everything with no place on the card's own face ─────────── -->
-          <aside
-            class="w-96 flex-shrink-0 p-5 border-l border-[#34251c]/10 overflow-y-auto"
-          >
-            <div class="space-y-5">
-              <label class="block">
-                <span
-                  class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                  >{$t("adminBattlesStatus")}</span
-                >
-                <select
-                  bind:value={draft.status}
-                  class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none"
-                >
-                  <option value="draft">{$t("adminBattlesStatusDraft")}</option>
-                  <option value="published"
-                    >{$t("adminBattlesStatusPublished")}</option
+          <!-- ── Панели по важности ──────────────────────────────────────
+               Порядок не по устройству карты, а по тому, в каком порядке её
+               заводят. Сперва чьё лицо она носит — карта заводится ОТ работы,
+               и «Работа» стояла седьмой сверху только потому, что в прежней
+               ленте блоки лежали в том порядке, в каком их дописывали. Дальше
+               то, что на карте написано, чем она одета, и лишь затем числа,
+               которыми она играет. Учёт — последним, у самой кнопки: статус
+               решают, когда решено всё остальное. -->
+          <div class="flex gap-7">
+            <div
+              class="flex-1 min-w-0 grid grid-cols-2 items-start gap-x-6 gap-y-7"
+            >
+              <SheetPanel
+                wide
+                title={$t("adminBattlesSheetWork")}
+                lead={$t("adminBattlesSheetWorkLead")}
+              >
+                <SheetField label={$t("adminBattlesWork")}>
+                  <input
+                    bind:value={workQuery}
+                    placeholder={$t("adminBattlesSearch")}
+                    class="mb-1.5"
+                  />
+                  <select
+                    value={draft.figurineId ?? ""}
+                    onchange={(e) => {
+                      const id = e.currentTarget.value || null;
+                      draft.figurineId = id;
+                      // The work's catalogue name is the link under the card,
+                      // never the card's own title. Filling titleEn from it is
+                      // how "Small doll Baba Yaga" sat where the card's name
+                      // should have been.
+                    }}
                   >
-                  <option value="retired"
-                    >{$t("adminBattlesStatusRetired")}</option
-                  >
-                </select>
-                <!-- А вот это НЕ переезжает: снятая карта просто исчезает с
-                     доски у всех, кто её называет, и этюд остаётся без тела. -->
-                {#if willEmptyEtudes}
-                  <p class="mt-1 text-[11px] leading-snug text-[#8f2f22]">
-                    {$t("adminBattlesEtudesWillEmpty")}
-                    {etudesUsing.map(etudeTitleOf).join(", ")}
+                    <option value="">{$t("adminBattlesWorkNone")}</option>
+                    {#each visibleFigurines as fig (fig.id)}
+                      <option value={fig.id}>{fig.name}</option>
+                    {/each}
+                  </select>
+                </SheetField>
+
+                {#if workTaken}
+                  <p class="mt-2 text-[11px] leading-relaxed text-[#c65f3c]">
+                    {$t("adminBattlesWorkTaken")}
                   </p>
                 {/if}
-              </label>
 
-              <label class="block">
-                <span
-                  class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                  >{$t("adminBattlesSlug")}</span
-                >
-                <input
-                  bind:value={draft.slug}
-                  class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none"
-                />
-                <!-- Слуг — это то, чем карту называют этюды. Раньше правка
-                     этого поля осиротила бы их молча; теперь переименование
-                     переезжает в них само, и сказать об этом надо здесь, где
-                     печатают, а не в примечании к выпуску. -->
-                {#if etudesUsing.length}
-                  <p class="mt-1 text-[11px] leading-snug text-[#5f4636]">
-                    {$t("adminBattlesInEtudes")}
-                    {etudesUsing.length}: {etudesUsing
-                      .map(etudeTitleOf)
-                      .join(", ")}.
-                    <span class="italic text-[#8a6a55]"
-                      >{$t("adminBattlesSlugCarried")}</span
+                {#if draft.artUrlOverride}
+                  <p class="mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]">
+                    {$t("adminBattlesArtOwn")}
+                    <button
+                      onclick={() => (draft.artUrlOverride = null)}
+                      class="ml-1 not-italic underline decoration-dotted hover:text-[#c65f3c]"
+                      >{$t("adminBattlesArtClear")}</button
                     >
                   </p>
+                {:else}
+                  <p class="mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]">
+                    {$t("adminBattlesArtFromWork")}
+                  </p>
                 {/if}
-              </label>
+
+                <div class="mt-4 pt-3 border-t border-dashed border-[#34251c]/12">
+                  <p class="mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">
+                    {$t("adminBattlesAim")}
+                  </p>
+                  <p class="mb-3 text-[11px] leading-relaxed italic text-[#8a6a55]">
+                    {$t("adminBattlesAimHint")}
+                  </p>
+                  <div class="grid grid-cols-3 gap-3">
+                    <label class="block">
+                      <span
+                        class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                        >{$t("adminBattlesFocusX")} · {(focal.x * 100).toFixed(
+                          0,
+                        )}%</span
+                      >
+                      <input
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.01"
+                        value={focal.x}
+                        oninput={(e) =>
+                          setFocal({ x: Number(e.currentTarget.value) })}
+                        class="w-full"
+                      />
+                    </label>
+                    <label class="block">
+                      <span
+                        class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                        >{$t("adminBattlesFocusY")} · {(focal.y * 100).toFixed(
+                          0,
+                        )}%</span
+                      >
+                      <input
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.01"
+                        value={focal.y}
+                        oninput={(e) =>
+                          setFocal({ y: Number(e.currentTarget.value) })}
+                        class="w-full"
+                      />
+                    </label>
+                    <label class="block">
+                      <span
+                        class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                        >{$t("adminBattlesZoom")} · {focal.zoom.toFixed(2)}</span
+                      >
+                      <input
+                        type="range"
+                        min="1"
+                        max="3"
+                        step="0.05"
+                        value={focal.zoom}
+                        oninput={(e) =>
+                          setFocal({ zoom: Number(e.currentTarget.value) })}
+                        class="w-full"
+                      />
+                    </label>
+                  </div>
+                  <button
+                    onclick={() => setFocal({ x: 0.5, y: 0.5, zoom: 1 })}
+                    class="mt-3 px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
+                    >{$t("adminBattlesAimReset")}</button
+                  >
+                </div>
+              </SheetPanel>
 
               <!-- ── What the card says: typed here at a normal size, read live
                    on the card beside it — same `draft`, no second copy. ─────── -->
-              <div class="pt-4 border-t border-[#34251c]/10 space-y-3">
-                <label class="block">
-                  <span
-                    class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                    >{$t("adminBattlesTitle")}</span
+              <SheetPanel
+                wide
+                title={$t("adminBattlesSheetPrint")}
+                lead={$t("adminBattlesSheetPrintLead")}
+                fault={faults.has("noTitle") || faults.has("noEffect")}
+              >
+                <div class="grid grid-cols-2 gap-3">
+                  <SheetField
+                    label={$t("adminBattlesTitle")}
+                    wide
+                    anchor="fault-title"
+                    fault={faults.has("noTitle")}
+                    faultNote={blankSide("title")
+                      ? $t("adminBattlesFaultOtherSide")
+                      : $t("adminBattlesFaultHere")}
                   >
-                  <input
-                    maxlength="80"
-                    value={editLang === "en" ? draft.titleEn : draft.titleRu}
-                    oninput={(e) => {
-                      if (editLang === "en")
-                        draft.titleEn = e.currentTarget.value;
-                      else draft.titleRu = e.currentTarget.value;
-                    }}
-                    class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                  />
-                </label>
-
-                <div class="flex gap-3">
-                  <label class="block flex-1 min-w-0">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("adminBattlesRace")}</span
-                    >
+                    <input
+                      maxlength="80"
+                      value={editLang === "en" ? draft.titleEn : draft.titleRu}
+                      oninput={(e) => {
+                        if (editLang === "en")
+                          draft.titleEn = e.currentTarget.value;
+                        else draft.titleRu = e.currentTarget.value;
+                      }}
+                    />
+                  </SheetField>
+                  <SheetField label={$t("adminBattlesRace")}>
                     <select
                       value={draft.raceId ?? ""}
                       onchange={(e) => selectRace(e.currentTarget.value)}
-                      class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none"
                     >
                       <option value="">{$t("adminBattlesRaceNone")}</option>
                       {#each races as race (race.id)}
@@ -5808,12 +5866,8 @@
                         >
                       {/each}
                     </select>
-                  </label>
-                  <label class="block flex-1 min-w-0">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("battlesTypeLabel")}</span
-                    >
+                  </SheetField>
+                  <SheetField label={$t("battlesTypeLabel")}>
                     <input
                       maxlength="40"
                       value={editLang === "en"
@@ -5824,788 +5878,655 @@
                           draft.typeEn = e.currentTarget.value;
                         else draft.typeRu = e.currentTarget.value;
                       }}
-                      class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
                     />
-                  </label>
+                  </SheetField>
+                  <SheetField
+                    label={$t("adminBattlesEffect")}
+                    wide
+                    anchor="fault-effect"
+                    fault={faults.has("noEffect")}
+                    faultNote={blankSide("effect")
+                      ? $t("adminBattlesFaultOtherSide")
+                      : $t("adminBattlesFaultHere")}
+                  >
+                    <textarea
+                      maxlength="400"
+                      rows="3"
+                      value={editLang === "en"
+                        ? (draft.effectEn ?? "")
+                        : (draft.effectRu ?? "")}
+                      oninput={(e) => {
+                        if (editLang === "en")
+                          draft.effectEn = e.currentTarget.value || null;
+                        else draft.effectRu = e.currentTarget.value || null;
+                      }}
+                    ></textarea>
+                  </SheetField>
+                  <!-- Приписка. Карта её печатает, сервер принимает — а поля
+                       ввода не было нигде, и задать её можно было только
+                       запросом к API. -->
+                  <SheetField label={$t("adminBattlesLore")} wide>
+                    <textarea
+                      maxlength="400"
+                      rows="2"
+                      value={editLang === "en"
+                        ? (draft.loreEn ?? "")
+                        : (draft.loreRu ?? "")}
+                      oninput={(e) => {
+                        if (editLang === "en")
+                          draft.loreEn = e.currentTarget.value || null;
+                        else draft.loreRu = e.currentTarget.value || null;
+                      }}
+                    ></textarea>
+                  </SheetField>
                 </div>
+              </SheetPanel>
 
-                <label class="block">
-                  <span
-                    class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                    >{$t("adminBattlesEffect")}</span
-                  >
-                  <textarea
-                    maxlength="400"
-                    rows="3"
-                    value={editLang === "en"
-                      ? (draft.effectEn ?? "")
-                      : (draft.effectRu ?? "")}
-                    oninput={(e) => {
-                      if (editLang === "en")
-                        draft.effectEn = e.currentTarget.value || null;
-                      else draft.effectRu = e.currentTarget.value || null;
-                    }}
-                    class="w-full px-2 py-1.5 text-sm leading-relaxed bg-transparent border border-[#34251c]/15 outline-none resize-y focus:border-[#34251c]/35"
-                  ></textarea>
-                </label>
-                <!-- Приписка. Карта её печатает, сервер принимает — а поля
-                     ввода не было нигде, и задать её можно было только
-                     запросом к API. -->
-                <label class="block">
-                  <span
-                    class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                    >{$t("adminBattlesLore")}</span
-                  >
-                  <textarea
-                    maxlength="400"
-                    rows="2"
-                    value={editLang === "en"
-                      ? (draft.loreEn ?? "")
-                      : (draft.loreRu ?? "")}
-                    oninput={(e) => {
-                      if (editLang === "en")
-                        draft.loreEn = e.currentTarget.value || null;
-                      else draft.loreRu = e.currentTarget.value || null;
-                    }}
-                    class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                  ></textarea>
-                </label>
-
-                <div>
-                  <p
-                    class="mb-2 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                  >
-                    {$t("adminBattlesTraits")}
+              <SheetPanel
+                title={$t("adminBattlesTraits")}
+                fault={faults.has("traitsWithoutAbilities")}
+              >
+                {#if !(draft.traits ?? []).length}
+                  <p class="mb-2 text-[11px] italic text-[#8a6a55]">
+                    {$t("adminBattlesTraitsEmpty")}
                   </p>
-                  {#if !(draft.traits ?? []).length}
-                    <p class="mb-2 text-[11px] italic text-[#8a6a55]">
-                      {$t("adminBattlesTraitsEmpty")}
-                    </p>
-                  {/if}
-                  <div class="space-y-2">
-                    {#each draft.traits ?? [] as trait, i (i)}
-                      <div
-                        class="flex items-start gap-1.5 p-2 border border-[#34251c]/10"
-                      >
-                        <div class="flex-1 min-w-0 space-y-1.5">
-                          <input
-                            maxlength="60"
-                            placeholder={$t("adminBattlesTraitName")}
-                            value={editLang === "en"
-                              ? trait.nameEn
-                              : trait.nameRu}
-                            oninput={(e) => {
-                              if (editLang === "en")
-                                trait.nameEn = e.currentTarget.value;
-                              else trait.nameRu = e.currentTarget.value;
-                            }}
-                            class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                          />
-                          <input
-                            maxlength="200"
-                            placeholder={$t("adminBattlesTraitText")}
-                            value={editLang === "en"
-                              ? trait.textEn
-                              : trait.textRu}
-                            oninput={(e) => {
-                              if (editLang === "en")
-                                trait.textEn = e.currentTarget.value;
-                              else trait.textRu = e.currentTarget.value;
-                            }}
-                            class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                          />
-                        </div>
-                        <div class="flex flex-col gap-0.5 flex-shrink-0">
-                          <button
-                            type="button"
-                            onclick={() => moveTrait(i, -1)}
-                            disabled={i === 0}
-                            class="px-1.5 text-xs border border-[#34251c]/20 disabled:opacity-30"
-                            >↑</button
-                          >
-                          <button
-                            type="button"
-                            onclick={() => moveTrait(i, 1)}
-                            disabled={i === (draft.traits?.length ?? 0) - 1}
-                            class="px-1.5 text-xs border border-[#34251c]/20 disabled:opacity-30"
-                            >↓</button
-                          >
-                          <button
-                            type="button"
-                            onclick={() => removeTrait(i)}
-                            class="px-1.5 text-xs border border-[#34251c]/20 hover:bg-[#c65f3c]/10"
-                            >×</button
-                          >
-                        </div>
+                {/if}
+                <div class="space-y-2">
+                  {#each draft.traits ?? [] as trait, i (i)}
+                    <div
+                      class="flex items-start gap-1.5 p-2 border border-[#34251c]/10"
+                    >
+                      <div class="flex-1 min-w-0 space-y-1.5">
+                        <input
+                          maxlength="60"
+                          placeholder={$t("adminBattlesTraitName")}
+                          value={editLang === "en" ? trait.nameEn : trait.nameRu}
+                          oninput={(e) => {
+                            if (editLang === "en")
+                              trait.nameEn = e.currentTarget.value;
+                            else trait.nameRu = e.currentTarget.value;
+                          }}
+                          class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                        />
+                        <input
+                          maxlength="200"
+                          placeholder={$t("adminBattlesTraitText")}
+                          value={editLang === "en" ? trait.textEn : trait.textRu}
+                          oninput={(e) => {
+                            if (editLang === "en")
+                              trait.textEn = e.currentTarget.value;
+                            else trait.textRu = e.currentTarget.value;
+                          }}
+                          class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                        />
                       </div>
-                    {/each}
+                      <div class="flex flex-col gap-0.5 flex-shrink-0">
+                        <button
+                          type="button"
+                          onclick={() => moveTrait(i, -1)}
+                          disabled={i === 0}
+                          class="px-1.5 text-xs border border-[#34251c]/20 disabled:opacity-30"
+                          >↑</button
+                        >
+                        <button
+                          type="button"
+                          onclick={() => moveTrait(i, 1)}
+                          disabled={i === (draft.traits?.length ?? 0) - 1}
+                          class="px-1.5 text-xs border border-[#34251c]/20 disabled:opacity-30"
+                          >↓</button
+                        >
+                        <button
+                          type="button"
+                          onclick={() => removeTrait(i)}
+                          class="px-1.5 text-xs border border-[#34251c]/20 hover:bg-[#c65f3c]/10"
+                          >×</button
+                        >
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+                <button
+                  type="button"
+                  onclick={addTrait}
+                  disabled={(draft.traits?.length ?? 0) >= TRAITS_MAX}
+                  class="mt-2 px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
+                  >+ {$t("adminBattlesTraitAdd")}</button
+                >
+              </SheetPanel>
+
+              <!-- Рамка только для этой карты. На лице карты есть «своя
+                   картинка» — она грузит одну фотографию; здесь берут готовый
+                   наряд из ящика целиком, вместе с отступами и полосами, иначе
+                   собранная из частей рамка на одну карту бы не переехала. -->
+              {#if presets.length}
+                <SheetPanel
+                  title={$t("adminBattlesSheetDress")}
+                  lead={$t("adminBattlesSheetDressLead")}
+                  note={$t("adminBattlesPresetCardHint")}
+                >
+                  <BattleFramePicker
+                    {presets}
+                    bind:chosen={presetChosen}
+                    allowNone
+                    label={$t("adminBattlesPresetChoose")}
+                  />
+                  <div class="flex flex-wrap items-center gap-2 mt-2">
+                    <button
+                      onclick={wearPresetOnCard}
+                      disabled={!presetTaken}
+                      class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
+                      >{$t("adminBattlesPresetWearCard")}</button
+                    >
+                    {#if draft.frameOverride}
+                      <button
+                        onclick={() => (draft.frameOverride = null)}
+                        class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
+                        >{$t("adminBattlesFrameResetCard")}</button
+                      >
+                    {/if}
                   </div>
-                  <button
-                    type="button"
-                    onclick={addTrait}
-                    disabled={(draft.traits?.length ?? 0) >= TRAITS_MAX}
-                    class="mt-2 px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
-                    >+ {$t("adminBattlesTraitAdd")}</button
-                  >
+                </SheetPanel>
+              {/if}
+
+              <!-- Медальоны, а не два выпадающих списка. Видов три, каналов
+                   четыре, и оба перечня закрыты: список прячет весь выбор под
+                   одно слово ровно там, где выбор можно показать целиком. -->
+              <SheetPanel
+                wide
+                title={$t("adminBattlesSheetBlow")}
+                lead={$t("adminBattlesSheetBlowLead")}
+              >
+                <p class="mb-2 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">
+                  {$t("adminBattlesKind")}
+                </p>
+                <div class="flex flex-wrap gap-x-6 gap-y-3 mb-5">
+                  <Medallion
+                    icon="unit"
+                    caption={$t("adminBattlesKindUnit")}
+                    selected={draft.kind === "unit"}
+                    onclick={() => (draft.kind = "unit")}
+                  />
+                  <!-- Помечены, а не убраны: вид карты хранится и ждёт движка,
+                       но обещать, что он играет, форма не должна. Опубликовать
+                       их и сейчас нельзя — обе требуют здоровья больше нуля, а
+                       со здоровьем становятся обычным телом на клетке. -->
+                  <Medallion
+                    icon="spark"
+                    caption={$t("adminBattlesKindSpell")}
+                    note={$t("adminBattlesKindDead")}
+                    selected={draft.kind === "spell"}
+                    onclick={() => (draft.kind = "spell")}
+                  />
+                  <Medallion
+                    icon="relic"
+                    caption={$t("adminBattlesKindRelic")}
+                    note={$t("adminBattlesKindDead")}
+                    selected={draft.kind === "relic"}
+                    onclick={() => (draft.kind = "relic")}
+                  />
                 </div>
 
-                <div class="flex gap-3">
-                  <label class="block flex-1">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("battlesHealthLabel")}</span
-                    >
-                    <input
-                      type="number"
-                      min="0"
-                      max="99"
-                      bind:value={draft.health}
-                      onfocus={selectOnFocus}
-                      onwheel={blurOnWheel}
-                      class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                    />
-                  </label>
-                  <label class="block flex-1">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("battlesManaLabel")}</span
-                    >
-                    <input
-                      type="number"
-                      min="0"
-                      max="99"
-                      bind:value={draft.mana}
-                      onfocus={selectOnFocus}
-                      onwheel={blurOnWheel}
-                      class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                    />
-                  </label>
-                  <label class="block flex-1">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("battlesCostLabel")}</span
-                    >
-                    <input
-                      type="number"
-                      min="0"
-                      max="20"
-                      bind:value={draft.cost}
-                      onfocus={selectOnFocus}
-                      onwheel={blurOnWheel}
-                      class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                    />
-                  </label>
-                  <label class="block flex-1">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("battlesPowerLabel")}</span
-                    >
-                    <input
-                      type="number"
-                      min="0"
-                      max="99"
-                      bind:value={draft.power}
-                      onfocus={selectOnFocus}
-                      onwheel={blurOnWheel}
-                      class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                    />
-                  </label>
+                <p class="mb-2 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">
+                  {$t("adminBattlesChannel")}
+                </p>
+                <div class="flex flex-wrap gap-x-6 gap-y-3">
+                  <Medallion
+                    icon="sword"
+                    caption={$t("adminBattlesChannelPhysical")}
+                    selected={draft.attackChannel === "physical"}
+                    onclick={() => (draft.attackChannel = "physical")}
+                  />
+                  <Medallion
+                    icon="spark"
+                    caption={$t("adminBattlesChannelMagic")}
+                    selected={draft.attackChannel === "magic"}
+                    onclick={() => (draft.attackChannel = "magic")}
+                  />
+                  <Medallion
+                    icon="pure"
+                    caption={$t("adminBattlesChannelPure")}
+                    selected={draft.attackChannel === "pure"}
+                    onclick={() => (draft.attackChannel = "pure")}
+                  />
+                  <Medallion
+                    icon="nil"
+                    caption={$t("adminBattlesChannelNone")}
+                    selected={draft.attackChannel === "none"}
+                    onclick={() => (draft.attackChannel = "none")}
+                  />
                 </div>
-                <!-- Мана карты печатается на лицевой стороне и не играет.
-                     Сказано рядом с полем, а не в общем описании: число, которое
-                     ни на что не влияет, должно признаваться в этом там, где его
-                     набирают. -->
-                <p
-                  class="mt-1.5 text-[11px] leading-snug italic text-[#8a6a55]"
-                >
+              </SheetPanel>
+
+              <!--
+                Тело для движка. Отделено от прозы выше не рамкой ради красоты:
+                проза печатается на карте и читается человеком, эти числа читает
+                только движок, и путать их — та самая ошибка, из-за которой
+                правила пытаются разобрать естественный язык.
+
+                Плашка стоит наверху панели, а не внизу листа, как на образце:
+                внизу она была бы оторвана от бюджета, который эти же числа и
+                судит, — а смотрят на них всегда вместе.
+              -->
+              <SheetPanel
+                wide
+                anchor="fault-body"
+                title={$t("adminBattlesBody")}
+                lead={$t("adminBattlesSheetBodyLead")}
+                note={$t("adminBattlesBodyHint")}
+                fault={faults.has("noHealth") ||
+                  faults.has("costBeyondMana") ||
+                  faults.has("overTierBudget")}
+              >
+                {#snippet aside()}
+                  <!-- Живое число, а не сохранённое. Прежде здесь стояло то,
+                       что вернул сервер при ПОСЛЕДНЕМ сохранении, а строчкой
+                       ниже — живое: два вердикта одним словом из разных
+                       моментов времени, и у новой карты первое молчало
+                       навсегда. -->
+                  {#if weigh}
+                    <span
+                      class="text-[10px] tabular-nums"
+                      style="color: {verdictColour(weigh.balanceIndex)}"
+                    >
+                      {weigh.totalPoints.toFixed(1)} · {verdictWord(
+                        weigh.balanceIndex,
+                      )}
+                    </span>
+                  {:else}
+                    <span class="text-[10px] text-[#8a6a55]"
+                      >{$t("adminBattlesScalesPending")}</span
+                    >
+                  {/if}
+                {/snippet}
+
+                <StatPlate>
+                  <StatCell
+                    icon="heart"
+                    label={$t("battlesHealthLabel")}
+                    anchor="fault-health"
+                    fault={faults.has("noHealth")}
+                    min={0}
+                    max={99}
+                    bind:value={draft.health}
+                  />
+                  <StatCell
+                    icon="sword"
+                    label={$t("battlesPowerLabel")}
+                    min={0}
+                    max={99}
+                    bind:value={draft.power}
+                  />
+                  <StatCell
+                    icon="coin"
+                    label={$t("battlesCostLabel")}
+                    anchor="fault-cost"
+                    fault={faults.has("costBeyondMana")}
+                    min={0}
+                    max={20}
+                    bind:value={draft.cost}
+                  />
+                  <!-- Мана карты печатается на лицевой стороне и не играет.
+                       Приглушена на плашке, а не убрана: число, которое ни на
+                       что не влияет, должно признаваться в этом там, где его
+                       набирают. -->
+                  <StatCell
+                    icon="drop"
+                    label={$t("battlesManaLabel")}
+                    tone="quiet"
+                    min={0}
+                    max={99}
+                    bind:value={draft.mana}
+                  />
+                  {#each bodyStats as stat (stat.key)}
+                    <StatCell
+                      icon={stat.icon}
+                      label={$t(stat.label)}
+                      min={stat.min}
+                      max={stat.max}
+                      bind:value={draft[stat.key]}
+                    />
+                  {/each}
+                </StatPlate>
+                <p class="mt-1.5 text-[10px] leading-snug italic text-[#8a6a55]">
                   {$t("adminBattlesManaHint")}
                 </p>
 
-                <!--
-                  Тело для движка. Отделено от прозы выше не рамкой ради красоты:
-                  проза печатается на карте и читается человеком, эти числа читает
-                  только движок, и путать их — та самая ошибка, из-за которой
-                  правила пытаются разобрать естественный язык.
-                -->
-                <div
-                  class="mt-4 pt-3 border-t border-dashed border-[#34251c]/15"
-                >
-                  <div class="flex items-baseline justify-between gap-3 mb-2">
+                <!-- Бюджет чина. Забор, а не весы: сумма очков крупно права
+                     («не больше двадцати на третий чин»), а тонко — нет, и
+                     вопрос «сыграет ли это» она не решает. Поэтому полоска
+                     показывает только, не вылезла ли карта за свой чин. -->
+                <div class="mt-4">
+                  <div
+                    class="flex items-baseline justify-between text-[10px] uppercase tracking-[0.14em]"
+                  >
+                    <span class="text-[#8a6a55]">{$t("adminBattlesBudget")}</span
+                    >
                     <span
-                      class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("adminBattlesBody")}</span
+                      class="tabular-nums"
+                      style="color: {overBudget ? '#8f2f22' : '#5f4636'}"
                     >
-                    <!-- Живое число, а не сохранённое. Прежде здесь стояло то,
-                         что вернул сервер при ПОСЛЕДНЕМ сохранении, а строчкой
-                         ниже — живое: два вердикта одним словом из разных
-                         моментов времени, и у новой карты первое молчало
-                         навсегда. -->
-                    {#if weigh}
-                      <span
-                        class="text-[11px] tabular-nums"
-                        style="color: {verdictColour(weigh.balanceIndex)}"
-                      >
-                        {weigh.totalPoints.toFixed(1)} · {verdictWord(
-                          weigh.balanceIndex,
-                        )}
-                      </span>
-                    {:else}
-                      <span class="text-[11px] text-[#8a6a55]"
-                        >{$t("adminBattlesScalesPending")}</span
-                      >
-                    {/if}
+                      {weigh ? weigh.totalPoints.toFixed(1) : "—"} / {tierBudget(
+                        draft.tier,
+                      )}
+                    </span>
                   </div>
-                  <p class="mb-2.5 text-[11px] leading-snug text-[#8a6a55]">
-                    {$t("adminBattlesBodyHint")}
-                  </p>
-                  <!-- Бюджет чина. Забор, а не весы: сумма очков крупно права
-                       («не больше двадцати на третий чин»), а тонко — нет, и
-                       вопрос «сыграет ли это» она не решает. Поэтому полоска
-                       показывает только, не вылезла ли карта за свой чин. -->
-                  <div class="mb-3">
+                  <div class="mt-1 h-1.5 bg-[#34251c]/10">
                     <div
-                      class="flex items-baseline justify-between text-[10px] uppercase tracking-[0.14em]"
-                    >
-                      <span class="text-[#8a6a55]"
-                        >{$t("adminBattlesBudget")}</span
-                      >
-                      <span
-                        class="tabular-nums"
-                        style="color: {overBudget ? '#8f2f22' : '#5f4636'}"
-                      >
-                        {weigh ? weigh.totalPoints.toFixed(1) : "—"} / {tierBudget(
-                          draft.tier,
-                        )}
-                      </span>
-                    </div>
-                    <div class="mt-1 h-1.5 bg-[#34251c]/10">
-                      <div
-                        class="h-full"
-                        style="width: {budgetFill}%; background: {overBudget
-                          ? '#8f2f22'
-                          : '#4a6141'}"
-                      ></div>
-                    </div>
-                  </div>
-
-                  <div class="flex gap-3 mb-2">
-                    <label class="block flex-1">
-                      <span
-                        class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                        >{$t("adminBattlesKind")}</span
-                      >
-                      <select
-                        bind:value={draft.kind}
-                        class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                      >
-                        <option value="unit"
-                          >{$t("adminBattlesKindUnit")}</option
-                        >
-                        <!-- Помечены, а не убраны: вид карты хранится и ждёт
-                             движка, но обещать, что он играет, форма не должна.
-                             Опубликовать их и сейчас нельзя — обе требуют
-                             здоровья больше нуля, а со здоровьем становятся
-                             обычным телом на клетке. -->
-                        <option value="spell"
-                          >{$t("adminBattlesKindSpell")} — {$t(
-                            "adminBattlesKindDead",
-                          )}</option
-                        >
-                        <option value="relic"
-                          >{$t("adminBattlesKindRelic")} — {$t(
-                            "adminBattlesKindDead",
-                          )}</option
-                        >
-                      </select>
-                    </label>
-                    <label class="block flex-1">
-                      <span
-                        class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                        >{$t("adminBattlesChannel")}</span
-                      >
-                      <select
-                        bind:value={draft.attackChannel}
-                        class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                      >
-                        <option value="physical"
-                          >{$t("adminBattlesChannelPhysical")}</option
-                        >
-                        <option value="magic"
-                          >{$t("adminBattlesChannelMagic")}</option
-                        >
-                        <option value="pure"
-                          >{$t("adminBattlesChannelPure")}</option
-                        >
-                        <option value="none"
-                          >{$t("adminBattlesChannelNone")}</option
-                        >
-                      </select>
-                    </label>
-                  </div>
-
-                  <div class="flex gap-3">
-                    {#each bodyStats as stat (stat.key)}
-                      <label class="block flex-1">
-                        <span
-                          class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                          >{$t(stat.label)}</span
-                        >
-                        <input
-                          type="number"
-                          min={stat.min}
-                          max={stat.max}
-                          bind:value={draft[stat.key]}
-                          onfocus={selectOnFocus}
-                          onwheel={blurOnWheel}
-                          class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                        />
-                      </label>
-                    {/each}
+                      class="h-full"
+                      style="width: {budgetFill}%; background: {overBudget
+                        ? '#8f2f22'
+                        : '#4a6141'}"
+                    ></div>
                   </div>
                 </div>
+              </SheetPanel>
 
-                <!--
-                  ── Способности для движка ───────────────────────────────
-                  Числа справа считает сервер той же формулой, что и при
-                  сохранении: браузер не знает ни одного курса.
-                -->
-                <div
-                  class="mt-4 pt-3 border-t border-dashed border-[#34251c]/15"
-                >
-                  <div class="flex items-baseline justify-between gap-3 mb-2">
+              <!--
+                ── Способности для движка ───────────────────────────────
+                Числа справа считает сервер той же формулой, что и при
+                сохранении: браузер не знает ни одного курса.
+              -->
+              <SheetPanel
+                wide
+                anchor="fault-abilities"
+                title={$t("adminBattlesAbilities")}
+                note={$t("adminBattlesAbilitiesHint")}
+                fault={faults.has("traitsWithoutAbilities")}
+              >
+                {#snippet aside()}
+                  {#if weigh}
                     <span
-                      class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("adminBattlesAbilities")}</span
+                      class="text-[10px] tabular-nums"
+                      style="color: {verdictColour(weigh.balanceIndex)}"
                     >
-                    {#if weigh}
-                      <span
-                        class="text-[11px] tabular-nums"
-                        style="color: {verdictColour(weigh.balanceIndex)}"
+                      {$t("adminBattlesWeighTotal")}
+                      {weigh.totalPoints.toFixed(1)}
+                      <span class="text-[#8a6a55]"
+                        >({$t("adminBattlesWeighBody")}
+                        {weigh.bodyPoints.toFixed(1)})</span
                       >
-                        {$t("adminBattlesWeighTotal")}
-                        {weigh.totalPoints.toFixed(1)}
+                      · {verdictWord(weigh.balanceIndex)}
+                      {#if weigh.suggestedCost !== draft.cost}
                         <span class="text-[#8a6a55]"
-                          >({$t("adminBattlesWeighBody")}
-                          {weigh.bodyPoints.toFixed(1)})</span
+                          >· {$t("adminBattlesWeighSuggested")}
+                          {weigh.suggestedCost}</span
                         >
-                        · {verdictWord(weigh.balanceIndex)}
-                        {#if weigh.suggestedCost !== draft.cost}
-                          <span class="text-[#8a6a55]"
-                            >· {$t("adminBattlesWeighSuggested")}
-                            {weigh.suggestedCost}</span
-                          >
-                        {/if}
-                      </span>
-                    {/if}
-                  </div>
-                  <p class="mb-2.5 text-[11px] leading-snug text-[#8a6a55]">
-                    {$t("adminBattlesAbilitiesHint")}
-                  </p>
+                      {/if}
+                    </span>
+                  {/if}
+                {/snippet}
 
-                  <div class="flex flex-col gap-2">
-                    {#each draft.abilities ?? [] as ability, i (ability.id)}
-                      <div
-                        class="p-2.5 border border-[#34251c]/12 bg-[#34251c]/[0.02]"
-                      >
-                        <div class="flex items-start gap-2">
-                          <div class="flex-1 min-w-0 flex flex-col gap-2">
-                            <div class="flex flex-wrap gap-2">
-                              <label class="block w-44">
-                                <span
-                                  class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                                  >{$t("adminBattlesAbilityVerb")}</span
-                                >
-                                <select
-                                  bind:value={draft.abilities[i].verb}
-                                  class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                                >
-                                  {#each VERBS as verb (verb)}
-                                    <option value={verb}
-                                      >{$t(VERB_LABELS[verb])}</option
-                                    >
-                                  {/each}
-                                </select>
-                              </label>
-                              <label class="block w-20">
-                                <span
-                                  class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                                  >{$t("adminBattlesAbilityAmount")}</span
-                                >
-                                <input
-                                  type="number"
-                                  min="0"
-                                  max="99"
-                                  bind:value={draft.abilities[i].amount}
-                                  onfocus={selectOnFocus}
-                                  onwheel={blurOnWheel}
-                                  class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                                />
-                              </label>
-                              <label class="block w-44">
-                                <span
-                                  class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                                  >{$t("adminBattlesAbilityShape")}</span
-                                >
-                                <select
-                                  bind:value={draft.abilities[i].shape}
-                                  class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                                >
-                                  {#each SHAPES as shape (shape)}
-                                    <option value={shape}
-                                      >{$t(SHAPE_LABELS[shape])}</option
-                                    >
-                                  {/each}
-                                </select>
-                              </label>
-                              <!-- Число несут только цепь и радиус; у остальных заполнять нечего. -->
-                              <label
-                                class="block w-24"
-                                class:opacity-30={!shapeCarriesNumber(
-                                  ability.shape,
-                                )}
+                <div class="flex flex-col gap-2">
+                  {#each draft.abilities ?? [] as ability, i (ability.id)}
+                    <div
+                      class="p-2.5 border border-[#34251c]/12 bg-[#34251c]/[0.02]"
+                    >
+                      <div class="flex items-start gap-2">
+                        <div class="flex-1 min-w-0 flex flex-col gap-2">
+                          <div class="flex flex-wrap gap-2">
+                            <label class="block w-44">
+                              <span
+                                class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                                >{$t("adminBattlesAbilityVerb")}</span
                               >
-                                <span
-                                  class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                                  >{$t("adminBattlesAbilityRadius")}</span
-                                >
-                                <input
-                                  type="number"
-                                  min="0"
-                                  max="3"
-                                  disabled={!shapeCarriesNumber(ability.shape)}
-                                  bind:value={draft.abilities[i].radius}
-                                  onfocus={selectOnFocus}
-                                  onwheel={blurOnWheel}
-                                  class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                                />
-                              </label>
-                              <label class="block w-20">
-                                <span
-                                  class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                                  >{$t("adminBattlesAbilityRange")}</span
-                                >
-                                <input
-                                  type="number"
-                                  min="0"
-                                  max="5"
-                                  bind:value={draft.abilities[i].range}
-                                  onfocus={selectOnFocus}
-                                  onwheel={blurOnWheel}
-                                  class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                                />
-                              </label>
-                              <label class="block w-20">
-                                <span
-                                  class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                                  >{$t("adminBattlesAbilityDuration")}</span
-                                >
-                                <input
-                                  type="number"
-                                  min="0"
-                                  max="5"
-                                  bind:value={draft.abilities[i].duration}
-                                  onfocus={selectOnFocus}
-                                  onwheel={blurOnWheel}
-                                  class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                                />
-                              </label>
-                            </div>
-
-                            <div class="flex flex-wrap gap-2">
-                              <label class="block w-52">
-                                <span
-                                  class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                                  >{$t("adminBattlesAbilityTrigger")}</span
-                                >
-                                <select
-                                  bind:value={draft.abilities[i].trigger}
-                                  class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                                >
-                                  {#each TRIGGERS as trigger (trigger)}
-                                    <option value={trigger}
-                                      >{$t(TRIGGER_LABELS[trigger])}</option
-                                    >
-                                  {/each}
-                                </select>
-                              </label>
-                              <label class="block w-36">
-                                <span
-                                  class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                                  >{$t("adminBattlesChannel")}</span
-                                >
-                                <select
-                                  bind:value={draft.abilities[i].channel}
-                                  class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                                >
-                                  <option value="physical"
-                                    >{$t("adminBattlesChannelPhysical")}</option
+                              <select
+                                bind:value={draft.abilities[i].verb}
+                                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                              >
+                                {#each VERBS as verb (verb)}
+                                  <option value={verb}
+                                    >{$t(VERB_LABELS[verb])}</option
                                   >
-                                  <option value="magic"
-                                    >{$t("adminBattlesChannelMagic")}</option
+                                {/each}
+                              </select>
+                            </label>
+                            <label class="block w-20">
+                              <span
+                                class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                                >{$t("adminBattlesAbilityAmount")}</span
+                              >
+                              <input
+                                type="number"
+                                min="0"
+                                max="99"
+                                bind:value={draft.abilities[i].amount}
+                                onfocus={selectOnFocus}
+                                onwheel={blurOnWheel}
+                                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                              />
+                            </label>
+                            <label class="block w-44">
+                              <span
+                                class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                                >{$t("adminBattlesAbilityShape")}</span
+                              >
+                              <select
+                                bind:value={draft.abilities[i].shape}
+                                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                              >
+                                {#each SHAPES as shape (shape)}
+                                  <option value={shape}
+                                    >{$t(SHAPE_LABELS[shape])}</option
                                   >
-                                  <option value="pure"
-                                    >{$t("adminBattlesChannelPure")}</option
-                                  >
-                                  <option value="none"
-                                    >{$t("adminBattlesChannelNone")}</option
-                                  >
-                                </select>
-                              </label>
-                              <label class="block w-20">
-                                <span
-                                  class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                                  >{$t("adminBattlesAbilityMana")}</span
-                                >
-                                <input
-                                  type="number"
-                                  min="0"
-                                  max="20"
-                                  bind:value={draft.abilities[i].manaCost}
-                                  onfocus={selectOnFocus}
-                                  onwheel={blurOnWheel}
-                                  class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                                />
-                              </label>
-                              <label class="block w-24">
-                                <span
-                                  class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                                  >{$t("adminBattlesAbilityCooldown")}</span
-                                >
-                                <input
-                                  type="number"
-                                  min="0"
-                                  max="5"
-                                  bind:value={draft.abilities[i].cooldown}
-                                  onfocus={selectOnFocus}
-                                  onwheel={blurOnWheel}
-                                  class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                                />
-                              </label>
-                            </div>
-
-                            <div class="flex flex-wrap gap-2">
-                              <label class="block flex-1 min-w-[10rem]">
-                                <span
-                                  class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                                  >{$t("adminBattlesTraitName")} · RU</span
-                                >
-                                <input
-                                  bind:value={draft.abilities[i].nameRu}
-                                  maxlength="60"
-                                  class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                                />
-                              </label>
-                              <label class="block flex-1 min-w-[10rem]">
-                                <span
-                                  class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                                  >{$t("adminBattlesTraitName")} · EN</span
-                                >
-                                <input
-                                  bind:value={draft.abilities[i].nameEn}
-                                  maxlength="60"
-                                  class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                                />
-                              </label>
-                              <label class="block flex-1 min-w-[12rem]">
-                                <span
-                                  class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                                  >{$t("adminBattlesAbilityKeywords")}</span
-                                >
-                                <input
-                                  value={(ability.keywords ?? []).join(", ")}
-                                  oninput={(e) =>
-                                    keywordsInput(i, e.currentTarget.value)}
-                                  class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                                />
-                              </label>
-                            </div>
+                                {/each}
+                              </select>
+                            </label>
+                            <!-- Число несут только цепь и радиус; у остальных заполнять нечего. -->
+                            <label
+                              class="block w-24"
+                              class:opacity-30={!shapeCarriesNumber(
+                                ability.shape,
+                              )}
+                            >
+                              <span
+                                class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                                >{$t("adminBattlesAbilityRadius")}</span
+                              >
+                              <input
+                                type="number"
+                                min="0"
+                                max="3"
+                                disabled={!shapeCarriesNumber(ability.shape)}
+                                bind:value={draft.abilities[i].radius}
+                                onfocus={selectOnFocus}
+                                onwheel={blurOnWheel}
+                                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                              />
+                            </label>
+                            <label class="block w-20">
+                              <span
+                                class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                                >{$t("adminBattlesAbilityRange")}</span
+                              >
+                              <input
+                                type="number"
+                                min="0"
+                                max="5"
+                                bind:value={draft.abilities[i].range}
+                                onfocus={selectOnFocus}
+                                onwheel={blurOnWheel}
+                                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                              />
+                            </label>
+                            <label class="block w-20">
+                              <span
+                                class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                                >{$t("adminBattlesAbilityDuration")}</span
+                              >
+                              <input
+                                type="number"
+                                min="0"
+                                max="5"
+                                bind:value={draft.abilities[i].duration}
+                                onfocus={selectOnFocus}
+                                onwheel={blurOnWheel}
+                                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                              />
+                            </label>
                           </div>
 
-                          <div
-                            class="flex flex-col items-end gap-1 flex-shrink-0"
-                          >
-                            <!-- Цена именно этой строки, посчитанная сервером. -->
-                            <span
-                              class="text-[11px] tabular-nums text-[#6f3b24]"
+                          <div class="flex flex-wrap gap-2">
+                            <label class="block w-52">
+                              <span
+                                class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                                >{$t("adminBattlesAbilityTrigger")}</span
+                              >
+                              <select
+                                bind:value={draft.abilities[i].trigger}
+                                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                              >
+                                {#each TRIGGERS as trigger (trigger)}
+                                  <option value={trigger}
+                                    >{$t(TRIGGER_LABELS[trigger])}</option
+                                  >
+                                {/each}
+                              </select>
+                            </label>
+                            <label class="block w-36">
+                              <span
+                                class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                                >{$t("adminBattlesChannel")}</span
+                              >
+                              <select
+                                bind:value={draft.abilities[i].channel}
+                                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                              >
+                                <option value="physical"
+                                  >{$t("adminBattlesChannelPhysical")}</option
+                                >
+                                <option value="magic"
+                                  >{$t("adminBattlesChannelMagic")}</option
+                                >
+                                <option value="pure"
+                                  >{$t("adminBattlesChannelPure")}</option
+                                >
+                                <option value="none"
+                                  >{$t("adminBattlesChannelNone")}</option
+                                >
+                              </select>
+                            </label>
+                            <label class="block w-20">
+                              <span
+                                class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                                >{$t("adminBattlesAbilityMana")}</span
+                              >
+                              <input
+                                type="number"
+                                min="0"
+                                max="20"
+                                bind:value={draft.abilities[i].manaCost}
+                                onfocus={selectOnFocus}
+                                onwheel={blurOnWheel}
+                                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                              />
+                            </label>
+                            <label class="block w-24">
+                              <span
+                                class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                                >{$t("adminBattlesAbilityCooldown")}</span
+                              >
+                              <input
+                                type="number"
+                                min="0"
+                                max="5"
+                                bind:value={draft.abilities[i].cooldown}
+                                onfocus={selectOnFocus}
+                                onwheel={blurOnWheel}
+                                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                              />
+                            </label>
+                          </div>
+
+                          <div class="flex flex-wrap gap-2">
+                            <label class="block flex-1 min-w-[10rem]">
+                              <span
+                                class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                                >{$t("adminBattlesTraitName")} · RU</span
+                              >
+                              <input
+                                bind:value={draft.abilities[i].nameRu}
+                                maxlength="60"
+                                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                              />
+                            </label>
+                            <label class="block flex-1 min-w-[10rem]">
+                              <span
+                                class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                                >{$t("adminBattlesTraitName")} · EN</span
+                              >
+                              <input
+                                bind:value={draft.abilities[i].nameEn}
+                                maxlength="60"
+                                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                              />
+                            </label>
+                            <label class="block flex-1 min-w-[12rem]">
+                              <span
+                                class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                                >{$t("adminBattlesAbilityKeywords")}</span
+                              >
+                              <input
+                                value={(ability.keywords ?? []).join(", ")}
+                                oninput={(e) =>
+                                  keywordsInput(i, e.currentTarget.value)}
+                                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                              />
+                            </label>
+                          </div>
+                        </div>
+
+                        <div class="flex flex-col items-end gap-1 flex-shrink-0">
+                          <!-- Цена именно этой строки, посчитанная сервером. -->
+                          <span class="text-[11px] tabular-nums text-[#6f3b24]">
+                            {abilityPoints(ability.id)?.toFixed(1) ?? "—"}
+                            <span class="text-[9px] text-[#8a6a55]"
+                              >{$t("adminBattlesAbilityPoints")}</span
                             >
-                              {abilityPoints(ability.id)?.toFixed(1) ?? "—"}
-                              <span class="text-[9px] text-[#8a6a55]"
-                                >{$t("adminBattlesAbilityPoints")}</span
-                              >
-                            </span>
-                            <div class="flex flex-col gap-0.5">
-                              <button
-                                type="button"
-                                onclick={() => moveAbility(i, -1)}
-                                disabled={i === 0}
-                                class="px-1.5 text-xs border border-[#34251c]/20 disabled:opacity-30"
-                                >↑</button
-                              >
-                              <button
-                                type="button"
-                                onclick={() => moveAbility(i, 1)}
-                                disabled={i ===
-                                  (draft.abilities?.length ?? 0) - 1}
-                                class="px-1.5 text-xs border border-[#34251c]/20 disabled:opacity-30"
-                                >↓</button
-                              >
-                              <button
-                                type="button"
-                                onclick={() => removeAbility(i)}
-                                class="px-1.5 text-xs border border-[#34251c]/20 hover:bg-[#c65f3c]/10"
-                                >×</button
-                              >
-                            </div>
+                          </span>
+                          <div class="flex flex-col gap-0.5">
+                            <button
+                              type="button"
+                              onclick={() => moveAbility(i, -1)}
+                              disabled={i === 0}
+                              class="px-1.5 text-xs border border-[#34251c]/20 disabled:opacity-30"
+                              >↑</button
+                            >
+                            <button
+                              type="button"
+                              onclick={() => moveAbility(i, 1)}
+                              disabled={i === (draft.abilities?.length ?? 0) - 1}
+                              class="px-1.5 text-xs border border-[#34251c]/20 disabled:opacity-30"
+                              >↓</button
+                            >
+                            <button
+                              type="button"
+                              onclick={() => removeAbility(i)}
+                              class="px-1.5 text-xs border border-[#34251c]/20 hover:bg-[#c65f3c]/10"
+                              >×</button
+                            >
                           </div>
                         </div>
                       </div>
-                    {/each}
-                  </div>
-
-                  <button
-                    type="button"
-                    onclick={addAbility}
-                    disabled={(draft.abilities?.length ?? 0) >= ABILITIES_MAX}
-                    class="mt-2 px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
-                    >+ {$t("adminBattlesAbilityAdd")}</button
-                  >
-                </div>
-              </div>
-
-              <label class="block">
-                <span
-                  class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                  >{$t("adminBattlesWork")}</span
-                >
-                <input
-                  bind:value={workQuery}
-                  placeholder={$t("adminBattlesSearch")}
-                  class="w-full mb-1.5 px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                />
-                <select
-                  value={draft.figurineId ?? ""}
-                  onchange={(e) => {
-                    const id = e.currentTarget.value || null;
-                    draft.figurineId = id;
-                    // The work's catalogue name is the link under the card,
-                    // never the card's own title. Filling titleEn from it is
-                    // how "Small doll Baba Yaga" sat where the card's name
-                    // should have been.
-                  }}
-                  class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none"
-                >
-                  <option value="">{$t("adminBattlesWorkNone")}</option>
-                  {#each visibleFigurines as fig (fig.id)}
-                    <option value={fig.id}>{fig.name}</option>
+                    </div>
                   {/each}
-                </select>
-              </label>
-
-              {#if workTaken}
-                <p class="text-[11px] leading-relaxed text-[#c65f3c]">
-                  {$t("adminBattlesWorkTaken")}
-                </p>
-              {/if}
-
-              {#if draft.artUrlOverride}
-                <p class="text-[11px] leading-relaxed italic text-[#8a6a55]">
-                  {$t("adminBattlesArtOwn")}
-                  <button
-                    onclick={() => (draft.artUrlOverride = null)}
-                    class="ml-1 not-italic underline decoration-dotted hover:text-[#c65f3c]"
-                    >{$t("adminBattlesArtClear")}</button
-                  >
-                </p>
-              {:else}
-                <p class="text-[11px] leading-relaxed italic text-[#8a6a55]">
-                  {$t("adminBattlesArtFromWork")}
-                </p>
-              {/if}
-
-              <div class="pt-4 border-t border-[#34251c]/10">
-                <p
-                  class="mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                >
-                  {$t("adminBattlesAim")}
-                </p>
-                <p
-                  class="mb-3 text-[11px] leading-relaxed italic text-[#8a6a55]"
-                >
-                  {$t("adminBattlesAimHint")}
-                </p>
-                <div class="space-y-3">
-                  <label class="block">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("adminBattlesFocusX")} · {(focal.x * 100).toFixed(
-                        0,
-                      )}%</span
-                    >
-                    <input
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.01"
-                      value={focal.x}
-                      oninput={(e) =>
-                        setFocal({ x: Number(e.currentTarget.value) })}
-                      class="w-full"
-                    />
-                  </label>
-                  <label class="block">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("adminBattlesFocusY")} · {(focal.y * 100).toFixed(
-                        0,
-                      )}%</span
-                    >
-                    <input
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.01"
-                      value={focal.y}
-                      oninput={(e) =>
-                        setFocal({ y: Number(e.currentTarget.value) })}
-                      class="w-full"
-                    />
-                  </label>
-                  <label class="block">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("adminBattlesZoom")} · {focal.zoom.toFixed(2)}</span
-                    >
-                    <input
-                      type="range"
-                      min="1"
-                      max="3"
-                      step="0.05"
-                      value={focal.zoom}
-                      oninput={(e) =>
-                        setFocal({ zoom: Number(e.currentTarget.value) })}
-                      class="w-full"
-                    />
-                  </label>
-                  <button
-                    onclick={() => setFocal({ x: 0.5, y: 0.5, zoom: 1 })}
-                    class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
-                    >{$t("adminBattlesAimReset")}</button
-                  >
                 </div>
-              </div>
 
-              <div class="pt-4 border-t border-[#34251c]/10">
-                <p
-                  class="mb-3 text-[11px] leading-relaxed italic text-[#8a6a55]"
+                <button
+                  type="button"
+                  onclick={addAbility}
+                  disabled={(draft.abilities?.length ?? 0) >= ABILITIES_MAX}
+                  class="mt-2 px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
+                  >+ {$t("adminBattlesAbilityAdd")}</button
                 >
-                  {$t("adminBattlesPriceHint")}
-                </p>
-                <div class="flex gap-3">
-                  <label class="block flex-1">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("adminBattlesPriceDust")}</span
-                    >
+              </SheetPanel>
+
+              <SheetPanel
+                title={$t("adminBattlesSheetPrice")}
+                lead={$t("adminBattlesSheetPriceLead")}
+                note={$t("adminBattlesPriceHint")}
+              >
+                <div class="grid grid-cols-2 gap-3">
+                  <SheetField label={$t("adminBattlesPriceDust")}>
                     <input
                       type="number"
                       min="0"
@@ -6614,14 +6535,9 @@
                         priceInput("priceDust", e.currentTarget.value)}
                       onfocus={selectOnFocus}
                       onwheel={blurOnWheel}
-                      class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
                     />
-                  </label>
-                  <label class="block flex-1">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("adminBattlesPriceFeed")}</span
-                    >
+                  </SheetField>
+                  <SheetField label={$t("adminBattlesPriceFeed")}>
                     <input
                       type="number"
                       min="0"
@@ -6630,24 +6546,17 @@
                         priceInput("priceFeed", e.currentTarget.value)}
                       onfocus={selectOnFocus}
                       onwheel={blurOnWheel}
-                      class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
                     />
-                  </label>
+                  </SheetField>
                 </div>
 
                 <!-- Лестница уровней. Заводится сейчас, поднимаются по ней в 1c. -->
-                <p
-                  class="mt-4 mb-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
-                >
+                <p class="mt-4 mb-2 text-[11px] leading-relaxed italic text-[#8a6a55]">
                   {$t("adminBattlesLevelPriceHint")}
                 </p>
-                <div class="flex gap-2">
+                <div class="grid grid-cols-4 gap-2">
                   {#each [0, 1, 2, 3] as step (step)}
-                    <label class="block flex-1">
-                      <span
-                        class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                        >{step + 1}→{step + 2}</span
-                      >
+                    <SheetField label={`${step + 1}→${step + 2}`}>
                       <input
                         type="number"
                         min="0"
@@ -6656,9 +6565,8 @@
                           levelPriceInput(step, e.currentTarget.value)}
                         onfocus={selectOnFocus}
                         onwheel={blurOnWheel}
-                        class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
                       />
-                    </label>
+                    </SheetField>
                   {/each}
                 </div>
 
@@ -6681,127 +6589,170 @@
                     >
                   </span>
                 </label>
-              </div>
-
-              <label class="block">
-                <span
-                  class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                  >{$t("adminBattlesPreviewLevel")}</span
-                >
-                <select
-                  value={previewLevel ?? ""}
-                  onchange={(e) =>
-                    (previewLevel =
-                      e.currentTarget.value === ""
-                        ? null
-                        : Number(e.currentTarget.value))}
-                  class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none"
-                >
-                  <option value="">{$t("adminBattlesPreviewNone")}</option>
-                  {#each TIERS as step (step)}
-                    <option value={step}>{step}</option>
-                  {/each}
-                </select>
-              </label>
-
-              <!-- Рамка только для этой карты. На лице карты есть «своя
-                   картинка» — она грузит одну фотографию; здесь берут готовый
-                   наряд из ящика целиком, вместе с отступами и полосами, иначе
-                   собранная из частей рамка на одну карту бы не переехала. -->
-              {#if presets.length}
-                <div class="pt-2">
-                  <p
-                    class="mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                  >
-                    {$t("adminBattlesPresets")}
-                  </p>
-                  <p
-                    class="mb-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
-                  >
-                    {$t("adminBattlesPresetCardHint")}
-                  </p>
-                  <BattleFramePicker
-                    {presets}
-                    bind:chosen={presetChosen}
-                    allowNone
-                    label={$t("adminBattlesPresetChoose")}
-                  />
-                  <div class="flex flex-wrap items-center gap-2 mt-2">
-                    <button
-                      onclick={wearPresetOnCard}
-                      disabled={!presetTaken}
-                      class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
-                      >{$t("adminBattlesPresetWearCard")}</button
-                    >
-                    {#if draft.frameOverride}
-                      <button
-                        onclick={() => (draft.frameOverride = null)}
-                        class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
-                        >{$t("adminBattlesFrameResetCard")}</button
-                      >
-                    {/if}
-                  </div>
-                </div>
-              {/if}
+              </SheetPanel>
 
               <!-- Чем эта карта показывает удар, чару, лечение. Стоит рядом с
                    нарядом, а не в отдельной вкладке: и то и другое — как карта
                    ВЫГЛЯДИТ, и надеваются они одним и тем же жестом. -->
-              <div class="pt-3 border-t border-[#34251c]/10">
+              <SheetPanel title={$t("adminBattlesSheetMotion")}>
                 <BattleMotionWear
                   wear={draft.motionWear}
                   {motions}
                   inherited={raceWear}
                   onChange={(raw) => (draft.motionWear = raw)}
+                  onOpenBox={() => (view = "motions")}
                 />
-              </div>
+              </SheetPanel>
 
-              <!-- Годность карты: препятствия и замечания. Стоит у кнопки, а
-                   не в отдельной вкладке, потому что читать это надо ровно
-                   перед сохранением. Слова приходят с сервера тем же разбором,
-                   которым он откажет, — подсказка и отказ не разойдутся. -->
-              {#if blocking.length}
-                <div class="pt-2 space-y-1">
-                  {#each blocking as fault (fault)}
-                    <p class="text-[11px] leading-relaxed text-[#8f2f22]">
-                      {$t(
-                        `adminBattlesFault${fault[0].toUpperCase()}${fault.slice(1)}` as TranslationKey,
-                      )}
-                    </p>
-                  {/each}
+              <SheetPanel
+                wide
+                title={$t("adminBattlesSheetRecord")}
+                lead={$t("adminBattlesSheetRecordLead")}
+              >
+                <div class="grid grid-cols-2 gap-3">
+                  <SheetField label={$t("adminBattlesStatus")}>
+                    <select bind:value={draft.status}>
+                      <option value="draft"
+                        >{$t("adminBattlesStatusDraft")}</option
+                      >
+                      <option value="published"
+                        >{$t("adminBattlesStatusPublished")}</option
+                      >
+                      <option value="retired"
+                        >{$t("adminBattlesStatusRetired")}</option
+                      >
+                    </select>
+                  </SheetField>
+                  <SheetField label={$t("adminBattlesSlug")}>
+                    <input bind:value={draft.slug} />
+                  </SheetField>
                 </div>
-              {/if}
-              {#if notes.length}
-                <div class="pt-2 space-y-1">
-                  {#each notes as note (note)}
-                    <p
-                      class="text-[11px] leading-relaxed italic text-[#8a6a55]"
-                    >
-                      {$t(
-                        `adminBattlesNote${note[0].toUpperCase()}${note.slice(1)}` as TranslationKey,
-                      )}
-                    </p>
-                  {/each}
-                </div>
-              {/if}
 
-              <div class="flex items-center gap-3 pt-2">
-                <button
-                  onclick={save}
-                  disabled={saving || blocking.length > 0 || workTaken}
-                  class="px-4 py-2 text-[10px] uppercase tracking-[0.16em] bg-[#34251c] text-[#f8f1e7] disabled:opacity-40"
-                  >{$t("adminBattlesSave")}</button
-                >
-                {#if selectedId}
-                  <button
-                    onclick={remove}
-                    class="px-4 py-2 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 text-[#6f3b24] hover:bg-[#c65f3c]/10"
-                    >{$t("adminBattlesDelete")}</button
-                  >
+                <!-- А вот это НЕ переезжает: снятая карта просто исчезает с
+                     доски у всех, кто её называет, и этюд остаётся без тела. -->
+                {#if willEmptyEtudes}
+                  <p class="mt-2 text-[11px] leading-snug text-[#8f2f22]">
+                    {$t("adminBattlesEtudesWillEmpty")}
+                    {etudesUsing.map(etudeTitleOf).join(", ")}
+                  </p>
                 {/if}
-              </div>
+                <!-- Слуг — это то, чем карту называют этюды. Раньше правка
+                     этого поля осиротила бы их молча; теперь переименование
+                     переезжает в них само, и сказать об этом надо здесь, где
+                     печатают, а не в примечании к выпуску. -->
+                {#if etudesUsing.length}
+                  <p class="mt-2 text-[11px] leading-snug text-[#5f4636]">
+                    {$t("adminBattlesInEtudes")}
+                    {etudesUsing.length}: {etudesUsing
+                      .map(etudeTitleOf)
+                      .join(", ")}.
+                    <span class="italic text-[#8a6a55]"
+                      >{$t("adminBattlesSlugCarried")}</span
+                    >
+                  </p>
+                {/if}
+              </SheetPanel>
             </div>
-          </aside>
+
+            <!-- ── Сама карта ──────────────────────────────────────────────
+                 Прибита к верху и стоит в колонке ОДНА. Под ней были наряд и
+                 движения, и это не работало ни дня: прибитое не двигает
+                 соседей, оно их накрывает, — а у карты посреди рамки дыра, и
+                 сквозь неё было видно, как под карту въезжают чужие панели.
+                 Колонка тянется во всю высоту листа (потому ряд и не
+                 `items-start`), и прибивать внутри неё больше нечего. -->
+            <aside class="w-[360px] flex-shrink-0">
+              <div class="sticky top-0 pt-1">
+                <BattleCard
+                  bind:card={draft}
+                  {frames}
+                  editable={true}
+                  frameEditable={true}
+                  {editLang}
+                  owned={!facedown}
+                  level={previewLevel}
+                  interactive={false}
+                  transition={false}
+                  onEditRace={jumpToRace}
+                  onError={(e) => flash(e, 6000)}
+                />
+                <div class="mt-3">
+                  <SheetField label={$t("adminBattlesPreviewLevel")}>
+                    <select
+                      value={previewLevel ?? ""}
+                      onchange={(e) =>
+                        (previewLevel =
+                          e.currentTarget.value === ""
+                            ? null
+                            : Number(e.currentTarget.value))}
+                    >
+                      <option value="">{$t("adminBattlesPreviewNone")}</option>
+                      {#each TIERS as step (step)}
+                        <option value={step}>{step}</option>
+                      {/each}
+                    </select>
+                  </SheetField>
+                </div>
+              </div>
+            </aside>
+          </div>
+        </div>
+
+        <!-- ── Годность карты и сама кнопка ────────────────────────────────
+             Прибита к низу листа. Слова о годности приходят с сервера тем же
+             разбором, которым он откажет, — подсказка и отказ не разойдутся, —
+             и читать их надо ровно перед сохранением. Пока полоса ехала вместе
+             с колонкой, до неё надо было доскроллить, а причина отказа стояла
+             ещё ниже кнопки, которая от неё погасла. -->
+        <div
+          class="sticky bottom-0 z-10 border-t border-[#34251c]/12 bg-[#f8f1e7]"
+        >
+          <div
+            class="w-full max-w-[1320px] mx-auto px-8 py-3 flex items-center gap-4"
+          >
+            <button
+              onclick={save}
+              disabled={saving || blocking.length > 0 || workTaken}
+              class="px-4 py-2 text-[10px] uppercase tracking-[0.16em] bg-[#34251c] text-[#f8f1e7] disabled:opacity-40"
+              >{$t("adminBattlesSave")}</button
+            >
+            {#if selectedId}
+              <button
+                onclick={remove}
+                class="px-4 py-2 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 text-[#6f3b24] hover:bg-[#c65f3c]/10"
+                >{$t("adminBattlesDelete")}</button
+              >
+            {/if}
+            <!-- Жалоба — кнопка, а не надпись. Пока она была надписью, отказ
+                 сообщал, ЧТО не так, и ни слова о том, где это лежит: на листе
+                 в восемь панелей «имя на обоих языках» отсылало искать поле
+                 имени руками, и на другом языке, о котором в этот миг никто не
+                 думает. Теперь она ведёт к полю, по дороге переключая язык на
+                 ту сторону, где пусто. -->
+            <div class="min-w-0 space-y-0.5">
+              {#each blocking as fault (fault)}
+                <button
+                  type="button"
+                  onclick={() => goToFault(fault)}
+                  class="block w-full text-left text-[11px] leading-snug text-[#8f2f22] hover:text-[#c65f3c]"
+                >
+                  <span class="underline decoration-dotted underline-offset-2"
+                    >{faultWord(fault)}</span
+                  >
+                  <span class="whitespace-nowrap text-[10px] uppercase tracking-[0.14em]"
+                    >→ {$t("adminBattlesFaultGo")}</span
+                  >
+                </button>
+              {/each}
+              {#each notes as note (note)}
+                <p class="text-[11px] leading-snug italic text-[#8a6a55]">
+                  {$t(
+                    `adminBattlesNote${note[0].toUpperCase()}${note.slice(1)}` as TranslationKey,
+                  )}
+                </p>
+              {/each}
+            </div>
+          </div>
         </div>
       </div>
     </div>

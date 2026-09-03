@@ -1,14 +1,23 @@
 <script lang="ts">
   // Что эта карта (или раса) показывает на каждом поводе.
   //
-  // Шесть строк, и ни одна из них не обязательна: не названный повод — это
-  // умолчание дома, то есть ровно то, что комната делала до движка. Поэтому
-  // «—» здесь не «ничего не показывать», а «как у всех», и подписано именно
-  // так: пустой выбор, читаемый как «выключено», однажды заставит хранителя
-  // заводить движение «обычный удар», которое у дома уже есть.
+  // Шесть строк, и ни одна не обязательна. Повод — когда надето, не что
+  // надето: в списке все виды, не только помеченные этим поводом. Иначе
+  // выстрел нельзя повесить на способность, не отобрав его у удара.
+  //
+  // Пустой выбор у способности, если на удар уже что-то надето, сыграет
+  // тем ударом (`motionFor`). Это говорится вслух, иначе сюрприз в этюде.
+  //
+  // И внизу — чего в ящике ещё нет. Заготовки дома (сглаз, чара, секира,
+  // выстрел) в списке не показываются и показываться не должны: надетым
+  // считается ИМЯ записи в ящике, и повод, названный заготовкой, которую в
+  // ящик не клали, молча уступил бы умолчанию — то есть выбор был бы сделан и
+  // не сыгран. Но и молчать нельзя: хранитель видит короткий список и решает,
+  // что сглаза в доме нет вовсе, — а он есть, одной вкладкой левее.
   import { t, lang } from '$lib/i18n';
   import {
     MOTION_OCCASIONS,
+    STOCK_MOTIONS,
     motionTitle,
     parseMotionWear,
     stringifyMotionWear,
@@ -19,16 +28,16 @@
   let {
     wear = null,
     motions = [],
-    /** Наследуемое — наряд расы под картой. Показывается серым: хранитель
-     *  должен видеть, что он перебивает, а не гадать, почему карта уже
-     *  что-то делает. */
     inherited = null,
     onChange,
+    onOpenBox,
   }: {
     wear?: string | null;
     motions?: Motion[];
     inherited?: string | null;
     onChange: (raw: string | null) => void;
+    /** Уводит на вкладку движений. Без него строка просто ничего не предлагает. */
+    onOpenBox?: () => void;
   } = $props();
 
   let mine = $derived(parseMotionWear(wear));
@@ -54,6 +63,20 @@
     const found = id ? motions.find((m) => m.id === id) : null;
     return found ? motionTitle(found, $lang) : '';
   };
+
+  const blowId = $derived(mine.blow || kin.blow);
+
+  /** Заготовки, которых в ящике ещё нет. Сверяются по имени: `takeStock`
+   *  кладёт копию с тем же именем, а переименованная в ящике заготовка —
+   *  уже своя запись, и звать её обратно в заготовки незачем. */
+  const notTaken = $derived(
+    STOCK_MOTIONS.filter(
+      (stock) =>
+        !motions.some(
+          (m) => m.nameRu === stock.nameRu || m.nameEn === stock.nameEn,
+        ),
+    ),
+  );
 </script>
 
 <div>
@@ -67,6 +90,8 @@
     {#each MOTION_OCCASIONS as occasion (occasion)}
       {@const kinId = kin[occasion]}
       {@const fromKin = !mine[occasion] && kinId}
+      {@const spellPlaysBlow =
+        occasion === 'spell' && !mine.spell && !kin.spell && blowId}
       <label class="flex items-center gap-2 text-[11px]">
         <span class="w-24 shrink-0 text-[#34251c]/70">{$t(OCCASION_KEY[occasion])}</span>
         <select
@@ -75,15 +100,40 @@
           class="flex-1 min-w-0 border border-[#34251c]/20 bg-transparent px-1 py-0.5 text-[11px]"
         >
           <option value=""
-            >{fromKin
-              ? `${$t('adminMotionsFromRace')} — ${titleOf(kinId)}`
-              : $t('adminMotionsHouseDefault')}</option
+            >{spellPlaysBlow
+              ? `${$t('adminMotionsSpellFallsBack')} — ${titleOf(blowId)}`
+              : fromKin
+                ? `${$t('adminMotionsFromRace')} — ${titleOf(kinId)}`
+                : $t('adminMotionsHouseDefault')}</option
           >
-          {#each motions.filter((m) => m.occasion === occasion) as motion (motion.id)}
-            <option value={motion.id}>{motionTitle(motion, $lang)}</option>
+          {#each motions as motion (motion.id)}
+            <option value={motion.id}
+              >{motionTitle(motion, $lang)}{motion.occasion !== occasion
+                ? ` · ${$t(OCCASION_KEY[motion.occasion])}`
+                : ''}</option
+            >
           {/each}
         </select>
       </label>
     {/each}
   </div>
+
+  {#if notTaken.length}
+    <p class="mt-2 text-[10px] leading-snug text-[#34251c]/55">
+      {$t('adminMotionsWearStock')}
+      <span class="text-[#34251c]/75"
+        >{notTaken
+          .map((s) => ($lang === 'ru' ? s.nameRu : s.nameEn))
+          .join(', ')}.</span
+      >
+      {#if onOpenBox}
+        <button
+          type="button"
+          onclick={onOpenBox}
+          class="underline decoration-dotted hover:text-[#c65f3c]"
+          >{$t('adminMotionsWearOpenBox')}</button
+        >
+      {/if}
+    </p>
+  {/if}
 </div>

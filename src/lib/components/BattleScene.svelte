@@ -26,9 +26,15 @@
     MOTION_MS_MAX,
     motionFor,
     motionSpan,
+    motionWound,
     occasionOf,
     stage,
+    struckOf,
+    WARD_MOTION,
+    type HitWear,
+    type ScrapFly,
     type Staged,
+    type StruckKind,
   } from '$lib/battles';
   import type {
     BattleAction,
@@ -322,9 +328,17 @@
   // Что играется прямо сейчас: какие два тела заняты и что с ними делается.
   // Стиль приходит готовой строкой из `stage()` — сцена его не собирает, иначе
   // стол хранителя показывал бы одно, а комната другое.
-  let acting = $state<{ striker: number | null; target: number | null; play: Staged } | null>(
-    null,
-  );
+  let acting = $state<{
+    striker: number | null;
+    target: number | null;
+    play: Staged;
+    struck: StruckKind | null;
+    hit: HitWear | null;
+    contact: number;
+  } | null>(null);
+  /** Обломок живёт на карте дольше такта, чтобы его было видно. */
+  let flying = $state<(ScrapFly & { unit: number; key: number }) | null>(null);
+  let flyKey = 0;
 
   /** Стиль для тела на клетке: пусто, если оно сейчас не занято. */
   const stirOf = (id: number): string | undefined => {
@@ -334,19 +348,36 @@
     return undefined;
   };
 
-  /**
-   * Мгновение, в которое позиция меняется, — начало ПЕРВОГО жеста, обращённого
-   * к цели.
-   *
-   * Не середина и не конец: у подачи это 220-я миллисекунда, когда бьющий
-   * дошёл, а у выстрела — та, на которой стрела долетела. Одно правило, и оно
-   * работает для обоих, потому что «когда цель дрогнула» и есть «когда до неё
-   * дошло». Жестов к цели нет вовсе — значит, сразу.
-   */
-  const contactOf = (motion: Motion | null): number => {
-    const aimed = motion?.gestures.filter((g) => g.whom === 'target') ?? [];
-    return aimed.length ? Math.min(...aimed.map((g) => g.at || 0)) : 0;
-  };
+  function dropActing() {
+    acting = null;
+  }
+
+  function openWound(target: number, hit: HitWear | null) {
+    const kind = struckOf(hit);
+    if (acting) acting = { ...acting, struck: kind };
+    if (kind === 'bruise' && hit) {
+      const key = ++flyKey;
+      flying = { unit: target, blow: hit.blow, remain: hit.remain, seed: hit.seed, key };
+      setTimeout(() => {
+        if (flying?.key === key) flying = null;
+      }, 580);
+    }
+  }
+
+  function hitOf(pos: BattleMatchState, e: BattleEvent): HitWear | null {
+    if (!('damaged' in e)) return null;
+    const u = pos.units[e.damaged.target];
+    if (!u) return null;
+    const max = Math.max(1, u.health.max);
+    return {
+      remain: Math.max(0, u.health.current - e.damaged.toHealth) / max,
+      blow: e.damaged.toHealth / max,
+      seed: e.damaged.target,
+      channel: e.damaged.channel,
+      source: e.damaged.source,
+      at: 0,
+    };
+  }
 
   /** Разложить событие на сцене. Клетки берутся из показанной позиции: тело,
    *  которое ещё не сдвинулось, стоит там, где его видно. */
@@ -355,16 +386,26 @@
     motion: Motion | null,
     striker: number | null,
     target: number | null,
+    hit: HitWear | null = null,
   ): Staged {
     const spotOf = (id: number | null) =>
       id == null ? null : (pos.board.find((s) => s.unit === id)?.cell ?? null);
+    const wound = calm ? 0 : motionWound(motion);
+    const wear = hit ? { ...hit, at: wound } : null;
     const play = stage(motion, spotOf(striker), spotOf(target), {
       spanX: along ? DEPTH : WIDTH,
       spanY: along ? WIDTH : DEPTH,
       along,
       calm,
     });
-    acting = { striker, target, play };
+    acting = {
+      striker,
+      target,
+      play,
+      struck: null,
+      hit: wear,
+      contact: wound,
+    };
     return play;
   }
 
@@ -486,23 +527,24 @@
     if ('damaged' in e || 'immune' in e) {
       const target = 'damaged' in e ? e.damaged.target : e.immune.target;
       const by = 'damaged' in e ? e.damaged.by : e.immune.by;
-      const motion = motionOf(pos, by ?? target, e);
+      // Промах — не удар: оберег, который взял на себя, не дрожит как раненый.
+      const motion = 'immune' in e ? WARD_MOTION : motionOf(pos, by ?? target, e);
       const span = calm ? 0 : (motion ? Math.min(MOTION_MS_MAX, motionSpan(motion)) : 0);
       markTrace(pos, by, target, e, span);
 
-      put(pos, motion, by, target);
-      const contact = calm ? 0 : Math.min(contactOf(motion), span);
-      if (contact > 0) {
-        await sleep(contact);
+      put(pos, motion, by, target, 'damaged' in e ? hitOf(pos, e) : null);
+      const wound = calm ? 0 : Math.min(acting?.contact ?? 0, span);
+      if (wound > 0) {
+        await sleep(wound);
         if (!alive()) return false;
       }
 
-      // Урон показывается тем, что меняется здоровье цели. Ничего не взлетает.
       transcribe(pos, e);
       live = copy(pos);
+      if ('damaged' in e) openWound(e.damaged.target, acting?.hit ?? null);
 
-      if (span > contact) await sleep(span - contact);
-      acting = null;
+      if (span > wound) await sleep(span - wound);
+      dropActing();
       return alive();
     }
 
@@ -513,10 +555,10 @@
       put(pos, motion, null, e.died.target);
       if (!calm) {
         await sleep(motionSpan(motion));
-        acting = null;
+        dropActing();
         if (!alive()) return false;
       }
-      acting = null;
+      dropActing();
       transcribe(pos, e);
       live = copy(pos);
       return alive();
@@ -534,15 +576,19 @@
       // у него нет ни автора, ни цели, есть только оно само.
       put(pos, motion, 'played' in e ? target : striker, 'played' in e ? null : target);
       if (!calm) await sleep(motionSpan(motion));
-      acting = null;
+      dropActing();
     }
     return alive();
   }
 
   /**
-   * Ход пришёл целиком: и своё действие, и весь ответ хранителя. Граница между
-   * ними — `turnEnded` своей стороны. До неё применяется мгновенно (рука должна
-   * чувствоваться своей), после — по одному, с паузами.
+   * Ход пришёл целиком: своё действие и ответ хранителя. Граница — `turnEnded`
+   * своей стороны.
+   *
+   * Своё тоже играют, иначе стрела существует только у противника. Рука
+   * остаётся своей тем, что между своими событиями нет REST: такт касания
+   * есть, театральной паузы перед ним — нет. Хвост хранителя — по одному,
+   * с паузами, как и было.
    */
   async function playThrough(from: BattleMatchState, events: BattleEvent[]) {
     const token = ++run;
@@ -550,15 +596,11 @@
 
     let cut = events.findIndex((e) => 'turnEnded' in e && e.turnEnded.side === me);
     cut = cut < 0 ? events.length : cut + 1;
-
-    for (let i = 0; i < cut; i++) transcribe(pos, events[i]);
+    const own = events.slice(0, cut);
     const tail = events.slice(cut);
-    // Своя половина уже на доске — и в журнале сразу. Хвост хранителя
-    // дописывается по мере `beat()`, а не всем пакетом заранее.
-    told = events.slice(0, cut);
 
-    if (!tail.length || calm) {
-      for (const e of tail) {
+    if (calm) {
+      for (const e of events) {
         const d = 'damaged' in e ? e.damaged : 'immune' in e ? e.immune : null;
         if (d) markTrace(pos, d.by, d.target, e);
         transcribe(pos, e);
@@ -574,6 +616,19 @@
     playing = true;
     picked = null;
     sheet = null;
+    told = [];
+
+    for (const e of own) {
+      if ('turnEnded' in e || 'finished' in e) {
+        transcribe(pos, e);
+        live = copy(pos);
+        told = [...told, e];
+        continue;
+      }
+      if (!(await beat(pos, e, token))) return;
+      told = [...told, e];
+    }
+
     for (const e of tail) {
       // Пауза — между тем, что видно. Конец хода и итог ничего не показывают,
       // и полсекунды тишины перед ними человек читает как задержку, а не как ритм.
@@ -609,6 +664,7 @@
     sheet = null;
     reading = null;
     acting = null;
+    flying = null;
     traces = [];
     told = [];
 
@@ -693,7 +749,7 @@
   let fieldEl = $state<HTMLElement | null>(null);
   let tableEl = $state<HTMLElement | null>(null);
   let roomEl = $state<HTMLElement | null>(null);
-  let room = $state(272);
+  let room = $state(310);
   let along = $state(false);
 
   function measureRoom() {
@@ -763,7 +819,7 @@
     <div class="hand">
       {#each theirHand as held, i (i)}
         {@const dto = dtoOf(held.name)}
-        <div class="held">
+        <div class="held" style="--i:{i}; --n:{theirHand.length}">
           {#if dto}
             <BattleCard card={dto} {frames} owned={true} transition={false} interactive={false} />
           {:else}
@@ -788,6 +844,7 @@
           class="held held--mine"
           class:held--picked={picked?.kind === 'hand' && picked.index === i}
           class:held--dim={!playableHand.has(i)}
+          style="--i:{i}; --n:{hand.length}"
         >
           {#if dto}
             <BattleCard card={dto} {frames} owned={true} transition={false} interactive={false} />
@@ -806,10 +863,10 @@
 <div class="scene" class:scene--held={playing} class:scene--along={along}>
   <!-- Слева: круг, чей ход, мана обеих сторон. -->
   <aside class="ledger">
-    <p class="ledger-line">{$t('battleRound')} {position.round}</p>
     <p class="ledger-turn">
       {position.active === me ? $t('battleWhoseTurnYours') : $t('battleWhoseTurnKeeper')}
     </p>
+    <p class="ledger-line">{$t('battleRound')} {position.round}</p>
     <!--
       «Сколько есть сейчас» имеет смысл только у той стороны, чей ход идёт. У
       другой `mana` — это остаток с её прошлого хода, а в первом раунде, пока
@@ -881,12 +938,23 @@
                   style:--fit={dto ? aspectOf(dto) : DEFAULT_ASPECT}
                   class:figure--spent={here.owner === me
                     && (here.acted || (mine && !ready.has(here.id)))}
+                  class:figure--wound={acting?.target === here.id || flying?.unit === here.id}
                   style={stirOf(here.id)}
                 >
                   {#if dto}
                     <!-- transition off: two copies of one work share a card id,
                          and two `view-transition-name`s abort the morph. -->
-                    <BattleCard card={dto} {frames} owned={true} transition={false} interactive={false} />
+                    <BattleCard
+                      card={dto}
+                      {frames}
+                      owned={true}
+                      transition={false}
+                      interactive={false}
+                      hurt={here.health.max > 0 ? here.health.current / here.health.max : 1}
+                      wearSeed={here.id}
+                      struck={acting?.target === here.id ? acting.struck : null}
+                      scrap={flying?.unit === here.id ? flying : null}
+                    />
                   {:else}
                     <span class="figure-name">{titleOf(here.card.name)}</span>
                   {/if}
@@ -1002,8 +1070,8 @@
       </div>
     </div>
 
-    <!-- Своя рука и ход — одна полоса: иначе абзац про ману и кнопка уезжают
-         под складку, а их как раз нажимают чаще всего. -->
+    <!-- Своя рука и ход — ближний край стола: веер карт и фраза хода
+         в одной полосе, чтобы оба оставались в окне. -->
     <div class="foot">
       <div class="table-hand table-hand--mine">{@render ownHand()}</div>
       <div class="turn">
@@ -1012,12 +1080,14 @@
             {handTrouble === 'mana' ? $t('battleNoManaYet') : $t('battleNoRoomYet')}
           </p>
         {/if}
-        <button type="button" disabled={!mine} onclick={() => onact('endTurn')} class="end">
-          {$t('battleEndTurn')}
-        </button>
-        {#if playing}
-          <span class="waiting">{$t('battleKeeperThinks')}</span>
-        {/if}
+        <div class="turn-act">
+          <button type="button" disabled={!mine} onclick={() => onact('endTurn')} class="end">
+            {$t('battleEndTurn')}
+          </button>
+          {#if playing}
+            <span class="waiting">{$t('battleKeeperThinks')}</span>
+          {/if}
+        </div>
       </div>
     </div>
   </div>
@@ -1130,7 +1200,7 @@
   .scene {
     display: flex;
     flex-direction: column;
-    gap: 1.6rem;
+    gap: 0.85rem;
     color: #34251c;
   }
 
@@ -1141,7 +1211,7 @@
       display: grid;
       grid-template-columns: 13rem minmax(0, 26rem) minmax(0, 1fr);
       align-items: start;
-      gap: 2rem;
+      gap: 1.1rem 1.35rem;
     }
 
     /* Руки уходят в боковую колонку — и только ради этого доска помещается в
@@ -1165,13 +1235,32 @@
        Ширина считается один раз и достаётся полю целиком: следы ударов и
        печать лежат в `inset: 0` от поля, и поле шире доски увело бы их вбок. */
     .table {
-      --board: clamp(13rem, calc((100dvh - var(--room, 17rem) - 20px) * 0.375 + 8px), 26rem);
+      --board: clamp(13rem, calc((100dvh - var(--room, 19rem) - 20px) * 0.375 + 8px), 26rem);
     }
 
     .field,
     .foot {
       width: var(--board);
       margin-inline: auto;
+    }
+  }
+
+  @container (max-width: 720px) {
+    .foot .held {
+      width: 4.65rem;
+    }
+
+    .end {
+      font-size: 1.08rem;
+    }
+
+    .cloth {
+      padding: 0.28rem;
+      outline-offset: 2px;
+    }
+
+    .hand-why {
+      max-width: 11rem;
     }
   }
 
@@ -1202,7 +1291,7 @@
      поле занимает окно целиком, а рука и ход уезжают под складку. */
   .scene--along .field,
   .scene--along .foot {
-    width: min(100%, 42rem, calc((100dvh - var(--room, 14rem)) * 1.5));
+    width: min(100%, 42rem, calc((100dvh - var(--room, 16rem)) * 1.5));
     margin-inline: auto;
   }
 
@@ -1230,7 +1319,11 @@
   }
 
   .ledger-turn {
-    color: #6f3b24;
+    margin: 0 0 0.15rem;
+    font-size: 1.05rem;
+    font-style: italic;
+    line-height: 1.3;
+    color: #34251c;
   }
 
   /* На узком экране руки остаются у краёв доски, как задумано: своя половина
@@ -1246,8 +1339,9 @@
   .table {
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: 0.35rem;
     min-width: 0;
+    overflow: visible;
     /* Пока стол стоит вертикально — колонка около 420 px: поле 3×6 само по
        себе высокое, растягивать его некуда. Вдоль комнаты потолок снимается. */
     max-width: 26rem;
@@ -1261,7 +1355,7 @@
     position: relative;
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 4px;
+    gap: 5px;
   }
 
   /* Черта между половинами. Абсолютная, а не отступ ряда: сетка должна остаться
@@ -1281,6 +1375,7 @@
     border: 1px solid transparent;
     background: transparent;
     text-align: left;
+    overflow: visible;
     transition: background-color 200ms ease, border-color 200ms ease;
   }
 
@@ -1334,6 +1429,7 @@
     place-items: center;
     height: 100%;
     padding: 3px;
+    overflow: visible;
     transition:
       transform 180ms cubic-bezier(0.2, 0.8, 0.25, 1),
       opacity 500ms ease,
@@ -1358,6 +1454,10 @@
 
   .figure--spent {
     opacity: 0.55;
+  }
+
+  .figure--wound {
+    z-index: 4;
   }
 
   /* Подача, вздрагивание и оседание жили здесь тремя правилами и одним
@@ -1493,16 +1593,19 @@
   }
 
   .hand-label {
-    font-size: 10px;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
+    margin: 0 0 0.2rem;
+    font-family: Georgia, 'Fraunces', serif;
+    font-size: 0.78rem;
+    font-style: italic;
+    letter-spacing: 0.02em;
+    text-transform: none;
     color: #8a6a55;
   }
 
   .held {
     display: block;
-    width: 4.4rem;
-    margin-inline: -0.35rem;
+    width: 4.6rem;
+    margin-inline: 0;
     padding: 0;
     background: transparent;
     border: 1px solid transparent;
@@ -1512,14 +1615,9 @@
     cursor: pointer;
   }
 
-  .held--picked,
-  .held--mine:hover {
-    z-index: 2;
-    margin-inline: 0.1rem;
-  }
-
   .held--picked {
-    border-color: #c65f3c;
+    outline: 1px solid #c65f3c;
+    outline-offset: 1px;
   }
 
   /* Выложить нельзя — и это должно читаться сразу, а не угадываться. Было
@@ -1532,79 +1630,162 @@
 
   .ledger-hands .hand {
     flex-wrap: wrap;
-    gap: 0.35rem;
+    gap: 0.4rem;
   }
 
   .ledger-hands .held {
-    margin-inline: 0;
+    width: 4.5rem;
+  }
+
+  .table-hand--theirs .hand {
+    justify-content: center;
+  }
+
+  .table-hand--theirs .held {
+    width: 4.15rem;
+    margin-inline: -0.4rem;
   }
 
   .ledger-note {
-    margin: 0.35rem 0 0;
-    max-width: 30ch;
-    font-family: Georgia, 'Fraunces', serif;
-    font-size: 0.78rem;
-    font-style: italic;
-    line-height: 1.5;
-    color: #8a6a55;
+    display: none;
   }
 
   .hand-why {
     margin: 0;
-    max-width: 18rem;
+    max-width: 13rem;
     font-family: Georgia, 'Fraunces', serif;
-    font-size: 0.72rem;
+    font-size: 0.68rem;
     font-style: italic;
     line-height: 1.35;
+    text-align: right;
     color: #8a6a55;
   }
 
+  /* Ближний край стола: карты лежат веером, ход — фраза справа, не столбик. */
   .foot {
     display: flex;
+    flex-wrap: wrap;
     align-items: flex-end;
     justify-content: space-between;
-    gap: 0.85rem 1.1rem;
+    gap: 0.55rem 0.9rem;
     min-width: 0;
+    padding: 0.15rem 0.1rem 0.1rem;
+    overflow: visible;
   }
 
   .foot .table-hand--mine {
     flex: 1 1 auto;
     min-width: 0;
+    overflow: visible;
+  }
+
+  .foot .hand-label {
+    display: none;
+  }
+
+  .foot .hand {
+    justify-content: flex-start;
+    padding: 0.7rem 0.95rem 0.12rem 0.8rem;
+    overflow: visible;
+  }
+
+  .foot .held {
+    position: relative;
+    z-index: calc(1 + var(--i, 0));
+    width: 5.45rem;
+    flex: 0 0 auto;
+    margin-inline: calc(-0.42rem - 0.1rem * var(--n, 3));
+    transform-origin: 50% 100%;
+    transform: rotate(calc((var(--i, 0) - (var(--n, 1) - 1) / 2) * 4.6deg))
+      translateY(0.28rem);
+    filter: drop-shadow(0 3px 7px rgba(52, 37, 28, 0.18));
+    transition:
+      transform 180ms cubic-bezier(0.2, 0.8, 0.25, 1),
+      filter 180ms ease;
+  }
+
+  .foot .held--picked,
+  .foot .held--mine:hover:not(:disabled) {
+    z-index: 12;
+    transform: rotate(0deg) translateY(-0.55rem);
+    filter: drop-shadow(0 8px 14px rgba(52, 37, 28, 0.28));
   }
 
   .turn {
     display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 0.7rem 0.85rem;
+    flex: 0 1 auto;
+    max-width: 22rem;
+  }
+
+  .turn-act {
+    display: flex;
     flex-direction: column;
     align-items: flex-end;
-    gap: 0.35rem;
+    gap: 0.15rem;
     flex: 0 0 auto;
-    max-width: 16rem;
   }
 
   .end {
+    position: relative;
     font-family: Georgia, 'Fraunces', serif;
     font-style: italic;
-    font-size: 15px;
-    letter-spacing: 0.02em;
-    padding: 0.1rem 0;
+    font-size: 1.22rem;
+    line-height: 1.15;
+    letter-spacing: 0.01em;
+    padding: 0.45rem 0.1rem 0.38rem;
     border: none;
-    border-bottom: 1px solid #d8c6b1;
     background: none;
+    color: #6f3b24;
     white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .end:not(:disabled)::before {
+    content: '';
+    display: inline-block;
+    width: 0.38rem;
+    height: 0.38rem;
+    margin-right: 0.5rem;
+    vertical-align: 0.12em;
+    border-radius: 42% 58% 47% 53% / 52% 44% 56% 48%;
+    background: #c65f3c;
+  }
+
+  .end:not(:disabled)::after {
+    content: '';
+    position: absolute;
+    left: 1.05rem;
+    right: 0;
+    bottom: 0.22rem;
+    height: 1px;
+    background: #c65f3c;
+    opacity: 0.7;
   }
 
   .end:disabled {
-    opacity: 0.4;
+    color: #8a6a55;
+    opacity: 0.45;
+    cursor: default;
   }
 
   .end:not(:disabled):hover {
     background: none;
-    border-bottom-color: #6f3b24;
-    color: #6f3b24;
+    color: #c65f3c;
+  }
+
+  .end:not(:disabled):hover::after {
+    opacity: 1;
   }
 
   .waiting {
-    font-size: 11px;
+    font-family: Georgia, 'Fraunces', serif;
+    font-size: 0.72rem;
+    font-style: italic;
     color: #8a6a55;
   }
 
@@ -1623,8 +1804,9 @@
   }
 
   .chosen {
-    padding: 0.75rem;
-    border: 1px solid #d8c6b1;
+    padding: 0 0 0 0.85rem;
+    border: none;
+    border-left: 1px solid #d8c6b1;
   }
 
   .chosen-head {
@@ -1728,9 +1910,11 @@
 
   .journal-label {
     margin-bottom: 0.4rem;
-    font-size: 10px;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
+    font-family: Georgia, 'Fraunces', serif;
+    font-size: 0.82rem;
+    font-style: italic;
+    letter-spacing: 0.02em;
+    text-transform: none;
     color: #8a6a55;
   }
 
@@ -1836,10 +2020,23 @@
     .trace {
       transition: none;
     }
+
+    .foot .held,
+    .foot .held--picked,
+    .foot .held--mine:hover:not(:disabled) {
+      transform: none;
+      transition: none;
+    }
   }
 
   .cloth {
     min-width: 0;
+    padding: 0.42rem;
+    background: #f3e6d4;
+    border: 1px solid #d8c6b1;
+    outline: 1px solid #d8c6b1;
+    outline-offset: 3px;
+    box-shadow: 0 8px 22px rgba(52, 37, 28, 0.08);
   }
 
   .face {

@@ -21,7 +21,7 @@
 {#if motes.length}
   <div class="motion" aria-hidden="true">
     {#each motes as mote (mote.key)}
-      <i class="mote" style={mote.style}></i>
+      <i class="mote" class:mote--scrap={mote.kind === 'scrap'} style={mote.style}></i>
     {/each}
   </div>
 {/if}
@@ -36,6 +36,14 @@
   .mote {
     display: block;
     /* Всё остальное — из `stage()`: коробка, картинка, полоса, слой, поворот. */
+  }
+
+  /* Кусок самой карты, не спрайт. Цвет бумаги дома, рваный край. Один, не рой. */
+  .mote--scrap {
+    background: #f8f1e7;
+    border: 1px solid #d8c6b1;
+    box-shadow: 1px 1px 0 #6f3b24;
+    clip-path: polygon(10% 8%, 88% 0%, 100% 72%, 68% 100%, 0% 88%, 16% 42%);
   }
 
   /* ── Словарь жестов ──────────────────────────────────────────────────────
@@ -97,6 +105,87 @@
     100% { transform: rotate(0deg); }
   }
 
+  /* Замах стрелка: тянется ПРОТИВ цели, потом коротко подаётся к ней.
+     `--lx/--ly` смотрят на цель, поэтому «назад» — это те же числа со знаком
+     минус, и стрелок с любой клетки натягивает в правильную сторону. */
+  @keyframes -global-gotiga-draw {
+    0% { transform: translate(0, 0); }
+    45% { transform: translate(calc(var(--lx, 0) * -0.7), calc(var(--ly, 0) * -0.7)); }
+    62% { transform: translate(calc(var(--lx, 0) * 0.65), calc(var(--ly, 0) * 0.65)); }
+    100% { transform: translate(0, 0); }
+  }
+
+  /* Отдача: цель отброшена ОТ бьющего. У цели `--lx/--ly` те же, что у
+     бьющего, — то есть уже «прочь от него», и умножать ни на что не надо. */
+  @keyframes -global-gotiga-recoil {
+    0% { transform: translate(0, 0); }
+    30% { transform: translate(calc(var(--lx, 0) * 0.55), calc(var(--ly, 0) * 0.55)); }
+    100% { transform: translate(0, 0); }
+  }
+
+  /* Замах сверху: поднимается и обрушивается. Тяжёлому удару. */
+  @keyframes -global-gotiga-heave {
+    0% { transform: translateY(0) rotate(0deg); }
+    40% { transform: translateY(-12px) rotate(-5deg); }
+    62% { transform: translate(calc(var(--lx, 0) * 0.85), calc(var(--ly, 0) * 0.85)) rotate(3deg); }
+    100% { transform: translateY(0) rotate(0deg); }
+  }
+
+  /* Крупнее и медленнее вздрагивания: досталось всерьёз. */
+  @keyframes -global-gotiga-shudder {
+    0% { transform: translate(0, 0) rotate(0deg); }
+    18% { transform: translate(-6px, 2px) rotate(-2.2deg); }
+    44% { transform: translate(6px, -2px) rotate(2.2deg); }
+    72% { transform: translate(-3px, 0) rotate(-1deg); }
+    100% { transform: translate(0, 0) rotate(0deg); }
+  }
+
+  /* Кренится и выпрямляется — медленно. Тому, кто готовит, а не бьёт. */
+  @keyframes -global-gotiga-sway {
+    0% { transform: rotate(0deg) translateY(0); }
+    50% { transform: rotate(-3.4deg) translateY(-5px); }
+    100% { transform: rotate(0deg) translateY(0); }
+  }
+
+  /* Нависает: подаётся вперёд ростом, а не шагом. */
+  @keyframes -global-gotiga-loom {
+    0% { transform: scale(1); }
+    45% { transform: scale(1.14); }
+    100% { transform: scale(1); }
+  }
+
+  /* ── Свет ──────────────────────────────────────────────────────────────
+     Не вспышка. Вспышка — это язык чужой игры, и он запрещён (§1); свет на
+     фотографии — язык этого дома, он уже стоит в `RakingLight` и
+     `CandleReveal`. Отсюда и сдержанность чисел: 18% яркости читаются, 80%
+     превращают миниатюру в лампу.
+
+     И главное свойство: это `filter`, а не `transform`. Значит, свет можно
+     дать телу ВМЕСТЕ с движением — «кренится и светлеет» одним телом. */
+
+  /* Затеплилось: чара. */
+  @keyframes -global-gotiga-kindle {
+    0% { filter: brightness(1) saturate(1); }
+    45% { filter: brightness(1.32) saturate(1.22); }
+    100% { filter: brightness(1) saturate(1); }
+  }
+
+  /* Краска ушла: холод, оберег, испуг. */
+  @keyframes -global-gotiga-blanch {
+    0% { filter: saturate(1) brightness(1); }
+    40% { filter: saturate(0.2) brightness(1.1); }
+    100% { filter: saturate(1) brightness(1); }
+  }
+
+  /* Потемнело: проклятие, яд. Не возвращается к концу СВОЕГО жеста — темнеет и
+     так остаётся до конца движения, потому что это не мгновение, а то, что
+     сделалось. Дальше тело всё равно вернётся в норму: как только событие
+     показано, сцена снимает с него стиль целиком. */
+  @keyframes -global-gotiga-wither {
+    0% { filter: brightness(1) saturate(1); }
+    100% { filter: brightness(0.68) saturate(0.5); }
+  }
+
   /* ── Рисунок ──────────────────────────────────────────────────────────── */
 
   /* Полоса кадров. Конец — не 100%, а `--strip-end`: см. `stripEnd()`, там
@@ -112,6 +201,18 @@
   @keyframes -global-gotiga-fly {
     from { transform: translate(0, 0) rotate(var(--turn, 0deg)); }
     to { transform: translate(var(--mx, 0), var(--my, 0)) rotate(var(--turn, 0deg)); }
+  }
+
+  /* Обломок улетает и гаснет. Угол и дальность уже в `--mx/--my` из `stage()`. */
+  @keyframes -global-gotiga-scrap {
+    from {
+      transform: translate(0, 0) rotate(var(--spin0, 0deg));
+      opacity: 1;
+    }
+    to {
+      transform: translate(var(--mx, 0), var(--my, 0)) rotate(var(--spin1, 40deg));
+      opacity: 0;
+    }
   }
 
   @keyframes -global-gotiga-fade-in {

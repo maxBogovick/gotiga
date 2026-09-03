@@ -1298,7 +1298,7 @@ export const en = {
   battleManaKeeper: 'Opponent’s mana',
   battleManaNote: 'Mana is only needed to play a card from your hand. Moving and striking are free.',
   battleSpent: 'already moved',
-  battleNoManaYet: 'Not enough mana for any card in your hand yet. End your turn — you will have more mana next turn.',
+  battleNoManaYet: 'Not enough mana for a card. There will be more next turn.',
   battleNoRoomYet: 'Nowhere to put one: there are no free cells on your half.',
   battleEndTurn: 'End the turn',
   battleKeeperThinks: 'The opponent is thinking…',

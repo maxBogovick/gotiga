@@ -47,10 +47,13 @@
     bodyPassport,
     BODY_STAT_LABELS,
     livePiece,
+    paperClip,
+    scrapFlight,
     sliceResizeDelta,
     sliceSigns,
     type InsetKey,
     type FrameOverride,
+    type ScrapFly,
     type SliceResizeX,
     type SliceResizeY,
   } from '$lib/battles';
@@ -76,6 +79,10 @@
     onEditRace,
     onIconUpload,
     onError,
+    hurt = 1,
+    wearSeed = 0,
+    struck = null,
+    scrap = null,
   }: {
     card: BattleCard;
     frames?: BattleFrame[] | null;
@@ -136,6 +143,15 @@
     /** A new icon was chosen for the race this sample wears. */
     onIconUpload?: (url: string) => void;
     onError?: (message: string) => void;
+    /** Remaining health, 0..1. 1 — целая. Полк и стол карт это не передают. */
+    hurt?: number;
+    /** Id тела: те же выщербы при том же здоровье, лечение снимает те же. */
+    wearSeed?: number;
+    /** Синяк или чернила — только такт удара, не метр здоровья. Родитель
+     *  вешает это В МОМЕНТ удара, не в начале замаха. */
+    struck?: 'bruise' | 'ink' | null;
+    /** Один обломок, улетает с карты. Тот же миг, что синяк. */
+    scrap?: ScrapFly | null;
   } = $props();
 
   let frame = $derived(frameForCard(card, frames, level));
@@ -145,6 +161,8 @@
    *  form, never the other one. */
   let editLang2 = $derived((editLang ?? $lang) as 'en' | 'ru');
   let copy = $derived(cardCopy(card, editLang2));
+  let torn = $derived(owned ? paperClip(hurt, wearSeed) : null);
+  let flake = $derived(scrap ? scrapFlight(scrap.blow, scrap.remain, scrap.seed) : null);
   let focal = $derived(parseFocal(card.artFocal));
   let prices = $derived(pricesOf(card));
   let head = $derived(headerCopy(card, editLang2));
@@ -825,6 +843,8 @@
    class:card--dressed={dressed && owned}
    class:card--overlaid={overlaid && owned}
    class:card--back-art={!owned && hasBackArt}
+   class:card--torn={!!torn}
+   style:clip-path={torn}
  >
   <div class="content" bind:this={contentEl}>
   {#if owned}
@@ -905,6 +925,9 @@
         <AppImage src={card.artUrl} alt={copy.title} class="art-image" sizes="(max-width: 640px) 45vw, 260px" />
       {:else}
         <div class="art--absent" aria-hidden="true"></div>
+      {/if}
+      {#if struck}
+        <i class="struck struck--{struck}" aria-hidden="true"></i>
       {/if}
       <span class="foil" aria-hidden="true"></span>
 
@@ -1235,6 +1258,14 @@
   {/if}
  </div>
 
+ {#if flake}
+   <i
+     class="scrap"
+     style="--scrap-x:{flake.x};--scrap-y:{flake.y};--scrap-spin:{flake.spin};--scrap-size:{flake.size}cqi"
+     aria-hidden="true"
+   ></i>
+ {/if}
+
  {#if badgePopoverOpen && badgePopoverPos}
    <!-- The cost/power badge's own numeric editor. Anchored off the badge's
         own screen position rather than `frame.costX`/`powerX` directly, and
@@ -1307,6 +1338,7 @@
     aspect-ratio: var(--aspect, 0.714);
     --mx: 0.5;
     --my: 0.5;
+    overflow: visible;
   }
 
   .card {
@@ -1315,6 +1347,7 @@
     background: var(--paper);
     color: var(--ink);
     border: 1px solid var(--edge);
+    border-radius: 0;
     box-shadow:
       inset 0 0 0 2cqi var(--paper),
       inset 0 0 0 calc(2cqi + 1px) var(--edge),
@@ -1323,6 +1356,10 @@
     transition: transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
     transform-style: preserve-3d;
     will-change: transform;
+  }
+
+  .card--torn {
+    filter: drop-shadow(0 0 0.6px #6f3b24);
   }
 
   /* Any card wearing a picture. The painted rings and the hairline border are
@@ -1887,6 +1924,71 @@
 
   .slot:hover .card:not(.card--still) .foil {
     opacity: 1;
+  }
+
+  /* Синяк на фотографии: сургуч, не неон. От сердца миниатюры наружу, такт,
+     потом нет. Чернила — чара, тот же жест, другой цвет. */
+  .struck {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    transform-origin: 50% 42%;
+    animation: struck-spread 420ms ease both;
+  }
+
+  .struck--bruise {
+    background: radial-gradient(
+      circle at 50% 42%,
+      rgba(139, 48, 36, 0.48) 0%,
+      rgba(139, 48, 36, 0.22) 32%,
+      transparent 68%
+    );
+    mix-blend-mode: multiply;
+  }
+
+  .struck--ink {
+    background: radial-gradient(
+      circle at 48% 40%,
+      rgba(52, 37, 28, 0.4) 0%,
+      rgba(52, 37, 28, 0.16) 38%,
+      transparent 70%
+    );
+    mix-blend-mode: multiply;
+  }
+
+  @keyframes struck-spread {
+    0% { opacity: 0; transform: scale(0.28); }
+    38% { opacity: 1; transform: scale(0.82); }
+    100% { opacity: 0; transform: scale(1.18); }
+  }
+
+  /* Обломок — ребёнок слота, не карты: у `.card` в app.css overflow:hidden,
+     и кусок бумаги не вылетел бы. Размер в cqi, от самой карты. */
+  .scrap {
+    position: absolute;
+    left: 50%;
+    top: 42%;
+    z-index: 8;
+    width: var(--scrap-size, 24cqi);
+    height: calc(var(--scrap-size, 24cqi) * 0.78);
+    margin-left: calc(var(--scrap-size, 24cqi) / -2);
+    pointer-events: none;
+    background: #f8f1e7;
+    border: 1px solid #6f3b24;
+    box-shadow: 1px 1px 0 #34251c;
+    clip-path: polygon(12% 6%, 90% 0%, 100% 70%, 72% 100%, 0% 86%, 14% 40%);
+    animation: scrap-fly 560ms cubic-bezier(0.2, 0.8, 0.25, 1) both;
+  }
+
+  @keyframes scrap-fly {
+    0% {
+      transform: translate(0, 0) rotate(-8deg);
+      opacity: 1;
+    }
+    100% {
+      transform: translate(var(--scrap-x, 40cqi), var(--scrap-y, -28cqi)) rotate(var(--scrap-spin, 70deg));
+      opacity: 0;
+    }
   }
 
   .plate {
@@ -2473,6 +2575,12 @@
     }
 
     .foil {
+      display: none;
+    }
+
+    .struck,
+    .scrap {
+      animation: none;
       display: none;
     }
   }

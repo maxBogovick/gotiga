@@ -1074,7 +1074,56 @@ export const GESTURE_BODIES: GestureBody[] = [
   'rise',
   'swell',
   'bow',
+  'draw',
+  'recoil',
+  'heave',
+  'shudder',
+  'sway',
+  'loom',
+  'kindle',
+  'blanch',
+  'wither',
 ];
+
+/** Жесты света. Меняют `filter`, а не `transform`, — значит, их можно дать
+ *  телу ВМЕСТЕ с движением, и они сложатся. Список нужен столу: он подсказывает
+ *  хранителю, какой жест не отменит уже надетый. */
+export const GESTURE_LIGHTS: GestureBody[] = ['kindle', 'blanch', 'wither'];
+/** Замахи. Пишут `transform`, поэтому на одном теле живёт только один. */
+export const GESTURE_MOVES: GestureBody[] = GESTURE_BODIES.filter(
+  (b) => b !== 'none' && !GESTURE_LIGHTS.includes(b),
+);
+
+export const isLight = (body: GestureBody) => GESTURE_LIGHTS.includes(body);
+export const isMove = (body: GestureBody) =>
+  body !== 'none' && !GESTURE_LIGHTS.includes(body);
+
+/** Полёт и поле без картинки — слот под стрелу, не пустой жест. */
+export const isSlot = (g: MotionGesture) =>
+  (g.whom === 'flight' || g.whom === 'field') && !g.image;
+
+/**
+ * Два замаха на одном теле не сложатся — победит последний. Свет складывается
+ * с замахом, но не со вторым светом. Стол и сервер держат одно правило.
+ */
+export function oneStirPerBody(gestures: MotionGesture[]): MotionGesture[] {
+  const last = (whom: GestureWhom, pred: (b: GestureBody) => boolean) => {
+    for (let i = gestures.length - 1; i >= 0; i--) {
+      if (gestures[i].whom === whom && pred(gestures[i].body)) return i;
+    }
+    return -1;
+  };
+  const sm = last('striker', isMove);
+  const tm = last('target', isMove);
+  const sl = last('striker', isLight);
+  const tl = last('target', isLight);
+  return gestures.filter((g, i) => {
+    if (g.whom !== 'striker' && g.whom !== 'target') return true;
+    if (isMove(g.body)) return i === (g.whom === 'striker' ? sm : tm);
+    if (isLight(g.body)) return i === (g.whom === 'striker' ? sl : tl);
+    return true;
+  });
+}
 export const GESTURE_TURNS: GestureTurn[] = ['none', 'toTarget', 'mirror'];
 export const GESTURE_FADES: GestureFade[] = ['hold', 'in', 'out', 'inOut'];
 
@@ -1133,17 +1182,37 @@ function gesture(
   return { ...newGesture(whom), body, at, dur, fade: 'hold' };
 }
 
+/** Слот под картинку. Без неё ничего не рисуется, но место живёт в записи. */
+export function newSlot(whom: 'flight' | 'field', at = 80, dur = 320): MotionGesture {
+  return {
+    ...newGesture(whom),
+    at,
+    dur,
+    image: '',
+    body: 'none',
+    size: whom === 'flight' ? 45 : 80,
+    fade: 'inOut',
+  };
+}
+
+/**
+ * Промах: удар не взял. Не тот же flinch, что у раны — иначе оберег дрожит
+ * как раненый. Свет без движения: тело стоит, краска уходит.
+ */
+export const WARD_MOTION: Motion = {
+  id: 'house-ward',
+  nameEn: 'A ward',
+  nameRu: 'Оберег',
+  occasion: 'unseen',
+  gestures: [gesture('target', 'blanch', 0, 280)],
+};
+
 /**
  * Умолчания дома — и доказательство, что комната не изменилась.
  *
  * Числа сверены с `BATTLE-SCENE.md` §6 и с тем, что стояло в сцене до движка:
  * подача 220 + 180 = 400, вздрагивание 160 с 220-й миллисекунды, лечение 300,
- * выставление 300, падение 500. Совпадает до миллисекунды, и это не совпадение,
- * а условие (`BATTLE-MOTION.md` §4): движок, в котором подача к цели
- * невыразима, — чужой движок, как бы красиво он ни показывал стрелу.
- *
- * Зеркало `default_motions()` на сервере. Как и пять рамок в `DEFAULT_FRAMES`,
- * держится здесь ради того, чтобы комната играла и до первого сохранения свода.
+ * выставление 300, падение 500. Совпадает до миллисекунды.
  */
 export const DEFAULT_MOTIONS: Motion[] = [
   {
@@ -1293,6 +1362,8 @@ export interface StagedMote {
   layer: number;
   /** Готовый инлайновый стиль: коробка, картинка, полоса, слой, поворот. */
   style: string;
+  /** Обломок бумаги — не картинка со склада, а кусок самой карты. */
+  kind?: 'scrap';
 }
 
 export interface Staged {
@@ -1302,6 +1373,161 @@ export interface Staged {
   striker: string;
   target: string;
   motes: StagedMote[];
+}
+
+/** Синяк на фото или чернильная блоха. Не полоска здоровья: живёт только такт. */
+export type StruckKind = 'bruise' | 'ink';
+
+/**
+ * Чем этот удар оставляет след на карте. Числа — из события, не из правил:
+ * `remain` после переписи, `blow` = toHealth/max, `seed` — id тела, чтобы
+ * обломок летел туда же при переигрывании.
+ */
+export interface HitWear {
+  remain: number;
+  blow: number;
+  seed: number;
+  channel: BattleChannel;
+  /** Откуда удар. Яд и зона — не синяк и не бумага. */
+  source?: string;
+  /** Когда касается — та же миллисекунда, что `motionContact`. */
+  at: number;
+}
+
+export function struckOf(hit: HitWear | null | undefined): StruckKind | null {
+  if (!hit || hit.blow <= 0) return null;
+  const src = hit.source ?? 'attack';
+  if (src === 'dot' || src === 'zone') return null;
+  if (hit.channel === 'physical') return 'bruise';
+  if (hit.channel === 'magic' || hit.channel === 'pure') return 'ink';
+  return null;
+}
+
+/** Когда движение касается цели: первый жест на ней, иначе сразу. */
+export function motionContact(motion: Motion | null): number {
+  const aimed = motion?.gestures.filter((g) => g.whom === 'target') ?? [];
+  return aimed.length ? Math.min(...aimed.map((g) => g.at || 0)) : 0;
+}
+
+/**
+ * Когда удар уже состоялся — синяк, обломок, перепись здоровья.
+ *
+ * Если на цели лежит полоса (секира, меч, булава), это не появление оружия, а
+ * кадр удара: вторая половина полосы. Иначе — то же, что `motionContact`.
+ */
+export function motionWound(motion: Motion | null): number {
+  if (!motion) return 0;
+  const pictured = motion.gestures.filter((g) => g.whom === 'target' && g.image);
+  if (pictured.length) {
+    const g = pictured.reduce((a, b) => ((a.at || 0) <= (b.at || 0) ? a : b));
+    return Math.min(MOTION_MS_MAX, (g.at || 0) + Math.round((g.dur || 0) * 0.62));
+  }
+  return motionContact(motion);
+}
+
+/** Детерминированный 0..1. Не Math.random: этюд переигрывают. */
+function wearRng(seed: number): () => number {
+  let a = (seed | 0) + 0x9e3779b9;
+  return () => {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+type PaperEdge = 'top' | 'right' | 'bottom' | 'left';
+
+export interface PaperBite {
+  edge: PaperEdge;
+  t: number;
+  w: number;
+  depth: number;
+}
+
+/** Выщербы края. Глубокие нарочно: на клетке 3 % — это два пикселя, их нет. */
+export function paperBites(remain: number, seed: number): PaperBite[] {
+  const missing = 1 - Math.max(0, Math.min(1, remain));
+  if (missing < 0.02) return [];
+  const rng = wearRng(seed);
+  const n = Math.min(5, 1 + Math.floor(missing * 5));
+  const depth = 11 + missing * 16;
+  const edges: PaperEdge[] = ['top', 'right', 'bottom', 'left'];
+  const bites: PaperBite[] = [];
+  for (let i = 0; i < n; i++) {
+    const edge = edges[Math.floor(rng() * 4)]!;
+    const t = 0.18 + rng() * 0.64;
+    const w = 0.07 + rng() * 0.05 + missing * 0.05;
+    if (bites.some((b) => b.edge === edge && Math.abs(b.t - t) < 0.14)) continue;
+    bites.push({ edge, t, w, depth });
+  }
+  return bites;
+}
+
+/**
+ * Надорванный край карты. Доля оставшегося здоровья — сколько выщербов,
+ * `seed` — где они стоят, чтобы лечение снимало те же, а не рисовало новые.
+ * Целая карта — `null`, клипа нет.
+ */
+export function paperClip(remain: number, seed: number): string | null {
+  const bites = paperBites(remain, seed);
+  if (!bites.length) return null;
+  const on = (edge: PaperEdge) =>
+    bites.filter((b) => b.edge === edge).sort((a, b) => a.t - b.t);
+
+  const pts: string[] = [];
+  const add = (x: number, y: number) => pts.push(`${x.toFixed(2)}% ${y.toFixed(2)}%`);
+  add(0, 0);
+  for (const b of on('top')) {
+    add((b.t - b.w) * 100, 0);
+    add(b.t * 100, b.depth);
+    add((b.t + b.w) * 100, 0);
+  }
+  add(100, 0);
+  for (const b of on('right')) {
+    add(100, (b.t - b.w) * 100);
+    add(100 - b.depth, b.t * 100);
+    add(100, (b.t + b.w) * 100);
+  }
+  add(100, 100);
+  for (const b of [...on('bottom')].reverse()) {
+    add((b.t + b.w) * 100, 100);
+    add(b.t * 100, 100 - b.depth);
+    add((b.t - b.w) * 100, 100);
+  }
+  add(0, 100);
+  for (const b of [...on('left')].reverse()) {
+    add(0, (b.t + b.w) * 100);
+    add(b.depth, b.t * 100);
+    add(0, (b.t - b.w) * 100);
+  }
+  return `polygon(${pts.join(',')})`;
+}
+
+/** Полёт одного обломка, в долях карты (`cqi`). */
+export function scrapFlight(
+  blow: number,
+  remain: number,
+  seed: number,
+): { size: number; x: string; y: string; spin: string } {
+  const b = Math.max(0.08, Math.min(1, blow));
+  const r = Math.max(0, Math.min(1, remain));
+  const rng = wearRng(seed + 17);
+  const ang = rng() * Math.PI * 2;
+  const dist = 36 + (1 - r) * 48;
+  return {
+    size: 20 + b * 22,
+    x: `${(Math.cos(ang) * dist).toFixed(1)}cqi`,
+    y: `${(Math.sin(ang) * dist).toFixed(1)}cqi`,
+    spin: `${(rng() * 140 - 40).toFixed(0)}deg`,
+  };
+}
+
+export interface ScrapFly {
+  blow: number;
+  remain: number;
+  seed: number;
 }
 
 const EMPTY_STAGE: Staged = { span: 0, striker: '', target: '', motes: [] };
@@ -1338,7 +1564,7 @@ export function stage(
   motion: Motion | null,
   from: StageSpot | null,
   to: StageSpot | null,
-  opts: { spanX: number; spanY: number; along: boolean; calm: boolean },
+  opts: { spanX: number; spanY: number; along: boolean; calm: boolean; hit?: HitWear | null },
 ): Staged {
   if (!motion || opts.calm) return EMPTY_STAGE;
   const { spanX, spanY, along } = opts;
@@ -1455,5 +1681,196 @@ export function stage(
     striker: dress('striker'),
     target: dress('target'),
     motes,
+  };
+}
+
+/**
+ * Готовые движения — то, что хранитель берёт и переделывает, а не сочиняет
+ * с нуля.
+ *
+ * Не умолчания и не пресеты: умолчание играется само, когда ничего не надето
+ * (`DEFAULT_MOTIONS`), а это — заготовки. Стол кладёт копию в ящик, дальше она
+ * обыкновенная запись со своим именем, и дом про неё больше ничего не знает.
+ * Отсюда и `id`, который выдаётся при взятии, а не хранится здесь.
+ *
+ * Три ближних удара несут полосу со склада дома: без рисунка секира, меч и
+ * булава — один и тот же замах. Остальные собраны без картинки, замахом и
+ * светом, потому что выстрел и чару надо показать уже сегодня, а стрелу
+ * хранитель кладёт сам.
+ *
+ * Чара и проклятие показывают, зачем свет отделён от движения: `sway` двигает
+ * `transform`, `kindle` — `filter`, и потому они играют ОДНИМ телом
+ * одновременно. Два движения так не сложились бы: победило бы последнее.
+ */
+
+/** Полосы ближнего удара. Дом нарисовал их сам; хранитель может заменить. */
+export const STRIKE_STRIPS = {
+  axe: '/battles/motion/axe.png',
+  sword: '/battles/motion/sword.png',
+  mace: '/battles/motion/mace.png',
+} as const;
+
+function strikeArt(image: string, at: number, dur: number): MotionGesture {
+  return {
+    ...newGesture('target'),
+    body: 'none',
+    image,
+    frames: 6,
+    size: 118,
+    at,
+    dur,
+    fade: 'inOut',
+    layer: 8,
+  };
+}
+
+export const STOCK_MOTIONS: { nameEn: string; nameRu: string; occasion: MotionOccasion; gestures: MotionGesture[] }[] = [
+  {
+    nameEn: 'An axe',
+    nameRu: 'Секира',
+    occasion: 'blow',
+    gestures: [
+      gesture('striker', 'heave', 0, 520),
+      strikeArt(STRIKE_STRIPS.axe, 280, 240),
+      gesture('target', 'recoil', 320, 280),
+    ],
+  },
+  {
+    nameEn: 'A sword',
+    nameRu: 'Меч',
+    occasion: 'blow',
+    gestures: [
+      gesture('striker', 'lunge', 0, 400),
+      strikeArt(STRIKE_STRIPS.sword, 200, 220),
+      gesture('target', 'flinch', 220, 160),
+    ],
+  },
+  {
+    nameEn: 'A mace',
+    nameRu: 'Булава',
+    occasion: 'blow',
+    gestures: [
+      gesture('striker', 'heave', 0, 520),
+      strikeArt(STRIKE_STRIPS.mace, 280, 240),
+      gesture('target', 'shudder', 320, 280),
+    ],
+  },
+  {
+    nameEn: 'A heavy blow',
+    nameRu: 'Тяжёлый удар',
+    occasion: 'blow',
+    gestures: [
+      gesture('striker', 'heave', 0, 520),
+      // Один замах на цель: recoil и shudder оба пишут transform, и второй
+      // убивал первый. Отдача — то, чем тяжёлый удар читается.
+      gesture('target', 'recoil', 320, 280),
+    ],
+  },
+  {
+    nameEn: 'A shot',
+    nameRu: 'Выстрел',
+    occasion: 'blow',
+    gestures: [
+      gesture('striker', 'draw', 0, 420),
+      // Слот: без картинки ничего не летит, но место уже есть — кладут стрелу,
+      // а не заводят жест. След удара в комнате рисуется отдельно.
+      newSlot('flight', 80, 340),
+      gesture('target', 'flinch', 400, 160),
+    ],
+  },
+  {
+    nameEn: 'A charm',
+    nameRu: 'Чара',
+    occasion: 'spell',
+    gestures: [
+      gesture('striker', 'sway', 0, 460),
+      gesture('striker', 'kindle', 0, 460),
+      newSlot('field', 200, 400),
+      gesture('target', 'kindle', 380, 320),
+      gesture('target', 'shiver', 380, 200),
+    ],
+  },
+  {
+    nameEn: 'A curse',
+    nameRu: 'Проклятие',
+    occasion: 'spell',
+    gestures: [
+      gesture('striker', 'loom', 0, 420),
+      newSlot('field', 180, 400),
+      gesture('target', 'wither', 340, 340),
+      gesture('target', 'shudder', 340, 280),
+    ],
+  },
+  {
+    nameEn: 'The evil eye',
+    nameRu: 'Сглаз',
+    occasion: 'blow',
+    gestures: [
+      gesture('striker', 'sway', 0, 380),
+      gesture('target', 'blanch', 260, 380),
+    ],
+  },
+  {
+    nameEn: 'Tending',
+    nameRu: 'Врачевание',
+    occasion: 'mend',
+    gestures: [
+      gesture('striker', 'bow', 0, 380),
+      gesture('target', 'kindle', 200, 340),
+      gesture('target', 'rise', 200, 340),
+    ],
+  },
+  {
+    nameEn: 'Stepping out',
+    nameRu: 'Явление',
+    occasion: 'arrive',
+    gestures: [
+      gesture('striker', 'swell', 0, 340),
+      gesture('striker', 'kindle', 60, 320),
+    ],
+  },
+  {
+    nameEn: 'Guttering out',
+    nameRu: 'Угасание',
+    occasion: 'fall',
+    gestures: [
+      gesture('target', 'sink', 0, 560),
+      gesture('target', 'blanch', 0, 560),
+    ],
+  },
+  {
+    nameEn: 'Poison',
+    nameRu: 'Яд',
+    occasion: 'unseen',
+    gestures: [
+      gesture('target', 'wither', 0, 320),
+      gesture('target', 'shiver', 0, 200),
+    ],
+  },
+];
+
+/** Заготовку берут копией: `id` рождается в этот миг, потому что на него сразу
+ *  начинают показывать карта, раса и порядок в ящике. */
+export function takeStock(index: number): Motion | null {
+  const found = STOCK_MOTIONS[index];
+  if (!found) return null;
+  return {
+    ...newMotion(found.occasion),
+    nameEn: found.nameEn,
+    nameRu: found.nameRu,
+    gestures: found.gestures.map((g) => ({ ...g })),
+  };
+}
+
+/** Умолчание дома — тоже копией: сами пять записей не правят, иначе комната
+ *  перестанет быть доказательством, что такт не изменился. */
+export function takeHouse(index: number): Motion | null {
+  const found = DEFAULT_MOTIONS[index];
+  if (!found) return null;
+  return {
+    ...newMotion(found.occasion),
+    nameEn: found.nameEn,
+    nameRu: found.nameRu,
+    gestures: found.gestures.map((g) => ({ ...g })),
   };
 }
