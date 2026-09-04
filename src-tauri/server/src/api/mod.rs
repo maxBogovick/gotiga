@@ -697,7 +697,7 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 )),
             )
             .route(
-                "/admin/battles/matches/{id}/replay",
+                "/admin/battles/matches/:id/replay",
                 get(handlers::admin_replay_battle_match).route_layer(
                     middleware::from_fn_with_state(config.clone(), auth_middleware),
                 ),

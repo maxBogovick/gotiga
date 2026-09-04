@@ -149,6 +149,7 @@
     if (!g) return;
     gestureAt = at;
     track = g.whom;
+    hand = 'gesture';
   }
 
   function showHouse(i: number) {
@@ -215,6 +216,43 @@
   let pinned = $state(false);
   let playing = $state(false);
 
+  /** Сцене — комната. Ширится КОНТЕЙНЕР, а не `transform`, ровно как на столе
+   *  рамок: карта тогда крупнее по-настоящему, а не размыта, и прямоугольники,
+   *  измеренные под перетаскиванием, остаются честными. */
+  let zoom = $state(1);
+
+  /** Остановленное время, мс от начала такта, или `null` — идёт.
+   *  Движение правят не проигрыванием, а остановкой: посмотреть 270-ю
+   *  миллисекунду можно только замерев на ней. */
+  let hold = $state<number | null>(null);
+
+  /** Одна рука на весь стол. Жест партитуры и кадр полосы — не два предмета,
+   *  а два способа взять один; поэтому инспектор один, как на столе рамок. */
+  let hand = $state<'gesture' | 'frame'>('gesture');
+
+  /** Слово из колодца, показанное на сцене, но НЕ применённое. Семнадцать слов
+   *  молчали: «нависает» узнавалось только после того, как его надели. */
+  let tasting = $state<GestureBody | null>(null);
+
+  /** Ящики под партитурой: источники, а не рабочая поверхность. */
+  let stripOpen = $state(false);
+  let namesOpen = $state(false);
+  let taking = $state(false);
+
+  /** Проба слова. Не запись в движение: пока держат мышь на слове, сцена
+   *  играет одно это слово тем телом, на чьей дорожке стоит рука. */
+  let tasteMotion = $derived.by((): Motion | null => {
+    if (!tasting) return null;
+    const whom: GestureWhom = track === 'flight' || track === 'field' ? 'target' : track;
+    return {
+      id: 'taste',
+      nameEn: '',
+      nameRu: '',
+      occasion: held?.occasion ?? 'blow',
+      gestures: [{ ...newGesture(whom), body: tasting, at: 0, dur: 420, fade: 'hold' }],
+    };
+  });
+
   const dtoOf = (id: string) => cards.find((c) => c.id === id) ?? null;
   const aspectOf = (dto: BattleCardDto) =>
     frameForCard(dto, frames).aspect || DEFAULT_ASPECT;
@@ -267,30 +305,46 @@
     along;
     looping;
     pinned;
+    hold;
+    tasteMotion;
     const alongNow = along;
     const loop = looping;
     const pin = pinned;
+    const at = hold;
+    const taste = tasteMotion;
 
     const put = () => {
-      const motion = held;
+      const motion = taste ?? held;
       if (!motion) {
         play = null;
         playing = false;
         woundOn = false;
         return 0;
       }
-      woundOn = false;
+      const still = taste ? null : at;
       play = stage(motion, from, to, {
         spanX: alongNow ? DEPTH : WIDTH,
         spanY: alongNow ? WIDTH : DEPTH,
         along: alongNow,
         calm: false,
+        hold: still,
       });
-      playGen += 1;
-      playKey = playGen;
+      // Замершая сцена карт НЕ переставляет: скраббинг идёт по кадру на каждое
+      // движение мыши, и пересборка `BattleCard` на каждом — это не работа.
+      // Стили жестов при этом меняются, а анимация стоит на паузе, поэтому
+      // замершая поза остаётся точной.
+      if (still === null) {
+        playGen += 1;
+        playKey = playGen;
+      }
       playing = true;
-      const gen = playGen;
       const delay = motionWound(motion);
+      if (still !== null) {
+        woundOn = still >= delay;
+        return 0;
+      }
+      woundOn = false;
+      const gen = playGen;
       if (delay <= 0) woundOn = true;
       else {
         setTimeout(() => {
@@ -301,7 +355,9 @@
     };
 
     const spanMs = untrack(put);
-    if (!loop || pin || !spanMs) return;
+    // Проба слова крутится сама, не спрашивая «по кругу»: её смотрят ровно
+    // столько, сколько держат мышь на слове.
+    if ((!loop && !taste) || pin || !spanMs) return;
     const wait = Math.max(480, spanMs + 380);
     const id = setInterval(() => untrack(put), wait);
     return () => clearInterval(id);
@@ -417,6 +473,7 @@
       track = whom;
     }
     mine.gestures = [...mine.gestures];
+    hand = 'gesture';
     bump();
   }
 
@@ -511,6 +568,7 @@
     mine.gestures = [...mine.gestures];
     gestureAt = i;
     track = g.whom;
+    hand = 'gesture';
     bump();
   }
 
@@ -605,6 +663,13 @@
     stripCells[i] = { ...had, src: url };
     stripCells = [...stripCells];
     if (stripCells.every((c) => c.src)) void composeStrip();
+  }
+
+  /** Взять кадр в руку. Настройки кадра живут в инспекторе, а не под полосой:
+   *  инспектор один, и в нём ровно то, что в руке. */
+  function holdCell(i: number) {
+    stripAt = i;
+    hand = 'frame';
   }
 
   function clearCell(i: number) {
@@ -806,6 +871,7 @@
     const cell = stripCells[i];
     if (!cell?.src) return;
     stripAt = i;
+    hand = 'frame';
     const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
     stripDrag = {
       i,
@@ -856,6 +922,7 @@
     pinned = true;
     gestureAt = i;
     track = g.whom;
+    hand = 'gesture';
     drag = {
       i,
       mode,
@@ -889,7 +956,161 @@
   }
 
   function playTurn() {
+    hold = null;
     bump();
+  }
+
+  // ── Остановленное время ──────────────────────────────────────────────────
+  //
+  // Партитура была только редактором: бегунок рисовался, но взять его было
+  // нельзя. Между тем движение правят остановкой — «покажи мне 270-ю и держи»,
+  // — а не тем, что смотрят такт целиком по третьему разу.
+
+  let scrubbing = $state(false);
+
+  function holdAt(lane: Element, clientX: number) {
+    const box = lane.getBoundingClientRect();
+    if (box.width <= 0) return 0;
+    const t = ((clientX - box.left) / box.width) * scoreMs;
+    return Math.max(0, Math.min(scoreMs, Math.round(t / 10) * 10));
+  }
+
+  function scrubDown(e: PointerEvent) {
+    const lane = e.currentTarget as HTMLElement;
+    scrubbing = true;
+    hold = holdAt(lane, e.clientX);
+    lane.setPointerCapture(e.pointerId);
+  }
+
+  function scrubMove(e: PointerEvent) {
+    if (!scrubbing) return;
+    hold = holdAt(e.currentTarget as HTMLElement, e.clientX);
+  }
+
+  function scrubUp() {
+    scrubbing = false;
+  }
+
+  /** Линейка — настоящий ползунок, не картинка: десять миллисекунд мышью не
+   *  берутся, а решают именно они. */
+  function holdKey(e: KeyboardEvent) {
+    const way = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0;
+    if (way) {
+      e.preventDefault();
+      const step = (e.shiftKey ? 100 : 10) * way;
+      hold = Math.max(0, Math.min(scoreMs, (hold ?? 0) + step));
+      return;
+    }
+    if (e.key === 'Home') {
+      e.preventDefault();
+      hold = 0;
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      hold = scoreMs;
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      hold = null;
+    }
+  }
+
+  /** Стрелки двигают взятый жест: партитуру тянут мышью, но десять
+   *  миллисекунд мышью не берутся, а именно они и решают. */
+  function nudgeBar(e: KeyboardEvent, i: number) {
+    const way = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0;
+    if (!way) return;
+    const mine = ensureMine();
+    const g = mine?.gestures[i];
+    if (!g) return;
+    e.preventDefault();
+    mark();
+    const step = (e.shiftKey ? 100 : 10) * way;
+    if (e.altKey) g.dur = Math.max(40, Math.min(MOTION_MS_MAX - g.at, g.dur + step));
+    else g.at = Math.max(0, Math.min(MOTION_MS_MAX - g.dur, g.at + step));
+    mine.gestures = [...mine.gestures];
+    bump();
+  }
+
+  // ── Отмена ───────────────────────────────────────────────────────────────
+  //
+  // Ровно то же, что на столе рамок, и по той же причине: полосу тянут мышью,
+  // правка пишется сразу, и без возврата трогать становится страшно — а прямое
+  // манипулирование живо тем, что пробовать не страшно.
+
+  let history = $state<string[]>([]);
+  let ahead = $state<string[]>([]);
+
+  /** Слепок ПЕРЕД правкой. Один раз на жест: с партитуры — в начале
+   *  перетаскивания, из колонки — перехватом нажатия и фокуса на всей колонке,
+   *  чтобы ни один орган управления не оборачивать вручную. */
+  function mark() {
+    const now = JSON.stringify(motions);
+    if (history[history.length - 1] === now) return;
+    history.push(now);
+    if (history.length > 60) history.shift();
+    ahead = [];
+  }
+
+  function wear(shot: string) {
+    motions = JSON.parse(shot) as Motion[];
+    if (heldId && !motions.some((m) => m.id === heldId)) {
+      heldId = motions[0]?.id ?? null;
+      if (!heldId) faceKind = 'house';
+    }
+    gestureAt = Math.min(gestureAt, Math.max(0, (held?.gestures.length ?? 1) - 1));
+    bump();
+  }
+
+  function stepBack() {
+    // Слепок снимается перехватом нажатия на всю колонку, и нажатие бывает не
+    // правкой: потянули линейку — ничего не изменилось. Одинаковые слепки
+    // проматываются, иначе «вернуть» один раз ничего не делает.
+    const now = JSON.stringify(motions);
+    let was = history.pop();
+    while (was !== undefined && was === now) was = history.pop();
+    if (was === undefined) return;
+    ahead.push(now);
+    wear(was);
+  }
+
+  function stepOn() {
+    const next = ahead.pop();
+    if (next === undefined) return;
+    history.push(JSON.stringify(motions));
+    wear(next);
+  }
+
+  // ── Стенд ────────────────────────────────────────────────────────────────
+  //
+  // Пара карт, расстояние и разворот — не данные движения, а настройки стенда,
+  // и хранитель выбирал их заново каждый день. Помнить их — то же, что помнить
+  // место панели куска рамы.
+
+  const STAND = 'gotiga_battle_motionstand';
+
+  function readStand() {
+    try {
+      const raw = localStorage.getItem(STAND);
+      if (!raw) return;
+      const was = JSON.parse(raw) as Record<string, unknown>;
+      if (typeof was.striker === 'string') strikerCard = was.striker;
+      if (typeof was.target === 'string') targetCard = was.target;
+      if (typeof was.reach === 'number') reach = Math.max(1, Math.min(DEPTH - 1, was.reach));
+      if (typeof was.along === 'boolean') along = was.along;
+      if (typeof was.zoom === 'number') zoom = Math.max(1, Math.min(4, was.zoom));
+    } catch {
+      /* приватное окно — стенд просто не помнится */
+    }
+  }
+
+  function keepStand() {
+    try {
+      localStorage.setItem(
+        STAND,
+        JSON.stringify({ striker: strikerCard, target: targetCard, reach, along, zoom }),
+      );
+    } catch {
+      /* некуда писать — не беда */
+    }
   }
 
   async function load() {
@@ -906,8 +1127,10 @@
       races = kin;
       frames = (dressing.frames ?? []).map(completeSlices);
       stored = JSON.stringify(motions);
-      strikerCard = strikerCard || (cards[0]?.id ?? '');
-      targetCard = targetCard || (cards[1]?.id ?? cards[0]?.id ?? '');
+      // Стенд помнится между заходами, но карту могли убрать из колоды.
+      if (!cards.some((c) => c.id === strikerCard)) strikerCard = cards[0]?.id ?? '';
+      if (!cards.some((c) => c.id === targetCard))
+        targetCard = cards[1]?.id ?? cards[0]?.id ?? '';
       if (motions[0]) {
         faceKind = 'mine';
         heldId = motions[0].id;
@@ -945,12 +1168,22 @@
   }
 
   onMount(() => {
+    readStand();
     void load();
     const guard = (e: BeforeUnloadEvent) => {
       if (untrack(() => dirty)) e.preventDefault();
     };
     window.addEventListener('beforeunload', guard);
     return () => window.removeEventListener('beforeunload', guard);
+  });
+
+  $effect(() => {
+    strikerCard;
+    targetCard;
+    reach;
+    along;
+    zoom;
+    if (!loading) keepStand();
   });
 
   const OCCASION_KEY: Record<MotionOccasion, TranslationKey> = {
@@ -1056,6 +1289,7 @@
     const lane = e.currentTarget as HTMLElement;
     const at = timeAtPointer(lane, e.clientX);
     track = whom;
+    hand = 'gesture';
     const mineList = held?.gestures ?? [];
     const found = findLaneGesture(mineList, whom, kind);
     if (found >= 0) {
@@ -1128,41 +1362,19 @@
   });
 </script>
 
+<!--
+  Стол такта, перекроенный по закону соседних столов: холст главный,
+  инспектор сбоку, инструменты — там, куда смотрят.
+
+  Сцена ПРИБИТА и берёт всю оставшуюся высоту; партитура — под ней, тоже
+  прибитая; источники (шесть кадров, имя и повод) убраны в ящики внизу, потому
+  что смотрят на них раз в час, а места они занимали больше всех. До этого
+  сцена лежала пятым блоком в общем скролле — то есть каждая правка проигрывала
+  движение туда, где его не видно.
+-->
 <div class="desk">
-  <!-- ── Лица ──────────────────────────────────────────────────────────── -->
+  <!-- ── Ящик и стол ───────────────────────────────────────────────────── -->
   <header class="faces">
-    <div class="face-col">
-      <p class="kicker">{$t('adminMotionsFacesHouse')}</p>
-      <div class="chips">
-        {#each DEFAULT_MOTIONS as motion, i (motion.id)}
-          <button
-            type="button"
-            class="chip"
-            class:chip--on={faceKind === 'house' && houseAt === i}
-            onclick={() => showHouse(i)}>{motionTitle(motion, $lang)}</button
-          >
-        {/each}
-      </div>
-    </div>
-    <div class="face-col">
-      <p class="kicker">{$t('adminMotionsFacesStock')}</p>
-      <div class="chips">
-        {#each STOCK_MOTIONS as ready, i (i)}
-          {@const img = faceImage(ready.gestures)}
-          <button
-            type="button"
-            class="chip"
-            class:chip--on={faceKind === 'stock' && stockAt === i}
-            onclick={() => showStock(i)}
-          >
-            {#if img}
-              <span class="chip-art" style="background-image:url('{img}')"></span>
-            {/if}
-            {$lang === 'ru' ? ready.nameRu : ready.nameEn}
-          </button>
-        {/each}
-      </div>
-    </div>
     <div class="face-col">
       <p class="kicker">{$t('adminMotionsFacesMine')}</p>
       <div class="chips">
@@ -1170,34 +1382,54 @@
           {@const img = faceImage(motion.gestures)}
           <button
             type="button"
-            class="chip"
+            class="chip chip--face"
             class:chip--on={faceKind === 'mine' && heldId === motion.id}
             onclick={() => showMine(motion.id)}
           >
             {#if img}
               <span class="chip-art" style="background-image:url('{img}')"></span>
             {/if}
-            {motionTitle(motion, $lang)}
+            <span class="chip-name">{motionTitle(motion, $lang)}</span>
+            <!-- Повод — то, чем движение цепляется за карту. Без него два
+                 «Секира» в ящике не отличаются ничем. -->
+            <span class="chip-when">{$t(OCCASION_KEY[motion.occasion])}</span>
           </button>
         {/each}
         <button
           type="button"
           class="chip chip--add"
           disabled={motions.length >= MOTIONS_MAX}
-          onclick={addBlank}>+</button
+          title={$t('adminMotionsUntitled')}
+          onclick={() => {
+            mark();
+            addBlank();
+          }}>+</button
         >
-        {#if faceKind === 'mine' && heldId}
-          <button type="button" class="chip chip--drop" onclick={dropHeld}
-            >{$t('adminMotionsDrop')}</button
-          >
-        {/if}
       </div>
     </div>
     <div class="face-save">
-      {#if faceKind !== 'mine'}
-        <button type="button" class="btn" onclick={takeFace}>{$t('adminMotionsTake')}</button>
-      {/if}
-      <button type="button" class="btn" disabled={saving || !dirty} onclick={save}
+      <button
+        type="button"
+        class="btn"
+        class:btn--on={taking || faceKind !== 'mine'}
+        onclick={() => (taking = !taking)}>{$t('adminMotionsTakeReady')}</button
+      >
+      <span class="face-gap"></span>
+      <button
+        type="button"
+        class="btn"
+        disabled={!history.length}
+        title={$t('adminMotionsBack')}
+        onclick={stepBack}>↶</button
+      >
+      <button
+        type="button"
+        class="btn"
+        disabled={!ahead.length}
+        title={$t('adminMotionsForward')}
+        onclick={stepOn}>↷</button
+      >
+      <button type="button" class="btn btn--do" disabled={saving || !dirty} onclick={save}
         >{$t('adminMotionsSave')}</button
       >
       {#if dirty}
@@ -1206,356 +1438,141 @@
     </div>
   </header>
 
+  {#if taking || faceKind !== 'mine'}
+    <div class="ready">
+      <div class="face-col">
+        <p class="kicker">{$t('adminMotionsFacesHouse')}</p>
+        <div class="chips">
+          {#each DEFAULT_MOTIONS as motion, i (motion.id)}
+            <button
+              type="button"
+              class="chip"
+              class:chip--on={faceKind === 'house' && houseAt === i}
+              onclick={() => showHouse(i)}>{motionTitle(motion, $lang)}</button
+            >
+          {/each}
+        </div>
+      </div>
+      <div class="face-col">
+        <p class="kicker">{$t('adminMotionsFacesStock')}</p>
+        <div class="chips">
+          {#each STOCK_MOTIONS as ready, i (i)}
+            {@const img = faceImage(ready.gestures)}
+            <button
+              type="button"
+              class="chip"
+              class:chip--on={faceKind === 'stock' && stockAt === i}
+              onclick={() => showStock(i)}
+            >
+              {#if img}
+                <span class="chip-art" style="background-image:url('{img}')"></span>
+              {/if}
+              {$lang === 'ru' ? ready.nameRu : ready.nameEn}
+            </button>
+          {/each}
+        </div>
+      </div>
+      {#if faceKind !== 'mine'}
+        <div class="ready-take">
+          <button
+            type="button"
+            class="btn btn--do"
+            onclick={() => {
+              mark();
+              takeFace();
+              taking = false;
+            }}>{$t('adminMotionsTake')}</button
+          >
+          <p class="hint">{$t('adminMotionsReadOnly')}</p>
+        </div>
+      {/if}
+    </div>
+  {/if}
+
   {#if loading}
     <p class="note px-4 py-3">{$t('adminMotionsLoading')}</p>
   {:else if !held}
     <p class="note px-4 py-3">{$t('adminMotionsNothingHeld')}</p>
   {:else}
-    <div class="body">
-      <!-- ── Сцена ─────────────────────────────────────────────────────── -->
+    <div class="body" class:body--locked={faceKind !== 'mine'}>
       <section class="stage-wrap">
-        <div class="stage-scroll">
-        <div class="art-plate">
-          <p class="kicker">{$t('adminMotionsStrip')}</p>
-          <p class="hint">{$t('adminMotionsStripNote')}</p>
-          <div class="strip-cells">
-            {#each stripCells as cell, i (i)}
-              <div
-                class="strip-cell"
-                class:strip-cell--on={Boolean(cell.src)}
-                class:strip-cell--held={stripAt === i}
-                class:strip-cell--over={stripOver === i}
-                ondragover={(e) => {
-                  e.preventDefault();
-                  stripOver = i;
-                }}
-                ondragleave={() => {
-                  if (stripOver === i) stripOver = null;
-                }}
-                ondrop={(e) => {
-                  e.preventDefault();
-                  stripOver = null;
-                  const files = e.dataTransfer?.files;
-                  if (files?.length) putCellFiles(files, i);
-                }}
-              >
-                {#if cell.src}
-                  <div
-                    class="strip-face"
-                    onpointerdown={(e) => poseDown(e, i)}
-                    onpointermove={poseMove}
-                    onpointerup={poseUp}
-                    onpointercancel={poseUp}
-                    onwheel={(e) => {
-                      e.preventDefault();
-                      poseCell(i, { turn: cell.turn + (e.deltaY > 0 ? 5 : -5) });
-                      scheduleCompose();
-                    }}
-                  >
-                    <img src={cell.src} alt="" style={poseStyle(cell)} />
-                  </div>
-                {:else}
-                  <label class="strip-face">
-                    <span class="strip-n">{i + 1}</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      class="hidden"
-                      onchange={(e) => {
-                        const file = e.currentTarget.files?.[0];
-                        if (file) void putCellFile(i, file);
-                        e.currentTarget.value = '';
-                      }}
-                    />
-                  </label>
-                {/if}
-                <span class="strip-cell-bar">
-                  <button
-                    type="button"
-                    class="strip-mini"
-                    onclick={() => (picking = i)}>{$t('adminMotionsFromStore')}</button
-                  >
-                  {#if cell.src}
-                    <label class="strip-mini">
-                      {$t('adminMotionsUpload')}
-                      <input
-                        type="file"
-                        accept="image/*"
-                        class="hidden"
-                        onchange={(e) => {
-                          const file = e.currentTarget.files?.[0];
-                          if (file) void putCellFile(i, file);
-                          e.currentTarget.value = '';
-                        }}
-                      />
-                    </label>
-                    <button type="button" class="strip-mini" onclick={() => spreadSrc(i)}
-                      >{$t('adminMotionsStripAll')}</button
-                    >
-                    <button type="button" class="strip-mini" onclick={() => clearCell(i)}>×</button>
-                  {/if}
-                </span>
-              </div>
-            {/each}
-          </div>
-          {#if stripHeld?.src}
-            <div class="strip-pose">
-              <p class="kicker">{$t('adminMotionsStripPose')} {stripAt + 1}</p>
-              <p class="hint">{$t('adminMotionsStripPoseNote')}</p>
-              <label class="art-size">
-                {$t('adminMotionsStripTurn')}
-                <span class="tabular-nums">{Math.round(stripHeld.turn)}°</span>
-                <input
-                  type="range"
-                  min={-STRIP_TURN_MAX}
-                  max={STRIP_TURN_MAX}
-                  value={stripHeld.turn}
-                  oninput={(e) => poseCell(stripAt, { turn: Number(e.currentTarget.value) })}
-                  onpointerup={scheduleCompose}
-                />
-              </label>
-              <label class="art-size">
-                {$t('adminMotionsStripScale')}
-                <span class="tabular-nums">{Math.round(stripHeld.size)}</span>
-                <input
-                  type="range"
-                  min="20"
-                  max={STRIP_SCALE_MAX}
-                  value={stripHeld.size}
-                  oninput={(e) => poseCell(stripAt, { size: Number(e.currentTarget.value) })}
-                  onpointerup={scheduleCompose}
-                />
-              </label>
-              <div class="nudge">
-                <label>
-                  {$t('adminMotionsNudgeX')}
-                  <input
-                    type="number"
-                    min={-STRIP_POSE_MAX}
-                    max={STRIP_POSE_MAX}
-                    value={Math.round(stripHeld.x)}
-                    onchange={(e) => {
-                      poseCell(stripAt, { x: Number(e.currentTarget.value) });
-                      scheduleCompose();
-                    }}
-                  />
-                </label>
-                <label>
-                  {$t('adminMotionsNudgeY')}
-                  <input
-                    type="number"
-                    min={-STRIP_POSE_MAX}
-                    max={STRIP_POSE_MAX}
-                    value={Math.round(stripHeld.y)}
-                    onchange={(e) => {
-                      poseCell(stripAt, { y: Number(e.currentTarget.value) });
-                      scheduleCompose();
-                    }}
-                  />
-                </label>
-              </div>
-            </div>
-          {/if}
-          <div class="row mt-strip">
-            <label class="btn">
-              {$t('adminMotionsStripCut')}
-              <input
-                type="file"
-                accept="image/*"
-                class="hidden"
-                disabled={stripBusy}
-                onchange={(e) => {
-                  const file = e.currentTarget.files?.[0];
-                  if (file) void cutPreparedStrip(file);
-                  e.currentTarget.value = '';
-                }}
-              />
-            </label>
-            <label class="btn">
-              {$t('adminMotionsStripSix')}
-              <input
-                type="file"
-                accept="image/*"
-                multiple
-                class="hidden"
-                disabled={stripBusy}
-                onchange={(e) => {
-                  if (e.currentTarget.files?.length) void putCellFiles(e.currentTarget.files, 0);
-                  e.currentTarget.value = '';
-                }}
-              />
-            </label>
-            {#if stripBusy}
-              <span class="muted"
-                >{stripWork === 'cut'
-                  ? $t('adminMotionsStripCutting')
-                  : $t('adminMotionsStripBusy')}</span
-              >
-            {:else if stripCells.some((c) => c.src) && !stripCells.every((c) => c.src)}
-              <span class="muted">{stripCells.filter((c) => c.src).length}/{STRIP_FRAMES}</span>
-            {/if}
-          </div>
-
-          {#if pictured.length}
-            <div class="art-plate-row">
-              {#each pictured as { g, i } (i)}
-                <button
-                  type="button"
-                  class="art-shot"
-                  class:art-shot--on={artAt === i}
-                  onclick={() => aimArt(i)}
-                >
-                  {#if g.image}
-                    <span class="art-strip" style="background-image:url('{g.image}')"></span>
-                  {:else}
-                    <span class="art-strip art-strip--empty">{$t('adminMotionsSlotNote')}</span>
-                  {/if}
-                </button>
-              {/each}
-              <div class="art-tools">
-                <div class="row">
-                  <button type="button" class="btn" onclick={openStore}
-                    >{$t('adminMotionsFromStore')}</button
-                  >
-                  <label class="btn">
-                    {uploading ? $t('adminMotionsUploading') : $t('adminMotionsUpload')}
-                    <input
-                      type="file"
-                      accept="image/*"
-                      class="hidden"
-                      onchange={(e) => {
-                        const file = e.currentTarget.files?.[0];
-                        if (file) void upload(file);
-                        e.currentTarget.value = '';
-                      }}
-                    />
-                  </label>
-                  {#if artGesture?.image}
-                    <button type="button" class="btn" onclick={() => setArt('')}
-                      >{$t('adminMotionsClearSlot')}</button
-                    >
-                  {/if}
+        <!-- ── Сцена: всё оставшееся место ────────────────────────────── -->
+        <div class="stage-dock">
+          <div
+            class="stage"
+            class:stage--along={along}
+            style="--x:{spanX};--y:{spanY};--zoom:{zoom}"
+          >
+            <div class="grid">
+              {#each spots as cell (`${cell.x},${cell.y}`)}
+                {@const isFrom = cell.x === from.x && cell.y === from.y}
+                {@const isTo = cell.x === to.x && cell.y === to.y}
+                <div class="cell" class:cell--used={isFrom || isTo}>
+                  {#key playKey}
+                    {#if isFrom && strikerDto}
+                      <span class="figure" style:--fit={aspectOf(strikerDto)} style={play?.striker}>
+                        <BattleCard
+                          card={strikerDto}
+                          {frames}
+                          owned={true}
+                          transition={false}
+                          interactive={false}
+                        />
+                      </span>
+                    {:else if isTo && targetDto}
+                      <span class="figure" style:--fit={aspectOf(targetDto)} style={play?.target}>
+                        <BattleCard
+                          card={targetDto}
+                          {frames}
+                          owned={true}
+                          transition={false}
+                          interactive={false}
+                          hurt={woundOn && previewStruck === 'bruise' ? (previewHit?.remain ?? 1) : 1}
+                          wearSeed={3}
+                          struck={woundOn && playing ? previewStruck : null}
+                          scrap={hold === null &&
+                          woundOn &&
+                          playing &&
+                          previewStruck === 'bruise' &&
+                          previewHit
+                            ? {
+                                blow: previewHit.blow,
+                                remain: previewHit.remain,
+                                seed: previewHit.seed,
+                              }
+                            : null}
+                        />
+                      </span>
+                    {/if}
+                  {/key}
                 </div>
-                {#if faceKind !== 'mine'}
-                  <p class="hint">{$t('adminMotionsArtCopyNote')}</p>
-                {/if}
-                {#if artGesture?.image}
-                  <label class="art-size">
-                    {$t('adminMotionsSize')}
-                    <span class="tabular-nums">{artGesture.size}</span>
-                    <input
-                      type="range"
-                      min="8"
-                      max={GESTURE_SIZE_MAX}
-                      value={artGesture.size}
-                      onpointerdown={() => (pinned = true)}
-                      oninput={(e) => setSize(Number(e.currentTarget.value))}
-                      onpointerup={() => {
-                        pinned = false;
-                        bump();
-                      }}
-                    />
-                  </label>
-                  <p class="hint">{$t('adminMotionsSizeNote')}</p>
-                  <label class="block">
-                    {$t('adminMotionsFrames')}
-                    <input
-                      type="number"
-                      min="1"
-                      max={MOTION_FRAMES_MAX}
-                      value={artGesture.frames}
-                      onchange={(e) => setFrames(Number(e.currentTarget.value))}
-                    />
-                  </label>
-                  <p class="hint">{$t('adminMotionsFramesNote')}</p>
-                {/if}
-              </div>
+              {/each}
             </div>
-          {:else if faceKind !== 'mine'}
-            <p class="hint">{$t('adminMotionsArtCopyNote')}</p>
-          {/if}
+            {#key playKey}
+              <BattleMotionStage motes={play?.motes ?? []} />
+            {/key}
+          </div>
         </div>
 
-        {#if faceKind === 'mine'}
-          <div class="names">
-            <label>
-              <span class="kicker">{$t('adminMotionsNameRu')}</span>
-              <input bind:value={held.nameRu} />
-            </label>
-            <label>
-              <span class="kicker">{$t('adminMotionsNameEn')}</span>
-              <input bind:value={held.nameEn} />
-            </label>
-            <label>
-              <span class="kicker">{$t('adminMotionsOccasion')}</span>
-              <select bind:value={held.occasion}>
-                {#each MOTION_OCCASIONS as o (o)}
-                  <option value={o}>{$t(OCCASION_KEY[o])}</option>
-                {/each}
-              </select>
-            </label>
-            <p class="hint">{$t('adminMotionsHint')}</p>
-            <button type="button" class="btn" onclick={duplicate}>{$t('adminMotionsCopy')}</button>
-            <button type="button" class="btn btn--drop" onclick={dropHeld}
-              >{$t('adminMotionsDrop')}</button
-            >
-          </div>
-        {:else if pictured.length === 0}
-          <p class="hint">{$t('adminMotionsReadOnly')}</p>
-        {/if}
-
-        <div class="stage" class:stage--along={along} style="--x:{spanX};--y:{spanY}">
-          <div class="grid">
-            {#each spots as cell (`${cell.x},${cell.y}`)}
-              {@const isFrom = cell.x === from.x && cell.y === from.y}
-              {@const isTo = cell.x === to.x && cell.y === to.y}
-              <div class="cell" class:cell--used={isFrom || isTo}>
-                {#key playKey}
-                  {#if isFrom && strikerDto}
-                    <span class="figure" style:--fit={aspectOf(strikerDto)} style={play?.striker}>
-                      <BattleCard
-                        card={strikerDto}
-                        {frames}
-                        owned={true}
-                        transition={false}
-                        interactive={false}
-                      />
-                    </span>
-                  {:else if isTo && targetDto}
-                    <span class="figure" style:--fit={aspectOf(targetDto)} style={play?.target}>
-                      <BattleCard
-                        card={targetDto}
-                        {frames}
-                        owned={true}
-                        transition={false}
-                        interactive={false}
-                        hurt={woundOn && previewStruck === 'bruise' ? (previewHit?.remain ?? 1) : 1}
-                        wearSeed={3}
-                        struck={woundOn && playing ? previewStruck : null}
-                        scrap={woundOn && playing && previewStruck === 'bruise' && previewHit
-                          ? {
-                              blow: previewHit.blow,
-                              remain: previewHit.remain,
-                              seed: previewHit.seed,
-                            }
-                          : null}
-                      />
-                    </span>
-                  {/if}
-                {/key}
-              </div>
-            {/each}
-          </div>
-          {#key playKey}
-            <BattleMotionStage motes={play?.motes ?? []} />
-          {/key}
-        </div>
-
+        <!-- ── Стенд: то, на чём смотрят, а не то, что правят ─────────── -->
         <div class="stage-bar">
-          <button type="button" class="btn" onclick={playTurn}>{$t('adminMotionsTurnPlay')}</button>
+          <button type="button" class="btn btn--do" onclick={playTurn}
+            >▶ {$t('adminMotionsTurnPlay')}</button
+          >
           <label class="inline">
             <input type="checkbox" bind:checked={looping} />
             {$t('adminMotionsLoop')}
+          </label>
+          {#if hold !== null}
+            <button type="button" class="btn btn--hold" onclick={() => (hold = null)}
+              >{$t('adminMotionsHold')} {hold}{$t('adminMotionsMs')} ×</button
+            >
+          {/if}
+          <span class="bar-gap"></span>
+          <label class="inline">
+            {$t('adminMotionsZoom')}
+            <input type="range" min="1" max="4" step="0.25" bind:value={zoom} />
+            <span class="tabular-nums">{zoom.toFixed(2).replace(/\.?0+$/, '')}×</span>
           </label>
           <label class="inline">
             {$t('adminMotionsReach')}
@@ -1566,9 +1583,6 @@
             <input type="checkbox" bind:checked={along} />
             {$t('adminMotionsAlong')}
           </label>
-          <span class="muted">{span}{$t('adminMotionsMs')}</span>
-        </div>
-        <div class="stage-bar">
           <label class="inline">
             {$t('adminMotionsStrikerCard')}
             <select bind:value={strikerCard}>
@@ -1586,9 +1600,9 @@
             </select>
           </label>
         </div>
-        </div>
 
-        <div class="score-desk">
+        <!-- ── Партитура ──────────────────────────────────────────────── -->
+        <div class="score-desk" onpointerdowncapture={mark} onfocusincapture={mark}>
           <div class="score-head">
             <p class="kicker">{$t('adminMotionsScore')}</p>
             <label class="score-beat">
@@ -1620,7 +1634,6 @@
               <span>{$t('adminMotionsMs')}</span>
             </label>
           </div>
-          <p class="hint">{$t('adminMotionsBeatNote')}</p>
           <div class="score">
             <div class="score-overlay">
               {#if woundAt > 0}
@@ -1630,25 +1643,39 @@
                   title="{$t('adminMotionsScoreWound')} {woundAt}{$t('adminMotionsMs')}"
                 ></i>
               {/if}
-              {#if span > 0 && !pinned}
+              {#if hold !== null}
+                <i class="score-hold" style="left:{scorePct(hold)}%"></i>
+              {:else if span > 0 && !pinned}
                 {#key playKey}
-                  <i
-                    class="score-play"
-                    style="--play-end:{scorePct(span)}%;--play-ms:{span}ms"
-                  ></i>
+                  <i class="score-play" style="--play-end:{scorePct(span)}%;--play-ms:{span}ms"></i>
                 {/key}
               {/if}
             </div>
+            <!-- Линейка — она же ручка времени: тянут по ней, сцена замирает. -->
             <div class="score-ruler">
-              <span class="score-whom"></span>
+              <span class="score-whom">{$t('adminMotionsHoldPull')}</span>
               <span class="score-shelf"></span>
-              <span class="score-lane score-lane--ruler">
+              <span
+                class="score-lane score-lane--ruler"
+                class:score-lane--scrub={scrubbing}
+                role="slider"
+                tabindex="0"
+                aria-label={$t('adminMotionsHoldNote')}
+                aria-valuemin={0}
+                aria-valuemax={scoreMs}
+                aria-valuenow={hold ?? 0}
+                title={$t('adminMotionsHoldNote')}
+                onpointerdown={scrubDown}
+                onpointermove={scrubMove}
+                onpointerup={scrubUp}
+                onpointercancel={scrubUp}
+                onkeydown={holdKey}
+              >
                 {#each scoreTicks as t (t)}
                   <i
                     class="score-tick"
                     class:score-tick--label={t % 200 === 0}
-                    style="left:{scorePct(t)}%"
-                    >{t % 200 === 0 ? t : ''}</i
+                    style="left:{scorePct(t)}%">{t % 200 === 0 ? t : ''}</i
                   >
                 {/each}
               </span>
@@ -1663,9 +1690,7 @@
                 )}
                 class:score-row--over={scoreOver === laneId}
               >
-                <span class="score-whom"
-                  >{lane.first ? $t(WHOM_KEY[lane.whom]) : ''}</span
-                >
+                <span class="score-whom">{lane.first ? $t(WHOM_KEY[lane.whom]) : ''}</span>
                 <span class="score-shelf"
                   >{lane.whom === 'flight' || lane.whom === 'field'
                     ? ''
@@ -1674,6 +1699,8 @@
                 <span
                   class="score-lane"
                   class:score-lane--art={lane.kind === 'art'}
+                  role="group"
+                  aria-label="{$t(WHOM_KEY[lane.whom])} · {$t(KIND_KEY[lane.kind])}"
                   onpointerdown={(e) => laneDown(e, lane.whom, lane.kind)}
                   ondragover={(e) => {
                     if (lane.kind !== 'art') return;
@@ -1709,6 +1736,7 @@
                       onpointermove={barMove}
                       onpointerup={barUp}
                       onpointercancel={barUp}
+                      onkeydown={(e) => nudgeBar(e, i)}
                       title="{barWord(g)} {g.at}–{g.at + g.dur}"
                     >
                       <span class="bar-label">{barWord(g)}</span>
@@ -1728,172 +1756,431 @@
               </div>
             {/each}
           </div>
+          <p class="hint">{$t('adminMotionsBeatNote')}</p>
         </div>
-      </section>
 
-      <!-- ── Партитура, колодец, картинка ─────────────────────────────── -->
-      <aside class="side">
-        <p class="kicker">{$t('adminMotionsGesture')}</p>
-        {#if gesture}
-          <p class="hint">{barWord(gesture)} · {$t(WHOM_KEY[gesture.whom])}</p>
-        {:else}
-          <p class="hint">{$t('adminMotionsNoGesture')}</p>
-        {/if}
-        {#if gesture && (gesture.whom === 'flight' || gesture.whom === 'field')}
-          <p class="hint">{$t('adminMotionsNoBodyHere')}</p>
-          {#if !gesture.image}
-            <p class="hint">{$t('adminMotionsSlotNote')}</p>
-            <div class="row">
-              <button type="button" class="btn" onclick={openStore}
-                >{$t('adminMotionsFromStore')}</button
-              >
+        <!-- ── Ящики: источники, а не рабочая поверхность ─────────────── -->
+        <div class="drawers" onpointerdowncapture={mark} onfocusincapture={mark}>
+          <details class="box" bind:open={stripOpen}>
+            <summary>
+              {$t('adminMotionsStrip')}
+              <span class="muted">
+                {stripCells.filter((c) => c.src).length}/{STRIP_FRAMES}
+                {#if stripBusy}
+                  · {stripWork === 'cut'
+                    ? $t('adminMotionsStripCutting')
+                    : $t('adminMotionsStripBusy')}
+                {/if}
+              </span>
+            </summary>
+            <p class="hint">{$t('adminMotionsStripNote')}</p>
+            <div class="strip-cells">
+              {#each stripCells as cell, i (i)}
+                <div
+                  class="strip-cell"
+                  role="group"
+                  aria-label="{$t('adminMotionsStripPose')} {i + 1}"
+                  class:strip-cell--on={Boolean(cell.src)}
+                  class:strip-cell--held={stripAt === i && hand === 'frame'}
+                  class:strip-cell--over={stripOver === i}
+                  ondragover={(e) => {
+                    e.preventDefault();
+                    stripOver = i;
+                  }}
+                  ondragleave={() => {
+                    if (stripOver === i) stripOver = null;
+                  }}
+                  ondrop={(e) => {
+                    e.preventDefault();
+                    stripOver = null;
+                    const files = e.dataTransfer?.files;
+                    if (files?.length) putCellFiles(files, i);
+                  }}
+                >
+                  {#if cell.src}
+                    <div
+                      class="strip-face"
+                      onpointerdown={(e) => poseDown(e, i)}
+                      onpointermove={poseMove}
+                      onpointerup={poseUp}
+                      onpointercancel={poseUp}
+                      onwheel={(e) => {
+                        e.preventDefault();
+                        poseCell(i, { turn: cell.turn + (e.deltaY > 0 ? 5 : -5) });
+                        scheduleCompose();
+                      }}
+                    >
+                      <img src={cell.src} alt="" style={poseStyle(cell)} />
+                    </div>
+                  {:else}
+                    <button type="button" class="strip-face" onclick={() => holdCell(i)}>
+                      <span class="strip-n">{i + 1}</span>
+                    </button>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+            <div class="row mt-strip">
               <label class="btn">
-                {uploading ? $t('adminMotionsUploading') : $t('adminMotionsUpload')}
+                {$t('adminMotionsStripCut')}
                 <input
                   type="file"
                   accept="image/*"
                   class="hidden"
+                  disabled={stripBusy}
                   onchange={(e) => {
                     const file = e.currentTarget.files?.[0];
-                    if (file) void upload(file);
+                    if (file) void cutPreparedStrip(file);
+                    e.currentTarget.value = '';
+                  }}
+                />
+              </label>
+              <label class="btn">
+                {$t('adminMotionsStripSix')}
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  class="hidden"
+                  disabled={stripBusy}
+                  onchange={(e) => {
+                    if (e.currentTarget.files?.length) void putCellFiles(e.currentTarget.files, 0);
                     e.currentTarget.value = '';
                   }}
                 />
               </label>
             </div>
-          {/if}
-        {:else if gesture?.whom === 'striker' || gesture?.whom === 'target' || track === 'striker' || track === 'target'}
-          {#each WELL as group (group.key)}
-            <p class="well-label">{$t(group.key)}</p>
-            <div class="well">
-              {#each group.bodies as b (b)}
-                <button
-                  type="button"
-                  class="chip"
-                  class:chip--on={activeBody.move === b || activeBody.light === b}
-                  onclick={() => putBody(b)}>{$t(BODY_KEY[b])}</button
-                >
-              {/each}
-            </div>
-          {/each}
-          <p class="hint">{$t('adminMotionsLightNote')}</p>
-        {/if}
+          </details>
 
-        {#if gesture && scoreKind(gesture) === 'art' && !gesture.image && gesture.whom !== 'flight' && gesture.whom !== 'field'}
-          <p class="hint">{$t('adminMotionsSlotNote')}</p>
+          {#if faceKind === 'mine'}
+            <details class="box" bind:open={namesOpen}>
+              <summary>
+                {motionTitle(held, $lang)}
+                <span class="muted">· {$t(OCCASION_KEY[held.occasion])}</span>
+              </summary>
+              <div class="names">
+                <label>
+                  <span class="kicker">{$t('adminMotionsNameRu')}</span>
+                  <input bind:value={held.nameRu} />
+                </label>
+                <label>
+                  <span class="kicker">{$t('adminMotionsNameEn')}</span>
+                  <input bind:value={held.nameEn} />
+                </label>
+                <label>
+                  <span class="kicker">{$t('adminMotionsOccasion')}</span>
+                  <select bind:value={held.occasion}>
+                    {#each MOTION_OCCASIONS as o (o)}
+                      <option value={o}>{$t(OCCASION_KEY[o])}</option>
+                    {/each}
+                  </select>
+                </label>
+                <button type="button" class="btn" onclick={duplicate}
+                  >{$t('adminMotionsCopy')}</button
+                >
+                <button type="button" class="btn btn--drop" onclick={dropHeld}
+                  >{$t('adminMotionsDrop')}</button
+                >
+              </div>
+              <p class="hint">{$t('adminMotionsHint')}</p>
+              <p class="kicker mt">{$t('adminMotionsWornBy')}</p>
+              {#if wearers.length}
+                <ul class="worn">
+                  {#each wearers as w, i (`${w.name}-${w.occasion}-${i}`)}
+                    <li>{w.name} · {$t(OCCASION_KEY[w.occasion])}</li>
+                  {/each}
+                </ul>
+              {:else}
+                <p class="hint">{$t('adminMotionsWornNone')}</p>
+              {/if}
+            </details>
+          {/if}
+        </div>
+      </section>
+
+      <!-- ── Одна рука: кадр ИЛИ жест, и настройки только у неё ───────── -->
+      <aside class="side" onpointerdowncapture={mark} onfocusincapture={mark}>
+        {#if hand === 'frame' && stripHeld}
+          <p class="kicker">{$t('adminMotionsStripPose')} {stripAt + 1}</p>
+          <p class="hint">{$t('adminMotionsStripPoseNote')}</p>
           <div class="row">
-            <button type="button" class="btn" onclick={openStore}
+            <button type="button" class="btn" onclick={() => (picking = stripAt)}
               >{$t('adminMotionsFromStore')}</button
             >
             <label class="btn">
-              {uploading ? $t('adminMotionsUploading') : $t('adminMotionsUpload')}
+              {$t('adminMotionsUpload')}
               <input
                 type="file"
                 accept="image/*"
                 class="hidden"
                 onchange={(e) => {
                   const file = e.currentTarget.files?.[0];
-                  if (file) void upload(file);
+                  if (file) void putCellFile(stripAt, file);
                   e.currentTarget.value = '';
                 }}
               />
             </label>
-          </div>
-        {/if}
-
-        {#if gesture}
-          <div class="timing">
-            <p class="kicker">{$t('adminMotionsWhen')}</p>
-            <div class="nudge">
-              <label>
-                {$t('adminMotionsAt')}
-                <input type="number" min="0" max={MOTION_MS_MAX} bind:value={gesture.at} onchange={bump} />
-              </label>
-              <label>
-                {$t('adminMotionsDur')}
-                <input type="number" min="0" max={MOTION_MS_MAX} bind:value={gesture.dur} onchange={bump} />
-              </label>
-            </div>
-            <p class="hint">{$t('adminMotionsWhenNote')}</p>
-          </div>
-        {/if}
-
-        {#if gesture && carriesArt(gesture)}
-          <div class="art">
-            {#if gesture.image}
-              <label class="block">
-                {$t('adminMotionsSize')} <span class="tabular-nums">{gesture.size}</span>
-                <input
-                  type="range"
-                  min="8"
-                  max={GESTURE_SIZE_MAX}
-                  value={gesture.size}
-                  onpointerdown={() => (pinned = true)}
-                  oninput={(e) => setSize(Number(e.currentTarget.value))}
-                  onpointerup={() => {
-                    pinned = false;
-                    bump();
-                  }}
-                />
-              </label>
-              <div class="nudge">
-                <label>
-                  {$t('adminMotionsNudgeX')}
-                  <input type="number" min={-GESTURE_NUDGE_MAX} max={GESTURE_NUDGE_MAX} bind:value={gesture.nudgeX} onchange={bump} />
-                </label>
-                <label>
-                  {$t('adminMotionsNudgeY')}
-                  <input type="number" min={-GESTURE_NUDGE_MAX} max={GESTURE_NUDGE_MAX} bind:value={gesture.nudgeY} onchange={bump} />
-                </label>
-              </div>
-              <label class="block">
-                {$t('adminMotionsTurn')}
-                <select bind:value={gesture.turn} onchange={bump}>
-                  {#each GESTURE_TURNS as v (v)}
-                    <option value={v}>{$t(TURN_KEY[v])}</option>
-                  {/each}
-                </select>
-              </label>
-              <label class="block">
-                {$t('adminMotionsFade')}
-                <select bind:value={gesture.fade} onchange={bump}>
-                  {#each GESTURE_FADES as v (v)}
-                    <option value={v}>{$t(FADE_KEY[v])}</option>
-                  {/each}
-                </select>
-              </label>
-              <label class="block">
-                {$t('adminMotionsLayer')} <span class="tabular-nums">{gesture.layer}</span>
-                <input type="range" min="1" max={GESTURE_LAYERS} bind:value={gesture.layer} onpointerup={bump} />
-              </label>
-            {/if}
-            {#if faceKind === 'mine'}
-              <button
-                type="button"
-                class="btn btn--drop mt"
-                onclick={() => dropGesture(gestureAt)}>×</button
+            {#if stripHeld.src}
+              <button type="button" class="btn" onclick={() => spreadSrc(stripAt)}
+                >{$t('adminMotionsStripAll')}</button
+              >
+              <button type="button" class="btn btn--drop" onclick={() => clearCell(stripAt)}
+                >×</button
               >
             {/if}
           </div>
-        {:else if gesture && (isMove(gesture.body) || isLight(gesture.body))}
-          <button type="button" class="btn btn--drop mt" onclick={() => dropGesture(gestureAt)}
-            >× {$t(BODY_KEY[gesture.body])}</button
+          {#if stripHeld.src}
+            <label class="art-size">
+              {$t('adminMotionsStripTurn')}
+              <span class="tabular-nums">{Math.round(stripHeld.turn)}°</span>
+              <input
+                type="range"
+                min={-STRIP_TURN_MAX}
+                max={STRIP_TURN_MAX}
+                value={stripHeld.turn}
+                oninput={(e) => poseCell(stripAt, { turn: Number(e.currentTarget.value) })}
+                onpointerup={scheduleCompose}
+              />
+            </label>
+            <label class="art-size">
+              {$t('adminMotionsStripScale')}
+              <span class="tabular-nums">{Math.round(stripHeld.size)}</span>
+              <input
+                type="range"
+                min="20"
+                max={STRIP_SCALE_MAX}
+                value={stripHeld.size}
+                oninput={(e) => poseCell(stripAt, { size: Number(e.currentTarget.value) })}
+                onpointerup={scheduleCompose}
+              />
+            </label>
+            <div class="nudge">
+              <label>
+                {$t('adminMotionsNudgeX')}
+                <input
+                  type="number"
+                  min={-STRIP_POSE_MAX}
+                  max={STRIP_POSE_MAX}
+                  value={Math.round(stripHeld.x)}
+                  onchange={(e) => {
+                    poseCell(stripAt, { x: Number(e.currentTarget.value) });
+                    scheduleCompose();
+                  }}
+                />
+              </label>
+              <label>
+                {$t('adminMotionsNudgeY')}
+                <input
+                  type="number"
+                  min={-STRIP_POSE_MAX}
+                  max={STRIP_POSE_MAX}
+                  value={Math.round(stripHeld.y)}
+                  onchange={(e) => {
+                    poseCell(stripAt, { y: Number(e.currentTarget.value) });
+                    scheduleCompose();
+                  }}
+                />
+              </label>
+            </div>
+          {/if}
+          <button type="button" class="btn mt" onclick={() => (hand = 'gesture')}
+            >{$t('adminMotionsToGesture')}</button
           >
-        {/if}
-
-        {#if faceKind === 'mine'}
-          <p class="kicker mt">{$t('adminMotionsWornBy')}</p>
-          {#if wearers.length}
-            <ul class="worn">
-              {#each wearers as w, i (`${w.name}-${w.occasion}-${i}`)}
-                <li>{w.name} · {$t(OCCASION_KEY[w.occasion])}</li>
-              {/each}
-            </ul>
+        {:else}
+          <p class="kicker">{$t('adminMotionsGesture')}</p>
+          {#if gesture}
+            <p class="hint">{barWord(gesture)} · {$t(WHOM_KEY[gesture.whom])}</p>
           {:else}
-            <p class="hint">{$t('adminMotionsWornNone')}</p>
+            <p class="hint">{$t('adminMotionsNoGesture')}</p>
+          {/if}
+
+          {#if gesture && (gesture.whom === 'flight' || gesture.whom === 'field')}
+            <p class="hint">{$t('adminMotionsNoBodyHere')}</p>
+          {:else if gesture?.whom === 'striker' || gesture?.whom === 'target' || track === 'striker' || track === 'target'}
+            <!-- Колодец. Наведение показывает слово на сцене, не применяя его. -->
+            {#each WELL as group (group.key)}
+              <p class="well-label">{$t(group.key)}</p>
+              <div class="well">
+                {#each group.bodies as b (b)}
+                  <button
+                    type="button"
+                    class="chip"
+                    class:chip--on={activeBody.move === b || activeBody.light === b}
+                    onpointerenter={() => (tasting = b)}
+                    onpointerleave={() => (tasting = null)}
+                    onfocus={() => (tasting = b)}
+                    onblur={() => (tasting = null)}
+                    onclick={() => putBody(b)}>{$t(BODY_KEY[b])}</button
+                  >
+                {/each}
+              </div>
+            {/each}
+            <p class="hint">{$t('adminMotionsTasteNote')}</p>
+            <p class="hint">{$t('adminMotionsLightNote')}</p>
+          {/if}
+
+          {#if gesture}
+            <div class="timing">
+              <p class="kicker">{$t('adminMotionsWhen')}</p>
+              <div class="nudge">
+                <label>
+                  {$t('adminMotionsAt')}
+                  <input
+                    type="number"
+                    min="0"
+                    max={MOTION_MS_MAX}
+                    bind:value={gesture.at}
+                    onchange={bump}
+                  />
+                </label>
+                <label>
+                  {$t('adminMotionsDur')}
+                  <input
+                    type="number"
+                    min="0"
+                    max={MOTION_MS_MAX}
+                    bind:value={gesture.dur}
+                    onchange={bump}
+                  />
+                </label>
+              </div>
+              <p class="hint">{$t('adminMotionsWhenNote')}</p>
+            </div>
+          {/if}
+
+          <!-- Единственная дверь на склад. Их было четыре, и величина правилась
+               двумя разными ползунками с одинаковым ходом. -->
+          {#if gesture && carriesArt(gesture)}
+            <div class="art">
+              <p class="kicker">{$t('adminMotionsArt')}</p>
+              <div class="row">
+                <button type="button" class="btn" onclick={openStore}
+                  >{$t('adminMotionsFromStore')}</button
+                >
+                <label class="btn">
+                  {uploading ? $t('adminMotionsUploading') : $t('adminMotionsUpload')}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    class="hidden"
+                    onchange={(e) => {
+                      const file = e.currentTarget.files?.[0];
+                      if (file) void upload(file);
+                      e.currentTarget.value = '';
+                    }}
+                  />
+                </label>
+                {#if gesture.image}
+                  <button type="button" class="btn btn--drop" onclick={() => setArt('')}
+                    >{$t('adminMotionsClearSlot')}</button
+                  >
+                {/if}
+              </div>
+              {#if !gesture.image}
+                <p class="hint">{$t('adminMotionsSlotNote')}</p>
+              {:else}
+                <label class="art-size">
+                  {$t('adminMotionsSize')} <span class="tabular-nums">{gesture.size}</span>
+                  <input
+                    type="range"
+                    min="8"
+                    max={GESTURE_SIZE_MAX}
+                    value={gesture.size}
+                    onpointerdown={() => (pinned = true)}
+                    oninput={(e) => setSize(Number(e.currentTarget.value))}
+                    onpointerup={() => {
+                      pinned = false;
+                      bump();
+                    }}
+                  />
+                </label>
+                <p class="hint">{$t('adminMotionsSizeNote')}</p>
+                <div class="nudge">
+                  <label>
+                    {$t('adminMotionsNudgeX')}
+                    <input
+                      type="number"
+                      min={-GESTURE_NUDGE_MAX}
+                      max={GESTURE_NUDGE_MAX}
+                      bind:value={gesture.nudgeX}
+                      onchange={bump}
+                    />
+                  </label>
+                  <label>
+                    {$t('adminMotionsNudgeY')}
+                    <input
+                      type="number"
+                      min={-GESTURE_NUDGE_MAX}
+                      max={GESTURE_NUDGE_MAX}
+                      bind:value={gesture.nudgeY}
+                      onchange={bump}
+                    />
+                  </label>
+                </div>
+                <label class="block">
+                  {$t('adminMotionsFrames')}
+                  <input
+                    type="number"
+                    min="1"
+                    max={MOTION_FRAMES_MAX}
+                    value={gesture.frames}
+                    onchange={(e) => setFrames(Number(e.currentTarget.value))}
+                  />
+                </label>
+                <p class="hint">{$t('adminMotionsFramesNote')}</p>
+                {#if gesture.frames === STRIP_FRAMES}
+                  <button
+                    type="button"
+                    class="btn"
+                    onclick={() => {
+                      stripOpen = true;
+                      hand = 'frame';
+                    }}>{$t('adminMotionsToStrip')}</button
+                  >
+                {/if}
+                <label class="block">
+                  {$t('adminMotionsTurn')}
+                  <select bind:value={gesture.turn} onchange={bump}>
+                    {#each GESTURE_TURNS as v (v)}
+                      <option value={v}>{$t(TURN_KEY[v])}</option>
+                    {/each}
+                  </select>
+                </label>
+                <label class="block">
+                  {$t('adminMotionsFade')}
+                  <select bind:value={gesture.fade} onchange={bump}>
+                    {#each GESTURE_FADES as v (v)}
+                      <option value={v}>{$t(FADE_KEY[v])}</option>
+                    {/each}
+                  </select>
+                </label>
+                <label class="block">
+                  {$t('adminMotionsLayer')} <span class="tabular-nums">{gesture.layer}</span>
+                  <input
+                    type="range"
+                    min="1"
+                    max={GESTURE_LAYERS}
+                    bind:value={gesture.layer}
+                    onpointerup={bump}
+                  />
+                </label>
+              {/if}
+            </div>
+          {/if}
+
+          {#if gesture && faceKind === 'mine'}
+            <button
+              type="button"
+              class="btn btn--drop mt"
+              onclick={() => dropGesture(gestureAt)}
+              >× {barWord(gesture)}</button
+            >
           {/if}
         {/if}
 
+        {#if faceKind !== 'mine'}
+          <p class="hint mt">{$t('adminMotionsArtCopyNote')}</p>
+        {/if}
         {#if complaint}
           <p class="warn mt">{complaint}</p>
         {/if}
@@ -1915,7 +2202,12 @@
 {/if}
 
 <style>
+  /* Размеры набора — одним местом. Стол был набран целиком десятью и
+     одиннадцатью пикселями: на широком экране это не сдержанность, а мелко. */
   .desk {
+    --tiny: 11px;
+    --small: 12px;
+    --body: 13px;
     display: flex;
     flex-direction: column;
     height: 100%;
@@ -1924,12 +2216,34 @@
     color: #34251c;
   }
 
+  /* ── Шапка ─────────────────────────────────────────────────────────────
+     Три колонки чипов стояли всегда и занимали полосу во всю ширину. Ящик —
+     то, чем работают каждый день; дом и заготовки берут раз в неделю, и они
+     уехали за одну кнопку. */
   .faces {
     display: flex;
     flex-wrap: wrap;
-    gap: 1rem;
-    padding: 0.6rem 0.85rem;
+    align-items: flex-end;
+    gap: 0.75rem 1rem;
+    padding: 0.5rem 0.85rem;
     border-bottom: 1px solid rgba(52, 37, 28, 0.12);
+  }
+
+  .ready {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem 1.5rem;
+    padding: 0.5rem 0.85rem 0.7rem;
+    background: rgba(52, 37, 28, 0.04);
+    border-bottom: 1px solid rgba(52, 37, 28, 0.12);
+  }
+
+  .ready-take {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    justify-content: flex-end;
+    max-width: 16rem;
   }
 
   .face-col {
@@ -1940,8 +2254,12 @@
   .face-save {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.4rem;
     margin-left: auto;
+  }
+
+  .face-gap {
+    width: 0.75rem;
   }
 
   .chips {
@@ -1955,18 +2273,27 @@
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
-    padding: 0.2rem 0.5rem;
-    font-size: 11px;
+    padding: 0.25rem 0.5rem;
+    font-size: var(--small);
     border: 1px solid rgba(52, 37, 28, 0.18);
     background: transparent;
     color: inherit;
+    cursor: pointer;
   }
 
   .chip-art {
     flex-shrink: 0;
     width: 1.85rem;
-    height: 0.7rem;
+    height: 0.75rem;
     background: rgba(52, 37, 28, 0.06) center / contain no-repeat;
+  }
+
+  /* Повод — то, чем движение цепляется за карту; без него два «Секира» в
+     ящике не отличаются ничем. */
+  .chip-when {
+    font-size: 9px;
+    letter-spacing: 0.04em;
+    color: rgba(52, 37, 28, 0.5);
   }
 
   .chip--on {
@@ -1974,22 +2301,26 @@
     background: rgba(198, 95, 60, 0.08);
   }
 
-  .chip--add {
-    color: #c65f3c;
+  .chip--on .chip-when {
+    color: rgba(198, 95, 60, 0.85);
   }
 
-  .chip--drop {
-    border-color: rgba(143, 47, 34, 0.35);
-    color: #8f2f22;
+  .chip--add {
+    color: #c65f3c;
+    font-size: var(--body);
+    padding: 0.25rem 0.6rem;
   }
 
   .kicker {
-    font-size: 10px;
+    font-size: var(--tiny);
     text-transform: uppercase;
     letter-spacing: 0.14em;
     color: #6f3b24;
   }
 
+  /* ── Тело ──────────────────────────────────────────────────────────────
+     Сцена берёт всё оставшееся место и прибита; партитура под ней, тоже
+     прибита; источники — в ящиках внизу. */
   .body {
     display: flex;
     flex: 1;
@@ -2004,85 +2335,23 @@
     min-height: 0;
   }
 
-  .stage-scroll {
+  .stage-dock {
     flex: 1;
     min-height: 0;
-    overflow-y: auto;
-    padding: 0.85rem 1rem 0.5rem;
+    overflow: auto;
+    display: grid;
+    grid-template-columns: minmax(min-content, 1fr);
+    align-content: center;
+    justify-items: center;
+    padding: 0.85rem 1rem;
+    background: rgba(52, 37, 28, 0.02);
   }
 
-  .score-desk {
-    flex-shrink: 0;
-    border-top: 1px solid rgba(52, 37, 28, 0.12);
-    padding: 0.55rem 1rem 0.7rem;
-    background: #f8f1e7;
-  }
-
-  .score-head {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.6rem 1rem;
-  }
-
-  .score-beat {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    font-size: 11px;
-    min-width: 16rem;
-    flex: 1 1 16rem;
-  }
-
-  .score-beat input[type='range'] {
-    flex: 1;
-    min-width: 8rem;
-  }
-
-  .score-beat input[type='number'] {
-    width: 3.6rem;
-    border: none;
-    border-bottom: 1px solid rgba(52, 37, 28, 0.25);
-    background: transparent;
-    color: inherit;
-    font: inherit;
-  }
-
-  .side {
-    width: 22rem;
-    flex-shrink: 0;
-    border-left: 1px solid rgba(52, 37, 28, 0.12);
-    overflow-y: auto;
-    padding: 0.75rem;
-  }
-
-  .names {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-    align-items: end;
-    margin-bottom: 0.75rem;
-  }
-
-  .names input,
-  .names select,
-  .stage-bar select,
-  .art input,
-  .art select,
-  .art-tools input {
-    border: none;
-    border-bottom: 1px solid rgba(52, 37, 28, 0.25);
-    background: transparent;
-    font-size: 13px;
-    padding: 0.15rem 0;
-    color: inherit;
-  }
-
+  /* Крупнее — ШИРЕ, а не `transform`: ровно как на столе рамок. Карта тогда
+     рисуется крупнее по-настоящему, а не растягивается. */
   .stage {
     position: relative;
-    width: calc(var(--x) * 4.4rem);
-    max-width: 100%;
+    width: calc(var(--x) * 4.4rem * var(--zoom, 1));
     overflow: visible;
   }
 
@@ -2119,12 +2388,19 @@
   }
 
   .stage-bar {
+    flex-shrink: 0;
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 0.75rem;
-    margin-top: 0.5rem;
-    font-size: 11px;
+    gap: 0.5rem 0.9rem;
+    padding: 0.45rem 1rem;
+    border-top: 1px solid rgba(52, 37, 28, 0.12);
+    font-size: var(--small);
+  }
+
+  .bar-gap {
+    flex: 1;
+    min-width: 0;
   }
 
   .inline {
@@ -2133,10 +2409,14 @@
     gap: 0.35rem;
   }
 
+  .inline input[type='range'] {
+    width: 5.5rem;
+  }
+
   .btn {
     display: inline-block;
-    padding: 0.2rem 0.55rem;
-    font-size: 11px;
+    padding: 0.25rem 0.6rem;
+    font-size: var(--small);
     border: 1px solid rgba(52, 37, 28, 0.22);
     background: transparent;
     color: inherit;
@@ -2145,6 +2425,23 @@
 
   .btn:disabled {
     opacity: 0.4;
+    cursor: default;
+  }
+
+  .btn--on {
+    border-color: #c65f3c;
+    background: rgba(198, 95, 60, 0.08);
+    color: #c65f3c;
+  }
+
+  .btn--do {
+    border-color: rgba(111, 59, 36, 0.5);
+    color: #6f3b24;
+  }
+
+  .btn--hold {
+    border-color: #c65f3c;
+    color: #c65f3c;
   }
 
   .btn--drop {
@@ -2152,9 +2449,48 @@
     color: #8f2f22;
   }
 
+  /* ── Партитура ─────────────────────────────────────────────────────── */
+  .score-desk {
+    flex-shrink: 0;
+    border-top: 1px solid rgba(52, 37, 28, 0.12);
+    padding: 0.5rem 1rem 0.6rem;
+    background: #f8f1e7;
+  }
+
+  .score-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+  }
+
+  .score-beat {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: var(--small);
+    min-width: 16rem;
+    flex: 1 1 16rem;
+  }
+
+  .score-beat input[type='range'] {
+    flex: 1;
+    min-width: 8rem;
+  }
+
+  .score-beat input[type='number'] {
+    width: 3.8rem;
+    border: none;
+    border-bottom: 1px solid rgba(52, 37, 28, 0.25);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+  }
+
   .score {
     position: relative;
-    margin-top: 0.35rem;
+    margin-top: 0.3rem;
     --score-labels: 10.7rem;
   }
 
@@ -2174,12 +2510,12 @@
     grid-template-columns: 5.4rem 4.6rem 1fr;
     gap: 0.35rem;
     align-items: center;
-    font-size: 11px;
+    font-size: var(--small);
   }
 
   .score-ruler {
     margin-bottom: 0.15rem;
-    min-height: 0.95rem;
+    min-height: 1.05rem;
   }
 
   .score-row {
@@ -2202,15 +2538,22 @@
     line-height: 1.2;
   }
 
+  .score-ruler .score-whom {
+    font-size: 9px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: rgba(52, 37, 28, 0.42);
+  }
+
   .score-shelf {
-    font-size: 10px;
+    font-size: var(--tiny);
     letter-spacing: 0.04em;
     text-transform: lowercase;
   }
 
   .score-lane {
     position: relative;
-    height: 1.55rem;
+    height: 1.65rem;
     background: rgba(52, 37, 28, 0.06);
     min-width: 0;
   }
@@ -2219,9 +2562,21 @@
     background: rgba(52, 37, 28, 0.035);
   }
 
+  /* Линейка — она же ручка времени. Была только рисунком: бегунок показывали,
+     а взять его было нельзя, и остановиться на 270-й было негде. */
   .score-lane--ruler {
-    height: 0.95rem;
-    background: transparent;
+    height: 1.05rem;
+    background: rgba(52, 37, 28, 0.03);
+    cursor: ew-resize;
+    touch-action: none;
+  }
+
+  .score-lane--ruler:hover {
+    background: rgba(198, 95, 60, 0.07);
+  }
+
+  .score-lane--scrub {
+    background: rgba(198, 95, 60, 0.12);
   }
 
   .score-tick {
@@ -2234,7 +2589,7 @@
     font-style: normal;
     color: rgba(52, 37, 28, 0.45);
     padding-left: 0.2rem;
-    line-height: 0.95rem;
+    line-height: 1.05rem;
     pointer-events: none;
   }
 
@@ -2257,6 +2612,25 @@
     width: 1px;
     background: #c65f3c;
     animation: score-play var(--play-ms) linear forwards;
+  }
+
+  /* Остановленное время. Не бегунок, который бежит, а место, где держат. */
+  .score-hold {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: #c65f3c;
+  }
+
+  .score-hold::before {
+    content: '';
+    position: absolute;
+    top: -2px;
+    left: -3px;
+    width: 7px;
+    height: 7px;
+    background: #c65f3c;
   }
 
   @keyframes score-play {
@@ -2324,8 +2698,8 @@
   .bar-label {
     display: block;
     padding: 0 0.45rem 0 0.3rem;
-    font-size: 10px;
-    line-height: 1.31rem;
+    font-size: var(--tiny);
+    line-height: 1.41rem;
     white-space: nowrap;
     overflow: hidden;
   }
@@ -2343,67 +2717,41 @@
   .score-empty {
     padding: 0 0.45rem;
     color: rgba(52, 37, 28, 0.38);
-    line-height: 1.55rem;
-    font-size: 10px;
+    line-height: 1.65rem;
+    font-size: var(--tiny);
     pointer-events: none;
   }
 
-  .slot-btn {
-    font-size: 10px;
-    color: #c65f3c;
-    background: none;
-    border: none;
-    padding: 0;
+  /* ── Ящики ─────────────────────────────────────────────────────────────
+     Полоса кадров стояла первой и занимала больше всех, а нужна раз в час. */
+  .drawers {
+    flex-shrink: 0;
+    max-height: 42%;
+    overflow-y: auto;
+    border-top: 1px solid rgba(52, 37, 28, 0.12);
+    padding: 0.35rem 1rem 0.6rem;
+  }
+
+  .box {
+    border-bottom: 1px solid rgba(52, 37, 28, 0.08);
+    padding-bottom: 0.35rem;
+  }
+
+  .box summary {
+    padding: 0.3rem 0;
+    font-size: var(--small);
+    color: #6f3b24;
     cursor: pointer;
-  }
-
-  .well {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.25rem;
-    margin-bottom: 0.35rem;
-  }
-
-  .well-label {
-    margin: 0.45rem 0 0.15rem;
-    font-size: 10px;
-    color: rgba(52, 37, 28, 0.55);
-  }
-
-  .hint,
-  .note,
-  .muted {
-    font-size: 10px;
-    line-height: 1.35;
-    color: rgba(52, 37, 28, 0.55);
-  }
-
-  .warn {
-    font-size: 10px;
-    color: #c65f3c;
-  }
-
-  .art-plate {
-    margin-bottom: 0.85rem;
-    padding: 0.55rem 0.65rem 0.7rem;
-    border: 1px solid rgba(52, 37, 28, 0.18);
-    background: rgba(52, 37, 28, 0.035);
-  }
-
-  .art-plate-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-    align-items: stretch;
-    margin-top: 0.65rem;
+    list-style-position: outside;
   }
 
   .strip-cells {
     display: grid;
     grid-template-columns: repeat(6, minmax(0, 1fr));
     gap: 0;
-    margin-top: 0.45rem;
+    margin-top: 0.35rem;
     border: 1px solid rgba(52, 37, 28, 0.18);
+    max-width: 34rem;
   }
 
   .strip-cell {
@@ -2421,11 +2769,7 @@
     background: rgba(52, 37, 28, 0.07);
   }
 
-  .strip-cell--held {
-    outline: 1px solid #c65f3c;
-    outline-offset: -1px;
-  }
-
+  .strip-cell--held,
   .strip-cell--over {
     outline: 1px solid #c65f3c;
     outline-offset: -1px;
@@ -2434,9 +2778,13 @@
   .strip-face {
     display: grid;
     place-items: center;
+    width: 100%;
     aspect-ratio: 1;
     overflow: hidden;
     cursor: pointer;
+    border: none;
+    background: none;
+    padding: 0;
   }
 
   .strip-cell--on .strip-face {
@@ -2456,75 +2804,82 @@
     color: rgba(52, 37, 28, 0.28);
   }
 
-  .strip-cell-bar {
-    display: flex;
-    justify-content: center;
-    gap: 0.25rem;
-    padding: 0.15rem 0.2rem 0.3rem;
-  }
-
-  .strip-mini {
-    padding: 0;
-    border: none;
-    background: none;
-    font-size: 9px;
-    color: #6f3b24;
-    cursor: pointer;
-  }
-
   .mt-strip {
     margin-top: 0.4rem;
   }
 
-  .strip-pose {
-    margin-top: 0.55rem;
-    padding-top: 0.45rem;
-    border-top: 1px solid rgba(52, 37, 28, 0.1);
+  /* Чужая бумага: дом и заготовки правятся только копией, и об этом должен
+     говорить стол собой, а не строка в десять пикселей внизу. */
+  .body--locked .score-lane,
+  .body--locked .strip-cells {
+    background-image: repeating-linear-gradient(
+      45deg,
+      rgba(52, 37, 28, 0.05) 0 4px,
+      transparent 4px 9px
+    );
   }
 
-  .art-shot {
-    flex: 1 1 16rem;
-    min-width: 0;
-    padding: 0.3rem;
-    border: 1px solid rgba(52, 37, 28, 0.14);
-    background: rgba(52, 37, 28, 0.04);
-    cursor: pointer;
+  /* ── Инспектор: одна рука ──────────────────────────────────────────── */
+  .side {
+    width: 23rem;
+    flex-shrink: 0;
+    border-left: 1px solid rgba(52, 37, 28, 0.12);
+    overflow-y: auto;
+    padding: 0.75rem;
+    font-size: var(--body);
   }
 
-  .art-shot--on {
-    border-color: #c65f3c;
-  }
-
-  .art-strip {
-    display: block;
-    height: 5.5rem;
-    background: center / contain no-repeat;
-  }
-
-  .art-strip--empty {
-    display: grid;
-    place-items: center;
-    padding: 0.5rem;
-    font-size: 10px;
-    line-height: 1.35;
-    color: rgba(52, 37, 28, 0.5);
-    outline: 1px dashed rgba(111, 59, 36, 0.4);
-    outline-offset: -4px;
-  }
-
-  .art-tools {
+  .names {
     display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-    justify-content: center;
-    min-width: 9.5rem;
-    flex: 0 1 14rem;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: end;
+    margin: 0.35rem 0 0.5rem;
+  }
+
+  .names input,
+  .names select,
+  .stage-bar select,
+  .art input,
+  .art select {
+    border: none;
+    border-bottom: 1px solid rgba(52, 37, 28, 0.25);
+    background: transparent;
+    font-size: var(--body);
+    padding: 0.15rem 0;
+    color: inherit;
+  }
+
+  .well {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    margin-bottom: 0.35rem;
+  }
+
+  .well-label {
+    margin: 0.45rem 0 0.15rem;
+    font-size: var(--tiny);
+    color: rgba(52, 37, 28, 0.55);
+  }
+
+  .hint,
+  .note,
+  .muted {
+    font-size: var(--tiny);
+    line-height: 1.4;
+    color: rgba(52, 37, 28, 0.55);
+  }
+
+  .warn {
+    font-size: var(--tiny);
+    color: #c65f3c;
   }
 
   .art-size {
     display: block;
     margin-top: 0.35rem;
-    font-size: 11px;
+    font-size: var(--small);
   }
 
   .art-size input[type='range'] {
@@ -2543,13 +2898,29 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0.4rem;
-    font-size: 11px;
+    font-size: var(--small);
+  }
+
+  .nudge input {
+    width: 100%;
+    border: none;
+    border-bottom: 1px solid rgba(52, 37, 28, 0.25);
+    background: transparent;
+    font: inherit;
+    color: inherit;
   }
 
   .block {
     display: block;
     margin-top: 0.4rem;
-    font-size: 11px;
+    font-size: var(--small);
+  }
+
+  .timing,
+  .art {
+    margin-top: 0.75rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid rgba(52, 37, 28, 0.1);
   }
 
   .mt {
@@ -2558,8 +2929,12 @@
 
   .worn {
     margin-top: 0.25rem;
-    font-size: 11px;
+    font-size: var(--small);
     line-height: 1.45;
+  }
+
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
   }
 
   .hidden {

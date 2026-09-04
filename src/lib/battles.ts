@@ -1806,10 +1806,28 @@ export function stage(
   motion: Motion | null,
   from: StageSpot | null,
   to: StageSpot | null,
-  opts: { spanX: number; spanY: number; along: boolean; calm: boolean; hit?: HitWear | null },
+  opts: {
+    spanX: number;
+    spanY: number;
+    along: boolean;
+    calm: boolean;
+    hit?: HitWear | null;
+    hold?: number | null;
+  },
 ): Staged {
   if (!motion || opts.calm) return EMPTY_STAGE;
   const { spanX, spanY, along } = opts;
+
+  // Остановленное время. Стол хранителя правит движение не проигрыванием, а
+  // остановкой: «покажи 270-ю миллисекунду и держи». Считать вторую, статичную
+  // раскладку было бы вторым отрисовщиком, а он однажды соврёт, — поэтому
+  // остановка делается той же строкой `animation`: задержка каждого жеста
+  // сдвигается на `-hold`, и всё ставится на паузу. Жест, до которого время
+  // ещё не дошло, остаётся с положительной задержкой и показывает свой нулевой
+  // кадр — это и есть `both`, и это верно.
+  const held = opts.hold ?? null;
+  const frozen = held !== null;
+  const lag = (at: number) => (frozen ? at - (held as number) : at);
 
   // Экранные координаты клеток. Разворот живёт здесь и только здесь.
   const screen = (spot: StageSpot | null) =>
@@ -1845,7 +1863,7 @@ export function stage(
       // Несколько шевелений одного тела складываются в один список анимаций —
       // так их и записывает CSS. Если две из них двигают одно и то же, побеждает
       // последняя: это предсказуемо и это же видно в списке жестов.
-      stir[g.whom].push(`gotiga-${g.body} ${dur}ms ${EASE} ${at}ms both`);
+      stir[g.whom].push(`gotiga-${g.body} ${dur}ms ${EASE} ${lag(at)}ms both`);
     }
 
     if (!g.image) continue;
@@ -1879,7 +1897,7 @@ export function stage(
     if (frames > 1) {
       parts.push(`background-size:${frames * 100}% 100%`);
       parts.push(`--strip-end:${stripEnd(frames).toFixed(4)}%`);
-      anims.push(`gotiga-strip ${dur}ms steps(${frames}) ${at}ms both`);
+      anims.push(`gotiga-strip ${dur}ms steps(${frames}) ${lag(at)}ms both`);
     } else {
       parts.push('background-size:contain', 'background-position:center');
     }
@@ -1896,7 +1914,7 @@ export function stage(
       const own = size > 0 ? 10000 / size : 0;
       parts.push(`--mx:${((b.x - a.x) * own).toFixed(2)}%`);
       parts.push(`--my:${((b.y - a.y) * own).toFixed(2)}%`);
-      anims.push(`gotiga-fly ${dur}ms ${EASE} ${at}ms both`);
+      anims.push(`gotiga-fly ${dur}ms ${EASE} ${lag(at)}ms both`);
     } else if (g.whom === 'target' && frames === 1 && a && b) {
       // Одиночная картина на цели. Полоса уже несёт удар в кадрах; без полосы
       // рисунок иначе просто висит вторым портретом. Замах читается с той же
@@ -1908,11 +1926,11 @@ export function stage(
       parts.push(`--lx:${((dx / len) * 32).toFixed(2)}%`);
       parts.push(`--ly:${((dy / len) * 32).toFixed(2)}%`);
       parts.push('transform-origin:50% 38%');
-      anims.push(`gotiga-cleave ${dur}ms ${EASE} ${at}ms both`);
+      anims.push(`gotiga-cleave ${dur}ms ${EASE} ${lag(at)}ms both`);
     }
 
     const fading = fadeName(g.fade);
-    if (fading) anims.push(`${fading} ${dur}ms linear ${at}ms both`);
+    if (fading) anims.push(`${fading} ${dur}ms linear ${lag(at)}ms both`);
 
     const layer = Math.max(1, Math.min(GESTURE_LAYERS, g.layer || 1));
     parts.push(`z-index:${layer}`);
@@ -1921,13 +1939,15 @@ export function stage(
     // поворот несёт внутри собственных кадров и потому эту строку перебивает.
     parts.push('transform:rotate(var(--turn))');
     if (anims.length) parts.push(`animation:${anims.join(',')}`);
+    if (frozen && anims.length) parts.push('animation-play-state:paused');
 
     motes.push({ key: `${motion.id}-${key++}`, layer, style: parts.join(';') });
   }
 
   const dress = (who: 'striker' | 'target') =>
     stir[who].length
-      ? `--lx:${lx.toFixed(2)}%;--ly:${ly.toFixed(2)}%;animation:${stir[who].join(',')}`
+      ? `--lx:${lx.toFixed(2)}%;--ly:${ly.toFixed(2)}%;animation:${stir[who].join(',')}` +
+        (frozen ? ';animation-play-state:paused' : '')
       : '';
 
   return {

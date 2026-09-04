@@ -1831,6 +1831,19 @@ export const enAdmin = {
   adminMotionsHint:
     'A hint — when this look is usually worn. A card may hang it on any occasion.',
   adminMotionsTrackEmpty: 'nothing yet',
+
+  adminMotionsTakeReady: 'Take a ready one',
+  adminMotionsBack: 'Back',
+  adminMotionsForward: 'Again',
+  adminMotionsZoom: 'larger',
+  adminMotionsHold: 'held at',
+  adminMotionsHoldPull: 'pull',
+  adminMotionsHoldNote:
+    'Pull along the ruler — the stage freezes at that millisecond and holds it. Let go with Turn.',
+  adminMotionsTasteNote:
+    'Hover a word — the stage shows it without writing it down. Click to put it on.',
+  adminMotionsToGesture: 'To the gesture in the score',
+  adminMotionsToStrip: 'Open the six frames',
 } as const;
 
 export type AdminTranslationKey = keyof typeof enAdmin;

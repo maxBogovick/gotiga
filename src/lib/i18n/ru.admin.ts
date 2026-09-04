@@ -1828,4 +1828,19 @@ export const ruAdmin: Record<AdminTranslationKey, string> = {
   adminMotionsReadOnly:        'Дом. Чтобы менять — возьмите копию.',
   adminMotionsHint:            'Подсказка — для какого мгновения вид задуман. Карта может надеть его на любой повод.',
   adminMotionsTrackEmpty:      'пока ничего',
+
+  // Стол перекроен: сцена прибита над партитурой, источники — в ящиках,
+  // инспектор один. Слова ниже — то, чего у стола до этого не было.
+  adminMotionsTakeReady:       'Взять готовое',
+  adminMotionsBack:            'Вернуть',
+  adminMotionsForward:         'Повторить',
+  adminMotionsZoom:            'крупнее',
+  adminMotionsHold:            'замерло на',
+  adminMotionsHoldPull:        'тяните',
+  adminMotionsHoldNote:
+    'Тяните по линейке — сцена замрёт на этой миллисекунде и будет держать. Отпустить: «Ход».',
+  adminMotionsTasteNote:
+    'Наведите на слово — сцена покажет его и не запишет. Нажмите — наденет.',
+  adminMotionsToGesture:       'К жесту в партитуре',
+  adminMotionsToStrip:         'Открыть шесть кадров',
 };
