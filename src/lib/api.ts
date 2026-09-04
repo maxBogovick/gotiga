@@ -100,6 +100,7 @@ import type {
     SaveBattleDeckRequest,
     SaveBattleChallengeRequest,
     BattleMatch,
+    Foresight,
     BattleAction,
     BenchRequest,
     Bench,
@@ -373,6 +374,19 @@ function resolveVariantUrl(url: string | null | undefined, variant: Variant): st
     const re = new RegExp(`/images/(${VARIANT_DIRS.join('|')})/`);
     if (!re.test(resolved)) return null;
     return resolved.replace(re, `/images/${variant}/`);
+}
+
+/**
+ * The widest rendition (1800px) of an uploaded image, when the URL is one of the
+ * three siblings; null for anything without them.
+ *
+ * A share card and Google Images both want the big photograph, and what is
+ * stored on a gazette leaf is the 420px thumb — enough for a spine on the shelf,
+ * and far under the 1200px the card networks ask for. Derived here rather than
+ * spelled out at the call site so the rendition layout stays known in one place.
+ */
+export function resolveLargestImageUrl(url: string | null | undefined): string | null {
+    return resolveVariantUrl(url, 'preview');
 }
 
 /**
@@ -2076,13 +2090,19 @@ export const api = {
         }
     },
 
-    /** The whole shelf of tall tales, in the order the keeper arranged it. */
+    /**
+     * The whole shelf of tall tales, in the order the keeper arranged it.
+     *
+     * Deliberately NOT swallowing its errors, unlike its neighbours above. The
+     * shelf is prerendered, and a caught failure here is indistinguishable from
+     * an empty shelf: the build then freezes "nothing has told its story yet"
+     * into /tales.html AND `entries()` yields no slugs, so every /tales/<slug>
+     * the (server-generated) sitemap advertises answers 404 until the next
+     * deploy. That is exactly what shipped. A caller that can honestly carry on
+     * without the shelf catches it itself.
+     */
     async getTales(loadFetch?: typeof fetch): Promise<GazetteLeaf[]> {
-        try {
-            return await webFetch('/tales', undefined, loadFetch);
-        } catch {
-            return [];
-        }
+        return await webFetch('/tales', undefined, loadFetch);
     },
 
     /** Lay the shelf out top to bottom; position is the index in the array. */
@@ -2552,6 +2572,29 @@ export const api = {
         action: BattleAction,
     ): Promise<BattleMatch> {
         return webFetch(`/battles/matches/${id}/act`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${sessionToken}`,
+            },
+            body: JSON.stringify({ seq, action }),
+        });
+    },
+
+    /**
+     * «Если сделать это и на этом закончить ход — чем ответит хранитель».
+     *
+     * Ничего не пишет и ничего не двигает: партия, посчитанная на ветку вперёд
+     * и выброшенная. `seq` спрашивается не ради защиты от повтора — повторять
+     * нечего, — а чтобы не отвечать про доску, которой уже нет.
+     */
+    async foreseeBattleMatch(
+        sessionToken: string,
+        id: string,
+        seq: number,
+        action: BattleAction,
+    ): Promise<Foresight> {
+        return webFetch(`/battles/matches/${id}/foresee`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

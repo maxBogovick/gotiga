@@ -2,7 +2,8 @@
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import { t, lang, brandName } from '$lib/i18n';
-  import { SITE_URL } from '$lib/site';
+  import { resolveLargestImageUrl } from '$lib/api';
+  import { SITE_URL, toAbsoluteUrl } from '$lib/site';
   import { jsonLdSafe } from '$lib/jsonld';
   import {
     GAZETTE_KIND_KEY,
@@ -46,6 +47,14 @@
   );
   let plates = $derived(data.leaf ? leafImageList(data.leaf) : []);
   let cover = $derived(data.leaf ? leafCoverUrl(data.leaf) : '');
+  // What is stored on a leaf is the 420px thumb, as a site-relative path. Both
+  // og:image and schema.org's `image` want an absolute URL — a relative one is
+  // not resolved, it is dropped, which is how a leaf with a photograph shares as
+  // a blank card — and a share network wants the wide rendition, not the spine-
+  // sized one. Same treatment as the shelf of tall tales.
+  let coverAbsolute = $derived(
+    toAbsoluteUrl(resolveLargestImageUrl(cover) ?? cover ?? null),
+  );
 
   let jsonLd = $derived(
     data.leaf && copy
@@ -57,7 +66,7 @@
           url: `${SITE_URL}/gazette/${data.leaf.slug}`,
           datePublished: data.leaf.publishedAt ?? data.leaf.createdAt,
           inLanguage: $lang === 'ru' ? 'ru' : 'en',
-          image: cover || undefined,
+          image: coverAbsolute ?? undefined,
           author: { '@type': 'Organization', name: $brandName },
           isPartOf: { '@type': 'WebSite', name: $brandName, url: SITE_URL },
         })
@@ -77,11 +86,10 @@
     <meta property="og:title" content="{copy?.title ?? $t('gazettePageTitle')} — {$brandName}" />
     <meta property="og:description" content={copy?.dek || $t('gazettePageSubtitle')} />
     <meta property="og:url" content="{SITE_URL}/gazette/{data.leaf.slug}" />
-    {#if cover}
-      <meta property="og:image" content={cover} />
-    {:else}
-      <meta property="og:image" content="{SITE_URL}/images/cabinet-bg.jpeg" />
-    {/if}
+    <meta
+      property="og:image"
+      content={coverAbsolute ?? `${SITE_URL}/images/cabinet-bg.jpeg`}
+    />
     {#if jsonLd}{@html `<script type="application/ld+json">${jsonLd}<\/script>`}{/if}
   {/if}
 </svelte:head>

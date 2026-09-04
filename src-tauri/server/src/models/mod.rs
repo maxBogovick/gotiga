@@ -3846,6 +3846,18 @@ pub struct ChallengeSetup {
     pub keeper_board: Vec<ChallengePlacement>,
     #[serde(default)]
     pub keeper_hand: Vec<String>,
+    /// Правила, по которым играется это испытание. `None` — умолчания дома.
+    ///
+    /// Лежит здесь, а не отдельной колонкой, ровно по той причине, по которой
+    /// здесь лежит расстановка: испытание — это шаблон целиком, и правило
+    /// «здесь никто не ходит» относится к нему так же, как относится «здесь
+    /// стоит ведьма». Колонка бы развела одно испытание по двум местам.
+    ///
+    /// Каждая ручка `Rules` уже померена и каждая меняет игру, а не оттенок:
+    /// шаг, тратящий ход целиком, уводит долю решённых очерёдностью партий с
+    /// 43 % на 98 %. До этого поля ни одна из них этюду доступна не была.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rules: Option<battle_core::Rules>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -3897,6 +3909,33 @@ pub struct BattleChallengeDto {
     /// `None` for a guest, and when the last one already has an outcome.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub open_match_id: Option<String>,
+    /// Чем этот этюд помечен у этого гостя. `None` — гость не вошёл, и мерить
+    /// нечего.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub marks: Option<ChallengeMarks>,
+}
+
+/// Три печати вместо одной.
+///
+/// Пыль за этюд платится однажды, и до этих чисел пройденный этюд не давал ни
+/// одной причины к нему вернуться: победа была двоичной. «За пять дел вместо
+/// семи» — утверждение о человеке, и оно не зависит от того, кому досталась
+/// монета: перевес первого хода 45/55 сидит в исходе, а не в длине линии.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChallengeMarks {
+    /// Хоть раз доведено до исхода — победа или нет.
+    pub finished: bool,
+    /// Хоть раз выиграно.
+    pub won: bool,
+    /// Хоть раз выиграно, не потеряв ни одного тела.
+    pub clean: bool,
+    /// Своя лучшая линия, в делах. Меньше — лучше. `None` — ещё не выиграно.
+    pub your_best: Option<i32>,
+    /// Лучшее, что дом видел от кого бы то ни было. Планка живая: её поднимает
+    /// рука, а не перебор, и поэтому она никогда не обещает больше, чем дом
+    /// действительно знает.
+    pub best_known: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3963,6 +4002,18 @@ pub struct BattleMatch {
     pub seq: i32,
     pub outcome: Option<String>,
     pub rounds: Option<i16>,
+    /// Правила, под которыми игралась эта партия. `None` — дом.
+    ///
+    /// Снимок, как и `setup`: правку испытания не должно быть видно в уже
+    /// начатой партии. И читается он на пересмотре — свёртка журнала по чужим
+    /// правилам дала бы другую доску, а `board_cache` затем и кэш, что его в
+    /// любой момент можно выбросить.
+    pub rules: Option<String>,
+    /// Сколько дел сделал гость, прежде чем партия кончилась. Конец хода делом
+    /// не считается. `None` — партия ещё идёт.
+    pub player_acts: Option<i16>,
+    /// Скольких своих тел он при этом недосчитался.
+    pub bodies_lost: Option<i16>,
     pub created_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
 }
@@ -4075,6 +4126,52 @@ pub struct BattleMatchDto {
     /// Обе выплаты сложены в одно число: человек видит, сколько осело за этот
     /// ход, а не разбор бухгалтерии — за конец отдельно, за победу отдельно.
     pub reward_dust: i32,
+    /// Чем кончилась именно эта партия. Есть только в ответе на ход, которым
+    /// она кончилась: печать ставится один раз и в одном месте.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub marks: Option<MatchMarks>,
+}
+
+/// Печать под сыгранной партией.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MatchMarks {
+    /// Сколько дел сделал гость. Конец хода делом не считается: это не выбор.
+    pub acts: i32,
+    pub bodies_lost: i32,
+    /// Лучшее известное дому ДО этой партии — чтобы «за пять, а лучшее шесть»
+    /// читалось как рекорд, а не как совпадение чисел.
+    pub best_known: Option<i32>,
+    /// Эта линия и есть новая планка этюда.
+    pub record: bool,
+}
+
+/// «Если сделать это и на этом закончить ход — чем ответит хранитель».
+///
+/// Ход хранителя вычислим: случайности в движке нет, скрытых карт у него нет,
+/// `reduce` чиста. Значит прятать его — не тайна, а недосказанность, и Into the
+/// Breach давно показала, чем это лечится: показанный ответ превращает угадайку
+/// в задачу.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForeseeRequest {
+    /// Тот же номер, что у хода. Не защита от повтора — предвестие ничего не
+    /// пишет, — а защита от вранья: доска, ушедшая вперёд, ответила бы на
+    /// вопрос о позиции, которой уже нет.
+    pub seq: i32,
+    pub action: battle_core::Action,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForeseeDto {
+    pub seq: i32,
+    /// Что сделает само действие.
+    pub yours: Vec<battle_core::Event>,
+    /// Чем на это ответит хранитель, если ход закончить здесь.
+    pub theirs: Vec<battle_core::Event>,
+    /// Чем всё кончится, если кончится.
+    pub outcome: Option<String>,
 }
 
 /// One move by the player, with the number that makes a repeat harmless.

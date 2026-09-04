@@ -45,6 +45,7 @@
     BattleMatch,
     BattleMatchState,
     BattleUnit,
+    Foresight,
     Motion,
   } from '$lib/types/api';
 
@@ -56,6 +57,7 @@
     busy = false,
     control = 'player',
     onact,
+    onforesee,
     onreplay,
     onleave,
   }: {
@@ -70,6 +72,14 @@
     /** `both` — стол хранителя: ходить можно за обе стороны. */
     control?: 'player' | 'both';
     onact: (action: BattleAction) => void;
+    /**
+     * «Если сделать это и на этом закончить ход — чем ответит хранитель».
+     *
+     * Приходит колбэком, а не запросом отсюда: сцена не знает ни одного адреса
+     * и ни одного правила, и это второе тоже. Не передан — предвестия в этой
+     * комнате нет вовсе, и стол хранителя обходится без него.
+     */
+    onforesee?: (action: BattleAction) => Promise<Foresight | null>;
     /** Под печатью. Обе необязательны: у стола хранителя их нет. */
     onreplay?: () => void;
     onleave?: () => void;
@@ -200,6 +210,152 @@
     return out;
   });
 
+  // ── Предвестие ────────────────────────────────────────────────────────────
+  //
+  // Ход хранителя ВЫЧИСЛИМ: случайности в движке нет, скрытых карт у него нет,
+  // `reduce` чиста. Человек с карандашом получил бы то же самое, только за
+  // полчаса. Прятать вычислимое — значит продавать не глубину, а неудобство;
+  // «Into the Breach» показывает следующий удар врага целиком, и игра от этого
+  // стала не проще, а глубже: перестаёшь угадывать, начинаешь считать.
+  //
+  // Вопрос поставлен ровно так: «если сделать это и НА ЭТОМ ЗАКОНЧИТЬ ХОД».
+  // Иначе ответа не существует — хранитель отвечает не на удар, а на конец
+  // хода, и предвестие после удара показывало бы ответ на несделанный ход.
+  //
+  // Считает сервер. Сцена по-прежнему не знает ни одного правила и ни одного
+  // адреса: она задаёт вопрос колбэком и показывает, что ответили.
+
+  const FORESIGHT_KEY = 'gotiga_battle_foresight';
+  /** Придержано на удар: провести мышью по доске — это не вопрос. */
+  const FORESIGHT_HOLD = 140;
+
+  let foresight = $state(true);
+  onMount(() => {
+    try {
+      foresight = localStorage.getItem(FORESIGHT_KEY) !== 'off';
+    } catch {
+      // Приватное окно — предвестие просто останется включённым.
+    }
+  });
+  function toggleForesight() {
+    foresight = !foresight;
+    if (!foresight) forget();
+    try {
+      localStorage.setItem(FORESIGHT_KEY, foresight ? 'on' : 'off');
+    } catch {
+      // Не сохранилось — переживём: это удобство, а не состояние партии.
+    }
+  }
+
+  let foretold = $state<Foresight | null>(null);
+  /** По какому действию оно посчитано. Ключ, а не флаг: показывать вчерашнее
+   *  предвестие под сегодняшним наведением — худшее из возможных вранья. */
+  let foretoldKey = $state<string | null>(null);
+  /** Спрошенное однажды не спрашивается снова: тот же ход при том же номере
+   *  даёт тот же ответ — это и есть чистота `reduce`, только с той стороны. */
+  let foreseen = new Map<string, Foresight>();
+  let asking: string | null = null;
+  let holdOff: ReturnType<typeof setTimeout> | null = null;
+
+  const foresightKey = (action: BattleAction) => `${match.seq}:${JSON.stringify(action)}`;
+
+  function forget() {
+    if (holdOff) clearTimeout(holdOff);
+    holdOff = null;
+    asking = null;
+    foretold = null;
+    foretoldKey = null;
+  }
+
+  /** Доска ушла вперёд — прежние ответы больше не про неё. */
+  $effect(() => {
+    match.seq;
+    untrack(() => {
+      foreseen.clear();
+      forget();
+    });
+  });
+
+  function ponder(action: BattleAction | null) {
+    if (!onforesee || !foresight || !mine || !action) {
+      forget();
+      return;
+    }
+    const key = foresightKey(action);
+    if (key === foretoldKey) return;
+    const known = foreseen.get(key);
+    if (known) {
+      foretold = known;
+      foretoldKey = key;
+      return;
+    }
+    if (holdOff) clearTimeout(holdOff);
+    asking = key;
+    holdOff = setTimeout(async () => {
+      const got = await onforesee!(action);
+      // Пока считали, увели мышь или сходили — ответ уже не про то, на что
+      // человек смотрит.
+      if (!got || asking !== key) return;
+      foreseen.set(key, got);
+      foretold = got;
+      foretoldKey = key;
+    }, FORESIGHT_HOLD);
+  }
+
+  /** Сколько снимут с каждого тела и кто при этом падёт. */
+  function toll(events: BattleEvent[]) {
+    const out = new Map<number, { off: number; falls: boolean }>();
+    const at = (id: number) => {
+      const had = out.get(id) ?? { off: 0, falls: false };
+      out.set(id, had);
+      return had;
+    };
+    for (const ev of events) {
+      if (typeof ev === 'string') continue;
+      if ('damaged' in ev) {
+        const row = at(ev.damaged.target);
+        row.off += ev.damaged.toHealth + ev.damaged.toShield;
+      }
+      if ('healed' in ev) at(ev.healed.target).off -= ev.healed.amount;
+      if ('died' in ev) at(ev.died.target).falls = true;
+    }
+    return out;
+  }
+
+  /** Что сделает само действие, и чем на это ответят. Порознь: своё и чужое на
+   *  доске должны читаться по-разному, иначе предвестие — просто россыпь чисел. */
+  let toldMine = $derived(foretold ? toll(foretold.yours) : new Map());
+  let toldTheirs = $derived(foretold ? toll(foretold.theirs) : new Map());
+
+  /** Ответ хранителя словами. Метки на доске говорят «сколько и с кого», а
+   *  строка — «кто и по кому», и без неё при дальности четыре число меняется
+   *  на другом конце поля без всякого видимого автора. */
+  let foretoldWords = $derived.by(() => {
+    const out: { by: string; target: string; off: number; falls: boolean }[] = [];
+    if (!foretold) return out;
+    const falls = new Set<number>();
+    for (const ev of foretold.theirs) {
+      if (typeof ev !== 'string' && 'died' in ev) falls.add(ev.died.target);
+    }
+    for (const ev of foretold.theirs) {
+      if (typeof ev === 'string' || !('damaged' in ev)) continue;
+      const d = ev.damaged;
+      const who = d.by === null ? null : (position.units[d.by] ?? null);
+      const whom = position.units[d.target] ?? null;
+      // Только по своим. Плату за простой хранитель платит и со своих тел —
+      // на доске она видна меткой, но в строке «чем ответит противник» чужая
+      // потеря читалась бы как угроза.
+      if (!whom || whom.owner !== me) continue;
+      out.push({
+        by: who ? titleOf(who.card.name) : '',
+        target: titleOf(whom.card.name),
+        off: d.toHealth + d.toShield,
+        falls: falls.has(d.target),
+      });
+    }
+    return out;
+  });
+
   let hand = $derived(me === 'player' ? position.player.hand : position.keeper.hand);
   let theirHand = $derived(me === 'player' ? position.keeper.hand : position.player.hand);
 
@@ -243,29 +399,38 @@
       : '',
   );
 
+  /**
+   * Что случится, если ткнуть в эту клетку сейчас. `null` — ткнуть означает
+   * выбрать или прочитать, а не сходить.
+   *
+   * Одна функция на нажатие и на предвестие. Две разошлись бы — и предвестие
+   * стало бы обещать не тот ход, чего не видно ни в одном тесте.
+   */
+  function actionAt(x: number, y: number): BattleAction | null {
+    if (!mine) return null;
+    const here = unitAt(x, y);
+    if (here && openUnits.has(here.id) && picked?.kind === 'unit') {
+      return openUnits.get(here.id) === 'attack'
+        ? { attack: { attacker: picked.id, target: here.id } }
+        : { mend: { healer: picked.id, target: here.id } };
+    }
+    if (!here && picked && openCells.has(`${x},${y}`)) {
+      const cell: BattleCell = { x, y };
+      return picked.kind === 'hand'
+        ? { play: { handIndex: picked.index, cell } }
+        : { move: { unit: picked.id, to: cell } };
+    }
+    return null;
+  }
+
   function tapCell(x: number, y: number) {
     if (playing) return;
     const here = unitAt(x, y);
 
     if (mine) {
-      if (here && openUnits.has(here.id)) {
-        const how = openUnits.get(here.id);
-        const source = picked as { kind: 'unit'; id: number };
-        onact(
-          how === 'attack'
-            ? { attack: { attacker: source.id, target: here.id } }
-            : { mend: { healer: source.id, target: here.id } },
-        );
-        return;
-      }
-
-      if (!here && picked && openCells.has(`${x},${y}`)) {
-        const cell: BattleCell = { x, y };
-        onact(
-          picked.kind === 'hand'
-            ? { play: { handIndex: picked.index, cell } }
-            : { move: { unit: picked.id, to: cell } },
-        );
+      const move = actionAt(x, y);
+      if (move) {
+        onact(move);
         return;
       }
 
@@ -303,25 +468,6 @@
       e.stopImmediatePropagation();
     }
   }
-
-  // ── Следы ударов ──────────────────────────────────────────────────────────
-  //
-  // Линия от бьющего к цели. Первые `400 мс` в полную силу, дальше бледнеет —
-  // но не исчезает до конца хода: наводить можно только на то, что видно.
-  type Trace = {
-    key: number;
-    from: BattleCell;
-    to: BattleCell;
-    by: string;
-    at: string;
-    trail: { step: string; from: number; to: number }[];
-    total: number;
-    immune: boolean;
-    fresh: boolean;
-  };
-  let traces = $state<Trace[]>([]);
-  let reading = $state<number | null>(null);
-  let traceKey = 0;
 
   // ── Движение ──────────────────────────────────────────────────────────────
   //
@@ -462,46 +608,6 @@
     }
   }
 
-  /** След от бьющего к цели — если известно, кто бил и где обе стороны стоят. */
-  function markTrace(
-    pos: BattleMatchState,
-    by: number | null,
-    target: number,
-    e: BattleEvent,
-    /** Сколько след держится в полную силу — столько же, сколько само
-     *  движение: погасший раньше стрелы след рассказывает не про этот удар. */
-    full = 400,
-  ) {
-    if (by == null) return;
-    const spotOf = (id: number) => pos.board.find((s) => s.unit === id)?.cell ?? null;
-    const from = spotOf(by);
-    const to = spotOf(target);
-    if (!from || !to) return;
-    const dmg = 'damaged' in e ? e.damaged : null;
-    const trace: Trace = {
-      key: ++traceKey,
-      from,
-      to,
-      by: titleOf(pos.units[by]?.card.name ?? ''),
-      at: titleOf(pos.units[target]?.card.name ?? ''),
-      trail: dmg?.trail ?? [],
-      total: dmg ? dmg.toHealth + dmg.toShield : 0,
-      immune: !dmg,
-      fresh: true,
-    };
-    traces = [...traces, trace];
-    if (!calm) {
-      const key = trace.key;
-      // «В полную силу» держится ровно столько, сколько длится само движение:
-      // след, погасший раньше стрелы, — это след не про этот удар.
-      setTimeout(() => {
-        traces = traces.map((x) => (x.key === key ? { ...x, fresh: false } : x));
-      }, Math.max(200, full));
-    } else {
-      trace.fresh = false;
-    }
-  }
-
   /**
    * Показать одно событие: разложить движение, переписать позицию в мгновение
    * касания, доиграть остаток.
@@ -530,7 +636,6 @@
       // Промах — не удар: оберег, который взял на себя, не дрожит как раненый.
       const motion = 'immune' in e ? WARD_MOTION : motionOf(pos, by ?? target, e);
       const span = calm ? 0 : (motion ? Math.min(MOTION_MS_MAX, motionSpan(motion)) : 0);
-      markTrace(pos, by, target, e, span);
 
       put(pos, motion, by, target, 'damaged' in e ? hitOf(pos, e) : null);
       const wound = calm ? 0 : Math.min(acting?.contact ?? 0, span);
@@ -601,8 +706,6 @@
 
     if (calm) {
       for (const e of events) {
-        const d = 'damaged' in e ? e.damaged : 'immune' in e ? e.immune : null;
-        if (d) markTrace(pos, d.by, d.target, e);
         transcribe(pos, e);
       }
       told = events;
@@ -662,10 +765,8 @@
   function arrive(events: BattleEvent[]) {
     picked = null;
     sheet = null;
-    reading = null;
     acting = null;
     flying = null;
-    traces = [];
     told = [];
 
     if (before === null || running) {
@@ -704,7 +805,12 @@
 
   const nameOf = (id: number) => titleOf(match.state.units[id]?.card.name ?? String(id));
 
-  type Line = { text: string; trail: Trace['trail']; total: number; head: string };
+  type Line = {
+    text: string;
+    trail: { step: string; from: number; to: number }[];
+    total: number;
+    head: string;
+  };
   let journal = $derived.by<Line[]>(() =>
     told.map((e) => {
       const bare = (text: string): Line => ({ text, trail: [], total: 0, head: '' });
@@ -913,12 +1019,19 @@
           {@const open2 = openCells.has(`${x},${y}`)}
           {@const target = here ? openUnits.get(here.id) : undefined}
           {@const dto = here ? dtoOf(here.card.name) : null}
+          {@const willTake = here ? toldMine.get(here.id) : undefined}
+          {@const willGet = here ? toldTheirs.get(here.id) : undefined}
           <button
             type="button"
             disabled={playing}
             onclick={() => tapCell(x, y)}
+            onpointerenter={() => ponder(actionAt(x, y))}
+            onpointerleave={forget}
+            onfocus={() => ponder(actionAt(x, y))}
+            onblur={forget}
             aria-label={here ? titleOf(here.card.name) : `${x},${y}`}
             class="cell"
+            class:cell--omen={!!willGet}
             class:cell--open={open2}
             class:cell--picked={picked?.kind === 'unit' && here?.id === picked.id}
             class:cell--attack={target === 'attack'}
@@ -966,6 +1079,22 @@
                   <span class="wound">{here.health.current}</span>
                 {/if}
 
+                <!-- Предвестие на теле: сколько снимет этот ход и сколько
+                     снимут в ответ. Два числа, а не одно: своё и чужое — не
+                     одно и то же, и сложенные они не значат ничего. -->
+                {#if willTake?.off || willGet?.off || willGet?.falls}
+                  <span class="omen" class:omen--falls={willGet?.falls}>
+                    {#if willTake?.off}
+                      <i class="omen-mine"
+                        >{willTake.off > 0 ? '−' : '+'}{Math.abs(willTake.off)}</i
+                      >
+                    {/if}
+                    {#if willGet?.off}
+                      <i class="omen-theirs">−{willGet.off}</i>
+                    {/if}
+                  </span>
+                {/if}
+
                 {#if here.statuses.length}
                   <span class="nicks" aria-hidden="true">
                     {#each here.statuses as st, i (i)}<i class="nick"></i>{/each}
@@ -978,69 +1107,9 @@
       </div>
 
       <!-- Нарисованное: стрела в полёте, вспышка на цели, полоса кадров.
-           Лежит в тех же `inset: 0` от поля, что следы и печать, — поле шире
+           Лежит в тех же `inset: 0` от поля, что печать, — поле шире
            доски увело бы всё вбок. -->
       <BattleMotionStage motes={acting?.play.motes ?? []} />
-
-      <!-- Следы ударов. viewBox под сетку клеток: линия декоративна, и доли
-           пикселя, которые съедают зазоры, ей ничего не стоят. -->
-      <svg
-        class="traces"
-        viewBox="0 0 {along ? DEPTH : WIDTH} {along ? WIDTH : DEPTH}"
-        preserveAspectRatio="none"
-        aria-hidden="true"
-      >
-        {#each traces as tr (tr.key)}
-          {@const x1 = (along ? tr.from.y : tr.from.x) + 0.5}
-          {@const y1 = (along ? tr.from.x : tr.from.y) + 0.5}
-          {@const x2 = (along ? tr.to.y : tr.to.x) + 0.5}
-          {@const y2 = (along ? tr.to.x : tr.to.y) + 0.5}
-          <line
-            class="trace"
-            class:trace--fresh={tr.fresh}
-            {x1} {y1} {x2} {y2}
-            vector-effect="non-scaling-stroke"
-          />
-          <line
-            class="trace-grip"
-            {x1} {y1} {x2} {y2}
-            vector-effect="non-scaling-stroke"
-            role="presentation"
-            onmouseenter={() => (reading = tr.key)}
-            onmouseleave={() => (reading = null)}
-          />
-        {/each}
-      </svg>
-
-      {#if reading !== null}
-        {@const tr = traces.find((x) => x.key === reading)}
-        {#if tr}
-          {@const spanX = along ? DEPTH : WIDTH}
-          {@const spanY = along ? WIDTH : DEPTH}
-          {@const midX = along ? tr.from.y + tr.to.y : tr.from.x + tr.to.x}
-          {@const midY = along ? tr.from.x + tr.to.x : tr.from.y + tr.to.y}
-          <div
-            class="breakdown"
-            style="--bx:{((midX + 1) / 2 / spanX) * 100}%;--by:{((midY + 1) / 2 / spanY) * 100}%"
-          >
-            <p class="breakdown-head">{tr.by} → {tr.at}</p>
-            {#if tr.immune}
-              <p class="breakdown-row"><span>{$t('battleStepImmunity')}</span></p>
-            {:else}
-              {#each tr.trail as b, i (i)}
-                <p class="breakdown-row">
-                  <span class="breakdown-why">{stepWord(b.step, $t)}</span>
-                  <span class="num">{b.from} → {b.to}</span>
-                </p>
-              {/each}
-              <p class="breakdown-row breakdown-total">
-                <span class="breakdown-why">{$t('battleTrailTotal')}</span>
-                <span class="num">{tr.total}</span>
-              </p>
-            {/if}
-          </div>
-        {/if}
-      {/if}
 
       <!-- Исход. Сургучная печать, тот же оттиск, что при получении карты. -->
       {#if position.outcome && !playing}
@@ -1056,6 +1125,25 @@
             </p>
             {#if match.rewardDust > 0}
               <p class="seal-dust">{match.rewardDust} {$t('battleDustGranted')}</p>
+            {/if}
+            <!-- Чем пройдено. Пыль платится однажды, и без этой строки
+                 пройденный этюд не даёт ни одной причины к нему вернуться:
+                 победа была двоичной. «За пять дел, а лучшее известное —
+                 шесть» — уже причина. -->
+            {#if match.marks}
+              <p class="seal-line">
+                {$t('battleMarkYourLine')} — {match.marks.acts}<span class="sep">·</span>{match
+                  .marks.bodiesLost === 0
+                  ? $t('battleLineNoneLost')
+                  : `${$t('battleLineLost')} — ${match.marks.bodiesLost}`}
+              </p>
+              {#if match.marks.record}
+                <p class="seal-record">{$t('battleLineRecord')}</p>
+              {:else if match.marks.bestKnown != null}
+                <p class="seal-line seal-line--bar">
+                  {$t('battleMarkBestLine')} — {match.marks.bestKnown}
+                </p>
+              {/if}
             {/if}
             {#if onleave || onreplay}
               <p class="seal-doors">
@@ -1081,13 +1169,68 @@
           </p>
         {/if}
         <div class="turn-act">
-          <button type="button" disabled={!mine} onclick={() => onact('endTurn')} class="end">
+          <button
+            type="button"
+            disabled={!mine}
+            onclick={() => onact('endTurn')}
+            onpointerenter={() => ponder('endTurn')}
+            onpointerleave={forget}
+            onfocus={() => ponder('endTurn')}
+            onblur={forget}
+            class="end"
+          >
             {$t('battleEndTurn')}
           </button>
           {#if playing}
             <span class="waiting">{$t('battleKeeperThinks')}</span>
           {/if}
         </div>
+
+        <!-- Ответ хранителя словами. Метки на доске говорят «сколько и с
+             кого», строка — «кто и по кому»: при дальности четыре число иначе
+             меняется на другом конце поля без всякого видимого автора.
+
+             Строка занята ВСЕГДА, пока предвестие включено: пока она то
+             появлялась, то исчезала, она толкала кнопку конца хода — а кнопка,
+             уезжающая из-под пальца, хуже любой подсказки. Поэтому при
+             включённом и ненаведённом предвестии здесь стоит то, что оно
+             обещает, а не пустота. -->
+        {#if onforesee}
+          <div class="omens">
+            <!-- Строка ПЕРЕД переключателем, а он прижат к тому же краю, что и
+                 «Закончить ход». Наоборот было хуже: пустеющая строка тянула
+                 переключатель вправо, и он уезжал из-под пальца ровно в тот
+                 миг, когда по нему нажали. -->
+            <p class="omen-word" class:omen-word--idle={!foretold}>
+              {#if !foresight}
+                &nbsp;
+              {:else if !foretold}
+                {$t('battleForesightHint')}
+              {:else if foretoldWords.length}
+                {#each foretoldWords as w, i (i)}<span class="omen-line"
+                    >{w.by}{w.by ? ' → ' : ''}{w.target} −{w.off}{w.falls
+                      ? ' †'
+                      : ''}</span
+                  >{/each}
+              {:else if foretold.outcome}
+                {$t('battleForesightEnds')}
+              {:else}
+                {$t('battleForesightQuiet')}
+              {/if}
+            </p>
+            <button
+              type="button"
+              class="omen-switch"
+              class:omen-switch--on={foresight}
+              aria-pressed={foresight}
+              onclick={toggleForesight}
+            >
+              {$t('battleForesight')}<span class="omen-state"
+                >{foresight ? $t('battleForesightOn') : $t('battleForesightOff')}</span
+              >
+            </button>
+          </div>
+        {/if}
       </div>
     </div>
   </div>
@@ -1162,7 +1305,7 @@
                   {line.text}
                 </button>
                 {#if open === i}
-                  <div class="breakdown breakdown--flat">
+                  <div class="breakdown">
                     {#if line.head}<p class="breakdown-head">{line.head}</p>{/if}
                     {#each line.trail as b, j (j)}
                       <p class="breakdown-row">
@@ -1488,6 +1631,147 @@
     color: #34251c;
   }
 
+  /* ── Предвестие ────────────────────────────────────────────────────────
+     Метка, а не всплывающая подсказка: она стоит на теле, к которому
+     относится, и не закрывает собой доску. Своё число тёмное, чужое —
+     цветом дома, потому что складывать их нельзя. */
+  .omen {
+    position: absolute;
+    right: 3px;
+    bottom: 3px;
+    z-index: 3;
+    display: flex;
+    gap: 2px;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    font-style: normal;
+  }
+
+  .omen i {
+    padding: 0 3px;
+    border: 1px dashed rgba(52, 37, 28, 0.35);
+    background: rgba(248, 241, 231, 0.92);
+  }
+
+  .omen-mine {
+    color: #34251c;
+  }
+
+  .omen-theirs {
+    color: #c65f3c;
+    border-color: rgba(198, 95, 60, 0.5);
+  }
+
+  /* Тело, которое до конца круга не доживёт. Пунктир гуще, и больше ничего:
+     череп над фигуркой — не эта комната. */
+  .omen--falls i {
+    border-style: solid;
+  }
+
+  .cell--omen {
+    outline: 1px dashed rgba(198, 95, 60, 0.45);
+    outline-offset: -3px;
+  }
+
+  /* Строка под печатью. Тише самой печати: она не хвалит, она сообщает. */
+  .seal-line {
+    margin: 0.35rem 0 0;
+    font-size: 0.76rem;
+    font-variant-numeric: tabular-nums;
+    color: #8a6a55;
+  }
+
+  .seal-line--bar {
+    font-style: italic;
+  }
+
+  .seal-record {
+    margin: 0.25rem 0 0;
+    font-family: Georgia, 'Fraunces', serif;
+    font-style: italic;
+    font-size: 0.86rem;
+    color: #c65f3c;
+  }
+
+  /* Своя строка целиком, а не сосед кнопки в общем ряду. Пока это был сосед,
+     выросший текст переносил ряд, и кнопка конца хода уезжала из-под пальца. */
+  .omens {
+    flex: 1 0 100%;
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: baseline;
+    justify-content: flex-end;
+    gap: 0.55rem;
+    margin-top: 0.25rem;
+    /* Высота держится и при пустой строке — по той же причине. */
+    min-height: 1.35rem;
+  }
+
+  /* Ощутимая мишень: строка в девятнадцать пикселей высотой — это попадание
+     с третьего раза, а переключатель, в который не попали, выглядит
+     сломанным. */
+  .omen-switch {
+    flex: 0 0 auto;
+    padding: 0.25rem 0.15rem;
+    margin: -0.25rem -0.15rem;
+    border: none;
+    background: none;
+    font: inherit;
+    font-size: 0.64rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: #b9a48c;
+    cursor: pointer;
+  }
+
+  .omen-switch--on {
+    color: #8a6a55;
+  }
+
+  /* Состояние названо словом, а не оттенком: разница между #8a6a55 и #b9a48c
+     на этой бумаге не читается, и переключатель выглядел неработающим. */
+  .omen-state {
+    display: inline-block;
+    /* Оба слова занимают одно место: «вкл» уже «выкл», и без этой ширины
+       переключатель дёргался на несколько пикселей от собственного нажатия. */
+    min-width: 2.4rem;
+    margin-left: 0.4rem;
+    padding: 0 0.25rem;
+    border: 1px solid currentColor;
+    font-size: 0.9em;
+    text-align: center;
+  }
+
+  .omen-switch--on .omen-state {
+    color: #f8f1e7;
+    background: #8a6a55;
+  }
+
+  /* Одна строка. Ударов за ход бывает несколько, но полная правда стоит
+     метками на самих телах, а строка называет главное и не растёт в высоту —
+     иначе она снова начнёт двигать то, что под ней. */
+  .omen-word {
+    flex: 1 1 auto;
+    min-width: 0;
+    text-align: right;
+    margin: 0;
+    font-size: 0.72rem;
+    line-height: 1.5;
+    color: #8a6a55;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .omen-word--idle {
+    font-style: italic;
+    color: #b9a48c;
+  }
+
+  .omen-line + .omen-line::before {
+    content: ' · ';
+  }
+
   .nicks {
     position: absolute;
     right: 2px;
@@ -1505,64 +1789,14 @@
     background: #6f3b24;
   }
 
-  .traces {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    z-index: 3;
-    pointer-events: none;
-  }
-
-  .trace {
-    stroke: #6f3b24;
-    stroke-width: 1;
-    opacity: 0.25;
-    transition: opacity 400ms ease;
-  }
-
-  .trace--fresh {
-    opacity: 0.85;
-  }
-
-  /* Широкая невидимая жила: наводиться на волосяную линию невозможно. */
-  .trace-grip {
-    stroke: transparent;
-    stroke-width: 14;
-    pointer-events: stroke;
-    cursor: help;
-  }
-
-  /* На узком экране наведения нет, а касание уже занято снятием выбора:
-     разбор там берут из журнала. */
-  @media (hover: none) {
-    .trace-grip {
-      pointer-events: none;
-    }
-  }
-
   .breakdown {
-    position: absolute;
-    left: var(--bx, 50%);
-    top: var(--by, 50%);
-    z-index: 5;
-    transform: translate(-50%, -50%);
-    min-width: 14rem;
+    min-width: 0;
+    margin: 0.3rem 0 0.5rem;
     padding: 0.6rem 0.75rem;
     background: #f8f1e7;
     border: 1px solid #d8c6b1;
-    box-shadow: 0 3px 16px rgba(52, 37, 28, 0.18);
     font-size: 12px;
     line-height: 1.5;
-    pointer-events: none;
-  }
-
-  .breakdown--flat {
-    position: static;
-    transform: none;
-    min-width: 0;
-    margin: 0.3rem 0 0.5rem;
-    box-shadow: none;
   }
 
   .breakdown-head {
@@ -1711,6 +1945,10 @@
     filter: drop-shadow(0 8px 14px rgba(52, 37, 28, 0.28));
   }
 
+  /* Ширина здесь ЗАДАНА, а не набрана содержимым. Пока она набиралась, любая
+     строка предвестия — появившаяся, сменившаяся, опустевшая — меняла ширину
+     всего столбца, и «Закончить ход» уезжал на две сотни пикселей в сторону.
+     Кнопка, уходящая из-под пальца, хуже любой подсказки. */
   .turn {
     display: flex;
     flex-direction: row;
@@ -1718,8 +1956,9 @@
     justify-content: flex-end;
     flex-wrap: wrap;
     gap: 0.7rem 0.85rem;
-    flex: 0 1 auto;
-    max-width: 22rem;
+    flex: 0 1 22rem;
+    width: 22rem;
+    max-width: 100%;
   }
 
   .turn-act {
@@ -2016,8 +2255,7 @@
      что сцена рисует сама. */
   @media (prefers-reduced-motion: reduce) {
     .figure,
-    .cell,
-    .trace {
+    .cell {
       transition: none;
     }
 

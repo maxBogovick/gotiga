@@ -4740,6 +4740,21 @@ pub async fn act_in_battle_match(
     Ok(Json(service.act_in_battle_match(user.id, id, body).await?))
 }
 
+/// Предвестие: чем хранитель ответит, если ход закончить этим.
+///
+/// Ничего не пишет и ничего не двигает — та же партия, посчитанная на ветку
+/// вперёд. Поэтому и метод, вообще говоря, читающий, а POST лишь потому, что
+/// действие не помещается в строку запроса.
+pub async fn foresee_battle_match(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(body): Json<crate::models::ForeseeRequest>,
+) -> Result<Json<crate::models::ForeseeDto>> {
+    let user = current_user(&service, &headers).await?;
+    Ok(Json(service.foresee_battle_match(user.id, id, body).await?))
+}
+
 /// The bench. Admin only, and it writes nothing anywhere.
 pub async fn admin_bench_battle(
     State(service): State<AppService>,

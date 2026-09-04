@@ -2,11 +2,12 @@
   // Стол такта. Не копия стола рамок: движение живёт во времени.
   //
   // Лица сверху — дом, заготовки, ящик. Сцена — настоящие карты на поле 3×6,
-  // тот же `stage()`, что в комнате, и крутится сама. Партитура — четыре
-  // дорожки; колодец слов ставит замах или свет, а не селект из семнадцати.
+  // тот же `stage()`, что в комнате, и крутится сама. Партитура — верстак под
+  // сценой: время в ширину, жест в руке справа. Колодец слов ставит замах или
+  // свет этому бару, а не селект из семнадцати.
   // Повод на записи — подсказка, не замок: карта вешает вид на любой повод.
   import { onMount, untrack } from 'svelte';
-  import { api } from '$lib/api';
+  import { api, resolveMediaUrl } from '$lib/api';
   import { t, lang } from '$lib/i18n';
   import BattleCard from '$lib/components/BattleCard.svelte';
   import BattleMotionStage from '$lib/components/BattleMotionStage.svelte';
@@ -19,17 +20,24 @@
     GESTURE_NUDGE_MAX,
     GESTURE_SIZE_MAX,
     GESTURE_TURNS,
+    GESTURES_MAX,
     MOTION_FRAMES_MAX,
     MOTION_MS_MAX,
     MOTION_OCCASIONS,
     MOTIONS_MAX,
     STOCK_MOTIONS,
+    STRIP_FRAMES,
+    STRIP_POSE_MAX,
+    STRIP_SCALE_MAX,
+    STRIP_TURN_MAX,
+    blankStripCell,
     completeSlices,
     frameForCard,
     isLight,
     isMove,
     isSlot,
     motionSpan,
+    motionBars,
     motionTitle,
     motionWound,
     newGesture,
@@ -37,12 +45,16 @@
     newSlot,
     oneStirPerBody,
     parseMotionWear,
+    punchStripGround,
+    splitMotionStrip,
     stage,
+    stitchMotionStrip,
     struckOf,
     takeHouse,
     takeStock,
     type HitWear,
     type Staged,
+    type StripCell,
   } from '$lib/battles';
   import type {
     BattleCard as BattleCardDto,
@@ -55,6 +67,7 @@
     Motion,
     MotionGesture,
     MotionOccasion,
+    BattleSplitRect,
   } from '$lib/types/api';
   import type { TranslationKey } from '$lib/i18n';
 
@@ -99,10 +112,74 @@
     return motions.find((m) => m.id === heldId) ?? null;
   });
 
-  let editable = $derived(faceKind === 'mine');
   let gestureAt = $state(0);
   let gesture = $derived(held?.gestures[gestureAt] ?? null);
   let track = $state<GestureWhom>('striker');
+
+  /** Полоса, полёт, поле и пустой слот под рисунок на теле — то, на что
+   *  кладут картинку. Замах без картинки сюда не входит. */
+  const carriesArt = (g: MotionGesture) =>
+    Boolean(g.image) || g.whom === 'flight' || g.whom === 'field' || g.body === 'none';
+
+  const picturedIndex = (gestures: MotionGesture[]) => {
+    const i = gestures.findIndex(carriesArt);
+    return i < 0 ? 0 : i;
+  };
+
+  const faceImage = (gestures: MotionGesture[]) =>
+    gestures.find((g) => g.image)?.image ?? '';
+
+  let pictured = $derived(
+    (held?.gestures ?? [])
+      .map((g, i) => ({ g, i }))
+      .filter((x) => carriesArt(x.g)),
+  );
+
+  let artAt = $derived.by(() => {
+    if (!held) return -1;
+    const current = held.gestures[gestureAt];
+    if (current && carriesArt(current)) return gestureAt;
+    return held.gestures.findIndex(carriesArt);
+  });
+
+  let artGesture = $derived(held && artAt >= 0 ? (held.gestures[artAt] ?? null) : null);
+
+  function aimArt(at: number) {
+    const g = held?.gestures[at];
+    if (!g) return;
+    gestureAt = at;
+    track = g.whom;
+  }
+
+  function showHouse(i: number) {
+    faceKind = 'house';
+    houseAt = i;
+    const motion = DEFAULT_MOTIONS[i];
+    gestureAt = picturedIndex(motion?.gestures ?? []);
+    const g = motion?.gestures[gestureAt];
+    if (g) track = g.whom;
+    bump();
+  }
+
+  function showStock(i: number) {
+    faceKind = 'stock';
+    stockAt = i;
+    const ready = STOCK_MOTIONS[i];
+    gestureAt = picturedIndex(ready?.gestures ?? []);
+    const g = ready?.gestures[gestureAt];
+    if (g) track = g.whom;
+    bump();
+  }
+
+  function showMine(id: string) {
+    faceKind = 'mine';
+    heldId = id;
+    const motion = motions.find((m) => m.id === id);
+    gestureAt = picturedIndex(motion?.gestures ?? []);
+    const g = motion?.gestures[gestureAt];
+    if (g) track = g.whom;
+    bump();
+  }
 
   const WIDTH = 3;
   const DEPTH = 6;
@@ -134,7 +211,7 @@
   let playKey = $state(0);
   let playGen = 0;
   let playRev = $state(0);
-  let looping = $state(true);
+  let looping = $state(false);
   let pinned = $state(false);
   let playing = $state(false);
 
@@ -163,6 +240,19 @@
 
   function bump() {
     playRev += 1;
+  }
+
+  /** Величину правят на живой сцене: `bump` перезапускает карты, а слайдер
+   *  этого не просил — только коробку рисунка. */
+  function liveStage() {
+    const motion = held;
+    if (!motion) return;
+    play = stage(motion, from, to, {
+      spanX: along ? DEPTH : WIDTH,
+      spanY: along ? WIDTH : DEPTH,
+      along,
+      calm: false,
+    });
   }
 
   // Писать play/playKey/playing здесь нельзя без untrack: `playKey += 1`
@@ -240,7 +330,9 @@
       motions = [...motions, born];
       faceKind = 'mine';
       heldId = born.id;
-      gestureAt = 0;
+      gestureAt = picturedIndex(born.gestures);
+      const g = born.gestures[gestureAt];
+      if (g) track = g.whom;
       bump();
       return;
     }
@@ -251,7 +343,9 @@
       motions = [...motions, born];
       faceKind = 'mine';
       heldId = born.id;
-      gestureAt = 0;
+      gestureAt = picturedIndex(born.gestures);
+      const g = born.gestures[gestureAt];
+      if (g) track = g.whom;
       bump();
     }
   }
@@ -279,7 +373,7 @@
     };
     motions = [...motions, twin];
     heldId = twin.id;
-    gestureAt = 0;
+    gestureAt = picturedIndex(twin.gestures);
     bump();
   }
 
@@ -295,34 +389,66 @@
     bump();
   }
 
+  type ScoreKind = 'move' | 'light' | 'art';
+
+  function scoreKind(g: MotionGesture): ScoreKind {
+    if (isMove(g.body)) return 'move';
+    if (isLight(g.body)) return 'light';
+    return 'art';
+  }
+
   function putBody(body: GestureBody) {
-    if (track === 'flight' || track === 'field') return;
+    const whom: GestureWhom =
+      gesture?.whom === 'striker' || gesture?.whom === 'target' ? gesture.whom : track;
+    if (whom === 'flight' || whom === 'field') return;
     const mine = ensureMine();
     if (!mine) return;
     const pred = isLight(body) ? isLight : isMove;
-    const at = mine.gestures.findIndex((g) => g.whom === track && pred(g.body));
+    const at = mine.gestures.findIndex((g) => g.whom === whom && pred(g.body));
     if (at >= 0) {
       mine.gestures[at].body = body;
       gestureAt = at;
+      track = whom;
     } else {
-      const g = { ...newGesture(track), body, fade: 'hold' as const };
+      if (mine.gestures.length >= GESTURES_MAX) return;
+      const g = { ...newGesture(whom), body, fade: 'hold' as const };
       mine.gestures = oneStirPerBody([...mine.gestures, g]);
-      gestureAt = mine.gestures.findIndex((x) => x.whom === track && x.body === body);
+      gestureAt = mine.gestures.findIndex((x) => x.whom === whom && x.body === body);
+      track = whom;
     }
     mine.gestures = [...mine.gestures];
     bump();
   }
 
-  function openSlot(whom: 'flight' | 'field') {
+  function newArt(whom: GestureWhom, at = 80, dur = 320): MotionGesture {
+    if (whom === 'flight' || whom === 'field') return newSlot(whom, at, dur);
+    return {
+      ...newGesture(whom),
+      body: 'none',
+      image: '',
+      at,
+      dur,
+      fade: 'inOut',
+      layer: 8,
+      size: 118,
+    };
+  }
+
+  function findLaneGesture(gestures: MotionGesture[], whom: GestureWhom, kind: ScoreKind) {
+    return gestures.findIndex((g) => g.whom === whom && scoreKind(g) === kind);
+  }
+
+  function putArtOn(whom: GestureWhom, at = 80) {
     const mine = ensureMine();
     if (!mine) return;
-    const at = mine.gestures.findIndex((g) => g.whom === whom);
-    if (at >= 0) {
-      gestureAt = at;
+    const found = findLaneGesture(mine.gestures, whom, 'art');
+    if (found >= 0) {
+      gestureAt = found;
       track = whom;
       return;
     }
-    mine.gestures = [...mine.gestures, newSlot(whom)];
+    if (mine.gestures.length >= GESTURES_MAX) return;
+    mine.gestures = [...mine.gestures, newArt(whom, at)];
     gestureAt = mine.gestures.length - 1;
     track = whom;
     bump();
@@ -336,19 +462,32 @@
     bump();
   }
 
-  let picking = $state(false);
+  let picking = $state<null | 'all' | number>(null);
   let uploading = $state(false);
+  let stripCells = $state<StripCell[]>(
+    Array.from({ length: STRIP_FRAMES }, blankStripCell),
+  );
+  let stripDirty = $state(false);
+  let stripBusy = $state(false);
+  let stripWork = $state<'cut' | 'join' | ''>('');
+  let stripOver = $state<number | null>(null);
+  let stripAt = $state(0);
+  let stripHeld = $derived(stripCells[stripAt] ?? null);
+  let composeWait = 0;
+
+  function artIndex() {
+    return artAt >= 0 ? artAt : gestureAt;
+  }
 
   async function upload(file: File) {
+    const at = artIndex();
     const mine = ensureMine();
-    const g = mine?.gestures[gestureAt];
+    const g = mine?.gestures[at];
     if (!g) return;
     uploading = true;
     try {
       const got = await api.adminUploadBattleFrameArt(file);
-      g.image = got.url;
-      mine.gestures = [...mine.gestures];
-      bump();
+      setArt(got.url);
     } catch (e) {
       complaint = String(e);
     } finally {
@@ -357,12 +496,338 @@
   }
 
   function setArt(url: string) {
+    setImage(artIndex(), url);
+  }
+
+  function setImage(i: number, url: string) {
     const mine = ensureMine();
-    const g = mine?.gestures[gestureAt];
+    const g = mine?.gestures[i];
     if (!g) return;
     g.image = url;
+    g.strip = [];
+    // Дом рисует полосу на 118% клетки. Одиночная картина при той же величине —
+    // второй портрет. Свести к удару.
+    if (url && g.size >= 100) g.size = 56;
     mine.gestures = [...mine.gestures];
+    gestureAt = i;
+    track = g.whom;
     bump();
+  }
+
+  function setBeat(n: number) {
+    const mine = ensureMine();
+    if (!mine) return;
+    const bars = motionBars(mine);
+    const ms = Math.round((Number(n) || 0) / 10) * 10;
+    mine.span = Math.max(bars, Math.min(MOTION_MS_MAX, Math.max(80, ms)));
+  }
+
+  function setSize(n: number) {
+    const at = artIndex();
+    const mine = ensureMine();
+    const g = mine?.gestures[at];
+    if (!g) return;
+    g.size = Math.max(0, Math.min(GESTURE_SIZE_MAX, Math.round(n) || 0));
+    mine.gestures = [...mine.gestures];
+    gestureAt = at;
+    liveStage();
+  }
+
+  function setFrames(n: number) {
+    const at = artIndex();
+    const mine = ensureMine();
+    const g = mine?.gestures[at];
+    if (!g) return;
+    g.frames = Math.max(1, Math.min(MOTION_FRAMES_MAX, Math.round(n) || 1));
+    mine.gestures = [...mine.gestures];
+    gestureAt = at;
+    bump();
+  }
+
+  function openStore() {
+    aimArt(artIndex());
+    picking = 'all';
+  }
+
+  function emptyStrip(): StripCell[] {
+    return Array.from({ length: STRIP_FRAMES }, blankStripCell);
+  }
+
+  function revokeStrip(url: string | null) {
+    if (url?.startsWith('blob:')) URL.revokeObjectURL(url);
+  }
+
+  function poseStyle(cell: StripCell) {
+    return `transform:translate(${cell.x}%,${cell.y}%) rotate(${cell.turn}deg) scale(${(cell.size || 100) / 100})`;
+  }
+
+  function holdPose(n: number, most: number) {
+    return Math.max(-most, Math.min(most, n));
+  }
+
+  $effect(() => {
+    const image = artGesture?.image ?? '';
+    const frames = artGesture?.frames ?? 1;
+    const saved = artGesture?.strip ?? [];
+    stripDirty = false;
+    let cancelled = false;
+    if (saved.length === STRIP_FRAMES && saved.some((c) => c.image)) {
+      stripCells = saved.map((c) => ({
+        src: c.image,
+        turn: c.turn || 0,
+        size: c.size || 100,
+        x: c.x || 0,
+        y: c.y || 0,
+      }));
+    } else if (image && frames === STRIP_FRAMES) {
+      const src = resolveMediaUrl(image) ?? image;
+      void splitMotionStrip(src, STRIP_FRAMES)
+        .then((parts) => {
+          if (!cancelled && !stripDirty)
+            stripCells = parts.map((src) => ({ ...blankStripCell(), src }));
+        })
+        .catch(() => {
+          if (!cancelled && !stripDirty) stripCells = emptyStrip();
+        });
+    } else {
+      stripCells = emptyStrip();
+    }
+    return () => {
+      cancelled = true;
+    };
+  });
+
+  function putCell(i: number, url: string) {
+    revokeStrip(stripCells[i]?.src ?? null);
+    stripDirty = true;
+    stripAt = i;
+    const had = stripCells[i] ?? blankStripCell();
+    stripCells[i] = { ...had, src: url };
+    stripCells = [...stripCells];
+    if (stripCells.every((c) => c.src)) void composeStrip();
+  }
+
+  function clearCell(i: number) {
+    revokeStrip(stripCells[i]?.src ?? null);
+    stripDirty = true;
+    stripCells[i] = blankStripCell();
+    stripCells = [...stripCells];
+  }
+
+  function poseCell(i: number, patch: Partial<StripCell>) {
+    const had = stripCells[i];
+    if (!had?.src) return;
+    stripDirty = true;
+    stripAt = i;
+    stripCells[i] = {
+      ...had,
+      turn: holdPose(patch.turn ?? had.turn, STRIP_TURN_MAX),
+      size: Math.max(8, Math.min(STRIP_SCALE_MAX, patch.size ?? had.size)),
+      x: holdPose(patch.x ?? had.x, STRIP_POSE_MAX),
+      y: holdPose(patch.y ?? had.y, STRIP_POSE_MAX),
+    };
+    stripCells = [...stripCells];
+  }
+
+  function spreadSrc(i: number) {
+    const src = stripCells[i]?.src;
+    if (!src) return;
+    stripDirty = true;
+    stripCells = stripCells.map((c, k) =>
+      k === i ? c : { ...c, src, turn: c.src ? c.turn : 0, size: c.src ? c.size : 100, x: c.src ? c.x : 0, y: c.src ? c.y : 0 },
+    );
+    if (stripCells.every((c) => c.src)) void composeStrip();
+  }
+
+  function scheduleCompose() {
+    window.clearTimeout(composeWait);
+    composeWait = window.setTimeout(() => void composeStrip(), 280);
+  }
+
+  async function putCellFile(i: number, file: File) {
+    stripAt = i;
+    stripBusy = true;
+    stripWork = 'join';
+    try {
+      const got = await api.adminUploadBattleFrameArt(file);
+      putCell(i, got.url);
+    } catch (e) {
+      complaint = String(e);
+    } finally {
+      stripBusy = false;
+      stripWork = '';
+    }
+  }
+
+  async function putCellFiles(files: FileList | File[], start = 0) {
+    const list = [...files].slice(0, STRIP_FRAMES - start);
+    if (!list.length) return;
+    stripBusy = true;
+    stripWork = 'join';
+    stripDirty = true;
+    try {
+      for (let k = 0; k < list.length; k++) {
+        const file = list[k];
+        if (!file) continue;
+        const got = await api.adminUploadBattleFrameArt(file);
+        const at = start + k;
+        revokeStrip(stripCells[at]?.src ?? null);
+        const had = stripCells[at] ?? blankStripCell();
+        stripCells[at] = { ...had, src: got.url };
+      }
+      stripCells = [...stripCells];
+      if (stripCells.every((c) => c.src)) void composeStrip();
+    } catch (e) {
+      complaint = String(e);
+    } finally {
+      stripBusy = false;
+      stripWork = '';
+    }
+  }
+
+  /** Готовая полоса из шести кадров в ряд: тот же разрез, что на вкладке
+   *  ассетов — шесть равных колонок, каждая подтянута к рисунку внутри. */
+  async function cutPreparedStrip(file: File) {
+    stripBusy = true;
+    stripWork = 'cut';
+    stripDirty = true;
+    complaint = '';
+    let filled = false;
+    try {
+      const punched = await punchStripGround(file);
+      const stem = file.name.replace(/\.[^.]+$/, '') || 'strip';
+      const parent = await api.adminAddBattleAsset(punched, stem, 'motion');
+      const rects: BattleSplitRect[] = Array.from({ length: STRIP_FRAMES }, (_, i) => ({
+        x: i / STRIP_FRAMES,
+        y: 0,
+        w: 1 / STRIP_FRAMES,
+        h: 1,
+        name: `${stem} ${i + 1}`,
+        role: 'motion',
+      }));
+      const parts = await api.adminSplitBattleAsset(parent.id, rects);
+      const ordered = [...parts].sort((a, b) => {
+        const ao = a.sortOrder ?? 0;
+        const bo = b.sortOrder ?? 0;
+        if (ao !== bo) return ao - bo;
+        return a.name.localeCompare(b.name, undefined, { numeric: true });
+      });
+      if (ordered.length !== STRIP_FRAMES) throw new Error('cut');
+      const next = emptyStrip();
+      for (let i = 0; i < STRIP_FRAMES; i++) {
+        const url = ordered[i]?.url;
+        if (!url) throw new Error('cut');
+        next[i] = { ...blankStripCell(), src: url };
+      }
+      for (const cell of stripCells) revokeStrip(cell.src);
+      stripCells = next;
+      filled = true;
+    } catch (e) {
+      complaint =
+        e instanceof Error && e.message === 'cut'
+          ? $t('adminMotionsStripCutFail')
+          : String(e);
+    } finally {
+      stripBusy = false;
+      stripWork = '';
+    }
+    if (filled) void composeStrip();
+  }
+
+  async function composeStrip() {
+    const ready = stripCells.filter((c) => c.src);
+    if (ready.length !== STRIP_FRAMES) return;
+    if (stripBusy) {
+      composeWait = window.setTimeout(() => void composeStrip(), 200);
+      return;
+    }
+    stripBusy = true;
+    stripWork = 'join';
+    complaint = '';
+    try {
+      const blob = await stitchMotionStrip(stripCells, STRIP_FRAMES);
+      const file = new File([blob], 'strip.png', { type: 'image/png' });
+      const got = await api.adminUploadBattleFrameArt(file);
+      applyStrip(got.url);
+    } catch (e) {
+      complaint = String(e);
+    } finally {
+      stripBusy = false;
+      stripWork = '';
+    }
+  }
+
+  function applyStrip(url: string) {
+    const mine = ensureMine();
+    if (!mine) return;
+    let at = artAt >= 0 ? artAt : mine.gestures.findIndex(carriesArt);
+    if (at < 0) {
+      mine.gestures = [
+        ...mine.gestures,
+        {
+          ...newGesture('target'),
+          body: 'none',
+          fade: 'inOut',
+          layer: 8,
+          at: 180,
+          dur: 480,
+          size: 56,
+        },
+      ];
+      at = mine.gestures.length - 1;
+    }
+    const g = mine.gestures[at];
+    if (!g) return;
+    g.image = url;
+    g.frames = STRIP_FRAMES;
+    g.strip = stripCells.map((c) => ({
+      image: c.src ?? '',
+      turn: c.turn,
+      size: c.size,
+      x: c.x,
+      y: c.y,
+    }));
+    mine.gestures = [...mine.gestures];
+    gestureAt = at;
+    track = g.whom;
+    bump();
+  }
+
+  let stripDrag = $state<{
+    i: number;
+    x0: number;
+    y0: number;
+    ox: number;
+    oy: number;
+    w: number;
+  } | null>(null);
+
+  function poseDown(e: PointerEvent, i: number) {
+    const cell = stripCells[i];
+    if (!cell?.src) return;
+    stripAt = i;
+    const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    stripDrag = {
+      i,
+      x0: e.clientX,
+      y0: e.clientY,
+      ox: cell.x,
+      oy: cell.y,
+      w: Math.max(1, box.width),
+    };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  }
+
+  function poseMove(e: PointerEvent) {
+    if (!stripDrag) return;
+    const dx = ((e.clientX - stripDrag.x0) / stripDrag.w) * 100;
+    const dy = ((e.clientY - stripDrag.y0) / stripDrag.w) * 100;
+    poseCell(stripDrag.i, { x: stripDrag.ox + dx, y: stripDrag.oy + dy });
+  }
+
+  function poseUp() {
+    if (stripDrag) scheduleCompose();
+    stripDrag = null;
   }
 
   // ── Партитура: бар тянут ─────────────────────────────────────────────────
@@ -374,19 +839,20 @@
     startAt: number;
     startDur: number;
     width: number;
+    total: number;
   } | null>(null);
 
-  function msFromPx(dx: number, width: number) {
-    if (width <= 0) return 0;
-    return Math.round(((dx / width) * MOTION_MS_MAX) / 10) * 10;
+  function msFromPx(dx: number, width: number, total: number) {
+    if (width <= 0 || total <= 0) return 0;
+    return Math.round(((dx / width) * total) / 10) * 10;
   }
 
   function barDown(e: PointerEvent, i: number, mode: 'at' | 'dur') {
     const mine = ensureMine();
     const g = mine?.gestures[i];
     if (!g) return;
-    const row = (e.currentTarget as HTMLElement).closest('.score-row');
-    const width = row?.getBoundingClientRect().width ?? 1;
+    const lane = (e.currentTarget as HTMLElement).closest('.score-lane');
+    const width = lane?.getBoundingClientRect().width ?? 1;
     pinned = true;
     gestureAt = i;
     track = g.whom;
@@ -397,6 +863,7 @@
       startAt: g.at,
       startDur: g.dur,
       width,
+      total: scoreMs,
     };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   }
@@ -406,7 +873,7 @@
     const mine = motions.find((m) => m.id === heldId);
     const g = mine?.gestures[drag.i];
     if (!g) return;
-    const delta = msFromPx(e.clientX - drag.origin, drag.width);
+    const delta = msFromPx(e.clientX - drag.origin, drag.width, drag.total);
     if (drag.mode === 'at') {
       g.at = Math.max(0, Math.min(MOTION_MS_MAX - g.dur, drag.startAt + delta));
     } else {
@@ -421,24 +888,7 @@
     bump();
   }
 
-  let turnRun = 0;
-  async function playTurn() {
-    const token = ++turnRun;
-    looping = false;
-    pinned = true;
-    bump();
-    const beat = () => Math.max(280, motionSpan(held) + 80);
-    await new Promise((r) => setTimeout(r, beat()));
-    if (token !== turnRun) return;
-    await new Promise((r) => setTimeout(r, 500));
-    if (token !== turnRun) return;
-    bump();
-    await new Promise((r) => setTimeout(r, beat()));
-    if (token !== turnRun) return;
-    await new Promise((r) => setTimeout(r, 500));
-    if (token !== turnRun) return;
-    pinned = false;
-    looping = true;
+  function playTurn() {
     bump();
   }
 
@@ -461,6 +911,9 @@
       if (motions[0]) {
         faceKind = 'mine';
         heldId = motions[0].id;
+        gestureAt = picturedIndex(motions[0].gestures);
+        const g = motions[0].gestures[gestureAt];
+        if (g) track = g.whom;
       }
     } catch (e) {
       complaint = String(e);
@@ -553,22 +1006,100 @@
     { key: 'adminMotionsWellLight', bodies: ['kindle', 'blanch', 'wither'] },
   ];
 
-  const TRACKS: GestureWhom[] = ['striker', 'target', 'flight', 'field'];
+  const SCORE_LANES: { whom: GestureWhom; kind: ScoreKind; first: boolean }[] = [
+    { whom: 'striker', kind: 'move', first: true },
+    { whom: 'striker', kind: 'light', first: false },
+    { whom: 'striker', kind: 'art', first: false },
+    { whom: 'target', kind: 'move', first: true },
+    { whom: 'target', kind: 'light', first: false },
+    { whom: 'target', kind: 'art', first: false },
+    { whom: 'flight', kind: 'art', first: true },
+    { whom: 'field', kind: 'art', first: true },
+  ];
+
+  const KIND_KEY: Record<ScoreKind, TranslationKey> = {
+    move: 'adminMotionsScoreMove',
+    light: 'adminMotionsScoreLight',
+    art: 'adminMotionsScoreArt',
+  };
 
   let span = $derived(motionSpan(held));
+  let barsMs = $derived(motionBars(held));
+  let woundAt = $derived(motionWound(held));
+  let scoreMs = $derived(Math.max(span, 280));
+  let scoreTicks = $derived.by(() => {
+    const out: number[] = [];
+    for (let t = 0; t <= scoreMs; t += 100) out.push(t);
+    return out;
+  });
+
+  function scorePct(ms: number) {
+    return scoreMs > 0 ? (ms / scoreMs) * 100 : 0;
+  }
+
+  function laneKin(whom: GestureWhom, kind: ScoreKind) {
+    return (held?.gestures ?? [])
+      .map((g, i) => ({ g, i }))
+      .filter((x) => x.g.whom === whom && scoreKind(x.g) === kind);
+  }
+
+  function timeAtPointer(lane: Element, clientX: number) {
+    const box = lane.getBoundingClientRect();
+    if (box.width <= 0) return 0;
+    const t = ((clientX - box.left) / box.width) * scoreMs;
+    return Math.max(0, Math.min(MOTION_MS_MAX, Math.round(t / 10) * 10));
+  }
+
+  function laneDown(e: PointerEvent, whom: GestureWhom, kind: ScoreKind) {
+    const target = e.target as HTMLElement | null;
+    if (target?.closest('.bar')) return;
+    const lane = e.currentTarget as HTMLElement;
+    const at = timeAtPointer(lane, e.clientX);
+    track = whom;
+    const mineList = held?.gestures ?? [];
+    const found = findLaneGesture(mineList, whom, kind);
+    if (found >= 0) {
+      gestureAt = found;
+      return;
+    }
+    if (kind === 'art') {
+      putArtOn(whom, at);
+      return;
+    }
+    if (whom === 'flight' || whom === 'field') return;
+    const body: GestureBody = kind === 'light' ? 'kindle' : 'lunge';
+    const mine = ensureMine();
+    if (!mine || mine.gestures.length >= GESTURES_MAX) return;
+    const g = { ...newGesture(whom), body, fade: 'hold' as const, at, dur: 280 };
+    mine.gestures = oneStirPerBody([...mine.gestures, g]);
+    gestureAt = mine.gestures.findIndex((x) => x.whom === whom && x.body === body);
+    mine.gestures = [...mine.gestures];
+    bump();
+  }
+
+  async function putLaneFile(whom: GestureWhom, file: File) {
+    putArtOn(whom);
+    const mine = motions.find((m) => m.id === heldId);
+    const i = mine ? findLaneGesture(mine.gestures, whom, 'art') : -1;
+    if (i < 0) return;
+    stripBusy = true;
+    try {
+      const got = await api.adminUploadBattleFrameArt(file);
+      setImage(i, got.url);
+    } catch (e) {
+      complaint = String(e);
+    } finally {
+      stripBusy = false;
+    }
+  }
+
+  let scoreOver = $state<string | null>(null);
 
   const barWord = (g: MotionGesture) => {
     if (isSlot(g)) return $t('adminMotionsSlot');
     if (g.image) return $t('adminMotionsHasArt');
     return $t(BODY_KEY[g.body]);
   };
-
-  let tracePts = $derived({
-    x1: (along ? from.y : from.x) + 0.5,
-    y1: (along ? from.x : from.y) + 0.5,
-    x2: (along ? to.y : to.x) + 0.5,
-    y2: (along ? to.x : to.y) + 0.5,
-  });
 
   let wearers = $derived.by(() => {
     if (faceKind !== 'mine' || !heldId) return [];
@@ -608,12 +1139,7 @@
             type="button"
             class="chip"
             class:chip--on={faceKind === 'house' && houseAt === i}
-            onclick={() => {
-              faceKind = 'house';
-              houseAt = i;
-              gestureAt = 0;
-              bump();
-            }}>{motionTitle(motion, $lang)}</button
+            onclick={() => showHouse(i)}>{motionTitle(motion, $lang)}</button
           >
         {/each}
       </div>
@@ -622,17 +1148,18 @@
       <p class="kicker">{$t('adminMotionsFacesStock')}</p>
       <div class="chips">
         {#each STOCK_MOTIONS as ready, i (i)}
+          {@const img = faceImage(ready.gestures)}
           <button
             type="button"
             class="chip"
             class:chip--on={faceKind === 'stock' && stockAt === i}
-            onclick={() => {
-              faceKind = 'stock';
-              stockAt = i;
-              gestureAt = 0;
-              bump();
-            }}>{ $lang === 'ru' ? ready.nameRu : ready.nameEn }</button
+            onclick={() => showStock(i)}
           >
+            {#if img}
+              <span class="chip-art" style="background-image:url('{img}')"></span>
+            {/if}
+            {$lang === 'ru' ? ready.nameRu : ready.nameEn}
+          </button>
         {/each}
       </div>
     </div>
@@ -640,19 +1167,30 @@
       <p class="kicker">{$t('adminMotionsFacesMine')}</p>
       <div class="chips">
         {#each motions as motion (motion.id)}
+          {@const img = faceImage(motion.gestures)}
           <button
             type="button"
             class="chip"
             class:chip--on={faceKind === 'mine' && heldId === motion.id}
-            onclick={() => {
-              faceKind = 'mine';
-              heldId = motion.id;
-              gestureAt = 0;
-              bump();
-            }}>{motionTitle(motion, $lang)}</button
+            onclick={() => showMine(motion.id)}
           >
+            {#if img}
+              <span class="chip-art" style="background-image:url('{img}')"></span>
+            {/if}
+            {motionTitle(motion, $lang)}
+          </button>
         {/each}
-        <button type="button" class="chip chip--add" onclick={addBlank}>+</button>
+        <button
+          type="button"
+          class="chip chip--add"
+          disabled={motions.length >= MOTIONS_MAX}
+          onclick={addBlank}>+</button
+        >
+        {#if faceKind === 'mine' && heldId}
+          <button type="button" class="chip chip--drop" onclick={dropHeld}
+            >{$t('adminMotionsDrop')}</button
+          >
+        {/if}
       </div>
     </div>
     <div class="face-save">
@@ -676,6 +1214,268 @@
     <div class="body">
       <!-- ── Сцена ─────────────────────────────────────────────────────── -->
       <section class="stage-wrap">
+        <div class="stage-scroll">
+        <div class="art-plate">
+          <p class="kicker">{$t('adminMotionsStrip')}</p>
+          <p class="hint">{$t('adminMotionsStripNote')}</p>
+          <div class="strip-cells">
+            {#each stripCells as cell, i (i)}
+              <div
+                class="strip-cell"
+                class:strip-cell--on={Boolean(cell.src)}
+                class:strip-cell--held={stripAt === i}
+                class:strip-cell--over={stripOver === i}
+                ondragover={(e) => {
+                  e.preventDefault();
+                  stripOver = i;
+                }}
+                ondragleave={() => {
+                  if (stripOver === i) stripOver = null;
+                }}
+                ondrop={(e) => {
+                  e.preventDefault();
+                  stripOver = null;
+                  const files = e.dataTransfer?.files;
+                  if (files?.length) putCellFiles(files, i);
+                }}
+              >
+                {#if cell.src}
+                  <div
+                    class="strip-face"
+                    onpointerdown={(e) => poseDown(e, i)}
+                    onpointermove={poseMove}
+                    onpointerup={poseUp}
+                    onpointercancel={poseUp}
+                    onwheel={(e) => {
+                      e.preventDefault();
+                      poseCell(i, { turn: cell.turn + (e.deltaY > 0 ? 5 : -5) });
+                      scheduleCompose();
+                    }}
+                  >
+                    <img src={cell.src} alt="" style={poseStyle(cell)} />
+                  </div>
+                {:else}
+                  <label class="strip-face">
+                    <span class="strip-n">{i + 1}</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      class="hidden"
+                      onchange={(e) => {
+                        const file = e.currentTarget.files?.[0];
+                        if (file) void putCellFile(i, file);
+                        e.currentTarget.value = '';
+                      }}
+                    />
+                  </label>
+                {/if}
+                <span class="strip-cell-bar">
+                  <button
+                    type="button"
+                    class="strip-mini"
+                    onclick={() => (picking = i)}>{$t('adminMotionsFromStore')}</button
+                  >
+                  {#if cell.src}
+                    <label class="strip-mini">
+                      {$t('adminMotionsUpload')}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        class="hidden"
+                        onchange={(e) => {
+                          const file = e.currentTarget.files?.[0];
+                          if (file) void putCellFile(i, file);
+                          e.currentTarget.value = '';
+                        }}
+                      />
+                    </label>
+                    <button type="button" class="strip-mini" onclick={() => spreadSrc(i)}
+                      >{$t('adminMotionsStripAll')}</button
+                    >
+                    <button type="button" class="strip-mini" onclick={() => clearCell(i)}>×</button>
+                  {/if}
+                </span>
+              </div>
+            {/each}
+          </div>
+          {#if stripHeld?.src}
+            <div class="strip-pose">
+              <p class="kicker">{$t('adminMotionsStripPose')} {stripAt + 1}</p>
+              <p class="hint">{$t('adminMotionsStripPoseNote')}</p>
+              <label class="art-size">
+                {$t('adminMotionsStripTurn')}
+                <span class="tabular-nums">{Math.round(stripHeld.turn)}°</span>
+                <input
+                  type="range"
+                  min={-STRIP_TURN_MAX}
+                  max={STRIP_TURN_MAX}
+                  value={stripHeld.turn}
+                  oninput={(e) => poseCell(stripAt, { turn: Number(e.currentTarget.value) })}
+                  onpointerup={scheduleCompose}
+                />
+              </label>
+              <label class="art-size">
+                {$t('adminMotionsStripScale')}
+                <span class="tabular-nums">{Math.round(stripHeld.size)}</span>
+                <input
+                  type="range"
+                  min="20"
+                  max={STRIP_SCALE_MAX}
+                  value={stripHeld.size}
+                  oninput={(e) => poseCell(stripAt, { size: Number(e.currentTarget.value) })}
+                  onpointerup={scheduleCompose}
+                />
+              </label>
+              <div class="nudge">
+                <label>
+                  {$t('adminMotionsNudgeX')}
+                  <input
+                    type="number"
+                    min={-STRIP_POSE_MAX}
+                    max={STRIP_POSE_MAX}
+                    value={Math.round(stripHeld.x)}
+                    onchange={(e) => {
+                      poseCell(stripAt, { x: Number(e.currentTarget.value) });
+                      scheduleCompose();
+                    }}
+                  />
+                </label>
+                <label>
+                  {$t('adminMotionsNudgeY')}
+                  <input
+                    type="number"
+                    min={-STRIP_POSE_MAX}
+                    max={STRIP_POSE_MAX}
+                    value={Math.round(stripHeld.y)}
+                    onchange={(e) => {
+                      poseCell(stripAt, { y: Number(e.currentTarget.value) });
+                      scheduleCompose();
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+          {/if}
+          <div class="row mt-strip">
+            <label class="btn">
+              {$t('adminMotionsStripCut')}
+              <input
+                type="file"
+                accept="image/*"
+                class="hidden"
+                disabled={stripBusy}
+                onchange={(e) => {
+                  const file = e.currentTarget.files?.[0];
+                  if (file) void cutPreparedStrip(file);
+                  e.currentTarget.value = '';
+                }}
+              />
+            </label>
+            <label class="btn">
+              {$t('adminMotionsStripSix')}
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                class="hidden"
+                disabled={stripBusy}
+                onchange={(e) => {
+                  if (e.currentTarget.files?.length) void putCellFiles(e.currentTarget.files, 0);
+                  e.currentTarget.value = '';
+                }}
+              />
+            </label>
+            {#if stripBusy}
+              <span class="muted"
+                >{stripWork === 'cut'
+                  ? $t('adminMotionsStripCutting')
+                  : $t('adminMotionsStripBusy')}</span
+              >
+            {:else if stripCells.some((c) => c.src) && !stripCells.every((c) => c.src)}
+              <span class="muted">{stripCells.filter((c) => c.src).length}/{STRIP_FRAMES}</span>
+            {/if}
+          </div>
+
+          {#if pictured.length}
+            <div class="art-plate-row">
+              {#each pictured as { g, i } (i)}
+                <button
+                  type="button"
+                  class="art-shot"
+                  class:art-shot--on={artAt === i}
+                  onclick={() => aimArt(i)}
+                >
+                  {#if g.image}
+                    <span class="art-strip" style="background-image:url('{g.image}')"></span>
+                  {:else}
+                    <span class="art-strip art-strip--empty">{$t('adminMotionsSlotNote')}</span>
+                  {/if}
+                </button>
+              {/each}
+              <div class="art-tools">
+                <div class="row">
+                  <button type="button" class="btn" onclick={openStore}
+                    >{$t('adminMotionsFromStore')}</button
+                  >
+                  <label class="btn">
+                    {uploading ? $t('adminMotionsUploading') : $t('adminMotionsUpload')}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      class="hidden"
+                      onchange={(e) => {
+                        const file = e.currentTarget.files?.[0];
+                        if (file) void upload(file);
+                        e.currentTarget.value = '';
+                      }}
+                    />
+                  </label>
+                  {#if artGesture?.image}
+                    <button type="button" class="btn" onclick={() => setArt('')}
+                      >{$t('adminMotionsClearSlot')}</button
+                    >
+                  {/if}
+                </div>
+                {#if faceKind !== 'mine'}
+                  <p class="hint">{$t('adminMotionsArtCopyNote')}</p>
+                {/if}
+                {#if artGesture?.image}
+                  <label class="art-size">
+                    {$t('adminMotionsSize')}
+                    <span class="tabular-nums">{artGesture.size}</span>
+                    <input
+                      type="range"
+                      min="8"
+                      max={GESTURE_SIZE_MAX}
+                      value={artGesture.size}
+                      onpointerdown={() => (pinned = true)}
+                      oninput={(e) => setSize(Number(e.currentTarget.value))}
+                      onpointerup={() => {
+                        pinned = false;
+                        bump();
+                      }}
+                    />
+                  </label>
+                  <p class="hint">{$t('adminMotionsSizeNote')}</p>
+                  <label class="block">
+                    {$t('adminMotionsFrames')}
+                    <input
+                      type="number"
+                      min="1"
+                      max={MOTION_FRAMES_MAX}
+                      value={artGesture.frames}
+                      onchange={(e) => setFrames(Number(e.currentTarget.value))}
+                    />
+                  </label>
+                  <p class="hint">{$t('adminMotionsFramesNote')}</p>
+                {/if}
+              </div>
+            </div>
+          {:else if faceKind !== 'mine'}
+            <p class="hint">{$t('adminMotionsArtCopyNote')}</p>
+          {/if}
+        </div>
+
         {#if faceKind === 'mine'}
           <div class="names">
             <label>
@@ -700,7 +1500,7 @@
               >{$t('adminMotionsDrop')}</button
             >
           </div>
-        {:else}
+        {:else if pictured.length === 0}
           <p class="hint">{$t('adminMotionsReadOnly')}</p>
         {/if}
 
@@ -749,26 +1549,14 @@
           {#key playKey}
             <BattleMotionStage motes={play?.motes ?? []} />
           {/key}
-          <svg
-            class="traces"
-            viewBox="0 0 {spanX} {spanY}"
-            preserveAspectRatio="none"
-            aria-hidden="true"
-          >
-            <line
-              class="trace"
-              class:trace--fresh={playing}
-              x1={tracePts.x1}
-              y1={tracePts.y1}
-              x2={tracePts.x2}
-              y2={tracePts.y2}
-              vector-effect="non-scaling-stroke"
-            />
-          </svg>
         </div>
 
         <div class="stage-bar">
           <button type="button" class="btn" onclick={playTurn}>{$t('adminMotionsTurnPlay')}</button>
+          <label class="inline">
+            <input type="checkbox" bind:checked={looping} />
+            {$t('adminMotionsLoop')}
+          </label>
           <label class="inline">
             {$t('adminMotionsReach')}
             <input type="range" min="1" max={DEPTH - 1} bind:value={reach} onpointerup={bump} />
@@ -798,78 +1586,183 @@
             </select>
           </label>
         </div>
+        </div>
+
+        <div class="score-desk">
+          <div class="score-head">
+            <p class="kicker">{$t('adminMotionsScore')}</p>
+            <label class="score-beat">
+              {$t('adminMotionsBeat')}
+              <input
+                type="range"
+                min={Math.max(80, barsMs)}
+                max={MOTION_MS_MAX}
+                step="20"
+                value={span}
+                onpointerdown={() => (pinned = true)}
+                oninput={(e) => setBeat(Number(e.currentTarget.value))}
+                onpointerup={() => {
+                  pinned = false;
+                  bump();
+                }}
+              />
+              <input
+                type="number"
+                min={Math.max(80, barsMs)}
+                max={MOTION_MS_MAX}
+                step="10"
+                value={span}
+                onchange={(e) => {
+                  setBeat(Number(e.currentTarget.value));
+                  bump();
+                }}
+              />
+              <span>{$t('adminMotionsMs')}</span>
+            </label>
+          </div>
+          <p class="hint">{$t('adminMotionsBeatNote')}</p>
+          <div class="score">
+            <div class="score-overlay">
+              {#if woundAt > 0}
+                <i
+                  class="score-wound"
+                  style="left:{scorePct(woundAt)}%"
+                  title="{$t('adminMotionsScoreWound')} {woundAt}{$t('adminMotionsMs')}"
+                ></i>
+              {/if}
+              {#if span > 0 && !pinned}
+                {#key playKey}
+                  <i
+                    class="score-play"
+                    style="--play-end:{scorePct(span)}%;--play-ms:{span}ms"
+                  ></i>
+                {/key}
+              {/if}
+            </div>
+            <div class="score-ruler">
+              <span class="score-whom"></span>
+              <span class="score-shelf"></span>
+              <span class="score-lane score-lane--ruler">
+                {#each scoreTicks as t (t)}
+                  <i
+                    class="score-tick"
+                    class:score-tick--label={t % 200 === 0}
+                    style="left:{scorePct(t)}%"
+                    >{t % 200 === 0 ? t : ''}</i
+                  >
+                {/each}
+              </span>
+            </div>
+            {#each SCORE_LANES as lane (`${lane.whom}-${lane.kind}`)}
+              {@const kin = laneKin(lane.whom, lane.kind)}
+              {@const laneId = `${lane.whom}-${lane.kind}`}
+              <div
+                class="score-row"
+                class:score-row--on={Boolean(
+                  gesture && gesture.whom === lane.whom && scoreKind(gesture) === lane.kind,
+                )}
+                class:score-row--over={scoreOver === laneId}
+              >
+                <span class="score-whom"
+                  >{lane.first ? $t(WHOM_KEY[lane.whom]) : ''}</span
+                >
+                <span class="score-shelf"
+                  >{lane.whom === 'flight' || lane.whom === 'field'
+                    ? ''
+                    : $t(KIND_KEY[lane.kind])}</span
+                >
+                <span
+                  class="score-lane"
+                  class:score-lane--art={lane.kind === 'art'}
+                  onpointerdown={(e) => laneDown(e, lane.whom, lane.kind)}
+                  ondragover={(e) => {
+                    if (lane.kind !== 'art') return;
+                    e.preventDefault();
+                    scoreOver = laneId;
+                  }}
+                  ondragleave={() => {
+                    if (scoreOver === laneId) scoreOver = null;
+                  }}
+                  ondrop={(e) => {
+                    if (lane.kind !== 'art') return;
+                    e.preventDefault();
+                    scoreOver = null;
+                    const file = e.dataTransfer?.files?.[0];
+                    if (file) void putLaneFile(lane.whom, file);
+                  }}
+                >
+                  {#each kin as { g, i } (i)}
+                    <button
+                      type="button"
+                      class="bar"
+                      class:bar--on={gestureAt === i}
+                      class:bar--slot={isSlot(g)}
+                      class:bar--light={lane.kind === 'light'}
+                      class:bar--art={lane.kind === 'art' && Boolean(g.image)}
+                      style="left:{scorePct(g.at)}%;width:{scorePct(g.dur)}%;{g.image
+                        ? `background-image:url('${resolveMediaUrl(g.image) ?? g.image}')`
+                        : ''}"
+                      onpointerdown={(e) => {
+                        e.stopPropagation();
+                        barDown(e, i, 'at');
+                      }}
+                      onpointermove={barMove}
+                      onpointerup={barUp}
+                      onpointercancel={barUp}
+                      title="{barWord(g)} {g.at}–{g.at + g.dur}"
+                    >
+                      <span class="bar-label">{barWord(g)}</span>
+                      <i
+                        class="bar-grip"
+                        onpointerdown={(e) => {
+                          e.stopPropagation();
+                          barDown(e, i, 'dur');
+                        }}
+                      ></i>
+                    </button>
+                  {/each}
+                  {#if !kin.length}
+                    <span class="score-empty">{$t('adminMotionsScoreEmpty')}</span>
+                  {/if}
+                </span>
+              </div>
+            {/each}
+          </div>
+        </div>
       </section>
 
       <!-- ── Партитура, колодец, картинка ─────────────────────────────── -->
       <aside class="side">
-        <p class="kicker">{$t('adminMotionsScore')}</p>
-        <div class="score">
-          {#each TRACKS as whom (whom)}
-            {@const kin = held.gestures
-              .map((g, i) => ({ g, i }))
-              .filter((x) => x.g.whom === whom)}
-            <div
-              class="score-row"
-              class:score-row--on={track === whom}
-              onpointerdown={() => (track = whom)}
-            >
-              <span class="score-whom">{$t(WHOM_KEY[whom])}</span>
-              <span class="score-lane">
-                {#each kin as { g, i } (i)}
-                  <button
-                    type="button"
-                    class="bar"
-                    class:bar--on={gestureAt === i}
-                    class:bar--slot={isSlot(g)}
-                    style="left:{(g.at / MOTION_MS_MAX) * 100}%;width:{Math.max(
-                      3,
-                      (g.dur / MOTION_MS_MAX) * 100,
-                    )}%"
-                    onpointerdown={(e) => {
-                      e.stopPropagation();
-                      barDown(e, i, 'at');
-                    }}
-                    onpointermove={barMove}
-                    onpointerup={barUp}
-                    onpointercancel={barUp}
-                    title="{barWord(g)} {g.at}–{g.at + g.dur}"
-                  >
-                    <span class="bar-label">{barWord(g)}</span>
-                    <i
-                      class="bar-grip"
-                      onpointerdown={(e) => {
-                        e.stopPropagation();
-                        barDown(e, i, 'dur');
-                      }}
-                    ></i>
-                  </button>
-                {/each}
-                {#if !kin.length}
-                  <span class="score-empty">{$t('adminMotionsTrackEmpty')}</span>
-                {/if}
-              </span>
-              {#if whom === 'flight' || whom === 'field'}
-                <button
-                  type="button"
-                  class="slot-btn"
-                  onclick={(e) => {
-                    e.stopPropagation();
-                    openSlot(whom);
-                  }}>{$t('adminMotionsAddSlot')}</button
-                >
-              {/if}
-            </div>
-          {/each}
-        </div>
-
-        <p class="kicker mt">
-          {track === 'flight' || track === 'field'
-            ? $t('adminMotionsArt')
-            : $t(WHOM_KEY[track])}
-        </p>
-        {#if track === 'flight' || track === 'field'}
-          <p class="hint">{$t('adminMotionsNoBodyHere')}</p>
+        <p class="kicker">{$t('adminMotionsGesture')}</p>
+        {#if gesture}
+          <p class="hint">{barWord(gesture)} · {$t(WHOM_KEY[gesture.whom])}</p>
         {:else}
+          <p class="hint">{$t('adminMotionsNoGesture')}</p>
+        {/if}
+        {#if gesture && (gesture.whom === 'flight' || gesture.whom === 'field')}
+          <p class="hint">{$t('adminMotionsNoBodyHere')}</p>
+          {#if !gesture.image}
+            <p class="hint">{$t('adminMotionsSlotNote')}</p>
+            <div class="row">
+              <button type="button" class="btn" onclick={openStore}
+                >{$t('adminMotionsFromStore')}</button
+              >
+              <label class="btn">
+                {uploading ? $t('adminMotionsUploading') : $t('adminMotionsUpload')}
+                <input
+                  type="file"
+                  accept="image/*"
+                  class="hidden"
+                  onchange={(e) => {
+                    const file = e.currentTarget.files?.[0];
+                    if (file) void upload(file);
+                    e.currentTarget.value = '';
+                  }}
+                />
+              </label>
+            </div>
+          {/if}
+        {:else if gesture?.whom === 'striker' || gesture?.whom === 'target' || track === 'striker' || track === 'target'}
           {#each WELL as group (group.key)}
             <p class="well-label">{$t(group.key)}</p>
             <div class="well">
@@ -886,64 +1779,57 @@
           <p class="hint">{$t('adminMotionsLightNote')}</p>
         {/if}
 
-        {#if gesture && (gesture.image || gesture.whom === 'flight' || gesture.whom === 'field')}
-          <div class="art">
-            <p class="kicker">{$t('adminMotionsArt')}</p>
-            {#if gesture.image}
-              <div
-                class="art-face"
-                style="background-image:url('{gesture.image}')"
-              ></div>
-            {:else}
-              <p class="hint">{$t('adminMotionsSlotNote')}</p>
-            {/if}
-            <div class="row">
-              <button type="button" class="btn" onclick={() => (picking = true)}
-                >{$t('adminMotionsFromStore')}</button
-              >
-              <label class="btn">
-                {uploading ? $t('adminMotionsUploading') : $t('adminMotionsUpload')}
-                <input
-                  type="file"
-                  accept="image/*"
-                  class="hidden"
-                  onchange={(e) => {
-                    const file = e.currentTarget.files?.[0];
-                    if (file) void upload(file);
-                    e.currentTarget.value = '';
-                  }}
-                />
+        {#if gesture && scoreKind(gesture) === 'art' && !gesture.image && gesture.whom !== 'flight' && gesture.whom !== 'field'}
+          <p class="hint">{$t('adminMotionsSlotNote')}</p>
+          <div class="row">
+            <button type="button" class="btn" onclick={openStore}
+              >{$t('adminMotionsFromStore')}</button
+            >
+            <label class="btn">
+              {uploading ? $t('adminMotionsUploading') : $t('adminMotionsUpload')}
+              <input
+                type="file"
+                accept="image/*"
+                class="hidden"
+                onchange={(e) => {
+                  const file = e.currentTarget.files?.[0];
+                  if (file) void upload(file);
+                  e.currentTarget.value = '';
+                }}
+              />
+            </label>
+          </div>
+        {/if}
+
+        {#if gesture}
+          <div class="timing">
+            <p class="kicker">{$t('adminMotionsWhen')}</p>
+            <div class="nudge">
+              <label>
+                {$t('adminMotionsAt')}
+                <input type="number" min="0" max={MOTION_MS_MAX} bind:value={gesture.at} onchange={bump} />
               </label>
-              {#if gesture.image}
-                <button type="button" class="btn" onclick={() => setArt('')}
-                  >{$t('adminMotionsClearSlot')}</button
-                >
-              {/if}
-              <button
-                type="button"
-                class="btn btn--drop"
-                onclick={() => dropGesture(gestureAt)}>×</button
-              >
+              <label>
+                {$t('adminMotionsDur')}
+                <input type="number" min="0" max={MOTION_MS_MAX} bind:value={gesture.dur} onchange={bump} />
+              </label>
             </div>
+            <p class="hint">{$t('adminMotionsWhenNote')}</p>
+          </div>
+        {/if}
+
+        {#if gesture && carriesArt(gesture)}
+          <div class="art">
             {#if gesture.image}
-              <label class="block">
-                {$t('adminMotionsFrames')}
-                <input
-                  type="number"
-                  min="1"
-                  max={MOTION_FRAMES_MAX}
-                  bind:value={gesture.frames}
-                  onchange={bump}
-                />
-              </label>
               <label class="block">
                 {$t('adminMotionsSize')} <span class="tabular-nums">{gesture.size}</span>
                 <input
                   type="range"
-                  min="0"
+                  min="8"
                   max={GESTURE_SIZE_MAX}
-                  bind:value={gesture.size}
+                  value={gesture.size}
                   onpointerdown={() => (pinned = true)}
+                  oninput={(e) => setSize(Number(e.currentTarget.value))}
                   onpointerup={() => {
                     pinned = false;
                     bump();
@@ -981,6 +1867,13 @@
                 <input type="range" min="1" max={GESTURE_LAYERS} bind:value={gesture.layer} onpointerup={bump} />
               </label>
             {/if}
+            {#if faceKind === 'mine'}
+              <button
+                type="button"
+                class="btn btn--drop mt"
+                onclick={() => dropGesture(gestureAt)}>×</button
+              >
+            {/if}
           </div>
         {:else if gesture && (isMove(gesture.body) || isLight(gesture.body))}
           <button type="button" class="btn btn--drop mt" onclick={() => dropGesture(gestureAt)}
@@ -1009,14 +1902,15 @@
   {/if}
 </div>
 
-{#if picking && gesture}
+{#if picking !== null}
   <BattleAssetPicker
     role="motion"
     onPick={(asset) => {
-      setArt(asset.url);
-      picking = false;
+      if (picking === 'all') setArt(asset.url);
+      else if (typeof picking === 'number') putCell(picking, asset.url);
+      picking = null;
     }}
-    onClose={() => (picking = false)}
+    onClose={() => (picking = null)}
   />
 {/if}
 
@@ -1058,11 +1952,21 @@
   }
 
   .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
     padding: 0.2rem 0.5rem;
     font-size: 11px;
     border: 1px solid rgba(52, 37, 28, 0.18);
     background: transparent;
     color: inherit;
+  }
+
+  .chip-art {
+    flex-shrink: 0;
+    width: 1.85rem;
+    height: 0.7rem;
+    background: rgba(52, 37, 28, 0.06) center / contain no-repeat;
   }
 
   .chip--on {
@@ -1072,6 +1976,11 @@
 
   .chip--add {
     color: #c65f3c;
+  }
+
+  .chip--drop {
+    border-color: rgba(143, 47, 34, 0.35);
+    color: #8f2f22;
   }
 
   .kicker {
@@ -1090,8 +1999,54 @@
   .stage-wrap {
     flex: 1;
     min-width: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .stage-scroll {
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
-    padding: 0.85rem 1rem;
+    padding: 0.85rem 1rem 0.5rem;
+  }
+
+  .score-desk {
+    flex-shrink: 0;
+    border-top: 1px solid rgba(52, 37, 28, 0.12);
+    padding: 0.55rem 1rem 0.7rem;
+    background: #f8f1e7;
+  }
+
+  .score-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem 1rem;
+  }
+
+  .score-beat {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 11px;
+    min-width: 16rem;
+    flex: 1 1 16rem;
+  }
+
+  .score-beat input[type='range'] {
+    flex: 1;
+    min-width: 8rem;
+  }
+
+  .score-beat input[type='number'] {
+    width: 3.6rem;
+    border: none;
+    border-bottom: 1px solid rgba(52, 37, 28, 0.25);
+    background: transparent;
+    color: inherit;
+    font: inherit;
   }
 
   .side {
@@ -1114,7 +2069,8 @@
   .names select,
   .stage-bar select,
   .art input,
-  .art select {
+  .art select,
+  .art-tools input {
     border: none;
     border-bottom: 1px solid rgba(52, 37, 28, 0.25);
     background: transparent;
@@ -1162,25 +2118,6 @@
     width: min(100%, calc(133.3333% * var(--fit, 0.714)));
   }
 
-  .traces {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    pointer-events: none;
-    z-index: 3;
-  }
-
-  .trace {
-    stroke: #6f3b24;
-    stroke-width: 1;
-    opacity: 0.28;
-  }
-
-  .trace--fresh {
-    opacity: 0.85;
-  }
-
   .stage-bar {
     display: flex;
     flex-wrap: wrap;
@@ -1197,6 +2134,7 @@
   }
 
   .btn {
+    display: inline-block;
     padding: 0.2rem 0.55rem;
     font-size: 11px;
     border: 1px solid rgba(52, 37, 28, 0.22);
@@ -1215,41 +2153,153 @@
   }
 
   .score {
+    position: relative;
     margin-top: 0.35rem;
+    --score-labels: 10.7rem;
   }
 
+  .score-overlay {
+    position: absolute;
+    left: var(--score-labels);
+    right: 0;
+    top: 0;
+    bottom: 0;
+    pointer-events: none;
+    z-index: 4;
+  }
+
+  .score-ruler,
   .score-row {
     display: grid;
-    grid-template-columns: 4.6rem 1fr auto;
+    grid-template-columns: 5.4rem 4.6rem 1fr;
     gap: 0.35rem;
     align-items: center;
-    margin-bottom: 0.35rem;
     font-size: 11px;
   }
 
-  .score-row--on .score-whom {
+  .score-ruler {
+    margin-bottom: 0.15rem;
+    min-height: 0.95rem;
+  }
+
+  .score-row {
+    margin-bottom: 0.2rem;
+  }
+
+  .score-row--on .score-whom,
+  .score-row--on .score-shelf {
     color: #c65f3c;
+  }
+
+  .score-row--over .score-lane {
+    outline: 1px solid #c65f3c;
+    outline-offset: -1px;
+  }
+
+  .score-whom,
+  .score-shelf {
+    color: #6f3b24;
+    line-height: 1.2;
+  }
+
+  .score-shelf {
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    text-transform: lowercase;
   }
 
   .score-lane {
     position: relative;
-    height: 1.35rem;
+    height: 1.55rem;
     background: rgba(52, 37, 28, 0.06);
+    min-width: 0;
+  }
+
+  .score-lane--art {
+    background: rgba(52, 37, 28, 0.035);
+  }
+
+  .score-lane--ruler {
+    height: 0.95rem;
+    background: transparent;
+  }
+
+  .score-tick {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 0;
+    border-left: 1px solid rgba(52, 37, 28, 0.12);
+    font-size: 9px;
+    font-style: normal;
+    color: rgba(52, 37, 28, 0.45);
+    padding-left: 0.2rem;
+    line-height: 0.95rem;
+    pointer-events: none;
+  }
+
+  .score-tick--label {
+    border-left-color: rgba(52, 37, 28, 0.28);
+  }
+
+  .score-wound {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 0;
+    border-left: 1px dashed #c65f3c;
+  }
+
+  .score-play {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: #c65f3c;
+    animation: score-play var(--play-ms) linear forwards;
+  }
+
+  @keyframes score-play {
+    from {
+      left: 0;
+    }
+    to {
+      left: var(--play-end);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .score-play {
+      animation: none;
+      left: 0;
+      opacity: 0;
+    }
   }
 
   .bar {
     position: absolute;
-    top: 0;
-    height: 100%;
+    top: 0.12rem;
+    height: calc(100% - 0.24rem);
+    min-width: 2.2rem;
     padding: 0;
     border: none;
     background: #6f3b24;
     color: #f8f1e7;
     overflow: hidden;
     cursor: grab;
+    z-index: 1;
   }
 
   .bar--on {
+    background: #c65f3c;
+    z-index: 2;
+  }
+
+  .bar--light {
+    background: #8a5a3a;
+  }
+
+  .bar--light.bar--on {
     background: #c65f3c;
   }
 
@@ -1260,11 +2310,22 @@
     outline-offset: -1px;
   }
 
+  .bar--slot.bar--on {
+    background: rgba(198, 95, 60, 0.12);
+    color: #c65f3c;
+  }
+
+  .bar--art {
+    background-color: #6f3b24;
+    background-size: cover;
+    background-position: center;
+  }
+
   .bar-label {
     display: block;
-    padding: 0 0.3rem;
-    font-size: 9px;
-    line-height: 1.35rem;
+    padding: 0 0.45rem 0 0.3rem;
+    font-size: 10px;
+    line-height: 1.31rem;
     white-space: nowrap;
     overflow: hidden;
   }
@@ -1273,16 +2334,18 @@
     position: absolute;
     right: 0;
     top: 0;
-    width: 6px;
+    width: 10px;
     height: 100%;
     cursor: ew-resize;
     background: rgba(248, 241, 231, 0.35);
   }
 
   .score-empty {
-    padding: 0 0.35rem;
-    color: rgba(52, 37, 28, 0.4);
-    line-height: 1.35rem;
+    padding: 0 0.45rem;
+    color: rgba(52, 37, 28, 0.38);
+    line-height: 1.55rem;
+    font-size: 10px;
+    pointer-events: none;
   }
 
   .slot-btn {
@@ -1320,10 +2383,154 @@
     color: #c65f3c;
   }
 
-  .art-face {
-    height: 3.5rem;
-    margin: 0.35rem 0;
-    background: rgba(52, 37, 28, 0.06) center / contain no-repeat;
+  .art-plate {
+    margin-bottom: 0.85rem;
+    padding: 0.55rem 0.65rem 0.7rem;
+    border: 1px solid rgba(52, 37, 28, 0.18);
+    background: rgba(52, 37, 28, 0.035);
+  }
+
+  .art-plate-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: stretch;
+    margin-top: 0.65rem;
+  }
+
+  .strip-cells {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 0;
+    margin-top: 0.45rem;
+    border: 1px solid rgba(52, 37, 28, 0.18);
+  }
+
+  .strip-cell {
+    position: relative;
+    min-width: 0;
+    border-right: 1px solid rgba(52, 37, 28, 0.12);
+    background: rgba(52, 37, 28, 0.04);
+  }
+
+  .strip-cell:last-child {
+    border-right: none;
+  }
+
+  .strip-cell--on {
+    background: rgba(52, 37, 28, 0.07);
+  }
+
+  .strip-cell--held {
+    outline: 1px solid #c65f3c;
+    outline-offset: -1px;
+  }
+
+  .strip-cell--over {
+    outline: 1px solid #c65f3c;
+    outline-offset: -1px;
+  }
+
+  .strip-face {
+    display: grid;
+    place-items: center;
+    aspect-ratio: 1;
+    overflow: hidden;
+    cursor: pointer;
+  }
+
+  .strip-cell--on .strip-face {
+    cursor: grab;
+  }
+
+  .strip-face img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    pointer-events: none;
+    transform-origin: center center;
+  }
+
+  .strip-n {
+    font-size: 1.1rem;
+    color: rgba(52, 37, 28, 0.28);
+  }
+
+  .strip-cell-bar {
+    display: flex;
+    justify-content: center;
+    gap: 0.25rem;
+    padding: 0.15rem 0.2rem 0.3rem;
+  }
+
+  .strip-mini {
+    padding: 0;
+    border: none;
+    background: none;
+    font-size: 9px;
+    color: #6f3b24;
+    cursor: pointer;
+  }
+
+  .mt-strip {
+    margin-top: 0.4rem;
+  }
+
+  .strip-pose {
+    margin-top: 0.55rem;
+    padding-top: 0.45rem;
+    border-top: 1px solid rgba(52, 37, 28, 0.1);
+  }
+
+  .art-shot {
+    flex: 1 1 16rem;
+    min-width: 0;
+    padding: 0.3rem;
+    border: 1px solid rgba(52, 37, 28, 0.14);
+    background: rgba(52, 37, 28, 0.04);
+    cursor: pointer;
+  }
+
+  .art-shot--on {
+    border-color: #c65f3c;
+  }
+
+  .art-strip {
+    display: block;
+    height: 5.5rem;
+    background: center / contain no-repeat;
+  }
+
+  .art-strip--empty {
+    display: grid;
+    place-items: center;
+    padding: 0.5rem;
+    font-size: 10px;
+    line-height: 1.35;
+    color: rgba(52, 37, 28, 0.5);
+    outline: 1px dashed rgba(111, 59, 36, 0.4);
+    outline-offset: -4px;
+  }
+
+  .art-tools {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    justify-content: center;
+    min-width: 9.5rem;
+    flex: 0 1 14rem;
+  }
+
+  .art-size {
+    display: block;
+    margin-top: 0.35rem;
+    font-size: 11px;
+  }
+
+  .art-size input[type='range'] {
+    display: block;
+    width: 100%;
+    margin-top: 0.2rem;
   }
 
   .row {

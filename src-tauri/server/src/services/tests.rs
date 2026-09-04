@@ -633,3 +633,162 @@ async fn set_figurine_like_rejects_empty_and_oversized_token() {
         "Invalid visitor token",
     );
 }
+
+// ── Печать под этюдом ───────────────────────────────────────────────────────
+//
+// Одно число решает, стоит ли возвращаться к пройденному этюду, — значит оно
+// обязано мерить то, что обещает. Здесь проверяется ровно это: что оно мерит
+// решения гостя, а не нажатия и не чужие ходы.
+
+/// Расстановка, в которой гость наверняка успевает ударить первым.
+fn one_blow_apart() -> battle_core::Setup {
+    battle_core::Setup {
+        player_board: vec![(
+            battle_core::CardSnapshot::new("боец", 1, 9, 9),
+            battle_core::Cell::new(1, 3).unwrap(),
+        )],
+        keeper_board: vec![(
+            battle_core::CardSnapshot::new("ворон", 1, 2, 1),
+            battle_core::Cell::new(1, 2).unwrap(),
+        )],
+        ..Default::default()
+    }
+}
+
+#[test]
+fn the_line_counts_decisions_and_not_keystrokes() {
+    let setup = one_blow_apart();
+    let mut state = battle_core::MatchState::begin(setup.clone());
+    let attack = battle_core::Action::Attack {
+        attacker: 0,
+        target: 1,
+    };
+    state = battle_core::reduce(&state, &attack).unwrap().0;
+
+    // Один удар и сколько угодно концов хода — это одно дело.
+    let journal = vec![
+        attack.clone(),
+        battle_core::Action::EndTurn,
+        battle_core::Action::EndTurn,
+    ];
+    let (acts, lost) = AppService::count_the_line(&setup, &journal, battle_core::Rules::default());
+    assert_eq!(acts, 1, "конец хода — не выбор, а его отсутствие");
+    assert_eq!(lost, 0);
+}
+
+#[test]
+fn the_keepers_own_moves_are_not_the_guests_line() {
+    // Партия доигрывается ботом за обе стороны: в журнале оказываются ходы
+    // обеих. Печать обязана считать только половину гостя — иначе «за пять
+    // дел» значило бы «хранитель был неразговорчив».
+    //
+    // Расстановка нарочно вязкая: слабые тела вдалеке друг от друга, чтобы
+    // хранитель успел походить, а не пал от первого удара.
+    let setup = battle_core::Setup {
+        player_board: vec![(
+            battle_core::CardSnapshot::new("боец", 1, 8, 1),
+            battle_core::Cell::new(0, 5).unwrap(),
+        )],
+        keeper_board: vec![(
+            battle_core::CardSnapshot::new("ворон", 1, 8, 1),
+            battle_core::Cell::new(2, 0).unwrap(),
+        )],
+        ..Default::default()
+    };
+
+    let mut state = battle_core::MatchState::begin(setup.clone());
+    let mut journal = Vec::new();
+    // Тот же счёт, но веденный здесь, снаружи: если помощник считает то же
+    // самое, он считает правильно, а не «непротиворечиво самому себе».
+    let mut expected = 0i16;
+    let mut keeper_moved = 0;
+    let mut guard = 0;
+    while state.outcome.is_none() && guard < 500 {
+        let mine = state.active == battle_core::Side::Player;
+        let action = battle_core::bot::choose(&state);
+        if mine && !matches!(action, battle_core::Action::EndTurn) {
+            expected += 1;
+        }
+        if !mine {
+            keeper_moved += 1;
+        }
+        state = battle_core::reduce(&state, &action).unwrap().0;
+        journal.push(action);
+        guard += 1;
+    }
+
+    assert!(keeper_moved > 0, "хранитель должен был походить");
+    let (acts, _) = AppService::count_the_line(&setup, &journal, battle_core::Rules::default());
+    assert_eq!(acts, expected);
+    assert!((acts as usize) < journal.len());
+}
+
+#[test]
+fn a_fallen_body_of_the_guest_is_counted_even_though_it_left_the_board() {
+    // Павшее тело уходит с доски, но остаётся в списке тел — на этом и держится
+    // счёт потерь. Считай его по доске, «без потерь» получал бы каждый.
+    let setup = battle_core::Setup {
+        player_board: vec![(
+            battle_core::CardSnapshot::new("щепка", 1, 1, 0),
+            battle_core::Cell::new(1, 3).unwrap(),
+        )],
+        keeper_board: vec![(
+            battle_core::CardSnapshot::new("молот", 1, 9, 9),
+            battle_core::Cell::new(1, 2).unwrap(),
+        )],
+        ..Default::default()
+    };
+    let mut state = battle_core::MatchState::begin(setup.clone());
+    let mut journal = Vec::new();
+    let mut guard = 0;
+    while state.outcome.is_none() && guard < 500 {
+        let action = battle_core::bot::choose(&state);
+        state = battle_core::reduce(&state, &action).unwrap().0;
+        journal.push(action);
+        guard += 1;
+    }
+
+    let (_, lost) = AppService::count_the_line(&setup, &journal, battle_core::Rules::default());
+    assert_eq!(lost, 1, "щепку снесли, и печати это должно быть видно");
+}
+
+#[test]
+fn a_line_counted_under_the_wrong_rules_would_stop_short() {
+    // Зачем правила вообще передаются в свёртку: под домашними правилами шаг
+    // не тратит ход, и тело, прошедшее и ударившее, — два законных дела.
+    // Стоит правилам сказать «шаг тратит ход целиком», и второе дело
+    // становится незаконным, а свёртка обрывается на нём.
+    let setup = battle_core::Setup {
+        player_board: vec![(
+            battle_core::CardSnapshot::new("боец", 1, 9, 4),
+            battle_core::Cell::new(1, 4).unwrap(),
+        )],
+        keeper_board: vec![(
+            battle_core::CardSnapshot::new("ворон", 1, 9, 1),
+            battle_core::Cell::new(1, 2).unwrap(),
+        )],
+        ..Default::default()
+    };
+    let journal = vec![
+        battle_core::Action::Move {
+            unit: 0,
+            to: battle_core::Cell::new(1, 3).unwrap(),
+        },
+        battle_core::Action::Attack {
+            attacker: 0,
+            target: 1,
+        },
+    ];
+
+    let house = battle_core::Rules::default();
+    assert!(!house.walk_spends_turn);
+    let (acts, _) = AppService::count_the_line(&setup, &journal, house);
+    assert_eq!(acts, 2);
+
+    let strict = battle_core::Rules {
+        walk_spends_turn: true,
+        ..house
+    };
+    let (acts, _) = AppService::count_the_line(&setup, &journal, strict);
+    assert_eq!(acts, 1, "второе дело под этими правилами незаконно");
+}

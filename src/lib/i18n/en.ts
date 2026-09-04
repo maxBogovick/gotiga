@@ -1314,6 +1314,47 @@ export const en = {
   battleStudyFinishReward: 'dust for playing it to the end, win or lose',
   battleStudyNote: 'The arrangement is set in advance — no deck needed.',
   battleMeetingNote: 'You play with your own deck.',
+
+  // Печати под этюдом. Победа была двоичной — прошёл и забыл; эти три говорят
+  // не «выиграл ли», а «как», и в этом вся причина вернуться.
+  battleMarkFinished: 'played to the end',
+  battleMarkWon: 'won',
+  battleMarkClean: 'not a body lost',
+  battleMarkYourLine: 'your line',
+  battleMarkBestLine: 'best known',
+  battleLineRecord: 'nobody has walked this one shorter',
+  battleLineLost: 'bodies lost',
+  battleLineNoneLost: 'not a body lost',
+
+  // Чем этот бой отличается от соседнего. Названо только отличие: свод, в
+  // котором перечислены все правила, не сообщает ничего.
+  battleRulesOwn: 'plays by its own rules',
+  battleRuleWalkSpends: 'a walk spends the whole turn',
+  battleRuleWalkFree: 'a body may walk up and strike in one turn',
+  battleRuleRetaliation: 'a struck body strikes back',
+  battleRuleNoRetaliation: 'a struck body does not strike back',
+  battleRuleActs: 'acts per turn',
+  battleRuleOpening: 'blows in the opening round',
+  battleRuleOpeningFree: 'no limit on blows in the opening round',
+  battleRuleIdleToll: 'toll for standing idle',
+  battleRuleNoIdleToll: 'standing idle costs nothing',
+  battleRuleEscalation: 'blows grow from round',
+  battleRuleRounds: 'rounds in a match',
+  battleRuleCoin: 'the opponent begins with mana',
+  battleRulePointBlank: 'an archer at arm’s length keeps, %',
+  battleRuleNoPointBlank: 'an archer at arm’s length strikes in full',
+  battleRuleLongShot: 'a shot past its reach keeps, %',
+  battleRuleNoLongShot: 'an archer does not reach past its range',
+
+  // Предвестие. Ответ противника вычислим — случайности в игре нет, скрытых
+  // карт у него нет. Прятать вычислимое значит продавать не глубину, а
+  // неудобство.
+  battleForesight: 'foresight',
+  battleForesightHint: 'hover a move to see the answer',
+  battleForesightOn: 'on',
+  battleForesightOff: 'off',
+  battleForesightQuiet: 'the opponent has no answer to that',
+  battleForesightEnds: 'that ends the battle',
   battleLayYourTable: 'Build a deck first',
   battleNothingToBring: 'Your deck has no cards in it. Build a deck and try again.',
   battleWonByPlayer: 'The field is yours.',

@@ -369,6 +369,61 @@ pub fn valid_player_side(side: &str) -> bool {
     side == SIDE_SCRIPTED || side == SIDE_DECK
 }
 
+// ── Правила испытания ────────────────────────────────────────────────────────
+//
+// `Rules` живут в движке и там же обоснованы числом каждая. Здесь — только
+// забор: хранитель правит их руками в форме, а форма — это место, откуда в
+// сервер приезжает что угодно.
+//
+// Забор нужен не от злого умысла, а от одной опечатки. Круги и потолок действий
+// стоят на пути цикла, который считает ответ хранителя: `max_rounds` в двести
+// пятьдесят на партии двух уходящих ближних боёв — это те самые 16 % партий,
+// которые не кончаются (§20.4), и сервер будет крутить их все. Остальные ручки
+// опечаткой партию не подвешивают, но карту делают бессмыслицей: сила в упор
+// «300 %» — не сложное испытание, а число, которого нет в игре.
+
+/// Сколько кругов испытанию позволено идти. Потолок вдвое выше умолчания дома:
+/// длинный этюд — законная затея, бесконечный — нет.
+pub const CHALLENGE_MAX_ROUNDS: u8 = 24;
+
+/// Правила, как их можно оставить в испытании.
+///
+/// Каждое число зажимается в тот же коридор, в котором оно измерялось, и
+/// незаданное правило остаётся тем, что дом выбрал замером, — здесь нет ни
+/// одного собственного умолчания, потому что второе умолчание рядом с
+/// `Rules::default()` однажды разойдётся с ним и никто не заметит.
+pub fn normalize_rules(raw: &battle_core::Rules) -> battle_core::Rules {
+    let house = battle_core::Rules::default();
+    battle_core::Rules {
+        second_side_coin: raw.second_side_coin.clamp(0, 10),
+        opening_attacks: raw.opening_attacks,
+        walk_spends_turn: raw.walk_spends_turn,
+        retaliation: raw.retaliation,
+        // Ноль действий за ход — это партия, в которой никто не может ничего,
+        // и она упирается в лимит кругов молча. Читается как «сколько угодно»,
+        // то есть как то, чем это поле было до появления ручки.
+        acts_per_turn: if raw.acts_per_turn == 0 {
+            house.acts_per_turn
+        } else {
+            raw.acts_per_turn
+        },
+        escalation_from: raw.escalation_from.min(CHALLENGE_MAX_ROUNDS),
+        idle_toll: raw.idle_toll.clamp(0, 5),
+        max_rounds: raw.max_rounds.clamp(1, CHALLENGE_MAX_ROUNDS),
+        long_shot_power: raw.long_shot_power.min(100),
+        point_blank_power: raw.point_blank_power.min(100),
+    }
+}
+
+/// Правила этой расстановки: свои, если испытание их назвало, иначе дом.
+pub fn rules_of(setup: &crate::models::ChallengeSetup) -> battle_core::Rules {
+    setup
+        .rules
+        .as_ref()
+        .map(normalize_rules)
+        .unwrap_or_default()
+}
+
 pub const DECK_BOARD: usize = 3;
 pub const DECK_HAND: usize = 3;
 
@@ -2336,6 +2391,27 @@ pub struct MotionGesture {
     pub fade: String,
     #[serde(default)]
     pub layer: i16,
+    /// Сборщик полосы: шесть исходников с позой. Движок играет слепленную
+    /// `image`; это нужно столу, чтобы править угол без разборки готовых кадров.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub strip: Vec<MotionStripCell>,
+}
+
+/// Одна клетка сборщика полосы.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MotionStripCell {
+    #[serde(default)]
+    pub image: String,
+    #[serde(default)]
+    pub turn: f32,
+    /// 100 — вписать в клетку. 0 при чтении значит «не задано» и станет 100.
+    #[serde(default)]
+    pub size: f32,
+    #[serde(default)]
+    pub x: f32,
+    #[serde(default)]
+    pub y: f32,
 }
 
 impl Default for MotionGesture {
@@ -2353,6 +2429,7 @@ impl Default for MotionGesture {
             turn: "none".into(),
             fade: "hold".into(),
             layer: 5,
+            strip: Vec::new(),
         }
     }
 }
@@ -2372,20 +2449,27 @@ pub struct Motion {
     /// Ради чего играется. Из `MOTION_OCCASIONS`.
     #[serde(default)]
     pub occasion: String,
+    /// Пол длительности, мс. 0 — только по жестам. Больше последнего жеста —
+    /// тишина после него. Потолок по-прежнему [`MOTION_MS_MAX`]: это не второй
+    /// потолок, а просьба держаться дольше жестов. `span()` берёт максимум.
+    #[serde(default)]
+    pub span: i16,
     #[serde(default)]
     pub gestures: Vec<MotionGesture>,
 }
 
 impl Motion {
-    /// Сколько длится. Не хранится, а считается: хранимая длина разошлась бы с
-    /// жестами в первый же вечер, а ждёт сцена именно её.
+    /// Сколько длится такт. Считается: жесты и, если хранитель попросил,
+    /// тишина после них. Хранимая длина, которая спорила бы с жестами, сюда
+    /// не кладётся — пол только поднимает, не обрезает.
     pub fn span(&self) -> i16 {
-        self.gestures
+        let bars = self
+            .gestures
             .iter()
             .map(|g| g.at.saturating_add(g.dur))
             .max()
-            .unwrap_or(0)
-            .min(MOTION_MS_MAX)
+            .unwrap_or(0);
+        bars.max(self.span).min(MOTION_MS_MAX)
     }
 }
 
@@ -2511,7 +2595,37 @@ pub fn normalize_gesture(mut g: MotionGesture) -> MotionGesture {
         g.dur = MOTION_MS_MAX - g.at;
     }
     g.layer = g.layer.clamp(1, GESTURE_LAYERS);
+    g.strip = normalize_strip_cells(g.strip);
     g
+}
+
+const STRIP_FRAMES: usize = 6;
+const STRIP_TURN_MAX: f32 = 180.0;
+const STRIP_SCALE_MAX: f32 = 250.0;
+const STRIP_POSE_MAX: f32 = 80.0;
+
+fn normalize_strip_cells(raw: Vec<MotionStripCell>) -> Vec<MotionStripCell> {
+    if raw.len() != STRIP_FRAMES {
+        return Vec::new();
+    }
+    let mut out = Vec::with_capacity(STRIP_FRAMES);
+    for mut c in raw {
+        c.image = c.image.trim().chars().take(600).collect();
+        c.turn = span(c.turn, STRIP_TURN_MAX);
+        c.size = if c.size <= 0.0 {
+            100.0
+        } else {
+            span(c.size, STRIP_SCALE_MAX).max(8.0)
+        };
+        c.x = span(c.x, STRIP_POSE_MAX);
+        c.y = span(c.y, STRIP_POSE_MAX);
+        out.push(c);
+    }
+    if out.iter().all(|c| c.image.is_empty()) {
+        Vec::new()
+    } else {
+        out
+    }
 }
 
 /// Одно движение, приведённое в годный вид.
@@ -2533,6 +2647,16 @@ pub fn normalize_motion(mut m: Motion) -> Motion {
         .filter(keep_gesture)
         .collect();
     m.gestures = one_stir_per_body(gestures);
+    let bars = m
+        .gestures
+        .iter()
+        .map(|g| g.at.saturating_add(g.dur))
+        .max()
+        .unwrap_or(0);
+    m.span = m.span.clamp(0, MOTION_MS_MAX);
+    if m.span <= bars {
+        m.span = 0;
+    }
     m
 }
 
@@ -2624,6 +2748,7 @@ pub fn default_motions() -> Vec<Motion> {
                 gesture("striker", "lunge", 0, 400),
                 gesture("target", "flinch", 220, 160),
             ],
+            ..Motion::default()
         },
         Motion {
             id: "house-mend".into(),
@@ -2631,6 +2756,7 @@ pub fn default_motions() -> Vec<Motion> {
             name_ru: "Лечение".into(),
             occasion: "mend".into(),
             gestures: vec![gesture("target", "rise", 0, 300)],
+            ..Motion::default()
         },
         Motion {
             id: "house-arrive".into(),
@@ -2638,6 +2764,7 @@ pub fn default_motions() -> Vec<Motion> {
             name_ru: "Выставление".into(),
             occasion: "arrive".into(),
             gestures: vec![gesture("striker", "swell", 0, 300)],
+            ..Motion::default()
         },
         Motion {
             id: "house-fall".into(),
@@ -2645,6 +2772,7 @@ pub fn default_motions() -> Vec<Motion> {
             name_ru: "Падение".into(),
             occasion: "fall".into(),
             gestures: vec![gesture("target", "sink", 0, 500)],
+            ..Motion::default()
         },
         Motion {
             id: "house-unseen".into(),
@@ -2652,6 +2780,7 @@ pub fn default_motions() -> Vec<Motion> {
             name_ru: "Без автора".into(),
             occasion: "unseen".into(),
             gestures: vec![gesture("target", "shiver", 0, 160)],
+            ..Motion::default()
         },
     ]
 }
@@ -3517,6 +3646,97 @@ mod tests {
         assert_eq!(to_channel("pure"), battle_core::Channel::Pure);
     }
 
+    // ── Правила испытания ───────────────────────────────────────────────────
+
+    #[test]
+    fn an_etude_without_rules_plays_the_house_ones() {
+        // Незаданное правило — это дом, а не собственное умолчание рядом с
+        // домашним: второе умолчание однажды разойдётся с первым, и никто не
+        // заметит.
+        let plain = crate::models::ChallengeSetup::default();
+        assert_eq!(rules_of(&plain), battle_core::Rules::default());
+    }
+
+    #[test]
+    fn a_challenge_may_name_one_rule_and_leave_the_rest_alone() {
+        // Ручка приходит из формы целым набором, но смысл у неё один: этюд, в
+        // котором шаг тратит ход, — другая игра, а не другая расстановка.
+        let mine = battle_core::Rules {
+            walk_spends_turn: true,
+            ..battle_core::Rules::default()
+        };
+        let setup = crate::models::ChallengeSetup {
+            rules: Some(mine),
+            ..Default::default()
+        };
+        let read = rules_of(&setup);
+        assert!(read.walk_spends_turn);
+        assert_eq!(read.idle_toll, battle_core::Rules::default().idle_toll);
+    }
+
+    #[test]
+    fn one_typo_in_the_rules_cannot_hang_the_room() {
+        // Круги стоят на пути цикла, который считает ответ хранителя: две сотни
+        // кругов на партии двух уходящих ближних боёв сервер будет крутить все.
+        let wild = battle_core::Rules {
+            max_rounds: 250,
+            escalation_from: 200,
+            idle_toll: 99,
+            second_side_coin: -5,
+            long_shot_power: 240,
+            point_blank_power: 200,
+            ..battle_core::Rules::default()
+        };
+        let kept = normalize_rules(&wild);
+        assert_eq!(kept.max_rounds, CHALLENGE_MAX_ROUNDS);
+        assert!(kept.escalation_from <= CHALLENGE_MAX_ROUNDS);
+        assert_eq!(kept.idle_toll, 5);
+        assert_eq!(kept.second_side_coin, 0);
+        assert_eq!(kept.long_shot_power, 100);
+        assert_eq!(kept.point_blank_power, 100);
+    }
+
+    #[test]
+    fn nobody_may_be_given_no_actions_at_all() {
+        // Ноль действий за ход — партия, в которой никто не может ничего. Она
+        // упирается в лимит кругов молча, и это не сложное испытание, а
+        // сломанное. Читается как «сколько угодно» — то есть как дом.
+        let none = battle_core::Rules {
+            acts_per_turn: 0,
+            ..battle_core::Rules::default()
+        };
+        assert_eq!(
+            normalize_rules(&none).acts_per_turn,
+            battle_core::Rules::default().acts_per_turn
+        );
+    }
+
+    #[test]
+    fn rules_ride_inside_the_arrangement_and_survive_the_round_trip() {
+        // Правила лежат в том же JSON, что и расстановка, и колонки под них нет
+        // намеренно: испытание — это шаблон целиком. Значит единственное, что
+        // может их потерять, — сериализация.
+        let setup = crate::models::ChallengeSetup {
+            keeper_hand: vec!["vedma".into()],
+            rules: Some(battle_core::Rules {
+                retaliation: true,
+                acts_per_turn: 2,
+                ..battle_core::Rules::default()
+            }),
+            ..Default::default()
+        };
+        let written = serde_json::to_string(&setup).unwrap();
+        let read: crate::models::ChallengeSetup = serde_json::from_str(&written).unwrap();
+        assert!(read.rules.unwrap().retaliation);
+
+        // А испытание, сохранённое до этой ручки, читается как «дом» и не
+        // отказывается читаться вовсе.
+        let older: crate::models::ChallengeSetup =
+            serde_json::from_str(r#"{"keeperHand":["vedma"]}"#).unwrap();
+        assert!(older.rules.is_none());
+        assert_eq!(rules_of(&older), battle_core::Rules::default());
+    }
+
     #[test]
     fn a_card_without_health_never_takes_the_field() {
         let mut card = sample_card();
@@ -3764,6 +3984,31 @@ mod tests {
     }
 
     #[test]
+    fn a_strip_of_six_keeps_its_pose_and_a_short_one_is_dropped() {
+        let mut g = MotionGesture {
+            image: "/frames/a.webp".into(),
+            frames: 6,
+            strip: (0..6)
+                .map(|i| MotionStripCell {
+                    image: format!("/c{i}.webp"),
+                    turn: 400.0,
+                    size: 0.0,
+                    x: 12.0,
+                    y: -9.0,
+                })
+                .collect(),
+            ..MotionGesture::default()
+        };
+        g = normalize_gesture(g);
+        assert_eq!(g.strip.len(), 6);
+        assert_eq!(g.strip[0].turn, 180.0);
+        assert_eq!(g.strip[0].size, 100.0);
+        g.strip.pop();
+        g = normalize_gesture(g);
+        assert!(g.strip.is_empty());
+    }
+
+    #[test]
     fn a_motion_can_never_outlast_the_keepers_turn() {
         let m = normalize_motion(Motion {
             id: "long".into(),
@@ -3779,6 +4024,40 @@ mod tests {
         });
         assert_eq!(m.span(), MOTION_MS_MAX);
         assert_eq!(m.gestures[0].dur, MOTION_MS_MAX - 1_000);
+    }
+
+    #[test]
+    fn a_motion_may_hold_silence_after_its_gestures() {
+        let m = normalize_motion(Motion {
+            id: "hold".into(),
+            occasion: "blow".into(),
+            span: 900,
+            gestures: vec![MotionGesture {
+                whom: "striker".into(),
+                body: "lunge".into(),
+                at: 0,
+                dur: 300,
+                ..MotionGesture::default()
+            }],
+            ..Motion::default()
+        });
+        assert_eq!(m.span, 900);
+        assert_eq!(m.span(), 900);
+        let clipped = normalize_motion(Motion {
+            id: "short".into(),
+            occasion: "blow".into(),
+            span: 100,
+            gestures: vec![MotionGesture {
+                whom: "striker".into(),
+                body: "lunge".into(),
+                at: 0,
+                dur: 400,
+                ..MotionGesture::default()
+            }],
+            ..Motion::default()
+        });
+        assert_eq!(clipped.span, 0);
+        assert_eq!(clipped.span(), 400);
     }
 
     #[test]

@@ -206,6 +206,10 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 post(handlers::act_in_battle_match),
             )
             .route(
+                "/battles/matches/:id/foresee",
+                post(handlers::foresee_battle_match),
+            )
+            .route(
                 "/battles/matches/:id/yield",
                 post(handlers::yield_battle_match),
             )

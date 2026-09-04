@@ -3,11 +3,13 @@
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import { t, lang, brandName } from '$lib/i18n';
-  import { SITE_URL } from '$lib/site';
+  import { resolveLargestImageUrl } from '$lib/api';
+  import { SITE_URL, toAbsoluteUrl } from '$lib/site';
   import { jsonLdSafe } from '$lib/jsonld';
   import { leafCopy, leafCoverUrl, leafHref } from '$lib/gazette';
   import { leadTale, spineHeight } from '$lib/tales';
   import AppImage from '$lib/components/AppImage.svelte';
+  import NotFound from '$lib/components/NotFound.svelte';
 
   let { data } = $props();
 
@@ -40,6 +42,20 @@
   }
 
   let ogLocale = $derived($lang === 'ru' ? 'ru_RU' : 'en_US');
+  let pageTitle = $derived(`${$t('talesPageTitle')} — ${$brandName}`);
+  // The shelf shares as its own lead photograph when it has one — a room whose
+  // share card is the house's generic background looks like every other room.
+  let ogImage = $derived(
+    toAbsoluteUrl(resolveLargestImageUrl(leadCover) ?? leadCover ?? null) ??
+      `${SITE_URL}/images/cabinet-bg.jpeg`,
+  );
+
+  // The shelf in machine-readable form. A CollectionPage that names no parts
+  // says only that a collection exists; the ItemList is what lets a crawler or
+  // an agent read the shelf itself — every tale, in the keeper's own order,
+  // with its title, its dek and its address — without running the page's JS.
+  // Clean addresses, deliberately: the visible links carry a `?src=` mark for
+  // the ledger, and that mark is not part of any tale's identity.
   let jsonLd = $derived(jsonLdSafe({
     '@context': 'https://schema.org',
     '@type': 'CollectionPage',
@@ -48,23 +64,80 @@
     url: `${SITE_URL}/tales`,
     inLanguage: $lang === 'ru' ? 'ru' : 'en',
     isPartOf: { '@type': 'WebSite', name: $brandName, url: SITE_URL },
+    mainEntity: {
+      '@type': 'ItemList',
+      name: $t('talesPageTitle'),
+      numberOfItems: tales.length,
+      itemListOrder: 'https://schema.org/ItemListOrderAscending',
+      itemListElement: tales.map((tale, i) => {
+        const copy = leafCopy(tale, $lang);
+        const raw = leafCoverUrl(tale);
+        const cover = toAbsoluteUrl(resolveLargestImageUrl(raw) ?? raw ?? null);
+        return {
+          '@type': 'ListItem',
+          position: i + 1,
+          url: `${SITE_URL}/tales/${tale.slug}`,
+          item: {
+            '@type': 'Article',
+            '@id': `${SITE_URL}/tales/${tale.slug}`,
+            headline: copy.title,
+            url: `${SITE_URL}/tales/${tale.slug}`,
+            ...(copy.dek ? { description: copy.dek } : {}),
+            ...(cover ? { image: cover } : {}),
+            datePublished: tale.publishedAt ?? tale.createdAt,
+          },
+        };
+      }),
+    },
+  }));
+
+  // Home › Tall tales. Google renders the trail in place of the bare URL, and
+  // it is the cheapest way to say where this room stands in the house.
+  let breadcrumbJsonLd = $derived(jsonLdSafe({
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: $brandName, item: SITE_URL },
+      { '@type': 'ListItem', position: 2, name: $t('talesPageTitle'), item: `${SITE_URL}/tales` },
+    ],
   }));
 </script>
 
 <svelte:head>
-  <title>{$t('talesPageTitle')} — {$brandName}</title>
+  <title>{pageTitle}</title>
   <meta name="description" content={$t('talesPageRule')} />
-  <link rel="canonical" href="{SITE_URL}/tales" />
+  <!-- canonical is emitted once, globally, in +layout.svelte — a second one here
+       (the same URL, printed twice) is a conflicting signal to look at, not a
+       stronger one. -->
+  <link
+    rel="alternate"
+    type="application/rss+xml"
+    title={$t('gazetteRssTitle')}
+    href="{SITE_URL}/gazette/feed.xml"
+  />
   <meta property="og:site_name" content={$brandName} />
   <meta property="og:locale" content={ogLocale} />
   <meta property="og:type" content="website" />
-  <meta property="og:title" content="{$t('talesPageTitle')} — {$brandName}" />
+  <meta property="og:title" content={pageTitle} />
   <meta property="og:description" content={$t('talesPageRule')} />
   <meta property="og:url" content="{SITE_URL}/tales" />
-  <meta property="og:image" content="{SITE_URL}/images/cabinet-bg.jpeg" />
+  <meta property="og:image" content={ogImage} />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content={pageTitle} />
+  <meta name="twitter:description" content={$t('talesPageRule')} />
+  <meta name="twitter:image" content={ogImage} />
   {@html `<script type="application/ld+json">${jsonLd}<\/script>`}
+  {@html `<script type="application/ld+json">${breadcrumbJsonLd}<\/script>`}
 </svelte:head>
 
+{#if data.loadError}
+  <NotFound
+    title={$t('loadErrorTitle')}
+    message={$t('talesLoadError')}
+    backHref="/"
+    backLabel={$t('talesBack')}
+  />
+{:else}
 <div class="root">
   <div class="grain" aria-hidden="true"></div>
   <div class="page">
@@ -91,7 +164,11 @@
       >
         {#if leadCover}
           <span class="lead-face">
-            <AppImage src={leadCover} alt="" class="lead-img" sizes="160px" />
+            <!-- The work in the photograph, not the tale's title: the title is
+                 already the link's own text, and repeating it here would say the
+                 same thing twice to a screen reader while telling image search
+                 nothing about what is actually pictured. -->
+            <AppImage src={leadCover} alt={lead.figurineName ?? ''} class="lead-img" sizes="160px" />
           </span>
         {/if}
         <span class="lead-copy">
@@ -136,6 +213,7 @@
     {/if}
   </div>
 </div>
+{/if}
 
 <style>
   .root {

@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Ящик нарядов, выдвинутый одним списком.
+  // Ящик нарядов: выдвижным списком или разложенный гардеробом.
   //
   // Был полосой квадратиков в четыре с половиной сантиметра, уезжавшей вбок:
   // с двумя нарядами это читалось, с дюжиной — уже нет, а имя под квадратиком
@@ -23,6 +23,7 @@
     allowNone = false,
     disabled = false,
     label,
+    layout = 'drawer',
   } = $props<{
     presets: BattleFramePreset[];
     /** Имя выбранного наряда. Связка, а не событие: у стола битв три места, где
@@ -38,6 +39,8 @@
     allowNone?: boolean;
     disabled?: boolean;
     label?: string;
+    /** `drawer` — строка, которую раскрывают. `rack` — все наряды сразу. */
+    layout?: 'drawer' | 'rack';
   }>();
 
   let open = $state(false);
@@ -121,6 +124,76 @@
   }
 </script>
 
+{#if layout === 'rack'}
+  <div
+    role="listbox"
+    aria-label={label ?? $t('adminBattlesPresetChoose')}
+    class="grid gap-2.5"
+    style="grid-template-columns: repeat(auto-fill, minmax(4.4rem, 1fr));"
+  >
+    {#if !presets.length}
+      <p class="col-span-full text-[11px] italic text-[#8a6a55]">
+        {$t('adminBattlesPresetsEmpty')}
+      </p>
+    {/if}
+    {#if allowNone && presets.length}
+      <button
+        role="option"
+        aria-selected={!chosen}
+        onclick={clear}
+        {disabled}
+        class="group flex flex-col gap-1 text-left disabled:opacity-40"
+      >
+        <span
+          class="w-full border border-dashed {!chosen
+            ? 'border-[#c65f3c]'
+            : 'border-[#34251c]/25'}"
+          style="aspect-ratio: 5 / 7;"
+        ></span>
+        <span
+          class="text-[10px] leading-snug italic {!chosen
+            ? 'text-[#c65f3c]'
+            : 'text-[#8a6a55]'}">{$t('adminBattlesPresetNone')}</span
+        >
+      </button>
+    {/if}
+    {#each presets as preset (preset.id)}
+      <div class="relative group">
+        <button
+          role="option"
+          aria-selected={preset.id === chosen}
+          onclick={() => pick(preset)}
+          {disabled}
+          title={preset.name}
+          class="w-full flex flex-col gap-1 text-left disabled:opacity-40"
+        >
+          <!-- Обводка тенью, а не рамкой: рамка на выбранной плитке шире на
+               пиксель, и весь ряд разъезжается от одного нажатия. -->
+          <span
+            class="w-full border bg-center bg-contain bg-no-repeat {preset.id ===
+            chosen
+              ? 'shadow-[0_0_0_2px_#c65f3c]'
+              : ''}"
+            style="aspect-ratio: 5 / 7; {swatchStyle(preset)}"
+          ></span>
+          <span
+            class="text-[10px] leading-snug break-words {preset.id === chosen
+              ? 'text-[#c65f3c]'
+              : 'text-[#5f4636]'}">{preset.name}</span
+          >
+        </button>
+        {#if onforget}
+          <button
+            onclick={() => onforget(preset)}
+            title={$t('adminBattlesPresetForget')}
+            class="absolute top-0.5 right-0.5 w-5 h-5 flex items-center justify-center text-[11px] leading-none bg-[#f8f1e7] text-[#8f2f22] opacity-0 group-hover:opacity-100 focus:opacity-100 hover:bg-[#c65f3c]/12"
+            >×</button
+          >
+        {/if}
+      </div>
+    {/each}
+  </div>
+{:else}
 <div class="relative" onkeydown={keys} role="presentation">
   <button
     onclick={() => (open ? (open = false) : unfold())}
@@ -213,3 +286,4 @@
     </ul>
   {/if}
 </div>
+{/if}

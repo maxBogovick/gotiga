@@ -21,8 +21,15 @@
   let copy = $derived(lead ? leafCopy(lead, $lang) : null);
   let cover = $derived(lead ? leafCoverUrl(lead) : '');
 
+  // One door among several: if the shelf cannot be read, this door simply is
+  // not there. `getTales` throws so the prerenderer cannot ship an empty shelf
+  // silently (see api.ts); here the honest answer really is "render nothing".
   onMount(async () => {
-    tales = await api.getTales();
+    try {
+      tales = await api.getTales();
+    } catch {
+      tales = [];
+    }
   });
 </script>
 

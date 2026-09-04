@@ -26,6 +26,7 @@ import type {
   MotionWear,
   BattleFrame,
   BattleFrameMode,
+  BattleRules,
   BattleLayout,
   CardTrait,
   SliceFit,
@@ -1157,6 +1158,7 @@ export function newGesture(whom: GestureWhom = 'striker'): MotionGesture {
     turn: whom === 'flight' ? 'toTarget' : 'none',
     fade: whom === 'flight' ? 'hold' : 'inOut',
     layer: 5,
+    strip: [],
   };
 }
 
@@ -1169,6 +1171,7 @@ export function newMotion(occasion: MotionOccasion = 'blow'): Motion {
     nameEn: '',
     nameRu: '',
     occasion,
+    span: 0,
     gestures: [newGesture('striker')],
   };
 }
@@ -1258,12 +1261,18 @@ export const DEFAULT_MOTIONS: Motion[] = [
   },
 ];
 
-export function motionSpan(motion: Motion | null): number {
+/** Конец последнего жеста, без тишины после него. */
+export function motionBars(motion: Motion | null): number {
   if (!motion || !motion.gestures.length) return 0;
   return Math.min(
     MOTION_MS_MAX,
     Math.max(...motion.gestures.map((g) => (g.at || 0) + (g.dur || 0))),
   );
+}
+
+export function motionSpan(motion: Motion | null): number {
+  if (!motion) return 0;
+  return Math.min(MOTION_MS_MAX, Math.max(motionBars(motion), motion.span || 0));
 }
 
 export function motionTitle(motion: Motion, lang: Lang): string {
@@ -1413,14 +1422,17 @@ export function motionContact(motion: Motion | null): number {
  * Когда удар уже состоялся — синяк, обломок, перепись здоровья.
  *
  * Если на цели лежит полоса (секира, меч, булава), это не появление оружия, а
- * кадр удара: вторая половина полосы. Иначе — то же, что `motionContact`.
+ * кадр удара: вторая половина полосы. Одиночная картина бьёт раньше — в
+ * касании замаха, не в конце.
  */
 export function motionWound(motion: Motion | null): number {
   if (!motion) return 0;
   const pictured = motion.gestures.filter((g) => g.whom === 'target' && g.image);
   if (pictured.length) {
     const g = pictured.reduce((a, b) => ((a.at || 0) <= (b.at || 0) ? a : b));
-    return Math.min(MOTION_MS_MAX, (g.at || 0) + Math.round((g.dur || 0) * 0.62));
+    const frames = Math.max(1, g.frames || 1);
+    const hit = frames > 1 ? 0.62 : 0.45;
+    return Math.min(MOTION_MS_MAX, (g.at || 0) + Math.round((g.dur || 0) * hit));
   }
   return motionContact(motion);
 }
@@ -1548,6 +1560,236 @@ function stripEnd(frames: number): number {
   return frames > 1 ? (100 * frames) / (frames - 1) : 0;
 }
 
+/** Сколько клеток в сборщике полосы. Дом рисует удар шестью кадрами; CSS
+ *  делит картинку ровно на столько частей, и зазора между ними нет. */
+export const STRIP_FRAMES = 6;
+/** Сторона клетки при ширине полосы 1536 — под порогом ужимания 1600. */
+export const STRIP_SIDE = 256;
+export const STRIP_TURN_MAX = 180;
+export const STRIP_SCALE_MAX = 250;
+export const STRIP_POSE_MAX = 80;
+
+/** Клетка сборщика: исходник и поза. Движок играет слепок; стол правит это. */
+export type StripCell = {
+  src: string | null;
+  turn: number;
+  size: number;
+  x: number;
+  y: number;
+};
+
+export function blankStripCell(): StripCell {
+  return { src: null, turn: 0, size: 100, x: 0, y: 0 };
+}
+
+function loadStripImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    if (!src.startsWith('blob:') && !src.startsWith('data:')) {
+      img.crossOrigin = 'anonymous';
+    }
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error(src));
+    img.src = src;
+  });
+}
+
+// Порог бумаги — те же числа, что `sheet.rs` (`bg_value` 0.62, `bg_sat` 0.20).
+// Чёрное поле (Kling) — не яркость в альфу: золото тогда станет дыркой.
+// Семя — почти чистый чёрный, дошедший до края; кайма 2 px съедает
+// сглаживание (v≤14). Шире — тёмный шар последнего кадра уходит вместе с полем.
+const STRIP_PALE_V = 0.62;
+const STRIP_DARK_V = 2 / 255;
+const STRIP_FRINGE_V = 14 / 255;
+const STRIP_FRINGE_R = 2;
+const STRIP_BG_SAT = 0.2;
+
+function stripValueSat(r: number, g: number, b: number): { v: number; s: number } {
+  const R = r / 255;
+  const G = g / 255;
+  const B = b / 255;
+  const v = Math.max(R, G, B);
+  const lo = Math.min(R, G, B);
+  const s = v > 0 ? (v - lo) / v : 0;
+  return { v, s };
+}
+
+function isStripGround(r: number, g: number, b: number, a: number): boolean {
+  if (a < 250) return true;
+  const { v, s } = stripValueSat(r, g, b);
+  if (s > STRIP_BG_SAT) return false;
+  return v >= STRIP_PALE_V || v <= STRIP_DARK_V;
+}
+
+function isStripFringe(r: number, g: number, b: number, a: number): boolean {
+  if (a < 250) return true;
+  const { v, s } = stripValueSat(r, g, b);
+  return s <= STRIP_BG_SAT && v <= STRIP_FRINGE_V;
+}
+
+/**
+ * Снять поле с готовой полосы так же, как разрез снимает бумагу с листа:
+ * бледное (или почти чёрное) только если оно ДОХОДИТ ДО КРАЯ холста.
+ * Блик внутри самоцвета края не касается и остаётся камнем.
+ *
+ * Полоса, у которой уже есть своя альфа, не трогается — как лист, который
+ * разрез берёт на слово.
+ */
+export async function punchStripGround(file: File): Promise<File> {
+  const src = URL.createObjectURL(file);
+  try {
+    const img = await loadStripImage(src);
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('canvas');
+    ctx.drawImage(img, 0, 0);
+    const pix = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const { data, width: w, height: h } = pix;
+    const n = w * h;
+
+    let sampled = 0;
+    let translucent = 0;
+    for (let i = 0; i < n; i += 37) {
+      sampled += 1;
+      if (data[i * 4 + 3] < 250) translucent += 1;
+    }
+    if (sampled > 0 && translucent * 100 > sampled) return file;
+
+    const ground = new Uint8Array(n);
+    for (let i = 0; i < n; i++) {
+      const o = i * 4;
+      ground[i] = isStripGround(data[o], data[o + 1], data[o + 2], data[o + 3]) ? 1 : 0;
+    }
+
+    const seen = new Uint8Array(n);
+    const q = new Int32Array(n);
+    let head = 0;
+    let tail = 0;
+    const push = (i: number) => {
+      if (i < 0 || i >= n || seen[i] || !ground[i]) return;
+      seen[i] = 1;
+      q[tail++] = i;
+    };
+    for (let x = 0; x < w; x++) {
+      push(x);
+      push((h - 1) * w + x);
+    }
+    for (let y = 0; y < h; y++) {
+      push(y * w);
+      push(y * w + w - 1);
+    }
+    while (head < tail) {
+      const i = q[head++];
+      const x = i % w;
+      const y = (i - x) / w;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          push(ny * w + nx);
+        }
+      }
+    }
+    const punched = seen.slice();
+    const fringeR = STRIP_FRINGE_R;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        if (punched[i]) continue;
+        const o = i * 4;
+        if (!isStripFringe(data[o], data[o + 1], data[o + 2], data[o + 3])) continue;
+        let near = false;
+        for (let yy = Math.max(0, y - fringeR); yy <= Math.min(h - 1, y + fringeR) && !near; yy++) {
+          for (let xx = Math.max(0, x - fringeR); xx <= Math.min(w - 1, x + fringeR); xx++) {
+            if (punched[yy * w + xx]) {
+              near = true;
+              break;
+            }
+          }
+        }
+        if (near) seen[i] = 1;
+      }
+    }
+    for (let i = 0; i < n; i++) {
+      if (seen[i]) data[i * 4 + 3] = 0;
+    }
+    ctx.putImageData(pix, 0, 0);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+    if (!blob) throw new Error('punch');
+    const stem = file.name.replace(/\.[^.]+$/, '') || 'strip';
+    return new File([blob], `${stem}.png`, { type: 'image/png' });
+  } finally {
+    URL.revokeObjectURL(src);
+  }
+}
+
+/** Разрезать готовую полосу обратно на кадры — чтобы клетку можно было сменить. */
+export async function splitMotionStrip(
+  src: string,
+  count = STRIP_FRAMES,
+): Promise<string[]> {
+  const img = await loadStripImage(src);
+  const n = Math.max(2, count);
+  const sw = img.width / n;
+  const sh = img.height;
+  const out: string[] = [];
+  for (let i = 0; i < n; i++) {
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(sw));
+    canvas.height = Math.max(1, Math.round(sh));
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('canvas');
+    ctx.drawImage(img, i * sw, 0, sw, sh, 0, 0, canvas.width, canvas.height);
+    out.push(canvas.toDataURL('image/png'));
+  }
+  return out;
+}
+
+/** Шесть картинок встык, без зазора, каждая со своей позой. */
+export async function stitchMotionStrip(
+  cells: StripCell[],
+  count = STRIP_FRAMES,
+): Promise<Blob> {
+  const canvas = document.createElement('canvas');
+  canvas.width = STRIP_SIDE * count;
+  canvas.height = STRIP_SIDE;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('canvas');
+  const imgs = await Promise.all(
+    cells.slice(0, count).map((c) => (c.src ? loadStripImage(c.src) : Promise.resolve(null))),
+  );
+  for (let i = 0; i < count; i++) {
+    const cell = cells[i];
+    const img = imgs[i];
+    if (!cell?.src || !img) continue;
+    const fit = Math.min(STRIP_SIDE / img.width, STRIP_SIDE / img.height);
+    const w = img.width * fit;
+    const h = img.height * fit;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(i * STRIP_SIDE, 0, STRIP_SIDE, STRIP_SIDE);
+    ctx.clip();
+    ctx.translate(
+      i * STRIP_SIDE + STRIP_SIDE / 2 + (cell.x / 100) * STRIP_SIDE,
+      STRIP_SIDE / 2 + (cell.y / 100) * STRIP_SIDE,
+    );
+    ctx.rotate((cell.turn * Math.PI) / 180);
+    const s = (cell.size || 100) / 100;
+    ctx.scale(s, s);
+    ctx.drawImage(img, -w / 2, -h / 2, w, h);
+    ctx.restore();
+  }
+  const blob = await new Promise<Blob | null>((resolve) =>
+    canvas.toBlob(resolve, 'image/png'),
+  );
+  if (!blob) throw new Error('strip');
+  return blob;
+}
+
 function fadeName(fade: GestureFade): string {
   return fade === 'hold' ? '' : `gotiga-fade-${fade}`;
 }
@@ -1655,6 +1897,18 @@ export function stage(
       parts.push(`--mx:${((b.x - a.x) * own).toFixed(2)}%`);
       parts.push(`--my:${((b.y - a.y) * own).toFixed(2)}%`);
       anims.push(`gotiga-fly ${dur}ms ${EASE} ${at}ms both`);
+    } else if (g.whom === 'target' && frames === 1 && a && b) {
+      // Одиночная картина на цели. Полоса уже несёт удар в кадрах; без полосы
+      // рисунок иначе просто висит вторым портретом. Замах читается с той же
+      // стороны, что подача, и свет на металле — тот же, что kindle: яркость
+      // фотографии, не вспышка.
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len = Math.max(1, Math.abs(dx) + Math.abs(dy));
+      parts.push(`--lx:${((dx / len) * 32).toFixed(2)}%`);
+      parts.push(`--ly:${((dy / len) * 32).toFixed(2)}%`);
+      parts.push('transform-origin:50% 38%');
+      anims.push(`gotiga-cleave ${dur}ms ${EASE} ${at}ms both`);
     }
 
     const fading = fadeName(g.fade);
@@ -1715,7 +1969,7 @@ function strikeArt(image: string, at: number, dur: number): MotionGesture {
     ...newGesture('target'),
     body: 'none',
     image,
-    frames: 6,
+    frames: STRIP_FRAMES,
     size: 118,
     at,
     dur,
@@ -1730,9 +1984,9 @@ export const STOCK_MOTIONS: { nameEn: string; nameRu: string; occasion: MotionOc
     nameRu: 'Секира',
     occasion: 'blow',
     gestures: [
-      gesture('striker', 'heave', 0, 520),
-      strikeArt(STRIKE_STRIPS.axe, 280, 240),
-      gesture('target', 'recoil', 320, 280),
+      gesture('striker', 'heave', 0, 600),
+      strikeArt(STRIKE_STRIPS.axe, 180, 480),
+      gesture('target', 'recoil', 420, 280),
     ],
   },
   {
@@ -1740,9 +1994,9 @@ export const STOCK_MOTIONS: { nameEn: string; nameRu: string; occasion: MotionOc
     nameRu: 'Меч',
     occasion: 'blow',
     gestures: [
-      gesture('striker', 'lunge', 0, 400),
-      strikeArt(STRIKE_STRIPS.sword, 200, 220),
-      gesture('target', 'flinch', 220, 160),
+      gesture('striker', 'lunge', 0, 500),
+      strikeArt(STRIKE_STRIPS.sword, 140, 440),
+      gesture('target', 'flinch', 340, 200),
     ],
   },
   {
@@ -1750,9 +2004,9 @@ export const STOCK_MOTIONS: { nameEn: string; nameRu: string; occasion: MotionOc
     nameRu: 'Булава',
     occasion: 'blow',
     gestures: [
-      gesture('striker', 'heave', 0, 520),
-      strikeArt(STRIKE_STRIPS.mace, 280, 240),
-      gesture('target', 'shudder', 320, 280),
+      gesture('striker', 'heave', 0, 620),
+      strikeArt(STRIKE_STRIPS.mace, 200, 500),
+      gesture('target', 'shudder', 440, 280),
     ],
   },
   {
@@ -1873,4 +2127,86 @@ export function takeHouse(index: number): Motion | null {
     nameRu: found.nameRu,
     gestures: found.gestures.map((g) => ({ ...g })),
   };
+}
+
+// ── Правила испытания ────────────────────────────────────────────────────────
+//
+// Полка и сцена показывают, чем этот бой отличается от соседнего. Отличие
+// считается сравнением с умолчаниями дома, и умолчания приходится держать
+// здесь ЗЕРКАЛОМ того, что стоит в `battle_core::Rules::default()`.
+//
+// Зеркало терпимо ровно потому, что этими числами здесь ничего не играется:
+// они выбирают, какую строчку сказать словами. Разъехавшееся зеркало показало
+// бы лишнюю строку или промолчало о нужной — и не изменило бы в бою ничего,
+// потому что бой считает сервер. Полагаться на него в счёте нельзя.
+
+/** Умолчания дома. Зеркало `Rules::default()`; см. оговорку выше. */
+export const HOUSE_RULES: BattleRules = {
+  secondSideCoin: 1,
+  openingAttacks: 1,
+  walkSpendsTurn: false,
+  retaliation: false,
+  actsPerTurn: 255,
+  escalationFrom: 0,
+  idleToll: 1,
+  maxRounds: 12,
+  longShotPower: 25,
+  pointBlankPower: 50,
+};
+
+/** Одно отличие правил от домашних: чем сказать и какое при нём число. */
+export interface RuleApart {
+  key: TranslationKey;
+  /** Число, которое ставится рядом со словами. `null` — правило без числа. */
+  amount: number | null;
+}
+
+/**
+ * Чем эти правила отличаются от домашних.
+ *
+ * Названо только отличие, а не весь свод: этюд, у которого перечислены все
+ * десять ручек, ничего не сообщает — читатель обязан помнить наизусть, какие
+ * из них обычные. Разница же читается с одного взгляда и ровно затем и
+ * показывается.
+ */
+export function rulesApart(rules: BattleRules | null | undefined): RuleApart[] {
+  if (!rules) return [];
+  const out: RuleApart[] = [];
+  const say = (key: TranslationKey, amount: number | null = null) => out.push({ key, amount });
+
+  if (rules.walkSpendsTurn !== HOUSE_RULES.walkSpendsTurn) {
+    say(rules.walkSpendsTurn ? 'battleRuleWalkSpends' : 'battleRuleWalkFree');
+  }
+  if (rules.retaliation !== HOUSE_RULES.retaliation) {
+    say(rules.retaliation ? 'battleRuleRetaliation' : 'battleRuleNoRetaliation');
+  }
+  // 255 — «сколько угодно», то есть каждое тело по разу. Число рядом с этим
+  // словом было бы враньём, поэтому и потолок называется, только когда он есть.
+  if (rules.actsPerTurn !== HOUSE_RULES.actsPerTurn && rules.actsPerTurn < 255) {
+    say('battleRuleActs', rules.actsPerTurn);
+  }
+  if (rules.openingAttacks !== HOUSE_RULES.openingAttacks) {
+    say(rules.openingAttacks >= 255 ? 'battleRuleOpeningFree' : 'battleRuleOpening',
+      rules.openingAttacks >= 255 ? null : rules.openingAttacks);
+  }
+  if (rules.idleToll !== HOUSE_RULES.idleToll) {
+    say(rules.idleToll === 0 ? 'battleRuleNoIdleToll' : 'battleRuleIdleToll',
+      rules.idleToll === 0 ? null : rules.idleToll);
+  }
+  if (rules.escalationFrom !== HOUSE_RULES.escalationFrom && rules.escalationFrom > 0) {
+    say('battleRuleEscalation', rules.escalationFrom);
+  }
+  if (rules.maxRounds !== HOUSE_RULES.maxRounds) say('battleRuleRounds', rules.maxRounds);
+  if (rules.secondSideCoin !== HOUSE_RULES.secondSideCoin) {
+    say('battleRuleCoin', rules.secondSideCoin);
+  }
+  if (rules.pointBlankPower !== HOUSE_RULES.pointBlankPower) {
+    say(rules.pointBlankPower >= 100 ? 'battleRuleNoPointBlank' : 'battleRulePointBlank',
+      rules.pointBlankPower >= 100 ? null : rules.pointBlankPower);
+  }
+  if (rules.longShotPower !== HOUSE_RULES.longShotPower) {
+    say(rules.longShotPower === 0 ? 'battleRuleNoLongShot' : 'battleRuleLongShot',
+      rules.longShotPower === 0 ? null : rules.longShotPower);
+  }
+  return out;
 }

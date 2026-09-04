@@ -6,7 +6,8 @@ import {
     PRIVACY_PATH,
     IMAGE_RIGHTS_PATH,
 } from '$lib/site';
-import type { FigurineListItem } from '$lib/types/api';
+import { leafCopy } from '$lib/gazette';
+import type { FigurineListItem, GazetteLeaf } from '$lib/types/api';
 
 // LLM-facing site index (https://llmstxt.org). Prerendered to a static /llms.txt in
 // the web build so language-model crawlers get a clean, link-rich map of the archive
@@ -35,6 +36,34 @@ export async function GET({ fetch }: { fetch: typeof globalThis.fetch }) {
         figurines = [];
     }
 
+    // The shelf of tall tales, listed the way the works are. A single link to
+    // /tales tells a model that a room exists and nothing about what is in it;
+    // this is the room's actual contents, in the keeper's own order, so an agent
+    // answering "what does this figure remember?" can reach the right leaf in
+    // one hop. Caught here rather than in api.getTales — a map missing one
+    // section is still a map, whereas a prerendered EMPTY SHELF is a lie, which
+    // is why the shelf's own load lets the failure through.
+    let tales: GazetteLeaf[] = [];
+    try {
+        tales = await api.getTales(fetch);
+    } catch {
+        tales = [];
+    }
+
+    const taleLines = tales
+        .map((tale) => {
+            const copy = leafCopy(tale, 'en');
+            const title = oneLine(copy.title);
+            if (!title) return '';
+            const line = `- [${title}](${SITE_URL}/tales/${tale.slug})`;
+            const about = oneLine(tale.figurineName);
+            const dek = oneLine(copy.dek);
+            const tail = [dek, about ? `about: ${about}` : ''].filter(Boolean).join(' — ');
+            return tail ? `${line}: ${tail}` : line;
+        })
+        .filter(Boolean)
+        .join('\n');
+
     const works = figurines
         .map((f) => {
             // FigurineListItem carries no description, so synthesise a short descriptor
@@ -50,9 +79,10 @@ export async function GET({ fetch }: { fetch: typeof globalThis.fetch }) {
 
     const body =
         `# Ritunia\n\n` +
-        `> An author's cabinet of gothic, handmade miniatures and art dolls. ` +
-        `Ritunia is a showcase archive — not a shop — where each piece is a unique, ` +
-        `hand-sculpted and hand-painted figure with its own story.\n\n` +
+        `> One-of-a-kind gothic art dolls and miniature sculptures — sculpted, painted ` +
+        `and finished entirely by hand by a single maker. Ritunia is a showcase archive, ` +
+        `not a shop: each piece is documented like a museum specimen, with material, ` +
+        `dimensions, year and provenance, and many of them have a tale of their own.\n\n` +
         `## About\n\n` +
         `- [The author](${SITE_URL}/author): who makes the figures and why.\n` +
         `- [The workshop](${SITE_URL}/workshop): tools, materials and process.\n` +
@@ -62,6 +92,11 @@ export async function GET({ fetch }: { fetch: typeof globalThis.fetch }) {
         `- [Privacy](${SITE_URL}${PRIVACY_PATH}): what personal data the site collects and why.\n\n` +
         `## Works\n\n` +
         (works || '- (the archive is currently quiet)') +
+        `\n\n## Tall tales\n\n` +
+        `Short stories about the works — what each figure remembers, told in its own ` +
+        `voice. Each tale lives at /tales/{slug} and is linked from the page of the work ` +
+        `it belongs to.\n\n` +
+        (taleLines || '- (the shelf is currently bare)') +
         `\n\n## Browse\n\n` +
         `- [Full archive](${SITE_URL}/figurines): every available, reserved and sold piece.\n` +
         `- [Gazette](${SITE_URL}/gazette): notes from the house — arrivals, sketches, openings, cuttings.\n` +

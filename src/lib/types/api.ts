@@ -2333,6 +2333,18 @@ export interface MotionGesture {
     turn: GestureTurn;
     fade: GestureFade;
     layer: number;
+    /** Сборщик полосы: исходные картинки с позой. Движок играет слепленную
+     *  `image`; стол хранит это, чтобы править угол, не разрезая готовую полосу. */
+    strip?: MotionStripCell[];
+}
+
+/** Одна клетка сборщика: картинка и как она лежит в кадре. */
+export interface MotionStripCell {
+    image: string;
+    turn: number;
+    size: number;
+    x: number;
+    y: number;
 }
 
 export interface Motion {
@@ -2342,6 +2354,10 @@ export interface Motion {
     nameEn: string;
     nameRu: string;
     occasion: MotionOccasion;
+    /** Пол длительности, мс. 0 — только по жестам. Больше последнего жеста —
+     *  тишина после него. Потолок всё равно `MOTION_MS_MAX`: это не второй
+     *  потолок, а просьба держаться дольше жестов. */
+    span?: number;
     gestures: MotionGesture[];
 }
 
@@ -2571,6 +2587,36 @@ export interface ChallengePlacement {
 
 export type BattlePlayerSide = 'scripted' | 'deck';
 
+/**
+ * Правила одной партии.
+ *
+ * Каждое число здесь выбрано замером, и обоснование каждого лежит в
+ * `battle_core::Rules::default()`. Клиент их не применяет — он ими только
+ * показывает, чем этот этюд отличается от соседнего.
+ */
+export interface BattleRules {
+    /** Мана, с которой начинает сторона, ходящая второй. */
+    secondSideCoin: number;
+    /** Сколько ударов первая сторона наносит в первом круге. 255 — сколько угодно. */
+    openingAttacks: number;
+    /** Тратит ли шаг ход тела целиком. Дома — нет: тело подходит и бьёт. */
+    walkSpendsTurn: boolean;
+    /** Отвечает ли ударенное тело ударом, если достаёт. Раз за чужой ход. */
+    retaliation: boolean;
+    /** Сколько действий сторона делает за ход. 255 — каждое тело по разу. */
+    actsPerTurn: number;
+    /** С какого круга удары растут по единице за круг. Ноль — не растут. */
+    escalationFrom: number;
+    /** Сколько здоровья теряет тело, простоявшее свой ход без дела. */
+    idleToll: number;
+    /** Сколько кругов идёт партия, прежде чем её решит остаток здоровья. */
+    maxRounds: number;
+    /** Какую долю силы, в сотых, сохраняет стрелок, бьющий дальше своей дали. */
+    longShotPower: number;
+    /** Какую долю силы, в сотых, сохраняет стрелок, к которому подошли вплотную. */
+    pointBlankPower: number;
+}
+
 /** A study sets BOTH sides. A meeting (`playerSide: 'deck'`) fills only the
  *  keeper's, and the guest brings his own table. */
 export interface ChallengeSetup {
@@ -2578,6 +2624,14 @@ export interface ChallengeSetup {
     playerHand: string[];
     keeperBoard: ChallengePlacement[];
     keeperHand: string[];
+    /**
+     * Правила этого испытания. `null` или отсутствие — умолчания дома.
+     *
+     * Живут внутри расстановки, а не отдельным полем испытания, потому что
+     * испытание — это шаблон целиком: «здесь никто не ходит» относится к нему
+     * так же, как «здесь стоит ведьма».
+     */
+    rules?: BattleRules | null;
 }
 
 export interface BattleChallenge {
@@ -2603,6 +2657,26 @@ export interface BattleChallenge {
     alreadyPaid?: boolean;
     /** The match still going on this challenge, if any. Absent for a guest. */
     openMatchId?: string;
+    /** Чем этот этюд помечен у того, кто смотрит. Отсутствует у гостя. */
+    marks?: ChallengeMarks;
+}
+
+/**
+ * Три печати вместо одной.
+ *
+ * Пыль за этюд платится однажды, и до этих чисел пройденный этюд не давал ни
+ * одной причины к нему вернуться: победа была двоичной.
+ */
+export interface ChallengeMarks {
+    /** Хоть раз доведено до исхода — победа или нет. Отданное поле не считается. */
+    finished: boolean;
+    won: boolean;
+    /** Хоть раз выиграно, не потеряв ни одного тела. */
+    clean: boolean;
+    /** Своя лучшая линия, в делах. Меньше — лучше. */
+    yourBest?: number | null;
+    /** Лучшее, что дом видел от кого бы то ни было. Планка живая. */
+    bestKnown?: number | null;
 }
 
 export interface SaveBattleChallengeRequest {
@@ -2701,17 +2775,7 @@ export interface BattleMatchState {
     round: number;
     active: BattleSide;
     outcome: BattleOutcome | null;
-    rules: {
-        secondSideCoin: number;
-        openingAttacks: number;
-        /** Whether a walk spends the body's whole turn. False by default: a body
-         *  walks up and strikes in the same turn. */
-        walkSpendsTurn: boolean;
-        /** Whether a struck body strikes back when it reaches. */
-        retaliation: boolean;
-        /** Acts one side may take in a turn. 255 — as many as it likes. */
-        actsPerTurn: number;
-    };
+    rules: BattleRules;
     openingAttacksUsed: number;
     actsThisTurn: number;
 }
@@ -2989,6 +3053,35 @@ export interface BattleMatch {
     /** Dust credited by this very request — обе выплаты сложены в одно число.
      *  Zero on every later reading. */
     rewardDust: number;
+    /** Чем кончилась именно эта партия. Есть только в ответе на тот ход,
+     *  которым она кончилась: печать ставится один раз и в одном месте. */
+    marks?: MatchMarks;
+}
+
+/** Печать под сыгранной партией. */
+export interface MatchMarks {
+    /** Сколько дел сделал гость. Конец хода делом не считается. */
+    acts: number;
+    bodiesLost: number;
+    /** Лучшее известное дому ДО этой партии. */
+    bestKnown?: number | null;
+    /** Эта линия и есть новая планка этюда. */
+    record: boolean;
+}
+
+/**
+ * «Если сделать это и на этом закончить ход — чем ответит хранитель».
+ *
+ * Не подсказка: ответ хранителя вычислим — случайности в движке нет, скрытых
+ * карт у него нет. Прятать вычислимое значит продавать не глубину, а неудобство.
+ */
+export interface Foresight {
+    seq: number;
+    /** Что сделает само действие. */
+    yours: BattleEvent[];
+    /** Чем на это ответит хранитель. */
+    theirs: BattleEvent[];
+    outcome: BattleOutcome | null;
 }
 
 /**

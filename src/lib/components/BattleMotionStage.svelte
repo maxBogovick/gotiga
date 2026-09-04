@@ -16,7 +16,7 @@
   let { motes = [] }: { motes?: StagedMote[] } = $props();
 </script>
 
-<!-- `inset: 0` от поля, а не от доски: следы ударов и печать лежат так же, и
+<!-- `inset: 0` от поля, а не от доски: печать лежит так же, и
      поле шире доски увело бы всё вбок (`BATTLE-SCENE.md` §10.1). -->
 {#if motes.length}
   <div class="motion" aria-hidden="true">
@@ -201,6 +201,34 @@
   @keyframes -global-gotiga-fly {
     from { transform: translate(0, 0) rotate(var(--turn, 0deg)); }
     to { transform: translate(var(--mx, 0), var(--my, 0)) rotate(var(--turn, 0deg)); }
+  }
+
+  /* Одиночное оружие на цели: замах, касание, уход. Не полоса кадров и не
+     вспышка — клинок проходит карту с той стороны, откуда бьют, и на ударе
+     чуть ловит свет, как фотография под косым лучом. */
+  @keyframes -global-gotiga-cleave {
+    0% {
+      transform: rotate(calc(var(--turn, 0deg) - 46deg))
+        translate(calc(var(--lx, 0) * -0.85), calc(var(--ly, 0) * -0.85))
+        scale(0.72);
+      filter: brightness(1) saturate(1);
+    }
+    38% {
+      transform: rotate(calc(var(--turn, 0deg) - 6deg)) translate(0, 0) scale(1.04);
+      filter: brightness(1.14) saturate(1.08);
+    }
+    52% {
+      transform: rotate(calc(var(--turn, 0deg) + 10deg))
+        translate(calc(var(--lx, 0) * 0.18), calc(var(--ly, 0) * 0.18))
+        scale(1.1);
+      filter: brightness(1.18) saturate(1.1);
+    }
+    100% {
+      transform: rotate(calc(var(--turn, 0deg) + 28deg))
+        translate(calc(var(--lx, 0) * 0.7), calc(var(--ly, 0) * 0.7))
+        scale(0.82);
+      filter: brightness(1) saturate(1);
+    }
   }
 
   /* Обломок улетает и гаснет. Угол и дальность уже в `--mx/--my` из `stage()`. */

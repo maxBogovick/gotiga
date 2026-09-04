@@ -19,6 +19,7 @@
     note,
     selected = false,
     disabled = false,
+    hollow = false,
     size = 44,
     title,
     onclick,
@@ -31,6 +32,9 @@
     note?: string;
     selected?: boolean;
     disabled?: boolean;
+    /** Пунктирный, без заливки: «добавить» и «не выбрано». Тот же пунктир,
+     *  которым в гардеробе помечена пустая ступень, — и означает то же. */
+    hollow?: boolean;
     size?: number;
     title?: string;
     /** Без него медальон — не кнопка, а просто изображение выбора. */
@@ -47,6 +51,7 @@
   class:med--on={selected}
   class:med--off={!selected}
   class:med--dead={disabled}
+  class:med--hollow={hollow}
   disabled={onclick ? disabled : undefined}
   aria-pressed={onclick ? selected : undefined}
   {title}
@@ -129,6 +134,20 @@
       0 0 0 1px rgba(52, 37, 28, 0.4),
       0 0 0 3px #f8f1e7,
       0 0 0 4px #c65f3c;
+  }
+
+  /* Пустой: рисуется каймой и ничем больше. Заливка сказала бы «выбор», а
+     это приглашение выбор ЗАВЕСТИ. */
+  .med--hollow .disc {
+    background: none;
+    color: #8a6a55;
+    box-shadow: none;
+    border: 1px dashed rgba(52, 37, 28, 0.35);
+  }
+  .med--hollow:hover .disc {
+    border-color: #c65f3c;
+    color: #c65f3c;
+    box-shadow: none;
   }
 
   .cap {

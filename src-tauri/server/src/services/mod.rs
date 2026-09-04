@@ -9057,14 +9057,7 @@ impl AppService {
         let actions: Vec<battle_core::Action> = serde_json::from_str(&rec.actions)
             .map_err(|_| AppError::Internal("Match journal will not read".into()))?;
 
-        // Правила той партии. Лежат внутри сохранённого состояния — единственное
-        // место, где они записаны.
-        let rules = rec
-            .board_cache
-            .as_deref()
-            .and_then(|c| serde_json::from_str::<battle_core::MatchState>(c).ok())
-            .map(|s| s.rules)
-            .unwrap_or_default();
+        let rules = Self::match_rules(&rec);
 
         let want = upto.min(actions.len());
         let mut state = battle_core::MatchState::begin_with(setup, rules);
@@ -9123,6 +9116,7 @@ impl AppService {
         row: crate::models::BattleChallenge,
         paid_keys: Option<&[String]>,
         open_match_id: Option<String>,
+        marks: Option<crate::models::ChallengeMarks>,
     ) -> BattleChallengeDto {
         let key = Self::challenge_key(row.id);
         BattleChallengeDto {
@@ -9141,6 +9135,7 @@ impl AppService {
             sort_order: row.sort_order,
             already_paid: paid_keys.map(|keys| keys.iter().any(|k| *k == key)),
             open_match_id,
+            marks,
         }
     }
 
@@ -9165,11 +9160,41 @@ impl AppService {
                 .collect(),
             None => HashMap::new(),
         };
+
+        // Печати. Тоже по одному запросу на полку, а не по одному на этюд.
+        //
+        // Планка спрашивается ВСЕГДА, когда гость вошёл, даже если сам он этот
+        // этюд ещё не открывал: «лучшее известное — пять» это то, ради чего за
+        // доску садятся, а не то, что показывают в награду за победу.
+        let (mine, bar) = match user_id {
+            Some(id) => (
+                self.repo.battle_challenge_marks(id).await?,
+                self.repo.battle_challenge_best_lines().await?,
+            ),
+            None => (Vec::new(), Vec::new()),
+        };
+        let mine: HashMap<Uuid, (bool, bool, bool, Option<i16>)> = mine
+            .into_iter()
+            .map(|(id, finished, won, clean, best)| (id, (finished, won, clean, best)))
+            .collect();
+        let bar: HashMap<Uuid, i16> = bar.into_iter().collect();
+
         Ok(rows
             .into_iter()
             .map(|r| {
                 let open_match_id = open.get(&r.id).cloned();
-                Self::challenge_dto(r, paid.as_deref(), open_match_id)
+                let marks = user_id.map(|_| {
+                    let (finished, won, clean, your_best) =
+                        mine.get(&r.id).copied().unwrap_or((false, false, false, None));
+                    crate::models::ChallengeMarks {
+                        finished,
+                        won,
+                        clean,
+                        your_best: your_best.map(|b| b as i32),
+                        best_known: bar.get(&r.id).map(|b| *b as i32),
+                    }
+                });
+                Self::challenge_dto(r, paid.as_deref(), open_match_id, marks)
             })
             .collect())
     }
@@ -9206,7 +9231,12 @@ impl AppService {
             .await?;
 
         let taken = self.repo.list_battle_challenge_slugs_except(id).await?;
-        let setup = serde_json::to_string(&req.setup)
+        // Правила зажимаются ЗДЕСЬ, при записи, а не при начале партии: иначе
+        // форма показывала бы хранителю одно число, а гость играл бы под другим,
+        // и разошлись бы они молча.
+        let mut arrangement = req.setup;
+        arrangement.rules = arrangement.rules.as_ref().map(crate::battles::normalize_rules);
+        let setup = serde_json::to_string(&arrangement)
             .map_err(|_| AppError::BadRequest("Arrangement will not serialise".into()))?;
         let slug = crate::battles::unique_slug(req.slug.as_deref(), &title_en, &taken);
         let rec = self
@@ -9237,7 +9267,7 @@ impl AppService {
             )
             .await?;
         Self::log_domain_event("battle_challenge_saved", "battle_challenge", rec.id, "ok");
-        Ok(Self::challenge_dto(rec, None, None))
+        Ok(Self::challenge_dto(rec, None, None, None))
     }
 
     /// Порядок полки этюдов. Та же проверка, что и у карт: испытание не может
@@ -9445,19 +9475,80 @@ impl AppService {
             .and_then(|s| s.parse().ok())
     }
 
+    /// Правила, под которыми игралась записанная партия.
+    ///
+    /// Колонка первой, кэш вторым, дом третьим. Кэш читается не из вежливости к
+    /// старым записям: до колонки правила лежали ТОЛЬКО в нём, внутри снимка
+    /// состояния, и партия, начатая до этой миграции, называет их именно там.
+    /// Дом последним — им и игралось всё, что старше обоих мест.
+    fn match_rules(rec: &crate::models::BattleMatch) -> battle_core::Rules {
+        if let Some(raw) = rec.rules.as_deref() {
+            if let Ok(rules) = serde_json::from_str(raw) {
+                return rules;
+            }
+        }
+        rec.board_cache
+            .as_deref()
+            .and_then(|c| serde_json::from_str::<battle_core::MatchState>(c).ok())
+            .map(|s| s.rules)
+            .unwrap_or_default()
+    }
+
     /// Fold a journal back into a board. The only definition of "the state of a
     /// match" there is — the cache is a convenience, this is the truth.
+    ///
+    /// Правила приходят снаружи и обязаны быть теми же, под которыми партия
+    /// игралась: свёртка чужими правилами даёт другую доску молча — то же
+    /// действие законно, а число другое, — и кэш перестал бы быть кэшем.
     fn replay(
         setup: &battle_core::Setup,
         actions: &[battle_core::Action],
+        rules: battle_core::Rules,
     ) -> Result<battle_core::MatchState> {
-        let mut state = battle_core::MatchState::begin(setup.clone());
+        let mut state = battle_core::MatchState::begin_with(setup.clone(), rules);
         for action in actions {
             state = battle_core::reduce(&state, action)
                 .map_err(|e| AppError::Internal(format!("Recorded match will not replay: {e:?}")))?
                 .0;
         }
         Ok(state)
+    }
+
+    /// Чем пройдена партия: сколько дел сделал гость и скольких тел лишился.
+    ///
+    /// **Конец хода делом не считается.** Это не выбор из нескольких, а его
+    /// отсутствие, и партия, выигранная пятью ударами в трёх ходах, не должна
+    /// читаться длиннее той же партии в пяти ходах: печать мерит решения, а не
+    /// нажатия.
+    ///
+    /// Свёртка идёт по журналу с самого начала, потому что чья очередь была на
+    /// каждом действии, знает только доска. Останавливается молча на первом же
+    /// действии, которое не применилось: разошедшаяся запись — повод показать
+    /// меньше, а не повод отказать в исходе, который уже случился.
+    fn count_the_line(
+        setup: &battle_core::Setup,
+        actions: &[battle_core::Action],
+        rules: battle_core::Rules,
+    ) -> (i16, i16) {
+        let mut state = battle_core::MatchState::begin_with(setup.clone(), rules);
+        let mut acts: i16 = 0;
+        for action in actions {
+            let mine = state.active == battle_core::Side::Player;
+            let Ok((next, _)) = battle_core::reduce(&state, action) else {
+                break;
+            };
+            if mine && !matches!(action, battle_core::Action::EndTurn) {
+                acts = acts.saturating_add(1);
+            }
+            state = next;
+        }
+        let lost = state
+            .units
+            .iter()
+            .filter(|u| u.owner == battle_core::Side::Player && u.health.is_dead())
+            .count()
+            .min(i16::MAX as usize) as i16;
+        (acts, lost)
     }
 
     fn match_state(rec: &crate::models::BattleMatch) -> Result<battle_core::MatchState> {
@@ -9472,7 +9563,7 @@ impl AppService {
             .map_err(|_| AppError::Internal("Match arrangement will not read".into()))?;
         let actions: Vec<battle_core::Action> = serde_json::from_str(&rec.actions)
             .map_err(|_| AppError::Internal("Match journal will not read".into()))?;
-        Self::replay(&setup, &actions)
+        Self::replay(&setup, &actions, Self::match_rules(rec))
     }
 
     fn match_dto(
@@ -9490,6 +9581,7 @@ impl AppService {
             events,
             outcome: rec.outcome.clone(),
             reward_dust,
+            marks: None,
         }
     }
 
@@ -9531,7 +9623,12 @@ impl AppService {
         // card cannot reach into this match.
         let frozen = serde_json::to_string(&setup)
             .map_err(|_| AppError::Internal("Arrangement will not freeze".into()))?;
-        let state = battle_core::MatchState::begin(setup);
+        // Правила замораживаются вместе с телами и по той же причине: этюд,
+        // переписанный посреди начатой партии, менял бы её на ходу.
+        let rules = crate::battles::rules_of(&arrangement);
+        let written_rules = serde_json::to_string(&rules)
+            .map_err(|_| AppError::Internal("Rules will not freeze".into()))?;
+        let state = battle_core::MatchState::begin_with(setup, rules);
         let cache = serde_json::to_string(&state)
             .map_err(|_| AppError::Internal("Board will not serialise".into()))?;
 
@@ -9541,7 +9638,14 @@ impl AppService {
 
         let rec = self
             .repo
-            .insert_battle_match(user_id, challenge_id, &frozen, version, &cache)
+            .insert_battle_match(
+                user_id,
+                challenge_id,
+                &frozen,
+                version,
+                &cache,
+                &written_rules,
+            )
             .await?;
         Self::log_domain_event("battle_match_started", "battle_match", rec.id, "ok");
         Ok(Self::match_dto(&rec, state, Vec::new(), 0))
@@ -9631,15 +9735,10 @@ impl AppService {
         // Рука хранителя — та, что задана испытанием. До этого поле `bot_depth`
         // писалось в базу, показывалось на полке этюдов и не читалось никем:
         // единственная ручка сложности всего PvE ничего не делала.
-        let depth = match rec.challenge_id {
-            Some(id) => {
-                crate::battles::clamp_bot_depth(self.repo.get_battle_challenge(id).await?.bot_depth)
-            }
-            None => crate::battles::BOT_DEPTH_MIN,
-        };
+        let depth = self.keeper_hand_depth(rec.challenge_id).await?;
         let mut guard = 0;
         while state.outcome.is_none() && state.active == battle_core::Side::Keeper {
-            let action = battle_core::bot::choose_at(&state, depth as u8);
+            let action = battle_core::bot::choose_at(&state, depth);
             let (next, produced) = battle_core::reduce(&state, &action)
                 .map_err(|e| AppError::Internal(format!("Keeper played an illegal move: {e:?}")))?;
             state = next;
@@ -9656,6 +9755,31 @@ impl AppService {
             battle_core::Outcome::Keeper => "keeper",
             battle_core::Outcome::Draw => "draw",
         });
+
+        // Печать под партией ставится ровно здесь и один раз — в тот ход,
+        // которым партия кончилась. Считается свёрткой журнала, потому что
+        // журнал и есть истина; счётчик, который вели бы параллельно, однажды
+        // разошёлся бы с ним молча.
+        let line = if outcome.is_some() {
+            let frozen: battle_core::Setup = serde_json::from_str(&rec.setup)
+                .map_err(|_| AppError::Internal("Match arrangement will not read".into()))?;
+            Some(Self::count_the_line(
+                &frozen,
+                &journal,
+                Self::match_rules(&rec),
+            ))
+        } else {
+            None
+        };
+        // Спрошено ДО записи: иначе эта же партия станет собственной планкой, и
+        // всякая победа читалась бы как повторение рекорда.
+        let stood = match (outcome, rec.challenge_id) {
+            (Some("player"), Some(challenge_id)) => {
+                self.repo.battle_challenge_best_line(challenge_id).await?
+            }
+            _ => None,
+        };
+
         let written = serde_json::to_string(&journal)
             .map_err(|_| AppError::Internal("Journal will not serialise".into()))?;
         let cache = serde_json::to_string(&state)
@@ -9665,7 +9789,16 @@ impl AppService {
         // the caller had. A repeat finds nothing and changes nothing.
         let Some(saved) = self
             .repo
-            .advance_battle_match(id, req.seq, &written, &cache, outcome, state.round as i16)
+            .advance_battle_match(
+                id,
+                req.seq,
+                &written,
+                &cache,
+                outcome,
+                state.round as i16,
+                line.map(|(acts, _)| acts),
+                line.map(|(_, lost)| lost),
+            )
             .await?
         else {
             let rec = self.repo.get_battle_match(id, user_id).await?;
@@ -9727,7 +9860,101 @@ impl AppService {
             self.settle_errands_quietly(user_id).await;
         }
 
-        Ok(Self::match_dto(&saved, state, events, reward))
+        let mut dto = Self::match_dto(&saved, state, events, reward);
+        dto.marks = line.map(|(acts, lost)| crate::models::MatchMarks {
+            acts: acts as i32,
+            bodies_lost: lost as i32,
+            best_known: stood.map(|b| b as i32),
+            // Рекорд — только у победы: проигранная линия из трёх дел короче
+            // всякой выигранной, и мерить её тем же числом значило бы платить
+            // за то, чтобы сдаться быстрее.
+            record: outcome == Some("player") && stood.is_none_or(|b| acts < b),
+        });
+        Ok(dto)
+    }
+
+    /// Рука хранителя в этой партии. Испытание её и назначает.
+    async fn keeper_hand_depth(&self, challenge_id: Option<Uuid>) -> Result<u8> {
+        Ok(match challenge_id {
+            Some(id) => crate::battles::clamp_bot_depth(
+                self.repo.get_battle_challenge(id).await?.bot_depth,
+            ) as u8,
+            None => crate::battles::BOT_DEPTH_MIN as u8,
+        })
+    }
+
+    /// «Если сделать это и на этом закончить ход — чем ответит хранитель».
+    ///
+    /// Не подсказка и не поддавки: ответ хранителя ВЫЧИСЛИМ. Случайности в
+    /// движке нет, скрытых карт у него нет, `reduce` чиста — то есть человек с
+    /// карандашом получил бы то же самое, только за полчаса. Прятать вычислимое
+    /// значит продавать не глубину, а неудобство.
+    ///
+    /// Ход закрывается прямо здесь, и вопрос поставлен именно так — «если на
+    /// этом закончить». Иначе ответа не существует: хранитель отвечает не на
+    /// удар, а на конец хода, и предвестие, показанное после удара, показывало
+    /// бы ответ на ход, который ещё не сделан.
+    ///
+    /// Ничего не пишет. Поэтому здесь нет и защиты от повтора: повторять нечего,
+    /// а `seq` спрашивается ровно затем, чтобы не отвечать про доску, которой
+    /// уже нет.
+    pub async fn foresee_battle_match(
+        &self,
+        user_id: Uuid,
+        id: Uuid,
+        req: crate::models::ForeseeRequest,
+    ) -> Result<crate::models::ForeseeDto> {
+        let rec = self.repo.get_battle_match(id, user_id).await?;
+        let state = Self::match_state(&rec)?;
+        // Пустое предвестие честнее сочинённого: доска ушла вперёд, партия
+        // кончилась или ход не наш — сказать нечего.
+        if rec.outcome.is_some() || req.seq != rec.seq || state.active != battle_core::Side::Player
+        {
+            return Ok(crate::models::ForeseeDto {
+                seq: rec.seq,
+                yours: Vec::new(),
+                theirs: Vec::new(),
+                outcome: rec.outcome.clone(),
+            });
+        }
+
+        let (mut state, yours) = battle_core::reduce(&state, &req.action)
+            .map_err(|e| AppError::BadRequest(format!("{e:?}")))?;
+
+        let mut theirs = Vec::new();
+        if state.outcome.is_none() {
+            let depth = self.keeper_hand_depth(rec.challenge_id).await?;
+            if let Ok((next, produced)) =
+                battle_core::reduce(&state, &battle_core::Action::EndTurn)
+            {
+                state = next;
+                theirs.extend(produced);
+            }
+            let mut guard = 0;
+            while state.outcome.is_none() && state.active == battle_core::Side::Keeper {
+                let action = battle_core::bot::choose_at(&state, depth);
+                let Ok((next, produced)) = battle_core::reduce(&state, &action) else {
+                    break;
+                };
+                state = next;
+                theirs.extend(produced);
+                guard += 1;
+                if guard > 500 {
+                    break;
+                }
+            }
+        }
+
+        Ok(crate::models::ForeseeDto {
+            seq: rec.seq,
+            yours,
+            theirs,
+            outcome: state.outcome.map(|o| match o {
+                battle_core::Outcome::Player => "player".to_string(),
+                battle_core::Outcome::Keeper => "keeper".to_string(),
+                battle_core::Outcome::Draw => "draw".to_string(),
+            }),
+        })
     }
 
     /// The bench: an arrangement played by hand, without a trace.
@@ -9737,9 +9964,15 @@ impl AppService {
         let cards = self.cards_by_slug().await?;
         let setup = Self::raise(&req.setup, &cards)?;
 
+        // Правила берутся из расстановки, как их возьмёт партия гостя. Стол
+        // затем и нужен, чтобы этюд проверялся тем же, чем он будет сыгран;
+        // стол, играющий домашними правилами при своих в испытании, проверял бы
+        // не тот этюд.
+        let rules = crate::battles::rules_of(&req.setup);
+
         // Everything already played is folded back in silently: its events were
         // shown when they happened and showing them again would be a lie.
-        let mut state = Self::replay(&setup, &req.actions)?;
+        let mut state = Self::replay(&setup, &req.actions, rules)?;
         let mut journal = req.actions;
         let mut events = Vec::new();
 

@@ -14,6 +14,7 @@
   import { fade } from 'svelte/transition';
   import { t, lang, brandName } from '$lib/i18n';
   import { api } from '$lib/api';
+  import { rulesApart } from '$lib/battles';
   import { authStore } from '$lib/stores/auth.svelte';
   import BattleScene from '$lib/components/BattleScene.svelte';
   import type {
@@ -22,6 +23,7 @@
     BattleChallenge,
     BattleFrame,
     BattleMatch,
+    Foresight,
     Motion,
   } from '$lib/types/api';
 
@@ -52,6 +54,9 @@
 
   const titleOf = (c: BattleChallenge) => ($lang === 'ru' ? c.titleRu : c.titleEn);
   const noteOf = (c: BattleChallenge) => ($lang === 'ru' ? c.noteRu : c.noteEn);
+  /** Чем правила этого боя отличаются от домашних. Пусто — обычный бой, и
+   *  говорить нечего. */
+  const apart = (c: BattleChallenge) => rulesApart(c.setup.rules);
 
   function loginFrom(challenge?: BattleChallenge) {
     const dest = challenge ? `/battles/etude?play=${challenge.id}` : '/battles/etude';
@@ -165,6 +170,24 @@
     }
   }
 
+  /**
+   * «Если сделать это и на этом закончить ход — чем ответит хранитель».
+   *
+   * Считает сервер: сцена не знает ни одного правила, а страница — ни одного
+   * адреса сверх этого вызова. Ничего не пишет и ни на что не влияет, поэтому
+   * молчаливый отказ здесь — правильный ответ: предвестие, которое не пришло,
+   * должно просто не появиться, а не сообщать об ошибке посреди партии.
+   */
+  async function foresee(action: BattleAction): Promise<Foresight | null> {
+    const token = authStore.token;
+    if (!token || !match) return null;
+    try {
+      return await api.foreseeBattleMatch(token, match.id, match.seq, action);
+    } catch {
+      return null;
+    }
+  }
+
   function askLeave() {
     if (match && !match.outcome) {
       leaving = true;
@@ -248,6 +271,7 @@
         {motions}
         {busy}
         onact={play}
+        onforesee={foresee}
         onleave={putBack}
         onreplay={taken ? again : undefined}
       />
@@ -275,6 +299,49 @@
                 <span class="kind">
                   {challenge.playerSide === 'deck' ? $t('battleMeetingNote') : $t('battleStudyNote')}
                 </span>
+                <!-- Чем этот бой отличается от соседнего. Названо только
+                     отличие: свод, в котором перечислены все десять правил,
+                     не сообщает ничего — читатель обязан помнить наизусть,
+                     какие из них обычные. -->
+                {#if apart(challenge).length}
+                  <span class="apart">
+                    {$t('battleRulesOwn')}:
+                    {#each apart(challenge) as line, i (line.key)}{i > 0
+                        ? ' · '
+                        : ' '}{$t(line.key)}{line.amount === null
+                        ? ''
+                        : ` — ${line.amount}`}{/each}
+                  </span>
+                {/if}
+                <!-- Три печати вместо одной. Победа была двоичной: прошёл и
+                     забыл. «За пять дел вместо семи» — утверждение о человеке,
+                     и оно не зависит от того, кому досталась монета. -->
+                {#if challenge.marks}
+                  <span class="marks">
+                    <!-- «Доведено» — печать проигравшего: победа говорит то же
+                         самое и громче, и две печати рядом читались бы как две
+                         разные вещи. -->
+                    {#if challenge.marks.finished && !challenge.marks.won}
+                      <span class="mark mark--done">{$t('battleMarkFinished')}</span>
+                    {/if}
+                    {#if challenge.marks.won}
+                      <span class="mark mark--won">{$t('battleMarkWon')}</span>
+                    {/if}
+                    {#if challenge.marks.clean}
+                      <span class="mark mark--clean">{$t('battleMarkClean')}</span>
+                    {/if}
+                    {#if challenge.marks.yourBest != null}
+                      <span class="line"
+                        >{$t('battleMarkYourLine')} — {challenge.marks.yourBest}</span
+                      >
+                    {/if}
+                    {#if challenge.marks.bestKnown != null}
+                      <span class="line line--bar"
+                        >{$t('battleMarkBestLine')} — {challenge.marks.bestKnown}</span
+                      >
+                    {/if}
+                  </span>
+                {/if}
               </div>
               {#if challenge.rewardDust > 0 || challenge.rewardFinishDust > 0}
                 <span class="reward">
@@ -482,6 +549,56 @@
   }
 
   .kind {
+    font-style: italic;
+  }
+
+  .apart {
+    display: block;
+    margin-top: 0.25rem;
+    font-size: 0.72rem;
+    line-height: 1.5;
+    color: #6f3b24;
+  }
+
+  /* Печати. Не значки и не медали: три коротких слова в строку — комната,
+     которая хвалит громче, чем говорит, перестаёт быть этой комнатой. */
+  .marks {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.35rem 0.6rem;
+    margin-top: 0.35rem;
+  }
+
+  .mark {
+    padding: 0.08rem 0.4rem;
+    font-size: 0.66rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #6f3b24;
+    border: 1px solid #d8c6b1;
+  }
+
+  .mark--won {
+    color: #c65f3c;
+    border-color: #c65f3c;
+  }
+
+  .mark--clean {
+    color: #f8f1e7;
+    background: #6f3b24;
+    border-color: #6f3b24;
+  }
+
+  .line {
+    font-size: 0.7rem;
+    font-variant-numeric: tabular-nums;
+    color: #8a6a55;
+  }
+
+  /* Планка дома. Она и есть причина вернуться, поэтому читается как чужой
+     результат, а не как своя строка. */
+  .line--bar {
     font-style: italic;
   }
 

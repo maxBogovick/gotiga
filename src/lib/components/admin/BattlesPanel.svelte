@@ -29,6 +29,8 @@
     SLICE_SLOTS,
     SLICE_TURNS,
     TIERS,
+    HOUSE_RULES,
+    rulesApart,
     applyInsetDelta,
     completeSlices,
     defaultSlices,
@@ -67,8 +69,11 @@
     BattleClock,
     AdminBattleErrand,
     BattleCardStatus,
+    BattleChannel,
+    CardAbility,
     BattleFrame,
     BattleFramePreset,
+    BattleRules,
     Motion,
     SliceFit,
     SliceKind,
@@ -288,6 +293,10 @@
       playerHand: benchHands.player,
       keeperBoard: board("keeper"),
       keeperHand: benchHands.keeper,
+      // Правила едут вместе с расстановкой — и на стол, и в запись. Стол,
+      // играющий домашними правилами при своих у этюда, проверял бы не тот
+      // этюд, а хранитель узнавал бы об этом от гостя.
+      rules: etudeOwnRules ? etudeRules : null,
     };
   });
 
@@ -450,6 +459,51 @@
    *  `deck` — столом гостя (встреча). У встречи половину гостя расставлять не
    *  надо и нельзя: её приносит гость. */
   let etudeSide = $state<BattlePlayerSide>("scripted");
+  // ── Правила этюда ───────────────────────────────────────────────────────
+  //
+  // До этой формы все этюды игрались умолчаниями дома, и ни одна из измеренных
+  // ручек полке доступна не была. Между тем каждая из них меняет не оттенок, а
+  // игру: шаг, тратящий ход целиком, уводит долю партий, решённых очерёдностью
+  // а не картой, с 43 % на 98 %; штраф стрелку в упор переворачивает крайний
+  // случай §15.2 с 2 побед из 16 на 11 из 18.
+  //
+  // Поэтому здесь не «настройки сложности», а вторая половина замысла этюда:
+  // расстановка говорит, кто стоит, правила — во что играют.
+
+  /** Играет ли этюд своими правилами. Выключено — в записи `null`, то есть
+   *  дом; и это не то же самое, что «свои правила, совпадающие с домашними»:
+   *  дом со временем меняется замером, и этюд, сказавший «как дома», обязан
+   *  меняться вместе с ним. */
+  let etudeOwnRules = $state(false);
+  let etudeRules = $state<BattleRules>({ ...HOUSE_RULES });
+
+  /** Ручки в том порядке, в каком их выбирают: сперва то, что меняет игру
+   *  целиком, потом то, что её подкручивает. */
+  const RULE_DIALS = [
+    { key: "walkSpendsTurn", label: "adminBattlesRuleWalk", kind: "flag" },
+    { key: "retaliation", label: "adminBattlesRuleRetaliation", kind: "flag" },
+    { key: "actsPerTurn", label: "adminBattlesRuleActs", kind: "number", min: 1, max: 255 },
+    { key: "openingAttacks", label: "adminBattlesRuleOpening", kind: "number", min: 0, max: 255 },
+    { key: "idleToll", label: "adminBattlesRuleIdle", kind: "number", min: 0, max: 5 },
+    { key: "escalationFrom", label: "adminBattlesRuleEscalation", kind: "number", min: 0, max: 24 },
+    { key: "maxRounds", label: "adminBattlesRuleRounds", kind: "number", min: 1, max: 24 },
+    { key: "secondSideCoin", label: "adminBattlesRuleCoin", kind: "number", min: 0, max: 10 },
+    { key: "pointBlankPower", label: "adminBattlesRulePointBlank", kind: "number", min: 0, max: 100 },
+    { key: "longShotPower", label: "adminBattlesRuleLongShot", kind: "number", min: 0, max: 100 },
+  ] as const;
+
+  /** Чем эти правила отличаются от домашних — теми же словами, какими это
+   *  прочтёт гость. Хранитель обязан видеть ту же строку, что и он. */
+  let etudeApart = $derived(etudeOwnRules ? rulesApart(etudeRules) : []);
+
+  /** Одна ручка. Пишется в копию, а не в объект: `$state` замечает подмену, а
+   *  правку внутри — нет, и форма показывала бы вчерашнее число. */
+  function tune<K extends keyof BattleRules>(key: K, value: BattleRules[K]) {
+    const next = { ...etudeRules };
+    next[key] = value;
+    etudeRules = next;
+  }
+
   /** Что нужно, чтобы это можно было оставить. У встречи — только половина
    *  хранителя: половину гостя приносит его стол, и требовать её здесь значило
    *  бы требовать чужого. То же правило, что и на сервере. */
@@ -487,6 +541,11 @@
     etudeFinish = challenge?.rewardFinishDust ?? 0;
     etudeStatus = challenge?.status ?? "draft";
     etudeSide = challenge?.playerSide ?? "scripted";
+    // Своё или дом — читается по наличию, а не по совпадению чисел: этюд,
+    // сказавший «как дома», и этюд, промолчавший, — разные вещи.
+    const kept = challenge?.setup.rules ?? null;
+    etudeOwnRules = !!kept;
+    etudeRules = { ...HOUSE_RULES, ...(kept ?? {}) };
 
     benchJournal = [];
     bench = null;
@@ -1871,6 +1930,57 @@
     once: "battlesTriggerOnce",
   } as const satisfies Record<AbilityTrigger, TranslationKey>;
 
+  /** Значки каналов. Формам и поводам такой таблицы не нужно: их значки
+   *  названы теми же словами, что и сами значения, и разойтись им негде. */
+  const CHANNEL_ICON = {
+    physical: "sword",
+    magic: "spark",
+    pure: "pure",
+    none: "nil",
+  } as const satisfies Record<BattleChannel, string>;
+
+  const CHANNELS = Object.keys(CHANNEL_ICON) as BattleChannel[];
+
+  const CHANNEL_LABELS = {
+    physical: "adminBattlesChannelPhysical",
+    magic: "adminBattlesChannelMagic",
+    pure: "adminBattlesChannelPure",
+    none: "adminBattlesChannelNone",
+  } as const satisfies Record<BattleChannel, TranslationKey>;
+
+  /**
+   * Значки глаголов.
+   *
+   * Таблица, а не совпадение имён, как у форм и поводов: пять глаголов носят
+   * значок, который уже есть у чего-то другого и означает то же самое, —
+   * «урон» это меч, «мана» это капля, — и рисовать им вторые такие же было бы
+   * два рисунка одного предмета, которые однажды разойдутся.
+   */
+  const VERB_ICON = {
+    damage: "sword",
+    dot: "flame",
+    heal: "sprig",
+    hot: "bloom",
+    shield: "shield",
+    zone: "zone",
+    bless: "bless",
+    curse: "curse",
+    control: "control",
+    silence: "silence",
+    disarm: "disarm",
+    charm: "charm",
+    veil: "veil",
+    guard: "guard",
+    immune: "immune",
+    thorns: "thorns",
+    move: "move",
+    summon: "summon",
+    sacrifice: "sacrifice",
+    cleanse: "cleanse",
+    dispel: "dispel",
+    mana: "drop",
+  } as const satisfies Record<AbilityVerb, string>;
+
   const VERBS = Object.keys(VERB_LABELS) as AbilityVerb[];
   const SHAPES = Object.keys(SHAPE_LABELS) as AbilityShape[];
   const TRIGGERS = Object.keys(TRIGGER_LABELS) as AbilityTrigger[];
@@ -1902,6 +2012,36 @@
         keywords: [],
       },
     ];
+    // Заведённое берётся в руку сразу: его затем и заводили, а лента без этого
+    // отрастила бы кружок, настройки которого лежат под другим кружком.
+    abilityHeld = draft.abilities[draft.abilities.length - 1].id;
+  }
+
+  /**
+   * Какое умение в руке.
+   *
+   * Держим ИМЯ строки, а не её номер — по той же причине, по которой деталь
+   * рамы держат за `id`: номер меняется от всякого перемещения по списку, и
+   * поднятое вверх умение выпадало бы из рук на каждый щелчок. Стёртое
+   * уступает первому: пустых рук у панели с умениями не бывает.
+   */
+  let abilityHeld = $state<string | null>(null);
+  let abilityAt = $derived.by(() => {
+    const list = draft.abilities ?? [];
+    if (!list.length) return -1;
+    const at = list.findIndex((a) => a.id === abilityHeld);
+    return at >= 0 ? at : 0;
+  });
+  let abilityInHand = $derived(
+    abilityAt >= 0 ? (draft.abilities ?? [])[abilityAt] : null,
+  );
+
+  /** Чем умение подписано в ленте: своим именем, а если его нет — глаголом.
+   *  Безымянных умений на карте много, и «без названия» пять раз подряд не
+   *  говорит ничего, а глагол говорит всё. */
+  function abilityName(ability: CardAbility): string {
+    const own = (editLang === "en" ? ability.nameEn : ability.nameRu)?.trim();
+    return own || $t(VERB_LABELS[ability.verb]);
   }
 
   function removeAbility(at: number) {
@@ -2410,6 +2550,32 @@
       });
       box.querySelector<HTMLElement>("input, textarea, select")?.focus();
     });
+  }
+
+  /**
+   * «1 карта», «2 карты», «5 карт».
+   *
+   * Слова лежат в словаре, а ветка выбора — здесь: склонение по числу это
+   * свойство языка, а не текста, и в строку его не записать. Пока форма была
+   * одна, полка расы говорила «1 карт» — мелочь, но она стоит в заголовке
+   * листа крупными буквами.
+   */
+  function cardsOf(count: number): string {
+    const tail = count % 100;
+    const last = count % 10;
+    const form =
+      $lang === "ru"
+        ? tail >= 11 && tail <= 14
+          ? "Many"
+          : last === 1
+            ? "One"
+            : last >= 2 && last <= 4
+              ? "Few"
+              : "Many"
+        : count === 1
+          ? "One"
+          : "Many";
+    return `${count} ${$t(`adminBattlesRaceCards${form}` as TranslationKey)}`;
   }
 
   /** Слово отказа — то же, которым откажет сервер. */
@@ -4434,6 +4600,85 @@
           >
             {$t("adminBattlesEtudeRewardNote")}
           </p>
+
+          <!-- ── Правила этюда ──────────────────────────────────────────────
+               Вторая половина замысла: расстановка говорит, кто стоит, правила
+               — во что играют. Стол ниже играет ими же, поэтому проверяется
+               именно тот этюд, который потом достанется гостю. -->
+          <div class="mt-4 pt-4 border-t border-[#34251c]/10">
+            <label class="inline-flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" bind:checked={etudeOwnRules} />
+              <span class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                >{$t("adminBattlesRulesOwn")}</span
+              >
+            </label>
+            <p
+              class="mt-1 max-w-[62ch] text-[11px] leading-relaxed italic text-[#8a6a55]"
+            >
+              {$t("adminBattlesRulesHint")}
+            </p>
+
+            {#if etudeOwnRules}
+              <div class="mt-3 flex flex-wrap gap-x-5 gap-y-3 items-end">
+                {#each RULE_DIALS as dial (dial.key)}
+                  {#if dial.kind === "flag"}
+                    <label
+                      class="inline-flex items-center gap-2 w-56 cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={etudeRules[dial.key]}
+                        onchange={(e) =>
+                          tune(dial.key, e.currentTarget.checked)}
+                      />
+                      <span class="text-[11px] text-[#5f4636]"
+                        >{$t(dial.label)}</span
+                      >
+                    </label>
+                  {:else}
+                    <label class="block w-40">
+                      <span
+                        class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                        >{$t(dial.label)}</span
+                      >
+                      <input
+                        type="number"
+                        min={dial.min}
+                        max={dial.max}
+                        value={etudeRules[dial.key]}
+                        oninput={(e) =>
+                          tune(dial.key, Number(e.currentTarget.value))}
+                        class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                      />
+                    </label>
+                  {/if}
+                {/each}
+              </div>
+
+              <!-- То же самое, что прочтёт гость на полке. Хранитель, видящий
+                   другую строку, правит вслепую. -->
+              <p
+                class="mt-3 max-w-[62ch] text-[11px] leading-relaxed text-[#5f4636]"
+              >
+                {#if etudeApart.length}
+                  {$t("adminBattlesRulesApart")}:
+                  {#each etudeApart as line, i (line.key)}{i > 0
+                      ? " · "
+                      : " "}{$t(line.key)}{line.amount === null
+                      ? ""
+                      : ` — ${line.amount}`}{/each}
+                {:else}
+                  {$t("adminBattlesRulesSame")}
+                {/if}
+              </p>
+              <button
+                type="button"
+                onclick={() => (etudeRules = { ...HOUSE_RULES })}
+                class="mt-2 px-2 py-1 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20"
+                >{$t("adminBattlesRulesReset")}</button
+              >
+            {/if}
+          </div>
           {#if etudeSide === "deck"}
             <p
               class="mt-2 max-w-[62ch] text-[11px] leading-relaxed text-[#8a6a55]"
@@ -5321,116 +5566,266 @@
   {:else if view === "motions"}
     <BattleMotionsPanel {flash} onSaved={(list) => (motions = list)} />
   {:else if view === "races"}
-    <!-- ── The race dictionary ──────────────────────────────────────────── -->
-    <div class="flex-1 flex min-h-0">
-      <div class="flex-1 overflow-y-auto p-6 min-w-0">
-        <p class="max-w-[62ch] mb-5 text-xs leading-relaxed text-[#5f4636]">
-          {$t("adminBattlesRacesHint")}
-        </p>
+    <!-- ── Лист расы ─────────────────────────────────────────────────────
+         Тот же лист, что у карты, и это не подражание ради складности. Раса и
+         карта правятся одним и тем же жестом — имя, наряд, движения, — и пока
+         одно лежало полкой с панелями, а другое списком с формой под ним,
+         хранителю приходилось помнить, в какой из двух комнат он стоит.
 
-        {#if !races.length}
-          <p class="mb-5 text-xs italic text-[#5f4636]">
-            {$t("adminBattlesRacesEmpty")}
-          </p>
-        {:else}
-          <ul class="max-w-2xl mb-6 border-t border-[#34251c]/10">
-            {#each races as race (race.id)}
-              <li
-                class="flex items-center gap-3 py-2 border-b border-[#34251c]/10"
-              >
-                <button
-                  onclick={() => openRace(race)}
-                  class="flex-1 text-left hover:text-[#c65f3c] {raceDraftId ===
+         Полка слева, лист посередине, образец справа: раса судится на карте,
+         а не в отрыве, — значок величиной с ноготь не говорит ничего о том,
+         как он читается в шапке. -->
+    <div class="flex-1 flex min-h-0">
+      <aside class="w-64 flex flex-col border-r border-[#34251c]/10">
+        <div class="p-3 border-b border-[#34251c]/10">
+          <button
+            onclick={() => openRace(null)}
+            class="w-full px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
+            >{$t("adminBattlesRaceNew")}</button
+          >
+        </div>
+        <div class="flex-1 overflow-y-auto">
+          {#if !races.length}
+            <p class="p-3 text-xs italic text-[#5f4636]">
+              {$t("adminBattlesRacesEmpty")}
+            </p>
+          {:else}
+            <ul class="pb-4">
+              {#each races as race (race.id)}
+                <li
+                  class="relative group border-b border-[#34251c]/5 {raceDraftId ===
                   race.id
-                    ? 'text-[#c65f3c]'
+                    ? 'bg-[#34251c]/[0.06]'
                     : ''}"
                 >
-                  <span
-                    class="text-sm"
-                    style="font-family: 'Cormorant Garamond', Georgia, serif;"
-                    >{race.nameRu}</span
+                  <button
+                    onclick={() => openRace(race)}
+                    class="w-full text-left px-3 py-2.5 pr-8 hover:bg-[#34251c]/[0.04]"
                   >
-                  <span class="ml-2 text-[11px] text-[#8a6a55]"
-                    >{race.nameEn}</span
+                    <span
+                      class="block text-[13px] leading-snug truncate {raceDraftId ===
+                      race.id
+                        ? 'text-[#c65f3c]'
+                        : ''}"
+                      style="font-family: 'Cormorant Garamond', Georgia, serif;"
+                      >{race.nameRu}</span
+                    >
+                    <span class="block text-[10px] text-[#8a6a55] truncate">
+                      {race.nameEn} · {cardsOf(race.cardCount)}
+                    </span>
+                  </button>
+                  <!-- Убрать расу — у самой расы, а не общей кнопкой внизу:
+                       общая кнопка убирает ТУ, что открыта, и промахнуться ею
+                       можно ровно один раз. -->
+                  <button
+                    onclick={() => removeRace(race)}
+                    title={$t("adminBattlesDelete")}
+                    class="absolute top-1/2 right-1 -translate-y-1/2 w-6 h-6 flex items-center justify-center text-xs leading-none text-[#8f2f22] opacity-0 group-hover:opacity-100 focus:opacity-100 hover:bg-[#c65f3c]/12"
+                    >×</button
                   >
-                </button>
-                <!-- What a rename or a removal would touch. -->
-                <span
-                  class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                >
-                  {race.cardCount}
-                  {$t("adminBattlesRaceCards")}
-                </span>
-                <button
-                  onclick={() => removeRace(race)}
-                  class="px-2 py-1 text-xs border border-[#34251c]/20 text-[#6f3b24] hover:bg-[#c65f3c]/10"
-                  >×</button
-                >
-              </li>
-            {/each}
-          </ul>
-        {/if}
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
+      </aside>
 
-        <div class="max-w-2xl p-4 border border-[#34251c]/12">
-          <p class="mb-3 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">
-            {raceDraftId
-              ? $t("adminBattlesRaceEdit")
+      <div class="flex-1 flex flex-col min-h-0 overflow-y-auto @container">
+        <div class="flex-1 w-full max-w-[1320px] mx-auto px-8 pt-7 pb-6">
+          <SheetHead
+            title={raceDraftId
+              ? raceNameRu || raceNameEn || $t("adminBattlesRaceNew")
               : $t("adminBattlesRaceNew")}
-          </p>
-          <div class="flex flex-wrap gap-3">
-            <label class="block w-52">
-              <span
-                class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                >{$t("adminBattlesFrameName")} · RU</span
+            tag={raceDraftId
+              ? cardsOf(races.find((r) => r.id === raceDraftId)?.cardCount ?? 0)
+              : undefined}
+            lead={$t("adminBattlesSheetRaceLead")}
+          />
+
+          <div class="flex flex-col-reverse gap-7 @4xl:flex-row">
+            <div
+              class="flex-1 min-w-0 grid grid-cols-1 items-start gap-x-6 gap-y-7 @6xl:grid-cols-2"
+            >
+              <SheetPanel
+                wide
+                title={$t("adminBattlesSheetRaceNames")}
+                lead={$t("adminBattlesSheetRaceNamesLead")}
+                note={$t("adminBattlesRacesHint")}
               >
-              <input
-                bind:value={raceNameRu}
-                maxlength="60"
-                class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-              />
-            </label>
-            <label class="block w-52">
-              <span
-                class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                >{$t("adminBattlesFrameName")} · EN</span
+                <!-- Оба языка разом, а не через переключатель, как на карте:
+                     имён у расы всего два, и держать их рядом дешевле, чем
+                     заводить ради них переключатель, которого здесь нет. -->
+                <div class="grid grid-cols-2 gap-3">
+                  <SheetField label={`${$t("adminBattlesRaceName")} · RU`}>
+                    <input bind:value={raceNameRu} maxlength="60" />
+                  </SheetField>
+                  <SheetField label={`${$t("adminBattlesRaceName")} · EN`}>
+                    <input bind:value={raceNameEn} maxlength="60" />
+                  </SheetField>
+                  <SheetField label={`${$t("adminBattlesRaceNote")} · RU`}>
+                    <input bind:value={raceNoteRu} maxlength="200" />
+                  </SheetField>
+                  <SheetField label={`${$t("adminBattlesRaceNote")} · EN`}>
+                    <input bind:value={raceNoteEn} maxlength="200" />
+                  </SheetField>
+                </div>
+              </SheetPanel>
+
+              <!-- Наряд по уровням. Пять плиток — тот же гардероб, что у карты:
+                   лицо рамы величиной с раму, а не квадратик в сорок пикселей,
+                   по которому уголок от притолоки не отличить. -->
+              <SheetPanel
+                wide
+                title={$t("adminBattlesRaceLevelFrames")}
+                note={$t("adminBattlesRaceLevelFramesHint")}
               >
-              <input
-                bind:value={raceNameEn}
-                maxlength="60"
-                class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-              />
-            </label>
+                <div class="flex flex-wrap gap-2.5">
+                  {#each [1, 2, 3, 4, 5] as lvl (lvl)}
+                    <button
+                      onclick={() => (raceLevelPreview = lvl)}
+                      class="w-16 flex flex-col gap-1 text-left"
+                    >
+                      <!-- Пустая ступень — пунктиром, как «не выбрано» в
+                           гардеробе: сплошная рамка вокруг пустоты читается
+                           рамой без картинки, а это разные вещи. -->
+                      <span
+                        class="w-full border bg-center bg-contain bg-no-repeat {raceLevelFrames[
+                          lvl - 1
+                        ]?.frameImage
+                          ? 'border-solid'
+                          : 'border-dashed'} {raceLevelPreview === lvl
+                          ? 'border-[#c65f3c] shadow-[0_0_0_2px_#c65f3c]'
+                          : 'border-[#34251c]/25'}"
+                        style="aspect-ratio: 5 / 7; {raceLevelFrames[lvl - 1]
+                          ?.frameImage
+                          ? `background-image:url('${raceLevelFrames[lvl - 1]?.frameImage}')`
+                          : ''}"
+                      ></span>
+                      <!-- Только число: слово «уровень» под каждой из пяти
+                           плиток переносилось на вторую строку и повторяло
+                           название панели пять раз подряд. -->
+                      <span
+                        class="text-[11px] tabular-nums {raceLevelPreview === lvl
+                          ? 'text-[#c65f3c]'
+                          : 'text-[#8a6a55]'}">{lvl}</span
+                      >
+                    </button>
+                  {/each}
+                </div>
+
+                <div class="flex flex-wrap items-center gap-2 mt-3">
+                  <button
+                    onclick={() => uploadRaceLevelFrame(raceLevelPreview - 1)}
+                    disabled={uploading}
+                    class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
+                    >{$t("adminBattlesFrameArtUpload")}</button
+                  >
+                  {#if raceLevelFrames[raceLevelPreview - 1]}
+                    <button
+                      onclick={() => clearRaceLevelFrame(raceLevelPreview - 1)}
+                      class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
+                      >{$t("adminBattlesFrameArtClear")}</button
+                    >
+                  {/if}
+                </div>
+
+                <!-- Или взять готовое из ящика — целиком, а не одной картинкой:
+                     рамка, собранная из частей, иначе на расу бы не переехала. -->
+                {#if presets.length}
+                  <div class="mt-5 pt-4 border-t border-dashed border-[#34251c]/12">
+                    <p
+                      class="mb-2 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                    >
+                      {$t("adminBattlesPresetChoose")}
+                    </p>
+                    <BattleFramePicker
+                      {presets}
+                      bind:chosen={presetChosen}
+                      allowNone
+                      layout="rack"
+                      label={$t("adminBattlesPresetChoose")}
+                    />
+                    <div class="flex flex-wrap items-center gap-2 mt-3">
+                      <button
+                        onclick={() => wearPresetOnLevel(raceLevelPreview - 1)}
+                        disabled={!presetTaken}
+                        class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
+                        >{$t("adminBattlesPresetWearLevel")}</button
+                      >
+                      <button
+                        onclick={wearPresetOnAllLevels}
+                        disabled={!presetTaken}
+                        class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
+                        >{$t("adminBattlesPresetWearAll")}</button
+                      >
+                    </div>
+                  </div>
+                {/if}
+              </SheetPanel>
+
+              <!-- Движения расы. Стоят рядом с нарядом, а не в отдельном месте:
+                   и то и другое — то, что раса раздаёт всем своим картам
+                   сразу, и надеваются они одним жестом. -->
+              <SheetPanel wide title={$t("adminBattlesSheetMotion")}>
+                <BattleMotionWear
+                  wear={raceMotionWear}
+                  {motions}
+                  onChange={(raw) => (raceMotionWear = raw)}
+                  onOpenBox={() => (view = "motions")}
+                />
+              </SheetPanel>
+            </div>
+
+            <!-- Сложенным столбиком карта не растягивается во всю ширину:
+                 она не становится понятнее от того, что стала с ладонь. -->
+            <aside
+              class="w-full max-w-[360px] flex-shrink-0 @4xl:w-[360px] @4xl:max-w-none"
+            >
+              <div class="pt-1 @4xl:sticky @4xl:top-0">
+                <BattleCard
+                  card={raceSample}
+                  {frames}
+                  owned={true}
+                  level={raceLevelPreview}
+                  transition={false}
+                  interactive={false}
+                  raceIconEditable={true}
+                  frameEditable={!!raceLevelFrames[raceLevelPreview - 1]}
+                  frameEditTarget={raceLevelFrames[raceLevelPreview - 1]}
+                  onIconUpload={(url) => (raceIconUrl = url)}
+                  onError={(e) => flash(e, 6000)}
+                />
+                <p
+                  class="mt-3 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                >
+                  {$t("adminBattlesRaceIcon")}
+                </p>
+                <p class="mt-1 text-[11px] leading-relaxed italic text-[#8a6a55]">
+                  {$t("adminBattlesRaceIconHint")}
+                </p>
+                {#if raceIconUrl.trim()}
+                  <button
+                    onclick={() => (raceIconUrl = "")}
+                    class="mt-2 px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
+                    >{$t("adminBattlesFrameArtClear")}</button
+                  >
+                {/if}
+              </div>
+            </aside>
           </div>
-          <div class="flex flex-wrap gap-3 mt-3">
-            <label class="block flex-1 min-w-[14rem]">
-              <span
-                class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                >{$t("adminBattlesRaceNote")} · RU</span
-              >
-              <input
-                bind:value={raceNoteRu}
-                maxlength="200"
-                class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-              />
-            </label>
-            <label class="block flex-1 min-w-[14rem]">
-              <span
-                class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                >{$t("adminBattlesRaceNote")} · EN</span
-              >
-              <input
-                bind:value={raceNoteEn}
-                maxlength="200"
-                class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-              />
-            </label>
-          </div>
-          <div class="flex items-center gap-3 mt-4">
+        </div>
+
+        <div
+          class="sticky bottom-0 z-10 border-t border-[#34251c]/12 bg-[#f8f1e7]"
+        >
+          <div
+            class="w-full max-w-[1320px] mx-auto px-8 py-3 flex items-center gap-4"
+          >
             <button
               onclick={saveRace}
               disabled={saving}
               class="px-4 py-2 text-[10px] uppercase tracking-[0.16em] bg-[#34251c] text-[#f8f1e7] disabled:opacity-40"
-              >{$t("adminBattlesSave")}</button
+              >{$t("adminBattlesSaveRace")}</button
             >
             {#if raceDraftId}
               <button
@@ -5438,129 +5833,14 @@
                 class="px-4 py-2 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20"
                 >{$t("adminBattlesRaceNew")}</button
               >
+            {:else}
+              <span class="text-[11px] italic text-[#8a6a55]"
+                >{$t("adminBattlesSheetRaceNone")}</span
+              >
             {/if}
           </div>
         </div>
       </div>
-
-      <!-- Judged on a card, the same way a frame is: an icon the size of a
-           swatch tells the keeper nothing about how it reads in the header. -->
-      <aside
-        class="w-80 flex-shrink-0 p-5 border-l border-[#34251c]/10 overflow-y-auto"
-      >
-        <!-- Движения расы. Стоят у значка, а не в отдельном месте: и то и
-             другое — то, что раса раздаёт всем своим картам сразу. -->
-        <div class="mb-4 pb-4 border-b border-[#34251c]/10">
-          <BattleMotionWear
-            wear={raceMotionWear}
-            {motions}
-            onChange={(raw) => (raceMotionWear = raw)}
-            onOpenBox={() => (view = "motions")}
-          />
-        </div>
-
-        <p class="mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">
-          {$t("adminBattlesRaceIcon")}
-        </p>
-        <p
-          class="max-w-[62ch] mb-3 text-[11px] leading-relaxed italic text-[#8a6a55]"
-        >
-          {$t("adminBattlesRaceIconHint")}
-        </p>
-        <BattleCard
-          card={raceSample}
-          {frames}
-          owned={true}
-          level={raceLevelPreview}
-          transition={false}
-          interactive={false}
-          raceIconEditable={true}
-          frameEditable={!!raceLevelFrames[raceLevelPreview - 1]}
-          frameEditTarget={raceLevelFrames[raceLevelPreview - 1]}
-          onIconUpload={(url) => (raceIconUrl = url)}
-          onError={(e) => flash(e, 6000)}
-        />
-        {#if raceIconUrl.trim()}
-          <button
-            onclick={() => (raceIconUrl = "")}
-            class="mt-3 px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
-            >{$t("adminBattlesFrameArtClear")}</button
-          >
-        {/if}
-
-        <p
-          class="mt-6 mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-        >
-          {$t("adminBattlesRaceLevelFrames")}
-        </p>
-        <p
-          class="max-w-[62ch] mb-3 text-[11px] leading-relaxed italic text-[#8a6a55]"
-        >
-          {$t("adminBattlesRaceLevelFramesHint")}
-        </p>
-        <div class="flex gap-2">
-          {#each [1, 2, 3, 4, 5] as lvl (lvl)}
-            <button
-              onclick={() => (raceLevelPreview = lvl)}
-              class="w-11 h-11 flex items-center justify-center text-xs border {raceLevelPreview ===
-              lvl
-                ? 'border-[#c65f3c] text-[#c65f3c]'
-                : 'border-[#34251c]/20 text-[#5f4636]'}"
-              style={raceLevelFrames[lvl - 1]?.frameImage
-                ? `background-image:url("${raceLevelFrames[lvl - 1]?.frameImage}");background-size:100% 100%;background-repeat:no-repeat;`
-                : ""}
-              >{#if !raceLevelFrames[lvl - 1]?.frameImage}{lvl}{/if}</button
-            >
-          {/each}
-        </div>
-        <div class="flex items-center gap-3 mt-3">
-          <button
-            onclick={() => uploadRaceLevelFrame(raceLevelPreview - 1)}
-            disabled={uploading}
-            class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
-            >{$t("adminBattlesFrameArtUpload")}</button
-          >
-          {#if raceLevelFrames[raceLevelPreview - 1]}
-            <button
-              onclick={() => clearRaceLevelFrame(raceLevelPreview - 1)}
-              class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
-              >{$t("adminBattlesFrameArtClear")}</button
-            >
-          {/if}
-        </div>
-
-        <!-- Или взять готовое из ящика — целиком, а не одной картинкой:
-             рамка, собранная из частей, иначе на расу бы не переехала. -->
-        {#if presets.length}
-          <div class="mt-5">
-            <p
-              class="mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-            >
-              {$t("adminBattlesPresetChoose")}
-            </p>
-            <BattleFramePicker
-              {presets}
-              bind:chosen={presetChosen}
-              allowNone
-              label={$t("adminBattlesPresetChoose")}
-            />
-          </div>
-          <div class="flex flex-wrap items-center gap-2 mt-2">
-            <button
-              onclick={() => wearPresetOnLevel(raceLevelPreview - 1)}
-              disabled={!presetTaken}
-              class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
-              >{$t("adminBattlesPresetWearLevel")}</button
-            >
-            <button
-              onclick={wearPresetOnAllLevels}
-              disabled={!presetTaken}
-              class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
-              >{$t("adminBattlesPresetWearAll")}</button
-            >
-          </div>
-        {/if}
-      </aside>
     </div>
   {:else}
     <div class="flex-1 flex min-h-0">
@@ -5660,7 +5940,14 @@
 
            Карта переехала вправо и прибита к верху: правят её саму, и она
            должна быть видна с любого места листа, а не только с начала. -->
-      <div class="flex-1 flex flex-col min-h-0 overflow-y-auto">
+      <!-- Лист меряет СЕБЯ, а не окно. Перелом сперва стоял на `lg:` — и это
+           было неверно с первой минуты: до листа окно доходит уже без боковины
+           администратора и без полки карт, четырьмя сотнями пикселей меньше. На
+           окне в тысячу «широкая» раскладка включалась, а листу доставалось
+           шестьсот, и колонка панелей схлопывалась в щепку рядом с картой в
+           треть тысячи. Контейнерный запрос спрашивает ровно то, что нужно
+           знать, — сколько места у листа, — и так же меряет себя сама карта. -->
+      <div class="flex-1 flex flex-col min-h-0 overflow-y-auto @container">
         <div class="flex-1 w-full max-w-[1320px] mx-auto px-8 pt-7 pb-6">
           <SheetHead
             title={titleOf(draft) || $t("adminBattlesSheetUntitled")}
@@ -5701,16 +5988,25 @@
                то, что на карте написано, чем она одета, и лишь затем числа,
                которыми она играет. Учёт — последним, у самой кнопки: статус
                решают, когда решено всё остальное. -->
-          <div class="flex gap-7">
+          <!-- Узкое окно ломает лист двумя способами сразу, и оба надо
+               закрыть: две колонки панелей на восьмистах пикселях — это две
+               узкие колонки ни для чего, а прибитая карта, встав НАД панелями
+               вместо того, чтобы стоять сбоку, снова начнёт их накрывать.
+               Поэтому до xl панели идут одной колонкой, а до lg карта
+               поднимается наверх и перестаёт быть прибитой. -->
+          <div class="flex flex-col-reverse gap-7 @4xl:flex-row">
             <div
-              class="flex-1 min-w-0 grid grid-cols-2 items-start gap-x-6 gap-y-7"
+              class="flex-1 min-w-0 grid grid-cols-1 items-start gap-x-6 gap-y-7 @6xl:grid-cols-2"
             >
               <SheetPanel
                 wide
                 title={$t("adminBattlesSheetWork")}
                 lead={$t("adminBattlesSheetWorkLead")}
               >
-                <SheetField label={$t("adminBattlesWork")}>
+                <!-- Без подписи: панель уже названа «Работой», и второе то же
+                     слово строчкой ниже сообщает только о том, что его забыли
+                     убрать. -->
+                <SheetField>
                   <input
                     bind:value={workQuery}
                     placeholder={$t("adminBattlesSearch")}
@@ -5778,7 +6074,7 @@
                         value={focal.x}
                         oninput={(e) =>
                           setFocal({ x: Number(e.currentTarget.value) })}
-                        class="w-full"
+                        class="w-full accent-[#c65f3c]"
                       />
                     </label>
                     <label class="block">
@@ -5796,7 +6092,7 @@
                         value={focal.y}
                         oninput={(e) =>
                           setFocal({ y: Number(e.currentTarget.value) })}
-                        class="w-full"
+                        class="w-full accent-[#c65f3c]"
                       />
                     </label>
                     <label class="block">
@@ -5812,7 +6108,7 @@
                         value={focal.zoom}
                         oninput={(e) =>
                           setFocal({ zoom: Number(e.currentTarget.value) })}
-                        class="w-full"
+                        class="w-full accent-[#c65f3c]"
                       />
                     </label>
                   </div>
@@ -6008,6 +6304,7 @@
                     {presets}
                     bind:chosen={presetChosen}
                     allowNone
+                    layout="rack"
                     label={$t("adminBattlesPresetChoose")}
                   />
                   <div class="flex flex-wrap items-center gap-2 mt-2">
@@ -6070,30 +6367,14 @@
                   {$t("adminBattlesChannel")}
                 </p>
                 <div class="flex flex-wrap gap-x-6 gap-y-3">
-                  <Medallion
-                    icon="sword"
-                    caption={$t("adminBattlesChannelPhysical")}
-                    selected={draft.attackChannel === "physical"}
-                    onclick={() => (draft.attackChannel = "physical")}
-                  />
-                  <Medallion
-                    icon="spark"
-                    caption={$t("adminBattlesChannelMagic")}
-                    selected={draft.attackChannel === "magic"}
-                    onclick={() => (draft.attackChannel = "magic")}
-                  />
-                  <Medallion
-                    icon="pure"
-                    caption={$t("adminBattlesChannelPure")}
-                    selected={draft.attackChannel === "pure"}
-                    onclick={() => (draft.attackChannel = "pure")}
-                  />
-                  <Medallion
-                    icon="nil"
-                    caption={$t("adminBattlesChannelNone")}
-                    selected={draft.attackChannel === "none"}
-                    onclick={() => (draft.attackChannel = "none")}
-                  />
+                  {#each CHANNELS as channel (channel)}
+                    <Medallion
+                      icon={CHANNEL_ICON[channel]}
+                      caption={$t(CHANNEL_LABELS[channel])}
+                      selected={draft.attackChannel === channel}
+                      onclick={() => (draft.attackChannel = channel)}
+                    />
+                  {/each}
                 </div>
               </SheetPanel>
 
@@ -6139,7 +6420,10 @@
                   {/if}
                 {/snippet}
 
-                <StatPlate>
+                <!-- 7.4rem — не круглое число ради красоты: с ним девять
+                     ячеек ложатся пятью и четырьмя, а не семью и двумя, где
+                     две последние растягивались каждая на треть плашки. -->
+                <StatPlate min="7.4rem">
                   <StatCell
                     icon="heart"
                     label={$t("battlesHealthLabel")}
@@ -6256,268 +6540,244 @@
                   {/if}
                 {/snippet}
 
-                <div class="flex flex-col gap-2">
-                  {#each draft.abilities ?? [] as ability, i (ability.id)}
-                    <div
-                      class="p-2.5 border border-[#34251c]/12 bg-[#34251c]/[0.02]"
-                    >
-                      <div class="flex items-start gap-2">
-                        <div class="flex-1 min-w-0 flex flex-col gap-2">
-                          <div class="flex flex-wrap gap-2">
-                            <label class="block w-44">
-                              <span
-                                class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                                >{$t("adminBattlesAbilityVerb")}</span
-                              >
-                              <select
-                                bind:value={draft.abilities[i].verb}
-                                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                              >
-                                {#each VERBS as verb (verb)}
-                                  <option value={verb}
-                                    >{$t(VERB_LABELS[verb])}</option
-                                  >
-                                {/each}
-                              </select>
-                            </label>
-                            <label class="block w-20">
-                              <span
-                                class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                                >{$t("adminBattlesAbilityAmount")}</span
-                              >
-                              <input
-                                type="number"
-                                min="0"
-                                max="99"
-                                bind:value={draft.abilities[i].amount}
-                                onfocus={selectOnFocus}
-                                onwheel={blurOnWheel}
-                                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                              />
-                            </label>
-                            <label class="block w-44">
-                              <span
-                                class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                                >{$t("adminBattlesAbilityShape")}</span
-                              >
-                              <select
-                                bind:value={draft.abilities[i].shape}
-                                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                              >
-                                {#each SHAPES as shape (shape)}
-                                  <option value={shape}
-                                    >{$t(SHAPE_LABELS[shape])}</option
-                                  >
-                                {/each}
-                              </select>
-                            </label>
-                            <!-- Число несут только цепь и радиус; у остальных заполнять нечего. -->
-                            <label
-                              class="block w-24"
-                              class:opacity-30={!shapeCarriesNumber(
-                                ability.shape,
-                              )}
-                            >
-                              <span
-                                class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                                >{$t("adminBattlesAbilityRadius")}</span
-                              >
-                              <input
-                                type="number"
-                                min="0"
-                                max="3"
-                                disabled={!shapeCarriesNumber(ability.shape)}
-                                bind:value={draft.abilities[i].radius}
-                                onfocus={selectOnFocus}
-                                onwheel={blurOnWheel}
-                                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                              />
-                            </label>
-                            <label class="block w-20">
-                              <span
-                                class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                                >{$t("adminBattlesAbilityRange")}</span
-                              >
-                              <input
-                                type="number"
-                                min="0"
-                                max="5"
-                                bind:value={draft.abilities[i].range}
-                                onfocus={selectOnFocus}
-                                onwheel={blurOnWheel}
-                                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                              />
-                            </label>
-                            <label class="block w-20">
-                              <span
-                                class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                                >{$t("adminBattlesAbilityDuration")}</span
-                              >
-                              <input
-                                type="number"
-                                min="0"
-                                max="5"
-                                bind:value={draft.abilities[i].duration}
-                                onfocus={selectOnFocus}
-                                onwheel={blurOnWheel}
-                                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                              />
-                            </label>
-                          </div>
+                <!-- Лента умений: по медальону на каждое, лицом глагола и своим
+                     именем. Настройки — ТОЛЬКО того, что в руке.
 
-                          <div class="flex flex-wrap gap-2">
-                            <label class="block w-52">
-                              <span
-                                class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                                >{$t("adminBattlesAbilityTrigger")}</span
-                              >
-                              <select
-                                bind:value={draft.abilities[i].trigger}
-                                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                              >
-                                {#each TRIGGERS as trigger (trigger)}
-                                  <option value={trigger}
-                                    >{$t(TRIGGER_LABELS[trigger])}</option
-                                  >
-                                {/each}
-                              </select>
-                            </label>
-                            <label class="block w-36">
-                              <span
-                                class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                                >{$t("adminBattlesChannel")}</span
-                              >
-                              <select
-                                bind:value={draft.abilities[i].channel}
-                                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                              >
-                                <option value="physical"
-                                  >{$t("adminBattlesChannelPhysical")}</option
-                                >
-                                <option value="magic"
-                                  >{$t("adminBattlesChannelMagic")}</option
-                                >
-                                <option value="pure"
-                                  >{$t("adminBattlesChannelPure")}</option
-                                >
-                                <option value="none"
-                                  >{$t("adminBattlesChannelNone")}</option
-                                >
-                              </select>
-                            </label>
-                            <label class="block w-20">
-                              <span
-                                class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                                >{$t("adminBattlesAbilityMana")}</span
-                              >
-                              <input
-                                type="number"
-                                min="0"
-                                max="20"
-                                bind:value={draft.abilities[i].manaCost}
-                                onfocus={selectOnFocus}
-                                onwheel={blurOnWheel}
-                                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                              />
-                            </label>
-                            <label class="block w-24">
-                              <span
-                                class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                                >{$t("adminBattlesAbilityCooldown")}</span
-                              >
-                              <input
-                                type="number"
-                                min="0"
-                                max="5"
-                                bind:value={draft.abilities[i].cooldown}
-                                onfocus={selectOnFocus}
-                                onwheel={blurOnWheel}
-                                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                              />
-                            </label>
-                          </div>
-
-                          <div class="flex flex-wrap gap-2">
-                            <label class="block flex-1 min-w-[10rem]">
-                              <span
-                                class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                                >{$t("adminBattlesTraitName")} · RU</span
-                              >
-                              <input
-                                bind:value={draft.abilities[i].nameRu}
-                                maxlength="60"
-                                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                              />
-                            </label>
-                            <label class="block flex-1 min-w-[10rem]">
-                              <span
-                                class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                                >{$t("adminBattlesTraitName")} · EN</span
-                              >
-                              <input
-                                bind:value={draft.abilities[i].nameEn}
-                                maxlength="60"
-                                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                              />
-                            </label>
-                            <label class="block flex-1 min-w-[12rem]">
-                              <span
-                                class="block mb-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                                >{$t("adminBattlesAbilityKeywords")}</span
-                              >
-                              <input
-                                value={(ability.keywords ?? []).join(", ")}
-                                oninput={(e) =>
-                                  keywordsInput(i, e.currentTarget.value)}
-                                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                              />
-                            </label>
-                          </div>
-                        </div>
-
-                        <div class="flex flex-col items-end gap-1 flex-shrink-0">
-                          <!-- Цена именно этой строки, посчитанная сервером. -->
-                          <span class="text-[11px] tabular-nums text-[#6f3b24]">
-                            {abilityPoints(ability.id)?.toFixed(1) ?? "—"}
-                            <span class="text-[9px] text-[#8a6a55]"
-                              >{$t("adminBattlesAbilityPoints")}</span
-                            >
-                          </span>
-                          <div class="flex flex-col gap-0.5">
-                            <button
-                              type="button"
-                              onclick={() => moveAbility(i, -1)}
-                              disabled={i === 0}
-                              class="px-1.5 text-xs border border-[#34251c]/20 disabled:opacity-30"
-                              >↑</button
-                            >
-                            <button
-                              type="button"
-                              onclick={() => moveAbility(i, 1)}
-                              disabled={i === (draft.abilities?.length ?? 0) - 1}
-                              class="px-1.5 text-xs border border-[#34251c]/20 disabled:opacity-30"
-                              >↓</button
-                            >
-                            <button
-                              type="button"
-                              onclick={() => removeAbility(i)}
-                              class="px-1.5 text-xs border border-[#34251c]/20 hover:bg-[#c65f3c]/10"
-                              >×</button
-                            >
-                          </div>
-                        </div>
-                      </div>
-                    </div>
+                     Панель разворачивала все поля всех умений разом: четыре
+                     умения это стена в пол-экрана из одинаковых выпадающих
+                     списков, и найти в ней нужное можно было только чтением
+                     подряд. Дом этот приём уже знает — стол рам показывает
+                     список деталей и настройки одной, взятой; здесь тот же
+                     жест и та же мебель. -->
+                <div class="flex flex-wrap items-start gap-x-5 gap-y-4">
+                  {#each draft.abilities ?? [] as ability (ability.id)}
+                    <Medallion
+                      icon={VERB_ICON[ability.verb]}
+                      caption={abilityName(ability)}
+                      note={abilityPoints(ability.id) != null
+                        ? `${abilityPoints(ability.id)?.toFixed(1)} ${$t("adminBattlesAbilityPoints")}`
+                        : undefined}
+                      selected={ability.id === abilityInHand?.id}
+                      onclick={() => (abilityHeld = ability.id)}
+                    />
                   {/each}
+                  {#if (draft.abilities?.length ?? 0) < ABILITIES_MAX}
+                    <Medallion
+                      icon="plus"
+                      hollow
+                      caption={$t("adminBattlesAbilityAdd")}
+                      onclick={addAbility}
+                    />
+                  {/if}
                 </div>
 
-                <button
-                  type="button"
-                  onclick={addAbility}
-                  disabled={(draft.abilities?.length ?? 0) >= ABILITIES_MAX}
-                  class="mt-2 px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
-                  >+ {$t("adminBattlesAbilityAdd")}</button
-                >
+                {#if !(draft.abilities ?? []).length}
+                  <p class="mt-4 text-[11px] leading-relaxed italic text-[#8a6a55]">
+                    {$t("adminBattlesAbilitiesEmpty")}
+                  </p>
+                {:else if abilityInHand}
+                  {@const i = abilityAt}
+                  {@const ability = abilityInHand}
+                  <div
+                    class="mt-5 pt-4 border-t border-dashed border-[#34251c]/15"
+                  >
+                    <!-- Чьи это настройки — сказано вслух. Без подписи полоса
+                         полей под лентой читается настройками ленты целиком. -->
+                    <div class="flex items-baseline gap-2 mb-3">
+                      <span
+                        class="text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                        >{$t("adminBattlesAbilityChosen")}</span
+                      >
+                      <span class="text-xs text-[#6f3b24]"
+                        >{abilityName(ability)}</span
+                      >
+                      <span class="ml-auto flex items-center gap-1">
+                        <button
+                          type="button"
+                          onclick={() => moveAbility(i, -1)}
+                          disabled={i === 0}
+                          title={$t("adminBattlesAbilityRaise")}
+                          class="w-6 h-6 flex items-center justify-center border border-[#34251c]/20 text-[#5f4636] disabled:opacity-30 hover:bg-[#34251c]/5"
+                          ><BattleIcon name="up" /></button
+                        >
+                        <button
+                          type="button"
+                          onclick={() => moveAbility(i, 1)}
+                          disabled={i === (draft.abilities?.length ?? 0) - 1}
+                          title={$t("adminBattlesAbilityLower")}
+                          class="w-6 h-6 flex items-center justify-center border border-[#34251c]/20 text-[#5f4636] disabled:opacity-30 hover:bg-[#34251c]/5"
+                          ><BattleIcon name="down" /></button
+                        >
+                        <button
+                          type="button"
+                          onclick={() => removeAbility(i)}
+                          title={$t("adminBattlesDelete")}
+                          class="w-6 h-6 flex items-center justify-center border border-[#34251c]/20 text-[#8f2f22] hover:bg-[#c65f3c]/10"
+                          ><BattleIcon name="trash" /></button
+                        >
+                      </span>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-x-4 gap-y-3">
+                      <SheetField label={$t("adminBattlesAbilityVerb")}>
+                        <span class="flex items-center gap-1.5">
+                          <span class="flex-shrink-0 text-[#6f3b24]"
+                            ><BattleIcon
+                              name={VERB_ICON[ability.verb]}
+                              size={15}
+                            /></span
+                          >
+                          <select bind:value={draft.abilities[i].verb}>
+                            {#each VERBS as verb (verb)}
+                              <option value={verb}
+                                >{$t(VERB_LABELS[verb])}</option
+                              >
+                            {/each}
+                          </select>
+                        </span>
+                      </SheetField>
+
+                      <!-- Значок стоит У списка, а не вместо него: форм восемь
+                           и поводов восемь, медальонами это два ряда кружков на
+                           каждое умение. Слово в списке уже написано. -->
+                      <SheetField label={$t("adminBattlesAbilityShape")}>
+                        <span class="flex items-center gap-1.5">
+                          <span class="flex-shrink-0 text-[#6f3b24]"
+                            ><BattleIcon name={ability.shape} size={15} /></span
+                          >
+                          <select bind:value={draft.abilities[i].shape}>
+                            {#each SHAPES as shape (shape)}
+                              <option value={shape}
+                                >{$t(SHAPE_LABELS[shape])}</option
+                              >
+                            {/each}
+                          </select>
+                        </span>
+                      </SheetField>
+
+                      <SheetField label={$t("adminBattlesAbilityTrigger")}>
+                        <span class="flex items-center gap-1.5">
+                          <span class="flex-shrink-0 text-[#6f3b24]"
+                            ><BattleIcon
+                              name={ability.trigger}
+                              size={15}
+                            /></span
+                          >
+                          <select bind:value={draft.abilities[i].trigger}>
+                            {#each TRIGGERS as trigger (trigger)}
+                              <option value={trigger}
+                                >{$t(TRIGGER_LABELS[trigger])}</option
+                              >
+                            {/each}
+                          </select>
+                        </span>
+                      </SheetField>
+
+                      <SheetField label={$t("adminBattlesAbilityKeywords")}>
+                        <input
+                          value={(ability.keywords ?? []).join(", ")}
+                          oninput={(e) =>
+                            keywordsInput(i, e.currentTarget.value)}
+                        />
+                      </SheetField>
+
+                      <!-- Числа умения. Той же плашкой, что тело карты: это
+                           тоже числа, которые читает только движок, и второй
+                           вид для них означал бы, что они другого рода. -->
+                      <div class="col-span-2">
+                        <StatPlate min="6rem">
+                          <StatCell
+                            icon="sword"
+                            label={$t("adminBattlesAbilityAmount")}
+                            min={0}
+                            max={99}
+                            bind:value={draft.abilities[i].amount}
+                          />
+                          <StatCell
+                            icon={ability.shape}
+                            label={$t("adminBattlesAbilityRadius")}
+                            tone={shapeCarriesNumber(ability.shape)
+                              ? "plain"
+                              : "quiet"}
+                            readonly={!shapeCarriesNumber(ability.shape)}
+                            min={0}
+                            max={3}
+                            bind:value={draft.abilities[i].radius}
+                          />
+                          <StatCell
+                            icon="reach"
+                            label={$t("adminBattlesAbilityRange")}
+                            min={0}
+                            max={5}
+                            bind:value={draft.abilities[i].range}
+                          />
+                          <StatCell
+                            icon="turnStart"
+                            label={$t("adminBattlesAbilityDuration")}
+                            min={0}
+                            max={5}
+                            bind:value={draft.abilities[i].duration}
+                          />
+                          <StatCell
+                            icon="drop"
+                            label={$t("adminBattlesAbilityMana")}
+                            min={0}
+                            max={20}
+                            bind:value={draft.abilities[i].manaCost}
+                          />
+                          <StatCell
+                            icon="once"
+                            label={$t("adminBattlesAbilityCooldown")}
+                            min={0}
+                            max={5}
+                            bind:value={draft.abilities[i].cooldown}
+                          />
+                        </StatPlate>
+                        <!-- Оговорки о радиусе здесь нет и не нужно: ячейка
+                             приглушена и не правится ровно у тех форм, которые
+                             числа не несут, и это видно без слов. -->
+                      </div>
+
+                      <!-- Канал медальонами: их четыре, и это тот же выбор
+                           теми же кружками, что у карты целиком в «Ударе». -->
+                      <div class="col-span-2">
+                        <span
+                          class="block mb-1.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                          >{$t("adminBattlesChannel")}</span
+                        >
+                        <div class="flex items-start gap-4">
+                          {#each CHANNELS as channel (channel)}
+                            <Medallion
+                              icon={CHANNEL_ICON[channel]}
+                              caption={$t(CHANNEL_LABELS[channel])}
+                              size={30}
+                              selected={ability.channel === channel}
+                              onclick={() =>
+                                (draft.abilities[i].channel = channel)}
+                            />
+                          {/each}
+                        </div>
+                      </div>
+
+                      <SheetField
+                        label={`${$t("adminBattlesTraitName")} · RU`}
+                      >
+                        <input
+                          bind:value={draft.abilities[i].nameRu}
+                          maxlength="60"
+                        />
+                      </SheetField>
+                      <SheetField
+                        label={`${$t("adminBattlesTraitName")} · EN`}
+                      >
+                        <input
+                          bind:value={draft.abilities[i].nameEn}
+                          maxlength="60"
+                        />
+                      </SheetField>
+                    </div>
+                  </div>
+                {/if}
               </SheetPanel>
 
               <SheetPanel
@@ -6661,8 +6921,12 @@
                  сквозь неё было видно, как под карту въезжают чужие панели.
                  Колонка тянется во всю высоту листа (потому ряд и не
                  `items-start`), и прибивать внутри неё больше нечего. -->
-            <aside class="w-[360px] flex-shrink-0">
-              <div class="sticky top-0 pt-1">
+            <!-- Сложенным столбиком карта не растягивается во всю ширину:
+                 она не становится понятнее от того, что стала с ладонь. -->
+            <aside
+              class="w-full max-w-[360px] flex-shrink-0 @4xl:w-[360px] @4xl:max-w-none"
+            >
+              <div class="pt-1 @4xl:sticky @4xl:top-0">
                 <BattleCard
                   bind:card={draft}
                   {frames}

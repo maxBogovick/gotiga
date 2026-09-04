@@ -7669,16 +7669,19 @@ impl Repository {
         setup: &str,
         rules_version: i32,
         board_cache: &str,
+        rules: &str,
     ) -> Result<crate::models::BattleMatch> {
         Ok(sqlx::query_as::<_, crate::models::BattleMatch>(
-            "INSERT INTO battle_matches (user_id, challenge_id, setup, rules_version, board_cache)
-             VALUES ($1,$2,$3,$4,$5) RETURNING *",
+            "INSERT INTO battle_matches
+                 (user_id, challenge_id, setup, rules_version, board_cache, rules)
+             VALUES ($1,$2,$3,$4,$5,$6) RETURNING *",
         )
         .bind(user_id)
         .bind(challenge_id)
         .bind(setup)
         .bind(rules_version)
         .bind(board_cache)
+        .bind(rules)
         .fetch_one(&self.pg_pool)
         .await?)
     }
@@ -7697,11 +7700,16 @@ impl Repository {
         board_cache: &str,
         outcome: Option<&str>,
         rounds: i16,
+        // Ставятся только вместе с исходом и только один раз: печать под
+        // сыгранной партией, а не счётчик, который растёт по ходу.
+        player_acts: Option<i16>,
+        bodies_lost: Option<i16>,
     ) -> Result<Option<crate::models::BattleMatch>> {
         Ok(sqlx::query_as::<_, crate::models::BattleMatch>(
             "UPDATE battle_matches
                 SET actions = $3, board_cache = $4, seq = seq + 1,
                     outcome = $5, rounds = $6,
+                    player_acts = $7, bodies_lost = $8,
                     finished_at = CASE WHEN $5 IS NULL THEN NULL ELSE NOW() END
               WHERE id = $1 AND seq = $2
               RETURNING *",
@@ -7712,7 +7720,73 @@ impl Repository {
         .bind(board_cache)
         .bind(outcome)
         .bind(rounds)
+        .bind(player_acts)
+        .bind(bodies_lost)
         .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    /// Чем помечены этюды у одного гостя: доведено, выиграно, выиграно без
+    /// потерь, и за сколько дел прошло лучшее из выигранных.
+    ///
+    /// Один запрос на всю полку, а не по одному на этюд, — тем же правилом, что
+    /// и кошельковые ключи рядом.
+    ///
+    /// «Доведено» — это `player_acts IS NOT NULL`, а не «есть исход». Отданное
+    /// поле исход тоже ставит, но печати не заслуживает: за него и пыль не
+    /// платят.
+    ///
+    /// Победа считается доведённой и без этого числа: выиграть, не доиграв,
+    /// нельзя, а партии старше самой колонки числа не имеют — и без этой
+    /// оговорки читались бы как «выиграно, но не доведено до конца».
+    pub async fn battle_challenge_marks(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<(Uuid, bool, bool, bool, Option<i16>)>> {
+        Ok(
+            sqlx::query_as::<_, (Uuid, bool, bool, bool, Option<i16>)>(
+                "SELECT challenge_id,
+                        COALESCE(BOOL_OR(player_acts IS NOT NULL OR outcome = 'player'), false),
+                        COALESCE(BOOL_OR(outcome = 'player'), false),
+                        COALESCE(BOOL_OR(outcome = 'player' AND bodies_lost = 0), false),
+                        MIN(player_acts) FILTER (WHERE outcome = 'player')
+                   FROM battle_matches
+                  WHERE user_id = $1 AND challenge_id IS NOT NULL AND outcome IS NOT NULL
+                  GROUP BY challenge_id",
+            )
+            .bind(user_id)
+            .fetch_all(&self.pg_pool)
+            .await?,
+        )
+    }
+
+    /// Планка каждого этюда: лучшая линия, которую дом видел от кого бы то ни
+    /// было. Поднимается живой рукой, а не перебором, — поэтому не обещает
+    /// того, чего дом не знает.
+    pub async fn battle_challenge_best_lines(&self) -> Result<Vec<(Uuid, i16)>> {
+        Ok(sqlx::query_as::<_, (Uuid, i16)>(
+            "SELECT challenge_id, MIN(player_acts)
+               FROM battle_matches
+              WHERE challenge_id IS NOT NULL
+                AND outcome = 'player' AND player_acts IS NOT NULL
+              GROUP BY challenge_id",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// То же для одного этюда. Спрашивается в тот единственный миг, когда
+    /// партия кончилась победой, — чтобы сказать «за пять, а лучшее было шесть»
+    /// прежде, чем эта же партия станет новым лучшим.
+    pub async fn battle_challenge_best_line(&self, challenge_id: Uuid) -> Result<Option<i16>> {
+        Ok(sqlx::query_scalar::<_, Option<i16>>(
+            "SELECT MIN(player_acts)
+               FROM battle_matches
+              WHERE challenge_id = $1
+                AND outcome = 'player' AND player_acts IS NOT NULL",
+        )
+        .bind(challenge_id)
+        .fetch_one(&self.pg_pool)
         .await?)
     }
 

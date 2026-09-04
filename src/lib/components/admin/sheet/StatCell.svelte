@@ -85,6 +85,11 @@
 
 <style>
   .cell {
+    /* Растёт сама: `--min` приходит с плашки наследованием, а не пропсом —
+       ширина ячейки это свойство ряда, в котором она стоит, и знать его
+       должна плашка, а не каждая из девяти. */
+    flex: 1 1 var(--min, 5.2rem);
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 0.3rem;
@@ -114,7 +119,7 @@
 
   .top {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 0.3rem;
     min-width: 0;
   }
@@ -124,13 +129,17 @@
     flex-shrink: 0;
     color: #d8c6b1;
   }
+  /* Подпись переносится, а не обрезается троеточием. Обрезанная подпись — это
+     ровно та беда, от которой подпись и заводили: «звеньев / клет…» не лучше
+     значка без слова. Переносится она только там, где не влезла: у коротких
+     слов тела строка остаётся одна, а сетка всё равно выравнивает ячейки по
+     самой высокой. */
   .cap {
-    overflow: hidden;
     font-size: 8px;
     letter-spacing: 0.11em;
     text-transform: uppercase;
-    white-space: nowrap;
-    text-overflow: ellipsis;
+    line-height: 1.2;
+    overflow-wrap: break-word;
     color: rgba(216, 198, 177, 0.72);
   }
 

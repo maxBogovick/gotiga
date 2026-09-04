@@ -1,10 +1,10 @@
 <script lang="ts">
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
-  import { api } from '$lib/api';
+  import { api, resolveLargestImageUrl } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
   import { t, lang, brandName } from '$lib/i18n';
-  import { SITE_URL } from '$lib/site';
+  import { SITE_URL, toAbsoluteUrl } from '$lib/site';
   import { jsonLdSafe } from '$lib/jsonld';
   import { leafCopy, leafCoverUrl, neighborTitle, workHref } from '$lib/gazette';
   import { renderTale, ORNAMENT } from '$lib/tales';
@@ -44,19 +44,71 @@
     return { destroy: () => watcher.disconnect() };
   }
 
+  let taleUrl = $derived(data.leaf ? `${SITE_URL}/tales/${data.leaf.slug}` : SITE_URL);
+  let pageTitle = $derived(`${copy?.title ?? $t('talesPageTitle')} — ${$brandName}`);
+  let description = $derived(copy?.dek || $t('talesPageRule'));
+  // `plate` is the stored path — `/static/images/…`. og:image and schema.org
+  // image both require an absolute URL; a relative one is simply dropped, which
+  // is how a tale with a photograph shares as a bare grey card.
+  let plateAbsolute = $derived(
+    toAbsoluteUrl(resolveLargestImageUrl(plate) ?? plate ?? null),
+  );
+  let ogImage = $derived(plateAbsolute ?? `${SITE_URL}/images/cabinet-bg.jpeg`);
+  // The work the tale is about, as an entity rather than a link. This is what
+  // ties the prose to the piece for anything reading the graph: the same URL the
+  // figurine's own page declares as a VisualArtwork.
+  let workUrl = $derived(
+    data.leaf?.figurineId
+      ? `${SITE_URL}/figurines/${data.leaf.figurineSlug || data.leaf.figurineId}`
+      : null,
+  );
+  let wordCount = $derived(
+    blocks.reduce((n, b) => (b.kind === 'p' ? n + b.text.split(/\s+/).filter(Boolean).length : n), 0),
+  );
+
   let jsonLd = $derived(
     data.leaf && copy
       ? jsonLdSafe({
           '@context': 'https://schema.org',
           '@type': 'Article',
           headline: copy.title,
-          description: copy.dek || $t('talesPageRule'),
-          url: `${SITE_URL}/tales/${data.leaf.slug}`,
+          description,
+          url: taleUrl,
+          mainEntityOfPage: { '@type': 'WebPage', '@id': taleUrl },
           datePublished: data.leaf.publishedAt ?? data.leaf.createdAt,
+          dateModified: data.leaf.updatedAt ?? data.leaf.publishedAt ?? data.leaf.createdAt,
           inLanguage: $lang === 'ru' ? 'ru' : 'en',
-          image: plate || undefined,
-          author: { '@type': 'Organization', name: $brandName },
+          image: plateAbsolute ?? undefined,
+          articleSection: $t('talesPageTitle'),
+          ...(wordCount ? { wordCount } : {}),
+          author: { '@type': 'Organization', name: $brandName, url: SITE_URL },
+          publisher: { '@type': 'Organization', name: $brandName, url: SITE_URL },
           isPartOf: { '@type': 'WebSite', name: $brandName, url: SITE_URL },
+          ...(workUrl && data.leaf.figurineName
+            ? {
+                about: {
+                  '@type': 'VisualArtwork',
+                  '@id': workUrl,
+                  name: data.leaf.figurineName,
+                  url: workUrl,
+                },
+              }
+            : {}),
+        })
+      : '',
+  );
+
+  // Home › Tall tales › this tale.
+  let breadcrumbJsonLd = $derived(
+    data.leaf && copy
+      ? jsonLdSafe({
+          '@context': 'https://schema.org',
+          '@type': 'BreadcrumbList',
+          itemListElement: [
+            { '@type': 'ListItem', position: 1, name: $brandName, item: SITE_URL },
+            { '@type': 'ListItem', position: 2, name: $t('talesPageTitle'), item: `${SITE_URL}/tales` },
+            { '@type': 'ListItem', position: 3, name: copy.title, item: taleUrl },
+          ],
         })
       : '',
   );
@@ -64,17 +116,38 @@
 
 <svelte:head>
   {#if data.leaf}
-    <title>{copy?.title ?? $t('talesPageTitle')} — {$brandName}</title>
-    <meta name="description" content={copy?.dek || $t('talesPageRule')} />
-    <link rel="canonical" href="{SITE_URL}/tales/{data.leaf.slug}" />
+    <title>{pageTitle}</title>
+    <meta name="description" content={description} />
+    <!-- canonical is emitted once, globally, in +layout.svelte. -->
+    <link
+      rel="alternate"
+      type="application/rss+xml"
+      title={$t('gazetteRssTitle')}
+      href="{SITE_URL}/gazette/feed.xml"
+    />
     <meta property="og:site_name" content={$brandName} />
     <meta property="og:locale" content={ogLocale} />
     <meta property="og:type" content="article" />
-    <meta property="og:title" content="{copy?.title ?? $t('talesPageTitle')} — {$brandName}" />
-    <meta property="og:description" content={copy?.dek || $t('talesPageRule')} />
-    <meta property="og:url" content="{SITE_URL}/tales/{data.leaf.slug}" />
-    <meta property="og:image" content={plate || `${SITE_URL}/images/cabinet-bg.jpeg`} />
+    <meta property="og:title" content={pageTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={taleUrl} />
+    <meta property="og:image" content={ogImage} />
+    <meta
+      property="article:published_time"
+      content={data.leaf.publishedAt ?? data.leaf.createdAt}
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={pageTitle} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImage} />
     {#if jsonLd}{@html `<script type="application/ld+json">${jsonLd}<\/script>`}{/if}
+    {#if breadcrumbJsonLd}{@html `<script type="application/ld+json">${breadcrumbJsonLd}<\/script>`}{/if}
+  {:else}
+    <!-- Nothing on the shelf under this name. The address can still be reached —
+         a stale link, a guessed slug — and nginx answers a miss with the SPA
+         shell, so say plainly that this page is not to be kept. -->
+    <title>{$t('talesPageTitle')} — {$brandName}</title>
+    <meta name="robots" content="noindex, follow" />
   {/if}
 </svelte:head>
 
@@ -122,7 +195,7 @@
                 href={work || undefined}
                 style={morph ? `view-transition-name: ${morph}` : undefined}
               >
-                <AppImage src={plate} alt="" class="margin-img" sizes="168px" />
+                <AppImage src={plate} alt={data.leaf.figurineName ?? ''} class="margin-img" sizes="168px" />
               </svelte:element>
               {#if data.leaf.figurineName}
                 <p class="margin-name">{data.leaf.figurineName}</p>
@@ -139,7 +212,7 @@
               href={work || undefined}
               style={morph ? `view-transition-name: ${morph}` : undefined}
             >
-              <AppImage src={plate} alt="" class="margin-img" sizes="168px" />
+              <AppImage src={plate} alt={data.leaf.figurineName ?? ''} class="margin-img" sizes="168px" />
             </svelte:element>
           </aside>
         {/if}
