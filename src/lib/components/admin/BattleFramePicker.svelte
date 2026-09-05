@@ -24,6 +24,7 @@
     disabled = false,
     label,
     layout = 'drawer',
+    size = 'compact',
   } = $props<{
     presets: BattleFramePreset[];
     /** Имя выбранного наряда. Связка, а не событие: у стола битв три места, где
@@ -41,7 +42,12 @@
     label?: string;
     /** `drawer` — строка, которую раскрывают. `rack` — все наряды сразу. */
     layout?: 'drawer' | 'rack';
+    /** `desk` — табличка на столе рамок: имя крупнее, список шире, забыть
+     *  видно сразу, а не при наведении. */
+    size?: 'compact' | 'desk';
   }>();
+
+  let desk = $derived(size === 'desk');
 
   let open = $state(false);
   /** Строка под стрелками. Отдельно от выбранной: по списку ходят, ничего не
@@ -201,20 +207,35 @@
     title={label ?? $t('adminBattlesPresetChoose')}
     aria-haspopup="listbox"
     aria-expanded={open}
-    class="w-full flex items-center gap-2 px-1.5 py-1.5 text-left bg-transparent border border-[#34251c]/20 hover:border-[#34251c]/35 disabled:opacity-40"
+    class="w-full flex items-center gap-2 text-left bg-transparent border border-[#34251c]/20 hover:border-[#34251c]/35 disabled:opacity-40 {desk
+      ? 'px-2 py-2'
+      : 'px-1.5 py-1.5'}"
   >
     {#if taken}
       <span
-        class="flex-shrink-0 w-8 h-11 border bg-center bg-contain bg-no-repeat"
+        class="flex-shrink-0 border bg-center bg-contain bg-no-repeat {desk
+          ? 'w-9 h-[3.15rem]'
+          : 'w-8 h-11'}"
         style={swatchStyle(taken)}
       ></span>
-      <span class="flex-1 min-w-0 text-xs truncate">{taken.name}</span>
+      <span
+        class="flex-1 min-w-0 truncate {desk
+          ? 'text-[1.15rem] leading-tight'
+          : 'text-xs'}"
+        style={desk
+          ? "font-family: 'Cormorant Garamond', Georgia, serif;"
+          : undefined}>{taken.name}</span
+      >
     {:else}
       <span
-        class="flex-shrink-0 w-8 h-11 border border-dashed border-[#34251c]/25"
+        class="flex-shrink-0 border border-dashed border-[#34251c]/25 {desk
+          ? 'w-9 h-[3.15rem]'
+          : 'w-8 h-11'}"
       ></span>
-      <span class="flex-1 min-w-0 text-xs italic text-[#8a6a55]"
-        >{$t('adminBattlesPresetNone')}</span
+      <span
+        class="flex-1 min-w-0 italic text-[#8a6a55] {desk
+          ? 'text-sm'
+          : 'text-xs'}">{$t('adminBattlesPresetNone')}</span
       >
     {/if}
     <span class="flex-shrink-0 px-1 text-[10px] text-[#8a6a55]"
@@ -262,8 +283,9 @@
             aria-selected={preset.id === chosen}
             onclick={() => pick(preset)}
             onpointerenter={() => (active = i)}
-            class="w-full flex items-center gap-2 px-1.5 py-1.5 text-left {i ===
-            active
+            class="w-full flex items-center gap-2 px-1.5 py-1.5 {onforget
+              ? 'pr-8'
+              : ''} text-left {i === active
               ? 'bg-[#34251c]/8'
               : ''} {preset.id === chosen ? 'text-[#c65f3c]' : ''}"
           >
@@ -271,13 +293,20 @@
               class="flex-shrink-0 w-8 h-11 border bg-center bg-contain bg-no-repeat"
               style={swatchStyle(preset)}
             ></span>
-            <span class="flex-1 min-w-0 text-xs truncate">{preset.name}</span>
+            <span class="flex-1 min-w-0 truncate {desk ? 'text-sm' : 'text-xs'}"
+              >{preset.name}</span
+            >
           </button>
           {#if onforget}
             <button
-              onclick={() => onforget(preset)}
+              onclick={(e) => {
+                e.stopPropagation();
+                onforget(preset);
+              }}
               title={$t('adminBattlesPresetForget')}
-              class="absolute top-1/2 right-1 -translate-y-1/2 w-5 h-5 flex items-center justify-center text-[11px] leading-none text-[#8f2f22] opacity-0 group-hover:opacity-100 focus:opacity-100 hover:bg-[#c65f3c]/12"
+              class="absolute top-1/2 right-1 -translate-y-1/2 w-6 h-6 flex items-center justify-center text-[13px] leading-none text-[#8f2f22] hover:bg-[#c65f3c]/12 {desk
+                ? 'opacity-100'
+                : 'opacity-0 group-hover:opacity-100 focus:opacity-100'}"
               >×</button
             >
           {/if}

@@ -1284,10 +1284,55 @@ pub struct FrameOverride {
     pub title_ink: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layout: Option<String>,
+    /// Вся опись или ничего — то же правило, что у `slices` и `ornaments`, и по
+    /// той же причине: полописи ранга и полописи наряда — это карта, которую
+    /// никто не задумывал.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sheet: Option<Vec<SheetRow>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_scale: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ink_fade: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost_shape: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub power_shape: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_fill: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub power_fill: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_ink: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub power_ink: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_size: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub power_size: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_weight: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub power_weight: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_plate: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub power_plate: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health_shape: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health_fill: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health_ink: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health_plate: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health_size: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health_weight: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health_x: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health_y: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aspect: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1350,8 +1395,46 @@ fn clean_frame_override(parsed: FrameOverride) -> Option<FrameOverride> {
         title_font: text(parsed.title_font),
         title_ink: text(parsed.title_ink),
         layout: parsed.layout.filter(|l| valid_layout(l)),
+        sheet: parsed.sheet.map(normalize_sheet),
+        type_scale: parsed
+            .type_scale
+            .filter(|v| v.is_finite())
+            .map(|v| clamp_scale(v, 0.75, 1.5)),
+        ink_fade: parsed
+            .ink_fade
+            .filter(|v| v.is_finite())
+            .map(|v| clamp_scale(v, 0.5, 1.6)),
         cost_shape: parsed.cost_shape.filter(|sh| valid_badge_shape(sh)),
         power_shape: parsed.power_shape.filter(|sh| valid_badge_shape(sh)),
+        // Пустая строка здесь — выбор («носи домашний цвет»), а не отсутствие,
+        // ровно как пустой `frame_image` у нарезанного наряда.
+        cost_fill: text(parsed.cost_fill),
+        power_fill: text(parsed.power_fill),
+        cost_ink: text(parsed.cost_ink),
+        power_ink: text(parsed.power_ink),
+        cost_size: parsed
+            .cost_size
+            .filter(|v| v.is_finite())
+            .map(|v| clamp_scale(v, BADGE_SCALE_MIN, BADGE_SCALE_MAX)),
+        power_size: parsed
+            .power_size
+            .filter(|v| v.is_finite())
+            .map(|v| clamp_scale(v, BADGE_SCALE_MIN, BADGE_SCALE_MAX)),
+        cost_weight: parsed.cost_weight.filter(|v| v.is_finite()).map(clamp_weight),
+        power_weight: parsed.power_weight.filter(|v| v.is_finite()).map(clamp_weight),
+        // Пустая строка — выбор («сними жетон, вернись к краске»), как у
+        // `frame_image` нарезанного наряда: `text` бережёт её, а отсутствие
+        // поля по-прежнему значит «не трогай этого».
+        cost_plate: text(parsed.cost_plate),
+        power_plate: text(parsed.power_plate),
+        health_shape: parsed.health_shape.filter(|sh| sh.is_empty() || valid_badge_shape(sh)),
+        health_fill: text(parsed.health_fill),
+        health_ink: text(parsed.health_ink),
+        health_plate: text(parsed.health_plate),
+        health_size: parsed.health_size.filter(|v| v.is_finite()),
+        health_weight: parsed.health_weight.filter(|v| v.is_finite()),
+        health_x: pos(parsed.health_x),
+        health_y: pos(parsed.health_y),
         aspect: parsed
             .aspect
             .filter(|a| a.is_finite())
@@ -1405,8 +1488,29 @@ impl FrameOverride {
             title_font,
             title_ink,
             layout,
+            sheet,
+            type_scale,
+            ink_fade,
             cost_shape,
             power_shape,
+            cost_fill,
+            power_fill,
+            cost_ink,
+            power_ink,
+            cost_size,
+            power_size,
+            cost_weight,
+            power_weight,
+            cost_plate,
+            power_plate,
+            health_shape,
+            health_fill,
+            health_ink,
+            health_plate,
+            health_size,
+            health_weight,
+            health_x,
+            health_y,
             aspect,
             inset_top,
             inset_right,
@@ -1440,8 +1544,29 @@ impl FrameOverride {
             title_font.is_none(),
             title_ink.is_none(),
             layout.is_none(),
+            sheet.is_none(),
+            type_scale.is_none(),
+            ink_fade.is_none(),
             cost_shape.is_none(),
             power_shape.is_none(),
+            cost_fill.is_none(),
+            power_fill.is_none(),
+            cost_ink.is_none(),
+            power_ink.is_none(),
+            cost_size.is_none(),
+            power_size.is_none(),
+            cost_weight.is_none(),
+            power_weight.is_none(),
+            cost_plate.is_none(),
+            power_plate.is_none(),
+            health_shape.is_none(),
+            health_fill.is_none(),
+            health_ink.is_none(),
+            health_plate.is_none(),
+            health_size.is_none(),
+            health_weight.is_none(),
+            health_x.is_none(),
+            health_y.is_none(),
             aspect.is_none(),
             inset_top.is_none(),
             inset_right.is_none(),
@@ -1797,6 +1922,142 @@ pub fn normalize_slices(found: SlicePieces) -> SlicePieces {
         side_mid_v: normalize_piece(found.side_mid_v, fallback.side_mid_v, SIDES_V),
     }
 }
+/// Опись — что вообще печатается на карте.
+///
+/// Каждая строка есть одна вещь, которую карта умеет сказать: раса, тип, имя,
+/// черты, паспорт тела, значок стоимости. Порядок строк В СПИСКЕ и есть порядок
+/// на карте — то же правило, по которому список деталей рамки задаёт слои.
+///
+/// Ни координат, ни ширины здесь нет. У текста длина меняется от языка и от
+/// карты, и свободно поставленная плашка имени столкнулась бы с соседкой на
+/// первом же длинном названии; поэтому текст размещается ПОЛОСОЙ и ПОРЯДКОМ, а
+/// свободные координаты остались у значков стоимости и силы, где стоит одна
+/// цифра.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SheetRow {
+    pub slot: String,
+    /// `never` · `large` · `always`. Три ступени, а не тумблер: разница между
+    /// полкой и клеткой боя — не «бой», а ШИРИНА, и «только крупно» значит одно
+    /// и то же всюду, где карта нарисована.
+    pub show: String,
+    /// `head` · `props` · `foot` · `over`.
+    pub band: String,
+}
+
+/// Все строки описи, в домашнем порядке. Зеркало `SHEET_SLOTS` в `battles.ts`;
+/// правятся вместе, как и пять домашних рам.
+pub const SHEET_SLOTS: &[&str] = &[
+    "raceIcon", "race", "kind", "channel", "pips", "title", "rank", "traits", "effect", "lore",
+    "health", "mana", "armor", "ward", "reach", "step", "mend", "stats", "cost", "power",
+    "healthMark", "new", "costWord", "powerWord",
+];
+
+/// С какой ВЕЛИЧИНЫ строка печатается, от самой скупой ступени к самой щедрой:
+/// никогда · лист взятия (281px) · полка (161px) · везде, включая клетку боя ·
+/// ТОЛЬКО в клетке боя. Последняя одна говорит про потолок, а не про порог, и
+/// заведена ради одного случая, который иначе невыразим: кружок здоровья
+/// появляется ровно там, где исчезает кружок стоимости.
+/// `cell` дописан снизу, а не переименован, поэтому опись, сохранённая до
+/// клетки, не меняет ни одной карты.
+pub const SHEET_SHOWS: &[&str] = &["never", "large", "always", "cell", "cellOnly"];
+
+/// Где строка вообще может стоять — первая полоса в списке домашняя. Проза в
+/// шапке высотой в девять процентов карты это обрезанная проза, а метка
+/// «новая» в потоке полос не стоит вовсе.
+pub fn sheet_slot_bands(slot: &str) -> Option<&'static [&'static str]> {
+    Some(match slot {
+        "raceIcon" | "race" | "kind" | "channel" | "pips" => &["head", "props", "foot"],
+        "title" | "rank" => &["props", "head", "foot"],
+        "traits" | "effect" | "lore" => &["props"],
+        "health" | "mana" | "armor" | "ward" | "reach" | "step" | "mend" => {
+            &["props", "foot", "head"]
+        }
+        "stats" => &["foot", "head", "props"],
+        "new" => &["over", "head", "foot"],
+        "cost" | "power" | "healthMark" | "costWord" | "powerWord" => &["over"],
+        _ => return None,
+    })
+}
+
+/// Домашняя опись — буква в букву то, что карта печатала до описи, с одним
+/// намеренным отличием: подписи под значками стоимости и силы сняты. Подпись
+/// висела под кружком в углу, а шапка отступала от кружка на его ширину и про
+/// подпись ничего не знала — отсюда «СТОИМОСТЬ ДОМОВЫЕ · ТЕ…» на каждой карте.
+pub fn default_sheet() -> Vec<SheetRow> {
+    SHEET_SLOTS
+        .iter()
+        .map(|slot| SheetRow {
+            slot: (*slot).to_string(),
+            show: if *slot == "costWord" || *slot == "powerWord" {
+                "never".into()
+            } else if *slot == "lore" {
+                // Байку и раньше печатал только лист взятия — это делал
+                // медиазапрос, мимо описи. Теперь то же самое сказано ступенью.
+                "large".into()
+            } else if *slot == "healthMark" {
+                // ТОЛЬКО в клетке: кружок здоровья встаёт туда же, где стоит
+                // стоимость, и появляется ровно тогда, когда та исчезает.
+                "cellOnly".into()
+            } else if *slot == "title" {
+                // Имя было в клетке всегда: домашняя опись обязана совпасть с
+                // прежней картой.
+                "cell".into()
+            } else {
+                "always".into()
+            },
+            band: sheet_slot_bands(slot).unwrap()[0].to_string(),
+        })
+        .collect()
+}
+
+/// Опись, годная к отрисовке: незнакомое выброшено, повторы сняты, недостающее
+/// дописано в домашнем виде и НА СВОЁ домашнее место, а не в конец — иначе
+/// появление новой строки в доме переставляло бы карты у всех, кто описи
+/// касался. Пустая опись означает «как в доме», и поэтому рамка, сохранённая
+/// до описи, ничего не теряет и переезда данных не потребовалось.
+pub fn normalize_sheet(given: Vec<SheetRow>) -> Vec<SheetRow> {
+    let mut rows: Vec<SheetRow> = Vec::new();
+    for row in given {
+        let Some(bands) = sheet_slot_bands(&row.slot) else {
+            continue;
+        };
+        if rows.iter().any(|kept| kept.slot == row.slot) {
+            continue;
+        }
+        let show = if SHEET_SHOWS.contains(&row.show.as_str()) {
+            row.show
+        } else {
+            "always".to_string()
+        };
+        let band = if bands.contains(&row.band.as_str()) {
+            row.band
+        } else {
+            bands[0].to_string()
+        };
+        rows.push(SheetRow {
+            slot: row.slot,
+            show,
+            band,
+        });
+    }
+    if rows.is_empty() {
+        return default_sheet();
+    }
+    let at = |slot: &str| SHEET_SLOTS.iter().position(|one| *one == slot).unwrap_or(0);
+    for row in default_sheet() {
+        if rows.iter().any(|kept| kept.slot == row.slot) {
+            continue;
+        }
+        let home = at(&row.slot);
+        match rows.iter().position(|kept| at(&kept.slot) > home) {
+            Some(before) => rows.insert(before, row),
+            None => rows.push(row),
+        }
+    }
+    rows
+}
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1924,6 +2185,18 @@ pub struct BattleFrame {
     ///             are read as a line, as on a card standing in a case.
     #[serde(default)]
     pub layout: String,
+    /// Опись: что печатается, в какой полосе и в каком порядке. Пустая — это
+    /// «как в доме», а не «пустая карта».
+    #[serde(default)]
+    pub sheet: Vec<SheetRow>,
+    /// Кегль всего текста карты, множитель к домашним размерам. Ноль значит
+    /// «не назначено» — рамка, сохранённая до кегля, несёт ноль.
+    #[serde(default)]
+    pub type_scale: f32,
+    /// Насыщенность второстепенных чернил, множитель. Ноль — то же «не
+    /// назначено»; потолок всё равно непрозрачность.
+    #[serde(default)]
+    pub ink_fade: f32,
     /// Centre of the cost badge, `corners` layout only — X in % of the card's
     /// width, Y in % of its height. `Option` for the same reason as the band
     /// shares: a frame saved before the badge was draggable has none, and
@@ -1944,11 +2217,68 @@ pub struct BattleFrame {
     pub cost_shape: String,
     #[serde(default)]
     pub power_shape: String,
+    /// Чем залит кружок, своё у каждого значка. Пустая строка — как в доме:
+    /// стоимость чернилами карты, сила — цветом её каймы.
+    #[serde(default)]
+    pub cost_fill: String,
+    #[serde(default)]
+    pub power_fill: String,
+    /// Чем написана цифра. Пустая — «как выйдет»: карта берёт краску от
+    /// заливки. Это умолчание, а не закон — заливки может не быть вовсе, и
+    /// тогда цифра лежит на резьбе, про которую ни одна краска рамы ничего не
+    /// знает.
+    #[serde(default)]
+    pub cost_ink: String,
+    #[serde(default)]
+    pub power_ink: String,
+    /// Величина значка — МНОЖИТЕЛЬ к домашним 13cqi, как `type_scale`. Ноль
+    /// значит «не назначено»: рамка, сохранённая до этой ручки, несёт ноль.
+    #[serde(default)]
+    pub cost_size: f32,
+    #[serde(default)]
+    pub power_size: f32,
+    /// Толщина цифры, 300..800. Ноль — «как у карты».
+    #[serde(default)]
+    pub cost_weight: f32,
+    #[serde(default)]
+    pub power_weight: f32,
+    /// Жетон под цифрой — картинка со склада, надетая вместо крашеной
+    /// подложки. Пустая строка — жетона нет, и значок печатается краской, как
+    /// печатался.
+    #[serde(default)]
+    pub cost_plate: String,
+    #[serde(default)]
+    pub power_plate: String,
+    /// Кружок здоровья — тот, что стоит в клетке боя.
+    ///
+    /// Своих полей у него сперва не было вовсе: он носил поля стоимости, и это
+    /// было верно ровно до того дня, когда хранителю понадобилось развести их.
+    /// Теперь поля свои, но ПУСТОЕ ЗНАЧИТ «как у стоимости», а не «ничего»:
+    /// пустая строка, ноль и `None` — все три говорят одно, и рама, сохранённая
+    /// до этих полей, выглядит буква в букву как выглядела. Разводит их только
+    /// тот, кто нарочно назначил здоровью своё.
+    #[serde(default)]
+    pub health_shape: String,
+    #[serde(default)]
+    pub health_fill: String,
+    #[serde(default)]
+    pub health_ink: String,
+    #[serde(default)]
+    pub health_plate: String,
+    #[serde(default)]
+    pub health_size: f32,
+    #[serde(default)]
+    pub health_weight: f32,
+    #[serde(default)]
+    pub health_x: Option<f32>,
+    #[serde(default)]
+    pub health_y: Option<f32>,
 }
 
 pub const LAYOUTS: &[&str] = &["corners", "plaque"];
 pub const FRAME_MODES: &[&str] = &["overlay", "behind", "sliced"];
-pub const BADGE_SHAPES: &[&str] = &["circle", "square", "diamond", "hex", "shield"];
+/// `none` — не шестая форма, а её отсутствие: подложка не печатается вовсе.
+pub const BADGE_SHAPES: &[&str] = &["circle", "square", "diamond", "hex", "shield", "none"];
 
 pub fn valid_layout(layout: &str) -> bool {
     LAYOUTS.contains(&layout)
@@ -2039,10 +2369,14 @@ pub const DEFAULT_ASPECT: f32 = 5.0 / 7.0;
 pub const DEFAULT_ART_SHARE: f32 = 0.44;
 pub const DEFAULT_HEADER_SHARE: f32 = 0.09;
 pub const DEFAULT_FOOT_SHARE: f32 = 0.10;
-pub const DEFAULT_COST_X: f32 = 10.0;
-pub const DEFAULT_COST_Y: f32 = 9.0;
-pub const DEFAULT_POWER_X: f32 = 90.0;
-pub const DEFAULT_POWER_Y: f32 = 91.0;
+/// Где стоят значки стоимости и силы — в долях КАРТЫ, не окна: значок носится
+/// поверх резьбы так же охотно, как внутри окна. Числа не выбраны заново — это
+/// те же места, куда значки попадали в долях окна с отступом 5cqi на карте
+/// 5 : 7 с нулевыми врезками. Зеркало в `battles.ts`, менять вместе.
+pub const DEFAULT_COST_X: f32 = 14.0;
+pub const DEFAULT_COST_Y: f32 = 12.0;
+pub const DEFAULT_POWER_X: f32 = 86.0;
+pub const DEFAULT_POWER_Y: f32 = 88.0;
 
 fn painted(
     tier: i16,
@@ -2084,12 +2418,34 @@ fn painted(
         title_font: String::new(),
         title_ink: String::new(),
         layout: "corners".into(),
+        sheet: default_sheet(),
+        type_scale: 1.0,
+        ink_fade: 1.0,
         cost_x: Some(DEFAULT_COST_X),
         cost_y: Some(DEFAULT_COST_Y),
         power_x: Some(DEFAULT_POWER_X),
         power_y: Some(DEFAULT_POWER_Y),
         cost_shape: "circle".into(),
         power_shape: "circle".into(),
+        cost_fill: String::new(),
+        power_fill: String::new(),
+        cost_ink: String::new(),
+        power_ink: String::new(),
+        cost_size: 1.0,
+        power_size: 1.0,
+        cost_weight: 0.0,
+        power_weight: 0.0,
+        cost_plate: String::new(),
+        power_plate: String::new(),
+        // Пусто — «как у стоимости». Дом не разводит их: он и не разводил.
+        health_shape: String::new(),
+        health_fill: String::new(),
+        health_ink: String::new(),
+        health_plate: String::new(),
+        health_size: 0.0,
+        health_weight: 0.0,
+        health_x: None,
+        health_y: None,
     }
 }
 
@@ -2207,8 +2563,38 @@ pub fn normalize_frame(mut found: BattleFrame, fallback: BattleFrame) -> BattleF
     found.side_mid_v = found.side_mid_v.trim().to_string();
     found.slices = normalize_slices(found.slices);
     found.ornaments = normalize_ornaments(found.ornaments);
+    found.sheet = normalize_sheet(found.sheet);
+    found.type_scale = clamp_scale(found.type_scale, 0.75, 1.5);
+    found.ink_fade = clamp_scale(found.ink_fade, 0.5, 1.6);
     found.title_font = found.title_font.trim().to_string();
     found.title_ink = found.title_ink.trim().to_string();
+    // Пустая заливка — «как в раме», а не «прозрачный кружок»: строку из
+    // пробелов надо привести к пустой, иначе она уедет в CSS как цвет.
+    found.cost_fill = found.cost_fill.trim().to_string();
+    found.power_fill = found.power_fill.trim().to_string();
+    found.cost_ink = found.cost_ink.trim().to_string();
+    found.power_ink = found.power_ink.trim().to_string();
+    found.cost_size = clamp_scale(found.cost_size, BADGE_SCALE_MIN, BADGE_SCALE_MAX);
+    found.power_size = clamp_scale(found.power_size, BADGE_SCALE_MIN, BADGE_SCALE_MAX);
+    found.cost_weight = clamp_weight(found.cost_weight);
+    found.power_weight = clamp_weight(found.power_weight);
+    found.cost_plate = found.cost_plate.trim().to_string();
+    found.power_plate = found.power_plate.trim().to_string();
+    found.health_shape = found.health_shape.trim().to_string();
+    found.health_fill = found.health_fill.trim().to_string();
+    found.health_ink = found.health_ink.trim().to_string();
+    found.health_plate = found.health_plate.trim().to_string();
+    // Ноль и `None` не выправляются в число: они и есть «как у стоимости», и
+    // выправленные превратились бы в назначенное хранителем молча — ровно
+    // наоборот тому, что делают `cost_*`, где ноль значит «дом».
+    found.health_size = if found.health_size > 0.0 {
+        clamp_scale(found.health_size, BADGE_SCALE_MIN, BADGE_SCALE_MAX)
+    } else {
+        0.0
+    };
+    found.health_weight = if found.health_weight > 0.0 { clamp_weight(found.health_weight) } else { 0.0 };
+    found.health_x = found.health_x.map(|v| clamp_pos(Some(v), None));
+    found.health_y = found.health_y.map(|v| clamp_pos(Some(v), None));
     found.aspect = if found.aspect > 0.0 {
         found.aspect.clamp(0.45, 1.4)
     } else {
@@ -2244,6 +2630,37 @@ pub fn normalize_frame(mut found: BattleFrame, fallback: BattleFrame) -> BattleF
     found.power_x = Some(clamp_pos(found.power_x, fallback.power_x));
     found.power_y = Some(clamp_pos(found.power_y, fallback.power_y));
     found
+}
+
+/// Пределы величины значка. Зеркало в `battles.ts`, менять вместе.
+pub const BADGE_SCALE_MIN: f32 = 0.5;
+pub const BADGE_SCALE_MAX: f32 = 4.0;
+/// Ступени толщины цифры. Между начертаниями шрифта промежутка нет, и дробное
+/// число обещало бы его, поэтому назначенное округляется к ближайшей ступени.
+pub const BADGE_WEIGHTS: &[f32] = &[300.0, 400.0, 500.0, 600.0, 700.0, 800.0];
+
+fn clamp_weight(given: f32) -> f32 {
+    if !given.is_finite() || given <= 0.0 {
+        return 0.0;
+    }
+    *BADGE_WEIGHTS
+        .iter()
+        .min_by(|a, b| {
+            (*a - given)
+                .abs()
+                .partial_cmp(&(*b - given).abs())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .unwrap_or(&400.0)
+}
+
+/// Множитель рамки, приведённый к делу. Ноль и мусор — это «не назначено», а не
+/// «стереть текст»: рамка, сохранённая до кегля, несёт ноль.
+fn clamp_scale(given: f32, min: f32, max: f32) -> f32 {
+    if !given.is_finite() || given <= 0.0 {
+        return 1.0;
+    }
+    given.clamp(min, max)
 }
 
 /// One band's share of the card. Absent takes the default; present is honoured,
@@ -2793,6 +3210,75 @@ mod tests {
     //
     // Здесь ошибка необратима: заплаченное не отзывается. Проверяется чистой
     // функцией и на границах, а не «на живом заходе», где сутки ждать.
+
+    // ── Опись ──────────────────────────────────────────────────────────
+    //
+    // Пустая опись — это «как в доме», а не «пустая карта»: рамка,
+    // сохранённая до описи, несёт пустой список, и одно неверное прочтение
+    // здесь стёрло бы всю полку одним сохранением.
+
+    fn sheet_row(slot: &str, show: &str, band: &str) -> SheetRow {
+        SheetRow {
+            slot: slot.into(),
+            show: show.into(),
+            band: band.into(),
+        }
+    }
+
+    #[test]
+    fn empty_sheet_means_the_house_one() {
+        assert_eq!(normalize_sheet(Vec::new()).len(), SHEET_SLOTS.len());
+        let house = default_sheet();
+        assert!(house.iter().all(|row| sheet_slot_bands(&row.slot).is_some()));
+        // Подписи под значками сняты нарочно: слово висело под кружком, а
+        // шапка про него ничего не знала.
+        let word = house.iter().find(|row| row.slot == "costWord").unwrap();
+        assert_eq!(word.show, "never");
+    }
+
+    /// Строка, которой в сохранённой описи нет, встаёт на СВОЁ место, а не в
+    /// конец: иначе новая строка в доме переставляла бы карты у всех, кто
+    /// описи касался.
+    #[test]
+    fn a_missing_row_lands_where_it_lives() {
+        let saved = vec![
+            sheet_row("race", "always", "head"),
+            sheet_row("health", "cell", "props"),
+        ];
+        let rows = normalize_sheet(saved);
+        assert_eq!(rows.len(), SHEET_SLOTS.len());
+        let at = |slot: &str| rows.iter().position(|row| row.slot == slot).unwrap();
+        assert!(at("raceIcon") < at("race"));
+        assert!(at("race") < at("kind"));
+        assert!(at("effect") < at("health"));
+        assert!(at("health") < at("mana"));
+        // Сохранённое сохранено.
+        assert_eq!(rows[at("health")].show, "cell");
+    }
+
+    /// Незнакомое, повторное и невозможное выбрасывается молча — это забор от
+    /// опечатки, а не разговор с хранителем.
+    #[test]
+    fn the_roster_keeps_only_what_it_knows() {
+        let rows = normalize_sheet(vec![
+            sheet_row("kind", "always", "head"),
+            sheet_row("kind", "never", "foot"),
+            sheet_row("nonesuch", "always", "head"),
+            // Проза в шапке — не полоса для прозы; строка встаёт в свою.
+            sheet_row("lore", "always", "head"),
+            sheet_row("title", "sometimes", "props"),
+        ]);
+        assert_eq!(rows.iter().filter(|row| row.slot == "kind").count(), 1);
+        assert!(rows.iter().all(|row| row.slot != "nonesuch"));
+        assert_eq!(
+            rows.iter().find(|row| row.slot == "lore").unwrap().band,
+            "props"
+        );
+        assert_eq!(
+            rows.iter().find(|row| row.slot == "title").unwrap().show,
+            "always"
+        );
+    }
 
     fn at(s: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
@@ -3476,6 +3962,31 @@ mod tests {
             levels <= LEVEL_FRAMES_MAX,
             "five carved dresses are {levels} characters; the race column holds {LEVEL_FRAMES_MAX}"
         );
+    }
+
+    /// Жетон обязан пережить дорогу туда и обратно — и в наряде, и в чине.
+    /// Это ровно то место, где новое поле теряется молча: на проводе оно
+    /// camelCase, в структуре snake_case, и `serde` о разошедшемся не скажет
+    /// ни слова — карта просто вернётся без бляхи, а хранитель решит, что
+    /// это он что-то нажал не так.
+    #[test]
+    fn a_token_survives_the_road_there_and_back() {
+        let raw = r#"{"costPlate":" /static/assets/a.webp ","powerPlate":""}"#;
+        let kept = normalize_frame_override(Some(raw)).unwrap();
+        let back: FrameOverride = serde_json::from_str(&kept).unwrap();
+        assert_eq!(back.cost_plate.as_deref(), Some("/static/assets/a.webp"));
+        // Пустая строка — ВЫБОР («сними жетон»), а не отсутствие: наряд,
+        // который её потеряет, перестанет уметь раздевать значок.
+        assert_eq!(back.power_plate.as_deref(), Some(""));
+
+        let mut rank = painted(1, "a", "а", "#fff", "#000", "#ccc", "");
+        rank.cost_plate = "  /static/assets/b.webp  ".into();
+        let rank = normalize_frame(rank, default_frames().remove(0));
+        assert_eq!(rank.cost_plate, "/static/assets/b.webp");
+        let wire = serde_json::to_string(&rank).unwrap();
+        assert!(wire.contains("\"costPlate\""), "имя на проводе: {wire}");
+        let back: BattleFrame = serde_json::from_str(&wire).unwrap();
+        assert_eq!(back.cost_plate, "/static/assets/b.webp");
     }
 
     #[test]

@@ -12,7 +12,7 @@
   // (`editable`) mutates its fields directly as the keeper clicks and types on
   // the card itself, and this desk never keeps a second copy of the same data
   // in a pile of loose variables that could drift from what the card shows.
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { api } from "$lib/api";
   import { t, lang, type TranslationKey } from "$lib/i18n";
   import BattleScene from "$lib/components/BattleScene.svelte";
@@ -22,6 +22,8 @@
     LAYOUTS,
     KIND_SIDES,
     SLICE_FITS,
+    SHEET_SHOWS,
+    SHEET_SLOT_BANDS,
     SLICE_GROW_MAX,
     SLICE_KIND,
     SLICE_KINDS,
@@ -32,8 +34,14 @@
     HOUSE_RULES,
     rulesApart,
     applyInsetDelta,
+    badgeReserve,
+    clampTier,
     completeSlices,
+    defaultSheet,
+    moveSheetRow,
+    SHEET_BANDS,
     defaultSlices,
+    dressWindowMissing,
     newOrnament,
     dressOf,
     frameName,
@@ -41,6 +49,7 @@
     livePiece,
     sliceSigns,
     parseFocal,
+    parseFrameOverride,
     parseLevelFrames,
     pickImageFile,
     type FrameOverride,
@@ -75,6 +84,10 @@
     BattleFramePreset,
     BattleRules,
     Motion,
+    SheetBand,
+    SheetRow,
+    SheetShow,
+    SheetSlot,
     SliceFit,
     SliceKind,
     SliceOrnament,
@@ -108,6 +121,7 @@
   let view = $state<
     | "cards"
     | "frames"
+    | "face"
     | "motions"
     | "assets"
     | "races"
@@ -147,6 +161,8 @@
   // a wall; one rank with its card standing next to it is a workbench.
   let frameIndex = $state(0);
   let uploading = $state(false);
+  /** Поле имени наряда на табличке рамки — чтобы «Новая» сразу просила имя. */
+  let frameNameBox = $state<HTMLInputElement | null>(null);
 
   // ── The drawer of saved dresses ────────────────────────────────────────
   //
@@ -1082,6 +1098,40 @@
     }
   }
 
+  /**
+   * Картинка жетона — тем же загрузчиком, что и детали рамки, и по той же
+   * причине: обычный `/upload` пишет JPEG-копии, а жетон вырезан по альфе, и
+   * залитый бумагой прямоугольник вместо бляхи ничего бы не сказал вслух.
+   *
+   * Куда её деть, инспектор говорит сам колбэком: он один знает, у какого из
+   * трёх значков открыт стол, и повторять здесь его развилку значило бы
+   * держать две таблицы полей вместо `BADGE_FIELDS`.
+   */
+  async function uploadBadgeArt(apply: (url: string) => void) {
+    const file = await pickImageFile();
+    if (!file) return;
+    uploading = true;
+    try {
+      const art = await api.adminUploadBattleFrameArt(file);
+      mark();
+      apply(art.url);
+    } catch (e) {
+      flash(String(e), 6000);
+    } finally {
+      uploading = false;
+    }
+  }
+
+  /** Со склада — ролью `accent`: из шести слов это единственное, которым
+   *  бляха, пломба или печать себя называют. Своей роли жетону не заведено —
+   *  роль это CHECK из шести, а не ящик, куда доклада́ют. */
+  function badgeArtFromStore(apply: (url: string) => void) {
+    fromStore('accent', (url) => {
+      mark();
+      apply(url);
+    });
+  }
+
   function setPieceImage(row: FramePiece, url: string) {
     if (row.ornament) row.ornament.image = url;
     else
@@ -1111,6 +1161,236 @@
       row.piece.layer = Math.max(1, SLICE_LAYERS - i);
     });
   }
+
+  /* ── Опись ──────────────────────────────────────────────────────────────
+     Что печатается на карте. Живёт в раме и правится здесь, а не отдельной
+     вкладкой: рама и есть внешний вид карты, она уже ездит по цепочке чин →
+     уровень расы → карта, уже кладётся в ящик нарядов и уже под отменой. */
+
+  /** Строки описи открытой рамы. Живой объект, а не копия: галочки и выбор
+   *  полосы пишут прямо в него, и «не сохранено» загорается само. */
+  let sheet = $derived(frames[frameIndex]?.sheet ?? []);
+
+  /** Подписи. `SheetSlot` закрыт, поэтому таблица полная и новая строка в
+   *  доме не соберётся без своего слова. */
+  const SHEET_SLOT_KEY: Record<SheetSlot, TranslationKey> = {
+    raceIcon: "adminBattlesRosterRaceIcon",
+    race: "adminBattlesRosterRace",
+    kind: "adminBattlesRosterKind",
+    channel: "adminBattlesRosterChannel",
+    pips: "adminBattlesRosterPips",
+    title: "adminBattlesRosterTitle",
+    rank: "adminBattlesRosterRank",
+    traits: "adminBattlesRosterTraits",
+    effect: "adminBattlesRosterEffect",
+    lore: "adminBattlesRosterLore",
+    health: "battlesHealthLabel",
+    mana: "battlesManaLabel",
+    armor: "battleStatArmour",
+    ward: "battleStatWard",
+    reach: "battleStatReach",
+    step: "battleStatStep",
+    mend: "battleStatMend",
+    stats: "adminBattlesRosterStats",
+    cost: "adminBattlesRosterCost",
+    power: "adminBattlesRosterPower",
+    healthMark: "adminBattlesRosterHealthMark",
+    new: "adminBattlesRosterNew",
+    costWord: "adminBattlesRosterCostWord",
+    powerWord: "adminBattlesRosterPowerWord",
+  };
+
+  const SHEET_SHOW_KEY: Record<SheetShow, TranslationKey> = {
+    never: "adminBattlesRosterNever",
+    large: "adminBattlesRosterLarge",
+    always: "adminBattlesRosterAlways",
+    cell: "adminBattlesRosterCell",
+    cellOnly: "adminBattlesRosterCellOnly",
+  };
+
+  const SHEET_SHOW_SHORT: Record<SheetShow, TranslationKey> = {
+    never: "adminBattlesRosterNeverShort",
+    large: "adminBattlesRosterLargeShort",
+    always: "adminBattlesRosterAlwaysShort",
+    cell: "adminBattlesRosterCellShort",
+    cellOnly: "adminBattlesRosterCellOnlyShort",
+  };
+
+  const SHEET_BAND_KEY: Record<SheetBand, TranslationKey> = {
+    head: "adminBattlesRosterBandHead",
+    props: "adminBattlesRosterBandProps",
+    foot: "adminBattlesRosterBandFoot",
+    over: "adminBattlesRosterBandOver",
+  };
+
+  /** Какая строка описи в руке. Одна на два входа — на карту и на список
+   *  сбоку, — потому что берут её и там и там, а несут одну. */
+  let rowHeld = $state<SheetSlot | null>(null);
+  /**
+   * Куда она сядет, если отпустить в списке.
+   *
+   * Названо соседом, а не номером: номер в полосе считается БЕЗ взятой строки,
+   * и держать его в состоянии значило бы пересчитывать его на каждое движение
+   * мыши — с той же ошибкой на единицу, которую он и заводит. `before: null` —
+   * в конец полосы.
+   */
+  let rowOver = $state<{ band: SheetBand; before: SheetSlot | null } | null>(null);
+
+  /** Строки одной полосы, в порядке описи. */
+  function bandRows(band: SheetBand): SheetRow[] {
+    return sheet.filter((row) => row.band === band);
+  }
+
+  /** Одна пересадка на оба входа. Стол не переставляет строки сам — он зовёт
+   *  `moveSheetRow`, ту же, которой отвечает карта. */
+  function moveRow(slot: SheetSlot, band: SheetBand, before: SheetSlot | null) {
+    if (!frames[frameIndex]) return;
+    mark();
+    frames[frameIndex].sheet = moveSheetRow(frames[frameIndex].sheet, slot, band, before);
+  }
+
+  /** Переставить строку описи стрелками — то же, что мышью, но точно. */
+  /** Куда метит рука в списке. Полоса, в которой строке стоять нельзя, не
+   *  берётся вовсе — метка просто не появляется. */
+  function aimRowList(band: SheetBand, before: SheetSlot | null) {
+    if (!rowHeld || !SHEET_SLOT_BANDS[rowHeld].includes(band)) {
+      rowOver = null;
+      return;
+    }
+    rowOver = { band, before };
+  }
+
+  /** Строку отпустили в списке. */
+  function dropRowList() {
+    const held = rowHeld;
+    const aim = rowOver;
+    rowHeld = null;
+    rowOver = null;
+    if (!held || !aim) return;
+    moveRow(held, aim.band, aim.before);
+  }
+
+  /** Сосед, перед которым сядет строка, если отпустить над этой. Верхняя
+   *  половина — перед ней, нижняя — перед следующей, а взятая пропускается:
+   *  «перед самой собой» не место. */
+  function seatBy(band: SheetBand, over: SheetSlot, event: DragEvent): SheetSlot | null {
+    const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    const below = event.clientY > box.top + box.height / 2;
+    const list = bandRows(band).filter((one) => one.slot !== rowHeld);
+    const at = list.findIndex((one) => one.slot === over);
+    if (at < 0) return below ? null : (list[0]?.slot ?? null);
+    const seat = below ? at + 1 : at;
+    return list[seat]?.slot ?? null;
+  }
+
+  function resheet(slot: SheetSlot, by: -1 | 1) {
+    const row = sheet.find((one) => one.slot === slot);
+    if (!row) return;
+    const all = bandRows(row.band);
+    const here = all.findIndex((one) => one.slot === slot);
+    if (here < 0) return;
+    if (by < 0 ? here === 0 : here === all.length - 1) return;
+    // По списку БЕЗ взятой строки: она вынимается первой, и «на одну ниже» —
+    // это перед той, что стоит через одну, а не перед соседкой.
+    const rest = all.filter((one) => one.slot !== slot);
+    moveRow(slot, row.band, rest[by < 0 ? here - 1 : here + 1]?.slot ?? null);
+  }
+
+  function resetSheet() {
+    if (!frames[frameIndex]) return;
+    mark();
+    frames[frameIndex].sheet = defaultSheet();
+  }
+
+  /* ── Сторож переполнения ────────────────────────────────────────────────
+     Написать на карту больше, чем держит окно, можно молча: полоса свойств не
+     выливается, а прокручивается, и лишнее просто пропадает — полосы прокрутки
+     на карте никто не видит и не ищет. Карт десятки, руками их не перебрать,
+     поэтому мерит не глаз, а сама карта. */
+
+  /** На сколько не влезло у карты, которая открыта на столе. */
+  let draftFit = $state(0);
+
+  /**
+   * Стенд «Лица карты»: одна и та же карта в трёх величинах разом.
+   *
+   * Ширины не круглые для красоты — это те самые числа, по которым карта
+   * делит себя сама (281 и 160), взятые по обе стороны от порогов, чтобы
+   * каждый стенд стоял ЗАВЕДОМО в своей полосе, а не на её краю. Первая —
+   * рабочая: за неё тянут строки, остальные две стоят свидетелями, и без них
+   * ступень «только крупно» на столе не видна вообще.
+   */
+  const FACE_SIZES: { px: number; label: TranslationKey }[] = [
+    { px: 400, label: "adminBattlesFitSheet" },
+    { px: 261, label: "adminBattlesFitShelf" },
+    { px: 140, label: "adminBattlesFitCell" },
+  ];
+
+  /**
+   * Ширины, на которых меряют. Клетки боя здесь нет нарочно: уже́ 160 px полоса
+   * свойств перестаёт быть коробкой с прокруткой (`overflow: visible`), там
+   * переполниться нечему, и лишняя треть работы ничего бы не сказала.
+   */
+  const FIT_WIDTHS: { px: number; label: TranslationKey }[] = [
+    { px: 261, label: "adminBattlesFitShelf" },
+    { px: 400, label: "adminBattlesFitSheet" },
+  ];
+
+  /** Идёт ли замер. Пока идёт — на столе стоит невидимая стопка настоящих
+   *  карт: считать переполнение иначе, чем это делает комната, значит завести
+   *  вторую правду о том, что влезает. */
+  let fitProbe = $state(false);
+  let fitOver = $state<Record<string, Record<number, number>>>({});
+
+  function noteFit(id: string, width: number, over: number) {
+    const was = fitOver[id]?.[width] ?? 0;
+    if (was === over) return;
+    fitOver = { ...fitOver, [id]: { ...(fitOver[id] ?? {}), [width]: over } };
+  }
+
+  let fitTrouble = $derived(
+    cards
+      .map((card) => ({
+        card,
+        where: FIT_WIDTHS.filter(({ px }) => (fitOver[card.id]?.[px] ?? 0) > 0),
+      }))
+      .filter((row) => row.where.length > 0),
+  );
+
+  /**
+   * Кто на самом деле носит открытый чин.
+   *
+   * Стол рамок правит чин, а гость видит КАРТУ — и между ними стоит цепочка
+   * нарядов: карта может носить свою картинку, раса — свою на каждом уровне.
+   * Без этой полки хранитель красит бумагу вслепую и не знает, что чин, над
+   * которым он сидит, не виден ни на одной карте полки.
+   */
+  let rankWorn = $derived.by(() => {
+    const tier = frames[frameIndex]?.tier ?? 1;
+    const mine = cards.filter((one) => clampTier(one.tier) === tier);
+    const own: BattleCardDto[] = [];
+    const byRace: BattleCardDto[] = [];
+    const plain: BattleCardDto[] = [];
+    for (const one of mine) {
+      // Свой наряд карты перекрывает чин ВСЕГДА; наряд расы — только на тех
+      // уровнях, которые она одела, поэтому это разные списки, а не один.
+      if (parseFrameOverride(one.frameOverride)) own.push(one);
+      else if (parseLevelFrames(one.raceLevelFrames).some(Boolean)) byRace.push(one);
+      else plain.push(one);
+    }
+    return { mine, own, byRace, plain };
+  });
+
+  /** Открыть карту с любой вкладки: полка нарядов — не список имён, а дверь. */
+  function jumpToCard(card: BattleCardDto) {
+    openCard(card);
+    view = "cards";
+  }
+
+  /** Наряд этой карты принёс картинку рамы, но не принёс окна. */
+  let draftDressBlind = $derived(
+    dressWindowMissing(parseFrameOverride(draft.frameOverride)),
+  );
 
   /** Показывать ли деталь целиком — все её копии разом. Отдельные копии
    *  гасятся своими галочками ниже. */
@@ -1254,6 +1534,20 @@
    *  остаётся честным без единой поправки. Полтора, а не один: стол широкий, и
    *  карта в 320 px на нём теряется. */
   let stageZoom = $state(1.5);
+
+  /**
+   * Показывать карту так, как она стоит В КЛЕТКЕ БОЯ.
+   *
+   * Без этого кружок здоровья на столе недостижим: он выходит только в бою, а
+   * стол — не бой, и хранитель, пришедший поправить здоровье, не находил на
+   * карте ничего. Не второй облик: тот же `BattleCard` получает те же `alive`
+   * и `hurt`, что даёт ему сцена, — стол показывает бой, а не рисунок боя, и
+   * соврать поэтому не может.
+   */
+  let stageInMatch = $state(false);
+  /** Сколько здоровья осталось у карты на стенде. Ползунок, а не поле: сургуч
+   *  смотрят в движении — от целого к почти сломанному, — а не по числу. */
+  let stageHurt = $state(0.55);
 
   /** Как называется каждый из шести именованных слотов. Украшение зовётся
    *  своей формой и номером: имени у него нет, а строка `/static/assets/…`
@@ -2823,7 +3117,9 @@
     const next = already
       ? presets.map((p) => (p.id === already.id ? kept : p))
       : [...presets, kept];
-    presetName = "";
+    // Имя остаётся на табличке: отложенный наряд — это тот, с которым теперь
+    // и работают, и стереть имя значило бы сразу же скрыть, какой он.
+    presetName = kept.name;
     // Отложенный наряд — это тот, с которым теперь и работают: следующая правка
     // должна ложиться обратно в него, а не заводить в ящике второго с почти
     // тем же именем.
@@ -2832,6 +3128,37 @@
       next,
       already ? "adminBattlesPresetReplaced" : "adminBattlesPresetKept",
     );
+  }
+
+  /** Имя, которого ещё нет в ящике. «simple2» при занятом даёт «simple2 2»,
+   *  а не затирает исходный — иначе «отложить как новый» молча убивал бы
+   *  рамку, с которой копировали. */
+  function uniquePresetName(seed: string): string {
+    const taken = new Set(presets.map((p) => p.name.toLowerCase()));
+    const base = seed.trim() || $t("adminBattlesFrameNew");
+    if (!taken.has(base.toLowerCase())) return base;
+    let n = 2;
+    while (taken.has(`${base} ${n}`.toLowerCase())) n += 1;
+    return `${base} ${n}`;
+  }
+
+  /** Новая рамка в ящике с того, что на столе. Исходная не трогается. */
+  function keepFrameAsNew() {
+    const frame = frames[frameIndex];
+    if (!frame) return;
+    const seed = presetName.trim() || presetWorn?.name || "";
+    if (!seed) {
+      tick().then(() => frameNameBox?.focus());
+      return;
+    }
+    const kept: BattleFramePreset = {
+      id: crypto.randomUUID(),
+      name: uniquePresetName(seed),
+      frame: $state.snapshot(frame),
+    };
+    presetName = kept.name;
+    presetOpen = kept.id;
+    savePresets([...presets, kept], "adminBattlesPresetKept");
   }
 
   /** Наряд, вынутый на этот чин, — если он ещё в ящике. */
@@ -2899,10 +3226,31 @@
       )
     )
       return;
+    if (preset.id === presetOpen) presetName = "";
     savePresets(
       presets.filter((p) => p.id !== preset.id),
       "adminBattlesPresetForgotten",
     );
+  }
+
+  /** Новая рамка на этом чине: дом, имя чина на месте, ящик закрыт.
+   *  Наряд ещё не в ящике — его откладывают, когда будет имя. */
+  function beginNewFrame() {
+    const current = frames[frameIndex];
+    if (!current) return;
+    mark();
+    const house = DEFAULT_FRAMES[current.tier - 1];
+    frames[frameIndex] = completeSlices({
+      ...house,
+      tier: current.tier,
+      nameEn: current.nameEn,
+      nameRu: current.nameRu,
+    });
+    presetOpen = null;
+    presetName = "";
+    sliceHeld = null;
+    rowHeld = null;
+    tick().then(() => frameNameBox?.focus());
   }
 
   let presetTaken = $derived(
@@ -2923,6 +3271,7 @@
     // держал бы деталь, которой на карте больше не рисуется.
     if (sliceHeld && !kindOf(frames[frameIndex], sliceHeld.id)) sliceHeld = null;
     presetOpen = preset.id;
+    presetName = "";
     flash($t("adminBattlesPresetWorn"));
   }
 
@@ -3019,6 +3368,12 @@
         class="px-3 py-1 {view === 'frames'
           ? 'bg-[#34251c] text-[#f8f1e7]'
           : ''}">{$t("adminBattlesFramesView")}</button
+      >
+      <button
+        onclick={() => (view = "face")}
+        class="px-3 py-1 {view === 'face'
+          ? 'bg-[#34251c] text-[#f8f1e7]'
+          : ''}">{$t("adminBattlesFaceView")}</button
       >
       <button
         onclick={() => (view = "motions")}
@@ -3241,8 +3596,99 @@
     <!-- ── Пять рам, по одной на ранг ──────────────────────────────────────
          Стол резчика: карта занимает место, сбоку — список деталей и настройки
          ТОЛЬКО той, что в руке. До этого было наоборот, и полтораста органов
-         управления стояли столбиком возле миниатюры в 320 px. -->
-    <div class="flex-1 flex min-h-0">
+         управления стояли столбиком возле миниатюры в 320 px.
+
+         Список рамок — на всю ширину, над сценой и колонкой: это и есть то,
+         с чем работают. Подпись «эта рамка» имени не выбирает, а ящик в
+         колонке прятал тот же список за прокруткой. -->
+    <div class="flex-1 flex flex-col min-h-0">
+      {#if frames[frameIndex]}
+        <div
+          class="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 border-b border-[#34251c]/10 bg-[#f8f1e7]"
+        >
+          <div class="w-[22rem] max-w-full">
+            <BattleFramePicker
+              {presets}
+              bind:chosen={presetOpen}
+              onchoose={wearPresetOnRank}
+              onforget={forgetPreset}
+              disabled={saving}
+              size="desk"
+              label={$t("adminBattlesPresetChoose")}
+            />
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <input
+              bind:this={frameNameBox}
+              bind:value={presetName}
+              maxlength="60"
+              placeholder={presetWorn
+                ? $t("adminBattlesPresetCopyName")
+                : $t("adminBattlesPresetName")}
+              onkeydown={(e) =>
+                e.key === "Enter" &&
+                (presetWorn ? keepFrameAsNew() : keepFrameAsPreset())}
+              class="w-44 px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+            />
+            {#if presetWorn}
+              <button
+                onclick={keepFrameAsNew}
+                disabled={saving}
+                title={$t("adminBattlesPresetKeepNewHint")}
+                class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5 disabled:opacity-40"
+                ><BattleIcon name="twin" />{$t(
+                  "adminBattlesPresetKeepNew",
+                )}</button
+              >
+              <button
+                onclick={updateOpenPreset}
+                disabled={saving || !presetChanged}
+                title={$t("adminBattlesPresetUpdateHint")}
+                class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5 disabled:opacity-40"
+                ><BattleIcon name="keep" />{$t(
+                  "adminBattlesPresetUpdate",
+                )}</button
+              >
+              {#if presetChanged}
+                <span
+                  class="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-[#8f2f22]"
+                >
+                  <span class="w-1.5 h-1.5 rounded-full bg-[#c65f3c]"></span>
+                  {$t("adminBattlesPresetDrifted")}
+                </span>
+              {/if}
+              <button
+                onclick={() => forgetPreset(presetWorn)}
+                disabled={saving}
+                title={$t("adminBattlesPresetForgetSure").replace(
+                  "{name}",
+                  presetWorn.name,
+                )}
+                class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#c65f3c]/40 text-[#8f2f22] hover:bg-[#c65f3c]/10 disabled:opacity-40"
+                ><BattleIcon name="trash" />{$t(
+                  "adminBattlesFrameDrop",
+                )}</button
+              >
+            {:else}
+              <button
+                onclick={keepFrameAsPreset}
+                disabled={saving || !presetName.trim()}
+                title={$t("adminBattlesPresetKeep")}
+                class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5 disabled:opacity-40"
+                ><BattleIcon name="keep" />{$t("adminBattlesPresetKeep")}</button
+              >
+            {/if}
+            <button
+              onclick={beginNewFrame}
+              title={$t("adminBattlesFrameNewHint")}
+              class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5"
+              ><BattleIcon name="plus" />{$t("adminBattlesFrameNew")}</button
+            >
+          </div>
+        </div>
+      {/if}
+
+      <div class="flex-1 flex min-h-0">
       <section class="flex-1 min-w-0 flex flex-col bg-[#f1e8db]">
         <div
           class="flex flex-wrap items-center gap-3 px-4 py-2 border-b border-[#34251c]/10"
@@ -3257,6 +3703,7 @@
                   // соседнем он ничего не значит, и «обновить» у чужой рамы
                   // положило бы в ящик не то, что доставали.
                   presetOpen = null;
+                  presetName = "";
                 }}
                 class="px-3 py-1 text-[11px] {frameIndex === i
                   ? 'bg-[#34251c] text-[#f8f1e7]'
@@ -3278,6 +3725,33 @@
                   : 'hover:bg-[#34251c]/5'}">{z}×</button
               >
             {/each}
+          </div>
+
+          <!-- Клетка боя. Стоит рядом с увеличением, а не в колонке справа:
+               это способ СМОТРЕТЬ на карту, как и увеличение, а не её
+               свойство. Без него кружок здоровья на столе недостижим — он
+               выходит только в бою, а стол не бой. -->
+          <div class="flex items-center gap-2 border border-[#34251c]/15 px-2 py-1">
+            <label
+              class="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] cursor-pointer"
+            >
+              <input type="checkbox" bind:checked={stageInMatch} class="accent-[#34251c]" />
+              {$t("adminBattlesStageInMatch")}
+            </label>
+            {#if stageInMatch}
+              <input
+                type="range"
+                min="0.05"
+                max="1"
+                step="0.05"
+                bind:value={stageHurt}
+                title={$t("adminBattlesStageHurt")}
+                class="w-24 accent-[#c65f3c]"
+              />
+              <span class="text-[10px] tabular-nums text-[#8a6a55]"
+                >{Math.round(stageHurt * 100)}%</span
+              >
+            {/if}
           </div>
 
           <div class="flex border border-[#34251c]/15">
@@ -3350,9 +3824,19 @@
               transition={false}
               interactive={false}
               frameEditable={true}
+              rowsEditable={true}
+              hurt={stageInMatch ? stageHurt : 1}
+              alive={stageInMatch
+                ? Math.max(0, Math.round((frameSample.health || 10) * stageHurt))
+                : null}
+              wearSeed={7}
               onEditStart={mark}
+              onBadgeArtUpload={uploadBadgeArt}
+              onBadgeArtStore={badgeArtFromStore}
               onEditEnd={() => barTick++}
+              onRowMove={moveRow}
               bind:sliceHeld
+              bind:rowHeld
             />
           </div>
 
@@ -3534,68 +4018,60 @@
         onfocusincapture={mark}
       >
         {#if frames[frameIndex]}
-          <!-- Ящик нарядов. Стоит ПЕРВЫМ: с готовой рамы работу начинают чаще,
-               чем с пустой. Один список, а не полоса квадратиков вбок — лицо и
-               имя рядом, и видно, какой наряд открыт сейчас.
-
-               Под ним — «обновить». Он и есть весь смысл того, что ящик помнит
-               открытый наряд: правку, начатую с готовой рамы, кладут обратно в
-               неё, а не в близнеца с почти тем же именем. -->
+          <!-- ── Кто это носит ────────────────────────────────────────────
+               Стоит ПЕРВЫМ и над ящиком нарядов, потому что это не настройка,
+               а обстановка: стол правит ЧИН, а гость видит КАРТУ, и между ними
+               стоит цепочка нарядов. Без этой полки чин красят вслепую — и не
+               узнают, что он не виден ни на одной карте. -->
           <div class="p-4 border-b border-[#34251c]/10">
-            <p
-              class="mb-2 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
-            >
-              {$t("adminBattlesPresets")}
+            <p class="mb-2 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]">
+              {$t("adminBattlesWornBy")}
             </p>
-            <BattleFramePicker
-              {presets}
-              bind:chosen={presetOpen}
-              onchoose={wearPresetOnRank}
-              onforget={forgetPreset}
-              disabled={saving}
-              label={$t("adminBattlesPresetWear")}
-            />
-            {#if presetWorn}
-              <div class="flex items-center gap-2 mt-2">
-                <button
-                  onclick={updateOpenPreset}
-                  disabled={saving || !presetChanged}
-                  title={$t("adminBattlesPresetUpdateHint")}
-                  class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5 disabled:opacity-40"
-                  ><BattleIcon name="keep" />{$t(
-                    "adminBattlesPresetUpdate",
-                  )}</button
+            {#if !rankWorn.mine.length}
+              <p class="text-[11px] italic text-[#8a6a55]">
+                {$t("adminBattlesWornNone")}
+              </p>
+            {:else}
+              <p class="text-[11px] leading-relaxed text-[#6f3b24]">
+                {$t("adminBattlesWornPlain")}
+                <b class="tabular-nums">{rankWorn.plain.length}</b>
+                {$t("adminBattlesWornOf")}
+                <b class="tabular-nums">{rankWorn.mine.length}</b>
+              </p>
+              {#if !rankWorn.plain.length}
+                <p
+                  class="mt-1 flex items-start gap-1.5 text-[11px] leading-relaxed text-[#8f2f22]"
                 >
-                {#if presetChanged}
-                  <span
-                    class="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-[#8f2f22]"
+                  <span class="mt-1.5 w-1.5 h-1.5 flex-shrink-0 rounded-full bg-[#c65f3c]"
+                  ></span>
+                  {$t("adminBattlesWornBlind")}
+                </p>
+              {/if}
+              {#each [{ list: rankWorn.own, word: "adminBattlesWornOwn" as TranslationKey }, { list: rankWorn.byRace, word: "adminBattlesWornRace" as TranslationKey }] as group (group.word)}
+                {#if group.list.length}
+                  <p
+                    class="mt-2 mb-0.5 text-[9px] uppercase tracking-[0.14em] text-[#8a6a55]"
                   >
-                    <span class="w-1.5 h-1.5 rounded-full bg-[#c65f3c]"></span>
-                    {$t("adminBattlesPresetDrifted")}
-                  </span>
+                    {$t(group.word)} · {group.list.length}
+                  </p>
+                  <ul class="space-y-0.5">
+                    {#each group.list as one (one.id)}
+                      <li>
+                        <button
+                          onclick={() => jumpToCard(one)}
+                          class="text-left text-[11px] leading-snug text-[#6f3b24] hover:underline"
+                          >{titleOf(one)}</button
+                        >
+                      </li>
+                    {/each}
+                  </ul>
                 {/if}
-              </div>
+              {/each}
             {/if}
-            <div class="flex items-center gap-2 mt-2">
-              <input
-                bind:value={presetName}
-                maxlength="60"
-                placeholder={$t("adminBattlesPresetName")}
-                onkeydown={(e) => e.key === "Enter" && keepFrameAsPreset()}
-                class="flex-1 min-w-0 px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-              />
-              <button
-                onclick={keepFrameAsPreset}
-                disabled={saving || !presetName.trim()}
-                title={$t("adminBattlesPresetKeep")}
-                class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5 disabled:opacity-40"
-                ><BattleIcon name="keep" />{$t("adminBattlesPresetKeepNew")}</button
-              >
-            </div>
           </div>
 
-          <!-- Как надета. Тоже наверху: это первое решение о раме, а не одна из
-               настроек в середине списка. -->
+          <!-- Как надета. Первое решение о раме, а не настройка в середине
+               списка. Список рамок стоит на табличке над столом. -->
           <div class="p-4 border-b border-[#34251c]/10">
             <p
               class="mb-2 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
@@ -4212,14 +4688,412 @@
           </details>
         {/if}
 
+      </aside>
+      </div>
+    </div>
+  {:else if view === "face"}
+    <!-- ── Лицо карты ───────────────────────────────────
+         Что карта ГОВОРИТ: какие строки печатаются, в какой полосе, в каком
+         порядке и с какой величины видно. Своя вкладка, а не раздел рамок:
+         рама — про резьбу, бумагу и окно, опись — про слова, и хранитель,
+         пришедший поправить одно, листал мимо другого. Данные при этом те же
+         (опись живёт в раме и потому едет по цепочке чин → уровень расы →
+         карта); порознь стоят СТОЛЫ, а не объекты, и сохраняет эта вкладка
+         той же кнопкой и тем же запросом, что стол резчика.
+
+         Стенд показывает карту в трёх величинах разом, и это главное, что
+         вкладка вообще умеет: «только крупно» — единственная ступень, которую
+         на одной карте увидеть нельзя. Крупная — рабочая, за неё тянут;
+         полка и клетка боя стоят свидетелями. -->
+    <div class="flex-1 flex min-h-0">
+      <section class="flex-1 min-w-0 flex flex-col bg-[#f1e8db]">
+        <div
+          class="flex flex-wrap items-center gap-3 px-4 py-2 border-b border-[#34251c]/10"
+        >
+          <div class="flex border border-[#34251c]/15">
+            {#each frames as frame, i (frame.tier)}
+              <button
+                onclick={() => (frameIndex = i)}
+                class="px-3 py-1 text-[11px] {frameIndex === i
+                  ? 'bg-[#34251c] text-[#f8f1e7]'
+                  : 'hover:bg-[#34251c]/5'}"
+                >{frame.tier} · {frameName(frame, $lang)}</button
+              >
+            {/each}
+          </div>
+
+          <div class="flex border border-[#34251c]/15">
+            <button
+              onclick={stepBack}
+              disabled={!history.length}
+              title="{$t('adminBattlesUndo')} · ⌘Z"
+              class="px-2.5 py-1 text-[11px] hover:bg-[#34251c]/5 disabled:opacity-30"
+              >↺</button
+            >
+            <button
+              onclick={stepOn}
+              disabled={!ahead.length}
+              title="{$t('adminBattlesRedo')} · ⇧⌘Z"
+              class="px-2.5 py-1 text-[11px] hover:bg-[#34251c]/5 disabled:opacity-30"
+              >↻</button
+            >
+          </div>
+
+          <div class="ml-auto flex items-center gap-3">
+            {#if dirty}
+              <span
+                class="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-[#8f2f22]"
+              >
+                <span class="w-1.5 h-1.5 rounded-full bg-[#c65f3c]"></span>
+                {$t("adminBattlesUnsaved")}
+              </span>
+            {/if}
+            <button
+              onclick={saveFrames}
+              disabled={saving}
+              class="px-4 py-1.5 text-[10px] uppercase tracking-[0.16em] {dirty
+                ? 'bg-[#34251c] text-[#f8f1e7]'
+                : 'border border-[#34251c]/25'} disabled:opacity-40"
+              >{$t("adminBattlesFramesSave")}</button
+            >
+          </div>
+        </div>
+
+        <!-- Стенд трёх величин. Ширины не круглые для красоты: это те самые
+             числа, по которым карта делит себя сама (281 и 160), взятые по
+             обе стороны от порогов. -->
+        <div class="flex-1 overflow-auto p-8">
+          <div class="flex flex-wrap items-start gap-8">
+            {#each FACE_SIZES as size (size.px)}
+              <div style="width:{size.px}px" class="flex-shrink-0">
+                <p
+                  class="mb-2 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                >
+                  {$t(size.label)} · {size.px}px
+                </p>
+                <BattleCard
+                  card={frameSample}
+                  {frames}
+                  owned={true}
+                  level={3}
+                  transition={false}
+                  interactive={false}
+                  rowsEditable={size.px === FACE_SIZES[0].px}
+                  onEditStart={mark}
+                  onRowMove={moveRow}
+                  bind:rowHeld
+                  onfit={(over) => noteFit("face", size.px, over)}
+                />
+                {#if (fitOver["face"]?.[size.px] ?? 0) > 0}
+                  <p
+                    class="mt-2 flex items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-[#8f2f22]"
+                  >
+                    <span class="w-1.5 h-1.5 rounded-full bg-[#c65f3c]"></span>
+                    {$t("adminBattlesFitOver")}
+                    {Math.round(fitOver["face"][size.px])}px
+                  </p>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        </div>
+      </section>
+
+      <aside
+        class="w-[27rem] flex-shrink-0 border-l border-[#34251c]/10 overflow-y-auto"
+        onpointerdowncapture={mark}
+        onfocusincapture={mark}
+      >
+        {#if frames[frameIndex]}
+          <div class="p-4">
+          <p
+            class="max-w-[62ch] mb-3 text-[11px] leading-relaxed italic text-[#8a6a55]"
+          >
+            {$t("adminBattlesRosterHint")}
+          </p>
+          <!-- Ящик на полосу. Строку перетаскивают внутри ящика — это
+               порядок, — и из ящика в ящик — это полоса. Полоса, в которой
+               строке стоять нельзя, метки не показывает вовсе: список
+               предлагает только то, что имеет смысл. То же делается прямо
+               на карте; здесь второй вход, для точности и для того, что на
+               карте закрыто резьбой. -->
+          {#each SHEET_BANDS as band (band)}
+            {@const rows = bandRows(band)}
+            <div
+              role="list"
+              ondragover={(e) => {
+                e.preventDefault();
+                aimRowList(band, null);
+              }}
+              ondrop={(e) => {
+                e.preventDefault();
+                dropRowList();
+              }}
+              class="mb-2 border {rowOver?.band === band
+                ? 'border-[#c65f3c]'
+                : 'border-[#34251c]/12'}"
+            >
+              <p
+                class="px-2 py-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55] bg-[#34251c]/[0.04]"
+              >
+                {$t(SHEET_BAND_KEY[band])}
+              </p>
+              {#if !rows.length}
+                <p class="px-2 py-2 text-[10px] italic text-[#8a6a55]">
+                  {$t("adminBattlesRosterBandEmpty")}
+                </p>
+              {/if}
+              {#each rows as row (row.slot)}
+                <div
+                  role="listitem"
+                  draggable="true"
+                  ondragstart={(e) => {
+                    rowHeld = row.slot;
+                    e.dataTransfer?.setData("text/plain", row.slot);
+                  }}
+                  ondragover={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    aimRowList(band, seatBy(band, row.slot, e));
+                  }}
+                  ondragend={() => {
+                    rowHeld = null;
+                    rowOver = null;
+                  }}
+                  ondrop={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dropRowList();
+                  }}
+                  class="px-1.5 py-1.5 border-t border-[#34251c]/8 cursor-grab {rowHeld ===
+                  row.slot
+                    ? 'opacity-40'
+                    : ''} {rowOver?.band === band &&
+                  rowOver.before === row.slot
+                    ? 'shadow-[inset_0_2px_0_0_#c65f3c]'
+                    : ''}"
+                >
+                  <!-- Имя строкой, ступени под ним. В один ряд они не встают:
+                       пять слов съедали всю ширину, и от названия оставалась
+                       буква с многоточием — список, по которому нельзя узнать
+                       ни одной строки. -->
+                  <div class="flex items-center gap-2">
+                    <span
+                      class="text-[10px] text-[#8a6a55] select-none"
+                      title={$t("adminBattlesRosterDrag")}>⠿</span
+                    >
+                    <span class="flex flex-col leading-none">
+                      <button
+                        onclick={() => resheet(row.slot, -1)}
+                        title={$t("adminBattlesStackUp")}
+                        class="px-1 text-[8px] text-[#8a6a55] hover:text-[#34251c]"
+                        >▲</button
+                      >
+                      <button
+                        onclick={() => resheet(row.slot, 1)}
+                        title={$t("adminBattlesStackDown")}
+                        class="px-1 text-[8px] text-[#8a6a55] hover:text-[#34251c]"
+                        >▼</button
+                      >
+                    </span>
+                    <span
+                      class="flex-1 min-w-0 text-[11px] {row.show === 'never'
+                        ? 'text-[#8a6a55] line-through'
+                        : ''}">{$t(SHEET_SLOT_KEY[row.slot])}</span
+                    >
+                  </div>
+                  <!-- Пять ступеней, а не тумблер: разница между полкой и
+                       клеткой боя — не «бой», а ширина. Четыре говорят, с
+                       какой величины строку видно, пятая — до какой. -->
+                  <div class="flex mt-1 ml-[1.55rem] border border-[#34251c]/15">
+                    {#each SHEET_SHOWS as show (show)}
+                      <button
+                        onclick={() => (row.show = show)}
+                        title={$t(SHEET_SHOW_KEY[show])}
+                        class="flex-1 px-1 py-0.5 text-[9px] uppercase tracking-[0.06em] {row.show ===
+                        show
+                          ? 'bg-[#34251c] text-[#f8f1e7]'
+                          : 'hover:bg-[#34251c]/5'}"
+                        >{$t(SHEET_SHOW_SHORT[show])}</button
+                      >
+                    {/each}
+                  </div>
+                </div>
+              {/each}
+              {#if rowOver?.band === band && rowOver.before === null}
+                <div class="h-0.5 bg-[#c65f3c]"></div>
+              {/if}
+            </div>
+          {/each}
+          <button
+            onclick={resetSheet}
+            class="mt-3 px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
+            >{$t("adminBattlesRosterReset")}</button
+          >
+
+          <!-- Кегль и чернила. Множители, а не размеры: размеры карта
+               считает из своей ширины, и рамка, назначающая пиксели,
+               отняла бы у неё ровно то, ради чего она их считает. -->
+          <div class="mt-5 pt-4 border-t border-[#34251c]/10 flex flex-wrap gap-5">
+            <label class="block w-44">
+              <span
+                class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                >{$t("adminBattlesTypeScale")} · {(
+                  frames[frameIndex].typeScale || 1
+                ).toFixed(2)}</span
+              >
+              <input
+                type="range"
+                min="0.75"
+                max="1.5"
+                step="0.01"
+                value={frames[frameIndex].typeScale || 1}
+                oninput={(e) =>
+                  (frames[frameIndex].typeScale = Number(
+                    e.currentTarget.value,
+                  ))}
+                class="w-full"
+              />
+            </label>
+            <label class="block w-44">
+              <span
+                class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                >{$t("adminBattlesInkFade")} · {(
+                  frames[frameIndex].inkFade || 1
+                ).toFixed(2)}</span
+              >
+              <input
+                type="range"
+                min="0.5"
+                max="1.6"
+                step="0.01"
+                value={frames[frameIndex].inkFade || 1}
+                oninput={(e) =>
+                  (frames[frameIndex].inkFade = Number(
+                    e.currentTarget.value,
+                  ))}
+                class="w-full"
+              />
+            </label>
+          </div>
+          </div>
+        {/if}
+      </aside>
+    </div>
+  {:else if view === "bench"}
+    <!--
+      ── Стол хранителя ────────────────────────────────────────────────────
+      Доску рисует тот же `BattleScene`, что и комната гостей: второй
+      отрисовщик неизбежно разошёлся бы с первым, и стол начал бы врать ровно
+      про то, что на нём проверяют.
+    -->
+    <div class="flex-1 flex min-h-0">
+      <!-- ── Полка этюдов ─────────────────────────────────────────────────
+           То, что оставили. Щелчок раскладывает этюд на столе — вместе с
+           расстановкой, а не рядом с ней. -->
+      <aside
+        class="w-56 flex-shrink-0 flex flex-col border-r border-[#34251c]/10"
+      >
+        <div class="p-3 border-b border-[#34251c]/10">
+          <button
+            onclick={() => openEtude(null)}
+            class="w-full px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
+            >{$t("adminBattlesEtudeNew")}</button
+          >
+        </div>
+        <div class="flex-1 overflow-y-auto">
+          {#if !challenges.length}
+            <p class="p-3 text-xs italic text-[#5f4636]">
+              {$t("adminBattlesEtudeEmpty")}
+            </p>
+          {:else}
+            <p
+              class="px-3 py-2 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+            >
+              {$t("adminBattlesDragHint")}
+            </p>
+            <ul class="pb-4">
+              {#each challenges as challenge, i (challenge.id)}
+                <li
+                  draggable="true"
+                  ondragstart={() => (etudeDragFrom = i)}
+                  ondragover={(e) => {
+                    e.preventDefault();
+                    etudeDragOver = i;
+                  }}
+                  ondragleave={() => {
+                    if (etudeDragOver === i) etudeDragOver = null;
+                  }}
+                  ondrop={(e) => {
+                    e.preventDefault();
+                    onEtudeDrop(i);
+                  }}
+                  ondragend={() => {
+                    etudeDragFrom = null;
+                    etudeDragOver = null;
+                  }}
+                  class="border-b border-[#34251c]/5 {etudeDragOver === i
+                    ? 'bg-[#c65f3c]/10'
+                    : ''} {etudeDragFrom === i ? 'opacity-40' : ''}"
+                >
+                  <button
+                    onclick={() => openEtude(challenge)}
+                    class="w-full text-left px-3 py-2.5 flex gap-2 items-start hover:bg-[#34251c]/[0.04] {etudeId ===
+                    challenge.id
+                      ? 'bg-[#34251c]/[0.06]'
+                      : ''}"
+                  >
+                    <span
+                      class="mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 {STATUS_TONE[
+                        challenge.status
+                      ]}"
+                    ></span>
+                    <span class="min-w-0 flex-1">
+                      <span
+                        class="block text-[13px] leading-snug truncate"
+                        style="font-family: 'Cormorant Garamond', Georgia, serif;"
+                      >
+                        {etudeTitleOf(challenge)}
+                      </span>
+                      <span class="block text-[10px] text-[#8a6a55]">
+                        {challenge.playerSide === "deck"
+                          ? $t("adminBattlesEtudeSideDeck")
+                          : $t("adminBattlesEtudeSideScripted")}
+                        · {challenge.botDepth >= 2
+                          ? $t("adminBattlesHandSearching")
+                          : $t("adminBattlesHandGreedy")}
+                        {#if challenge.rewardDust > 0}
+                          · {challenge.rewardDust}
+                        {/if}
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
+      </aside>
+
+      <div class="flex-1 overflow-y-auto p-6 min-w-0">
+        <p class="max-w-[62ch] mb-1 text-xs leading-relaxed text-[#5f4636]">
+          {$t("adminBattlesBenchHint")}
+        </p>
+        <p class="max-w-[62ch] mb-5 text-[11px] leading-relaxed text-[#8a6a55]">
+          {$t("adminBattlesBenchNoHealth")}
+        </p>
+
         <details class="border-b border-[#34251c]/10">
           <summary
             class="px-4 py-2.5 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
             >{$t("adminBattlesRates")}</summary
           >
           <div class="px-4 pb-4">
-            <!-- Ставки начисления. Стоят рядом с рамками, потому что и то и другое —
-             настройка комнаты целиком, а не свойство одной карты. -->
+            <!-- Ставки начисления, подарок новичку и часы. Это настройки
+                 КОМНАТЫ, а не чина: рама решает, как карта выглядит, а здесь
+                 решают, по чему она достаётся и когда. На вкладке рамок они
+                 стояли исторически, и хранитель, пришедший красить бумагу,
+                 листал мимо них курсы пыли. -->
             <div class="mb-8 pb-6 border-b border-[#34251c]/10">
               <p
                 class="mb-1 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
@@ -4355,110 +5229,6 @@
             </div>
           </div>
         </details>
-      </aside>
-    </div>
-  {:else if view === "bench"}
-    <!--
-      ── Стол хранителя ────────────────────────────────────────────────────
-      Доску рисует тот же `BattleScene`, что и комната гостей: второй
-      отрисовщик неизбежно разошёлся бы с первым, и стол начал бы врать ровно
-      про то, что на нём проверяют.
-    -->
-    <div class="flex-1 flex min-h-0">
-      <!-- ── Полка этюдов ─────────────────────────────────────────────────
-           То, что оставили. Щелчок раскладывает этюд на столе — вместе с
-           расстановкой, а не рядом с ней. -->
-      <aside
-        class="w-56 flex-shrink-0 flex flex-col border-r border-[#34251c]/10"
-      >
-        <div class="p-3 border-b border-[#34251c]/10">
-          <button
-            onclick={() => openEtude(null)}
-            class="w-full px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
-            >{$t("adminBattlesEtudeNew")}</button
-          >
-        </div>
-        <div class="flex-1 overflow-y-auto">
-          {#if !challenges.length}
-            <p class="p-3 text-xs italic text-[#5f4636]">
-              {$t("adminBattlesEtudeEmpty")}
-            </p>
-          {:else}
-            <p
-              class="px-3 py-2 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-            >
-              {$t("adminBattlesDragHint")}
-            </p>
-            <ul class="pb-4">
-              {#each challenges as challenge, i (challenge.id)}
-                <li
-                  draggable="true"
-                  ondragstart={() => (etudeDragFrom = i)}
-                  ondragover={(e) => {
-                    e.preventDefault();
-                    etudeDragOver = i;
-                  }}
-                  ondragleave={() => {
-                    if (etudeDragOver === i) etudeDragOver = null;
-                  }}
-                  ondrop={(e) => {
-                    e.preventDefault();
-                    onEtudeDrop(i);
-                  }}
-                  ondragend={() => {
-                    etudeDragFrom = null;
-                    etudeDragOver = null;
-                  }}
-                  class="border-b border-[#34251c]/5 {etudeDragOver === i
-                    ? 'bg-[#c65f3c]/10'
-                    : ''} {etudeDragFrom === i ? 'opacity-40' : ''}"
-                >
-                  <button
-                    onclick={() => openEtude(challenge)}
-                    class="w-full text-left px-3 py-2.5 flex gap-2 items-start hover:bg-[#34251c]/[0.04] {etudeId ===
-                    challenge.id
-                      ? 'bg-[#34251c]/[0.06]'
-                      : ''}"
-                  >
-                    <span
-                      class="mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 {STATUS_TONE[
-                        challenge.status
-                      ]}"
-                    ></span>
-                    <span class="min-w-0 flex-1">
-                      <span
-                        class="block text-[13px] leading-snug truncate"
-                        style="font-family: 'Cormorant Garamond', Georgia, serif;"
-                      >
-                        {etudeTitleOf(challenge)}
-                      </span>
-                      <span class="block text-[10px] text-[#8a6a55]">
-                        {challenge.playerSide === "deck"
-                          ? $t("adminBattlesEtudeSideDeck")
-                          : $t("adminBattlesEtudeSideScripted")}
-                        · {challenge.botDepth >= 2
-                          ? $t("adminBattlesHandSearching")
-                          : $t("adminBattlesHandGreedy")}
-                        {#if challenge.rewardDust > 0}
-                          · {challenge.rewardDust}
-                        {/if}
-                      </span>
-                    </span>
-                  </button>
-                </li>
-              {/each}
-            </ul>
-          {/if}
-        </div>
-      </aside>
-
-      <div class="flex-1 overflow-y-auto p-6 min-w-0">
-        <p class="max-w-[62ch] mb-1 text-xs leading-relaxed text-[#5f4636]">
-          {$t("adminBattlesBenchHint")}
-        </p>
-        <p class="max-w-[62ch] mb-5 text-[11px] leading-relaxed text-[#8a6a55]">
-          {$t("adminBattlesBenchNoHealth")}
-        </p>
 
         <!-- ── Чем расстановка подписана, если её оставить ────────────────
              Поля стоят над столом, а расстановки не хранят: её всегда даёт
@@ -5729,6 +6499,18 @@
                   {/if}
                 </div>
 
+                <!-- Наряд без окна. Картинка приехала, врезки остались от
+                     ранга — и содержимое ложится поверх чужой резьбы. Где у
+                     ЭТОЙ картинки дыра, знает только тот, кто её рисовал,
+                     поэтому стол говорит словами, а не догадывается. -->
+                {#if dressWindowMissing(raceLevelFrames[raceLevelPreview - 1])}
+                  <p
+                    class="mt-3 max-w-[62ch] text-[11px] leading-relaxed italic text-[#8f2f22]"
+                  >
+                    {$t("adminBattlesDressNoWindow")}
+                  </p>
+                {/if}
+
                 <!-- Или взять готовое из ящика — целиком, а не одной картинкой:
                      рамка, собранная из частей, иначе на расу бы не переехала. -->
                 {#if presets.length}
@@ -5857,6 +6639,44 @@
             placeholder={$t("adminBattlesSearch")}
             class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
           />
+          <!-- Проверка полки. Карт десятки, и главная беда описи в том, что
+               переполнение НЕВИДИМО: не влезшее уезжает в прокрутку, которой
+               на карте никто не ищет. Кнопка ставит на стол невидимую стопку
+               настоящих карт на двух ширинах и слушает, что они скажут. -->
+          <button
+            onclick={() => (fitProbe = !fitProbe)}
+            disabled={loading || !cards.length}
+            class="w-full px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border {fitProbe
+              ? 'bg-[#34251c] text-[#f8f1e7] border-[#34251c]'
+              : 'border-[#34251c]/20 hover:bg-[#34251c]/5'} disabled:opacity-40"
+            >{$t("adminBattlesFitCheck")}</button
+          >
+          {#if fitProbe}
+            {#if fitTrouble.length}
+              <p class="text-[10px] uppercase tracking-[0.16em] text-[#8f2f22]">
+                {$t("adminBattlesFitTitle")}
+              </p>
+              <ul class="space-y-0.5">
+                {#each fitTrouble as row (row.card.id)}
+                  <li>
+                    <button
+                      onclick={() => openCard(row.card)}
+                      class="w-full text-left text-[11px] leading-snug text-[#6f3b24] hover:underline"
+                      >{titleOf(row.card)} —
+                      {row.where.map((one) => $t(one.label)).join(", ")}</button
+                    >
+                  </li>
+                {/each}
+              </ul>
+            {:else}
+              <p class="text-[11px] italic text-[#8a6a55]">
+                {$t("adminBattlesFitNone")}
+              </p>
+            {/if}
+            <p class="text-[10px] leading-relaxed italic text-[#8a6a55]">
+              {$t("adminBattlesFitHint")}
+            </p>
+          {/if}
         </div>
         <div class="flex-1 overflow-y-auto">
           {#if loading}
@@ -5930,6 +6750,33 @@
           {/if}
         </div>
       </aside>
+
+      <!-- Невидимая стопка. Настоящие `BattleCard` на настоящих ширинах:
+           замер, считающий переполнение по-своему, — это вторая правда о том,
+           что влезает, и однажды она разойдётся с комнатой. Стоит за краем
+           окна, а не под `display: none`: у скрытого нет ни ширины, ни
+           укладки, и мерить в нём нечего. -->
+      {#if fitProbe}
+        <div
+          aria-hidden="true"
+          class="fixed top-0 left-[-99999px] pointer-events-none"
+        >
+          {#each cards as one (one.id)}
+            {#each FIT_WIDTHS as size (size.px)}
+              <div style="width:{size.px}px">
+                <BattleCard
+                  card={one}
+                  {frames}
+                  owned={true}
+                  interactive={false}
+                  transition={false}
+                  onfit={(over) => noteFit(one.id, size.px, over)}
+                />
+              </div>
+            {/each}
+          {/each}
+        </div>
+      {/if}
 
       <!-- ── Лист карты ──────────────────────────────────────────────────
            Была карта посередине и колонка в двадцать пять блоков справа: всё,
@@ -6939,7 +7786,33 @@
                   transition={false}
                   onEditRace={jumpToRace}
                   onError={(e) => flash(e, 6000)}
+                  onfit={(over) => (draftFit = over)}
                 />
+
+                <!-- Лампа «не влезло». Полоса свойств не выливается, а
+                     прокручивается, и не влезшее просто пропадает: полосы
+                     прокрутки на карте никто не видит и не ищет. Мерит сама
+                     карта — после укладки и на той ширине, на которой стоит,
+                     потому что без ширины у вопроса «влезло ли» ответа нет. -->
+                {#if draftFit > 0}
+                  <p
+                    class="mt-2 flex items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-[#8f2f22]"
+                  >
+                    <span class="w-1.5 h-1.5 rounded-full bg-[#c65f3c]"></span>
+                    {$t("adminBattlesFitOver")}
+                    {Math.round(draftFit)}px
+                  </p>
+                {/if}
+
+                <!-- Наряд без окна. Молча это не чинится: где у ЭТОЙ картинки
+                     дыра, знает только тот, кто её рисовал. -->
+                {#if draftDressBlind}
+                  <p
+                    class="mt-2 max-w-[42ch] text-[11px] leading-relaxed italic text-[#8f2f22]"
+                  >
+                    {$t("adminBattlesDressNoWindow")}
+                  </p>
+                {/if}
                 <div class="mt-3">
                   <SheetField label={$t("adminBattlesPreviewLevel")}>
                     <select

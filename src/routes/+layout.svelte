@@ -12,6 +12,7 @@
   import { roomGesture } from '$lib/house-rooms';
   import { loadSiteFonts } from '$lib/load-fonts';
   import { api } from '$lib/api';
+  import { matchChrome } from '$lib/stores/match-chrome.svelte';
   import type { Lang } from '$lib/i18n';
 
   type ViewTransition = { finished: Promise<void>; ready: Promise<void> };
@@ -25,7 +26,9 @@
     `${page.url.origin}${page.data?.canonicalPath ?? page.url.pathname}`
   );
   let { children } = $props();
-  let showSiteHeader = $derived(!page.url.pathname.startsWith('/admin'));
+  let showSiteHeader = $derived(
+    !page.url.pathname.startsWith('/admin') && !matchChrome.covering,
+  );
   let hasHeaderOffset = $derived(showSiteHeader && page.url.pathname !== '/');
   // House-descent scroll dimmer: every public page EXCEPT the figurine detail /
   // passport routes, which run their own candle vignette (stacking a second

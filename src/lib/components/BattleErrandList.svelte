@@ -22,9 +22,12 @@
     errands,
     /** Предпросмотр на столе хранителя: ссылки увели бы его со стола. */
     preview = false,
+    /** В двери комнат: без внешнего поля, список уже стоит в рамке строки. */
+    nest = false,
   }: {
     errands: BattleErrand[];
     preview?: boolean;
+    nest?: boolean;
   } = $props();
 
   /** Сколько разовых заданий видно до нажатия «показать все». */
@@ -119,7 +122,7 @@
   </svelte:element>
 {/snippet}
 
-<section class="tasks" in:fade={{ duration: 500 }}>
+<section class="tasks" class:tasks--nest={nest} in:fade={{ duration: 500 }}>
   <header class="tasks-head">
     <span class="tasks-title">{$t('battlesErrands')}</span>
     <span class="tasks-tally">
@@ -176,6 +179,11 @@
     border: 1px solid #d8c6b1;
     background: rgba(255, 253, 249, 0.55);
     color: #34251c;
+  }
+
+  .tasks--nest {
+    margin: 0;
+    max-width: none;
   }
 
   .tasks-head {

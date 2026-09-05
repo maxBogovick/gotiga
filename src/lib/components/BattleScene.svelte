@@ -21,6 +21,7 @@
     bodyPassport,
     cardCopy,
     channelLabelKey,
+    cellPrints,
     frameForCard,
     kindLabelKey,
     MOTION_MS_MAX,
@@ -39,6 +40,7 @@
   import type {
     BattleAction,
     BattleCard as BattleCardDto,
+    SheetSlot,
     BattleCell,
     BattleEvent,
     BattleFrame,
@@ -60,6 +62,7 @@
     onforesee,
     onreplay,
     onleave,
+    fill = false,
   }: {
     match: BattleMatch;
     cards?: BattleCardDto[];
@@ -83,14 +86,20 @@
     /** Под печатью. Обе необязательны: у стола хранителя их нет. */
     onreplay?: () => void;
     onleave?: () => void;
+    /**
+     * Этюд занимает окно: доска берёт оставшуюся высоту, шапка кабинета
+     * при этом снята. Стол хранителя в 24rem это не передаёт — там сцена
+     * складывается в колонку и меряет себя содержимым.
+     */
+    fill?: boolean;
   } = $props();
 
   const WIDTH = 3;
   const DEPTH = 6;
   /** Комната, в которой стол ложится вдоль: шесть портретов в ряд на более
-   *  узкой — штампы. Совпадает с `.scene--along`, не с контейнерным 900 px:
-   *  три колонки сцены появляются раньше, чем доске хватает ширины. */
-  const ALONG = 1100;
+   *  узкой — штампы. Совпадает с `.scene--along`. Полоса хода больше не ест
+   *  тринадцать колонн слева, поэтому порог чуть ниже прежних 1100. */
+  const ALONG = 960;
 
   // ── Темп ──────────────────────────────────────────────────────────────────
   //
@@ -151,6 +160,19 @@
    *  которой позволено мерить себя по содержимому, из клетки вылезает. */
   const aspectOf = (dto: BattleCardDto) =>
     frameForCard(dto, frames).aspect || DEFAULT_ASPECT;
+
+  /**
+   * Печатает ли ЭТА карта число сама, стоя в клетке.
+   *
+   * Спрашивается у описи той рамы, которую карта носит, а не у дома: наряд
+   * может снять значок, и тогда число обязана сказать доска. Нет карты (тело
+   * без карточки) — не говорит никто, и оба кружка доски остаются.
+   *
+   * Функцией, а не `{@const}` в разметке: тот обязан стоять непосредственным
+   * ребёнком блока, а спрашивают здесь изнутри обычного элемента.
+   */
+  const cardSays = (dto: BattleCardDto | null | undefined, slot: SheetSlot) =>
+    !!dto && cellPrints(frameForCard(dto, frames), slot);
 
   let byCell = $derived(
     new Map(position.board.map((s) => [`${s.cell.x},${s.cell.y}`, s.unit])),
@@ -839,6 +861,9 @@
   );
 
   let open = $state<number | null>(null);
+  /** Правая колонка появляется, когда есть что сказать: выбранное тело или
+   *  строки журнала. Пустое «пока ничего» не стоит трети окна. */
+  let hasRail = $derived(!!chosen || journal.length > 0);
 
   // ── Доска по высоте окна ──────────────────────────────────────────────────
   //
@@ -954,6 +979,7 @@
         >
           {#if dto}
             <BattleCard card={dto} {frames} owned={true} transition={false} interactive={false} />
+            <span class="held-cost">{held.cost}</span>
           {:else}
             <span class="held-name">{titleOf(held.name)}</span>
           {/if}
@@ -965,43 +991,53 @@
 
 <!-- Комната и стол — разные элементы: элемент не может спрашивать свой
      собственный контейнер, и запрос ниже молча мерил бы страницу. -->
-<div class="room" bind:this={roomEl}>
-<div class="scene" class:scene--held={playing} class:scene--along={along}>
-  <!-- Слева: круг, чей ход, мана обеих сторон. -->
-  <aside class="ledger">
+<div class="room" class:room--fill={fill} bind:this={roomEl}>
+<div
+  class="scene"
+  class:scene--held={playing}
+  class:scene--along={along}
+  class:scene--fill={fill}
+  class:scene--rail={hasRail}
+>
+  <!-- Круг, чей ход, мана — одна строка над доской, не колонка слева. -->
+  <div class="strip">
     <p class="ledger-turn">
       {position.active === me ? $t('battleWhoseTurnYours') : $t('battleWhoseTurnKeeper')}
     </p>
-    <p class="ledger-line">{$t('battleRound')} {position.round}</p>
-    <!--
-      «Сколько есть сейчас» имеет смысл только у той стороны, чей ход идёт. У
-      другой `mana` — это остаток с её прошлого хода, а в первом раунде, пока
-      она ещё не ходила ни разу, это просто ноль при непустом потолке: сторона,
-      ходящая второй, показывала «0/2», а на своём первом ходу получала 3.
-      Число, которое ни разу не было правдой.
+    <p class="strip-meta">
+      <!--
+        «Сколько есть сейчас» имеет смысл только у той стороны, чей ход идёт. У
+        другой `mana` — это остаток с её прошлого хода, а в первом раунде, пока
+        она ещё не ходила ни разу, это просто ноль при непустом потолке: сторона,
+        ходящая второй, показывала «0/2», а на своём первом ходу получала 3.
+        Число, которое ни разу не было правдой.
 
-      Поэтому у активной стороны показывается «есть из потолка», а у неактивной
-      — только сам потолок. Дорисовывать ей «будет столько-то» здесь нельзя:
-      прибавку на ход считает движок, и вторая её реализация разошлась бы с ним.
-    -->
-    <p class="ledger-line">
-      {$t('battleManaYours')}
-      <span class="num">
-        {#if position.active === 'player'}{position.player.mana}/{position.player.manaMax}
-        {:else}{position.player.manaMax}{/if}
+        Поэтому у активной стороны показывается «есть из потолка», а у неактивной
+        — только сам потолок. Дорисовывать ей «будет столько-то» здесь нельзя:
+        прибавку на ход считает движок, и вторая её реализация разошлась бы с ним.
+      -->
+      <span>{$t('battleRound')} {position.round}</span>
+      <span>
+        {$t('battleManaYours')}
+        <span class="num">
+          {#if position.active === 'player'}{position.player.mana}/{position.player.manaMax}
+          {:else}{position.player.manaMax}{/if}
+        </span>
+      </span>
+      <span>
+        {$t('battleManaKeeper')}
+        <span class="num">
+          {#if position.active === 'keeper'}{position.keeper.mana}/{position.keeper.manaMax}
+          {:else}{position.keeper.manaMax}{/if}
+        </span>
       </span>
     </p>
-    <p class="ledger-line">
-      {$t('battleManaKeeper')}
-      <span class="num">
-        {#if position.active === 'keeper'}{position.keeper.mana}/{position.keeper.manaMax}
-        {:else}{position.keeper.manaMax}{/if}
-      </span>
-    </p>
-    <p class="ledger-note">{$t('battleManaNote')}</p>
+  </div>
 
-    <!-- Рука хранителя в этой колонке на широком экране: тогда под доской
-         остаются только свои карты и ход, и они помещаются в окно. -->
+  <div class="play">
+  <!-- Рука хранителя в этой колонке на широком экране: тогда под доской
+       остаются только свои карты и ход, и они помещаются в окно. -->
+  <aside class="ledger" class:ledger--empty={!theirHand.length}>
     <div class="ledger-hands">
       {@render keeperHand()}
     </div>
@@ -1010,6 +1046,7 @@
   <div class="table" bind:this={tableEl} style="--room:{room}px">
     <div class="table-hand table-hand--theirs">{@render keeperHand()}</div>
 
+    <div class="well" style="--fit:{DEFAULT_ASPECT}">
     <div class="field" bind:this={fieldEl}>
       <div class="cloth">
       <div class="face">
@@ -1054,6 +1091,7 @@
                   class:figure--wound={acting?.target === here.id || flying?.unit === here.id}
                   style={stirOf(here.id)}
                 >
+                  <span class="figure-body">
                   {#if dto}
                     <!-- transition off: two copies of one work share a card id,
                          and two `view-transition-name`s abort the morph. -->
@@ -1064,6 +1102,7 @@
                       transition={false}
                       interactive={false}
                       hurt={here.health.max > 0 ? here.health.current / here.health.max : 1}
+                      alive={here.health.current}
                       wearSeed={here.id}
                       struck={acting?.target === here.id ? acting.struck : null}
                       scrap={flying?.unit === here.id ? flying : null}
@@ -1071,13 +1110,27 @@
                   {:else}
                     <span class="figure-name">{titleOf(here.card.name)}</span>
                   {/if}
+                  <!-- Числа, которых карта НЕ печатает сама.
+                       Карта в клетке носит свои значки — со своей формой, своей
+                       заливкой, своим местом на кромке окна и сургучом у
+                       здоровья, — и кружок доски, вставший в тот же угол,
+                       просто накрывал их собой: два отрисовщика одного числа
+                       это не лишний код, это два кружка в одном месте, и
+                       побеждал тот, что нарисован позже. Спрашиваем опись ТОЙ
+                       рамы, которую носит это тело; нет карты — печатаем оба,
+                       иначе на доске не осталось бы чисел вовсе. -->
+                  {#if !cardSays(dto, 'healthMark') || !cardSays(dto, 'power')}
+                    <span class="tally">
+                      {#if !cardSays(dto, 'healthMark')}
+                        <i class="tally-pip tally-pip--health">{here.health.current}</i>
+                      {/if}
+                      {#if !cardSays(dto, 'power')}
+                        <i class="tally-pip tally-pip--power">{here.power}</i>
+                      {/if}
+                    </span>
+                  {/if}
+                  </span>
                 </span>
-
-                <!-- Число — только у раненых. Целое тело сообщает о себе тем,
-                     что молчит. -->
-                {#if here.health.current < here.health.max}
-                  <span class="wound">{here.health.current}</span>
-                {/if}
 
                 <!-- Предвестие на теле: сколько снимет этот ход и сколько
                      снимут в ответ. Два числа, а не одно: своё и чужое — не
@@ -1157,6 +1210,7 @@
       </div>
       </div>
     </div>
+    </div>
 
     <!-- Своя рука и ход — ближний край стола: веер карт и фраза хода
          в одной полосе, чтобы оба оставались в окне. -->
@@ -1235,6 +1289,7 @@
     </div>
   </div>
 
+  {#if hasRail}
   <aside class="aside">
     <!-- Карточка выбранного: спокойная и неподвижная, не всплывающая подсказка. -->
     {#if chosen}
@@ -1292,42 +1347,42 @@
       </div>
     {/if}
 
-    <div class="journal" class:journal--vacant={!journal.length}>
+    {#if journal.length}
+    <div class="journal">
       <p class="journal-label">{$t('battleJournal')}</p>
-      {#if !journal.length}
-        <p class="journal-empty">{$t('battleJournalEmpty')}</p>
-      {:else}
-        <ul class="journal-lines">
-          {#each journal as line, i (i)}
-            <li>
-              {#if line.trail.length}
-                <button type="button" class="journal-open" onclick={() => (open = open === i ? null : i)}>
-                  {line.text}
-                </button>
-                {#if open === i}
-                  <div class="breakdown">
-                    {#if line.head}<p class="breakdown-head">{line.head}</p>{/if}
-                    {#each line.trail as b, j (j)}
-                      <p class="breakdown-row">
-                        <span class="breakdown-why">{stepWord(b.step, $t)}</span>
-                        <span class="num">{b.from} → {b.to}</span>
-                      </p>
-                    {/each}
-                    <p class="breakdown-row breakdown-total">
-                      <span class="breakdown-why">{$t('battleTrailTotal')}</span>
-                      <span class="num">{line.total}</span>
+      <ul class="journal-lines">
+        {#each journal as line, i (i)}
+          <li>
+            {#if line.trail.length}
+              <button type="button" class="journal-open" onclick={() => (open = open === i ? null : i)}>
+                {line.text}
+              </button>
+              {#if open === i}
+                <div class="breakdown">
+                  {#if line.head}<p class="breakdown-head">{line.head}</p>{/if}
+                  {#each line.trail as b, j (j)}
+                    <p class="breakdown-row">
+                      <span class="breakdown-why">{stepWord(b.step, $t)}</span>
+                      <span class="num">{b.from} → {b.to}</span>
                     </p>
-                  </div>
-                {/if}
-              {:else}
-                <span class="journal-plain">{line.text}</span>
+                  {/each}
+                  <p class="breakdown-row breakdown-total">
+                    <span class="breakdown-why">{$t('battleTrailTotal')}</span>
+                    <span class="num">{line.total}</span>
+                  </p>
+                </div>
               {/if}
-            </li>
-          {/each}
-        </ul>
-      {/if}
+            {:else}
+              <span class="journal-plain">{line.text}</span>
+            {/if}
+          </li>
+        {/each}
+      </ul>
     </div>
+    {/if}
   </aside>
+  {/if}
+  </div>
 </div>
 </div>
 
@@ -1340,21 +1395,95 @@
     container-type: inline-size;
   }
 
+  .room--fill {
+    height: 100%;
+    min-height: 0;
+  }
+
+  /* Стол хранителя не знает этой обёртки: она прозрачна, пока сцена не
+     на весь экран. В этюде колодец — размерная коробка среднего ряда,
+     а поле внутри неё держит отношение сторон карт, иначе сукно
+     растягивается в широкий пустой прямоугольник. */
+  .well {
+    display: contents;
+  }
+
   .scene {
     display: flex;
     flex-direction: column;
-    gap: 0.85rem;
+    gap: 0.7rem;
     color: #34251c;
+  }
+
+  .scene--fill {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+    gap: 0.28rem;
+  }
+
+  .scene.scene--fill .strip {
+    gap: 0.15rem 1rem;
+  }
+
+  .scene.scene--fill .strip-meta {
+    font-size: 0.74rem;
+  }
+
+  .play {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .scene--fill .play {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .strip {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.35rem 1.35rem;
+    flex: 0 0 auto;
+  }
+
+  .strip-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.25rem 1.1rem;
+    margin: 0;
+    font-family: Georgia, 'Fraunces', serif;
+    font-size: 0.82rem;
+    letter-spacing: 0.04em;
+    color: #8a6a55;
   }
 
   /* Три колонки только там, где они помещаются. Стол хранителя рисует ту же
      сцену в 24rem, и там она складывается в одну колонку сама. */
   @container (min-width: 900px) {
-    .scene {
+    .play {
       display: grid;
-      grid-template-columns: 13rem minmax(0, 26rem) minmax(0, 1fr);
+      grid-template-areas: 'hands board rail';
+      grid-template-columns: auto minmax(0, 1fr) auto;
       align-items: start;
-      gap: 1.1rem 1.35rem;
+      gap: 0.7rem 1.25rem;
+    }
+
+    .ledger {
+      grid-area: hands;
+    }
+
+    .table {
+      grid-area: board;
+    }
+
+    .aside {
+      grid-area: rail;
     }
 
     /* Руки уходят в боковую колонку — и только ради этого доска помещается в
@@ -1390,7 +1519,7 @@
 
   @container (max-width: 720px) {
     .foot .held {
-      width: 4.65rem;
+      width: 5.4rem;
     }
 
     .end {
@@ -1410,11 +1539,26 @@
   /* Стол вдоль комнаты: те же 18 клеток, половины слева и справа. Класс, а не
      второй контейнерный порог: порядок клеток в разметке должен совпасть с
      колонками, и это знает только сцена. */
-  .scene.scene--along {
+  .scene.scene--along .play {
     display: grid;
-    grid-template-columns: 11rem minmax(0, 1fr) minmax(12rem, 16rem);
-    align-items: start;
-    gap: 1rem 1.25rem;
+    grid-template-areas: 'hands board rail';
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: stretch;
+    gap: 0.7rem 1.1rem;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .scene--along .ledger {
+    grid-area: hands;
+  }
+
+  .scene--along .table {
+    grid-area: board;
+  }
+
+  .scene--along .aside {
+    grid-area: rail;
   }
 
   .scene--along .ledger-hands {
@@ -1428,13 +1572,16 @@
   .scene--along .table {
     max-width: none;
     width: 100%;
+    min-width: 0;
+    min-height: 0;
   }
 
   /* Шесть колонок 3:4 дают H ≈ ⅔·W. Ширину берём из остатка высоты, иначе
-     поле занимает окно целиком, а рука и ход уезжают под складку. */
+     поле занимает окно целиком, а рука и ход уезжают под складку. Потолка
+     в 42rem больше нет: он держал клетку около ста пикселей посреди окна. */
   .scene--along .field,
   .scene--along .foot {
-    width: min(100%, 42rem, calc((100dvh - var(--room, 16rem)) * 1.5));
+    width: min(100%, calc((100dvh - var(--room, 16rem)) * 1.5));
     margin-inline: auto;
   }
 
@@ -1451,6 +1598,230 @@
     border-left: 1px dashed rgba(52, 37, 28, 0.2);
   }
 
+  /* Стол этюда. Руки — фиксированные ряды, чтобы карты не обрезались
+     окном. Колодец среднего ряда забирает остаток; поле внутри него
+     держит отношение сторон сетки карт (6×3 вдоль, 3×6 стоя), поэтому
+     клетки совпадают с картами, а не растягиваются в пустой прямоугольник.
+     Движения и печать живут в поле — оно и есть доска, не сукно внутри
+     широкого поля. */
+  .scene.scene--fill .play,
+  .scene.scene--fill.scene--along .play {
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .scene.scene--fill .ledger {
+    display: none;
+  }
+
+  .scene.scene--fill .well {
+    display: grid;
+    place-items: center;
+    min-width: 0;
+    min-height: 0;
+    width: 100%;
+    height: 100%;
+    container-type: size;
+    overflow: hidden;
+  }
+
+  .scene.scene--fill .table-hand--theirs {
+    display: block;
+    height: 2.8rem;
+    min-height: 2.8rem;
+    overflow: hidden;
+  }
+
+  .scene.scene--fill .table,
+  .scene.scene--fill.scene--along .table {
+    display: grid;
+    grid-template-rows: 2.8rem minmax(0, 1fr) 7.6rem;
+    grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto;
+    max-width: none;
+    gap: 0.2rem;
+    overflow: hidden;
+  }
+
+  .scene.scene--fill .foot,
+  .scene.scene--fill.scene--along .foot {
+    width: 100%;
+    margin: 0;
+    max-width: none;
+  }
+
+  .scene.scene--fill .field,
+  .scene.scene--fill.scene--along .field {
+    --cols: 3;
+    --rows: 6;
+    flex: unset;
+    min-width: 0;
+    min-height: 0;
+    margin: 0;
+    max-width: 100%;
+    max-height: 100%;
+    width: min(100cqw, calc(100cqh * var(--cols) * var(--fit, 0.714) / var(--rows)));
+    height: auto;
+    aspect-ratio: calc(var(--cols) * var(--fit, 0.714) / var(--rows));
+    container-type: size;
+    display: block;
+    position: relative;
+  }
+
+  .scene.scene--fill.scene--along .field {
+    --cols: 6;
+    --rows: 3;
+  }
+
+  .scene.scene--fill .cloth,
+  .scene.scene--fill.scene--along .cloth {
+    aspect-ratio: unset;
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 0.28rem;
+  }
+
+  .scene.scene--fill .face,
+  .scene.scene--fill .grid {
+    height: 100%;
+    width: 100%;
+  }
+
+  .scene.scene--fill .grid {
+    grid-template-rows: repeat(6, minmax(0, 1fr));
+  }
+
+  .scene.scene--fill.scene--along .grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-rows: repeat(3, minmax(0, 1fr));
+  }
+
+  .scene.scene--fill .cell {
+    aspect-ratio: auto;
+    min-height: 0;
+    min-width: 0;
+    height: 100%;
+    container-type: size;
+  }
+
+  .scene.scene--fill .figure {
+    height: 100%;
+    width: 100%;
+    padding: 1px;
+  }
+
+  .scene.scene--fill .figure-body {
+    width: min(100cqw, calc(100cqh * var(--fit, 0.714)));
+    height: auto;
+    max-height: 100%;
+    aspect-ratio: var(--fit, 0.714);
+  }
+
+  .scene.scene--fill .figure-body > :global(.slot) {
+    width: 100%;
+    height: 100%;
+  }
+
+  .scene.scene--fill .foot {
+    height: 7.6rem;
+    min-height: 7.6rem;
+    max-height: 7.6rem;
+    overflow: hidden;
+    flex-wrap: nowrap;
+    align-items: flex-end;
+    padding: 0.15rem 0.2rem 0.2rem;
+    background: #f8f1e7;
+  }
+
+  .scene.scene--fill .foot .hand {
+    padding: 0;
+    height: 7.1rem;
+    align-items: flex-end;
+  }
+
+  .scene.scene--fill .foot .table-hand--mine {
+    height: 7.1rem;
+    overflow: hidden;
+  }
+
+  .scene.scene--fill .aside {
+    position: absolute;
+    top: 3.1rem;
+    right: 0;
+    bottom: 7.9rem;
+    z-index: 8;
+    width: 15rem;
+    max-width: min(15rem, 36%);
+    margin: 0;
+    padding: 0.7rem 0.85rem 0.7rem 0.9rem;
+    background: #f8f1e7;
+    border-left: 1px solid #d8c6b1;
+    overflow: auto;
+  }
+
+  .scene.scene--fill .foot .held {
+    flex: 0 0 auto;
+    width: auto;
+    height: 7.1rem;
+    aspect-ratio: 5 / 7;
+    margin-inline: -0.28rem;
+    transform: none;
+    filter: drop-shadow(0 2px 5px rgba(52, 37, 28, 0.16));
+  }
+
+  .scene.scene--fill .table-hand--theirs .held {
+    width: auto;
+    height: 2.55rem;
+    aspect-ratio: 5 / 7;
+    margin-inline: -0.22rem;
+  }
+
+  .scene.scene--fill .foot .held--picked,
+  .scene.scene--fill .foot .held--mine:hover:not(:disabled) {
+    transform: translateY(-0.15rem);
+  }
+
+  .scene.scene--fill .turn {
+    flex: 0 0 auto;
+    width: auto;
+    max-width: 16rem;
+  }
+
+  .scene.scene--fill .end {
+    padding: 0.2rem 0.1rem 0.18rem;
+    font-size: 1.22rem;
+  }
+
+  .scene.scene--fill .omens {
+    flex: 0 1 auto;
+    flex-basis: auto;
+    min-width: 0;
+    margin-top: 0;
+  }
+
+  .scene.scene--fill .omen-word {
+    max-width: 9rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .scene.scene--fill .tally-pip {
+    width: 1.75em;
+    height: 1.75em;
+    font-size: clamp(0.9rem, 16cqi, 1.35rem);
+  }
+
   .ledger {
     display: flex;
     flex-direction: column;
@@ -1459,11 +1830,16 @@
     font-size: 13px;
     letter-spacing: 0.04em;
     color: #8a6a55;
+    min-width: 0;
+  }
+
+  .ledger--empty {
+    display: none;
   }
 
   .ledger-turn {
-    margin: 0 0 0.15rem;
-    font-size: 1.05rem;
+    margin: 0;
+    font-size: 1.15rem;
     font-style: italic;
     line-height: 1.3;
     color: #34251c;
@@ -1579,20 +1955,21 @@
       filter 180ms ease;
   }
 
-  /* Ходил — приглушение, не слово. */
-  /* Каждая рамка носит своё отношение сторон, а клетки одинаковы. Ширина
-     считается, а не выводится из содержимого: клетка 3:4 (см. `.cell`), значит
-     её высота — 133⅓% ширины, и карта ростом в клетку шириной `133⅓% × отношение`.
-     Шире клетки она не станет — тогда её держит `100%`, а высоту досчитает
-     собственный `aspect-ratio`.
-
-     Так, а не `height: 100%; width: auto`: карта — контейнер (`container-type`),
-     и её содержимое меряется в `cqi`. Позволить такому боксу мерить свою ширину
-     по содержимому — значит замкнуть круг: ширина из содержимого, содержимое из
-     ширины. Широкая рамка в этом круге вырастала в полтора раза больше клетки и
-     ложилась поверх соседей. Процент от клетки круг разрывает. */
-  .figure > :global(.slot) {
+  /* Карта и её числа — одна коробка. Плашка на клетке уезжала в угол поля,
+     пока рама стояла в центре. */
+  .figure-body {
+    position: relative;
+    display: grid;
+    place-items: center;
     width: min(100%, calc(133.3333% * var(--fit, 0.714)));
+    height: auto;
+    aspect-ratio: var(--fit, 0.714);
+    container-type: inline-size;
+  }
+
+  .figure-body > :global(.slot) {
+    width: 100%;
+    height: 100%;
   }
 
   .figure--spent {
@@ -1618,17 +1995,39 @@
     line-height: 1.2;
   }
 
-  .wound {
+  .tally {
     position: absolute;
-    left: 4px;
-    bottom: 4px;
-    z-index: 2;
-    padding: 0 3px;
+    inset: 0;
+    z-index: 3;
+    pointer-events: none;
+  }
+
+  .tally-pip {
+    position: absolute;
+    bottom: 3.5%;
+    display: grid;
+    place-items: center;
+    width: 1.7em;
+    height: 1.7em;
+    padding: 0;
     background: #f8f1e7;
-    border: 1px solid rgba(52, 37, 28, 0.25);
-    font-size: 11px;
+    border: 1px solid #6f3b24;
+    border-radius: 50%;
+    font-family: Georgia, 'Fraunces', serif;
+    font-size: clamp(0.8rem, 14cqi, 1.2rem);
+    font-style: normal;
     font-variant-numeric: tabular-nums;
+    line-height: 1;
     color: #34251c;
+  }
+
+  .tally-pip--health {
+    left: 3.5%;
+  }
+
+  .tally-pip--power {
+    right: 3.5%;
+    margin-left: 0;
   }
 
   /* ── Предвестие ────────────────────────────────────────────────────────
@@ -1638,7 +2037,7 @@
   .omen {
     position: absolute;
     right: 3px;
-    bottom: 3px;
+    bottom: 1.85rem;
     z-index: 3;
     display: flex;
     gap: 2px;
@@ -1837,12 +2236,29 @@
   }
 
   .held {
+    position: relative;
     display: block;
     width: 4.6rem;
     margin-inline: 0;
     padding: 0;
     background: transparent;
     border: 1px solid transparent;
+  }
+
+  .held-cost {
+    position: absolute;
+    left: 3px;
+    bottom: 3px;
+    z-index: 2;
+    min-width: 1.15rem;
+    padding: 0.04rem 0.28rem;
+    background: #f8f1e7;
+    border: 1px solid rgba(52, 37, 28, 0.4);
+    font-size: 0.78rem;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.15;
+    color: #34251c;
+    pointer-events: none;
   }
 
   .held--mine {
@@ -1868,7 +2284,7 @@
   }
 
   .ledger-hands .held {
-    width: 4.5rem;
+    width: 5.6rem;
   }
 
   .table-hand--theirs .hand {
@@ -1926,9 +2342,9 @@
   .foot .held {
     position: relative;
     z-index: calc(1 + var(--i, 0));
-    width: 5.45rem;
+    width: 10.2rem;
     flex: 0 0 auto;
-    margin-inline: calc(-0.42rem - 0.1rem * var(--n, 3));
+    margin-inline: calc(-0.85rem - 0.16rem * var(--n, 3));
     transform-origin: 50% 100%;
     transform: rotate(calc((var(--i, 0) - (var(--n, 1) - 1) / 2) * 4.6deg))
       translateY(0.28rem);
@@ -1973,7 +2389,7 @@
     position: relative;
     font-family: Georgia, 'Fraunces', serif;
     font-style: italic;
-    font-size: 1.22rem;
+    font-size: 1.38rem;
     line-height: 1.15;
     letter-spacing: 0.01em;
     padding: 0.45rem 0.1rem 0.38rem;
@@ -2038,7 +2454,8 @@
     display: flex;
     flex-direction: column;
     gap: 1.25rem;
-    min-width: 0;
+    min-width: 12rem;
+    max-width: 16rem;
     font-size: 12px;
   }
 

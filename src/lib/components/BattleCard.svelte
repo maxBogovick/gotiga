@@ -14,7 +14,15 @@
   // an ordinary form next to the card instead, writing the same `card`
   // object this component reads, so the preview still never lies. It is off
   // everywhere except the admin card editor.
-  import type { BattleCard, BattleFrame, SliceSide } from '$lib/types/api';
+  import type {
+    BattleBadgeShape,
+    BattleCard,
+    BattleFrame,
+    SheetBand,
+    SheetRow,
+    SheetSlot,
+    SliceSide,
+  } from '$lib/types/api';
   import { t, lang } from '$lib/i18n';
   import {
     cardCopy,
@@ -35,7 +43,11 @@
     DEFAULT_COST_Y,
     DEFAULT_POWER_X,
     DEFAULT_POWER_Y,
+    type BadgeKind,
     BADGE_SHAPES,
+    BADGE_FIELDS,
+    BADGE_KINDS,
+    badgeAt,
     KIND_SIDES,
     SLICE_GROW_MAX,
     SLICE_SIDE_AXES,
@@ -45,6 +57,23 @@
     kindLabelKey,
     channelLabelKey,
     bodyPassport,
+    badgeReserve,
+    badgeSpot,
+    badgeStyle,
+    badgeExtent,
+    badgePlate,
+    badgeShape,
+    badgeText,
+    badgeUnfilled,
+    sealWear,
+    DEFAULT_ASPECT,
+    sheetOf,
+    sheetBand,
+    sheetShows,
+    isStatSlot,
+    statGroupShow,
+    SHEET_SLOT_BANDS,
+    SHEET_STATS,
     BODY_STAT_LABELS,
     livePiece,
     paperClip,
@@ -59,6 +88,7 @@
   } from '$lib/battles';
   import { api } from '$lib/api';
   import AppImage from '$lib/components/AppImage.svelte';
+  import BattleBadgeInspector from '$lib/components/BattleBadgeInspector.svelte';
 
   let {
     card = $bindable(),
@@ -78,11 +108,18 @@
     raceIconEditable = false,
     onEditRace,
     onIconUpload,
+    onBadgeArtUpload,
+    onBadgeArtStore,
     onError,
     hurt = 1,
     wearSeed = 0,
     struck = null,
     scrap = null,
+    onfit,
+    alive = null,
+    rowsEditable = false,
+    rowHeld = $bindable(null),
+    onRowMove,
   }: {
     card: BattleCard;
     frames?: BattleFrame[] | null;
@@ -142,6 +179,11 @@
     onEditRace?: () => void;
     /** A new icon was chosen for the race this sample wears. */
     onIconUpload?: (url: string) => void;
+    /** Две двери за картинкой жетона, для стола значка. Карта их только
+     *  ПРОВОЗИТ: где лежит склад и как туда стучаться, знает стол хранителя, а
+     *  карта рисуется и на полке, где ни того, ни другого нет. */
+    onBadgeArtUpload?: (apply: (url: string) => void) => void;
+    onBadgeArtStore?: (apply: (url: string) => void) => void;
     onError?: (message: string) => void;
     /** Remaining health, 0..1. 1 — целая. Полк и стол карт это не передают. */
     hurt?: number;
@@ -152,6 +194,36 @@
     struck?: 'bruise' | 'ink' | null;
     /** Один обломок, улетает с карты. Тот же миг, что синяк. */
     scrap?: ScrapFly | null;
+    /**
+     * Сколько здоровья ОСТАЛОСЬ. Числом, а не долей: `hurt` рвёт бумагу и
+     * этого ему хватает, а кружок здоровья говорит число, и посчитанное из
+     * доли оно врало бы округлением. `null` — партии нет: полка и стол
+     * печатают то, что написано на бумаге.
+     */
+    alive?: number | null;
+    /**
+     * Влезло ли написанное в окно — и на сколько не влезло, в пикселях.
+     *
+     * Полоса свойств переполняется МОЛЧА: у неё `overflow-y: auto`, и лишние
+     * числа уезжают в прокрутку, которой на карте никто не видит и не ищет.
+     * Мерит тот, кто рисует, потому что мерить это можно только после укладки,
+     * и только на той ширине, на которой карта стоит. Стол зажигает по этому
+     * лампу; полка не передаёт ничего и ничего не меряет.
+     */
+    onfit?: (over: number) => void;
+    /**
+     * Опись правится НА КАРТЕ: строку берут там, где она напечатана, и
+     * отпускают там, где ей стоять. Ставится только столом рамок — на полке
+     * карта не редактор, а карта.
+     */
+    rowsEditable?: boolean;
+    /** Какая строка сейчас в руке. Связка, потому что берут её двумя путями —
+     *  на карте и в списке сбоку, — а одно значение не может разойтись само с
+     *  собой во мнении о том, что несут. */
+    rowHeld?: SheetSlot | null;
+    /** Строку отпустили: вот полоса и вот место в ней. Карта не пишет в опись
+     *  сама — она читает раму, а рама принадлежит столу. */
+    onRowMove?: (slot: SheetSlot, band: SheetBand, before: SheetSlot | null) => void;
   } = $props();
 
   let frame = $derived(frameForCard(card, frames, level));
@@ -188,10 +260,300 @@
   let sliced = $derived(isSliced(frame));
   let hasBackArt = $derived(!!frame.backImage?.trim());
   let vars = $derived(frameVars(frame));
+
+  /* ── Опись ────────────────────────────────────────────────────────────────
+     Что печатается, в какой полосе и в каком порядке, решает РАМА. Полосы —
+     один `{#each}` по её строкам. До этого содержимое полос было прибито к
+     разметке, и «убрать байку с клетки боя» значило дописать в компонент ещё
+     одно условие; теперь это строка описи, и она едет вместе с нарядом на
+     чин, на уровень расы и на одну карту тем же кодом, что и всё остальное. */
+
+  let rows = $derived(sheetOf(frame));
+
+  /** Есть ли ЭТОЙ строке что сказать на ЭТОЙ карте. Пустая раса и пустой
+   *  канал не должны оставлять после себя точку-разделитель, а «стоимость ·
+   *  сила» строкой печатается только там, где значков по углам нет. */
+  function speaks(slot: SheetSlot): boolean {
+    switch (slot) {
+      case 'raceIcon': return editable || raceIconEditable || !!card.raceIconUrl;
+      case 'race': return !!head.race;
+      case 'channel': return !!channelWord;
+      case 'pips': return level != null;
+      case 'title': return !!copy.title;
+      case 'rank': return !!rank;
+      case 'traits': return traits.length > 0;
+      case 'effect': return !!copy.effect;
+      case 'lore': return !!copy.lore;
+      case 'stats': return frame.layout !== 'corners';
+      case 'cost':
+      case 'power': return frame.layout === 'corners';
+      case 'new': return isNew;
+      // Значки и их подписи — единственные строки, которые рисует не полоса, а
+      // свой слой: они держатся за кружок, а не за поток. В описи они стоят
+      // затем, чтобы их можно было включить и выключить там же, где всё
+      // остальное, — но полосе их отдавать нечего.
+      case 'costWord':
+      case 'powerWord': return false;
+      default:
+        // Число паспорта печатается только тогда, когда оно у карты есть:
+        // ноль на бумагу не идёт, как и раньше.
+        if (isStatSlot(slot)) return passport.some((one) => one.field === slot);
+        return true;
+    }
+  }
+
+  /**
+   * Одна напечатанная вещь: строка описи, её точка-разделитель и — только у
+   * паспорта — числа, собранные в одну коробку.
+   */
+  type Cell = {
+    row: SheetRow;
+    sep: 'none' | 'large' | 'always';
+    stats?: SheetRow[];
+  };
+
+  /** Строки, между которыми в шапке ставится точка. Иконка расы — квадрат, а
+   *  насечки уровня — насечки: точка возле них ничего не разделяет. */
+  const SEP_SLOTS = new Set<SheetSlot>(['race', 'kind', 'channel', 'title', 'rank', 'stats']);
+
+  /**
+   * Строки одной полосы вместе с их разделителем.
+   *
+   * Разделитель принадлежит строке, ПЕРЕД которой стоит, и прячется вместе с
+   * ней — иначе строка «только крупно» уносила бы с полки слово, но оставляла
+   * точку. Своя ступень у него потому, что перед первой ВИДИМОЙ строкой точки
+   * быть не должно: если всё, что стоит слева, показывается только крупно, то
+   * и точка появляется только крупно.
+   */
+  function cellsOf(band: SheetBand): Cell[] {
+    const list = sheetBand(rows, band).filter((row) => speaks(row.slot));
+    const stats = list.filter((row) => isStatSlot(row.slot));
+    const out: Cell[] = [];
+    let told = false;
+    list.forEach((row, i) => {
+      // Семь чисел печатаются ОДНОЙ коробкой: семь отдельных абзацев в колонке
+      // свойств это семь строк высотой в карту. Коробку ставит первое из них,
+      // порядок внутри — порядок описи, а видна она с той величины, с какой
+      // видно самое щедрое из чисел, иначе полная скрытых чисел коробка
+      // оставляла бы на карте свой отступ.
+      if (isStatSlot(row.slot)) {
+        if (told) return;
+        told = true;
+        out.push({ row: { ...row, show: statGroupShow(stats) }, sep: 'none', stats });
+        return;
+      }
+      const sep = ((): Cell['sep'] => {
+        if (band !== 'head' || !SEP_SLOTS.has(row.slot)) return 'none';
+        const before = list.slice(0, i).filter((one) => SEP_SLOTS.has(one.slot));
+        if (!before.length) return 'none';
+        return before.some((one) => one.show === 'always' || one.show === 'cell')
+          ? 'always'
+          : 'large';
+      })();
+      out.push({ row, sep });
+    });
+    return out;
+  }
+
+  let headCells = $derived(cellsOf('head'));
+  let propCells = $derived(cellsOf('props'));
+  let footCells = $derived(cellsOf('foot'));
+  let overCells = $derived(cellsOf('over'));
+  let costWord = $derived(sheetShows(rows, 'costWord'));
+  let powerWord = $derived(sheetShows(rows, 'powerWord'));
+  /** Ступени самих кружков. Раньше их гасил медиазапрос на 160 px — мимо
+   *  описи и мимо хранителя; теперь решает опись, как и про всё остальное. */
+  let costRow = $derived(rows.find((row) => row.slot === 'cost'));
+  let powerRow = $derived(rows.find((row) => row.slot === 'power'));
+  /** Кружок здоровья. Дом даёт ему клетку боя и только её. */
+  let healthRow = $derived(rows.find((row) => row.slot === 'healthMark'));
+  let badgeRow = $derived<Record<BadgeKind, SheetRow | undefined>>({
+    cost: costRow,
+    power: powerRow,
+    health: healthRow,
+  });
+  /** Метка «новая» лежит поверх карты — тогда, и только тогда, шапка ей
+   *  уступает место. Поставленная в полосу, она стоит в потоке и не мешает. */
+  let newOver = $derived(rows.some((row) => row.slot === 'new' && row.band === 'over' && row.show !== 'never'));
+
+  /** Партия, а не полка: сцена передаёт, сколько здоровья осталось. Ширина
+   *  клетки при этом может перешагнуть порог полки (161 px) — иначе фотография
+   *  на доске нечитаема, — и опись, читая одну ширину, напечатала бы стоимость
+   *  вместо здоровья. `alive` и есть признак «это тело в бою», вторым обликом
+   *  карты это не становится: отрисовщик тот же, плотность как у клетки. */
+  let inMatch = $derived(alive != null);
+  /** Сургуч на кружке здоровья. Тот же `wearSeed`, что рвёт бумагу, и это не
+   *  экономия: печать и лист — одно тело, и трещины на них обязаны стоять по
+   *  одному счёту, иначе лечение снимало бы выщерб с края и оставляло трещину
+   *  на воске. Только в партии: на полке `hurt` — единица, карта цела. */
+  let sealed = $derived(inMatch ? sealWear(hurt, wearSeed) : null);
+
+  /** Сколько уступают значкам и метке шапка и текст свойств. Считается из
+   *  того, где значки СТОЯТ, а не из того, где они стояли в первый день. */
+  let reserve = $derived(
+    badgeReserve(frame, {
+      isNew,
+      costOn: !inMatch && !!costRow && costRow.show !== 'never',
+      powerOn: !!powerRow && powerRow.show !== 'never',
+      healthOn: !!healthRow && healthRow.show !== 'never' && (inMatch || healthRow.show === 'cell' || healthRow.show === 'cellOnly'),
+      costWord: costWord && !inMatch,
+      powerWord,
+      newOver,
+    }),
+  );
+
+  /* ── Опись под мышью ─────────────────────────────────────────────────────
+     Строку берут там, где она напечатана, и отпускают там, где ей стоять. По
+     тому же закону, что и детали рамки: место назначается на самом предмете, а
+     не числом в колонке сбоку. Числа и списки остаются — но вторым входом. */
+
+  /** Куда попадёт строка, если отпустить сейчас. `ok` — можно ли ей туда:
+   *  полоса, в которой строке стоять нельзя, не берётся вовсе. */
+  let rowAim = $state<{ band: SheetBand; before: SheetSlot | null; ok: boolean } | null>(null);
+  /** Метка вставки, в координатах карты. Меряется по соседям, а не считается
+   *  вторым способом: у полосы свойств строки разной высоты, и вычисленная
+   *  черта разошлась бы с настоящей на первой же длинной черте. */
+  let rowMark = $state<{ left: number; top: number; width: number; height: number } | null>(null);
+  let rowMoved = false;
+
+  function rowTake(slot: SheetSlot, event: PointerEvent) {
+    if (!rowsEditable || event.button !== 0) return;
+    event.preventDefault();
+    // Ниже лежит карта со своими нажатиями — наведение фотографии, взятие
+    // детали резьбы. Строку берут поверх них.
+    event.stopPropagation();
+    onEditStart?.();
+    rowMoved = false;
+    rowHeld = slot;
+    rowAim = null;
+    rowMark = null;
+    aimRow(event);
+  }
+
+  /** Где строка окажется, если отпустить здесь. */
+  function aimRow(event: PointerEvent) {
+    const held = rowHeld;
+    if (!held || !root) return;
+    rowMoved = true;
+    const allowed = SHEET_SLOT_BANDS[held];
+    let band: SheetBand = 'over';
+    for (const one of ['head', 'props', 'foot'] as const) {
+      const box = root.querySelector(`.band--${one}`)?.getBoundingClientRect();
+      // Полосы лежат стопкой во всю ширину окна, поэтому спрашивается только
+      // высота: вбок из полосы не выйти, не выйдя из карты.
+      if (box && box.height > 0 && event.clientY >= box.top && event.clientY <= box.bottom) {
+        band = one;
+        break;
+      }
+    }
+    const ok = allowed.includes(band);
+    const seat = ok ? seatIn(band, held, event) : null;
+    rowAim = { band, before: seat?.before ?? null, ok };
+    rowMark = seat && ok ? seat.mark : null;
+  }
+
+  /**
+   * Место в полосе и черта, которой оно показано.
+   *
+   * Шапка и подвал идут вдоль, свойства — вниз, поэтому спрашивается разная
+   * ось; таблицы для этого не нужно, полос всего четыре и направление у них
+   * то же, что у их вёрстки.
+   */
+  function seatIn(
+    band: SheetBand,
+    held: SheetSlot,
+    event: PointerEvent,
+  ): {
+    before: SheetSlot | null;
+    mark: { left: number; top: number; width: number; height: number };
+  } | null {
+    if (!root) return null;
+    const card = root.getBoundingClientRect();
+    // «Поверх» — не полоса, а сама коробка окна: строки, стоящие поверх карты,
+    // лежат в ней рядом с полосами, а не внутри одной из них.
+    const host =
+      band === 'over' ? contentEl : (root.querySelector(`.band--${band}`) as HTMLElement | null);
+    if (!host) return null;
+    // На любой глубине, а не только среди прямых детей: числа паспорта лежат
+    // внутри своей коробки, и без этого их нельзя было бы ни взять, ни
+    // положить между собой.
+    const boxes = Array.from(host.querySelectorAll<HTMLElement>('[data-row]'))
+      .filter((one) => one.dataset.row !== held)
+      .map((one) => ({ slot: one.dataset.row!, box: one.firstElementChild?.getBoundingClientRect() }))
+      .filter((one): one is { slot: string; box: DOMRect } => !!one.box && one.box.width > 0);
+    const along = band === 'props' ? 'vertical' : 'horizontal';
+    const at = (box: DOMRect) =>
+      along === 'vertical' ? box.top + box.height / 2 : box.left + box.width / 2;
+    const here = along === 'vertical' ? event.clientY : event.clientX;
+    let index = boxes.findIndex((one) => here < at(one.box));
+    if (index < 0) index = boxes.length;
+    // Соседом, а не номером: карта видит только напечатанное, а опись держит и
+    // то, чему на этой карте сказать нечего, — «третье место» значило бы у них
+    // разное. Сосед один и тот же у обоих.
+    const before = (boxes[index]?.slot as SheetSlot | undefined) ?? null;
+    const near = boxes[Math.min(index, boxes.length - 1)]?.box;
+    const room = host.getBoundingClientRect();
+    if (!near) {
+      return {
+        before,
+        mark: { left: room.left - card.left, top: room.top - card.top, width: room.width, height: 2 },
+      };
+    }
+    const after = index >= boxes.length;
+    const mark =
+      along === 'vertical'
+        ? {
+            left: near.left - card.left,
+            top: (after ? near.bottom : near.top) - card.top,
+            width: near.width,
+            height: 2,
+          }
+        : {
+            left: (after ? near.right : near.left) - card.left,
+            top: near.top - card.top,
+            width: 2,
+            height: near.height,
+          };
+    return { before, mark };
+  }
+
+  function rowLet() {
+    const held = rowHeld;
+    const aim = rowAim;
+    rowHeld = null;
+    rowAim = null;
+    rowMark = null;
+    onEditEnd?.();
+    // Нажали и отпустили не двинувшись — это выбор строки, а не перекладка.
+    if (!held || !aim || !aim.ok || !rowMoved) return;
+    onRowMove?.(held, aim.band, aim.before);
+  }
+
+  // Слушает окно, а не саму строку: у обёртки строки нет своей коробки
+  // (`display: contents`), захватывать указатель ей нечем, а рука, потерявшая
+  // строку на полпути к соседней полосе, — это перекладка, которой не было.
+  $effect(() => {
+    if (!rowHeld || !rowsEditable) return;
+    const move = (e: PointerEvent) => aimRow(e);
+    const done = () => rowLet();
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', done);
+    window.addEventListener('pointercancel', done);
+    return () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', done);
+      window.removeEventListener('pointercancel', done);
+    };
+  });
+
   let varStyle = $derived(
     Object.entries(vars)
       .map(([k, v]) => `${k}:${v}`)
-      .join(';'),
+      .join(';') +
+      `;--head-pad-left:${reserve.headLeft.toFixed(1)}cqi` +
+      `;--head-pad-right:${reserve.headRight.toFixed(1)}cqi` +
+      `;--body-pad-left:${reserve.bodyLeft.toFixed(1)}cqi` +
+      `;--body-pad-right:${reserve.bodyRight.toFixed(1)}cqi`,
   );
 
   // The photo's pan/zoom. `object-fit: cover` at a FIXED, centred
@@ -222,6 +584,53 @@
    *  live pixel height, the one thing `--header-share` etc. are a fraction
    *  of. Never written to. */
   let contentEl = $state<HTMLElement | null>(null);
+
+  /** Сама карта — коробка, в долях которой стоят значки стоимости и силы.
+   *  Не окно: значок носится ПОВЕРХ резьбы так же охотно, как внутри окна,
+   *  и в долях окна место на раме невыразимо. */
+  let cardEl = $state<HTMLElement | null>(null);
+
+  /** Полоса свойств — единственная, у которой высота не задана, и
+   *  единственная, которая поэтому умеет переполниться. */
+  let propsEl = $state<HTMLElement | null>(null);
+
+  /**
+   * Сторож переполнения.
+   *
+   * Считает не «похоже ли, что много», а разницу между написанным и окном, и
+   * пересчитывает её на каждое изменение ширины: та же карта на листе взятия
+   * влезает, а на полке нет, и вопрос «влезло ли» без ширины не имеет ответа.
+   * Ставится только там, где о нём спросили: `ResizeObserver` на каждой карте
+   * полки — сорок наблюдателей ради лампы, которую там никто не зажигает.
+   */
+  $effect(() => {
+    const tell = onfit;
+    const box = propsEl;
+    if (!tell || !box) return;
+    // Прочитано нарочно: полоса меряется заново не только когда меняется
+    // ширина, но и когда меняется написанное. Иначе лампа гасла бы на карте,
+    // у которой хранитель только что стёр половину строк, и загоралась бы
+    // через раз на той, где дописал.
+    void rows;
+    void copy;
+    void traits;
+    void passport;
+    void vars;
+    let last = -1;
+    const measure = () => {
+      const over = Math.max(0, box.scrollHeight - box.clientHeight);
+      if (over === last) return;
+      last = over;
+      tell(over);
+    };
+    const watch = new ResizeObserver(measure);
+    watch.observe(box);
+    const settle = requestAnimationFrame(measure);
+    return () => {
+      cancelAnimationFrame(settle);
+      watch.disconnect();
+    };
+  });
   let frameId = 0;
 
   // `container-type: inline-size` together with `aspect-ratio` on the same
@@ -752,30 +1161,82 @@
   // opens instead — the keyboard-reachable form a drag can never be exact
   // enough to replace.
 
-  type BadgeKind = 'cost' | 'power';
-  const BADGE_KEYS: Record<
-    BadgeKind,
-    { x: 'costX'; y: 'costY'; shape: 'costShape' } | { x: 'powerX'; y: 'powerY'; shape: 'powerShape' }
-  > = {
-    cost: { x: 'costX', y: 'costY', shape: 'costShape' },
-    power: { x: 'powerX', y: 'powerY', shape: 'powerShape' },
-  };
+
 
   let badgeDragKind = $state<BadgeKind | null>(null);
   let badgeMoved = false;
   let badgePopoverOpen = $state<BadgeKind | null>(null);
   /** Where the popover sits, in % of `.slot` (this component's own root) —
    *  read off the badge itself when it opens rather than reusing
-   *  `frame.costX`/`costY`: those are percentages of `.content`, which sits
-   *  inset from `.slot` by the frame's own padding, so reusing them here would
-   *  drift the popover away from the badge on any dressed or inset frame.
+   *  `frame.costX`/`costY`: the badge hangs off its own centre
+   *  (`translate(-50%, -50%)`) and carries a caption of unknown width, so the
+   *  numbers name a point the popover must not simply repeat.
    *  Rendered as a sibling of `.card` rather than inside it: an unrelated
    *  global `.card { overflow: hidden }` rule (see the admin design system)
    *  would otherwise clip it, the same trap `.frame-popover` sits in. */
   let badgePopoverPos = $state<{ left: number; top: number } | null>(null);
 
+  /** Сама панель — чтобы её можно было ИЗМЕРИТЬ. Место ей назначено в долях
+   *  карты, а влезает она или нет — вопрос к экрану, и ответить на него можно
+   *  только меркой. */
+  let badgePopoverEl = $state<HTMLElement | null>(null);
+
+  /**
+   * Панель, приведённая в видимое.
+   *
+   * Открывается она под значком, и это верно ровно до нижнего значка: под ним
+   * до края экрана остаётся полсантиметра, панель уезжает вниз, и добраться до
+   * неё нечем — карта не прокручивается вслед за тем, чего у неё нет.
+   *
+   * Сперва ПЕРЕВОРОТ: не влезло под значком — открываем над ним, потому что
+   * подпихивать вверх панель, которая тогда закроет полкарты, значит спорить с
+   * тем, где её открыли. И только потом, если и так не встало, — сдвиг в
+   * пределы экрана.
+   *
+   * Пишет прямо в стиль элемента, а не в состояние: состояние меняло бы
+   * разметку, разметка — мерку, и мерка гоняла бы саму себя по кругу. Проход
+   * ровно один: сбросить, измерить, назначить.
+   */
+  function fitBadgePopover() {
+    const el = badgePopoverEl;
+    if (!el) return;
+    const pad = 8;
+    el.classList.remove('badge-popover--up');
+    el.style.setProperty('--bi-shift-x', '0px');
+    el.style.setProperty('--bi-shift-y', '0px');
+    let box = el.getBoundingClientRect();
+    if (box.bottom > window.innerHeight - pad && box.height + pad * 2 <= window.innerHeight) {
+      el.classList.add('badge-popover--up');
+      box = el.getBoundingClientRect();
+    }
+    let dx = 0;
+    let dy = 0;
+    if (box.bottom > window.innerHeight - pad) dy = window.innerHeight - pad - box.bottom;
+    if (box.top + dy < pad) dy = pad - box.top;
+    if (box.right > window.innerWidth - pad) dx = window.innerWidth - pad - box.right;
+    if (box.left + dx < pad) dx = pad - box.left;
+    el.style.setProperty('--bi-shift-x', `${dx}px`);
+    el.style.setProperty('--bi-shift-y', `${dy}px`);
+  }
+
+  // Мерить приходится и после открытия, и после всякого движения под панелью:
+  // стол хранителя прокручивается, и панель, поставленная один раз, уехала бы
+  // вместе со значком, но уже без права на своё место.
+  $effect(() => {
+    if (!badgePopoverOpen || !badgePopoverPos || !badgePopoverEl) return;
+    fitBadgePopover();
+    const again = () => fitBadgePopover();
+    window.addEventListener('resize', again);
+    window.addEventListener('scroll', again, true);
+    return () => {
+      window.removeEventListener('resize', again);
+      window.removeEventListener('scroll', again, true);
+    };
+  });
+
   function badgeDragStart(kind: BadgeKind, event: PointerEvent & { currentTarget: HTMLElement }) {
     if (!frameEditable) return;
+    onEditStart?.();
     event.preventDefault();
     event.stopPropagation();
     badgeDragKind = kind;
@@ -784,16 +1245,24 @@
   }
 
   function badgeDragMove(event: PointerEvent) {
-    if (!badgeDragKind || !contentEl) return;
-    const rect = contentEl.getBoundingClientRect();
+    if (!badgeDragKind || !cardEl) return;
+    const rect = cardEl.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
     badgeMoved = true;
-    const { x, y } = BADGE_KEYS[badgeDragKind];
+    const { x, y } = BADGE_FIELDS[badgeDragKind];
     const target = rankFrame();
     const dx = (event.movementX / rect.width) * 100;
     const dy = (event.movementY / rect.height) * 100;
-    target[x] = Math.min(100, Math.max(0, (target[x] ?? 0) + dx));
-    target[y] = Math.min(100, Math.max(0, (target[y] ?? 0) + dy));
+    // Прижато к карте тем же `badgeSpot`, которым значок рисуется: иначе число
+    // уезжало бы дальше кружка, и обратный ход начинался бы не сразу.
+    const spot = badgeSpot(
+      (target[x] ?? 0) + dx,
+      (target[y] ?? 0) + dy,
+      frame.aspect || DEFAULT_ASPECT,
+      badgeExtent(frame, badgeDragKind),
+    );
+    target[x] = spot.x;
+    target[y] = spot.y;
   }
 
   function badgeDragEnd(event: PointerEvent & { currentTarget: HTMLElement }) {
@@ -826,7 +1295,8 @@
   bind:this={root}
   class="slot"
   class:slice-sizing={!!sliceCursor}
-  class:slot--flush-foot={frame.layout === 'corners' && !frameEditable}
+  class:slot--match={inMatch}
+  class:slot--flush-foot={frame.layout === 'corners' && !frameEditable && footCells.length === 0}
   data-tier={card.tier}
   data-layout={frame.layout}
   style={varStyle}
@@ -838,6 +1308,7 @@
 >
  <div
    class="card"
+   bind:this={cardEl}
    class:card--down={!owned}
    class:card--still={!interactive}
    class:card--dressed={dressed && owned}
@@ -848,9 +1319,14 @@
  >
   <div class="content" bind:this={contentEl}>
   {#if owned}
-    <!-- 1. The header: what this is, and what kind of thing it is. -->
-    <header class="band band--head">
-      {#if editable || raceIconEditable || card.raceIconUrl}
+    <!-- Опись. Один `{#each}` на полосу: что стоит в шапке, что в свойствах,
+         в каком порядке и с какой величины видно — это строки рамы, а не
+         разметка. Обёртка каждой строки — `display: contents`, то есть своей
+         коробки у неё нет: `.numbers` остаётся тем же элементом флекса полосы,
+         каким был, и ни одно правило ниже не переписано. Прячется строка
+         «только крупно» тем, что гаснет обёртка вместе со всем, что внутри. -->
+    {#snippet say(row: SheetRow)}
+      {#if row.slot === 'raceIcon'}
         {#if editable || raceIconEditable}
           <button
             type="button"
@@ -867,26 +1343,105 @@
             <img src={card.raceIconUrl} alt="" class="race-icon-img" />
           </span>
         {/if}
-      {/if}
-
-      {#if head.race}<span class="race">{head.race}</span>{/if}
-      {#if head.race}<span class="head-sep">·</span>{/if}
-      <span class="kind">{kindWord}</span>
-      {#if channelWord}
-        <span class="head-sep">·</span>
+      {:else if row.slot === 'race'}
+        <span class="race">{head.race}</span>
+      {:else if row.slot === 'kind'}
+        <span class="kind">{kindWord}</span>
+      {:else if row.slot === 'channel'}
         <span class="kind">{channelWord}</span>
-      {/if}
-
-      <!-- Notches, not a number: at shelf size a digit disappears and a row of
-           marks does not. This is the level of your copy — never the card's
-           rank, which is worn as the frame itself. -->
-      {#if level != null}
+      {:else if row.slot === 'pips'}
+        <!-- Насечки, не число: на полке цифра пропадает, а ряд меток нет. Это
+             уровень ВАШЕЙ копии — никогда не чин карты, который надет рамой. -->
         <span class="pips" aria-label="{$t('battlesLevelLabel')}: {level}">
           {#each [1, 2, 3, 4, 5] as step (step)}
-            <span class="pip" class:pip--lit={step <= level}></span>
+            <span class="pip" class:pip--lit={step <= (level ?? 0)}></span>
           {/each}
         </span>
+      {:else if row.slot === 'title'}
+        <h3 class="title">{copy.title}</h3>
+      {:else if row.slot === 'rank'}
+        <p class="rank">{rank}</p>
+      {:else if row.slot === 'traits'}
+        <ul class="traits">
+          {#each traits as trait, i (i)}
+            <li class="trait">
+              <span class="trait-name">
+                {trait.name}{#if trait.other}<span class="trait-other">({trait.other})</span>{/if}{#if printTraitRule && trait.text}:{/if}
+              </span>
+              {#if printTraitRule && trait.text}<span class="trait-text"> {trait.text}</span>{/if}
+            </li>
+          {/each}
+        </ul>
+      {:else if row.slot === 'effect'}
+        <p class="effect" class:effect--voice={!printEffectAsRule}>{copy.effect}</p>
+      {:else if row.slot === 'lore'}
+        <p class="lore">{copy.lore}</p>
+      {:else if row.slot === 'stats'}
+        <span class="stats">
+          {$t('battlesCostLabel')} {card.cost} · {$t('battlesPowerLabel')} {card.power}
+        </span>
+      {:else if row.slot === 'new'}
+        <span class="new-mark" class:new-mark--over={row.band === 'over'}>{$t('battlesNew')}</span>
       {/if}
+    {/snippet}
+
+    {#snippet stripe(cells: Cell[])}
+      {#each cells as cell (cell.row.slot)}
+        {#if cell.stats}
+          <!-- Паспорт. Обёртка коробки не берётся в руку и своего `data-row`
+               не имеет: тянут ОТДЕЛЬНОЕ число, а не весь паспорт разом. -->
+          <span class="row" class:row--large={cell.row.show === 'large'} class:row--shelf={cell.row.show === 'always'}
+          class:row--only-cell={cell.row.show === 'cellOnly'}>
+            <p class="numbers">
+              {#each cell.stats as stat (stat.slot)}
+                {@const value = passport.find((one) => one.field === stat.slot)?.value}
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <span
+                  class="row"
+                  class:row--large={stat.show === 'large'}
+                  class:row--shelf={stat.show === 'always'}
+                  class:row--only-cell={stat.show === 'cellOnly'}
+                  class:row--live={rowsEditable}
+                  class:row--held={rowHeld === stat.slot}
+                  data-row={stat.slot}
+                  onpointerdown={(e) => rowTake(stat.slot, e)}
+                >
+                  <span class="number"
+                    >{$t(BODY_STAT_LABELS[stat.slot as keyof typeof BODY_STAT_LABELS])}
+                    <b>{value}</b></span
+                  >
+                </span>
+              {/each}
+            </p>
+          </span>
+        {:else}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <span
+            class="row"
+            class:row--large={cell.row.show === 'large'}
+            class:row--shelf={cell.row.show === 'always'}
+          class:row--only-cell={cell.row.show === 'cellOnly'}
+            class:row--live={rowsEditable}
+            class:row--held={rowHeld === cell.row.slot}
+            data-row={cell.row.slot}
+            onpointerdown={(e) => rowTake(cell.row.slot, e)}
+          >
+            {#if cell.sep !== 'none'}<span
+                class="head-sep"
+                class:row--large={cell.sep === 'large'}
+              >·</span>{/if}{@render say(cell.row)}
+          </span>
+        {/if}
+      {/each}
+    {/snippet}
+
+    <!-- 1. The header: what this is, and what kind of thing it is. -->
+    <header
+      class="band band--head"
+      class:band--drop={rowAim?.band === 'head' && rowAim.ok}
+      class:band--deny={rowAim?.band === 'head' && !rowAim.ok}
+    >
+      {@render stripe(headCells)}
 
       {#if frameEditable && !frameEditTarget}
         <div
@@ -950,44 +1505,21 @@
 
     <!-- 3. The properties. The band with no fixed share: it takes whatever the
             other three leave, because it is the one holding prose. -->
-    <div class="band band--props">
-      <div class="plate">
-        <h3 class="title">{copy.title}</h3>
-        <p class="rank">{rank}</p>
-      </div>
-
-      {#if traits.length}
-        <ul class="traits">
-          {#each traits as trait, i (i)}
-            <li class="trait">
-              <span class="trait-name">
-                {trait.name}{#if trait.other}<span class="trait-other">({trait.other})</span>{/if}{#if printTraitRule && trait.text}:{/if}
-              </span>
-              {#if printTraitRule && trait.text}<span class="trait-text"> {trait.text}</span>{/if}
-            </li>
-          {/each}
-        </ul>
-      {/if}
-
-      {#if copy.effect}
-        <p class="effect" class:effect--voice={!printEffectAsRule}>{copy.effect}</p>
-      {/if}
-
-      {#if copy.lore}
-        <p class="lore">{copy.lore}</p>
-      {/if}
-
-      {#if passport.length}
-        <p class="numbers">
-          {#each passport as row (row.field)}
-            <span class="number">{$t(BODY_STAT_LABELS[row.field])} <b>{row.value}</b></span>
-          {/each}
-        </p>
-      {/if}
+    <div
+      class="band band--props"
+      class:band--drop={rowAim?.band === 'props' && rowAim.ok}
+      class:band--deny={rowAim?.band === 'props' && !rowAim.ok}
+      bind:this={propsEl}
+    >
+      {@render stripe(propCells)}
     </div>
 
     <!-- 4. The footer. -->
-    <footer class="band band--foot">
+    <footer
+      class="band band--foot"
+      class:band--drop={rowAim?.band === 'foot' && rowAim.ok}
+      class:band--deny={rowAim?.band === 'foot' && !rowAim.ok}
+    >
       {#if frameEditable && !frameEditTarget}
         <div
           class="share-handle share-handle--foot"
@@ -1003,16 +1535,12 @@
           tabindex="0"
         ></div>
       {/if}
-      {#if frame.layout !== 'corners'}
-        <span class="stats">
-          {$t('battlesCostLabel')} {card.cost} · {$t('battlesPowerLabel')} {card.power}
-        </span>
-      {/if}
+      {@render stripe(footCells)}
     </footer>
 
-    {#if isNew}
-      <span class="new-mark">{$t('battlesNew')}</span>
-    {/if}
+    <!-- Поверх карты: то, что не стоит ни в одной полосе. -->
+    {@render stripe(overCells)}
+
   {:else}
     <!-- Face down. Not greyed out: a card you do not have is a card lying in
          dust with its price still legible, which is also the room's price list. -->
@@ -1090,51 +1618,88 @@
   </div>
 
   {#if owned && frame.layout === 'corners'}
-    <!-- Cost and power, above the carving. Same box as `.content` (see
-         `.badges-layer` below) but its own layer: a cut-out frame's ornament
-         can bulge inward over the window, and a badge sitting inside
-         `.content`'s own stacking context can never paint over a sibling
-         layer no matter its local z-index — only a layer of its own can. -->
+    <!-- Cost and power, above the carving and placed against the whole card
+         (see `.badges-layer` below): a badge sitting inside `.content`'s own
+         stacking context can never paint over a sibling layer no matter its
+         local z-index, and inside `.content`'s BOX it could never be dragged
+         out onto the frame at all. -->
     <div class="badges-layer">
       {#snippet badge(kind: BadgeKind)}
-        {@const label = kind === 'cost' ? $t('battlesCostLabel') : $t('battlesPowerLabel')}
-        {@const value = kind === 'cost' ? card.cost : card.power}
-        {@const x = kind === 'cost' ? (frame.costX ?? DEFAULT_COST_X) : (frame.powerX ?? DEFAULT_POWER_X)}
-        {@const y = kind === 'cost' ? (frame.costY ?? DEFAULT_COST_Y) : (frame.powerY ?? DEFAULT_POWER_Y)}
-        {@const shape = kind === 'cost' ? (frame.costShape ?? 'circle') : (frame.powerShape ?? 'circle')}
+        {@const keys = BADGE_FIELDS[kind]}
+        {@const label = $t(
+          kind === 'cost'
+            ? 'battlesCostLabel'
+            : kind === 'power'
+              ? 'battlesPowerLabel'
+              : 'battlesHealthLabel',
+        )}
+        <!-- Здоровье — единственное число, которое в бою МЕНЯЕТСЯ, поэтому
+             оно и приходит извне. Нет партии — нет и `alive`, и кружок
+             говорит то, что напечатано на бумаге. -->
+        {@const value =
+          kind === 'cost' ? card.cost : kind === 'power' ? card.power : (alive ?? card.health)}
+        {@const spot = badgeAt(frame, kind)}
+        {@const shape = badgeShape(frame, kind)}
+        {@const fill = badgeText(frame, kind, 'fill')}
+        {@const plate = badgePlate(frame, kind)}
+        {@const paint = badgeStyle(frame, kind)}
+        <!-- Сургуч только у здоровья, и только у него он и может быть: это
+             единственное число карты, которое в бою меняется. Стоимость и сила
+             отпечатаны на бумаге раз и навсегда, трескаться им не с чего. -->
+        {@const wear = kind === 'health' ? sealed : null}
+        {@const word = kind === 'cost' ? costWord : kind === 'power' ? powerWord : false}
+        {@const step = badgeRow[kind]?.show ?? 'always'}
+        <!-- В партии порог ширины не решает: клетка крупнее полки всё равно
+             фигура, стоимость на ней молчит, здоровье и сила — нет. -->
+        {@const byWidth = !inMatch}
+        <!-- Берутся в руку все три. Здоровье не бралось, пока у него не было
+             своих полей: править его значило бы править стоимость под видом
+             здоровья. Поля появились — исчезла и причина. -->
         {@const live = frameEditable && !frameEditTarget}
         {@const named = `${label} ${value}`}
         <span
           class="corner-mark"
           class:corner-mark--power={kind === 'power'}
-          style="left:{x}%; top:{y}%"
+          class:row--large={byWidth && step === 'large'}
+          class:row--shelf={byWidth && step === 'always'}
+          class:row--only-cell={byWidth && step === 'cellOnly'}
+          style="left:{spot.x}%; top:{spot.y}%"
         >
           {#if live}
             <button
               type="button"
               class="corner corner--{kind} corner--shape-{shape} corner--editable"
+              class:corner--unfilled={!!fill && badgeUnfilled(fill)}
+              class:corner--plate={!!plate}
+              style={paint}
               aria-label={named}
               onpointerdown={(e) => badgeDragStart(kind, e)}
               onpointermove={badgeDragMove}
               onpointerup={badgeDragEnd}
               onpointercancel={badgeDragEnd}
             >
+              {#if wear}<span class="corner-wear" style={wear}></span>{/if}
               <span class="corner-num">{value}</span>
             </button>
           {:else}
             <span
               class="corner corner--{kind} corner--shape-{shape}"
+              class:corner--unfilled={!!fill && badgeUnfilled(fill)}
+              class:corner--plate={!!plate}
+              style={paint}
               role="img"
               aria-label={named}
             >
+              {#if wear}<span class="corner-wear" style={wear}></span>{/if}
               <span class="corner-num">{value}</span>
             </span>
           {/if}
-          <span class="corner-word" aria-hidden="true">{label}</span>
+          {#if word}<span class="corner-word" aria-hidden="true">{label}</span>{/if}
         </span>
       {/snippet}
-      {@render badge('cost')}
-      {@render badge('power')}
+      {#each BADGE_KINDS as kind (kind)}
+        {#if badgeRow[kind] && badgeRow[kind].show !== 'never' && !(inMatch && kind === 'cost')}{@render badge(kind)}{/if}
+      {/each}
     </div>
   {/if}
 
@@ -1258,6 +1823,21 @@
   {/if}
  </div>
 
+ <!-- Куда сядет строка. Черта меряется по соседям, а не считается вторым
+      способом: у полосы свойств строки разной высоты, и вычисленная черта
+      разошлась бы с настоящей на первой же длинной черте.
+
+      Лежит В КАРТЕ, а не в окне, и числа у неё от карты: окно — коробка,
+      сдвинутая врезками рамы и обрезающая всё, что вышло за неё, а место
+      выбирают ровно по краям. -->
+ {#if rowMark}
+   <i
+     class="row-mark"
+     style="left:{rowMark.left}px; top:{rowMark.top}px; width:{rowMark.width}px; height:{rowMark.height}px"
+     aria-hidden="true"
+   ></i>
+ {/if}
+
  {#if flake}
    <i
      class="scrap"
@@ -1267,61 +1847,30 @@
  {/if}
 
  {#if badgePopoverOpen && badgePopoverPos}
-   <!-- The cost/power badge's own numeric editor. Anchored off the badge's
-        own screen position rather than `frame.costX`/`powerX` directly, and
-        a sibling of `.card` rather than inside it — an unrelated global
-        `.card { overflow: hidden }` rule would otherwise clip it. -->
+   <!-- Стол значка. Прицеплен к экранному месту самого значка, а не к
+        `frame.costX`/`powerX`: у значка есть подпись неизвестной ширины, и он
+        висит на своём центре. Сосед `.card`, а не его ребёнок — посторонее
+        правило `.card { overflow: hidden }` иначе обрезало бы стол. -->
    <button
      type="button"
      class="frame-backdrop"
      aria-label={$t('adminBattlesFrameClose')}
      onclick={() => (badgePopoverOpen = null)}
    ></button>
-   <div class="badge-popover" style="left:{badgePopoverPos.left}%; top:{badgePopoverPos.top}%">
-     <span class="badge-popover-label">
-       {badgePopoverOpen === 'cost' ? $t('battlesCostLabel') : $t('battlesPowerLabel')}
-     </span>
-     <div class="badge-popover-shapes" role="radiogroup" aria-label={$t('adminBattlesBadgeShape')}>
-       {#each BADGE_SHAPES as shape (shape)}
-         <button
-           type="button"
-           class="badge-shape-swatch badge-shape-swatch--{shape}"
-           class:active={(badgePopoverOpen === 'cost' ? frame.costShape : frame.powerShape) === shape}
-           title={$t(
-             shape === 'circle' ? 'adminBattlesBadgeShapeCircle' :
-             shape === 'square' ? 'adminBattlesBadgeShapeSquare' :
-             shape === 'diamond' ? 'adminBattlesBadgeShapeDiamond' :
-             shape === 'hex' ? 'adminBattlesBadgeShapeHex' :
-             'adminBattlesBadgeShapeShield',
-           )}
-           role="radio"
-           aria-checked={(badgePopoverOpen === 'cost' ? frame.costShape : frame.powerShape) === shape}
-           onclick={() => (rankFrame()[BADGE_KEYS[badgePopoverOpen!].shape] = shape)}
-         ></button>
-       {/each}
-     </div>
-     <div class="badge-popover-row">
-       <label class="badge-popover-field">
-         X <input
-           type="number" min="0" max="100" step="1"
-           value={Math.round(
-             (badgePopoverOpen === 'cost' ? frame.costX : frame.powerX) ??
-               (badgePopoverOpen === 'cost' ? DEFAULT_COST_X : DEFAULT_POWER_X),
-           )}
-           oninput={(e) => (rankFrame()[BADGE_KEYS[badgePopoverOpen!].x] = Number(e.currentTarget.value))}
-         />
-       </label>
-       <label class="badge-popover-field">
-         Y <input
-           type="number" min="0" max="100" step="1"
-           value={Math.round(
-             (badgePopoverOpen === 'cost' ? frame.costY : frame.powerY) ??
-               (badgePopoverOpen === 'cost' ? DEFAULT_COST_Y : DEFAULT_POWER_Y),
-           )}
-           oninput={(e) => (rankFrame()[BADGE_KEYS[badgePopoverOpen!].y] = Number(e.currentTarget.value))}
-         />
-       </label>
-     </div>
+   <div
+     class="badge-popover"
+     bind:this={badgePopoverEl}
+     style="left:{badgePopoverPos.left}%; top:{badgePopoverPos.top}%"
+   >
+     <BattleBadgeInspector
+       kind={badgePopoverOpen}
+       {frame}
+       write={rankFrame}
+       {onEditStart}
+       onArtUpload={onBadgeArtUpload}
+       onArtStore={onBadgeArtStore}
+       onclose={() => (badgePopoverOpen = null)}
+     />
    </div>
  {/if}
 </article>
@@ -1521,23 +2070,27 @@
     margin-top: -0.5px;
   }
 
-  /* The same box as `.content` (same inset formula, same conditional padding
-     below) but a layer of its OWN, above the carving — a stacking context
-     can only be beaten by a sibling with a higher z-index, never from
-     inside it, which is why the badges cannot simply ask for a higher
-     z-index while still living inside `.content`. Deaf to the pointer
-     itself so the empty parts of the layer never steal a click from the
-     photograph or the header underneath; only the badges opt back in. */
+  /* The WHOLE card, not the window — a layer of its own above the carving.
+     A stacking context can only be beaten by a sibling with a higher
+     z-index, never from inside it, which is why the badges cannot simply ask
+     for a higher z-index while still living inside `.content`.
+
+     The box is the card's because `costX`/`costY` are percentages of THE
+     CARD: a badge belongs on the frame's corner as readily as inside the
+     window, and in percentages of the window a place on the carving cannot
+     be written down at all. It is also the reading `badgeReserve` has always
+     used — it measures the badge against `insetLeft` and the header's own
+     share — so a window-relative box here made the reserve wrong by the
+     insets on every dressed frame.
+
+     Deaf to the pointer itself so the empty parts of the layer never steal a
+     click from the photograph or the header underneath; only the badges opt
+     back in. */
   .badges-layer {
     position: absolute;
-    inset: var(--pad-top, 0) var(--pad-right, 0) var(--pad-bottom, 0) var(--pad-left, 0);
-    padding: 5cqi;
+    inset: 0;
     z-index: 4;
     pointer-events: none;
-  }
-
-  .card--dressed .badges-layer {
-    padding: 0;
   }
 
   .badges-layer .corner {
@@ -1616,38 +2169,79 @@
     flex-direction: column-reverse;
   }
 
+  /* Заливка кружка — своя у каждого значка, и назначается она НЕ ЗДЕСЬ:
+     `--badge-fill` приходит инлайновым стилем, только когда хранитель выбрал
+     цвет. Умолчания остаются в откате `var()`, поэтому нетронутый значок
+     печатается ровно тем, чем печатался: стоимость — чернилами карты, сила —
+     цветом каймы (см. `.corner--power`). Цифру выбирает `badgeInk`. */
   .corner {
     position: relative;
     z-index: 2;
     display: grid;
     place-items: center;
-    width: 13cqi;
-    height: 13cqi;
+    width: calc(10.5cqi * var(--badge-size, 1));
+    height: calc(10.5cqi * var(--badge-size, 1));
     margin: 0;
     padding: 0;
     font: inherit;
     line-height: 1;
-    color: var(--paper);
-    background: var(--ink);
+    color: var(--badge-ink, var(--paper));
+    /* Заливка остаётся ЗАЛИВКОЙ — `background-color`, а не сокращение: свет
+       ложится вторым слоем поверх неё, и выбранный хранителем цвет никуда не
+       девается. Сокращение `background` стёрло бы этот слой у любого, кто
+       переназначит цвет (см. `.corner--power`). */
+    background-color: var(--badge-fill, var(--ink));
+    /* Значок — вещь, а не заливка. Свет падает сверху, той же лампой, при
+       которой снята фотография рамы: блик по верхней кромке, тень по нижней,
+       волосяная кайма цветом рамы. Ничего не светится — плашка просто
+       перестаёт быть плоской наклейкой поверх резьбы. */
+    background-image: linear-gradient(
+      to bottom,
+      color-mix(in oklab, #fff 20%, transparent),
+      transparent 45%,
+      color-mix(in oklab, #000 14%, transparent)
+    );
+    box-shadow:
+      inset 0 0.4cqi 0.6cqi color-mix(in oklab, #fff 26%, transparent),
+      inset 0 -0.45cqi 0.7cqi color-mix(in oklab, #000 22%, transparent),
+      inset 0 0 0 0.28cqi color-mix(in oklab, var(--edge) 60%, transparent);
+    /* Тень СНАРУЖИ — фильтром, а не четвёртой строкой `box-shadow`: у ромба,
+       шестиугольника и щита форма вырезана `clip-path`, а он обрезает и
+       внешнюю тень тоже. Фильтр читает готовый силуэт и потому верен всем
+       пяти формам разом, а не одним только круглой и квадратной. */
+    filter: drop-shadow(0 0.28cqi 0.4cqi color-mix(in oklab, var(--ink) 40%, transparent));
     border: none;
     cursor: default;
     pointer-events: auto;
   }
 
+  /* Цифра растёт вместе с кружком: величина значка — это величина ЗНАЧКА, а
+     подложка без цифры или цифра без подложки были бы двумя ручками там, где
+     хранитель тянет одну. Толщина своя: у неё ступени начертаний, а не ход. */
   .corner-num {
-    font-size: 7cqi;
+    /* Кегль почти прежний (7 → 6.6), кружок вокруг него — заметно меньше: то,
+       что убрали, было мёртвым полем, а не цифрой. Зеркало `BADGE_BARE`. */
+    font-size: calc(6.6cqi * var(--type-scale, 1) * var(--badge-size, 1));
+    /* Дом печатает цифру полужирной: на монете в 10.5cqi светлое начертание
+       читается хуже, чем читалось на плашке в тринадцать. Хранитель, назначив
+       толщину, по-прежнему побеждает. */
+    font-weight: var(--badge-weight, 600);
     line-height: 1;
+    /* Цифра лежит НА металле, а не рядом с ним: волосяная тень под ней — то же
+       самое освещение, что и у кружка, и без неё число висит отдельно от
+       вещи, на которой оно вычеканено. */
+    text-shadow: 0 0.1cqi 0.15cqi color-mix(in oklab, #000 26%, transparent);
   }
 
   .corner-word {
     margin-top: 0.7cqi;
-    font-size: 3.2cqi;
+    font-size: calc(3.2cqi * var(--type-scale, 1));
     letter-spacing: 0.08em;
     text-transform: uppercase;
     line-height: 1;
     color: var(--ink);
     white-space: nowrap;
-    opacity: 0.78;
+    opacity: min(1, calc(0.78 * var(--ink-fade, 1)));
   }
 
   .corner-mark--power .corner-word {
@@ -1688,16 +2282,112 @@
     clip-path: polygon(50% 0%, 100% 18%, 100% 55%, 50% 100%, 0% 55%, 0% 18%);
   }
 
-  .corner--power {
-    background: var(--edge);
-    color: var(--ink);
+  /* Не шестая форма, а её отсутствие: подложка не печатается, на карте одна
+     цифра. Заливку это НЕ стирает — сняли форму, вернули, и цвет на месте, —
+     поэтому побеждает объявление, а не пустое поле. Коробка остаётся: она
+     ручка, по которой значок берут, и то, из чего считается отступ шапки. */
+  .corner--shape-none,
+  .corner--power.corner--shape-none {
+    background: none;
+    border-radius: 0;
+    clip-path: none;
+    /* Нет формы — нет и КОРОБКИ. Кружок вокруг цифры кегля 6.6cqi это поле
+       пустоты почти в самую цифру шириной, и пока коробка стояла, она мешала
+       дважды: держала цифру в своём центре и не подпускала её к краю карты на
+       свою половину. Значок становится ровно тем, что нарисовано. */
+    width: auto;
+    height: auto;
   }
+
+  /* Сургуч у здоровья: трещины и выщербы, посчитанные `sealWear` по тому,
+     сколько здоровья осталось. Картинка приходит инлайновым стилем — одна
+     строка на весь слой, как у резьбы и у движений.
+
+     `multiply`, а не сплошная краска: трещина обязана темнить то, что под ней,
+     — крашеный воск, фотографию жетона, чужой рисунок, — а не класть поверх
+     всего этого одинаковую чёрную черту. Слой лежит ВНУТРИ значка, поэтому
+     `clip-path` формы обрезает его сам: сургуч не вылезает за край печати,
+     какой бы формы она ни была, и об этом не надо помнить отдельно. */
+  .corner-wear {
+    position: absolute;
+    inset: 0;
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 100% 100%;
+    mix-blend-mode: multiply;
+    pointer-events: none;
+  }
+
+  /* Материал — это материал ПОДЛОЖКИ. Нет её (снята форма) или она нарочно
+     прозрачна — светить и отбрасывать тень нечему: блик, кайма и внешняя тень
+     обвели бы кружок, которого хранитель как раз и не заказывал. Цифра при
+     этом остаётся со своей волосяной тенью: она лежит на бумаге, на резьбе или
+     на фотографии, и без неё теряется на любой из трёх. */
+  .corner--shape-none:not(.corner--plate),
+  .corner--unfilled:not(.corner--plate) {
+    background-image: none;
+    box-shadow: none;
+    filter: none;
+  }
+
+  .corner--power {
+    /* `background-color`, а не сокращение: сокращение стёрло бы слой света,
+       который `.corner` кладёт вторым фоном, и сила осталась бы единственным
+       плоским значком из трёх. */
+    background-color: var(--badge-fill, var(--edge));
+    color: var(--badge-ink, var(--ink));
+  }
+
+  /* Жетон — картинка со склада, надетая вместо крашеной подложки. Он и есть
+     нарисованная подложка, поэтому краска, форма и весь домашний материал под
+     ним молчат: блик и кайма, положенные поверх чужого рисунка, обвели бы его
+     кружком, которого на рисунке нет. А внешняя тень остаётся — и остаётся
+     ФИЛЬТРОМ: `drop-shadow` читает альфу картинки, то есть настоящий силуэт
+     жетона, и медальон с фигурным краем отбрасывает тень своей формы, а не
+     формы своей коробки. Ради одного этого фильтр тут и стоял.
+
+     Ничего не выбрано хранителем — ничего и не назначено: `--badge-plate`
+     приходит инлайновым стилем только когда жетон надет, и `.corner--plate`
+     ставится по тому же условию, так что нетронутый значок этих правил не
+     видит вовсе. */
+  .corner--plate {
+    /* Коробка возвращается: форма могла быть снята, а под жетоном она есть —
+       он и есть нарисованная подложка. */
+    width: calc(10.5cqi * var(--badge-size, 1));
+    height: calc(10.5cqi * var(--badge-size, 1));
+    background-color: transparent;
+    background-image: var(--badge-plate);
+    background-repeat: no-repeat;
+    background-position: center;
+    /* `contain`, а не `cover`: жетон рисуют целиком, и обрезанный по коробке
+       медальон — это медальон без края. */
+    background-size: contain;
+    box-shadow: none;
+    /* Форму задаёт сам рисунок. Оставленный `clip-path` ромба или щита срезал
+       бы у чужой картинки углы по чужой мерке. */
+    clip-path: none;
+    border-radius: 0;
+  }
+
+
+  /* У здоровья нет ни своего правила, ни своих полей: `BADGE_FIELDS.health`
+     указывает на поля стоимости, и кружок приходит сюда её формой, её
+     заливкой, её величиной и на её месте. Разница ровно одна — число. */
 
   /* Only in the Frames tab: the badge itself becomes a handle, dragged to
      reposition and clicked (without moving) to open its own X/Y editor. */
   .corner--editable {
     cursor: grab;
     touch-action: none;
+  }
+
+  /* Со снятой заливкой хватать нечего: цифра мельче своей коробки, и хранитель
+     тянул бы за воздух. Волосяная обводка — ТОЛЬКО на столе (`--editable`), на
+     полке значка без заливки не видно, и в этом весь смысл. */
+  .corner--editable.corner--unfilled,
+  .corner--editable.corner--shape-none {
+    outline: 1px dashed color-mix(in oklab, var(--ink) 35%, transparent);
+    outline-offset: -1px;
   }
 
   .corner--editable:active {
@@ -1708,24 +2398,120 @@
     opacity: 1;
   }
 
+  /* Обёртка строки описи. Своей коробки у неё нет — `display: contents`, —
+     поэтому `.numbers` остаётся тем же элементом флекса своей полосы, каким
+     был, и ни одно правило ниже переписывать не пришлось. */
+  .row {
+    display: contents;
+  }
+
+  /* Две ступени, два порога, и оба — те самые числа, по которым карта уже
+     делит себя сама. Класс говорит, где строку ВИДНО ЕЩЁ, а не где её прячут:
+     «с листа взятия» гаснет на полке, «с полки» — в клетке боя, а строка без
+     класса («везде») не гаснет нигде. `never` до разметки не доходит вовсе.
+
+     Написано модификаторами, а не через `.row:not(...)`, потому что эти же два
+     класса носит кружок значка, у которого своя коробка и своё место, и
+     `display: contents` от `.row` отняло бы у него и то и другое.
+
+     Гаснет вместе с обёрткой и точка-разделитель внутри неё: строка, которую
+     хранитель оставил «только крупно», не должна уносить с полки слово, но
+     оставлять после себя точку. */
+  @container (max-width: 280px) {
+    .row--large {
+      display: none;
+    }
+  }
+
+  @container (max-width: 160px) {
+    .row--shelf {
+      display: none;
+    }
+  }
+
+  /* Единственная ступень с потолком, а не с порогом: «только в клетке боя».
+     Заведена не ради полноты лестницы, а ради одного случая, который иначе
+     невыразим, — кружок здоровья появляется ровно там, где исчезает кружок
+     стоимости, и стоят они в одном углу. */
+  @container (min-width: 161px) {
+    .row--only-cell {
+      display: none;
+    }
+  }
+
+  /* Партия на широкой клетке. Порог 160 px — это полка, а не «бой»; клетка
+     этюда крупнее полки, иначе фотография нечитаема. Опись, читая ширину,
+     напечатала бы документ полки (стоимость, черты, действие) и спрятала бы
+     здоровье. Класс ставит сцена через `alive`: плотность как у клетки,
+     отрисовщик тот же. */
+  .slot--match .row--large,
+  .slot--match .row--shelf {
+    display: none;
+  }
+
+  .slot--match .row--only-cell {
+    display: contents;
+  }
+
+  /* Строку берут там, где она напечатана. Обёртка своей коробки не имеет, но
+     курсор и подсветку наследует то, что внутри неё, а нажатие всплывает
+     сквозь неё — этого хватает, чтобы взять строку целиком. */
+  .row--live > :global(*) {
+    cursor: grab;
+    touch-action: none;
+  }
+
+  /* `.card` в селекторе не для красоты: у `.numbers` и `.rank` своя
+     непрозрачность с тем же весом, и без предка взятая строка бледнела бы
+     через раз — смотря какое правило написано ниже. */
+  .card .row--held > :global(*) {
+    opacity: 0.4;
+    cursor: grabbing;
+  }
+
+  /* Полоса, над которой рука. Пунктир изнутри, а не рамка снаружи: полосы
+     стоят вплотную, и внешняя рамка сдвинула бы соседнюю на пиксель. */
+  .band--drop {
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ink) 45%, transparent);
+  }
+
+  /* Сюда этой строке нельзя. Не «ничего не происходит», а сказанный отказ:
+     проза в шапке в девять процентов карты — это обрезанная проза. */
+  .band--deny {
+    box-shadow: inset 0 0 0 1px rgba(143, 47, 34, 0.55);
+    cursor: not-allowed;
+  }
+
+  /* Куда сядет. Считается по соседям и кладётся в координатах карты — как
+     рукоять детали, и по той же причине: черта внутри полосы унаследовала бы
+     её обрезку и пропала бы ровно на краю, где место и выбирают. */
+  .row-mark {
+    position: absolute;
+    z-index: 6;
+    background: #c65f3c;
+    pointer-events: none;
+  }
+
   /* Three bands are measured; the properties band is not, and takes the rest.
      Sliders that happen to add up can never squeeze it to nothing. */
   .band--head {
     flex: 0 0 var(--header-share, 9%);
-    font-size: 3.8cqi;
+    font-size: calc(3.8cqi * var(--type-scale, 1));
     letter-spacing: 0.16em;
     text-transform: uppercase;
     color: var(--ink);
-    opacity: 0.72;
+    opacity: min(1, calc(0.72 * var(--ink-fade, 1)));
   }
 
   .band--foot {
     flex: 0 0 var(--foot-share, 10%);
   }
 
-  /* Corners wear cost and power outside the window; the foot was reserving
-     a tenth of the card for nothing. Keep the band in the Frames tab, where
-     the seam is a handle. */
+  /* Уголки носят стоимость и силу вне окна, и подвал резервировал десятую
+     часть карты ни подо что. Полоса остаётся на вкладке рамок, где шов — это
+     ручка, и остаётся всюду, где опись всё же поставила в подвал строку:
+     сплющивать полосу, в которой что-то стоит, значит прятать то, что
+     хранитель только что туда положил. */
   .slot--flush-foot .band--foot {
     flex: 0 0 0;
     min-height: 0;
@@ -1743,9 +2529,14 @@
     overflow: hidden;
   }
 
-  /* The cost badge keeps its corner; the header starts clear of it. */
-  .slot[data-layout='corners'] .band--head {
-    padding-left: 17cqi;
+  /* Шапка отступает от того, что на ней лежит, — от значков и от метки
+     «новая». Числа приходят из `badgeReserve`, из того, ГДЕ ЗНАЧОК СТОИТ:
+     до этого отступ был один и жёсткий (17cqi слева) и держался на том, что
+     значок стоимости не двигали. Подпись под кружком в этот отступ не входила
+     вовсе — отсюда «СТОИМОСТЬ ДОМОВЫЕ · ТЕ…» на каждой карте полки. */
+  .band--head {
+    padding-left: var(--head-pad-left, 0);
+    padding-right: var(--head-pad-right, 0);
   }
 
   .band--props {
@@ -1761,7 +2552,7 @@
   }
 
   .head-sep {
-    opacity: 0.5;
+    opacity: min(1, calc(0.5 * var(--ink-fade, 1)));
   }
 
   /* The race icon: a small square before the header text, always the same
@@ -1800,7 +2591,7 @@
     list-style: none;
     min-height: 0;
     overflow: hidden;
-    font-size: 4.2cqi;
+    font-size: calc(4.2cqi * var(--type-scale, 1));
     line-height: 1.34;
     color: var(--ink);
   }
@@ -1819,7 +2610,7 @@
   .trait-other {
     margin-left: 0.35ch;
     font-weight: 400;
-    opacity: 0.6;
+    opacity: min(1, calc(0.6 * var(--ink-fade, 1)));
   }
 
   .numbers {
@@ -1829,21 +2620,23 @@
     gap: 1.2cqi 3cqi;
     margin: auto 0 0;
     padding-top: 2.5cqi;
-    font-size: 4cqi;
+    font-size: calc(4cqi * var(--type-scale, 1));
     letter-spacing: 0.1em;
     text-transform: uppercase;
     color: var(--ink);
-    opacity: 0.88;
+    opacity: min(1, calc(0.88 * var(--ink-fade, 1)));
   }
 
-  /* Power keeps its corner, the way cost keeps the header. Without this the
-     last number (Step, Mend) sits under the disc and overflow clips it;
-     the effect used to run through the same disc. */
-  .slot[data-layout='corners'] .numbers,
-  .slot[data-layout='corners'] .effect,
-  .slot[data-layout='corners'] .lore,
-  .slot[data-layout='corners'] .traits {
-    padding-right: 17cqi;
+  /* Текст уступает значку силы так же, как шапка — значку стоимости, и по
+     тому же числу: без этого последнее число (Шаг, Лечение) стоит под кружком
+     и обрезается, а действие пробегает сквозь него. Значок, поднятый в шапку,
+     тексту уже не мешает, и `badgeReserve` отдаёт здесь ноль. */
+  .numbers,
+  .effect,
+  .lore,
+  .traits {
+    padding-right: var(--body-pad-right, 0);
+    padding-left: var(--body-pad-left, 0);
   }
 
   .number b {
@@ -1991,7 +2784,10 @@
     }
   }
 
-  .plate {
+  .title,
+  .rank {
+    /* Имя и чин были одной плашкой, пока стояли рядом всегда. Опись их
+       развела: каждый теперь сам себе строка и сам не сжимается. */
     flex: 0 0 auto;
   }
 
@@ -1999,7 +2795,7 @@
     margin: 0;
     font-family: var(--title-face, inherit);
     color: var(--title-ink, var(--ink));
-    font-size: 7cqi;
+    font-size: calc(7cqi * var(--type-scale, 1));
     line-height: 1.15;
     font-weight: 400;
     letter-spacing: 0.01em;
@@ -2008,10 +2804,10 @@
   .rank {
     margin: 1cqi 0 0;
     color: var(--ink);
-    font-size: 4cqi;
+    font-size: calc(4cqi * var(--type-scale, 1));
     letter-spacing: 0.18em;
     text-transform: uppercase;
-    opacity: 0.62;
+    opacity: min(1, calc(0.62 * var(--ink-fade, 1)));
   }
 
   .effect {
@@ -2026,7 +2822,7 @@
     color: var(--ink);
     padding-top: 2.5cqi;
     border-top: 1px solid color-mix(in oklab, var(--edge) 70%, transparent);
-    font-size: 5cqi;
+    font-size: calc(5cqi * var(--type-scale, 1));
     line-height: 1.35;
   }
 
@@ -2035,10 +2831,10 @@
   .effect--voice {
     padding-top: 0;
     border-top: none;
-    font-size: 4.4cqi;
+    font-size: calc(4.4cqi * var(--type-scale, 1));
     line-height: 1.4;
     font-style: italic;
-    opacity: 0.78;
+    opacity: min(1, calc(0.78 * var(--ink-fade, 1)));
   }
 
   /* On a shelf the card is a thumbnail: name, a line of traits, the effect,
@@ -2047,16 +2843,18 @@
      the traits for the last 81px of the window. The taking sheet is 400px,
      so lore and the full trait list still live there. */
   @container (max-width: 280px) {
-    .lore {
-      display: none;
-    }
+    /* Байка отсюда ушла: «печатать ли её на полке» — это ступень описи, а не
+       медиазапрос, и держать один и тот же выбор в двух местах значит однажды
+       дать им разойтись. Домашняя ступень байки — «с листа взятия», то есть
+       ровно то, что делало это правило. Здесь осталась только ПЛОТНОСТЬ:
+       сколько черт влезает и как обрезается строка. */
 
     .trait-other {
       display: none;
     }
 
     .traits {
-      max-height: calc(4.2cqi * 1.34);
+      max-height: calc(4.2cqi * var(--type-scale, 1) * 1.34);
     }
 
     .trait:not(:first-child) {
@@ -2078,31 +2876,32 @@
   }
 
   /* Smaller still: the card standing on a board cell. At this width it is a
-     figure, not a document — frame, photograph, name, and nothing else.
-     Power and armour do not change during a match, so keeping them on the
-     board keeps in front of the reader what the reader already learned from
-     the card; health is told by the scene itself, beside the wounded.
+     figure, not a document — frame, photograph, name, health, power.
+     Cost belongs to the shelf; health belongs to the body that stands here.
+     The same density is applied by `.slot--match` when the cell is wider than
+     160 px: otherwise a readable board card would print the shelf document.
 
      Here rather than behind a `compact` prop for the same reason the preview
      lives in this component: a board that draws its own smaller card is a
      board that will drift from the shelf, and then one of the two is lying. */
   @container (max-width: 160px) {
-    .band--head,
-    .band--foot,
-    .traits,
-    .effect,
-    .numbers,
-    .rank,
-    .new-mark,
-    .corner,
-    .corner-mark {
-      display: none;
-    }
+    /* Что здесь ПЕЧАТАЕТСЯ, решает опись, а не этот медиазапрос. Раньше он
+       гасил шапку, подвал, черты, действие, паспорт и оба кружка списком — и
+       ступень «всегда» не значила «всегда»: хранитель ставил её и не понимал,
+       почему в клетке боя ничего нет. Здесь осталось только про ВЕЛИЧИНУ. */
 
     /* The photograph takes everything the name leaves: the three shares are a
        frame's way of dividing four bands, and at this size there are two. */
     .art {
       flex: 1 1 auto;
+    }
+
+    /* Число, оставленное в клетке, должно читаться. Домашние 4cqi — это пять
+       с половиной точек на карте в 140 px: не мелкий шрифт, а грязь. */
+    .numbers {
+      gap: 0.8cqi 2cqi;
+      padding-top: 1.6cqi;
+      font-size: calc(7cqi * var(--type-scale, 1));
     }
 
     .band--props {
@@ -2117,14 +2916,68 @@
       -webkit-line-clamp: 2;
       line-clamp: 2;
       overflow: hidden;
-      font-size: 9cqi;
+      font-size: calc(9cqi * var(--type-scale, 1));
       line-height: 1.1;
     }
 
-    /* The header is gone, and with it the corner it was standing clear of. */
-    .slot[data-layout='corners'] .band--head {
+    /* Шапка в клетке боя высотой в девять процентов карты — это полоска в
+       восемнадцать точек, и уступать в ней значку нечего: он сам с неё ростом.
+       Кто её здесь показывает, тот показывает и кружок поверх неё. */
+    .band--head {
       padding-left: 0;
+      padding-right: 0;
     }
+  }
+
+  .slot--match .content {
+    padding: 0;
+  }
+
+  .slot--match .band--head,
+  .slot--match .band--foot {
+    flex: 0 0 0;
+    min-height: 0;
+    padding: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+
+  .slot--match .art {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .slot--match .numbers {
+    gap: 0.8cqi 2cqi;
+    padding-top: 1.6cqi;
+    font-size: calc(7cqi * var(--type-scale, 1));
+  }
+
+  .slot--match .band--props {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 2;
+    flex: 0 0 auto;
+    padding: 1.6cqi 2.4cqi 2cqi;
+    overflow: visible;
+    background: color-mix(in oklab, var(--paper, #f8f1e7) 78%, transparent);
+  }
+
+  .slot--match .title {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+    font-size: calc(8.5cqi * var(--type-scale, 1));
+    line-height: 1.1;
+  }
+
+  .slot--match .band--head {
+    padding-left: 0;
+    padding-right: 0;
   }
 
   .lore {
@@ -2135,10 +2988,10 @@
     overflow: hidden;
     margin: 2cqi 0 0;
     color: var(--ink);
-    font-size: 4.4cqi;
+    font-size: calc(4.4cqi * var(--type-scale, 1));
     line-height: 1.4;
     font-style: italic;
-    opacity: 0.66;
+    opacity: min(1, calc(0.66 * var(--ink-fade, 1)));
   }
 
   .pips {
@@ -2168,7 +3021,8 @@
     justify-content: center;
   }
 
-  .slot[data-layout='plaque'] .plate,
+  .slot[data-layout='plaque'] .title,
+  .slot[data-layout='plaque'] .rank,
   .slot[data-layout='plaque'] .effect,
   .slot[data-layout='plaque'] .lore,
   .slot[data-layout='plaque'] .traits {
@@ -2184,21 +3038,28 @@
   }
 
   .stats {
-    font-size: 4.4cqi;
+    font-size: calc(4.4cqi * var(--type-scale, 1));
     letter-spacing: 0.06em;
     color: var(--ink);
   }
 
   .new-mark {
-    position: absolute;
-    top: 3cqi;
-    right: 3cqi;
+    /* Поставленная в полосу, метка стоит в потоке и места ни у кого не
+       отнимает; лежащая поверх карты — в правом верхнем углу, и шапка ей
+       уступает ровно на её ширину (`--head-pad-right`). */
+    align-self: center;
     padding: 1cqi 2.4cqi;
-    font-size: 3.6cqi;
+    font-size: calc(3.6cqi * var(--type-scale, 1));
     letter-spacing: 0.2em;
     text-transform: uppercase;
     color: var(--paper);
     background: #c65f3c;
+  }
+
+  .new-mark--over {
+    position: absolute;
+    top: 3cqi;
+    right: 3cqi;
   }
 
   /* The dusty back. */
@@ -2238,9 +3099,9 @@
   }
 
   .title--down {
-    font-size: 6cqi;
+    font-size: calc(6cqi * var(--type-scale, 1));
     color: var(--ink);
-    opacity: 0.78;
+    opacity: min(1, calc(0.78 * var(--ink-fade, 1)));
   }
 
   .rank--down {
@@ -2265,15 +3126,15 @@
   }
 
   .price-amount {
-    font-size: 6.4cqi;
+    font-size: calc(6.4cqi * var(--type-scale, 1));
     color: var(--ink);
   }
 
   .price-coin {
-    font-size: 3.6cqi;
+    font-size: calc(3.6cqi * var(--type-scale, 1));
     letter-spacing: 0.14em;
     text-transform: uppercase;
-    opacity: 0.66;
+    opacity: min(1, calc(0.66 * var(--ink-fade, 1)));
   }
 
   /* The rank's own shape, dragged instead of dialled — see `frameEditable` in
@@ -2480,89 +3341,28 @@
   /* The cost/power badge's own numeric editor — a click on the badge that
      never moved opens this instead of dragging it. Anchored on the badge's
      own centre, same as the badge itself, and dropped just clear of it. */
+  /* Только ПРИВЯЗКА: где стоит стол значка. Бумага, кайма и отступы — его
+     собственные, и вторая их пара здесь однажды разошлась бы с первой.
+     Отвод от значка назван в cqi, потому что отводят от кружка, а кружок
+     мерян шириной карты, и число это — его ПОЛОВИНА (5.75 при 10.5cqi) плюс
+     волосок: считать отвод от старой величины значит отходить на пустое
+     место, которого на карте больше нет. Сдвиг — в пикселях: он не про карту, а про экран,
+     и назначает его `fitBadgePopover`. */
   .badge-popover {
     position: absolute;
     z-index: 6;
-    display: flex;
-    flex-direction: column;
-    gap: 0.4em;
-    padding: 0.5em 0.6em;
-    font-size: 0.65rem;
-    color: var(--ink, #34251c);
-    background: var(--paper, #f8f1e7);
-    border: 1px solid color-mix(in oklab, var(--ink) 30%, transparent);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
-    transform: translate(-50%, calc(7cqi + 6px));
-    white-space: nowrap;
+    transform: translate(
+      calc(-50% + var(--bi-shift-x, 0px)),
+      calc(5.75cqi + 6px + var(--bi-shift-y, 0px))
+    );
   }
 
-  .badge-popover-label {
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-
-  .badge-popover-row {
-    display: flex;
-    align-items: center;
-    gap: 0.6em;
-  }
-
-  .badge-popover-shapes {
-    display: flex;
-    gap: 0.35em;
-  }
-
-  .badge-shape-swatch {
-    width: 1.3em;
-    height: 1.3em;
-    padding: 0;
-    background: color-mix(in oklab, var(--ink) 55%, transparent);
-    border: 1px solid transparent;
-    cursor: pointer;
-  }
-
-  .badge-shape-swatch.active {
-    border-color: var(--ink);
-    background: var(--ink);
-  }
-
-  .badge-shape-swatch--circle {
-    border-radius: 50%;
-  }
-
-  .badge-shape-swatch--square {
-    border-radius: 12%;
-  }
-
-  .badge-shape-swatch--diamond {
-    border-radius: 0;
-    clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
-  }
-
-  .badge-shape-swatch--hex {
-    border-radius: 0;
-    clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
-  }
-
-  .badge-shape-swatch--shield {
-    border-radius: 0;
-    clip-path: polygon(50% 0%, 100% 18%, 100% 55%, 50% 100%, 0% 55%, 0% 18%);
-  }
-
-  .badge-popover-field {
-    display: flex;
-    align-items: center;
-    gap: 0.3em;
-  }
-
-  .badge-popover-field input {
-    width: 3.2em;
-    padding: 0.15em 0.3em;
-    font: inherit;
-    color: var(--ink);
-    background: color-mix(in oklab, var(--paper) 90%, var(--ink) 10%);
-    border: 1px solid color-mix(in oklab, var(--ink) 25%, transparent);
+  /* Над значком — когда под ним до края экрана не осталось места. */
+  .badge-popover--up {
+    transform: translate(
+      calc(-50% + var(--bi-shift-x, 0px)),
+      calc(-100% - 5.75cqi - 6px + var(--bi-shift-y, 0px))
+    );
   }
 
   /* A tilting, sweeping card is decoration; the card without it is the whole

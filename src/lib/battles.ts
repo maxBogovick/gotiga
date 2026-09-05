@@ -28,7 +28,12 @@ import type {
   BattleFrameMode,
   BattleRules,
   BattleLayout,
+  CardAbility,
   CardTrait,
+  SheetBand,
+  SheetRow,
+  SheetShow,
+  SheetSlot,
   SliceFit,
   SliceKind,
   SliceOrnament,
@@ -58,10 +63,18 @@ export const DEFAULT_ASPECT = 5 / 7;
 export const DEFAULT_ART_SHARE = 0.44;
 export const DEFAULT_HEADER_SHARE = 0.09;
 export const DEFAULT_FOOT_SHARE = 0.1;
-export const DEFAULT_COST_X = 10;
-export const DEFAULT_COST_Y = 9;
-export const DEFAULT_POWER_X = 90;
-export const DEFAULT_POWER_Y = 91;
+/**
+ * Где стоят значки стоимости и силы — в долях КАРТЫ, не окна (см.
+ * `.badges-layer` в `BattleCard.svelte`).
+ *
+ * Числа выглядят необязательными, но они не выбраны заново: это ровно те
+ * места, куда значки попадали, пока их считали в долях окна с отступом
+ * 5cqi, — на карте 5 : 7 с нулевыми врезками. Дом не переехал.
+ */
+export const DEFAULT_COST_X = 14;
+export const DEFAULT_COST_Y = 12;
+export const DEFAULT_POWER_X = 86;
+export const DEFAULT_POWER_Y = 88;
 
 export const SLICE_SLOTS: SliceSlot[] = [
   'corner', 'sideH', 'sideV', 'cornerExtra', 'sideMidH', 'sideMidV',
@@ -319,7 +332,17 @@ export function completeSlices(frame: BattleFrame): BattleFrame {
       const kind = SLICE_KINDS.includes(one.kind) ? one.kind : 'corner';
       return { ...one, kind, ...settle(one, kind, defaultSlices().cornerExtra) };
     });
-  return { ...frame, slices, ornaments };
+  return {
+    ...frame,
+    slices,
+    ornaments,
+    // Опись и два множителя — по той же причине, что и детали: стол правит
+    // живой объект, а рамка, сохранённая до описи, несёт пустой список и ноли.
+    // Дополняется здесь один раз, а не в каждом месте, которое их читает.
+    sheet: normalizeSheet(frame.sheet),
+    typeScale: frame.typeScale || 1,
+    inkFade: frame.inkFade || 1,
+  };
 }
 
 /** Which upload each named slot draws. A slot with no picture is never placed
@@ -526,6 +549,748 @@ export function carvedCopies(frame: BattleFrame): CarvedCopy[] {
   return out;
 }
 
+/* ── Опись ────────────────────────────────────────────────────────────────
+   Что печатается на карте, в какой полосе и в каком порядке.
+
+   Список И ЕСТЬ порядок — то же правило, что у списка деталей рамки. Полоса
+   и порядок, а не координаты: у текста длина меняется от языка и от карты, и
+   свободно поставленное имя столкнётся с соседкой на первом же длинном
+   названии. Координаты остались там, где стоит одна цифра, — у значков.     */
+
+/** Все строки описи, в домашнем порядке. Порядок здесь — порядок на карте у
+ *  рамки, которая описи не трогала. */
+export const SHEET_SLOTS: SheetSlot[] = [
+  'raceIcon', 'race', 'kind', 'channel', 'pips',
+  'title', 'rank', 'traits', 'effect', 'lore',
+  'health', 'mana', 'armor', 'ward', 'reach', 'step', 'mend',
+  'stats',
+  'cost', 'power', 'healthMark', 'new', 'costWord', 'powerWord',
+];
+
+/**
+ * Семь чисел паспорта. Строки описи, но не такие, как все: печатаются они
+ * ОДНОЙ коробкой, а не семью — семь отдельных абзацев в колонке свойств это
+ * семь строк высотой в карту. Коробку ставит первая из них, порядок внутри —
+ * порядок описи, а сама коробка видна с той величины, с какой видно самое
+ * щедрое из чисел (см. `statGroupShow`).
+ */
+export const SHEET_STATS: BodyStatField[] = [
+  'health', 'mana', 'armor', 'ward', 'reach', 'step', 'mend',
+];
+
+export function isStatSlot(slot: SheetSlot): slot is BodyStatField {
+  return (SHEET_STATS as string[]).includes(slot);
+}
+
+/** Ступени в том порядке, в каком их предлагают: от «нигде» к «везде», и
+ *  особая пятая — «только в клетке» — последней, потому что она единственная
+ *  говорит про потолок, а не про порог. */
+export const SHEET_SHOWS: SheetShow[] = ['never', 'large', 'always', 'cell', 'cellOnly'];
+
+/**
+ * Коробка паспорта видна с той величины, с какой видно самое щедрое из чисел в
+ * ней. Иначе коробка, полная скрытых чисел, оставляла бы на карте свой отступ:
+ * пустое место там, где по описи ничего не стоит.
+ */
+export function statGroupShow(rows: SheetRow[]): SheetShow {
+  const has = (show: SheetShow) => rows.some((row) => row.show === show);
+  // Не «самая старшая ступень», а самая ТЕСНАЯ, которая накрывает все: у
+  // «только в клетке» потолок, а не порог, и по номеру в списке её не сложить
+  // с остальными. Чего накрыть нельзя (лист и клетка без полки), накрывается с
+  // запасом — лишний раз показанная пустая коробка честнее спрятанного числа.
+  if (has('cell') || ((has('large') || has('always')) && has('cellOnly'))) return 'cell';
+  if (has('always')) return 'always';
+  if (has('cellOnly')) return 'cellOnly';
+  if (has('large')) return 'large';
+  return 'never';
+}
+
+/**
+ * Где строка вообще может стоять.
+ *
+ * Не украшение и не вкусовщина: проза в шапке высотой в девять процентов
+ * карты — это обрезанная проза, а метка «новая» и подписи под значками стоят
+ * поверх карты и в потоке полос не стоят вовсе. Стол предлагает только то,
+ * что имеет смысл, вместо того чтобы позволить выбрать заведомо сломанное.
+ */
+export const SHEET_SLOT_BANDS: Record<SheetSlot, SheetBand[]> = {
+  raceIcon: ['head', 'props', 'foot'],
+  race: ['head', 'props', 'foot'],
+  kind: ['head', 'props', 'foot'],
+  channel: ['head', 'props', 'foot'],
+  pips: ['head', 'props', 'foot'],
+  title: ['props', 'head', 'foot'],
+  rank: ['props', 'head', 'foot'],
+  traits: ['props'],
+  effect: ['props'],
+  lore: ['props'],
+  health: ['props', 'foot', 'head'],
+  mana: ['props', 'foot', 'head'],
+  armor: ['props', 'foot', 'head'],
+  ward: ['props', 'foot', 'head'],
+  reach: ['props', 'foot', 'head'],
+  step: ['props', 'foot', 'head'],
+  mend: ['props', 'foot', 'head'],
+  stats: ['foot', 'head', 'props'],
+  cost: ['over'],
+  power: ['over'],
+  healthMark: ['over'],
+  new: ['over', 'head', 'foot'],
+  costWord: ['over'],
+  powerWord: ['over'],
+};
+
+/**
+ * Домашняя опись — буква в букву то, что карта печатала до описи, с одним
+ * намеренным отличием: подписи под значками стоимости и силы сняты.
+ *
+ * Подпись висит под кружком в углу, а шапка отступает от кружка на его
+ * ширину и про подпись ничего не знает — отсюда «СТОИМОСТЬ ДОМОВЫЕ · ТЕ…» на
+ * каждой карте полки. Кружок с цифрой в углу карты понятен и без слова;
+ * хранитель, которому слово нужно, включает его и ставит значок туда, где
+ * слово помещается.
+ */
+/**
+ * Домашняя опись — буква в букву то, что карта печатала до неё, и «буква в
+ * букву» включает клетку боя: там всегда были рама, фотография и ИМЯ, и ничего
+ * больше. Поэтому имя одно стоит на `cell`, а не на `always` — не потому, что
+ * оно важнее, а потому, что так было.
+ */
+export function defaultSheet(): SheetRow[] {
+  return SHEET_SLOTS.map((slot) => ({
+    slot,
+    show:
+      slot === 'costWord' || slot === 'powerWord'
+        ? 'never'
+        : slot === 'healthMark'
+          ? // Кружок здоровья — ТОЛЬКО в клетке боя, и «только» здесь
+            // существенно: он встаёт ровно туда, где стоит стоимость, и
+            // появляется ровно тогда, когда та исчезает. На полке цена и сила
+            // напечатаны на бумаге и никуда не денутся; в клетке цена не
+            // значит ничего, а здоровье — всё.
+            'cellOnly'
+          : slot === 'title'
+            ? 'cell'
+            : slot === 'lore'
+              ? 'large'
+              : 'always',
+    band: SHEET_SLOT_BANDS[slot][0],
+  }));
+}
+
+/** Домашняя опись, но клетка боя показывает здоровье и силу. Не умолчание —
+ *  заготовка: доска, на которой видно, кто ещё жив, это выбор хранителя, а
+ *  `BATTLE-SCENE.md` держится обратного («числа только у раненых»). */
+export function cellSheet(): SheetRow[] {
+  return defaultSheet().map((row) =>
+    row.slot === 'health' || row.slot === 'power' ? { ...row, show: 'cell' } : row,
+  );
+}
+
+/**
+ * Опись, годная к отрисовке: незнакомое выброшено, повторы сняты, недостающее
+ * дописано в домашнем виде и в домашнем месте.
+ *
+ * Дописывать обязательно, а не желательно: рамка, сохранённая до описи, несёт
+ * пустой список, и «пустая опись = пустая карта» стёрла бы всю полку одним
+ * сохранением. Пустое — это «как в доме», и поэтому переезда данных не
+ * потребовалось.
+ */
+export function normalizeSheet(given: SheetRow[] | null | undefined): SheetRow[] {
+  const seen = new Set<SheetSlot>();
+  const rows: SheetRow[] = [];
+  for (const row of given ?? []) {
+    const slot = row?.slot as SheetSlot;
+    if (!slot || !SHEET_SLOT_BANDS[slot] || seen.has(slot)) continue;
+    seen.add(slot);
+    const bands = SHEET_SLOT_BANDS[slot];
+    rows.push({
+      slot,
+      show: SHEET_SHOWS.includes(row.show) ? row.show : 'always',
+      band: bands.includes(row.band) ? row.band : bands[0],
+    });
+  }
+  if (!rows.length) return defaultSheet();
+  // Строка, которой в сохранённой описи нет, встаёт на своё домашнее место —
+  // не в конец. Иначе появление новой строки в доме переставляло бы карты у
+  // всех, кто описи касался.
+  for (const row of defaultSheet()) {
+    if (seen.has(row.slot)) continue;
+    const at = SHEET_SLOTS.indexOf(row.slot);
+    const before = rows.findIndex((one) => SHEET_SLOTS.indexOf(one.slot) > at);
+    if (before < 0) rows.push(row);
+    else rows.splice(before, 0, row);
+  }
+  return rows;
+}
+
+/** Полосы в том порядке, в каком они стоят на карте. Ими же перечисляются
+ *  ящики на столе, чтобы список и карта читались одинаково. */
+export const SHEET_BANDS: SheetBand[] = ['head', 'props', 'foot', 'over'];
+
+/**
+ * Переложить строку описи — в другую полосу, на другое место, или и то и
+ * другое сразу. Одна пересадка на оба входа: мышь по карте и мышь по списку.
+ *
+ * Место названо СОСЕДОМ, а не номером, и это не вкусовщина. Номер значил бы
+ * разное у двух входов: карта видит только напечатанное (у карты без черт
+ * строки черт на ней нет), а список видит всю опись, — и «третье место»
+ * оказывалось бы разным местом, смотря откуда несли. Сосед у обоих один и тот
+ * же. `before: null` — в конец своей полосы.
+ *
+ * Список ПЕРЕСТАВЛЯЕТСЯ, а не пересобирается по полосам: порядок строк соседних
+ * полос ничего не рисует, но он чей-то — перекладывать чужое, потому что тронули
+ * своё, значит однажды сдвинуть то, чего никто не двигал.
+ *
+ * Полоса, в которой строке стоять нельзя, не берётся вовсе: `SHEET_SLOT_BANDS`
+ * — не украшение, а забор от заведомо сломанного (проза в шапке высотой в
+ * девять процентов карты это обрезанная проза).
+ */
+export function moveSheetRow(
+  given: SheetRow[] | null | undefined,
+  slot: SheetSlot,
+  band: SheetBand,
+  before: SheetSlot | null,
+): SheetRow[] {
+  const rows = normalizeSheet(given);
+  const from = rows.findIndex((row) => row.slot === slot);
+  if (from < 0) return rows;
+  const allowed = SHEET_SLOT_BANDS[slot];
+  const moved: SheetRow = {
+    ...rows[from],
+    band: allowed.includes(band) ? band : rows[from].band,
+  };
+  const rest = rows.filter((_, i) => i !== from);
+  const out = rest.slice();
+  const at = before
+    ? rest.findIndex((row) => row.slot === before && row.band === moved.band)
+    : -1;
+  if (at >= 0) {
+    out.splice(at, 0, moved);
+    return out;
+  }
+  // В конец своей полосы — то есть сразу за её последней строкой, а не в конец
+  // всего списка: там начинается чужая полоса.
+  const inBand = rest.filter((row) => row.band === moved.band);
+  if (!inBand.length) return [...rest, moved];
+  out.splice(out.indexOf(inBand[inBand.length - 1]) + 1, 0, moved);
+  return out;
+}
+
+/**
+ * Печатает ли карта это число САМА, стоя в клетке боя.
+ *
+ * Спрашивает сцена, и спрашивает обязательно: доска рисует свои кружки поверх
+ * карты, а карта рисует свои, и два отрисовщика одного числа — это не
+ * «дублирование кода», это два кружка в одном углу. Ровно так и вышло: кружок
+ * доски накрыл собой значок карты, и вся работа над значком была не видна.
+ *
+ * Слотом, а не тремя функциями: здоровье и сила устроены одинаково, и
+ * `cellSaysHealth`, у которой не было ни одного вызова, ничему не помешала —
+ * никто просто не спросил.
+ *
+ * В партии значок ставит `alive` даже на клетке шире полки (ступени ширины там
+ * не решают — см. `byWidth` в `BattleCard`), поэтому здесь достаточно «строка
+ * не снята», а не ступень `cell`/`cellOnly`.
+ */
+export function cellPrints(frame: Pick<BattleFrame, 'sheet'>, slot: SheetSlot): boolean {
+  return sheetOf(frame).some((row) => row.slot === slot && row.show !== 'never');
+}
+
+/** Опись этой рамы. Один вход для всех, кто её читает, — и карты, и стола. */
+export function sheetOf(frame: Pick<BattleFrame, 'sheet'>): SheetRow[] {
+  return normalizeSheet(frame.sheet);
+}
+
+/** Строки одной полосы, в порядке описи. */
+export function sheetBand(rows: SheetRow[], band: SheetBand): SheetRow[] {
+  return rows.filter((row) => row.band === band && row.show !== 'never');
+}
+
+/** Показывается ли строка хоть где-нибудь. */
+export function sheetShows(rows: SheetRow[], slot: SheetSlot): boolean {
+  return rows.some((row) => row.slot === slot && row.show !== 'never');
+}
+
+/**
+ * Ширина, с которой строка «только крупно» появляется. То самое число, по
+ * которому карта уже делит лист взятия и полку (`@container`, 280 px), —
+ * второе, своё, развело бы предпросмотр и комнату.
+ */
+export const SHEET_LARGE_MIN = 281;
+
+/**
+ * Сколько карта обязана уступить значкам стоимости и силы и метке «новая» —
+ * в cqi, то есть в процентах ширины карты.
+ *
+ * До этого отступ был один и жёсткий (17cqi слева у шапки, 17cqi справа у
+ * текста), и держался он на том, что значки стоят в двух углах по умолчанию.
+ * Хранитель, оттащивший значок на четверть карты вправо, получал шапку под
+ * значком и никакого способа это заметить, кроме как посмотреть. Считается из
+ * того, где значок СТОИТ.
+ *
+ * Значок «в шапке», если его верхний край выше нижней границы шапки; иначе он
+ * мешает тексту свойств, и уступает ему тот. Высота кружка задана в cqi, то
+ * есть в долях ШИРИНЫ, поэтому в доли высоты переводится через отношение
+ * сторон — иначе на квадратной карте отступа не хватило бы, а на узкой он
+ * появлялся бы там, где значка нет.
+ */
+export function badgeReserve(
+  frame: BattleFrame,
+  opts: {
+    isNew: boolean;
+    costOn: boolean;
+    powerOn: boolean;
+    healthOn: boolean;
+    costWord: boolean;
+    powerWord: boolean;
+    newOver: boolean;
+  },
+): { headLeft: number; headRight: number; bodyLeft: number; bodyRight: number } {
+  let headLeft = 0;
+  let headRight = 0;
+  let bodyLeft = 0;
+  let bodyRight = 0;
+  if (frame.layout === 'corners') {
+    const aspect = frame.aspect || DEFAULT_ASPECT;
+    const top = frame.insetTop || 0;
+    const bottom = frame.insetBottom || 0;
+    const headBottom = top + (frame.headerShare ?? DEFAULT_HEADER_SHARE) * (100 - top - bottom);
+    // Величина значка входит в расчёт: увеличенный кружок и лезет дальше в
+    // шапку, и просит больше отступа. Отступ, посчитанный по домашним 10.5cqi,
+    // молча разошёлся бы с тем, что нарисовано, — ровно та же поломка, что
+    // была у долей окна против долей карты.
+    const worn: Record<BadgeKind, boolean> = {
+      cost: opts.costOn,
+      power: opts.powerOn,
+      health: opts.healthOn,
+    };
+    const worded: Record<BadgeKind, boolean> = {
+      cost: opts.costWord,
+      power: opts.powerWord,
+      // У здоровья подписи нет: его включают ровно там, где для слова уже
+      // нет места.
+      health: false,
+    };
+    const badges = BADGE_KINDS.filter((kind) => worn[kind]).map((kind) => ({
+      ...badgeAt(frame, kind),
+      word: worded[kind],
+      extent: badgeExtent(frame, kind),
+    }));
+    for (const badge of badges) {
+      const halfSize = badge.extent.w / 2;
+      const half = (badge.extent.h / 2) * aspect;
+      const inHead = badge.y - half <= headBottom;
+      const reach = badge.word ? Math.max(BADGE_WORD_REACH, halfSize) : halfSize;
+      const near = badge.x < 50;
+      const room = near
+        ? badge.x + reach - (frame.insetLeft || 0)
+        : 100 - badge.x + reach - (frame.insetRight || 0);
+      if (inHead) {
+        if (near) headLeft = Math.max(headLeft, room);
+        else headRight = Math.max(headRight, room);
+      } else if (near) bodyLeft = Math.max(bodyLeft, room);
+      else bodyRight = Math.max(bodyRight, room);
+    }
+  }
+  // Метка «новая» лежит поверх правого края шапки. В потоке полосы (её можно
+  // поставить и туда) она места не занимает и уступать ей нечего.
+  if (opts.isNew && opts.newOver) headRight = Math.max(headRight, NEW_MARK_REACH);
+  return {
+    headLeft: Math.max(0, headLeft),
+    headRight: Math.max(0, headRight),
+    bodyLeft: Math.max(0, bodyLeft),
+    bodyRight: Math.max(0, bodyRight),
+  };
+}
+
+/**
+ * Три значка, и все три устроены одинаково: место, форма, заливка, чернила,
+ * величина, толщина. Таблица, а не тернарник на каждое поле, — при двух
+ * значках это была мелкая неопрятность, при трёх стало бы шесть развилок,
+ * каждую из которых можно забыть по отдельности.
+ */
+export type BadgeKind = 'cost' | 'power' | 'health';
+
+export const BADGE_KINDS: BadgeKind[] = ['cost', 'power', 'health'];
+
+export const BADGE_FIELDS = {
+  cost: {
+    x: 'costX', y: 'costY', shape: 'costShape', fill: 'costFill',
+    ink: 'costInk', size: 'costSize', weight: 'costWeight', plate: 'costPlate',
+    homeX: DEFAULT_COST_X, homeY: DEFAULT_COST_Y,
+  },
+  power: {
+    x: 'powerX', y: 'powerY', shape: 'powerShape', fill: 'powerFill',
+    ink: 'powerInk', size: 'powerSize', weight: 'powerWeight', plate: 'powerPlate',
+    homeX: DEFAULT_POWER_X, homeY: DEFAULT_POWER_Y,
+  },
+  // У здоровья поля СВОИ, но пустые они значат «как у стоимости» (см.
+  // `BADGE_HOME` ниже). Сперва их не было вовсе — кружок здоровья не «походил
+  // на» кружок стоимости, а и БЫЛ им, — и это было верно ровно до того дня,
+  // когда хранителю понадобилось развести их: здоровье меняется в бою, а
+  // стоимость напечатана навсегда, и одеть их одинаково — выбор, а не закон.
+  // Откат к стоимости оставлен затем, что старый закон был не глуп: пока
+  // хранитель молчит, два кружка остаются одним и разойтись не могут.
+  health: {
+    x: 'healthX', y: 'healthY', shape: 'healthShape', fill: 'healthFill',
+    ink: 'healthInk', size: 'healthSize', weight: 'healthWeight', plate: 'healthPlate',
+    homeX: DEFAULT_COST_X, homeY: DEFAULT_COST_Y,
+  },
+} as const satisfies Record<
+  BadgeKind,
+  {
+    x: keyof BattleFrame; y: keyof BattleFrame; shape: keyof BattleFrame;
+    fill: keyof BattleFrame; ink: keyof BattleFrame; size: keyof BattleFrame;
+    weight: keyof BattleFrame; plate: keyof BattleFrame;
+    homeX: number; homeY: number;
+  }
+>;
+
+/**
+ * Чей значок донашивает этот, пока ему не назначили своего.
+ *
+ * Одна запись, а не откат, повторённый в каждом из семи чтений: разойтись
+ * семи копиям одного правила — вопрос времени, и разошлись бы они молча.
+ */
+export const BADGE_HOME: Partial<Record<BadgeKind, BadgeKind>> = { health: 'cost' };
+
+type BadgeFieldKey = 'x' | 'y' | 'shape' | 'fill' | 'ink' | 'size' | 'weight' | 'plate';
+
+function badgeRaw(frame: BattleFrame, kind: BadgeKind, key: BadgeFieldKey): unknown {
+  return frame[BADGE_FIELDS[kind][key] as keyof BattleFrame];
+}
+
+/**
+ * Строковое поле значка, с оглядкой на того, чей наряд он донашивает.
+ *
+ * Пустая строка у ЗДОРОВЬЯ значит «как у стоимости», и только потом уже пустая
+ * строка стоимости значит «как в раме». Две пустоты на двух уровнях — не
+ * путаница, а лестница: снял своё — вернулся к стоимости, снял и у стоимости —
+ * вернулся к раме.
+ */
+export function badgeText(frame: BattleFrame, kind: BadgeKind, key: BadgeFieldKey): string {
+  const own = ((badgeRaw(frame, kind, key) as string) ?? '').trim();
+  if (own) return own;
+  const home = BADGE_HOME[kind];
+  return home ? ((badgeRaw(frame, home, key) as string) ?? '').trim() : '';
+}
+
+/** Числовое поле значка. Ноль — «не назначено», как у `typeScale`. */
+export function badgeNum(frame: BattleFrame, kind: BadgeKind, key: 'size' | 'weight'): number {
+  const own = badgeRaw(frame, kind, key) as number;
+  if (own) return own;
+  const home = BADGE_HOME[kind];
+  return home ? ((badgeRaw(frame, home, key) as number) || 0) : 0;
+}
+
+/** Где значок стоит на самом деле — со своим местом, местом донашиваемого и
+ *  домашним, в этом порядке, и с прижатием к карте. `null` здесь значит «не
+ *  назначено», а ноль — верхний левый угол, поэтому проверка на `!= null`, а
+ *  не на истинность. */
+export function badgeAt(frame: BattleFrame, kind: BadgeKind): { x: number; y: number } {
+  const keys = BADGE_FIELDS[kind];
+  const axis = (key: 'x' | 'y', home: number) => {
+    const own = badgeRaw(frame, kind, key) as number | null | undefined;
+    if (own != null) return own;
+    const under = BADGE_HOME[kind];
+    if (under) {
+      const worn = badgeRaw(frame, under, key) as number | null | undefined;
+      if (worn != null) return worn;
+    }
+    return home;
+  };
+  return badgeSpot(
+    axis('x', keys.homeX),
+    axis('y', keys.homeY),
+    frame.aspect || DEFAULT_ASPECT,
+    badgeExtent(frame, kind),
+  );
+}
+
+/**
+ * Кружок значка, в cqi. Совпадает с `.corner` в `BattleCard.svelte`.
+ *
+ * Домашние 10.5, а не 13: при цифре кегля 6.6cqi тринадцать оставляли вокруг
+ * числа поле пустоты почти в саму цифру шириной, а на клетке боя кружок съедал
+ * четверть высоты карты. Число это читают и `badgeSpot`, и `badgeExtent`, и
+ * `badgeReserve`, поэтому записано оно ровно дважды — здесь и в CSS, — и
+ * правится только вместе.
+ */
+export const BADGE_SIZE = 10.5;
+
+/**
+ * Значок, прижатый к КАРТЕ.
+ *
+ * Место значка меряется в долях карты, и это ровно затем, чтобы его можно было
+ * вынести на раму. Но карта непрозрачна и обрезает вышедшее за неё
+ * (`.card { overflow: hidden }`), поэтому за её краем не «место, где значок
+ * свисает», а срез: половина кружка просто исчезает, и хранитель видит
+ * полукруг, которого не ставил. Границы считаются из самого кружка, и по
+ * вертикали — через отношение сторон: 10.5cqi заданы в долях ШИРИНЫ.
+ *
+ * Прижимает и отрисовщик, и перетаскивание, и `badgeReserve`: место, которое
+ * они поняли бы порознь, — это отступ под значок, стоящий не там.
+ */
+export function badgeSpot(
+  x: number,
+  y: number,
+  aspect: number,
+  extent: BadgeExtent = { w: BADGE_SIZE, h: BADGE_SIZE },
+): { x: number; y: number } {
+  const halfX = extent.w / 2;
+  // Высота названа в cqi, то есть в долях ШИРИНЫ, и в доли высоты переводится
+  // отношением сторон — иначе на узкой карте запас брался бы не оттуда.
+  const halfY = (extent.h / 2) * (aspect || DEFAULT_ASPECT);
+  return {
+    x: Math.min(100 - halfX, Math.max(halfX, x)),
+    y: Math.min(100 - halfY, Math.max(halfY, y)),
+  };
+}
+/**
+ * Цифра на залитом кружке.
+ *
+ * Заливку хранитель выбирает, цифру — нет, и это не экономия на поле, а
+ * условие: два цвета, назначаемые порознь, рано или поздно совпадут, и на
+ * карте окажется пустой кружок. Выбор идёт из ДВУХ красок самой рамы —
+ * бумаги и чернил, — а не из чёрного с белым: чужая пара выдала бы значок
+ * как приклеенный.
+ *
+ * Светлота считается по тем же весам, что и всюду (Rec. 709). Цвет, который
+ * не удалось прочесть, считается тёмным: так значок выглядел до заливки, и
+ * незнакомая запись не должна менять его молча.
+ */
+/**
+ * Обе краски значка одной строкой инлайнового стиля — или ничего.
+ *
+ * Ничего — это важное состояние: нетронутый значок не должен получить НИ
+ * ОДНОГО объявления, тогда домашние цвета остаются там, где им и место, — в
+ * откатах `var(--badge-fill, …)`, где они у стоимости и у силы разные. Кто
+ * попробует разрешить их здесь, тому придётся повторить эту разницу вторым
+ * списком, и однажды списки разойдутся.
+ *
+ * Цифру назначает хранитель. Не назначил — карта выбирает её от заливки, и
+ * только если заливка выбрана: без заливки цифра лежит на самой карте, и
+ * `badgeInk` даёт её чернила.
+ */
+export function badgeStyle(frame: BattleFrame, kind: BadgeKind): string | undefined {
+  const fill = badgeText(frame, kind, 'fill');
+  const ink = badgeText(frame, kind, 'ink');
+  const plate = badgePlate(frame, kind);
+  const size = badgeScale(frame, kind);
+  const weight = badgeWeight(frame, kind);
+  const parts: string[] = [];
+  if (plate) parts.push(`--badge-plate:url("${cssUrl(plate)}")`);
+  // Заливка под жетоном не печатается, но и не забывается: сняли жетон —
+  // выбранный цвет на месте. Молчит она в CSS, а не здесь, ровно как форма.
+  if (fill) parts.push(`--badge-fill:${fill}`);
+  if (ink) parts.push(`--badge-ink:${ink}`);
+  // Пару к заливке карта угадывает, только когда цифра на заливке и лежит.
+  else if (fill && !plate) parts.push(`--badge-ink:${badgeInk(fill, frame)}`);
+  // На жетоне цифра лежит на чужой картинке, про которую ни одна краска рамы
+  // ничего не обещает. Домашний откат тут не годится: у стоимости он — БУМАГА,
+  // и светлая она ровно потому, что дома лежит на тёмном кружке чернил. Жетон
+  // этот кружок убрал, и та же бумага стала белым по светлому. Чернила карты —
+  // не угадывание, а честное умолчание: они читаются на большинстве бляшек, и
+  // хранителю всё равно решать самому.
+  else if (plate) parts.push(`--badge-ink:${frame.ink}`);
+  if (size !== 1) parts.push(`--badge-size:${size}`);
+  if (weight) parts.push(`--badge-weight:${weight}`);
+  return parts.length ? parts.join(';') : undefined;
+}
+
+/**
+ * Жетон значка — картинка, надетая вместо крашеной подложки, или пустая
+ * строка.
+ *
+ * Читается одной функцией по той же причине, по которой значки читаются одной
+ * таблицей: у здоровья своего жетона НЕТ, оно носит жетон стоимости, и это
+ * должно быть сказано ровно один раз — в `BADGE_FIELDS`, а не тернарником в
+ * каждом из трёх мест, где жетон нужен (отрисовщик, коробка, стол).
+ */
+export function badgePlate(frame: BattleFrame, kind: BadgeKind): string {
+  return badgeText(frame, kind, 'plate');
+}
+
+/** Форма значка. Пустая — «как у того, чей наряд донашиваем», а если и там
+ *  пусто, то кружок: форма есть у всякого значка, её нельзя не иметь. */
+export function badgeShape(frame: BattleFrame, kind: BadgeKind): BattleBadgeShape {
+  return (badgeText(frame, kind, 'shape') as BattleBadgeShape) || 'circle';
+}
+
+/** Множитель величины значка. Ноль и мусор — «не назначено», как у `typeScale`:
+ *  рамка, сохранённая до этой ручки, несёт ноль. */
+export function badgeScale(frame: BattleFrame, kind: BadgeKind): number {
+  return clampScale(badgeNum(frame, kind, 'size'), BADGE_SCALE_MIN, BADGE_SCALE_MAX);
+}
+
+/** Толщина цифры, или 0 — «как у карты». Округляется к своей ступени: между
+ *  начертаниями шрифта промежутка нет, и дробное число обещало бы его. */
+export function badgeWeight(frame: BattleFrame, kind: BadgeKind): number {
+  const given = badgeNum(frame, kind, 'weight');
+  if (!Number.isFinite(given) || !given) return 0;
+  return BADGE_WEIGHTS.reduce((best, w) => (Math.abs(w - given) < Math.abs(best - given) ? w : best));
+}
+
+export const BADGE_SCALE_MIN = 0.5;
+export const BADGE_SCALE_MAX = 4;
+
+/** Голая цифра — её собственная коробка, в cqi: кегль 6.6cqi при высоте строки 1. */
+export const BADGE_BARE = 6.6;
+/** Ширина цифры к её кеглю. Замерено на цифрах Georgia (0.565); взято с
+ *  запасом, потому что цифр бывает две. */
+export const BADGE_BARE_ASPECT = 0.62;
+
+/** Что значок занимает по ширине и по высоте, в cqi. Двумя числами, а не
+ *  одним: у кружка они равны, у цифры — нет, и одно число на двоих оставило бы
+ *  по бокам цифры ровно то мёртвое поле, ради которого коробку и снимали. */
+export type BadgeExtent = { w: number; h: number };
+
+/**
+ * Сколько значок ЗАНИМАЕТ на самом деле, в cqi.
+ *
+ * Без подложки занимает цифра, и мерить по кружку, которого не рисуют, значит
+ * городить вокруг неё мёртвое поле — то самое, которое видно и в отступе
+ * шапки, и в том, куда значок вообще пускают: кружок вдвое крупнее цифры не
+ * подпускал её к краю карты на полкружка пустоты.
+ *
+ * Прозрачная заливка коробку НЕ снимает: форму хранитель выбрал, и коробка —
+ * это форма. Снимает её только «без формы», и правило целиком: нет формы — нет
+ * коробки.
+ */
+export function badgeExtent(frame: BattleFrame, kind: BadgeKind): BadgeExtent {
+  const shape = badgeShape(frame, kind);
+  const scale = badgeScale(frame, kind);
+  // Жетон — это и есть нарисованная подложка, поэтому коробка у него та же,
+  // что у формы, даже когда форма снята: «нет формы — нет коробки» сказано про
+  // одинокую цифру, а под цифрой с жетоном коробка нарисована.
+  if (shape !== 'none' || badgePlate(frame, kind)) {
+    return { w: BADGE_SIZE * scale, h: BADGE_SIZE * scale };
+  }
+  const h = BADGE_BARE * scale * clampScale(frame.typeScale, 0.75, 1.5);
+  return { w: h * BADGE_BARE_ASPECT, h };
+}
+export const BADGE_WEIGHTS = [300, 400, 500, 600, 700, 800];
+
+/**
+ * Заливка, разобранная на цвет и на то, сколько его.
+ *
+ * Прозрачность живёт ВНУТРИ цвета (`#rrggbbaa`), а не вторым полем, и это то
+ * же решение, что «прозрачная — это цвет»: заливка остаётся одной записью,
+ * которую CSS понимает сам, и снятая заливка есть просто нулевая плотность.
+ * Домашний цвет нужен затем, что у «как в раме» и у `transparent` своего цвета
+ * нет, а ползунок плотности обязан от чего-то отталкиваться.
+ */
+export function fillParts(fill: string, house: string): { hex: string; alpha: number } {
+  const v = (fill ?? '').trim();
+  if (!v) return { hex: house, alpha: 100 };
+  const eight = /^#([0-9a-f]{6})([0-9a-f]{2})$/i.exec(v);
+  if (eight) {
+    return { hex: `#${eight[1]}`, alpha: Math.round((parseInt(eight[2], 16) / 255) * 100) };
+  }
+  if (badgeUnfilled(v)) return { hex: house, alpha: 0 };
+  return { hex: v, alpha: 100 };
+}
+
+/** Обратная сборка. Цвет, который не удалось бы дописать байтом (хранитель
+ *  вписал слово), возвращается как есть: лучше полная заливка, чем запись,
+ *  которой браузер не поймёт и нарисует чёрным. */
+export function fillJoin(hex: string, alpha: number): string {
+  const a = Math.round(Math.min(100, Math.max(0, alpha)));
+  if (!/^#[0-9a-f]{6}$/i.test(hex)) return hex;
+  if (a >= 100) return hex;
+  return `${hex}${Math.round((a / 100) * 255).toString(16).padStart(2, '0')}`;
+}
+
+/**
+ * Цифра, выбранная за хранителя, когда он её не выбрал.
+ *
+ * Это УМОЛЧАНИЕ и только оно. Пара к заливке угадывается верно, пока цифра
+ * лежит на заливке; на снятой заливке она лежит на резьбе, на фотографии, на
+ * чужой картинке — и там ни одна краска рамы ничего не обещает. Поэтому
+ * `costInk`/`powerInk` перебивают этот выбор всегда.
+ */
+export function badgeInk(fill: string, frame: BattleFrame): string {
+  // Без заливки цифра лежит уже не на кружке, а на самой карте — на бумаге, на
+  // резьбе, на фотографии, — и печатается она тем же, чем печатается на карте
+  // всё остальное. Светлоту тут спрашивать не у чего: заливки нет.
+  if (badgeUnfilled(fill)) return frame.ink;
+  return lightness(fill) > 0.55 ? frame.ink : frame.paper;
+}
+
+/**
+ * «Без заливки» — это ЦВЕТ, а не пустое место и не третье поле.
+ *
+ * Пустая строка уже занята и значит «как в раме», поэтому снятая заливка
+ * хранится словом CSS. Оно того стоит: отрисовщику про этот случай знать
+ * нечего — `--badge-fill` принимает `transparent` как любой другой цвет, ни
+ * одной ветки не прибавилось. Знать нужно ровно одному месту, `badgeInk`,
+ * потому что цифре теперь нужна не пара к кружку, а краска карты.
+ */
+export const BADGE_FILL_NONE = 'transparent';
+
+/** Снята ли заливка. Кроме своего слова принимает `none` и запись с нулевой
+ *  прозрачностью: цифра, ставшая невидимой из-за незнакомой записи, — самая
+ *  дорогая из ошибок, которые тут возможны. */
+export function badgeUnfilled(fill: string): boolean {
+  const v = fill.trim().toLowerCase();
+  return (
+    v === 'transparent' ||
+    v === 'none' ||
+    /^#[0-9a-f]{6}00$/.test(v) ||
+    /^#[0-9a-f]{3}0$/.test(v)
+  );
+}
+
+/** Светлота цвета, 0..1. Понимает `#rgb` и `#rrggbb` — то, что даёт
+ *  `<input type="color">`; всё прочее возвращает «тёмный». */
+function lightness(color: string): number {
+  const hex = color.trim().replace(/^#/, '');
+  const full =
+    hex.length === 3
+      ? hex.split('').map((c) => c + c).join('')
+      : hex.length === 6
+        ? hex
+        // Плотность на светлоту не влияет: полупрозрачная краска лежит на том,
+        // подо что её положили, и это уже не вопрос к самой краске.
+        : hex.length === 8
+          ? hex.slice(0, 6)
+          : '';
+  if (!/^[0-9a-fA-F]{6}$/.test(full)) return 0;
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16) / 255);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/** Докуда достаёт значок с подписью. Слово длиннее кружка, и «СТОИМОСТЬ» —
+ *  самое длинное из тех, что дом печатает. */
+const BADGE_WORD_REACH = 14;
+/** Метка «новая» в правом верхнем углу — её ширина с отступом. */
+const NEW_MARK_REACH = 22;
+
+/**
+ * Наряд принёс картинку рамы, но не принёс окна.
+ *
+ * Тогда карта носит чужую картинку в врезках ранга, и содержимое вылезает
+ * поверх резьбы — ровно то, что видно на третьей и четвёртой картах полки.
+ * Молча это не чинится: где у ЭТОЙ картинки дыра, знает только тот, кто её
+ * рисовал. Стол говорит об этом словами, а не догадывается.
+ */
+export function dressWindowMissing(dress: FrameOverride | null | undefined): boolean {
+  if (!dress) return false;
+  const picture =
+    !!dress.frameImage?.trim() ||
+    !!dress.cornerImage?.trim() ||
+    !!dress.sideImageH?.trim() ||
+    !!dress.sideImageV?.trim();
+  if (!picture) return false;
+  return (
+    dress.insetTop === undefined &&
+    dress.insetRight === undefined &&
+    dress.insetBottom === undefined &&
+    dress.insetLeft === undefined
+  );
+}
+
 function painted(
   tier: number,
   nameEn: string,
@@ -557,12 +1322,33 @@ function painted(
     titleFont: '',
     titleInk: '',
     layout: 'corners',
+    sheet: defaultSheet(),
+    typeScale: 1,
+    inkFade: 1,
     costX: DEFAULT_COST_X,
     costY: DEFAULT_COST_Y,
     powerX: DEFAULT_POWER_X,
     powerY: DEFAULT_POWER_Y,
     costShape: 'circle',
     powerShape: 'circle',
+    costFill: '',
+    powerFill: '',
+    costInk: '',
+    powerInk: '',
+    costSize: 1,
+    powerSize: 1,
+    costWeight: 0,
+    powerWeight: 0,
+    costPlate: '',
+    powerPlate: '',
+    healthShape: '',
+    healthFill: '',
+    healthInk: '',
+    healthPlate: '',
+    healthSize: 0,
+    healthWeight: 0,
+    healthX: null,
+    healthY: null,
   };
 }
 
@@ -582,7 +1368,7 @@ export const DEFAULT_FRAMES: BattleFrame[] = [
 
 export const LAYOUTS: BattleLayout[] = ['corners', 'plaque'];
 export const FRAME_MODES: BattleFrameMode[] = ['overlay', 'behind', 'sliced'];
-export const BADGE_SHAPES: BattleBadgeShape[] = ['circle', 'square', 'diamond', 'hex', 'shield'];
+export const BADGE_SHAPES: BattleBadgeShape[] = ['circle', 'square', 'diamond', 'hex', 'shield', 'none'];
 
 export function clampTier(tier: number): number {
   if (!Number.isFinite(tier)) return 1;
@@ -765,7 +1551,19 @@ export function frameVars(frame: BattleFrame): Record<string, string> {
     '--foot-share': `${((frame.footShare ?? DEFAULT_FOOT_SHARE) * 100).toFixed(1)}%`,
     '--title-face': frame.titleFont ? fontStack(frame.titleFont) : 'inherit',
     '--title-ink': frame.titleInk?.trim() || frame.ink,
+    // Кегль и насыщенность — множители, а не размеры. Размеры карта считает
+    // сама из своей ширины, и рамка, назначающая пиксели, отняла бы у неё
+    // ровно то, ради чего она их считает.
+    '--type-scale': String(clampScale(frame.typeScale, 0.75, 1.5)),
+    '--ink-fade': String(clampScale(frame.inkFade, 0.5, 1.6)),
   };
+}
+
+/** Множитель рамки, приведённый к делу. Ноль и мусор — это «не назначено»,
+ *  а не «стереть текст»: рамка, сохранённая до кегля, несёт ноль. */
+function clampScale(given: number | undefined, min: number, max: number): number {
+  if (!Number.isFinite(given) || !given || given <= 0) return 1;
+  return Math.min(max, Math.max(min, given as number));
 }
 
 /** The card's four insets — how far the window sits from each side of the
@@ -863,6 +1661,13 @@ export function traitCopy(
   const other = lineInLang(ru ? trait.nameEn : trait.nameRu, ru ? 'en' : 'ru');
   const text = lineInLang(ru ? trait.textRu : trait.textEn, lang);
   return { name, other: name && other && name !== other ? other : '', text };
+}
+
+/** The ability's own name in the reader's language. The verb is a dictionary
+ *  word printed elsewhere — this is only what the keeper wrote on it. */
+export function abilityCopy(ability: CardAbility, lang: Lang): { name: string } {
+  const ru = lang === 'ru';
+  return { name: lineInLang(ru ? ability.nameRu : ability.nameEn, lang) };
 }
 
 /** The header band: what this is. Kind is a dictionary word, printed elsewhere;
@@ -1516,6 +2321,97 @@ export function paperClip(remain: number, seed: number): string | null {
   }
   return `polygon(${pts.join(',')})`;
 }
+
+/**
+ * Сургуч на кружке здоровья: трещины и выщербы по тому, сколько его осталось.
+ *
+ * Заведено затем, что здоровье — единственное число карты, которое МЕНЯЕТСЯ, а
+ * печаталось оно как отчеканенная навсегда монета: десять молча становилось
+ * семью, и увидеть это можно было, только прочитав цифру. Сургуч читается
+ * раньше цифры.
+ *
+ * Своих полей у здоровья нет и здесь: это правило ОТРИСОВЩИКА, а не ручка
+ * хранителя. `BADGE_FIELDS.health` по-прежнему указывает на поля стоимости, и
+ * дать сургучу настройку значило бы завести здоровью первое собственное поле —
+ * то самое, из-за которого два значка однажды разошлись бы.
+ *
+ * Закон тот же, что у рваного края карты (`paperBites`): `seed` держит трещины
+ * на месте, а число их растёт с уроном ПО ТОЙ ЖЕ последовательности, поэтому
+ * лечение снимает те трещины, которые были, а не рисует новые. Совпадение это
+ * не случайное — рвётся одна и та же бумага.
+ *
+ * Возвращает готовую строку стиля, а не куски: отрисовщик один, как у резьбы
+ * (`carvedCopies`) и у движений (`stage`), и второй, собирающий то же самое из
+ * частей, был бы предпросмотром, который однажды соврёт.
+ */
+export function sealWear(remain: number, seed: number): string | null {
+  const missing = 1 - Math.max(0, Math.min(1, remain));
+  if (missing < 0.02) return null;
+  const rng = wearRng(seed + 101);
+  const marks: string[] = [];
+  // Трещин столько же, сколько выщербов у края карты, и по той же формуле:
+  // кружок мельче карты, и четвёртая трещина на нём — уже не сургуч, а сетка.
+  const cracks = Math.min(SEAL_CRACKS_MAX, 1 + Math.floor(missing * SEAL_CRACKS_MAX));
+  for (let i = 0; i < cracks; i++) {
+    // Каждая трещина ЦЕЛИКОМ вычерпывается из последовательности, включая
+    // изломы, — иначе следующая забирала бы числа предыдущей и первая трещина
+    // переезжала бы от одного удара к другому.
+    const ang = rng() * Math.PI * 2;
+    const jitters = [rng(), rng(), rng(), rng()];
+    // Идёт от края внутрь: сургуч лопается от кромки, а не из середины.
+    const reach = 0.34 + missing * 0.48;
+    const pts: string[] = [];
+    for (let k = 0; k <= 4; k++) {
+      const t = k / 4;
+      const r = SEAL_R * (1 - t * reach);
+      const off = (jitters[k % 4]! - 0.5) * 0.30 * (1 - t);
+      const a = ang + off;
+      pts.push(`${(50 + Math.cos(a) * r).toFixed(1)},${(50 + Math.sin(a) * r).toFixed(1)}`);
+    }
+    marks.push(
+      `<polyline points="${pts.join(' ')}" fill="none" stroke="#2a1c14"`
+      // Толщина названа в СОТЫХ ДОЛЯХ кружка, а не в пикселях, и потому
+      // держится на любой величине карты. Но и доля выбрана по самой мелкой:
+      // на клетке боя кружок в двадцать пикселей, и волосок в два процента
+      // его ширины там не рисуется вовсе — трещина, которой не видно ровно
+      // там, где здоровье и меняется, не трещина.
+      + ` stroke-width="${(4.6 - i * 0.8).toFixed(1)}" stroke-linecap="round"`
+      + ` stroke-opacity="${(0.5 + missing * 0.32).toFixed(2)}"/>`,
+    );
+    // Выщерб — только у сильно битого, и только у первых трещин: край
+    // выкрошился там, где лопнуло раньше всего.
+    if (missing > 0.45 && i < 2) {
+      const w = 0.16 + rng() * 0.10;
+      const p: string[] = [];
+      for (const a of [ang - w, ang, ang + w]) {
+        const r = a === ang ? SEAL_R * (1 - 0.16 - missing * 0.10) : SEAL_R;
+        p.push(`${(50 + Math.cos(a) * r).toFixed(1)},${(50 + Math.sin(a) * r).toFixed(1)}`);
+      }
+      marks.push(`<polygon points="${p.join(' ')}" fill="#2a1c14" fill-opacity="0.5"/>`);
+    }
+  }
+  // Остывший воск темнеет весь, а не только по трещинам. Печатается ПЕРВЫМ,
+  // под трещинами: положенное поверх, оно размывало бы их собственный край.
+  const dull =
+    `<circle cx="50" cy="50" r="${SEAL_R}" fill="#2a1c14"`
+    + ` fill-opacity="${(missing * 0.12).toFixed(3)}"/>`;
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" preserveAspectRatio="none">`
+    + dull
+    + marks.join('')
+    + `</svg>`;
+  // Кодируется целиком, а не одна решётка: в `data:`-ссылке `#` открывает
+  // якорь и обрезает хвост картинки, а `<`/`>`/кавычка часть браузеров
+  // принимает лишь по доброте.
+  return `background-image:url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+}
+
+/** Трещин на кружке не больше трёх: четвёртая — уже не сургуч, а сетка. */
+export const SEAL_CRACKS_MAX = 3;
+/** Радиус сургучной печати в её собственных ста единицах. Не пятьдесят —
+ *  трещина, дошедшая до самого края коробки, читается как царапина по бумаге
+ *  вокруг значка, а не как лопнувший воск. */
+const SEAL_R = 45;
 
 /** Полёт одного обломка, в долях карты (`cqi`). */
 export function scrapFlight(

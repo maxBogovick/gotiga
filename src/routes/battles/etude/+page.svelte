@@ -8,7 +8,7 @@
   // Ни одного правила боя на этой странице нет. Сервер присылает состояние и
   // список законных действий, страница показывает первое и отправляет обратно
   // одно из вторых.
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { fade } from 'svelte/transition';
@@ -17,6 +17,8 @@
   import { rulesApart } from '$lib/battles';
   import { authStore } from '$lib/stores/auth.svelte';
   import BattleScene from '$lib/components/BattleScene.svelte';
+  import BattleDoor from '$lib/components/BattleDoor.svelte';
+  import { matchChrome } from '$lib/stores/match-chrome.svelte';
   import type {
     BattleAction,
     BattleCard,
@@ -86,6 +88,13 @@
     }
     ready = true;
   });
+
+  $effect(() => {
+    if (match) matchChrome.cover();
+    else matchChrome.uncover();
+  });
+
+  onDestroy(() => matchChrome.uncover());
 
   $effect(() => {
     const id = page.url.searchParams.get('play');
@@ -235,22 +244,19 @@
 <svelte:window onkeydown={onkey} />
 
 <svelte:head>
-  <title>{$t('battlesPageTitle')} — {$brandName}</title>
+  <title>{$t('battleStudies')} — {$brandName}</title>
   <meta name="robots" content="noindex" />
 </svelte:head>
 
-<div class="root">
+<div class="root" class:root--match={!!match}>
   <div class="grain" aria-hidden="true"></div>
   <div class="page" class:page--match={!!match}>
     {#if !match}
-      <nav class="back-nav">
-        <a href="/battles" class="back-link">{$t('battlesTableBack')}</a>
-        <a href="/battles/table" class="back-link">{$t('battlesTableTitle')} →</a>
-      </nav>
+      <BattleDoor />
 
       <header class="masthead">
         <p class="eyebrow"><span class="eyebrow-rule"></span>{$t('battlesPageKicker')}</p>
-        <h1 class="page-title">{$t('battlesPageTitle')}</h1>
+        <h1 class="page-title">{$t('battleStudies')}</h1>
         <p class="page-rule">{$t('battleStudiesRule')}</p>
       </header>
     {/if}
@@ -270,6 +276,7 @@
         {frames}
         {motions}
         {busy}
+        fill
         onact={play}
         onforesee={foresee}
         onleave={putBack}
@@ -414,6 +421,14 @@
     color: #34251c;
   }
 
+  .root--match {
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
   .grain {
     position: fixed;
     inset: 0;
@@ -431,27 +446,19 @@
   }
 
   .page--match {
-    max-width: 92rem;
-    padding: 1.15rem 1.5rem 1.5rem;
-  }
-
-  .back-nav {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-width: none;
+    width: 100%;
+    padding: 0.3rem 0.85rem 0.25rem;
     display: flex;
-    flex-wrap: wrap;
-    gap: 1.4rem 1.6rem;
-    margin-bottom: 2.5rem;
+    flex-direction: column;
+    overflow: hidden;
   }
 
-  .back-link {
-    font-size: 0.72rem;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: #6f3b24;
-    text-decoration: none;
-  }
-
-  .back-link:hover {
-    color: #c65f3c;
+  .page--match :global(.room) {
+    flex: 1 1 auto;
+    min-height: 0;
   }
 
   .eyebrow {
@@ -643,7 +650,8 @@
   }
 
   .leave-row {
-    margin-bottom: 0.7rem;
+    flex: 0 0 auto;
+    margin-bottom: 0.1rem;
   }
 
   .leave {

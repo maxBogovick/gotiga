@@ -20,6 +20,7 @@
   import { authStore } from '$lib/stores/auth.svelte';
   import { cardCopy } from '$lib/battles';
   import BattleCard from '$lib/components/BattleCard.svelte';
+  import BattleDoor from '$lib/components/BattleDoor.svelte';
   import BattleHotMarks from '$lib/components/BattleHotMarks.svelte';
   import BattleSheet from '$lib/components/BattleSheet.svelte';
   import type {
@@ -408,12 +409,10 @@
 <div class="root" bind:this={rootEl}>
   <div class="grain" aria-hidden="true"></div>
   <div class="page">
-    <nav class="back-nav" in:fade={{ duration: 600 }}>
-      <a href="/battles" class="back-link">{$t('battlesTableBack')}</a>
-    </nav>
+    <BattleDoor {me} />
 
     <header class="masthead">
-      <p class="eyebrow"><span class="eyebrow-rule"></span>{$t('battlesTableKicker')}</p>
+      <p class="eyebrow"><span class="eyebrow-rule"></span>{$t('battlesPageKicker')}</p>
       <h1 class="page-title">{$t('battlesTableTitle')}</h1>
       <!-- Три вещи, которые страница обязана сказать до того, как её начнут
            трогать: ЧТО это, ЧТО нажимать и ОТКУДА берутся чужие карты.
@@ -699,22 +698,6 @@
     font-size: 1rem;
     font-style: italic;
     color: #6f3b24;
-  }
-
-  .back-nav {
-    margin-bottom: 2.5rem;
-  }
-
-  .back-link {
-    font-size: 0.72rem;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: #6f3b24;
-    text-decoration: none;
-  }
-
-  .back-link:hover {
-    color: #c65f3c;
   }
 
   .eyebrow {
