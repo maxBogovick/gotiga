@@ -41,7 +41,10 @@
     fillJoin,
     fillParts,
     DEFAULT_ASPECT,
+    statMark,
+    statLabel,
   } from '$lib/battles';
+  import BattleIcon from '$lib/components/BattleIcon.svelte';
   import type { BattleBadgeShape, BattleFrame } from '$lib/types/api';
   import type { BadgeKind, FrameOverride } from '$lib/battles';
 
@@ -136,14 +139,11 @@
      стопку по снимку на каждый оттенок и каждый пиксель хода. -->
 <div class="bi" onpointerdowncapture={() => onEditStart?.()}>
   <header class="bi-head">
+    <!-- Знак и слово берутся по одному имени: стол значка называет ровно то
+         же, что вычеканено на самом кружке, которым он правит. -->
     <span class="bi-title">
-      {$t(
-        kind === 'cost'
-          ? 'battlesCostLabel'
-          : kind === 'power'
-            ? 'battlesPowerLabel'
-            : 'battlesHealthLabel',
-      )}
+      <BattleIcon name={statMark(kind)} size={12} weight={1.35} />
+      {$t(statLabel(kind))}
     </span>
     <button type="button" class="bi-close" onclick={onclose} aria-label={$t('adminBattlesFrameClose')}
       >×</button
@@ -379,6 +379,9 @@
   }
 
   .bi-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4em;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.07em;

@@ -12,12 +12,15 @@
   import { fade } from 'svelte/transition';
   import { t, lang, type TranslationKey } from '$lib/i18n';
   import BattleCard from '$lib/components/BattleCard.svelte';
+  import BattleIcon from '$lib/components/BattleIcon.svelte';
   import BattleSheet from '$lib/components/BattleSheet.svelte';
   import BattleMotionStage from '$lib/components/BattleMotionStage.svelte';
   import WaxSeal from '$lib/components/WaxSeal.svelte';
   import {
     DEFAULT_ASPECT,
-    BODY_STAT_LABELS,
+    statMark,
+    statLabel,
+    type MarkedStat,
     bodyPassport,
     cardCopy,
     channelLabelKey,
@@ -50,6 +53,7 @@
     Foresight,
     Motion,
   } from '$lib/types/api';
+  import './battle-chamber.css';
 
   let {
     match,
@@ -62,6 +66,7 @@
     onforesee,
     onreplay,
     onleave,
+    onexit,
     fill = false,
   }: {
     match: BattleMatch;
@@ -86,6 +91,8 @@
     /** Под печатью. Обе необязательны: у стола хранителя их нет. */
     onreplay?: () => void;
     onleave?: () => void;
+    /** Шапка комнаты: спросить, уйти. Не `onleave` — тот уже «назад к списку» под печатью. */
+    onexit?: () => void;
     /**
      * Этюд занимает окно: доска берёт оставшуюся высоту, шапка кабинета
      * при этом снята. Стол хранителя в 24rem это не передаёт — там сцена
@@ -793,12 +800,14 @@
 
     if (before === null || running) {
       // Первый показ — или посылка догнала предыдущую, пока играла прошлая:
-      // снимок сервера и есть истина, играть нечего.
+      // снимок сервера и есть истина, играть нечего. Журнал всё равно носит
+      // эту посылку: иначе комната открывается пустым «пока ничего».
       run++;
       running = false;
       playing = false;
       live = null;
       before = match.state;
+      told = events;
       return;
     }
 
@@ -827,30 +836,40 @@
 
   const nameOf = (id: number) => titleOf(match.state.units[id]?.card.name ?? String(id));
 
+  type LineKind = 'play' | 'move' | 'hit' | 'mend' | 'fall' | 'ward' | 'turn' | 'other';
   type Line = {
     text: string;
+    kind: LineKind;
     trail: { step: string; from: number; to: number }[];
     total: number;
     head: string;
   };
   let journal = $derived.by<Line[]>(() =>
     told.map((e) => {
-      const bare = (text: string): Line => ({ text, trail: [], total: 0, head: '' });
-      if ('played' in e) return bare(`${nameOf(e.played.unit)} — ${$t('battleLogPlayed')}`);
-      if ('moved' in e) return bare(`${nameOf(e.moved.unit)} — ${$t('battleLogMoved')}`);
+      const bare = (text: string, kind: LineKind = 'other'): Line => ({
+        text,
+        kind,
+        trail: [],
+        total: 0,
+        head: '',
+      });
+      if ('played' in e) return bare(`${nameOf(e.played.unit)} — ${$t('battleLogPlayed')}`, 'play');
+      if ('moved' in e) return bare(`${nameOf(e.moved.unit)} — ${$t('battleLogMoved')}`, 'move');
       if ('healed' in e)
-        return bare(`${nameOf(e.healed.target)} — ${$t('battleLogHealed')} ${e.healed.amount}`);
-      if ('died' in e) return bare(`${nameOf(e.died.target)} — ${$t('battleLogDied')}`);
-      if ('immune' in e) return bare(`${nameOf(e.immune.target)} — ${$t('battleLogImmune')}`);
+        return bare(`${nameOf(e.healed.target)} — ${$t('battleLogHealed')} ${e.healed.amount}`, 'mend');
+      if ('died' in e) return bare(`${nameOf(e.died.target)} — ${$t('battleLogDied')}`, 'fall');
+      if ('immune' in e) return bare(`${nameOf(e.immune.target)} — ${$t('battleLogImmune')}`, 'ward');
       if ('turnEnded' in e)
         return bare(
           e.turnEnded.side === me ? $t('battleLogTurnYours') : $t('battleLogTurnKeeper'),
+          'turn',
         );
       if ('damaged' in e) {
         const d = e.damaged;
         const total = d.toHealth + d.toShield;
         return {
           text: `${nameOf(d.target)} — ${$t('battleLogDamaged')} ${total}`,
+          kind: 'hit' as const,
           trail: d.trail,
           total,
           head: d.by == null ? '' : `${nameOf(d.by)} → ${nameOf(d.target)}`,
@@ -863,7 +882,20 @@
   let open = $state<number | null>(null);
   /** Правая колонка появляется, когда есть что сказать: выбранное тело или
    *  строки журнала. Пустое «пока ничего» не стоит трети окна. */
-  let hasRail = $derived(!!chosen || journal.length > 0);
+  let hasRail = $derived(fill || !!chosen || journal.length > 0);
+
+  const MANA_GEMS_CAP = 10;
+  let manaCap = $derived(Math.max(0, Math.min(MANA_GEMS_CAP, position.player.manaMax)));
+  let manaLit = $derived(
+    position.active === 'player' ? Math.max(0, Math.min(manaCap, position.player.mana)) : 0,
+  );
+  let manaGems = $derived(Array.from({ length: manaCap }, (_, i) => i < manaLit));
+  let promptWord = $derived.by((): TranslationKey => {
+    if (playing || !mine) return 'battlePromptWait';
+    if (handTrouble === 'mana') return 'battlePromptMana';
+    if (handTrouble === 'room') return 'battlePromptRoom';
+    return 'battlePromptPick';
+  });
 
   // ── Доска по высоте окна ──────────────────────────────────────────────────
   //
@@ -881,7 +913,7 @@
   let tableEl = $state<HTMLElement | null>(null);
   let roomEl = $state<HTMLElement | null>(null);
   let room = $state(310);
-  let along = $state(false);
+  let along = $state(fill);
 
   function measureRoom() {
     if (!fieldEl || !tableEl) return;
@@ -918,7 +950,11 @@
     const el = roomEl;
     if (!el || typeof ResizeObserver === 'undefined') return;
     const apply = (w: number) => {
-      along = w >= ALONG;
+      // Комната этюда всегда вдоль: портрет 3×6 даёт поле шириной в четверть
+      // окна, а печать исхода тогда — узкая карточка внутри клетки. Те же
+      // восемнадцать клеток, половины слева и справа. Стол хранителя по-
+      // прежнему меряет ширину комнаты.
+      along = fill || w >= ALONG;
     };
     apply(el.getBoundingClientRect().width);
     const ro = new ResizeObserver((entries) => {
@@ -979,7 +1015,17 @@
         >
           {#if dto}
             <BattleCard card={dto} {frames} owned={true} transition={false} interactive={false} />
-            <span class="held-cost">{held.cost}</span>
+            <!-- Тот же закон, что у кружков доски (см. `cardSays` выше): карта
+                 в руке носит свой значок стоимости, и бумажка руки, вставшая
+                 рядом, была вторым отрисовщиком одного числа. Печатаем её
+                 только там, где опись рамы стоимость сняла.
+                 Со знаком, потому что цифра на бумажке одна и ничем себя не
+                 называет — ровно та беда, ради которой знак и заводили. -->
+            {#if !cardSays(dto, 'cost')}
+              <span class="held-cost" aria-label={`${$t('battlesCostLabel')} ${held.cost}`}>
+                <BattleIcon name={statMark('cost')} size="1em" weight={1.4} />{held.cost}
+              </span>
+            {/if}
           {:else}
             <span class="held-name">{titleOf(held.name)}</span>
           {/if}
@@ -997,9 +1043,50 @@
   class:scene--held={playing}
   class:scene--along={along}
   class:scene--fill={fill}
+  class:scene--chamber={fill}
   class:scene--rail={hasRail}
 >
-  <!-- Круг, чей ход, мана — одна строка над доской, не колонка слева. -->
+  {#if fill}
+    <div class="crest">
+      {#if onexit}
+        <button type="button" class="exit" onclick={onexit}>
+          <span class="exit-arrow" aria-hidden="true">←</span>
+          {$t('battleLeave')}
+        </button>
+      {:else}
+        <span></span>
+      {/if}
+      <div class="crest-mark">
+        <p class="crest-turn">
+          {position.active === me ? $t('battleWhoseTurnYours') : $t('battleWhoseTurnKeeper')}
+        </p>
+        <p class="crest-round">{$t('battleRound')} {position.round}</p>
+      </div>
+      <div
+        class="mana-track"
+        aria-label={`${$t('battleManaYours')} ${
+          position.active === 'player'
+            ? `${position.player.mana}/${position.player.manaMax}`
+            : String(position.player.manaMax)
+        }`}
+      >
+        <span class="mana-word">
+          <BattleIcon name={statMark('mana')} size="1em" weight={1.4} />
+          {$t('battleManaShort')}
+          {#if position.active === 'player'}
+            {position.player.mana}/{position.player.manaMax}
+          {:else}
+            {position.player.manaMax}
+          {/if}
+        </span>
+        <span class="mana-gems" aria-hidden="true">
+          {#each manaGems as lit, i (i)}
+            <i class="gem" class:gem--lit={lit}></i>
+          {/each}
+        </span>
+      </div>
+    </div>
+  {:else}
   <div class="strip">
     <p class="ledger-turn">
       {position.active === me ? $t('battleWhoseTurnYours') : $t('battleWhoseTurnKeeper')}
@@ -1033,6 +1120,7 @@
       </span>
     </p>
   </div>
+  {/if}
 
   <div class="play">
   <!-- Рука хранителя в этой колонке на широком экране: тогда под доской
@@ -1074,6 +1162,8 @@
             class:cell--attack={target === 'attack'}
             class:cell--mend={target === 'mend'}
             class:cell--live={mine && here?.owner === me && ready.has(here.id)}
+            class:cell--theirs={y < 3}
+            class:cell--mine={y >= 3}
           >
               {#if here}
                 <!-- Погасшим показывается и тело, которое уже сходило, и тело,
@@ -1121,11 +1211,24 @@
                        иначе на доске не осталось бы чисел вовсе. -->
                   {#if !cardSays(dto, 'healthMark') || !cardSays(dto, 'power')}
                     <span class="tally">
+                      <!-- Оттиск под цифрой — тот же, что карта чеканит на
+                           своём кружке (`.corner-glyph`): кружок доски встаёт
+                           вместо её значка и обязан говорить то же самое. -->
                       {#if !cardSays(dto, 'healthMark')}
-                        <i class="tally-pip tally-pip--health">{here.health.current}</i>
+                        <i class="tally-pip tally-pip--health">
+                          <span class="tally-glyph" aria-hidden="true"
+                            ><BattleIcon name={statMark('health')} size="0.78em" weight={1.15} /></span
+                          >
+                          <span class="tally-num">{here.health.current}</span>
+                        </i>
                       {/if}
                       {#if !cardSays(dto, 'power')}
-                        <i class="tally-pip tally-pip--power">{here.power}</i>
+                        <i class="tally-pip tally-pip--power">
+                          <span class="tally-glyph" aria-hidden="true"
+                            ><BattleIcon name={statMark('power')} size="0.78em" weight={1.15} /></span
+                          >
+                          <span class="tally-num">{here.power}</span>
+                        </i>
                       {/if}
                     </span>
                   {/if}
@@ -1156,57 +1259,17 @@
               {/if}
             </button>
           {/each}
-        <span class="midline" aria-hidden="true"></span>
+        <span class="midline" aria-hidden="true">{#if fill}<i class="vs"></i>{/if}</span>
       </div>
 
-      <!-- Нарисованное: стрела в полёте, вспышка на цели, полоса кадров.
-           Лежит в тех же `inset: 0` от поля, что печать, — поле шире
-           доски увело бы всё вбок. -->
-      <BattleMotionStage motes={acting?.play.motes ?? []} />
-
-      <!-- Исход. Сургучная печать, тот же оттиск, что при получении карты. -->
-      {#if position.outcome && !playing}
-        <div class="seal-wrap" transition:fade={{ duration: 200 }}>
-          <div class="verdict" class:verdict--dim={position.outcome !== 'player'}>
-            <WaxSeal size="6.5rem" dim={position.outcome !== 'player'} />
-            <p class="seal-word">
-              {position.outcome === 'player'
-                ? $t('battleWonByPlayer')
-                : position.outcome === 'keeper'
-                  ? $t('battleWonByKeeper')
-                  : $t('battleDrawn')}
-            </p>
-            {#if match.rewardDust > 0}
-              <p class="seal-dust">{match.rewardDust} {$t('battleDustGranted')}</p>
-            {/if}
-            <!-- Чем пройдено. Пыль платится однажды, и без этой строки
-                 пройденный этюд не даёт ни одной причины к нему вернуться:
-                 победа была двоичной. «За пять дел, а лучшее известное —
-                 шесть» — уже причина. -->
-            {#if match.marks}
-              <p class="seal-line">
-                {$t('battleMarkYourLine')} — {match.marks.acts}<span class="sep">·</span>{match
-                  .marks.bodiesLost === 0
-                  ? $t('battleLineNoneLost')
-                  : `${$t('battleLineLost')} — ${match.marks.bodiesLost}`}
-              </p>
-              {#if match.marks.record}
-                <p class="seal-record">{$t('battleLineRecord')}</p>
-              {:else if match.marks.bestKnown != null}
-                <p class="seal-line seal-line--bar">
-                  {$t('battleMarkBestLine')} — {match.marks.bestKnown}
-                </p>
-              {/if}
-            {/if}
-            {#if onleave || onreplay}
-              <p class="seal-doors">
-                {#if onleave}<button type="button" class="door" onclick={onleave}>{$t('battleBackToStudies')}</button>{/if}
-                {#if onreplay}<button type="button" class="door" onclick={onreplay}>{$t('battleReplay')}</button>{/if}
-              </p>
-            {/if}
-          </div>
-        </div>
+      {#if fill}
+        <span class="zone zone--theirs">{$t('battleZoneTheirs')}</span>
+        <span class="zone zone--mine">{$t('battleZoneYours')}</span>
       {/if}
+
+      <!-- Нарисованное: стрела в полёте, вспышка на цели, полоса кадров.
+           Лежит в `inset: 0` от поля — поле шире доски увело бы всё вбок. -->
+      <BattleMotionStage motes={acting?.play.motes ?? []} />
       </div>
       </div>
     </div>
@@ -1215,6 +1278,12 @@
     <!-- Своя рука и ход — ближний край стола: веер карт и фраза хода
          в одной полосе, чтобы оба оставались в окне. -->
     <div class="foot">
+      {#if fill}
+        <div class="prompt">
+          <div class="glass" class:glass--run={playing} aria-hidden="true"></div>
+          <p class="prompt-word">{$t(promptWord)}</p>
+        </div>
+      {/if}
       <div class="table-hand table-hand--mine">{@render ownHand()}</div>
       <div class="turn">
         {#if handTrouble}
@@ -1311,27 +1380,33 @@
             {chosenKind}{#if chosenChannel}<span class="sep">·</span>{chosenChannel}{/if}
           </p>
         {/if}
-        <dl class="chosen-stats">
+        <!-- Одна строка разбора — один снипет, а не пятнадцать раз выписанное
+             `<dt>/<dd>`: знак числа приходит из `STAT_MARKS`, и место, которое
+             называет своё сердце руками, однажды назовёт не то. -->
+        {#snippet stat(slot: MarkedStat, shown: string)}
           <div>
-            <dt>{$t('battlesHealthLabel')}</dt>
-            <dd class="num">{chosen.health.current}/{chosen.health.max}</dd>
+            <dt>
+              <BattleIcon name={statMark(slot)} size="1em" weight={1.35} />
+              {$t(statLabel(slot))}
+            </dt>
+            <dd class="num">{shown}</dd>
           </div>
+        {/snippet}
+        <dl class="chosen-stats">
+          {@render stat('health', `${chosen.health.current}/${chosen.health.max}`)}
           {#if chosenDto}
-            <div><dt>{$t('battlesCostLabel')}</dt><dd class="num">{chosenDto.cost}</dd></div>
-            <div><dt>{$t('battlesPowerLabel')}</dt><dd class="num">{chosenDto.power}</dd></div>
+            {@render stat('cost', String(chosenDto.cost))}
+            {@render stat('power', String(chosenDto.power))}
             {#each chosenPass.filter((row) => row.field !== 'health') as row (row.field)}
-              <div>
-                <dt>{$t(BODY_STAT_LABELS[row.field])}</dt>
-                <dd class="num">{row.value}</dd>
-              </div>
+              {@render stat(row.field, String(row.value))}
             {/each}
           {:else}
-            <div><dt>{$t('battlesPowerLabel')}</dt><dd class="num">{chosen.power}</dd></div>
-            {#if chosen.armor > 0}<div><dt>{$t('battleStatArmour')}</dt><dd class="num">{chosen.armor}</dd></div>{/if}
-            {#if chosen.ward > 0}<div><dt>{$t('battleStatWard')}</dt><dd class="num">{chosen.ward}</dd></div>{/if}
-            {#if chosen.reach > 0}<div><dt>{$t('battleStatReach')}</dt><dd class="num">{chosen.reach}</dd></div>{/if}
-            {#if chosen.step > 0}<div><dt>{$t('battleStatStep')}</dt><dd class="num">{chosen.step}</dd></div>{/if}
-            {#if chosen.mend > 0}<div><dt>{$t('battleStatMend')}</dt><dd class="num">{chosen.mend}</dd></div>{/if}
+            {@render stat('power', String(chosen.power))}
+            {#if chosen.armor > 0}{@render stat('armor', String(chosen.armor))}{/if}
+            {#if chosen.ward > 0}{@render stat('ward', String(chosen.ward))}{/if}
+            {#if chosen.reach > 0}{@render stat('reach', String(chosen.reach))}{/if}
+            {#if chosen.step > 0}{@render stat('step', String(chosen.step))}{/if}
+            {#if chosen.mend > 0}{@render stat('mend', String(chosen.mend))}{/if}
           {/if}
         </dl>
         {#if chosenFace?.effect}
@@ -1347,12 +1422,15 @@
       </div>
     {/if}
 
-    {#if journal.length}
+    {#if journal.length || fill}
     <div class="journal">
       <p class="journal-label">{$t('battleJournal')}</p>
+      {#if journal.length}
       <ul class="journal-lines">
         {#each journal as line, i (i)}
           <li>
+            {#if fill}<i class="log-ico log-ico--{line.kind}" aria-hidden="true"></i>{/if}
+            <div class="log-body">
             {#if line.trail.length}
               <button type="button" class="journal-open" onclick={() => (open = open === i ? null : i)}>
                 {line.text}
@@ -1375,14 +1453,65 @@
             {:else}
               <span class="journal-plain">{line.text}</span>
             {/if}
+            </div>
           </li>
         {/each}
       </ul>
+      {:else}
+        <p class="journal-empty">{$t('battleJournalEmpty')}</p>
+      {/if}
     </div>
     {/if}
   </aside>
   {/if}
   </div>
+
+  <!-- Исход накрывает комнату, а не клетку поля: внутри 3×6 печать
+       становилась узкой карточкой. Сургуч тот же, что при получении карты. -->
+  {#if position.outcome && !playing}
+    <div class="seal-wrap" transition:fade={{ duration: 200 }}>
+      <div class="verdict" class:verdict--dim={position.outcome !== 'player'}>
+        <WaxSeal size={fill ? '8.25rem' : '6.5rem'} dim={position.outcome !== 'player'} />
+        <div class="verdict-copy">
+          <p class="seal-word">
+            {position.outcome === 'player'
+              ? $t('battleWonByPlayer')
+              : position.outcome === 'keeper'
+                ? $t('battleWonByKeeper')
+                : $t('battleDrawn')}
+          </p>
+          {#if match.rewardDust > 0}
+            <p class="seal-dust">{match.rewardDust} {$t('battleDustGranted')}</p>
+          {/if}
+          <!-- Чем пройдено. Пыль платится однажды, и без этой строки
+               пройденный этюд не даёт ни одной причины к нему вернуться:
+               победа была двоичной. «За пять дел, а лучшее известное —
+               шесть» — уже причина. -->
+          {#if match.marks}
+            <p class="seal-line">
+              {$t('battleMarkYourLine')} — {match.marks.acts}<span class="sep">·</span>{match
+                .marks.bodiesLost === 0
+                ? $t('battleLineNoneLost')
+                : `${$t('battleLineLost')} — ${match.marks.bodiesLost}`}
+            </p>
+            {#if match.marks.record}
+              <p class="seal-record">{$t('battleLineRecord')}</p>
+            {:else if match.marks.bestKnown != null}
+              <p class="seal-line seal-line--bar">
+                {$t('battleMarkBestLine')} — {match.marks.bestKnown}
+              </p>
+            {/if}
+          {/if}
+          {#if onleave || onreplay}
+            <p class="seal-doors">
+              {#if onleave}<button type="button" class="door" onclick={onleave}>{$t('battleBackToStudies')}</button>{/if}
+              {#if onreplay}<button type="button" class="door" onclick={onreplay}>{$t('battleReplay')}</button>{/if}
+            </p>
+          {/if}
+        </div>
+      </div>
+    </div>
+  {/if}
 </div>
 </div>
 
@@ -1409,6 +1538,7 @@
   }
 
   .scene {
+    position: relative;
     display: flex;
     flex-direction: column;
     gap: 0.7rem;
@@ -1598,20 +1728,24 @@
     border-left: 1px dashed rgba(52, 37, 28, 0.2);
   }
 
-  /* Стол этюда. Руки — фиксированные ряды, чтобы карты не обрезались
-     окном. Колодец среднего ряда забирает остаток; поле внутри него
-     держит отношение сторон сетки карт (6×3 вдоль, 3×6 стоя), поэтому
-     клетки совпадают с картами, а не растягиваются в пустой прямоугольник.
-     Движения и печать живут в поле — оно и есть доска, не сукно внутри
-     широкого поля. */
+  /* Стол этюда — комната: шапка, поле с журналом справа, низ на всю ширину.
+     `display: contents` у стола отдаёт его детей сетке `.play`, чтобы журнал
+     стоял на высоту поля, а не на высоту футера. */
   .scene.scene--fill .play,
   .scene.scene--fill.scene--along .play {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(15rem, 18rem);
+    grid-template-rows: 2.35rem minmax(0, 1fr) auto;
+    grid-template-areas:
+      'theirs rail'
+      'board rail'
+      'foot foot';
     position: relative;
     flex: 1 1 auto;
     min-height: 0;
     overflow: hidden;
+    gap: 0.15rem 0.55rem;
+    align-items: stretch;
   }
 
   .scene.scene--fill .ledger {
@@ -1620,6 +1754,7 @@
 
   .scene.scene--fill .well {
     display: grid;
+    grid-area: board;
     place-items: center;
     min-width: 0;
     min-height: 0;
@@ -1630,28 +1765,30 @@
   }
 
   .scene.scene--fill .table-hand--theirs {
-    display: block;
-    height: 2.8rem;
-    min-height: 2.8rem;
+    display: flex;
+    grid-area: theirs;
+    align-items: center;
+    justify-content: center;
+    height: 2.35rem;
+    min-height: 2.35rem;
     overflow: hidden;
   }
 
   .scene.scene--fill .table,
   .scene.scene--fill.scene--along .table {
-    display: grid;
-    grid-template-rows: 2.8rem minmax(0, 1fr) 7.6rem;
-    grid-template-columns: minmax(0, 1fr);
-    width: 100%;
-    flex: 1 1 auto;
+    display: contents;
+    width: auto;
+    flex: unset;
     min-height: 0;
     height: auto;
     max-width: none;
-    gap: 0.2rem;
-    overflow: hidden;
+    gap: 0;
+    overflow: visible;
   }
 
   .scene.scene--fill .foot,
   .scene.scene--fill.scene--along .foot {
+    grid-area: foot;
     width: 100%;
     margin: 0;
     max-width: none;
@@ -1689,6 +1826,10 @@
     min-width: 0;
     box-sizing: border-box;
     padding: 0.28rem;
+    background: #1a1210;
+    border-color: #5a4630;
+    outline-color: rgba(90, 70, 40, 0.55);
+    box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.45);
   }
 
   .scene.scene--fill .face,
@@ -1706,12 +1847,108 @@
     grid-template-rows: repeat(3, minmax(0, 1fr));
   }
 
+  .scene.scene--fill.scene--along .grid::before {
+    top: 0;
+    bottom: 0;
+    left: 0;
+    right: auto;
+    width: 50%;
+    height: auto;
+    background:
+      linear-gradient(90deg, rgba(110, 32, 24, 0.38), rgba(70, 28, 22, 0.12) 70%, transparent);
+  }
+
+  .scene.scene--fill.scene--along .grid::after {
+    top: 0;
+    bottom: 0;
+    right: 0;
+    left: auto;
+    width: 50%;
+    height: auto;
+    background:
+      radial-gradient(ellipse at 110% 50%, rgba(50, 90, 170, 0.28), transparent 55%),
+      linear-gradient(270deg, rgba(22, 40, 88, 0.42), rgba(24, 40, 72, 0.1) 72%, transparent);
+  }
+
+  .scene.scene--fill.scene--along .midline {
+    border: 0;
+    height: auto;
+    width: 0;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    right: auto;
+  }
+
+  .scene.scene--fill.scene--along .midline::before {
+    left: 50%;
+    right: auto;
+    top: 50%;
+    width: 88cqh;
+    height: 12px;
+    transform: translate(-50%, -50%) rotate(90deg);
+  }
+
+  .scene.scene--fill.scene--along .vs {
+    top: 50%;
+    left: 50%;
+    width: 3.6rem;
+    height: 3.6rem;
+    transform: translate(-50%, -50%);
+  }
+
+  .scene.scene--fill .zone {
+    font-size: 0.78rem;
+    letter-spacing: 0.16em;
+    padding: 0.28rem 0.7rem 0.24rem;
+  }
+
+  .scene.scene--fill.scene--along .zone--theirs {
+    top: 0.5rem;
+    left: 0.5rem;
+    bottom: auto;
+  }
+
+  .scene.scene--fill.scene--along .zone--mine {
+    top: 0.5rem;
+    right: 0.5rem;
+    left: auto;
+    bottom: auto;
+  }
+
   .scene.scene--fill .cell {
     aspect-ratio: auto;
     min-height: 0;
     min-width: 0;
     height: 100%;
     container-type: size;
+  }
+
+  .scene.scene--fill .cell:not(:has(.figure)):not(.cell--open):not(.cell--attack):not(.cell--mend):not(.cell--picked) {
+    background: linear-gradient(160deg, rgba(48, 36, 28, 0.55), rgba(12, 10, 8, 0.8));
+    border: 1px solid #4a3828;
+    box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.55);
+  }
+
+  .scene.scene--fill .cell--theirs:not(:has(.figure)):not(.cell--open):not(.cell--attack):not(.cell--mend):not(.cell--picked) {
+    border-color: #6a3028;
+    box-shadow:
+      inset 0 0 14px rgba(160, 40, 30, 0.32),
+      inset 0 0 10px rgba(0, 0, 0, 0.5);
+  }
+
+  .scene.scene--fill .cell--mine:not(:has(.figure)):not(.cell--open):not(.cell--attack):not(.cell--mend):not(.cell--picked) {
+    border-color: #2a4068;
+    box-shadow:
+      inset 0 0 14px rgba(40, 80, 170, 0.3),
+      inset 0 0 10px rgba(0, 0, 0, 0.5);
+  }
+
+  .scene.scene--fill .cell--picked {
+    border-color: transparent;
+    box-shadow:
+      0 0 0 2px #5ad4f0,
+      0 0 18px 4px rgba(62, 200, 232, 0.62);
   }
 
   .scene.scene--fill .figure {
@@ -1733,14 +1970,14 @@
   }
 
   .scene.scene--fill .foot {
-    height: 7.6rem;
-    min-height: 7.6rem;
-    max-height: 7.6rem;
-    overflow: hidden;
+    height: 8.5rem;
+    min-height: 8.5rem;
+    max-height: 8.5rem;
+    overflow: visible;
     flex-wrap: nowrap;
     align-items: flex-end;
     padding: 0.15rem 0.2rem 0.2rem;
-    background: #f8f1e7;
+    background: transparent;
   }
 
   .scene.scene--fill .foot .hand {
@@ -1755,18 +1992,72 @@
   }
 
   .scene.scene--fill .aside {
-    position: absolute;
-    top: 3.1rem;
-    right: 0;
-    bottom: 7.9rem;
+    grid-area: rail;
+    position: relative;
+    top: auto;
+    right: auto;
+    bottom: auto;
     z-index: 8;
-    width: 15rem;
-    max-width: min(15rem, 36%);
+    width: auto;
+    max-width: none;
     margin: 0;
-    padding: 0.7rem 0.85rem 0.7rem 0.9rem;
-    background: #f8f1e7;
-    border-left: 1px solid #d8c6b1;
+    padding: 0.85rem 1.05rem 0.85rem 1.1rem;
+    background:
+      linear-gradient(180deg, rgba(10, 8, 6, 0.94), rgba(8, 6, 5, 0.96)),
+      url('/battles/chamber/chamber-journal.png?v=2') center / 100% 100% no-repeat;
+    border: 1px solid #8a7040;
     overflow: auto;
+    color: #f4ead8;
+  }
+
+  .scene.scene--fill .journal-label {
+    margin: 0 0 0.7rem;
+    font-family: Georgia, 'Fraunces', serif;
+    font-size: 1.08rem;
+    font-style: normal;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #f3d98a;
+    text-align: center;
+    text-shadow: 0 1px 0 #1a1208;
+  }
+
+  .scene.scene--fill .journal-lines {
+    font-size: 1rem;
+    line-height: 1.5;
+    color: #f6efe0;
+    gap: 0.4rem;
+  }
+
+  .scene.scene--fill .journal-plain,
+  .scene.scene--fill .journal-open,
+  .scene.scene--fill .log-body {
+    color: #f6efe0;
+  }
+
+  .scene.scene--fill .journal-open {
+    border-bottom-color: rgba(243, 217, 138, 0.45);
+  }
+
+  .scene.scene--fill .journal-open:hover {
+    color: #ffe08a;
+  }
+
+  .scene.scene--fill .journal-empty {
+    font-size: 1rem;
+    color: #e4d8c0;
+  }
+
+  .scene.scene--fill .chosen-name,
+  .scene.scene--fill .chosen-effect,
+  .scene.scene--fill .chosen-riders,
+  .scene.scene--fill .chosen-stats {
+    color: #f4ead8;
+  }
+
+  .scene.scene--fill .chosen-kind,
+  .scene.scene--fill .chosen-stats dt {
+    color: #e8d5a0;
   }
 
   .scene.scene--fill .foot .held {
@@ -1788,18 +2079,18 @@
 
   .scene.scene--fill .foot .held--picked,
   .scene.scene--fill .foot .held--mine:hover:not(:disabled) {
-    transform: translateY(-0.15rem);
+    transform: translateY(-0.45rem);
   }
 
   .scene.scene--fill .turn {
     flex: 0 0 auto;
     width: auto;
-    max-width: 16rem;
+    max-width: none;
   }
 
   .scene.scene--fill .end {
-    padding: 0.2rem 0.1rem 0.18rem;
-    font-size: 1.22rem;
+    padding: 0 1.4rem 0.15rem;
+    font-size: 0.72rem;
   }
 
   .scene.scene--fill .omens {
@@ -1820,6 +2111,39 @@
     width: 1.75em;
     height: 1.75em;
     font-size: clamp(0.9rem, 16cqi, 1.35rem);
+  }
+
+  @media (max-width: 820px) {
+    .scene.scene--fill .play,
+    .scene.scene--fill.scene--along .play {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: 2.1rem minmax(0, 1fr) auto auto;
+      grid-template-areas:
+        'theirs'
+        'board'
+        'rail'
+        'foot';
+    }
+
+    .scene.scene--fill .aside {
+      max-height: 7.5rem;
+    }
+
+    .scene.scene--fill .verdict {
+      grid-template-columns: minmax(0, 1fr);
+      justify-items: center;
+      text-align: center;
+      width: min(28rem, 96%);
+      padding: 1.3rem 1.2rem;
+    }
+
+    .scene.scene--fill .verdict-copy {
+      align-items: center;
+    }
+
+    .scene.scene--fill .seal-doors {
+      justify-content: center;
+    }
   }
 
   .ledger {
@@ -2019,6 +2343,21 @@
     font-variant-numeric: tabular-nums;
     line-height: 1;
     color: #34251c;
+  }
+
+  /* Оттиск и цифра стоят в ОДНОЙ клетке сетки: два элемента в потоке встали бы
+     друг под другом и растянули кружок вдвое. Тот же приём, что у `.corner`. */
+  .tally-glyph,
+  .tally-num {
+    grid-area: 1 / 1;
+  }
+
+  .tally-glyph {
+    display: grid;
+    place-items: center;
+    font-size: 1em;
+    color: inherit;
+    opacity: 0.42;
   }
 
   .tally-pip--health {
@@ -2250,6 +2589,9 @@
     left: 3px;
     bottom: 3px;
     z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3em;
     min-width: 1.15rem;
     padding: 0.04rem 0.28rem;
     background: #f8f1e7;
@@ -2540,10 +2882,21 @@
   }
 
   .chosen-stats dt {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    min-width: 0;
     font-size: 10px;
     letter-spacing: 0.12em;
     text-transform: uppercase;
     color: #8a6a55;
+  }
+
+  /* Знак меряется строкой, а не точками: разбор набран десятью пикселями, и
+     знак в четырнадцать стоял бы над словом вдвое выше него. */
+  .chosen-stats dt :global(svg) {
+    flex: 0 0 auto;
+    opacity: 0.75;
   }
 
   .chosen-effect {
@@ -2665,6 +3018,89 @@
 
   .door:hover {
     color: #c65f3c;
+  }
+
+  /* Комната: печать накрывает зал целиком, панель лежит вдоль, чернила
+     светлые. Scoped-правила пергамента иначе перебивают chamber.css. */
+  .scene.scene--fill .seal-wrap {
+    z-index: 30;
+    display: grid;
+    place-items: center;
+    padding: 1.4rem 1.6rem;
+    background: rgba(8, 6, 5, 0.82);
+  }
+
+  .scene.scene--fill .verdict {
+    position: static;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 1.4rem 2.1rem;
+    width: min(52rem, 94%);
+    max-width: 52rem;
+    margin: 0;
+    padding: 1.7rem 2.1rem;
+    text-align: left;
+    background: #16100c;
+    border: 1px solid #d4b06a;
+    outline: 1px solid #8a7040;
+    outline-offset: 5px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+    transform: none;
+  }
+
+  .scene.scene--fill .verdict--dim {
+    opacity: 1;
+    transform: none;
+  }
+
+  .scene.scene--fill .verdict-copy {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.45rem;
+    min-width: 0;
+  }
+
+  .scene.scene--fill .seal-word {
+    font-size: clamp(1.7rem, 3.2vw, 2.25rem);
+    line-height: 1.15;
+    color: #f8edd0;
+  }
+
+  .scene.scene--fill .seal-dust,
+  .scene.scene--fill .seal-line {
+    margin: 0;
+    font-size: 1.08rem;
+    font-weight: 500;
+    color: #f0e4c8;
+  }
+
+  .scene.scene--fill .seal-record {
+    margin: 0;
+    font-size: 1.12rem;
+    color: #f3d98a;
+  }
+
+  .scene.scene--fill .seal-doors {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 0.7rem 1rem;
+    margin-top: 0.55rem;
+  }
+
+  .scene.scene--fill .door {
+    font-size: 0.72rem;
+    letter-spacing: 0.12em;
+    padding: 0.5rem 0.85rem 0.45rem;
+    border: 1px solid #8a7040;
+    background: #241810;
+    color: #f3d98a;
+  }
+
+  .scene.scene--fill .door:hover {
+    color: #fff6d8;
+    border-color: #d4b06a;
   }
 
   /* Обязательство, а не украшение. `stage()` при этой настройке не отдаёт ни

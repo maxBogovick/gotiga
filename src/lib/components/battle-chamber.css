@@ -1,0 +1,862 @@
+/* Хром комнаты этюда. Только `.scene--chamber` / `.room--fill`.
+   Стол хранителя этого файла не носит. Карты сюда не входят. */
+
+.room.room--fill {
+  position: relative;
+  background:
+    radial-gradient(ellipse at 8% 88%, rgba(180, 90, 30, 0.22), transparent 36%),
+    radial-gradient(ellipse at 92% 88%, rgba(180, 90, 30, 0.18), transparent 34%),
+    radial-gradient(ellipse at 50% 0%, rgba(0, 0, 0, 0.35), transparent 50%),
+    #0b0806 url('/battles/chamber/chamber-hall.jpg?v=2') center / cover no-repeat;
+  padding: 0.85rem 0.95rem 0.7rem;
+  isolation: isolate;
+  box-shadow:
+    inset 0 0 0 3px #2a1c10,
+    inset 0 0 0 5px #c4a060,
+    inset 0 0 0 18px #1a120c,
+    inset 0 0 55px rgba(0, 0, 0, 0.45);
+}
+
+.scene.scene--chamber {
+  position: relative;
+  z-index: 1;
+  color: #e6dcc8;
+  gap: 0.2rem;
+}
+
+/* ── Шапка ─────────────────────────────────────────────────────────────── */
+
+.scene--chamber .crest {
+  display: grid;
+  grid-template-columns: minmax(8rem, 1fr) auto minmax(8rem, 1fr);
+  align-items: center;
+  gap: 0.6rem 1rem;
+  flex: 0 0 auto;
+  min-height: 4.1rem;
+  padding: 0.15rem 0.9rem 0.1rem;
+}
+
+.scene--chamber .exit {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0.42rem 0.95rem 0.4rem 0.7rem;
+  border: 0;
+  background:
+    linear-gradient(180deg, rgba(48, 36, 24, 0.2), rgba(12, 8, 6, 0.25)),
+    url('/battles/chamber/chamber-plate.png?v=2') center / 100% 100% no-repeat;
+  font-family: Georgia, 'Fraunces', serif;
+  font-size: 0.62rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #e8d5a0;
+  cursor: pointer;
+  text-shadow: 0 1px 0 #1a1208;
+}
+
+.scene--chamber .exit:hover {
+  color: #fff1c4;
+}
+
+.scene--chamber .exit-arrow {
+  font-size: 0.95em;
+  opacity: 0.85;
+}
+
+.scene--chamber .crest-mark {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 16rem;
+  padding: 0.55rem 2.8rem 0.7rem;
+  background: url('/battles/chamber/chamber-crest.png?v=2') center / contain no-repeat;
+  text-align: center;
+}
+
+.scene--chamber .crest-turn {
+  margin: 0;
+  font-family: Georgia, 'Fraunces', serif;
+  font-size: clamp(1.05rem, 2.1vw, 1.55rem);
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #f3d98a;
+  text-shadow:
+    0 0 12px rgba(230, 170, 40, 0.45),
+    0 2px 0 #2a1a08;
+  line-height: 1.1;
+}
+
+.scene--chamber .crest-round {
+  margin: 0.12rem 0 0;
+  font-family: Georgia, 'Fraunces', serif;
+  font-size: 0.72rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #c4b48a;
+}
+
+.scene--chamber .mana-track {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem 0.55rem;
+  padding: 0.35rem 0.7rem 0.35rem 0.85rem;
+  background:
+    linear-gradient(180deg, rgba(20, 40, 70, 0.35), rgba(8, 12, 22, 0.5)),
+    url('/battles/chamber/chamber-plate.png?v=2') center / 100% 100% no-repeat;
+}
+
+.scene--chamber .mana-word {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  font-family: Georgia, 'Fraunces', serif;
+  font-size: 0.68rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #d8c898;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Знак маны меряется словом, при котором стоит: строка набрана в 0.68rem, а
+   значок в свои четырнадцать точек стоял бы над ней вдвое выше. */
+.scene--chamber .mana-word svg {
+  flex: 0 0 auto;
+  opacity: 0.85;
+}
+
+.scene--chamber .mana-gems {
+  display: flex;
+  gap: 0.18rem;
+}
+
+.scene--chamber .gem {
+  display: block;
+  width: 1.05rem;
+  height: 1.35rem;
+  background: url('/battles/chamber/chamber-socket.png?v=2') center / contain no-repeat;
+  filter: grayscale(0.2) brightness(0.85);
+}
+
+.scene--chamber .gem--lit {
+  background-image: url('/battles/chamber/chamber-gem.png?v=2');
+  filter: drop-shadow(0 0 6px rgba(80, 210, 255, 0.85));
+}
+
+/* ── Сетка комнаты ─────────────────────────────────────────────────────── */
+
+.scene.scene--fill.scene--chamber .play {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(15rem, 18rem);
+  grid-template-rows: 2.35rem minmax(0, 1fr) auto;
+  grid-template-areas:
+    'theirs rail'
+    'board rail'
+    'foot foot';
+  gap: 0.15rem 0.55rem;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.scene.scene--fill.scene--chamber .ledger {
+  display: none;
+}
+
+.scene.scene--fill.scene--chamber .table {
+  display: contents;
+  max-width: none;
+  width: auto;
+  height: auto;
+}
+
+.scene.scene--fill.scene--chamber .table-hand--theirs {
+  grid-area: theirs;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 2.35rem;
+  min-height: 2.35rem;
+  overflow: hidden;
+}
+
+.scene.scene--fill.scene--chamber .well {
+  grid-area: board;
+}
+
+.scene.scene--fill.scene--chamber .foot {
+  grid-area: foot;
+}
+
+.scene.scene--fill.scene--chamber .aside {
+  grid-area: rail;
+  position: relative;
+  top: auto;
+  right: auto;
+  bottom: auto;
+  z-index: 2;
+  width: auto;
+  max-width: none;
+  margin: 0;
+  padding: 0.85rem 1.05rem 0.85rem 1.1rem;
+  overflow: auto;
+  background:
+    linear-gradient(180deg, rgba(10, 8, 6, 0.94), rgba(8, 6, 5, 0.96)),
+    url('/battles/chamber/chamber-journal.png?v=2') center / 100% 100% no-repeat;
+  border: 1px solid #8a7040;
+  color: #f4ead8;
+}
+
+.scene.scene--fill.scene--chamber .field,
+.scene.scene--fill.scene--along.scene--chamber .field {
+  width: min(100cqw, calc(100cqh * var(--cols) * var(--fit, 0.714) / var(--rows)));
+}
+
+/* ── Поле ──────────────────────────────────────────────────────────────── */
+
+.scene--chamber .cloth {
+  background: #1a1210;
+  border: 1px solid #5a4630;
+  outline: 1px solid rgba(90, 70, 40, 0.55);
+  outline-offset: 2px;
+  box-shadow:
+    inset 0 0 40px rgba(0, 0, 0, 0.45),
+    0 8px 28px rgba(0, 0, 0, 0.45);
+}
+
+.scene--chamber .face {
+  isolation: isolate;
+}
+
+.scene--chamber .zone {
+  position: absolute;
+  left: 0.35rem;
+  z-index: 6;
+  padding: 0.22rem 0.6rem 0.2rem;
+  font-family: Georgia, 'Fraunces', serif;
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  pointer-events: none;
+  background: rgba(12, 8, 6, 0.72);
+}
+
+.scene--chamber .zone--theirs {
+  top: 0.4rem;
+  color: #f0c8b0;
+  border: 1px solid rgba(176, 56, 44, 0.7);
+}
+
+.scene--chamber .zone--mine {
+  bottom: 0.4rem;
+  color: #c8d8f4;
+  border: 1px solid rgba(64, 120, 196, 0.7);
+}
+
+.scene--chamber .grid::before,
+.scene--chamber .grid::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 50%;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.scene--chamber .grid::before {
+  top: 0;
+  background:
+    linear-gradient(180deg, rgba(110, 32, 24, 0.38), rgba(70, 28, 22, 0.12) 70%, transparent);
+}
+
+.scene--chamber .grid::after {
+  bottom: 0;
+  background:
+    radial-gradient(ellipse at 50% 110%, rgba(50, 90, 170, 0.28), transparent 55%),
+    linear-gradient(0deg, rgba(22, 40, 88, 0.42), rgba(24, 40, 72, 0.1) 72%, transparent);
+}
+
+.scene.scene--fill.scene--along.scene--chamber .zone--theirs {
+  top: 0.5rem;
+  left: 0.5rem;
+  bottom: auto;
+}
+
+.scene.scene--fill.scene--along.scene--chamber .zone--mine {
+  top: 0.5rem;
+  right: 0.5rem;
+  left: auto;
+  bottom: auto;
+}
+
+.scene.scene--fill.scene--along.scene--chamber .grid::before {
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: auto;
+  width: 50%;
+  height: auto;
+  background:
+    linear-gradient(90deg, rgba(110, 32, 24, 0.38), rgba(70, 28, 22, 0.12) 70%, transparent);
+}
+
+.scene.scene--fill.scene--along.scene--chamber .grid::after {
+  top: 0;
+  bottom: 0;
+  right: 0;
+  left: auto;
+  width: 50%;
+  height: auto;
+  background:
+    radial-gradient(ellipse at 110% 50%, rgba(50, 90, 170, 0.28), transparent 55%),
+    linear-gradient(270deg, rgba(22, 40, 88, 0.42), rgba(24, 40, 72, 0.1) 72%, transparent);
+}
+
+.scene.scene--fill.scene--along.scene--chamber .midline {
+  height: auto;
+  width: 0;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  right: auto;
+  border: 0;
+}
+
+.scene.scene--fill.scene--along.scene--chamber .midline::before {
+  left: 50%;
+  right: auto;
+  top: 50%;
+  width: 88cqh;
+  height: 12px;
+  transform: translate(-50%, -50%) rotate(90deg);
+}
+
+.scene.scene--fill.scene--along.scene--chamber .vs {
+  top: 50%;
+  left: 50%;
+  width: 3.6rem;
+  height: 3.6rem;
+  transform: translate(-50%, -50%);
+}
+
+.scene--chamber .cell {
+  z-index: 1;
+  border-color: transparent;
+}
+
+.scene--chamber .cell:not(:has(.figure)):not(.cell--open):not(.cell--attack):not(.cell--mend):not(.cell--picked) {
+  background:
+    linear-gradient(160deg, rgba(48, 36, 28, 0.55), rgba(12, 10, 8, 0.8));
+  border: 1px solid #4a3828;
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.55);
+  clip-path: polygon(
+    5px 0,
+    calc(100% - 5px) 0,
+    100% 5px,
+    100% calc(100% - 5px),
+    calc(100% - 5px) 100%,
+    5px 100%,
+    0 calc(100% - 5px),
+    0 5px
+  );
+}
+
+.scene--chamber .cell--theirs:not(:has(.figure)):not(.cell--open):not(.cell--attack):not(.cell--mend):not(.cell--picked) {
+  border-color: #6a3028;
+  box-shadow:
+    inset 0 0 14px rgba(160, 40, 30, 0.32),
+    inset 0 0 10px rgba(0, 0, 0, 0.5);
+}
+
+.scene--chamber .cell--mine:not(:has(.figure)):not(.cell--open):not(.cell--attack):not(.cell--mend):not(.cell--picked) {
+  border-color: #2a4068;
+  box-shadow:
+    inset 0 0 14px rgba(40, 80, 170, 0.3),
+    inset 0 0 10px rgba(0, 0, 0, 0.5);
+}
+
+.scene--chamber .cell--open {
+  background: rgba(62, 200, 232, 0.1);
+  border-color: rgba(90, 210, 240, 0.55);
+}
+
+.scene--chamber .cell--picked {
+  border-color: transparent;
+  box-shadow:
+    0 0 0 2px #5ad4f0,
+    0 0 18px 4px rgba(62, 200, 232, 0.62);
+  z-index: 3;
+}
+
+.scene--chamber .cell--live:hover .figure,
+.scene--chamber .cell--picked .figure {
+  filter: drop-shadow(0 0 10px rgba(62, 200, 232, 0.45));
+}
+
+.scene--chamber .cell--attack::before {
+  background: rgba(176, 48, 36, 0.85);
+}
+
+.scene--chamber .cell--mend::before {
+  border-color: #5ad4f0;
+}
+
+.scene--chamber .midline {
+  z-index: 4;
+  height: 0;
+  border: 0;
+  top: 50%;
+  left: 0;
+  right: 0;
+}
+
+.scene--chamber .midline::before {
+  content: '';
+  position: absolute;
+  left: 4%;
+  right: 4%;
+  top: -5px;
+  height: 10px;
+  background: url('/battles/chamber/chamber-rail.png?v=2') center / 100% 100% no-repeat;
+  opacity: 0.95;
+}
+
+.scene.scene--fill.scene--along.scene--chamber .vs {
+  top: 50%;
+  left: 50%;
+  width: 3.6rem;
+  height: 3.6rem;
+  transform: translate(-50%, -50%);
+}
+
+.scene--chamber .vs {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 2.7rem;
+  height: 2.7rem;
+  transform: translate(-50%, -50%);
+  background: url('/battles/chamber/chamber-vs.png?v=2') center / contain no-repeat;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.65));
+}
+
+.scene--chamber .omen i {
+  background: rgba(18, 12, 8, 0.88);
+  border-color: rgba(232, 200, 120, 0.4);
+  color: #f0e0c0;
+}
+
+.scene--chamber .omen-theirs {
+  color: #e07050;
+}
+
+.scene--chamber .tally-pip {
+  background: #1a1410;
+  border-color: #c4a060;
+  color: #f0e0c0;
+}
+
+/* ── Журнал ────────────────────────────────────────────────────────────── */
+
+.scene--chamber .journal-label {
+  margin: 0 0 0.7rem;
+  font-family: Georgia, 'Fraunces', serif;
+  font-size: 1.08rem;
+  font-style: normal;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #f3d98a;
+  text-align: center;
+  text-shadow: 0 1px 0 #1a1208;
+}
+
+.scene--chamber .journal-lines {
+  color: #f6efe0;
+  gap: 0.4rem;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+.scene--chamber .journal-lines li {
+  display: grid;
+  grid-template-columns: 0.85rem minmax(0, 1fr);
+  gap: 0.35rem 0.4rem;
+  align-items: start;
+}
+
+.scene--chamber .log-ico {
+  grid-column: 1;
+  margin-top: 0.2rem;
+}
+
+.scene--chamber .journal-open,
+.scene--chamber .journal-plain,
+.scene--chamber .log-body {
+  grid-column: 2;
+  min-width: 0;
+}
+
+.scene--chamber .hand-why {
+  display: none;
+}
+
+.scene--chamber .log-ico {
+  flex: 0 0 auto;
+  width: 0.85rem;
+  height: 0.85rem;
+  margin-top: 0.2rem;
+  background: center / contain no-repeat;
+  opacity: 0.9;
+}
+
+.scene--chamber .log-ico--move {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path fill='%23e8e0d0' d='M2 13c1.2-2 3-3.2 5-3.2S11.8 11 13 13M5 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4m6 1.2a1.7 1.7 0 1 0 0-3.4 1.7 1.7 0 0 0 0 3.4'/></svg>");
+}
+
+.scene--chamber .log-ico--hit {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path fill='%23d06048' d='M2 14 14 2M6 2l8 8M2 6l8 8'/></svg>");
+}
+
+.scene--chamber .log-ico--mend,
+.scene--chamber .log-ico--play {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path fill='none' stroke='%2368c8e8' stroke-width='1.4' d='M8 2c2 2.4 4.5 3 4.5 6.2S10 14 8 14 3.5 11.4 3.5 8.2 6 4.4 8 2z'/></svg>");
+}
+
+.scene--chamber .log-ico--fall {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path fill='%23c0b4a0' d='M7.2 1h1.6v6.2h6v1.6H8.8V15H7.2V8.8H1.2V7.2h6z'/></svg>");
+}
+
+.scene--chamber .log-ico--ward {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path fill='%23d8c898' d='M8 1 14 4v4.2c0 3.4-2.4 5.8-6 6.8-3.6-1-6-3.4-6-6.8V4z'/></svg>");
+}
+
+.scene--chamber .log-ico--turn {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='2' fill='%238a7a60'/></svg>");
+}
+
+.scene--chamber .journal-open {
+  color: #f6efe0;
+  border-bottom-color: rgba(243, 217, 138, 0.45);
+}
+
+.scene--chamber .journal-open:hover {
+  color: #ffe08a;
+}
+
+.scene--chamber .journal-plain {
+  color: #f6efe0;
+}
+
+.scene--chamber .journal-empty {
+  margin: 0;
+  font-family: Georgia, 'Fraunces', serif;
+  font-style: italic;
+  font-size: 1rem;
+  color: #e4d8c0;
+}
+
+.scene--chamber .breakdown {
+  background: rgba(18, 12, 8, 0.8);
+  border-color: #5a4630;
+  color: #d8cfc0;
+}
+
+.scene--chamber .chosen {
+  margin-top: 0.85rem;
+  padding: 0.65rem 0 0;
+  border-left: 0;
+  border-top: 1px solid rgba(200, 160, 80, 0.28);
+}
+
+.scene--chamber .chosen-name,
+.scene--chamber .chosen-kind,
+.scene--chamber .chosen-stats,
+.scene--chamber .chosen-effect,
+.scene--chamber .chosen-riders {
+  color: #f4ead8;
+}
+
+.scene--chamber .chosen-leaf {
+  background: rgba(20, 14, 10, 0.7);
+  border-color: #6a5638;
+  color: #f3d98a;
+}
+
+.scene--chamber .chosen-kind,
+.scene--chamber .chosen-stats dt {
+  color: #e8d5a0;
+}
+
+/* ── Низ ───────────────────────────────────────────────────────────────── */
+
+.scene.scene--fill.scene--chamber .foot {
+  display: grid;
+  grid-template-columns: 8.6rem minmax(0, 1fr) 13.2rem;
+  align-items: end;
+  gap: 0.4rem 0.7rem;
+  height: 8.5rem;
+  min-height: 8.5rem;
+  max-height: 8.5rem;
+  padding: 0.2rem 0.6rem 0.35rem;
+  overflow: visible;
+  background: linear-gradient(180deg, transparent 0%, rgba(8, 6, 5, 0.72) 40%);
+}
+
+.scene--chamber .prompt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.scene--chamber .glass {
+  width: 3.1rem;
+  height: 4.15rem;
+  background: url('/battles/chamber/chamber-hourglass.png?v=2') center / contain no-repeat;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.55));
+}
+
+.scene--chamber .glass--run {
+  animation: chamber-glow 2.2s ease-in-out infinite;
+}
+
+.scene--chamber .prompt-word {
+  margin: 0;
+  max-width: 8.4rem;
+  padding: 0.32rem 0.45rem 0.38rem;
+  background: url('/battles/chamber/chamber-plaque.png?v=2') center / 100% 100% no-repeat;
+  font-family: Georgia, 'Fraunces', serif;
+  font-size: 0.62rem;
+  line-height: 1.3;
+  text-align: center;
+  color: #e8dcc0;
+  text-shadow: 0 1px 0 #1a1208;
+}
+
+.scene.scene--fill.scene--chamber .foot .table-hand--mine {
+  height: 7.6rem;
+  overflow: visible;
+}
+
+.scene.scene--fill.scene--chamber .foot .hand {
+  height: 7.6rem;
+  justify-content: center;
+  padding: 0.2rem 0.4rem 0;
+}
+
+.scene.scene--fill.scene--chamber .foot .held {
+  height: 7.35rem;
+  filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.45));
+}
+
+.scene.scene--fill.scene--chamber .foot .held--picked,
+.scene.scene--fill.scene--chamber .foot .held--mine:hover:not(:disabled) {
+  transform: translateY(-0.45rem);
+  filter:
+    drop-shadow(0 0 10px rgba(62, 200, 232, 0.85))
+    drop-shadow(0 8px 14px rgba(0, 0, 0, 0.4));
+}
+
+.scene--chamber .held--picked {
+  outline: none;
+}
+
+.scene--chamber .held-cost {
+  display: none;
+}
+
+.scene.scene--fill.scene--chamber .turn {
+  width: auto;
+  max-width: none;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.2rem;
+}
+
+.scene.scene--fill.scene--chamber .end {
+  width: 12.4rem;
+  height: 4.35rem;
+  padding: 0 1.4rem 0.15rem;
+  border: 0;
+  background: url('/battles/chamber/chamber-end-turn.png?v=2') center / contain no-repeat;
+  font-family: Georgia, 'Fraunces', serif;
+  font-style: normal;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  line-height: 1.15;
+  color: #f8e6b8;
+  text-shadow:
+    0 1px 0 #3a1808,
+    0 0 10px rgba(255, 180, 60, 0.45);
+  white-space: normal;
+}
+
+.scene--chamber .end::before,
+.scene--chamber .end::after {
+  content: none;
+}
+
+.scene--chamber .end:not(:disabled):hover {
+  color: #fff6d8;
+  filter: brightness(1.08);
+}
+
+.scene--chamber .end:disabled {
+  opacity: 0.42;
+  filter: grayscale(0.35);
+}
+
+.scene.scene--fill.scene--chamber .omens {
+  width: 100%;
+  justify-content: center;
+  margin: 0;
+}
+
+.scene.scene--fill.scene--chamber .omen-word {
+  max-width: 12rem;
+  color: #b8a888;
+  text-align: center;
+}
+
+.scene--chamber .omen-switch {
+  color: #8a7a60;
+}
+
+.scene--chamber .omen-switch--on {
+  color: #d8c898;
+}
+
+.scene--chamber .omen-switch--on .omen-state {
+  background: #6a5630;
+  color: #f8f1e7;
+}
+
+.scene--chamber .waiting,
+.scene--chamber .hand-why {
+  color: #c4b48a;
+  text-align: center;
+  max-width: none;
+}
+
+.scene--chamber .hand-label {
+  color: #a09070;
+}
+
+.scene--chamber .table-hand--theirs .hand-label {
+  display: none;
+}
+
+.scene--chamber .seal-wrap {
+  background: rgba(8, 6, 5, 0.82);
+}
+
+.scene--chamber .verdict {
+  background: #16100c;
+  border-color: #d4b06a;
+  outline-color: #8a7040;
+  color: #f8edd0;
+}
+
+.scene--chamber .seal-word {
+  color: #f8edd0;
+}
+
+.scene--chamber .seal-line,
+.scene--chamber .seal-dust {
+  color: #f0e4c8;
+}
+
+.scene--chamber .door {
+  color: #f3d98a;
+}
+
+@keyframes chamber-glow {
+  0%,
+  100% {
+    filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 0 rgba(220, 90, 30, 0));
+  }
+  50% {
+    filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 10px rgba(220, 90, 30, 0.55));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scene--chamber .glass--run,
+  .scene--chamber .gem--lit {
+    animation: none;
+    filter: drop-shadow(0 0 4px rgba(80, 210, 255, 0.5));
+  }
+
+  .scene--chamber .cell--picked,
+  .scene.scene--fill.scene--chamber .foot .held--picked {
+    box-shadow: 0 0 0 2px #5ad4f0;
+    filter: none;
+  }
+}
+
+@media (max-width: 820px) {
+  .scene.scene--fill.scene--chamber .play {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 2.1rem minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      'theirs'
+      'board'
+      'rail'
+      'foot';
+  }
+
+  .scene.scene--fill.scene--chamber .aside {
+    max-height: 7.5rem;
+  }
+
+  .scene.scene--fill.scene--chamber .foot {
+    grid-template-columns: 4.6rem minmax(0, 1fr) 8.5rem;
+    height: 7.2rem;
+    min-height: 7.2rem;
+    max-height: 7.2rem;
+  }
+
+  .scene--chamber .crest {
+    grid-template-columns: auto 1fr auto;
+    min-height: 3.2rem;
+    padding-inline: 0.35rem;
+  }
+
+  .scene--chamber .crest-mark {
+    min-width: 0;
+    padding-inline: 0.4rem;
+  }
+
+  .scene--chamber .mana-word {
+    display: none;
+  }
+
+  .scene.scene--fill.scene--chamber .end {
+    width: 8.4rem;
+    height: 3.4rem;
+    font-size: 0.58rem;
+  }
+
+  .scene--chamber .prompt-word {
+    font-size: 0.52rem;
+  }
+
+  .scene--chamber .glass {
+    width: 2.2rem;
+    height: 3rem;
+  }
+}

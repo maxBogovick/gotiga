@@ -11,7 +11,7 @@
   // Круг тёмный у выбранного и светлый у прочих: разница по СВЕТЛОТЕ видна и
   // боковым зрением, и на выцветшем экране, а разница по цвету каймы — нет.
   import type { Snippet } from 'svelte';
-  import BattleIcon from '../BattleIcon.svelte';
+  import BattleIcon from '$lib/components/BattleIcon.svelte';
 
   let {
     icon,

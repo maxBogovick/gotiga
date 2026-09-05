@@ -14,17 +14,19 @@
   import { fade } from 'svelte/transition';
   import { t, lang, brandName } from '$lib/i18n';
   import { api } from '$lib/api';
-  import { rulesApart } from '$lib/battles';
+  import { HOUSE_RULES, rulesApart } from '$lib/battles';
   import { authStore } from '$lib/stores/auth.svelte';
   import BattleScene from '$lib/components/BattleScene.svelte';
   import BattleDoor from '$lib/components/BattleDoor.svelte';
   import { matchChrome } from '$lib/stores/match-chrome.svelte';
   import type {
     BattleAction,
+    BattleBodyCard,
     BattleCard,
     BattleChallenge,
     BattleFrame,
     BattleMatch,
+    BattleUnit,
     Foresight,
     Motion,
   } from '$lib/types/api';
@@ -49,6 +51,8 @@
   /** onMount finished — `?play=` must not fire while `laid` is still the default. */
   let ready = $state(false);
   let openedPlay = false;
+  /** `?chamber=1` already dressed a preview — leaving must not dress it again. */
+  let openedChamber = false;
   /** Спросить, оставить открытую партию или отдать поле. */
   let leaving = $state(false);
 
@@ -105,6 +109,161 @@
     void takeUp(found);
   });
 
+  /** Живая комната без входа: только в dev, `?chamber=1`. Расстановка — с этюда. */
+  $effect(() => {
+    if (!import.meta.env.DEV) return;
+    if (!ready || match || busy) return;
+    if (page.url.searchParams.get('chamber') !== '1') return;
+    if (openedChamber) return;
+    openedChamber = true;
+    const study =
+      challenges.find((c) => c.playerSide === 'scripted') ?? challenges[0] ?? null;
+    if (!study) return;
+    taken = study;
+    match = dressStudy(study, cards, page.url.searchParams.get('seal') === '1');
+  });
+
+  function bodyOf(card: BattleCard): BattleBodyCard {
+    return {
+      name: card.slug,
+      cost: card.cost,
+      health: card.health,
+      power: card.power,
+      armor: card.armor,
+      ward: card.ward,
+      reach: card.reach,
+      step: card.step,
+      mend: card.mend,
+      channel: card.attackChannel,
+    };
+  }
+
+  function dressStudy(study: BattleChallenge, deck: BattleCard[], sealed = false): BattleMatch {
+    const find = (slug: string) => deck.find((c) => c.slug === slug);
+    const units: BattleUnit[] = [];
+    const board: { cell: { x: number; y: number }; unit: number }[] = [];
+    let next = 0;
+    let playerId = -1;
+    let keeperId = -1;
+    const put = (
+      slug: string,
+      x: number,
+      y: number,
+      owner: 'player' | 'keeper',
+    ) => {
+      const card = find(slug);
+      if (!card) return;
+      const id = next++;
+      const body = bodyOf(card);
+      units[id] = {
+        id,
+        owner,
+        reach: body.reach,
+        step: body.step,
+        mend: body.mend,
+        channel: body.channel,
+        acted: false,
+        moved: false,
+        retaliated: false,
+        card: body,
+        health: { current: body.health, max: body.health },
+        power: body.power,
+        armor: body.armor,
+        ward: body.ward,
+        shield: 0,
+        statuses: [],
+        immune: null,
+      };
+      board.push({ cell: { x, y }, unit: id });
+      if (owner === 'player' && playerId < 0) playerId = id;
+      if (owner === 'keeper' && keeperId < 0) keeperId = id;
+    };
+    for (const p of study.setup.playerBoard) put(p.card, p.x, p.y, 'player');
+    for (const p of study.setup.keeperBoard) put(p.card, p.x, p.y, 'keeper');
+    const handOf = (slugs: string[]) =>
+      slugs.map((s) => find(s)).filter(Boolean).map((c) => bodyOf(c as BattleCard));
+    const playerHand = handOf(study.setup.playerHand);
+    const occupied = new Set(board.map((s) => `${s.cell.x},${s.cell.y}`));
+    const legal: BattleAction[] = ['endTurn'];
+    for (const spot of board) {
+      const u = units[spot.unit];
+      if (!u || u.owner !== 'player') continue;
+      legal.push({
+        move: {
+          unit: u.id,
+          to: { x: (spot.cell.x + 1) % 3, y: spot.cell.y },
+        },
+      });
+      for (const other of board) {
+        const t = units[other.unit];
+        if (t && t.owner === 'keeper') {
+          legal.push({ attack: { attacker: u.id, target: t.id } });
+          break;
+        }
+      }
+    }
+    for (let i = 0; i < playerHand.length; i++) {
+      for (let x = 0; x < 3; x++) {
+        for (const y of [3, 4, 5]) {
+          if (!occupied.has(`${x},${y}`)) {
+            legal.push({ play: { handIndex: i, cell: { x, y } } });
+            occupied.add(`${x},${y}`);
+            break;
+          }
+        }
+      }
+    }
+    const events: BattleMatch['events'] = [];
+    if (playerId >= 0 && board[0]) {
+      const from = board.find((s) => s.unit === playerId)?.cell ?? { x: 0, y: 4 };
+      events.push({
+        moved: { unit: playerId, from, to: { x: from.x, y: from.y } },
+      });
+    }
+    if (playerId >= 0 && keeperId >= 0) {
+      events.push({
+        damaged: {
+          target: keeperId,
+          by: playerId,
+          toHealth: 2,
+          toShield: 0,
+          channel: 'physical',
+          source: 'attack',
+          trail: [{ step: 'pointBlank', from: 3, to: 2 }],
+        },
+      });
+    }
+    events.push({ turnEnded: { side: 'player', round: 1 } });
+    return {
+      id: 'chamber-preview',
+      challengeId: study.id,
+      seq: 0,
+      state: {
+        units,
+        board,
+        player: { hand: playerHand, mana: 3, manaMax: 5 },
+        keeper: {
+          hand: handOf(study.setup.keeperHand),
+          mana: 2,
+          manaMax: 2,
+        },
+        round: 1,
+        active: 'player',
+        outcome: sealed ? 'player' : null,
+        rules: study.setup.rules ?? HOUSE_RULES,
+        openingAttacksUsed: 0,
+        actsThisTurn: 0,
+      },
+      legalActions: legal,
+      events,
+      outcome: sealed ? 'player' : null,
+      rewardDust: sealed ? 12 : 0,
+      marks: sealed
+        ? { acts: 16, bodiesLost: 2, bestKnown: 9, record: false }
+        : undefined,
+    };
+  }
+
   /** Встреча, на которую идут с неразложенным столом. */
   const needsTable = (c: BattleChallenge) => c.playerSide === 'deck' && !laid;
 
@@ -154,9 +313,75 @@
     }
   }
 
+  function previewAct(action: BattleAction) {
+    const now = match;
+    if (!now || now.id !== 'chamber-preview') return;
+    const from = now.state.board.find((s) =>
+      typeof action !== 'string' && 'move' in action ? s.unit === action.move.unit : false,
+    );
+    if (action === 'endTurn') {
+      match = {
+        ...now,
+        seq: now.seq + 1,
+        events: [{ turnEnded: { side: 'player', round: now.state.round } }],
+        state: { ...now.state, active: 'keeper' },
+        legalActions: [],
+      };
+      return;
+    }
+    if (typeof action !== 'string' && 'move' in action) {
+      match = {
+        ...now,
+        seq: now.seq + 1,
+        events: [
+          {
+            moved: {
+              unit: action.move.unit,
+              from: from?.cell ?? action.move.to,
+              to: action.move.to,
+            },
+          },
+        ],
+        state: {
+          ...now.state,
+          board: now.state.board.map((s) =>
+            s.unit === action.move.unit ? { ...s, cell: action.move.to } : s,
+          ),
+        },
+      };
+      return;
+    }
+    if (typeof action !== 'string' && 'attack' in action) {
+      const target = now.state.units[action.attack.target];
+      const hp = target ? Math.min(2, target.health.current) : 2;
+      match = {
+        ...now,
+        seq: now.seq + 1,
+        events: [
+          {
+            damaged: {
+              target: action.attack.target,
+              by: action.attack.attacker,
+              toHealth: hp,
+              toShield: 0,
+              channel: 'physical',
+              source: 'strike',
+              trail: [{ step: 'floor', from: hp + 1, to: 1 }],
+            },
+          },
+        ],
+      };
+    }
+  }
+
   async function play(action: BattleAction) {
     const token = authStore.token;
-    if (!token || !match) return;
+    if (!match) return;
+    if (match.id === 'chamber-preview') {
+      previewAct(action);
+      return;
+    }
+    if (!token) return;
     busy = true;
     complaint = null;
     const sent = match.seq;
@@ -188,6 +413,7 @@
    * должно просто не появиться, а не сообщать об ошибке посреди партии.
    */
   async function foresee(action: BattleAction): Promise<Foresight | null> {
+    if (match?.id === 'chamber-preview') return null;
     const token = authStore.token;
     if (!token || !match) return null;
     try {
@@ -266,10 +492,6 @@
     {/if}
 
     {#if match}
-      <div class="leave-row">
-        <button type="button" class="leave" onclick={askLeave}>← {$t('battleLeave')}</button>
-      </div>
-
       <BattleScene
         {match}
         {cards}
@@ -280,6 +502,7 @@
         onact={play}
         onforesee={foresee}
         onleave={putBack}
+        onexit={askLeave}
         onreplay={taken ? again : undefined}
       />
 
@@ -427,6 +650,12 @@
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    background: #0b0806;
+    color: #e6dcc8;
+  }
+
+  .root--match .grain {
+    display: none;
   }
 
   .grain {
@@ -450,10 +679,11 @@
     min-height: 0;
     max-width: none;
     width: 100%;
-    padding: 0.3rem 0.85rem 0.25rem;
+    padding: 0;
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    position: relative;
   }
 
   .page--match :global(.room) {
@@ -650,24 +880,20 @@
   }
 
   .leave-row {
-    flex: 0 0 auto;
-    margin-bottom: 0.1rem;
+    display: none;
   }
 
-  .leave {
-    padding: 0;
-    font: inherit;
-    font-size: 0.68rem;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    color: #8a6a55;
-    background: none;
-    border: 0;
-    cursor: pointer;
-  }
-
-  .leave:hover {
-    color: #c65f3c;
+  .page--match .fault {
+    position: absolute;
+    top: 4.6rem;
+    left: 50%;
+    z-index: 30;
+    transform: translateX(-50%);
+    margin: 0;
+    padding: 0.35rem 0.8rem;
+    background: rgba(18, 10, 8, 0.88);
+    border: 1px solid #8a7040;
+    color: #f0c8b0;
   }
 
   .veil {
@@ -678,18 +904,19 @@
     align-items: center;
     justify-content: center;
     padding: 2rem;
-    background: rgba(52, 37, 28, 0.55);
+    background: rgba(8, 6, 5, 0.72);
     backdrop-filter: blur(2px);
   }
 
   .ask {
     max-width: 28rem;
     padding: 1.6rem 1.7rem 1.4rem;
-    background: #f8f1e7;
-    border: 1px solid #d8c6b1;
-    outline: 1px solid #d8c6b1;
+    background: #1a1410;
+    border: 1px solid #8a7040;
+    outline: 1px solid #8a7040;
     outline-offset: 4px;
     transform: rotate(-1deg);
+    color: #e6dcc8;
   }
 
   .ask-word {
@@ -697,6 +924,7 @@
     font-family: Georgia, 'Fraunces', serif;
     font-size: 1.05rem;
     line-height: 1.5;
+    color: #e6dcc8;
   }
 
   .ask-doors {
@@ -719,11 +947,11 @@
   }
 
   .ask-keep {
-    color: #6f3b24;
+    color: #e8c96a;
   }
 
   .ask-yield {
-    color: #8a6a55;
+    color: #a09070;
   }
 
   .ask-keep:hover,

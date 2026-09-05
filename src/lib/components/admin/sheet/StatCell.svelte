@@ -15,7 +15,7 @@
   //
   // И подпись словом. Значка мало: сердце угадывают все, а «оберег» от «брони»
   // по двум щитам не отличит никто, включая того, кто их рисовал.
-  import BattleIcon from '../BattleIcon.svelte';
+  import BattleIcon from '$lib/components/BattleIcon.svelte';
 
   let {
     icon,

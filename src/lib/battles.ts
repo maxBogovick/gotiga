@@ -1768,6 +1768,86 @@ export const BODY_STAT_LABELS = {
 } as const satisfies Record<BodyStatField, TranslationKey>;
 
 /**
+ * Число, у которого есть имя, есть и ЗНАК.
+ *
+ * Один список на весь дом — и это условие, а не опрятность. Знак стоит рядом с
+ * числом в шести местах разом (лицо карты, лист взятия, разбор на сцене, три
+ * плашки стола хранителя), и до этого списка он выбирался в каждом из них
+ * по-своему: `icon="heart"` было вписано в разметку стола рукой, а карта и лист
+ * не рисовали знака вовсе. Два места, называющие сердце для здоровья порознь,
+ * — это два места, которые однажды назовут разное, и хранитель увидит на карте
+ * одну картинку, а на своей плашке другую.
+ *
+ * Знак СОПРОВОЖДАЕТ слово, а не заменяет его, и это тоже решено не здесь:
+ * сердце угадывают все, а «оберег» от «брони» по двум щитам не отличит никто
+ * (см. `StatCell.svelte`). Единственное место, где знак стоит один, — кружок
+ * значка: там нет слова и не было, туда не помещается даже цифра со словом.
+ *
+ * Имена — те, что понимает `BattleIcon`. Не путь к картинке: знаки рисуются
+ * линиями в чернилах того места, где стоят, а не приходят файлом со склада,
+ * который пришлось бы красить.
+ */
+export const STAT_MARKS = {
+  health: 'heart',
+  mana: 'drop',
+  armor: 'shield',
+  ward: 'ward',
+  reach: 'reach',
+  step: 'boot',
+  mend: 'sprig',
+  /** Не в паспорте (`SHEET_STATS`), но на листе взятия стоит и печатается. */
+  speed: 'hourglass',
+  cost: 'coin',
+  power: 'sword',
+} as const satisfies Record<BodyStatField | 'speed' | BadgeKind, string>;
+
+/** Слот, у которого есть знак. `healthMark` — не число, а кружок здоровья, и
+ *  знак у него тот же, что у здоровья: это одно и то же число. */
+export type MarkedStat = keyof typeof STAT_MARKS;
+
+/**
+ * Слово того же числа. `BODY_STAT_LABELS` называет семь из паспорта, а
+ * стоимость, сила и скорость лежали по своим ключам и выписывались рукой в
+ * каждом месте, где стояли рядом с паспортом, — тремя развилками там, где
+ * нужен был один список. Ключи здесь буква в букву те же, что у `STAT_MARKS`:
+ * у числа одно слово и один знак, и берутся они по одному имени.
+ */
+export const STAT_LABELS = {
+  ...BODY_STAT_LABELS,
+  speed: 'battlesSpeedLabel',
+  cost: 'battlesCostLabel',
+  power: 'battlesPowerLabel',
+} as const satisfies Record<MarkedStat, TranslationKey>;
+
+/** Слово числа. Пара к `statMark`, и по той же причине функцией: `healthMark`
+ *  — это здоровье под другим именем. */
+export function statLabel(slot: MarkedStat | 'healthMark'): TranslationKey {
+  return STAT_LABELS[slot === 'healthMark' ? 'health' : slot];
+}
+
+/**
+ * Знак СТРОКИ ОПИСИ, или ничего.
+ *
+ * Опись знает и слова (имя, раса, байка), и числа, и знак есть только у
+ * вторых. Спрашивать это здесь, а не перечислять числа в списке стола, —
+ * потому что список слотов один (`SHEET_SLOTS`), и второй, живущий в админке
+ * и помнящий, какие из них числа, разошёлся бы с ним на первой же новой
+ * строке. `stats` — коробка паспорта, а не число: одного знака на семь чисел
+ * не бывает.
+ */
+export function sheetSlotMark(slot: SheetSlot): string | null {
+  if (slot === 'healthMark') return statMark('health');
+  return slot in STAT_MARKS ? STAT_MARKS[slot as MarkedStat] : null;
+}
+
+/** Знак числа. Отдельной функцией, а не чтением словаря на месте, потому что
+ *  `healthMark` — это здоровье под другим именем, и разворачивать это в каждом
+ *  из шести мест значит забыть однажды. */
+export function statMark(slot: MarkedStat | 'healthMark'): string {
+  return STAT_MARKS[slot === 'healthMark' ? 'health' : slot];
+}
+
+/**
  * The numbers a person needs to see the body they will play. Zeros stay off
  * the paper, the same way `pricesOf` will not print a coin that is not a price.
  */

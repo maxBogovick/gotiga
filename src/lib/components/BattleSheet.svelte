@@ -7,6 +7,7 @@
   import { fade } from 'svelte/transition';
   import { t, lang } from '$lib/i18n';
   import BattleCard from '$lib/components/BattleCard.svelte';
+  import BattleIcon from '$lib/components/BattleIcon.svelte';
   import {
     abilityCopy,
     cardCopy,
@@ -16,6 +17,9 @@
     headerCopy,
     kindLabelKey,
     pricesOf,
+    statMark,
+    statLabel,
+    type MarkedStat,
     traitCopy,
     workHref,
     type Coin,
@@ -130,24 +134,27 @@
     }));
   });
 
-  type Figure = { label: TranslationKey; value: number };
+  /** Число на листе называется СЛОТОМ, а не парой «ключ слова + картинка»:
+   *  слово и знак берутся по одному имени (`statLabel`/`statMark`), и лист,
+   *  назвавший их порознь, однажды напишет «Оберег» над щитом брони. */
+  type Figure = { slot: MarkedStat; value: number };
   /** Четыре числа удара — как четыре кружка на мерке, без золотой оправы.
    *  Ноль здесь тоже число: на листе «не бьёт с шага» видно, а не пропадает. */
   let blow = $derived<Figure[]>([
-    { label: 'battlesCostLabel', value: card.cost },
-    { label: 'battlesPowerLabel', value: card.power },
-    { label: 'battleStatReach', value: card.reach },
-    { label: 'battleStatStep', value: card.step },
+    { slot: 'cost', value: card.cost },
+    { slot: 'power', value: card.power },
+    { slot: 'reach', value: card.reach },
+    { slot: 'step', value: card.step },
   ]);
 
   /** Всё тело, которым играют. Миниатюра прячет нули; лист называет каждое. */
   let body = $derived<Figure[]>([
-    { label: 'battlesHealthLabel', value: card.health },
-    { label: 'battlesManaLabel', value: card.mana },
-    { label: 'battleStatArmour', value: card.armor },
-    { label: 'battleStatWard', value: card.ward },
-    { label: 'battleStatMend', value: card.mend },
-    { label: 'battlesSpeedLabel', value: card.speed },
+    { slot: 'health', value: card.health },
+    { slot: 'mana', value: card.mana },
+    { slot: 'armor', value: card.armor },
+    { slot: 'ward', value: card.ward },
+    { slot: 'mend', value: card.mend },
+    { slot: 'speed', value: card.speed },
   ]);
 
   function abilityLine(row: CardAbility): string {
@@ -223,10 +230,14 @@
           <section class="block">
             <h3 class="block-title">{$t('battlesSheetBlow')}</h3>
             <ul class="figures">
-              {#each blow as fig (fig.label)}
+              {#each blow as fig (fig.slot)}
                 <li class="figure">
                   <b>{fig.value}</b>
-                  <span>{$t(fig.label)}</span>
+                  <span
+                    ><BattleIcon name={statMark(fig.slot)} size="1em" weight={1.35} />{$t(
+                      statLabel(fig.slot),
+                    )}</span
+                  >
                 </li>
               {/each}
             </ul>
@@ -283,10 +294,14 @@
     <section class="params">
       <h3 class="block-title">{$t('battlesSheetParams')}</h3>
       <ul class="param-row">
-        {#each body as fig (fig.label)}
+        {#each body as fig (fig.slot)}
           <li class="param">
             <b>{fig.value}</b>
-            <span>{$t(fig.label)}</span>
+            <span
+              ><BattleIcon name={statMark(fig.slot)} size="1em" weight={1.35} />{$t(
+                statLabel(fig.slot),
+              )}</span
+            >
           </li>
         {/each}
       </ul>
@@ -509,6 +524,9 @@
   }
 
   .figure span {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3em;
     font-family: 'Inter', system-ui, sans-serif;
     font-size: 0.58rem;
     letter-spacing: 0.12em;
@@ -603,11 +621,22 @@
   }
 
   .param span {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3em;
     font-family: 'Inter', system-ui, sans-serif;
     font-size: 0.58rem;
     letter-spacing: 0.12em;
     text-transform: uppercase;
     color: #6f3b24;
+  }
+
+  /* Знак меряется подписью, а не точками листа: подпись набрана в 0.58rem, и
+     знак в четырнадцать пикселей стоял бы над словом вдвое выше него. */
+  .figure span :global(svg),
+  .param span :global(svg) {
+    flex: 0 0 auto;
+    opacity: 0.8;
   }
 
   .foot {

@@ -23,6 +23,8 @@
     KIND_SIDES,
     SLICE_FITS,
     SHEET_SHOWS,
+    statMark,
+    sheetSlotMark,
     SHEET_SLOT_BANDS,
     SLICE_GROW_MAX,
     SLICE_KIND,
@@ -57,7 +59,7 @@
   } from "$lib/battles";
   import { SITE_FONTS } from "$lib/fonts";
   import BattleCard from "$lib/components/BattleCard.svelte";
-  import BattleIcon from "$lib/components/admin/BattleIcon.svelte";
+  import BattleIcon from "$lib/components/BattleIcon.svelte";
   import SheetHead from "$lib/components/admin/sheet/SheetHead.svelte";
   import SheetPanel from "$lib/components/admin/sheet/SheetPanel.svelte";
   import SheetField from "$lib/components/admin/sheet/SheetField.svelte";
@@ -237,12 +239,16 @@
    * значения не теряются (`cardBody` по-прежнему их отправляет), но задавать
    * число, которое ни на что не влияет, форма больше не предлагает.
    */
+  // Знак берётся из `STAT_MARKS`, а не вписан сюда рукой: тот же знак стоит
+  // рядом с тем же числом на лице карты, на листе взятия и в разборе сцены, и
+  // плашка, называющая своё сердце отдельно, однажды покажет хранителю одну
+  // картинку здесь и другую на карте, которую он этой плашкой правит.
   const bodyStats = [
-    { key: "armor", label: "adminBattlesArmor", icon: "shield", min: 0, max: 20 },
-    { key: "ward", label: "adminBattlesWard", icon: "ward", min: 0, max: 20 },
-    { key: "reach", label: "adminBattlesReach", icon: "reach", min: 0, max: 5 },
-    { key: "step", label: "adminBattlesStep", icon: "boot", min: 0, max: 3 },
-    { key: "mend", label: "adminBattlesMend", icon: "sprig", min: 0, max: 20 },
+    { key: "armor", label: "adminBattlesArmor", min: 0, max: 20 },
+    { key: "ward", label: "adminBattlesWard", min: 0, max: 20 },
+    { key: "reach", label: "adminBattlesReach", min: 0, max: 5 },
+    { key: "step", label: "adminBattlesStep", min: 0, max: 3 },
+    { key: "mend", label: "adminBattlesMend", min: 0, max: 20 },
   ] as const;
 
   /** Тот же порог, что в `battles.rs`: выше 1.15 перегруз, ниже 0.85 мертва. */
@@ -4897,10 +4903,29 @@
                       >
                     </span>
                     <span
-                      class="flex-1 min-w-0 text-[11px] {row.show === 'never'
+                      class="flex-1 min-w-0 flex items-center gap-1.5 text-[11px] {row.show ===
+                      'never'
                         ? 'text-[#8a6a55] line-through'
-                        : ''}">{$t(SHEET_SLOT_KEY[row.slot])}</span
+                        : ''}"
                     >
+                      <!-- Знак у строки-числа. Список описи — это пятнадцать
+                           строк подряд, и «Броня» от «Оберега» в нём отличаются
+                           одной буквой; на карте они отличаются знаком, и стол,
+                           который его не показывает, заставляет хранителя
+                           узнавать свою же строку по памяти. У строк-слов знака
+                           нет, и пустого места под него тоже: `flex` сдвигает
+                           имя к самому ⠿. -->
+                      {#if sheetSlotMark(row.slot)}
+                        <span class="shrink-0 text-[#8a6a55]"
+                          ><BattleIcon
+                            name={sheetSlotMark(row.slot) ?? ''}
+                            size={11}
+                            weight={1.4}
+                          /></span
+                        >
+                      {/if}
+                      <span class="min-w-0 truncate">{$t(SHEET_SLOT_KEY[row.slot])}</span>
+                    </span>
                   </div>
                   <!-- Пять ступеней, а не тумблер: разница между полкой и
                        клеткой боя — не «бой», а ширина. Четыре говорят, с
@@ -7272,7 +7297,7 @@
                      две последние растягивались каждая на треть плашки. -->
                 <StatPlate min="7.4rem">
                   <StatCell
-                    icon="heart"
+                    icon={statMark("health")}
                     label={$t("battlesHealthLabel")}
                     anchor="fault-health"
                     fault={faults.has("noHealth")}
@@ -7281,14 +7306,14 @@
                     bind:value={draft.health}
                   />
                   <StatCell
-                    icon="sword"
+                    icon={statMark("power")}
                     label={$t("battlesPowerLabel")}
                     min={0}
                     max={99}
                     bind:value={draft.power}
                   />
                   <StatCell
-                    icon="coin"
+                    icon={statMark("cost")}
                     label={$t("battlesCostLabel")}
                     anchor="fault-cost"
                     fault={faults.has("costBeyondMana")}
@@ -7301,7 +7326,7 @@
                        что не влияет, должно признаваться в этом там, где его
                        набирают. -->
                   <StatCell
-                    icon="drop"
+                    icon={statMark("mana")}
                     label={$t("battlesManaLabel")}
                     tone="quiet"
                     min={0}
@@ -7310,7 +7335,7 @@
                   />
                   {#each bodyStats as stat (stat.key)}
                     <StatCell
-                      icon={stat.icon}
+                      icon={statMark(stat.key)}
                       label={$t(stat.label)}
                       min={stat.min}
                       max={stat.max}

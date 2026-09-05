@@ -75,6 +75,7 @@
     SHEET_SLOT_BANDS,
     SHEET_STATS,
     BODY_STAT_LABELS,
+    statMark,
     livePiece,
     paperClip,
     scrapFlight,
@@ -88,6 +89,7 @@
   } from '$lib/battles';
   import { api } from '$lib/api';
   import AppImage from '$lib/components/AppImage.svelte';
+  import BattleIcon from '$lib/components/BattleIcon.svelte';
   import BattleBadgeInspector from '$lib/components/BattleBadgeInspector.svelte';
 
   let {
@@ -1404,11 +1406,35 @@
                   class:row--live={rowsEditable}
                   class:row--held={rowHeld === stat.slot}
                   data-row={stat.slot}
+                  role="img"
+                  aria-label={`${$t(
+                    BODY_STAT_LABELS[stat.slot as keyof typeof BODY_STAT_LABELS],
+                  )} ${value}`}
                   onpointerdown={(e) => rowTake(stat.slot, e)}
                 >
+                  <!-- Здесь и только здесь знак стоит ВМЕСТО слова, а не
+                       рядом с ним. В доме решено обратное («оберег» от «брони»
+                       по двум щитам не отличит никто, см. `StatCell.svelte`) —
+                       и остаётся решённым везде, где есть место: на листе
+                       взятия, в разборе сцены, на плашке стола. Но полоса
+                       свойств не резиновая: со словом И знаком седьмое число
+                       («Лечение») уезжало за нижний край карты в 400 px, то
+                       есть в ту самую молчаливую прокрутку, ради которой стол
+                       держит лампу переполнения. Знак занимает один квадрат,
+                       слово — пять, и выбор был между знаком и числом.
+                       Слово при этом не пропало: оно названо строке
+                       (`aria-label`), и читающий её голосом слышит то же
+                       самое.
+
+                       Указателя знак не берёт: строку тянут за неё саму
+                       (`data-row`), и глиф под пальцем перехватил бы нажатие
+                       у того, кто его слушает. -->
                   <span class="number"
-                    >{$t(BODY_STAT_LABELS[stat.slot as keyof typeof BODY_STAT_LABELS])}
-                    <b>{value}</b></span
+                    ><BattleIcon
+                      name={statMark(stat.slot as keyof typeof BODY_STAT_LABELS)}
+                      size="1.15em"
+                      weight={1.4}
+                    /><b>{value}</b></span
                   >
                 </span>
               {/each}
@@ -1624,6 +1650,25 @@
          local z-index, and inside `.content`'s BOX it could never be dragged
          out onto the frame at all. -->
     <div class="badges-layer">
+      <!-- Знак числа, вычеканенный на самом кружке.
+           Рядом его поставить некуда: у значка нет строки, он стоит один в
+           углу карты, и слово рядом с ним дом уже пробовал — оно висело под
+           кружком и обрезалось шапкой (`costWord`/`powerWord`, снятые в
+           домашней описи). Поэтому знак не РЯДОМ с цифрой, а ПОД ней: монета с
+           оттиском, на которой отчеканено число.
+           Приглушён и обведён светом той же лампы, что и сам кружок.
+           Без формы знака нет: `shape-none` — это цифра без подложки, и чеканить
+           оттиск не на чем; жетон (`plate`) — чужой рисунок, и класть на него
+           свой глиф значило бы обвести его тем, чего на рисунке нет, ровно по
+           той же причине, по которой под жетоном молчат краска и кайма. -->
+      {#snippet badgeGlyph(kind: BadgeKind, shape: string, plate: string)}
+        {#if shape !== 'none' && !plate}
+          <span class="corner-glyph" aria-hidden="true">
+            <BattleIcon name={statMark(kind)} size="0.78em" weight={1.05} />
+          </span>
+        {/if}
+      {/snippet}
+
       {#snippet badge(kind: BadgeKind)}
         {@const keys = BADGE_FIELDS[kind]}
         {@const label = $t(
@@ -1679,6 +1724,7 @@
               onpointercancel={badgeDragEnd}
             >
               {#if wear}<span class="corner-wear" style={wear}></span>{/if}
+              {@render badgeGlyph(kind, shape, plate)}
               <span class="corner-num">{value}</span>
             </button>
           {:else}
@@ -1691,6 +1737,7 @@
               aria-label={named}
             >
               {#if wear}<span class="corner-wear" style={wear}></span>{/if}
+              {@render badgeGlyph(kind, shape, plate)}
               <span class="corner-num">{value}</span>
             </span>
           {/if}
@@ -2233,6 +2280,34 @@
     text-shadow: 0 0.1cqi 0.15cqi color-mix(in oklab, #000 26%, transparent);
   }
 
+  /* Оттиск на монете. Стоит в той же клетке сетки, что и цифра, — иначе
+     кружок вырос бы под ним, а величина значка это ОДНА ручка хранителя.
+     `1em` здесь — ширина кружка: кегль назначен той же меркой, которой
+     назначена его коробка, и знак растёт вместе с ней сам.
+
+     Красится ЧЕРНИЛАМИ ЦИФРЫ (`color: inherit`), а не своим цветом и не
+     умножением. Умножение было первой мыслью — тем же законом, что у трещин
+     сургуча, — но трещина темнит то, что под ней ВСЕГДА, а оттиск на тёмной
+     монете обязан светлеть: чернила цифры уже выбраны под заливку (`badgeInk`
+     или рука хранителя), и оттиск, взявший их, светел на тёмном и тёмен на
+     светлом сам, без единого разбора яркости. */
+  .corner-glyph {
+    grid-area: 1 / 1;
+    display: grid;
+    place-items: center;
+    font-size: calc(10.5cqi * var(--badge-size, 1));
+    color: inherit;
+    opacity: 0.5;
+    pointer-events: none;
+  }
+
+  /* Цифра — В ТОЙ ЖЕ клетке и поверх оттиска. Названо здесь, а не оставлено
+     потоку: два элемента в сетке встали бы друг под другом и растянули кружок
+     вдвое. */
+  .corner-num {
+    grid-area: 1 / 1;
+  }
+
   .corner-word {
     margin-top: 0.7cqi;
     font-size: calc(3.2cqi * var(--type-scale, 1));
@@ -2639,9 +2714,32 @@
     padding-left: var(--body-pad-left, 0);
   }
 
+  .number {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55ch;
+    white-space: nowrap;
+  }
+
   .number b {
     font-weight: 600;
     letter-spacing: 0;
+  }
+
+  /* Знак меряется КАРТОЙ, а не точками: `1em` берёт кегль строки, а кегль
+     строки карта уже считает из своей ширины (`cqi`). Пиксель, назначенный
+     здесь, стоял бы на карте в 140 px тем же, чем на карте в 400.
+
+     Опущен на волос: линии глифа стоят по всей высоте холста, а буквы вокруг
+     — от базовой линии до высоты прописной, и выровненный по базовой линии
+     знак висел бы над словом.
+
+     Указателя не берёт: строку тянут за неё саму (`data-row`), и глиф под
+     пальцем перехватил бы нажатие у того, кто его слушает. */
+  .number :global(svg) {
+    flex: 0 0 auto;
+    opacity: 0.82;
+    pointer-events: none;
   }
 
   .art {
