@@ -23,3 +23,10 @@ src-tauri/server/data
 /src-tauri/server/data/
 # Prod-backup media restored locally for start_all.sh --restore
 /src-tauri/server/uploads/
+
+# venv для tools/ (pillow + numpy)
+.venv-tools/
+live_drop/
+
+# Копия значков рамок перед переносом их с резьбы внутрь окна (см. .badge-revert/revert.sql)
+.badge-revert/
