@@ -320,9 +320,15 @@
 
     {#if !draft}
       <div class="p-5 max-w-[62ch]">
-        <p class="mb-4 text-[11px] leading-relaxed italic text-[#8a6a55]">
-          {$t('adminErrandsIntro')}
-        </p>
+        <details class="mb-4">
+          <summary
+            class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+            >{$t('adminBattlesHintOpen')}</summary
+          >
+          <p class="mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]">
+            {$t('adminErrandsIntro')}
+          </p>
+        </details>
         <!-- Предпросмотр стоит здесь, а не под формой: хранитель приходит на
              стол посмотреть, что видит гость, чаще, чем что-то править. -->
         <p class="mb-2 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]">
@@ -338,9 +344,15 @@
       <div class="p-5 max-w-[70ch] space-y-5">
         <!-- Правка суммы прошлое не переписывает: книга только дописывается.
              Сказано словами, а не оставлено догадываться. -->
-        <p class="text-[11px] leading-relaxed italic text-[#8a6a55]">
-          {$t('adminErrandsLedgerNote')}
-        </p>
+        <details>
+          <summary
+            class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+            >{$t('adminBattlesHintOpen')}</summary
+          >
+          <p class="mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]">
+            {$t('adminErrandsLedgerNote')}
+          </p>
+        </details>
 
         <div class="grid grid-cols-2 gap-3">
           <label class="block">

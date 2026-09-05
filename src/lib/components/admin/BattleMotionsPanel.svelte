@@ -1756,7 +1756,10 @@
               </div>
             {/each}
           </div>
-          <p class="hint">{$t('adminMotionsBeatNote')}</p>
+          <details class="hint-fold">
+            <summary>{$t('adminBattlesHintOpen')}</summary>
+            <p class="hint">{$t('adminMotionsBeatNote')}</p>
+          </details>
         </div>
 
         <!-- ── Ящики: источники, а не рабочая поверхность ─────────────── -->
@@ -1773,7 +1776,10 @@
                 {/if}
               </span>
             </summary>
-            <p class="hint">{$t('adminMotionsStripNote')}</p>
+            <details class="hint-fold">
+              <summary>{$t('adminBattlesHintOpen')}</summary>
+              <p class="hint">{$t('adminMotionsStripNote')}</p>
+            </details>
             <div class="strip-cells">
               {#each stripCells as cell, i (i)}
                 <div
@@ -1882,7 +1888,10 @@
                   >{$t('adminMotionsDrop')}</button
                 >
               </div>
-              <p class="hint">{$t('adminMotionsHint')}</p>
+              <details class="hint-fold">
+                <summary>{$t('adminBattlesHintOpen')}</summary>
+                <p class="hint">{$t('adminMotionsHint')}</p>
+              </details>
               <p class="kicker mt">{$t('adminMotionsWornBy')}</p>
               {#if wearers.length}
                 <ul class="worn">
@@ -1902,7 +1911,10 @@
       <aside class="side" onpointerdowncapture={mark} onfocusincapture={mark}>
         {#if hand === 'frame' && stripHeld}
           <p class="kicker">{$t('adminMotionsStripPose')} {stripAt + 1}</p>
-          <p class="hint">{$t('adminMotionsStripPoseNote')}</p>
+          <details class="hint-fold">
+            <summary>{$t('adminBattlesHintOpen')}</summary>
+            <p class="hint">{$t('adminMotionsStripPoseNote')}</p>
+          </details>
           <div class="row">
             <button type="button" class="btn" onclick={() => (picking = stripAt)}
               >{$t('adminMotionsFromStore')}</button
@@ -2015,8 +2027,11 @@
                 {/each}
               </div>
             {/each}
-            <p class="hint">{$t('adminMotionsTasteNote')}</p>
-            <p class="hint">{$t('adminMotionsLightNote')}</p>
+            <details class="hint-fold">
+              <summary>{$t('adminBattlesHintOpen')}</summary>
+              <p class="hint">{$t('adminMotionsTasteNote')}</p>
+              <p class="hint">{$t('adminMotionsLightNote')}</p>
+            </details>
           {/if}
 
           {#if gesture}
@@ -2044,7 +2059,10 @@
                   />
                 </label>
               </div>
-              <p class="hint">{$t('adminMotionsWhenNote')}</p>
+              <details class="hint-fold">
+                <summary>{$t('adminBattlesHintOpen')}</summary>
+                <p class="hint">{$t('adminMotionsWhenNote')}</p>
+              </details>
             </div>
           {/if}
 
@@ -2077,7 +2095,10 @@
                 {/if}
               </div>
               {#if !gesture.image}
-                <p class="hint">{$t('adminMotionsSlotNote')}</p>
+                <details class="hint-fold">
+                  <summary>{$t('adminBattlesHintOpen')}</summary>
+                  <p class="hint">{$t('adminMotionsSlotNote')}</p>
+                </details>
               {:else}
                 <label class="art-size">
                   {$t('adminMotionsSize')} <span class="tabular-nums">{gesture.size}</span>
@@ -2094,7 +2115,10 @@
                     }}
                   />
                 </label>
-                <p class="hint">{$t('adminMotionsSizeNote')}</p>
+                <details class="hint-fold">
+                  <summary>{$t('adminBattlesHintOpen')}</summary>
+                  <p class="hint">{$t('adminMotionsSizeNote')}</p>
+                </details>
                 <div class="nudge">
                   <label>
                     {$t('adminMotionsNudgeX')}
@@ -2127,7 +2151,10 @@
                     onchange={(e) => setFrames(Number(e.currentTarget.value))}
                   />
                 </label>
-                <p class="hint">{$t('adminMotionsFramesNote')}</p>
+                <details class="hint-fold">
+                  <summary>{$t('adminBattlesHintOpen')}</summary>
+                  <p class="hint">{$t('adminMotionsFramesNote')}</p>
+                </details>
                 {#if gesture.frames === STRIP_FRAMES}
                   <button
                     type="button"
@@ -2869,6 +2896,20 @@
     font-size: var(--tiny);
     line-height: 1.4;
     color: rgba(52, 37, 28, 0.55);
+  }
+
+  .hint-fold {
+    margin: 0.45rem 0 0;
+  }
+  .hint-fold summary {
+    font-size: var(--tiny);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: rgba(52, 37, 28, 0.55);
+    cursor: pointer;
+  }
+  .hint-fold .hint {
+    margin-top: 0.45rem;
   }
 
   .warn {

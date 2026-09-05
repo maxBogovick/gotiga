@@ -4118,9 +4118,17 @@
               {/each}
             </div>
             {#if frames[frameIndex].frameMode === "sliced"}
-              <p class="mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]">
-                {$t("adminBattlesFrameSlicedHint")}
-              </p>
+              <details class="mt-2">
+                <summary
+                  class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+                  >{$t("adminBattlesHintOpen")}</summary
+                >
+                <p
+                  class="mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
+                >
+                  {$t("adminBattlesFrameSlicedHint")}
+                </p>
+              </details>
             {/if}
           </div>
 
@@ -4134,9 +4142,17 @@
               >
                 {$t("adminBattlesStack")}
               </p>
-              <p class="mb-3 text-[11px] leading-relaxed italic text-[#8a6a55]">
-                {$t("adminBattlesStackHint")}
-              </p>
+              <details class="mb-3">
+                <summary
+                  class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+                  >{$t("adminBattlesHintOpen")}</summary
+                >
+                <p
+                  class="mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
+                >
+                  {$t("adminBattlesStackHint")}
+                </p>
+              </details>
               <div class="border border-[#34251c]/12">
                 {#each stack as row (row.id)}
                   <div
@@ -4291,9 +4307,17 @@
                   class="w-full mb-3 px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
                 />
                 {@render placement(heldRow.id, heldRow.kind, heldRow.piece)}
-                <p class="text-[11px] leading-relaxed italic text-[#8a6a55]">
-                  {$t("adminBattlesSliceHint")}
-                </p>
+                <details class="mt-2">
+                  <summary
+                    class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+                    >{$t("adminBattlesHintOpen")}</summary
+                  >
+                  <p
+                    class="mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
+                  >
+                    {$t("adminBattlesSliceHint")}
+                  </p>
+                </details>
               </div>
             {:else}
               <p
@@ -4425,11 +4449,17 @@
                 >
                   {$t("adminBattlesBackArt")}
                 </p>
-                <p
-                  class="max-w-[62ch] mb-3 text-[11px] leading-relaxed italic text-[#8a6a55]"
-                >
-                  {$t("adminBattlesBackArtHint")}
-                </p>
+                <details class="mb-3">
+                  <summary
+                    class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+                    >{$t("adminBattlesHintOpen")}</summary
+                  >
+                  <p
+                    class="max-w-[62ch] mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
+                  >
+                    {$t("adminBattlesBackArtHint")}
+                  </p>
+                </details>
                 <div class="flex flex-wrap items-end gap-3">
                   <button
                     onclick={uploadBackArt}
@@ -4476,16 +4506,22 @@
                 >
                   {$t("adminBattlesFrameWindow")}
                 </p>
-                <p
-                  class="max-w-[62ch] mb-3 text-[11px] leading-relaxed italic text-[#8a6a55]"
-                >
-                  {$t("adminBattlesFrameWindowHint")}
-                </p>
-                <p
-                  class="max-w-[62ch] mb-3 text-[11px] leading-relaxed italic text-[#8a6a55]"
-                >
-                  {$t("adminBattlesBandsHint")}
-                </p>
+                <details class="mb-3">
+                  <summary
+                    class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+                    >{$t("adminBattlesHintOpen")}</summary
+                  >
+                  <p
+                    class="max-w-[62ch] mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
+                  >
+                    {$t("adminBattlesFrameWindowHint")}
+                  </p>
+                  <p
+                    class="max-w-[62ch] mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
+                  >
+                    {$t("adminBattlesBandsHint")}
+                  </p>
+                </details>
                 <div class="flex flex-wrap gap-5">
                   <label class="block w-40">
                     <span
@@ -4926,11 +4962,17 @@
       >
         {#if frames[frameIndex]}
           <div class="p-4">
-          <p
-            class="max-w-[62ch] mb-3 text-[11px] leading-relaxed italic text-[#8a6a55]"
-          >
-            {$t("adminBattlesRosterHint")}
-          </p>
+          <details class="mb-3">
+            <summary
+              class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+              >{$t("adminBattlesHintOpen")}</summary
+            >
+            <p
+              class="max-w-[62ch] mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
+            >
+              {$t("adminBattlesRosterHint")}
+            </p>
+          </details>
           <!-- Ящик на полосу. Строку перетаскивают внутри ящика — это
                порядок, — и из ящика в ящик — это полоса. Полоса, в которой
                строке стоять нельзя, метки не показывает вовсе: список
@@ -5216,9 +5258,15 @@
       </aside>
 
       <div class="flex-1 overflow-y-auto p-6 min-w-0">
-        <p class="max-w-[62ch] mb-1 text-xs leading-relaxed text-[#5f4636]">
-          {$t("adminBattlesBenchHint")}
-        </p>
+        <details class="mb-1">
+          <summary
+            class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+            >{$t("adminBattlesHintOpen")}</summary
+          >
+          <p class="max-w-[62ch] mt-2 text-xs leading-relaxed text-[#5f4636]">
+            {$t("adminBattlesBenchHint")}
+          </p>
+        </details>
         <p class="max-w-[62ch] mb-5 text-[11px] leading-relaxed text-[#8a6a55]">
           {$t("adminBattlesBenchNoHealth")}
         </p>
@@ -5240,11 +5288,17 @@
               >
                 {$t("adminBattlesRates")}
               </p>
-              <p
-                class="max-w-[62ch] mb-3 text-[11px] leading-relaxed italic text-[#8a6a55]"
-              >
-                {$t("adminBattlesRatesHint")}
-              </p>
+              <details class="mb-3">
+                <summary
+                  class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+                  >{$t("adminBattlesHintOpen")}</summary
+                >
+                <p
+                  class="max-w-[62ch] mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
+                >
+                  {$t("adminBattlesRatesHint")}
+                </p>
+              </details>
               <div class="flex flex-wrap items-end gap-3">
                 {#each [{ key: "liked" as const, label: $t("adminBattlesRateLiked") }, { key: "seen" as const, label: $t("adminBattlesRateSeen") }, { key: "read" as const, label: $t("adminBattlesRateRead") }] as row (row.key)}
                   <label class="block w-40">
@@ -5285,11 +5339,17 @@
               >
                 {$t("adminBattlesGift")}
               </p>
-              <p
-                class="max-w-[62ch] mb-3 text-[11px] leading-relaxed italic text-[#8a6a55]"
-              >
-                {$t("adminBattlesGiftHint")}
-              </p>
+              <details class="mb-3">
+                <summary
+                  class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+                  >{$t("adminBattlesHintOpen")}</summary
+                >
+                <p
+                  class="max-w-[62ch] mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
+                >
+                  {$t("adminBattlesGiftHint")}
+                </p>
+              </details>
               <div class="flex flex-wrap items-end gap-3">
                 {#each [{ key: "dust" as const, label: $t("adminBattlesGiftDust") }, { key: "feed" as const, label: $t("adminBattlesGiftFeed") }] as row (row.key)}
                   <label class="block w-40">
@@ -5330,11 +5390,17 @@
               >
                 {$t("adminBattlesClock")}
               </p>
-              <p
-                class="max-w-[62ch] mb-3 text-[11px] leading-relaxed italic text-[#8a6a55]"
-              >
-                {$t("adminBattlesClockHint")}
-              </p>
+              <details class="mb-3">
+                <summary
+                  class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+                  >{$t("adminBattlesHintOpen")}</summary
+                >
+                <p
+                  class="max-w-[62ch] mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
+                >
+                  {$t("adminBattlesClockHint")}
+                </p>
+              </details>
               <div class="flex flex-wrap items-end gap-3">
                 <label class="block w-40">
                   <span
@@ -5381,11 +5447,17 @@
           >
             {etudeId ? $t("adminBattlesEtude") : $t("adminBattlesEtudeNew")}
           </p>
-          <p
-            class="max-w-[62ch] mb-3 text-[11px] leading-relaxed italic text-[#8a6a55]"
-          >
-            {$t("adminBattlesEtudeHint")}
-          </p>
+          <details class="mb-3">
+            <summary
+              class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+              >{$t("adminBattlesHintOpen")}</summary
+            >
+            <p
+              class="max-w-[62ch] mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
+            >
+              {$t("adminBattlesEtudeHint")}
+            </p>
+          </details>
 
           <div class="flex flex-wrap gap-x-4 gap-y-3 items-end">
             {#each [{ label: $t("adminBattlesEtudeTitle") + " · RU", get: () => etudeTitleRu, set: (v: string) => (etudeTitleRu = v), wide: true }, { label: $t("adminBattlesEtudeTitle") + " · EN", get: () => etudeTitleEn, set: (v: string) => (etudeTitleEn = v), wide: true }, { label: $t("adminBattlesEtudeNote") + " · RU", get: () => etudeNoteRu, set: (v: string) => (etudeNoteRu = v), wide: false }, { label: $t("adminBattlesEtudeNote") + " · EN", get: () => etudeNoteEn, set: (v: string) => (etudeNoteEn = v), wide: false }] as field (field.label)}
@@ -5522,11 +5594,17 @@
                 >{$t("adminBattlesRulesOwn")}</span
               >
             </label>
-            <p
-              class="mt-1 max-w-[62ch] text-[11px] leading-relaxed italic text-[#8a6a55]"
-            >
-              {$t("adminBattlesRulesHint")}
-            </p>
+            <details class="mt-1">
+              <summary
+                class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+                >{$t("adminBattlesHintOpen")}</summary
+              >
+              <p
+                class="mt-2 max-w-[62ch] text-[11px] leading-relaxed italic text-[#8a6a55]"
+              >
+                {$t("adminBattlesRulesHint")}
+              </p>
+            </details>
 
             {#if etudeOwnRules}
               <div class="mt-3 flex flex-wrap gap-x-5 gap-y-3 items-end">
@@ -5795,14 +5873,20 @@
       поэтому своя комната, а не строка среди ставок.
     -->
     <div class="flex-1 overflow-y-auto p-6">
-      <p class="max-w-[62ch] mb-1 text-xs leading-relaxed text-[#5f4636]">
-        {$t("adminBattlesHandHint")}
-      </p>
-      <p
-        class="max-w-[62ch] mb-6 text-[11px] leading-relaxed italic text-[#8a6a55]"
-      >
-        {$t("adminBattlesHandNoteHint")}
-      </p>
+      <details class="mb-6">
+        <summary
+          class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+          >{$t("adminBattlesHintOpen")}</summary
+        >
+        <p class="max-w-[62ch] mt-2 text-xs leading-relaxed text-[#5f4636]">
+          {$t("adminBattlesHandHint")}
+        </p>
+        <p
+          class="max-w-[62ch] mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
+        >
+          {$t("adminBattlesHandNoteHint")}
+        </p>
+      </details>
 
       <div class="max-w-xl">
         <!-- Кому. Поиск, а не длинный список: гостей больше, чем помещается. -->
@@ -5912,11 +5996,17 @@
             >
               {$t("adminBattlesGive")}
             </p>
-            <p
-              class="max-w-[62ch] mb-3 text-[11px] leading-relaxed italic text-[#8a6a55]"
-            >
-              {$t("adminBattlesGiveHint")}
-            </p>
+            <details class="mb-3">
+              <summary
+                class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+                >{$t("adminBattlesHintOpen")}</summary
+              >
+              <p
+                class="max-w-[62ch] mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
+              >
+                {$t("adminBattlesGiveHint")}
+              </p>
+            </details>
             <div class="flex flex-wrap items-end gap-3">
               <label class="block w-32">
                 <span
@@ -6054,9 +6144,15 @@
           >{$t("adminBattlesMatchesRefresh")}</button
         >
       </div>
-      <p class="max-w-[70ch] mb-6 text-xs leading-relaxed text-[#5f4636]">
-        {$t("adminBattlesMatchesHint")}
-      </p>
+      <details class="mb-6">
+        <summary
+          class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+          >{$t("adminBattlesHintOpen")}</summary
+        >
+        <p class="max-w-[70ch] mt-2 text-xs leading-relaxed text-[#5f4636]">
+          {$t("adminBattlesMatchesHint")}
+        </p>
+      </details>
 
       {#if matchesBusy && !matches}
         <p class="text-xs text-[#5f4636]">…</p>
@@ -6128,11 +6224,17 @@
         <p class="mb-1 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]">
           {$t("adminBattlesByCard")}
         </p>
-        <p
-          class="max-w-[70ch] mb-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
-        >
-          {$t("adminBattlesByCardHint")}
-        </p>
+        <details class="mb-2">
+          <summary
+            class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+            >{$t("adminBattlesHintOpen")}</summary
+          >
+          <p
+            class="max-w-[70ch] mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
+          >
+            {$t("adminBattlesByCardHint")}
+          </p>
+        </details>
         <table class="w-full mb-8 text-xs border-collapse">
           <thead class="text-[10px] uppercase tracking-[0.14em] text-[#8a6a55]">
             <tr class="border-b border-[#34251c]/15">
@@ -6326,9 +6428,15 @@
     -->
     <div class="flex-1 flex min-h-0">
       <div class="flex-1 overflow-y-auto p-6 min-w-0">
-        <p class="max-w-[62ch] mb-5 text-xs leading-relaxed text-[#5f4636]">
-          {$t("adminBattlesKeywordsHint")}
-        </p>
+        <details class="mb-5">
+          <summary
+            class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+            >{$t("adminBattlesHintOpen")}</summary
+          >
+          <p class="max-w-[62ch] mt-2 text-xs leading-relaxed text-[#5f4636]">
+            {$t("adminBattlesKeywordsHint")}
+          </p>
+        </details>
 
         {#if !keywords.length}
           <p class="mb-5 text-xs italic text-[#5f4636]">
@@ -6722,9 +6830,17 @@
                 >
                   {$t("adminBattlesRaceIcon")}
                 </p>
-                <p class="mt-1 text-[11px] leading-relaxed italic text-[#8a6a55]">
-                  {$t("adminBattlesRaceIconHint")}
-                </p>
+                <details class="mt-1">
+                  <summary
+                    class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+                    >{$t("adminBattlesHintOpen")}</summary
+                  >
+                  <p
+                    class="mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
+                  >
+                    {$t("adminBattlesRaceIconHint")}
+                  </p>
+                </details>
                 {#if raceIconUrl.trim()}
                   <button
                     onclick={() => (raceIconUrl = "")}
@@ -6813,9 +6929,17 @@
                 {$t("adminBattlesFitNone")}
               </p>
             {/if}
-            <p class="text-[10px] leading-relaxed italic text-[#8a6a55]">
-              {$t("adminBattlesFitHint")}
-            </p>
+            <details class="mt-2">
+              <summary
+                class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+                >{$t("adminBattlesHintOpen")}</summary
+              >
+              <p
+                class="mt-2 text-[10px] leading-relaxed italic text-[#8a6a55]"
+              >
+                {$t("adminBattlesFitHint")}
+              </p>
+            </details>
           {/if}
         </div>
         <div class="flex-1 overflow-y-auto">
@@ -7042,9 +7166,17 @@
                   <p class="mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">
                     {$t("adminBattlesAim")}
                   </p>
-                  <p class="mb-3 text-[11px] leading-relaxed italic text-[#8a6a55]">
-                    {$t("adminBattlesAimHint")}
-                  </p>
+                  <details class="mb-3">
+                    <summary
+                      class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+                      >{$t("adminBattlesHintOpen")}</summary
+                    >
+                    <p
+                      class="mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
+                    >
+                      {$t("adminBattlesAimHint")}
+                    </p>
+                  </details>
                   <div class="grid grid-cols-3 gap-3">
                     <label class="block">
                       <span
@@ -7458,9 +7590,17 @@
                     />
                   {/each}
                 </StatPlate>
-                <p class="mt-1.5 text-[10px] leading-snug italic text-[#8a6a55]">
-                  {$t("adminBattlesManaHint")}
-                </p>
+                <details class="mt-1.5">
+                  <summary
+                    class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+                    >{$t("adminBattlesHintOpen")}</summary
+                  >
+                  <p
+                    class="mt-2 text-[10px] leading-snug italic text-[#8a6a55]"
+                  >
+                    {$t("adminBattlesManaHint")}
+                  </p>
+                </details>
 
                 <!-- Бюджет чина. Забор, а не весы: сумма очков крупно права
                      («не больше двадцати на третий чин»), а тонко — нет, и
@@ -7798,9 +7938,17 @@
                 </div>
 
                 <!-- Лестница уровней. Заводится сейчас, поднимаются по ней в 1c. -->
-                <p class="mt-4 mb-2 text-[11px] leading-relaxed italic text-[#8a6a55]">
-                  {$t("adminBattlesLevelPriceHint")}
-                </p>
+                <details class="mt-4 mb-2">
+                  <summary
+                    class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+                    >{$t("adminBattlesHintOpen")}</summary
+                  >
+                  <p
+                    class="mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
+                  >
+                    {$t("adminBattlesLevelPriceHint")}
+                  </p>
+                </details>
                 <div class="grid grid-cols-4 gap-2">
                   {#each [0, 1, 2, 3] as step (step)}
                     <SheetField label={`${step + 1}→${step + 2}`}>
@@ -7831,9 +7979,17 @@
                   />
                   <span>
                     {$t("adminBattlesLendable")}
-                    <span class="block text-[#8a6a55] italic"
-                      >{$t("adminBattlesLendableHint")}</span
-                    >
+                    <details class="mt-1">
+                      <summary
+                        class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+                        >{$t("adminBattlesHintOpen")}</summary
+                      >
+                      <p
+                        class="mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
+                      >
+                        {$t("adminBattlesLendableHint")}
+                      </p>
+                    </details>
                   </span>
                 </label>
               </SheetPanel>

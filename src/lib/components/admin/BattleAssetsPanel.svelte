@@ -457,9 +457,15 @@
         </button>
         {#if knobsOpen}
           <div class="px-3 pb-4 border-t border-[#34251c]/10">
-            <p class="max-w-[62ch] my-3 text-xs leading-relaxed text-[#5f4636]">
-              {$t('adminAssetsSettingsHint')}
-            </p>
+            <details class="my-3">
+              <summary
+                class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+                >{$t('adminBattlesHintOpen')}</summary
+              >
+              <p class="max-w-[62ch] mt-2 text-xs leading-relaxed text-[#5f4636]">
+                {$t('adminAssetsSettingsHint')}
+              </p>
+            </details>
             <div class="flex flex-wrap gap-x-6 gap-y-3">
               <label class="block w-40">
                 <span class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">
@@ -625,9 +631,15 @@
           class="ml-auto px-4 py-2 text-[10px] uppercase tracking-[0.16em] bg-[#34251c] text-[#f8f1e7] disabled:opacity-40"
         >{$t('adminAssetsSaveChosen')}</button>
       </div>
-      <p class="max-w-[62ch] mb-5 text-[11px] leading-relaxed text-[#8a6a55]">
-        {$t('adminAssetsCaptionsHint')}
-      </p>
+      <details class="mb-5">
+        <summary
+          class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+          >{$t('adminBattlesHintOpen')}</summary
+        >
+        <p class="max-w-[62ch] mt-2 text-[11px] leading-relaxed text-[#8a6a55]">
+          {$t('adminAssetsCaptionsHint')}
+        </p>
+      </details>
 
       <div class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));">
         {#each shownParts as part (part.index)}
@@ -800,9 +812,15 @@
           </div>
         </div>
       {:else if scope === 'loose'}
-        <p class="max-w-[62ch] mb-5 text-xs leading-relaxed text-[#5f4636]">
-          {$t('adminAssetsLooseHint')}
-        </p>
+        <details class="mb-5">
+          <summary
+            class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+            >{$t('adminBattlesHintOpen')}</summary
+          >
+          <p class="max-w-[62ch] mt-2 text-xs leading-relaxed text-[#5f4636]">
+            {$t('adminAssetsLooseHint')}
+          </p>
+        </details>
       {/if}
 
       <div class="flex flex-wrap items-center gap-3 mb-4">

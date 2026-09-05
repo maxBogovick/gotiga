@@ -1217,6 +1217,7 @@ export const enAdmin = {
   adminBattlesFrameOverlay: 'On top \u2014 cut-out',
   adminBattlesFrameBehind: 'Behind \u2014 solid',
   adminBattlesFrameSliced: 'Built from parts \u2014 corner and sides',
+  adminBattlesHintOpen: 'How this works',
   adminBattlesFrameNoAlpha: 'That picture has no hole in it, so it has been set behind the card. A cut-out frame must be a PNG with a transparent middle.',
   adminBattlesFrameSlicedHint: 'Three pictures instead of one: a corner (mirrored into all four), a top edge (mirrored for the foot) and a left edge (mirrored for the right). The four sliders below set how wide each band is \u2014 where every piece STARTS. Where it ends is its own, under the picture: carving does not tile, so a corner is meant to sit on its edge and an accent to bleed over both.',
   adminBattlesSlicePlacement: 'How it lies',

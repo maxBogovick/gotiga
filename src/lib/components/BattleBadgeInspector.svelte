@@ -178,7 +178,10 @@
           >
         {/if}
       </div>
-      <p class="bi-hint">{$t('adminBattlesBadgePlateHint')}</p>
+      <details class="bi-hint-fold">
+        <summary>{$t('adminBattlesHintOpen')}</summary>
+        <p class="bi-hint">{$t('adminBattlesBadgePlateHint')}</p>
+      </details>
     </section>
   {/if}
 
@@ -507,6 +510,20 @@
         transparent 0% 50%
       )
       0 0 / 0.5em 0.5em;
+  }
+
+  .bi-hint-fold {
+    margin: 0.35em 0 0;
+  }
+  .bi-hint-fold summary {
+    font-size: 0.78em;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    opacity: 0.6;
+    cursor: pointer;
+  }
+  .bi-hint-fold .bi-hint {
+    margin-top: 0.35em;
   }
 
   .bi-hint {

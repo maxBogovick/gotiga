@@ -83,9 +83,15 @@
   <p class="text-[10px] uppercase tracking-[0.16em] text-[#6f3b24]">
     {$t('adminMotionsWear')}
   </p>
-  <p class="mt-0.5 text-[10px] leading-snug text-[#34251c]/55">
-    {$t('adminMotionsWearNote')}
-  </p>
+  <details class="mt-0.5">
+    <summary
+      class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+      >{$t('adminBattlesHintOpen')}</summary
+    >
+    <p class="mt-1 text-[10px] leading-snug text-[#34251c]/55">
+      {$t('adminMotionsWearNote')}
+    </p>
+  </details>
   <div class="mt-1.5 space-y-1">
     {#each MOTION_OCCASIONS as occasion (occasion)}
       {@const kinId = kin[occasion]}

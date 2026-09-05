@@ -12,6 +12,7 @@
   // прибита к пергаменту дома: панель ставят и на затенённую подложку, и
   // разрыв линейки тогда пришлось бы замазывать вторым цветом руками.
   import type { Snippet } from 'svelte';
+  import { t } from '$lib/i18n';
 
   let {
     title,
@@ -75,7 +76,10 @@
 
   <div class="body" class:body--tight={pad === 'tight'} class:body--bare={pad === 'none'}>
     {#if note}
-      <p class="note">{note}</p>
+      <details class="note-fold">
+        <summary>{$t('adminBattlesHintOpen')}</summary>
+        <p class="note">{note}</p>
+      </details>
     {/if}
     {@render children()}
   </div>
@@ -209,8 +213,18 @@
     padding: 0;
   }
 
-  .note {
+  .note-fold {
     margin-bottom: 0.7rem;
+  }
+  .note-fold summary {
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: #8a6a55;
+    cursor: pointer;
+  }
+  .note {
+    margin-top: 0.5rem;
     font-size: 11px;
     line-height: 1.5;
     font-style: italic;
