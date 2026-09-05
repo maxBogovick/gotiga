@@ -80,6 +80,17 @@ fn strikes_by_default() -> bool {
 /// rule. Past five the card can no longer be understood at a glance.
 pub const STATUS_CAP: usize = 5;
 
+/// Turns left before one ability may be asked again.
+///
+/// Kept as a list rather than a map: order must be deterministic, and this
+/// crate refuses `HashMap` for that reason alone.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AbilityCooldown {
+    pub id: String,
+    pub left: u8,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Unit {
@@ -130,6 +141,10 @@ pub struct Unit {
     pub statuses: Vec<Status>,
     /// The one channel this unit does not feel at all. Rare, tier 5, one turn.
     pub immune: Option<crate::damage::Channel>,
+    /// Cooldowns of abilities this body has already used. Empty on matches
+    /// begun before abilities arrived.
+    #[serde(default)]
+    pub ability_cds: Vec<AbilityCooldown>,
 }
 
 impl Unit {
@@ -153,6 +168,7 @@ impl Unit {
             shield: 0,
             statuses: Vec::new(),
             immune: None,
+            ability_cds: Vec::new(),
         }
     }
 
@@ -179,7 +195,79 @@ impl Unit {
             shield: 0,
             statuses: Vec::new(),
             immune: None,
+            ability_cds: Vec::new(),
         }
+    }
+
+    /// Turns left before this ability may be asked again. Zero — free to use.
+    pub fn ability_cd(&self, id: &str) -> u8 {
+        self.ability_cds
+            .iter()
+            .find(|c| c.id == id)
+            .map(|c| c.left)
+            .unwrap_or(0)
+    }
+
+    /// Start a cooldown after an ability is used. Zero turns is a no-op: the
+    /// ability may be asked again next turn (the body's `acted` still holds).
+    pub fn start_ability_cd(&mut self, id: &str, turns: u8) {
+        if turns == 0 || id.is_empty() {
+            return;
+        }
+        if let Some(existing) = self.ability_cds.iter_mut().find(|c| c.id == id) {
+            existing.left = turns;
+            return;
+        }
+        self.ability_cds.push(AbilityCooldown {
+            id: id.to_string(),
+            left: turns,
+        });
+    }
+
+    /// Tick every cooldown by one turn of this body. Called at the opening of
+    /// its side's turn — the same moment `acted` clears.
+    pub fn tick_ability_cds(&mut self) {
+        for cd in self.ability_cds.iter_mut() {
+            cd.left = cd.left.saturating_sub(1);
+        }
+        self.ability_cds.retain(|c| c.left > 0);
+    }
+
+    /// The active heal this body may cast right now, if any — and if the side
+    /// has the mana. Body `mend` is the fallback when no ability is ready.
+    pub fn ready_heal<'a>(
+        &'a self,
+        mana: i32,
+    ) -> Option<crate::card::AbilitySnapshot> {
+        for (i, a) in self.card.abilities.iter().enumerate() {
+            if !a.is_active_heal() {
+                continue;
+            }
+            if a.shape != "one" && a.shape != "self" {
+                // Other shapes arrive with the rest of the ability engine.
+                continue;
+            }
+            let key = ability_key(a, i);
+            if self.ability_cd(&key) > 0 {
+                continue;
+            }
+            if a.mana_cost > mana {
+                continue;
+            }
+            let mut ready = a.clone();
+            // Empty ids must still key a cooldown: the archive allows them, and
+            // two empty ids on one card would otherwise share a single timer.
+            if ready.id.is_empty() {
+                ready.id = key;
+            }
+            return Some(ready);
+        }
+        None
+    }
+
+    /// Whether this body has any way to mend — ability or printed field.
+    pub fn can_mend(&self, mana: i32) -> bool {
+        self.ready_heal(mana).is_some() || self.mend > 0
     }
 
     pub fn with_owner(mut self, owner: crate::board::Side) -> Self {
@@ -266,5 +354,15 @@ impl Unit {
     /// number is the mistake this whole crate is arranged to avoid.
     pub fn printed_power(&self) -> i32 {
         (self.power + self.status_sum(Stat::Power)).max(0)
+    }
+}
+
+/// Stable key for a cooldown slot. Prefers the ability's own id; falls back to
+/// its place on the card so an empty id is still one timer, not a shared one.
+pub fn ability_key(a: &crate::card::AbilitySnapshot, index: usize) -> String {
+    if a.id.is_empty() {
+        format!("#{index}")
+    } else {
+        a.id.clone()
     }
 }

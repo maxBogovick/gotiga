@@ -1137,6 +1137,34 @@ export const BADGE_SCALE_MAX = 4;
 
 /** Голая цифра — её собственная коробка, в cqi: кегль 6.6cqi при высоте строки 1. */
 export const BADGE_BARE = 6.6;
+
+/**
+ * Знак рядом с цифрой значка и просвет между ними, в cqi.
+ *
+ * Зеркало `.corner-glyph` и `gap` у `.corner`, правятся только вместе. Знак
+ * мерится ЦИФРОЙ, а не плашкой: 0.72 её кегля (`BADGE_BARE`), потому что
+ * равняется он на прописную полосу числа, а не на середину коробки — Georgia
+ * набирает старостильные цифры, и у «3» середина рисунка на 0.167em ниже
+ * середины её коробки. Подробнее — там же, в CSS.
+ */
+export const BADGE_GLYPH = BADGE_BARE * 0.72;
+export const BADGE_GLYPH_GAP = 1.5;
+
+/**
+ * Во сколько раз плашка со знаком шире своей высоты.
+ *
+ * Знак стоит РЯДОМ с цифрой, а не под ней: оттиск, положенный в ту же клетку,
+ * — это не «цифра со значком», а две вещи, наложенные одна на другую, и число
+ * от него мутнеет. Поэтому кружок со знаком перестаёт быть кружком и
+ * становится плашкой.
+ *
+ * Взято по ДВУЗНАЧНОМУ числу, а рисуется по месту (`width: auto`): цифр у
+ * стоимости одна, у силы и здоровья бывает две, и ширина, посчитанная по
+ * одной, обрезала бы вторую. Мерка, взятая с запасом, ошибается в безопасную
+ * сторону — значок не подпускается к самому углу карты на пару процентов её
+ * ширины; мерка в притык дала бы срез, а срез виден.
+ */
+export const BADGE_PILL = 1.72;
 /** Ширина цифры к её кеглю. Замерено на цифрах Georgia (0.565); взято с
  *  запасом, потому что цифр бывает две. */
 export const BADGE_BARE_ASPECT = 0.62;
@@ -1161,14 +1189,38 @@ export type BadgeExtent = { w: number; h: number };
 export function badgeExtent(frame: BattleFrame, kind: BadgeKind): BadgeExtent {
   const shape = badgeShape(frame, kind);
   const scale = badgeScale(frame, kind);
+  const marked = badgeWearsMark(frame, kind);
   // Жетон — это и есть нарисованная подложка, поэтому коробка у него та же,
   // что у формы, даже когда форма снята: «нет формы — нет коробки» сказано про
   // одинокую цифру, а под цифрой с жетоном коробка нарисована.
   if (shape !== 'none' || badgePlate(frame, kind)) {
-    return { w: BADGE_SIZE * scale, h: BADGE_SIZE * scale };
+    // Со знаком коробка ШИРЕ своей высоты: знак стоит рядом с цифрой, и
+    // квадратная мерка отдала бы карте отступ под кружок там, где нарисована
+    // плашка. То же число читают и прижим к карте, и отступ шапки.
+    return { w: BADGE_SIZE * scale * (marked ? BADGE_PILL : 1), h: BADGE_SIZE * scale };
   }
   const h = BADGE_BARE * scale * clampScale(frame.typeScale, 0.75, 1.5);
-  return { w: h * BADGE_BARE_ASPECT, h };
+  const bare = h * BADGE_BARE_ASPECT;
+  return {
+    w: marked ? bare + (BADGE_GLYPH + BADGE_GLYPH_GAP) * scale : bare,
+    h: marked ? Math.max(h, BADGE_GLYPH * scale) : h,
+  };
+}
+
+/**
+ * Носит ли значок свой знак.
+ *
+ * Не носит только под жетоном: жетон — чужой рисунок, и знак, положенный
+ * рядом с цифрой внутри плашки, растянул бы этот рисунок ради места, которого
+ * на нём не рисовали. Без формы — носит: там нет подложки, но есть цифра, а
+ * знак заводили ради неё, а не ради подложки.
+ *
+ * Спрашивается ОДНОЙ функцией, потому что ответ нужен трижды и врозь: коробке
+ * (`badgeExtent`), отрисовщику и отступу шапки. Разошедшись, они дали бы
+ * отступ под плашку, которой нет.
+ */
+export function badgeWearsMark(frame: BattleFrame, kind: BadgeKind): boolean {
+  return !badgePlate(frame, kind);
 }
 export const BADGE_WEIGHTS = [300, 400, 500, 600, 700, 800];
 
@@ -1397,11 +1449,36 @@ export function frameFor(tier: number, frames: BattleFrame[] | null | undefined)
  *  exactly what it meant when it was saved. */
 export type FrameOverride = Partial<Omit<BattleFrame, 'tier' | 'nameEn' | 'nameRu'>>;
 
-/** A frame taken off and folded into a dress — everything but its rank and
- *  its name, which belong to the dictionary it came from. */
+/** A frame taken off and folded into a dress — carving, paint and window.
+ *
+ *  Rank and name stay with the dictionary. The roster (`sheet`) and the two
+ *  type multipliers stay with Card Face on the five ranks: a race that wore a
+ *  frozen copy of the roster would hide later Face edits on the shelf forever.
+ *  Wearing a preset onto a RANK still copies the roster explicitly there. */
 export function dressOf(frame: BattleFrame): FrameOverride {
-  const { tier: _tier, nameEn: _nameEn, nameRu: _nameRu, ...dress } = frame;
+  const {
+    tier: _tier,
+    nameEn: _nameEn,
+    nameRu: _nameRu,
+    sheet: _sheet,
+    typeScale: _typeScale,
+    inkFade: _inkFade,
+    ...dress
+  } = frame;
   return { ...dress };
+}
+
+/** Race dresses may still carry a roster snapshotted before Card Face was
+ *  its own desk — strip it so the rank's sheet reaches the shelf. */
+function dressCarving(patch: FrameOverride | null): FrameOverride | null {
+  if (!patch) return null;
+  const {
+    sheet: _sheet,
+    typeScale: _typeScale,
+    inkFade: _inkFade,
+    ...dress
+  } = patch;
+  return dress;
 }
 
 /** A broken or empty override is the same as none: the tier's own frame. */
@@ -1453,13 +1530,12 @@ function patchFrame(base: BattleFrame, patch: FrameOverride | null): BattleFrame
 
 /**
  * The frame this ONE card actually wears, built in three layers:
- *   1. the tier's shared frame
- *   2. the card's race, dressed for this level of an owned copy (if the race
- *      set one for that level — a level nobody dressed keeps the tier's own)
- *   3. this one card's own `frameOverride` — the keeper's most specific
- *      exception, "wear a picture of your own", wins over both of the above
- * A layer wears only what it names — usually a picture and its window, and,
- * when the keeper took a whole saved frame out of the drawer, the whole design.
+ *   1. the tier's shared frame — carving AND roster (Card Face)
+ *   2. the card's race, dressed for this level of an owned copy (carving only;
+ *      a level nobody dressed keeps the tier's own)
+ *   3. this one card's own `frameOverride` — carving only, same reason
+ * Roster never comes from a dress: Face edits the five ranks, and a frozen
+ * copy on a race or a card would hide those edits on the shelf forever.
  * The rank itself and its name are the dictionary's alone at every layer.
  */
 export function frameForCard(
@@ -1469,8 +1545,8 @@ export function frameForCard(
 ): BattleFrame {
   let frame = frameFor(card.tier, frames);
   const levelFrames = parseLevelFrames(card.raceLevelFrames);
-  frame = patchFrame(frame, levelFrames[clampTier(level ?? 1) - 1]);
-  frame = patchFrame(frame, parseFrameOverride(card.frameOverride));
+  frame = patchFrame(frame, dressCarving(levelFrames[clampTier(level ?? 1) - 1]));
+  frame = patchFrame(frame, dressCarving(parseFrameOverride(card.frameOverride)));
   return frame;
 }
 

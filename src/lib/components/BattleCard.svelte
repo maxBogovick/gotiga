@@ -65,6 +65,7 @@
     badgeShape,
     badgeText,
     badgeUnfilled,
+    badgeWearsMark,
     sealWear,
     DEFAULT_ASPECT,
     sheetOf,
@@ -1650,21 +1651,19 @@
          local z-index, and inside `.content`'s BOX it could never be dragged
          out onto the frame at all. -->
     <div class="badges-layer">
-      <!-- Знак числа, вычеканенный на самом кружке.
-           Рядом его поставить некуда: у значка нет строки, он стоит один в
-           углу карты, и слово рядом с ним дом уже пробовал — оно висело под
-           кружком и обрезалось шапкой (`costWord`/`powerWord`, снятые в
-           домашней описи). Поэтому знак не РЯДОМ с цифрой, а ПОД ней: монета с
-           оттиском, на которой отчеканено число.
-           Приглушён и обведён светом той же лампы, что и сам кружок.
-           Без формы знака нет: `shape-none` — это цифра без подложки, и чеканить
-           оттиск не на чем; жетон (`plate`) — чужой рисунок, и класть на него
-           свой глиф значило бы обвести его тем, чего на рисунке нет, ровно по
-           той же причине, по которой под жетоном молчат краска и кайма. -->
-      {#snippet badgeGlyph(kind: BadgeKind, shape: string, plate: string)}
-        {#if shape !== 'none' && !plate}
+      <!-- Знак числа — СБОКУ от цифры, внутри той же плашки.
+           Сперва он был положен ПОД цифру оттиском, и это оказалось не «цифра
+           со значком», а две вещи, наложенные одна на другую: знак мутил
+           число, число прятало знак. Поэтому кружок со знаком перестаёт быть
+           кружком и становится плашкой, ровно на знак шире (`BADGE_PILL` — то
+           же число читают прижим к карте и отступ шапки, иначе карта отдала бы
+           отступ под кружок там, где нарисована плашка).
+           Не носит знака только жетон: он чужой рисунок, и место под знак
+           растянуло бы его ради того, чего на нём не рисовали. -->
+      {#snippet badgeGlyph(kind: BadgeKind, marked: boolean)}
+        {#if marked}
           <span class="corner-glyph" aria-hidden="true">
-            <BattleIcon name={statMark(kind)} size="0.78em" weight={1.05} />
+            <BattleIcon name={statMark(kind)} size="100%" weight={1.35} />
           </span>
         {/if}
       {/snippet}
@@ -1688,6 +1687,7 @@
         {@const fill = badgeText(frame, kind, 'fill')}
         {@const plate = badgePlate(frame, kind)}
         {@const paint = badgeStyle(frame, kind)}
+        {@const marked = badgeWearsMark(frame, kind)}
         <!-- Сургуч только у здоровья, и только у него он и может быть: это
              единственное число карты, которое в бою меняется. Стоимость и сила
              отпечатаны на бумаге раз и навсегда, трескаться им не с чего. -->
@@ -1714,6 +1714,7 @@
             <button
               type="button"
               class="corner corner--{kind} corner--shape-{shape} corner--editable"
+              class:corner--marked={marked}
               class:corner--unfilled={!!fill && badgeUnfilled(fill)}
               class:corner--plate={!!plate}
               style={paint}
@@ -1724,12 +1725,13 @@
               onpointercancel={badgeDragEnd}
             >
               {#if wear}<span class="corner-wear" style={wear}></span>{/if}
-              {@render badgeGlyph(kind, shape, plate)}
+              {@render badgeGlyph(kind, marked)}
               <span class="corner-num">{value}</span>
             </button>
           {:else}
             <span
               class="corner corner--{kind} corner--shape-{shape}"
+              class:corner--marked={marked}
               class:corner--unfilled={!!fill && badgeUnfilled(fill)}
               class:corner--plate={!!plate}
               style={paint}
@@ -1737,7 +1739,7 @@
               aria-label={named}
             >
               {#if wear}<span class="corner-wear" style={wear}></span>{/if}
-              {@render badgeGlyph(kind, shape, plate)}
+              {@render badgeGlyph(kind, marked)}
               <span class="corner-num">{value}</span>
             </span>
           {/if}
@@ -2224,8 +2226,10 @@
   .corner {
     position: relative;
     z-index: 2;
-    display: grid;
-    place-items: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: calc(1.5cqi * var(--badge-size, 1));
     width: calc(10.5cqi * var(--badge-size, 1));
     height: calc(10.5cqi * var(--badge-size, 1));
     margin: 0;
@@ -2280,32 +2284,72 @@
     text-shadow: 0 0.1cqi 0.15cqi color-mix(in oklab, #000 26%, transparent);
   }
 
-  /* Оттиск на монете. Стоит в той же клетке сетки, что и цифра, — иначе
-     кружок вырос бы под ним, а величина значка это ОДНА ручка хранителя.
-     `1em` здесь — ширина кружка: кегль назначен той же меркой, которой
-     назначена его коробка, и знак растёт вместе с ней сам.
+  /* Знак ВОЗЛЕ цифры, и мерится он ЦИФРОЙ, а не плашкой: кегль у него тот же,
+     что у числа, а рост и место названы в долях этого кегля.
 
-     Красится ЧЕРНИЛАМИ ЦИФРЫ (`color: inherit`), а не своим цветом и не
-     умножением. Умножение было первой мыслью — тем же законом, что у трещин
-     сургуча, — но трещина темнит то, что под ней ВСЕГДА, а оттиск на тёмной
-     монете обязан светлеть: чернила цифры уже выбраны под заливку (`badgeInk`
-     или рука хранителя), и оттиск, взявший их, светел на тёмном и тёмен на
-     светлом сам, без единого разбора яркости. */
+     Иначе знак и цифра стоят на разной высоте, и это не придирка, а свойство
+     шрифта: Georgia набирает СТАРОСТИЛЬНЫЕ цифры — 3, 4, 5, 7, 9 свисают ниже
+     базовой линии, 6 и 8 лезут выше прописной. Замерено: у «3» середина
+     рисунка на 0.167em ниже середины её коробки, у «8» — ровно в середине.
+     Поэтому центровать коробки (`align-items: center`) нельзя: знак вставал
+     посередине плашки, а цифра — где ей велел шрифт, и одна пара выглядела
+     ровной, а другая косой. Лигатурных прописных цифр у Georgia нет (нет
+     `lnum`), выбора начертания тут не существует.
+
+     Равняем по ПРОПИСНОЙ ПОЛОСЕ — от базовой линии до высоты цифры: это то,
+     что глаз читает как «тело» числа, хвост старостильной тройки в счёт не
+     идёт. Полоса эта лежит на 0.078em ниже середины коробки (базовая линия
+     0.8475em от верха при `line-height: 1`, высота цифры 0.5415em), а сама
+     она в 0.5415em ростом — отсюда и рост знака: 0.72em коробки, потому что
+     рисунок занимает около трёх четвертей своего холста 16×16.
+
+     Красится ЧЕРНИЛАМИ ЦИФРЫ (`color: inherit`), а не своим цветом: чернила
+     уже выбраны под заливку (`badgeInk` или рука хранителя), и знак, взявший
+     их, светел на тёмной плашке и тёмен на светлой сам, без разбора яркости. */
   .corner-glyph {
-    grid-area: 1 / 1;
     display: grid;
     place-items: center;
-    font-size: calc(10.5cqi * var(--badge-size, 1));
+    flex: 0 0 auto;
+    font-size: calc(6.6cqi * var(--type-scale, 1) * var(--badge-size, 1));
+    width: 0.72em;
+    height: 0.72em;
+    transform: translateY(0.078em);
     color: inherit;
-    opacity: 0.5;
+    opacity: 0.92;
     pointer-events: none;
   }
 
-  /* Цифра — В ТОЙ ЖЕ клетке и поверх оттиска. Названо здесь, а не оставлено
-     потоку: два элемента в сетке встали бы друг под другом и растянули кружок
-     вдвое. */
+  .corner-glyph :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
   .corner-num {
-    grid-area: 1 / 1;
+    flex: 0 0 auto;
+  }
+
+  /* Со знаком кружок перестаёт быть кружком: он ровно на знак шире.
+     Ширина здесь ПО МЕСТУ (`auto`), а мерка в `badgeExtent` — по двузначному
+     числу: цифр бывает две, и ширина, посчитанная по одной, обрезала бы
+     вторую. Мерка с запасом ошибается в безопасную сторону — значок не
+     подпускается к самому углу на пару процентов ширины карты; мерка в притык
+     дала бы срез, а срез виден. */
+  .corner--marked {
+    width: auto;
+    min-width: calc(10.5cqi * var(--badge-size, 1));
+    padding: 0 calc(2.4cqi * var(--badge-size, 1));
+  }
+
+  /* Круг, растянутый в плашку, — эллипс, а не монета. Скруглять надо по
+     МЕНЬШЕЙ стороне, и это ровно то, что делает большой радиус. */
+  .corner--marked.corner--shape-circle {
+    border-radius: 999px;
+  }
+
+  /* Без формы нет и коробки: одна цифра со знаком возле неё, без поля вокруг. */
+  .corner--marked.corner--shape-none {
+    min-width: 0;
+    padding: 0;
   }
 
   .corner-word {
@@ -2738,6 +2782,11 @@
      пальцем перехватил бы нажатие у того, кто его слушает. */
   .number :global(svg) {
     flex: 0 0 auto;
+    /* Опущен на 0.077em по той же причине и с тем же числом, что знак на
+       плашке значка (см. `.corner-glyph`): Georgia набирает старостильные
+       цифры, «7» и «3» свисают ниже базовой линии, и центровка коробок ставит
+       знак выше тела числа. Равняем по прописной полосе. */
+    transform: translateY(0.077em);
     opacity: 0.82;
     pointer-events: none;
   }

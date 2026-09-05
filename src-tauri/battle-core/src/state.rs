@@ -483,6 +483,7 @@ impl MatchState {
             if u.owner == side {
                 u.acted = false;
                 u.moved = false;
+                u.tick_ability_cds();
             }
         }
     }
@@ -749,11 +750,32 @@ pub fn reduce(state: &MatchState, action: &Action) -> Result<(MatchState, Vec<Ev
             if h.acted {
                 return Err(Illegal::AlreadyActed);
             }
-            if h.mend <= 0 {
-                return Err(Illegal::DoesNotMend);
+
+            let mana = st.side_state(side).mana;
+            let ability = h.ready_heal(mana);
+            let (amount, reach, mana_cost, allow_self, ability_id, cooldown) =
+                if let Some(ref a) = ability {
+                    (a.amount, a.range, a.mana_cost, a.shape == "self", a.id.clone(), a.cooldown)
+                } else if h.mend > 0 {
+                    (h.mend, h.reach, 0, false, String::new(), 0)
+                } else {
+                    return Err(Illegal::DoesNotMend);
+                };
+
+            if mana_cost > mana {
+                return Err(Illegal::NotEnoughMana);
             }
-            if healer == target {
-                // A mender tends others; tending itself is a different verb.
+
+            if allow_self {
+                if healer != target {
+                    // This ability only tends its bearer; another ally is not a
+                    // target it knows. Same refuse word as "do not tend yourself"
+                    // on a body mend — the list never offers the wrong one.
+                    return Err(Illegal::TargetIsAlly);
+                }
+            } else if healer == target {
+                // A mender tends others; tending itself is a different verb
+                // (shape `self` on a heal ability).
                 return Err(Illegal::TargetIsAlly);
             }
 
@@ -770,13 +792,23 @@ pub fn reduce(state: &MatchState, action: &Action) -> Result<(MatchState, Vec<Ev
 
             let from = st.board.cell_of(h.id).ok_or(Illegal::UnitIsDown)?;
             let to = st.board.cell_of(t.id).ok_or(Illegal::TargetIsDown)?;
-            if from.distance(to) > h.reach {
+            if from.distance(to) > reach {
                 return Err(Illegal::OutOfReach);
             }
 
-            let mending = crate::heal::resolve_mend(&t, h.mend);
+            let mending = crate::heal::resolve_mend(&t, amount);
             st.units[h.id as usize].acted = true;
-            events.extend(crate::heal::apply_mend(Some(h.id), &mut st.units[t.id as usize], &mending));
+            if mana_cost > 0 {
+                st.side_state_mut(side).mana -= mana_cost;
+            }
+            if !ability_id.is_empty() {
+                st.units[h.id as usize].start_ability_cd(&ability_id, cooldown);
+            }
+            events.extend(crate::heal::apply_mend(
+                Some(h.id),
+                &mut st.units[t.id as usize],
+                &mending,
+            ));
         }
 
         Action::Attack { attacker, target } => {
@@ -932,16 +964,39 @@ pub fn legal_actions(state: &MatchState) -> Vec<Action> {
 
     for healer in state.standing(side) {
         let h = &state.units[healer as usize];
-        if h.acted || h.mend <= 0 {
+        if h.acted {
+            continue;
+        }
+        let mana = state.side_state(side).mana;
+        let ability = h.ready_heal(mana);
+        let (amount, reach, allow_self) = if let Some(ref a) = ability {
+            (a.amount, a.range, a.shape == "self")
+        } else if h.mend > 0 {
+            (h.mend, h.reach, false)
+        } else {
+            continue;
+        };
+        if amount <= 0 {
             continue;
         }
         let Some(from) = state.board.cell_of(healer) else { continue };
+
+        if allow_self {
+            if state.units[healer as usize].wound() > 0 {
+                out.push(Action::Mend {
+                    healer,
+                    target: healer,
+                });
+            }
+            continue;
+        }
+
         for target in state.standing(side) {
             if target == healer || state.units[target as usize].wound() == 0 {
                 continue;
             }
             let Some(to) = state.board.cell_of(target) else { continue };
-            if from.distance(to) <= h.reach {
+            if from.distance(to) <= reach {
                 out.push(Action::Mend { healer, target });
             }
         }

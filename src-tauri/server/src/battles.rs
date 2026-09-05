@@ -1095,6 +1095,20 @@ pub fn to_snapshot(card: &crate::models::BattleCardDto) -> battle_core::CardSnap
         mend: card.mend as i32,
         channel: to_channel(&card.attack_channel),
         strikes: strikes(&card.attack_channel),
+        abilities: card
+            .abilities
+            .iter()
+            .map(|a| battle_core::AbilitySnapshot {
+                id: a.id.clone(),
+                verb: a.verb.clone(),
+                amount: a.amount as i32,
+                shape: a.shape.clone(),
+                range: clamp_reach(a.range) as u8,
+                mana_cost: a.mana_cost as i32,
+                cooldown: a.cooldown.clamp(0, 5) as u8,
+                trigger: a.trigger.clone(),
+            })
+            .collect(),
     }
 }
 
@@ -4099,6 +4113,30 @@ mod tests {
         assert_eq!(body.reach, 4);
         assert_eq!(body.step, 0);
         assert_eq!(body.mend, 5);
+        assert!(body.abilities.is_empty());
+
+        card.abilities = vec![crate::battles::CardAbility {
+            id: "cure".into(),
+            name_en: "Cure".into(),
+            name_ru: "Лечение".into(),
+            verb: "heal".into(),
+            channel: "none".into(),
+            amount: 1,
+            shape: "one".into(),
+            radius: 0,
+            range: 3,
+            duration: 0,
+            trigger: "active".into(),
+            mana_cost: 1,
+            cooldown: 5,
+            keywords: vec![],
+        }];
+        let body = to_snapshot(&card);
+        assert_eq!(body.abilities.len(), 1);
+        assert_eq!(body.abilities[0].verb, "heal");
+        assert_eq!(body.abilities[0].range, 3);
+        assert_eq!(body.abilities[0].mana_cost, 1);
+        assert_eq!(body.abilities[0].cooldown, 5);
     }
 
     #[test]

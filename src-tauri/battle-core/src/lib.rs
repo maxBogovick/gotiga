@@ -78,9 +78,9 @@ pub mod state;
 pub mod unit;
 
 pub use board::{Board, Cell, Side, Spot};
-pub use card::CardSnapshot;
+pub use card::{AbilitySnapshot, CardSnapshot};
 pub use damage::{Breakdown, Channel, DamagePacket, Resolution, Source, StepId, apply, resolve, strike};
 pub use event::{Event, Outcome};
 pub use heal::{Mending, apply_mend, resolve_mend};
 pub use state::{Action, Illegal, MatchState, Rules, Setup, SideState, legal_actions, reduce};
-pub use unit::{Health, Stat, Status, Unit, UnitId};
+pub use unit::{AbilityCooldown, Health, Stat, Status, Unit, UnitId};

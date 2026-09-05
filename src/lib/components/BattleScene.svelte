@@ -9,7 +9,7 @@
   // Описание комнаты целиком — `BATTLE-SCENE.md`. Всё, что ниже похоже на
   // произвол, объяснено там.
   import { onMount, untrack } from 'svelte';
-  import { fade } from 'svelte/transition';
+  import { fade, fly } from 'svelte/transition';
   import { t, lang, type TranslationKey } from '$lib/i18n';
   import BattleCard from '$lib/components/BattleCard.svelte';
   import BattleIcon from '$lib/components/BattleIcon.svelte';
@@ -414,6 +414,75 @@
     return cheapest > position.player.mana ? 'mana' : 'room';
   });
 
+  /**
+   * Почему выбранное сейчас не бьёт / не ходит / не ложится на стол.
+   *
+   * Не второе правило: список `legalActions` уже решил, что можно. Здесь только
+   * имя отказа — по тем же признакам, которые движок уже положил в тело и в
+   * правила партии (`acted`, opening, mana), плюс по тому, чего в списке нет
+   * (есть шаг — нет удара → вне досягаемости). Иначе человек видит голубое
+   * свечение и молчание.
+   */
+  let stuckWord = $derived.by((): TranslationKey | null => {
+    if (!mine || playing || position.outcome) return null;
+
+    if (picked?.kind === 'hand') {
+      if (playableHand.has(picked.index)) return null;
+      const card = hand[picked.index];
+      if (!card) return null;
+      return card.cost > position.player.mana ? 'battleWhyMana' : 'battleWhyRoom';
+    }
+
+    if (picked?.kind !== 'unit') return null;
+    const u = position.units[picked.id];
+    if (!u || u.owner !== me) return null;
+
+    if (openUnits.size > 0) return null;
+
+    const foesAlive = position.units.some((x) => x.owner !== me && x.health.current > 0);
+    const canStrike = u.power > 0;
+    const canMend =
+      u.mend > 0 ||
+      (u.card.abilities ?? []).some(
+        (a) => a.verb === 'heal' && a.trigger === 'active' && a.amount > 0,
+      );
+
+    // Шаг есть, удара нет — ровно случай «выбрана, а бить нельзя».
+    if (openCells.size > 0) {
+      if (canStrike && foesAlive) return 'battleWhyReach';
+      return null;
+    }
+
+    if (u.acted) return 'battleWhyActed';
+
+    const { rules } = position;
+    if (position.actsThisTurn >= rules.actsPerTurn) return 'battleWhyActs';
+
+    if (
+      position.round === 1 &&
+      position.active === 'player' &&
+      me === 'player' &&
+      canStrike &&
+      foesAlive &&
+      position.openingAttacksUsed >= rules.openingAttacks
+    ) {
+      return 'battleWhyOpening';
+    }
+
+    if (u.moved && rules.walkSpendsTurn) return 'battleWhyActed';
+
+    if (!canStrike && !canMend) return 'battleWhyPeace';
+
+    if (canStrike && foesAlive) {
+      return u.step === 0 ? 'battleWhyStuck' : 'battleWhyReach';
+    }
+
+    return 'battleWhyIdle';
+  });
+
+  /** Удар по подсказке, когда ткнули в цель вне досягаемости. */
+  let tipBeat = $state(0);
+
   let chosen = $derived(picked?.kind === 'unit' ? (position.units[picked.id] ?? null) : null);
   let chosenDto = $derived(chosen ? dtoOf(chosen.card.name) : null);
   let chosenFace = $derived(chosenDto ? cardCopy(chosenDto, $lang) : null);
@@ -463,8 +532,31 @@
         return;
       }
 
+      // Своё тело в руке, а ткнули куда ход не ведёт — не прыгаем на чужой
+      // лист и не снимаем выбор: бьём в колокол причины.
+      if (picked?.kind === 'unit') {
+        const held = position.units[picked.id];
+        if (held?.owner === me) {
+          if (here && here.owner !== me) {
+            tipBeat += 1;
+            return;
+          }
+          if (!here && !openCells.has(`${x},${y}`) && stuckWord) {
+            tipBeat += 1;
+            return;
+          }
+        }
+      }
+
       // Готовое своё тело — выбор для хода. Подсветка клеток только у него.
       if (here && here.owner === me && ready.has(here.id)) {
+        picked =
+          picked?.kind === 'unit' && picked.id === here.id ? null : { kind: 'unit', id: here.id };
+        return;
+      }
+
+      // Своё, но ходить нечем — всё равно берём в руку, чтобы сказать почему.
+      if (here && here.owner === me) {
         picked =
           picked?.kind === 'unit' && picked.id === here.id ? null : { kind: 'unit', id: here.id };
         return;
@@ -481,7 +573,7 @@
   }
 
   function tapHand(index: number) {
-    if (!mine || !playableHand.has(index)) return;
+    if (!mine) return;
     picked = picked?.kind === 'hand' && picked.index === index ? null : { kind: 'hand', index };
   }
 
@@ -892,6 +984,7 @@
   let manaGems = $derived(Array.from({ length: manaCap }, (_, i) => i < manaLit));
   let promptWord = $derived.by((): TranslationKey => {
     if (playing || !mine) return 'battlePromptWait';
+    if (stuckWord) return stuckWord;
     if (handTrouble === 'mana') return 'battlePromptMana';
     if (handTrouble === 'room') return 'battlePromptRoom';
     return 'battlePromptPick';
@@ -1006,7 +1099,7 @@
         {@const dto = dtoOf(held.name)}
         <button
           type="button"
-          disabled={!mine || !playableHand.has(i)}
+          disabled={!mine}
           onclick={() => tapHand(i)}
           class="held held--mine"
           class:held--picked={picked?.kind === 'hand' && picked.index === i}
@@ -1028,6 +1121,16 @@
             {/if}
           {:else}
             <span class="held-name">{titleOf(held.name)}</span>
+          {/if}
+          {#if stuckWord && picked?.kind === 'hand' && picked.index === i}
+            <span class="stuck-anchor">
+              {#key `h${picked.index}:${tipBeat}`}
+                <span class="stuck-tip" role="status" transition:fly={{ y: 8, duration: 280 }}>
+                  <i class="stuck-tip-flare" aria-hidden="true"></i>
+                  <em class="stuck-tip-word">{$t(stuckWord)}</em>
+                </span>
+              {/key}
+            </span>
           {/if}
         </button>
       {/each}
@@ -1211,13 +1314,13 @@
                        иначе на доске не осталось бы чисел вовсе. -->
                   {#if !cardSays(dto, 'healthMark') || !cardSays(dto, 'power')}
                     <span class="tally">
-                      <!-- Оттиск под цифрой — тот же, что карта чеканит на
-                           своём кружке (`.corner-glyph`): кружок доски встаёт
-                           вместо её значка и обязан говорить то же самое. -->
+                      <!-- Знак ВОЗЛЕ цифры — тот же, что карта ставит на своей
+                           плашке (`.corner-glyph`): кружок доски встаёт вместо
+                           её значка и обязан говорить то же самое. -->
                       {#if !cardSays(dto, 'healthMark')}
                         <i class="tally-pip tally-pip--health">
                           <span class="tally-glyph" aria-hidden="true"
-                            ><BattleIcon name={statMark('health')} size="0.78em" weight={1.15} /></span
+                            ><BattleIcon name={statMark('health')} size="100%" weight={1.35} /></span
                           >
                           <span class="tally-num">{here.health.current}</span>
                         </i>
@@ -1225,7 +1328,7 @@
                       {#if !cardSays(dto, 'power')}
                         <i class="tally-pip tally-pip--power">
                           <span class="tally-glyph" aria-hidden="true"
-                            ><BattleIcon name={statMark('power')} size="0.78em" weight={1.15} /></span
+                            ><BattleIcon name={statMark('power')} size="100%" weight={1.35} /></span
                           >
                           <span class="tally-num">{here.power}</span>
                         </i>
@@ -1256,6 +1359,17 @@
                     {#each here.statuses as st, i (i)}<i class="nick"></i>{/each}
                   </span>
                 {/if}
+
+                {#if stuckWord && picked?.kind === 'unit' && here.id === picked.id}
+                  <span class="stuck-anchor">
+                    {#key `${picked.id}:${tipBeat}`}
+                      <span class="stuck-tip" role="status" transition:fly={{ y: 10, duration: 300 }}>
+                        <i class="stuck-tip-flare" aria-hidden="true"></i>
+                        <em class="stuck-tip-word">{$t(stuckWord)}</em>
+                      </span>
+                    {/key}
+                  </span>
+                {/if}
               {/if}
             </button>
           {/each}
@@ -1281,7 +1395,7 @@
       {#if fill}
         <div class="prompt">
           <div class="glass" class:glass--run={playing} aria-hidden="true"></div>
-          <p class="prompt-word">{$t(promptWord)}</p>
+          <p class="prompt-word" class:prompt-word--stuck={!!stuckWord}>{$t(promptWord)}</p>
         </div>
       {/if}
       <div class="table-hand table-hand--mine">{@render ownHand()}</div>
@@ -1471,7 +1585,7 @@
   {#if position.outcome && !playing}
     <div class="seal-wrap" transition:fade={{ duration: 200 }}>
       <div class="verdict" class:verdict--dim={position.outcome !== 'player'}>
-        <WaxSeal size={fill ? '8.25rem' : '6.5rem'} dim={position.outcome !== 'player'} />
+        <WaxSeal size={fill ? '9.5rem' : '6.5rem'} dim={position.outcome !== 'player'} />
         <div class="verdict-copy">
           <p class="seal-word">
             {position.outcome === 'player'
@@ -1734,8 +1848,8 @@
   .scene.scene--fill .play,
   .scene.scene--fill.scene--along .play {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(15rem, 18rem);
-    grid-template-rows: 2.35rem minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) minmax(16rem, 19rem);
+    grid-template-rows: 1.7rem minmax(0, 1fr) auto;
     grid-template-areas:
       'theirs rail'
       'board rail'
@@ -1744,7 +1858,7 @@
     flex: 1 1 auto;
     min-height: 0;
     overflow: hidden;
-    gap: 0.15rem 0.55rem;
+    gap: 0.1rem 0.7rem;
     align-items: stretch;
   }
 
@@ -1769,8 +1883,8 @@
     grid-area: theirs;
     align-items: center;
     justify-content: center;
-    height: 2.35rem;
-    min-height: 2.35rem;
+    height: 1.7rem;
+    min-height: 1.7rem;
     overflow: hidden;
   }
 
@@ -1892,15 +2006,16 @@
   .scene.scene--fill.scene--along .vs {
     top: 50%;
     left: 50%;
-    width: 3.6rem;
-    height: 3.6rem;
+    width: 4.2rem;
+    height: 4.2rem;
     transform: translate(-50%, -50%);
   }
 
   .scene.scene--fill .zone {
-    font-size: 0.78rem;
+    font-size: 0.9rem;
     letter-spacing: 0.16em;
-    padding: 0.28rem 0.7rem 0.24rem;
+    padding: 0.32rem 0.8rem 0.28rem;
+    background: rgba(8, 6, 5, 0.88);
   }
 
   .scene.scene--fill.scene--along .zone--theirs {
@@ -1970,24 +2085,24 @@
   }
 
   .scene.scene--fill .foot {
-    height: 8.5rem;
-    min-height: 8.5rem;
-    max-height: 8.5rem;
+    height: 6.9rem;
+    min-height: 6.9rem;
+    max-height: 6.9rem;
     overflow: visible;
     flex-wrap: nowrap;
     align-items: flex-end;
-    padding: 0.15rem 0.2rem 0.2rem;
+    padding: 0.1rem 0.2rem 0.15rem;
     background: transparent;
   }
 
   .scene.scene--fill .foot .hand {
     padding: 0;
-    height: 7.1rem;
+    height: 6.5rem;
     align-items: flex-end;
   }
 
   .scene.scene--fill .foot .table-hand--mine {
-    height: 7.1rem;
+    height: 6.5rem;
     overflow: hidden;
   }
 
@@ -2001,69 +2116,83 @@
     width: auto;
     max-width: none;
     margin: 0;
-    padding: 0.85rem 1.05rem 0.85rem 1.1rem;
-    background:
-      linear-gradient(180deg, rgba(10, 8, 6, 0.94), rgba(8, 6, 5, 0.96)),
-      url('/battles/chamber/chamber-journal.png?v=2') center / 100% 100% no-repeat;
-    border: 1px solid #8a7040;
+    padding: 1rem 1.15rem 1rem 1.2rem;
+    background: #100c09;
+    border: 1px solid #d4b06a;
+    outline: 1px solid rgba(138, 112, 64, 0.55);
+    outline-offset: -4px;
     overflow: auto;
-    color: #f4ead8;
+    color: #fff8ea;
+    box-shadow: inset 0 0 28px rgba(0, 0, 0, 0.45);
   }
 
   .scene.scene--fill .journal-label {
-    margin: 0 0 0.7rem;
+    margin: 0 0 0.85rem;
     font-family: Georgia, 'Fraunces', serif;
-    font-size: 1.08rem;
+    font-size: 1.22rem;
     font-style: normal;
+    font-weight: 600;
     letter-spacing: 0.14em;
     text-transform: uppercase;
-    color: #f3d98a;
+    color: #ffe08a;
     text-align: center;
     text-shadow: 0 1px 0 #1a1208;
   }
 
   .scene.scene--fill .journal-lines {
-    font-size: 1rem;
-    line-height: 1.5;
-    color: #f6efe0;
-    gap: 0.4rem;
+    font-size: 1.2rem;
+    line-height: 1.55;
+    color: #fff8ea;
+    gap: 0.55rem;
   }
 
   .scene.scene--fill .journal-plain,
   .scene.scene--fill .journal-open,
   .scene.scene--fill .log-body {
-    color: #f6efe0;
+    color: #fff8ea;
   }
 
   .scene.scene--fill .journal-open {
-    border-bottom-color: rgba(243, 217, 138, 0.45);
+    border-bottom-color: rgba(255, 224, 138, 0.55);
   }
 
   .scene.scene--fill .journal-open:hover {
-    color: #ffe08a;
+    color: #fff3c0;
   }
 
   .scene.scene--fill .journal-empty {
-    font-size: 1rem;
-    color: #e4d8c0;
+    font-size: 1.08rem;
+    color: #f0e4c8;
+  }
+
+  .scene.scene--fill .breakdown {
+    background: #1a1410;
+    border-color: #8a7040;
+    color: #fff8ea;
+  }
+
+  .scene.scene--fill .breakdown-head,
+  .scene.scene--fill .breakdown-row,
+  .scene.scene--fill .breakdown-total {
+    color: #fff8ea;
   }
 
   .scene.scene--fill .chosen-name,
   .scene.scene--fill .chosen-effect,
   .scene.scene--fill .chosen-riders,
   .scene.scene--fill .chosen-stats {
-    color: #f4ead8;
+    color: #fff8ea;
   }
 
   .scene.scene--fill .chosen-kind,
   .scene.scene--fill .chosen-stats dt {
-    color: #e8d5a0;
+    color: #ffe08a;
   }
 
   .scene.scene--fill .foot .held {
     flex: 0 0 auto;
     width: auto;
-    height: 7.1rem;
+    height: 6.5rem;
     aspect-ratio: 5 / 7;
     margin-inline: -0.28rem;
     transform: none;
@@ -2329,14 +2458,17 @@
   .tally-pip {
     position: absolute;
     bottom: 3.5%;
-    display: grid;
-    place-items: center;
-    width: 1.7em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.18em;
+    width: auto;
+    min-width: 1.7em;
     height: 1.7em;
-    padding: 0;
+    padding: 0 0.3em;
+    border-radius: 999px;
     background: #f8f1e7;
     border: 1px solid #6f3b24;
-    border-radius: 50%;
     font-family: Georgia, 'Fraunces', serif;
     font-size: clamp(0.8rem, 14cqi, 1.2rem);
     font-style: normal;
@@ -2345,19 +2477,27 @@
     color: #34251c;
   }
 
-  /* Оттиск и цифра стоят в ОДНОЙ клетке сетки: два элемента в потоке встали бы
-     друг под другом и растянули кружок вдвое. Тот же приём, что у `.corner`. */
-  .tally-glyph,
-  .tally-num {
-    grid-area: 1 / 1;
-  }
+  /* Знак ВОЗЛЕ цифры, а не под ней: кружок доски со знаком становится плашкой
+     ровно на знак шире — тот же закон, что у `.corner--marked` на карте.
 
+     И те же 0.72em роста с тем же опусканием на 0.078em: кружок доски набран
+     той же Georgia со старостильными цифрами, и центровка коробок поставила бы
+     знак выше тела числа (см. `.corner-glyph` в `BattleCard.svelte`, где это
+     замерено). Два кружка одного числа обязаны быть сверстаны одинаково. */
   .tally-glyph {
     display: grid;
     place-items: center;
-    font-size: 1em;
+    flex: 0 0 auto;
+    width: 0.72em;
+    height: 0.72em;
+    transform: translateY(0.078em);
     color: inherit;
-    opacity: 0.42;
+    opacity: 0.9;
+  }
+
+  .tally-glyph :global(svg) {
+    width: 100%;
+    height: 100%;
   }
 
   .tally-pip--health {
@@ -2525,6 +2665,151 @@
     width: 5px;
     height: 2px;
     background: #6f3b24;
+  }
+
+  /* Отказ у выбранного: якорь держит место, плашка внутри — иначе `fly`
+     ломает центрирование своим `transform`. */
+  .stuck-anchor {
+    position: absolute;
+    left: 50%;
+    bottom: 0.35rem;
+    z-index: 40;
+    width: max(100%, 7.4rem);
+    max-width: 11rem;
+    transform: translateX(-50%);
+    pointer-events: none;
+  }
+
+  .stuck-tip {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 100%;
+    padding: 0.42rem 0.55rem 0.48rem;
+    border: 1px solid rgba(198, 95, 60, 0.55);
+    background:
+      linear-gradient(180deg, rgba(248, 241, 231, 0.97), rgba(232, 214, 190, 0.96));
+    box-shadow:
+      0 0 0 1px rgba(52, 37, 28, 0.18),
+      0 8px 18px rgba(52, 37, 28, 0.28);
+  }
+
+  .stuck-tip-flare {
+    display: none;
+  }
+
+  .stuck-tip-word {
+    margin: 0;
+    font-family: Georgia, 'Fraunces', serif;
+    font-size: 0.68rem;
+    font-style: italic;
+    font-weight: 500;
+    line-height: 1.25;
+    text-align: center;
+    color: #34251c;
+  }
+
+  .held .stuck-anchor {
+    bottom: auto;
+    top: 0.35rem;
+    width: 8rem;
+  }
+
+  /* Комната: стили ЗДЕСЬ, не в chamber.css — scoped `.stuck-tip` иначе
+     перебивает внешний файл равным весом и оставляет пергамент поверх зала. */
+  .scene.scene--chamber .stuck-tip {
+    padding: 0.55rem 0.65rem 0.58rem;
+    border: 0;
+    background:
+      url('/battles/chamber/chamber-plaque.png?v=2') center / 100% 100% no-repeat,
+      radial-gradient(120% 90% at 50% 0%, rgba(90, 212, 240, 0.2), transparent 55%),
+      linear-gradient(165deg, #2a1c12 0%, #120c09 48%, #1a100c 100%);
+    box-shadow:
+      0 0 0 1px rgba(232, 196, 120, 0.55),
+      0 0 0 2px rgba(20, 12, 8, 0.9),
+      0 0 18px 2px rgba(62, 200, 232, 0.45),
+      0 10px 22px rgba(0, 0, 0, 0.55);
+    animation: chamber-stuck-glow 2.4s ease-in-out infinite;
+  }
+
+  .scene.scene--chamber .stuck-tip-flare {
+    display: block;
+    position: absolute;
+    inset: -22% -10% auto;
+    height: 75%;
+    pointer-events: none;
+    background:
+      radial-gradient(ellipse at 50% 100%, rgba(255, 196, 96, 0.35), transparent 68%),
+      radial-gradient(ellipse at 50% 0%, rgba(90, 212, 240, 0.45), transparent 60%);
+    mix-blend-mode: screen;
+    opacity: 0.85;
+    animation: chamber-stuck-flare 1.8s ease-in-out infinite;
+  }
+
+  .scene.scene--chamber .stuck-tip-word {
+    position: relative;
+    z-index: 1;
+    font-size: clamp(0.58rem, 1.8cqi + 0.32rem, 0.78rem);
+    font-style: normal;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    line-height: 1.3;
+    color: #fff4d8;
+    text-shadow:
+      0 1px 0 #1a1008,
+      0 0 12px rgba(255, 180, 60, 0.35);
+  }
+
+  .scene.scene--chamber .held .stuck-anchor {
+    animation: chamber-stuck-float 2.8s ease-in-out infinite;
+  }
+
+  @keyframes chamber-stuck-glow {
+    0%,
+    100% {
+      box-shadow:
+        0 0 0 1px rgba(232, 196, 120, 0.5),
+        0 0 0 2px rgba(20, 12, 8, 0.9),
+        0 0 14px 1px rgba(62, 200, 232, 0.35),
+        0 10px 22px rgba(0, 0, 0, 0.55);
+    }
+    50% {
+      box-shadow:
+        0 0 0 1px rgba(255, 220, 140, 0.85),
+        0 0 0 2px rgba(20, 12, 8, 0.95),
+        0 0 26px 4px rgba(90, 212, 240, 0.65),
+        0 12px 26px rgba(0, 0, 0, 0.6);
+    }
+  }
+
+  @keyframes chamber-stuck-flare {
+    0%,
+    100% {
+      opacity: 0.55;
+      transform: scaleY(1);
+    }
+    50% {
+      opacity: 1;
+      transform: scaleY(1.08);
+    }
+  }
+
+  @keyframes chamber-stuck-float {
+    0%,
+    100% {
+      transform: translateX(-50%);
+    }
+    50% {
+      transform: translateX(-50%) translateY(-3px);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .scene.scene--chamber .stuck-tip,
+    .scene.scene--chamber .stuck-tip-flare,
+    .scene.scene--chamber .held .stuck-anchor {
+      animation: none;
+    }
   }
 
   .breakdown {
@@ -3020,14 +3305,15 @@
     color: #c65f3c;
   }
 
-  /* Комната: печать накрывает зал целиком, панель лежит вдоль, чернила
-     светлые. Scoped-правила пергамента иначе перебивают chamber.css. */
+  /* Комната: печать накрывает зал целиком — не клетку поля. Панель лежит
+     вдоль, чернила светлые на тёмном металле. Пергамент сюда не входит. */
   .scene.scene--fill .seal-wrap {
-    z-index: 30;
+    z-index: 40;
     display: grid;
     place-items: center;
-    padding: 1.4rem 1.6rem;
-    background: rgba(8, 6, 5, 0.82);
+    padding: 1.6rem 2rem;
+    background: rgba(6, 4, 3, 0.9);
+    backdrop-filter: blur(2px);
   }
 
   .scene.scene--fill .verdict {
@@ -3035,18 +3321,22 @@
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
     align-items: center;
-    gap: 1.4rem 2.1rem;
-    width: min(52rem, 94%);
-    max-width: 52rem;
+    gap: 1.6rem 2.4rem;
+    width: min(58rem, 92%);
+    max-width: 58rem;
     margin: 0;
-    padding: 1.7rem 2.1rem;
+    padding: 2rem 2.4rem;
     text-align: left;
-    background: #16100c;
-    border: 1px solid #d4b06a;
-    outline: 1px solid #8a7040;
-    outline-offset: 5px;
-    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+    background:
+      linear-gradient(160deg, #221810 0%, #120e0a 55%, #0e0a08 100%);
+    border: 2px solid #e0c078;
+    outline: 1px solid #6a5028;
+    outline-offset: 6px;
+    box-shadow:
+      0 20px 56px rgba(0, 0, 0, 0.65),
+      inset 0 0 40px rgba(0, 0, 0, 0.35);
     transform: none;
+    color: #fff8ea;
   }
 
   .scene.scene--fill .verdict--dim {
@@ -3058,49 +3348,57 @@
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: 0.45rem;
+    gap: 0.55rem;
     min-width: 0;
   }
 
   .scene.scene--fill .seal-word {
-    font-size: clamp(1.7rem, 3.2vw, 2.25rem);
-    line-height: 1.15;
-    color: #f8edd0;
+    font-size: clamp(2rem, 3.6vw, 2.7rem);
+    line-height: 1.12;
+    color: #fff8ea;
+    text-shadow: 0 1px 0 #1a1208;
   }
 
   .scene.scene--fill .seal-dust,
   .scene.scene--fill .seal-line {
     margin: 0;
-    font-size: 1.08rem;
-    font-weight: 500;
-    color: #f0e4c8;
+    font-size: 1.22rem;
+    font-weight: 600;
+    line-height: 1.4;
+    color: #fff3d0;
+  }
+
+  .scene.scene--fill .seal-line--bar {
+    font-style: italic;
+    color: #ffe08a;
   }
 
   .scene.scene--fill .seal-record {
     margin: 0;
-    font-size: 1.12rem;
-    color: #f3d98a;
+    font-size: 1.2rem;
+    color: #ffe08a;
   }
 
   .scene.scene--fill .seal-doors {
     justify-content: flex-start;
     flex-wrap: wrap;
-    gap: 0.7rem 1rem;
-    margin-top: 0.55rem;
+    gap: 0.85rem 1.1rem;
+    margin-top: 0.85rem;
   }
 
   .scene.scene--fill .door {
-    font-size: 0.72rem;
-    letter-spacing: 0.12em;
-    padding: 0.5rem 0.85rem 0.45rem;
-    border: 1px solid #8a7040;
-    background: #241810;
-    color: #f3d98a;
+    font-size: 0.78rem;
+    letter-spacing: 0.14em;
+    padding: 0.7rem 1.1rem 0.62rem;
+    border: 1px solid #e0c078;
+    background: #2a1c10;
+    color: #fff3d0;
   }
 
   .scene.scene--fill .door:hover {
-    color: #fff6d8;
-    border-color: #d4b06a;
+    color: #ffffff;
+    border-color: #ffe08a;
+    background: #3a2818;
   }
 
   /* Обязательство, а не украшение. `stage()` при этой настройке не отдаёт ни

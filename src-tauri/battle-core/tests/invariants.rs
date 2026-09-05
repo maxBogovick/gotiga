@@ -28,13 +28,23 @@ fn generate(seed: u32) -> Setup {
         let mut taken: Vec<Cell> = Vec::new();
 
         for _ in 0..bodies {
-            let card = CardSnapshot::new("тело", 1 + r.next(3) as i32, 2 + r.next(8) as i32, 1 + r.next(5) as i32)
+            let mut card = CardSnapshot::new("тело", 1 + r.next(3) as i32, 2 + r.next(8) as i32, 1 + r.next(5) as i32)
                 .with_armor(r.next(3) as i32)
                 .with_reach(1 + r.next(3) as u8)
                 .with_step(r.next(3) as u8)
                 // Каждый второй умеет лечить: без этого генератор не трогает
                 // новую механику, и вся эта батарея о ней ничего не скажет.
                 .with_mend(if r.next(2) == 0 { 0 } else { 1 + r.next(4) as i32 });
+            // Каждый четвёртый лечит способностью на свою дальность — иначе
+            // батарея никогда не спросит, достаёт ли лечение дальше удара.
+            if r.next(4) == 0 {
+                let range = 1 + r.next(3) as u8;
+                card = card.with_ability(AbilitySnapshot::heal(
+                    "gen-heal",
+                    1 + r.next(3) as i32,
+                    range,
+                ));
+            }
             let base = if side == Side::Player { 3 } else { 0 };
             let cell = loop {
                 let c = Cell::new(r.next(3) as u8, base + r.next(3) as u8).unwrap();

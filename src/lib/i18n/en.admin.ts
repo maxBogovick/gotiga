@@ -1581,6 +1581,7 @@ export const enAdmin = {
   adminBattlesWornOwn: 'In a dress of their own',
   adminBattlesWornRace: 'Dressed by their race on some levels',
   adminBattlesFaceView: 'Card face',
+  adminBattlesFaceFrame: 'Frame for this face',
   adminBattlesRoster: 'Roster',
   adminBattlesRosterHint: 'What the card prints, in which band and in which order \u2014 the list IS the order. Three steps rather than a switch: “always”, “large only” (from the taking sheet up; off on the shelf and on a board cell), “never”. Text is placed by band and order, never by coordinates: its length changes with the language and the card, and a freely placed name plate collides on the first long one. Coordinates stay with the cost and power badges, where a single digit stands. Drag a row on the card itself — where it is printed is where it is taken — or here in the list: within a band for order, into another for the band.',
   adminBattlesRosterBandEmpty: 'Nothing stands here',

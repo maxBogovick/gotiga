@@ -6,6 +6,59 @@
 
 use crate::damage::Channel;
 
+/// One ability, frozen with the card.
+///
+/// The archive holds the full dictionary; the match only needs what `reduce`
+/// reads. Unknown verbs sit here quietly — `legal_actions` never offers them,
+/// so a card printed with a verb the engine does not yet run is not a trap.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AbilitySnapshot {
+    pub id: String,
+    pub verb: String,
+    pub amount: i32,
+    pub shape: String,
+    pub range: u8,
+    pub mana_cost: i32,
+    pub cooldown: u8,
+    pub trigger: String,
+}
+
+impl AbilitySnapshot {
+    /// An active heal of `amount` at `range`, for tests and the generator.
+    pub fn heal(id: &str, amount: i32, range: u8) -> Self {
+        Self {
+            id: id.to_string(),
+            verb: "heal".into(),
+            amount,
+            shape: "one".into(),
+            range,
+            mana_cost: 0,
+            cooldown: 0,
+            trigger: "active".into(),
+        }
+    }
+
+    pub fn with_mana(mut self, mana: i32) -> Self {
+        self.mana_cost = mana;
+        self
+    }
+
+    pub fn with_cooldown(mut self, cooldown: u8) -> Self {
+        self.cooldown = cooldown;
+        self
+    }
+
+    pub fn on_self(mut self) -> Self {
+        self.shape = "self".into();
+        self
+    }
+
+    pub fn is_active_heal(&self) -> bool {
+        self.verb == "heal" && self.trigger == "active" && self.amount > 0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CardSnapshot {
@@ -20,6 +73,7 @@ pub struct CardSnapshot {
     /// a cauldron stands where it was put.
     pub step: u8,
     /// How much it mends in one act of mending. Zero — it does not mend.
+    /// Interim: a heal ability on the card takes over when present.
     pub mend: i32,
     pub channel: Channel,
     /// Бьёт ли это тело вообще.
@@ -31,6 +85,10 @@ pub struct CardSnapshot {
     /// всё равно выходила и била.
     #[serde(default = "strikes_by_default")]
     pub strikes: bool,
+    /// Abilities frozen with the card. Empty on every match begun before this
+    /// field existed — `default` keeps their board caches readable.
+    #[serde(default)]
+    pub abilities: Vec<AbilitySnapshot>,
 }
 
 fn strikes_by_default() -> bool {
@@ -52,6 +110,7 @@ impl CardSnapshot {
             mend: 0,
             channel: Channel::Physical,
             strikes: true,
+            abilities: Vec::new(),
         }
     }
 
@@ -82,6 +141,11 @@ impl CardSnapshot {
 
     pub fn with_channel(mut self, channel: Channel) -> Self {
         self.channel = channel;
+        self
+    }
+
+    pub fn with_ability(mut self, ability: AbilitySnapshot) -> Self {
+        self.abilities.push(ability);
         self
     }
 

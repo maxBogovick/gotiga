@@ -49,6 +49,7 @@
     frameName,
     kindOf,
     livePiece,
+    normalizeSheet,
     sliceSigns,
     parseFocal,
     parseFrameOverride,
@@ -930,24 +931,30 @@
     }
   });
 
-  /** The card the frames view dresses: the one being written, else any real
-   *  card of that rank, else a stand-in — so the sliders always have a subject. */
-  let frameSample = $derived<BattleCardDto>(
-    draft.titleRu || draft.titleEn
-      ? { ...draft, tier: frames[frameIndex]?.tier ?? 1 }
-      : (cards.find((c) => c.tier === (frames[frameIndex]?.tier ?? 1)) ?? {
-          ...emptyCard(),
-          tier: frames[frameIndex]?.tier ?? 1,
-          titleEn: "The Keeper of the Key",
-          titleRu: "Хранительница Ключа",
-          effectRu:
-            "Вихрь Души: каждое третье заклинание создаёт копию эффекта.",
-          effectEn:
-            "Wind of Soul: every third spell makes a copy of its effect.",
-          cost: 5,
-          power: 10,
-        }),
-  );
+  /** The card the frames / face views dress: the one being written, else any
+   *  real card of that rank, else a stand-in — so the sliders always have a
+   *  subject. Race and card dresses are stripped: this desk edits the RANK,
+   *  and a sample that wore another look would show a roster the sidebar is
+   *  not editing. */
+  let frameSample = $derived.by((): BattleCardDto => {
+    const tier = frames[frameIndex]?.tier ?? 1;
+    const raw =
+      draft.titleRu || draft.titleEn
+        ? { ...draft, tier }
+        : (cards.find((c) => c.tier === tier) ?? {
+            ...emptyCard(),
+            tier,
+            titleEn: "The Keeper of the Key",
+            titleRu: "Хранительница Ключа",
+            effectRu:
+              "Вихрь Души: каждое третье заклинание создаёт копию эффекта.",
+            effectEn:
+              "Wind of Soul: every third spell makes a copy of its effect.",
+            cost: 5,
+            power: 10,
+          });
+    return { ...raw, frameOverride: null, raceLevelFrames: null };
+  });
 
   /** The race dictionary's own sample, so the icon can be judged on a card
    *  rather than as a bare thumbnail — the same reasoning the frames view
@@ -3272,7 +3279,16 @@
     const frame = frames[frameIndex];
     if (!frame) return;
     mark();
-    frames[frameIndex] = completeSlices({ ...frame, ...dressOf(preset.frame) });
+    // Опись и кегль — дело вкладки «Лицо карты» на чине; `dressOf` их не
+    // несёт (иначе раса заморозила бы вчерашний список). На чин надевают
+    // целиком, и опись пресета сюда кладётся явно.
+    frames[frameIndex] = completeSlices({
+      ...frame,
+      ...dressOf(preset.frame),
+      sheet: normalizeSheet(preset.frame.sheet),
+      typeScale: preset.frame.typeScale || 1,
+      inkFade: preset.frame.inkFade || 1,
+    });
     // В руке могло остаться украшение, которого на новом наряде нет: стол
     // держал бы деталь, которой на карте больше не рисуется.
     if (sliceHeld && !kindOf(frames[frameIndex], sliceHeld.id)) sliceHeld = null;
@@ -4702,16 +4718,107 @@
          Что карта ГОВОРИТ: какие строки печатаются, в какой полосе, в каком
          порядке и с какой величины видно. Своя вкладка, а не раздел рамок:
          рама — про резьбу, бумагу и окно, опись — про слова, и хранитель,
-         пришедший поправить одно, листал мимо другого. Данные при этом те же
-         (опись живёт в раме и потому едет по цепочке чин → уровень расы →
-         карта); порознь стоят СТОЛЫ, а не объекты, и сохраняет эта вкладка
-         той же кнопкой и тем же запросом, что стол резчика.
+         пришедший поправить одно, листал мимо другого. Опись живёт в ЧИНЕ
+         (пять рамок словаря) и читается с полки через `frameForCard`: раса
+         надевает резьбу, но не подменяет опись — иначе правка здесь не
+         доходила бы до карт расы. Сохраняет эта вкладка той же кнопкой и тем
+         же запросом, что стол резчика.
 
          Стенд показывает карту в трёх величинах разом, и это главное, что
          вкладка вообще умеет: «только крупно» — единственная ступень, которую
          на одной карте увидеть нельзя. Крупная — рабочая, за неё тянут;
-         полка и клетка боя стоят свидетелями. -->
-    <div class="flex-1 flex min-h-0">
+         полка и клетка боя стоят свидетелями. Метка «новая» на стенде
+         зажжена нарочно (`isNew`): иначе ступень правили вслепую. -->
+    <div class="flex-1 flex flex-col min-h-0">
+      <!-- Ящик нарядов — буква в букву тот же, что на вкладке рамок: лицо
+           рамки слева, имя справа. Иначе непонятно, чьё лицо правят. -->
+      {#if frames[frameIndex]}
+        <div
+          class="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 border-b border-[#34251c]/10 bg-[#f8f1e7]"
+        >
+          <div class="w-[22rem] max-w-full">
+            <BattleFramePicker
+              {presets}
+              bind:chosen={presetOpen}
+              onchoose={wearPresetOnRank}
+              onforget={forgetPreset}
+              disabled={saving}
+              size="desk"
+              label={$t("adminBattlesPresetChoose")}
+            />
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <input
+              bind:this={frameNameBox}
+              bind:value={presetName}
+              maxlength="60"
+              placeholder={presetWorn
+                ? $t("adminBattlesPresetCopyName")
+                : $t("adminBattlesPresetName")}
+              onkeydown={(e) =>
+                e.key === "Enter" &&
+                (presetWorn ? keepFrameAsNew() : keepFrameAsPreset())}
+              class="w-44 px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+            />
+            {#if presetWorn}
+              <button
+                onclick={keepFrameAsNew}
+                disabled={saving}
+                title={$t("adminBattlesPresetKeepNewHint")}
+                class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5 disabled:opacity-40"
+                ><BattleIcon name="twin" />{$t(
+                  "adminBattlesPresetKeepNew",
+                )}</button
+              >
+              <button
+                onclick={updateOpenPreset}
+                disabled={saving || !presetChanged}
+                title={$t("adminBattlesPresetUpdateHint")}
+                class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5 disabled:opacity-40"
+                ><BattleIcon name="keep" />{$t(
+                  "adminBattlesPresetUpdate",
+                )}</button
+              >
+              {#if presetChanged}
+                <span
+                  class="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-[#8f2f22]"
+                >
+                  <span class="w-1.5 h-1.5 rounded-full bg-[#c65f3c]"></span>
+                  {$t("adminBattlesPresetDrifted")}
+                </span>
+              {/if}
+              <button
+                onclick={() => forgetPreset(presetWorn)}
+                disabled={saving}
+                title={$t("adminBattlesPresetForgetSure").replace(
+                  "{name}",
+                  presetWorn.name,
+                )}
+                class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#c65f3c]/40 text-[#8f2f22] hover:bg-[#c65f3c]/10 disabled:opacity-40"
+                ><BattleIcon name="trash" />{$t(
+                  "adminBattlesFrameDrop",
+                )}</button
+              >
+            {:else}
+              <button
+                onclick={keepFrameAsPreset}
+                disabled={saving || !presetName.trim()}
+                title={$t("adminBattlesPresetKeep")}
+                class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5 disabled:opacity-40"
+                ><BattleIcon name="keep" />{$t("adminBattlesPresetKeep")}</button
+              >
+            {/if}
+            <button
+              onclick={beginNewFrame}
+              title={$t("adminBattlesFrameNewHint")}
+              class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5"
+              ><BattleIcon name="plus" />{$t("adminBattlesFrameNew")}</button
+            >
+          </div>
+        </div>
+      {/if}
+
+      <div class="flex-1 flex min-h-0">
       <section class="flex-1 min-w-0 flex flex-col bg-[#f1e8db]">
         <div
           class="flex flex-wrap items-center gap-3 px-4 py-2 border-b border-[#34251c]/10"
@@ -4719,7 +4826,13 @@
           <div class="flex border border-[#34251c]/15">
             {#each frames as frame, i (frame.tier)}
               <button
-                onclick={() => (frameIndex = i)}
+                onclick={() => {
+                  frameIndex = i;
+                  // Открытый наряд — про ТОТ чин. На соседнем он ничего не
+                  // значит, как и на вкладке рамок.
+                  presetOpen = null;
+                  presetName = "";
+                }}
                 class="px-3 py-1 text-[11px] {frameIndex === i
                   ? 'bg-[#34251c] text-[#f8f1e7]'
                   : 'hover:bg-[#34251c]/5'}"
@@ -4782,6 +4895,7 @@
                   {frames}
                   owned={true}
                   level={3}
+                  isNew={true}
                   transition={false}
                   interactive={false}
                   rowsEditable={size.px === FACE_SIZES[0].px}
@@ -5004,6 +5118,7 @@
           </div>
         {/if}
       </aside>
+      </div>
     </div>
   {:else if view === "bench"}
     <!--

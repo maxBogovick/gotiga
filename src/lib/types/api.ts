@@ -2864,6 +2864,22 @@ export interface BattleBodyCard {
     step: number;
     mend: number;
     channel: BattleChannel;
+    /** Abilities frozen with the body. Empty on matches begun before this
+     *  field existed. The scene lights cells from `legalActions`; this is for
+     *  naming why a body can mend when `mend` itself is zero. */
+    abilities?: BattleAbilitySnap[];
+}
+
+/** The match's view of one ability — what the engine froze, not the desk form. */
+export interface BattleAbilitySnap {
+    id: string;
+    verb: string;
+    amount: number;
+    shape: string;
+    range: number;
+    manaCost: number;
+    cooldown: number;
+    trigger: string;
 }
 
 export interface BattleStatus {

@@ -208,24 +208,27 @@ pub fn choose(state: &MatchState) -> Action {
     //    the field because a body already standing is worth more than one that
     //    arrives unable to swing — and below the killing blow, because a corpse
     //    needs no mending.
-    let mut best_mend: Option<(&Action, i32)> = None;
+    let mut best_mend: Option<(&Action, i32, i32)> = None;
     for action in &actions {
         if let Action::Mend { healer, target } = action {
             let h = &state.units[*healer as usize];
             let t = &state.units[*target as usize];
-            let restored = crate::heal::resolve_mend(t, h.mend).restored;
-            if best_mend.is_none_or(|(_, best)| restored > best) {
-                best_mend = Some((action, restored));
+            let mana = state.side_state(state.active).mana;
+            let offered = h
+                .ready_heal(mana)
+                .map(|a| a.amount)
+                .unwrap_or(h.mend);
+            let restored = crate::heal::resolve_mend(t, offered).restored;
+            if best_mend.is_none_or(|(_, best, _)| restored > best) {
+                best_mend = Some((action, restored, offered));
             }
         }
     }
     // Only when the mending is not mostly wasted: half of what is offered has to
     // land, or the turn is better spent on almost anything else.
-    if let Some((action, restored)) = best_mend {
-        if let Action::Mend { healer, .. } = action {
-            if restored * 2 >= state.units[*healer as usize].mend {
-                return action.clone();
-            }
+    if let Some((action, restored, offered)) = best_mend {
+        if offered > 0 && restored * 2 >= offered {
+            return action.clone();
         }
     }
 

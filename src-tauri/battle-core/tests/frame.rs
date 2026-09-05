@@ -963,6 +963,150 @@ fn the_bot_mends_a_deep_wound_before_anything_else_but_killing() {
     assert_eq!(bot::choose(&st), Action::Mend { healer: 2, target: 1 });
 }
 
+// ── лечение способностью ─────────────────────────────────────────────────────
+
+fn healer_with_reach(range: u8) -> CardSnapshot {
+    boec("Лекарь", 2, 5, 1).with_ability(AbilitySnapshot::heal("cure", 3, range))
+}
+
+#[test]
+fn a_heal_ability_reaches_past_the_body_blow() {
+    // Тело бьёт на 1 (дом), способность лечит на 3 — ровно то, чего не было,
+    // пока лечение ходило только по дальности удара.
+    let setup = Setup {
+        player_board: vec![
+            (boec("Раненый", 1, 8, 3), cell(0, 3)),
+            (healer_with_reach(3), cell(2, 5)),
+        ],
+        keeper_board: vec![(boec("Ворон", 1, 6, 3), cell(0, 2))],
+        ..Default::default()
+    };
+    let st = MatchState::begin_with(
+        setup,
+        Rules {
+            idle_toll: 0,
+            ..Default::default()
+        },
+    );
+    let (st, _) = act(&st, Action::EndTurn);
+    let (st, _) = act(&st, Action::Attack { attacker: 2, target: 0 });
+    let (st, _) = act(&st, Action::EndTurn);
+    // (2,5) → (0,3) = 2 клетки: дальше удара, внутри способности.
+    let (st, events) = act(&st, Action::Mend { healer: 1, target: 0 });
+    assert_eq!(st.unit(0).unwrap().health.current, 8);
+    assert_eq!(
+        events,
+        vec![Event::Healed {
+            target: 0,
+            by: Some(1),
+            amount: 3
+        }]
+    );
+}
+
+#[test]
+fn a_heal_ability_still_stops_at_its_own_range() {
+    let setup = Setup {
+        player_board: vec![
+            (boec("Раненый", 1, 8, 3), cell(0, 3)),
+            (healer_with_reach(1), cell(2, 5)),
+        ],
+        keeper_board: vec![(boec("Ворон", 1, 6, 3), cell(0, 2))],
+        ..Default::default()
+    };
+    let st = MatchState::begin_with(
+        setup,
+        Rules {
+            idle_toll: 0,
+            ..Default::default()
+        },
+    );
+    let (st, _) = act(&st, Action::EndTurn);
+    let (st, _) = act(&st, Action::Attack { attacker: 2, target: 0 });
+    let (st, _) = act(&st, Action::EndTurn);
+    assert_eq!(
+        reduce(&st, &Action::Mend { healer: 1, target: 0 }).unwrap_err(),
+        Illegal::OutOfReach
+    );
+}
+
+#[test]
+fn a_heal_ability_spends_mana_and_then_waits() {
+    let setup = Setup {
+        player_board: vec![
+            (boec("Раненый", 1, 12, 3), cell(1, 3)),
+            (
+                boec("Лекарь", 2, 5, 1).with_ability(
+                    AbilitySnapshot::heal("cure", 2, 1)
+                        .with_mana(1)
+                        .with_cooldown(2),
+                ),
+                cell(1, 4),
+            ),
+        ],
+        keeper_board: vec![(boec("Ворон", 1, 6, 4), cell(1, 2))],
+        ..Default::default()
+    };
+    let st = MatchState::begin_with(
+        setup,
+        Rules {
+            idle_toll: 0,
+            ..Default::default()
+        },
+    );
+    let (st, _) = act(&st, Action::EndTurn);
+    let (st, _) = act(&st, Action::Attack { attacker: 2, target: 0 });
+    let (st, _) = act(&st, Action::EndTurn);
+    assert_eq!(st.player.mana, 2, "второй ход игрока — две маны");
+    let wounded = st.unit(0).unwrap().health.current;
+    let (st, _) = act(&st, Action::Mend { healer: 1, target: 0 });
+    assert_eq!(st.player.mana, 1, "лечение забрало одну ману");
+    assert_eq!(
+        st.unit(0).unwrap().health.current,
+        wounded + 2,
+        "залечили на величину способности"
+    );
+    // Снова свой ход: кулдаун ещё тикает, законного лечения нет — даже
+    // при оставшейся ране.
+    let (st, _) = act(&st, Action::EndTurn);
+    let (st, _) = act(&st, Action::EndTurn);
+    assert!(st.unit(0).unwrap().wound() > 0, "рана ещё есть");
+    assert!(!legal_actions(&st)
+        .iter()
+        .any(|a| matches!(a, Action::Mend { healer: 1, .. })));
+    // Ещё один круг — кулдаун сошёл.
+    let (st, _) = act(&st, Action::EndTurn);
+    let (st, _) = act(&st, Action::EndTurn);
+    assert!(legal_actions(&st)
+        .iter()
+        .any(|a| matches!(a, Action::Mend { healer: 1, .. })));
+}
+
+#[test]
+fn a_self_heal_ability_tends_its_bearer() {
+    let setup = Setup {
+        player_board: vec![(
+            boec("Сама", 1, 8, 1).with_ability(AbilitySnapshot::heal("bind", 3, 1).on_self()),
+            cell(1, 3),
+        )],
+        keeper_board: vec![(boec("Ворон", 1, 6, 3), cell(1, 2))],
+        ..Default::default()
+    };
+    let st = MatchState::begin_with(
+        setup,
+        Rules {
+            idle_toll: 0,
+            ..Default::default()
+        },
+    );
+    let (st, _) = act(&st, Action::EndTurn);
+    let (st, _) = act(&st, Action::Attack { attacker: 1, target: 0 });
+    let (st, _) = act(&st, Action::EndTurn);
+    let before = st.unit(0).unwrap().health.current;
+    let (st, _) = act(&st, Action::Mend { healer: 0, target: 0 });
+    assert_eq!(st.unit(0).unwrap().health.current, before + 3);
+}
+
 // ── правила открытия ────────────────────────────────────────────────────────
 
 #[test]
