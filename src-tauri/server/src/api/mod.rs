@@ -654,6 +654,229 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             )
             // Часы дома: по ним поворачивается «сегодня» у повторяющихся
             // поручений. Одно число, и его должно быть видно там же, где ставки.
+            // === СТУДИЯ ===
+            //
+            // Всё, кроме библиотеки, — под сессией: у склада есть владелец, и
+            // это единственное, что отделяет его от склада дома.
+            .route("/studio", get(handlers::get_studio))
+            .route("/studio/library", get(handlers::get_studio_library))
+            .route("/studio/assets", post(handlers::add_studio_asset))
+            .route(
+                "/studio/assets/:id",
+                delete(handlers::remove_studio_asset),
+            )
+            .route(
+                "/studio/frames",
+                post(handlers::create_studio_frame),
+            )
+            // Выкладка одним пакетом: тело и все картинки за один запрос.
+            //
+            // Свой потолок тела, и он обязателен: двадцать деталей по два
+            // мегабайта не влезают в общий шестнадцатимегабайтный, и пакет
+            // отказывался бы ровно на богатой раме — той самой, ради которой
+            // всё это делалось.
+            .route(
+                "/studio/frames/package",
+                post(handlers::package_studio_frame)
+                    .route_layer(DefaultBodyLimit::max(MEDIA_UPLOAD_LIMIT)),
+            )
+            .route("/studio/agreement", post(handlers::accept_studio_agreement))
+            // Свои карты. Комната та же, поэтому и ворота те же: своего замка
+            // карты не получают.
+            .route(
+                "/studio/cards",
+                get(handlers::get_studio_cards).post(handlers::create_studio_card),
+            )
+            .route(
+                "/studio/cards/:id",
+                put(handlers::save_studio_card).delete(handlers::delete_studio_card),
+            )
+            .route("/studio/cards/:id/show", post(handlers::show_studio_card))
+            .route(
+                "/studio/cards/:id/withdraw",
+                post(handlers::withdraw_studio_card),
+            )
+            // Весы — те же, что у хозяина, одной функцией за двумя дверями.
+            .route("/studio/cards/weigh", post(handlers::weigh_studio_card))
+            // Свои роды: словарная строка, которую наденут чужие карты.
+            .route(
+                "/studio/races",
+                get(handlers::get_studio_races).post(handlers::create_studio_race),
+            )
+            .route(
+                "/studio/races/:id",
+                put(handlers::save_studio_race).delete(handlers::delete_studio_race),
+            )
+            .route("/studio/races/:id/show", post(handlers::show_studio_race))
+            .route(
+                "/studio/races/:id/withdraw",
+                post(handlers::withdraw_studio_race),
+            )
+            // Сезон. Смотреть можно всякому — на это и приходят из соцсетей;
+            // оценивать только со входом.
+            .route("/studio/season", get(handlers::get_studio_season))
+            .route("/studio/gallery", get(handlers::get_studio_gallery))
+            .route("/studio/licences", get(handlers::get_my_licences))
+            // Лавка авторов: автор ставит цену сам, дом держит коридор и берёт
+            // долю, которая сгорает.
+            .route("/studio/market", get(handlers::get_market))
+            .route("/studio/market/copies", get(handlers::get_market_copies))
+            .route("/studio/copies", get(handlers::get_my_copies))
+            // Молоток: смотреть можно без имени, ставить — со входом.
+            .route(
+                "/studio/auctions",
+                get(handlers::get_auctions).post(handlers::start_auction),
+            )
+            .route("/studio/auctions/:id/bid", post(handlers::place_bid))
+            // Мена: вещь за вещь, против объявления.
+            .route(
+                "/studio/trades",
+                get(handlers::get_trades).post(handlers::offer_trade),
+            )
+            .route("/studio/trades/:id/accept", post(handlers::accept_trade))
+            .route("/studio/trades/:id/refuse", post(handlers::refuse_trade))
+            .route("/studio/market/list", post(handlers::list_licence))
+            .route("/studio/market/:id/withdraw", post(handlers::withdraw_listing))
+            .route("/studio/market/:id/buy", post(handlers::buy_listing))
+            .route("/studio/authors/:slug", get(handlers::get_studio_author))
+            .route(
+                "/studio/season/:number",
+                get(handlers::get_studio_season_by_number),
+            )
+            .route("/studio/season/enter", post(handlers::enter_studio_season))
+            .route("/studio/entries/:id/rate", post(handlers::rate_studio_entry))
+            .route("/studio/frames/:id/report", post(handlers::report_studio_frame))
+            // Листы: тот же разрез, что у склада дома, только со своим владельцем
+            // и своими квотами.
+            .route(
+                "/studio/sheets",
+                post(handlers::add_studio_sheet)
+                    .route_layer(DefaultBodyLimit::max(MEDIA_UPLOAD_LIMIT)),
+            )
+            .route("/studio/sheets/:id", delete(handlers::remove_studio_sheet))
+            .route("/studio/sheets/:id/slice", post(handlers::slice_studio_sheet))
+            .route("/studio/sheets/:id/cut", post(handlers::keep_studio_cut))
+            .route("/studio/sheets/:id/part", post(handlers::studio_sheet_part))
+            .route("/studio/assets/:id/split", post(handlers::split_studio_asset))
+            .route("/studio/assets/:id/name", post(handlers::rename_studio_asset))
+            .route(
+                "/studio/frames/:id",
+                put(handlers::save_studio_frame).delete(handlers::delete_studio_frame),
+            )
+            .route(
+                "/admin/studio/races",
+                get(handlers::admin_studio_race_queue).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/studio/races/:id/deny",
+                post(handlers::admin_deny_studio_race).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/studio/races/:id/approve",
+                post(handlers::admin_approve_studio_race).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/studio/cards",
+                get(handlers::admin_studio_card_queue).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/studio/cards/:id/deny",
+                post(handlers::admin_deny_studio_card).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/studio/cards/:id/approve",
+                post(handlers::admin_approve_studio_card).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/studio/admissions",
+                get(handlers::admin_list_studio_admissions).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/studio/frames/:id/admit",
+                post(handlers::admin_admit_studio_frame).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/studio/frames/:id/deny",
+                post(handlers::admin_deny_studio_frame).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/studio/season",
+                post(handlers::admin_save_studio_season).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/studio/season/judge",
+                post(handlers::admin_judge_studio_season).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/studio/queue",
+                get(handlers::admin_studio_queue).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/admin/studio/frames/:id/approve",
+                post(handlers::admin_approve_studio_frame).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/studio/frames/:id/strike",
+                post(handlers::admin_strike_studio_frame).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/studio/reports",
+                get(handlers::admin_studio_reports).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/admin/studio/reports/:id/close",
+                post(handlers::admin_close_studio_report).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/studio/waiting",
+                get(handlers::admin_studio_waiting).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/admin/studio/settings",
+                get(handlers::admin_get_studio_settings)
+                    .post(handlers::admin_save_studio_settings)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
             .route(
                 "/admin/battles/clock",
                 get(handlers::admin_get_battle_clock)
@@ -1364,6 +1587,8 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
         // The sheets of frame parts, and the parts cut off them.
         "sheets",
         "assets",
+        // Склад студии: детали и листы людей.
+        "studio",
     ] {
         app = app.nest_service(
             &format!("/static/{}", subdir),
@@ -1432,6 +1657,16 @@ fn is_public_cacheable(path: &str) -> bool {
         "/battles/races",
         "/battles/keywords",
         "/battles/challenges",
+        // Библиотека дома: из этих деталей собирают рамку в простом сборщике.
+        // Видна без имени — на неё приходят смотреть.
+        "/studio/library",
+        // Сезон виден без имени: страница, ради которой приходят из соцсетей,
+        // не должна спрашивать пароль.
+        "/studio/season",
+        "/studio/gallery",
+        "/studio/market",
+        "/studio/market/copies",
+        "/studio/auctions",
     ];
 
     if EXACT.contains(&path) {
@@ -1439,6 +1674,11 @@ fn is_public_cacheable(path: &str) -> bool {
     }
     // Read-only site settings: theme, reel theme, home layout, copy overrides, contacts.
     // (The admin's writable twins live under /admin/settings/… and are not matched here.)
+    // Зал авторов — публичная страница с адресом-именем; кэшируется так же,
+    // как остальные читаемые всеми.
+    if path.starts_with("/studio/authors/") {
+        return true;
+    }
     if path.starts_with("/settings/") || path.starts_with("/content/texts/") {
         return true;
     }

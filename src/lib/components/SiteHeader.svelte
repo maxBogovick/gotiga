@@ -38,6 +38,10 @@
 
   let rightLinks = $derived([
     { href: '/workshop', label: $t('navWorkshop') },
+    // Студия стоит в навигации, а не за дверью, как полка битв: на неё
+    // приходят из соцсетей, и комната, которую надо знать по адресу,
+    // посетителей не собирает.
+    { href: '/studio',   label: $t('navStudio') },
     { href: '/author',   label: $t('navAuthor') },
   ]);
 

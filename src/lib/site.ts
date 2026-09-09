@@ -27,6 +27,11 @@ export const SITEMAP_STATIC_ROUTES = [
     // это адрес, который знает только тот, кто его уже знает. Этюды
     // (`/battles/etude`) сюда не идут: они noindex и принадлежат человеку.
     '/battles',
+    // Студия: галерея и сезон — публичные и ради них всё затевалось. Сам стол,
+    // склад и вход в студию сюда не идут: они за именем.
+    '/studio/gallery',
+    '/studio/season',
+    '/studio/market',
     ACQUIRE_PATH,
     IMPRESSIONS_PATH,
     PRIVACY_PATH,

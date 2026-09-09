@@ -44,6 +44,17 @@ pub struct ClaimMatch {
     pub name: String,
 }
 
+/// Работа вместе с тем, чего клиенту не показывают: чья она и на каком языке
+/// писалась. Отдельным типом, а не полями в `StudioCardDto`: владелец в теле
+/// ответа — это то, что однажды уедет на страницу по недосмотру.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct StudioCardRow {
+    #[sqlx(flatten)]
+    pub card: crate::models::StudioCardDto,
+    pub owner_id: Uuid,
+    pub lang: String,
+}
+
 impl Repository {
     pub fn new(pg_pool: PgPool) -> Self {
         Self { pg_pool }
@@ -6237,7 +6248,7 @@ impl Repository {
                c.abilities, c.budget_points, c.balance_index, c.rules_version,
                c.price_dust, c.price_feed, c.level_price_dust,
                c.art_url, c.art_focal, c.frame_override, c.motion_wear,
-               c.shelf_order, c.lendable,
+               c.shelf_order, c.lendable, c.credit_name, c.edition_size, c.minted,
                c.created_at, c.updated_at,
                f.name AS figurine_name, f.slug AS figurine_slug,
                fi.file_path AS figurine_face_path, fi.id AS figurine_face_id,
@@ -6356,9 +6367,10 @@ impl Repository {
                     kind, armor, ward, attack_channel, reach, step, speed, mend,
                     abilities, budget_points, balance_index,
                     price_dust, price_feed, level_price_dust,
-                    art_url, art_focal, frame_override, motion_wear, lendable
+                    art_url, art_focal, frame_override, motion_wear, lendable,
+                    edition_size, credit_name
                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,
-                         $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37)
+                         $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39)
                RETURNING *"#,
         )
         .bind(&w.slug)
@@ -6398,6 +6410,8 @@ impl Repository {
         .bind(w.frame_override.as_deref())
         .bind(w.motion_wear.as_deref())
         .bind(w.lendable)
+        .bind(w.edition_size)
+        .bind(w.credit_name.as_deref())
         .fetch_one(&self.pg_pool)
         .await?)
     }
@@ -6422,7 +6436,7 @@ impl Repository {
                     abilities = $28, budget_points = $29, balance_index = $30,
                     price_dust = $31, price_feed = $32, level_price_dust = $33,
                     art_url = $34, art_focal = $35, frame_override = $36,
-                    motion_wear = $37, lendable = $38,
+                    motion_wear = $37, lendable = $38, edition_size = $39,
                     rules_version = rules_version + 1,
                     updated_at = NOW()
                WHERE id = $1
@@ -6466,6 +6480,8 @@ impl Repository {
         .bind(w.frame_override.as_deref())
         .bind(w.motion_wear.as_deref())
         .bind(w.lendable)
+        .bind(w.edition_size)
+        .bind(w.credit_name.as_deref())
         .fetch_optional(&self.pg_pool)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Battle card {id} not found")))
@@ -6486,6 +6502,18 @@ impl Repository {
     /// Lay the shelf out in one statement. `updated_at` is deliberately left
     /// alone: rearranging the shelf is not a rewrite of the card, and the desk
     /// compares that stamp against its own open draft.
+    /// Подписать карту автором. Отдельным запросом, а не полем в записи карты:
+    /// автограф ставит студия, а не стол хозяина, и `SaveBattleCardRequest` о
+    /// нём знать не должен — иначе подпись однажды приедет из формы.
+    pub async fn set_battle_card_credit(&self, id: Uuid, name: &str) -> Result<()> {
+        sqlx::query("UPDATE battle_cards SET credit_name = $2 WHERE id = $1")
+            .bind(id)
+            .bind(name)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn set_battle_card_order(&self, ids: &[Uuid]) -> Result<u64> {
         if ids.is_empty() {
             return Ok(0);
@@ -6843,7 +6871,7 @@ impl Repository {
         // Собрание — это состояние, и окно ему не применяется намеренно.
         let owned: (i64, i64) = sqlx::query_as(
             "SELECT COUNT(*)::bigint, COALESCE(MAX(level), 0)::bigint
-               FROM battle_owned_cards WHERE user_id = $1",
+               FROM card_copies WHERE owner_id = $1",
         )
         .bind(user_id)
         .fetch_one(&self.pg_pool)
@@ -7080,7 +7108,12 @@ impl Repository {
         user_id: Uuid,
     ) -> Result<Vec<crate::models::BattleOwnedCard>> {
         Ok(sqlx::query_as::<_, crate::models::BattleOwnedCard>(
-            "SELECT * FROM battle_owned_cards WHERE user_id = $1 ORDER BY acquired_at",
+            // Запертое объявлением НЕ СЧИТАЕТСЯ владением: выставленной вещью
+            // нельзя играть, иначе она стоит на доске в тот самый миг, когда
+            // её у тебя покупают.
+            "SELECT id, owner_id AS user_id, card_id, serial, level, acquired_at, seen_at
+               FROM card_copies WHERE owner_id = $1 AND locked_by IS NULL
+              ORDER BY acquired_at",
         )
         .bind(user_id)
         .fetch_all(&self.pg_pool)
@@ -7157,29 +7190,62 @@ impl Repository {
         if card_ids.is_empty() {
             return Ok(0);
         }
-        let res = sqlx::query(
-            "INSERT INTO battle_owned_cards (user_id, card_id, level)
-             SELECT $1, id, $3 FROM UNNEST($2::uuid[]) AS t(id)
-             ON CONFLICT (user_id, card_id) DO UPDATE SET level = EXCLUDED.level",
+        // Экземпляр, а не отметка. У кого карта уже есть, тому переписывается
+        // уровень — второй экземпляр из рук хранителя не появляется, иначе
+        // «выдать всё», нажатое дважды, удвоило бы собрание.
+        //
+        // Двумя запросами, а не одним ловким: тронутыми считаются И
+        // переписанные, и заведённые, и хранителю сказано одно число, которое
+        // не врёт.
+        let mut tx = self.pg_pool.begin().await?;
+        let raised = sqlx::query(
+            "UPDATE card_copies SET level = $3
+              WHERE owner_id = $1 AND card_id = ANY($2)",
         )
         .bind(user_id)
         .bind(card_ids)
         .bind(level)
-        .execute(&self.pg_pool)
+        .execute(&mut *tx)
         .await?;
-        Ok(res.rows_affected())
+
+        // Номер новому экземпляру даёт счётчик отпечатанного — тот же, что и
+        // при покупке: подарок печатается из того же тиража, что и покупка,
+        // иначе тираж перестаёт быть числом.
+        let given = sqlx::query(
+            "WITH fresh AS (
+                 SELECT t.id FROM UNNEST($2::uuid[]) AS t(id)
+                  WHERE NOT EXISTS (
+                      SELECT 1 FROM card_copies o
+                       WHERE o.owner_id = $1 AND o.card_id = t.id
+                  )
+             ),
+             minted AS (
+                 UPDATE battle_cards c SET minted = c.minted + 1
+                  WHERE c.id IN (SELECT id FROM fresh)
+              RETURNING c.id, c.minted
+             )
+             INSERT INTO card_copies (card_id, owner_id, serial, level, origin)
+             SELECT id, $1, minted, $3, 'gift' FROM minted",
+        )
+        .bind(user_id)
+        .bind(card_ids)
+        .bind(level)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(raised.rows_affected() + given.rows_affected())
     }
 
     /// Забрать карты обратно. Пустой список — забрать все: проверка пустого
     /// собрания (и заёма, который его закрывает) иначе недостижима.
     pub async fn revoke_battle_cards(&self, user_id: Uuid, card_ids: &[Uuid]) -> Result<u64> {
         let res = if card_ids.is_empty() {
-            sqlx::query("DELETE FROM battle_owned_cards WHERE user_id = $1")
+            sqlx::query("DELETE FROM card_copies WHERE owner_id = $1")
                 .bind(user_id)
                 .execute(&self.pg_pool)
                 .await?
         } else {
-            sqlx::query("DELETE FROM battle_owned_cards WHERE user_id = $1 AND card_id = ANY($2)")
+            sqlx::query("DELETE FROM card_copies WHERE owner_id = $1 AND card_id = ANY($2)")
                 .bind(user_id)
                 .bind(card_ids)
                 .execute(&self.pg_pool)
@@ -7192,8 +7258,8 @@ impl Repository {
     /// being a no-op once `seen_at` is set: the first look is the one recorded.
     pub async fn mark_battle_card_seen(&self, user_id: Uuid, card_id: Uuid) -> Result<()> {
         sqlx::query(
-            "UPDATE battle_owned_cards SET seen_at = NOW()
-              WHERE user_id = $1 AND card_id = $2 AND seen_at IS NULL",
+            "UPDATE card_copies SET seen_at = NOW()
+              WHERE owner_id = $1 AND card_id = $2 AND seen_at IS NULL",
         )
         .bind(user_id)
         .bind(card_id)
@@ -7233,7 +7299,7 @@ impl Repository {
             .await?;
 
         let owned: (bool,) = sqlx::query_as(
-            "SELECT EXISTS(SELECT 1 FROM battle_owned_cards WHERE user_id = $1 AND card_id = $2)",
+            "SELECT EXISTS(SELECT 1 FROM card_copies WHERE owner_id = $1 AND card_id = $2)",
         )
         .bind(user_id)
         .bind(card_id)
@@ -7257,6 +7323,24 @@ impl Repository {
             return Err(AppError::BadRequest("Not enough in the wallet".into()));
         }
 
+        // Номер экземпляра берётся ДО списания: у карты с тиражом он может
+        // кончиться, и человек, у которого взяли пыль за ненапечатанное, —
+        // это худшее, что умеет сделать лавка. Счётчик поднимается тем же
+        // запросом, которым читается: два тайма между чтением и записью —
+        // это два экземпляра с номером семь.
+        let minted: Option<(i32,)> = sqlx::query_as(
+            "UPDATE battle_cards SET minted = minted + 1
+              WHERE id = $1 AND (edition_size IS NULL OR minted < edition_size)
+          RETURNING minted",
+        )
+        .bind(card_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some((serial,)) = minted else {
+            tx.rollback().await?;
+            return Err(AppError::BadRequest("The edition is out".into()));
+        };
+
         let spent = sqlx::query(
             "INSERT INTO battle_wallet_entries
                  (user_id, currency, amount, reason, ref_id, idem_key)
@@ -7278,12 +7362,12 @@ impl Repository {
         }
 
         sqlx::query(
-            "INSERT INTO battle_owned_cards (user_id, card_id, level)
-             VALUES ($1, $2, 1)
-             ON CONFLICT (user_id, card_id) DO NOTHING",
+            "INSERT INTO card_copies (card_id, owner_id, serial, level, origin)
+             VALUES ($1, $2, $3, 1, 'bought')",
         )
-        .bind(user_id)
         .bind(card_id)
+        .bind(user_id)
+        .bind(serial)
         .execute(&mut *tx)
         .await?;
 
@@ -7322,15 +7406,19 @@ impl Repository {
             .execute(&mut *tx)
             .await?;
 
-        let held: Option<(i16,)> = sqlx::query_as(
-            "SELECT level FROM battle_owned_cards
-              WHERE user_id = $1 AND card_id = $2 FOR UPDATE",
+        // Поднимается САМЫЙ ОТСТАЮЩИЙ экземпляр этой карты. Пока экземпляр
+        // один, выбирать не из чего; когда экземпляры пойдут по рукам, поднять
+        // прокачанную, пока рядом лежит непрокачанная, никто не попросит.
+        let held: Option<(Uuid, i16)> = sqlx::query_as(
+            "SELECT id, level FROM card_copies
+              WHERE owner_id = $1 AND card_id = $2
+              ORDER BY level, acquired_at LIMIT 1 FOR UPDATE",
         )
         .bind(user_id)
         .bind(card_id)
         .fetch_optional(&mut *tx)
         .await?;
-        let Some((held,)) = held else {
+        let Some((copy_id, held)) = held else {
             tx.rollback().await?;
             return Err(AppError::BadRequest("This card is not yours".into()));
         };
@@ -7375,11 +7463,9 @@ impl Repository {
         }
 
         let raised = sqlx::query(
-            "UPDATE battle_owned_cards SET level = $3
-              WHERE user_id = $1 AND card_id = $2 AND level = $4",
+            "UPDATE card_copies SET level = $2 WHERE id = $1 AND level = $3",
         )
-        .bind(user_id)
-        .bind(card_id)
+        .bind(copy_id)
         .bind(to_level)
         .bind(from_level)
         .execute(&mut *tx)
@@ -8011,6 +8097,2289 @@ impl Repository {
     /// Every filter in one statement rather than a hand-built query: a NULL
     /// bind means "no opinion", so the three questions the desk actually asks
     /// — which sheet, which role, which name — compose without string surgery.
+    // ── Студия ──────────────────────────────────────────────────────────────
+    //
+    // Каждое чтение — с `owner_id` в `WHERE`, а не с проверкой после чтения:
+    // забытая проверка после чтения это чужая работа на экране.
+
+    /// Сколько занято в ящике. Одним запросом по обеим таблицам: ящик — это
+    /// правда о складе, а не число, которое кто-то не забыл обновить.
+    pub async fn studio_box_used(&self, owner: Uuid) -> Result<i64> {
+        let used: Option<i64> = sqlx::query_scalar(
+            "SELECT COALESCE((SELECT SUM(bytes) FROM studio_assets WHERE owner_id = $1), 0)
+                  + COALESCE((SELECT SUM(bytes) FROM studio_sheets WHERE owner_id = $1), 0)",
+        )
+        .bind(owner)
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(used.unwrap_or(0))
+    }
+
+    pub async fn list_studio_assets(
+        &self,
+        owner: Uuid,
+    ) -> Result<Vec<crate::models::StudioAssetDto>> {
+        Ok(sqlx::query_as::<_, crate::models::StudioAssetDto>(
+            "SELECT id, sheet_id, name, role, url, width, height, bytes, created_at
+               FROM studio_assets WHERE owner_id = $1 ORDER BY created_at DESC",
+        )
+        .bind(owner)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn list_studio_sheets(
+        &self,
+        owner: Uuid,
+    ) -> Result<Vec<crate::models::StudioSheetDto>> {
+        Ok(sqlx::query_as::<_, crate::models::StudioSheetDto>(
+            "SELECT id, name, url, width, height, bytes, harvested_at, created_at
+               FROM studio_sheets WHERE owner_id = $1 ORDER BY created_at DESC",
+        )
+        .bind(owner)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn insert_studio_asset(
+        &self,
+        owner: Uuid,
+        name: &str,
+        role: &str,
+        url: &str,
+        width: i32,
+        height: i32,
+        bytes: i32,
+    ) -> Result<crate::models::StudioAssetDto> {
+        Ok(sqlx::query_as::<_, crate::models::StudioAssetDto>(
+            "INSERT INTO studio_assets (owner_id, name, role, url, width, height, bytes)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             RETURNING id, sheet_id, name, role, url, width, height, bytes, created_at",
+        )
+        .bind(owner)
+        .bind(name)
+        .bind(role)
+        .bind(url)
+        .bind(width)
+        .bind(height)
+        .bind(bytes)
+        .fetch_one(&self.pg_pool)
+        .await?)
+    }
+
+    /// Убрать деталь. Возвращает её адрес на складе — файл убирает служба,
+    /// а не запрос: база не знает про диск.
+    pub async fn delete_studio_asset(&self, owner: Uuid, id: Uuid) -> Result<Option<String>> {
+        Ok(
+            sqlx::query_scalar("DELETE FROM studio_assets WHERE id = $1 AND owner_id = $2 RETURNING url")
+                .bind(id)
+                .bind(owner)
+                .fetch_optional(&self.pg_pool)
+                .await?,
+        )
+    }
+
+    /// Сколько весят названные детали этого человека.
+    ///
+    /// По адресам, а не по идентификаторам: рама носит адрес картинки, и
+    /// спрашивать её об идентификаторе — значит завести второе имя одной и той
+    /// же вещи. Чужие адреса в счёт не идут: `owner_id` в условии.
+    pub async fn studio_assets_weight(&self, owner: Uuid, urls: &[String]) -> Result<i64> {
+        if urls.is_empty() {
+            return Ok(0);
+        }
+        let sum: Option<i64> = sqlx::query_scalar(
+            "SELECT SUM(bytes) FROM studio_assets WHERE owner_id = $1 AND url = ANY($2)",
+        )
+        .bind(owner)
+        .bind(urls)
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(sum.unwrap_or(0))
+    }
+
+    pub async fn set_studio_frame_bytes(&self, id: Uuid, bytes: i32) -> Result<()> {
+        sqlx::query("UPDATE studio_frames SET bytes = $2 WHERE id = $1")
+            .bind(id)
+            .bind(bytes)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
+    /// С какой редакцией соглашения человек согласился и когда.
+    pub async fn studio_agreement(&self, owner: Uuid) -> Result<Option<String>> {
+        Ok(sqlx::query_scalar(
+            "SELECT studio_agreement FROM users WHERE id = $1 AND studio_agreed_at IS NOT NULL",
+        )
+        .bind(owner)
+        .fetch_optional(&self.pg_pool)
+        .await?
+        .flatten())
+    }
+
+    pub async fn accept_studio_agreement(&self, owner: Uuid, version: &str) -> Result<()> {
+        sqlx::query(
+            "UPDATE users SET studio_agreed_at = NOW(), studio_agreement = $2 WHERE id = $1",
+        )
+        .bind(owner)
+        .bind(version)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn set_studio_frame_status(
+        &self,
+        owner: Uuid,
+        id: Uuid,
+        status: &str,
+    ) -> Result<Option<crate::models::StudioFrameDto>> {
+        Ok(sqlx::query_as::<_, crate::models::StudioFrameDto>(
+            "UPDATE studio_frames SET status = $3, updated_at = NOW()
+              WHERE id = $1 AND owner_id = $2 AND status IN ('draft', 'withdrawn')
+             RETURNING id, name, body, status, admitted_at, bytes, created_at, updated_at",
+        )
+        .bind(id)
+        .bind(owner)
+        .bind(status)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn insert_studio_sheet(
+        &self,
+        owner: Uuid,
+        name: &str,
+        url: &str,
+        width: i32,
+        height: i32,
+        bytes: i32,
+    ) -> Result<crate::models::StudioSheetDto> {
+        Ok(sqlx::query_as::<_, crate::models::StudioSheetDto>(
+            "INSERT INTO studio_sheets (owner_id, name, url, width, height, bytes)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             RETURNING id, name, url, width, height, bytes, harvested_at, created_at",
+        )
+        .bind(owner)
+        .bind(name)
+        .bind(url)
+        .bind(width)
+        .bind(height)
+        .bind(bytes)
+        .fetch_one(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn get_studio_sheet(
+        &self,
+        owner: Uuid,
+        id: Uuid,
+    ) -> Result<Option<crate::models::StudioSheetDto>> {
+        Ok(sqlx::query_as::<_, crate::models::StudioSheetDto>(
+            "SELECT id, name, url, width, height, bytes, harvested_at, created_at
+               FROM studio_sheets WHERE id = $1 AND owner_id = $2",
+        )
+        .bind(id)
+        .bind(owner)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    /// Лист, из которого что-то вырезали, уборщик больше не трогает.
+    pub async fn mark_studio_sheet_harvested(&self, id: Uuid) -> Result<()> {
+        sqlx::query("UPDATE studio_sheets SET harvested_at = NOW() WHERE id = $1 AND harvested_at IS NULL")
+            .bind(id)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn delete_studio_sheet(&self, owner: Uuid, id: Uuid) -> Result<Option<String>> {
+        Ok(
+            sqlx::query_scalar("DELETE FROM studio_sheets WHERE id = $1 AND owner_id = $2 RETURNING url")
+                .bind(id)
+                .bind(owner)
+                .fetch_optional(&self.pg_pool)
+                .await?,
+        )
+    }
+
+    /// Сколько листов лежит сейчас и сколько принесли за сутки. Два числа
+    /// одним запросом: они всегда спрашиваются вместе — перед загрузкой.
+    pub async fn count_studio_sheets(&self, owner: Uuid) -> Result<(i64, i64)> {
+        let row: (i64, i64) = sqlx::query_as(
+            "SELECT COUNT(*),
+                    COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '1 day')
+               FROM studio_sheets WHERE owner_id = $1",
+        )
+        .bind(owner)
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(row)
+    }
+
+    pub async fn attach_studio_asset_to_sheet(&self, id: Uuid, sheet: Uuid) -> Result<()> {
+        sqlx::query("UPDATE studio_assets SET sheet_id = $2 WHERE id = $1")
+            .bind(id)
+            .bind(sheet)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn get_studio_asset(
+        &self,
+        owner: Uuid,
+        id: Uuid,
+    ) -> Result<Option<crate::models::StudioAssetDto>> {
+        Ok(sqlx::query_as::<_, crate::models::StudioAssetDto>(
+            "SELECT id, sheet_id, name, role, url, width, height, bytes, created_at
+               FROM studio_assets WHERE id = $1 AND owner_id = $2",
+        )
+        .bind(id)
+        .bind(owner)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn rename_studio_asset(&self, owner: Uuid, id: Uuid, name: &str, role: &str) -> Result<()> {
+        sqlx::query("UPDATE studio_assets SET name = $3, role = $4 WHERE id = $1 AND owner_id = $2")
+            .bind(id)
+            .bind(owner)
+            .bind(name)
+            .bind(role)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
+    // ── Сезоны ──────────────────────────────────────────────────────────────
+
+    pub async fn current_studio_season(&self) -> Result<Option<crate::models::StudioSeasonDto>> {
+        Ok(sqlx::query_as::<_, crate::models::StudioSeasonDto>(
+            "SELECT id, number, opens_at, closes_at, verdict_at, state, theme, theme_note
+               FROM studio_seasons ORDER BY number DESC LIMIT 1",
+        )
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn studio_season_by_number(
+        &self,
+        number: i32,
+    ) -> Result<Option<crate::models::StudioSeasonDto>> {
+        Ok(sqlx::query_as::<_, crate::models::StudioSeasonDto>(
+            "SELECT id, number, opens_at, closes_at, verdict_at, state, theme, theme_note
+               FROM studio_seasons WHERE number = $1",
+        )
+        .bind(number)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn insert_studio_season(
+        &self,
+        number: i32,
+        opens: chrono::DateTime<chrono::Utc>,
+        closes: chrono::DateTime<chrono::Utc>,
+        verdict: chrono::DateTime<chrono::Utc>,
+    ) -> Result<crate::models::StudioSeasonDto> {
+        Ok(sqlx::query_as::<_, crate::models::StudioSeasonDto>(
+            "INSERT INTO studio_seasons (number, opens_at, closes_at, verdict_at)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (number) DO UPDATE SET number = EXCLUDED.number
+             RETURNING id, number, opens_at, closes_at, verdict_at, state, theme, theme_note",
+        )
+        .bind(number)
+        .bind(opens)
+        .bind(closes)
+        .bind(verdict)
+        .fetch_one(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn save_studio_season_theme(
+        &self,
+        id: Uuid,
+        theme: Option<&str>,
+        note: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query("UPDATE studio_seasons SET theme = $2, theme_note = $3 WHERE id = $1")
+            .bind(id)
+            .bind(theme)
+            .bind(note)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Сезоны, которым пора вердикта, но которых ещё не судили.
+    ///
+    /// Список, а не один: сервер мог простоять выходные, и тогда неподведённых
+    /// окажется несколько. Пропустить их молча — значит потерять чью-то неделю.
+    pub async fn studio_seasons_due(&self) -> Result<Vec<crate::models::StudioSeasonDto>> {
+        Ok(sqlx::query_as::<_, crate::models::StudioSeasonDto>(
+            "SELECT id, number, opens_at, closes_at, verdict_at, state, theme, theme_note
+               FROM studio_seasons
+              WHERE state <> 'judged' AND verdict_at <= NOW()
+              ORDER BY number",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Заявки сезона с рамой и именем автора. `viewer` — чтобы принести свою
+    /// оценку, если она есть: чужие голоса поимённо не показываются.
+    pub async fn list_studio_entries(
+        &self,
+        season: Uuid,
+        viewer: Option<Uuid>,
+    ) -> Result<Vec<crate::models::StudioEntryDto>> {
+        Ok(sqlx::query_as::<_, crate::models::StudioEntryDto>(
+            "SELECT e.id, e.frame_id, f.name, f.body, e.author_id, u.display_name AS author,
+                    e.entered_at, e.score::float8 AS score,
+                    (SELECT COUNT(*) FROM studio_ratings r WHERE r.entry_id = e.id) AS votes,
+                    e.place, e.to_keeper,
+                    (SELECT r.value FROM studio_ratings r
+                      WHERE r.entry_id = e.id AND r.voter_id = $2) AS mine
+               FROM studio_entries e
+               JOIN studio_frames f ON f.id = e.frame_id
+               JOIN users u ON u.id = e.author_id
+              WHERE e.season_id = $1
+              ORDER BY e.place NULLS LAST, e.entered_at",
+        )
+        .bind(season)
+        .bind(viewer)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn insert_studio_entry(
+        &self,
+        season: Uuid,
+        frame: Uuid,
+        author: Uuid,
+    ) -> Result<Uuid> {
+        Ok(sqlx::query_scalar(
+            "INSERT INTO studio_entries (season_id, frame_id, author_id) VALUES ($1, $2, $3)
+             RETURNING id",
+        )
+        .bind(season)
+        .bind(frame)
+        .bind(author)
+        .fetch_one(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn set_studio_frame_lang(&self, owner: Uuid, id: Uuid, lang: &str) -> Result<()> {
+        sqlx::query("UPDATE studio_frames SET lang = $3 WHERE id = $1 AND owner_id = $2")
+            .bind(id)
+            .bind(owner)
+            .bind(lang)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn studio_entry_frame(&self, entry: Uuid) -> Result<Option<Uuid>> {
+        Ok(
+            sqlx::query_scalar("SELECT frame_id FROM studio_entries WHERE id = $1")
+                .bind(entry)
+                .fetch_optional(&self.pg_pool)
+                .await?,
+        )
+    }
+
+    pub async fn studio_entry_author(&self, entry: Uuid) -> Result<Option<(Uuid, Uuid)>> {
+        Ok(
+            sqlx::query_as("SELECT author_id, season_id FROM studio_entries WHERE id = $1")
+                .bind(entry)
+                .fetch_optional(&self.pg_pool)
+                .await?,
+        )
+    }
+
+    /// Сколько этот человек уже оценил в этом сезоне.
+    pub async fn count_studio_ratings(&self, season: Uuid, voter: Uuid) -> Result<i64> {
+        Ok(sqlx::query_scalar(
+            "SELECT COUNT(*) FROM studio_ratings r
+               JOIN studio_entries e ON e.id = r.entry_id
+              WHERE e.season_id = $1 AND r.voter_id = $2",
+        )
+        .bind(season)
+        .bind(voter)
+        .fetch_one(&self.pg_pool)
+        .await?)
+    }
+
+    /// Оценка. Переоценить можно — мнение меняется; удвоить нельзя.
+    pub async fn put_studio_rating(
+        &self,
+        entry: Uuid,
+        voter: Uuid,
+        value: i16,
+        weight: f64,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO studio_ratings (entry_id, voter_id, value, weight)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (entry_id, voter_id) DO UPDATE SET value = EXCLUDED.value",
+        )
+        .bind(entry)
+        .bind(voter)
+        .bind(value)
+        .bind(weight)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Итог каждой заявки сезона: сумма «оценка × вес», сумма весов, число
+    /// голосов. Считает база — перебирать тысячу оценок в памяти незачем.
+    pub async fn studio_season_tallies(
+        &self,
+        season: Uuid,
+    ) -> Result<Vec<(Uuid, Uuid, f64, f64, i64, chrono::DateTime<chrono::Utc>)>> {
+        Ok(sqlx::query_as(
+            "SELECT e.id, e.author_id,
+                    COALESCE(SUM(r.value * r.weight), 0)::float8,
+                    COALESCE(SUM(r.weight), 0)::float8,
+                    COUNT(r.voter_id),
+                    e.entered_at
+               FROM studio_entries e
+               LEFT JOIN studio_ratings r ON r.entry_id = e.id
+              WHERE e.season_id = $1
+              GROUP BY e.id",
+        )
+        .bind(season)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn set_studio_entry_result(
+        &self,
+        entry: Uuid,
+        score: f64,
+        votes: i64,
+        weight: f64,
+        place: i16,
+        to_keeper: bool,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE studio_entries
+                SET score = $2, votes = $3, weight = $4, place = $5, to_keeper = $6
+              WHERE id = $1",
+        )
+        .bind(entry)
+        .bind(score)
+        .bind(votes as i32)
+        .bind(weight)
+        .bind(place)
+        .bind(to_keeper)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn set_studio_season_state(&self, id: Uuid, state: &str) -> Result<bool> {
+        Ok(sqlx::query(
+            "UPDATE studio_seasons SET state = $2 WHERE id = $1 AND state <> 'judged'",
+        )
+        .bind(id)
+        .bind(state)
+        .execute(&self.pg_pool)
+        .await?
+        .rows_affected()
+            > 0)
+    }
+
+    /// Допуск: очередь и решение.
+    pub async fn list_studio_admissions(&self) -> Result<Vec<crate::models::StudioFrameDto>> {
+        Ok(sqlx::query_as::<_, crate::models::StudioFrameDto>(
+            "SELECT id, name, body, status, admitted_at, bytes, created_at, updated_at
+               FROM studio_frames
+              WHERE status = 'shown' AND admitted_at IS NULL
+              ORDER BY updated_at",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn admit_studio_frame(&self, id: Uuid, word: Option<&str>) -> Result<bool> {
+        Ok(sqlx::query(
+            "UPDATE studio_frames SET admitted_at = NOW(), admit_word = $2
+              WHERE id = $1 AND status = 'shown' AND admitted_at IS NULL",
+        )
+        .bind(id)
+        .bind(word)
+        .execute(&self.pg_pool)
+        .await?
+        .rows_affected()
+            > 0)
+    }
+
+    /// Не допустить: работа возвращается автору со словом. Возвращается именно
+    /// в черновик — иначе её нельзя ни поправить, ни выбросить.
+    pub async fn deny_studio_frame(&self, id: Uuid, word: &str) -> Result<bool> {
+        Ok(sqlx::query(
+            "UPDATE studio_frames SET status = 'draft', admit_word = $2, updated_at = NOW()
+              WHERE id = $1 AND status = 'shown' AND admitted_at IS NULL",
+        )
+        .bind(id)
+        .bind(word)
+        .execute(&self.pg_pool)
+        .await?
+        .rows_affected()
+            > 0)
+    }
+
+    /// Рама, допущенная и не выставленная: то, чем можно заявиться в сезон.
+    pub async fn studio_frame_ready(
+        &self,
+        owner: Uuid,
+        id: Uuid,
+    ) -> Result<Option<(String, i16, bool)>> {
+        Ok(sqlx::query_as(
+            "SELECT status, entries_used, admitted_at IS NOT NULL
+               FROM studio_frames WHERE id = $1 AND owner_id = $2",
+        )
+        .bind(id)
+        .bind(owner)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    /// Работа пошла в неделю. Состояние при этом НЕ трогается: участие живёт в
+    /// `studio_entries`, и вторая его копия в столбце — та самая, которую никто
+    /// не снимал и из-за которой работа застревала навсегда.
+    pub async fn mark_studio_frame_entered(&self, id: Uuid) -> Result<()> {
+        sqlx::query(
+            "UPDATE studio_frames SET entries_used = entries_used + 1, updated_at = NOW()
+              WHERE id = $1",
+        )
+        .bind(id)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn insert_studio_report(
+        &self,
+        frame: Uuid,
+        reporter: Option<Uuid>,
+        reason: &str,
+        note: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO studio_reports (frame_id, reporter_id, reason, note)
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(frame)
+        .bind(reporter)
+        .bind(reason)
+        .bind(note)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Возраст человека и сыграл ли он: две трети веса голоса.
+    pub async fn voter_standing(&self, user: Uuid) -> Result<(bool, bool, bool)> {
+        let row: (bool, bool, bool) = sqlx::query_as(
+            "SELECT (u.created_at < NOW() - ($2 || ' days')::interval),
+                    EXISTS (SELECT 1 FROM card_copies o WHERE o.owner_id = u.id),
+                    EXISTS (SELECT 1 FROM battle_matches m WHERE m.user_id = u.id)
+               FROM users u WHERE u.id = $1",
+        )
+        .bind(user)
+        .bind(crate::studio::WEIGHT_AGE_DAYS.to_string())
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Тройка сезона — то, что ушло хозяину.
+    pub async fn list_studio_keeper_queue(
+        &self,
+        season: Uuid,
+    ) -> Result<Vec<crate::models::StudioEntryDto>> {
+        Ok(sqlx::query_as::<_, crate::models::StudioEntryDto>(
+            "SELECT e.id, e.frame_id, f.name, f.body, e.author_id, u.display_name AS author,
+                    e.entered_at, e.score::float8 AS score,
+                    (SELECT COUNT(*) FROM studio_ratings r WHERE r.entry_id = e.id) AS votes,
+                    e.place, e.to_keeper, NULL::smallint AS mine
+               FROM studio_entries e
+               JOIN studio_frames f ON f.id = e.frame_id
+               JOIN users u ON u.id = e.author_id
+              WHERE e.season_id = $1 AND e.to_keeper AND f.approved_at IS NULL
+              ORDER BY e.place",
+        )
+        .bind(season)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Утвердить раму и назначить ей тираж лицензий.
+    pub async fn approve_studio_frame(&self, id: Uuid, edition: Option<i32>) -> Result<bool> {
+        Ok(sqlx::query(
+            "UPDATE studio_frames
+                SET edition_size = $2, approved_at = NOW(), updated_at = NOW()
+              WHERE id = $1 AND status = 'shown' AND approved_at IS NULL",
+        )
+        .bind(id)
+        .bind(edition)
+        .execute(&self.pg_pool)
+        .await?
+        .rows_affected()
+            > 0)
+    }
+
+    /// Снять работу насовсем. Купленные лицензии при этом не отбираются — люди
+    /// не виноваты; здесь только сама работа уходит с людских глаз.
+    pub async fn strike_studio_frame(&self, id: Uuid, word: &str) -> Result<bool> {
+        Ok(sqlx::query(
+            "UPDATE studio_frames SET status = 'withdrawn', admit_word = $2, admitted_at = NULL,
+                    updated_at = NOW()
+              WHERE id = $1",
+        )
+        .bind(id)
+        .bind(word)
+        .execute(&self.pg_pool)
+        .await?
+        .rows_affected()
+            > 0)
+    }
+
+    pub async fn list_studio_reports(&self) -> Result<Vec<crate::models::StudioReportDto>> {
+        Ok(sqlx::query_as::<_, crate::models::StudioReportDto>(
+            "SELECT r.id, r.frame_id, f.name AS frame_name, f.body,
+                    u.display_name AS reporter, r.reason, r.note, r.state, r.created_at
+               FROM studio_reports r
+               JOIN studio_frames f ON f.id = r.frame_id
+               LEFT JOIN users u ON u.id = r.reporter_id
+              WHERE r.state = 'open'
+              ORDER BY r.created_at",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn close_studio_report(&self, id: Uuid) -> Result<()> {
+        sqlx::query("UPDATE studio_reports SET state = 'closed' WHERE id = $1")
+            .bind(id)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Сколько чего ждёт хозяина: допуск, тройка, жалобы. Одним запросом —
+    /// значок на вкладке спрашивается на каждом заходе в админку.
+    pub async fn studio_waiting(&self) -> Result<(i64, i64, i64)> {
+        let row: (i64, i64, i64) = sqlx::query_as(
+            "SELECT
+               (SELECT COUNT(*) FROM studio_frames
+                 WHERE status = 'shown' AND admitted_at IS NULL),
+               (SELECT COUNT(*) FROM studio_entries e
+                  JOIN studio_frames f ON f.id = e.frame_id
+                 WHERE e.to_keeper AND f.approved_at IS NULL),
+               (SELECT COUNT(*) FROM studio_reports WHERE state = 'open')",
+        )
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(row)
+    }
+
+    // ── Галерея и Зал авторов ───────────────────────────────────────────────
+
+    /// Всё, что допущено на люди. Страницами: полка растёт, и «все сразу» это
+    /// ответ, который однажды перестанет приходить.
+    pub async fn list_studio_gallery(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<crate::models::StudioShownDto>> {
+        Ok(sqlx::query_as::<_, crate::models::StudioShownDto>(
+            "SELECT f.id, f.name, f.body, f.status, u.display_name AS author,
+                    u.studio_slug AS author_slug, f.admitted_at, f.approved_at, f.edition_size
+               FROM studio_frames f
+               JOIN users u ON u.id = f.owner_id
+              WHERE f.admitted_at IS NOT NULL AND f.status <> 'withdrawn'
+              ORDER BY f.approved_at DESC NULLS LAST, f.admitted_at DESC
+              LIMIT $1 OFFSET $2",
+        )
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn count_studio_gallery(&self) -> Result<i64> {
+        Ok(sqlx::query_scalar(
+            "SELECT COUNT(*) FROM studio_frames
+              WHERE admitted_at IS NOT NULL AND status <> 'withdrawn'",
+        )
+        .fetch_one(&self.pg_pool)
+        .await?)
+    }
+
+    /// Автор и его работы. По слугу — адрес должен читаться словами.
+    pub async fn studio_author(
+        &self,
+        slug: &str,
+    ) -> Result<Option<(Uuid, String)>> {
+        Ok(
+            sqlx::query_as("SELECT id, display_name FROM users WHERE studio_slug = $1")
+                .bind(slug)
+                .fetch_optional(&self.pg_pool)
+                .await?,
+        )
+    }
+
+    pub async fn list_studio_author_works(
+        &self,
+        author: Uuid,
+    ) -> Result<Vec<crate::models::StudioShownDto>> {
+        Ok(sqlx::query_as::<_, crate::models::StudioShownDto>(
+            "SELECT f.id, f.name, f.body, f.status, u.display_name AS author,
+                    u.studio_slug AS author_slug, f.admitted_at, f.approved_at, f.edition_size
+               FROM studio_frames f
+               JOIN users u ON u.id = f.owner_id
+              WHERE f.owner_id = $1 AND f.admitted_at IS NOT NULL AND f.status <> 'withdrawn'
+              ORDER BY f.approved_at DESC NULLS LAST, f.admitted_at DESC",
+        )
+        .bind(author)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Карты автора, дошедшие до полки. Только взятые домом: непринятая работа
+    /// — это черновик, и показывать его на людской странице нечего.
+    pub async fn list_studio_author_cards(
+        &self,
+        author: Uuid,
+    ) -> Result<Vec<crate::models::StudioAuthorCardDto>> {
+        Ok(sqlx::query_as::<_, crate::models::StudioAuthorCardDto>(
+            "SELECT c.id, c.body, c.card_id, c.approved_at
+               FROM studio_cards c
+              WHERE c.owner_id = $1 AND c.approved_at IS NOT NULL
+              ORDER BY c.approved_at DESC",
+        )
+        .bind(author)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn studio_slug_taken(&self, slug: &str) -> Result<bool> {
+        Ok(
+            sqlx::query_scalar::<_, bool>("SELECT EXISTS (SELECT 1 FROM users WHERE studio_slug = $1)")
+                .bind(slug)
+                .fetch_one(&self.pg_pool)
+                .await?,
+        )
+    }
+
+    pub async fn set_studio_slug(&self, user: Uuid, slug: &str) -> Result<()> {
+        sqlx::query("UPDATE users SET studio_slug = $2 WHERE id = $1 AND studio_slug IS NULL")
+            .bind(user)
+            .bind(slug)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Кому принадлежит работа, как его звать, его адрес и на каком языке с
+    /// ним говорить. Одним запросом: записка пишется сразу после решения, и
+    /// четыре похода в базу за одним и тем же — это четыре места, где можно
+    /// разойтись.
+    pub async fn studio_frame_owner(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<(Uuid, String, Option<String>, String, String)>> {
+        Ok(sqlx::query_as(
+            "SELECT u.id, u.display_name, u.studio_slug, f.lang, f.name
+               FROM studio_frames f JOIN users u ON u.id = f.owner_id WHERE f.id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    // ── Лицензии ────────────────────────────────────────────────────────────
+    //
+    // Лицензия — право носить раму. Продаётся ИМЕННО ОНА, а не рама: продать
+    // «раму» значило бы раздеть в момент сделки все карты автора, её носившие.
+
+    /// Отпечатать тираж автору. Разом, одним запросом, и только если у рамы
+    /// ещё нет ни одной лицензии: утверждение могут нажать дважды, а тираж —
+    /// число, а не действие.
+    pub async fn mint_frame_licences(
+        &self,
+        frame: Uuid,
+        owner: Uuid,
+        count: i32,
+    ) -> Result<u64> {
+        let done = sqlx::query(
+            "INSERT INTO frame_licenses (frame_id, owner_id, serial, origin)
+             SELECT $1, $2, n, 'author' FROM generate_series(1, $3) AS n
+              WHERE NOT EXISTS (SELECT 1 FROM frame_licenses WHERE frame_id = $1)",
+        )
+        .bind(frame)
+        .bind(owner)
+        .bind(count)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(done.rows_affected())
+    }
+
+    pub async fn count_frame_licences(&self, frame: Uuid) -> Result<(i64, i64)> {
+        let row: (i64, i64) = sqlx::query_as(
+            "SELECT COUNT(*), COUNT(*) FILTER (WHERE owner_id IS NOT NULL)
+               FROM frame_licenses WHERE frame_id = $1",
+        )
+        .bind(frame)
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Лицензии человека, с рамой и именем автора: так их и показывают.
+    pub async fn list_my_licences(&self, owner: Uuid) -> Result<Vec<crate::models::LicenceDto>> {
+        Ok(sqlx::query_as::<_, crate::models::LicenceDto>(
+            "SELECT l.id, l.frame_id, f.name, f.body, l.serial, f.edition_size,
+                    u.display_name AS author, u.studio_slug AS author_slug,
+                    l.origin, l.locked_by IS NOT NULL AS locked
+               FROM frame_licenses l
+               JOIN studio_frames f ON f.id = l.frame_id
+               JOIN users u ON u.id = f.owner_id
+              WHERE l.owner_id = $1
+              ORDER BY l.acquired_at DESC",
+        )
+        .bind(owner)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    // ── Лавка авторов ───────────────────────────────────────────────────────
+
+    /// Выставить лицензию. Она при этом ЗАПИРАЕТСЯ: выставленной нельзя ни
+    /// играть, ни продать второму — эскроу без слова «эскроу».
+    /// Выставить СВОЮ вещь: лицензию на раму или экземпляр карты.
+    ///
+    /// Одна дорога на оба вида, потому что сделка у них одна: вещь запирается
+    /// объявлением, деньги и владение меняются одной транзакцией. Отличается
+    /// только таблица, в которой вещь лежит, и держать ради этого два разных
+    /// пути значило бы однажды починить один и забыть другой.
+    ///
+    /// `locked_by IS NULL` в отборе — вся защита от второго объявления: вещь,
+    /// уже стоящую на прилавке, нельзя ни выставить снова, ни играть ею.
+    pub async fn list_thing(
+        &self,
+        seller: Uuid,
+        kind: &str,
+        subject: Uuid,
+        price: i32,
+        currency: &str,
+    ) -> Result<Uuid> {
+        let (pick, lock) = if kind == "copy" {
+            (
+                "INSERT INTO market_listings (kind, subject_id, seller_id, price, currency)
+                 SELECT 'copy', c.id, $1, $3, $4 FROM card_copies c
+                  WHERE c.id = $2 AND c.owner_id = $1 AND c.locked_by IS NULL
+                 RETURNING id",
+                "UPDATE card_copies SET locked_by = $2 WHERE id = $1",
+            )
+        } else {
+            (
+                "INSERT INTO market_listings (kind, subject_id, seller_id, price, currency)
+                 SELECT 'license', l.id, $1, $3, $4 FROM frame_licenses l
+                  WHERE l.id = $2 AND l.owner_id = $1 AND l.locked_by IS NULL
+                 RETURNING id",
+                "UPDATE frame_licenses SET locked_by = $2 WHERE id = $1",
+            )
+        };
+        let mut tx = self.pg_pool.begin().await?;
+        let listing: Uuid = sqlx::query_scalar(pick)
+            .bind(seller)
+            .bind(subject)
+            .bind(price)
+            .bind(currency)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| AppError::BadRequest("notYours".into()))?;
+        sqlx::query(lock)
+            .bind(subject)
+            .bind(listing)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(listing)
+    }
+
+    /// Снять с продажи: объявление закрыто, лицензия отперта.
+    pub async fn withdraw_listing(&self, seller: Uuid, listing: Uuid) -> Result<bool> {
+        let mut tx = self.pg_pool.begin().await?;
+        let hit = sqlx::query(
+            "UPDATE market_listings SET state = 'withdrawn', closed_at = NOW()
+              WHERE id = $1 AND seller_id = $2 AND state = 'open'",
+        )
+        .bind(listing)
+        .bind(seller)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        // Отпираем обе таблицы: вещь лежит в одной из них, и спрашивать в
+        // какой — значит держать вид объявления вторым знанием рядом с самим
+        // объявлением.
+        sqlx::query("UPDATE frame_licenses SET locked_by = NULL WHERE locked_by = $1")
+            .bind(listing)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE card_copies SET locked_by = NULL WHERE locked_by = $1")
+            .bind(listing)
+            .execute(&mut *tx)
+            .await?;
+        // Мены на снятое отпадают вместе с ним: иначе предложенное осталось бы
+        // запертым за объявлением, которого больше нет.
+        if hit > 0 {
+            self.drop_other_trades(&mut tx, listing, None).await?;
+        }
+        tx.commit().await?;
+        Ok(hit > 0)
+    }
+
+    /// Купить. Всё одной транзакцией: списание, выплата автору, сгоревшая
+    /// комиссия, смена владельца, закрытие объявления. Половина сделки — это
+    /// потерянные деньги или потерянная вещь, и середины здесь быть не может.
+    ///
+    /// Кошелёк покупателя запирается тем же advisory-замком, что и покупка
+    /// карты: два нажатия в двух вкладках встают в очередь, а не читают один и
+    /// тот же баланс и оба слышат «хватает».
+    pub async fn buy_listing(
+        &self,
+        buyer: Uuid,
+        listing: Uuid,
+        commission_percent: i32,
+    ) -> Result<(i32, String, Uuid)> {
+        let mut tx = self.pg_pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))")
+            .bind(buyer.to_string())
+            .execute(&mut *tx)
+            .await?;
+
+        let row: Option<(Uuid, Uuid, i32, String, String)> = sqlx::query_as(
+            "SELECT subject_id, seller_id, price, currency, kind FROM market_listings
+              WHERE id = $1 AND state = 'open' FOR UPDATE",
+        )
+        .bind(listing)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let (thing, seller, price, currency, kind) =
+            row.ok_or_else(|| AppError::BadRequest("gone".into()))?;
+        if seller == buyer {
+            tx.rollback().await?;
+            return Err(AppError::BadRequest("ownListing".into()));
+        }
+
+        let balance: (Option<i64>,) = sqlx::query_as(
+            "SELECT SUM(amount)::bigint FROM battle_wallet_entries
+              WHERE user_id = $1 AND currency = $2",
+        )
+        .bind(buyer)
+        .bind(&currency)
+        .fetch_one(&mut *tx)
+        .await?;
+        if balance.0.unwrap_or(0) < i64::from(price) {
+            tx.rollback().await?;
+            return Err(AppError::BadRequest("notEnough".into()));
+        }
+
+        // Комиссия дома СГОРАЕТ: она никому не начисляется. Это единственный
+        // сток валюты — без него за месяц цены перестанут что-то значить.
+        let commission = (price * commission_percent) / 100;
+        let to_seller = price - commission;
+
+        sqlx::query(
+            "INSERT INTO battle_wallet_entries (user_id, currency, amount, reason, ref_id, idem_key)
+             VALUES ($1, $2, $3, 'market_bought', $4, $5)",
+        )
+        .bind(buyer)
+        .bind(&currency)
+        .bind(-price)
+        .bind(listing)
+        .bind(format!("market:{listing}:paid"))
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO battle_wallet_entries (user_id, currency, amount, reason, ref_id, idem_key)
+             VALUES ($1, $2, $3, 'market_sold', $4, $5)",
+        )
+        .bind(seller)
+        .bind(&currency)
+        .bind(to_seller)
+        .bind(listing)
+        .bind(format!("market:{listing}:got"))
+        .execute(&mut *tx)
+        .await?;
+
+        // Смена владельца — ОДНА СТРОКА, и в этом весь смысл экземпляра:
+        // ничего не копируется, ничего не исчезает, и правило «продал — у тебя
+        // больше нет» выполняется формой таблицы, а не проверкой.
+        let move_it = if kind == "copy" {
+            "UPDATE card_copies SET owner_id = $2, origin = 'bought', locked_by = NULL,
+                    acquired_at = NOW(), seen_at = NULL
+              WHERE id = $1"
+        } else {
+            "UPDATE frame_licenses SET owner_id = $2, origin = 'bought', locked_by = NULL,
+                    acquired_at = NOW()
+              WHERE id = $1"
+        };
+        sqlx::query(move_it)
+            .bind(thing)
+            .bind(buyer)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "UPDATE market_listings SET state = 'sold', closed_at = NOW() WHERE id = $1",
+        )
+        .bind(listing)
+        .execute(&mut *tx)
+        .await?;
+        // Кто-то отдал за неё пыль — мены на эту вещь отпадают, и предложенное
+        // возвращается своим хозяевам отпертым.
+        self.drop_other_trades(&mut tx, listing, None).await?;
+
+        tx.commit().await?;
+        Ok((price, currency, thing))
+    }
+
+    /// Полка лавки: что продаётся сейчас.
+    pub async fn list_market(&self) -> Result<Vec<crate::models::ListingDto>> {
+        Ok(sqlx::query_as::<_, crate::models::ListingDto>(
+            "SELECT m.id, l.id AS licence_id, m.price, m.currency, l.serial, f.id AS frame_id, f.name, f.body,
+                    f.edition_size, u.display_name AS seller, a.display_name AS author,
+                    a.studio_slug AS author_slug, m.created_at
+               FROM market_listings m
+               JOIN frame_licenses l ON l.id = m.subject_id
+               JOIN studio_frames f ON f.id = l.frame_id
+               JOIN users u ON u.id = m.seller_id
+               JOIN users a ON a.id = f.owner_id
+              WHERE m.state = 'open' AND m.kind = 'license'
+              ORDER BY m.created_at DESC",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Экземпляры карт на прилавке.
+    ///
+    /// Только тех карт, что стоят на полке дома: снятую с полки карту дом не
+    /// показывает и в лавке — иначе человек купил бы вещь, которой на полке
+    /// нет и посмотреть которую негде.
+    pub async fn list_market_copies(&self) -> Result<Vec<crate::models::CopyListingDto>> {
+        Ok(sqlx::query_as::<_, crate::models::CopyListingDto>(
+            "SELECT m.id, c.id AS copy_id, m.price, m.currency, c.serial, c.level,
+                    c.card_id, k.title_en, k.title_ru, k.credit_name,
+                    u.display_name AS seller, m.created_at
+               FROM market_listings m
+               JOIN card_copies c ON c.id = m.subject_id
+               JOIN battle_cards k ON k.id = c.card_id
+               JOIN users u ON u.id = m.seller_id
+              WHERE m.state = 'open' AND m.kind = 'copy' AND k.status = 'published'
+              ORDER BY m.created_at DESC",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Свои экземпляры — ВСЕ, включая запертые: продавать их человек приходит
+    /// сюда же, и вещь, пропавшая из списка ровно потому, что выставлена, —
+    /// это вещь, которую нельзя снять с продажи.
+    pub async fn list_my_copies(&self, owner: Uuid) -> Result<Vec<crate::models::MyCopyDto>> {
+        Ok(sqlx::query_as::<_, crate::models::MyCopyDto>(
+            "SELECT c.id, c.card_id, c.serial, c.level, c.locked_by IS NOT NULL AS locked,
+                    k.title_en, k.title_ru
+               FROM card_copies c
+               JOIN battle_cards k ON k.id = c.card_id
+              WHERE c.owner_id = $1
+              ORDER BY c.acquired_at DESC",
+        )
+        .bind(owner)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    // ── Мена ────────────────────────────────────────────────────────────────
+
+    /// Предложить мену против объявления.
+    ///
+    /// Запираются ТОЛЬКО вещи предлагающего. Запирать заодно и чужие — значит
+    /// дать любому заморозить чужое собрание одним предложением, которое он и
+    /// не собирался доводить до конца.
+    ///
+    /// Вещи проверяются тем же отбором, что и на прилавке (`owner_id` и
+    /// `locked_by IS NULL`): предложить чужое или уже занятое нельзя, и это
+    /// отбор в запросе, а не проверка на странице.
+    pub async fn offer_trade(
+        &self,
+        from: Uuid,
+        listing: Uuid,
+        items: &[crate::models::TradeItem],
+    ) -> Result<Uuid> {
+        let mut tx = self.pg_pool.begin().await?;
+
+        // Объявление должно быть открыто и НЕ СВОИМ: мена с собой — это не
+        // мена, а способ запереть собственную вещь дважды.
+        let seller: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT seller_id FROM market_listings WHERE id = $1 AND state = 'open'",
+        )
+        .bind(listing)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some((seller,)) = seller else {
+            tx.rollback().await?;
+            return Err(AppError::BadRequest("gone".into()));
+        };
+        if seller == from {
+            tx.rollback().await?;
+            return Err(AppError::BadRequest("ownListing".into()));
+        }
+
+        let trade: Uuid = sqlx::query_scalar(
+            "INSERT INTO trades (listing_id, from_id) VALUES ($1, $2) RETURNING id",
+        )
+        .bind(listing)
+        .bind(from)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        for item in items {
+            let lock = if item.kind == "copy" {
+                "UPDATE card_copies SET locked_by = $3
+                  WHERE id = $1 AND owner_id = $2 AND locked_by IS NULL"
+            } else {
+                "UPDATE frame_licenses SET locked_by = $3
+                  WHERE id = $1 AND owner_id = $2 AND locked_by IS NULL"
+            };
+            let hit = sqlx::query(lock)
+                .bind(item.subject_id)
+                .bind(from)
+                .bind(trade)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected();
+            if hit == 0 {
+                // Ни одной половины мены: либо вся она законна, либо её нет.
+                tx.rollback().await?;
+                return Err(AppError::BadRequest("notYours".into()));
+            }
+            sqlx::query(
+                "INSERT INTO trade_items (trade_id, kind, subject_id) VALUES ($1, $2, $3)",
+            )
+            .bind(trade)
+            .bind(&item.kind)
+            .bind(item.subject_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+        Ok(trade)
+    }
+
+    /// Принять мену. Всё одной транзакцией: вещь с прилавка идёт предложившему,
+    /// предложенное — продавцу, объявление закрывается словом `traded`.
+    ///
+    /// Принять может ТОЛЬКО хозяин объявления, и это условие стоит в запросе.
+    pub async fn accept_trade(&self, seller: Uuid, trade: Uuid) -> Result<bool> {
+        let mut tx = self.pg_pool.begin().await?;
+
+        let row: Option<(Uuid, Uuid, Uuid, String)> = sqlx::query_as(
+            "SELECT t.from_id, m.id, m.subject_id, m.kind
+               FROM trades t
+               JOIN market_listings m ON m.id = t.listing_id
+              WHERE t.id = $1 AND t.state = 'offered'
+                AND m.state = 'open' AND m.seller_id = $2
+              FOR UPDATE OF t, m",
+        )
+        .bind(trade)
+        .bind(seller)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some((buyer, listing, subject, kind)) = row else {
+            tx.rollback().await?;
+            return Ok(false);
+        };
+
+        // Вещь с прилавка — предложившему.
+        let hand_over = if kind == "copy" {
+            "UPDATE card_copies SET owner_id = $2, origin = 'traded', locked_by = NULL,
+                    acquired_at = NOW(), seen_at = NULL WHERE id = $1"
+        } else {
+            "UPDATE frame_licenses SET owner_id = $2, origin = 'traded', locked_by = NULL,
+                    acquired_at = NOW() WHERE id = $1"
+        };
+        sqlx::query(hand_over)
+            .bind(subject)
+            .bind(buyer)
+            .execute(&mut *tx)
+            .await?;
+
+        // Предложенное — продавцу. Отпираем тем же движением: вещь занята была
+        // ЭТОЙ меной, и держать её запертой после неё нечем.
+        let items: Vec<(String, Uuid)> =
+            sqlx::query_as("SELECT kind, subject_id FROM trade_items WHERE trade_id = $1")
+                .bind(trade)
+                .fetch_all(&mut *tx)
+                .await?;
+        for (item_kind, id) in items {
+            let move_it = if item_kind == "copy" {
+                "UPDATE card_copies SET owner_id = $2, origin = 'traded', locked_by = NULL,
+                        acquired_at = NOW(), seen_at = NULL WHERE id = $1"
+            } else {
+                "UPDATE frame_licenses SET owner_id = $2, origin = 'traded', locked_by = NULL,
+                        acquired_at = NOW() WHERE id = $1"
+            };
+            sqlx::query(move_it)
+                .bind(id)
+                .bind(seller)
+                .execute(&mut *tx)
+                .await?;
+        }
+
+        sqlx::query(
+            "UPDATE market_listings SET state = 'traded', closed_at = NOW() WHERE id = $1",
+        )
+        .bind(listing)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("UPDATE trades SET state = 'taken', closed_at = NOW() WHERE id = $1")
+            .bind(trade)
+            .execute(&mut *tx)
+            .await?;
+        // Остальные мены на это объявление отпадают: вещь ушла.
+        self.drop_other_trades(&mut tx, listing, Some(trade)).await?;
+
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    /// Отказать в мене или забрать её назад — одним движением, потому что
+    /// делают эти двое одно и то же: мена кончается, вещи отпираются.
+    pub async fn refuse_trade(&self, who: Uuid, trade: Uuid) -> Result<bool> {
+        let mut tx = self.pg_pool.begin().await?;
+        let hit = sqlx::query(
+            "UPDATE trades t SET state = 'refused', closed_at = NOW()
+               FROM market_listings m
+              WHERE t.id = $1 AND t.state = 'offered' AND m.id = t.listing_id
+                AND (t.from_id = $2 OR m.seller_id = $2)",
+        )
+        .bind(trade)
+        .bind(who)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        if hit > 0 {
+            Self::unlock_trade(&mut tx, trade).await?;
+        }
+        tx.commit().await?;
+        Ok(hit > 0)
+    }
+
+    /// Отпереть вещи, занятые меной.
+    async fn unlock_trade(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        trade: Uuid,
+    ) -> Result<()> {
+        sqlx::query("UPDATE card_copies SET locked_by = NULL WHERE locked_by = $1")
+            .bind(trade)
+            .execute(&mut **tx)
+            .await?;
+        sqlx::query("UPDATE frame_licenses SET locked_by = NULL WHERE locked_by = $1")
+            .bind(trade)
+            .execute(&mut **tx)
+            .await?;
+        Ok(())
+    }
+
+    /// Мены, оставшиеся без вещи: объявление закрыто, и держать их нельзя —
+    /// предложенное осталось бы запертым навсегда.
+    async fn drop_other_trades(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        listing: Uuid,
+        except: Option<Uuid>,
+    ) -> Result<()> {
+        let others: Vec<(Uuid,)> = sqlx::query_as(
+            "SELECT id FROM trades
+              WHERE listing_id = $1 AND state = 'offered' AND ($2::uuid IS NULL OR id <> $2)",
+        )
+        .bind(listing)
+        .bind(except)
+        .fetch_all(&mut **tx)
+        .await?;
+        for (id,) in others {
+            sqlx::query("UPDATE trades SET state = 'gone', closed_at = NOW() WHERE id = $1")
+                .bind(id)
+                .execute(&mut **tx)
+                .await?;
+            Self::unlock_trade(tx, id).await?;
+        }
+        Ok(())
+    }
+
+    /// Мены, которые касаются этого человека: и те, что он предложил, и те, что
+    /// предложили ему.
+    pub async fn list_trades(&self, who: Uuid) -> Result<Vec<crate::models::TradeDto>> {
+        let rows: Vec<(Uuid, Uuid, String, String, Uuid, DateTime<Utc>)> = sqlx::query_as(
+            "SELECT t.id, t.listing_id, t.state, u.display_name, t.from_id, t.created_at
+               FROM trades t
+               JOIN market_listings m ON m.id = t.listing_id
+               JOIN users u ON u.id = t.from_id
+              WHERE t.state = 'offered' AND (t.from_id = $1 OR m.seller_id = $1)
+              ORDER BY t.created_at DESC",
+        )
+        .bind(who)
+        .fetch_all(&self.pg_pool)
+        .await?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for (id, listing, state, from, from_id, created_at) in rows {
+            out.push(crate::models::TradeDto {
+                id,
+                listing_id: listing,
+                state,
+                from,
+                mine: from_id == who,
+                want: self.listing_name(listing).await?,
+                gives: self.trade_item_names(id).await?,
+                created_at,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Как называется то, что стоит на прилавке. Одним запросом на оба вида:
+    /// у лицензии имя рамы, у экземпляра — имя карты.
+    async fn listing_name(&self, listing: Uuid) -> Result<String> {
+        Ok(sqlx::query_scalar(
+            "SELECT COALESCE(f.name, k.title_ru, '')
+               FROM market_listings m
+               LEFT JOIN frame_licenses l ON l.id = m.subject_id AND m.kind = 'license'
+               LEFT JOIN studio_frames f ON f.id = l.frame_id
+               LEFT JOIN card_copies c ON c.id = m.subject_id AND m.kind = 'copy'
+               LEFT JOIN battle_cards k ON k.id = c.card_id
+              WHERE m.id = $1",
+        )
+        .bind(listing)
+        .fetch_optional(&self.pg_pool)
+        .await?
+        .unwrap_or_default())
+    }
+
+    async fn trade_item_names(&self, trade: Uuid) -> Result<Vec<String>> {
+        Ok(sqlx::query_scalar(
+            "SELECT COALESCE(f.name, k.title_ru, '')
+               FROM trade_items i
+               LEFT JOIN frame_licenses l ON l.id = i.subject_id AND i.kind = 'license'
+               LEFT JOIN studio_frames f ON f.id = l.frame_id
+               LEFT JOIN card_copies c ON c.id = i.subject_id AND i.kind = 'copy'
+               LEFT JOIN battle_cards k ON k.id = c.card_id
+              WHERE i.trade_id = $1",
+        )
+        .bind(trade)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    // ── Свои роды ───────────────────────────────────────────────────────────
+
+    const STUDIO_RACE_SELECT: &'static str =
+        "id, name_en, name_ru, note_en, note_ru, icon_url, status, keeper_word,
+         approved_at, race_id, created_at, updated_at";
+
+    pub async fn list_studio_races(
+        &self,
+        owner: Uuid,
+    ) -> Result<Vec<crate::models::StudioRaceDto>> {
+        Ok(sqlx::query_as::<_, crate::models::StudioRaceDto>(&format!(
+            "SELECT {} FROM studio_races WHERE owner_id = $1 ORDER BY updated_at DESC",
+            Self::STUDIO_RACE_SELECT
+        ))
+        .bind(owner)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn count_studio_races_open(&self, owner: Uuid) -> Result<i64> {
+        Ok(sqlx::query_scalar(
+            "SELECT COUNT(*) FROM studio_races
+              WHERE owner_id = $1 AND status IN ('draft', 'withdrawn')",
+        )
+        .bind(owner)
+        .fetch_one(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn insert_studio_race(
+        &self,
+        owner: Uuid,
+        req: &crate::models::SaveStudioRaceRequest,
+    ) -> Result<crate::models::StudioRaceDto> {
+        Ok(sqlx::query_as::<_, crate::models::StudioRaceDto>(&format!(
+            "INSERT INTO studio_races (owner_id, name_en, name_ru, note_en, note_ru, icon_url, lang)
+             VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING {}",
+            Self::STUDIO_RACE_SELECT
+        ))
+        .bind(owner)
+        .bind(&req.name_en)
+        .bind(&req.name_ru)
+        .bind(req.note_en.as_deref())
+        .bind(req.note_ru.as_deref())
+        .bind(req.icon_url.as_deref())
+        .bind(&req.lang)
+        .fetch_one(&self.pg_pool)
+        .await?)
+    }
+
+    /// `status` в условии — забор на стороне базы: отданное хозяину не
+    /// правится, взятое домом тем более.
+    pub async fn update_studio_race(
+        &self,
+        owner: Uuid,
+        id: Uuid,
+        req: &crate::models::SaveStudioRaceRequest,
+    ) -> Result<Option<crate::models::StudioRaceDto>> {
+        Ok(sqlx::query_as::<_, crate::models::StudioRaceDto>(&format!(
+            "UPDATE studio_races
+                SET name_en = $3, name_ru = $4, note_en = $5, note_ru = $6, icon_url = $7,
+                    updated_at = NOW()
+              WHERE id = $1 AND owner_id = $2 AND status IN ('draft', 'withdrawn')
+             RETURNING {}",
+            Self::STUDIO_RACE_SELECT
+        ))
+        .bind(id)
+        .bind(owner)
+        .bind(&req.name_en)
+        .bind(&req.name_ru)
+        .bind(req.note_en.as_deref())
+        .bind(req.note_ru.as_deref())
+        .bind(req.icon_url.as_deref())
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn set_studio_race_status(
+        &self,
+        owner: Uuid,
+        id: Uuid,
+        to: &str,
+        from: &[&str],
+    ) -> Result<bool> {
+        Ok(sqlx::query(
+            "UPDATE studio_races SET status = $3, updated_at = NOW()
+              WHERE id = $1 AND owner_id = $2 AND status = ANY($4)",
+        )
+        .bind(id)
+        .bind(owner)
+        .bind(to)
+        .bind(from)
+        .execute(&self.pg_pool)
+        .await?
+        .rows_affected()
+            > 0)
+    }
+
+    pub async fn delete_studio_race(&self, owner: Uuid, id: Uuid) -> Result<bool> {
+        Ok(sqlx::query(
+            // Взятый домом не выбрасывают: его уже носят чужие карты.
+            "DELETE FROM studio_races WHERE id = $1 AND owner_id = $2 AND approved_at IS NULL",
+        )
+        .bind(id)
+        .bind(owner)
+        .execute(&self.pg_pool)
+        .await?
+        .rows_affected()
+            > 0)
+    }
+
+    pub async fn studio_race_queue(&self) -> Result<Vec<crate::models::StudioRaceQueueDto>> {
+        Ok(sqlx::query_as::<_, crate::models::StudioRaceQueueDto>(
+            "SELECT r.id, r.name_en, r.name_ru, r.note_en, r.note_ru, r.icon_url,
+                    u.display_name AS author, r.updated_at
+               FROM studio_races r
+               JOIN users u ON u.id = r.owner_id
+              WHERE r.status = 'shown'
+              ORDER BY r.updated_at",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Работа со стороны хозяина: чья она и на каком языке писалась.
+    pub async fn get_studio_race_any(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<(crate::models::StudioRaceDto, Uuid, String)>> {
+        let row: Option<(Uuid, String)> =
+            sqlx::query_as("SELECT owner_id, lang FROM studio_races WHERE id = $1")
+                .bind(id)
+                .fetch_optional(&self.pg_pool)
+                .await?;
+        let Some((owner, lang)) = row else {
+            return Ok(None);
+        };
+        let race = sqlx::query_as::<_, crate::models::StudioRaceDto>(&format!(
+            "SELECT {} FROM studio_races WHERE id = $1",
+            Self::STUDIO_RACE_SELECT
+        ))
+        .bind(id)
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(Some((race, owner, lang)))
+    }
+
+    pub async fn deny_studio_race(&self, id: Uuid, word: &str) -> Result<bool> {
+        Ok(sqlx::query(
+            "UPDATE studio_races SET status = 'draft', keeper_word = $2, updated_at = NOW()
+              WHERE id = $1 AND status = 'shown'",
+        )
+        .bind(id)
+        .bind(word)
+        .execute(&self.pg_pool)
+        .await?
+        .rows_affected()
+            > 0)
+    }
+
+    pub async fn mark_studio_race_approved(&self, id: Uuid, race: Uuid) -> Result<bool> {
+        Ok(sqlx::query(
+            "UPDATE studio_races SET approved_at = NOW(), race_id = $2, updated_at = NOW()
+              WHERE id = $1 AND approved_at IS NULL",
+        )
+        .bind(id)
+        .bind(race)
+        .execute(&self.pg_pool)
+        .await?
+        .rows_affected()
+            > 0)
+    }
+
+    /// Подписать род автором — тем же движением, каким подписывается карта.
+    pub async fn set_battle_race_credit(&self, id: Uuid, name: &str) -> Result<()> {
+        sqlx::query("UPDATE battle_races SET credit_name = $2 WHERE id = $1")
+            .bind(id)
+            .bind(name)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
+    // ── Аукцион ─────────────────────────────────────────────────────────────
+
+    /// Выставить вещь на торг. Вещь запирается лотом — тем же `locked_by`, что
+    /// и прилавком: занятое занято, и знать, чем именно, дому незачем.
+    pub async fn start_auction(
+        &self,
+        seller: Option<Uuid>,
+        kind: &str,
+        subject: Uuid,
+        start_price: i32,
+        currency: &str,
+        ends_at: DateTime<Utc>,
+        estate: bool,
+    ) -> Result<Uuid> {
+        let mut tx = self.pg_pool.begin().await?;
+        let auction: Uuid = sqlx::query_scalar(
+            "INSERT INTO auctions (kind, subject_id, seller_id, estate, start_price, currency, ends_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+        )
+        .bind(kind)
+        .bind(subject)
+        .bind(seller)
+        .bind(estate)
+        .bind(start_price)
+        .bind(currency)
+        .bind(ends_at)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        // Вещь должна быть СВОЕЙ и свободной. У наследства хозяина нет вовсе —
+        // тогда проверяется, что она и правда ничья.
+        let lock = match (kind, seller.is_some()) {
+            ("copy", true) => {
+                "UPDATE card_copies SET locked_by = $3
+                  WHERE id = $1 AND owner_id = $2 AND locked_by IS NULL"
+            }
+            ("copy", false) => {
+                "UPDATE card_copies SET locked_by = $3
+                  WHERE id = $1 AND owner_id IS NULL AND $2::uuid IS NULL AND locked_by IS NULL"
+            }
+            (_, true) => {
+                "UPDATE frame_licenses SET locked_by = $3
+                  WHERE id = $1 AND owner_id = $2 AND locked_by IS NULL"
+            }
+            (_, false) => {
+                "UPDATE frame_licenses SET locked_by = $3
+                  WHERE id = $1 AND owner_id IS NULL AND $2::uuid IS NULL AND locked_by IS NULL"
+            }
+        };
+        let hit = sqlx::query(lock)
+            .bind(subject)
+            .bind(seller)
+            .bind(auction)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+        if hit == 0 {
+            tx.rollback().await?;
+            return Err(AppError::BadRequest("notYours".into()));
+        }
+        tx.commit().await?;
+        Ok(auction)
+    }
+
+    /// Что сейчас на молотке.
+    pub async fn list_auctions(&self) -> Result<Vec<crate::models::AuctionDto>> {
+        Ok(sqlx::query_as::<_, crate::models::AuctionDto>(
+            "SELECT a.id, a.kind, a.subject_id, u.display_name AS seller, a.estate,
+                    COALESCE(f.name, k.title_ru, '') AS name,
+                    c.card_id,
+                    a.start_price, a.currency,
+                    (SELECT MAX(b.amount) FROM auction_bids b WHERE b.auction_id = a.id) AS top_bid,
+                    (SELECT COUNT(*) FROM auction_bids b WHERE b.auction_id = a.id) AS bids,
+                    a.ends_at
+               FROM auctions a
+               LEFT JOIN users u ON u.id = a.seller_id
+               LEFT JOIN frame_licenses l ON l.id = a.subject_id AND a.kind = 'license'
+               LEFT JOIN studio_frames f ON f.id = l.frame_id
+               LEFT JOIN card_copies c ON c.id = a.subject_id AND a.kind = 'copy'
+               LEFT JOIN battle_cards k ON k.id = c.card_id
+              WHERE a.state = 'open'
+              ORDER BY a.ends_at",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Поставить. Ставка НИЧЕГО не списывает: пока идёт торг, деньги у человека
+    /// на руках. Проверяется только, что они у него есть, — обещание, за
+    /// которое в момент закрытия спросят.
+    ///
+    /// Ставка в последние минуты продлевает торг на столько же: иначе всё
+    /// решается в последнюю секунду, и выигрывает не тот, кто дал больше, а
+    /// тот, у кого быстрее рука.
+    pub async fn place_bid(
+        &self,
+        bidder: Uuid,
+        auction: Uuid,
+        amount: i32,
+        step: i32,
+        snipe_minutes: i64,
+    ) -> Result<i32> {
+        let mut tx = self.pg_pool.begin().await?;
+        let lot: Option<(Option<Uuid>, i32, String, DateTime<Utc>)> = sqlx::query_as(
+            "SELECT seller_id, start_price, currency, ends_at FROM auctions
+              WHERE id = $1 AND state = 'open' FOR UPDATE",
+        )
+        .bind(auction)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some((seller, start_price, currency, ends_at)) = lot else {
+            tx.rollback().await?;
+            return Err(AppError::BadRequest("gone".into()));
+        };
+        if ends_at <= Utc::now() {
+            tx.rollback().await?;
+            return Err(AppError::BadRequest("over".into()));
+        }
+        if seller == Some(bidder) {
+            tx.rollback().await?;
+            return Err(AppError::BadRequest("ownLot".into()));
+        }
+
+        let top: Option<i32> =
+            sqlx::query_scalar("SELECT MAX(amount) FROM auction_bids WHERE auction_id = $1")
+                .bind(auction)
+                .fetch_one(&mut *tx)
+                .await?;
+        let least = match top {
+            Some(top) => top + step,
+            None => start_price,
+        };
+        if amount < least {
+            tx.rollback().await?;
+            return Err(AppError::BadRequest(format!("bidTooLow:{least}")));
+        }
+
+        let balance: (Option<i64>,) = sqlx::query_as(
+            "SELECT SUM(amount)::bigint FROM battle_wallet_entries
+              WHERE user_id = $1 AND currency = $2",
+        )
+        .bind(bidder)
+        .bind(&currency)
+        .fetch_one(&mut *tx)
+        .await?;
+        if balance.0.unwrap_or(0) < i64::from(amount) {
+            tx.rollback().await?;
+            return Err(AppError::BadRequest("notEnough".into()));
+        }
+
+        sqlx::query(
+            "INSERT INTO auction_bids (auction_id, bidder_id, amount) VALUES ($1, $2, $3)",
+        )
+        .bind(auction)
+        .bind(bidder)
+        .bind(amount)
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            "UPDATE auctions SET ends_at = GREATEST(ends_at, NOW() + ($2 || ' minutes')::interval)
+              WHERE id = $1 AND ends_at < NOW() + ($2 || ' minutes')::interval",
+        )
+        .bind(auction)
+        .bind(snipe_minutes.to_string())
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(amount)
+    }
+
+    /// Торги, которым вышел срок.
+    pub async fn auctions_due(&self) -> Result<Vec<Uuid>> {
+        Ok(
+            sqlx::query_scalar("SELECT id FROM auctions WHERE state = 'open' AND ends_at <= NOW()")
+                .fetch_all(&self.pg_pool)
+                .await?,
+        )
+    }
+
+    /// Ударить молотком.
+    ///
+    /// Ставки перебираются сверху вниз, и лот достаётся ПЕРВОМУ, кто может
+    /// заплатить прямо сейчас: ставка не списывалась, и за неделю деньги могли
+    /// уйти на другое. Никто не может — лот пуст (`void`), и вещь возвращается
+    /// хозяину отпертой.
+    ///
+    /// Вырученное у наследства СГОРАЕТ: платить некому, а дописать эту пыль
+    /// кому-нибудь значило бы напечатать её из ниоткуда.
+    pub async fn close_auction(&self, auction: Uuid) -> Result<Option<(Uuid, i32)>> {
+        let mut tx = self.pg_pool.begin().await?;
+        let lot: Option<(String, Uuid, Option<Uuid>, String, bool)> = sqlx::query_as(
+            "SELECT kind, subject_id, seller_id, currency, estate FROM auctions
+              WHERE id = $1 AND state = 'open' FOR UPDATE",
+        )
+        .bind(auction)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some((kind, subject, seller, currency, estate)) = lot else {
+            tx.rollback().await?;
+            return Ok(None);
+        };
+
+        let bids: Vec<(Uuid, i32)> = sqlx::query_as(
+            "SELECT bidder_id, amount FROM auction_bids
+              WHERE auction_id = $1 ORDER BY amount DESC, created_at",
+        )
+        .bind(auction)
+        .fetch_all(&mut *tx)
+        .await?;
+
+        let mut winner: Option<(Uuid, i32)> = None;
+        for (bidder, amount) in bids {
+            let balance: (Option<i64>,) = sqlx::query_as(
+                "SELECT SUM(amount)::bigint FROM battle_wallet_entries
+                  WHERE user_id = $1 AND currency = $2",
+            )
+            .bind(bidder)
+            .bind(&currency)
+            .fetch_one(&mut *tx)
+            .await?;
+            if balance.0.unwrap_or(0) >= i64::from(amount) {
+                winner = Some((bidder, amount));
+                break;
+            }
+        }
+
+        match winner {
+            Some((who, price)) => {
+                sqlx::query(
+                    "INSERT INTO battle_wallet_entries
+                         (user_id, currency, amount, reason, ref_id, idem_key)
+                     VALUES ($1, $2, $3, 'auction_won', $4, $5)
+                     ON CONFLICT (user_id, idem_key) DO NOTHING",
+                )
+                .bind(who)
+                .bind(&currency)
+                .bind(-price)
+                .bind(auction)
+                .bind(format!("auction:{auction}:paid"))
+                .execute(&mut *tx)
+                .await?;
+
+                // Продавцу — если он есть. У наследства его нет, и вырученное
+                // сгорает: это тот же сток, что и доля дома.
+                if let (Some(seller), false) = (seller, estate) {
+                    sqlx::query(
+                        "INSERT INTO battle_wallet_entries
+                             (user_id, currency, amount, reason, ref_id, idem_key)
+                         VALUES ($1, $2, $3, 'auction_sold', $4, $5)
+                         ON CONFLICT (user_id, idem_key) DO NOTHING",
+                    )
+                    .bind(seller)
+                    .bind(&currency)
+                    .bind(price)
+                    .bind(auction)
+                    .bind(format!("auction:{auction}:got"))
+                    .execute(&mut *tx)
+                    .await?;
+                }
+
+                let hand_over = if kind == "copy" {
+                    "UPDATE card_copies SET owner_id = $2, origin = 'traded', locked_by = NULL,
+                            acquired_at = NOW(), seen_at = NULL WHERE id = $1"
+                } else {
+                    "UPDATE frame_licenses SET owner_id = $2, origin = 'traded', locked_by = NULL,
+                            acquired_at = NOW() WHERE id = $1"
+                };
+                sqlx::query(hand_over)
+                    .bind(subject)
+                    .bind(who)
+                    .execute(&mut *tx)
+                    .await?;
+                sqlx::query(
+                    "UPDATE auctions SET state = 'done', winner_id = $2, final_price = $3,
+                            closed_at = NOW() WHERE id = $1",
+                )
+                .bind(auction)
+                .bind(who)
+                .bind(price)
+                .execute(&mut *tx)
+                .await?;
+                tx.commit().await?;
+                Ok(Some((who, price)))
+            }
+            None => {
+                // Никто не взял — вещь возвращается отпертой, а не остаётся
+                // висеть за торгом, которого больше нет.
+                let free = if kind == "copy" {
+                    "UPDATE card_copies SET locked_by = NULL WHERE id = $1"
+                } else {
+                    "UPDATE frame_licenses SET locked_by = NULL WHERE id = $1"
+                };
+                sqlx::query(free)
+                    .bind(subject)
+                    .execute(&mut *tx)
+                    .await?;
+                sqlx::query(
+                    "UPDATE auctions SET state = 'void', closed_at = NOW() WHERE id = $1",
+                )
+                .bind(auction)
+                .execute(&mut *tx)
+                .await?;
+                tx.commit().await?;
+                Ok(None)
+            }
+        }
+    }
+
+    /// Вещи, оставшиеся без хозяина: учётную запись удалили, а вещи стоят.
+    /// Ровно они и уходят с молотка.
+    pub async fn ownerless_things(&self) -> Result<Vec<(String, Uuid)>> {
+        let copies: Vec<(Uuid,)> = sqlx::query_as(
+            "SELECT c.id FROM card_copies c
+              WHERE c.owner_id IS NULL AND c.locked_by IS NULL",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?;
+        let licences: Vec<(Uuid,)> = sqlx::query_as(
+            "SELECT l.id FROM frame_licenses l
+              WHERE l.owner_id IS NULL AND l.locked_by IS NULL",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?;
+        Ok(copies
+            .into_iter()
+            .map(|(id,)| ("copy".to_string(), id))
+            .chain(licences.into_iter().map(|(id,)| ("license".to_string(), id)))
+            .collect())
+    }
+
+    // ── Уборка ──────────────────────────────────────────────────────────────
+
+    /// Листы, из которых ничего не вырезали и которые пролежали дольше срока.
+    ///
+    /// Лист весит 2.6 МБ против 12 КБ у детали — это самый тяжёлый мусор в
+    /// доме и единственный, который копится сам собой: человек принёс лист,
+    /// посмотрел разрез, передумал и ушёл.
+    pub async fn studio_sheets_to_sweep(&self, days: i32) -> Result<Vec<(Uuid, String)>> {
+        Ok(sqlx::query_as(
+            "SELECT id, url FROM studio_sheets
+              WHERE harvested_at IS NULL
+                AND created_at < NOW() - ($1 || ' days')::interval",
+        )
+        .bind(days.to_string())
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Детали, на которые не ссылается ни одна рама этого человека и которые
+    /// пролежали дольше срока.
+    ///
+    /// Ссылка ищется в ТЕЛЕ рамы, а не по столбцу: деталь стоит в раме адресом,
+    /// и второго учёта — «эта деталь занята» — заводить нельзя, он разойдётся с
+    /// правдой на первой же правке.
+    pub async fn studio_assets_to_sweep(&self, days: i32) -> Result<Vec<(Uuid, String)>> {
+        Ok(sqlx::query_as(
+            "SELECT a.id, a.url FROM studio_assets a
+              WHERE a.created_at < NOW() - ($1 || ' days')::interval
+                AND NOT EXISTS (
+                      SELECT 1 FROM studio_frames f
+                       WHERE f.owner_id = a.owner_id
+                         AND f.body::text LIKE '%' || a.url || '%')",
+        )
+        .bind(days.to_string())
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn drop_studio_sheet(&self, id: Uuid) -> Result<()> {
+        sqlx::query("DELETE FROM studio_sheets WHERE id = $1")
+            .bind(id)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn drop_studio_asset(&self, id: Uuid) -> Result<()> {
+        sqlx::query("DELETE FROM studio_assets WHERE id = $1")
+            .bind(id)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn list_studio_frames(
+        &self,
+        owner: Uuid,
+    ) -> Result<Vec<crate::models::StudioFrameDto>> {
+        Ok(sqlx::query_as::<_, crate::models::StudioFrameDto>(
+            "SELECT id, name, body, status, admitted_at, bytes, created_at, updated_at
+               FROM studio_frames WHERE owner_id = $1 ORDER BY updated_at DESC",
+        )
+        .bind(owner)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn get_studio_frame(
+        &self,
+        owner: Uuid,
+        id: Uuid,
+    ) -> Result<Option<crate::models::StudioFrameDto>> {
+        Ok(sqlx::query_as::<_, crate::models::StudioFrameDto>(
+            "SELECT id, name, body, status, admitted_at, bytes, created_at, updated_at
+               FROM studio_frames WHERE id = $1 AND owner_id = $2",
+        )
+        .bind(id)
+        .bind(owner)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn count_studio_frames_open(&self, owner: Uuid) -> Result<i64> {
+        Ok(sqlx::query_scalar(
+            "SELECT COUNT(*) FROM studio_frames
+              WHERE owner_id = $1 AND status IN ('draft', 'withdrawn')",
+        )
+        .bind(owner)
+        .fetch_one(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn insert_studio_frame(
+        &self,
+        owner: Uuid,
+        name: &str,
+        body: &serde_json::Value,
+    ) -> Result<crate::models::StudioFrameDto> {
+        Ok(sqlx::query_as::<_, crate::models::StudioFrameDto>(
+            "INSERT INTO studio_frames (owner_id, name, body) VALUES ($1, $2, $3)
+             RETURNING id, name, body, status, admitted_at, bytes, created_at, updated_at",
+        )
+        .bind(owner)
+        .bind(name)
+        .bind(body)
+        .fetch_one(&self.pg_pool)
+        .await?)
+    }
+
+    /// Записать рамку. `status` в условии — забор на стороне базы: выложенное
+    /// не правится, и это не должно держаться на одной проверке в службе.
+    pub async fn update_studio_frame(
+        &self,
+        owner: Uuid,
+        id: Uuid,
+        name: &str,
+        body: &serde_json::Value,
+    ) -> Result<Option<crate::models::StudioFrameDto>> {
+        Ok(sqlx::query_as::<_, crate::models::StudioFrameDto>(
+            "UPDATE studio_frames SET name = $3, body = $4, updated_at = NOW()
+              WHERE id = $1 AND owner_id = $2 AND status IN ('draft', 'withdrawn')
+             RETURNING id, name, body, status, admitted_at, bytes, created_at, updated_at",
+        )
+        .bind(id)
+        .bind(owner)
+        .bind(name)
+        .bind(body)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn delete_studio_frame(&self, owner: Uuid, id: Uuid) -> Result<bool> {
+        Ok(sqlx::query(
+            // Утверждённую не выбрасывают: её уже носят чужие карты.
+            "DELETE FROM studio_frames WHERE id = $1 AND owner_id = $2 AND approved_at IS NULL",
+        )
+        .bind(id)
+        .bind(owner)
+        .execute(&self.pg_pool)
+        .await?
+        .rows_affected()
+            > 0)
+    }
+
+    // ── Свои карты ──────────────────────────────────────────────────────
+
+    const STUDIO_CARD_SELECT: &'static str =
+        "id, body, status, keeper_word, approved_at, card_id, created_at, updated_at";
+
+    pub async fn list_studio_cards(
+        &self,
+        owner: Uuid,
+    ) -> Result<Vec<crate::models::StudioCardDto>> {
+        Ok(sqlx::query_as::<_, crate::models::StudioCardDto>(&format!(
+            "SELECT {} FROM studio_cards WHERE owner_id = $1 ORDER BY updated_at DESC",
+            Self::STUDIO_CARD_SELECT
+        ))
+        .bind(owner)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn get_studio_card(
+        &self,
+        owner: Uuid,
+        id: Uuid,
+    ) -> Result<Option<crate::models::StudioCardDto>> {
+        Ok(sqlx::query_as::<_, crate::models::StudioCardDto>(&format!(
+            "SELECT {} FROM studio_cards WHERE id = $1 AND owner_id = $2",
+            Self::STUDIO_CARD_SELECT
+        ))
+        .bind(id)
+        .bind(owner)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    /// Работа со стороны хозяина: без владельца в условии, потому что смотрит
+    /// он чужое. Возвращает ещё и чья она и на каком языке её писали — записка
+    /// автору пишется на ЕГО языке, а не на том, что открыт у хозяина.
+    pub async fn get_studio_card_any(&self, id: Uuid) -> Result<Option<StudioCardRow>> {
+        Ok(sqlx::query_as::<_, StudioCardRow>(&format!(
+            "SELECT {}, owner_id, lang FROM studio_cards WHERE id = $1",
+            Self::STUDIO_CARD_SELECT
+        ))
+        .bind(id)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    /// Сколько работ у человека в руках — незаконченных. Взятые домом и
+    /// отданные не в счёт: потолок про то, сколько можно НАЧАТЬ.
+    pub async fn count_studio_cards_open(&self, owner: Uuid) -> Result<i64> {
+        Ok(sqlx::query_scalar(
+            "SELECT COUNT(*) FROM studio_cards
+              WHERE owner_id = $1 AND status IN ('draft', 'withdrawn')",
+        )
+        .bind(owner)
+        .fetch_one(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn insert_studio_card(
+        &self,
+        owner: Uuid,
+        body: &serde_json::Value,
+        lang: &str,
+    ) -> Result<crate::models::StudioCardDto> {
+        Ok(sqlx::query_as::<_, crate::models::StudioCardDto>(&format!(
+            "INSERT INTO studio_cards (owner_id, body, lang) VALUES ($1, $2, $3)
+             RETURNING {}",
+            Self::STUDIO_CARD_SELECT
+        ))
+        .bind(owner)
+        .bind(body)
+        .bind(lang)
+        .fetch_one(&self.pg_pool)
+        .await?)
+    }
+
+    /// `status` в условии — забор на стороне базы: отданное хозяину не
+    /// правится, и это не должно держаться на одной проверке в службе.
+    pub async fn update_studio_card(
+        &self,
+        owner: Uuid,
+        id: Uuid,
+        body: &serde_json::Value,
+    ) -> Result<Option<crate::models::StudioCardDto>> {
+        Ok(sqlx::query_as::<_, crate::models::StudioCardDto>(&format!(
+            "UPDATE studio_cards SET body = $3, updated_at = NOW()
+              WHERE id = $1 AND owner_id = $2 AND status IN ('draft', 'withdrawn')
+             RETURNING {}",
+            Self::STUDIO_CARD_SELECT
+        ))
+        .bind(id)
+        .bind(owner)
+        .bind(body)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    /// Перевести работу в другое состояние. `from` — те слова, из которых
+    /// переход законен: без них «отдать» дважды сбросило бы отметку хозяина.
+    pub async fn set_studio_card_status(
+        &self,
+        owner: Uuid,
+        id: Uuid,
+        to: &str,
+        from: &[&str],
+    ) -> Result<bool> {
+        Ok(sqlx::query(
+            "UPDATE studio_cards SET status = $3, updated_at = NOW()
+              WHERE id = $1 AND owner_id = $2 AND status = ANY($4)",
+        )
+        .bind(id)
+        .bind(owner)
+        .bind(to)
+        .bind(from)
+        .execute(&self.pg_pool)
+        .await?
+        .rows_affected()
+            > 0)
+    }
+
+    pub async fn delete_studio_card(&self, owner: Uuid, id: Uuid) -> Result<bool> {
+        Ok(sqlx::query(
+            // Утверждённую не выбрасывают: она уже стоит на полке дома, и
+            // память о принесённом — часть её истории.
+            "DELETE FROM studio_cards WHERE id = $1 AND owner_id = $2 AND approved_at IS NULL",
+        )
+        .bind(id)
+        .bind(owner)
+        .execute(&self.pg_pool)
+        .await?
+        .rows_affected()
+            > 0)
+    }
+
+    /// Очередь хозяина: отданное, самое старое сверху.
+    ///
+    /// ОДНА, а не два ящика: допуск у карт снят (`STUDIO-CARDS-REVIEW.md` П3).
+    /// Он не значил ничего, кроме того, в каком ящике стола лежит работа, —
+    /// допущенной карты не видел никто, и утвердить можно было мимо него.
+    pub async fn studio_card_queue(&self) -> Result<Vec<crate::models::StudioCardQueueDto>> {
+        Ok(sqlx::query_as::<_, crate::models::StudioCardQueueDto>(
+            "SELECT c.id, c.body, c.status, c.approved_at,
+                    u.display_name AS author, u.id AS author_id,
+                    u.studio_slug AS author_slug, c.updated_at
+               FROM studio_cards c
+               JOIN users u ON u.id = c.owner_id
+              WHERE c.status = 'shown'
+              ORDER BY c.updated_at",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Отказ. Работа возвращается автору ПРАВИМОЙ: отказ, который нельзя
+    /// починить, — это не отказ, а тупик.
+    pub async fn deny_studio_card(&self, id: Uuid, word: &str) -> Result<bool> {
+        Ok(sqlx::query(
+            "UPDATE studio_cards
+                SET status = 'draft', keeper_word = $2, updated_at = NOW()
+              WHERE id = $1 AND status = 'shown'",
+        )
+        .bind(id)
+        .bind(word)
+        .execute(&self.pg_pool)
+        .await?
+        .rows_affected()
+            > 0)
+    }
+
+    /// Отметить утверждённой. Условие `approved_at IS NULL` — вся защита от
+    /// второго нажатия: два «утвердить» не заведут двух карт.
+    pub async fn mark_studio_card_approved(&self, id: Uuid, card: Uuid) -> Result<bool> {
+        Ok(sqlx::query(
+            "UPDATE studio_cards SET approved_at = NOW(), card_id = $2, updated_at = NOW()
+              WHERE id = $1 AND approved_at IS NULL",
+        )
+        .bind(id)
+        .bind(card)
+        .execute(&self.pg_pool)
+        .await?
+        .rows_affected()
+            > 0)
+    }
+
+    /// Первый экземпляр — автору, даром. Номер из того же тиража, что и у
+    /// покупателей: второго счётчика у карты нет.
+    pub async fn give_first_copy(&self, card: Uuid, owner: Uuid) -> Result<Option<i32>> {
+        let minted: Option<(i32,)> = sqlx::query_as(
+            "UPDATE battle_cards SET minted = minted + 1
+              WHERE id = $1 AND (edition_size IS NULL OR minted < edition_size)
+          RETURNING minted",
+        )
+        .bind(card)
+        .fetch_optional(&self.pg_pool)
+        .await?;
+        let Some((serial,)) = minted else {
+            return Ok(None);
+        };
+        sqlx::query(
+            "INSERT INTO card_copies (card_id, owner_id, serial, level, origin)
+             VALUES ($1, $2, $3, 1, 'prize')",
+        )
+        .bind(card)
+        .bind(owner)
+        .bind(serial)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(Some(serial))
+    }
+
+    /// Библиотека дома: детали склада, открытые людям. Отдельной таблицы нет —
+    /// это те же детали, просто с поднятым флагом.
+    pub async fn list_public_battle_assets(
+        &self,
+        role: Option<&str>,
+    ) -> Result<Vec<crate::models::BattleAssetListed>> {
+        Ok(sqlx::query_as::<_, crate::models::BattleAssetListed>(
+            "SELECT a.id, a.sheet_id, a.name, a.role, a.url, a.width, a.height,
+                    a.sort_order, a.created_at, a.updated_at, a.public, NULL::text AS sheet_name
+               FROM battle_assets a
+              WHERE a.public AND ($1::text IS NULL OR a.role = $1)
+              ORDER BY a.role, a.sort_order NULLS LAST, a.created_at DESC",
+        )
+        .bind(role)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
     pub async fn list_battle_assets(
         &self,
         sheet: crate::models::AssetSheetFilter,
@@ -8024,7 +10393,7 @@ impl Repository {
         };
         Ok(sqlx::query_as::<_, crate::models::BattleAssetListed>(
             "SELECT a.id, a.sheet_id, a.name, a.role, a.url, a.width, a.height,
-                    a.sort_order, a.created_at, a.updated_at, s.name AS sheet_name
+                    a.sort_order, a.created_at, a.updated_at, a.public, s.name AS sheet_name
                FROM battle_assets a
                LEFT JOIN battle_asset_sheets s ON s.id = a.sheet_id
               WHERE ($1::uuid IS NULL OR a.sheet_id = $1)
@@ -8098,12 +10467,14 @@ impl Repository {
         role: Option<&str>,
         move_sheet: bool,
         sheet_id: Option<Uuid>,
+        public: Option<bool>,
     ) -> Result<crate::models::BattleAsset> {
         sqlx::query_as::<_, crate::models::BattleAsset>(
             "UPDATE battle_assets
                 SET name = COALESCE($2, name),
                     role = COALESCE($3, role),
                     sheet_id = CASE WHEN $4 THEN $5 ELSE sheet_id END,
+                    public = COALESCE($6, public),
                     updated_at = NOW()
               WHERE id = $1 RETURNING *",
         )
@@ -8112,6 +10483,7 @@ impl Repository {
         .bind(role)
         .bind(move_sheet)
         .bind(sheet_id)
+        .bind(public)
         .fetch_optional(&self.pg_pool)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Battle asset {id} not found")))

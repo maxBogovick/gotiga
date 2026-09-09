@@ -26,8 +26,14 @@
     `${page.url.origin}${page.data?.canonicalPath ?? page.url.pathname}`
   );
   let { children } = $props();
+  // Стол студии — рабочая поверхность, а не страница дома: он занимает весь
+  // экран и носит свою шапку с дверью назад. С шапкой и подвалом сайта поверх
+  // него стол не помещался бы никогда, и человек резал бы раму, прокручивая
+  // страницу. Вход в студию (`/studio`) — обычная страница дома, шапка на ней
+  // остаётся: это витрина, с неё уходят в другие комнаты.
+  let atDesk = $derived(/^\/studio\/frames\//.test(page.url.pathname));
   let showSiteHeader = $derived(
-    !page.url.pathname.startsWith('/admin') && !matchChrome.covering,
+    !page.url.pathname.startsWith('/admin') && !atDesk && !matchChrome.covering,
   );
   let hasHeaderOffset = $derived(showSiteHeader && page.url.pathname !== '/');
   // House-descent scroll dimmer: every public page EXCEPT the figurine detail /

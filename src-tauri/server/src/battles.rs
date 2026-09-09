@@ -608,6 +608,20 @@ pub fn default_kind() -> String {
     "unit".to_string()
 }
 
+/// Умолчание для утверждения чужой карты: ЧЕРНОВИК.
+///
+/// Хозяин, забывший сказать слово, не должен нечаянно выложить чужую работу на
+/// полку — обратное решение стоит одного нажатия, а выложенное уже видели.
+/// Вид объявления по умолчанию: лицензия. С неё лавка начиналась, и старая
+/// страница про вид не знает.
+pub fn default_listing_kind() -> String {
+    "license".to_string()
+}
+
+pub fn default_card_status() -> String {
+    "draft".to_string()
+}
+
 pub fn default_channel() -> String {
     "physical".to_string()
 }
@@ -2290,7 +2304,10 @@ pub struct BattleFrame {
 }
 
 pub const LAYOUTS: &[&str] = &["corners", "plaque"];
-pub const FRAME_MODES: &[&str] = &["overlay", "behind", "sliced"];
+/// Порядок тот же, что на клиенте: «собрана из частей» первой — с неё
+/// начинают. Для проверки порядок не значит ничего, но два списка одного и того
+/// же должны выглядеть одинаково, иначе однажды разойдутся и по составу.
+pub const FRAME_MODES: &[&str] = &["sliced", "overlay", "behind"];
 /// `none` — не шестая форма, а её отсутствие: подложка не печатается вовсе.
 pub const BADGE_SHAPES: &[&str] = &["circle", "square", "diamond", "hex", "shield", "none"];
 
@@ -4346,6 +4363,9 @@ mod tests {
             motion_wear: None,
             shelf_order: None,
             lendable: false,
+            credit_name: None,
+            edition_size: None,
+            minted: 0,
             figurine_id: None,
             figurine_name: None,
             figurine_slug: None,

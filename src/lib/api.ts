@@ -105,6 +105,33 @@ import type {
     BenchRequest,
     Bench,
     SaveBattleCardRequest,
+    StudioState,
+    StudioFrame,
+    BattleFrame,
+    StudioAsset,
+    StudioSettings,
+    SaveStudioFrameRequest,
+    StudioSheet,
+    StudioSeason,
+    StudioSeasonPage,
+    StudioEntry,
+    StudioReport,
+    StudioWaiting,
+    StudioCard,
+    StudioCardWaiting,
+    StudioRace,
+    StudioRaceWaiting,
+    SaveStudioRaceRequest,
+    ApproveStudioCardRequest,
+    Auction,
+    CopyListing,
+    Trade,
+    MyCopy,
+    StudioLicence,
+    StudioListing,
+    StudioGallery,
+    StudioAuthor,
+    BattleAsset as BattleAssetRow,
     CopyOverrides,
     HomeLayoutConfig,
     HomeLayoutPreset,
@@ -2262,6 +2289,681 @@ export const api = {
         });
     },
 
+    // === СТУДИЯ ===
+    //
+    // Всё, кроме библиотеки, — под сессией: у склада есть владелец, и это
+    // единственное, что отделяет его от склада дома.
+
+    /** Ворота, настройки, свои рамки и ящик — одним ответом. */
+    async getStudio(sessionToken: string): Promise<StudioState> {
+        return webFetch('/studio', {
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    /** Библиотека дома: детали, которые хозяин открыл людям. Без имени — из
+     *  них собирают рамку, и увидеть их должен всякий, кто пришёл смотреть. */
+    async getStudioLibrary(role?: string, loadFetch?: typeof fetch): Promise<BattleAssetRow[]> {
+        const rows = await webFetch<BattleAssetRow[]>(
+            `/studio/library${role ? `?role=${encodeURIComponent(role)}` : ''}`,
+            undefined,
+            loadFetch,
+        );
+        return (rows ?? []).map(webBattleAsset);
+    },
+
+    async createStudioFrame(
+        sessionToken: string,
+        body: SaveStudioFrameRequest,
+    ): Promise<StudioFrame> {
+        return webFetch('/studio/frames', {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${sessionToken}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(body),
+        });
+    },
+
+    async saveStudioFrame(
+        sessionToken: string,
+        id: string,
+        body: SaveStudioFrameRequest,
+    ): Promise<StudioFrame> {
+        return webFetch(`/studio/frames/${id}`, {
+            method: 'PUT',
+            headers: {
+                Authorization: `Bearer ${sessionToken}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(body),
+        });
+    },
+
+    async deleteStudioFrame(sessionToken: string, id: string): Promise<void> {
+        await webFetch(`/studio/frames/${id}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    /** Деталь в ящик. Тем же приёмом, что деталь рамы дома — WebP с альфой:
+     *  обычная загрузка пишет JPEG-копии и залила бы бумагой ту самую дыру,
+     *  ради которой деталь и вырезали. */
+    async uploadStudioAsset(
+        sessionToken: string,
+        file: File,
+        name: string,
+        role: string,
+    ): Promise<StudioAsset> {
+        const form = new FormData();
+        form.append('name', name);
+        form.append('role', role);
+        form.append('file', file);
+        const res = await fetch(`${webApiBase()}/studio/assets`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+            body: form,
+        });
+        const text = await res.text();
+        if (!res.ok) throw new ApiError(res.status, text);
+        const row = JSON.parse(text) as StudioAsset;
+        return { ...row, url: webPublicUrl(row.url) ?? row.url };
+    },
+
+    /**
+     * Рамка одним пакетом: тело и все её картинки за один запрос.
+     *
+     * Не циклом загрузок: оборванный на пятнадцатой картинке цикл оставил бы
+     * половину рамки на складе и никого, кто это уберёт. Сервер меняет ключи
+     * `local:…` на адреса склада сам, поэтому склеивать тело из ответов
+     * клиенту не приходится — и разъезжаться нечему.
+     */
+    async packageStudioFrame(
+        sessionToken: string,
+        input: {
+            id?: string | null;
+            name: string;
+            body: BattleFrame;
+            /** Файлы под своими ключами `local:…` — теми же, что в теле. */
+            files: Map<string, Blob>;
+            publish?: boolean;
+            /** Язык, на котором человек работает: на нём с ним и заговорят,
+             *  когда решение придёт — днём позже. */
+            lang?: string;
+        },
+    ): Promise<StudioFrame> {
+        const form = new FormData();
+        if (input.id) form.append('id', input.id);
+        form.append('name', input.name);
+        form.append('body', JSON.stringify(input.body));
+        form.append('publish', input.publish ? '1' : '0');
+        form.append('lang', input.lang ?? 'ru');
+        for (const [key, blob] of input.files) {
+            form.append(key, blob, 'piece.webp');
+        }
+        const res = await fetch(`${webApiBase()}/studio/frames/package`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+            body: form,
+        });
+        const text = await res.text();
+        if (!res.ok) throw new ApiError(res.status, text);
+        return JSON.parse(text) as StudioFrame;
+    },
+
+    /** Принять соглашение автора. Спрашивается один раз, перед первой
+     *  выкладкой, и записывается редакцией — не галочкой. */
+    async acceptStudioAgreement(sessionToken: string): Promise<void> {
+        await webFetch('/studio/agreement', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    async deleteStudioAsset(sessionToken: string, id: string): Promise<void> {
+        await webFetch(`/studio/assets/${id}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    // ── Листы студии ────────────────────────────────────────────────────────
+
+    async addStudioSheet(sessionToken: string, file: File, name: string): Promise<StudioSheet> {
+        const form = new FormData();
+        form.append('name', name);
+        form.append('file', file);
+        const res = await fetch(`${webApiBase()}/studio/sheets`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+            body: form,
+        });
+        const text = await res.text();
+        if (!res.ok) throw new ApiError(res.status, text);
+        const row = JSON.parse(text) as StudioSheet;
+        return { ...row, url: webPublicUrl(row.url) ?? row.url };
+    },
+
+    async removeStudioSheet(sessionToken: string, id: string): Promise<void> {
+        await webFetch(`/studio/sheets/${id}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    /** Предложить разрез. Ничего не пишет — перечитывать можно сколько угодно. */
+    async sliceStudioSheet(
+        sessionToken: string,
+        id: string,
+        settings?: BattleSliceSettings | null,
+    ): Promise<BattleSheetCut> {
+        // Настроек может не быть вовсе: первый разрез делается домашними, и
+        // ответ приносит их с собой — крутить есть что только со второго раза.
+        return webFetch(`/studio/sheets/${id}/slice`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${sessionToken}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(settings ? { settings } : {}),
+        });
+    },
+
+    async keepStudioCut(
+        sessionToken: string,
+        id: string,
+        settings: BattleSliceSettings,
+        picks: BattleAssetPick[],
+    ): Promise<StudioAsset[]> {
+        const rows = await webFetch<StudioAsset[]>(`/studio/sheets/${id}/cut`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${sessionToken}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ settings, picks }),
+        });
+        return (rows ?? []).map((r) => ({ ...r, url: webPublicUrl(r.url) ?? r.url }));
+    },
+
+    /** Один кусок в полный рост — для разделочной доски. */
+    async studioSheetPart(
+        sessionToken: string,
+        id: string,
+        settings: BattleSliceSettings,
+        index: number,
+    ): Promise<BattleSheetPartFull> {
+        return webFetch(`/studio/sheets/${id}/part`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${sessionToken}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ settings, index }),
+        });
+    },
+
+    async splitStudioAsset(
+        sessionToken: string,
+        id: string,
+        rects: BattleSplitRect[],
+    ): Promise<StudioAsset[]> {
+        const rows = await webFetch<StudioAsset[]>(`/studio/assets/${id}/split`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${sessionToken}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ rects }),
+        });
+        return (rows ?? []).map((r) => ({ ...r, url: webPublicUrl(r.url) ?? r.url }));
+    },
+
+    async renameStudioAsset(
+        sessionToken: string,
+        id: string,
+        name: string,
+        role: string,
+    ): Promise<void> {
+        await webFetch(`/studio/assets/${id}/name`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${sessionToken}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ name, role }),
+        });
+    },
+
+    // ── Сезон ───────────────────────────────────────────────────────────────
+
+    /** Страница сезона. Токен необязателен: смотреть можно всякому. */
+    async getStudioSeason(
+        sessionToken?: string | null,
+        number?: number,
+        loadFetch?: typeof fetch,
+    ): Promise<StudioSeasonPage> {
+        return webFetch(
+            number ? `/studio/season/${number}` : '/studio/season',
+            sessionToken ? { headers: { Authorization: `Bearer ${sessionToken}` } } : undefined,
+            loadFetch,
+        );
+    },
+
+    async enterStudioSeason(sessionToken: string, frameId: string): Promise<void> {
+        await webFetch('/studio/season/enter', {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${sessionToken}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ frameId }),
+        });
+    },
+
+    async rateStudioEntry(sessionToken: string, id: string, value: number): Promise<void> {
+        await webFetch(`/studio/entries/${id}/rate`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${sessionToken}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ value }),
+        });
+    },
+
+    async reportStudioFrame(
+        sessionToken: string | null,
+        id: string,
+        reason: string,
+        note?: string,
+    ): Promise<void> {
+        await webFetch(`/studio/frames/${id}/report`, {
+            method: 'POST',
+            headers: {
+                ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ reason, note }),
+        });
+    },
+
+    async adminStudioAdmissions(): Promise<StudioFrame[]> {
+        return webFetch('/admin/studio/admissions', { headers: authHeaders() });
+    },
+
+    async adminAdmitStudioFrame(id: string, word?: string): Promise<void> {
+        await webFetch(`/admin/studio/frames/${id}/admit`, {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ word }),
+        });
+    },
+
+    async adminDenyStudioFrame(id: string, word: string): Promise<void> {
+        await webFetch(`/admin/studio/frames/${id}/deny`, {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ word }),
+        });
+    },
+
+    /** Галерея. Без имени: это и есть страница, ради которой приходят. */
+    async getStudioGallery(page = 0, loadFetch?: typeof fetch): Promise<StudioGallery> {
+        return webFetch(`/studio/gallery?page=${page}`, undefined, loadFetch);
+    },
+
+    async getStudioAuthor(slug: string, loadFetch?: typeof fetch): Promise<StudioAuthor> {
+        return webFetch(`/studio/authors/${encodeURIComponent(slug)}`, undefined, loadFetch);
+    },
+
+    // ── Свои карты ──────────────────────────────────────────────────────────
+
+    async getStudioCards(sessionToken: string): Promise<StudioCard[]> {
+        return webFetch('/studio/cards', {
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    /** Завести или сохранить. Домовые поля вырежет сервер: страница не забор. */
+    async saveStudioCard(
+        sessionToken: string,
+        id: string | null,
+        body: SaveBattleCardRequest,
+        lang: string,
+    ): Promise<StudioCard> {
+        return webFetch(id ? `/studio/cards/${id}` : '/studio/cards', {
+            method: id ? 'PUT' : 'POST',
+            headers: {
+                Authorization: `Bearer ${sessionToken}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ body, lang }),
+        });
+    },
+
+    async showStudioCard(sessionToken: string, id: string): Promise<void> {
+        await webFetch(`/studio/cards/${id}/show`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    async withdrawStudioCard(sessionToken: string, id: string): Promise<void> {
+        await webFetch(`/studio/cards/${id}/withdraw`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    async deleteStudioCard(sessionToken: string, id: string): Promise<void> {
+        await webFetch(`/studio/cards/${id}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    /** Весы человека — та же функция, что у хозяина, за второй дверью. */
+    async weighStudioCard(
+        sessionToken: string,
+        body: SaveBattleCardRequest,
+    ): Promise<BattleWeigh> {
+        return webFetch('/studio/cards/weigh', {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${sessionToken}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(body),
+        });
+    },
+
+    /** Очередь карт — одна: допуск у карт снят, решений у хозяина два. */
+    // ── Свои роды ───────────────────────────────────────────────────────────
+
+    async getStudioRaces(sessionToken: string): Promise<StudioRace[]> {
+        return webFetch('/studio/races', {
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    async saveStudioRace(
+        sessionToken: string,
+        id: string | null,
+        body: SaveStudioRaceRequest,
+    ): Promise<StudioRace> {
+        return webFetch(id ? `/studio/races/${id}` : '/studio/races', {
+            method: id ? 'PUT' : 'POST',
+            headers: {
+                Authorization: `Bearer ${sessionToken}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(body),
+        });
+    },
+
+    async showStudioRace(sessionToken: string, id: string): Promise<void> {
+        await webFetch(`/studio/races/${id}/show`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    async withdrawStudioRace(sessionToken: string, id: string): Promise<void> {
+        await webFetch(`/studio/races/${id}/withdraw`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    async deleteStudioRace(sessionToken: string, id: string): Promise<void> {
+        await webFetch(`/studio/races/${id}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    async adminStudioRaceQueue(): Promise<StudioRaceWaiting[]> {
+        return webFetch('/admin/studio/races', { headers: authHeaders() });
+    },
+
+    async adminDenyStudioRace(id: string, word: string): Promise<void> {
+        await webFetch(`/admin/studio/races/${id}/deny`, {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ word }),
+        });
+    },
+
+    async adminApproveStudioRace(id: string, slug: string): Promise<BattleRace> {
+        return webFetch(`/admin/studio/races/${id}/approve`, {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ slug }),
+        });
+    },
+
+    async adminStudioCardQueue(): Promise<StudioCardWaiting[]> {
+        return webFetch('/admin/studio/cards', { headers: authHeaders() });
+    },
+
+    async adminDenyStudioCard(id: string, word: string): Promise<void> {
+        await webFetch(`/admin/studio/cards/${id}/deny`, {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ word }),
+        });
+    },
+
+    async adminApproveStudioCard(
+        id: string,
+        add: ApproveStudioCardRequest,
+    ): Promise<BattleCard> {
+        return webFetch(`/admin/studio/cards/${id}/approve`, {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(add),
+        });
+    },
+
+    // ── Лавка авторов ───────────────────────────────────────────────────────
+
+    /** Лавка. Без имени: на неё приходят смотреть. */
+    async getStudioMarket(loadFetch?: typeof fetch): Promise<StudioListing[]> {
+        return webFetch('/studio/market', undefined, loadFetch);
+    },
+
+    async getMyLicences(sessionToken: string): Promise<StudioLicence[]> {
+        return webFetch('/studio/licences', {
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    /** Выставить свою вещь: лицензию на раму или экземпляр карты. Одна дорога
+     *  на оба вида — сделка у них одна. */
+    async listThing(
+        sessionToken: string,
+        kind: 'license' | 'copy',
+        subjectId: string,
+        price: number,
+        currency: string,
+    ): Promise<void> {
+        await webFetch('/studio/market/list', {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${sessionToken}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ kind, subjectId, price, currency }),
+        });
+    },
+
+    // ── Молоток ─────────────────────────────────────────────────────────────
+
+    /** Что сейчас на молотке. Без имени: смотреть торг приходят все. */
+    async getAuctions(loadFetch?: typeof fetch): Promise<Auction[]> {
+        return webFetch('/studio/auctions', undefined, loadFetch);
+    },
+
+    async startAuction(
+        sessionToken: string,
+        kind: 'license' | 'copy',
+        subjectId: string,
+        startPrice: number,
+        currency: string,
+        days?: number,
+    ): Promise<void> {
+        await webFetch('/studio/auctions', {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${sessionToken}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ kind, subjectId, startPrice, currency, days }),
+        });
+    },
+
+    /** Поставить. Ставка ничего не списывает — платит победитель в момент
+     *  удара молотком. */
+    async placeBid(sessionToken: string, id: string, amount: number): Promise<void> {
+        await webFetch(`/studio/auctions/${id}/bid`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${sessionToken}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ amount }),
+        });
+    },
+
+    // ── Мена ────────────────────────────────────────────────────────────────
+
+    async getTrades(sessionToken: string): Promise<Trade[]> {
+        return webFetch('/studio/trades', {
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    /** Предложить мену против объявления: вещь за вещь, без пыли. */
+    async offerTrade(
+        sessionToken: string,
+        listingId: string,
+        items: { kind: 'license' | 'copy'; subjectId: string }[],
+    ): Promise<void> {
+        await webFetch('/studio/trades', {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${sessionToken}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ listingId, items }),
+        });
+    },
+
+    async acceptTrade(sessionToken: string, id: string): Promise<void> {
+        await webFetch(`/studio/trades/${id}/accept`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    /** Отказать или забрать назад — одна дорога: делают эти двое одно и то же. */
+    async refuseTrade(sessionToken: string, id: string): Promise<void> {
+        await webFetch(`/studio/trades/${id}/refuse`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    async getMarketCopies(loadFetch?: typeof fetch): Promise<CopyListing[]> {
+        return webFetch('/studio/market/copies', undefined, loadFetch);
+    },
+
+    async getMyCopies(sessionToken: string): Promise<MyCopy[]> {
+        return webFetch('/studio/copies', {
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    async withdrawListing(sessionToken: string, id: string): Promise<void> {
+        await webFetch(`/studio/market/${id}/withdraw`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    async buyListing(sessionToken: string, id: string): Promise<{ balance: number }> {
+        return webFetch(`/studio/market/${id}/buy`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    async adminStudioQueue(): Promise<StudioEntry[]> {
+        return webFetch('/admin/studio/queue', { headers: authHeaders() });
+    },
+
+    async adminApproveStudioFrame(id: string, editionSize?: number | null): Promise<void> {
+        await webFetch(`/admin/studio/frames/${id}/approve`, {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ editionSize }),
+        });
+    },
+
+    async adminStrikeStudioFrame(id: string, word: string): Promise<void> {
+        await webFetch(`/admin/studio/frames/${id}/strike`, {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ word }),
+        });
+    },
+
+    async adminStudioReports(): Promise<StudioReport[]> {
+        return webFetch('/admin/studio/reports', { headers: authHeaders() });
+    },
+
+    async adminCloseStudioReport(id: string): Promise<void> {
+        await webFetch(`/admin/studio/reports/${id}/close`, {
+            method: 'POST',
+            headers: authHeaders(),
+        });
+    },
+
+    async adminStudioWaiting(): Promise<StudioWaiting> {
+        return webFetch('/admin/studio/waiting', { headers: authHeaders() });
+    },
+
+    async adminJudgeStudioSeason(): Promise<{ toKeeper: number }> {
+        return webFetch('/admin/studio/season/judge', {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: '{}',
+        });
+    },
+
+    async adminSaveStudioSeason(theme?: string, themeNote?: string): Promise<StudioSeason> {
+        return webFetch('/admin/studio/season', {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ theme, themeNote }),
+        });
+    },
+
+    async adminGetStudioSettings(): Promise<StudioSettings> {
+        return webFetch('/admin/studio/settings', { headers: authHeaders() });
+    },
+
+    async adminSaveStudioSettings(body: StudioSettings): Promise<StudioSettings> {
+        return webFetch('/admin/studio/settings', {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+    },
+
     // === СКРОМНЫЕ ЭПИЧЕСКИЕ БИТВЫ ===
 
     /** The whole shelf, in the order the keeper arranged it. Never paginated. */
@@ -2949,7 +3651,7 @@ export const api = {
      *  `sheetId: null` makes the part loose; leaving it out moves nothing. */
     async adminSaveBattleAsset(
         id: string,
-        body: { name?: string; role?: BattleAssetRole; sheetId?: string | null },
+        body: { name?: string; role?: BattleAssetRole; sheetId?: string | null; public?: boolean },
     ): Promise<BattleAsset> {
         return webBattleAsset(
             await webFetch<BattleAsset>(`/admin/battles/assets/${id}`, {

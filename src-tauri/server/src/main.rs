@@ -104,6 +104,70 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // Background: вердикт сезонов студии.
+    //
+    // Тик — четверть часа, а не сутки: вердикт назначен на конкретную минуту
+    // ночи с субботы на воскресенье, и суточный тик подвёл бы его когда
+    // придётся. Задача сама идемпотентна (`judge_studio_season` первым делом
+    // ставит `judged` одним запросом с условием), поэтому частый тик безопасен,
+    // а простой сервера на выходных не теряет ничью неделю: подводятся ВСЕ
+    // сезоны, которым пора.
+    {
+        let svc = service.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(900));
+            loop {
+                tick.tick().await;
+                match svc.judge_due_studio_seasons().await {
+                    Ok(n) if n > 0 => tracing::info!("Сезон студии подведён: {n} к хозяину"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("Вердикт сезона не удался: {e}"),
+                }
+            }
+        });
+    }
+
+    // Background: молоток. Тик тот же четвертьчасовой, что и у вердикта, и по
+    // той же причине: у торга есть НАЗНАЧЕННАЯ минута конца, а ставка в
+    // последние минуты её ещё и отодвигает. Суточный тик закрывал бы лоты
+    // когда придётся, и «до конца два часа» на странице значило бы «когда-то».
+    {
+        let svc = service.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(900));
+            loop {
+                tick.tick().await;
+                match svc.close_due_auctions().await {
+                    Ok(n) if n > 0 => tracing::info!("Молоток: продано лотов {n}"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("Молоток не удался: {e}"),
+                }
+            }
+        });
+    }
+
+    // Background: уборка склада студии — раз в сутки.
+    //
+    // Суточный тик здесь уместен ровно потому, почему у вердикта он неуместен:
+    // мусор не назначен на минуту. Лист, брошенный в среду, может полежать до
+    // четверга — и никому от этого не хуже.
+    {
+        let svc = service.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(24 * 3600));
+            loop {
+                tick.tick().await;
+                match svc.sweep_studio_store().await {
+                    Ok((0, 0)) => {}
+                    Ok((sheets, assets)) => {
+                        tracing::info!("Склад студии убран: листов {sheets}, деталей {assets}")
+                    }
+                    Err(e) => tracing::warn!("Уборка склада студии не удалась: {e}"),
+                }
+            }
+        });
+    }
+
     // Background: prune login attempts past the retention window (runs now, then daily).
     {
         let svc = service.clone();

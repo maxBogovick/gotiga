@@ -50,15 +50,25 @@ async fn spawn_app(pool: PgPool) -> (String, String, PathBuf) {
         .unwrap();
     let router = api::router(service, config.clone(), log_store);
 
+    // Так же, как поднимает дом (`main.rs`), а не «просто serve».
+    //
+    // Наблюдательность спрашивает адрес обратившегося через
+    // `ConnectInfo<SocketAddr>`, и без него КАЖДЫЙ запрос отвечает 500 —
+    // здоровье в том числе. Пять проверок этого файла лежали именно из-за
+    // расхождения стенда с домом: проверялся не тот сервер, который работает.
     tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
     });
 
     (addr, config.admin_api_key, PathBuf::from(upload_dir))
 }
 
 #[sqlx::test]
-#[ignore = "requires a reachable PostgreSQL test database"]
 async fn health_and_public_listing(pool: PgPool) {
     sqlx::migrate!("./migrations/").run(&pool).await.unwrap();
     let (addr, api_key, upload_dir) = spawn_app(pool).await;
@@ -71,7 +81,7 @@ async fn health_and_public_listing(pool: PgPool) {
         .send()
         .await
         .unwrap();
-    assert!(resp.status().is_success());
+    assert!(resp.status().is_success(), "здоровье ответило {}", resp.status());
     assert_eq!(
         resp.headers()
             .get("x-request-id")
@@ -90,14 +100,18 @@ async fn health_and_public_listing(pool: PgPool) {
     assert_eq!(ready["status"], "ready");
     assert_eq!(ready["checks"]["postgres"], "ok");
 
-    // Public figurine listing returns a JSON array (empty on a fresh DB).
+    // Публичная полка отдаёт СТРАНИЦУ, а не голый список: `{items, total}`.
+    // Проверка ждала массив — с тех пор полка научилась страницам, и это
+    // ровно тот случай, ради которого стенд и нужен: ответ поменял форму, а
+    // сказать об этом было некому, потому что проверки не бегали.
     let resp = client
         .get(format!("{}/api/v1/figurines", addr))
         .send()
         .await
         .unwrap();
     assert!(resp.status().is_success());
-    let list: Vec<serde_json::Value> = resp.json().await.unwrap();
+    let page: serde_json::Value = resp.json().await.unwrap();
+    let list = page["items"].as_array().expect("полка отдаёт items").clone();
     assert_eq!(list.len(), 0);
 
     // Metrics are exposed in Prometheus text format, but only to admin callers.
@@ -142,7 +156,6 @@ async fn health_and_public_listing(pool: PgPool) {
 }
 
 #[sqlx::test]
-#[ignore = "requires a reachable PostgreSQL test database"]
 async fn analytics_accepts_text_plain_and_exposes_admin_page(pool: PgPool) {
     sqlx::migrate!("./migrations/").run(&pool).await.unwrap();
     let figurine_id = uuid::Uuid::new_v4();
@@ -191,7 +204,6 @@ async fn analytics_accepts_text_plain_and_exposes_admin_page(pool: PgPool) {
 /// Full cycle: submit → honeypot silently drops → rate limit kicks in →
 /// unapproved/unfeatured stays hidden → admin approve+feature makes it public.
 #[sqlx::test]
-#[ignore = "requires a reachable PostgreSQL test database"]
 async fn impressions_full_cycle(pool: PgPool) {
     sqlx::migrate!("./migrations/").run(&pool).await.unwrap();
     let (addr, api_key, upload_dir) = spawn_app(pool).await;
@@ -285,7 +297,6 @@ async fn impressions_full_cycle(pool: PgPool) {
 /// Deleting a figurine removes its row, all cascade-linked rows, **and** the
 /// `figurine_analytics_events` rows that have no FK (manual delete).
 #[sqlx::test]
-#[ignore = "requires a reachable PostgreSQL test database"]
 async fn delete_figurine_cascades_rows_and_analytics_events(pool: PgPool) {
     sqlx::migrate!("./migrations/").run(&pool).await.unwrap();
     let (addr, api_key, upload_dir) = spawn_app(pool.clone()).await;
@@ -366,7 +377,6 @@ async fn delete_figurine_cascades_rows_and_analytics_events(pool: PgPool) {
 /// Image files on disk (all variants: main, original, thumb, depth) are
 /// removed when the figurine is deleted; http URLs are left untouched.
 #[sqlx::test]
-#[ignore = "requires a reachable PostgreSQL test database"]
 async fn delete_figurine_removes_image_files_from_disk(pool: PgPool) {
     sqlx::migrate!("./migrations/").run(&pool).await.unwrap();
     let (addr, api_key, upload_dir) = spawn_app(pool.clone()).await;

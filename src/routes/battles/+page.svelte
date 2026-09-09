@@ -483,6 +483,7 @@
     {frames}
     signedIn={signedIn}
     owned={!!holdingOf(sheet.id)}
+    serial={holdingOf(sheet.id)?.serial ?? null}
     busy={busyCard === sheet.id}
     canAfford={affordable}
     loginHref={loginFromSheet(sheet)}

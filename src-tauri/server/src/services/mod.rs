@@ -4644,6 +4644,81 @@ impl AppService {
         Ok(())
     }
 
+    /// Письмо об утверждении. ОДНО письмо на весь путь работы.
+    ///
+    /// Записки в профиле бесплатны и никого не тревожат, поэтому почтой дом
+    /// говорит только там, где иначе человек не узнает вовремя: работу взяли в
+    /// игру. На допуск, отказ и место в тройке письма нет — это разговор внутри
+    /// комнаты, и превращать его в поток писем значит потерять и это одно.
+    ///
+    /// Отправляется вдогонку (`spawn`): медленный SMTP не должен держать стол
+    /// хозяина, а неудача письма не отменяет утверждения.
+    async fn send_studio_approved_email(&self, to: &str, work: &str, en: bool) -> Result<()> {
+        use lettre::message::header::ContentType;
+        use lettre::transport::smtp::authentication::Credentials;
+        use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
+
+        let db = self.get_smtp_settings().await.unwrap_or_default();
+        let host = db.host.as_deref().or(self.config.smtp_host.as_deref());
+        let user = db.user.as_deref().or(self.config.smtp_user.as_deref());
+        let pass = db.pass.as_deref().or(self.config.smtp_pass.as_deref());
+        let from = db.from.as_deref().or(self.config.smtp_from.as_deref());
+        let port = db.port.or(self.config.smtp_port).unwrap_or(587);
+        let (Some(host), Some(user), Some(pass), Some(from)) = (host, user, pass, from) else {
+            tracing::warn!("SMTP not configured — studio approval not mailed to {to}");
+            return Ok(());
+        };
+
+        let site = self.config.public_url.trim_end_matches('/');
+        let (subject, body_text) = if en {
+            (
+                "Your frame was taken into the game",
+                format!(
+                    "“{work}” is approved.\n\nIt gets a run of licences with your name on them — \
+                     for good. Your works: {site}/studio/gallery\n\n\
+                     This letter goes out once, when a work of yours is taken in. \
+                     Nothing else from the studio reaches your inbox — the rest waits \
+                     for you in the house."
+                ),
+            )
+        } else {
+            (
+                "Вашу раму взяли в игру",
+                format!(
+                    "«{work}» утверждена.\n\nОна получает тираж лицензий и ваше имя на них — \
+                     навсегда. Работы дома: {site}/studio/gallery\n\n\
+                     Это письмо приходит один раз — когда вашу работу берут в игру. \
+                     Больше студия почтой не пишет: остальное ждёт вас в доме."
+                ),
+            )
+        };
+
+        let email = Message::builder()
+            .from(
+                from.parse()
+                    .map_err(|_| AppError::Internal("Invalid SMTP from address".into()))?,
+            )
+            .to(to
+                .parse()
+                .map_err(|_| AppError::Internal("Invalid recipient address".into()))?)
+            .subject(subject)
+            .header(ContentType::TEXT_PLAIN)
+            .body(body_text)
+            .map_err(|e| AppError::Internal(format!("Email build error: {e}")))?;
+
+        let creds = Credentials::new(user.to_string(), pass.to_string());
+        let mailer = AsyncSmtpTransport::<Tokio1Executor>::relay(host)
+            .map_err(|e| AppError::Internal(format!("SMTP relay error: {e}")))?
+            .port(port)
+            .credentials(creds)
+            .build();
+        mailer
+            .send(email)
+            .await
+            .map_err(|e| AppError::Internal(format!("SMTP send error: {e}")))?;
+        Ok(())
+    }
+
     async fn send_password_reset_email(&self, to: &str, token: &str) -> Result<()> {
         use lettre::message::header::ContentType;
         use lettre::transport::smtp::authentication::Credentials;
@@ -7284,6 +7359,9 @@ impl AppService {
             motion_wear: row.motion_wear,
             shelf_order: row.shelf_order,
             lendable: row.lendable,
+            credit_name: row.credit_name,
+            edition_size: row.edition_size,
+            minted: row.minted,
             figurine_id: row.figurine_id.map(|id| id.to_string()),
             figurine_name: row.figurine_name,
             figurine_slug: row.figurine_slug,
@@ -7334,8 +7412,24 @@ impl AppService {
         &self,
         req: SaveBattleCardRequest,
     ) -> Result<BattleCardDto> {
+        self.admin_create_battle_card_signed(req, None).await
+    }
+
+    /// То же, и с подписью автора, когда карта пришла из студии.
+    ///
+    /// Подпись едет в ТОЙ ЖЕ записи, которой карта заводится, а не дописывается
+    /// следующим запросом: обрыв между двумя запросами оставлял на полке чужую
+    /// работу без имени автора (`STUDIO-CARDS-REVIEW.md` П7). В
+    /// `SaveBattleCardRequest` её по-прежнему нет — подпись ставит студия, и
+    /// приехать из формы стола хозяина она не должна.
+    pub async fn admin_create_battle_card_signed(
+        &self,
+        req: SaveBattleCardRequest,
+        credit: Option<&str>,
+    ) -> Result<BattleCardDto> {
         let taken = self.repo.list_battle_card_slugs_except(None).await?;
-        let p = Self::prepare_battle_card_save(&req, &taken)?;
+        let mut p = Self::prepare_battle_card_save(&req, &taken)?;
+        p.credit_name = credit.map(str::to_string);
         self.assert_work_is_free(p.figurine_id, None).await?;
         let rec = self.repo.insert_battle_card(&p).await?;
         Self::log_domain_event("battle_card_created", "battle_card", rec.id, "ok");
@@ -7354,7 +7448,19 @@ impl AppService {
         // намеренно, испытание это шаблон, — и переименование без этого просто
         // осиротило бы каждое из них: карта пропала бы с доски молча, а узнал
         // бы об этом гость.
-        let was = self.repo.get_battle_card_admin(id).await?.map(|c| c.slug);
+        let before = self.repo.get_battle_card_admin(id).await?;
+        // Тираж не опускается ниже уже отпечатанного: у людей на руках
+        // экземпляры с номерами, и «из 50», под которым лежит семидесятый, —
+        // это число, которое врёт молча.
+        if let (Some(asked), Some(card)) = (p.edition_size, before.as_ref()) {
+            if asked < card.minted {
+                return Err(AppError::BadRequest(format!(
+                    "Отпечатано уже {}: тираж меньше назначить нельзя",
+                    card.minted
+                )));
+            }
+        }
+        let was = before.map(|c| c.slug);
         let rec = self.repo.update_battle_card(id, &p).await?;
         if let Some(old) = was.filter(|old| *old != rec.slug) {
             let moved = self.carry_slug_into_challenges(&old, &rec.slug).await?;
@@ -8030,6 +8136,1963 @@ impl AppService {
         Ok(clean)
     }
 
+    // ── Студия ──────────────────────────────────────────────────────────────
+
+    /// Пускают ли этого человека за стол.
+    ///
+    /// `owners` спрашивает владение картами, а не число сыгранных партий:
+    /// карта на руках — самый простой честный признак того, что человек в игре,
+    /// и он же не отсекает того, кто пришёл именно творить.
+    async fn studio_gate_open(&self, user_id: Uuid, gate: &str) -> Result<bool> {
+        Ok(match gate {
+            "all" => true,
+            "closed" => false,
+            _ => !self.repo.list_owned_battle_cards(user_id).await?.is_empty(),
+        })
+    }
+
+    pub async fn studio_state(&self, user_id: Uuid) -> Result<crate::models::StudioStateDto> {
+        let settings = self.get_studio_settings().await?;
+        let open = self.studio_gate_open(user_id, &settings.gate).await?;
+        Ok(crate::models::StudioStateDto {
+            open,
+            gate: settings.gate.clone(),
+            // Согласие СТАРОЙ редакции — не согласие: текст меняется, и человек,
+            // принявший прошлый, нового не принимал.
+            agreed: self
+                .repo
+                .studio_agreement(user_id)
+                .await?
+                .filter(|v| v == crate::studio::AGREEMENT),
+            agreement: crate::studio::AGREEMENT.to_string(),
+            frames: if open {
+                self.repo.list_studio_frames(user_id).await?
+            } else {
+                Vec::new()
+            },
+            r#box: self.studio_box(user_id, &settings).await?,
+            settings,
+        })
+    }
+
+    pub async fn studio_box(
+        &self,
+        user_id: Uuid,
+        settings: &crate::studio::StudioSettings,
+    ) -> Result<crate::models::StudioBoxDto> {
+        Ok(crate::models::StudioBoxDto {
+            used: self.repo.studio_box_used(user_id).await?,
+            limit: settings.box_bytes,
+            assets: self.repo.list_studio_assets(user_id).await?,
+            sheets: self.repo.list_studio_sheets(user_id).await?,
+        })
+    }
+
+    /// Общая дверь всех действий студии: заперта — дальше не идём.
+    async fn studio_admit(&self, user_id: Uuid) -> Result<crate::studio::StudioSettings> {
+        let settings = self.get_studio_settings().await?;
+        if !self.studio_gate_open(user_id, &settings.gate).await? {
+            return Err(AppError::BadRequest("studioClosed".into()));
+        }
+        Ok(settings)
+    }
+
+    /// Положить деталь в ящик. Место проверяется ДО записи файла — отказ после
+    /// того, как байты уже легли на диск, оставил бы мусор, которого никто не
+    /// считает.
+    pub async fn studio_room_for(&self, user_id: Uuid, bytes: usize) -> Result<()> {
+        let settings = self.studio_admit(user_id).await?;
+        if bytes as i64 > settings.asset_bytes {
+            return Err(AppError::BadRequest("assetTooBig".into()));
+        }
+        self.studio_box_room(user_id, bytes, &settings).await
+    }
+
+    /// Влезет ли это в ящик — и только это.
+    ///
+    /// Отдельно от `studio_room_for`, потому что ЛИСТ НЕ ДЕТАЛЬ: потолок детали
+    /// два мегабайта (настоящий максимум на складе — 438 КБ), а лист по замеру
+    /// весит 0.6–3 МБ, и мерить его меркой детали — значит не принять ни одного
+    /// листа вообще. Листу свой забор ставят число пикселей и потолок листов
+    /// одновременно.
+    async fn studio_box_room(
+        &self,
+        user_id: Uuid,
+        bytes: usize,
+        settings: &crate::studio::StudioSettings,
+    ) -> Result<()> {
+        let used = self.repo.studio_box_used(user_id).await?;
+        if used + bytes as i64 > settings.box_bytes {
+            return Err(AppError::BadRequest("boxFull".into()));
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn add_studio_asset(
+        &self,
+        user_id: Uuid,
+        name: &str,
+        role: &str,
+        url: &str,
+        width: i32,
+        height: i32,
+        bytes: i32,
+    ) -> Result<crate::models::StudioAssetDto> {
+        let name = name.trim();
+        let name = if name.is_empty() { "деталь" } else { name };
+        let name: String = name.chars().take(80).collect();
+        self.repo
+            .insert_studio_asset(
+                user_id,
+                &name,
+                &crate::studio::clamp_asset_role(role),
+                url,
+                width,
+                height,
+                bytes,
+            )
+            .await
+    }
+
+    /// Запомнить язык работы. Не свойство рамы, а свойство разговора о ней.
+    pub async fn set_studio_frame_lang(&self, user: Uuid, id: Uuid, lang: &str) -> Result<()> {
+        let lang = if lang == "en" { "en" } else { "ru" };
+        self.repo.set_studio_frame_lang(user, id, lang).await
+    }
+
+    pub async fn remove_studio_asset(&self, user_id: Uuid, id: Uuid) -> Result<()> {
+        match self.repo.delete_studio_asset(user_id, id).await? {
+            Some(url) => {
+                self.remove_upload(&url).await;
+                Ok(())
+            }
+            // Чужая деталь для этого человека не существует — не «запрещено».
+            None => Err(AppError::NotFound("studio asset".into())),
+        }
+    }
+
+    /// Куда класть пакет: в эту запись, в новую — или никуда.
+    ///
+    /// Три разных случая, и раньше все три отвечали одинаковым 404:
+    ///
+    /// — записи нет вовсе (её убрали, или браузер помнит ссылку с прошлой
+    ///   жизни базы) — ССЫЛКА ПРОТУХЛА, и работу надо завести заново: терять
+    ///   чужой труд из-за нашей уборки нельзя;
+    /// — запись есть, но уже на людях — это не ошибка адреса, а отказ по делу,
+    ///   и сказать надо словом, а не «не найдено»;
+    /// — запись есть и в работе — писать в неё.
+    pub async fn studio_package_target(
+        &self,
+        user_id: Uuid,
+        id: Option<Uuid>,
+    ) -> Result<Option<Uuid>> {
+        let Some(id) = id else { return Ok(None) };
+        match self.repo.studio_frame_ready(user_id, id).await? {
+            None => Ok(None),
+            Some((status, _, _)) if crate::studio::frame_may_edit(&status) => Ok(Some(id)),
+            Some(_) => Err(AppError::BadRequest("alreadyOut".into())),
+        }
+    }
+
+    /// Завести рамку. Тело нормализуется теми же правилами, что и рама дома:
+    /// иначе гость назначил бы врезку в тысячу процентов, и её пришлось бы
+    /// чинить на карте, которую уже кто-то увидел.
+    pub async fn create_studio_frame(
+        &self,
+        user_id: Uuid,
+        req: crate::models::SaveStudioFrameRequest,
+    ) -> Result<crate::models::StudioFrameDto> {
+        let settings = self.studio_admit(user_id).await?;
+        let open = self.repo.count_studio_frames_open(user_id).await?;
+        if open >= settings.frames_open as i64 {
+            return Err(AppError::BadRequest("tooManyFrames".into()));
+        }
+        let (name, body) = Self::clean_studio_frame(req)?;
+        let weight = self.studio_frame_weight(user_id, &body, &settings).await?;
+        let frame = self.repo.insert_studio_frame(user_id, &name, &body).await?;
+        self.repo.set_studio_frame_bytes(frame.id, weight).await?;
+        Ok(crate::models::StudioFrameDto { bytes: weight, ..frame })
+    }
+
+    /// Сколько весит рама — суммой её деталей.
+    ///
+    /// Считается на записи, а не при чтении: потолок на одну работу нужен ровно
+    /// в тот миг, когда её кладут. И считается по СВОИМ деталям: рама может
+    /// носить картинку из библиотеки дома, и её вес — не вес этого человека.
+    async fn studio_frame_weight(
+        &self,
+        user_id: Uuid,
+        body: &serde_json::Value,
+        settings: &crate::studio::StudioSettings,
+    ) -> Result<i32> {
+        let mut urls: Vec<String> = Vec::new();
+        Self::collect_studio_urls(body, &mut urls);
+        urls.sort();
+        urls.dedup();
+        let weight = self.repo.studio_assets_weight(user_id, &urls).await?;
+        if weight > settings.frame_bytes {
+            return Err(AppError::BadRequest("frameTooHeavy".into()));
+        }
+        Ok(weight as i32)
+    }
+
+    /// Адреса картинок студии, какие ни попадись в теле рамы. Обходом, а не
+    /// перечислением полей: полей у рамы двадцать, и список, который забыли
+    /// дописать, — это деталь, которая не весит ничего.
+    fn collect_studio_urls(value: &serde_json::Value, out: &mut Vec<String>) {
+        match value {
+            serde_json::Value::String(s) => {
+                if s.contains("/static/studio/") {
+                    out.push(s.clone());
+                }
+            }
+            serde_json::Value::Array(list) => {
+                for one in list {
+                    Self::collect_studio_urls(one, out);
+                }
+            }
+            serde_json::Value::Object(map) => {
+                for one in map.values() {
+                    Self::collect_studio_urls(one, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub async fn save_studio_frame(
+        &self,
+        user_id: Uuid,
+        id: Uuid,
+        req: crate::models::SaveStudioFrameRequest,
+    ) -> Result<crate::models::StudioFrameDto> {
+        let settings = self.studio_admit(user_id).await?;
+        let (name, body) = Self::clean_studio_frame(req)?;
+        let weight = self.studio_frame_weight(user_id, &body, &settings).await?;
+        match self
+            .repo
+            .update_studio_frame(user_id, id, &name, &body)
+            .await?
+        {
+            Some(frame) => {
+                self.repo.set_studio_frame_bytes(frame.id, weight).await?;
+                Ok(crate::models::StudioFrameDto { bytes: weight, ..frame })
+            }
+            // Либо чужая, либо уже выложена: и то и другое для этого человека
+            // выглядит одинаково — править нечего.
+            None => Err(AppError::NotFound("studio frame".into())),
+        }
+    }
+
+    pub async fn delete_studio_frame(&self, user_id: Uuid, id: Uuid) -> Result<()> {
+        self.studio_admit(user_id).await?;
+        if self.repo.delete_studio_frame(user_id, id).await? {
+            Ok(())
+        } else {
+            Err(AppError::NotFound("studio frame".into()))
+        }
+    }
+
+    /// Имя и тело рамки, приведённые в чувство одним местом — им пользуются и
+    /// заведение, и запись.
+    fn clean_studio_frame(
+        req: crate::models::SaveStudioFrameRequest,
+    ) -> Result<(String, serde_json::Value)> {
+        let name: String = req.name.trim().chars().take(60).collect();
+        if name.is_empty() {
+            return Err(AppError::BadRequest("nameEmpty".into()));
+        }
+        // Присланное КЛАДЁТСЯ ПОВЕРХ домашней рамы, а не читается само по себе.
+        //
+        // Иначе рамка без одного поля — отказ, и старый клиент, не знающий про
+        // поле, заведённое вчера, теряет работу целиком со словами «missing
+        // field». Дом уже так говорит везде: пустое значит «как в доме».
+        let tier = crate::battles::clamp_tier(
+            req.body
+                .get("tier")
+                .and_then(|t| t.as_i64())
+                .unwrap_or(1) as i16,
+        );
+        let fallback = crate::battles::default_frames()[(tier - 1) as usize].clone();
+        let mut merged = serde_json::to_value(&fallback)
+            .map_err(|_| AppError::Internal("Рамка дома не сериализуется".into()))?;
+        if let (Some(base), Some(sent)) = (merged.as_object_mut(), req.body.as_object()) {
+            for (key, value) in sent {
+                base.insert(key.clone(), value.clone());
+            }
+        }
+        let frame: crate::battles::BattleFrame = serde_json::from_value(merged)
+            .map_err(|e| AppError::BadRequest(format!("frameUnreadable: {e}")))?;
+        let clean = crate::battles::normalize_frame(frame, fallback);
+        let body = serde_json::to_value(&clean)
+            .map_err(|_| AppError::Internal("Рамка не сериализуется".into()))?;
+        Ok((name, body))
+    }
+
+    /// Принять соглашение автора. Записывается редакцией: «согласен» без
+    /// указания, с чем именно, через год не значит ничего.
+    pub async fn accept_studio_agreement(&self, user_id: Uuid) -> Result<()> {
+        self.studio_admit(user_id).await?;
+        self.repo
+            .accept_studio_agreement(user_id, crate::studio::AGREEMENT)
+            .await
+    }
+
+    /// Выложить рамку на допуск хозяина.
+    ///
+    /// Требует согласия НЫНЕШНЕЙ редакции: выкладка — это первый раз, когда
+    /// работу увидит кто-то кроме автора, и спрашивать позже уже поздно.
+    pub async fn publish_studio_frame(
+        &self,
+        user_id: Uuid,
+        id: Uuid,
+    ) -> Result<crate::models::StudioFrameDto> {
+        self.studio_admit(user_id).await?;
+        let agreed = self.repo.studio_agreement(user_id).await?;
+        if agreed.as_deref() != Some(crate::studio::AGREEMENT) {
+            return Err(AppError::BadRequest("needsAgreement".into()));
+        }
+        match self
+            .repo
+            .set_studio_frame_status(user_id, id, "shown")
+            .await?
+        {
+            Some(frame) => {
+                Self::log_domain_event("studio_frame_published", "studio_frame", frame.id, "ok");
+                Ok(frame)
+            }
+            None => Err(AppError::NotFound("studio frame".into())),
+        }
+    }
+
+    // ── Листы студии ────────────────────────────────────────────────────────
+    //
+    // Режет их тот же `sheet.rs`, что и листы дома: один алгоритм, одни числа,
+    // и деталь, вырезанная гостем, ничем не отличается от вырезанной хозяином.
+    // Разное здесь только владение и квоты.
+
+    /// Принести лист. Хранится ЦЕЛИКОМ, в тех байтах, в которых пришёл: разрез
+    /// можно повторить с другими настройками, не спрашивая файл заново.
+    pub async fn add_studio_sheet(
+        &self,
+        user_id: Uuid,
+        name: &str,
+        bytes: Vec<u8>,
+    ) -> Result<crate::models::StudioSheetDto> {
+        let settings = self.studio_admit(user_id).await?;
+        let (now, today) = self.repo.count_studio_sheets(user_id).await?;
+        if now >= settings.sheets_at_once as i64 {
+            return Err(AppError::BadRequest("tooManySheets".into()));
+        }
+        if today >= settings.sheets_per_day as i64 {
+            return Err(AppError::BadRequest("sheetsToday".into()));
+        }
+        self.studio_box_room(user_id, bytes.len(), &settings).await?;
+
+        // Формат читается из БАЙТОВ, а не из имени файла: расширение — это
+        // утверждение, а решает оно, куда файл ляжет.
+        let format = image::guess_format(&bytes)
+            .map_err(|e| AppError::BadRequest(format!("Unrecognised image: {e}")))?;
+        let extension = format.extensions_str().first().copied().unwrap_or("bin");
+        let probe = image::load_from_memory(&bytes)
+            .map_err(|e| AppError::BadRequest(format!("Invalid image file: {e}")))?;
+        let (width, height) = (probe.width(), probe.height());
+        if width as u64 * height as u64 > crate::sheet::SHEET_MAX_PIXELS {
+            return Err(AppError::BadRequest("sheetTooLarge".into()));
+        }
+        drop(probe);
+
+        let relative = format!("studio/{}.{}", Uuid::new_v4(), extension);
+        self.write_upload(&relative, &bytes).await?;
+        self.repo
+            .insert_studio_sheet(
+                user_id,
+                &Self::clean_asset_name(name, "Лист"),
+                &format!("/static/{}", relative),
+                width as i32,
+                height as i32,
+                bytes.len() as i32,
+            )
+            .await
+    }
+
+    pub async fn remove_studio_sheet(&self, user_id: Uuid, id: Uuid) -> Result<()> {
+        self.studio_admit(user_id).await?;
+        match self.repo.delete_studio_sheet(user_id, id).await? {
+            Some(url) => {
+                self.remove_upload(&url).await;
+                Ok(())
+            }
+            None => Err(AppError::NotFound("studio sheet".into())),
+        }
+    }
+
+    /// Байты листа этого человека. Отдельной функцией, потому что их просят
+    /// трижды: предложить разрез, вырезать отобранное и показать один кусок
+    /// крупно.
+    async fn studio_sheet_bytes(&self, user_id: Uuid, id: Uuid) -> Result<Vec<u8>> {
+        let sheet = self
+            .repo
+            .get_studio_sheet(user_id, id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("studio sheet".into()))?;
+        let path = Path::new(&self.config.upload_dir)
+            .join(sheet.url.trim_start_matches("/static/"));
+        tokio::fs::read(&path)
+            .await
+            .map_err(|e| AppError::NotFound(format!("The sheet's file is gone: {e}")))
+    }
+
+    async fn cut_studio_sheet(
+        &self,
+        user_id: Uuid,
+        id: Uuid,
+        settings: crate::sheet::SliceSettings,
+    ) -> Result<crate::sheet::Sliced> {
+        let bytes = self.studio_sheet_bytes(user_id, id).await?;
+        tokio::task::spawn_blocking(move || crate::sheet::slice(&bytes, &settings))
+            .await
+            .map_err(|e| AppError::Internal(format!("Sheet cutting task failed: {e}")))?
+            .map_err(|e| AppError::BadRequest(e.to_string()))
+    }
+
+    /// Предложить разрез. Ничего не пишет: перечитывать можно сколько угодно.
+    pub async fn slice_studio_sheet(
+        &self,
+        user_id: Uuid,
+        id: Uuid,
+        settings: crate::sheet::SliceSettings,
+    ) -> Result<BattleSheetCutDto> {
+        self.studio_admit(user_id).await?;
+        let cut = self.cut_studio_sheet(user_id, id, settings.clone()).await?;
+        Ok(Self::sliced_dto(cut, settings))
+    }
+
+    /// Сохранить отобранное. Разрез повторяется, а не берётся из предложения:
+    /// сохранённое предложение было бы вторым источником правды о том, что
+    /// человек видел. Каждый отбор несёт размер, при котором на него смотрели,
+    /// и несовпадение ловится, а не сохраняется молча под чужим именем.
+    pub async fn keep_studio_cut(
+        &self,
+        user_id: Uuid,
+        id: Uuid,
+        settings: crate::sheet::SliceSettings,
+        picks: Vec<BattleAssetPick>,
+    ) -> Result<Vec<crate::models::StudioAssetDto>> {
+        self.studio_admit(user_id).await?;
+        if picks.is_empty() {
+            return Err(AppError::BadRequest("nothingChosen".into()));
+        }
+        let cut = self.cut_studio_sheet(user_id, id, settings).await?;
+        let mut saved = Vec::with_capacity(picks.len());
+        for pick in picks.iter() {
+            let part = cut
+                .parts
+                .iter()
+                .find(|p| p.index == pick.index)
+                .ok_or_else(|| AppError::BadRequest(format!("noPart:{}", pick.index)))?;
+            if part.width != pick.width || part.height != pick.height {
+                return Err(AppError::BadRequest("cutMoved".into()));
+            }
+            let name = Self::clean_asset_name(
+                pick.name.as_deref().unwrap_or(""),
+                &format!("{:02}", pick.index),
+            );
+            let role = crate::studio::clamp_asset_role(
+                pick.role.as_deref().unwrap_or(Self::role_name(part.role)),
+            );
+            let rec = self
+                .keep_studio_image(user_id, &name, &role, &part.image)
+                .await?;
+            self.repo.attach_studio_asset_to_sheet(rec.id, id).await?;
+            saved.push(rec);
+
+            // И то, что человек обвёл на куске сам. Кусок при этом остаётся:
+            // рамки — добавление, а не замена.
+            if pick.rects.len() > Self::SPLIT_RECTS_MAX {
+                return Err(AppError::BadRequest("tooManyRects".into()));
+            }
+            for (n, rect) in pick.rects.iter().enumerate() {
+                let cropped = crate::sheet::crop_to_content(
+                    &part.image,
+                    &rect.frame(),
+                    Self::SPLIT_ALPHA_FLOOR,
+                )
+                .ok_or_else(|| AppError::BadRequest("emptyRect".into()))?;
+                let piece = self
+                    .keep_studio_image(user_id, &format!("{name}·{}", n + 1), &role, &cropped)
+                    .await?;
+                self.repo.attach_studio_asset_to_sheet(piece.id, id).await?;
+                saved.push(piece);
+            }
+        }
+        self.repo.mark_studio_sheet_harvested(id).await?;
+        Ok(saved)
+    }
+
+    /// Один кусок предложения в полный рост — для разделочной доски. Превью в
+    /// сетке нарочно мелкие, их восемьдесят в одном ответе, и обводить по ним
+    /// нельзя.
+    pub async fn studio_sheet_part(
+        &self,
+        user_id: Uuid,
+        id: Uuid,
+        settings: crate::sheet::SliceSettings,
+        index: u32,
+    ) -> Result<BattleSheetPartFullDto> {
+        self.studio_admit(user_id).await?;
+        let cut = self.cut_studio_sheet(user_id, id, settings).await?;
+        let part = cut
+            .parts
+            .iter()
+            .find(|p| p.index == index)
+            .ok_or_else(|| AppError::BadRequest(format!("noPart:{index}")))?;
+        let webp = crate::sheet::to_webp(&part.image, 88.0);
+        Ok(BattleSheetPartFullDto {
+            index: part.index,
+            width: part.width,
+            height: part.height,
+            image: format!(
+                "data:image/webp;base64,{}",
+                base64::engine::general_purpose::STANDARD.encode(&webp)
+            ),
+        })
+    }
+
+    /// Разрезать уже сохранённую деталь по обведённым рамкам. Исходная
+    /// остаётся: склеенная деталь иногда нужна целиком.
+    pub async fn split_studio_asset(
+        &self,
+        user_id: Uuid,
+        id: Uuid,
+        rects: Vec<crate::models::BattleAssetSplitRect>,
+    ) -> Result<Vec<crate::models::StudioAssetDto>> {
+        self.studio_admit(user_id).await?;
+        if rects.is_empty() {
+            return Err(AppError::BadRequest("nothingChosen".into()));
+        }
+        if rects.len() > Self::SPLIT_RECTS_MAX {
+            return Err(AppError::BadRequest("tooManyRects".into()));
+        }
+        let asset = self
+            .repo
+            .get_studio_asset(user_id, id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("studio asset".into()))?;
+        let path = Path::new(&self.config.upload_dir)
+            .join(asset.url.trim_start_matches("/static/"));
+        let bytes = tokio::fs::read(&path)
+            .await
+            .map_err(|e| AppError::NotFound(format!("The piece's file is gone: {e}")))?;
+        let whole = image::load_from_memory(&bytes)
+            .map_err(|e| AppError::BadRequest(format!("Invalid image: {e}")))?
+            .to_rgba8();
+        let mut saved = Vec::with_capacity(rects.len());
+        for (n, rect) in rects.iter().enumerate() {
+            let cropped =
+                crate::sheet::crop_to_content(&whole, &rect.frame(), Self::SPLIT_ALPHA_FLOOR)
+                    .ok_or_else(|| AppError::BadRequest("emptyRect".into()))?;
+            saved.push(
+                self.keep_studio_image(
+                    user_id,
+                    &format!("{}·{}", asset.name, n + 1),
+                    &asset.role,
+                    &cropped,
+                )
+                .await?,
+            );
+        }
+        Ok(saved)
+    }
+
+    /// Положить вырезанную картинку в ящик. Место проверяется перед записью,
+    /// как и у обычной загрузки.
+    async fn keep_studio_image(
+        &self,
+        user_id: Uuid,
+        name: &str,
+        role: &str,
+        image: &image::RgbaImage,
+    ) -> Result<crate::models::StudioAssetDto> {
+        let webp = crate::sheet::to_webp(image, 88.0);
+        self.studio_room_for(user_id, webp.len()).await?;
+        let relative = format!("studio/{}.webp", Uuid::new_v4());
+        self.write_upload(&relative, &webp).await?;
+        self.add_studio_asset(
+            user_id,
+            name,
+            role,
+            &format!("/static/{}", relative),
+            image.width() as i32,
+            image.height() as i32,
+            webp.len() as i32,
+        )
+        .await
+    }
+
+    pub async fn rename_studio_asset(
+        &self,
+        user_id: Uuid,
+        id: Uuid,
+        name: &str,
+        role: &str,
+    ) -> Result<()> {
+        self.studio_admit(user_id).await?;
+        self.repo
+            .rename_studio_asset(
+                user_id,
+                id,
+                &Self::clean_asset_name(name, "деталь"),
+                &crate::studio::clamp_asset_role(role),
+            )
+            .await
+    }
+
+    // ── Сезон ───────────────────────────────────────────────────────────────
+    //
+    // Неделя по часам дома: понедельник открывает, суббота закрывает, в ночь на
+    // воскресенье — вердикт. Границы считаются от часов битв (`BattleClock`),
+    // а не от UTC: «сегодня» у дома уже определено, и второе определение
+    // однажды разошлось бы с первым на час.
+
+    /// Идущий сезон. Заводится сам при первом обращении — руками открывать
+    /// неделю значит однажды забыть.
+    pub async fn studio_season_now(&self) -> Result<crate::models::StudioSeasonDto> {
+        let offset = chrono::Duration::minutes(self.get_battle_clock().await?.offset_min as i64);
+        let now_here = chrono::Utc::now() + offset;
+        let monday = (now_here.date_naive()
+            - chrono::Duration::days(
+                now_here.date_naive().weekday().num_days_from_monday() as i64
+            ))
+        .and_hms_opt(0, 0, 0)
+        .unwrap_or_default();
+        let opens = chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(monday, chrono::Utc)
+            - offset;
+        let closes = opens + chrono::Duration::days(6);
+        let verdict = opens + chrono::Duration::days(6) + chrono::Duration::minutes(5);
+
+        if let Some(found) = self.repo.current_studio_season().await? {
+            if found.opens_at == opens {
+                return Ok(found);
+            }
+            // Новая неделя: следующий номер по порядку.
+            return self
+                .repo
+                .insert_studio_season(found.number + 1, opens, closes, verdict)
+                .await;
+        }
+        self.repo.insert_studio_season(1, opens, closes, verdict).await
+    }
+
+    /// Страница сезона. Без имени тоже: смотреть можно всякому, оценивать — нет.
+    pub async fn studio_season_page(
+        &self,
+        number: Option<i32>,
+        viewer: Option<Uuid>,
+    ) -> Result<crate::models::StudioSeasonPageDto> {
+        let season = match number {
+            Some(n) => self
+                .repo
+                .studio_season_by_number(n)
+                .await?
+                .ok_or_else(|| AppError::NotFound("season".into()))?,
+            None => self.studio_season_now().await?,
+        };
+        let entries = self.repo.list_studio_entries(season.id, viewer).await?;
+        let (ratings_left, entered) = match viewer {
+            Some(who) => {
+                let used = self.repo.count_studio_ratings(season.id, who).await?;
+                let rules = self.get_studio_settings().await?;
+                (
+                    (rules.ratings_per_season - used).max(0),
+                    entries.iter().any(|e| e.author_id == who),
+                )
+            }
+            None => (0, false),
+        };
+        Ok(crate::models::StudioSeasonPageDto {
+            season,
+            // Автор, выставившийся сам, соперников не оценивает: иначе первое,
+            // что сделает каждый, — поставит всем по единице.
+            may_rate: viewer.is_some() && !entered && ratings_left > 0,
+            entries,
+            ratings_left,
+            entered,
+        })
+    }
+
+    /// Выставить раму в сезон. Только допущенную: до слова хозяина работу не
+    /// видит никто, кроме автора.
+    pub async fn enter_studio_season(&self, user_id: Uuid, frame_id: Uuid) -> Result<()> {
+        self.studio_admit(user_id).await?;
+        let season = self.studio_season_now().await?;
+        if season.state != "open" {
+            return Err(AppError::BadRequest("seasonClosed".into()));
+        }
+        let (status, used, admitted) = self
+            .repo
+            .studio_frame_ready(user_id, frame_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("studio frame".into()))?;
+        // Само правило — в `studio::why_not_in_season`, и там же оно
+        // проверяется. Пока оно жило здесь тремя `if`, проверить его было
+        // нечем: любая проверка требовала базы, сессии и открытого сезона —
+        // и тупик, из-за которого работа не выставлялась второй раз, сидел
+        // ровно в них.
+        if let Some(why) = crate::studio::why_not_in_season(
+            &status,
+            admitted,
+            used,
+            crate::studio::ENTRIES_PER_FRAME,
+        ) {
+            return Err(AppError::BadRequest(why.into()));
+        }
+        self.repo
+            .insert_studio_entry(season.id, frame_id, user_id)
+            .await
+            .map_err(|e| match e {
+                // Одна заявка от человека в сезон — правило схемы, и отказ
+                // приходит оттуда же.
+                AppError::Database(ref db) if db.to_string().contains("studio_entries_one_per") => {
+                    AppError::BadRequest("alreadyEntered".into())
+                }
+                other => other,
+            })?;
+        self.repo.mark_studio_frame_entered(frame_id).await?;
+        Ok(())
+    }
+
+    /// Оценить работу. Вес голоса пишется В МОМЕНТ ГОЛОСА и больше не меняется.
+    pub async fn rate_studio_entry(
+        &self,
+        user_id: Uuid,
+        entry: Uuid,
+        value: i16,
+    ) -> Result<()> {
+        self.studio_admit(user_id).await?;
+        if !(1..=5).contains(&value) {
+            return Err(AppError::BadRequest("badValue".into()));
+        }
+        let (author, season_id) = self
+            .repo
+            .studio_entry_author(entry)
+            .await?
+            .ok_or_else(|| AppError::NotFound("entry".into()))?;
+        if author == user_id {
+            return Err(AppError::BadRequest("ownWork".into()));
+        }
+        let season = self.studio_season_now().await?;
+        if season.id != season_id || season.state != "open" {
+            return Err(AppError::BadRequest("seasonClosed".into()));
+        }
+        // Автор, выставившийся в этом сезоне, соперников не оценивает.
+        let entries = self.repo.list_studio_entries(season.id, None).await?;
+        if entries.iter().any(|e| e.author_id == user_id) {
+            return Err(AppError::BadRequest("authorMayNotRate".into()));
+        }
+        // Переоценка своей же оценки потолка не тратит: потолок про то,
+        // сколько работ человек посмотрел, а не сколько раз передумал.
+        let used = self.repo.count_studio_ratings(season.id, user_id).await?;
+        let fresh = !entries
+            .iter()
+            .any(|e| e.id == entry && e.mine.is_some());
+        let rules = self.get_studio_settings().await?;
+        if fresh && used >= rules.ratings_per_season {
+            return Err(AppError::BadRequest("noRatingsLeft".into()));
+        }
+        let (aged, owns, played) = self.repo.voter_standing(user_id).await?;
+        let weight = crate::studio::voter_weight(aged, owns, played);
+        self.repo.put_studio_rating(entry, user_id, value, weight).await
+    }
+
+    /// Пожаловаться. Без имени тоже: тот, кто увидел чужой арт, может быть и
+    /// не здешним.
+    pub async fn report_studio_frame(
+        &self,
+        who: Option<Uuid>,
+        frame: Uuid,
+        reason: &str,
+        note: Option<&str>,
+    ) -> Result<()> {
+        let reason: String = reason.trim().chars().take(40).collect();
+        if reason.is_empty() {
+            return Err(AppError::BadRequest("reasonEmpty".into()));
+        }
+        let note: Option<String> = note
+            .map(|n| n.trim().chars().take(600).collect::<String>())
+            .filter(|n| !n.is_empty());
+        self.repo
+            .insert_studio_report(frame, who, &reason, note.as_deref())
+            .await
+    }
+
+    /// Вердикт: посчитать сезон и раздать плату.
+    ///
+    /// ИДЕМПОТЕНТЕН по построению. Состояние `judged` ставится ПЕРВЫМ, одним
+    /// запросом с условием, и если его поставил кто-то другой — второй заход
+    /// просто уходит. Перезапуск сервера в воскресенье не подводит вердикт
+    /// дважды и не платит дважды; плата вдобавок идёт по `idem_key`.
+    pub async fn judge_studio_season(&self, season: Uuid) -> Result<usize> {
+        if !self.repo.set_studio_season_state(season, "judged").await? {
+            return Ok(0);
+        }
+        // Пороги берутся из настроек, а не из констант: первые сезоны идут при
+        // десятке участников, и порог живого дома тогда не пропустит никого.
+        let rules = self.get_studio_settings().await?;
+        let mut rows = self.repo.studio_season_tallies(season).await?;
+        // Ничья — вперёд тот, кто выложил раньше.
+        rows.sort_by(|a, b| {
+            let sa = crate::studio::bayes_score(a.2, a.3);
+            let sb = crate::studio::bayes_score(b.2, b.3);
+            sb.partial_cmp(&sa)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.5.cmp(&b.5))
+        });
+        let mut to_keeper = 0usize;
+        let mut sum_scores = 0.0;
+        let mut counted = 0usize;
+        for (_, _, sum, weight, votes, _) in rows.iter() {
+            if *votes > 0 {
+                sum_scores += crate::studio::bayes_score(*sum, *weight);
+                counted += 1;
+            }
+        }
+        let average = if counted > 0 { sum_scores / counted as f64 } else { 0.0 };
+
+        for (place, (entry, author, sum, weight, votes, _)) in rows.iter().enumerate() {
+            let score = crate::studio::bayes_score(*sum, *weight);
+            // В тройку — только с порогом доверия: иначе её займут те, кого
+            // никто не смотрел.
+            let trusted = *votes >= rules.ratings_trusted;
+            let chosen = trusted && (to_keeper as i64) < rules.to_keeper;
+            if chosen {
+                to_keeper += 1;
+            }
+            self.repo
+                .set_studio_entry_result(
+                    *entry,
+                    (score * 1000.0).round() / 1000.0,
+                    *votes,
+                    *weight,
+                    (place + 1) as i16,
+                    chosen,
+                )
+                .await?;
+            // Добавка — тем, чей итог выше среднего ПО ОЦЕНЁННЫМ. Работа, на
+            // которую никто не посмотрел, среднего не превосходит: её баллом
+            // Байес поставил ровную середину, а среднее считалось по тем, кого
+            // смотрели, — и без этого условия добавку получали все, включая
+            // неделю, где не голосовал никто.
+            let liked = *votes > 0 && score > average;
+            self.pay_for_season(season, *author, liked).await?;
+            if chosen {
+                // Про тройку человек узнаёт от дома, а не подсчётом мест на
+                // странице сезона.
+                let frame = self.repo.studio_entry_frame(*entry).await?;
+                if let Some(frame) = frame {
+                    self.note_about_frame(frame, "chosen", None).await?;
+                }
+            }
+        }
+        Self::log_domain_event("studio_season_judged", "studio_season", season, "ok");
+        Ok(to_keeper)
+    }
+
+    /// Плата за сезон. Платят НЕ ТОЛЬКО тройке: из двадцати авторов побеждают
+    /// трое, и без платы остальным семнадцать второго сезона не будет.
+    ///
+    /// `idem_key` держит это в узде: пересчёт вердикта — если он когда-нибудь
+    /// случится руками — не заплатит второй раз.
+    async fn pay_for_season(&self, season: Uuid, author: Uuid, above: bool) -> Result<()> {
+        self.repo
+            .credit_battle_wallet(
+                author,
+                "dust",
+                crate::studio::PAY_ENTERED,
+                "studio_entered",
+                Some(season),
+                &format!("season:{season}:entered"),
+            )
+            .await?;
+        if above {
+            self.repo
+                .credit_battle_wallet(
+                    author,
+                    "dust",
+                    crate::studio::PAY_LIKED,
+                    "studio_liked",
+                    Some(season),
+                    &format!("season:{season}:liked"),
+                )
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Подвести все сезоны, которым пора. Список, а не один: сервер мог
+    /// простоять выходные, и неподведённых окажется несколько.
+    pub async fn judge_due_studio_seasons(&self) -> Result<usize> {
+        let mut done = 0;
+        for season in self.repo.studio_seasons_due().await? {
+            done += self.judge_studio_season(season.id).await?;
+        }
+        Ok(done)
+    }
+
+    // ── Допуск ──────────────────────────────────────────────────────────────
+
+    pub async fn list_studio_admissions(&self) -> Result<Vec<crate::models::StudioFrameDto>> {
+        self.repo.list_studio_admissions().await
+    }
+
+    pub async fn admit_studio_frame(&self, id: Uuid, word: Option<&str>) -> Result<()> {
+        let word: Option<String> = word
+            .map(|w| w.trim().chars().take(600).collect::<String>())
+            .filter(|w| !w.is_empty());
+        if self.repo.admit_studio_frame(id, word.as_deref()).await? {
+            // Адрес автора заводится здесь: с этой минуты его работу видят люди.
+            self.give_studio_slug(id).await?;
+            // И работа СРАЗУ встаёт в идущий сезон.
+            //
+            // Раньше это было вторым действием автора, и получалась дурная
+            // развилка: хозяин допустил — и ничего не произошло, потому что
+            // человек об этом ещё не знает. Показать работу хозяину и значит
+            // «хочу на люди»; спрашивать второй раз то же самое незачем.
+            //
+            // Отказ здесь — обычное дело, а не поломка: у автора уже может быть
+            // заявка на этой неделе, или неделя подведена. Тогда работа просто
+            // остаётся в галерее, и записка говорит об этом словом.
+            let entered = self.enter_studio_season(self.frame_owner(id).await?, id).await.is_ok();
+            self.note_about_frame(id, if entered { "admitted" } else { "admittedOnly" }, None)
+                .await?;
+            Self::log_domain_event("studio_frame_admitted", "studio_frame", id, "ok");
+            Ok(())
+        } else {
+            Err(AppError::NotFound("studio frame".into()))
+        }
+    }
+
+    /// Не допустить — со словом. Пустое слово не принимается: отказ, которого
+    /// нельзя исправить, вернётся той же работой на следующей неделе.
+    pub async fn deny_studio_frame(&self, id: Uuid, word: &str) -> Result<()> {
+        let word: String = word.trim().chars().take(600).collect();
+        if word.is_empty() {
+            return Err(AppError::BadRequest("wordEmpty".into()));
+        }
+        if self.repo.deny_studio_frame(id, &word).await? {
+            self.note_about_frame(id, "denied", Some(&word)).await?;
+            Self::log_domain_event("studio_frame_denied", "studio_frame", id, "ok");
+            Ok(())
+        } else {
+            Err(AppError::NotFound("studio frame".into()))
+        }
+    }
+
+    /// Уборка склада студии.
+    ///
+    /// Два вида мусора, и они разные. ЛИСТ, из которого ничего не вырезали, —
+    /// самый тяжёлый (2.6 МБ против 12 КБ у детали) и копится сам: принесли,
+    /// посмотрели, ушли. ДЕТАЛЬ-СИРОТА — та, что не стоит ни в одной раме:
+    /// её заменили другой, а прежняя осталась лежать.
+    ///
+    /// Сроки разные и не от вкуса: лист нужен, пока идёт разрез, — это часы;
+    /// деталь может ждать своей рамы неделями, и трогать её раньше значит
+    /// выбрасывать работу.
+    pub async fn sweep_studio_store(&self) -> Result<(usize, usize)> {
+        let settings = self.get_studio_settings().await?;
+        let mut sheets = 0;
+        for (id, url) in self.repo.studio_sheets_to_sweep(settings.sheet_days).await? {
+            self.remove_upload(&url).await;
+            self.repo.drop_studio_sheet(id).await?;
+            sheets += 1;
+        }
+        let mut assets = 0;
+        for (id, url) in self.repo.studio_assets_to_sweep(crate::studio::ORPHAN_DAYS).await? {
+            self.remove_upload(&url).await;
+            self.repo.drop_studio_asset(id).await?;
+            assets += 1;
+        }
+        Ok((sheets, assets))
+    }
+
+    // ── Свои карты ──────────────────────────────────────────────────────────
+    //
+    // `STUDIO-CARDS.md`. Комната одна, поэтому и ворота одни: своего замка
+    // карты не получают.
+
+    pub async fn studio_cards(&self, user_id: Uuid) -> Result<Vec<crate::models::StudioCardDto>> {
+        self.studio_admit(user_id).await?;
+        self.repo.list_studio_cards(user_id).await
+    }
+
+    /// Тело работы, приведённое в чувство: домовое вырезано, содержимое
+    /// нормализовано ТЕМИ ЖЕ зажимами, какими его нормализует сохранение карты
+    /// хозяином. Без этого человек хранил бы у себя 99 силы, весы считали бы по
+    /// зажатому, и два числа на одной странице говорили бы разное.
+    fn clean_studio_card(body: &serde_json::Value) -> Result<serde_json::Value> {
+        let kept = crate::studio::guest_card_json(body);
+        // Читается КАК ЗАПРОС КАРТЫ, а не как свободный JSON: то же чтение, тот
+        // же отказ, те же умолчания — иначе у работы завёлся бы второй разбор.
+        let req: SaveBattleCardRequest = serde_json::from_value(kept)
+            .map_err(|e| AppError::BadRequest(format!("cardUnreadable: {e}")))?;
+        serde_json::to_value(&req)
+            .map_err(|_| AppError::Internal("Карта не сериализуется".into()))
+    }
+
+    pub async fn save_studio_card(
+        &self,
+        user_id: Uuid,
+        id: Option<Uuid>,
+        body: &serde_json::Value,
+        lang: &str,
+    ) -> Result<crate::models::StudioCardDto> {
+        let settings = self.studio_admit(user_id).await?;
+        let clean = Self::clean_studio_card(body)?;
+        let lang = if lang == "en" { "en" } else { "ru" };
+        match id {
+            None => {
+                // Потолок незаконченных — СВОИМ числом, а не рамочным: карта
+                // весит не то, что рама, и общая ручка однажды подвинула бы
+                // обе разом.
+                let open = self.repo.count_studio_cards_open(user_id).await?;
+                if open >= settings.cards_open as i64 {
+                    return Err(AppError::BadRequest("tooManyCards".into()));
+                }
+                self.repo.insert_studio_card(user_id, &clean, lang).await
+            }
+            Some(id) => self
+                .repo
+                .update_studio_card(user_id, id, &clean)
+                .await?
+                // Либо чужая, либо уже отдана хозяину: для этого человека и то
+                // и другое выглядит одинаково — править нечего.
+                .ok_or_else(|| AppError::NotFound("studio card".into())),
+        }
+    }
+
+    /// Отдать работу хозяину.
+    ///
+    /// Только с пустым `blocking`, и разбор берётся ТОТ ЖЕ, которым отказывает
+    /// публикация карты (`card_readiness`): иначе очередь хозяина заполнялась
+    /// бы заведомо негодным, а объясняться словами пришлось бы ему.
+    pub async fn show_studio_card(&self, user_id: Uuid, id: Uuid) -> Result<()> {
+        self.studio_admit(user_id).await?;
+        // Соглашение автора — то же, что у рамы, и по той же причине: это
+        // единственное, чем человек разрешает дому пользоваться его работой.
+        // У карт его не спрашивали вовсе, и карта уходила на полку, в продажу
+        // и в чужие руки без единого слова о правах.
+        let agreed = self.repo.studio_agreement(user_id).await?;
+        if agreed.as_deref() != Some(crate::studio::AGREEMENT) {
+            return Err(AppError::BadRequest("needsAgreement".into()));
+        }
+        let card = self
+            .repo
+            .get_studio_card(user_id, id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("studio card".into()))?;
+        // Годность спрашивается у ОПУБЛИКОВАННОЙ карты: черновику дом прощает
+        // почти всё, а на полку встанет именно опубликованная.
+        let mut req: SaveBattleCardRequest = serde_json::from_value(card.body.clone())
+            .map_err(|e| AppError::BadRequest(format!("cardUnreadable: {e}")))?;
+        req.status = "published".into();
+        let weighed = Self::weigh_battle_card(&req);
+        if !weighed.readiness.blocking.is_empty() {
+            return Err(AppError::BadRequest(format!(
+                "cardNotReady: {}",
+                weighed.readiness.blocking.join(",")
+            )));
+        }
+        if self
+            .repo
+            .set_studio_card_status(user_id, id, "shown", &["draft", "withdrawn"])
+            .await?
+        {
+            Self::log_domain_event("studio_card_shown", "studio_card", id, "ok");
+            Ok(())
+        } else {
+            Err(AppError::NotFound("studio card".into()))
+        }
+    }
+
+    /// Снять с людских глаз. Работа возвращается правимой — это и есть способ
+    /// починить и показать снова.
+    pub async fn withdraw_studio_card(&self, user_id: Uuid, id: Uuid) -> Result<()> {
+        self.studio_admit(user_id).await?;
+        if self
+            .repo
+            .set_studio_card_status(user_id, id, "withdrawn", &["shown"])
+            .await?
+        {
+            Ok(())
+        } else {
+            Err(AppError::NotFound("studio card".into()))
+        }
+    }
+
+    pub async fn delete_studio_card(&self, user_id: Uuid, id: Uuid) -> Result<()> {
+        self.studio_admit(user_id).await?;
+        if self.repo.delete_studio_card(user_id, id).await? {
+            Ok(())
+        } else {
+            Err(AppError::NotFound("studio card".into()))
+        }
+    }
+
+    // ── Свои роды ───────────────────────────────────────────────────────────
+    //
+    // Род — словарная строка, которую однажды наденут чужие карты. Взвешивать
+    // в нём нечего: есть имя, слово о нём и значок, и решает хозяин глазами.
+
+    pub async fn studio_races(&self, user_id: Uuid) -> Result<Vec<crate::models::StudioRaceDto>> {
+        self.studio_admit(user_id).await?;
+        self.repo.list_studio_races(user_id).await
+    }
+
+    pub async fn save_studio_race(
+        &self,
+        user_id: Uuid,
+        id: Option<Uuid>,
+        req: &crate::models::SaveStudioRaceRequest,
+    ) -> Result<crate::models::StudioRaceDto> {
+        let settings = self.studio_admit(user_id).await?;
+        if req.name_en.trim().is_empty() || req.name_ru.trim().is_empty() {
+            // Род зовут на обоих языках, как и карту: пустое английское имя
+            // ставило бы кириллицу в шапку английской полки.
+            return Err(AppError::BadRequest("nameEmpty".into()));
+        }
+        match id {
+            None => {
+                let open = self.repo.count_studio_races_open(user_id).await?;
+                if open >= settings.cards_open as i64 {
+                    return Err(AppError::BadRequest("tooManyRaces".into()));
+                }
+                self.repo.insert_studio_race(user_id, req).await
+            }
+            Some(id) => self
+                .repo
+                .update_studio_race(user_id, id, req)
+                .await?
+                .ok_or_else(|| AppError::NotFound("studio race".into())),
+        }
+    }
+
+    pub async fn show_studio_race(&self, user_id: Uuid, id: Uuid) -> Result<()> {
+        self.studio_admit(user_id).await?;
+        let agreed = self.repo.studio_agreement(user_id).await?;
+        if agreed.as_deref() != Some(crate::studio::AGREEMENT) {
+            return Err(AppError::BadRequest("needsAgreement".into()));
+        }
+        if self
+            .repo
+            .set_studio_race_status(user_id, id, "shown", &["draft", "withdrawn"])
+            .await?
+        {
+            Ok(())
+        } else {
+            Err(AppError::NotFound("studio race".into()))
+        }
+    }
+
+    pub async fn withdraw_studio_race(&self, user_id: Uuid, id: Uuid) -> Result<()> {
+        self.studio_admit(user_id).await?;
+        if self
+            .repo
+            .set_studio_race_status(user_id, id, "withdrawn", &["shown"])
+            .await?
+        {
+            Ok(())
+        } else {
+            Err(AppError::NotFound("studio race".into()))
+        }
+    }
+
+    pub async fn delete_studio_race(&self, user_id: Uuid, id: Uuid) -> Result<()> {
+        self.studio_admit(user_id).await?;
+        if self.repo.delete_studio_race(user_id, id).await? {
+            Ok(())
+        } else {
+            Err(AppError::NotFound("studio race".into()))
+        }
+    }
+
+    pub async fn studio_race_queue(&self) -> Result<Vec<crate::models::StudioRaceQueueDto>> {
+        self.repo.studio_race_queue().await
+    }
+
+    pub async fn deny_studio_race(&self, id: Uuid, word: &str) -> Result<()> {
+        let word: String = word.trim().chars().take(600).collect();
+        if word.is_empty() {
+            return Err(AppError::BadRequest("wordEmpty".into()));
+        }
+        if self.repo.deny_studio_race(id, &word).await? {
+            Ok(())
+        } else {
+            Err(AppError::NotFound("studio race".into()))
+        }
+    }
+
+    /// Утвердить род: он становится строкой словаря дома.
+    ///
+    /// Замок и порядок — те же, что у карты: работа сперва запирается своим
+    /// словом `taken`, и только потом пишется словарная строка единственным
+    /// писателем `battle_races`.
+    pub async fn approve_studio_race(
+        &self,
+        id: Uuid,
+        add: crate::models::ApproveStudioRaceRequest,
+    ) -> Result<crate::models::BattleRaceDto> {
+        let (race, owner, _) = self
+            .repo
+            .get_studio_race_any(id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("studio race".into()))?;
+        if race.status == "taken" || race.approved_at.is_some() {
+            return Err(AppError::BadRequest("raceAlreadyTaken".into()));
+        }
+        if race.status != "shown" {
+            return Err(AppError::BadRequest("raceNotShown".into()));
+        }
+        let credit = match add.credit_name.as_deref().map(str::trim) {
+            Some(word) if !word.is_empty() => word.to_string(),
+            _ => self
+                .repo
+                .find_user_by_id(owner)
+                .await?
+                .map(|u| u.display_name)
+                .unwrap_or_default(),
+        };
+        if !self
+            .repo
+            .set_studio_race_status(owner, id, "taken", &["shown"])
+            .await?
+        {
+            return Err(AppError::BadRequest("raceAlreadyTaken".into()));
+        }
+
+        let made = match self
+            .admin_create_battle_race(SaveBattleRaceRequest {
+                slug: add.slug.clone(),
+                name_en: race.name_en.clone(),
+                name_ru: race.name_ru.clone(),
+                note_en: race.note_en.clone(),
+                note_ru: race.note_ru.clone(),
+                icon_url: race.icon_url.clone(),
+                level_frames: None,
+                motion_wear: None,
+            })
+            .await
+        {
+            Ok(made) => made,
+            Err(e) => {
+                let _ = self
+                    .repo
+                    .set_studio_race_status(owner, id, "shown", &["taken"])
+                    .await;
+                return Err(e);
+            }
+        };
+        let race_id = Uuid::parse_str(&made.id)
+            .map_err(|_| AppError::Internal("Род без имени".into()))?;
+        self.repo.set_battle_race_credit(race_id, &credit).await?;
+        self.repo.mark_studio_race_approved(id, race_id).await?;
+        Self::log_domain_event("studio_race_approved", "studio_race", id, "ok");
+        Ok(made)
+    }
+
+    // ── Стол хозяина: очередь карт ──────────────────────────────────────────
+
+    pub async fn studio_card_queue(&self) -> Result<Vec<crate::models::StudioCardQueueDto>> {
+        self.repo.studio_card_queue().await
+    }
+
+    /// Отказ — со словом. Пустое слово не принимается: отказ, которого нельзя
+    /// исправить, вернётся той же работой.
+    pub async fn deny_studio_card(&self, id: Uuid, word: &str) -> Result<()> {
+        let word: String = word.trim().chars().take(600).collect();
+        if word.is_empty() {
+            return Err(AppError::BadRequest("wordEmpty".into()));
+        }
+        if self.repo.deny_studio_card(id, &word).await? {
+            self.note_about_card(id, "denied", Some(&word)).await?;
+            Self::log_domain_event("studio_card_denied", "studio_card", id, "ok");
+            Ok(())
+        } else {
+            Err(AppError::NotFound("studio card".into()))
+        }
+    }
+
+    /// Утвердить: работа человека становится картой дома.
+    ///
+    /// Порядок здесь — не удобство, а условие. Сначала ЗАМОК: отметка
+    /// `approved_at` ставится по `approved_at IS NULL`, и второе нажатие
+    /// уходит ни с чем ДО того, как будет записана вторая карта. Карта при
+    /// этом пишется единственным писателем `battle_cards` — тем же
+    /// `admin_create_battle_card`, каким её пишет стол хозяина: второй
+    /// писатель однажды разошёлся бы с первым в нормализации, и в базе
+    /// появилась бы карта, которую стол сохранить бы отказался.
+    pub async fn approve_studio_card(
+        &self,
+        id: Uuid,
+        add: crate::models::ApproveStudioCardRequest,
+    ) -> Result<BattleCardDto> {
+        let row = self
+            .repo
+            .get_studio_card_any(id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("studio card".into()))?;
+        // Взятое домом названо СВОИМ словом, и отказы поэтому честные: одна
+        // причина — «уже взята», другая — «автор снял её со стола».
+        if row.card.status == "taken" || row.card.approved_at.is_some() {
+            return Err(AppError::BadRequest("cardAlreadyTaken".into()));
+        }
+        if row.card.status != "shown" {
+            return Err(AppError::BadRequest("cardNotShown".into()));
+        }
+
+        // Второй раз вырезаем домовое: запись могла лечь до последней правки
+        // списка, а утверждение — последний рубеж.
+        let kept = crate::studio::guest_card_json(&row.card.body);
+        let mut req: SaveBattleCardRequest = serde_json::from_value(kept)
+            .map_err(|e| AppError::BadRequest(format!("cardUnreadable: {e}")))?;
+
+        // Дописка хозяина — поверх, и только домовое.
+        req.slug = add.slug.clone();
+        req.status = add.status.clone();
+        req.price_dust = add.price_dust;
+        req.price_feed = add.price_feed;
+        req.level_price_dust = add.level_price_dust.clone();
+        req.edition_size = add.edition_size;
+        req.lendable = add.lendable;
+        req.frame_override = add.frame_override.clone();
+        req.motion_wear = add.motion_wear.clone();
+        if let Some(art) = add.art_url.clone() {
+            req.art_url = Some(art);
+        }
+        if let Some(tier) = add.tier {
+            req.tier = tier;
+        }
+
+        let author = row.owner_id;
+        // Подпись: имя автора по умолчанию — это чужой труд, и молчать о нём
+        // дом не станет.
+        let credit = match add.credit_name.as_deref().map(str::trim) {
+            Some(word) if !word.is_empty() => word.to_string(),
+            _ => self
+                .repo
+                .find_user_by_id(author)
+                .await?
+                .map(|u| u.display_name)
+                .unwrap_or_default(),
+        };
+
+        // ЗАМОК прежде записи: два нажатия на медленной сети не должны завести
+        // двух карт. Отметка `approved_at` ставится позже (нужен `card_id`),
+        // поэтому работа сперва запирается переводом в СВОЁ состояние —
+        // `taken`, терминальное: из него нельзя ни править, ни показать снова.
+        // Раньше замком служило чужое слово `withdrawn`, и утверждённая работа
+        // возвращалась к автору правимой, а потом вечно висела в очереди
+        // (`STUDIO-CARDS-REVIEW.md` П1).
+        if !self
+            .repo
+            .set_studio_card_status(author, id, "taken", &["shown"])
+            .await?
+        {
+            return Err(AppError::BadRequest("cardAlreadyTaken".into()));
+        }
+
+        let made = match self.admin_create_battle_card_signed(req, Some(&credit)).await {
+            Ok(made) => made,
+            Err(e) => {
+                // Карта не записалась — работа возвращается в очередь, а не
+                // повисает взятой: хозяин ничего не решал, он получил отказ.
+                let _ = self
+                    .repo
+                    .set_studio_card_status(author, id, "shown", &["taken"])
+                    .await;
+                return Err(e);
+            }
+        };
+        let card_id = Uuid::parse_str(&made.id)
+            .map_err(|_| AppError::Internal("Карта без имени".into()))?;
+        self.repo.mark_studio_card_approved(id, card_id).await?;
+
+        // Первый экземпляр — автору, даром: тот, кто карту придумал, не
+        // покупает её за пыль.
+        self.repo.give_first_copy(card_id, author).await?;
+
+        // Плата. Идемпотентная по работе, а не по времени: книга это уже умеет.
+        let dust = add
+            .reward_dust
+            .unwrap_or(crate::studio::PAY_CARD_APPROVED)
+            .clamp(0, 10_000);
+        if dust > 0 {
+            self.repo
+                .credit_battle_wallet(
+                    author,
+                    "dust",
+                    dust,
+                    "card_approved",
+                    Some(id),
+                    &format!("card:{id}"),
+                )
+                .await?;
+        }
+        self.note_about_card(id, "approved", None).await?;
+        Self::log_domain_event("studio_card_approved", "studio_card", id, "ok");
+        Ok(made)
+    }
+
+    /// Записка автору о его карте. Язык — работы, а не хозяина.
+    async fn note_about_card(&self, card: Uuid, kind: &str, word: Option<&str>) -> Result<()> {
+        let Some(row) = self.repo.get_studio_card_any(card).await? else {
+            return Ok(());
+        };
+        let name = row
+            .card
+            .body
+            .get(if row.lang == "en" { "titleEn" } else { "titleRu" })
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let en = row.lang == "en";
+        let (subject, body) = match (kind, en) {
+            ("denied", false) => (
+                "Карта возвращена",
+                format!(
+                    "«{name}» пока не выходит на полку. Хозяин пишет: {}\n\nОна вернулась к вам в черновики — поправьте и покажите снова.",
+                    word.unwrap_or("")
+                ),
+            ),
+            ("denied", true) => (
+                "Your card is back with you",
+                format!(
+                    "“{name}” is not going on the shelf yet. The keeper writes: {}\n\nIt is back in your drafts — mend it and show it again.",
+                    word.unwrap_or("")
+                ),
+            ),
+            ("approved", false) => (
+                "Карта взята в игру",
+                format!(
+                    "«{name}» стоит на полке с вашим именем, и первый её экземпляр — ваш."
+                ),
+            ),
+            ("approved", true) => (
+                "Taken into the game",
+                format!("“{name}” is on the shelf with your name on it, and the first copy is yours."),
+            ),
+            _ => return Ok(()),
+        };
+        let _ = self
+            .repo
+            .create_thread(row.owner_id, "studio", Some(card), subject, &body, true, &[])
+            .await;
+        Ok(())
+    }
+
+    // ── Записки автору ──────────────────────────────────────────────────────
+    //
+    // Записка в профиль, а не письмо: письмами дом пишет по делу — бронь,
+    // заказ, — и решение о раме не стоит того, чтобы догонять человека почтой.
+    // Он придёт сам: за этим сюда и ходят.
+    //
+    // Язык берётся у РАБОТЫ, а не угадывается: `studio_frames.lang` — это язык,
+    // на котором человек работал, когда отдавал её. Тот же приём, что у
+    // прошения.
+
+    /// Чья это работа. Отдельной функцией, потому что спрашивается из двух мест.
+    async fn frame_owner(&self, frame: Uuid) -> Result<Uuid> {
+        self.repo
+            .studio_frame_owner(frame)
+            .await?
+            .map(|(user, _, _, _, _)| user)
+            .ok_or_else(|| AppError::NotFound("studio frame".into()))
+    }
+
+    async fn note_about_frame(&self, frame: Uuid, kind: &str, word: Option<&str>) -> Result<()> {
+        let Some((user, _, slug, lang, name)) = self.repo.studio_frame_owner(frame).await? else {
+            return Ok(());
+        };
+        let en = lang == "en";
+        let (subject, body) = match (kind, en) {
+            ("admitted", false) => (
+                "Работа в сезоне",
+                format!(
+                    "«{name}» допущена и уже стоит в сезоне — её видно в галерее, и её оценивают."
+                ),
+            ),
+            ("admitted", true) => (
+                "Your work is in the season",
+                format!("“{name}” is admitted and already in the season — it is in the gallery, and people are marking it."),
+            ),
+            // Допущена, но в сезон не встала: у автора уже есть заявка на этой
+            // неделе, или неделя подведена. Это не отказ, и сказать надо так.
+            ("admittedOnly", false) => (
+                "Работа вышла на люди",
+                format!(
+                    "«{name}» допущена: её видно в галерее. В сезон она не встала — на этой неделе у вас уже есть работа. Выставить её можно в следующем сезоне."
+                ),
+            ),
+            ("admittedOnly", true) => (
+                "Your work is out",
+                format!("“{name}” is admitted and is in the gallery. It did not go into the season — you already have a work in this one. Next week it can."),
+            ),
+            ("denied", false) => (
+                "Работа возвращена",
+                format!(
+                    "«{name}» пока не выходит на люди. Хозяин пишет: {}\n\nОна вернулась к вам в черновики — поправьте и покажите снова.",
+                    word.unwrap_or("")
+                ),
+            ),
+            ("denied", true) => (
+                "Your work is back with you",
+                format!(
+                    "“{name}” is not going out yet. The keeper writes: {}\n\nIt is back in your drafts — mend it and show it again.",
+                    word.unwrap_or("")
+                ),
+            ),
+            ("approved", false) => (
+                "Работа взята в игру",
+                format!(
+                    "«{name}» утверждена. Она получает тираж лицензий и ваше имя на них — навсегда.{}",
+                    slug.as_deref()
+                        .map(|s| format!("\n\nВаша страница: /studio/authors/{s}"))
+                        .unwrap_or_default()
+                ),
+            ),
+            ("approved", true) => (
+                "Taken into the game",
+                format!(
+                    "“{name}” is approved. It gets a run of licences with your name on them — for good.{}",
+                    slug.as_deref()
+                        .map(|s| format!("\n\nYour page: /studio/authors/{s}"))
+                        .unwrap_or_default()
+                ),
+            ),
+            ("struck", false) => (
+                "Работа снята",
+                format!("«{name}» снята с людских глаз. Причина: {}", word.unwrap_or("")),
+            ),
+            ("struck", true) => (
+                "Your work was taken down",
+                format!("“{name}” has been taken down. Why: {}", word.unwrap_or("")),
+            ),
+            ("chosen", false) => (
+                "Работа в тройке недели",
+                format!("«{name}» вошла в тройку сезона и ушла хозяину на решение."),
+            ),
+            ("chosen", true) => (
+                "Among the three",
+                format!("“{name}” is among the three of the season and has gone to the keeper."),
+            ),
+            _ => return Ok(()),
+        };
+        let _ = self
+            .repo
+            .create_thread(user, "studio", Some(frame), subject, &body, true, &[])
+            .await;
+        Ok(())
+    }
+
+    // ── Галерея и Зал авторов ───────────────────────────────────────────────
+
+    pub async fn studio_gallery(
+        &self,
+        page: i64,
+    ) -> Result<crate::models::StudioGalleryDto> {
+        const PER_PAGE: i64 = 24;
+        let page = page.max(0);
+        Ok(crate::models::StudioGalleryDto {
+            works: self
+                .repo
+                .list_studio_gallery(PER_PAGE, page * PER_PAGE)
+                .await?,
+            total: self.repo.count_studio_gallery().await?,
+        })
+    }
+
+    pub async fn studio_author(&self, slug: &str) -> Result<crate::models::StudioAuthorDto> {
+        let (id, name) = self
+            .repo
+            .studio_author(slug)
+            .await?
+            .ok_or_else(|| AppError::NotFound("author".into()))?;
+        let works = self.repo.list_studio_author_works(id).await?;
+        let cards = self.repo.list_studio_author_cards(id).await?;
+        Ok(crate::models::StudioAuthorDto {
+            // Взята в игру — это ОТМЕТКА, а не состояние: состояние говорит про
+            // автора, отметка про решение хозяина.
+            approved: works.iter().filter(|w| w.approved_at.is_some()).count() + cards.len(),
+            cards,
+            name,
+            slug: slug.to_string(),
+            works,
+        })
+    }
+
+    /// Дать автору адрес — при первом допуске его работы.
+    ///
+    /// Лениво, потому что до допуска страницы у него нет и быть не должно:
+    /// страницу, на которой ничего нет, в доме не заводят. Занятый слуг
+    /// разрешается номером, а не отказом: имена людей повторяются, и второй
+    /// «Мария» не должна остаться без адреса.
+    async fn give_studio_slug(&self, frame: Uuid) -> Result<()> {
+        let Some((user, name, slug, _, _)) = self.repo.studio_frame_owner(frame).await? else {
+            return Ok(());
+        };
+        if slug.is_some() {
+            return Ok(());
+        }
+        let base = crate::slug::slugify(&name);
+        let base = if base.is_empty() { "author".to_string() } else { base };
+        let mut candidate = base.clone();
+        let mut n = 2;
+        while self.repo.studio_slug_taken(&candidate).await? {
+            candidate = format!("{base}-{n}");
+            n += 1;
+            if n > 50 {
+                candidate = format!("{base}-{}", &user.to_string()[..6]);
+                break;
+            }
+        }
+        self.repo.set_studio_slug(user, &candidate).await
+    }
+
+    /// Тройка нынешнего сезона — то, что ждёт вашего слова.
+    pub async fn studio_keeper_queue(&self) -> Result<Vec<crate::models::StudioEntryDto>> {
+        let season = self.studio_season_now().await?;
+        self.repo.list_studio_keeper_queue(season.id).await
+    }
+
+    /// Утвердить работу и назначить тираж лицензий.
+    pub async fn approve_studio_frame(&self, id: Uuid, edition: Option<i32>) -> Result<()> {
+        // Тираж — число, а не «сколько-нибудь»: ноль лицензий это не тираж, а
+        // работа, которую никто не сможет носить.
+        let edition = edition.filter(|n| *n > 0);
+        if self.repo.approve_studio_frame(id, edition).await? {
+            // Тираж печатается АВТОРУ и разом. Утверждение могут нажать дважды
+            // — печать смотрит, есть ли у рамы хоть одна лицензия, и второй раз
+            // не печатает ничего: тираж это число, а не действие.
+            if let Some(count) = edition {
+                let owner = self.frame_owner(id).await?;
+                let made = self.repo.mint_frame_licences(id, owner, count).await?;
+                if made > 0 {
+                    Self::log_domain_event("studio_licences_minted", "studio_frame", id, "ok");
+                }
+            }
+            self.note_about_frame(id, "approved", None).await?;
+            // Письмо — вдогонку: медленный SMTP не держит стол, а неудача
+            // письма не отменяет утверждения.
+            if let Some((user, _, _, lang, name)) = self.repo.studio_frame_owner(id).await? {
+                if let Ok(Some(who)) = self.repo.find_user_by_id(user).await {
+                    let svc = self.clone();
+                    let to = who.email.clone();
+                    let en = lang == "en";
+                    tokio::spawn(async move {
+                        if let Err(e) = svc.send_studio_approved_email(&to, &name, en).await {
+                            tracing::warn!("Studio approval email failed: {e}");
+                        }
+                    });
+                }
+            }
+            Self::log_domain_event("studio_frame_approved", "studio_frame", id, "ok");
+            Ok(())
+        } else {
+            Err(AppError::NotFound("studio frame".into()))
+        }
+    }
+
+    pub async fn strike_studio_frame(&self, id: Uuid, word: &str) -> Result<()> {
+        let word: String = word.trim().chars().take(600).collect();
+        if word.is_empty() {
+            return Err(AppError::BadRequest("wordEmpty".into()));
+        }
+        if self.repo.strike_studio_frame(id, &word).await? {
+            self.note_about_frame(id, "struck", Some(&word)).await?;
+            Self::log_domain_event("studio_frame_struck", "studio_frame", id, "ok");
+            Ok(())
+        } else {
+            Err(AppError::NotFound("studio frame".into()))
+        }
+    }
+
+    /// Лицензии человека — то, что он может носить и однажды продать.
+    pub async fn my_licences(&self, user_id: Uuid) -> Result<Vec<crate::models::LicenceDto>> {
+        self.repo.list_my_licences(user_id).await
+    }
+
+    // ── Лавка авторов ───────────────────────────────────────────────────────
+
+    /// Выставить свою вещь — лицензию или экземпляр карты. Цена в коридоре
+    /// дома: без потолка первый же автор поставит миллион и лавка встанет, без
+    /// пола её зальют мусором.
+    pub async fn list_thing(
+        &self,
+        seller: Uuid,
+        kind: &str,
+        subject: Uuid,
+        price: i32,
+        currency: &str,
+    ) -> Result<Uuid> {
+        let settings = self.studio_admit(seller).await?;
+        if kind != "license" && kind != "copy" {
+            return Err(AppError::BadRequest("unknownKind".into()));
+        }
+        if !crate::battles::CURRENCIES.contains(&currency) {
+            return Err(AppError::BadRequest("unknownCoin".into()));
+        }
+        if price < settings.price_floor || price > settings.price_ceil {
+            return Err(AppError::BadRequest("priceOutside".into()));
+        }
+        self.repo
+            .list_thing(seller, kind, subject, price, currency)
+            .await
+    }
+
+    /// Свои экземпляры — все, включая выставленные: снимать их человек
+    /// приходит туда же, где выставлял.
+    pub async fn my_copies(&self, user_id: Uuid) -> Result<Vec<crate::models::MyCopyDto>> {
+        self.repo.list_my_copies(user_id).await
+    }
+
+    pub async fn withdraw_listing(&self, seller: Uuid, listing: Uuid) -> Result<()> {
+        if self.repo.withdraw_listing(seller, listing).await? {
+            Ok(())
+        } else {
+            Err(AppError::NotFound("listing".into()))
+        }
+    }
+
+    /// Купить. Деньги, вещь и объявление меняются одной транзакцией — половина
+    /// сделки это либо потерянные деньги, либо потерянная вещь.
+    pub async fn buy_listing(&self, buyer: Uuid, listing: Uuid) -> Result<i64> {
+        let settings = self.studio_admit(buyer).await?;
+        let (_, currency, _) = self
+            .repo
+            .buy_listing(buyer, listing, settings.commission_percent)
+            .await?;
+        Self::log_domain_event("market_sold", "market_listing", listing, "ok");
+        self.repo.battle_wallet_balance(buyer, &currency).await
+    }
+
+    // ── Аукцион ─────────────────────────────────────────────────────────────
+
+    pub async fn auctions(&self) -> Result<Vec<crate::models::AuctionDto>> {
+        self.repo.list_auctions().await
+    }
+
+    pub async fn start_auction(
+        &self,
+        seller: Uuid,
+        req: &crate::models::StartAuctionRequest,
+    ) -> Result<Uuid> {
+        let settings = self.studio_admit(seller).await?;
+        if req.kind != "license" && req.kind != "copy" {
+            return Err(AppError::BadRequest("unknownKind".into()));
+        }
+        if !crate::battles::CURRENCIES.contains(&req.currency.as_str()) {
+            return Err(AppError::BadRequest("unknownCoin".into()));
+        }
+        if req.start_price < settings.price_floor || req.start_price > settings.price_ceil {
+            return Err(AppError::BadRequest("priceOutside".into()));
+        }
+        let days = req.days.unwrap_or(crate::studio::AUCTION_DAYS).clamp(1, 30);
+        let ends_at = Utc::now() + chrono::Duration::days(days);
+        let id = self
+            .repo
+            .start_auction(
+                Some(seller),
+                &req.kind,
+                req.subject_id,
+                req.start_price,
+                &req.currency,
+                ends_at,
+                false,
+            )
+            .await?;
+        Self::log_domain_event("auction_started", "auction", id, "ok");
+        Ok(id)
+    }
+
+    pub async fn place_bid(&self, bidder: Uuid, auction: Uuid, amount: i32) -> Result<i32> {
+        self.studio_admit(bidder).await?;
+        self.repo
+            .place_bid(
+                bidder,
+                auction,
+                amount,
+                crate::studio::BID_STEP,
+                crate::studio::SNIPE_MINUTES,
+            )
+            .await
+    }
+
+    /// Ударить молотком по всем, кому вышел срок. Зовётся фоновой задачей —
+    /// той же, что подводит сезон: дом сам не забывает.
+    pub async fn close_due_auctions(&self) -> Result<usize> {
+        let mut done = 0;
+        for id in self.repo.auctions_due().await? {
+            if self.repo.close_auction(id).await?.is_some() {
+                done += 1;
+            }
+            Self::log_domain_event("auction_closed", "auction", id, "ok");
+        }
+        Ok(done)
+    }
+
+    /// Вещи ушедших из дома — на молоток.
+    ///
+    /// `STUDIO.md` §9: труд не отменяется удалением учётной записи, но и висеть
+    /// вечно ничьим он не должен. Вырученное сгорает: платить некому.
+    pub async fn auction_the_estate(&self) -> Result<usize> {
+        let settings = self.get_studio_settings().await?;
+        let ends_at = Utc::now() + chrono::Duration::days(crate::studio::AUCTION_DAYS);
+        let mut put = 0;
+        for (kind, id) in self.repo.ownerless_things().await? {
+            self.repo
+                .start_auction(
+                    None,
+                    &kind,
+                    id,
+                    settings.price_floor,
+                    "dust",
+                    ends_at,
+                    true,
+                )
+                .await?;
+            put += 1;
+        }
+        Ok(put)
+    }
+
+    // ── Мена ────────────────────────────────────────────────────────────────
+    //
+    // Мена предлагается против объявления: чтобы предложить человеку обмен,
+    // надо сперва увидеть, что у него есть, а места, где видно чужое собрание,
+    // в доме нет. Прилавок и есть «вот моя вещь, она отдаётся».
+
+    pub async fn offer_trade(
+        &self,
+        from: Uuid,
+        req: &crate::models::OfferTradeRequest,
+    ) -> Result<Uuid> {
+        self.studio_admit(from).await?;
+        if req.items.is_empty() {
+            // Мена ни за что — это просьба подарить, и сказать её надо словами,
+            // а не пустым списком, который выглядит как поломка страницы.
+            return Err(AppError::BadRequest("nothingOffered".into()));
+        }
+        if req.items.len() > crate::studio::TRADE_ITEMS_MAX {
+            return Err(AppError::BadRequest("tooMuchOffered".into()));
+        }
+        if req
+            .items
+            .iter()
+            .any(|i| i.kind != "license" && i.kind != "copy")
+        {
+            return Err(AppError::BadRequest("unknownKind".into()));
+        }
+        let trade = self.repo.offer_trade(from, req.listing_id, &req.items).await?;
+        Self::log_domain_event("trade_offered", "trade", trade, "ok");
+        Ok(trade)
+    }
+
+    pub async fn accept_trade(&self, seller: Uuid, trade: Uuid) -> Result<()> {
+        self.studio_admit(seller).await?;
+        if self.repo.accept_trade(seller, trade).await? {
+            Self::log_domain_event("trade_taken", "trade", trade, "ok");
+            Ok(())
+        } else {
+            Err(AppError::BadRequest("gone".into()))
+        }
+    }
+
+    /// Отказать или забрать назад — одно движение: делают эти двое одно и то
+    /// же, мена кончается и вещи отпираются.
+    pub async fn refuse_trade(&self, who: Uuid, trade: Uuid) -> Result<()> {
+        if self.repo.refuse_trade(who, trade).await? {
+            Ok(())
+        } else {
+            Err(AppError::NotFound("trade".into()))
+        }
+    }
+
+    pub async fn trades(&self, who: Uuid) -> Result<Vec<crate::models::TradeDto>> {
+        self.repo.list_trades(who).await
+    }
+
+    pub async fn market_copies(&self) -> Result<Vec<crate::models::CopyListingDto>> {
+        self.repo.list_market_copies().await
+    }
+
+    pub async fn market(&self) -> Result<Vec<crate::models::ListingDto>> {
+        self.repo.list_market().await
+    }
+
+    pub async fn list_studio_reports(&self) -> Result<Vec<crate::models::StudioReportDto>> {
+        self.repo.list_studio_reports().await
+    }
+
+    pub async fn close_studio_report(&self, id: Uuid) -> Result<()> {
+        self.repo.close_studio_report(id).await
+    }
+
+    pub async fn studio_waiting(&self) -> Result<crate::models::StudioWaitingDto> {
+        let (admissions, queue, reports) = self.repo.studio_waiting().await?;
+        Ok(crate::models::StudioWaitingDto {
+            admissions,
+            queue,
+            reports,
+        })
+    }
+
+    pub async fn save_studio_season_theme(
+        &self,
+        theme: Option<&str>,
+        note: Option<&str>,
+    ) -> Result<crate::models::StudioSeasonDto> {
+        let season = self.studio_season_now().await?;
+        let theme: Option<String> = theme
+            .map(|t| t.trim().chars().take(120).collect::<String>())
+            .filter(|t| !t.is_empty());
+        let note: Option<String> = note
+            .map(|t| t.trim().chars().take(400).collect::<String>())
+            .filter(|t| !t.is_empty());
+        self.repo
+            .save_studio_season_theme(season.id, theme.as_deref(), note.as_deref())
+            .await?;
+        self.studio_season_now().await
+    }
+
+    /// Библиотека дома — открытые детали склада. Без сессии: из них собирают
+    /// рамку, и увидеть их должен всякий, кто пришёл посмотреть.
+    pub async fn studio_library(
+        &self,
+        role: Option<&str>,
+    ) -> Result<Vec<crate::models::BattleAssetDto>> {
+        let rows = self.repo.list_public_battle_assets(role).await?;
+        Ok(rows.into_iter().map(Self::asset_dto).collect())
+    }
+
+    /// Настройки студии. Умолчания дома — в `studio::StudioSettings::default`,
+    /// и они же ответ, когда настройки ещё ни разу не сохраняли.
+    pub async fn get_studio_settings(&self) -> Result<crate::studio::StudioSettings> {
+        let saved: crate::studio::StudioSettings =
+            parse_json_setting("studio", self.repo.get_setting("studio").await?)?;
+        Ok(crate::studio::normalize_studio_settings(saved))
+    }
+
+    pub async fn save_studio_settings(
+        &self,
+        settings: crate::studio::StudioSettings,
+    ) -> Result<crate::studio::StudioSettings> {
+        let clean = crate::studio::normalize_studio_settings(settings);
+        let json = serde_json::to_string(&clean)
+            .map_err(|_| AppError::Internal("Настройки студии не сериализуются".into()))?;
+        self.repo.upsert_setting("studio", &json).await?;
+        Ok(clean)
+    }
+
     pub async fn get_battle_gift(&self) -> Result<crate::models::BattleGift> {
         parse_json_setting("battle_gift", self.repo.get_setting("battle_gift").await?)
     }
@@ -8135,6 +10198,7 @@ impl AppService {
                 .into_iter()
                 .map(|o| crate::models::BattleOwnedCardDto {
                     card_id: o.card_id.to_string(),
+                    serial: o.serial,
                     level: o.level,
                     is_new: o.seen_at.is_none(),
                 })
@@ -8788,6 +10852,11 @@ impl AppService {
             frame_override: crate::battles::normalize_frame_override(req.frame_override.as_deref()),
             motion_wear: crate::battles::normalize_motion_wear(req.motion_wear.as_deref()),
             lendable: req.lendable,
+            // Тираж — целое больше нуля или ничего. Ноль пришедший из формы
+            // значит «не ограничивать», а не «не печатать ни одной».
+            edition_size: req.edition_size.filter(|n| *n > 0),
+            // Подпись не приходит из формы: её ставит студия при утверждении.
+            credit_name: None,
         })
     }
 
@@ -10282,6 +12351,7 @@ impl AppService {
             width: row.width,
             height: row.height,
             sort_order: row.sort_order,
+            public: row.public,
             created_at: row.created_at,
         }
     }
@@ -10380,6 +12450,16 @@ impl AppService {
         settings: crate::sheet::SliceSettings,
     ) -> Result<BattleSheetCutDto> {
         let cut = self.cut_sheet(id, settings.clone()).await?;
+        Ok(Self::sliced_dto(cut, settings))
+    }
+
+    /// Предложение разреза, собранное для показа. Одно на оба стола: у склада
+    /// дома и у склада студии режет один и тот же `sheet.rs`, и второй сборщик
+    /// превью однажды показал бы не то, что вырежется.
+    fn sliced_dto(
+        cut: crate::sheet::Sliced,
+        settings: crate::sheet::SliceSettings,
+    ) -> BattleSheetCutDto {
         let parts = cut
             .parts
             .iter()
@@ -10401,7 +12481,7 @@ impl AppService {
                 }
             })
             .collect();
-        Ok(BattleSheetCutDto {
+        BattleSheetCutDto {
             width: cut.width,
             height: cut.height,
             source: match cut.source {
@@ -10410,7 +12490,7 @@ impl AppService {
             },
             settings,
             parts,
-        })
+        }
     }
 
     /// Take the chosen parts off the sheet for keeps.
@@ -10599,7 +12679,14 @@ impl AppService {
         };
         let rec = self
             .repo
-            .update_battle_asset(id, name.as_deref(), role.as_deref(), move_sheet, sheet_id)
+            .update_battle_asset(
+                id,
+                name.as_deref(),
+                role.as_deref(),
+                move_sheet,
+                sheet_id,
+                req.public,
+            )
             .await?;
         self.find_asset(rec.id).await
     }

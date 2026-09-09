@@ -3311,7 +3311,7 @@ pub struct GazetteRefreshReport {
 // ============================================================
 
 /// A card as the row that was just written. `tier` is the card's rank; the
-/// owner's `level` lives on `battle_owned_cards` and never on the card itself.
+/// owner's `level` lives on `card_copies` and never on the card itself.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct BattleCard {
     pub id: Uuid,
@@ -3442,6 +3442,13 @@ pub struct BattleCardListed {
     pub motion_wear: Option<String>,
     pub shelf_order: Option<i32>,
     pub lendable: bool,
+    /// Автограф: чьё это придумано. `NULL` у карт дома.
+    pub credit_name: Option<String>,
+    /// Тираж карты. `None` — печатается сколько угодно.
+    pub edition_size: Option<i32>,
+    /// Сколько экземпляров уже отпечатано. Растёт и на покупке, и на подарке:
+    /// номер экземпляра берётся отсюда, и второго счётчика быть не может.
+    pub minted: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub figurine_name: Option<String>,
@@ -3537,6 +3544,17 @@ pub struct BattleCardDto {
     /// Готов ли дом одолжить эту карту тому, у кого своего ещё нет.
     /// Отбирается ещё и по чину: одалживается только первый.
     pub lendable: bool,
+    /// Автограф автора — печатается строкой на листе взятия, не на самой
+    /// карте: лицо карты это опись, в которую не втискивают шестнадцатую
+    /// строку ради служебного факта.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credit_name: Option<String>,
+    /// Тираж и сколько из него отпечатано. Отсюда полка знает, сколько
+    /// осталось, а лист взятия — «№7 из 100».
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edition_size: Option<i32>,
+    #[serde(default)]
+    pub minted: i32,
     pub figurine_id: Option<String>,
     pub figurine_name: Option<String>,
     pub figurine_slug: Option<String>,
@@ -3544,7 +3562,11 @@ pub struct BattleCardDto {
     pub updated_at: String,
 }
 
-#[derive(Debug, Deserialize)]
+/// `Serialize` здесь не для ответа: тело работы человека ХРАНИТСЯ как этот же
+/// запрос, и записывается оно через разбор в него и обратно — тем самым все
+/// зажимы и умолчания дома достаются работе даром, а второго разбора карты в
+/// доме не заводится.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveBattleCardRequest {
     pub slug: Option<String>,
@@ -3602,6 +3624,11 @@ pub struct SaveBattleCardRequest {
     /// которая про заём не знает.
     #[serde(default)]
     pub lendable: bool,
+    /// Тираж: сколько экземпляров этой карты дом отпечатает вообще. `None` —
+    /// сколько угодно. Отсутствует в старом запросе — значит «не трогать»:
+    /// форма, которая про тираж не знает, не должна его снимать.
+    #[serde(default)]
+    pub edition_size: Option<i32>,
     pub figurine_id: Option<String>,
 }
 
@@ -3652,6 +3679,13 @@ pub struct BattleCardWrite {
     pub frame_override: Option<String>,
     pub motion_wear: Option<String>,
     pub lendable: bool,
+    pub edition_size: Option<i32>,
+    /// Автограф автора. Едет В ТОЙ ЖЕ записи, которой карта заводится: вторым
+    /// запросом он оставлял бы на полке чужую работу без имени всякий раз,
+    /// когда между двумя запросами что-то обрывалось. В запросе стола хозяина
+    /// его по-прежнему нет — подпись ставит студия, и приехать из формы она
+    /// не должна.
+    pub credit_name: Option<String>,
 }
 
 /// What the scales say about a card that has not been saved yet.
@@ -4191,6 +4225,9 @@ pub struct BattleOwnedCard {
     pub id: Uuid,
     pub user_id: Uuid,
     pub card_id: Uuid,
+    /// «Седьмой отпечатанный». Есть у всякого экземпляра, а не только у
+    /// тиражного: без номера один из двух одинаковых неотличим от другого.
+    pub serial: Option<i32>,
     pub level: i16,
     pub acquired_at: DateTime<Utc>,
     /// NULL while the card still wears the "new" mark on the shelf.
@@ -4201,6 +4238,10 @@ pub struct BattleOwnedCard {
 #[serde(rename_all = "camelCase")]
 pub struct BattleOwnedCardDto {
     pub card_id: String,
+    /// «Седьмой отпечатанный». Показывается на листе взятия: это то, чего у
+    /// соседа нет, и единственное, чем один экземпляр отличается от другого.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub serial: Option<i32>,
     pub level: i16,
     /// Whether the card still wears the mark. Sent instead of the timestamp:
     /// the shelf needs the answer, not the hour.
@@ -4914,6 +4955,593 @@ pub struct BattleAsset {
     pub updated_at: DateTime<Utc>,
 }
 
+// ── Студия ───────────────────────────────────────────────────────────────────
+//
+// Личный склад человека и его рамки. Всё под сессией: у склада есть владелец,
+// и это единственное, что отделяет его от склада дома.
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioAssetDto {
+    pub id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sheet_id: Option<Uuid>,
+    pub name: String,
+    pub role: String,
+    pub url: String,
+    pub width: i32,
+    pub height: i32,
+    pub bytes: i32,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioSheetDto {
+    pub id: Uuid,
+    pub name: String,
+    pub url: String,
+    pub width: i32,
+    pub height: i32,
+    pub bytes: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harvested_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Рамка человека. `body` — тот же `BattleFrame`, каким одеваются карты дома,
+/// и второго его описания в доме нет.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioFrameDto {
+    pub id: Uuid,
+    pub name: String,
+    pub body: serde_json::Value,
+    pub status: String,
+    /// Допущена ли на люди. Без этого человек не отличает «ждёт хозяина» от
+    /// «можно выставлять», и жмёт кнопку впустую.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub admitted_at: Option<DateTime<Utc>>,
+    pub bytes: i32,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Своя карта человека: тело будущей карты плюс что о ней решил хозяин.
+///
+/// Имени отдельным полем нет — оно внутри тела (`titleRu`/`titleEn`), и второго
+/// места, где написано одно имя, заводить нельзя: они разойдутся.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioCardDto {
+    pub id: Uuid,
+    pub body: serde_json::Value,
+    pub status: String,
+    /// Что сказал хозяин — одним полем на оба случая: взял или вернул. Двумя
+    /// оно значило противоположное, а печаталось одинаково.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keeper_word: Option<String>,
+    /// Взята в игру: стоит на полке дома.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approved_at: Option<DateTime<Utc>>,
+    /// Что из работы вышло — карта на полке.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub card_id: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Свой род человека: словарная строка, которую однажды наденут чужие карты.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioRaceDto {
+    pub id: Uuid,
+    pub name_en: String,
+    pub name_ru: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note_en: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note_ru: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_url: Option<String>,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keeper_word: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approved_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub race_id: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Род в очереди хозяина: та же строка плюс кто её принёс.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioRaceQueueDto {
+    pub id: Uuid,
+    pub name_en: String,
+    pub name_ru: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note_en: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note_ru: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_url: Option<String>,
+    pub author: String,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveStudioRaceRequest {
+    pub name_en: String,
+    pub name_ru: String,
+    pub note_en: Option<String>,
+    pub note_ru: Option<String>,
+    pub icon_url: Option<String>,
+    #[serde(default = "crate::studio::default_lang")]
+    pub lang: String,
+}
+
+/// Дописка хозяина при утверждении рода: только домовое. Имена и слово о роде
+/// пришли от человека и здесь не правятся.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApproveStudioRaceRequest {
+    pub slug: Option<String>,
+    /// Как подписать автора. Пусто — именем из учётной записи.
+    pub credit_name: Option<String>,
+}
+
+/// Работа в очереди хозяина: та же карта плюс кто её принёс.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioCardQueueDto {
+    pub id: Uuid,
+    pub body: serde_json::Value,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approved_at: Option<DateTime<Utc>>,
+    pub author: String,
+    pub author_id: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author_slug: Option<String>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Дописка хозяина при утверждении: ТОЛЬКО домовое, и ни одного поля
+/// содержимого. Всё, что человек назначил сам, приходит из тела работы.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApproveStudioCardRequest {
+    pub slug: Option<String>,
+    pub tier: Option<i16>,
+    pub price_dust: Option<i32>,
+    pub price_feed: Option<i32>,
+    pub level_price_dust: Option<Vec<i32>>,
+    pub edition_size: Option<i32>,
+    #[serde(default)]
+    pub lendable: bool,
+    pub frame_override: Option<String>,
+    pub motion_wear: Option<String>,
+    /// Хозяин волен заменить картинку — например, на фотографию настоящей
+    /// работы.
+    pub art_url: Option<String>,
+    /// Как подписать автора. Пусто — именем из учётной записи; подписывать
+    /// умолчанием, потому что это чужой труд.
+    pub credit_name: Option<String>,
+    /// Принять, но пока не выкладывать.
+    #[serde(default = "crate::battles::default_card_status")]
+    pub status: String,
+    /// Пыль автору. Пусто — домашняя плата.
+    pub reward_dust: Option<i32>,
+}
+
+/// Сколько занято в ящике и чем. `used` считается запросом по складу, а не
+/// хранимым числом: два места, где записан один размер, разойдутся на первой
+/// же ошибке удаления.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioBoxDto {
+    pub used: i64,
+    pub limit: i64,
+    pub assets: Vec<StudioAssetDto>,
+    pub sheets: Vec<StudioSheetDto>,
+}
+
+/// Что видит человек, открывший студию.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioStateDto {
+    /// Пустили ли за стол. Заперто — комната есть, но сегодня закрыта.
+    pub open: bool,
+    /// С какой редакцией соглашения человек согласился. Пусто — не согласился
+    /// вовсе или согласился со старой: выкладка спросит снова.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agreed: Option<String>,
+    /// Нынешняя редакция — чтобы страница знала, что показывать.
+    pub agreement: String,
+    /// Почему заперто: `gate` дома, как есть. Клиент говорит словами сам.
+    pub gate: String,
+    pub settings: crate::studio::StudioSettings,
+    pub frames: Vec<StudioFrameDto>,
+    pub r#box: StudioBoxDto,
+}
+
+/// Сезон, как его видят все.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioSeasonDto {
+    pub id: Uuid,
+    pub number: i32,
+    pub opens_at: DateTime<Utc>,
+    pub closes_at: DateTime<Utc>,
+    pub verdict_at: DateTime<Utc>,
+    pub state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub theme: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub theme_note: Option<String>,
+}
+
+/// Заявка в сезон, с рамой и автором — так её и показывают.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioEntryDto {
+    pub id: Uuid,
+    pub frame_id: Uuid,
+    pub name: String,
+    pub body: serde_json::Value,
+    pub author_id: Uuid,
+    pub author: String,
+    pub entered_at: DateTime<Utc>,
+    /// Живой счёт: он виден в ходе недели — ради него и заходят каждый день.
+    pub score: Option<f64>,
+    pub votes: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub place: Option<i16>,
+    pub to_keeper: bool,
+    /// Оценка этого зрителя, если он уже смотрел. Своя, не чужая: показывать
+    /// чужие голоса поимённо — значит превратить оценку в спор.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mine: Option<i16>,
+}
+
+/// Сезон целиком: неделя, её заявки и что осталось у зрителя.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioSeasonPageDto {
+    pub season: StudioSeasonDto,
+    pub entries: Vec<StudioEntryDto>,
+    /// Сколько оценок у этого человека ещё осталось. Не для азарта, а чтобы
+    /// он знал, что их не бесконечно.
+    pub ratings_left: i64,
+    /// Своя заявка в этом сезоне уже есть.
+    pub entered: bool,
+    /// Автор, выставившийся сам, соперников не оценивает.
+    pub may_rate: bool,
+}
+
+/// Объявление в лавке: чья лицензия, чья работа и почём.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct ListingDto {
+    pub id: Uuid,
+    /// Какая именно лицензия стоит на прилавке. Названа номером, а не именем
+    /// продавца: двух людей с одинаковым именем дом не запрещает, и «моё ли
+    /// это» по имени однажды ответит неверно.
+    pub licence_id: Uuid,
+    pub price: i32,
+    pub currency: String,
+    pub serial: i32,
+    pub frame_id: Uuid,
+    pub name: String,
+    pub body: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edition_size: Option<i32>,
+    /// Кто продаёт — не всегда автор: лицензию можно перепродать.
+    pub seller: String,
+    pub author: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author_slug: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListLicenceRequest {
+    /// Что выставляют: `license` — право носить раму, `copy` — экземпляр
+    /// карты. Умолчание — лицензия: так лавка начиналась, и старая страница
+    /// про вид не знает.
+    #[serde(default = "crate::battles::default_listing_kind")]
+    pub kind: String,
+    /// Что именно выставляют — номер лицензии или экземпляра.
+    #[serde(alias = "licenceId")]
+    pub subject_id: Uuid,
+    pub price: i32,
+    pub currency: String,
+}
+
+/// Экземпляр карты на прилавке. Отдельным видом, а не полем в лицензии: право
+/// носить раму и сама карта — разные вещи, и показаны они по-разному.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct CopyListingDto {
+    pub id: Uuid,
+    pub copy_id: Uuid,
+    pub price: i32,
+    pub currency: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub serial: Option<i32>,
+    /// Уровень ЭТОГО экземпляра: прокачанная карта объективно дороже, и рынку
+    /// есть чем торговать, кроме редкости.
+    pub level: i16,
+    pub card_id: Uuid,
+    pub title_en: String,
+    pub title_ru: String,
+    /// Автограф придумавшего — третье обещанное место подписи: имя рядом с
+    /// ценой, в тот самый миг, когда его запоминают.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credit_name: Option<String>,
+    pub seller: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Что человек кладёт в мену: вид вещи и её номер.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TradeItem {
+    pub kind: String,
+    pub subject_id: Uuid,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OfferTradeRequest {
+    /// Против какого объявления мена. Кому она — говорит объявление.
+    pub listing_id: Uuid,
+    pub items: Vec<TradeItem>,
+}
+
+/// Лот с молотка.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct AuctionDto {
+    pub id: Uuid,
+    pub kind: String,
+    pub subject_id: Uuid,
+    /// Чья вещь. Пусто — ушедшего из дома: платить некому, вырученное сгорает.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seller: Option<String>,
+    pub estate: bool,
+    /// Как называется то, что продаётся: имя рамы или имя карты.
+    pub name: String,
+    /// Карта — чтобы показать лот НАСТОЯЩЕЙ картой, а не строкой списка.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub card_id: Option<Uuid>,
+    pub start_price: i32,
+    pub currency: String,
+    /// Сколько дают сейчас. Пусто — ставок ещё не было.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_bid: Option<i32>,
+    pub bids: i64,
+    pub ends_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartAuctionRequest {
+    pub kind: String,
+    pub subject_id: Uuid,
+    pub start_price: i32,
+    pub currency: String,
+    /// Сколько дней торгу. Пусто — неделя, как у сезона.
+    pub days: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BidRequest {
+    pub amount: i32,
+}
+
+/// Мена, как её видят обе стороны.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TradeDto {
+    pub id: Uuid,
+    pub listing_id: Uuid,
+    pub state: String,
+    /// Кто предложил. Своё имя человек узнаёт по `mine`.
+    pub from: String,
+    /// Моя ли это мена: предложил я или предложили мне.
+    pub mine: bool,
+    /// Что просят взамен — с той стороны прилавка.
+    pub want: String,
+    /// Что за это дают, словами: у вещи в мене нет цены, и показать её иначе,
+    /// чем перечислив, нельзя.
+    pub gives: Vec<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Свой экземпляр: то, что можно выставить, и то, что уже стоит на прилавке.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct MyCopyDto {
+    pub id: Uuid,
+    pub card_id: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub serial: Option<i32>,
+    pub level: i16,
+    /// Заперт объявлением: ни играть, ни выставить второй раз.
+    pub locked: bool,
+    pub title_en: String,
+    pub title_ru: String,
+}
+
+/// Лицензия — право носить раму. Экземпляр с номером: «№7 из 200».
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct LicenceDto {
+    pub id: Uuid,
+    pub frame_id: Uuid,
+    pub name: String,
+    pub body: serde_json::Value,
+    pub serial: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edition_size: Option<i32>,
+    pub author: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author_slug: Option<String>,
+    pub origin: String,
+    /// Выставлена на продажу — заперта: ею нельзя ни играть, ни продать второму.
+    pub locked: bool,
+}
+
+/// Работа, показанная на людях: в галерее и в Зале авторов.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioShownDto {
+    pub id: Uuid,
+    pub name: String,
+    pub body: serde_json::Value,
+    pub status: String,
+    pub author: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author_slug: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub admitted_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approved_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edition_size: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioGalleryDto {
+    pub works: Vec<StudioShownDto>,
+    pub total: i64,
+}
+
+/// Зал авторов: человек и всё, что от него осталось на людях.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioAuthorDto {
+    pub name: String,
+    pub slug: String,
+    pub works: Vec<StudioShownDto>,
+    /// Карты, взятые домом. Обещанное третье место автографа
+    /// (`STUDIO.md` §6): лист взятия · ЗАЛ АВТОРОВ · лавка. Без них страница
+    /// человека, чья карта стоит на полке дома, не показывала его работы
+    /// вовсе.
+    pub cards: Vec<StudioAuthorCardDto>,
+    /// Сколько работ дошло до игры. Число, которым автор и меряется.
+    pub approved: usize,
+}
+
+/// Карта автора, стоящая на полке дома.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioAuthorCardDto {
+    pub id: Uuid,
+    pub body: serde_json::Value,
+    /// Куда идти смотреть её на полке.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub card_id: Option<Uuid>,
+    pub approved_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioReportDto {
+    pub id: Uuid,
+    pub frame_id: Uuid,
+    pub frame_name: String,
+    pub body: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reporter: Option<String>,
+    pub reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    pub state: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Что ждёт хозяина в студии. Значок на вкладке — сумма трёх.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioWaitingDto {
+    pub admissions: i64,
+    pub queue: i64,
+    pub reports: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApproveFrameRequest {
+    /// Тираж лицензий. Пусто — тираж не назначен, лицензии не печатаются.
+    #[serde(default)]
+    pub edition_size: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnterSeasonRequest {
+    pub frame_id: Uuid,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RateEntryRequest {
+    pub value: i16,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportFrameRequest {
+    pub reason: String,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveStudioCardRequest {
+    /// Тело будущей карты — `SaveBattleCardRequest` как есть. Домовое из него
+    /// вырежет сервер: клиент не забор.
+    pub body: serde_json::Value,
+    /// На каком языке человек работает — на нём ему и напишут.
+    #[serde(default = "crate::studio::default_lang")]
+    pub lang: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdmitFrameRequest {
+    #[serde(default)]
+    pub word: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveSeasonThemeRequest {
+    #[serde(default)]
+    pub theme: Option<String>,
+    #[serde(default)]
+    pub theme_note: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveStudioFrameRequest {
+    pub name: String,
+    /// Тело рамы. Приходит как есть и нормализуется теми же правилами, что и
+    /// рама дома, — иначе гость назначил бы врезку в тысячу процентов.
+    pub body: serde_json::Value,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BattleAssetDto {
@@ -4929,6 +5557,9 @@ pub struct BattleAssetDto {
     pub height: i32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort_order: Option<i32>,
+    /// В библиотеке студии: из этой детали люди собирают свои рамки.
+    #[serde(default)]
+    pub public: bool,
     pub created_at: DateTime<Utc>,
 }
 
@@ -5075,6 +5706,10 @@ pub struct SaveBattleAssetRequest {
     /// where it is; present-and-null makes it loose.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sheet_id: Option<Option<String>>,
+    /// Открыть деталь людям — она попадёт в библиотеку студии. Отсутствие
+    /// оставляет как было: полка правится по одному полю за раз.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public: Option<bool>,
 }
 
 /// A part read for the desk, carrying the name of the sheet it came off.
@@ -5091,6 +5726,7 @@ pub struct BattleAssetListed {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub sheet_name: Option<String>,
+    pub public: bool,
 }
 
 /// Which sheet's parts are being asked for. `Loose` is not the same question as

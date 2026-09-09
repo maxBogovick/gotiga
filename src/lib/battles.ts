@@ -11,11 +11,16 @@
 // Nothing on this page may quietly turn one into the other.
 
 import type {
+  AbilityShape,
+  AbilityTrigger,
+  AbilityVerb,
   BattleBadgeShape,
   BattleCard,
   BattleCardKind,
   BattleChannel,
   BattleEvent,
+  BattleRace,
+  SaveBattleCardRequest,
   GestureBody,
   GestureFade,
   GestureTurn,
@@ -372,11 +377,18 @@ export interface CarvedPiece {
   piece: SlicePiece;
 }
 
-export function carving(frame: BattleFrame): CarvedPiece[] {
+export function carving(frame: BattleFrame, showEmpty = false): CarvedPiece[] {
   const out: CarvedPiece[] = [];
   for (const slot of SLICE_SLOTS) {
     const image = slotArt(frame, slot);
-    if (!image) continue;
+    // Пустой слот на СТОЛЕ показывается пунктиром и берётся в руку, а на полке
+    // не существует вовсе.
+    //
+    // Без этого пустая рама — карта, на которой нечего нажать: место у детали
+    // есть, а детали нет, и человек жмёт на край и попадает в воздух. Пунктир
+    // не «подсказка», а сама деталь: та же коробка, тот же `data-piece`, тот же
+    // захват — просто в ней пока ничего не нарисовано.
+    if (!image && !showEmpty) continue;
     out.push({ id: slot, kind: SLICE_KIND[slot], image, piece: pieceOf(frame, slot) });
   }
   for (const one of frame.ornaments ?? []) {
@@ -527,11 +539,15 @@ function fitOf(kind: SliceKind, fit: SliceFit): string {
 /** Every copy of every piece, ready to render. A copy the keeper put out is
  *  simply not here — an accent over the lintel and nothing on the sill is one
  *  unticked box, not a second upload with half of it erased. */
-export function carvedCopies(frame: BattleFrame): CarvedCopy[] {
+export function carvedCopies(frame: BattleFrame, showEmpty = false): CarvedCopy[] {
   const out: CarvedCopy[] = [];
-  for (const { id, kind, image, piece: settled } of carving(frame)) {
-    const picture = `background-image:url("${cssUrl(image)}")`;
-    const paint = `${picture};${fitOf(kind, settled.fit)};background-repeat:no-repeat`;
+  for (const { id, kind, image, piece: settled } of carving(frame, showEmpty)) {
+    // Пустая деталь: коробка на месте, картинки нет. Пунктир рисуется здесь же,
+    // а не классом, потому что и всё остальное про эту копию — строка стиля, и
+    // второе место, где решается, как копия выглядит, однажды разошлось бы.
+    const paint = image
+      ? `background-image:url("${cssUrl(image)}");${fitOf(kind, settled.fit)};background-repeat:no-repeat`
+      : 'outline:1px dashed rgba(52,37,28,0.35);outline-offset:-2px;background:rgba(52,37,28,0.04)';
     for (const side of KIND_SIDES[kind]) {
       const at = settled.places[side];
       if (!at || at.shown === false) continue;
@@ -1419,7 +1435,12 @@ export const DEFAULT_FRAMES: BattleFrame[] = [
 ];
 
 export const LAYOUTS: BattleLayout[] = ['corners', 'plaque'];
-export const FRAME_MODES: BattleFrameMode[] = ['overlay', 'behind', 'sliced'];
+/** Порядок — это предложение, а не перечень.
+ *
+ *  «Собрана из частей» стоит первой, потому что это единственный способ, в
+ *  котором раму ДЕЛАЮТ: два других надевают готовую картинку целиком. Первый в
+ *  списке — то, с чего начинают, и новая рама начинается именно с него. */
+export const FRAME_MODES: BattleFrameMode[] = ['sliced', 'overlay', 'behind'];
 export const BADGE_SHAPES: BattleBadgeShape[] = ['circle', 'square', 'diamond', 'hex', 'shield', 'none'];
 
 export function clampTier(tier: number): number {
@@ -1807,6 +1828,131 @@ export function pricesOf(card: BattleCard): { coin: Coin; amount: number }[] {
   }
   return out;
 }
+
+// ── Способности: имена, значки, потолок ─────────────────────────────────────
+//
+// Живут ЗДЕСЬ, а не в столе хозяина, по той же причине, по которой в общем
+// месте живёт `BattleIcon`: этими словами и значками способность подписана и в
+// админке, и на столе человека в студии, и второй такой список однажды
+// разошёлся бы с первым — глагол, добавленный в доме, не появился бы у людей.
+//
+// Списки ЗАКРЫТЫ и повторяют `battles.rs`. Повторяются намеренно: сервер
+// отбрасывает неизвестный глагол молча, а форма не должна давать его выбрать.
+
+export const ABILITIES_MAX = 6;
+
+// Ключ перевода рядом с самим значением, а не собранный из строки: тогда
+// забытый в словаре глагол — ошибка компиляции, а не «battlesVerbFoo» на
+// экране. Порядок записи здесь и есть порядок в списке.
+export const VERB_LABELS = {
+  damage: "battlesVerbDamage",
+  dot: "battlesVerbDot",
+  heal: "battlesVerbHeal",
+  hot: "battlesVerbHot",
+  shield: "battlesVerbShield",
+  zone: "battlesVerbZone",
+  bless: "battlesVerbBless",
+  curse: "battlesVerbCurse",
+  control: "battlesVerbControl",
+  silence: "battlesVerbSilence",
+  disarm: "battlesVerbDisarm",
+  charm: "battlesVerbCharm",
+  veil: "battlesVerbVeil",
+  guard: "battlesVerbGuard",
+  immune: "battlesVerbImmune",
+  thorns: "battlesVerbThorns",
+  move: "battlesVerbMove",
+  summon: "battlesVerbSummon",
+  sacrifice: "battlesVerbSacrifice",
+  cleanse: "battlesVerbCleanse",
+  dispel: "battlesVerbDispel",
+  mana: "battlesVerbMana",
+} as const satisfies Record<AbilityVerb, TranslationKey>;
+
+export const SHAPE_LABELS = {
+  self: "battlesShapeSelf",
+  one: "battlesShapeOne",
+  adjacent: "battlesShapeAdjacent",
+  chain: "battlesShapeChain",
+  line: "battlesShapeLine",
+  radius: "battlesShapeRadius",
+  side: "battlesShapeSide",
+  cell: "battlesShapeCell",
+} as const satisfies Record<AbilityShape, TranslationKey>;
+
+export const TRIGGER_LABELS = {
+  active: "battlesTriggerActive",
+  onPlay: "battlesTriggerOnPlay",
+  onHit: "battlesTriggerOnHit",
+  onDamaged: "battlesTriggerOnDamaged",
+  onDeath: "battlesTriggerOnDeath",
+  turnStart: "battlesTriggerTurnStart",
+  aura: "battlesTriggerAura",
+  once: "battlesTriggerOnce",
+} as const satisfies Record<AbilityTrigger, TranslationKey>;
+
+/** Значки каналов. Формам и поводам такой таблицы не нужно: их значки
+ *  названы теми же словами, что и сами значения, и разойтись им негде. */
+export const CHANNEL_ICON = {
+  physical: "sword",
+  magic: "spark",
+  pure: "pure",
+  none: "nil",
+} as const satisfies Record<BattleChannel, string>;
+
+export const CHANNELS = Object.keys(CHANNEL_ICON) as BattleChannel[];
+
+// Слова каналов — ПУБЛИЧНЫЕ, те же, которыми канал подписан на листе взятия.
+// Админский набор повторял их слово в слово; двух словарей для четырёх слов
+// быть не должно, и второй удалён.
+export const CHANNEL_LABELS = {
+  physical: "battlesChannelPhysical",
+  magic: "battlesChannelMagic",
+  pure: "battlesChannelPure",
+  none: "battlesChannelNone",
+} as const satisfies Record<BattleChannel, TranslationKey>;
+
+/**
+ * Значки глаголов.
+ *
+ * Таблица, а не совпадение имён, как у форм и поводов: пять глаголов носят
+ * значок, который уже есть у чего-то другого и означает то же самое, —
+ * «урон» это меч, «мана» это капля, — и рисовать им вторые такие же было бы
+ * два рисунка одного предмета, которые однажды разойдутся.
+ */
+export const VERB_ICON = {
+  damage: "sword",
+  dot: "flame",
+  heal: "sprig",
+  hot: "bloom",
+  shield: "shield",
+  zone: "zone",
+  bless: "bless",
+  curse: "curse",
+  control: "control",
+  silence: "silence",
+  disarm: "disarm",
+  charm: "charm",
+  veil: "veil",
+  guard: "guard",
+  immune: "immune",
+  thorns: "thorns",
+  move: "move",
+  summon: "summon",
+  sacrifice: "sacrifice",
+  cleanse: "cleanse",
+  dispel: "dispel",
+  mana: "drop",
+} as const satisfies Record<AbilityVerb, string>;
+
+
+export const VERBS = Object.keys(VERB_LABELS) as AbilityVerb[];
+export const SHAPES = Object.keys(SHAPE_LABELS) as AbilityShape[];
+export const TRIGGERS = Object.keys(TRIGGER_LABELS) as AbilityTrigger[];
+
+/** Только `chain` и `radius` несут число; у остальных поле нечего заполнять. */
+export const shapeCarriesNumber = (shape: string) =>
+  shape === "chain" || shape === "radius";
 
 /** One dictionary word for the header: body, spell, or relic — never the free `type`. */
 export function kindLabelKey(
@@ -3281,4 +3427,124 @@ export function rulesApart(rules: BattleRules | null | undefined): RuleApart[] {
       rules.longShotPower === 0 ? null : rules.longShotPower);
   }
   return out;
+}
+
+/** Пустая карта — манекен, на котором примеряют раму.
+ *
+ *  Лежала в админке; студии нужна та же, и второй её копии быть не должно:
+ *  карта прирастает полями, и забытый близнец — это поле, которого на манекене
+ *  нет, то есть предпросмотр, который однажды соврёт.
+ */
+/** Пустое тело своей карты — ровно тот запрос, каким карту сохраняет и стол
+ *  хозяина. Домовые поля (цена, слуг, наряд) сюда НЕ кладутся вовсе: их
+ *  назначает дом, и место для них на странице было бы обещанием, которого
+ *  сервер не выполнит. */
+export function emptyCardRequest(): SaveBattleCardRequest {
+  return {
+    status: "draft",
+    tier: 1,
+    raceId: null,
+    typeEn: null,
+    typeRu: null,
+    titleEn: "",
+    titleRu: "",
+    effectEn: null,
+    effectRu: null,
+    loreEn: null,
+    loreRu: null,
+    cost: 1,
+    power: 1,
+    health: 3,
+    mana: 0,
+    traits: [],
+    kind: "unit",
+    armor: 0,
+    ward: 0,
+    attackChannel: "physical",
+    reach: 1,
+    step: 1,
+    speed: 3,
+    mend: 0,
+    abilities: [],
+    artUrl: null,
+    artFocal: null,
+  };
+}
+
+/** Тело работы, показанное КАРТОЙ. Отрисовщик один на весь дом, и кормить его
+ *  надо тем же, чем кормят полку, — поэтому запрос раскладывается в карту, а
+ *  не рисуется вторым способом. */
+export function cardFromRequest(
+  req: SaveBattleCardRequest,
+  races: BattleRace[] = [],
+): BattleCard {
+  const race = races.find((r) => r.id === req.raceId) ?? null;
+  return {
+    ...emptyBattleCard(),
+    ...req,
+    // У работы слуга нет и быть не может: его назначает дом при утверждении.
+    slug: "",
+    raceId: req.raceId ?? null,
+    raceNameEn: race?.nameEn ?? null,
+    raceNameRu: race?.nameRu ?? null,
+    raceIconUrl: race?.iconUrl ?? null,
+    raceLevelFrames: race?.levelFrames ?? null,
+  };
+}
+
+export function emptyBattleCard(): BattleCard {
+  return {
+    id: "",
+    slug: "",
+    status: "draft",
+    tier: 1,
+    raceId: null,
+    raceNameEn: null,
+    raceNameRu: null,
+    raceIconUrl: null,
+    raceLevelFrames: null,
+    typeEn: null,
+    typeRu: null,
+    titleEn: "",
+    titleRu: "",
+    effectEn: null,
+    effectRu: null,
+    loreEn: null,
+    loreRu: null,
+    cost: 1,
+    power: 1,
+    health: 0,
+    mana: 0,
+    traits: [],
+    kind: "unit",
+    armor: 0,
+    ward: 0,
+    attackChannel: "physical",
+    reach: 1,
+    step: 1,
+    speed: 3,
+    mend: 0,
+    abilities: [],
+    budgetPoints: null,
+    balanceIndex: null,
+    rulesVersion: 1,
+    priceDust: null,
+    priceFeed: null,
+    levelPriceDust: null,
+    lendable: false,
+    creditName: null,
+    editionSize: null,
+    minted: 0,
+    artUrl: null,
+    artUrlOverride: null,
+    artFocal: null,
+    frameOverride: null,
+    motionWear: null,
+    shelfOrder: null,
+    figurineId: null,
+    figurineName: null,
+    figurineSlug: null,
+    createdAt: "",
+    updatedAt: "",
+  };
 }

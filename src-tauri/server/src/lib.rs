@@ -20,3 +20,4 @@ pub mod search;
 pub mod services;
 pub mod sheet;
 pub mod slug;
+pub mod studio;

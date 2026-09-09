@@ -192,7 +192,10 @@
 
   // ── Деталь ───────────────────────────────────────────────────────────────
 
-  async function savePart(asset: BattleAsset, patch: { name?: string; role?: BattleAssetRole }) {
+  async function savePart(
+    asset: BattleAsset,
+    patch: { name?: string; role?: BattleAssetRole; public?: boolean },
+  ) {
     try {
       const saved = await api.adminSaveBattleAsset(asset.id, patch);
       assets = assets.map((a) => (a.id === saved.id ? saved : a));
@@ -902,6 +905,19 @@
                     class="px-1 text-[#8f2f22]/70 hover:text-[#8f2f22]"
                   >×</button>
                 </div>
+                <!-- Открыть людям. Из открытых деталей собирают рамку в
+                     простом сборщике студии, и это единственное место, где
+                     хозяин решает, что показывать. -->
+                <label class="mt-1 flex cursor-pointer items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] {asset.public ? 'text-[#c65f3c]' : 'text-[#8a6a55]'}">
+                  <input
+                    type="checkbox"
+                    checked={asset.public}
+                    onchange={(e) =>
+                      savePart(asset, { public: (e.currentTarget as HTMLInputElement).checked })}
+                    class="accent-[#c65f3c]"
+                  />
+                  {$t('adminAssetsPublic')}
+                </label>
                 <p class="mt-1 text-[10px] tabular-nums text-[#8a6a55]">
                   {sizeOf(asset.width, asset.height)}
                   {#if scope === 'all'}

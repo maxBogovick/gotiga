@@ -1933,6 +1933,13 @@ export interface BattleCard {
      *  Only rank 1 is ever actually lent — the pool is filtered by rank, not
      *  by this flag, so the keeper can mark a card before settling its rank. */
     lendable: boolean;
+    /** Автограф: чьё это придумано. Пусто у карт дома. */
+    creditName?: string | null;
+    /** Тираж: сколько экземпляров дом отпечатает вообще. Пусто — сколько
+     *  угодно. */
+    editionSize?: number | null;
+    /** Сколько уже отпечатано. Отсюда «осталось N» и номер экземпляра. */
+    minted: number;
     figurineId: string | null;
     figurineName: string | null;
     figurineSlug: string | null;
@@ -1976,7 +1983,389 @@ export interface SaveBattleCardRequest {
     frameOverride?: string | null;
     motionWear?: string | null;
     lendable?: boolean;
+    /** Тираж. `null` или 0 — не ограничивать. */
+    editionSize?: number | null;
     figurineId?: string | null;
+}
+
+// ── Студия ───────────────────────────────────────────────────────────────────
+//
+// Личный склад человека и его рамки. Рамка — это тот же `BattleFrame`, каким
+// одеваются карты дома: второго описания рамы в доме нет и не будет.
+
+/** Состояние работы — только про автора: что он может с ней сделать.
+ *
+ *  Решение хозяина живёт отметками (`admittedAt`, `approvedAt`), участие в
+ *  неделе — в заявках сезона. Когда всё это было одним столбцом, работа,
+ *  побывавшая в сезоне, застревала навсегда (`STUDIO-REVIEW.md`). */
+export type StudioFrameStatus = 'draft' | 'shown' | 'withdrawn';
+
+export type StudioAssetRole =
+    | 'corner'
+    | 'sideH'
+    | 'sideV'
+    | 'accent'
+    | 'art'
+    | 'paper'
+    | 'other';
+
+export interface StudioAsset {
+    id: string;
+    sheetId?: string | null;
+    name: string;
+    role: StudioAssetRole;
+    url: string;
+    width: number;
+    height: number;
+    bytes: number;
+    createdAt: string;
+}
+
+export interface StudioSheet {
+    id: string;
+    name: string;
+    url: string;
+    width: number;
+    height: number;
+    bytes: number;
+    harvestedAt?: string | null;
+    createdAt: string;
+}
+
+export interface StudioFrame {
+    id: string;
+    name: string;
+    body: BattleFrame;
+    status: StudioFrameStatus;
+    /** Допущена ли на люди. Без этого «ждёт хозяина» не отличить от «можно
+     *  выставлять», и человек жмёт кнопку впустую. */
+    admittedAt?: string | null;
+    bytes: number;
+    createdAt: string;
+    updatedAt: string;
+}
+
+/** Сколько занято в ящике и чем. `used` сервер считает запросом по складу: два
+ *  места, где записан один размер, разойдутся на первой же ошибке удаления. */
+export interface StudioBox {
+    used: number;
+    limit: number;
+    assets: StudioAsset[];
+    sheets: StudioSheet[];
+}
+
+export interface StudioSettings {
+    gate: 'all' | 'owners' | 'closed';
+    boxBytes: number;
+    assetBytes: number;
+    frameBytes: number;
+    framePieces: number;
+    framesOpen: number;
+    sheetsPerDay: number;
+    sheetsAtOnce: number;
+    sheetDays: number;
+    ratingsPerSeason: number;
+    /** Ниже этого числа оценок работа в тройку не проходит. */
+    ratingsTrusted: number;
+    toKeeper: number;
+    /** Сколько незаконченных карт человек держит одновременно. */
+    cardsOpen: number;
+    /** Коридор цены в лавке. */
+    priceFloor: number;
+    priceCeil: number;
+    /** Доля дома со сделки, в сотых. Сгорает. */
+    commissionPercent: number;
+}
+
+export interface StudioState {
+    /** Пустили ли за стол. Заперто — комната есть, но сегодня закрыта. */
+    open: boolean;
+    /** С какой редакцией соглашения человек согласился. Пусто — спросят снова. */
+    agreed?: string | null;
+    /** Нынешняя редакция соглашения. */
+    agreement: string;
+    gate: StudioSettings['gate'];
+    settings: StudioSettings;
+    frames: StudioFrame[];
+    box: StudioBox;
+}
+
+export interface StudioSeason {
+    id: string;
+    number: number;
+    opensAt: string;
+    closesAt: string;
+    verdictAt: string;
+    state: 'open' | 'closed' | 'judged';
+    theme?: string | null;
+    themeNote?: string | null;
+}
+
+export interface StudioEntry {
+    id: string;
+    frameId: string;
+    name: string;
+    body: BattleFrame;
+    authorId: string;
+    author: string;
+    enteredAt: string;
+    /** Живой счёт: виден в ходе недели. */
+    score?: number | null;
+    votes: number;
+    place?: number | null;
+    toKeeper: boolean;
+    /** Оценка этого зрителя. Чужие голоса поимённо не показываются. */
+    mine?: number | null;
+}
+
+export interface StudioSeasonPage {
+    season: StudioSeason;
+    entries: StudioEntry[];
+    ratingsLeft: number;
+    entered: boolean;
+    mayRate: boolean;
+}
+
+/** Работа, показанная на людях. */
+export interface StudioShown {
+    id: string;
+    name: string;
+    body: BattleFrame;
+    status: StudioFrameStatus;
+    /** Взята в игру. Отметка, а не состояние. */
+    author: string;
+    authorSlug?: string | null;
+    admittedAt?: string | null;
+    approvedAt?: string | null;
+    editionSize?: number | null;
+}
+
+export interface StudioGallery {
+    works: StudioShown[];
+    total: number;
+}
+
+export interface StudioAuthorCard {
+    id: string;
+    body: SaveBattleCardRequest;
+    cardId?: string | null;
+    approvedAt?: string | null;
+}
+
+export interface StudioAuthor {
+    name: string;
+    slug: string;
+    works: StudioShown[];
+    /** Сколько работ дошло до игры — число, которым автор и меряется. */
+    approved: number;
+    /** Карты автора, стоящие на полке дома. */
+    cards: StudioAuthorCard[];
+}
+
+/** Лицензия — право носить раму. Экземпляр с номером: «№7 из 200». */
+/** Своя карта человека: тело будущей карты плюс что о ней решил хозяин.
+ *
+ *  Имени отдельным полем нет — оно внутри тела (`titleRu`/`titleEn`): два
+ *  места, где написано одно имя, однажды разойдутся. */
+export interface StudioCard {
+    id: string;
+    body: SaveBattleCardRequest;
+    /** `taken` терминально: работа стала картой дома и больше не правится. */
+    status: 'draft' | 'shown' | 'withdrawn' | 'taken';
+    /** Что сказал хозяин — одним полем на оба случая: взял или вернул. */
+    keeperWord?: string | null;
+    approvedAt?: string | null;
+    /** Что из работы вышло — карта на полке дома. */
+    cardId?: string | null;
+    createdAt: string;
+    updatedAt: string;
+}
+
+/** Свой род: словарная строка, которую однажды наденут чужие карты. */
+export interface StudioRace {
+    id: string;
+    nameEn: string;
+    nameRu: string;
+    noteEn?: string | null;
+    noteRu?: string | null;
+    iconUrl?: string | null;
+    /** `taken` терминально: род стал строкой словаря дома. */
+    status: 'draft' | 'shown' | 'withdrawn' | 'taken';
+    keeperWord?: string | null;
+    approvedAt?: string | null;
+    raceId?: string | null;
+    createdAt: string;
+    updatedAt: string;
+}
+
+/** Род в очереди хозяина: та же строка плюс кто её принёс. */
+export interface StudioRaceWaiting {
+    id: string;
+    nameEn: string;
+    nameRu: string;
+    noteEn?: string | null;
+    noteRu?: string | null;
+    iconUrl?: string | null;
+    author: string;
+    updatedAt: string;
+}
+
+export interface SaveStudioRaceRequest {
+    nameEn: string;
+    nameRu: string;
+    noteEn?: string | null;
+    noteRu?: string | null;
+    iconUrl?: string | null;
+    lang?: string;
+}
+
+/** Работа в очереди хозяина: та же карта плюс кто её принёс. */
+export interface StudioCardWaiting {
+    id: string;
+    body: SaveBattleCardRequest;
+    status: string;
+    approvedAt?: string | null;
+    author: string;
+    authorId: string;
+    authorSlug?: string | null;
+    updatedAt: string;
+}
+
+/** Дописка хозяина при утверждении: ТОЛЬКО домовое. */
+export interface ApproveStudioCardRequest {
+    slug?: string | null;
+    tier?: number | null;
+    priceDust?: number | null;
+    priceFeed?: number | null;
+    levelPriceDust?: number[] | null;
+    editionSize?: number | null;
+    lendable?: boolean;
+    frameOverride?: string | null;
+    motionWear?: string | null;
+    artUrl?: string | null;
+    creditName?: string | null;
+    status: 'draft' | 'published';
+    rewardDust?: number | null;
+}
+
+export interface StudioLicence {
+    id: string;
+    frameId: string;
+    name: string;
+    body: BattleFrame;
+    serial: number;
+    editionSize?: number | null;
+    author: string;
+    authorSlug?: string | null;
+    origin: string;
+    /** Выставлена на продажу — заперта: ни играть, ни продать второму. */
+    locked: boolean;
+}
+
+export interface StudioListing {
+    id: string;
+    /** Какая лицензия стоит на прилавке — по ней покупатель узнаёт свою. */
+    licenceId: string;
+    price: number;
+    currency: 'dust' | 'feed';
+    serial: number;
+    frameId: string;
+    name: string;
+    body: BattleFrame;
+    editionSize?: number | null;
+    /** Продаёт не всегда автор: лицензию можно перепродать. */
+    seller: string;
+    author: string;
+    authorSlug?: string | null;
+    createdAt: string;
+}
+
+/** Экземпляр карты на прилавке. Отдельным видом, а не полем в лицензии: право
+ *  носить раму и сама карта — разные вещи, и показаны они по-разному. */
+export interface CopyListing {
+    id: string;
+    copyId: string;
+    price: number;
+    currency: 'dust' | 'feed';
+    serial?: number | null;
+    /** Уровень ЭТОГО экземпляра: прокачанная карта дороже непрокачанной. */
+    level: number;
+    cardId: string;
+    titleEn: string;
+    titleRu: string;
+    creditName?: string | null;
+    seller: string;
+    createdAt: string;
+}
+
+/** Свой экземпляр: то, что можно выставить, и то, что уже на прилавке. */
+export interface MyCopy {
+    id: string;
+    cardId: string;
+    serial?: number | null;
+    level: number;
+    /** Заперт объявлением: ни играть, ни выставить второй раз. */
+    locked: boolean;
+    titleEn: string;
+    titleRu: string;
+}
+
+/** Лот с молотка. */
+export interface Auction {
+    id: string;
+    kind: 'license' | 'copy';
+    subjectId: string;
+    /** Чья вещь. Пусто — ушедшего из дома: платить некому, вырученное сгорает. */
+    seller?: string | null;
+    estate: boolean;
+    name: string;
+    cardId?: string | null;
+    startPrice: number;
+    currency: 'dust' | 'feed';
+    /** Сколько дают сейчас. Пусто — ставок ещё не было. */
+    topBid?: number | null;
+    bids: number;
+    endsAt: string;
+}
+
+/** Мена, как её видят обе стороны. Предлагается против объявления: чтобы
+ *  предложить человеку обмен, надо сперва увидеть, что у него есть. */
+export interface Trade {
+    id: string;
+    listingId: string;
+    state: 'offered' | 'taken' | 'refused' | 'gone';
+    from: string;
+    /** Моя ли это мена: предложил я или предложили мне. */
+    mine: boolean;
+    /** Что просят с той стороны прилавка. */
+    want: string;
+    /** Что за это дают — словами: у вещи в мене нет цены. */
+    gives: string[];
+    createdAt: string;
+}
+
+export interface StudioReport {
+    id: string;
+    frameId: string;
+    frameName: string;
+    body: BattleFrame;
+    reporter?: string | null;
+    reason: string;
+    note?: string | null;
+    state: string;
+    createdAt: string;
+}
+
+/** Что ждёт хозяина в студии. Значок на вкладке — сумма трёх. */
+export interface StudioWaiting {
+    admissions: number;
+    queue: number;
+    reports: number;
+}
+
+export interface SaveStudioFrameRequest {
+    name: string;
+    body: BattleFrame;
 }
 
 // ── Стол гостя ───────────────────────────────────────────────────────────────
@@ -2539,6 +2928,8 @@ export interface BattleAsset {
     height: number;
     sortOrder?: number | null;
     createdAt: string;
+    /** В библиотеке студии: из этой детали люди собирают свои рамки. */
+    public?: boolean;
 }
 
 /**
@@ -2948,6 +3339,8 @@ export type BattleAction =
 /** Одна копия одной карты — чья-то. */
 export interface BattleOwnedCard {
     cardId: string;
+    /** «Седьмой отпечатанный» — чем ваш экземпляр отличается от соседского. */
+    serial?: number | null;
     level: number;
     /** Пока карту не посмотрели, она носит пометку «новая». */
     isNew: boolean;

@@ -33,6 +33,7 @@
     import GazettePanel from '$lib/components/admin/GazettePanel.svelte';
     import TalesPanel from '$lib/components/admin/TalesPanel.svelte';
     import BattlesPanel from '$lib/components/admin/BattlesPanel.svelte';
+    import StudioPanel from '$lib/components/admin/StudioPanel.svelte';
     import LogsPanel from '$lib/components/admin/LogsPanel.svelte';
     import ToolsPanel from '$lib/components/admin/ToolsPanel.svelte';
     import { t, registerAdminDicts, type TranslationKey } from '$lib/i18n';
@@ -124,6 +125,7 @@
                 ['gazette',     'adminTabGazette'],
                 ['tales',       'adminTabTales'],
                 ['battles',     'adminTabBattles'],
+                ['studio',      'adminTabStudio'],
                 ['marks',       'adminTabMarks'],
             ],
         },
@@ -181,6 +183,9 @@
     let pendingBookingsCount = $state(0);
     let pendingCommentsCount = $state(0);
     let pendingImpressionsCount = $state(0);
+    /** Допуск + тройка + жалобы одним числом: на вкладке важно «ждёт ли
+     *  что-нибудь», а чего именно — видно уже внутри. */
+    let studioWaitingCount = $state(0);
 
     // Unattended work waiting in a tab. Red = someone is waiting on an answer;
     // orange = something needs moderating before guests see it.
@@ -190,6 +195,8 @@
         bookings: 'bg-red-500',
         comments: 'bg-orange-600',
         impressions: 'bg-orange-600',
+        // Оранжевый — модерация: кто-то ждёт не ответа, а решения.
+        studio: 'bg-orange-600',
     };
     function tabBadge(tab: AdminTab): number {
         switch (tab) {
@@ -198,6 +205,7 @@
             case 'bookings':    return pendingBookingsCount;
             case 'comments':    return pendingCommentsCount;
             case 'impressions': return pendingImpressionsCount;
+            case 'studio':      return studioWaitingCount;
             default:            return 0;
         }
     }
@@ -474,6 +482,12 @@
             isAuthenticated = true;
             loadFigurines();
             loadShowingRooms();
+            // Значок студии спрашивается сразу: остальные вкладки сообщают своё
+            // число, только когда их откроют, а тут «ждёт ли что-нибудь» нужно
+            // знать ДО того, как зайдёшь.
+            api.adminStudioWaiting()
+                .then((w) => (studioWaitingCount = w.admissions + w.queue + w.reports))
+                .catch(() => {});
         }
         // Restore sidebar collapsed state
         sidebarCollapsed = localStorage.getItem('gotiga_admin_sidebar_collapsed') === '1';
@@ -790,6 +804,8 @@
             <div in:fade class="h-full overflow-hidden"><TalesPanel seed={gazetteSeed} onSeedConsumed={() => (gazetteSeed = null)} /></div>
         {:else if activeTab === 'battles'}
             <div in:fade class="h-full overflow-hidden"><BattlesPanel /></div>
+        {:else if activeTab === 'studio'}
+            <div in:fade class="h-full overflow-hidden"><StudioPanel /></div>
 
         {:else if activeTab === 'media'}
             <div in:fade class="h-full">

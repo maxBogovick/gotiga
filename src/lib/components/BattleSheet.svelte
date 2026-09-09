@@ -44,6 +44,7 @@
     frames = null,
     signedIn = false,
     owned = false,
+    serial = null,
     busy = false,
     canAfford = () => false,
     loginHref = '/login',
@@ -56,6 +57,8 @@
     frames?: BattleFrame[] | null;
     signedIn?: boolean;
     owned?: boolean;
+    /** Номер ВАШЕГО экземпляра, если карта ваша. */
+    serial?: number | null;
     busy?: boolean;
     canAfford?: (coin: Coin, amount: number) => boolean;
     loginHref?: string;
@@ -260,8 +263,28 @@
           <div class="purse">
             {@render flourish()}
             {#if owned}
-              <p class="purse-word">{$t('battlesYours')}</p>
+              <!-- Своё названо номером: «у вас есть» одинаково у всех, а
+                   номер есть только у этого экземпляра. -->
+              <p class="purse-word">
+                {$t('battlesYours')}
+                {#if serial}<span class="serial"
+                    >{card.editionSize
+                      ? $t('battlesCopyOf')
+                          .replace('{n}', String(serial))
+                          .replace('{of}', String(card.editionSize))
+                      : $t('battlesCopy').replace('{n}', String(serial))}</span
+                  >{/if}
+              </p>
             {:else if signedIn}
+              <!-- Сколько осталось. Названо только у конечного тиража: у
+                   бесконечного это число ничего не значит. -->
+              {#if card.editionSize}
+                <p class="purse-word">
+                  {$t('battlesLeftOfEdition')
+                    .replace('{n}', String(Math.max(0, card.editionSize - card.minted)))
+                    .replace('{of}', String(card.editionSize))}
+                </p>
+              {/if}
               {#each prices as price (price.coin)}
                 <p class="price">
                   <span class="amount">{price.amount}</span>
@@ -384,6 +407,14 @@
         <footer class="foot">
           {#if face.lore}
             <p class="note">{face.lore}</p>
+          {/if}
+          <!-- Автограф. Тихой строкой на листе, а не на самой карте: лицо карты
+               это опись, в которую не втискивают шестнадцатую строку ради
+               служебного факта. У карт дома его нет. -->
+          {#if card.creditName}
+            <p class="credit">
+              {$t('battlesCredit').replace('{name}', card.creditName)}
+            </p>
           {/if}
           {#if href}
             <a class="work" {href}>{workName || $t('battlesWorkLink')}</a>
@@ -823,6 +854,14 @@
     color: #c9ad78;
   }
 
+  /* Номер стоит рядом со словом, но тише его: слово — про право, номер —
+     про вещь. */
+  .serial {
+    margin-left: 0.5em;
+    letter-spacing: 0.12em;
+    color: #a08a63;
+  }
+
   .price {
     display: flex;
     flex-wrap: wrap;
@@ -905,6 +944,14 @@
     font-style: italic;
     line-height: 1.5;
     color: #bfa87e;
+  }
+
+  .credit {
+    margin: 0;
+    font-family: Georgia, 'Fraunces', serif;
+    font-style: italic;
+    font-size: 0.78rem;
+    color: #a08b64;
   }
 
   .work {

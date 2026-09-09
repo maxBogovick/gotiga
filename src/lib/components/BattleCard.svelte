@@ -259,8 +259,22 @@
   let printEffectAsRule = $derived((card.abilities?.length ?? 0) > 0);
   let rank = $derived(frameName(frame, $lang));
   let dressed = $derived(isDressed(frame));
-  let overlaid = $derived(isOverlaid(frame));
-  let sliced = $derived(isSliced(frame));
+  /**
+   * Рама «собрана из частей», в которой ещё нет НИ ОДНОЙ картинки.
+   *
+   * На полке такой рамы не существует: одеться ей нечем, и слой резьбы не
+   * рисуется вовсе. На СТОЛЕ она обязана существовать — иначе новая рама это
+   * карта, на которой нечего нажать: места у деталей есть, деталей нет, и
+   * человек жмёт на край и попадает в воздух.
+   *
+   * Поэтому стол показывает её пустые места пунктиром (`carvedCopies` с
+   * `showEmpty`), и каждое берётся в руку, как обычная деталь.
+   */
+  let bareDesk = $derived(
+    frameEditable && !frameEditTarget && frame.frameMode === 'sliced' && !isDressed(frame),
+  );
+  let overlaid = $derived(isOverlaid(frame) || bareDesk);
+  let sliced = $derived(isSliced(frame) || bareDesk);
   let hasBackArt = $derived(!!frame.backImage?.trim());
   let vars = $derived(frameVars(frame));
 
@@ -917,7 +931,7 @@
    *  keeper's own flourishes in ONE list, each already carrying the inline
    *  style that places it. One list and one style so there is exactly one
    *  renderer: a preview with a second one is a preview that eventually lies. */
-  let copies = $derived(sliced ? carvedCopies(frame) : []);
+  let copies = $derived(sliced ? carvedCopies(frame, sliceEditable) : []);
 
   /** What a drag on the held copy is doing: moving it, or growing it past its
    *  band. Two gestures, two grips, no modifier key to remember. A size drag

@@ -16,6 +16,7 @@
   import { api } from "$lib/api";
   import { t, lang, type TranslationKey } from "$lib/i18n";
   import BattleScene from "$lib/components/BattleScene.svelte";
+  import FrameDesk from "$lib/components/studio/FrameDesk.svelte";
   import {
     DEFAULT_FRAMES,
     FRAME_MODES,
@@ -38,6 +39,7 @@
     applyInsetDelta,
     badgeReserve,
     clampTier,
+    emptyBattleCard,
     completeSlices,
     defaultSheet,
     moveSheetRow,
@@ -57,16 +59,21 @@
     pickImageFile,
     type FrameOverride,
     type InsetKey,
+    CHANNELS,
+    CHANNEL_ICON,
+    CHANNEL_LABELS,
   } from "$lib/battles";
   import { SITE_FONTS } from "$lib/fonts";
+  import { selectOnFocus, blurOnWheel } from "$lib/utils/fields";
   import BattleCard from "$lib/components/BattleCard.svelte";
   import BattleIcon from "$lib/components/BattleIcon.svelte";
-  import SheetHead from "$lib/components/admin/sheet/SheetHead.svelte";
-  import SheetPanel from "$lib/components/admin/sheet/SheetPanel.svelte";
-  import SheetField from "$lib/components/admin/sheet/SheetField.svelte";
-  import Medallion from "$lib/components/admin/sheet/Medallion.svelte";
-  import StatPlate from "$lib/components/admin/sheet/StatPlate.svelte";
-  import StatCell from "$lib/components/admin/sheet/StatCell.svelte";
+  import BattleAbilities from "$lib/components/BattleAbilities.svelte";
+  import SheetHead from "$lib/components/sheet/SheetHead.svelte";
+  import SheetPanel from "$lib/components/sheet/SheetPanel.svelte";
+  import SheetField from "$lib/components/sheet/SheetField.svelte";
+  import Medallion from "$lib/components/sheet/Medallion.svelte";
+  import StatPlate from "$lib/components/sheet/StatPlate.svelte";
+  import StatCell from "$lib/components/sheet/StatCell.svelte";
   import BattleAssetsPanel from "$lib/components/admin/BattleAssetsPanel.svelte";
   import BattleAssetPicker from "$lib/components/admin/BattleAssetPicker.svelte";
   import BattleFramePicker from "$lib/components/admin/BattleFramePicker.svelte";
@@ -149,7 +156,7 @@
 
   // ── The card being written — one live object, edited on the card itself ──
   let selectedId = $state<string | null>(null);
-  let draft = $state<BattleCardDto>(emptyCard());
+  let draft = $state<BattleCardDto>(emptyBattleCard());
   /** Which language the on-card fields read and write. The card shows one
    *  language at a time, same as a reader would see it. */
   let editLang = $state<"en" | "ru">(($lang as "en" | "ru") ?? "ru");
@@ -822,59 +829,7 @@
   const etudeTitleOf = (c: BattleChallenge) =>
     $lang === "ru" ? c.titleRu || c.titleEn : c.titleEn || c.titleRu;
 
-  function emptyCard(): BattleCardDto {
-    return {
-      id: "",
-      slug: "",
-      status: "draft",
-      tier: 1,
-      raceId: null,
-      raceNameEn: null,
-      raceNameRu: null,
-      raceIconUrl: null,
-      raceLevelFrames: null,
-      typeEn: null,
-      typeRu: null,
-      titleEn: "",
-      titleRu: "",
-      effectEn: null,
-      effectRu: null,
-      loreEn: null,
-      loreRu: null,
-      cost: 1,
-      power: 1,
-      health: 0,
-      mana: 0,
-      traits: [],
-      kind: "unit",
-      armor: 0,
-      ward: 0,
-      attackChannel: "physical",
-      reach: 1,
-      step: 1,
-      speed: 3,
-      mend: 0,
-      abilities: [],
-      budgetPoints: null,
-      balanceIndex: null,
-      rulesVersion: 1,
-      priceDust: null,
-      priceFeed: null,
-      levelPriceDust: null,
-      lendable: false,
-      artUrl: null,
-      artUrlOverride: null,
-      artFocal: null,
-      frameOverride: null,
-      motionWear: null,
-      shelfOrder: null,
-      figurineId: null,
-      figurineName: null,
-      figurineSlug: null,
-      createdAt: "",
-      updatedAt: "",
-    };
-  }
+
 
   let visible = $derived(
     listQuery.trim()
@@ -942,7 +897,7 @@
       draft.titleRu || draft.titleEn
         ? { ...draft, tier }
         : (cards.find((c) => c.tier === tier) ?? {
-            ...emptyCard(),
+            ...emptyBattleCard(),
             tier,
             titleEn: "The Keeper of the Key",
             titleRu: "Хранительница Ключа",
@@ -960,7 +915,7 @@
    *  rather than as a bare thumbnail — the same reasoning the frames view
    *  already follows for its own sample. */
   let raceSample = $derived<BattleCardDto>({
-    ...emptyCard(),
+    ...emptyBattleCard(),
     tier: 3,
     titleEn: "The Keeper of the Key",
     titleRu: "Хранительница Ключа",
@@ -974,67 +929,8 @@
       : null,
   });
 
-  /** A frame picture, kept transparent, stretched to the card's fixed ratio. */
-  async function uploadFrameArt() {
-    const file = await pickImageFile();
-    if (!file) return;
-    uploading = true;
-    try {
-      const art = await api.adminUploadBattleFrameArt(file);
-      const frame = frames[frameIndex];
-      frame.frameImage = art.url;
-      // The card's ratio is fixed game-wide; the picture is stretched to fit
-      // it, not the other way around, so different frame uploads can never
-      // leave cards different shapes. The aspect slider still overrides it.
-      if (art.hasAlpha) {
-        frame.frameMode = "overlay";
-      } else {
-        // No hole in it: worn on top it would cover the card completely.
-        frame.frameMode = "behind";
-        flash($t("adminBattlesFrameNoAlpha"), 8000);
-      }
-    } catch (e) {
-      flash(String(e), 6000);
-    } finally {
-      uploading = false;
-    }
-  }
 
-  /** The paper under the card. An ordinary photograph — no transparency needed. */
-  async function uploadPaperArt() {
-    const file = await pickImageFile();
-    if (!file) return;
-    uploading = true;
-    try {
-      const imported = await api.importMediaWithVariants(
-        file,
-        "images",
-        "card-paper",
-      );
-      frames[frameIndex].paperImage = imported.url;
-    } catch (e) {
-      flash(String(e), 6000);
-    } finally {
-      uploading = false;
-    }
-  }
 
-  /** The reverse — what a card you do not own shows lying in dust. Never the
-   *  frame's own picture: the carving is the front's dress and BattleCard
-   *  never wears it face down, whatever this is set to. */
-  async function uploadBackArt() {
-    const file = await pickImageFile();
-    if (!file) return;
-    uploading = true;
-    try {
-      const art = await api.adminUploadBattleFrameArt(file);
-      frames[frameIndex].backImage = art.url;
-    } catch (e) {
-      flash(String(e), 6000);
-    } finally {
-      uploading = false;
-    }
-  }
 
   // ── Со склада ───────────────────────────────────────────────────────────
   //
@@ -1055,125 +951,12 @@
   // открытыми блоками. Блок теперь один — у детали, что в руке, — и загрузчик
   // тоже один: `uploadPiece` ниже.
 
-  /**
-   * Сменить, как надета рама.
-   *
-   * И дать собранной из частей полосы, если их ещё нет. Врезы у свежей рамы
-   * нулевые, а полоса нулевой ширины — это деталь нулевого размера: хранитель
-   * загружал четыре картинки и не видел ни одной, без единого слова о том,
-   * почему. Десять процентов — не догадка о его замысле, а первое, что видно;
-   * дальше он тянет окно сам.
-   */
-  function setFrameMode(mode: string) {
-    const frame = frames[frameIndex];
-    frame.frameMode = mode as typeof frame.frameMode;
-    if (mode !== "sliced") return;
-    if (
-      frame.insetTop ||
-      frame.insetRight ||
-      frame.insetBottom ||
-      frame.insetLeft
-    )
-      return;
-    frame.insetTop = 10;
-    frame.insetRight = 10;
-    frame.insetBottom = 10;
-    frame.insetLeft = 10;
-  }
 
-  /** С какой полки склада предлагать деталь для этого слота. Роль — не второй
-   *  справочник, а слово, по которому хранитель отбирает: показать сразу углы,
-   *  когда берут угол. */
-  const STORE_ROLE: Record<SliceSlot, BattleAssetRole> = {
-    corner: "corner",
-    sideH: "sideH",
-    sideV: "sideV",
-    cornerExtra: "accent",
-    sideMidH: "accent",
-    sideMidV: "accent",
-  };
 
-  /** Загрузить картинку для той детали, что в руке. Шесть почти одинаковых
-   *  загрузчиков стояли рядом, пока слоты были шестью открытыми блоками; теперь
-   *  блок один, и загрузчик тоже. */
-  async function uploadPiece(row: FramePiece) {
-    const file = await pickImageFile();
-    if (!file) return;
-    uploading = true;
-    try {
-      const art = await api.adminUploadBattleFrameArt(file);
-      mark();
-      setPieceImage(row, art.url);
-    } catch (e) {
-      flash(String(e), 6000);
-    } finally {
-      uploading = false;
-    }
-  }
 
-  /**
-   * Картинка жетона — тем же загрузчиком, что и детали рамки, и по той же
-   * причине: обычный `/upload` пишет JPEG-копии, а жетон вырезан по альфе, и
-   * залитый бумагой прямоугольник вместо бляхи ничего бы не сказал вслух.
-   *
-   * Куда её деть, инспектор говорит сам колбэком: он один знает, у какого из
-   * трёх значков открыт стол, и повторять здесь его развилку значило бы
-   * держать две таблицы полей вместо `BADGE_FIELDS`.
-   */
-  async function uploadBadgeArt(apply: (url: string) => void) {
-    const file = await pickImageFile();
-    if (!file) return;
-    uploading = true;
-    try {
-      const art = await api.adminUploadBattleFrameArt(file);
-      mark();
-      apply(art.url);
-    } catch (e) {
-      flash(String(e), 6000);
-    } finally {
-      uploading = false;
-    }
-  }
 
-  /** Со склада — ролью `accent`: из шести слов это единственное, которым
-   *  бляха, пломба или печать себя называют. Своей роли жетону не заведено —
-   *  роль это CHECK из шести, а не ящик, куда доклада́ют. */
-  function badgeArtFromStore(apply: (url: string) => void) {
-    fromStore('accent', (url) => {
-      mark();
-      apply(url);
-    });
-  }
 
-  function setPieceImage(row: FramePiece, url: string) {
-    if (row.ornament) row.ornament.image = url;
-    else
-      (frames[frameIndex] as unknown as Record<string, string>)[
-        SLOT_FIELD[row.id as SliceSlot]
-      ] = url;
-  }
 
-  /**
-   * Переложить деталь в стопке. Список ПЕРЕНУМЕРОВЫВАЕТСЯ целиком, сверху вниз,
-   * а не меняет два числа местами: пока слои могли совпадать, порядок решала
-   * разметка — то есть решал никто и невидимо. После перенумерации у каждой
-   * детали свой слой, и список — единственное место, где порядок задают.
-   */
-  function restack(id: string, by: -1 | 1) {
-    const order = stack.slice();
-    const from = order.findIndex((row) => row.id === id);
-    const to = from + by;
-    if (from < 0 || to < 0 || to >= order.length) return;
-    mark();
-    const [moved] = order.splice(from, 1);
-    order.splice(to, 0, moved);
-    // Сверху — самый большой слой. Хватает на 24 детали; ниже пола просто
-    // упирается, и там снова решает порядок списка, что честно: он и есть
-    // порядок разметки.
-    order.forEach((row, i) => {
-      row.piece.layer = Math.max(1, SLICE_LAYERS - i);
-    });
-  }
 
   /* ── Опись ──────────────────────────────────────────────────────────────
      Что печатается на карте. Живёт в раме и правится здесь, а не отдельной
@@ -1405,21 +1188,7 @@
     dressWindowMissing(parseFrameOverride(draft.frameOverride)),
   );
 
-  /** Показывать ли деталь целиком — все её копии разом. Отдельные копии
-   *  гасятся своими галочками ниже. */
-  function pieceShown(row: FramePiece): boolean {
-    return KIND_SIDES[row.kind].some(
-      (side) => row.piece.places[side]?.shown !== false,
-    );
-  }
 
-  function showPiece(row: FramePiece, on: boolean) {
-    mark();
-    for (const side of KIND_SIDES[row.kind]) {
-      const at = row.piece.places[side];
-      if (at) at.shown = on;
-    }
-  }
 
   /** Какая КОПИЯ детали сейчас в руке — левый верхний угол, а не «угол»
    *  вообще: четыре угла кладут порознь. `id` — именованный слот или id
@@ -1433,416 +1202,41 @@
   // склада, надо было найти нужный блок среди шести. Теперь у взятой детали
   // прямо на карте появляется своя полоска — там, где на неё смотрят.
 
-  /** Отложенная деталь: картинка, форма и вся укладка. Не системный буфер —
-   *  это внутренняя мерка стола, а не текст, который куда-то вставляют. */
-  let clip = $state<{
-    image: string;
-    kind: SliceKind;
-    piece: SlicePiece;
-  } | null>(null);
 
-  function copyPiece(row: FramePiece) {
-    clip = {
-      image: row.image,
-      kind: row.kind,
-      piece: JSON.parse(JSON.stringify(row.piece)) as SlicePiece,
-    };
-  }
 
-  /** Вырезать — это скопировать и убрать. Украшение уходит из списка целиком;
-   *  именованный слот остаётся, потому что он анатомия рамы: у него отнимают
-   *  картинку, а не место. */
-  function cutPiece(row: FramePiece) {
-    copyPiece(row);
-    if (row.ornament) dropOrnament(row.id);
-    else setPieceImage(row, "");
-  }
 
-  /** Вставить в ту деталь, что в руке: картинку, заполнение, разворот, связку
-   *  и укладку каждой стороны, какая у обеих есть. У формы с другими копиями
-   *  переносится то, что совпало, — угол в сторону не втиснуть. */
-  function pastePiece(row: FramePiece) {
-    if (!clip) return;
-    setPieceImage(row, clip.image);
-    row.piece.fit = clip.piece.fit;
-    row.piece.turn = clip.piece.turn;
-    row.piece.linked = clip.piece.linked;
-    for (const side of KIND_SIDES[row.kind]) {
-      const from = clip.piece.places[side];
-      const to = row.piece.places[side];
-      if (from && to) Object.assign(to, { ...from });
-    }
-  }
 
-  /** Ещё одна такая же — новым украшением. Самый частый способ получить второй
-   *  медальон: не искать ту же деталь на складе заново, а повторить ту, что уже
-   *  встала как надо. */
-  function twinPiece(row: FramePiece) {
-    const twin = newOrnament(row.image, row.kind);
-    twin.fit = row.piece.fit;
-    twin.turn = row.piece.turn;
-    twin.linked = row.piece.linked;
-    twin.layer = row.piece.layer;
-    for (const side of KIND_SIDES[row.kind]) {
-      const from = row.piece.places[side];
-      const to = twin.places[side];
-      if (from && to) Object.assign(to, { ...from });
-    }
-    frames[frameIndex].ornaments.push(twin);
-    sliceHeld = { id: twin.id, side: KIND_SIDES[row.kind][0] };
-  }
 
-  /** Видна ли ИМЕННО та копия, что в руке. У полоски на карте свой смысл:
-   *  погасить эту, а не всю деталь — тем и отличается от глаза в списке. */
-  function heldShown(): boolean {
-    if (!sliceHeld || !heldRow) return true;
-    return heldRow.piece.places[sliceHeld.side]?.shown !== false;
-  }
 
-  function toggleHeldCopy() {
-    if (!sliceHeld || !heldRow) return;
-    const at = heldRow.piece.places[sliceHeld.side];
-    if (at) at.shown = at.shown === false;
-  }
 
-  const SLICE_NUMBERS = [
-    { key: 'growX', label: 'adminBattlesSliceGrowX' },
-    { key: 'growY', label: 'adminBattlesSliceGrowY' },
-    { key: 'nudgeX', label: 'adminBattlesSliceNudgeX' },
-    { key: 'nudgeY', label: 'adminBattlesSliceNudgeY' },
-  ] as const satisfies readonly { key: 'growX' | 'growY' | 'nudgeX' | 'nudgeY'; label: TranslationKey }[];
 
-  /** Как называется каждая копия. Полными словами, а не «ЛВ»: сокращение
-   *  экономит три знака и стоит хранителю секунды на каждый выбор. */
-  const SIDE_KEY: Record<SliceSide, TranslationKey> = {
-    tl: 'adminBattlesSideTl',
-    tr: 'adminBattlesSideTr',
-    bl: 'adminBattlesSideBl',
-    br: 'adminBattlesSideBr',
-    top: 'adminBattlesSideTop',
-    bottom: 'adminBattlesSideBottom',
-    left: 'adminBattlesSideLeft',
-    right: 'adminBattlesSideRight',
-  };
 
-  const FIT_KEY: Record<SliceFit, TranslationKey> = {
-    stretch: 'adminBattlesSliceFitStretch',
-    contain: 'adminBattlesSliceFitContain',
-    cover: 'adminBattlesSliceFitCover',
-    tile: 'adminBattlesSliceFitTile',
-  };
 
-  const TURN_KEY: Record<SliceTurn, TranslationKey> = {
-    mirror: 'adminBattlesSliceTurnMirror',
-    rotate: 'adminBattlesSliceTurnRotate',
-    none: 'adminBattlesSliceTurnNone',
-  };
 
-  const STAGE_BASE = 320;
-  const ZOOMS = [1, 1.5, 2, 3, 4];
 
-  /** Во сколько раз увеличен предпросмотр. Не `transform`: карта меряет себя
-   *  контейнерными единицами, поэтому увеличенная ширина увеличивает и резьбу,
-   *  и шрифт по-настоящему, а `getBoundingClientRect` под перетаскиванием
-   *  остаётся честным без единой поправки. Полтора, а не один: стол широкий, и
-   *  карта в 320 px на нём теряется. */
-  let stageZoom = $state(1.5);
 
-  /**
-   * Показывать карту так, как она стоит В КЛЕТКЕ БОЯ.
-   *
-   * Без этого кружок здоровья на столе недостижим: он выходит только в бою, а
-   * стол — не бой, и хранитель, пришедший поправить здоровье, не находил на
-   * карте ничего. Не второй облик: тот же `BattleCard` получает те же `alive`
-   * и `hurt`, что даёт ему сцена, — стол показывает бой, а не рисунок боя, и
-   * соврать поэтому не может.
-   */
-  let stageInMatch = $state(false);
-  /** Сколько здоровья осталось у карты на стенде. Ползунок, а не поле: сургуч
-   *  смотрят в движении — от целого к почти сломанному, — а не по числу. */
-  let stageHurt = $state(0.55);
 
-  /** Как называется каждый из шести именованных слотов. Украшение зовётся
-   *  своей формой и номером: имени у него нет, а строка `/static/assets/…`
-   *  именем не работает. */
-  const SLOT_KEY: Record<SliceSlot, TranslationKey> = {
-    corner: 'adminBattlesPieceCorner',
-    sideH: 'adminBattlesPieceSideH',
-    sideV: 'adminBattlesPieceSideV',
-    cornerExtra: 'adminBattlesPieceCornerExtra',
-    sideMidH: 'adminBattlesPieceSideMidH',
-    sideMidV: 'adminBattlesPieceSideMidV',
-  };
 
-  /** Какое поле рамы держит картинку каждого слота. */
-  const SLOT_FIELD = {
-    corner: 'cornerImage',
-    sideH: 'sideImageH',
-    sideV: 'sideImageV',
-    cornerExtra: 'cornerExtra',
-    sideMidH: 'sideMidH',
-    sideMidV: 'sideMidV',
-  } as const satisfies Record<SliceSlot, keyof BattleFrame>;
 
-  /** Одна строка списка деталей. Именованные слоты и свои украшения приходят
-   *  сюда одинаково — иначе список врал бы про то, что лежит на карте. */
-  interface FramePiece {
-    id: string;
-    kind: SliceKind;
-    label: string;
-    image: string;
-    piece: SlicePiece;
-    /** Украшение можно убрать и переназвать формой; слот — нельзя. */
-    ornament: SliceOrnament | null;
-  }
 
-  let stack = $derived.by<FramePiece[]>(() => {
-    const frame = frames[frameIndex];
-    if (!frame) return [];
-    const rows: (FramePiece & { at: number })[] = [];
-    SLICE_SLOTS.forEach((slot, at) => {
-      rows.push({
-        id: slot,
-        kind: SLICE_KIND[slot],
-        label: $t(SLOT_KEY[slot]),
-        image: String(frame[SLOT_FIELD[slot]] ?? '').trim(),
-        piece: frame.slices[slot],
-        ornament: null,
-        at,
-      });
-    });
-    frame.ornaments.forEach((one, i) => {
-      rows.push({
-        id: one.id,
-        kind: one.kind,
-        label: `${$t(KIND_KEY[one.kind])} · ${i + 1}`,
-        image: one.image.trim(),
-        piece: one,
-        ornament: one,
-        at: SLICE_SLOTS.length + i,
-      });
-    });
-    // Сверху то, что рисуется поверх. При равных слоях выигрывает тот, кто
-    // позже в разметке, — список обязан показывать ровно это, иначе он опишет
-    // порядок, которого на карте нет.
-    return rows.sort((a, b) => b.piece.layer - a.piece.layer || b.at - a.at);
-  });
-
-  // Полоска встаёт ЧУТЬ НИЖЕ КУРСОРА — у того места, куда хранитель только что
-  // нажал.
-  //
-  // Сначала она вставала по коробке детали, и на высокой стороне это выносило
-  // её к нижнему краю карты: коробка левой стороны идёт от притолоки до порога,
-  // и «под коробкой» — это в самом низу, за полкарты от того места, куда
-  // смотрели. У детали нет одной точки, которую можно назвать «где она»; у
-  // нажатия есть.
-  //
-  // Меряется всё равно ОТ КАРТЫ, а не от стола: стол прокручивается,
-  // центрирует карту и меняет ширину вместе с колонкой, и число, посчитанное
-  // от него, уезжает ровно на половину этой разницы.
-  let cardBox = $state<HTMLElement | null>(null);
-  /** Стол. Полоска лежит В НЁМ, а не в карте: карта меняет ширину от
-   *  увеличения и от колонки, и прибитая к ней полоска переезжала бы вместе с
-   *  ней — а прибивают её как раз затем, чтобы она никуда не девалась. */
-  let stageBox = $state<HTMLElement | null>(null);
-  /** Насколько стол прокручен. Место полоски считается в его СОДЕРЖИМОМ, а
-   *  прибитое держится за видимую часть, — значит, прокрутку надо знать, иначе
-   *  увеличенную карту не увезти из-под неподвижной полоски. */
-  let stageScroll = $state({ x: 0, y: 0 });
-  let barTick = $state(0);
-  let barWide = $state(0);
-  let barTall = $state(0);
   /** Где нажали, в координатах карты. Пусто, когда деталь взяли из списка
    *  сбоку: тогда курсор был не на карте и указывать нечего. */
   let pokedAt = $state<{ x: number; y: number } | null>(null);
-  let barAt = $state<{ x: number; y: number } | null>(null);
 
-  /**
-   * Куда полоску поставили рукой, в координатах ВИДИМОЙ части стола.
-   *
-   * Пусто — полоска ходит за курсором, как и ходила. Непусто — стоит там, где
-   * её оставили, не пропадает, когда из руки всё выпустили, и всё равно
-   * работает с тем, что в руке сейчас: место — не выбор детали.
-   *
-   * Оно и есть весь признак «прибита»: отдельный флажок рядом с координатами
-   * рано или поздно разошёлся бы с ними — прибита, а места нет.
-   */
-  const BAR_PIN_KEY = "gotiga_battle_barpin";
   let barPin = $state<{ x: number; y: number } | null>(null);
 
-  function rememberBar() {
-    try {
-      if (barPin) localStorage.setItem(BAR_PIN_KEY, JSON.stringify(barPin));
-      else localStorage.removeItem(BAR_PIN_KEY);
-    } catch {
-      // Приватное окно или запрет на хранение. Полоска работает и без памяти.
-    }
-  }
 
-  onMount(() => {
-    try {
-      const raw = localStorage.getItem(BAR_PIN_KEY);
-      const put = raw ? JSON.parse(raw) : null;
-      if (put && Number.isFinite(put.x) && Number.isFinite(put.y))
-        barPin = { x: put.x, y: put.y };
-    } catch {
-      barPin = null;
-    }
-  });
 
-  /** Прибить туда, где полоска стоит сейчас, — или отпустить обратно под
-   *  курсор. Место снимается с самой полоски, а не считается заново: прибивают
-   *  ровно то, на что смотрят. */
-  function pinBar() {
-    if (barPin) {
-      barPin = null;
-      rememberBar();
-      return;
-    }
-    const stage = stageBox?.getBoundingClientRect();
-    const bar = stageBox?.querySelector("[data-piece-bar]");
-    if (!stage || !bar) return;
-    const box = bar.getBoundingClientRect();
-    barPin = {
-      x: box.left + box.width / 2 - stage.left,
-      y: box.top - stage.top,
-    };
-    rememberBar();
-  }
 
-  /** Смещение от курсора до полоски, пока её тащат. За рукоять берут где
-   *  придётся, и без этого полоска прыгала бы к курсору серединой. */
-  let barGrab: { x: number; y: number } | null = null;
 
-  function grabBar(event: PointerEvent) {
-    const hand = event.currentTarget as HTMLElement;
-    const bar = hand.closest("[data-piece-bar]");
-    if (!bar) return;
-    const box = bar.getBoundingClientRect();
-    barGrab = {
-      x: box.left + box.width / 2 - event.clientX,
-      y: box.top - event.clientY,
-    };
-    hand.setPointerCapture(event.pointerId);
-    event.preventDefault();
-  }
 
-  function dragBar(event: PointerEvent) {
-    const stage = stageBox?.getBoundingClientRect();
-    if (!barGrab || !stage) return;
-    // Тащат — значит, стоять ей здесь: иначе первое же нажатие по карте
-    // забрало бы её обратно под курсор, и перенести полоску было бы нельзя.
-    barPin = {
-      x: event.clientX + barGrab.x - stage.left,
-      y: event.clientY + barGrab.y - stage.top,
-    };
-  }
 
-  function dropBar() {
-    if (!barGrab) return;
-    barGrab = null;
-    rememberBar();
-  }
 
-  function poke(event: PointerEvent) {
-    const card = cardBox?.getBoundingClientRect();
-    if (!card) return;
-    // Нажатие по самой полоске сюда не приходит: она лежит на столе рядом с
-    // картой, а не в ней. Пока она была внутри, каждое нажатие по её же
-    // кнопке уводило её на восемнадцать точек вниз — из-под пальца, ещё до
-    // отпускания, — и нажать на неё было нельзя вовсе.
-    pokedAt = { x: event.clientX - card.left, y: event.clientY - card.top };
-  }
 
-  $effect(() => {
-    void barTick;
-    // Пересчитывается на любую правку рамы, потому что деталь под полоской
-    // могла как раз поехать или вырасти.
-    void shot;
-    const held = sliceHeld;
-    const room = cardBox;
-    if (!held || !room) {
-      barAt = null;
-      return;
-    }
-    const card = room.getBoundingClientRect();
-    const desk = stageBox?.getBoundingClientRect();
-    if (!card.width || !desk) return;
-    // Из координат карты — в координаты содержимого стола, где полоска и
-    // лежит. Прокрутка входит в обе половины и потому не меняет число.
-    const dx = card.left - desk.left + (stageBox?.scrollLeft ?? 0);
-    const dy = card.top - desk.top + (stageBox?.scrollTop ?? 0);
-    if (pokedAt) {
-      barAt = { x: pokedAt.x + dx, y: pokedAt.y + dy + 18 };
-      return;
-    }
-    // Взяли из списка — курсора на карте не было. Тогда у НАЧАЛА детали: у
-    // высокой это её верх, а не низ, и это ближе к тому, с чего работу с ней
-    // начинают.
-    const at = room.querySelector(
-      `[data-piece="${CSS.escape(held.id)}"][data-side="${held.side}"]`,
-    );
-    // У пустого слота копий на карте нет — и полоска была бы недостижима ровно
-    // тогда, когда через неё и берут картинку. Такая деталь получает полоску
-    // посреди карты: место неточное, но зато оно есть.
-    if (!at) {
-      barAt = { x: card.width / 2 + dx, y: card.height / 2 + dy };
-      return;
-    }
-    const box = at.getBoundingClientRect();
-    barAt = {
-      x: box.left + box.width / 2 - card.left + dx,
-      y: box.top - card.top + Math.min(box.height / 2, 18) + dy,
-    };
-  });
 
-  /**
-   * Полоска не должна уезжать за край СТОЛА — но и подбираться к середине
-   * карты раньше времени тоже не должна.
-   *
-   * Зажим по карте был бы проще и хуже: полоска шириной в три четверти карты
-   * от любого нажатия у края отпрыгивала бы к центру, то есть переставала бы
-   * стоять под курсором ровно там, где по краю и работают. Стол шире карты на
-   * добрых полторы сотни точек с каждой стороны, и свисать на них полоске
-   * ничто не мешает.
-   */
-  function barLeft(x: number): number {
-    const stage = stageBox;
-    const half = barWide / 2;
-    if (!stage || !barWide) return x;
-    // Видимая часть стола, в координатах его содержимого.
-    const from = stageScroll.x + half + 4;
-    const to = stageScroll.x + stage.clientWidth - half - 4;
-    if (from > to) return x;
-    return Math.min(Math.max(x, from), to);
-  }
 
-  /** Вниз полоска не зажималась никогда: под курсором ей место и у нижнего
-   *  края. Прибитую зажимать приходится — окно с тех пор могли уменьшить, а
-   *  полоска, оказавшаяся за краем, недостижима. */
-  function barTop(y: number): number {
-    const stage = stageBox;
-    if (!stage || !barTall) return y;
-    const from = stageScroll.y + 4;
-    const to = stageScroll.y + stage.clientHeight - barTall - 4;
-    if (from > to) return y;
-    return Math.min(Math.max(y, from), to);
-  }
 
-  /** Где полоска стоит: прибитая — там, где её оставили (место держится за
-   *  видимую часть стола, поэтому прокрутка её не уносит), прочая — под тем
-   *  местом, куда нажали. */
-  let barSpot = $derived.by<{ x: number; y: number } | null>(() => {
-    if (barPin)
-      return {
-        x: barLeft(barPin.x + stageScroll.x),
-        y: barTop(barPin.y + stageScroll.y),
-      };
-    return barAt && { x: barLeft(barAt.x), y: barAt.y };
-  });
 
-  /** Что сейчас в руке, строкой списка. */
-  let heldRow = $derived(stack.find((row) => row.id === sliceHeld?.id) ?? null);
 
   // ── Отмена, и знание о несохранённом ────────────────────────────────────
   //
@@ -1885,82 +1279,9 @@
     sliceHeld = null;
   }
 
-  /** Стрелки двигают взятую копию. Мышь на карте в 320 px даёт 0.31 % на
-   *  пиксель — точнее неё клавиатура и должна быть, а не грубее, как было при
-   *  шаге в полпроцента. Alt — не двигает, а наращивает нахлёст. */
-  function nudgeHeld(event: KeyboardEvent) {
-    if (!sliceHeld) return;
-    const way: Record<string, [number, number]> = {
-      ArrowLeft: [-1, 0],
-      ArrowRight: [1, 0],
-      ArrowUp: [0, -1],
-      ArrowDown: [0, 1],
-    };
-    const step = way[event.key];
-    if (!step) return;
-    const frame = frames[frameIndex];
-    const piece = livePiece(frame, sliceHeld.id);
-    const kind = kindOf(frame, sliceHeld.id);
-    if (!piece || !kind) return;
-    event.preventDefault();
-    mark();
-    const by = event.shiftKey ? 1 : 0.1;
-    const dx = step[0] * by;
-    const dy = step[1] * by;
-    const sign = sliceSigns(sliceHeld.side);
-    const sides = piece.linked !== false ? KIND_SIDES[kind] : [sliceHeld.side];
-    const hold = (v: number) =>
-      Math.min(SLICE_GROW_MAX, Math.max(-SLICE_GROW_MAX, v));
-    for (const side of sides) {
-      const at = piece.places[side];
-      if (!at) continue;
-      if (event.altKey) {
-        at.growX = hold(at.growX + dx * sign.growX);
-        at.growY = hold(at.growY + dy * sign.growY);
-      } else {
-        at.nudgeX = hold(at.nudgeX + dx * sign.nudgeX);
-        at.nudgeY = hold(at.nudgeY + dy * sign.nudgeY);
-      }
-    }
-  }
 
-  function stageKeys(event: KeyboardEvent) {
-    const meta = event.metaKey || event.ctrlKey;
-    if (meta && event.key.toLowerCase() === "z") {
-      event.preventDefault();
-      if (event.shiftKey) stepOn();
-      else stepBack();
-      return;
-    }
-    if (event.key === "Escape") {
-      sliceHeld = null;
-      return;
-    }
-    nudgeHeld(event);
-  }
 
-  /** Back to the placement the piece has always had — the way out of an
-   *  experiment, without hunting a dozen numbers back to zero by hand. Its
-   *  picture and its shape are not part of the experiment and stay. */
-  function resetSlice(id: string) {
-    const frame = frames[frameIndex];
-    if ((SLICE_SLOTS as string[]).includes(id)) {
-      frame.slices[id as SliceSlot] = defaultSlices()[id as SliceSlot];
-      return;
-    }
-    const one = frame.ornaments.find((each) => each.id === id);
-    if (one)
-      Object.assign(one, newOrnament(one.image, one.kind), { id: one.id });
-  }
 
-  /** What each shape is called, and where its copies land. */
-  const KIND_KEY: Record<SliceKind, TranslationKey> = {
-    corner: "adminBattlesKindCorner",
-    edgeH: "adminBattlesKindEdgeH",
-    edgeV: "adminBattlesKindEdgeV",
-    midH: "adminBattlesKindMidH",
-    midV: "adminBattlesKindMidV",
-  };
 
   // ── Свои украшения ──────────────────────────────────────────────────────
   //
@@ -1969,55 +1290,10 @@
   // Украшение — не анатомия, а завиток, которого захотела именно эта рама, и
   // честного постоянного числа таких завитков не бывает. Поэтому список.
 
-  /** Свежий завиток из уже нарезанной детали — обычный путь: детали приходят
-   *  листами, и перезаливать по одной то, что лежит на складе, значит плодить
-   *  копии одного файла. */
-  function addOrnamentFromStore() {
-    fromStore("accent", (url) => {
-      frames[frameIndex].ornaments.push(newOrnament(url));
-    });
-  }
 
-  async function addOrnamentUpload() {
-    const file = await pickImageFile();
-    if (!file) return;
-    uploading = true;
-    try {
-      const art = await api.adminUploadBattleFrameArt(file);
-      frames[frameIndex].ornaments.push(newOrnament(art.url));
-    } catch (e) {
-      flash(String(e), 6000);
-    } finally {
-      uploading = false;
-    }
-  }
 
-  /** Убрать завиток. Взятое в руку отпускается заодно — иначе стол держал бы
-   *  то, чего на карте больше нет. */
-  function dropOrnament(id: string) {
-    const frame = frames[frameIndex];
-    frame.ornaments = frame.ornaments.filter((one) => one.id !== id);
-    if (sliceHeld?.id === id) sliceHeld = null;
-  }
 
-  /** Сменить форму украшения. Копии у форм разные, поэтому места пересобираются
-   *  под новую — иначе у «угла», ставшего «верхом», не оказалось бы ни одного
-   *  места, в которое можно писать. */
-  function reshapeOrnament(one: SliceOrnament, kind: SliceKind) {
-    Object.assign(one, newOrnament(one.image, kind), {
-      id: one.id,
-      layer: one.layer,
-    });
-    if (sliceHeld?.id === one.id)
-      sliceHeld = { id: one.id, side: KIND_SIDES[kind][0] };
-  }
 
-  /** A slider set to `value` — mirrored onto the opposite side by the same
-   *  amount, same as dragging the inset handle on the card itself. */
-  function setInset(kind: InsetKey, value: number) {
-    const frame = frames[frameIndex];
-    applyInsetDelta(frame, kind, value - (frame[kind] ?? 0));
-  }
 
   // ── The race dictionary ───────────────────────────────────────────────────
 
@@ -2180,202 +1456,6 @@
 
   const TRAITS_MAX = 8;
 
-  // ── Способности ────────────────────────────────────────────────────────
-  //
-  // Списки закрыты и повторяют `battles.rs`. Повторяются намеренно: сервер
-  // отбрасывает неизвестный глагол молча, а форма не должна давать его выбрать.
-
-  const ABILITIES_MAX = 6;
-
-  // Ключ перевода рядом с самим значением, а не собранный из строки: тогда
-  // забытый в словаре глагол — ошибка компиляции, а не «battlesVerbFoo» на
-  // экране. Порядок записи здесь и есть порядок в списке.
-  const VERB_LABELS = {
-    damage: "battlesVerbDamage",
-    dot: "battlesVerbDot",
-    heal: "battlesVerbHeal",
-    hot: "battlesVerbHot",
-    shield: "battlesVerbShield",
-    zone: "battlesVerbZone",
-    bless: "battlesVerbBless",
-    curse: "battlesVerbCurse",
-    control: "battlesVerbControl",
-    silence: "battlesVerbSilence",
-    disarm: "battlesVerbDisarm",
-    charm: "battlesVerbCharm",
-    veil: "battlesVerbVeil",
-    guard: "battlesVerbGuard",
-    immune: "battlesVerbImmune",
-    thorns: "battlesVerbThorns",
-    move: "battlesVerbMove",
-    summon: "battlesVerbSummon",
-    sacrifice: "battlesVerbSacrifice",
-    cleanse: "battlesVerbCleanse",
-    dispel: "battlesVerbDispel",
-    mana: "battlesVerbMana",
-  } as const satisfies Record<AbilityVerb, TranslationKey>;
-
-  const SHAPE_LABELS = {
-    self: "battlesShapeSelf",
-    one: "battlesShapeOne",
-    adjacent: "battlesShapeAdjacent",
-    chain: "battlesShapeChain",
-    line: "battlesShapeLine",
-    radius: "battlesShapeRadius",
-    side: "battlesShapeSide",
-    cell: "battlesShapeCell",
-  } as const satisfies Record<AbilityShape, TranslationKey>;
-
-  const TRIGGER_LABELS = {
-    active: "battlesTriggerActive",
-    onPlay: "battlesTriggerOnPlay",
-    onHit: "battlesTriggerOnHit",
-    onDamaged: "battlesTriggerOnDamaged",
-    onDeath: "battlesTriggerOnDeath",
-    turnStart: "battlesTriggerTurnStart",
-    aura: "battlesTriggerAura",
-    once: "battlesTriggerOnce",
-  } as const satisfies Record<AbilityTrigger, TranslationKey>;
-
-  /** Значки каналов. Формам и поводам такой таблицы не нужно: их значки
-   *  названы теми же словами, что и сами значения, и разойтись им негде. */
-  const CHANNEL_ICON = {
-    physical: "sword",
-    magic: "spark",
-    pure: "pure",
-    none: "nil",
-  } as const satisfies Record<BattleChannel, string>;
-
-  const CHANNELS = Object.keys(CHANNEL_ICON) as BattleChannel[];
-
-  const CHANNEL_LABELS = {
-    physical: "adminBattlesChannelPhysical",
-    magic: "adminBattlesChannelMagic",
-    pure: "adminBattlesChannelPure",
-    none: "adminBattlesChannelNone",
-  } as const satisfies Record<BattleChannel, TranslationKey>;
-
-  /**
-   * Значки глаголов.
-   *
-   * Таблица, а не совпадение имён, как у форм и поводов: пять глаголов носят
-   * значок, который уже есть у чего-то другого и означает то же самое, —
-   * «урон» это меч, «мана» это капля, — и рисовать им вторые такие же было бы
-   * два рисунка одного предмета, которые однажды разойдутся.
-   */
-  const VERB_ICON = {
-    damage: "sword",
-    dot: "flame",
-    heal: "sprig",
-    hot: "bloom",
-    shield: "shield",
-    zone: "zone",
-    bless: "bless",
-    curse: "curse",
-    control: "control",
-    silence: "silence",
-    disarm: "disarm",
-    charm: "charm",
-    veil: "veil",
-    guard: "guard",
-    immune: "immune",
-    thorns: "thorns",
-    move: "move",
-    summon: "summon",
-    sacrifice: "sacrifice",
-    cleanse: "cleanse",
-    dispel: "dispel",
-    mana: "drop",
-  } as const satisfies Record<AbilityVerb, string>;
-
-  const VERBS = Object.keys(VERB_LABELS) as AbilityVerb[];
-  const SHAPES = Object.keys(SHAPE_LABELS) as AbilityShape[];
-  const TRIGGERS = Object.keys(TRIGGER_LABELS) as AbilityTrigger[];
-
-  /** Только `chain` и `radius` несут число; у остальных поле нечего заполнять. */
-  const shapeCarriesNumber = (shape: string) =>
-    shape === "chain" || shape === "radius";
-
-  function addAbility() {
-    const list = draft.abilities ?? [];
-    if (list.length >= ABILITIES_MAX) return;
-    draft.abilities = [
-      ...list,
-      {
-        // Собственный id внутри карты: по нему весы кладут число к нужной строке.
-        id: `a${Date.now().toString(36)}`,
-        nameEn: "",
-        nameRu: "",
-        verb: "damage",
-        channel: "physical",
-        amount: 1,
-        shape: "one",
-        radius: 1,
-        range: 1,
-        duration: 0,
-        trigger: "active",
-        manaCost: 0,
-        cooldown: 0,
-        keywords: [],
-      },
-    ];
-    // Заведённое берётся в руку сразу: его затем и заводили, а лента без этого
-    // отрастила бы кружок, настройки которого лежат под другим кружком.
-    abilityHeld = draft.abilities[draft.abilities.length - 1].id;
-  }
-
-  /**
-   * Какое умение в руке.
-   *
-   * Держим ИМЯ строки, а не её номер — по той же причине, по которой деталь
-   * рамы держат за `id`: номер меняется от всякого перемещения по списку, и
-   * поднятое вверх умение выпадало бы из рук на каждый щелчок. Стёртое
-   * уступает первому: пустых рук у панели с умениями не бывает.
-   */
-  let abilityHeld = $state<string | null>(null);
-  let abilityAt = $derived.by(() => {
-    const list = draft.abilities ?? [];
-    if (!list.length) return -1;
-    const at = list.findIndex((a) => a.id === abilityHeld);
-    return at >= 0 ? at : 0;
-  });
-  let abilityInHand = $derived(
-    abilityAt >= 0 ? (draft.abilities ?? [])[abilityAt] : null,
-  );
-
-  /** Чем умение подписано в ленте: своим именем, а если его нет — глаголом.
-   *  Безымянных умений на карте много, и «без названия» пять раз подряд не
-   *  говорит ничего, а глагол говорит всё. */
-  function abilityName(ability: CardAbility): string {
-    const own = (editLang === "en" ? ability.nameEn : ability.nameRu)?.trim();
-    return own || $t(VERB_LABELS[ability.verb]);
-  }
-
-  function removeAbility(at: number) {
-    draft.abilities = (draft.abilities ?? []).filter((_, i) => i !== at);
-  }
-
-  function moveAbility(at: number, by: number) {
-    const list = draft.abilities ?? [];
-    const to = at + by;
-    if (to < 0 || to >= list.length) return;
-    const next = [...list];
-    [next[at], next[to]] = [next[to], next[at]];
-    draft.abilities = next;
-  }
-
-  function keywordsInput(at: number, raw: string) {
-    const list = [...(draft.abilities ?? [])];
-    list[at] = {
-      ...list[at],
-      keywords: raw
-        .split(",")
-        .map((k) => k.trim())
-        .filter(Boolean)
-        .slice(0, 4),
-    };
-    draft.abilities = list;
-  }
 
   const abilityPoints = (id: string) =>
     weigh?.abilities.find((a) => a.id === id)?.points ?? null;
@@ -2628,19 +1708,8 @@
     }
   }
 
-  /** A number field's whole value is worth more retyped than nudged — this
-   *  makes a click-and-type behave like it does everywhere else. */
-  function selectOnFocus(e: FocusEvent & { currentTarget: HTMLInputElement }) {
-    e.currentTarget.select();
-  }
 
-  /** A focused `type="number"` spins its value on an ordinary page-scroll
-   *  wheel in Chrome and Firefox — surprising here, where the field sits in a
-   *  normally scrollable sidebar. Blurring it hands the scroll back to the
-   *  page instead of silently changing cost, power, health or a price. */
-  function blurOnWheel(e: WheelEvent & { currentTarget: HTMLInputElement }) {
-    e.currentTarget.blur();
-  }
+
 
   const STATUS_TONE: Record<BattleCardStatus, string> = {
     draft: "bg-[#b9a68f]",
@@ -2668,7 +1737,7 @@
 
   function blank() {
     selectedId = null;
-    draft = emptyCard();
+    draft = emptyBattleCard();
     facedown = false;
   }
 
@@ -2723,6 +1792,7 @@
       priceFeed: draft.priceFeed,
       levelPriceDust: draft.levelPriceDust,
       lendable: draft.lendable,
+      editionSize: draft.editionSize ?? null,
       artUrl: draft.artUrlOverride?.trim() || null,
       artFocal: draft.artFocal,
       frameOverride: draft.frameOverride,
@@ -3032,6 +2102,10 @@
     }
   }
 
+
+  /** Первые несколько мест, где ответ разошёлся с отправленным. Путём, а не
+   *  «что-то изменилось»: хранителю нужно знать, какую именно настройку сервер
+   *  не взял, чтобы понять, что он смотрит на старый сервер. */
   /**
    * Одно ли это число — по мерке СЕРВЕРА, а не по мерке браузера.
    *
@@ -3051,9 +2125,6 @@
     return typeof back === "number" && Math.fround(sent) === Math.fround(back);
   }
 
-  /** Первые несколько мест, где ответ разошёлся с отправленным. Путём, а не
-   *  «что-то изменилось»: хранителю нужно знать, какую именно настройку сервер
-   *  не взял, чтобы понять, что он смотрит на старый сервер. */
   function whatChanged(
     sent: unknown,
     back: unknown,
@@ -3474,1281 +2545,45 @@
     </div>
   {/if}
 
-  <!-- Как лежит одна деталь. Один и тот же набор для всех шести слотов, потому
-       что нестыковка была у всех шести одна и та же: полоса знала, где деталь
-       начинается, и на этом всё кончалось. -->
-
-  {#snippet placement(id: string, kind: SliceKind, piece: SlicePiece)}
-    {@const sides = KIND_SIDES[kind]}
-    {@const side = sliceHeld?.id === id ? sliceHeld.side : sides[0]}
-    {@const at = piece.places[side]}
-    <div
-      class="mb-5 pl-3 border-l {sliceHeld?.id === id
-        ? 'border-[#c65f3c]'
-        : 'border-[#34251c]/10'}"
-    >
-      <p
-        class="mb-2 text-[9px] uppercase tracking-[0.16em] {sliceHeld?.id === id
-          ? 'text-[#c65f3c]'
-          : 'text-[#8a6a55]'}"
-      >
-        {$t("adminBattlesSlicePlacement")}
-      </p>
-
-      <!-- Стороны. Выбор здесь и есть то, что взято на карте: два входа, одно
-           значение, поэтому они не могут разойтись во мнении о том, что двигают.
-           Галочка у каждой — рисуется ли эта копия вообще: медальон над
-           притолокой и ничего на пороге снимается здесь, а не второй заливкой
-           картинки, у которой половина стёрта. -->
-      <div class="flex flex-wrap items-center gap-1.5 mb-2">
-        {#each sides as one (one)}
-          {@const there = piece.places[one]}
-          <span
-            class="inline-flex items-center border {sliceHeld?.id === id &&
-            sliceHeld.side === one
-              ? 'border-[#34251c]'
-              : 'border-[#34251c]/20'}"
-          >
-            <input
-              type="checkbox"
-              title={$t("adminBattlesSliceShown")}
-              checked={there ? there.shown !== false : true}
-              onchange={(e) => {
-                if (there) there.shown = e.currentTarget.checked;
-              }}
-              class="ml-1.5 accent-[#34251c]"
-            />
-            <button
-              type="button"
-              onclick={() => ((pokedAt = null), (sliceHeld = { id, side: one }))}
-              class="px-2 py-1 text-[9px] uppercase tracking-[0.14em] {sliceHeld?.id ===
-                id && sliceHeld.side === one
-                ? 'bg-[#34251c] text-[#f8f1e7]'
-                : 'hover:bg-[#34251c]/5'} {there && there.shown === false
-                ? 'line-through opacity-50'
-                : ''}">{$t(SIDE_KEY[one])}</button
-            >
-          </span>
-        {/each}
-        <label
-          class="flex items-center gap-1.5 ml-2 text-[9px] uppercase tracking-[0.14em] text-[#8a6a55] cursor-pointer"
-        >
-          <input
-            type="checkbox"
-            bind:checked={piece.linked}
-            class="accent-[#34251c]"
-          />
-          {$t("adminBattlesSliceLinked")}
-        </label>
-      </div>
-
-      <!-- Картинка одна на все копии, поэтому слой, заполнение и разворот —
-           детали, а не стороны. -->
-      <div class="flex flex-wrap items-end gap-2 mb-2">
-        <label class="block w-52">
-          <span
-            class="block mb-1 text-[9px] uppercase tracking-[0.14em] text-[#8a6a55]"
-            >{$t("adminBattlesSliceFit")}</span
-          >
-          <select
-            bind:value={piece.fit}
-            class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none"
-          >
-            {#each SLICE_FITS as fit (fit)}
-              <option value={fit}>{$t(FIT_KEY[fit])}</option>
-            {/each}
-          </select>
-        </label>
-        <label class="block w-44">
-          <span
-            class="block mb-1 text-[9px] uppercase tracking-[0.14em] text-[#8a6a55]"
-            >{$t("adminBattlesSliceTurn")}</span
-          >
-          <select
-            bind:value={piece.turn}
-            class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none"
-          >
-            {#each SLICE_TURNS as turn (turn)}
-              <option value={turn}>{$t(TURN_KEY[turn])}</option>
-            {/each}
-          </select>
-        </label>
-      </div>
-
-      <!-- И четыре числа выбранной стороны — то же, что мышь пишет на карте,
-           сказанное точно. -->
-      {#if at}
-        <div class="flex flex-wrap items-end gap-2">
-          {#each SLICE_NUMBERS as row (row.key)}
-            <label class="block w-[4.5rem]">
-              <span
-                class="block mb-1 text-[9px] uppercase tracking-[0.14em] text-[#8a6a55]"
-                >{$t(row.label)}</span
-              >
-              <input
-                type="number"
-                step="0.1"
-                min={-SLICE_GROW_MAX}
-                max={SLICE_GROW_MAX}
-                value={at[row.key]}
-                oninput={(e) => {
-                  const given = Number(e.currentTarget.value);
-                  at[row.key] = Number.isFinite(given)
-                    ? Math.min(SLICE_GROW_MAX, Math.max(-SLICE_GROW_MAX, given))
-                    : 0;
-                }}
-                onfocus={selectOnFocus}
-                onwheel={blurOnWheel}
-                class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-              />
-            </label>
-          {/each}
-          <button
-            type="button"
-            onclick={() => resetSlice(id)}
-            class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
-            >{$t("adminBattlesSliceReset")}</button
-          >
-        </div>
-      {/if}
-    </div>
-  {/snippet}
-
   {#if view === "frames"}
-    <!-- ── Пять рам, по одной на ранг ──────────────────────────────────────
-         Стол резчика: карта занимает место, сбоку — список деталей и настройки
-         ТОЛЬКО той, что в руке. До этого было наоборот, и полтораста органов
-         управления стояли столбиком возле миниатюры в 320 px.
-
-         Список рамок — на всю ширину, над сценой и колонкой: это и есть то,
-         с чем работают. Подпись «эта рамка» имени не выбирает, а ящик в
-         колонке прятал тот же список за прокруткой. -->
-    <div class="flex-1 flex flex-col min-h-0">
-      {#if frames[frameIndex]}
-        <div
-          class="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 border-b border-[#34251c]/10 bg-[#f8f1e7]"
-        >
-          <div class="w-[22rem] max-w-full">
-            <BattleFramePicker
-              {presets}
-              bind:chosen={presetOpen}
-              onchoose={wearPresetOnRank}
-              onforget={forgetPreset}
-              disabled={saving}
-              size="desk"
-              label={$t("adminBattlesPresetChoose")}
-            />
-          </div>
-          <div class="flex flex-wrap items-center gap-2">
-            <input
-              bind:this={frameNameBox}
-              bind:value={presetName}
-              maxlength="60"
-              placeholder={presetWorn
-                ? $t("adminBattlesPresetCopyName")
-                : $t("adminBattlesPresetName")}
-              onkeydown={(e) =>
-                e.key === "Enter" &&
-                (presetWorn ? keepFrameAsNew() : keepFrameAsPreset())}
-              class="w-44 px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-            />
-            {#if presetWorn}
-              <button
-                onclick={keepFrameAsNew}
-                disabled={saving}
-                title={$t("adminBattlesPresetKeepNewHint")}
-                class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5 disabled:opacity-40"
-                ><BattleIcon name="twin" />{$t(
-                  "adminBattlesPresetKeepNew",
-                )}</button
-              >
-              <button
-                onclick={updateOpenPreset}
-                disabled={saving || !presetChanged}
-                title={$t("adminBattlesPresetUpdateHint")}
-                class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5 disabled:opacity-40"
-                ><BattleIcon name="keep" />{$t(
-                  "adminBattlesPresetUpdate",
-                )}</button
-              >
-              {#if presetChanged}
-                <span
-                  class="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-[#8f2f22]"
-                >
-                  <span class="w-1.5 h-1.5 rounded-full bg-[#c65f3c]"></span>
-                  {$t("adminBattlesPresetDrifted")}
-                </span>
-              {/if}
-              <button
-                onclick={() => forgetPreset(presetWorn)}
-                disabled={saving}
-                title={$t("adminBattlesPresetForgetSure").replace(
-                  "{name}",
-                  presetWorn.name,
-                )}
-                class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#c65f3c]/40 text-[#8f2f22] hover:bg-[#c65f3c]/10 disabled:opacity-40"
-                ><BattleIcon name="trash" />{$t(
-                  "adminBattlesFrameDrop",
-                )}</button
-              >
-            {:else}
-              <button
-                onclick={keepFrameAsPreset}
-                disabled={saving || !presetName.trim()}
-                title={$t("adminBattlesPresetKeep")}
-                class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5 disabled:opacity-40"
-                ><BattleIcon name="keep" />{$t("adminBattlesPresetKeep")}</button
-              >
-            {/if}
-            <button
-              onclick={beginNewFrame}
-              title={$t("adminBattlesFrameNewHint")}
-              class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5"
-              ><BattleIcon name="plus" />{$t("adminBattlesFrameNew")}</button
-            >
-          </div>
-        </div>
-      {/if}
-
-      <div class="flex-1 flex min-h-0">
-      <section class="flex-1 min-w-0 flex flex-col bg-[#f1e8db]">
-        <div
-          class="flex flex-wrap items-center gap-3 px-4 py-2 border-b border-[#34251c]/10"
-        >
-          <div class="flex border border-[#34251c]/15">
-            {#each frames as frame, i (frame.tier)}
-              <button
-                onclick={() => {
-                  frameIndex = i;
-                  sliceHeld = null;
-                  // Открытый наряд — про ТОТ чин, с которого его сняли. На
-                  // соседнем он ничего не значит, и «обновить» у чужой рамы
-                  // положило бы в ящик не то, что доставали.
-                  presetOpen = null;
-                  presetName = "";
-                }}
-                class="px-3 py-1 text-[11px] {frameIndex === i
-                  ? 'bg-[#34251c] text-[#f8f1e7]'
-                  : 'hover:bg-[#34251c]/5'}"
-                >{frame.tier} · {frameName(frame, $lang)}</button
-              >
-            {/each}
-          </div>
-
-          <!-- Увеличение. Не `transform`: карта меряет себя контейнерными
-               единицами, поэтому большая ширина увеличивает и резьбу, и шрифт
-               по-настоящему, а перетаскивание остаётся точным без поправок. -->
-          <div class="flex border border-[#34251c]/15">
-            {#each ZOOMS as z (z)}
-              <button
-                onclick={() => (stageZoom = z)}
-                class="px-2 py-1 text-[10px] {stageZoom === z
-                  ? 'bg-[#34251c] text-[#f8f1e7]'
-                  : 'hover:bg-[#34251c]/5'}">{z}×</button
-              >
-            {/each}
-          </div>
-
-          <!-- Клетка боя. Стоит рядом с увеличением, а не в колонке справа:
-               это способ СМОТРЕТЬ на карту, как и увеличение, а не её
-               свойство. Без него кружок здоровья на столе недостижим — он
-               выходит только в бою, а стол не бой. -->
-          <div class="flex items-center gap-2 border border-[#34251c]/15 px-2 py-1">
-            <label
-              class="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] cursor-pointer"
-            >
-              <input type="checkbox" bind:checked={stageInMatch} class="accent-[#34251c]" />
-              {$t("adminBattlesStageInMatch")}
-            </label>
-            {#if stageInMatch}
-              <input
-                type="range"
-                min="0.05"
-                max="1"
-                step="0.05"
-                bind:value={stageHurt}
-                title={$t("adminBattlesStageHurt")}
-                class="w-24 accent-[#c65f3c]"
-              />
-              <span class="text-[10px] tabular-nums text-[#8a6a55]"
-                >{Math.round(stageHurt * 100)}%</span
-              >
-            {/if}
-          </div>
-
-          <div class="flex border border-[#34251c]/15">
-            <button
-              onclick={stepBack}
-              disabled={!history.length}
-              title="{$t('adminBattlesUndo')} · ⌘Z"
-              class="px-2.5 py-1 text-[11px] hover:bg-[#34251c]/5 disabled:opacity-30"
-              >↺</button
-            >
-            <button
-              onclick={stepOn}
-              disabled={!ahead.length}
-              title="{$t('adminBattlesRedo')} · ⇧⌘Z"
-              class="px-2.5 py-1 text-[11px] hover:bg-[#34251c]/5 disabled:opacity-30"
-              >↻</button
-            >
-          </div>
-
-          <div class="ml-auto flex items-center gap-3">
-            {#if dirty}
-              <span
-                class="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-[#8f2f22]"
-              >
-                <span class="w-1.5 h-1.5 rounded-full bg-[#c65f3c]"></span>
-                {$t("adminBattlesUnsaved")}
-              </span>
-            {/if}
-            <button
-              onclick={saveFrames}
-              disabled={saving}
-              class="px-4 py-1.5 text-[10px] uppercase tracking-[0.16em] {dirty
-                ? 'bg-[#34251c] text-[#f8f1e7]'
-                : 'border border-[#34251c]/25'} disabled:opacity-40"
-              >{$t("adminBattlesFramesSave")}</button
-            >
-          </div>
-        </div>
-
-        <!-- Сцена. Своя прокрутка, поэтому увеличенная карта возится по столу
-             вместо того, чтобы гнать колонку настроек за собой. Слушает
-             клавиши: стрелки двигают взятую копию на 0.1 % (с Shift — на 1 %,
-             с Alt — наращивают нахлёст), ⌘Z отменяет. -->
-        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-        <div
-          role="application"
-          aria-label={$t("adminBattlesPreview")}
-          tabindex="0"
-          onkeydown={stageKeys}
-          bind:this={stageBox}
-          onscroll={() =>
-            (stageScroll = {
-              x: stageBox?.scrollLeft ?? 0,
-              y: stageBox?.scrollTop ?? 0,
-            })}
-          class="relative flex-1 overflow-auto p-8 outline-none"
-        >
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div
-            class="relative mx-auto"
-            bind:this={cardBox}
-            onpointerdowncapture={poke}
-            style="width:{Math.round(STAGE_BASE * stageZoom)}px"
-          >
-            <BattleCard
-              card={frameSample}
-              {frames}
-              owned={true}
-              transition={false}
-              interactive={false}
-              frameEditable={true}
-              rowsEditable={true}
-              hurt={stageInMatch ? stageHurt : 1}
-              alive={stageInMatch
-                ? Math.max(0, Math.round((frameSample.health || 10) * stageHurt))
-                : null}
-              wearSeed={7}
-              onEditStart={mark}
-              onBadgeArtUpload={uploadBadgeArt}
-              onBadgeArtStore={badgeArtFromStore}
-              onEditEnd={() => barTick++}
-              onRowMove={moveRow}
-              bind:sliceHeld
-              bind:rowHeld
-            />
-          </div>
-
-          <!-- Полоска взятой детали. Стоит у неё, а не в колонке: за картинкой
-               со склада и за «убрать» ходили через шесть блоков подряд.
-               Перехват нажатия снимает слепок для отмены до правки, а
-               отпускание двигает саму полоску вслед за тем, что она только
-               что изменила.
-
-               Лежит НА СТОЛЕ, а не в карте: прибитую полоску карта возила бы
-               за собой на каждом увеличении, а прибивают её ровно затем,
-               чтобы она стояла. Прибитая не пропадает и с пустой рукой —
-               место остаётся местом, — но делает всегда то, что в руке
-               сейчас. -->
-          {#if barSpot && (heldRow || barPin)}
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div
-              data-piece-bar
-              bind:clientWidth={barWide}
-              bind:clientHeight={barTall}
-              onpointerdowncapture={mark}
-              onpointerupcapture={() => barTick++}
-              style="left:{barSpot.x}px; top:{barSpot.y}px"
-              class="absolute z-20 flex -translate-x-1/2 items-center gap-0.5 p-1 bg-[#f8f1e7] border border-[#34251c]/25 shadow-[0_2px_10px_rgba(52,37,28,0.18)]"
-            >
-              <!-- Рукоять и гвоздь. Полоску таскают за рукоять и прибивают
-                   гвоздём: прибитая стоит на своём месте, а не выскакивает
-                   каждый раз там, где нажали. -->
-              <button
-                onpointerdown={grabBar}
-                onpointermove={dragBar}
-                onpointerup={dropBar}
-                onpointercancel={dropBar}
-                title={$t("adminBattlesBarMove")}
-                class="p-1.5 cursor-move touch-none text-[#8a6a55] hover:bg-[#34251c]/8"
-                ><BattleIcon name="move" /></button
-              >
-              <button
-                onclick={pinBar}
-                title={barPin
-                  ? $t("adminBattlesBarUnpin")
-                  : $t("adminBattlesBarPin")}
-                class="p-1.5 hover:bg-[#34251c]/8 {barPin
-                  ? 'text-[#c65f3c]'
-                  : 'text-[#8a6a55]'}"><BattleIcon name="pin" /></button
-              >
-
-              <span class="w-px h-5 mx-0.5 bg-[#34251c]/15"></span>
-
-              {#if heldRow}
-                <button
-                  onclick={() => uploadPiece(heldRow!)}
-                  disabled={uploading}
-                  title={$t("adminBattlesFrameArtUpload")}
-                  class="p-1.5 hover:bg-[#34251c]/8 disabled:opacity-30"
-                  ><BattleIcon name="upload" /></button
-                >
-                <button
-                  onclick={() =>
-                    fromStore(
-                      heldRow!.ornament
-                        ? "accent"
-                        : STORE_ROLE[heldRow!.id as SliceSlot],
-                      (url) => setPieceImage(heldRow!, url),
-                    )}
-                  title={$t("adminAssetsPick")}
-                  class="p-1.5 hover:bg-[#34251c]/8"
-                  ><BattleIcon name="store" /></button
-                >
-
-                <span class="w-px h-5 mx-0.5 bg-[#34251c]/15"></span>
-
-                <button
-                  onclick={() => copyPiece(heldRow!)}
-                  disabled={!heldRow.image}
-                  title={$t("adminBattlesPieceCopy")}
-                  class="p-1.5 hover:bg-[#34251c]/8 disabled:opacity-30"
-                  ><BattleIcon name="copy" /></button
-                >
-                <button
-                  onclick={() => cutPiece(heldRow!)}
-                  disabled={!heldRow.image}
-                  title={$t("adminBattlesPieceCut")}
-                  class="p-1.5 hover:bg-[#34251c]/8 disabled:opacity-30"
-                  ><BattleIcon name="cut" /></button
-                >
-                <button
-                  onclick={() => pastePiece(heldRow!)}
-                  disabled={!clip}
-                  title={clip
-                    ? $t("adminBattlesPiecePaste")
-                    : $t("adminBattlesPieceNothingCopied")}
-                  class="p-1.5 hover:bg-[#34251c]/8 disabled:opacity-30"
-                  ><BattleIcon name="paste" /></button
-                >
-                <button
-                  onclick={() => twinPiece(heldRow!)}
-                  disabled={!heldRow.image}
-                  title={$t("adminBattlesPieceTwin")}
-                  class="p-1.5 hover:bg-[#34251c]/8 disabled:opacity-30"
-                  ><BattleIcon name="twin" /></button
-                >
-
-                <span class="w-px h-5 mx-0.5 bg-[#34251c]/15"></span>
-
-                <button
-                  onclick={() => restack(heldRow!.id, -1)}
-                  title={$t("adminBattlesStackUp")}
-                  class="p-1.5 hover:bg-[#34251c]/8"
-                  ><BattleIcon name="up" /></button
-                >
-                <button
-                  onclick={() => restack(heldRow!.id, 1)}
-                  title={$t("adminBattlesStackDown")}
-                  class="p-1.5 hover:bg-[#34251c]/8"
-                  ><BattleIcon name="down" /></button
-                >
-                <button
-                  onclick={toggleHeldCopy}
-                  title={$t("adminBattlesSliceShown")}
-                  class="p-1.5 hover:bg-[#34251c]/8 {heldShown()
-                    ? ''
-                    : 'text-[#c65f3c]'}"
-                  ><BattleIcon name={heldShown() ? "eye" : "eye-off"} /></button
-                >
-                <button
-                  onclick={() =>
-                    (heldRow!.piece.linked = heldRow!.piece.linked === false)}
-                  title={$t("adminBattlesSliceLinked")}
-                  class="p-1.5 hover:bg-[#34251c]/8 {heldRow.piece.linked ===
-                  false
-                    ? 'text-[#c65f3c]'
-                    : ''}"
-                  ><BattleIcon name={heldRow.piece.linked === false ? "unlink" : "link"} /></button
-                >
-
-                <span class="w-px h-5 mx-0.5 bg-[#34251c]/15"></span>
-
-                <button
-                  onclick={() => resetSlice(heldRow!.id)}
-                  title={$t("adminBattlesSliceReset")}
-                  class="p-1.5 hover:bg-[#34251c]/8"
-                  ><BattleIcon name="reset" /></button
-                >
-                <button
-                  onclick={() =>
-                    heldRow!.ornament
-                      ? dropOrnament(heldRow!.id)
-                      : setPieceImage(heldRow!, "")}
-                  disabled={!heldRow.image}
-                  title={heldRow.ornament
-                    ? $t("adminBattlesOrnamentDrop")
-                    : $t("adminBattlesFrameArtClear")}
-                  class="p-1.5 text-[#8f2f22] hover:bg-[#c65f3c]/12 disabled:opacity-30"
-                  ><BattleIcon name="trash" /></button
-                >
-              {:else}
-                <!-- Прибитая полоска с пустой рукой. Кнопкам нечего делать,
-                     но место — это и есть то, за чем её прибивали: пусть
-                     стоит и ждёт, а не пропадает, чтобы появиться в другом
-                     углу. -->
-                <span
-                  class="px-2 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                  >{$t("adminBattlesBarIdle")}</span
-                >
-              {/if}
-            </div>
-          {/if}
-        </div>
-      </section>
-
-      <!-- Колонка. Перехват нажатия и фокуса на ней целиком снимает слепок для
-           отмены перед любой правкой — иначе каждый из полутораста органов
-           управления пришлось бы оборачивать руками. -->
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <aside
-        class="w-[27rem] flex-shrink-0 border-l border-[#34251c]/10 overflow-y-auto"
-        onpointerdowncapture={mark}
-        onfocusincapture={mark}
-      >
-        {#if frames[frameIndex]}
-          <!-- ── Кто это носит ────────────────────────────────────────────
-               Стоит ПЕРВЫМ и над ящиком нарядов, потому что это не настройка,
-               а обстановка: стол правит ЧИН, а гость видит КАРТУ, и между ними
-               стоит цепочка нарядов. Без этой полки чин красят вслепую — и не
-               узнают, что он не виден ни на одной карте. -->
-          <div class="p-4 border-b border-[#34251c]/10">
-            <p class="mb-2 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]">
-              {$t("adminBattlesWornBy")}
-            </p>
-            {#if !rankWorn.mine.length}
-              <p class="text-[11px] italic text-[#8a6a55]">
-                {$t("adminBattlesWornNone")}
-              </p>
-            {:else}
-              <p class="text-[11px] leading-relaxed text-[#6f3b24]">
-                {$t("adminBattlesWornPlain")}
-                <b class="tabular-nums">{rankWorn.plain.length}</b>
-                {$t("adminBattlesWornOf")}
-                <b class="tabular-nums">{rankWorn.mine.length}</b>
-              </p>
-              {#if !rankWorn.plain.length}
-                <p
-                  class="mt-1 flex items-start gap-1.5 text-[11px] leading-relaxed text-[#8f2f22]"
-                >
-                  <span class="mt-1.5 w-1.5 h-1.5 flex-shrink-0 rounded-full bg-[#c65f3c]"
-                  ></span>
-                  {$t("adminBattlesWornBlind")}
-                </p>
-              {/if}
-              {#each [{ list: rankWorn.own, word: "adminBattlesWornOwn" as TranslationKey }, { list: rankWorn.byRace, word: "adminBattlesWornRace" as TranslationKey }] as group (group.word)}
-                {#if group.list.length}
-                  <p
-                    class="mt-2 mb-0.5 text-[9px] uppercase tracking-[0.14em] text-[#8a6a55]"
-                  >
-                    {$t(group.word)} · {group.list.length}
-                  </p>
-                  <ul class="space-y-0.5">
-                    {#each group.list as one (one.id)}
-                      <li>
-                        <button
-                          onclick={() => jumpToCard(one)}
-                          class="text-left text-[11px] leading-snug text-[#6f3b24] hover:underline"
-                          >{titleOf(one)}</button
-                        >
-                      </li>
-                    {/each}
-                  </ul>
-                {/if}
-              {/each}
-            {/if}
-          </div>
-
-          <!-- Как надета. Первое решение о раме, а не настройка в середине
-               списка. Список рамок стоит на табличке над столом. -->
-          <div class="p-4 border-b border-[#34251c]/10">
-            <p
-              class="mb-2 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
-            >
-              {$t("adminBattlesFrameMode")}
-            </p>
-            <div class="flex border border-[#34251c]/20">
-              {#each FRAME_MODES as mode (mode)}
-                <button
-                  onclick={() => setFrameMode(mode)}
-                  class="flex-1 px-2 py-1.5 text-[10px] leading-tight {frames[
-                    frameIndex
-                  ].frameMode === mode
-                    ? 'bg-[#34251c] text-[#f8f1e7]'
-                    : 'hover:bg-[#34251c]/5'}"
-                  >{mode === "overlay"
-                    ? $t("adminBattlesFrameOverlay")
-                    : mode === "behind"
-                      ? $t("adminBattlesFrameBehind")
-                      : $t("adminBattlesFrameSliced")}</button
-                >
-              {/each}
-            </div>
-            {#if frames[frameIndex].frameMode === "sliced"}
-              <details class="mt-2">
-                <summary
-                  class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
-                  >{$t("adminBattlesHintOpen")}</summary
-                >
-                <p
-                  class="mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
-                >
-                  {$t("adminBattlesFrameSlicedHint")}
-                </p>
-              </details>
-            {/if}
-          </div>
-
-          {#if frames[frameIndex].frameMode === "sliced"}
-            <!-- Список деталей. Сверху то, что рисуется поверх; порядок задают
-                 здесь, и только здесь, поэтому невидимых ничьих между равными
-                 слоями больше нет. -->
-            <div class="p-4 border-b border-[#34251c]/10">
-              <p
-                class="mb-2 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
-              >
-                {$t("adminBattlesStack")}
-              </p>
-              <details class="mb-3">
-                <summary
-                  class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
-                  >{$t("adminBattlesHintOpen")}</summary
-                >
-                <p
-                  class="mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
-                >
-                  {$t("adminBattlesStackHint")}
-                </p>
-              </details>
-              <div class="border border-[#34251c]/12">
-                {#each stack as row (row.id)}
-                  <div
-                    class="flex items-center gap-2 px-1.5 py-1 border-b last:border-b-0 border-[#34251c]/8 {sliceHeld?.id ===
-                    row.id
-                      ? 'bg-[#c65f3c]/[0.09]'
-                      : ''}"
-                  >
-                    <span class="flex flex-col leading-none">
-                      <button
-                        onclick={() => restack(row.id, -1)}
-                        title={$t("adminBattlesStackUp")}
-                        class="px-1 text-[8px] text-[#8a6a55] hover:text-[#34251c]"
-                        >▲</button
-                      >
-                      <button
-                        onclick={() => restack(row.id, 1)}
-                        title={$t("adminBattlesStackDown")}
-                        class="px-1 text-[8px] text-[#8a6a55] hover:text-[#34251c]"
-                        >▼</button
-                      >
-                    </span>
-                    <button
-                      onclick={() => showPiece(row, !pieceShown(row))}
-                      title={$t("adminBattlesSliceShown")}
-                      class="w-4 text-[11px] {pieceShown(row)
-                        ? 'text-[#34251c]'
-                        : 'text-[#34251c]/25'}"
-                      >{pieceShown(row) ? "◉" : "○"}</button
-                    >
-                    <button
-                      onclick={() =>
-                        ((pokedAt = null),
-                        (sliceHeld = {
-                          id: row.id,
-                          side: KIND_SIDES[row.kind][0],
-                        }))}
-                      class="flex-1 flex items-center gap-2 py-0.5 text-left min-w-0"
-                    >
-                      <!-- Миниатюра. До неё в слоте стояла строка вида
-                           `/static/assets/0158db49-….webp`, по которой нельзя
-                           узнать ни одну деталь. -->
-                      <span
-                        class="w-8 h-8 flex-shrink-0 border border-[#34251c]/15 bg-[#34251c]/[0.04] bg-center bg-contain bg-no-repeat"
-                        style:background-image={row.image
-                          ? `url("${row.image}")`
-                          : "none"}
-                      ></span>
-                      <span class="min-w-0">
-                        <span
-                          class="block text-[11px] truncate {row.image
-                            ? ''
-                            : 'text-[#8a6a55] italic'}">{row.label}</span
-                        >
-                        <span
-                          class="block text-[9px] uppercase tracking-[0.14em] text-[#8a6a55] truncate"
-                        >
-                          {row.image
-                            ? $t(KIND_KEY[row.kind])
-                            : $t("adminBattlesPieceEmpty")}
-                        </span>
-                      </span>
-                    </button>
-                  </div>
-                {/each}
-              </div>
-              <div class="flex flex-wrap items-center gap-2 mt-3">
-                <button
-                  onclick={addOrnamentUpload}
-                  disabled={uploading}
-                  class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
-                  >{uploading ? "…" : $t("adminBattlesOrnamentAdd")}</button
-                >
-                <button
-                  onclick={addOrnamentFromStore}
-                  class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
-                  >{$t("adminBattlesOrnamentAddStore")}</button
-                >
-              </div>
-            </div>
-
-            <!-- Настройки ТОЛЬКО взятой детали. Шесть блоков разом были прежде
-                 всегда открыты, и колонка не помещалась на экран. -->
-            {#if heldRow}
-              <div class="p-4 border-b border-[#34251c]/10">
-                <p
-                  class="mb-3 text-[10px] uppercase tracking-[0.16em] text-[#c65f3c]"
-                >
-                  {heldRow.label}
-                </p>
-                <div class="flex flex-wrap items-end gap-2 mb-3">
-                  <button
-                    onclick={() => uploadPiece(heldRow!)}
-                    disabled={uploading}
-                    class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
-                    >{uploading
-                      ? "…"
-                      : $t("adminBattlesFrameArtUpload")}</button
-                  >
-                  <button
-                    onclick={() =>
-                      fromStore(
-                        heldRow!.ornament
-                          ? "accent"
-                          : STORE_ROLE[heldRow!.id as SliceSlot],
-                        (url) => setPieceImage(heldRow!, url),
-                      )}
-                    class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
-                    >{$t("adminAssetsPick")}</button
-                  >
-                  {#if heldRow.image}
-                    <button
-                      onclick={() => setPieceImage(heldRow!, "")}
-                      class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
-                      >{$t("adminBattlesFrameArtClear")}</button
-                    >
-                  {/if}
-                  {#if heldRow.ornament}
-                    <button
-                      onclick={() => dropOrnament(heldRow!.id)}
-                      class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#c65f3c]/40 text-[#8f2f22] hover:bg-[#c65f3c]/10"
-                      >{$t("adminBattlesOrnamentDrop")}</button
-                    >
-                  {/if}
-                </div>
-                {#if heldRow.ornament}
-                  <label class="block w-full mb-3">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("adminBattlesOrnamentKind")}</span
-                    >
-                    <select
-                      value={heldRow.ornament.kind}
-                      onchange={(e) =>
-                        reshapeOrnament(
-                          heldRow!.ornament!,
-                          e.currentTarget.value as SliceKind,
-                        )}
-                      class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none"
-                    >
-                      {#each SLICE_KINDS as kind (kind)}
-                        <option value={kind}>{$t(KIND_KEY[kind])}</option>
-                      {/each}
-                    </select>
-                  </label>
-                {/if}
-                <input
-                  value={heldRow.image}
-                  oninput={(e) =>
-                    setPieceImage(heldRow!, e.currentTarget.value)}
-                  placeholder="/static/assets/…"
-                  class="w-full mb-3 px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                />
-                {@render placement(heldRow.id, heldRow.kind, heldRow.piece)}
-                <details class="mt-2">
-                  <summary
-                    class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
-                    >{$t("adminBattlesHintOpen")}</summary
-                  >
-                  <p
-                    class="mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
-                  >
-                    {$t("adminBattlesSliceHint")}
-                  </p>
-                </details>
-              </div>
-            {:else}
-              <p
-                class="p-4 border-b border-[#34251c]/10 text-[11px] leading-relaxed italic text-[#8a6a55]"
-              >
-                {$t("adminBattlesStackNothingHeld")}
-              </p>
-            {/if}
-          {/if}
-
-          <details class="border-b border-[#34251c]/10">
-            <summary
-              class="px-4 py-2.5 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
-              >{$t("adminBattlesFrameArt")}</summary
-            >
-            <div class="px-4 pb-4 space-y-4">
-              <div class="flex flex-wrap items-end gap-4">
-                <label class="block">
-                  <span
-                    class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                    >{$t("adminBattlesFrameName")} · EN</span
-                  >
-                  <input
-                    bind:value={frames[frameIndex].nameEn}
-                    class="px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                  />
-                </label>
-                <label class="block">
-                  <span
-                    class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                    >{$t("adminBattlesFrameName")} · RU</span
-                  >
-                  <input
-                    bind:value={frames[frameIndex].nameRu}
-                    class="px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                  />
-                </label>
-                <label class="block">
-                  <span
-                    class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                    >{$t("adminBattlesFrameLayout")}</span
-                  >
-                  <select
-                    bind:value={frames[frameIndex].layout}
-                    class="px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none"
-                  >
-                    {#each LAYOUTS as option (option)}
-                      <option value={option}>
-                        {option === "corners"
-                          ? $t("adminBattlesLayoutCorners")
-                          : $t("adminBattlesLayoutPlaque")}
-                      </option>
-                    {/each}
-                  </select>
-                </label>
-              </div>
-              <!-- Одна целая фотография рамы — для `overlay` и `behind`.
-                 Собранной из частей она не нужна: та строит себя из деталей. -->
-              {#if frames[frameIndex].frameMode !== "sliced"}
-                <div class="flex flex-wrap items-end gap-3">
-                  <button
-                    onclick={uploadFrameArt}
-                    disabled={uploading}
-                    class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
-                    >{uploading
-                      ? "…"
-                      : $t("adminBattlesFrameArtUpload")}</button
-                  >
-                  <label class="block flex-1 min-w-[12rem]">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                    >
-                      {#if !frames[frameIndex].frameImage.trim()}{$t(
-                          "adminBattlesFrameArtNone",
-                        )}{:else}URL{/if}
-                    </span>
-                    <input
-                      bind:value={frames[frameIndex].frameImage}
-                      placeholder="/static/frames/…"
-                      class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                    />
-                  </label>
-                  {#if frames[frameIndex].frameImage.trim()}
-                    <button
-                      onclick={() => (frames[frameIndex].frameImage = "")}
-                      class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
-                      >{$t("adminBattlesFrameArtClear")}</button
-                    >
-                  {/if}
-                </div>
-              {/if}
-
-              <!-- What shows through the hole in a cut-out frame. -->
-              <div class="flex flex-wrap items-end gap-3 mt-4">
-                <button
-                  onclick={uploadPaperArt}
-                  disabled={uploading}
-                  class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
-                  >{uploading ? "…" : $t("adminBattlesPaperUpload")}</button
-                >
-                <label class="block flex-1 min-w-[16rem]">
-                  <span
-                    class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                  >
-                    {#if !frames[frameIndex].paperImage.trim()}{$t(
-                        "adminBattlesPaperNone",
-                      )}{:else}URL{/if}
-                  </span>
-                  <input
-                    bind:value={frames[frameIndex].paperImage}
-                    placeholder="/static/images/preview/…"
-                    class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                  />
-                </label>
-                {#if frames[frameIndex].paperImage.trim()}
-                  <button
-                    onclick={() => (frames[frameIndex].paperImage = "")}
-                    class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
-                    >{$t("adminBattlesFrameArtClear")}</button
-                  >
-                {/if}
-              </div>
-
-              <!-- The reverse. Never wears the frame above, whatever picture it shows —
-               the carving is the front's own dress. -->
-              <div class="pt-5 border-t border-[#34251c]/10">
-                <p
-                  class="mb-3 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                >
-                  {$t("adminBattlesBackArt")}
-                </p>
-                <details class="mb-3">
-                  <summary
-                    class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
-                    >{$t("adminBattlesHintOpen")}</summary
-                  >
-                  <p
-                    class="max-w-[62ch] mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
-                  >
-                    {$t("adminBattlesBackArtHint")}
-                  </p>
-                </details>
-                <div class="flex flex-wrap items-end gap-3">
-                  <button
-                    onclick={uploadBackArt}
-                    disabled={uploading}
-                    class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
-                    >{uploading ? "…" : $t("adminBattlesBackArtUpload")}</button
-                  >
-                  <label class="block flex-1 min-w-[16rem]">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                    >
-                      {#if !frames[frameIndex].backImage.trim()}{$t(
-                          "adminBattlesBackArtNone",
-                        )}{:else}URL{/if}
-                    </span>
-                    <input
-                      bind:value={frames[frameIndex].backImage}
-                      placeholder="/static/frames/…"
-                      class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                    />
-                  </label>
-                  {#if frames[frameIndex].backImage.trim()}
-                    <button
-                      onclick={() => (frames[frameIndex].backImage = "")}
-                      class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
-                      >{$t("adminBattlesFrameArtClear")}</button
-                    >
-                  {/if}
-                </div>
-              </div>
-            </div>
-          </details>
-
-          <details class="border-b border-[#34251c]/10">
-            <summary
-              class="px-4 py-2.5 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
-              >{$t("adminBattlesFrameWindow")}</summary
-            >
-            <div class="px-4 pb-4">
-              <!-- Where the opening in that frame actually is. -->
-              <div class="pt-5 border-t border-[#34251c]/10">
-                <p
-                  class="mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                >
-                  {$t("adminBattlesFrameWindow")}
-                </p>
-                <details class="mb-3">
-                  <summary
-                    class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
-                    >{$t("adminBattlesHintOpen")}</summary
-                  >
-                  <p
-                    class="max-w-[62ch] mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
-                  >
-                    {$t("adminBattlesFrameWindowHint")}
-                  </p>
-                  <p
-                    class="max-w-[62ch] mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
-                  >
-                    {$t("adminBattlesBandsHint")}
-                  </p>
-                </details>
-                <div class="flex flex-wrap gap-5">
-                  <label class="block w-40">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("adminBattlesInsetTop")} · {frames[
-                        frameIndex
-                      ].insetTop.toFixed(0)}%</span
-                    >
-                    <input
-                      type="range"
-                      min="0"
-                      max="45"
-                      step="0.5"
-                      value={frames[frameIndex].insetTop}
-                      oninput={(e) =>
-                        setInset("insetTop", Number(e.currentTarget.value))}
-                      class="w-full"
-                    />
-                  </label>
-                  <label class="block w-40">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("adminBattlesInsetRight")} · {frames[
-                        frameIndex
-                      ].insetRight.toFixed(0)}%</span
-                    >
-                    <input
-                      type="range"
-                      min="0"
-                      max="45"
-                      step="0.5"
-                      value={frames[frameIndex].insetRight}
-                      oninput={(e) =>
-                        setInset("insetRight", Number(e.currentTarget.value))}
-                      class="w-full"
-                    />
-                  </label>
-                  <label class="block w-40">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("adminBattlesInsetBottom")} · {frames[
-                        frameIndex
-                      ].insetBottom.toFixed(0)}%</span
-                    >
-                    <input
-                      type="range"
-                      min="0"
-                      max="45"
-                      step="0.5"
-                      value={frames[frameIndex].insetBottom}
-                      oninput={(e) =>
-                        setInset("insetBottom", Number(e.currentTarget.value))}
-                      class="w-full"
-                    />
-                  </label>
-                  <label class="block w-40">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("adminBattlesInsetLeft")} · {frames[
-                        frameIndex
-                      ].insetLeft.toFixed(0)}%</span
-                    >
-                    <input
-                      type="range"
-                      min="0"
-                      max="45"
-                      step="0.5"
-                      value={frames[frameIndex].insetLeft}
-                      oninput={(e) =>
-                        setInset("insetLeft", Number(e.currentTarget.value))}
-                      class="w-full"
-                    />
-                  </label>
-                  <label class="block w-40">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("adminBattlesAspect")} · {frames[
-                        frameIndex
-                      ].aspect.toFixed(2)}</span
-                    >
-                    <input
-                      type="range"
-                      min="0.45"
-                      max="1.4"
-                      step="0.01"
-                      bind:value={frames[frameIndex].aspect}
-                      class="w-full"
-                    />
-                  </label>
-                  <label class="block w-40">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("adminBattlesHeaderShare")} · {(
-                        frames[frameIndex].headerShare * 100
-                      ).toFixed(0)}%</span
-                    >
-                    <input
-                      type="range"
-                      min="0"
-                      max="0.3"
-                      step="0.005"
-                      bind:value={frames[frameIndex].headerShare}
-                      class="w-full"
-                    />
-                  </label>
-                  <label class="block w-40">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("adminBattlesArtShare")} · {(
-                        frames[frameIndex].artShare * 100
-                      ).toFixed(0)}%</span
-                    >
-                    <input
-                      type="range"
-                      min="0.12"
-                      max="0.85"
-                      step="0.01"
-                      bind:value={frames[frameIndex].artShare}
-                      class="w-full"
-                    />
-                  </label>
-                  <label class="block w-40">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("adminBattlesFootShare")} · {(
-                        frames[frameIndex].footShare * 100
-                      ).toFixed(0)}%</span
-                    >
-                    <input
-                      type="range"
-                      min="0"
-                      max="0.3"
-                      step="0.005"
-                      bind:value={frames[frameIndex].footShare}
-                      class="w-full"
-                    />
-                  </label>
-                </div>
-              </div>
-            </div>
-          </details>
-
-          <details class="border-b border-[#34251c]/10">
-            <summary
-              class="px-4 py-2.5 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
-              >{$t("adminBattlesFramePaper")}</summary
-            >
-            <div class="px-4 pb-4">
-              <!-- The name, and the colours the renderer paints when there is no
-                 photograph — still the ground under one that fails to load. -->
-              <div
-                class="pt-5 border-t border-[#34251c]/10 flex flex-wrap items-end gap-4"
-              >
-                <label class="block">
-                  <span
-                    class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                    >{$t("adminBattlesTitleFont")}</span
-                  >
-                  <select
-                    bind:value={frames[frameIndex].titleFont}
-                    class="px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none"
-                  >
-                    <option value=""
-                      >{$t("adminBattlesTitleFontDefault")}</option
-                    >
-                    {#each SITE_FONTS as font (font.id)}
-                      <option value={font.id}>{font.name}</option>
-                    {/each}
-                  </select>
-                </label>
-                <label class="block">
-                  <span
-                    class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                    >{$t("adminBattlesTitleInk")}</span
-                  >
-                  <input
-                    type="color"
-                    value={frames[frameIndex].titleInk ||
-                      frames[frameIndex].ink}
-                    oninput={(e) =>
-                      (frames[frameIndex].titleInk = e.currentTarget.value)}
-                    class="w-12 h-8 bg-transparent border border-[#34251c]/15"
-                  />
-                </label>
-                {#each [["paper", $t("adminBattlesFramePaper")], ["ink", $t("adminBattlesFrameInk")], ["border", $t("adminBattlesFrameBorder")]] as [key, label] (key)}
-                  <label class="block">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{label}</span
-                    >
-                    <input
-                      type="color"
-                      value={frames[frameIndex][
-                        key as "paper" | "ink" | "border"
-                      ]}
-                      oninput={(e) =>
-                        (frames[frameIndex][key as "paper" | "ink" | "border"] =
-                          e.currentTarget.value)}
-                      class="w-12 h-8 bg-transparent border border-[#34251c]/15"
-                    />
-                  </label>
-                {/each}
-                <label class="block flex-1 min-w-[14rem]">
-                  <span
-                    class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                  >
-                    {$t("adminBattlesFrameFoil")}
-                    {#if !frames[frameIndex].foil.trim()}<span
-                        class="normal-case tracking-normal italic"
-                      >
-                        — {$t("adminBattlesFrameNoFoil")}</span
-                      >{/if}
-                  </span>
-                  <input
-                    bind:value={frames[frameIndex].foil}
-                    placeholder="rgba(198,95,60,0.28)"
-                    class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                  />
-                </label>
-              </div>
-            </div>
-          </details>
-        {/if}
-
-      </aside>
-      </div>
-    </div>
+    <FrameDesk
+      bind:frames
+      bind:frameIndex
+      bind:sliceHeld
+      bind:rowHeld
+      bind:barPin
+      bind:pokedAt
+      bind:uploading
+      bind:presetOpen
+      bind:presetName
+      bind:frameNameBox
+      sample={frameSample}
+      worn={rankWorn}
+      {saving}
+      {dirty}
+      {history}
+      {ahead}
+      {presets}
+      {presetWorn}
+      {presetChanged}
+      {mark}
+      save={saveFrames}
+      {flash}
+      {titleOf}
+      {moveRow}
+      {stepBack}
+      {stepOn}
+      pickFromStore={fromStore}
+      uploadArt={(file) => api.adminUploadBattleFrameArt(file)}
+      importMedia={(file, kind, note) => api.importMediaWithVariants(file, kind, note)}
+      onOpenCard={jumpToCard}
+      {keepFrameAsPreset}
+      {keepFrameAsNew}
+      {forgetPreset}
+      {updateOpenPreset}
+      {beginNewFrame}
+      {wearPresetOnRank}
+    />
   {:else if view === "face"}
     <!-- ── Лицо карты ───────────────────────────────────
          Что карта ГОВОРИТ: какие строки печатаются, в какой полосе, в каком
@@ -7667,244 +5502,14 @@
                   {/if}
                 {/snippet}
 
-                <!-- Лента умений: по медальону на каждое, лицом глагола и своим
-                     именем. Настройки — ТОЛЬКО того, что в руке.
-
-                     Панель разворачивала все поля всех умений разом: четыре
-                     умения это стена в пол-экрана из одинаковых выпадающих
-                     списков, и найти в ней нужное можно было только чтением
-                     подряд. Дом этот приём уже знает — стол рам показывает
-                     список деталей и настройки одной, взятой; здесь тот же
-                     жест и та же мебель. -->
-                <div class="flex flex-wrap items-start gap-x-5 gap-y-4">
-                  {#each draft.abilities ?? [] as ability (ability.id)}
-                    <Medallion
-                      icon={VERB_ICON[ability.verb]}
-                      caption={abilityName(ability)}
-                      note={abilityPoints(ability.id) != null
-                        ? `${abilityPoints(ability.id)?.toFixed(1)} ${$t("adminBattlesAbilityPoints")}`
-                        : undefined}
-                      selected={ability.id === abilityInHand?.id}
-                      onclick={() => (abilityHeld = ability.id)}
-                    />
-                  {/each}
-                  {#if (draft.abilities?.length ?? 0) < ABILITIES_MAX}
-                    <Medallion
-                      icon="plus"
-                      hollow
-                      caption={$t("adminBattlesAbilityAdd")}
-                      onclick={addAbility}
-                    />
-                  {/if}
-                </div>
-
-                {#if !(draft.abilities ?? []).length}
-                  <p class="mt-4 text-[11px] leading-relaxed italic text-[#8a6a55]">
-                    {$t("adminBattlesAbilitiesEmpty")}
-                  </p>
-                {:else if abilityInHand}
-                  {@const i = abilityAt}
-                  {@const ability = abilityInHand}
-                  <div
-                    class="mt-5 pt-4 border-t border-dashed border-[#34251c]/15"
-                  >
-                    <!-- Чьи это настройки — сказано вслух. Без подписи полоса
-                         полей под лентой читается настройками ленты целиком. -->
-                    <div class="flex items-baseline gap-2 mb-3">
-                      <span
-                        class="text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                        >{$t("adminBattlesAbilityChosen")}</span
-                      >
-                      <span class="text-xs text-[#6f3b24]"
-                        >{abilityName(ability)}</span
-                      >
-                      <span class="ml-auto flex items-center gap-1">
-                        <button
-                          type="button"
-                          onclick={() => moveAbility(i, -1)}
-                          disabled={i === 0}
-                          title={$t("adminBattlesAbilityRaise")}
-                          class="w-6 h-6 flex items-center justify-center border border-[#34251c]/20 text-[#5f4636] disabled:opacity-30 hover:bg-[#34251c]/5"
-                          ><BattleIcon name="up" /></button
-                        >
-                        <button
-                          type="button"
-                          onclick={() => moveAbility(i, 1)}
-                          disabled={i === (draft.abilities?.length ?? 0) - 1}
-                          title={$t("adminBattlesAbilityLower")}
-                          class="w-6 h-6 flex items-center justify-center border border-[#34251c]/20 text-[#5f4636] disabled:opacity-30 hover:bg-[#34251c]/5"
-                          ><BattleIcon name="down" /></button
-                        >
-                        <button
-                          type="button"
-                          onclick={() => removeAbility(i)}
-                          title={$t("adminBattlesDelete")}
-                          class="w-6 h-6 flex items-center justify-center border border-[#34251c]/20 text-[#8f2f22] hover:bg-[#c65f3c]/10"
-                          ><BattleIcon name="trash" /></button
-                        >
-                      </span>
-                    </div>
-
-                    <div class="grid grid-cols-2 gap-x-4 gap-y-3">
-                      <SheetField label={$t("adminBattlesAbilityVerb")}>
-                        <span class="flex items-center gap-1.5">
-                          <span class="flex-shrink-0 text-[#6f3b24]"
-                            ><BattleIcon
-                              name={VERB_ICON[ability.verb]}
-                              size={15}
-                            /></span
-                          >
-                          <select bind:value={draft.abilities[i].verb}>
-                            {#each VERBS as verb (verb)}
-                              <option value={verb}
-                                >{$t(VERB_LABELS[verb])}</option
-                              >
-                            {/each}
-                          </select>
-                        </span>
-                      </SheetField>
-
-                      <!-- Значок стоит У списка, а не вместо него: форм восемь
-                           и поводов восемь, медальонами это два ряда кружков на
-                           каждое умение. Слово в списке уже написано. -->
-                      <SheetField label={$t("adminBattlesAbilityShape")}>
-                        <span class="flex items-center gap-1.5">
-                          <span class="flex-shrink-0 text-[#6f3b24]"
-                            ><BattleIcon name={ability.shape} size={15} /></span
-                          >
-                          <select bind:value={draft.abilities[i].shape}>
-                            {#each SHAPES as shape (shape)}
-                              <option value={shape}
-                                >{$t(SHAPE_LABELS[shape])}</option
-                              >
-                            {/each}
-                          </select>
-                        </span>
-                      </SheetField>
-
-                      <SheetField label={$t("adminBattlesAbilityTrigger")}>
-                        <span class="flex items-center gap-1.5">
-                          <span class="flex-shrink-0 text-[#6f3b24]"
-                            ><BattleIcon
-                              name={ability.trigger}
-                              size={15}
-                            /></span
-                          >
-                          <select bind:value={draft.abilities[i].trigger}>
-                            {#each TRIGGERS as trigger (trigger)}
-                              <option value={trigger}
-                                >{$t(TRIGGER_LABELS[trigger])}</option
-                              >
-                            {/each}
-                          </select>
-                        </span>
-                      </SheetField>
-
-                      <SheetField label={$t("adminBattlesAbilityKeywords")}>
-                        <input
-                          value={(ability.keywords ?? []).join(", ")}
-                          oninput={(e) =>
-                            keywordsInput(i, e.currentTarget.value)}
-                        />
-                      </SheetField>
-
-                      <!-- Числа умения. Той же плашкой, что тело карты: это
-                           тоже числа, которые читает только движок, и второй
-                           вид для них означал бы, что они другого рода. -->
-                      <div class="col-span-2">
-                        <StatPlate min="6rem">
-                          <StatCell
-                            icon="sword"
-                            label={$t("adminBattlesAbilityAmount")}
-                            min={0}
-                            max={99}
-                            bind:value={draft.abilities[i].amount}
-                          />
-                          <StatCell
-                            icon={ability.shape}
-                            label={$t("adminBattlesAbilityRadius")}
-                            tone={shapeCarriesNumber(ability.shape)
-                              ? "plain"
-                              : "quiet"}
-                            readonly={!shapeCarriesNumber(ability.shape)}
-                            min={0}
-                            max={3}
-                            bind:value={draft.abilities[i].radius}
-                          />
-                          <StatCell
-                            icon="reach"
-                            label={$t("adminBattlesAbilityRange")}
-                            min={0}
-                            max={5}
-                            bind:value={draft.abilities[i].range}
-                          />
-                          <StatCell
-                            icon="turnStart"
-                            label={$t("adminBattlesAbilityDuration")}
-                            min={0}
-                            max={5}
-                            bind:value={draft.abilities[i].duration}
-                          />
-                          <StatCell
-                            icon="drop"
-                            label={$t("adminBattlesAbilityMana")}
-                            min={0}
-                            max={20}
-                            bind:value={draft.abilities[i].manaCost}
-                          />
-                          <StatCell
-                            icon="once"
-                            label={$t("adminBattlesAbilityCooldown")}
-                            min={0}
-                            max={5}
-                            bind:value={draft.abilities[i].cooldown}
-                          />
-                        </StatPlate>
-                        <!-- Оговорки о радиусе здесь нет и не нужно: ячейка
-                             приглушена и не правится ровно у тех форм, которые
-                             числа не несут, и это видно без слов. -->
-                      </div>
-
-                      <!-- Канал медальонами: их четыре, и это тот же выбор
-                           теми же кружками, что у карты целиком в «Ударе». -->
-                      <div class="col-span-2">
-                        <span
-                          class="block mb-1.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                          >{$t("adminBattlesChannel")}</span
-                        >
-                        <div class="flex items-start gap-4">
-                          {#each CHANNELS as channel (channel)}
-                            <Medallion
-                              icon={CHANNEL_ICON[channel]}
-                              caption={$t(CHANNEL_LABELS[channel])}
-                              size={30}
-                              selected={ability.channel === channel}
-                              onclick={() =>
-                                (draft.abilities[i].channel = channel)}
-                            />
-                          {/each}
-                        </div>
-                      </div>
-
-                      <SheetField
-                        label={`${$t("adminBattlesTraitName")} · RU`}
-                      >
-                        <input
-                          bind:value={draft.abilities[i].nameRu}
-                          maxlength="60"
-                        />
-                      </SheetField>
-                      <SheetField
-                        label={`${$t("adminBattlesTraitName")} · EN`}
-                      >
-                        <input
-                          bind:value={draft.abilities[i].nameEn}
-                          maxlength="60"
-                        />
-                      </SheetField>
-                    </div>
-                  </div>
-                {/if}
+                <!-- Один редактор на весь дом: он же стоит на столе
+                     человека в студии. Два таких — это два списка глаголов,
+                     которые однажды разойдутся молча. -->
+                <BattleAbilities
+                  bind:abilities={draft.abilities}
+                  pointsOf={abilityPoints}
+                  editLang={editLang}
+                />
               </SheetPanel>
 
               <SheetPanel
@@ -7964,6 +5569,35 @@
                     </SheetField>
                   {/each}
                 </div>
+
+                <!-- Тираж. Стоит рядом с ценами по той же причине, по которой
+                     рядом стоит заём: всё это про то, как карта попадает к
+                     человеку. Пусто — печатается сколько угодно; число —
+                     ограниченный тираж, и когда он кончится, лавка ответит
+                     словами, а пыль останется на месте. Ниже уже
+                     отпечатанного дом тираж не примет. -->
+                <SheetField label={$t("adminBattlesEdition")}>
+                  <input
+                    type="number"
+                    min="0"
+                    value={draft.editionSize ?? ""}
+                    oninput={(e) =>
+                      (draft.editionSize =
+                        e.currentTarget.value === ""
+                          ? null
+                          : Number(e.currentTarget.value))}
+                    onfocus={selectOnFocus}
+                    onwheel={blurOnWheel}
+                  />
+                </SheetField>
+                <p class="mt-1 text-[11px] leading-relaxed italic text-[#8a6a55]">
+                  {draft.minted > 0
+                    ? $t("adminBattlesMinted").replace(
+                        "{n}",
+                        String(draft.minted),
+                      )
+                    : $t("adminBattlesEditionHint")}
+                </p>
 
                 <!-- Заём. Стоит рядом с ценами, потому что это тоже про то, как
                      карта попадает к человеку, — только даром и на время. Без

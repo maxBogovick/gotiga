@@ -2215,6 +2215,11 @@ pub async fn sitemap_xml(
         "/upcoming",
         "/acquire",
         "/impressions",
+        // Студия: галерея и сезон — публичные страницы, ради которых всё и
+        // затевалось. Стол, склад и сама студия сюда не идут: за именем.
+        "/studio/gallery",
+        "/studio/season",
+        "/studio/market",
         "/privacy",
         "/rights",
     ] {
@@ -4647,6 +4652,912 @@ pub async fn admin_reorder_battle_errands(
 ) -> Result<StatusCode> {
     service.admin_reorder_battle_errands(&req.ids).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ── Студия ───────────────────────────────────────────────────────────────────
+
+/// Что видит человек, открывший студию: пустили ли, чем занят ящик, свои рамки.
+pub async fn get_studio(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<Json<crate::models::StudioStateDto>> {
+    let user = current_user(&service, &headers).await?;
+    Ok(Json(service.studio_state(user.id).await?))
+}
+
+/// Библиотека дома — открытые детали склада. Без сессии: из них собирают рамку,
+/// и увидеть их должен всякий, кто пришёл посмотреть.
+pub async fn get_studio_library(
+    State(service): State<AppService>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<Vec<crate::models::BattleAssetDto>>> {
+    let role = params.get("role").map(|s| s.as_str());
+    Ok(Json(service.studio_library(role).await?))
+}
+
+/// Своя деталь в ящик. Тем же приёмом, что и деталь рамы дома — лоссовый WebP
+/// с альфой: обычный `/upload` пишет JPEG-копии и залил бы бумагой ту самую
+/// дыру, ради которой деталь и вырезали.
+///
+/// Место проверяется ДО записи файла: отказ после того, как байты уже легли на
+/// диск, оставил бы мусор, которого никто не считает.
+pub async fn add_studio_asset(
+    State(service): State<AppService>,
+    State(config): State<Config>,
+    headers: HeaderMap,
+    mut multipart: Multipart,
+) -> Result<Json<crate::models::StudioAssetDto>> {
+    let user = current_user(&service, &headers).await?;
+    let mut name = String::new();
+    let mut role = String::from("other");
+    let mut file: Option<Vec<u8>> = None;
+    // Сперва читается ВСЁ, и только потом делается дело. Иначе имя и роль,
+    // присланные после файла, не читаются вовсе: обработчик уже ответил, а
+    // порядок полей в multipart выбирает не он.
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::BadRequest(e.to_string()))?
+    {
+        match field.name().unwrap_or("") {
+            "name" => name = field.text().await.unwrap_or_default(),
+            "role" => role = field.text().await.unwrap_or_else(|_| "other".into()),
+            "file" => {
+                let data = field
+                    .bytes()
+                    .await
+                    .map_err(|e| AppError::BadRequest(e.to_string()))?;
+                if data.len() > MAX_IMAGE_BYTES {
+                    return Err(AppError::BadRequest("Image file is too large".into()));
+                }
+                // Место — до всякой работы: отказ после того, как байты уже
+                // легли на диск, оставил бы мусор, которого никто не считает.
+                service.studio_room_for(user.id, data.len()).await?;
+                file = Some(data.to_vec());
+            }
+            _ => {}
+        }
+    }
+    let bytes = file.ok_or_else(|| AppError::BadRequest("No file field found".to_string()))?;
+    let asset = tokio::task::spawn_blocking(move || build_frame_asset(&bytes))
+        .await
+        .map_err(|e| AppError::Internal(format!("Frame processing failed: {}", e)))??;
+    // Второй раз, уже по настоящему весу: WebP обычно легче присланного, но
+    // бывает и тяжелее, а ящик считает то, что ляжет на диск.
+    service.studio_room_for(user.id, asset.webp.len()).await?;
+    let relative = format!("studio/{}.webp", Uuid::new_v4());
+    write_bytes(&config.upload_dir, &relative, &asset.webp).await?;
+    Ok(Json(
+        service
+            .add_studio_asset(
+                user.id,
+                &name,
+                &role,
+                &format!("/static/{}", relative),
+                asset.width as i32,
+                asset.height as i32,
+                asset.webp.len() as i32,
+            )
+            .await?,
+    ))
+}
+
+pub async fn remove_studio_asset(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    let user = current_user(&service, &headers).await?;
+    service.remove_studio_asset(user.id, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Выложить рамку ОДНИМ ПАКЕТОМ: тело и все её картинки в одном запросе.
+///
+/// Не двадцатью загрузками подряд. Оборванная на пятнадцатой картинке выкладка
+/// оставила бы половину рамки на складе и никого, кто это уберёт, — а человек
+/// увидел бы работу, часть которой молча исчезла.
+///
+/// Поэтому порядок такой: сперва читается и пережимается ВСЁ, потом
+/// проверяется место под всё, и только потом пишется на диск. Если запись
+/// сорвалась посередине, уже написанное убирается — пакет либо лёг целиком,
+/// либо не лёг вовсе.
+///
+/// Картинки приходят под своими ключами (`local:<uuid>`), теми же, что стоят в
+/// теле рамы. Сервер меняет ключ на адрес склада — клиенту не приходится
+/// склеивать тело из ответов, а значит и нечему разъехаться.
+pub async fn package_studio_frame(
+    State(service): State<AppService>,
+    State(config): State<Config>,
+    headers: HeaderMap,
+    mut multipart: Multipart,
+) -> Result<Json<crate::models::StudioFrameDto>> {
+    let user = current_user(&service, &headers).await?;
+    let mut id: Option<Uuid> = None;
+    let mut name = String::new();
+    let mut body: Option<serde_json::Value> = None;
+    let mut publish = false;
+    let mut lang = String::from("ru");
+    let mut raw: Vec<(String, Vec<u8>)> = Vec::new();
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::BadRequest(e.to_string()))?
+    {
+        let field_name = field.name().unwrap_or("").to_string();
+        match field_name.as_str() {
+            "id" => {
+                let text = field.text().await.unwrap_or_default();
+                id = Uuid::parse_str(text.trim()).ok();
+            }
+            "name" => name = field.text().await.unwrap_or_default(),
+            "publish" => publish = matches!(field.text().await.as_deref(), Ok("1") | Ok("true")),
+            // Язык, на котором человек работал, когда отдавал раму: на нём с ним
+            // и заговорят, когда решение придёт — днём позже.
+            "lang" => {
+                if let Ok(l) = field.text().await {
+                    if l.trim() == "en" {
+                        lang = "en".into();
+                    }
+                }
+            }
+            "body" => {
+                let text = field
+                    .text()
+                    .await
+                    .map_err(|e| AppError::BadRequest(e.to_string()))?;
+                body = Some(
+                    serde_json::from_str(&text)
+                        .map_err(|e| AppError::BadRequest(format!("frameUnreadable: {e}")))?,
+                );
+            }
+            key if key.starts_with("local:") => {
+                let data = field
+                    .bytes()
+                    .await
+                    .map_err(|e| AppError::BadRequest(e.to_string()))?;
+                if data.len() > MAX_IMAGE_BYTES {
+                    return Err(AppError::BadRequest("Image file is too large".into()));
+                }
+                raw.push((key.to_string(), data.to_vec()));
+            }
+            _ => {}
+        }
+    }
+
+    let mut body = body.ok_or_else(|| AppError::BadRequest("bodyMissing".into()))?;
+
+    // ① Пережать всё. Ни одного файла ещё не написано.
+    let mut made: Vec<(String, EncodedFrame)> = Vec::with_capacity(raw.len());
+    for (key, bytes) in raw {
+        let asset = tokio::task::spawn_blocking(move || build_frame_asset(&bytes))
+            .await
+            .map_err(|e| AppError::Internal(format!("Frame processing failed: {}", e)))??;
+        made.push((key, asset));
+    }
+
+    // ② Место под всё сразу, а не по одной: пакет, влезающий по частям, но не
+    // целиком, — это ровно та половина работы, которой быть не должно.
+    let total: usize = made.iter().map(|(_, a)| a.webp.len()).sum();
+    service.studio_room_for(user.id, total).await?;
+
+    // ③ Написать. Сорвалось — убрать написанное.
+    let mut written: Vec<(String, String, EncodedFrame)> = Vec::with_capacity(made.len());
+    for (key, asset) in made {
+        let relative = format!("studio/{}.webp", Uuid::new_v4());
+        if let Err(e) = write_bytes(&config.upload_dir, &relative, &asset.webp).await {
+            for (_, done, _) in &written {
+                let path = std::path::Path::new(&config.upload_dir).join(done);
+                let _ = fs::remove_file(&path).await;
+            }
+            return Err(e);
+        }
+        written.push((key, relative, asset));
+    }
+
+    // ④ Ключи в теле — на адреса склада.
+    let mut swapped = serde_json::to_string(&body)
+        .map_err(|_| AppError::Internal("Рамка не сериализуется".into()))?;
+    for (key, relative, asset) in &written {
+        let url = format!("/static/{}", relative);
+        swapped = swapped.replace(key, &url);
+        service
+            .add_studio_asset(
+                user.id,
+                &name,
+                "other",
+                &url,
+                asset.width as i32,
+                asset.height as i32,
+                asset.webp.len() as i32,
+            )
+            .await?;
+    }
+    body = serde_json::from_str(&swapped)
+        .map_err(|e| AppError::Internal(format!("Рамка не читается обратно: {e}")))?;
+
+    let req = crate::models::SaveStudioFrameRequest { name, body };
+    // Куда класть: в свою запись, в новую (ссылка протухла) — или отказ словом,
+    // если работа уже на людях.
+    let id = service.studio_package_target(user.id, id).await?;
+    let frame = match id {
+        Some(id) => service.save_studio_frame(user.id, id, req).await?,
+        None => service.create_studio_frame(user.id, req).await?,
+    };
+    service.set_studio_frame_lang(user.id, frame.id, &lang).await?;
+    if publish {
+        return Ok(Json(service.publish_studio_frame(user.id, frame.id).await?));
+    }
+    Ok(Json(frame))
+}
+
+/// Принести лист на разрез. Байты хранятся как есть: разрез можно повторить с
+/// другими настройками, не спрашивая файл заново.
+pub async fn add_studio_sheet(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    mut multipart: Multipart,
+) -> Result<Json<crate::models::StudioSheetDto>> {
+    let user = current_user(&service, &headers).await?;
+    let mut name = String::new();
+    let mut file: Option<Vec<u8>> = None;
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::BadRequest(e.to_string()))?
+    {
+        match field.name().unwrap_or("") {
+            "name" => name = field.text().await.unwrap_or_default(),
+            "file" => {
+                let data = field
+                    .bytes()
+                    .await
+                    .map_err(|e| AppError::BadRequest(e.to_string()))?;
+                file = Some(data.to_vec());
+            }
+            _ => {}
+        }
+    }
+    let bytes = file.ok_or_else(|| AppError::BadRequest("No file field found".to_string()))?;
+    Ok(Json(service.add_studio_sheet(user.id, &name, bytes).await?))
+}
+
+pub async fn remove_studio_sheet(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    let user = current_user(&service, &headers).await?;
+    service.remove_studio_sheet(user.id, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn slice_studio_sheet(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(body): Json<SliceSheetRequest>,
+) -> Result<Json<BattleSheetCutDto>> {
+    let user = current_user(&service, &headers).await?;
+    Ok(Json(
+        service.slice_studio_sheet(user.id, id, body.settings).await?,
+    ))
+}
+
+pub async fn keep_studio_cut(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(body): Json<CutSheetRequest>,
+) -> Result<Json<Vec<crate::models::StudioAssetDto>>> {
+    let user = current_user(&service, &headers).await?;
+    Ok(Json(
+        service
+            .keep_studio_cut(user.id, id, body.settings, body.picks)
+            .await?,
+    ))
+}
+
+pub async fn studio_sheet_part(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(body): Json<BattleSheetPartRequest>,
+) -> Result<Json<BattleSheetPartFullDto>> {
+    let user = current_user(&service, &headers).await?;
+    Ok(Json(
+        service
+            .studio_sheet_part(user.id, id, body.settings, body.index)
+            .await?,
+    ))
+}
+
+pub async fn split_studio_asset(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(body): Json<SplitBattleAssetRequest>,
+) -> Result<Json<Vec<crate::models::StudioAssetDto>>> {
+    let user = current_user(&service, &headers).await?;
+    Ok(Json(service.split_studio_asset(user.id, id, body.rects).await?))
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameStudioAssetRequest {
+    pub name: String,
+    pub role: String,
+}
+
+pub async fn rename_studio_asset(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(body): Json<RenameStudioAssetRequest>,
+) -> Result<StatusCode> {
+    let user = current_user(&service, &headers).await?;
+    service
+        .rename_studio_asset(user.id, id, &body.name, &body.role)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ── Сезон ────────────────────────────────────────────────────────────────────
+
+/// Страница сезона. Без имени тоже: смотреть можно всякому — на это и
+/// приходят из соцсетей, — а оценивать только со входом.
+pub async fn get_studio_season(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<Json<crate::models::StudioSeasonPageDto>> {
+    let viewer = studio_viewer(&service, &headers).await;
+    Ok(Json(service.studio_season_page(None, viewer).await?))
+}
+
+pub async fn get_studio_season_by_number(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(number): Path<i32>,
+) -> Result<Json<crate::models::StudioSeasonPageDto>> {
+    let viewer = studio_viewer(&service, &headers).await;
+    Ok(Json(service.studio_season_page(Some(number), viewer).await?))
+}
+
+/// Кто смотрит, если смотрит кто-то знакомый. Неизвестный токен — не отказ:
+/// страница сезона видна всем, и «не вошёл» здесь не ошибка.
+async fn studio_viewer(service: &AppService, headers: &HeaderMap) -> Option<Uuid> {
+    let token = bearer_token(headers)?;
+    service.get_user_from_session(token).await.ok().map(|u| u.id)
+}
+
+pub async fn enter_studio_season(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(body): Json<crate::models::EnterSeasonRequest>,
+) -> Result<StatusCode> {
+    let user = current_user(&service, &headers).await?;
+    service.enter_studio_season(user.id, body.frame_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn rate_studio_entry(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(body): Json<crate::models::RateEntryRequest>,
+) -> Result<StatusCode> {
+    let user = current_user(&service, &headers).await?;
+    service.rate_studio_entry(user.id, id, body.value).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Пожаловаться. Без имени тоже: увидеть чужой арт может и не здешний.
+pub async fn report_studio_frame(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(body): Json<crate::models::ReportFrameRequest>,
+) -> Result<StatusCode> {
+    let who = studio_viewer(&service, &headers).await;
+    service
+        .report_studio_frame(who, id, &body.reason, body.note.as_deref())
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ── Допуск, со стола хозяина ─────────────────────────────────────────────────
+
+pub async fn admin_list_studio_admissions(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<crate::models::StudioFrameDto>>> {
+    Ok(Json(service.list_studio_admissions().await?))
+}
+
+// ── Свои карты ──────────────────────────────────────────────────────────────
+
+pub async fn get_studio_cards(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::models::StudioCardDto>>> {
+    let user = current_user(&service, &headers).await?;
+    Ok(Json(service.studio_cards(user.id).await?))
+}
+
+pub async fn create_studio_card(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(req): Json<crate::models::SaveStudioCardRequest>,
+) -> Result<Json<crate::models::StudioCardDto>> {
+    let user = current_user(&service, &headers).await?;
+    Ok(Json(
+        service
+            .save_studio_card(user.id, None, &req.body, &req.lang)
+            .await?,
+    ))
+}
+
+pub async fn save_studio_card(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(req): Json<crate::models::SaveStudioCardRequest>,
+) -> Result<Json<crate::models::StudioCardDto>> {
+    let user = current_user(&service, &headers).await?;
+    Ok(Json(
+        service
+            .save_studio_card(user.id, Some(id), &req.body, &req.lang)
+            .await?,
+    ))
+}
+
+pub async fn show_studio_card(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    let user = current_user(&service, &headers).await?;
+    service.show_studio_card(user.id, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn withdraw_studio_card(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    let user = current_user(&service, &headers).await?;
+    service.withdraw_studio_card(user.id, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn delete_studio_card(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    let user = current_user(&service, &headers).await?;
+    service.delete_studio_card(user.id, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Весы человека — ТА ЖЕ функция, что у стола хозяина. Второй счёт однажды
+/// разошёлся бы с первым, и человек увидел бы «годна», а приём отказал.
+pub async fn weigh_studio_card(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(body): Json<crate::models::SaveBattleCardRequest>,
+) -> Result<Json<crate::models::BattleWeighDto>> {
+    current_user(&service, &headers).await?;
+    Ok(Json(AppService::weigh_battle_card(&body)))
+}
+
+// ── Свои роды ───────────────────────────────────────────────────────────────
+
+pub async fn get_studio_races(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::models::StudioRaceDto>>> {
+    let user = current_user(&service, &headers).await?;
+    Ok(Json(service.studio_races(user.id).await?))
+}
+
+pub async fn create_studio_race(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(req): Json<crate::models::SaveStudioRaceRequest>,
+) -> Result<Json<crate::models::StudioRaceDto>> {
+    let user = current_user(&service, &headers).await?;
+    Ok(Json(service.save_studio_race(user.id, None, &req).await?))
+}
+
+pub async fn save_studio_race(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(req): Json<crate::models::SaveStudioRaceRequest>,
+) -> Result<Json<crate::models::StudioRaceDto>> {
+    let user = current_user(&service, &headers).await?;
+    Ok(Json(service.save_studio_race(user.id, Some(id), &req).await?))
+}
+
+pub async fn show_studio_race(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    let user = current_user(&service, &headers).await?;
+    service.show_studio_race(user.id, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn withdraw_studio_race(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    let user = current_user(&service, &headers).await?;
+    service.withdraw_studio_race(user.id, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn delete_studio_race(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    let user = current_user(&service, &headers).await?;
+    service.delete_studio_race(user.id, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_studio_race_queue(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<crate::models::StudioRaceQueueDto>>> {
+    Ok(Json(service.studio_race_queue().await?))
+}
+
+pub async fn admin_deny_studio_race(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<crate::models::AdmitFrameRequest>,
+) -> Result<StatusCode> {
+    service
+        .deny_studio_race(id, body.word.as_deref().unwrap_or(""))
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_approve_studio_race(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<crate::models::ApproveStudioRaceRequest>,
+) -> Result<Json<crate::models::BattleRaceDto>> {
+    Ok(Json(service.approve_studio_race(id, body).await?))
+}
+
+pub async fn admin_studio_card_queue(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<crate::models::StudioCardQueueDto>>> {
+    Ok(Json(service.studio_card_queue().await?))
+}
+
+pub async fn admin_deny_studio_card(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<crate::models::AdmitFrameRequest>,
+) -> Result<StatusCode> {
+    service
+        .deny_studio_card(id, body.word.as_deref().unwrap_or(""))
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_approve_studio_card(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<crate::models::ApproveStudioCardRequest>,
+) -> Result<Json<crate::models::BattleCardDto>> {
+    Ok(Json(service.approve_studio_card(id, body).await?))
+}
+
+pub async fn admin_admit_studio_frame(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<crate::models::AdmitFrameRequest>,
+) -> Result<StatusCode> {
+    service.admit_studio_frame(id, body.word.as_deref()).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_deny_studio_frame(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<crate::models::AdmitFrameRequest>,
+) -> Result<StatusCode> {
+    service
+        .deny_studio_frame(id, body.word.as_deref().unwrap_or(""))
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_save_studio_season(
+    State(service): State<AppService>,
+    Json(body): Json<crate::models::SaveSeasonThemeRequest>,
+) -> Result<Json<crate::models::StudioSeasonDto>> {
+    Ok(Json(
+        service
+            .save_studio_season_theme(body.theme.as_deref(), body.theme_note.as_deref())
+            .await?,
+    ))
+}
+
+/// Подвести сезон руками. Та же функция, что и у фоновой задачи, и она
+/// идемпотентна: подведённый сезон второй раз не считается.
+pub async fn admin_judge_studio_season(
+    State(service): State<AppService>,
+) -> Result<Json<serde_json::Value>> {
+    let season = service.studio_season_now().await?;
+    let chosen = service.judge_studio_season(season.id).await?;
+    Ok(Json(serde_json::json!({ "toKeeper": chosen })))
+}
+
+/// Галерея. Публично: это и есть страница, ради которой приходят из соцсетей.
+pub async fn get_studio_gallery(
+    State(service): State<AppService>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<crate::models::StudioGalleryDto>> {
+    let page = params
+        .get("page")
+        .and_then(|p| p.parse::<i64>().ok())
+        .unwrap_or(0);
+    Ok(Json(service.studio_gallery(page).await?))
+}
+
+/// Зал авторов. Публично, и по слугу: адрес должен читаться словами.
+pub async fn get_studio_author(
+    State(service): State<AppService>,
+    Path(slug): Path<String>,
+) -> Result<Json<crate::models::StudioAuthorDto>> {
+    Ok(Json(service.studio_author(&slug).await?))
+}
+
+/// Свои лицензии: что человек может носить и однажды продать.
+pub async fn get_my_licences(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::models::LicenceDto>>> {
+    let user = current_user(&service, &headers).await?;
+    Ok(Json(service.my_licences(user.id).await?))
+}
+
+/// Лавка. Видна без имени: на неё приходят смотреть.
+pub async fn get_market(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<crate::models::ListingDto>>> {
+    Ok(Json(service.market().await?))
+}
+
+pub async fn list_licence(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(body): Json<crate::models::ListLicenceRequest>,
+) -> Result<Json<serde_json::Value>> {
+    let user = current_user(&service, &headers).await?;
+    let id = service
+        .list_thing(
+            user.id,
+            &body.kind,
+            body.subject_id,
+            body.price,
+            &body.currency,
+        )
+        .await?;
+    Ok(Json(serde_json::json!({ "id": id })))
+}
+
+/// Экземпляры карт на прилавке. Отдельным ответом от лицензий: право носить
+/// раму и сама карта — разные вещи, и показаны они по-разному.
+pub async fn get_market_copies(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<crate::models::CopyListingDto>>> {
+    Ok(Json(service.market_copies().await?))
+}
+
+/// Что сейчас на молотке. Видно без имени: смотреть торг приходят все.
+pub async fn get_auctions(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<crate::models::AuctionDto>>> {
+    Ok(Json(service.auctions().await?))
+}
+
+pub async fn start_auction(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(body): Json<crate::models::StartAuctionRequest>,
+) -> Result<Json<serde_json::Value>> {
+    let user = current_user(&service, &headers).await?;
+    let id = service.start_auction(user.id, &body).await?;
+    Ok(Json(serde_json::json!({ "id": id })))
+}
+
+pub async fn place_bid(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(body): Json<crate::models::BidRequest>,
+) -> Result<Json<serde_json::Value>> {
+    let user = current_user(&service, &headers).await?;
+    let amount = service.place_bid(user.id, id, body.amount).await?;
+    Ok(Json(serde_json::json!({ "amount": amount })))
+}
+
+/// Предложить мену против объявления.
+pub async fn offer_trade(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(body): Json<crate::models::OfferTradeRequest>,
+) -> Result<Json<serde_json::Value>> {
+    let user = current_user(&service, &headers).await?;
+    let id = service.offer_trade(user.id, &body).await?;
+    Ok(Json(serde_json::json!({ "id": id })))
+}
+
+pub async fn get_trades(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::models::TradeDto>>> {
+    let user = current_user(&service, &headers).await?;
+    Ok(Json(service.trades(user.id).await?))
+}
+
+pub async fn accept_trade(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    let user = current_user(&service, &headers).await?;
+    service.accept_trade(user.id, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn refuse_trade(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    let user = current_user(&service, &headers).await?;
+    service.refuse_trade(user.id, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn get_my_copies(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::models::MyCopyDto>>> {
+    let user = current_user(&service, &headers).await?;
+    Ok(Json(service.my_copies(user.id).await?))
+}
+
+pub async fn withdraw_listing(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    let user = current_user(&service, &headers).await?;
+    service.withdraw_listing(user.id, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn buy_listing(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>> {
+    let user = current_user(&service, &headers).await?;
+    let balance = service.buy_listing(user.id, id).await?;
+    Ok(Json(serde_json::json!({ "balance": balance })))
+}
+
+pub async fn admin_studio_queue(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<crate::models::StudioEntryDto>>> {
+    Ok(Json(service.studio_keeper_queue().await?))
+}
+
+pub async fn admin_approve_studio_frame(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<crate::models::ApproveFrameRequest>,
+) -> Result<StatusCode> {
+    service.approve_studio_frame(id, body.edition_size).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_strike_studio_frame(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<crate::models::AdmitFrameRequest>,
+) -> Result<StatusCode> {
+    service
+        .strike_studio_frame(id, body.word.as_deref().unwrap_or(""))
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_studio_reports(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<crate::models::StudioReportDto>>> {
+    Ok(Json(service.list_studio_reports().await?))
+}
+
+pub async fn admin_close_studio_report(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    service.close_studio_report(id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_studio_waiting(
+    State(service): State<AppService>,
+) -> Result<Json<crate::models::StudioWaitingDto>> {
+    Ok(Json(service.studio_waiting().await?))
+}
+
+pub async fn accept_studio_agreement(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<StatusCode> {
+    let user = current_user(&service, &headers).await?;
+    service.accept_studio_agreement(user.id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn create_studio_frame(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(req): Json<crate::models::SaveStudioFrameRequest>,
+) -> Result<Json<crate::models::StudioFrameDto>> {
+    let user = current_user(&service, &headers).await?;
+    Ok(Json(service.create_studio_frame(user.id, req).await?))
+}
+
+pub async fn save_studio_frame(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(req): Json<crate::models::SaveStudioFrameRequest>,
+) -> Result<Json<crate::models::StudioFrameDto>> {
+    let user = current_user(&service, &headers).await?;
+    Ok(Json(service.save_studio_frame(user.id, id, req).await?))
+}
+
+pub async fn delete_studio_frame(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    let user = current_user(&service, &headers).await?;
+    service.delete_studio_frame(user.id, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ── Студия ───────────────────────────────────────────────────────────────────
+
+/// Настройки студии. Только со стола хозяина: потолки склада и ворота — это
+/// хозяйство дома, а не то, о чём спрашивают гостя.
+pub async fn admin_get_studio_settings(
+    State(service): State<AppService>,
+) -> Result<Json<crate::studio::StudioSettings>> {
+    Ok(Json(service.get_studio_settings().await?))
+}
+
+pub async fn admin_save_studio_settings(
+    State(service): State<AppService>,
+    Json(req): Json<crate::studio::StudioSettings>,
+) -> Result<Json<crate::studio::StudioSettings>> {
+    Ok(Json(service.save_studio_settings(req).await?))
 }
 
 pub async fn admin_get_battle_clock(
