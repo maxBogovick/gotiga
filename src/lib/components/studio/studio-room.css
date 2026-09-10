@@ -1,0 +1,419 @@
+/* Одежда комнат студии. Одна на все одиннадцать.
+ *
+ * Заведена по разбору `STUDIO-DESIGN-REVIEW.md`: комнаты были набраны
+ * утилитами, цвет вписан литералом до ста раз в файл, а весь ритм держался на
+ * одном приёме — капсе вразрядку, которым были набраны и заголовок раздела, и
+ * срок, и кнопка, и пустое состояние. Семь разных по смыслу вещей выглядели
+ * одинаково, и первое, что делал человек на такой странице, — читал её целиком
+ * подряд.
+ *
+ * Ритм взят у комнат ДОМА (`/battles`, `/tales`), а не придуман заново: надбровие
+ * с чертой, имя комнаты серифом в `clamp()`, строка объяснения в 42 знака, зерно
+ * на бумаге. Студия — комната того же дома, а не соседний сайт.
+ *
+ * Носится классом на корне: `<div class="studio-room">`. */
+
+.studio-room {
+  --ink: #34251c;
+  --ink-soft: #6f3b24;
+  --ink-faint: #8a6a55;
+  --ink-ghost: #b0a08e;
+  --paper: #f8f1e7;
+  --paper-lit: #fdf9f3;
+  --edge: #d8c6b1;
+  --accent: #c65f3c;
+  --danger: #8f2f22;
+  --serif: Georgia, 'Fraunces', serif;
+
+  position: relative;
+  min-height: 100vh;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+/* Зерно бумаги. Дом кладёт его во всех своих комнатах, и без него страница
+   выглядит белым листом, а не бумагой. */
+.studio-room::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.05;
+  background-image: radial-gradient(var(--ink) 0.5px, transparent 0.5px);
+  background-size: 4px 4px;
+}
+
+.studio-room .page {
+  position: relative;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: clamp(2rem, 5vw, 3rem) 1.5rem 6rem;
+}
+
+/* ── Шапка комнаты ─────────────────────────────────────────────────────── */
+
+.studio-room .eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin: 0 0 1rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.studio-room .eyebrow-rule {
+  flex: 0 0 auto;
+  width: 3.5rem;
+  height: 1px;
+  background: var(--edge);
+}
+
+/* На узком экране надбровие несёт ТОЛЬКО дорогу назад: два капса вразрядку и
+   черта между ними переносились на три строки и съедали первый экран — тот
+   самый, ради которого сюда приходят по ссылке. */
+@media (max-width: 520px) {
+  .studio-room .eyebrow-rule,
+  .studio-room .eyebrow > span:last-child {
+    display: none;
+  }
+}
+
+.studio-room .eyebrow a {
+  color: inherit;
+  text-decoration: none;
+  opacity: 0.75;
+}
+
+.studio-room .eyebrow a:hover {
+  opacity: 1;
+  color: var(--accent);
+}
+
+.studio-room .room-title {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: clamp(2rem, 5vw, 3.2rem);
+  font-weight: 400;
+  line-height: 1.1;
+}
+
+.studio-room .room-lead {
+  max-width: 42ch;
+  margin: 1rem 0 0;
+  font-family: var(--serif);
+  font-size: 1rem;
+  line-height: 1.6;
+  opacity: 0.74;
+}
+
+/* Заголовок полки внутри комнаты. Меньше имени комнаты и НЕ капсом: капсом
+   набрано надбровие, и третий капс в одном столбце — это шум. */
+.studio-room .shelf-title {
+  margin: clamp(2.5rem, 5vw, 3.5rem) 0 0;
+  font-family: var(--serif);
+  font-size: clamp(1.25rem, 2.4vw, 1.6rem);
+  font-weight: 400;
+}
+
+.studio-room .shelf-lead {
+  max-width: 46ch;
+  margin: 0.5rem 0 0;
+  font-family: var(--serif);
+  font-size: 0.94rem;
+  line-height: 1.55;
+  opacity: 0.7;
+}
+
+/* ── Слова ─────────────────────────────────────────────────────────────── */
+
+/* Подпись под вещью — СЕРИФОМ: всё, что называет вещь, дом набирает Georgia,
+   и имя работы, набранное 11 пикселями санса, выглядит отладочным выводом. */
+.studio-room .name {
+  margin: 0.6rem 0 0;
+  font-family: var(--serif);
+  font-size: 1rem;
+  line-height: 1.3;
+}
+
+.studio-room .by {
+  margin: 0.15rem 0 0;
+  font-family: var(--serif);
+  font-size: 0.86rem;
+  color: var(--ink-faint);
+}
+
+.studio-room .by a {
+  color: inherit;
+}
+
+/* Отметка на вещи: «на полке», «у хозяина», «на прилавке». Единственное место,
+   где остаётся капс вразрядку, — потому что это ярлык, а не слова. */
+.studio-room .mark {
+  margin: 0.2rem 0 0;
+  font-size: 0.62rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.studio-room .mark--lit {
+  color: var(--accent);
+}
+
+/* Слово хозяина — курсивом и в полную строку: отказ, из которого не видно, что
+   чинить, вернётся той же работой. */
+.studio-room .word {
+  margin: 0.4rem 0 0;
+  max-width: 42ch;
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+
+.studio-room .empty {
+  margin: 3rem 0 0;
+  font-family: var(--serif);
+  font-size: 1.05rem;
+  font-style: italic;
+  color: var(--ink-faint);
+}
+
+.studio-room .said {
+  margin: 1rem 0 0;
+  font-family: var(--serif);
+  font-size: 0.95rem;
+  color: var(--accent);
+}
+
+/* ── Кнопки ────────────────────────────────────────────────────────────── */
+
+.studio-room .doors {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.7rem 1rem;
+  margin: clamp(1.5rem, 3vw, 2rem) 0 0;
+}
+
+.studio-room .btn {
+  display: inline-block;
+  padding: 0.5rem 1.1rem;
+  border: 1px solid rgba(52, 37, 28, 0.25);
+  background: none;
+  font-family: inherit;
+  font-size: 0.66rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink);
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.studio-room .btn:hover:not(:disabled) {
+  background: rgba(52, 37, 28, 0.05);
+}
+
+.studio-room .btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.studio-room .btn--lit {
+  border-color: rgba(198, 95, 60, 0.45);
+  color: var(--accent);
+}
+
+.studio-room .btn--lit:hover:not(:disabled) {
+  background: rgba(198, 95, 60, 0.08);
+}
+
+/* Тихое действие: ссылкой, а не кнопкой. Их под вещью по три, и три рамки
+   рядом — это забор. */
+.studio-room .quiet {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  font-size: 0.62rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  cursor: pointer;
+}
+
+.studio-room .quiet:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+.studio-room .quiet:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Необратимое отделено И ЦВЕТОМ, И МЕСТОМ: «выбросить» вплотную к «работать» —
+   это кнопка, которую однажды нажмут не ту. */
+.studio-room .quiet--danger {
+  margin-left: auto;
+  color: var(--ink-ghost);
+}
+
+.studio-room .quiet--danger:hover:not(:disabled) {
+  color: var(--danger);
+}
+
+.studio-room .deeds {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.9rem;
+  margin: 0.45rem 0 0;
+}
+
+/* ── Полки ─────────────────────────────────────────────────────────────── */
+
+/* ОДНА карта в ряд на телефоне. Карта сама гасит по описи почти все строки
+   ниже 160 px, и полполосы на телефоне — это пустая рама там, где человек
+   впервые видит работу. */
+.studio-room .shelf {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: clamp(1.5rem, 3vw, 2.2rem);
+  margin: 1.75rem 0 0;
+}
+
+@media (min-width: 480px) {
+  .studio-room .shelf {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 780px) {
+  .studio-room .shelf {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (min-width: 1040px) {
+  .studio-room .shelf {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+/* Ярлык с ценой. НЕ ценник: цена написана тушью рядом с номером экземпляра,
+   а не плашкой у кнопки «купить». */
+.studio-room .tag {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem;
+  margin: 0.35rem 0 0;
+  font-family: var(--serif);
+  font-size: 0.95rem;
+  color: var(--ink-soft);
+}
+
+.studio-room .tag-coin {
+  font-size: 0.62rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+/* ── Листки и поля ─────────────────────────────────────────────────────── */
+
+.studio-room .slip {
+  margin: 1.5rem 0 0;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--edge);
+  background: var(--paper-lit);
+}
+
+.studio-room .field {
+  display: block;
+  font-size: 0.62rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.studio-room .field input,
+.studio-room .field textarea,
+.studio-room .field select {
+  display: block;
+  width: 100%;
+  margin-top: 0.35rem;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--edge);
+  background: #fff;
+  font-family: var(--serif);
+  font-size: 0.95rem;
+  color: var(--ink);
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.studio-room .field input:focus,
+.studio-room .field textarea:focus,
+.studio-room .field select:focus {
+  outline: none;
+  border-color: rgba(198, 95, 60, 0.5);
+}
+
+.studio-room .hint {
+  margin: 0.35rem 0 0;
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--ink-faint);
+}
+
+/* Named `.field-grid`, not the bare `.grid` Tailwind already owns: a plain
+   `.grid` here once collided with every Tailwind `grid-cols-*` utility on
+   the same subtree — same class name, and this rule's two-class selector
+   outranked Tailwind's single-class one, silently forcing every Tailwind
+   grid on the page to one column regardless of viewport. */
+.studio-room .field-grid {
+  display: grid;
+  gap: 0.75rem 1rem;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 640px) {
+  .studio-room .grid--two {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .studio-room .grid--three {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* Числа тела: их десять, и в три колонки на телефоне они читаются столбиком
+   паспорта, а не сеткой полей. */
+.studio-room .grid--numbers {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+@media (min-width: 520px) {
+  .studio-room .grid--numbers {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (min-width: 780px) {
+  .studio-room .grid--numbers {
+    grid-template-columns: repeat(5, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .studio-room .btn {
+    transition: none;
+  }
+}

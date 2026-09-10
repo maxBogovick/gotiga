@@ -117,7 +117,10 @@ import type {
     StudioEntry,
     StudioReport,
     StudioWaiting,
+    Motion,
     StudioCard,
+    StudioMotion,
+    StudioMotionWaiting,
     StudioCardWaiting,
     StudioRace,
     StudioRaceWaiting,
@@ -130,6 +133,7 @@ import type {
     StudioLicence,
     StudioListing,
     StudioGallery,
+    StudioShown,
     StudioAuthor,
     BattleAsset as BattleAssetRow,
     CopyOverrides,
@@ -2594,6 +2598,10 @@ export const api = {
         return webFetch('/admin/studio/admissions', { headers: authHeaders() });
     },
 
+    async adminApprovedStudioFrames(): Promise<StudioShown[]> {
+        return webFetch('/admin/studio/frames/approved', { headers: authHeaders() });
+    },
+
     async adminAdmitStudioFrame(id: string, word?: string): Promise<void> {
         await webFetch(`/admin/studio/frames/${id}/admit`, {
             method: 'POST',
@@ -2617,6 +2625,63 @@ export const api = {
 
     async getStudioAuthor(slug: string, loadFetch?: typeof fetch): Promise<StudioAuthor> {
         return webFetch(`/studio/authors/${encodeURIComponent(slug)}`, undefined, loadFetch);
+    },
+
+    // ── Свои движения ───────────────────────────────────────────────────────
+
+    async getStudioMotions(sessionToken: string): Promise<StudioMotion[]> {
+        return webFetch('/studio/motions', {
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    /** Ящик целиком: стол правит его разом и сохраняет разом. */
+    async saveStudioMotions(
+        sessionToken: string,
+        motions: Motion[],
+        lang: string,
+    ): Promise<StudioMotion[]> {
+        return webFetch('/studio/motions', {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${sessionToken}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ motions, lang }),
+        });
+    },
+
+    async showStudioMotion(sessionToken: string, id: string): Promise<void> {
+        await webFetch(`/studio/motions/${id}/show`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    async withdrawStudioMotion(sessionToken: string, id: string): Promise<void> {
+        await webFetch(`/studio/motions/${id}/withdraw`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    async adminStudioMotionQueue(): Promise<StudioMotionWaiting[]> {
+        return webFetch('/admin/studio/motions', { headers: authHeaders() });
+    },
+
+    async adminDenyStudioMotion(id: string, word: string): Promise<void> {
+        await webFetch(`/admin/studio/motions/${id}/deny`, {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ word }),
+        });
+    },
+
+    async adminApproveStudioMotion(id: string): Promise<void> {
+        await webFetch(`/admin/studio/motions/${id}/approve`, {
+            method: 'POST',
+            headers: authHeaders(),
+        });
     },
 
     // ── Свои карты ──────────────────────────────────────────────────────────

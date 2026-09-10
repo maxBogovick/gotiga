@@ -15,6 +15,8 @@
   import { onMount } from 'svelte';
   import { t } from '$lib/i18n';
   import { api } from '$lib/api';
+  import StudioAsk from '$lib/components/studio/StudioAsk.svelte';
+  import '$lib/components/studio/studio-room.css';
   import { authStore } from '$lib/stores/auth.svelte';
   import * as local from '$lib/studio/local';
   import { liveUrl } from '$lib/studio/live';
@@ -48,6 +50,12 @@
   let settings = $state<BattleSliceSettings | null>(null);
 
   let token = $derived(authStore.token);
+
+  /** Что выбрасывают. Своим окном, а не системным: необратимое дом
+   *  спрашивает сам и спрашивает на пергаменте. */
+  let dropping = $state<
+    null | { where: 'bench'; one: local.LocalAsset } | { where: 'box'; one: StudioAsset }
+  >(null);
 
   onMount(reload);
 
@@ -99,7 +107,6 @@
   }
 
   async function dropLocal(one: local.LocalAsset) {
-    if (!confirm($t('studioDropSure').replace('{name}', one.name))) return;
     await local.dropAsset(one.key);
     mine = await local.listAssets();
   }
@@ -114,7 +121,6 @@
 
   async function dropBox(one: StudioAsset) {
     if (!token) return;
-    if (!confirm($t('studioDropSure').replace('{name}', one.name))) return;
     await api.deleteStudioAsset(token, one.id).catch((e) => flash(String(e)));
     studio = await api.getStudio(token);
   }
@@ -211,28 +217,32 @@
   }
 </script>
 
-<svelte:head><title>{$t('studioStore')}</title></svelte:head>
+<svelte:head>
+  <title>{$t('studioStore')}</title>
+  <meta name="description" content={$t('studioStoreLead')} />
+</svelte:head>
 
-<div class="mx-auto max-w-5xl px-5 py-10">
-  <div class="flex flex-wrap items-baseline justify-between gap-3">
-    <h1 class="font-serif text-2xl text-[#34251c]">{$t('studioStore')}</h1>
-    <a href="/studio" class="text-xs uppercase tracking-[0.16em] text-[#8a6a55] hover:text-[#c65f3c]"
-      >← {$t('studioBack')}</a
-    >
-  </div>
-  <p class="mt-2 max-w-2xl text-sm leading-relaxed text-[#6f3b24]">{$t('studioStoreLead')}</p>
+<div class="studio-room">
+  <div class="page">
+  <p class="eyebrow">
+    <a href="/studio">{$t('studioBack')}</a>
+    <span class="eyebrow-rule"></span>
+    <span>{$t('studioEyebrow')}</span>
+  </p>
+  <h1 class="room-title">{$t('studioStore')}</h1>
+  <p class="room-lead">{$t('studioStoreLead')}</p>
 
-  {#if said}<p class="mt-3 text-xs text-[#c65f3c]">{said}</p>{/if}
+  {#if said}<p class="said">{said}</p>{/if}
 
   {#if loading}
-    <p class="mt-8 text-sm text-[#8a6a55]">{$t('studioLoading')}</p>
+    <p class="empty">{$t('studioLoading')}</p>
   {:else}
     <!-- ── Лист и разрез ─────────────────────────────────────────────────── -->
     <section class="mt-8 border border-[#d8c6b1] bg-[#fdf9f3] p-4">
-      <h2 class="text-[11px] uppercase tracking-[0.18em] text-[#8a6a55]">{$t('studioSheets')}</h2>
+      <h2 class="shelf-title">{$t('studioSheets')}</h2>
       <p class="mt-1 max-w-2xl text-xs leading-relaxed text-[#8a6a55]">{$t('studioSheetsLead')}</p>
 
-      <label class="mt-3 inline-block cursor-pointer border border-[#34251c]/25 px-4 py-2 text-xs uppercase tracking-[0.16em] hover:bg-[#34251c]/5">
+      <label class="btn" style="margin-top:1rem;cursor:pointer">
         {$t('studioBringSheet')}
         <input
           type="file"
@@ -246,7 +256,7 @@
       {#if sheet && cut}
         <div class="mt-4 flex flex-wrap items-end gap-3 border-t border-[#d8c6b1] pt-3">
           {#if settings}
-            <label class="text-[10px] uppercase tracking-[0.14em] text-[#8a6a55]">
+            <label class="field">
               {$t('studioSliceThreshold')}
               <input
                 type="number"
@@ -257,7 +267,7 @@
                 class="ml-2 w-16 border border-[#34251c]/15 bg-transparent px-1 py-0.5 text-xs"
               />
             </label>
-            <label class="text-[10px] uppercase tracking-[0.14em] text-[#8a6a55]">
+            <label class="field">
               {$t('studioSliceMinSide')}
               <input
                 type="number"
@@ -266,7 +276,7 @@
                 class="ml-2 w-20 border border-[#34251c]/15 bg-transparent px-1 py-0.5 text-xs"
               />
             </label>
-            <label class="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-[#8a6a55]">
+            <label class="field" style="display:flex;align-items:center;gap:.4rem">
               <input type="checkbox" bind:checked={settings.keepText} class="accent-[#c65f3c]" />
               {$t('studioSliceKeepText')}
             </label>
@@ -274,7 +284,7 @@
           <button
             onclick={propose}
             disabled={busy}
-            class="border border-[#34251c]/25 px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] hover:bg-[#34251c]/5 disabled:opacity-40"
+            class="btn"
             >{$t('studioSliceAgain')}</button
           >
           <span class="text-[11px] text-[#8a6a55]"
@@ -283,7 +293,7 @@
           <button
             onclick={keepCut}
             disabled={busy || !Object.keys(picked).length}
-            class="ml-auto border border-[#c65f3c]/50 px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] text-[#c65f3c] hover:bg-[#c65f3c]/8 disabled:opacity-40"
+            class="btn btn--lit" style="margin-left:auto"
             >{$t('studioKeepPicked').replace('{n}', String(Object.keys(picked).length))}</button
           >
         </div>
@@ -319,7 +329,7 @@
               {/if}
               <button
                 onclick={() => openBoard(part.index)}
-                class="mt-1 w-full text-[9px] uppercase tracking-[0.14em] text-[#8a6a55] hover:text-[#c65f3c]"
+                class="quiet" style="margin-top:.25rem;width:100%"
                 >{$t('studioSplit')}</button
               >
             </div>
@@ -330,9 +340,9 @@
 
     <!-- ── Верстак: свои картинки в этом браузере ────────────────────────── -->
     <section class="mt-8">
-      <h2 class="text-[11px] uppercase tracking-[0.18em] text-[#8a6a55]">{$t('studioMyPieces')}</h2>
+      <h2 class="shelf-title">{$t('studioMyPieces')}</h2>
       <p class="mt-1 text-xs text-[#8a6a55]">{$t('studioMyPiecesLead')}</p>
-      <label class="mt-3 inline-block cursor-pointer border border-[#34251c]/25 px-4 py-2 text-xs uppercase tracking-[0.16em] hover:bg-[#34251c]/5">
+      <label class="btn" style="margin-top:1rem;cursor:pointer">
         {$t('studioBringPieces')}
         <input
           type="file"
@@ -362,7 +372,7 @@
                   >{$t('studioToBox')}</button
                 >
                 <button
-                  onclick={() => dropLocal(one)}
+                  onclick={() => (dropping = { where: 'bench', one })}
                   class="text-[9px] uppercase tracking-[0.14em] text-[#8f2f22]/70 hover:text-[#8f2f22]"
                   >{$t('studioDrop')}</button
                 >
@@ -371,14 +381,14 @@
           {/each}
         </div>
       {:else}
-        <p class="mt-3 text-sm text-[#8a6a55]">{$t('studioPickEmpty')}</p>
+        <p class="empty">{$t('studioPickEmpty')}</p>
       {/if}
     </section>
 
     <!-- ── Ящик: то, что отдано дому ─────────────────────────────────────── -->
     <section class="mt-8">
       <div class="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 class="text-[11px] uppercase tracking-[0.18em] text-[#8a6a55]">{$t('studioBox')}</h2>
+        <h2 class="shelf-title">{$t('studioBox')}</h2>
         {#if studio}
           <span class="text-[11px] text-[#8a6a55]"
             >{$t('studioBoxUsed')
@@ -412,7 +422,7 @@
               <div class="mt-1 flex justify-between">
                 <span class="text-[9px] text-[#b0a08e]">{mb(one.bytes)}</span>
                 <button
-                  onclick={() => dropBox(one)}
+                  onclick={() => (dropping = { where: 'box', one })}
                   class="text-[9px] uppercase tracking-[0.14em] text-[#8f2f22]/70 hover:text-[#8f2f22]"
                   >{$t('studioDrop')}</button
                 >
@@ -421,10 +431,11 @@
           {/each}
         </div>
       {:else}
-        <p class="mt-3 text-sm text-[#8a6a55]">{$t('studioBoxEmpty')}</p>
+        <p class="empty">{$t('studioBoxEmpty')}</p>
       {/if}
     </section>
   {/if}
+  </div>
 </div>
 
 <!-- Разделочная доска: там, где автоматика бессильна по существу — два уголка
@@ -469,4 +480,20 @@
       {/key}
     </div>
   </div>
+{/if}
+
+{#if dropping}
+  <StudioAsk
+    title={$t('studioDrop')}
+    lead={$t('studioDropSure').replace('{name}', dropping.one.name)}
+    yes={$t('studioDrop')}
+    danger
+    onyes={() => {
+      const go = dropping;
+      dropping = null;
+      if (go?.where === 'bench') void dropLocal(go.one);
+      else if (go) void dropBox(go.one);
+    }}
+    onclose={() => (dropping = null)}
+  />
 {/if}

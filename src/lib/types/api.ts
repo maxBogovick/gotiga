@@ -2163,6 +2163,27 @@ export interface StudioAuthor {
 }
 
 /** Лицензия — право носить раму. Экземпляр с номером: «№7 из 200». */
+/** Своё движение человека: такт, который однажды сыграют чужие карты. */
+export interface StudioMotion {
+    id: string;
+    /** Тело — `Motion` буква в букву: тот же вид, что в своде дома. */
+    body: Motion;
+    status: 'draft' | 'shown' | 'withdrawn' | 'taken';
+    keeperWord?: string | null;
+    approvedAt?: string | null;
+    /** Каким именем движение встало в свод дома. */
+    houseId?: string | null;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface StudioMotionWaiting {
+    id: string;
+    body: Motion;
+    author: string;
+    updatedAt: string;
+}
+
 /** Своя карта человека: тело будущей карты плюс что о ней решил хозяин.
  *
  *  Имени отдельным полем нет — оно внутри тела (`titleRu`/`titleEn`): два
@@ -2243,6 +2264,7 @@ export interface ApproveStudioCardRequest {
     frameOverride?: string | null;
     motionWear?: string | null;
     artUrl?: string | null;
+    figurineId?: string | null;
     creditName?: string | null;
     status: 'draft' | 'published';
     rewardDust?: number | null;

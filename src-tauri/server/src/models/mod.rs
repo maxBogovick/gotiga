@@ -5031,6 +5031,44 @@ pub struct StudioCardDto {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Своё движение человека: такт, который однажды сыграют чужие карты.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioMotionDto {
+    pub id: Uuid,
+    /// Тело — `Motion` буква в букву: тот же вид, что в своде дома.
+    pub body: serde_json::Value,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keeper_word: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approved_at: Option<DateTime<Utc>>,
+    /// Каким именем движение встало в свод дома.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub house_id: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioMotionQueueDto {
+    pub id: Uuid,
+    pub body: serde_json::Value,
+    pub author: String,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveStudioMotionsRequest {
+    /// Ящик целиком: стол правит его разом, и сохранять по одному значило бы
+    /// спрашивать, какая строка какому движению отвечает.
+    pub motions: Vec<serde_json::Value>,
+    #[serde(default = "crate::studio::default_lang")]
+    pub lang: String,
+}
+
 /// Свой род человека: словарная строка, которую однажды наденут чужие карты.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 #[serde(rename_all = "camelCase")]
@@ -5128,6 +5166,10 @@ pub struct ApproveStudioCardRequest {
     /// Хозяин волен заменить картинку — например, на фотографию настоящей
     /// работы.
     pub art_url: Option<String>,
+    /// Настоящая фигурка дома, которую эта карта изображает. Домовое поле:
+    /// в теле гостя его нет (`HOUSE_CARD_FIELDS`), и без него запись здесь
+    /// оно молча оставалось `None` навсегда.
+    pub figurine_id: Option<String>,
     /// Как подписать автора. Пусто — именем из учётной записи; подписывать
     /// умолчанием, потому что это чужой труд.
     pub credit_name: Option<String>,

@@ -2904,6 +2904,14 @@ pub struct Motion {
     pub span: i16,
     #[serde(default)]
     pub gestures: Vec<MotionGesture>,
+    /// Кто придумал. Пусто — дом.
+    ///
+    /// Автограф движения, поставленный студией при утверждении. В своде дома
+    /// он лежит тем же полем, а не отдельным списком имён рядом: список,
+    /// который надо держать в согласии со сводом, разошёлся бы с ним на первом
+    /// же переименовании.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub credit: String,
 }
 
 impl Motion {

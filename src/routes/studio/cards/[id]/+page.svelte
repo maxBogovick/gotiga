@@ -16,6 +16,7 @@
   import { cardFromRequest } from '$lib/battles';
   import BattleCard from '$lib/components/BattleCard.svelte';
   import BattleAbilities from '$lib/components/BattleAbilities.svelte';
+  import '$lib/components/studio/studio-room.css';
   import type {
     BattleFrame,
     BattleRace,
@@ -162,28 +163,26 @@
 
 <svelte:head><title>{$t('studioCardDesk')}</title></svelte:head>
 
-<div class="mx-auto max-w-6xl px-5 py-8">
-  <div class="flex flex-wrap items-baseline justify-between gap-3">
-    <h1 class="font-serif text-2xl text-[#34251c]">{$t('studioCardDesk')}</h1>
-    <a
-      href="/studio/cards"
-      class="text-xs uppercase tracking-[0.16em] text-[#8a6a55] hover:text-[#c65f3c]"
-      >← {$t('studioCards')}</a
-    >
-  </div>
+<div class="studio-room"><div class="page" style="max-width:76rem">
+  <p class="eyebrow">
+    <a href="/studio/cards">{$t('studioCards')}</a>
+    <span class="eyebrow-rule"></span>
+    <span>{$t('studioEyebrow')}</span>
+  </p>
+  <h1 class="room-title">{$t('studioCardDesk')}</h1>
 
-  {#if said}<p class="mt-3 text-xs text-[#c65f3c]">{said}</p>{/if}
+  {#if said}<p class="said">{said}</p>{/if}
 
   {#if loading}
-    <p class="mt-8 text-sm text-[#8a6a55]">{$t('studioLoading')}</p>
+    <p class="empty">{$t('studioLoading')}</p>
   {:else if !work || !body}
-    <p class="mt-8 text-sm text-[#8a6a55]">{$t('studioCardGone')}</p>
+    <p class="empty">{$t('studioCardGone')}</p>
   {:else if work.status === 'shown'}
-    <p class="mt-8 text-sm text-[#6f3b24]">{$t('studioCardShownLocked')}</p>
+    <p class="empty">{$t('studioCardShownLocked')}</p>
   {:else if work.status === 'taken'}
     <!-- Взятая домом не правится, и это не строгость: карта уже отпечатана и
          стоит на полке, а запись под ней — память о том, ЧТО принесли. -->
-    <p class="mt-8 text-sm text-[#6f3b24]">{$t('studioCardTakenLocked')}</p>
+    <p class="empty">{$t('studioCardTakenLocked')}</p>
     {#if work.cardId}
       <a
         href="/battles?card={work.cardId}"
@@ -198,7 +197,7 @@
         <BattleCard card={cardFromRequest(body, races)} {frames} owned={true} />
 
         <div class="mt-4 border border-[#d8c6b1] bg-[#fdf9f3] p-3">
-          <p class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]">
+          <p class="field">
             {$t('studioScales')}
           </p>
           {#if weigh}
@@ -223,17 +222,17 @@
           {/if}
         </div>
 
-        <div class="mt-4 flex flex-wrap gap-2">
+        <div class="doors">
           <button
             onclick={save}
             disabled={saving || !dirty}
-            class="border border-[#34251c]/25 px-4 py-2 text-xs uppercase tracking-[0.16em] hover:bg-[#34251c]/5 disabled:opacity-40"
+            class="btn"
             >{dirty ? $t('studioCardSave') : $t('studioCardSaved')}</button
           >
           <button
             onclick={show}
             disabled={saving || (weigh?.readiness.blocking.length ?? 1) > 0}
-            class="border border-[#c65f3c]/40 px-4 py-2 text-xs uppercase tracking-[0.16em] text-[#c65f3c] hover:bg-[#c65f3c]/8 disabled:opacity-40"
+            class="btn btn--lit"
             >{$t('studioCardShow')}</button
           >
         </div>
@@ -243,83 +242,84 @@
            обещанием, которого сервер не выполнит. -->
       <div class="space-y-6">
         <section class="space-y-3">
-          <h2 class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]">
+          <h2 class="field">
             {$t('studioCardWords')}
           </h2>
-          <div class="grid gap-3 sm:grid-cols-2">
-            <label class="block text-[11px] text-[#6f3b24]">
+          <div class="field-grid grid--two">
+            <label class="field">
               {$t('studioCardTitleRu')}
               <input
                 bind:value={body.titleRu}
-                class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1 text-sm text-[#34251c]"
+                
               />
             </label>
-            <label class="block text-[11px] text-[#6f3b24]">
+            <label class="field">
               {$t('studioCardTitleEn')}
               <input
                 bind:value={body.titleEn}
-                class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1 text-sm text-[#34251c]"
+                
               />
             </label>
-            <label class="block text-[11px] text-[#6f3b24]">
+            <label class="field">
               {$t('studioCardEffectRu')}
               <textarea
                 bind:value={body.effectRu}
                 rows="2"
-                class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1 text-sm text-[#34251c]"
+                
               ></textarea>
             </label>
-            <label class="block text-[11px] text-[#6f3b24]">
+            <label class="field">
               {$t('studioCardEffectEn')}
               <textarea
                 bind:value={body.effectEn}
                 rows="2"
-                class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1 text-sm text-[#34251c]"
+                
               ></textarea>
             </label>
-            <label class="block text-[11px] text-[#6f3b24]">
+            <label class="field">
               {$t('studioCardLoreRu')}
               <textarea
                 bind:value={body.loreRu}
                 rows="2"
-                class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1 text-sm text-[#34251c]"
+                
               ></textarea>
             </label>
-            <label class="block text-[11px] text-[#6f3b24]">
+            <label class="field">
               {$t('studioCardLoreEn')}
               <textarea
                 bind:value={body.loreEn}
                 rows="2"
-                class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1 text-sm text-[#34251c]"
+                
               ></textarea>
             </label>
-            <label class="block text-[11px] text-[#6f3b24]">
+            <label class="field">
               {$t('studioCardTypeRu')}
               <input
                 bind:value={body.typeRu}
-                class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1 text-sm text-[#34251c]"
+                
               />
             </label>
-            <label class="block text-[11px] text-[#6f3b24]">
+            <label class="field">
               {$t('studioCardTypeEn')}
               <input
                 bind:value={body.typeEn}
-                class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1 text-sm text-[#34251c]"
+                
               />
             </label>
           </div>
         </section>
 
         <section class="space-y-3">
-          <h2 class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]">
+          <h2 class="field">
             {$t('studioCardKindAndRank')}
           </h2>
-          <div class="grid gap-3 sm:grid-cols-3">
-            <label class="block text-[11px] text-[#6f3b24]">
+          <p class="hint">{$t('studioCardTierHint')}</p>
+          <div class="field-grid grid--three">
+            <label class="field">
               {$t('studioCardRace')}
               <select
                 bind:value={body.raceId}
-                class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1 text-sm text-[#34251c]"
+                
               >
                 <option value={null}>—</option>
                 {#each races as race (race.id)}
@@ -327,35 +327,35 @@
                 {/each}
               </select>
             </label>
-            <label class="block text-[11px] text-[#6f3b24]">
+            <label class="field">
               {$t('studioCardKind')}
               <select
                 bind:value={body.kind}
-                class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1 text-sm text-[#34251c]"
+                
               >
                 <option value="unit">{$t('battlesKindUnit')}</option>
                 <option value="spell">{$t('battlesKindSpell')}</option>
                 <option value="relic">{$t('battlesKindRelic')}</option>
               </select>
             </label>
-            <label class="block text-[11px] text-[#6f3b24]">
+            <label class="field">
               <!-- Чин — БЮДЖЕТ, а не награда: взявший пятый получил не сильную
                    карту, а разрешение весить больше. -->
               {$t('studioCardTier')}
               <select
                 bind:value={body.tier}
-                class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1 text-sm text-[#34251c]"
+                
               >
                 {#each [1, 2, 3, 4, 5] as n (n)}
                   <option value={n}>{n}</option>
                 {/each}
               </select>
             </label>
-            <label class="block text-[11px] text-[#6f3b24]">
+            <label class="field">
               {$t('studioCardChannel')}
               <select
                 bind:value={body.attackChannel}
-                class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1 text-sm text-[#34251c]"
+                
               >
                 <option value="physical">{$t('battlesChannelPhysical')}</option>
                 <option value="magic">{$t('battlesChannelMagic')}</option>
@@ -367,12 +367,12 @@
         </section>
 
         <section class="space-y-3">
-          <h2 class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]">
+          <h2 class="field">
             {$t('studioCardNumbers')}
           </h2>
-          <div class="grid grid-cols-3 gap-3 sm:grid-cols-5">
+          <div class="field-grid grid--numbers">
             {#each NUMBERS as num (num.key)}
-              <label class="block text-[11px] text-[#6f3b24]">
+              <label class="field">
                 {$t(num.word as never)}
                 <input
                   type="number"
@@ -382,7 +382,7 @@
                       e.currentTarget.value,
                     );
                   }}
-                  class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1 text-sm text-[#34251c]"
+                  
                 />
               </label>
             {/each}
@@ -390,10 +390,10 @@
         </section>
 
         <section class="space-y-3">
-          <h2 class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]">
+          <h2 class="field">
             {$t('studioCardTraits')}
           </h2>
-          <p class="text-[11px] italic text-[#8a6a55]">{$t('studioCardTraitsHint')}</p>
+          <p class="hint">{$t('studioCardTraitsHint')}</p>
           {#each body.traits as trait, i (i)}
             <div class="grid gap-2 border border-[#d8c6b1] bg-[#fdf9f3] p-3 sm:grid-cols-2">
               <input
@@ -418,20 +418,20 @@
               />
               <button
                 onclick={() => dropTrait(i)}
-                class="justify-self-start text-[10px] uppercase tracking-[0.14em] text-[#b0a08e] hover:text-[#8f2f22]"
+                class="quiet quiet--danger"
                 >{$t('studioCardTraitDrop')}</button
               >
             </div>
           {/each}
           <button
             onclick={addTrait}
-            class="border border-[#34251c]/25 px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] hover:bg-[#34251c]/5"
+            class="btn"
             >{$t('studioCardTraitAdd')}</button
           >
         </section>
 
         <section class="space-y-3">
-          <h2 class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]">
+          <h2 class="field">
             {$t('studioCardAbilities')}
           </h2>
           <!-- Тот же редактор, что у хозяина, — не похожий, а ТОТ ЖЕ. Человек
@@ -439,7 +439,7 @@
                умеет, а не новое правило: тысячи способностей и ни одной правки
                движка. Второй список глаголов на этой странице однажды разошёлся
                бы с домашним, и сервер отбросил бы лишнее молча. -->
-          <p class="text-[11px] italic text-[#8a6a55]">{$t('studioCardAbilitiesHint')}</p>
+          <p class="hint">{$t('studioCardAbilitiesHint')}</p>
           <BattleAbilities
             bind:abilities={body.abilities}
             pointsOf={(id) => weigh?.abilities.find((a) => a.id === id)?.points ?? null}
@@ -447,7 +447,7 @@
         </section>
 
         <section class="space-y-3">
-          <h2 class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]">
+          <h2 class="field">
             {$t('studioCardArt')}
           </h2>
           <!-- Картинка берётся ИЗ ЯЩИКА, а не с верстака: на верстаке она живёт
@@ -475,20 +475,20 @@
             {/if}
             <button
               onclick={() => (picking = false)}
-              class="text-[10px] uppercase tracking-[0.14em] text-[#b0a08e] hover:text-[#8a6a55]"
+              class="quiet"
               >{$t('studioCancel')}</button
             >
           {:else}
-            <div class="flex flex-wrap items-center gap-3">
+            <div class="doors">
               <button
                 onclick={() => (picking = true)}
-                class="border border-[#34251c]/25 px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] hover:bg-[#34251c]/5"
+                class="btn"
                 >{$t('studioCardArtPick')}</button
               >
               {#if body.artUrl}
                 <button
                   onclick={() => (body!.artUrl = null)}
-                  class="text-[10px] uppercase tracking-[0.14em] text-[#b0a08e] hover:text-[#8f2f22]"
+                  class="quiet quiet--danger"
                   >{$t('studioCardArtClear')}</button
                 >
               {/if}
@@ -498,4 +498,5 @@
       </div>
     </div>
   {/if}
+  </div>
 </div>

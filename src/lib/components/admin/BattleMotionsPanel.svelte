@@ -62,6 +62,8 @@
   loadMotions={async () => (await api.getBattleMotions()).motions}
   saveMotions={async (motions) => (await api.adminSaveBattleMotions({ motions })).motions}
   loadCards={() => api.adminListBattleCards()}
+  loadFrames={() => api.getBattleFrames()}
+  loadRaces={() => api.getBattleRaces()}
   uploadArt={async (file) => (await api.adminUploadBattleFrameArt(file)).url}
   {keepStrip}
   {pickFromStore}

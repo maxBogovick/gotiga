@@ -8793,6 +8793,24 @@ impl Repository {
 
     // ── Галерея и Зал авторов ───────────────────────────────────────────────
 
+    /// Рамки, которые хозяин УТВЕРДИЛ. Список для его же стола — надевать на
+    /// карту чужую работу можно только из уже одобренного, не из допущенного:
+    /// допуск говорит «люди могут посмотреть», а не «дом ручается».
+    pub async fn list_approved_studio_frames(
+        &self,
+    ) -> Result<Vec<crate::models::StudioShownDto>> {
+        Ok(sqlx::query_as::<_, crate::models::StudioShownDto>(
+            "SELECT f.id, f.name, f.body, f.status, u.display_name AS author,
+                    u.studio_slug AS author_slug, f.admitted_at, f.approved_at, f.edition_size
+               FROM studio_frames f
+               JOIN users u ON u.id = f.owner_id
+              WHERE f.approved_at IS NOT NULL
+              ORDER BY f.approved_at DESC",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
     /// Всё, что допущено на люди. Страницами: полка растёт, и «все сразу» это
     /// ответ, который однажды перестанет приходить.
     pub async fn list_studio_gallery(
@@ -9082,15 +9100,8 @@ impl Repository {
             return Err(AppError::BadRequest("ownListing".into()));
         }
 
-        let balance: (Option<i64>,) = sqlx::query_as(
-            "SELECT SUM(amount)::bigint FROM battle_wallet_entries
-              WHERE user_id = $1 AND currency = $2",
-        )
-        .bind(buyer)
-        .bind(&currency)
-        .fetch_one(&mut *tx)
-        .await?;
-        if balance.0.unwrap_or(0) < i64::from(price) {
+        let balance = self.battle_wallet_balance(buyer, &currency).await?;
+        if balance < i64::from(price) {
             tx.rollback().await?;
             return Err(AppError::BadRequest("notEnough".into()));
         }
@@ -9444,6 +9455,14 @@ impl Repository {
         .fetch_all(&self.pg_pool)
         .await?;
 
+        if rows.is_empty() {
+            return Ok(Vec::new());
+        }
+        let listing_ids: Vec<Uuid> = rows.iter().map(|(_, listing, ..)| *listing).collect();
+        let trade_ids: Vec<Uuid> = rows.iter().map(|(id, ..)| *id).collect();
+        let names = self.listing_names_batch(&listing_ids).await?;
+        let mut gives = self.trade_items_batch(&trade_ids).await?;
+
         let mut out = Vec::with_capacity(rows.len());
         for (id, listing, state, from, from_id, created_at) in rows {
             out.push(crate::models::TradeDto {
@@ -9452,45 +9471,60 @@ impl Repository {
                 state,
                 from,
                 mine: from_id == who,
-                want: self.listing_name(listing).await?,
-                gives: self.trade_item_names(id).await?,
+                want: names.get(&listing).cloned().unwrap_or_default(),
+                gives: gives.remove(&id).unwrap_or_default(),
                 created_at,
             });
         }
         Ok(out)
     }
 
-    /// Как называется то, что стоит на прилавке. Одним запросом на оба вида:
-    /// у лицензии имя рамы, у экземпляра — имя карты.
-    async fn listing_name(&self, listing: Uuid) -> Result<String> {
-        Ok(sqlx::query_scalar(
-            "SELECT COALESCE(f.name, k.title_ru, '')
+    /// Как называются вещи на прилавке, для целого списка лотов сразу — одним
+    /// запросом, а не одним на каждый ряд мен. Одним запросом на оба вида: у
+    /// лицензии имя рамы, у экземпляра — имя карты.
+    async fn listing_names_batch(
+        &self,
+        listings: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, String>> {
+        let rows: Vec<(Uuid, String)> = sqlx::query_as(
+            "SELECT m.id, COALESCE(f.name, k.title_ru, '')
                FROM market_listings m
                LEFT JOIN frame_licenses l ON l.id = m.subject_id AND m.kind = 'license'
                LEFT JOIN studio_frames f ON f.id = l.frame_id
                LEFT JOIN card_copies c ON c.id = m.subject_id AND m.kind = 'copy'
                LEFT JOIN battle_cards k ON k.id = c.card_id
-              WHERE m.id = $1",
+              WHERE m.id = ANY($1)",
         )
-        .bind(listing)
-        .fetch_optional(&self.pg_pool)
-        .await?
-        .unwrap_or_default())
+        .bind(listings)
+        .fetch_all(&self.pg_pool)
+        .await?;
+        Ok(rows.into_iter().collect())
     }
 
-    async fn trade_item_names(&self, trade: Uuid) -> Result<Vec<String>> {
-        Ok(sqlx::query_scalar(
-            "SELECT COALESCE(f.name, k.title_ru, '')
+    /// То же для того, что предложено В мену, тоже одним запросом на весь
+    /// список мен.
+    async fn trade_items_batch(
+        &self,
+        trades: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Vec<String>>> {
+        let rows: Vec<(Uuid, String)> = sqlx::query_as(
+            "SELECT i.trade_id, COALESCE(f.name, k.title_ru, '')
                FROM trade_items i
                LEFT JOIN frame_licenses l ON l.id = i.subject_id AND i.kind = 'license'
                LEFT JOIN studio_frames f ON f.id = l.frame_id
                LEFT JOIN card_copies c ON c.id = i.subject_id AND i.kind = 'copy'
                LEFT JOIN battle_cards k ON k.id = c.card_id
-              WHERE i.trade_id = $1",
+              WHERE i.trade_id = ANY($1)",
         )
-        .bind(trade)
+        .bind(trades)
         .fetch_all(&self.pg_pool)
-        .await?)
+        .await?;
+        let mut out: std::collections::HashMap<Uuid, Vec<String>> =
+            std::collections::HashMap::new();
+        for (trade_id, name) in rows {
+            out.entry(trade_id).or_default().push(name);
+        }
+        Ok(out)
     }
 
     // ── Свои роды ───────────────────────────────────────────────────────────
@@ -9674,6 +9708,150 @@ impl Repository {
             .execute(&self.pg_pool)
             .await?;
         Ok(())
+    }
+
+    // ── Свои движения ───────────────────────────────────────────────────────
+
+    /// Ящик человека целиком — тем же видом, каким его читает стол такта.
+    pub async fn list_studio_motions(&self, owner: Uuid) -> Result<Vec<crate::models::StudioMotionDto>> {
+        Ok(sqlx::query_as::<_, crate::models::StudioMotionDto>(
+            "SELECT id, body, status, keeper_word, approved_at, house_id, created_at, updated_at
+               FROM studio_motions WHERE owner_id = $1 ORDER BY created_at",
+        )
+        .bind(owner)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Записать движение человека. Ящик правится целиком, поэтому запись идёт
+    /// по ИМЕНИ движения: стол сохраняет весь ящик разом, и попытка угадать,
+    /// какая строка какому движению отвечает, разошлась бы с ним на первой же
+    /// перестановке.
+    ///
+    /// Отданное хозяину и взятое домом не переписываются — условие в запросе,
+    /// а не проверка в службе.
+    pub async fn upsert_studio_motion(
+        &self,
+        owner: Uuid,
+        name: &str,
+        body: &serde_json::Value,
+        lang: &str,
+    ) -> Result<()> {
+        // `lang` только на вставке: как у карты, язык называет речь, на
+        // которой работа заведена, а не последнюю, на которой стол открыт.
+        sqlx::query(
+            "INSERT INTO studio_motions (owner_id, body, lang) VALUES ($1, $2, $3)
+             ON CONFLICT (owner_id, (body->>'id')) DO UPDATE
+                SET body = EXCLUDED.body, updated_at = NOW()
+              WHERE studio_motions.status IN ('draft', 'withdrawn')",
+        )
+        .bind(owner)
+        .bind(body)
+        .bind(lang)
+        .execute(&self.pg_pool)
+        .await?;
+        let _ = name;
+        Ok(())
+    }
+
+    /// Убрать то, чего в ящике больше нет. Отданное и взятое остаётся: человек
+    /// стёр его у себя, но хозяин уже смотрит, а взятое домом носят чужие карты.
+    pub async fn drop_missing_studio_motions(
+        &self,
+        owner: Uuid,
+        keep: &[String],
+    ) -> Result<u64> {
+        Ok(sqlx::query(
+            "DELETE FROM studio_motions
+              WHERE owner_id = $1 AND status IN ('draft', 'withdrawn')
+                AND NOT (body->>'id' = ANY($2))",
+        )
+        .bind(owner)
+        .bind(keep)
+        .execute(&self.pg_pool)
+        .await?
+        .rows_affected())
+    }
+
+    pub async fn set_studio_motion_status(
+        &self,
+        owner: Uuid,
+        id: Uuid,
+        to: &str,
+        from: &[&str],
+    ) -> Result<bool> {
+        Ok(sqlx::query(
+            "UPDATE studio_motions SET status = $3, updated_at = NOW()
+              WHERE id = $1 AND owner_id = $2 AND status = ANY($4)",
+        )
+        .bind(id)
+        .bind(owner)
+        .bind(to)
+        .bind(from)
+        .execute(&self.pg_pool)
+        .await?
+        .rows_affected()
+            > 0)
+    }
+
+    pub async fn studio_motion_queue(&self) -> Result<Vec<crate::models::StudioMotionQueueDto>> {
+        Ok(sqlx::query_as::<_, crate::models::StudioMotionQueueDto>(
+            "SELECT m.id, m.body, u.display_name AS author, m.updated_at
+               FROM studio_motions m
+               JOIN users u ON u.id = m.owner_id
+              WHERE m.status = 'shown'
+              ORDER BY m.updated_at",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn get_studio_motion_any(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<(crate::models::StudioMotionDto, Uuid)>> {
+        let owner: Option<(Uuid,)> =
+            sqlx::query_as("SELECT owner_id FROM studio_motions WHERE id = $1")
+                .bind(id)
+                .fetch_optional(&self.pg_pool)
+                .await?;
+        let Some((owner,)) = owner else {
+            return Ok(None);
+        };
+        let one = sqlx::query_as::<_, crate::models::StudioMotionDto>(
+            "SELECT id, body, status, keeper_word, approved_at, house_id, created_at, updated_at
+               FROM studio_motions WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(Some((one, owner)))
+    }
+
+    pub async fn deny_studio_motion(&self, id: Uuid, word: &str) -> Result<bool> {
+        Ok(sqlx::query(
+            "UPDATE studio_motions SET status = 'draft', keeper_word = $2, updated_at = NOW()
+              WHERE id = $1 AND status = 'shown'",
+        )
+        .bind(id)
+        .bind(word)
+        .execute(&self.pg_pool)
+        .await?
+        .rows_affected()
+            > 0)
+    }
+
+    pub async fn mark_studio_motion_approved(&self, id: Uuid, house: &str) -> Result<bool> {
+        Ok(sqlx::query(
+            "UPDATE studio_motions SET approved_at = NOW(), house_id = $2, updated_at = NOW()
+              WHERE id = $1 AND approved_at IS NULL",
+        )
+        .bind(id)
+        .bind(house)
+        .execute(&self.pg_pool)
+        .await?
+        .rows_affected()
+            > 0)
     }
 
     // ── Аукцион ─────────────────────────────────────────────────────────────
@@ -9866,7 +10044,11 @@ impl Repository {
     ///
     /// Вырученное у наследства СГОРАЕТ: платить некому, а дописать эту пыль
     /// кому-нибудь значило бы напечатать её из ниоткуда.
-    pub async fn close_auction(&self, auction: Uuid) -> Result<Option<(Uuid, i32)>> {
+    pub async fn close_auction(
+        &self,
+        auction: Uuid,
+        commission_percent: i32,
+    ) -> Result<Option<(Uuid, i32)>> {
         let mut tx = self.pg_pool.begin().await?;
         let lot: Option<(String, Uuid, Option<Uuid>, String, bool)> = sqlx::query_as(
             "SELECT kind, subject_id, seller_id, currency, estate FROM auctions
@@ -9890,15 +10072,8 @@ impl Repository {
 
         let mut winner: Option<(Uuid, i32)> = None;
         for (bidder, amount) in bids {
-            let balance: (Option<i64>,) = sqlx::query_as(
-                "SELECT SUM(amount)::bigint FROM battle_wallet_entries
-                  WHERE user_id = $1 AND currency = $2",
-            )
-            .bind(bidder)
-            .bind(&currency)
-            .fetch_one(&mut *tx)
-            .await?;
-            if balance.0.unwrap_or(0) >= i64::from(amount) {
+            let balance = self.battle_wallet_balance(bidder, &currency).await?;
+            if balance >= i64::from(amount) {
                 winner = Some((bidder, amount));
                 break;
             }
@@ -9920,9 +10095,13 @@ impl Repository {
                 .execute(&mut *tx)
                 .await?;
 
-                // Продавцу — если он есть. У наследства его нет, и вырученное
-                // сгорает: это тот же сток, что и доля дома.
+                // Продавцу — если он есть, и за вычетом комиссии дома: тот же
+                // сток, что и у лавки, иначе аукцион был бы дырой в нём.
+                // У наследства продавца нет, и вырученное сгорает целиком —
+                // это тот же сток, что и доля дома.
                 if let (Some(seller), false) = (seller, estate) {
+                    let commission = (price * commission_percent) / 100;
+                    let to_seller = price - commission;
                     sqlx::query(
                         "INSERT INTO battle_wallet_entries
                              (user_id, currency, amount, reason, ref_id, idem_key)
@@ -9931,7 +10110,7 @@ impl Repository {
                     )
                     .bind(seller)
                     .bind(&currency)
-                    .bind(price)
+                    .bind(to_seller)
                     .bind(auction)
                     .bind(format!("auction:{auction}:got"))
                     .execute(&mut *tx)

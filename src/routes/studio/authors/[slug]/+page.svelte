@@ -11,6 +11,7 @@
   import { api } from '$lib/api';
   import { cardFromRequest, emptyBattleCard } from '$lib/battles';
   import BattleCard from '$lib/components/BattleCard.svelte';
+  import '$lib/components/studio/studio-room.css';
   import type { BattleCard as BattleCardDto, StudioAuthor } from '$lib/types/api';
 
   let author = $state<StudioAuthor | null>(null);
@@ -32,77 +33,72 @@
     author = await api.getStudioAuthor(slug).catch(() => null);
     loading = false;
   });
+
+  let lead = $derived(
+    author
+      ? $t('studioAuthorLead')
+          .replace('{name}', author.name)
+          .replace('{n}', String(author.approved))
+      : '',
+  );
 </script>
 
 <svelte:head>
   <title>{author?.name ?? $t('studioAuthors')}</title>
-  {#if author}
-    <meta
-      name="description"
-      content={$t('studioAuthorLead').replace('{name}', author.name).replace('{n}', String(author.approved))}
-    />
-  {/if}
+  {#if author}<meta name="description" content={lead} />{/if}
 </svelte:head>
 
-<div class="mx-auto max-w-5xl px-5 py-10">
-  <div class="flex flex-wrap items-baseline justify-between gap-3">
-    <h1 class="font-serif text-2xl text-[#34251c]">{author?.name ?? $t('studioAuthors')}</h1>
-    <a
-      href="/studio/gallery"
-      class="text-xs uppercase tracking-[0.16em] text-[#8a6a55] hover:text-[#c65f3c]"
-      >← {$t('studioGallery')}</a
-    >
-  </div>
-
-  {#if loading}
-    <p class="mt-8 text-sm text-[#8a6a55]">{$t('studioLoading')}</p>
-  {:else if !author}
-    <p class="mt-8 text-sm text-[#8a6a55]">{$t('studioAuthorGone')}</p>
-  {:else}
-    <p class="mt-2 text-sm text-[#6f3b24]">
-      {$t('studioAuthorLead')
-        .replace('{name}', author.name)
-        .replace('{n}', String(author.approved))}
+<div class="studio-room">
+  <div class="page">
+    <p class="eyebrow">
+      <a href="/studio/gallery">{$t('studioGallery')}</a>
+      <span class="eyebrow-rule"></span>
+      <span>{$t('studioAuthors')}</span>
     </p>
 
-    <div class="mt-8 grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-4">
-      {#each author.works as work (work.id)}
-        <div>
-          <BattleCard card={sample} frames={[work.body]} owned={true} />
-          <p class="mt-2 truncate text-sm text-[#34251c]">{work.name}</p>
-          {#if work.approvedAt}
-            <p class="text-[10px] uppercase tracking-[0.14em] text-[#c65f3c]">
-              {$t('studioApprovedMark')}
-              {#if work.editionSize}· {$t('studioEditionOf').replace('{n}', String(work.editionSize))}{/if}
-            </p>
-          {:else}
-            <p class="text-[10px] uppercase tracking-[0.14em] text-[#b0a08e]">
-              {$t('studioShownMark')}
-            </p>
-          {/if}
-        </div>
-      {/each}
-    </div>
+    {#if loading}
+      <p class="empty">{$t('studioLoading')}</p>
+    {:else if !author}
+      <h1 class="room-title">{$t('studioAuthors')}</h1>
+      <p class="empty">{$t('studioAuthorGone')}</p>
+    {:else}
+      <h1 class="room-title">{author.name}</h1>
+      <p class="room-lead">{lead}</p>
 
-    <!-- Карты автора. Третье обещанное место автографа: лист взятия · ЗАЛ
-         АВТОРОВ · лавка. Показаны настоящими картами, теми же, что стоят на
-         полке дома. -->
-    {#if author.cards.length}
-      <h2 class="mt-12 font-serif text-xl text-[#34251c]">{$t('studioAuthorCards')}</h2>
-      <div class="mt-4 grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-4">
-        {#each author.cards as made (made.id)}
+      <div class="shelf">
+        {#each author.works as work (work.id)}
           <div>
-            <BattleCard card={cardFromRequest(made.body)} frames={null} owned={true} />
-            {#if made.cardId}
-              <a
-                href="/battles?card={made.cardId}"
-                class="mt-2 block text-[10px] uppercase tracking-[0.14em] text-[#c65f3c] hover:underline"
-                >{$t('studioCardSeeOnShelf')}</a
-              >
+            <BattleCard card={sample} frames={[work.body]} owned={true} />
+            <p class="name">{work.name}</p>
+            {#if work.approvedAt}
+              <p class="mark mark--lit">
+                {$t('studioApprovedMark')}
+                {#if work.editionSize}· {$t('studioEditionOf').replace('{n}', String(work.editionSize))}{/if}
+              </p>
+            {:else}
+              <p class="mark">{$t('studioShownMark')}</p>
             {/if}
           </div>
         {/each}
       </div>
+
+      <!-- Карты автора. Третье обещанное место автографа: лист взятия · ЗАЛ
+           АВТОРОВ · лавка. -->
+      {#if author.cards.length}
+        <h2 class="shelf-title">{$t('studioAuthorCards')}</h2>
+        <div class="shelf">
+          {#each author.cards as made (made.id)}
+            <div>
+              <BattleCard card={cardFromRequest(made.body)} frames={null} owned={true} />
+              {#if made.cardId}
+                <p class="deeds">
+                  <a class="quiet" href="/battles?card={made.cardId}">{$t('studioCardSeeOnShelf')}</a>
+                </p>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      {/if}
     {/if}
-  {/if}
+  </div>
 </div>

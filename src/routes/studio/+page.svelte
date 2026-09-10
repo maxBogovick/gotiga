@@ -12,6 +12,8 @@
   import { authStore } from '$lib/stores/auth.svelte';
   import { DEFAULT_FRAMES } from '$lib/battles';
   import * as local from '$lib/studio/local';
+  import StudioAsk from '$lib/components/studio/StudioAsk.svelte';
+  import '$lib/components/studio/studio-room.css';
   import type { StudioState } from '$lib/types/api';
 
   let studio = $state<StudioState | null>(null);
@@ -20,6 +22,9 @@
   let localUsed = $state(0);
   let loading = $state(true);
   let complaint = $state<string | null>(null);
+  /** Какую раму выбрасывают. Своим окном, а не системным: необратимое дом
+   *  спрашивает сам, и спрашивает на пергаменте. */
+  let dropping = $state<local.LocalFrame | null>(null);
 
   let signedIn = $derived(authStore.isLoggedIn);
 
@@ -100,7 +105,6 @@
   /** Выбросить раму. С верстака — всегда; из ящика — если хозяин её ещё не
    *  видел: выложенное принадлежит уже не только автору. */
   async function dropFrame(frame: local.LocalFrame) {
-    if (!confirm($t('studioDropSure').replace('{name}', frame.name))) return;
     const token = authStore.token;
     if (frame.remoteId && token) {
       await api.deleteStudioFrame(token, frame.remoteId).catch(() => {});
@@ -123,160 +127,177 @@
 
 <svelte:head><title>{$t('studioTitle')}</title></svelte:head>
 
-<div class="mx-auto max-w-4xl px-5 py-12">
-  <h1 class="font-serif text-3xl text-[#34251c]">{$t('studioTitle')}</h1>
-  <p class="mt-2 max-w-xl text-sm leading-relaxed text-[#6f3b24]">{$t('studioLead')}</p>
+<div class="studio-room">
+  <div class="page" style="max-width: 62rem">
+    <p class="eyebrow">
+      <span>{$t('studioEyebrow')}</span>
+      <span class="eyebrow-rule"></span>
+      <a href="/battles">{$t('studioToShelf')}</a>
+    </p>
+    <h1 class="room-title">{$t('studioTitle')}</h1>
+    <p class="room-lead">{$t('studioLead')}</p>
 
-  {#if loading}
-    <p class="mt-10 text-sm text-[#8a6a55]">{$t('studioLoading')}</p>
-  {:else if !signedIn}
-    <div class="mt-10 border border-[#d8c6b1] bg-[#fdf9f3] p-6">
-      <p class="text-sm text-[#6f3b24]">{$t('studioNeedsName')}</p>
-      <a href="/login" class="mt-4 inline-block border border-[#34251c]/25 px-4 py-2 text-xs uppercase tracking-[0.16em] hover:bg-[#34251c]/5">{$t('studioSignIn')}</a>
-    </div>
-  {:else if studio && !studio.open}
-    <!-- Заперто — это дверь, а не ошибка: комната есть, сегодня закрыта. -->
-    <div class="mt-10 border border-[#d8c6b1] bg-[#fdf9f3] p-6">
-      <p class="text-sm text-[#6f3b24]">
-        {studio.gate === 'closed' ? $t('studioShut') : $t('studioForOwners')}
-      </p>
-      {#if studio.gate === 'owners'}
-        <a href="/battles" class="mt-4 inline-block border border-[#34251c]/25 px-4 py-2 text-xs uppercase tracking-[0.16em] hover:bg-[#34251c]/5">{$t('studioToShelf')}</a>
+    {#if loading}
+      <p class="empty">{$t('studioLoading')}</p>
+    {:else if !signedIn}
+      <div class="slip">
+        <p class="hint" style="font-style:normal">{$t('studioNeedsName')}</p>
+        <div class="doors"><a class="btn" href="/login">{$t('studioSignIn')}</a></div>
+      </div>
+    {:else if studio && !studio.open}
+      <!-- Заперто — это дверь, а не ошибка: комната есть, сегодня закрыта. -->
+      <div class="slip">
+        <p class="hint" style="font-style:normal">
+          {studio.gate === 'closed' ? $t('studioShut') : $t('studioForOwners')}
+        </p>
+        {#if studio.gate === 'owners'}
+          <div class="doors"><a class="btn" href="/battles">{$t('studioToShelf')}</a></div>
+        {/if}
+      </div>
+    {:else}
+      {#if !workbench}
+        <!-- Молча терять работу нельзя. Про закрытый ящик браузера говорится
+             прямо, до того как человек начнёт. -->
+        <p class="warn">{$t('studioNoWorkbench')}</p>
       {/if}
-    </div>
-  {:else}
-    {#if !workbench}
-      <!-- Молча терять работу нельзя. Про закрытый ящик браузера говорится
-           прямо, до того как человек начнёт. -->
-      <p class="mt-6 border-l-2 border-[#c65f3c] bg-[#fdf3ee] px-4 py-3 text-xs leading-relaxed text-[#6f3b24]">
-        {$t('studioNoWorkbench')}
-      </p>
-    {/if}
 
-    <div class="mt-8 flex flex-wrap items-center gap-3">
-      <button
-        onclick={() => beginFrame()}
-        class="border border-[#34251c]/25 px-4 py-2 text-xs uppercase tracking-[0.16em] hover:bg-[#34251c]/5"
-        >{$t('studioNewFrame')}</button
-      >
-      <button
-        onclick={() => beginFrame(true)}
-        class="text-xs uppercase tracking-[0.16em] text-[#8a6a55] underline-offset-4 hover:text-[#c65f3c] hover:underline"
-        >{$t('studioNewSimple')}</button
-      >
-      <a
-        href="/studio/cards"
-        class="border border-[#34251c]/25 px-4 py-2 text-xs uppercase tracking-[0.16em] hover:bg-[#34251c]/5"
-        >{$t('studioToCards')}</a
-      >
-      <a
-        href="/studio/races"
-        class="border border-[#34251c]/25 px-4 py-2 text-xs uppercase tracking-[0.16em] hover:bg-[#34251c]/5"
-        >{$t('studioToRaces')}</a
-      >
-      <a
-        href="/studio/assets"
-        class="border border-[#34251c]/25 px-4 py-2 text-xs uppercase tracking-[0.16em] hover:bg-[#34251c]/5"
-        >{$t('studioStore')}</a
-      >
-      <a
-        href="/studio/season"
-        class="border border-[#c65f3c]/40 px-4 py-2 text-xs uppercase tracking-[0.16em] text-[#c65f3c] hover:bg-[#c65f3c]/8"
-        >{$t('studioToSeason')}</a
-      >
-      <a
-        href="/studio/gallery"
-        class="border border-[#34251c]/25 px-4 py-2 text-xs uppercase tracking-[0.16em] hover:bg-[#34251c]/5"
-        >{$t('studioToGallery')}</a
-      >
-      <a
-        href="/studio/market"
-        class="border border-[#34251c]/25 px-4 py-2 text-xs uppercase tracking-[0.16em] hover:bg-[#34251c]/5"
-        >{$t('studioToMarket')}</a
-      >
-      {#if studio}
-        <span class="text-[11px] text-[#8a6a55]">
+      <div class="doors">
+        <button class="btn btn--lit" onclick={() => beginFrame()}>{$t('studioNewFrame')}</button>
+        <a class="btn" href="/studio/cards">{$t('studioToCards')}</a>
+        <a class="btn" href="/studio/motions">{$t('studioToMotions')}</a>
+        <a class="btn" href="/studio/races">{$t('studioToRaces')}</a>
+        <a class="btn" href="/studio/assets">{$t('studioStore')}</a>
+      </div>
+
+      <!-- Комнаты, где смотрят на чужое и своё меняют, — второй дверью: они не
+           про работу за столом, и мешать их с «новой рамой» значит ставить
+           девять одинаковых кнопок в ряд. -->
+      <div class="doors">
+        <a class="quiet" href="/studio/season">{$t('studioToSeason')}</a>
+        <a class="quiet" href="/studio/gallery">{$t('studioToGallery')}</a>
+        <a class="quiet" href="/studio/market">{$t('studioToMarket')}</a>
+        <button class="quiet" onclick={() => beginFrame(true)}>{$t('studioNewSimple')}</button>
+      </div>
+
+      <p class="mark">
+        {#if studio}
           {$t('studioBoxUsed')
             .replace('{used}', weigh(studio.box.used))
             .replace('{limit}', weigh(studio.box.limit))}
-        </span>
-      {/if}
-      {#if workbench && localUsed > 0}
-        <span class="text-[11px] text-[#8a6a55]"
-          >{$t('studioLocalUsed').replace('{used}', weigh(localUsed))}</span
-        >
-      {/if}
-    </div>
+        {/if}
+        {#if workbench && localUsed > 0}
+          · {$t('studioLocalUsed').replace('{used}', weigh(localUsed))}
+        {/if}
+      </p>
 
-    {#if complaint}
-      <p class="mt-4 text-xs text-[#c65f3c]">{complaint}</p>
-    {/if}
+      {#if complaint}<p class="said">{complaint}</p>{/if}
 
-    <!-- Верстак: то, что лежит только в этом браузере. -->
-    <h2 class="mt-10 text-[11px] uppercase tracking-[0.18em] text-[#8a6a55]">
-      {$t('studioWorkbench')}
-    </h2>
-    {#if mine.length === 0}
-      <p class="mt-3 text-sm text-[#8a6a55]">{$t('studioWorkbenchEmpty')}</p>
-    {:else}
-      <ul class="mt-3 divide-y divide-[#d8c6b1]/60 border-y border-[#d8c6b1]/60">
-        {#each mine as frame (frame.id)}
-          <li class="flex items-center justify-between gap-4 py-3">
-            <a href="/studio/frames/{frame.id}" class="text-sm text-[#6f3b24] hover:underline"
-              >{frame.name}</a
-            >
-            <span class="flex items-center gap-3">
-              <span class="text-[10px] uppercase tracking-[0.14em] text-[#b0a08e]">
+      <!-- Верстак: то, что лежит только в этом браузере. -->
+      <h2 class="shelf-title">{$t('studioWorkbench')}</h2>
+      {#if mine.length === 0}
+        <p class="empty" style="margin-top:1rem">{$t('studioWorkbenchEmpty')}</p>
+      {:else}
+        <ul class="rows">
+          {#each mine as frame (frame.id)}
+            <li class="row">
+              <a class="row-name" href="/studio/frames/{frame.id}">{frame.name}</a>
+              <span class="mark" style="margin:0">
                 {frame.remoteId ? $t('studioInBox') : $t('studioLocalOnly')}
               </span>
-              <button
-                onclick={() => copyFrame(frame)}
-                class="text-[10px] uppercase tracking-[0.14em] text-[#8a6a55] hover:text-[#c65f3c]"
-                >{$t('studioCopy')}</button
-              >
-              <button
-                onclick={() => dropFrame(frame)}
-                class="text-[10px] uppercase tracking-[0.14em] text-[#8f2f22]/70 hover:text-[#8f2f22]"
+              <button class="quiet" onclick={() => copyFrame(frame)}>{$t('studioCopy')}</button>
+              <button class="quiet quiet--danger" onclick={() => (dropping = frame)}
                 >{$t('studioDrop')}</button
               >
-            </span>
-          </li>
-        {/each}
-      </ul>
-    {/if}
-
-    <!-- Ящик: то, что уже отдано дому и переживёт чистку браузера. -->
-    {#if studio}
-      <h2 class="mt-10 text-[11px] uppercase tracking-[0.18em] text-[#8a6a55]">
-        {$t('studioBox')}
-      </h2>
-      {#if studio.frames.length === 0}
-        <p class="mt-3 text-sm text-[#8a6a55]">{$t('studioBoxEmpty')}</p>
-      {:else}
-        <ul class="mt-3 divide-y divide-[#d8c6b1]/60 border-y border-[#d8c6b1]/60">
-          {#each studio.frames as frame (frame.id)}
-            <li class="flex items-center justify-between gap-4 py-3">
-              <span class="text-sm text-[#6f3b24]">{frame.name}</span>
-              <span class="text-[10px] uppercase tracking-[0.14em] text-[#b0a08e]">
-                <!-- «Выложена» и «допущена» — разные вещи, и путь работы виден
-                     только если их назвать порознь. -->
-                {#if frame.status === 'shown' && frame.admittedAt}
-                  {$t('studioStatus_admitted')}
-                {:else}
-                  {$t(`studioStatus_${frame.status}` as never)}
-                {/if}
-              </span>
-              {#if frame.status === 'shown' && frame.admittedAt}
-                <a
-                  href="/studio/season"
-                  class="text-[10px] uppercase tracking-[0.14em] text-[#c65f3c] hover:underline"
-                  >{$t('studioPutInSeason')}</a
-                >
-              {/if}
             </li>
           {/each}
         </ul>
       {/if}
+
+      <!-- Ящик: то, что уже отдано дому и переживёт чистку браузера. -->
+      {#if studio}
+        <h2 class="shelf-title">{$t('studioBox')}</h2>
+        {#if studio.frames.length === 0}
+          <p class="empty" style="margin-top:1rem">{$t('studioBoxEmpty')}</p>
+        {:else}
+          <ul class="rows">
+            {#each studio.frames as frame (frame.id)}
+              <li class="row">
+                <span class="row-name">{frame.name}</span>
+                <span class="mark" style="margin:0">
+                  <!-- «Выложена» и «допущена» — разные вещи, и путь работы виден
+                       только если их назвать порознь. -->
+                  {#if frame.status === 'shown' && frame.admittedAt}
+                    {$t('studioStatus_admitted')}
+                  {:else}
+                    {$t(`studioStatus_${frame.status}` as never)}
+                  {/if}
+                </span>
+                {#if frame.status === 'shown' && frame.admittedAt}
+                  <a class="quiet" style="color:#c65f3c" href="/studio/season"
+                    >{$t('studioPutInSeason')}</a
+                  >
+                {/if}
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      {/if}
     {/if}
-  {/if}
+  </div>
 </div>
+
+{#if dropping}
+  <StudioAsk
+    title={$t('studioDrop')}
+    lead={$t('studioDropSure').replace('{name}', dropping.name)}
+    yes={$t('studioDrop')}
+    danger
+    onyes={() => {
+      const one = dropping;
+      dropping = null;
+      if (one) void dropFrame(one);
+    }}
+    onclose={() => (dropping = null)}
+  />
+{/if}
+
+<style>
+  .warn {
+    margin: 1.5rem 0 0;
+    padding: 0.8rem 1rem;
+    border-left: 2px solid #c65f3c;
+    background: #fdf3ee;
+    font-family: Georgia, 'Fraunces', serif;
+    font-size: 0.9rem;
+    line-height: 1.55;
+    color: #6f3b24;
+  }
+
+  .rows {
+    margin: 1rem 0 0;
+    padding: 0;
+    list-style: none;
+    border-top: 1px solid rgba(216, 198, 177, 0.6);
+  }
+
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem 1rem;
+    padding: 0.7rem 0;
+    border-bottom: 1px solid rgba(216, 198, 177, 0.6);
+  }
+
+  .row-name {
+    flex: 1 1 12rem;
+    font-family: Georgia, 'Fraunces', serif;
+    font-size: 1rem;
+    color: #6f3b24;
+    text-decoration: none;
+  }
+
+  a.row-name:hover {
+    color: #c65f3c;
+  }
+</style>

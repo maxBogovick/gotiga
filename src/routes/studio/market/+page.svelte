@@ -13,6 +13,8 @@
   import { authStore } from '$lib/stores/auth.svelte';
   import { emptyBattleCard } from '$lib/battles';
   import BattleCard from '$lib/components/BattleCard.svelte';
+  import StudioAsk from '$lib/components/studio/StudioAsk.svelte';
+  import '$lib/components/studio/studio-room.css';
   import type {
     BattleCard as BattleCardDto,
     CopyListing,
@@ -47,6 +49,17 @@
   let pricing = $state<string | null>(null);
   let price = $state(0);
   let busy = $state<string | null>(null);
+  /** О чём спрашивает дом сейчас. Своим окном, а не системным: серое окно
+   *  посреди пергамента — самое громкое, что было в этой комнате, и в него
+   *  нельзя было написать, из чего выбирают (коридор цены человек узнавал
+   *  только из отказа сервера). */
+  let ask = $state<
+    | null
+    | { kind: 'sellCopy'; copy: MyCopy }
+    | { kind: 'hammer'; copy: MyCopy }
+    | { kind: 'bid'; lot: Auction }
+    | { kind: 'buy'; listing: string; name: string; price: number }
+  >(null);
 
   let token = $derived(authStore.token);
 
@@ -137,11 +150,10 @@
 
   const withdraw = (listing: StudioListing) => withdrawId(listing.id);
 
+  // Покупка — трата, и спрашивают о ней один раз, словами и с ценой; спрашивает
+  // окно дома, а согласие приходит сюда.
   async function buyId(listing: string, name: string, price: number) {
     if (!token) return;
-    // Покупка — трата, и спрашивают о ней один раз, словами и с ценой.
-    const ask = $t('studioBuyAsk').replace('{name}', name).replace('{n}', String(price));
-    if (!confirm(ask)) return;
     busy = listing;
     try {
       const done = await api.buyListing(token, listing);
@@ -154,7 +166,28 @@
     busy = null;
   }
 
-  const buy = (listing: StudioListing) => buyId(listing.id, listing.name, listing.price);
+  const buy = (listing: StudioListing) =>
+    (ask = { kind: 'buy', listing: listing.id, name: listing.name, price: listing.price });
+
+  /** Что дом спрашивает у окна и что делает с ответом. Одним местом: четыре
+   *  окна с четырьмя своими кнопками разошлись бы на первой же правке. */
+  const askTitle = $derived.by(() => {
+    if (!ask) return '';
+    if (ask.kind === 'buy') return $t('studioBuy');
+    if (ask.kind === 'bid') return $t('studioBid');
+    if (ask.kind === 'hammer') return $t('studioToHammer');
+    return $t('studioSell');
+  });
+
+  function answered(said: string) {
+    const now = ask;
+    ask = null;
+    if (!now) return;
+    if (now.kind === 'buy') void buyId(now.listing, now.name, now.price);
+    else if (now.kind === 'bid') void bid(now.lot, said);
+    else if (now.kind === 'hammer') void toHammer(now.copy, said);
+    else void sellCopy(now.copy, said);
+  }
 
   /** Сколько получит продавец: доля дома сгорает, и молчать об этом нельзя —
    *  человек ставит цену, а получает меньше. */
@@ -180,13 +213,8 @@
    *  «мало» приходит без числа. */
   const leastBid = (lot: Auction) => (lot.topBid ? lot.topBid + 10 : lot.startPrice);
 
-  async function bid(lot: Auction) {
+  async function bid(lot: Auction, asked: string) {
     if (!token) return;
-    const asked = prompt(
-      $t('studioBidAsk').replace('{n}', String(leastBid(lot))),
-      String(leastBid(lot)),
-    );
-    if (!asked) return;
     busy = lot.id;
     try {
       await api.placeBid(token, lot.id, Math.round(Number(asked)));
@@ -198,15 +226,8 @@
     busy = null;
   }
 
-  async function toHammer(copy: MyCopy) {
+  async function toHammer(copy: MyCopy, asked: string) {
     if (!token) return;
-    const asked = prompt(
-      $t('studioSellCopyAsk')
-        .replace('{min}', String(settings?.priceFloor ?? 1))
-        .replace('{max}', String(settings?.priceCeil ?? 0)),
-      String(settings?.priceFloor ?? 50),
-    );
-    if (!asked) return;
     busy = copy.id;
     try {
       await api.startAuction(token, 'copy', copy.id, Math.round(Number(asked)), 'dust');
@@ -276,15 +297,8 @@
    *  полки, а не строкой списка. */
   const cardOf = (id: string) => shelf.find((c) => c.id === id) ?? null;
 
-  async function sellCopy(copy: MyCopy) {
+  async function sellCopy(copy: MyCopy, asked: string) {
     if (!token) return;
-    const asked = prompt(
-      $t('studioSellCopyAsk')
-        .replace('{min}', String(settings?.priceFloor ?? 1))
-        .replace('{max}', String(settings?.priceCeil ?? 0)),
-      String(settings?.priceFloor ?? 50),
-    );
-    if (!asked) return;
     busy = copy.id;
     try {
       await api.listThing(token, 'copy', copy.id, Math.round(Number(asked)), 'dust');
@@ -311,36 +325,35 @@
   <meta name="description" content={$t('studioMarketLead')} />
 </svelte:head>
 
-<div class="mx-auto max-w-5xl px-5 py-10">
-  <div class="flex flex-wrap items-baseline justify-between gap-3">
-    <h1 class="font-serif text-2xl text-[#34251c]">{$t('studioMarket')}</h1>
-    <a href="/studio" class="text-xs uppercase tracking-[0.16em] text-[#8a6a55] hover:text-[#c65f3c]"
-      >← {$t('studioBack')}</a
-    >
-  </div>
-  <p class="mt-2 max-w-2xl text-sm leading-relaxed text-[#6f3b24]">{$t('studioMarketLead')}</p>
-
-  {#if token && dust !== null}
-    <p class="mt-3 text-[11px] uppercase tracking-[0.14em] text-[#8a6a55]">
-      {$t('studioPurse').replace('{n}', String(dust))}
+<div class="studio-room">
+  <div class="page">
+    <p class="eyebrow">
+      <a href="/studio">{$t('studioBack')}</a>
+      <span class="eyebrow-rule"></span>
+      <span>{$t('studioEyebrow')}</span>
     </p>
-  {/if}
+    <h1 class="room-title">{$t('studioMarket')}</h1>
+    <p class="room-lead">{$t('studioMarketLead')}</p>
 
-  {#if said}<p class="mt-3 text-xs text-[#c65f3c]">{said}</p>{/if}
+    {#if token && dust !== null}
+      <p class="mark">{$t('studioPurse').replace('{n}', String(dust))}</p>
+    {/if}
+
+    {#if said}<p class="said">{said}</p>{/if}
 
   {#if loading}
-    <p class="mt-8 text-sm text-[#8a6a55]">{$t('studioLoading')}</p>
+    <p class="empty">{$t('studioLoading')}</p>
   {:else}
     <!-- Прилавок -->
     {#if listings.length === 0}
-      <p class="mt-8 text-sm text-[#8a6a55]">{$t('studioMarketEmpty')}</p>
+      <p class="empty">{$t('studioMarketEmpty')}</p>
     {:else}
-      <div class="mt-8 grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-4">
+      <div class="shelf">
         {#each listings as listing (listing.id)}
           <div>
             <BattleCard card={sample} frames={[listing.body]} owned={true} />
-            <p class="mt-2 truncate text-sm text-[#34251c]">{listing.name}</p>
-            <p class="text-[11px] text-[#8a6a55]">
+            <p class="name">{listing.name}</p>
+            <p class="by">
               {#if listing.authorSlug}
                 <a href="/studio/authors/{listing.authorSlug}" class="hover:underline"
                   >{listing.author}</a
@@ -358,27 +371,27 @@
               {/if}
             </p>
             {#if listing.seller !== listing.author}
-              <p class="text-[10px] text-[#b0a08e]">
+              <p class="mark">
                 {$t('studioSoldBy').replace('{name}', listing.seller)}
               </p>
             {/if}
-            <div class="mt-1 flex items-baseline gap-2">
-              <span class="font-serif text-lg text-[#6f3b24]">{listing.price}</span>
-              <span class="text-[10px] uppercase tracking-[0.14em] text-[#8a6a55]"
+            <div class="tag">
+              <span class="tag-price">{listing.price}</span>
+              <span class="tag-coin"
                 >{$t('studioDust')}</span
               >
               {#if mineIds.has(listing.licenceId)}
                 <button
                   onclick={() => withdraw(listing)}
                   disabled={busy === listing.id}
-                  class="ml-auto text-[10px] uppercase tracking-[0.14em] text-[#b0a08e] hover:text-[#8f2f22] disabled:opacity-40"
+                  class="quiet quiet--danger"
                   >{$t('studioWithdraw')}</button
                 >
               {:else if token}
                 <button
                   onclick={() => buy(listing)}
                   disabled={busy === listing.id || (dust !== null && dust < listing.price)}
-                  class="ml-auto border border-[#c65f3c]/40 px-3 py-1 text-[10px] uppercase tracking-[0.14em] text-[#c65f3c] hover:bg-[#c65f3c]/8 disabled:opacity-40"
+                  class="quiet quiet--buy"
                   >{dust !== null && dust < listing.price
                     ? $t('studioNotEnough')
                     : $t('studioBuy')}</button
@@ -386,7 +399,7 @@
               {:else}
                 <a
                   href="/login"
-                  class="ml-auto text-[10px] uppercase tracking-[0.14em] text-[#8a6a55] hover:text-[#c65f3c]"
+                  class="quiet" style="margin-left:auto"
                   >{$t('studioSignInToBuy')}</a
                 >
               {/if}
@@ -399,12 +412,12 @@
     <!-- Карты людей. Второй прилавок в той же комнате: право носить раму и
          сама карта — разные вещи, и мешать их в одну полку значило бы
          показывать их одинаково. -->
-    <h2 class="mt-14 font-serif text-xl text-[#34251c]">{$t('studioMarketCards')}</h2>
-    <p class="mt-1 max-w-2xl text-sm text-[#6f3b24]">{$t('studioMarketCardsLead')}</p>
+    <h2 class="shelf-title">{$t('studioMarketCards')}</h2>
+    <p class="shelf-lead">{$t('studioMarketCardsLead')}</p>
     {#if copies.length === 0}
-      <p class="mt-4 text-sm text-[#8a6a55]">{$t('studioMarketEmpty')}</p>
+      <p class="empty">{$t('studioMarketEmpty')}</p>
     {:else}
-      <div class="mt-6 grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-4">
+      <div class="shelf">
         {#each copies as one (one.id)}
           <div>
             {#if cardOf(one.cardId)}
@@ -415,29 +428,29 @@
                 level={one.level}
               />
             {/if}
-            <p class="mt-2 truncate text-sm text-[#34251c]">
+            <p class="name">
               {$lang === 'en' ? one.titleEn : one.titleRu}
             </p>
-            <p class="text-[11px] text-[#8a6a55]">
+            <p class="by">
               {#if one.serial}{$t('studioSerial').replace('{n}', String(one.serial))} · {/if}
               {$t('studioCopyLevel').replace('{n}', String(one.level))}
             </p>
             {#if one.creditName}
               <!-- Имя рядом с ценой — в тот самый миг, когда его запоминают. -->
-              <p class="text-[10px] italic text-[#a08a63]">
+              <p class="by">
                 {$t('battlesCredit').replace('{name}', one.creditName)}
               </p>
             {/if}
-            <div class="mt-1 flex items-baseline gap-2">
-              <span class="font-serif text-lg text-[#6f3b24]">{one.price}</span>
-              <span class="text-[10px] uppercase tracking-[0.14em] text-[#8a6a55]"
+            <div class="tag">
+              <span class="tag-price">{one.price}</span>
+              <span class="tag-coin"
                 >{$t('studioDust')}</span
               >
               {#if myCopyIds.has(one.copyId)}
                 <button
                   onclick={() => withdrawId(one.id)}
                   disabled={busy === one.id}
-                  class="ml-auto text-[10px] uppercase tracking-[0.14em] text-[#b0a08e] hover:text-[#8f2f22] disabled:opacity-40"
+                  class="quiet quiet--danger"
                   >{$t('studioWithdraw')}</button
                 >
               {:else if token}
@@ -448,9 +461,15 @@
                   >{$t('studioTradeOffer')}</button
                 >
                 <button
-                  onclick={() => buyId(one.id, $lang === 'en' ? one.titleEn : one.titleRu, one.price)}
+                  onclick={() =>
+                    (ask = {
+                      kind: 'buy',
+                      listing: one.id,
+                      name: $lang === 'en' ? one.titleEn : one.titleRu,
+                      price: one.price,
+                    })}
                   disabled={busy === one.id || (dust !== null && dust < one.price)}
-                  class="border border-[#c65f3c]/40 px-3 py-1 text-[10px] uppercase tracking-[0.14em] text-[#c65f3c] hover:bg-[#c65f3c]/8 disabled:opacity-40"
+                  class="btn btn--lit"
                   >{dust !== null && dust < one.price
                     ? $t('studioNotEnough')
                     : $t('studioBuy')}</button
@@ -458,7 +477,7 @@
               {:else}
                 <a
                   href="/login"
-                  class="ml-auto text-[10px] uppercase tracking-[0.14em] text-[#8a6a55] hover:text-[#c65f3c]"
+                  class="quiet" style="margin-left:auto"
                   >{$t('studioSignInToBuy')}</a
                 >
               {/if}
@@ -470,19 +489,19 @@
 
     <!-- Молоток. Третья полка той же комнаты: вещь тоже отдаётся, только цену
          называет не хозяин, а тот, кто больше даст. -->
-    <h2 class="mt-14 font-serif text-xl text-[#34251c]">{$t('studioHammer')}</h2>
-    <p class="mt-1 max-w-2xl text-sm text-[#6f3b24]">{$t('studioHammerLead')}</p>
+    <h2 class="shelf-title">{$t('studioHammer')}</h2>
+    <p class="shelf-lead">{$t('studioHammerLead')}</p>
     {#if auctions.length === 0}
-      <p class="mt-4 text-sm text-[#8a6a55]">{$t('studioHammerEmpty')}</p>
+      <p class="empty">{$t('studioHammerEmpty')}</p>
     {:else}
-      <div class="mt-6 grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-4">
+      <div class="shelf">
         {#each auctions as lot (lot.id)}
           <div>
             {#if lot.cardId && cardOf(lot.cardId)}
               <BattleCard card={cardOf(lot.cardId)!} {frames} owned={true} />
             {/if}
-            <p class="mt-2 truncate text-sm text-[#34251c]">{lot.name}</p>
-            <p class="text-[11px] text-[#8a6a55]">
+            <p class="name">{lot.name}</p>
+            <p class="by">
               {#if lot.estate}
                 <!-- Вещь ушедшего названа словом: у неё нет продавца, и
                      вырученное за неё сгорает. -->
@@ -492,24 +511,24 @@
               {/if}
               · {timeLeft(lot.endsAt)}
             </p>
-            <div class="mt-1 flex items-baseline gap-2">
-              <span class="font-serif text-lg text-[#6f3b24]">{lot.topBid ?? lot.startPrice}</span>
-              <span class="text-[10px] uppercase tracking-[0.14em] text-[#8a6a55]">
+            <div class="tag">
+              <span class="tag-price">{lot.topBid ?? lot.startPrice}</span>
+              <span class="tag-coin">
                 {lot.topBid
                   ? $t('studioLotBids').replace('{n}', String(lot.bids))
                   : $t('studioLotStart')}
               </span>
               {#if token}
                 <button
-                  onclick={() => bid(lot)}
+                  onclick={() => (ask = { kind: 'bid', lot })}
                   disabled={busy === lot.id}
-                  class="ml-auto border border-[#c65f3c]/40 px-3 py-1 text-[10px] uppercase tracking-[0.14em] text-[#c65f3c] hover:bg-[#c65f3c]/8 disabled:opacity-40"
+                  class="quiet quiet--buy"
                   >{$t('studioBid')}</button
                 >
               {:else}
                 <a
                   href="/login"
-                  class="ml-auto text-[10px] uppercase tracking-[0.14em] text-[#8a6a55] hover:text-[#c65f3c]"
+                  class="quiet" style="margin-left:auto"
                   >{$t('studioSignInToBuy')}</a
                 >
               {/if}
@@ -521,18 +540,18 @@
 
     <!-- Свои лицензии: та же комната, второй прилавок. -->
     {#if token}
-      <h2 class="mt-14 font-serif text-xl text-[#34251c]">{$t('studioMyLicences')}</h2>
-      <p class="mt-1 max-w-2xl text-sm text-[#6f3b24]">{$t('studioMyLicencesLead')}</p>
+      <h2 class="shelf-title">{$t('studioMyLicences')}</h2>
+      <p class="shelf-lead">{$t('studioMyLicencesLead')}</p>
 
       {#if mine.length === 0}
-        <p class="mt-4 text-sm text-[#8a6a55]">{$t('studioNoLicences')}</p>
+        <p class="empty">{$t('studioNoLicences')}</p>
       {:else}
-        <div class="mt-6 grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-4">
+        <div class="shelf">
           {#each mine as licence (licence.id)}
             <div>
               <BattleCard card={sample} frames={[licence.body]} owned={true} />
-              <p class="mt-2 truncate text-sm text-[#34251c]">{licence.name}</p>
-              <p class="text-[11px] text-[#8a6a55]">
+              <p class="name">{licence.name}</p>
+              <p class="by">
                 {licence.author} ·
                 {#if licence.editionSize}
                   {$t('studioSerialOf')
@@ -544,7 +563,7 @@
               </p>
               {#if licence.locked}
                 <!-- Запертая стоит на прилавке: снимают её там, а не здесь. -->
-                <p class="mt-1 text-[10px] uppercase tracking-[0.14em] text-[#c65f3c]">
+                <p class="mark mark--lit">
                   {$t('studioOnSale')}
                 </p>
               {:else if pricing === licence.id}
@@ -574,12 +593,12 @@
                     <button
                       onclick={() => sell(licence)}
                       disabled={busy === licence.id}
-                      class="border border-[#c65f3c]/40 px-3 py-1 text-[10px] uppercase tracking-[0.14em] text-[#c65f3c] hover:bg-[#c65f3c]/8 disabled:opacity-40"
+                      class="btn btn--lit"
                       >{$t('studioSell')}</button
                     >
                     <button
                       onclick={() => (pricing = null)}
-                      class="text-[10px] uppercase tracking-[0.14em] text-[#b0a08e] hover:text-[#8a6a55]"
+                      class="quiet"
                       >{$t('studioCancel')}</button
                     >
                   </div>
@@ -597,40 +616,40 @@
       {/if}
       <!-- Свои карты. Продают их отсюда же: вещь, пропавшая из списка ровно
            потому, что выставлена, — это вещь, которую нельзя снять. -->
-      <h2 class="mt-14 font-serif text-xl text-[#34251c]">{$t('studioMyCards')}</h2>
-      <p class="mt-1 max-w-2xl text-sm text-[#6f3b24]">{$t('studioMyCardsLead')}</p>
+      <h2 class="shelf-title">{$t('studioMyCards')}</h2>
+      <p class="shelf-lead">{$t('studioMyCardsLead')}</p>
       {#if myCopies.length === 0}
-        <p class="mt-4 text-sm text-[#8a6a55]">{$t('studioNoCopies')}</p>
+        <p class="empty">{$t('studioNoCopies')}</p>
       {:else}
-        <div class="mt-6 grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-4">
+        <div class="shelf">
           {#each myCopies as own (own.id)}
             <div>
               {#if cardOf(own.cardId)}
                 <BattleCard card={cardOf(own.cardId)!} {frames} owned={true} level={own.level} />
               {/if}
-              <p class="mt-2 truncate text-sm text-[#34251c]">
+              <p class="name">
                 {$lang === 'en' ? own.titleEn : own.titleRu}
               </p>
-              <p class="text-[11px] text-[#8a6a55]">
+              <p class="by">
                 {#if own.serial}{$t('studioSerial').replace('{n}', String(own.serial))} · {/if}
                 {$t('studioCopyLevel').replace('{n}', String(own.level))}
               </p>
               {#if own.locked}
-                <p class="mt-1 text-[10px] uppercase tracking-[0.14em] text-[#c65f3c]">
+                <p class="mark mark--lit">
                   {$t('studioOnSale')}
                 </p>
               {:else}
-                <div class="mt-1 flex flex-wrap gap-3">
+                <div class="deeds">
                   <button
-                    onclick={() => sellCopy(own)}
+                    onclick={() => (ask = { kind: 'sellCopy', copy: own })}
                     disabled={busy === own.id}
-                    class="text-[10px] uppercase tracking-[0.14em] text-[#8a6a55] hover:text-[#c65f3c] disabled:opacity-40"
+                    class="quiet"
                     >{$t('studioSell')}</button
                   >
                   <button
-                    onclick={() => toHammer(own)}
+                    onclick={() => (ask = { kind: 'hammer', copy: own })}
                     disabled={busy === own.id}
-                    class="text-[10px] uppercase tracking-[0.14em] text-[#8a6a55] hover:text-[#c65f3c] disabled:opacity-40"
+                    class="quiet"
                     >{$t('studioToHammer')}</button
                   >
                 </div>
@@ -643,7 +662,7 @@
            комната, и разносить их по разным местам значило бы прятать половину
            разговора. -->
       {#if trades.length}
-        <h2 class="mt-14 font-serif text-xl text-[#34251c]">{$t('studioTrades')}</h2>
+        <h2 class="shelf-title">{$t('studioTrades')}</h2>
         <div class="mt-4 space-y-3">
           {#each trades as trade (trade.id)}
             <div class="border border-[#d8c6b1] bg-[#fdf9f3] p-3">
@@ -680,11 +699,13 @@
         </div>
       {/if}
     {:else}
-      <p class="mt-14 text-sm text-[#8a6a55]">{$t('studioMarketSignIn')}</p>
+      <p class="empty">{$t('studioMarketSignIn')}</p>
     {/if}
   {/if}
+  </div>
+</div>
 
-  <!-- Что кладём в мену. Выбирают из СВОЕГО и не запертого: вещь, уже занятая
+<!-- Что кладём в мену. Выбирают из СВОЕГО и не запертого: вещь, уже занятая
        другой меной или прилавком, в мену не идёт. -->
   {#if trading}
     <div class="fixed inset-0 z-50 flex items-center justify-center bg-[#34251c]/40 p-4">
@@ -692,7 +713,7 @@
         <h2 class="font-serif text-xl text-[#34251c]">{$t('studioTradeWhat')}</h2>
         <p class="mt-1 text-sm text-[#6f3b24]">{$t('studioTradeWhatLead')}</p>
         {#if tradable.length === 0}
-          <p class="mt-4 text-sm text-[#8a6a55]">{$t('studioNoCopies')}</p>
+          <p class="empty">{$t('studioNoCopies')}</p>
         {:else}
           <div class="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
             {#each tradable as own (own.id)}
@@ -728,4 +749,47 @@
       </div>
     </div>
   {/if}
-</div>
+
+{#if ask}
+  <StudioAsk
+    title={askTitle}
+    lead={ask.kind === 'buy'
+      ? $t('studioBuyAsk').replace('{name}', ask.name).replace('{n}', String(ask.price))
+      : ask.kind === 'bid'
+        ? $t('studioBidAsk').replace('{n}', String(leastBid(ask.lot)))
+        : $t('studioSellCopyAsk')
+            .replace('{min}', String(settings?.priceFloor ?? 1))
+            .replace('{max}', String(settings?.priceCeil ?? 0))}
+    field={ask.kind === 'buy' ? undefined : 'number'}
+    value={ask.kind === 'bid'
+      ? String(leastBid(ask.lot))
+      : ask.kind === 'buy'
+        ? ''
+        : String(settings?.priceFloor ?? 50)}
+    min={ask.kind === 'bid' ? leastBid(ask.lot) : (settings?.priceFloor ?? 1)}
+    max={ask.kind === 'bid' ? undefined : settings?.priceCeil}
+    yes={askTitle}
+    onyes={answered}
+    onclose={() => (ask = null)}
+  />
+{/if}
+
+<style>
+  /* Цена — ЯРЛЫК на вещи, а не ценник у кнопки: лавка дома выглядит прилавком,
+     а не витриной. Число тушью, монета шёпотом, кнопка такая же тихая, как
+     «показать хозяину». */
+  .tag-price {
+    font-family: Georgia, 'Fraunces', serif;
+    font-size: 1.05rem;
+    color: #6f3b24;
+  }
+
+  :global(.studio-room .quiet--buy) {
+    margin-left: auto;
+    color: #c65f3c;
+  }
+
+  :global(.studio-room .quiet--buy:disabled) {
+    color: #b0a08e;
+  }
+</style>

@@ -11,6 +11,8 @@
   import { t, lang } from '$lib/i18n';
   import { api } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
+  import StudioAsk from '$lib/components/studio/StudioAsk.svelte';
+  import '$lib/components/studio/studio-room.css';
   import type { SaveStudioRaceRequest, StudioAsset, StudioRace } from '$lib/types/api';
 
   let races = $state<StudioRace[]>([]);
@@ -24,6 +26,8 @@
   let draft = $state<SaveStudioRaceRequest>(empty());
   let needsAgreement = $state(true);
   let asking = $state<StudioRace | null>(null);
+  /** Какой род выбрасывают. Своим окном: необратимое дом спрашивает сам. */
+  let dropping = $state<StudioRace | null>(null);
 
   let token = $derived(authStore.token);
 
@@ -123,9 +127,10 @@
     busy = null;
   }
 
-  async function drop(race: StudioRace) {
-    if (!token) return;
-    if (!confirm($t('studioRaceDropAsk'))) return;
+  async function drop() {
+    const race = dropping;
+    dropping = null;
+    if (!token || !race) return;
     busy = race.id;
     await api.deleteStudioRace(token, race.id).catch((e) => flash(String(e)));
     await reload();
@@ -140,195 +145,219 @@
   }
 </script>
 
-<svelte:head><title>{$t('studioRaces')}</title></svelte:head>
+<svelte:head>
+  <title>{$t('studioRaces')}</title>
+  <meta name="description" content={$t('studioRacesLead')} />
+</svelte:head>
 
-<div class="mx-auto max-w-4xl px-5 py-10">
-  <div class="flex flex-wrap items-baseline justify-between gap-3">
-    <h1 class="font-serif text-2xl text-[#34251c]">{$t('studioRaces')}</h1>
-    <a href="/studio" class="text-xs uppercase tracking-[0.16em] text-[#8a6a55] hover:text-[#c65f3c]"
-      >← {$t('studioBack')}</a
-    >
-  </div>
-  <p class="mt-2 max-w-2xl text-sm leading-relaxed text-[#6f3b24]">{$t('studioRacesLead')}</p>
+<div class="studio-room">
+  <div class="page" style="max-width: 60rem">
+    <p class="eyebrow">
+      <a href="/studio">{$t('studioBack')}</a>
+      <span class="eyebrow-rule"></span>
+      <span>{$t('studioEyebrow')}</span>
+    </p>
+    <h1 class="room-title">{$t('studioRaces')}</h1>
+    <p class="room-lead">{$t('studioRacesLead')}</p>
 
-  {#if said}<p class="mt-3 text-xs text-[#c65f3c]">{said}</p>{/if}
+    {#if said}<p class="said">{said}</p>{/if}
 
-  {#if !token}
-    <p class="mt-8 text-sm text-[#8a6a55]">{$t('studioCardsSignIn')}</p>
-  {:else if loading}
-    <p class="mt-8 text-sm text-[#8a6a55]">{$t('studioLoading')}</p>
-  {:else}
-    {#if editing}
-      <div class="mt-6 space-y-3 border border-[#d8c6b1] bg-[#fdf9f3] p-4">
-        <div class="grid gap-3 sm:grid-cols-2">
-          <label class="block text-[11px] text-[#6f3b24]">
-            {$t('studioRaceNameRu')}
-            <input
-              bind:value={draft.nameRu}
-              maxlength="60"
-              class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1 text-sm text-[#34251c]"
-            />
-          </label>
-          <label class="block text-[11px] text-[#6f3b24]">
-            {$t('studioRaceNameEn')}
-            <input
-              bind:value={draft.nameEn}
-              maxlength="60"
-              class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1 text-sm text-[#34251c]"
-            />
-          </label>
-          <label class="block text-[11px] text-[#6f3b24]">
-            {$t('studioRaceNoteRu')}
-            <textarea
-              bind:value={draft.noteRu}
-              rows="2"
-              maxlength="200"
-              class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1 text-sm text-[#34251c]"
-            ></textarea>
-          </label>
-          <label class="block text-[11px] text-[#6f3b24]">
-            {$t('studioRaceNoteEn')}
-            <textarea
-              bind:value={draft.noteEn}
-              rows="2"
-              maxlength="200"
-              class="mt-1 w-full border border-[#d8c6b1] bg-white px-2 py-1 text-sm text-[#34251c]"
-            ></textarea>
-          </label>
-        </div>
+    {#if !token}
+      <p class="empty">{$t('studioCardsSignIn')}</p>
+    {:else if loading}
+      <p class="empty">{$t('studioLoading')}</p>
+    {:else}
+      {#if editing}
+        <div class="slip">
+          <div class="field-grid grid--two">
+            <label class="field">
+              {$t('studioRaceNameRu')}
+              <input bind:value={draft.nameRu} maxlength="60" />
+            </label>
+            <label class="field">
+              {$t('studioRaceNameEn')}
+              <input bind:value={draft.nameEn} maxlength="60" />
+            </label>
+            <label class="field">
+              {$t('studioRaceNoteRu')}
+              <textarea bind:value={draft.noteRu} rows="2" maxlength="200"></textarea>
+            </label>
+            <label class="field">
+              {$t('studioRaceNoteEn')}
+              <textarea bind:value={draft.noteEn} rows="2" maxlength="200"></textarea>
+            </label>
+          </div>
 
-        <!-- Значок — из своего ящика: второго склада для этого нет. -->
-        <div>
-          <p class="text-[11px] text-[#6f3b24]">{$t('studioRaceIcon')}</p>
+          <!-- Значок — из своего ящика: второго склада для этого нет. -->
+          <p class="field" style="margin-top:1rem">{$t('studioRaceIcon')}</p>
           {#if box.length === 0}
-            <p class="mt-1 text-[11px] text-[#8a6a55]">
+            <p class="hint">
               {$t('studioCardArtEmpty')}
-              <a href="/studio/assets" class="underline">{$t('studioStore')}</a>
+              <a href="/studio/assets">{$t('studioStore')}</a>
             </p>
           {:else}
-            <div class="mt-2 flex flex-wrap gap-2">
+            <div class="icons">
               {#each box as asset (asset.id)}
                 <button
+                  class="icon"
+                  class:icon--lit={draft.iconUrl === asset.url}
                   onclick={() => (draft.iconUrl = asset.url)}
-                  class="border p-1 {draft.iconUrl === asset.url
-                    ? 'border-[#c65f3c]'
-                    : 'border-[#d8c6b1] hover:border-[#8a6a55]'}"
                 >
-                  <img src={asset.url} alt={asset.name} class="h-10 w-10 object-contain" />
+                  <img src={asset.url} alt={asset.name} />
                 </button>
               {/each}
               {#if draft.iconUrl}
-                <button
-                  onclick={() => (draft.iconUrl = null)}
-                  class="self-center text-[10px] uppercase tracking-[0.14em] text-[#b0a08e] hover:text-[#8f2f22]"
+                <button class="quiet quiet--danger" onclick={() => (draft.iconUrl = null)}
                   >{$t('studioCardArtClear')}</button
                 >
               {/if}
             </div>
           {/if}
-        </div>
 
-        <div class="flex flex-wrap gap-3">
-          <button
-            onclick={keep}
-            disabled={busy !== null}
-            class="border border-[#c65f3c]/40 px-4 py-2 text-xs uppercase tracking-[0.16em] text-[#c65f3c] hover:bg-[#c65f3c]/8 disabled:opacity-40"
-            >{$t('studioCardSave')}</button
-          >
-          <button
-            onclick={() => (editing = null)}
-            class="border border-[#34251c]/20 px-4 py-2 text-xs uppercase tracking-[0.16em] hover:bg-[#34251c]/5"
-            >{$t('studioCancel')}</button
-          >
-        </div>
-      </div>
-    {:else}
-      <button
-        onclick={begin}
-        class="mt-6 border border-[#c65f3c]/40 px-4 py-2 text-xs uppercase tracking-[0.16em] text-[#c65f3c] hover:bg-[#c65f3c]/8"
-        >{$t('studioRaceNew')}</button
-      >
-    {/if}
-
-    {#if races.length === 0}
-      <p class="mt-8 text-sm text-[#8a6a55]">{$t('studioRacesEmpty')}</p>
-    {:else}
-      <div class="mt-8 space-y-3">
-        {#each races as race (race.id)}
-          <div class="flex flex-wrap items-start gap-3 border border-[#d8c6b1] bg-[#fdf9f3] p-3">
-            {#if race.iconUrl}
-              <img src={race.iconUrl} alt="" class="h-10 w-10 object-contain" />
-            {/if}
-            <div class="min-w-0 flex-1">
-              <p class="text-sm text-[#34251c]">
-                {$lang === 'en' ? race.nameEn : race.nameRu}
-                <span class="text-[#b0a08e]">· {$lang === 'en' ? race.nameRu : race.nameEn}</span>
-              </p>
-              <p class="text-[10px] uppercase tracking-[0.14em] text-[#8a6a55]">{markOf(race)}</p>
-              {#if race.noteRu || race.noteEn}
-                <p class="mt-1 text-[11px] italic text-[#6f3b24]">
-                  {$lang === 'en' ? race.noteEn : race.noteRu}
-                </p>
-              {/if}
-              {#if race.keeperWord}
-                <p class="mt-1 text-[11px] italic leading-relaxed text-[#8f2f22]">
-                  {race.keeperWord}
-                </p>
-              {/if}
-            </div>
-            <div class="flex flex-wrap gap-3 text-[10px] uppercase tracking-[0.14em]">
-              {#if race.status === 'taken' || race.approvedAt}
-                <span class="text-[#c65f3c]">{$t('studioRaceInHouse')}</span>
-              {:else if race.status === 'shown'}
-                <button
-                  onclick={() => withdraw(race)}
-                  disabled={busy === race.id}
-                  class="text-[#8a6a55] hover:text-[#c65f3c] disabled:opacity-40"
-                  >{$t('studioCardTakeBack')}</button
-                >
-              {:else}
-                <button
-                  onclick={() => edit(race)}
-                  class="text-[#8a6a55] hover:text-[#c65f3c]">{$t('studioCardWork')}</button
-                >
-                <button
-                  onclick={() => show(race)}
-                  disabled={busy === race.id}
-                  class="text-[#c65f3c] hover:underline disabled:opacity-40"
-                  >{$t('studioCardShow')}</button
-                >
-                <button
-                  onclick={() => drop(race)}
-                  disabled={busy === race.id}
-                  class="text-[#b0a08e] hover:text-[#8f2f22] disabled:opacity-40"
-                  >{$t('studioCardDrop')}</button
-                >
-              {/if}
-            </div>
+          <div class="doors">
+            <button class="btn btn--lit" disabled={busy !== null} onclick={keep}
+              >{$t('studioCardSave')}</button
+            >
+            <button class="btn" onclick={() => (editing = null)}>{$t('studioCancel')}</button>
           </div>
-        {/each}
-      </div>
-    {/if}
-  {/if}
-
-  {#if asking}
-    <div class="fixed inset-0 z-50 flex items-center justify-center bg-[#34251c]/40 p-4">
-      <div class="max-w-lg border border-[#d8c6b1] bg-[#f8f1e7] p-6">
-        <h2 class="font-serif text-xl text-[#34251c]">{$t('studioAgreementTitle')}</h2>
-        <p class="mt-3 text-sm leading-relaxed text-[#6f3b24]">{$t('studioAgreementBody')}</p>
-        <div class="mt-5 flex flex-wrap gap-3">
-          <button
-            onclick={agreeAndShow}
-            class="border border-[#c65f3c]/60 px-4 py-2 text-xs uppercase tracking-[0.16em] text-[#c65f3c] hover:bg-[#c65f3c]/8"
-            >{$t('studioAgreementAgree')}</button
-          >
-          <button
-            onclick={() => (asking = null)}
-            class="border border-[#34251c]/20 px-4 py-2 text-xs uppercase tracking-[0.16em] hover:bg-[#34251c]/5"
-            >{$t('studioAgreementNo')}</button
-          >
         </div>
-      </div>
-    </div>
-  {/if}
+      {:else}
+        <div class="doors">
+          <button class="btn btn--lit" onclick={begin}>{$t('studioRaceNew')}</button>
+        </div>
+      {/if}
+
+      {#if races.length === 0}
+        <p class="empty">{$t('studioRacesEmpty')}</p>
+      {:else}
+        <div class="rows">
+          {#each races as race (race.id)}
+            <div class="row">
+              {#if race.iconUrl}
+                <img class="row-icon" src={race.iconUrl} alt="" />
+              {/if}
+              <div class="row-words">
+                <p class="name" style="margin:0">
+                  {$lang === 'en' ? race.nameEn : race.nameRu}
+                  <span style="opacity:.45">· {$lang === 'en' ? race.nameRu : race.nameEn}</span>
+                </p>
+                <p class="mark" class:mark--lit={race.status === 'taken' || !!race.approvedAt}>
+                  {markOf(race)}
+                </p>
+                {#if race.noteRu || race.noteEn}
+                  <p class="word">{$lang === 'en' ? race.noteEn : race.noteRu}</p>
+                {/if}
+                {#if race.keeperWord}
+                  <p class="word">{race.keeperWord}</p>
+                {/if}
+              </div>
+              <div class="deeds row-deeds">
+                {#if race.status === 'taken' || race.approvedAt}
+                  <span class="mark mark--lit" style="margin:0">{$t('studioRaceInHouse')}</span>
+                {:else if race.status === 'shown'}
+                  <button class="quiet" disabled={busy === race.id} onclick={() => withdraw(race)}
+                    >{$t('studioCardTakeBack')}</button
+                  >
+                {:else}
+                  <button class="quiet" onclick={() => edit(race)}>{$t('studioCardWork')}</button>
+                  <button
+                    class="quiet"
+                    style="color:#c65f3c"
+                    disabled={busy === race.id}
+                    onclick={() => show(race)}>{$t('studioCardShow')}</button
+                  >
+                  <button
+                    class="quiet quiet--danger"
+                    disabled={busy === race.id}
+                    onclick={() => (dropping = race)}>{$t('studioCardDrop')}</button
+                  >
+                {/if}
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    {/if}
+  </div>
 </div>
+
+{#if asking}
+  <StudioAsk
+    title={$t('studioAgreementTitle')}
+    lead={$t('studioAgreementBody')}
+    yes={$t('studioAgreementAgree')}
+    onyes={agreeAndShow}
+    onclose={() => (asking = null)}
+  />
+{/if}
+
+{#if dropping}
+  <StudioAsk
+    title={$t('studioCardDrop')}
+    lead={$t('studioRaceDropAsk')}
+    yes={$t('studioCardDrop')}
+    danger
+    onyes={drop}
+    onclose={() => (dropping = null)}
+  />
+{/if}
+
+<style>
+  .icons {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.6rem;
+  }
+
+  .icon {
+    padding: 0.25rem;
+    border: 1px solid #d8c6b1;
+    background: none;
+    cursor: pointer;
+    line-height: 0;
+  }
+
+  .icon--lit {
+    border-color: #c65f3c;
+  }
+
+  .icon img {
+    width: 2.5rem;
+    height: 2.5rem;
+    object-fit: contain;
+  }
+
+  .rows {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin-top: 2rem;
+  }
+
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 0.9rem;
+    padding: 0.9rem 1rem;
+    border: 1px solid #d8c6b1;
+    background: #fdf9f3;
+  }
+
+  .row-icon {
+    width: 2.5rem;
+    height: 2.5rem;
+    object-fit: contain;
+  }
+
+  .row-words {
+    flex: 1 1 14rem;
+    min-width: 0;
+  }
+
+  .row-deeds {
+    margin: 0;
+  }
+</style>

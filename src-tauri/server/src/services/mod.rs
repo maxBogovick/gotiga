@@ -8887,7 +8887,10 @@ impl AppService {
             return Err(AppError::BadRequest("seasonClosed".into()));
         }
         // Автор, выставившийся в этом сезоне, соперников не оценивает.
-        let entries = self.repo.list_studio_entries(season.id, None).await?;
+        let entries = self
+            .repo
+            .list_studio_entries(season.id, Some(user_id))
+            .await?;
         if entries.iter().any(|e| e.author_id == user_id) {
             return Err(AppError::BadRequest("authorMayNotRate".into()));
         }
@@ -9205,7 +9208,7 @@ impl AppService {
         }
         if self
             .repo
-            .set_studio_card_status(user_id, id, "shown", &["draft", "withdrawn"])
+            .set_studio_card_status(user_id, id, "shown", crate::studio::WORK_MAY_SHOW_FROM)
             .await?
         {
             Self::log_domain_event("studio_card_shown", "studio_card", id, "ok");
@@ -9221,7 +9224,7 @@ impl AppService {
         self.studio_admit(user_id).await?;
         if self
             .repo
-            .set_studio_card_status(user_id, id, "withdrawn", &["shown"])
+            .set_studio_card_status(user_id, id, "withdrawn", crate::studio::WORK_MAY_WITHDRAW_FROM)
             .await?
         {
             Ok(())
@@ -9237,6 +9240,167 @@ impl AppService {
         } else {
             Err(AppError::NotFound("studio card".into()))
         }
+    }
+
+    // ── Свои движения ───────────────────────────────────────────────────────
+    //
+    // Движение человека — сочетание готовых жестов, и это то же самое, что
+    // способность из готовых глаголов: движок не умеет ничего сверх списка, и
+    // принести новое ПРАВИЛО через движение нельзя.
+
+    pub async fn studio_motions(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<crate::models::StudioMotionDto>> {
+        self.studio_admit(user_id).await?;
+        self.repo.list_studio_motions(user_id).await
+    }
+
+    /// Сохранить ящик человека целиком.
+    ///
+    /// Тела проходят ТЕ ЖЕ зажимы, что и свод дома (`normalize_motions`): второй
+    /// разбор движения разошёлся бы с первым на первом же новом поле жеста, и
+    /// разошёлся бы молча — на столе сложилось, в комнате не сыграло.
+    pub async fn save_studio_motions(
+        &self,
+        user_id: Uuid,
+        req: &crate::models::SaveStudioMotionsRequest,
+    ) -> Result<Vec<crate::models::StudioMotionDto>> {
+        self.studio_admit(user_id).await?;
+        let sent: Vec<crate::battles::Motion> = req
+            .motions
+            .iter()
+            .cloned()
+            .map(serde_json::from_value)
+            .collect::<std::result::Result<_, _>>()
+            .map_err(|e| AppError::BadRequest(format!("motionUnreadable: {e}")))?;
+        let clean = crate::battles::normalize_motions(sent);
+        if clean.len() > crate::studio::MOTIONS_OPEN {
+            return Err(AppError::BadRequest("tooManyMotions".into()));
+        }
+        let mut keep: Vec<String> = Vec::with_capacity(clean.len());
+        for one in &clean {
+            // Автограф ставит студия при утверждении, а не человек у себя: имя,
+            // приехавшее из тела, было бы чужой подписью на своей работе.
+            let mut body = one.clone();
+            body.credit = String::new();
+            let json = serde_json::to_value(&body)
+                .map_err(|_| AppError::Internal("Движение не сериализуется".into()))?;
+            self.repo
+                .upsert_studio_motion(user_id, &one.id, &json, &req.lang)
+                .await?;
+            keep.push(one.id.clone());
+        }
+        self.repo.drop_missing_studio_motions(user_id, &keep).await?;
+        self.repo.list_studio_motions(user_id).await
+    }
+
+    pub async fn show_studio_motion(&self, user_id: Uuid, id: Uuid) -> Result<()> {
+        self.studio_admit(user_id).await?;
+        let agreed = self.repo.studio_agreement(user_id).await?;
+        if agreed.as_deref() != Some(crate::studio::AGREEMENT) {
+            return Err(AppError::BadRequest("needsAgreement".into()));
+        }
+        if self
+            .repo
+            .set_studio_motion_status(user_id, id, "shown", crate::studio::WORK_MAY_SHOW_FROM)
+            .await?
+        {
+            Ok(())
+        } else {
+            Err(AppError::NotFound("studio motion".into()))
+        }
+    }
+
+    pub async fn withdraw_studio_motion(&self, user_id: Uuid, id: Uuid) -> Result<()> {
+        self.studio_admit(user_id).await?;
+        if self
+            .repo
+            .set_studio_motion_status(user_id, id, "withdrawn", crate::studio::WORK_MAY_WITHDRAW_FROM)
+            .await?
+        {
+            Ok(())
+        } else {
+            Err(AppError::NotFound("studio motion".into()))
+        }
+    }
+
+    pub async fn studio_motion_queue(
+        &self,
+    ) -> Result<Vec<crate::models::StudioMotionQueueDto>> {
+        self.repo.studio_motion_queue().await
+    }
+
+    pub async fn deny_studio_motion(&self, id: Uuid, word: &str) -> Result<()> {
+        let word: String = word.trim().chars().take(600).collect();
+        if word.is_empty() {
+            return Err(AppError::BadRequest("wordEmpty".into()));
+        }
+        if self.repo.deny_studio_motion(id, &word).await? {
+            Ok(())
+        } else {
+            Err(AppError::NotFound("studio motion".into()))
+        }
+    }
+
+    /// Утвердить движение: оно встаёт в СВОД ДОМА с именем автора.
+    ///
+    /// Свод — одна строка настроек, и пишется он единственным писателем
+    /// (`save_battle_motions`), тем же, каким его пишет стол хозяина: второй
+    /// писатель однажды разошёлся бы с первым в зажимах, и в своде появилось бы
+    /// движение, которое стол сохранить бы отказался.
+    ///
+    /// Имя движения в своде дома может быть занято чужим: тогда оно получает
+    /// своё, а не затирает соседа — на имя показывают карты и расы.
+    pub async fn approve_studio_motion(&self, id: Uuid) -> Result<String> {
+        let (work, owner) = self
+            .repo
+            .get_studio_motion_any(id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("studio motion".into()))?;
+        if work.status == "taken" || work.approved_at.is_some() {
+            return Err(AppError::BadRequest("motionAlreadyTaken".into()));
+        }
+        if work.status != "shown" {
+            return Err(AppError::BadRequest("motionNotShown".into()));
+        }
+        let mut body: crate::battles::Motion = serde_json::from_value(work.body.clone())
+            .map_err(|e| AppError::BadRequest(format!("motionUnreadable: {e}")))?;
+        body.credit = self
+            .repo
+            .find_user_by_id(owner)
+            .await?
+            .map(|u| u.display_name)
+            .unwrap_or_default();
+
+        let house = self.get_battle_motions().await?;
+        if house.motions.iter().any(|m| m.id == body.id) {
+            body.id = format!("{}-{}", body.id, &id.to_string()[..8]);
+        }
+        let name = body.id.clone();
+
+        if !self
+            .repo
+            .set_studio_motion_status(owner, id, "taken", crate::studio::WORK_MAY_TAKE_FROM)
+            .await?
+        {
+            return Err(AppError::BadRequest("motionAlreadyTaken".into()));
+        }
+        let mut motions = house.motions;
+        motions.push(body);
+        if let Err(e) = self
+            .save_battle_motions(crate::battles::BattleMotions { motions })
+            .await
+        {
+            let _ = self
+                .repo
+                .set_studio_motion_status(owner, id, "shown", crate::studio::WORK_MAY_RETURN_FROM)
+                .await;
+            return Err(e);
+        }
+        self.repo.mark_studio_motion_approved(id, &name).await?;
+        Self::log_domain_event("studio_motion_approved", "studio_motion", id, "ok");
+        Ok(name)
     }
 
     // ── Свои роды ───────────────────────────────────────────────────────────
@@ -9285,7 +9449,7 @@ impl AppService {
         }
         if self
             .repo
-            .set_studio_race_status(user_id, id, "shown", &["draft", "withdrawn"])
+            .set_studio_race_status(user_id, id, "shown", crate::studio::WORK_MAY_SHOW_FROM)
             .await?
         {
             Ok(())
@@ -9298,7 +9462,7 @@ impl AppService {
         self.studio_admit(user_id).await?;
         if self
             .repo
-            .set_studio_race_status(user_id, id, "withdrawn", &["shown"])
+            .set_studio_race_status(user_id, id, "withdrawn", crate::studio::WORK_MAY_WITHDRAW_FROM)
             .await?
         {
             Ok(())
@@ -9364,7 +9528,7 @@ impl AppService {
         };
         if !self
             .repo
-            .set_studio_race_status(owner, id, "taken", &["shown"])
+            .set_studio_race_status(owner, id, "taken", crate::studio::WORK_MAY_TAKE_FROM)
             .await?
         {
             return Err(AppError::BadRequest("raceAlreadyTaken".into()));
@@ -9387,7 +9551,7 @@ impl AppService {
             Err(e) => {
                 let _ = self
                     .repo
-                    .set_studio_race_status(owner, id, "shown", &["taken"])
+                    .set_studio_race_status(owner, id, "shown", crate::studio::WORK_MAY_RETURN_FROM)
                     .await;
                 return Err(e);
             }
@@ -9469,6 +9633,9 @@ impl AppService {
         if let Some(art) = add.art_url.clone() {
             req.art_url = Some(art);
         }
+        if add.figurine_id.is_some() {
+            req.figurine_id = add.figurine_id.clone();
+        }
         if let Some(tier) = add.tier {
             req.tier = tier;
         }
@@ -9495,7 +9662,7 @@ impl AppService {
         // (`STUDIO-CARDS-REVIEW.md` П1).
         if !self
             .repo
-            .set_studio_card_status(author, id, "taken", &["shown"])
+            .set_studio_card_status(author, id, "taken", crate::studio::WORK_MAY_TAKE_FROM)
             .await?
         {
             return Err(AppError::BadRequest("cardAlreadyTaken".into()));
@@ -9508,7 +9675,7 @@ impl AppService {
                 // повисает взятой: хозяин ничего не решал, он получил отказ.
                 let _ = self
                     .repo
-                    .set_studio_card_status(author, id, "shown", &["taken"])
+                    .set_studio_card_status(author, id, "shown", crate::studio::WORK_MAY_RETURN_FROM)
                     .await;
                 return Err(e);
             }
@@ -9695,6 +9862,15 @@ impl AppService {
     }
 
     // ── Галерея и Зал авторов ───────────────────────────────────────────────
+
+    /// Утверждённые рамки — для стола одобрения карты: хозяин надевает
+    /// чужую работу на конкретную карту сразу там же, а не в отдельной
+    /// панели битв.
+    pub async fn list_approved_studio_frames(
+        &self,
+    ) -> Result<Vec<crate::models::StudioShownDto>> {
+        self.repo.list_approved_studio_frames().await
+    }
 
     pub async fn studio_gallery(
         &self,
@@ -9930,9 +10106,15 @@ impl AppService {
     /// Ударить молотком по всем, кому вышел срок. Зовётся фоновой задачей —
     /// той же, что подводит сезон: дом сам не забывает.
     pub async fn close_due_auctions(&self) -> Result<usize> {
+        let settings = self.get_studio_settings().await?;
         let mut done = 0;
         for id in self.repo.auctions_due().await? {
-            if self.repo.close_auction(id).await?.is_some() {
+            if self
+                .repo
+                .close_auction(id, settings.commission_percent)
+                .await?
+                .is_some()
+            {
                 done += 1;
             }
             Self::log_domain_event("auction_closed", "auction", id, "ok");

@@ -5074,6 +5074,14 @@ pub async fn admin_list_studio_admissions(
     Ok(Json(service.list_studio_admissions().await?))
 }
 
+/// Утверждённые рамки людей — чтобы надеть одну на карту прямо в диалоге её
+/// одобрения.
+pub async fn admin_list_approved_studio_frames(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<crate::models::StudioShownDto>>> {
+    Ok(Json(service.list_approved_studio_frames().await?))
+}
+
 // ── Свои карты ──────────────────────────────────────────────────────────────
 
 pub async fn get_studio_cards(
@@ -5150,6 +5158,70 @@ pub async fn weigh_studio_card(
 ) -> Result<Json<crate::models::BattleWeighDto>> {
     current_user(&service, &headers).await?;
     Ok(Json(AppService::weigh_battle_card(&body)))
+}
+
+// ── Свои движения ───────────────────────────────────────────────────────────
+
+pub async fn get_studio_motions(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::models::StudioMotionDto>>> {
+    let user = current_user(&service, &headers).await?;
+    Ok(Json(service.studio_motions(user.id).await?))
+}
+
+pub async fn save_studio_motions(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(req): Json<crate::models::SaveStudioMotionsRequest>,
+) -> Result<Json<Vec<crate::models::StudioMotionDto>>> {
+    let user = current_user(&service, &headers).await?;
+    Ok(Json(service.save_studio_motions(user.id, &req).await?))
+}
+
+pub async fn show_studio_motion(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    let user = current_user(&service, &headers).await?;
+    service.show_studio_motion(user.id, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn withdraw_studio_motion(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    let user = current_user(&service, &headers).await?;
+    service.withdraw_studio_motion(user.id, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_studio_motion_queue(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<crate::models::StudioMotionQueueDto>>> {
+    Ok(Json(service.studio_motion_queue().await?))
+}
+
+pub async fn admin_deny_studio_motion(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<crate::models::AdmitFrameRequest>,
+) -> Result<StatusCode> {
+    service
+        .deny_studio_motion(id, body.word.as_deref().unwrap_or(""))
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_approve_studio_motion(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>> {
+    let name = service.approve_studio_motion(id).await?;
+    Ok(Json(serde_json::json!({ "id": name })))
 }
 
 // ── Свои роды ───────────────────────────────────────────────────────────────

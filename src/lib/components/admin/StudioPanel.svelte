@@ -16,19 +16,21 @@
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
   import { t } from '$lib/i18n';
-  import { cardFromRequest, emptyBattleCard } from '$lib/battles';
+  import { cardFromRequest, emptyBattleCard, dressOf } from '$lib/battles';
   import BattleCard from '$lib/components/BattleCard.svelte';
   import type {
     BattleCard as BattleCardDto,
     BattleFrame,
     BattleRace,
     StudioCardWaiting,
+    StudioMotionWaiting,
     StudioRaceWaiting,
     StudioEntry,
     StudioFrame,
     StudioReport,
     StudioSeason,
     StudioSettings,
+    StudioShown,
   } from '$lib/types/api';
 
   let admissions = $state<StudioFrame[]>([]);
@@ -43,6 +45,10 @@
   /** Роды людей: словарные строки, которые наденут чужие карты. Взвешивать в
    *  них нечего — решение глазами, и потому очередь простая. */
   let waitingRaces = $state<StudioRaceWaiting[]>([]);
+  /** Движения людей: те же два решения, что у карт и родов, — взять или
+   *  вернуть со словом. Взвешивать в них нечего: сочетание готовых жестов
+   *  либо складывается в такт, либо нет, и смотрит на это хозяин. */
+  let motions = $state<StudioMotionWaiting[]>([]);
   let racing = $state<string | null>(null);
   let raceSlug = $state('');
   let races = $state<BattleRace[]>([]);
@@ -52,6 +58,10 @@
   let slug = $state('');
   let priceDust = $state<number | null>(20);
   let cardEdition = $state<number | null>(null);
+  /** Утверждённые рамки людей — чтобы надеть чужую работу на карту сразу
+   *  здесь, а не бегать за этим в панель битв. */
+  let approvedFrames = $state<StudioShown[]>([]);
+  let chosenFrameId = $state('');
   let season = $state<StudioSeason | null>(null);
   let settings = $state<StudioSettings | null>(null);
   let loading = $state(true);
@@ -78,7 +88,7 @@
   async function reload() {
     loading = true;
     try {
-      const [a, q, r, page, s, cn, rq, dress, race] = await Promise.all([
+      const [a, q, r, page, s, cn, rq, mo, dress, race, af] = await Promise.all([
         api.adminStudioAdmissions().catch(() => []),
         api.adminStudioQueue().catch(() => []),
         api.adminStudioReports().catch(() => []),
@@ -86,16 +96,20 @@
         api.adminGetStudioSettings().catch(() => null),
         api.adminStudioCardQueue().catch(() => []),
         api.adminStudioRaceQueue().catch(() => []),
+        api.adminStudioMotionQueue().catch(() => []),
         api.getBattleFrames().catch(() => null),
         api.getBattleRaces().catch(() => []),
+        api.adminApprovedStudioFrames().catch(() => []),
       ]);
       admissions = a;
       queue = q;
       reports = r;
       cards = cn;
       waitingRaces = rq;
+      motions = mo;
       frames = dress?.frames ?? null;
       races = race;
+      approvedFrames = af;
       season = page?.season ?? null;
       settings = s;
       theme = season?.theme ?? '';
@@ -149,6 +163,7 @@
       flash($t('adminStudioCardNeedsSlug'));
       return;
     }
+    const wornFrame = approvedFrames.find((f) => f.id === chosenFrameId);
     run(
       () =>
         api.adminApproveStudioCard(work.id, {
@@ -156,11 +171,13 @@
           priceDust,
           editionSize: cardEdition,
           status: 'published',
+          frameOverride: wornFrame ? JSON.stringify(dressOf(wornFrame.body)) : null,
         }),
       $t('adminStudioCardTaken'),
     );
     dressing = null;
     slug = '';
+    chosenFrameId = '';
   }
 
   function denyRace(work: StudioRaceWaiting) {
@@ -182,6 +199,14 @@
     );
     racing = null;
     raceSlug = '';
+  }
+
+  function denyMotion(one: StudioMotionWaiting) {
+    const word = prompt(
+      $t('adminStudioDenyAsk').replace('{name}', one.body.nameRu || one.body.id),
+    );
+    if (!word?.trim()) return;
+    run(() => api.adminDenyStudioMotion(one.id, word), $t('adminStudioDenied'));
   }
 
   function strike(id: string, name: string) {
@@ -403,6 +428,18 @@
                       class="mt-1 w-full border border-[#34251c]/15 bg-transparent px-2 py-1 text-xs"
                     />
                   </label>
+                  <label class="block text-[10px] uppercase tracking-[0.14em] text-[#8a6a55]">
+                    {$t('adminStudioCardFrame')}
+                    <select
+                      bind:value={chosenFrameId}
+                      class="mt-1 w-full border border-[#34251c]/15 bg-transparent px-2 py-1 text-xs"
+                    >
+                      <option value="">{$t('adminStudioCardFrameNone')}</option>
+                      {#each approvedFrames as one (one.id)}
+                        <option value={one.id}>{one.name} — {one.author}</option>
+                      {/each}
+                    </select>
+                  </label>
                   <div class="flex gap-3">
                     <button
                       onclick={() => approveCard(work)}
@@ -425,6 +462,7 @@
                       slug = '';
                       priceDust = 20;
                       cardEdition = null;
+                      chosenFrameId = '';
                     }}
                     disabled={busy}
                     class="text-[10px] uppercase tracking-[0.14em] text-[#c65f3c] hover:underline disabled:opacity-40"
@@ -512,6 +550,47 @@
             </div>
           {/each}
         </div>
+      {/if}
+    </section>
+
+    <!-- ── Движения людей ───────────────────────────────────────────────── -->
+    <section class="mt-8">
+      <h3 class="text-[11px] uppercase tracking-[0.18em] text-[#8a6a55]">
+        {$t('adminStudioMotions')}
+        {#if motions.length}<span class="ml-2 text-[#c65f3c]">{motions.length}</span>{/if}
+      </h3>
+      <p class="mt-1 max-w-2xl text-[11px] text-[#8a6a55]">{$t('adminStudioMotionsLead')}</p>
+      {#if motions.length === 0}
+        <p class="mt-3 text-sm text-[#8a6a55]">{$t('adminStudioNothing')}</p>
+      {:else}
+        <ul class="mt-3 space-y-2">
+          {#each motions as one (one.id)}
+            <li
+              class="flex flex-wrap items-baseline gap-3 border border-[#d8c6b1] bg-[#fdf9f3] p-3"
+            >
+              <span class="text-sm text-[#34251c]">{one.body.nameRu || one.body.id}</span>
+              <span class="text-[11px] text-[#8a6a55]">
+                {one.author} · {$t('adminStudioMotionGestures').replace(
+                  '{n}',
+                  String(one.body.gestures?.length ?? 0),
+                )}
+              </span>
+              <button
+                onclick={() =>
+                  run(() => api.adminApproveStudioMotion(one.id), $t('adminStudioApproved'))}
+                disabled={busy}
+                class="ml-auto text-[10px] uppercase tracking-[0.14em] text-[#c65f3c] hover:underline disabled:opacity-40"
+                >{$t('adminStudioApprove')}</button
+              >
+              <button
+                onclick={() => denyMotion(one)}
+                disabled={busy}
+                class="text-[10px] uppercase tracking-[0.14em] text-[#8f2f22]/70 hover:text-[#8f2f22] disabled:opacity-40"
+                >{$t('adminStudioDeny')}</button
+              >
+            </li>
+          {/each}
+        </ul>
       {/if}
     </section>
 

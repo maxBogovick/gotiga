@@ -698,6 +698,16 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             )
             // Весы — те же, что у хозяина, одной функцией за двумя дверями.
             .route("/studio/cards/weigh", post(handlers::weigh_studio_card))
+            // Свои движения: сочетание готовых жестов, а не новый жест.
+            .route(
+                "/studio/motions",
+                get(handlers::get_studio_motions).post(handlers::save_studio_motions),
+            )
+            .route("/studio/motions/:id/show", post(handlers::show_studio_motion))
+            .route(
+                "/studio/motions/:id/withdraw",
+                post(handlers::withdraw_studio_motion),
+            )
             // Свои роды: словарная строка, которую наденут чужие карты.
             .route(
                 "/studio/races",
@@ -764,6 +774,24 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 put(handlers::save_studio_frame).delete(handlers::delete_studio_frame),
             )
             .route(
+                "/admin/studio/motions",
+                get(handlers::admin_studio_motion_queue).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/studio/motions/:id/deny",
+                post(handlers::admin_deny_studio_motion).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/studio/motions/:id/approve",
+                post(handlers::admin_approve_studio_motion).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
                 "/admin/studio/races",
                 get(handlers::admin_studio_race_queue).route_layer(
                     middleware::from_fn_with_state(config.clone(), auth_middleware),
@@ -802,6 +830,12 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             .route(
                 "/admin/studio/admissions",
                 get(handlers::admin_list_studio_admissions).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/studio/frames/approved",
+                get(handlers::admin_list_approved_studio_frames).route_layer(
                     middleware::from_fn_with_state(config.clone(), auth_middleware),
                 ),
             )

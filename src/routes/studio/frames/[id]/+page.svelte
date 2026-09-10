@@ -19,6 +19,7 @@
   import * as local from '$lib/studio/local';
   import { toLive, toStored, rememberLive, forgetLive, hasAlpha, liveUrl } from '$lib/studio/live';
   import StudioAssetPicker from '$lib/components/studio/StudioAssetPicker.svelte';
+  import StudioAsk from '$lib/components/studio/StudioAsk.svelte';
   import type { BattleCard, BattleFrame } from '$lib/types/api';
 
   let id = $derived($page.params.id ?? '');
@@ -52,6 +53,9 @@
    *  телефонная, а перетаскивание работает; на широком сенсорном экране
    *  наоборот. */
   let byFinger = $state(false);
+  /** Спрашивают ли сейчас про «выбросить». Своим окном: необратимое дом
+   *  спрашивает сам. */
+  let dropping = $state(false);
 
   // Что стол правит на карте: деталь в руке, строка описи, панель.
   let sliceHeld = $state<{ id: string; side: string } | null>(null) as never;
@@ -342,7 +346,7 @@
 
   /** Выбросить. Из ящика — только пока хозяин её не видел. */
   async function dropFrame() {
-    if (!confirm($t('studioDropSure').replace('{name}', name))) return;
+    dropping = false;
     const token = authStore.token;
     if (remoteId && token) await api.deleteStudioFrame(token, remoteId).catch(() => {});
     await local.dropFrame(opened);
@@ -406,7 +410,7 @@
         >{$t('studioCopy')}</button
       >
       <button
-        onclick={dropFrame}
+        onclick={() => (dropping = true)}
         class="px-2 py-1.5 text-[10px] uppercase tracking-[0.16em] text-[#8f2f22]/70 hover:text-[#8f2f22]"
         >{$t('studioDrop')}</button
       >
@@ -505,4 +509,15 @@
       onclose={() => (picker = null)}
     />
   {/if}
+{/if}
+
+{#if dropping}
+  <StudioAsk
+    title={$t('studioDrop')}
+    lead={$t('studioDropSure').replace('{name}', name)}
+    yes={$t('studioDrop')}
+    danger
+    onyes={dropFrame}
+    onclose={() => (dropping = false)}
+  />
 {/if}

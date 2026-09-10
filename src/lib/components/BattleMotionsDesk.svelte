@@ -17,7 +17,7 @@
   // свет этому бару, а не селект из семнадцати.
   // Повод на записи — подсказка, не замок: карта вешает вид на любой повод.
   import { onMount, untrack } from 'svelte';
-  import { api, resolveMediaUrl } from '$lib/api';
+  import { resolveMediaUrl } from '$lib/api';
   import { t, lang } from '$lib/i18n';
   import BattleCard from '$lib/components/BattleCard.svelte';
   import BattleMotionStage from '$lib/components/BattleMotionStage.svelte';
@@ -68,6 +68,7 @@
   import type {
     BattleCard as BattleCardDto,
     BattleFrame,
+    BattleFrames,
     BattleRace,
     GestureBody,
     GestureFade,
@@ -86,6 +87,8 @@
     loadMotions,
     saveMotions,
     loadCards,
+    loadFrames,
+    loadRaces,
     uploadArt,
     keepStrip,
     pickFromStore,
@@ -98,6 +101,9 @@
     /** Настоящие карты для сцены: превью, считающее иначе, чем комната,
      *  соврёт на движении позже всего. */
     loadCards: () => Promise<BattleCardDto[]>;
+    /** Наряды дома — по ним значится повод-по-умолчанию карты/расы. */
+    loadFrames: () => Promise<BattleFrames>;
+    loadRaces: () => Promise<BattleRace[]>;
     uploadArt: (file: File) => Promise<string>;
     /** Нарезать принесённую полосу на кадры и положить на склад. Нет в
      *  транспорте — нет и кнопки: у гостя своего склада полос нет. */
@@ -1139,8 +1145,8 @@
       const [moving, deck, dressing, kin] = await Promise.all([
         loadMotions(),
         loadCards(),
-        api.getBattleFrames(),
-        api.getBattleRaces(),
+        loadFrames(),
+        loadRaces(),
       ]);
       motions = moving;
       cards = deck;
@@ -1847,20 +1853,22 @@
               {/each}
             </div>
             <div class="row mt-strip">
-              <label class="btn">
-                {$t('adminMotionsStripCut')}
-                <input
-                  type="file"
-                  accept="image/*"
-                  class="hidden"
-                  disabled={stripBusy}
-                  onchange={(e) => {
-                    const file = e.currentTarget.files?.[0];
-                    if (file) void cutPreparedStrip(file);
-                    e.currentTarget.value = '';
-                  }}
-                />
-              </label>
+              {#if keepStrip}
+                <label class="btn">
+                  {$t('adminMotionsStripCut')}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    class="hidden"
+                    disabled={stripBusy}
+                    onchange={(e) => {
+                      const file = e.currentTarget.files?.[0];
+                      if (file) void cutPreparedStrip(file);
+                      e.currentTarget.value = '';
+                    }}
+                  />
+                </label>
+              {/if}
               <label class="btn">
                 {$t('adminMotionsStripSix')}
                 <input
