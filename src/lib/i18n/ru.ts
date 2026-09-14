@@ -1313,13 +1313,14 @@ export const ru: Record<TranslationKey, string> = {
   /** Почему выбранное тело или карта из руки не делает того, чего ждут. */
   battleWhyReach:        'Вне досягаемости — шагните ближе.',
   battleWhyActed:        'Уже действовала в этот ход.',
-  battleWhyOpening:      'В первом круге удар уже израсходован.',
+  battleWhyOpening:      'Удары первого круга у вашей стороны кончились — до второго круга не бьёт никто.',
   battleWhyActs:         'На этот ход действий больше нет.',
   battleWhyMana:         'На эту карту не хватает маны.',
   battleWhyRoom:         'На вашей половине нет свободной клетки.',
   battleWhyPeace:        'Это тело не наносит ударов.',
   battleWhyStuck:        'Шагать некуда и бить некого в досягаемости.',
   battleWhyIdle:         'Этому телу сейчас нечем ходить.',
+  battleWhyCooldown:     'Лечение потрачено — вернётся через ходов: {n}.',
   battleEndTurn:         'Закончить ход',
   battleKeeperThinks:    'Противник думает…',
   battleStudies:         'Этюды',
@@ -1363,6 +1364,13 @@ export const ru: Record<TranslationKey, string> = {
   battleRuleNoPointBlank: 'стрелок в упор бьёт в полную силу',
   battleRuleLongShot:    'выстрел за далью бьёт, %',
   battleRuleNoLongShot:  'дальше своей дали стрелок не достаёт',
+  /** Первый круг: сколько ударов у стороны ещё есть, и чем это правило живо. */
+  battleOpeningLeft:     'осталось ударов: {n}',
+  battleOpeningSpent:    'удары кончились',
+  battleRulesSeal:       'Правила этого боя',
+  battleRulesInForce:    'Что держит вас здесь',
+  battleRuleOpeningWhole:
+    'Удары первого круга даются стороне, а не каждому телу: потратили одним — остальные до второго круга не бьют. Так сбивается перевес того, кто ходит первым: у равных карт первый удар решает 98,8 % партий.',
 
   // Предвестие.
   battleForesight:       'предвестие',
@@ -1392,6 +1400,72 @@ export const ru: Record<TranslationKey, string> = {
   battleStatStep:        'Шаг',
   battleStatMend:        'Лечение',
   battleStatusTurns:     'ходов:',
+  /** ── Поднос намерений ──────────────────────────────────────────────────
+   *  У карты, которая бьёт, лечит и проклинает, в одну и ту же чужую клетку
+   *  ведут три разных дела: сперва выбирается способ, и доска светит цели
+   *  только его. */
+  battleIntents:         'Чем заняться',
+  battleIntentBlow:      'Ударить',
+  battleIntentMend:      'Лечить',
+  battleIntentAsleep:    'Вернётся через ходов: {n}',
+  battleIntentMana:      'Не хватает маны',
+  battleIntentNoAim:     'Некого',
+  battleIntentSpent:     'Потрачено: однажды за партию',
+  battleAuraWhile:       'пока стоит',
+  battleIntentNoRoom:    'Некуда',
+  /** Кого спрашивает то, что в руке. «Выберите» на взведённом проклятии не
+   *  говорит ничего. */
+  battleAimBlow:         'По кому ударить',
+  battleAimMend:         'Кого залечить',
+  battleAimHarm:         'На кого навести',
+  battleAimCurse:        'Кого проклясть',
+  battleAimBless:        'Кого благословить',
+  battleAimShield:       'Кого укрыть',
+  /** Показатель, который правит всадник. Своего числа на карте у уязвимости
+   *  нет — она живёт только всадником, потому и слово у неё только здесь. */
+  battleStatVulnerable:  'Уязвимость',
+  battleLogCursed:       'проклят',
+  battleLogBlessed:      'благословлён',
+  battleLogShielded:     'укрыт щитом на',
+  /** ── Что наложено на тело ──────────────────────────────────────────────
+   *  Не всадник: всадник правит числа, а это правит то, что тело МОЖЕТ. */
+  battleHoldBound:       'Оцепенение',
+  battleHoldHushed:      'Немота',
+  battleHoldDisarmed:    'Разоружено',
+  battleHoldSwayed:      'Смута',
+  battleHoldVeiled:      'Покров',
+  battleHoldGuarding:    'Стража',
+  battleHoldNumb:        'Оберег',
+  battleHoldThorned:     'Шипы',
+  battleHoldFestering:   'Порча',
+  battleHoldKnitting:    'Заживление',
+  battleHoldRested:      'Отдых',
+  /** Кого спрашивает то, что в руке, — у каждого глагола своё. */
+  battleAimFester:       'Кого испортить',
+  battleAimKnit:         'Кого заживить',
+  battleAimBind:         'Кого сковать',
+  battleAimHush:         'Кому зажать рот',
+  battleAimDisarm:       'Кого обезоружить',
+  battleAimSway:         'Кого увести',
+  battleAimVeil:         'Кого укрыть покровом',
+  battleAimGuard:        'Кому встать стражем',
+  battleAimNumb:         'Кому дать оберег',
+  battleAimThorns:       'Кому поставить шипы',
+  battleAimShove:        'Кого толкнуть или притянуть',
+  battleAimCleanse:      'Кого очистить',
+  battleAimDispel:       'С кого снять',
+  battleAimCoin:         'Взять ману',
+  battleAimOffer:        'Кого принести в жертву',
+  battleAimZone:         'Какую клетку сделать опасной',
+  battleAimSummon:       'Куда призвать',
+  /** Строки журнала для того, что не удар и не лечение. */
+  battleLogHeld:         'охвачен',
+  battleLogLifted:       'снято',
+  battleLogLiftedIll:    'проклятий',
+  battleLogLiftedGood:   'благословений',
+  battleLogMana:         'мана прибыла на',
+  battleLogZoned:        'клетка стала опасной',
+  battleZoneHere:        'Опасная клетка',
   battleJournal:         'Что произошло',
   battleJournalEmpty:    'Пока ничего не произошло.',
   battleLogPlayed:       'выходит на поле',
@@ -1820,6 +1894,12 @@ export const ru: Record<TranslationKey, string> = {
   cardAbilMana:                'Мана',
   cardAbilCooldown:            'Перезарядка',
   cardAbilChannel:             'Канал',
+  /** Только у проклятия и благословения: «на два» — это два ЧЕГО. Пусто —
+   *  сила, и это то, что читатель предполагает сам. */
+  cardAbilSummon:              'Кого призывает',
+  cardAbilSummonNone:          '— не выбрано —',
+  cardAbilStat:                'Чем правит',
+  cardAbilStatHint:            'У уязвимости счёт обратный: проклятие её прибавляет, благословение убавляет.',
   cardAbilName:                'Название',
   cardAbilPoints:              'очк.',
   studioAuthorCards:           'Карты на полке',

@@ -77,6 +77,15 @@ impl Cell {
     }
 }
 
+/// Каждая клетка поля, в том же порядке обхода, в каком читается доска.
+///
+/// Нужна тем, кто говорит о КЛЕТКАХ, а не о телах, — опасной клетке и её
+/// радиусу. Порядок тот же и по той же причине: две клетки, одинаково подходящие,
+/// должны выбираться одинаково всегда, иначе переигрывание партии расходится.
+pub fn all_cells() -> impl Iterator<Item = Cell> {
+    (0..CELLS).map(|i| Cell { y: (i as u8) / WIDTH, x: (i as u8) % WIDTH })
+}
+
 /// One taken cell, as the board is written down.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]

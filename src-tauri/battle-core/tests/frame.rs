@@ -205,7 +205,7 @@ fn bodies_are_ready_again_at_the_start_of_your_turn() {
 // ── конец партии ────────────────────────────────────────────────────────────
 
 #[test]
-fn a_side_with_nothing_standing_and_nothing_held_has_lost() {
+fn a_side_with_nothing_standing_has_lost() {
     let setup = Setup {
         player_board: vec![(boec("Боец", 1, 6, 9), cell(1, 3))],
         keeper_board: vec![(boec("Ворон", 1, 3, 1), cell(1, 2))],
@@ -218,93 +218,24 @@ fn a_side_with_nothing_standing_and_nothing_held_has_lost() {
 }
 
 #[test]
-fn a_side_still_holding_a_card_has_not_lost_yet() {
+fn a_card_in_hand_does_not_postpone_defeat() {
+    // Раньше зажатая карта держала партию: «мана ещё дорастёт». Хранитель
+    // выбрал обратное — мана есть то, что планируют, и держать в руке тело,
+    // которое не по карману, пока поле отнимают, и есть та ошибка, за которую
+    // партия наказывает. Четыре прежних испытания про «дороже потолка»,
+    // «дорастёт» и «некуда класть» стояли ровно на этой развилке и удалены
+    // вместе с ней: испытание правила, которого нет, хуже, чем его отсутствие.
     let setup = Setup {
         player_board: vec![(boec("Боец", 1, 6, 9), cell(1, 3))],
         keeper_board: vec![(boec("Ворон", 1, 3, 1), cell(1, 2))],
-        keeper_hand: vec![boec("Второй ворон", 1, 3, 1)],
-        ..Default::default()
-    };
-    let st = MatchState::begin(setup);
-    let (st, _) = act(&st, Action::Attack { attacker: 0, target: 1 });
-    assert_eq!(st.outcome, None);
-}
-
-#[test]
-fn a_card_nobody_can_ever_afford_is_the_same_as_an_empty_hand() {
-    // Пустая доска и карта дороже потолка маны. Раньше партия досиживала до
-    // двенадцатого круга, пока обе стороны молча передавали ход.
-    let setup = Setup {
-        player_board: vec![(boec("Боец", 1, 6, 9), cell(1, 3))],
-        keeper_board: vec![(boec("Ворон", 1, 3, 1), cell(1, 2))],
-        keeper_hand: vec![boec("Неподъёмная", 99, 5, 5)],
+        keeper_hand: vec![boec("Дешёвая", 1, 5, 5), boec("Тяжёлая", 9, 5, 5)],
         ..Default::default()
     };
     let st = MatchState::begin(setup);
     let (st, events) = act(&st, Action::Attack { attacker: 0, target: 1 });
-    assert_eq!(st.outcome, Some(Outcome::Player), "выставить нечего — партия окончена");
+    assert_eq!(st.outcome, Some(Outcome::Player), "тел не осталось — партия окончена");
     assert_eq!(st.round, 1, "и окончена сразу, а не по времени");
     assert!(events.contains(&Event::Finished { outcome: Outcome::Player }));
-}
-
-#[test]
-fn a_card_that_becomes_affordable_later_keeps_the_match_alive() {
-    // Дорогая, но в пределах потолка: сторона ещё вернётся, и обрывать нельзя.
-    let setup = Setup {
-        player_board: vec![(boec("Боец", 1, 6, 9), cell(1, 3))],
-        keeper_board: vec![(boec("Ворон", 1, 3, 1), cell(1, 2))],
-        keeper_hand: vec![boec("Тяжёлая", 9, 5, 5)],
-        ..Default::default()
-    };
-    let st = MatchState::begin(setup);
-    let (st, _) = act(&st, Action::Attack { attacker: 0, target: 1 });
-    assert_eq!(st.outcome, None, "мана дорастёт до девяти — это не поражение");
-}
-
-#[test]
-fn a_card_with_nowhere_to_stand_is_the_same_as_no_card() {
-    // Половина хранителя занята чужими телами целиком, своё — одно, и стоит
-    // оно на чужой половине. Снять его — и выставить купленное будет некуда.
-    let mut player_board = Vec::new();
-    for y in 0..3u8 {
-        for x in 0..3u8 {
-            player_board.push((boec("Осада", 1, 4, 1), cell(x, y)));
-        }
-    }
-    let setup = Setup {
-        player_board,
-        keeper_board: vec![(boec("Ворон", 1, 3, 1), cell(1, 3))],
-        keeper_hand: vec![boec("Дешёвая", 1, 5, 5)],
-        ..Default::default()
-    };
-    let st = MatchState::begin(setup);
-    let raven = st.standing(Side::Keeper)[0];
-    // Бьёт сосед сверху: (1,2) и (1,3) — соседние ряды через середину.
-    let neighbour = st
-        .standing(Side::Player)
-        .into_iter()
-        .find(|id| st.board.cell_of(*id) == Some(cell(1, 2)))
-        .expect("тело на (1,2)");
-    let mut st = st;
-    // Ворон живуч ровно настолько, чтобы его добили за два удара.
-    while st.outcome.is_none() && st.standing(Side::Keeper).len() == 1 {
-        let before = st.units[raven as usize].health.current;
-        st = act(&st, Action::Attack { attacker: neighbour, target: raven }).0;
-        if st.units[raven as usize].health.current == before {
-            break;
-        }
-        if st.standing(Side::Keeper).is_empty() {
-            break;
-        }
-        st = act(&st, Action::EndTurn).0;
-        st = act(&st, Action::EndTurn).0;
-    }
-    assert!(st.standing(Side::Keeper).is_empty(), "ворона сняли");
-    assert_eq!(
-        st.outcome,
-        Some(Outcome::Player),
-        "карта в руке есть, а класть её некуда — это поражение, а не отсрочка",
-    );
 }
 
 #[test]

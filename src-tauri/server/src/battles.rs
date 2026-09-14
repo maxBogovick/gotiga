@@ -592,6 +592,16 @@ pub const ABILITY_SHAPES: &[&str] = &[
     "self", "one", "adjacent", "chain", "line", "radius", "side", "cell",
 ];
 
+/// Какой показатель правит всадник — проклятие и благословение.
+///
+/// Четыре, и ровно те же четыре, что знает `battle_core::Stat`: список не
+/// «пока такой», а закрытый, потому что всадника читает конвейер урона своими
+/// шагами, и пятый показатель был бы шагом, которого в конвейере нет.
+///
+/// Пусто — сила: проклятие без уговора ослабляет удар, и это то, что читатель
+/// предполагает сам.
+pub const ABILITY_STATS: &[&str] = &["power", "armor", "ward", "vulnerable"];
+
 /// When it happens.
 pub const ABILITY_TRIGGERS: &[&str] = &[
     "active",
@@ -850,6 +860,20 @@ pub struct CardAbility {
     pub cooldown: i16,
     #[serde(default)]
     pub keywords: Vec<String>,
+    /// Из `ABILITY_STATS`. Читают его только `curse` и `bless`; у остальных
+    /// глаголов он пуст и ничего не значит.
+    ///
+    /// Отдельным полем, а не словом в `keywords`: «−2» без «чего» — это число,
+    /// которое врёт молча, а ключевые слова дом нигде не читает правилом.
+    #[serde(default)]
+    pub stat: String,
+    /// Слаг карты, которую призывает `summon`. Пусто — призывать нечего, и
+    /// движок такой чары не играет вовсе: призыв без тела не призыв.
+    ///
+    /// Слагом, а не номером: номер живёт в одной базе, а слаг — то же имя, под
+    /// которым карту знает журнал партии.
+    #[serde(default)]
+    pub summon: String,
 }
 
 pub fn default_shape() -> String {
@@ -907,6 +931,15 @@ pub fn normalize_abilities(abilities: &[CardAbility]) -> Option<String> {
                     .filter(|k| !k.is_empty())
                     .take(4)
                     .collect(),
+                // Незнакомое слово становится пустотой, а не отказом: пустое —
+                // это «как в доме» (сила), и карта из-за описки в показателе не
+                // перестаёт существовать.
+                stat: if ABILITY_STATS.contains(&a.stat.trim()) {
+                    a.stat.trim().to_string()
+                } else {
+                    String::new()
+                },
+                summon: cut(&a.summon, ABILITY_NAME_MAX),
             }
         })
         .take(ABILITIES_MAX)
@@ -937,6 +970,44 @@ pub fn read_abilities(raw: Option<&str>) -> Vec<CardAbility> {
 /// *permitted* strength.
 pub fn tier_budget(tier: i16) -> f64 {
     8.0 + 6.0 * ((clamp_tier(tier) - 1) as f64)
+}
+
+/// Сочетания глагола и пригоршни, которых у карты быть не может.
+///
+/// §4: «✗ — ЗАПРЕЩЁННЫЕ сочетания, не „дорогие“. Массовый контроль и массовое
+/// подчинение — это конец партии одной картой, сколько бы он ни стоил».
+///
+/// Стол отказывает ими при сохранении, движок их не играет (`Casting::forbids`),
+/// и оба замка нужны: движок держит партию, а стол объясняет — потому что
+/// хранитель может поправить это только здесь, и молчаливо не сыгранная чара
+/// выглядела бы поломкой движка, а не отказом правила.
+pub fn ability_blockers(abilities: &[CardAbility], status: &str) -> Vec<&'static str> {
+    if status != "published" {
+        return Vec::new();
+    }
+    let forbidden = abilities.iter().any(|a| {
+        let shape = a.shape.trim();
+        let radius = a.radius.clamp(0, 3);
+        match a.verb.trim() {
+            "charm" => !matches!(shape, "one" | "self"),
+            "control" | "veil" => shape == "side" || (shape == "radius" && radius >= 2),
+            _ => false,
+        }
+    });
+    // Аурой бывают только благословение и проклятие: остальные глаголы — это
+    // СОБЫТИЯ, и «призвать, пока стою» не значит ничего. Движок такую ауру не
+    // вдохнёт, и молчать об этом нельзя — поправить её можно только здесь.
+    let odd_aura = abilities
+        .iter()
+        .any(|a| a.trigger.trim() == "aura" && !matches!(a.verb.trim(), "bless" | "curse"));
+    let mut out = Vec::new();
+    if forbidden {
+        out.push("forbiddenShape");
+    }
+    if odd_aura {
+        out.push("auraNeedsRider");
+    }
+    out
 }
 
 fn shape_multiplier(shape: &str, radius: i16) -> f64 {
@@ -1096,7 +1167,29 @@ pub fn balance_index(points: f64, cost: i16) -> f64 {
 /// session that wrote it and is read in both languages, so a Russian title
 /// frozen into it would be a language baked into a record. The scene looks the
 /// real card up by that slug and renders whichever title the reader wants.
+/// Тело для партии — без оглядки на другие карты.
+///
+/// Оставлено отдельным входом, потому что призыв нужен не всем и не всегда: у
+/// весов, у проверок и у всякого, кто спрашивает «во что превратится эта
+/// карта», второй карты под рукой нет. Призванное тело у такого снимка пусто,
+/// и чара призыва у него просто не играется.
 pub fn to_snapshot(card: &crate::models::BattleCardDto) -> battle_core::CardSnapshot {
+    to_snapshot_with(card, |_| None)
+}
+
+/// То же, но с полкой под рукой: `summon` находит по слагу то, что призывает.
+///
+/// Призванное тело ЗАМОРАЖИВАЕТСЯ вместе с умением — как всё остальное в
+/// партии, и по той же причине: карта призванного в архиве переживёт
+/// перебалансировку, а партия обязана переигрываться той, что была.
+///
+/// Призванное не призывает: внутренний снимок берётся без полки, и цепочка
+/// обрывается на первом же звене. Иначе карта призывает карту, которая
+/// призывает карту, — и снимок доски растёт, пока не кончится память.
+pub fn to_snapshot_with<'a>(
+    card: &crate::models::BattleCardDto,
+    find: impl Fn(&str) -> Option<&'a crate::models::BattleCardDto>,
+) -> battle_core::CardSnapshot {
     battle_core::CardSnapshot {
         name: card.slug.clone(),
         cost: card.cost as i32,
@@ -1121,6 +1214,15 @@ pub fn to_snapshot(card: &crate::models::BattleCardDto) -> battle_core::CardSnap
                 mana_cost: a.mana_cost as i32,
                 cooldown: a.cooldown.clamp(0, 5) as u8,
                 trigger: a.trigger.clone(),
+                channel: to_channel(&a.channel),
+                duration: a.duration.clamp(0, 5) as u8,
+                radius: a.radius.clamp(0, 3) as u8,
+                stat: to_stat(&a.stat),
+                body: if a.verb == "summon" {
+                    find(a.summon.trim()).map(|c| Box::new(to_snapshot(c)))
+                } else {
+                    None
+                },
             })
             .collect(),
     }
@@ -1152,6 +1254,18 @@ pub fn to_channel(raw: &str) -> battle_core::Channel {
         "magic" => battle_core::Channel::Magic,
         "pure" => battle_core::Channel::Pure,
         _ => battle_core::Channel::Physical,
+    }
+}
+
+/// Показатель всадника, как его называет движок. Пусто и незнакомое — ничего,
+/// и это не «неизвестно», а «как в доме»: `spell::rider` читает пустоту силой.
+pub fn to_stat(raw: &str) -> Option<battle_core::Stat> {
+    match raw.trim() {
+        "power" => Some(battle_core::Stat::Power),
+        "armor" => Some(battle_core::Stat::Armor),
+        "ward" => Some(battle_core::Stat::Ward),
+        "vulnerable" => Some(battle_core::Stat::Vulnerable),
+        _ => None,
     }
 }
 
@@ -2364,8 +2478,11 @@ pub struct BattleFramePresets {
 
 /// A drawer, not an archive. Past this many the keeper is hoarding dresses
 /// rather than choosing between them, and the setting they all live in has a
-/// size of its own to respect.
-pub const PRESETS_MAX: usize = 24;
+/// size of its own to respect. Raised from 24 once the drawer filled up with
+/// dresses cut off one pair of sheets: the bottom is there to stop hoarding,
+/// and a bottom that turns a save into a silent loss of seven frames stops
+/// the wrong thing.
+pub const PRESETS_MAX: usize = 32;
 pub const PRESET_NAME_MAX: usize = 60;
 
 /// The drawer, tidied: a preset with no name or no id is not a preset, the
@@ -4155,6 +4272,8 @@ mod tests {
             mana_cost: 1,
             cooldown: 5,
             keywords: vec![],
+            stat: String::new(),
+            summon: String::new(),
         }];
         let body = to_snapshot(&card);
         assert_eq!(body.abilities.len(), 1);
@@ -4473,6 +4592,8 @@ mod tests {
             mana_cost: 0,
             cooldown: 0,
             keywords: Vec::new(),
+            stat: String::new(),
+            summon: String::new(),
         }
     }
 

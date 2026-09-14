@@ -50,6 +50,83 @@ impl Status {
     }
 }
 
+/// Что наложено на тело со СРОКОМ и правит не числа, а возможности.
+///
+/// Второй список рядом с `Status`, и это не небрежность. Всадник правит ЧИСЛА,
+/// и читает его конвейер урона — по показателю, складывая. Удержание правит то,
+/// что тело МОЖЕТ: ходить, бить, наводить, быть выбранным целью, — и складывать
+/// его не с чем: «оцепенение плюс оцепенение» не число. Один список на оба
+/// пришлось бы спрашивать двумя разными вопросами в каждом месте, где его
+/// спрашивают, а спрашивают его из конвейера, из списка законного и из свёртки.
+///
+/// Сроки у обоих одни и те же и тикают в одном месте — это и есть то общее,
+/// что у них правда есть.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum HoldKind {
+    /// Оцепенение: тело не делает ничего.
+    Bound,
+    /// Немота: не наводит чар, но бьёт.
+    Hushed,
+    /// Разоружение: не бьёт, но наводит.
+    Disarmed,
+    /// Смута: стоит за того, кто её навёл. Не «переходит на сторону»: своим
+    /// оно быть не перестало, и свой хозяин его не теряет (`is_spent`).
+    Swayed,
+    /// Покров: тело нельзя ВЫБРАТЬ целью. По площади достаётся.
+    Veiled,
+    /// Стража: удары, нацеленные в соседей, приходят ему. `amount` — сколько
+    /// ещё примет.
+    Guarding,
+    /// Оберег канала: этот канал не чувствуется вовсе.
+    Numb(crate::damage::Channel),
+    /// Шипы: тому, кто ударил, прилетает `amount`.
+    Thorned,
+    /// Порча: `amount` урона в конце своего хода.
+    Festering,
+    /// Заживление: `amount` здоровья в конце своего хода.
+    Knitting,
+    /// Отдых после оцепенения и смуты: под них снова нельзя.
+    ///
+    /// Правило дома, а не осторожность движка (§5.3): без него две ведьмы
+    /// держат одно тело до конца партии, и человек просто смотрит.
+    Rested,
+}
+
+impl HoldKind {
+    /// Одного ли рода два удержания. Оберег канала — одного рода с любым
+    /// оберегом канала: два разных канала на одном теле были бы неуязвимостью,
+    /// собранной из двух карт в обход цены.
+    pub fn same_as(self, other: HoldKind) -> bool {
+        std::mem::discriminant(&self) == std::mem::discriminant(&other)
+    }
+
+    /// Кладётся ли оно тому, у кого есть отдых.
+    pub fn is_control(self) -> bool {
+        matches!(self, HoldKind::Bound | HoldKind::Swayed)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Hold {
+    /// Ключ умения, как и у всадника: по нему одноимённое освежает срок.
+    pub name: String,
+    pub kind: HoldKind,
+    pub amount: i32,
+    pub turns: u8,
+}
+
+impl Hold {
+    pub fn new(name: &str, kind: HoldKind, amount: i32, turns: u8) -> Self {
+        Self { name: name.to_string(), kind, amount, turns }
+    }
+}
+
+/// Сколько удержаний тело несёт разом. То же число и по той же причине, что у
+/// всадников: дальше карта перестаёт читаться с одного взгляда.
+pub const HOLD_CAP: usize = 5;
+
 /// Health is a number with a ceiling, and nothing else.
 ///
 /// Mitigation deliberately does not live here. Armour is read by the damage
@@ -145,6 +222,21 @@ pub struct Unit {
     /// begun before abilities arrived.
     #[serde(default)]
     pub ability_cds: Vec<AbilityCooldown>,
+    /// Что наложено на него со сроком и правит его возможности.
+    #[serde(default)]
+    pub holds: Vec<Hold>,
+    /// Чем на него ДЫШИТ поле: всадники от аур, пока те стоят рядом.
+    ///
+    /// Отдельным списком, а не вперемешку с наложенным, и это не опрятность.
+    /// Наложенное держится СРОКОМ: легло, тикает, сошло. Аура не держится
+    /// ничем — она есть, пока на поле стоит тот, кто ею дышит, и исчезает в тот
+    /// же миг, как он пал. Один список пришлось бы после каждого действия
+    /// разбирать на «это тикает» и «это пересчитывается», а разбор по имени —
+    /// ровно тот приём, из-за которого однажды теряют половину списка.
+    ///
+    /// Пересчитывается целиком (`breathe`) и не тикает никогда.
+    #[serde(default)]
+    pub aura: Vec<Status>,
 }
 
 impl Unit {
@@ -169,6 +261,8 @@ impl Unit {
             statuses: Vec::new(),
             immune: None,
             ability_cds: Vec::new(),
+            holds: Vec::new(),
+            aura: Vec::new(),
         }
     }
 
@@ -196,6 +290,8 @@ impl Unit {
             statuses: Vec::new(),
             immune: None,
             ability_cds: Vec::new(),
+            holds: Vec::new(),
+            aura: Vec::new(),
         }
     }
 
@@ -207,6 +303,11 @@ impl Unit {
             .map(|c| c.left)
             .unwrap_or(0)
     }
+
+    /// Столько ходов отката значит НАВСЕГДА: умение, которое просят один раз за
+    /// партию. Числом, а не вторым списком, потому что спрашивают его тем же
+    /// вопросом — «вернулось ли» — и ответ на него один: нет.
+    pub const FOREVER: u8 = u8::MAX;
 
     /// Start a cooldown after an ability is used. Zero turns is a no-op: the
     /// ability may be asked again next turn (the body's `acted` still holds).
@@ -228,6 +329,10 @@ impl Unit {
     /// its side's turn — the same moment `acted` clears.
     pub fn tick_ability_cds(&mut self) {
         for cd in self.ability_cds.iter_mut() {
+            // Навсегда — это навсегда: такой откат не убывает.
+            if cd.left == Self::FOREVER {
+                continue;
+            }
             cd.left = cd.left.saturating_sub(1);
         }
         self.ability_cds.retain(|c| c.left > 0);
@@ -268,6 +373,166 @@ impl Unit {
     /// Whether this body has any way to mend — ability or printed field.
     pub fn can_mend(&self, mana: i32) -> bool {
         self.ready_heal(mana).is_some() || self.mend > 0
+    }
+
+    /// Чары, которые это тело может навести ПРЯМО СЕЙЧАС: ключ, само умение и
+    /// чем оно является.
+    ///
+    /// Списком, а не «первой готовой», и этим оно отличается от `ready_heal`.
+    /// Лечение у тела одно по построению — лечат одним способом, — а чар у
+    /// карты может быть три, и человек выбирает между ними: ровно для этого
+    /// выбора `legal_actions` обязан предложить все, а не ту, что стоит в списке
+    /// первой. Невидимый выбор — это не правило, а потерянная карта.
+    ///
+    /// Ключ тот же, что у отката (`ability_key`): пустой `id` всё равно свой
+    /// отсчёт, и он же — имя всадника, по которому комната подставит слово.
+    pub fn casts_ready(&self, mana: i32) -> Vec<(String, crate::card::AbilitySnapshot, crate::spell::Casting)> {
+        let mut out = Vec::new();
+        for (i, a) in self.card.abilities.iter().enumerate() {
+            // Только то, что просят рукой: аура и ответы на поводы случаются
+            // сами, и в веере им места нет.
+            if !a.on_command() {
+                continue;
+            }
+            let Some(what) = a.casting() else { continue };
+            let key = ability_key(a, i);
+            if self.ability_cd(&key) > 0 {
+                continue;
+            }
+            if a.mana_cost > mana {
+                continue;
+            }
+            out.push((key, a.clone(), what));
+        }
+        out
+    }
+
+    /// Умение по его ключу — вместе с ключом, потому что спрашивающий прислал
+    /// ключ, а не номер, и номер ему ничего не скажет.
+    pub fn ability_by_key(&self, key: &str) -> Option<crate::card::AbilitySnapshot> {
+        self.card
+            .abilities
+            .iter()
+            .enumerate()
+            .find(|(i, a)| ability_key(a, *i) == key)
+            .map(|(_, a)| a.clone())
+    }
+
+    // ── Удержания ───────────────────────────────────────────────────────────
+
+    /// Удержание этого рода, если оно есть.
+    pub fn hold(&self, kind: HoldKind) -> Option<&Hold> {
+        self.holds.iter().find(|h| h.kind.same_as(kind))
+    }
+
+    pub fn held(&self, kind: HoldKind) -> bool {
+        self.hold(kind).is_some()
+    }
+
+    /// Сколько несёт удержание этого рода. Нет его — ноль.
+    pub fn hold_amount(&self, kind: HoldKind) -> i32 {
+        self.hold(kind).map(|h| h.amount).unwrap_or(0)
+    }
+
+    /// Наложить удержание.
+    ///
+    /// Правила те же, что у всадника, и это не совпадение, а §5.1: одноимённое
+    /// освежает срок и не складывает число, разноимённое встаёт рядом, на
+    /// переполнении уходит самое старое. Одного РОДА, но разных имён — два
+    /// разных удержания: «оцепенение» от двух ведьм это два срока, и сходят
+    /// они порознь; спрашивают же удержание по роду, так что телу от этого ни
+    /// холодно ни жарко, а списку — честно.
+    pub fn lay_hold(&mut self, hold: Hold) {
+        if let Some(existing) = self.holds.iter_mut().find(|h| h.name == hold.name) {
+            existing.turns = existing.turns.max(hold.turns);
+            existing.amount = existing.amount.max(hold.amount);
+            return;
+        }
+        if self.holds.len() >= HOLD_CAP {
+            self.holds.remove(0);
+        }
+        self.holds.push(hold);
+    }
+
+    /// Снять удержания этого рода. Сколько сняли.
+    pub fn lift_holds(&mut self, kind: HoldKind) -> usize {
+        let before = self.holds.len();
+        self.holds.retain(|h| !h.kind.same_as(kind));
+        before - self.holds.len()
+    }
+
+    /// Не делает ничего вовсе.
+    pub fn bound(&self) -> bool {
+        self.held(HoldKind::Bound)
+    }
+
+    /// Не наводит чар.
+    pub fn hushed(&self) -> bool {
+        self.held(HoldKind::Hushed)
+    }
+
+    /// Не бьёт — сейчас. Отдельно от `strikes`, которое про карту и не меняется.
+    pub fn disarmed(&self) -> bool {
+        self.held(HoldKind::Disarmed)
+    }
+
+    /// Нельзя ВЫБРАТЬ целью. По площади достаётся, и это весь смысл покрова.
+    pub fn veiled(&self) -> bool {
+        self.held(HoldKind::Veiled)
+    }
+
+    pub fn swayed(&self) -> bool {
+        self.held(HoldKind::Swayed)
+    }
+
+    /// За кого это тело стоит СЕЙЧАС.
+    ///
+    /// Не `owner`: смута разводит «чьё тело» и «за кого оно бьёт», и это
+    /// разные вопросы. Бой спрашивает этот, а хозяйство — `owner`: сторона, у
+    /// которой увели последнее тело, не проиграла (§4: массовое подчинение
+    /// запрещено как «конец партии одной картой», и одиночное не должно
+    /// кончать партию тихо).
+    pub fn side(&self) -> crate::board::Side {
+        if self.swayed() { self.owner.other() } else { self.owner }
+    }
+
+    /// Сбросить по ходу у каждого всадника и снять сошедших.
+    ///
+    /// Зовётся в КОНЦЕ хода носителя, а не в начале. Начало выглядело
+    /// естественнее и было поломкой: проклятие на один ход, наведённое в свой
+    /// ход, снималось бы у противника до того, как он что-нибудь сделает, —
+    /// то есть не значило бы ничего ни разу.
+    pub fn tick_statuses(&mut self) {
+        for s in self.statuses.iter_mut() {
+            s.turns = s.turns.saturating_sub(1);
+        }
+        self.statuses.retain(|s| s.turns > 0);
+    }
+
+    /// То же самое у удержаний, и в тот же миг: срок у них один и тот же —
+    /// ходы носителя.
+    ///
+    /// Отдых кладётся ЗДЕСЬ, а не там, где оцепенение накладывали: тот, кто
+    /// накладывал, не знает, когда оно сойдёт, а правило говорит «вышедшая
+    /// из-под контроля карта», то есть про выход, а не про вход.
+    pub fn tick_holds(&mut self) {
+        for h in self.holds.iter_mut() {
+            h.turns = h.turns.saturating_sub(1);
+        }
+        let freed = self
+            .holds
+            .iter()
+            .any(|h| h.turns == 0 && h.kind.is_control());
+        self.holds.retain(|h| h.turns > 0);
+        if freed {
+            self.lay_hold(Hold::new("", HoldKind::Rested, 0, 1));
+        }
+        // Оберег канала живёт сроком, а читается полем: конвейер спрашивает
+        // `immune`, и спрашивать его список было бы вторым чтением одного и
+        // того же. Пишет оба одно место — вот это.
+        if !self.held(HoldKind::Numb(crate::damage::Channel::Physical)) {
+            self.immune = None;
+        }
     }
 
     pub fn with_owner(mut self, owner: crate::board::Side) -> Self {
@@ -318,7 +583,15 @@ impl Unit {
     /// Sum of every rider touching one stat. Riders of different names add up;
     /// that is the whole of rule two.
     pub fn status_sum(&self, stat: Stat) -> i32 {
-        self.statuses.iter().filter(|s| s.stat == stat).map(|s| s.amount).sum()
+        // Аура складывается наравне с наложенным: для конвейера урона разницы
+        // между «прокляли» и «стоит рядом с тем, кто проклинает» нет никакой —
+        // разница в том, как долго это держится, а не в том, что это делает.
+        self.statuses
+            .iter()
+            .chain(self.aura.iter())
+            .filter(|s| s.stat == stat)
+            .map(|s| s.amount)
+            .sum()
     }
 
     /// Lay a rider on this unit.

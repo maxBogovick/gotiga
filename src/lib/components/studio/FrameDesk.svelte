@@ -15,6 +15,8 @@
   import { onMount } from "svelte";
   import { t, lang, type TranslationKey } from "$lib/i18n";
   import {
+    CARD_WIDTHS,
+    DEFAULT_ASPECT,
     FRAME_MODES,
     KIND_SIDES,
     LAYOUTS,
@@ -26,6 +28,7 @@
     SLICE_SLOTS,
     SLICE_TURNS,
     applyInsetDelta,
+    cardTallAt,
     defaultSlices,
     dressWindowMissing,
     frameName,
@@ -34,6 +37,7 @@
     newOrnament,
     pickImageFile,
     sliceSigns,
+    widthShow,
     type InsetKey,
   } from "$lib/battles";
   import { SITE_FONTS } from "$lib/fonts";
@@ -466,15 +470,93 @@
     none: 'adminBattlesSliceTurnNone',
   };
 
-  const STAGE_BASE = 320;
   const ZOOMS = [1, 1.5, 2, 3, 4];
 
-  /** Во сколько раз увеличен предпросмотр. Не `transform`: карта меряет себя
-   *  контейнерными единицами, поэтому увеличенная ширина увеличивает и резьбу,
-   *  и шрифт по-настоящему, а `getBoundingClientRect` под перетаскиванием
-   *  остаётся честным без единой поправки. Полтора, а не один: стол широкий, и
-   *  карта в 320 px на нём теряется. */
+  /** Сколько места отведено мерке слева. Одно число на обе половины: верхняя
+   *  подпись отступает ровно на него, иначе мерка ширины встала бы не по краям
+   *  карты, а по краям стола, и перестала бы что-либо мерить. */
+  const RULER_GUTTER = 34;
+
+  /**
+   * Какой ширины карта на столе — и это НАСТОЯЩАЯ её ширина, а не величина
+   * предпросмотра.
+   *
+   * До этого стол ставил карту в 320 px и умножал это число на увеличение:
+   * 320 · 480 · 640 · 960 · 1280. Ни одно из них не та ширина, на которой
+   * карта где-нибудь стоит, и резчик, сажавший уголок «на глаз по краю», не
+   * мог узнать ни сколько это точек у гостя, ни какие строки описи на такой
+   * карте вообще печатаются, — а от ширины зависит и то, и другое.
+   *
+   * Теперь ширина выбирается из тех трёх, на которых карта стоит в комнате
+   * (`CARD_WIDTHS`), и лист взятия — по умолчанию: рамку строят там, где видно
+   * всё, а проверяют на полке и в клетке, где видно не всё.
+   */
+  let stageWidth = $state<number>(CARD_WIDTHS[0]);
+
+  /**
+   * Во сколько раз стол увеличивает карту. СТЕКЛО, а не ширина: `zoom` не
+   * трогает собственную ширину карты, поэтому контейнерные запросы, врезки и
+   * кегль остаются ровно теми, какие будут у гостя, — крупнее делается только
+   * то, что видит резчик.
+   *
+   * Не `transform`: тот увеличил бы картинку поверх раскладки, и стол перестал
+   * бы под неё отводить место, а `getBoundingClientRect` под перетаскиванием
+   * остался бы честным лишь наполовину. И не ширина контейнера, как было: та
+   * увеличивала резьбу и кегль по-настоящему, но вместе с ними — и саму карту,
+   * то есть меняла ответ на вопрос «что на ней напечатано».
+   */
   let stageZoom = $state(1.5);
+
+  /** Высота карты при выбранной ширине: отношение сторон у каждого чина своё,
+   *  и высота — не вторая ручка, а следствие первой. */
+  let cardTall = $derived(
+    cardTallAt(stageWidth, frames[frameIndex]?.aspect || DEFAULT_ASPECT),
+  );
+
+  /** Сколько карта занимает НА СТОЛЕ. Отличается от её собственной ширины ровно
+   *  стеклом, и говорится об этом вслух: иначе «400» на кнопке и полметра
+   *  карты на экране спорили бы друг с другом. */
+  let stageShown = $derived(Math.round(stageWidth * stageZoom));
+
+  /** Как зовут каждую из трёх ширин. Местом, а не числом: «400» ничего не
+   *  говорит, «лист взятия» говорит всё, — а число стоит рядом, потому что
+   *  резчик готовит картинки в точках. */
+  const WIDTH_KEY: Record<number, TranslationKey> = {
+    400: "adminBattlesWidthSheet",
+    261: "adminBattlesWidthShelf",
+    140: "adminBattlesWidthCell",
+  };
+
+  /** До какой ступени описи дотягивается карта такой ширины. Та же лестница,
+   *  что на вкладке «Лицо карты»: ступень — не про стол, а про карту. */
+  const STAGE_SHOW_KEY = {
+    large: "adminBattlesStageShowLarge",
+    always: "adminBattlesStageShowAlways",
+    cell: "adminBattlesStageShowCell",
+  } as const satisfies Record<"large" | "always" | "cell", TranslationKey>;
+
+  /**
+   * Сколько это в точках на той карте, которую сейчас показывают.
+   *
+   * Врезки названы в процентах, а режут они КАРТИНКУ, и картинку готовят в
+   * точках: «12 %» не отвечает ни на «какой ширины рисовать уголок», ни на
+   * «хватит ли у него разрешения», а «48 px» отвечает на оба. Проценты вбок
+   * читаются от ширины, вниз — от высоты, ровно как их читает `inset` в CSS;
+   * считать их от одного числа значило бы соврать на всякой карте, кроме
+   * квадратной.
+   */
+  /** Четыре врезки в том порядке, в каком их обходят по часовой стрелке. */
+  const INSETS = [
+    { key: "insetTop", label: "adminBattlesInsetTop" },
+    { key: "insetRight", label: "adminBattlesInsetRight" },
+    { key: "insetBottom", label: "adminBattlesInsetBottom" },
+    { key: "insetLeft", label: "adminBattlesInsetLeft" },
+  ] as const satisfies readonly { key: InsetKey; label: TranslationKey }[];
+
+  function insetPx(key: InsetKey, pct: number): number {
+    const across = key === "insetLeft" || key === "insetRight";
+    return Math.round((pct / 100) * (across ? stageWidth : cardTall));
+  }
 
   /**
    * Показывать карту так, как она стоит В КЛЕТКЕ БОЯ.
@@ -716,9 +798,10 @@
   /** Что сейчас в руке, строкой списка. */
   let heldRow = $derived(stack.find((row) => row.id === sliceHeld?.id) ?? null);
 
-  /** Стрелки двигают взятую копию. Мышь на карте в 320 px даёт 0.31 % на
-   *  пиксель — точнее неё клавиатура и должна быть, а не грубее, как было при
-   *  шаге в полпроцента. Alt — не двигает, а наращивает нахлёст. */
+  /** Стрелки двигают взятую копию. Мышь на карте листа взятия даёт 0.25 % на
+   *  точку экрана (а под стеклом — и того меньше); точнее неё клавиатура и
+   *  должна быть, а не грубее, как было при шаге в полпроцента. Alt — не
+   *  двигает, а наращивает нахлёст. */
   function nudgeHeld(event: KeyboardEvent) {
     if (!sliceHeld) return;
     const way: Record<string, [number, number]> = {
@@ -1171,10 +1254,34 @@
           </div>
           {/if}
 
-          <!-- Увеличение. Не `transform`: карта меряет себя контейнерными
-               единицами, поэтому большая ширина увеличивает и резьбу, и шрифт
-               по-настоящему, а перетаскивание остаётся точным без поправок. -->
-          <div class="flex border border-[#34251c]/15">
+          <!-- Ширина карты. Три настоящие, а не величина предпросмотра: от
+               ширины зависит и то, какие строки описи печатаются, и сколько
+               точек приходится на врезку, — и резчику надо знать оба числа
+               до того, как он нарисует уголок, а не после. -->
+          <div
+            class="flex border border-[#34251c]/15"
+            title={$t("adminBattlesCardWidthHint")}
+          >
+            {#each CARD_WIDTHS as w (w)}
+              <button
+                onclick={() => (stageWidth = w)}
+                class="px-2.5 py-1 text-[10px] whitespace-nowrap {stageWidth ===
+                w
+                  ? 'bg-[#34251c] text-[#f8f1e7]'
+                  : 'hover:bg-[#34251c]/5'}"
+                >{$t(WIDTH_KEY[w])} · <span class="tabular-nums">{w}</span
+                ></button
+              >
+            {/each}
+          </div>
+
+          <!-- Стекло. Только увеличивает показ: собственная ширина карты от
+               него не меняется, поэтому и опись, и резьба, и кегль остаются
+               ровно теми, что будут у гостя. -->
+          <div
+            class="flex border border-[#34251c]/15"
+            title={$t("adminBattlesStageGlassHint")}
+          >
             {#each ZOOMS as z (z)}
               <button
                 onclick={() => (stageZoom = z)}
@@ -1274,34 +1381,85 @@
             })}
           class="relative flex-1 overflow-auto p-8 outline-none"
         >
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div
-            class="relative mx-auto"
-            bind:this={cardBox}
-            onpointerdowncapture={poke}
-            style="width:{Math.round(STAGE_BASE * stageZoom)}px"
-          >
-            <BattleCard
-              card={sample}
-              {frames}
-              owned={true}
-              transition={false}
-              interactive={false}
-              frameEditable={true}
-              rowsEditable={true}
-              hurt={stageInMatch ? stageHurt : 1}
-              alive={stageInMatch
-                ? Math.max(0, Math.round((sample.health || 10) * stageHurt))
-                : null}
-              wearSeed={7}
-              onEditStart={mark}
-              onBadgeArtUpload={uploadBadgeArt}
-              onBadgeArtStore={badgeArtFromStore}
-              onEditEnd={() => barTick++}
-              onRowMove={moveRow}
-              bind:sliceHeld
-              bind:rowHeld
-            />
+          <!-- Мерка. Стоит вплотную к карте, по её настоящим краям, и называет
+               настоящие точки — те, в которых резчик готовит картинки.
+               Наверху ширина, слева высота; обе снаружи карты, чтобы ничего не
+               заслонить, и обе вне стекла, чтобы подпись не росла вместе с
+               резьбой. -->
+          <div class="mx-auto w-fit">
+            <div
+              class="flex items-center gap-2 pb-1.5 text-[9px] uppercase tracking-[0.14em] text-[#8a6a55]"
+              style="margin-left:{RULER_GUTTER}px; width:{stageShown}px"
+            >
+              <span
+                class="flex-1 border-t border-[#34251c]/20 border-l border-l-[#34251c]/35 h-[5px]"
+              ></span>
+              <span class="tabular-nums whitespace-nowrap">{stageWidth} px</span>
+              <span
+                class="flex-1 border-t border-[#34251c]/20 border-r border-r-[#34251c]/35 h-[5px]"
+              ></span>
+            </div>
+            <div class="flex items-stretch">
+              <div
+                class="shrink-0 flex items-center justify-center text-[9px] uppercase tracking-[0.14em] text-[#8a6a55]"
+                style="width:{RULER_GUTTER}px"
+              >
+                <span
+                  class="flex-1 self-stretch border-r border-[#34251c]/20 border-t border-t-[#34251c]/35 border-b border-b-[#34251c]/35 mr-1.5"
+                ></span>
+                <span class="tabular-nums [writing-mode:vertical-rl] rotate-180"
+                  >{cardTall} px</span
+                >
+              </div>
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div
+                class="relative"
+                bind:this={cardBox}
+                onpointerdowncapture={poke}
+                style="width:{stageWidth}px; zoom:{stageZoom}"
+              >
+                <BattleCard
+                  card={sample}
+                  {frames}
+                  owned={true}
+                  transition={false}
+                  interactive={false}
+                  frameEditable={true}
+                  rowsEditable={true}
+                  hurt={stageInMatch ? stageHurt : 1}
+                  alive={stageInMatch
+                    ? Math.max(0, Math.round((sample.health || 10) * stageHurt))
+                    : null}
+                  wearSeed={7}
+                  onEditStart={mark}
+                  onBadgeArtUpload={uploadBadgeArt}
+                  onBadgeArtStore={badgeArtFromStore}
+                  onEditEnd={() => barTick++}
+                  onRowMove={moveRow}
+                  bind:sliceHeld
+                  bind:rowHeld
+                />
+              </div>
+            </div>
+
+            <!-- Чем эта ширина отличается от соседней: отношением сторон и
+                 тем, что на ней печатается. Стоит ПОД КАРТОЙ, а не в полосе
+                 кнопок: это сказано про карту, а не про то, чем её выбирают,
+                 — и места под ней ровно столько, сколько нужно словам. -->
+            <p
+              class="pt-2 text-[9px] uppercase tracking-[0.14em] text-[#8a6a55]"
+              style="margin-left:{RULER_GUTTER}px; width:{stageShown}px"
+            >
+              <span class="tabular-nums"
+                >1 : {(1 / (frames[frameIndex]?.aspect || DEFAULT_ASPECT)).toFixed(
+                  2,
+                )}</span
+              >
+              · {$t(STAGE_SHOW_KEY[widthShow(stageWidth)])}{#if stageZoom !== 1}
+                · <span class="tabular-nums"
+                  >{$t("adminBattlesStageOnDesk")} {stageShown} px</span
+                >{/if}
+            </p>
           </div>
 
           <!-- Полоска взятой детали. Стоит у неё, а не в колонке: за картинкой
@@ -1967,78 +2125,37 @@
                   </p>
                 </details>
                 <div class="flex flex-wrap gap-5">
-                  <label class="block w-40">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("adminBattlesInsetTop")} · {frames[
-                        frameIndex
-                      ].insetTop.toFixed(0)}%</span
-                    >
-                    <input
-                      type="range"
-                      min="0"
-                      max="45"
-                      step="0.5"
-                      value={frames[frameIndex].insetTop}
-                      oninput={(e) =>
-                        setInset("insetTop", Number(e.currentTarget.value))}
-                      class="w-full"
-                    />
-                  </label>
-                  <label class="block w-40">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("adminBattlesInsetRight")} · {frames[
-                        frameIndex
-                      ].insetRight.toFixed(0)}%</span
-                    >
-                    <input
-                      type="range"
-                      min="0"
-                      max="45"
-                      step="0.5"
-                      value={frames[frameIndex].insetRight}
-                      oninput={(e) =>
-                        setInset("insetRight", Number(e.currentTarget.value))}
-                      class="w-full"
-                    />
-                  </label>
-                  <label class="block w-40">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("adminBattlesInsetBottom")} · {frames[
-                        frameIndex
-                      ].insetBottom.toFixed(0)}%</span
-                    >
-                    <input
-                      type="range"
-                      min="0"
-                      max="45"
-                      step="0.5"
-                      value={frames[frameIndex].insetBottom}
-                      oninput={(e) =>
-                        setInset("insetBottom", Number(e.currentTarget.value))}
-                      class="w-full"
-                    />
-                  </label>
-                  <label class="block w-40">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("adminBattlesInsetLeft")} · {frames[
-                        frameIndex
-                      ].insetLeft.toFixed(0)}%</span
-                    >
-                    <input
-                      type="range"
-                      min="0"
-                      max="45"
-                      step="0.5"
-                      value={frames[frameIndex].insetLeft}
-                      oninput={(e) =>
-                        setInset("insetLeft", Number(e.currentTarget.value))}
-                      class="w-full"
-                    />
-                  </label>
+                  <!-- Четыре врезки одним списком: разница между ними — одно
+                       слово и одна ось, и четыре списанных друг с друга блока
+                       расходились бы по одному. Рядом с процентом стоят
+                       ТОЧКИ — те самые, что на выбранной ширине карты: резать
+                       картинку по процентам нельзя. -->
+                  {#each INSETS as row (row.key)}
+                    <label class="block w-40">
+                      <span
+                        class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                        >{$t(row.label)} · {frames[frameIndex][
+                          row.key
+                        ].toFixed(0)}% ·
+                        <span class="tabular-nums text-[#34251c]/70"
+                          >{insetPx(
+                            row.key,
+                            frames[frameIndex][row.key],
+                          )} px</span
+                        ></span
+                      >
+                      <input
+                        type="range"
+                        min="0"
+                        max="45"
+                        step="0.5"
+                        value={frames[frameIndex][row.key]}
+                        oninput={(e) =>
+                          setInset(row.key, Number(e.currentTarget.value))}
+                        class="w-full"
+                      />
+                    </label>
+                  {/each}
                   <label class="block w-40">
                     <span
                       class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"

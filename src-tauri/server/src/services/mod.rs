@@ -10549,6 +10549,19 @@ impl AppService {
             .filter(|c| crate::battles::can_take_the_field(c))
             .filter_map(|c| c.id.parse().ok())
             .collect();
+        // Владение меняется (продажа, сброс, перевыпуск) независимо от того,
+        // снята ли карта с публикации — старый стол, ссылающийся на чужую
+        // карту, обязан считаться ушедшим ровно так же, как ссылающийся на
+        // снятую: иначе гость видит обычную карту, шлёт её же назад при
+        // сохранении, и сервер отказывает снова и снова, а обновление
+        // страницы ничего не чинит — оно перечитывает то же самое.
+        let owned: std::collections::HashSet<Uuid> = self
+            .repo
+            .list_owned_battle_cards(user_id)
+            .await?
+            .into_iter()
+            .map(|o| o.card_id)
+            .collect();
 
         // Пул перебирается по кругу, а не раздаётся по одной карте: у дома,
         // отметившего одну карту заёмной, иначе закрывалось бы одно место из
@@ -10568,7 +10581,7 @@ impl AppService {
 
         let mut board = Vec::with_capacity(crate::battles::DECK_BOARD);
         for slot in layout.board.iter().take(crate::battles::DECK_BOARD) {
-            let gone = !fieldable.contains(&slot.card);
+            let gone = !fieldable.contains(&slot.card) || !owned.contains(&slot.card);
             board.push(crate::models::BattleDeckSlotDto {
                 card_id: Some(slot.card.to_string()),
                 gone,
@@ -10599,7 +10612,7 @@ impl AppService {
 
         let mut hand = Vec::with_capacity(crate::battles::DECK_HAND);
         for card in layout.hand.iter().take(crate::battles::DECK_HAND) {
-            let gone = !fieldable.contains(card);
+            let gone = !fieldable.contains(card) || !owned.contains(card);
             hand.push(crate::models::BattleDeckSlotDto {
                 card_id: Some(card.to_string()),
                 gone,
@@ -11075,6 +11088,11 @@ impl AppService {
             )
             .into_iter()
             .map(str::to_string),
+        );
+        blocking.extend(
+            crate::battles::ability_blockers(&req.abilities, &req.status)
+                .into_iter()
+                .map(str::to_string),
         );
         let mut notes: Vec<String> = crate::battles::card_notes(
             &req.status,
@@ -11594,10 +11612,12 @@ impl AppService {
         setup: &ChallengeSetup,
         cards: &std::collections::BTreeMap<String, BattleCardDto>,
     ) -> Result<battle_core::Setup> {
+        // Полка под рукой: чара призыва находит по слагу то, что призывает, и
+        // замораживает его вместе с умением.
         let body = |slug: &str| -> Result<battle_core::CardSnapshot> {
             cards
                 .get(slug)
-                .map(crate::battles::to_snapshot)
+                .map(|c| crate::battles::to_snapshot_with(c, |want| cards.get(want)))
                 .ok_or_else(|| AppError::BadRequest(format!("Unknown card {slug}")))
         };
         let place = |list: &[crate::models::ChallengePlacement]| -> Result<Vec<_>> {
@@ -11671,10 +11691,14 @@ impl AppService {
             .map_err(|fault| AppError::BadRequest(format!("deck:{}", fault.word())))?;
 
         // Что фактически встаёт: свой выбор, а где его нет — заём.
+        let by_slug: std::collections::HashMap<&str, &BattleCardDto> =
+            cards.iter().map(|c| (c.slug.as_str(), c)).collect();
         let body = |id: Uuid| -> Result<battle_core::CardSnapshot> {
             by_id
                 .get(&id)
-                .map(|c| crate::battles::to_snapshot(c))
+                .map(|c| {
+                    crate::battles::to_snapshot_with(c, |want| by_slug.get(want).copied())
+                })
                 .ok_or_else(|| AppError::BadRequest("deck:nothingToBring".into()))
         };
         let mut board = Vec::new();
@@ -11698,15 +11722,16 @@ impl AppService {
 
         // Отказ только если приводить НЕЧЕГО — ни на поле, ни в руке.
         //
-        // Пустое поле при непустой руке партию не проигрывает: `is_spent` в
-        // `battle-core/src/state.rs` считает сторону вышедшей из игры только
-        // тогда, когда у неё нет ни стоящих тел, ни карты, которую есть на что
-        // выложить и куда. Рука — это и есть «есть чем ходить»: первым ходом
-        // карты выставляются на свою половину за ману.
+        // Проверки `board.is_empty()` здесь нет и не должно быть, но причина у
+        // этого теперь ДРУГАЯ, чем была. Раньше пустое поле при непустой руке
+        // партию не проигрывало — `is_spent` считал и руку. Теперь считает
+        // только тела: нет тел на поле — поражение. Своей проверки это всё
+        // равно не требует, потому что поле пустым не приходит: пустые места
+        // стола дом закрывает заёмом (`read_battle_deck`), и «колода из трёх
+        // карт в руке» встаёт на поле тремя одолженными телами.
         //
-        // Здесь раньше стояла проверка `board.is_empty()`, и она переписывала
-        // правило движка своим, более строгим. Колода из трёх карт в руке —
-        // законная и играбельная — отвергалась с сообщением, что колода пуста.
+        // Проверить это здесь второй раз значило бы переписать правило движка
+        // своим — ровно то, за что прежнюю проверку и сняли.
         if board.is_empty() && hand.is_empty() {
             return Err(AppError::BadRequest("deck:nothingToBring".into()));
         }

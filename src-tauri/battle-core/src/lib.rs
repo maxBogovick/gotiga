@@ -74,6 +74,7 @@ pub mod card;
 pub mod damage;
 pub mod event;
 pub mod heal;
+pub mod spell;
 pub mod state;
 pub mod unit;
 
@@ -82,5 +83,8 @@ pub use card::{AbilitySnapshot, CardSnapshot};
 pub use damage::{Breakdown, Channel, DamagePacket, Resolution, Source, StepId, apply, resolve, strike};
 pub use event::{Event, Outcome};
 pub use heal::{Mending, apply_mend, resolve_mend};
-pub use state::{Action, Illegal, MatchState, Rules, Setup, SideState, legal_actions, reduce};
-pub use unit::{AbilityCooldown, Health, Stat, Status, Unit, UnitId};
+pub use spell::{Aim, Casting, lay_hold, lay_rider, lift_riders, raise_shield, rider};
+pub use state::{
+    Action, Illegal, Mark, MatchState, Rules, Setup, SideState, Zone, legal_actions, reduce,
+};
+pub use unit::{AbilityCooldown, Health, Hold, HoldKind, Stat, Status, Unit, UnitId};

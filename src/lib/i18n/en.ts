@@ -1313,13 +1313,14 @@ export const en = {
   /** Why the picked body or hand card cannot do what the guest expects. */
   battleWhyReach: 'Out of reach — step closer.',
   battleWhyActed: 'Already acted this turn.',
-  battleWhyOpening: 'The opening blow is already spent.',
+  battleWhyOpening: "Your side's opening blows are spent — until round two no one strikes.",
   battleWhyActs: 'No acts left this turn.',
   battleWhyMana: 'Not enough mana for this card.',
   battleWhyRoom: 'No free cell on your half.',
   battleWhyPeace: 'This body does not strike.',
   battleWhyStuck: 'Nowhere to step, and no one in reach.',
   battleWhyIdle: 'This body has nothing it can do.',
+  battleWhyCooldown: 'The mending is spent — turns until it returns: {n}.',
   battleEndTurn: 'End the turn',
   battleKeeperThinks: 'The opponent is thinking…',
   battleStudies: 'Studies',
@@ -1365,6 +1366,13 @@ export const en = {
   battleRuleNoPointBlank: 'an archer at arm’s length strikes in full',
   battleRuleLongShot: 'a shot past its reach keeps, %',
   battleRuleNoLongShot: 'an archer does not reach past its range',
+  /** Первый круг: сколько ударов у стороны ещё есть, и чем это правило живо. */
+  battleOpeningLeft: 'blows left: {n}',
+  battleOpeningSpent: 'blows spent',
+  battleRulesSeal: 'Rules of this match',
+  battleRulesInForce: 'What holds you here',
+  battleRuleOpeningWhole:
+    'The blows of the opening round are dealt to the side, not to each body: spend one with a single figure and the rest do not strike until round two. It blunts the first mover, whose blow decides 98.8% of even matches.',
 
   // Предвестие. Ответ противника вычислим — случайности в игре нет, скрытых
   // карт у него нет. Прятать вычислимое значит продавать не глубину, а
@@ -1396,6 +1404,72 @@ export const en = {
   battleStatStep: 'Step',
   battleStatMend: 'Mend',
   battleStatusTurns: 'turns:',
+  /** ── The tray of intents ───────────────────────────────────────────────
+   *  A card that strikes, mends and curses has three different errands into
+   *  the very same enemy cell: the way is chosen first, and the board lights
+   *  only its targets. */
+  battleIntents: 'What to do',
+  battleIntentBlow: 'Strike',
+  battleIntentMend: 'Mend',
+  battleIntentAsleep: 'Returns in turns: {n}',
+  battleIntentMana: 'Not enough mana',
+  battleIntentNoAim: 'No one within reach',
+  battleIntentSpent: 'Spent: once a match',
+  battleAuraWhile: 'while it stands',
+  battleIntentNoRoom: 'Nowhere to put it',
+  /** What the thing in hand is asking for. "Choose" on a readied curse says
+   *  nothing at all. */
+  battleAimBlow: 'Whom to strike',
+  battleAimMend: 'Whom to mend',
+  battleAimHarm: 'Whom to cast at',
+  battleAimCurse: 'Whom to curse',
+  battleAimBless: 'Whom to bless',
+  battleAimShield: 'Whom to shield',
+  /** What a rider rules. Vulnerability has no number of its own on a card —
+   *  it only ever lives as a rider, which is why its word lives only here. */
+  battleStatVulnerable: 'Vulnerability',
+  battleLogCursed: 'is cursed',
+  battleLogBlessed: 'is blessed',
+  battleLogShielded: 'is shielded by',
+  /** ── What is laid on a body ────────────────────────────────────────────
+   *  Not a rider: a rider rules numbers, this rules what a body CAN. */
+  battleHoldBound: 'Bound',
+  battleHoldHushed: 'Silenced',
+  battleHoldDisarmed: 'Disarmed',
+  battleHoldSwayed: 'Swayed',
+  battleHoldVeiled: 'Veiled',
+  battleHoldGuarding: 'Guarding',
+  battleHoldNumb: 'Warded',
+  battleHoldThorned: 'Thorns',
+  battleHoldFestering: 'Festering',
+  battleHoldKnitting: 'Knitting',
+  battleHoldRested: 'Resting',
+  /** What the thing in hand is asking for — one word per verb. */
+  battleAimFester: 'Whom to rot',
+  battleAimKnit: 'Whom to knit',
+  battleAimBind: 'Whom to bind',
+  battleAimHush: 'Whom to silence',
+  battleAimDisarm: 'Whom to disarm',
+  battleAimSway: 'Whom to sway',
+  battleAimVeil: 'Whom to veil',
+  battleAimGuard: 'Whom to guard for',
+  battleAimNumb: 'Whom to ward',
+  battleAimThorns: 'Whom to thorn',
+  battleAimShove: 'Whom to shove or pull',
+  battleAimCleanse: 'Whom to cleanse',
+  battleAimDispel: 'Whom to strip',
+  battleAimCoin: 'Draw mana',
+  battleAimOffer: 'Whom to give up',
+  battleAimZone: 'Which cell to make dangerous',
+  battleAimSummon: 'Where to summon',
+  /** Journal lines for what is neither a blow nor a mending. */
+  battleLogHeld: 'is taken by',
+  battleLogLifted: 'lifted',
+  battleLogLiftedIll: 'curses',
+  battleLogLiftedGood: 'blessings',
+  battleLogMana: 'mana rose to',
+  battleLogZoned: 'a cell turned dangerous',
+  battleZoneHere: 'Dangerous cell',
   battleJournal: 'What happened',
   battleJournalEmpty: 'Nothing has happened yet.',
   battleLogPlayed: 'takes the field',
@@ -1824,6 +1898,12 @@ export const en = {
   cardAbilMana: 'Mana',
   cardAbilCooldown: 'Cooldown',
   cardAbilChannel: 'Channel',
+  /** Curses and blessings only: "by two" is two of WHAT. Empty means power,
+   *  which is what a reader assumes anyway. */
+  cardAbilSummon: 'What it summons',
+  cardAbilSummonNone: '— not chosen —',
+  cardAbilStat: 'What it rules',
+  cardAbilStatHint: 'Vulnerability counts the other way: a curse adds to it, a blessing takes away.',
   cardAbilName: 'Name',
   cardAbilPoints: 'pts',
   studioAuthorCards: 'Cards on the shelf',

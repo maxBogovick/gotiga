@@ -180,6 +180,79 @@ fn look(state: &MatchState, side: crate::board::Side, budget: u8) -> i32 {
     if best == i32::MIN { playout(&st, side) } else { best }
 }
 
+/// Сколько здоровья снимет это действие, если оно вообще снимает.
+///
+/// Удар и чара считаются ОДНОЙ функцией, и это не опрятность: у жадной руки
+/// есть два правила про урон — «сначала добить» и «бить того, кто ближе всех к
+/// падению», — и пока чара в них не входила, хранитель с дальнобойной чарой
+/// подходил ею вплотную и бил кулаком.
+fn wound_of(state: &MatchState, action: &Action) -> Option<(i32, crate::unit::UnitId)> {
+    match action {
+        Action::Attack { attacker, target } => {
+            let a = &state.units[*attacker as usize];
+            let t = &state.units[*target as usize];
+            Some((state.blow(a, t).to_health, *target))
+        }
+        Action::Cast {
+            caster,
+            ability,
+            target,
+        } => {
+            let c = &state.units[*caster as usize];
+            let a = c.ability_by_key(ability)?;
+            if !a.casting()?.wounds() {
+                return None;
+            }
+            // Урон наводят на тело; клеточные чары урона не наносят вовсе.
+            let t = &state.units[target.unit()? as usize];
+            let res = crate::damage::resolve(
+                Some(c),
+                t,
+                crate::damage::DamagePacket::new(
+                    a.amount,
+                    a.channel,
+                    crate::damage::Source::Ability,
+                ),
+            );
+            Some((res.to_health, t.id))
+        }
+        _ => None,
+    }
+}
+
+/// Чего стоит наведённый всадник или щит — грубо и нарочно грубо.
+///
+/// Перебор глубины 2 оценит чару сам: проклятие силы видно в `evaluate` через
+/// `printed_power`. Жадной руке нужно только одно — не стоять, имея в руках
+/// проклятие, и выбирать между тремя чарами всегда одинаково.
+fn rider_worth(state: &MatchState, action: &Action) -> Option<i32> {
+    let Action::Cast {
+        caster, ability, ..
+    } = action
+    else {
+        return None;
+    };
+    let c = &state.units[*caster as usize];
+    let a = c.ability_by_key(ability)?;
+    let what = a.casting()?;
+    if what.wounds() {
+        return None;
+    }
+    // Три глагола жадная рука не берёт вовсе, и это не пробел, а отказ: их
+    // польза не выводится из числа на умении. Жертва ОТДАЁТ тело — с одним
+    // числом в руках бот отдавал бы их одно за другим; глоток маны на полном
+    // запасе не даёт ничего и тратит ход; толчок меняет расстановку, а
+    // расстановку жадная рука не оценивает ничем. Перебор глубины 2 их всё
+    // равно рассмотрит — он смотрит на доску после, а не на число до.
+    if matches!(
+        what,
+        crate::spell::Casting::Offer | crate::spell::Casting::Coin | crate::spell::Casting::Shove
+    ) {
+        return None;
+    }
+    Some(a.amount * a.duration.max(1) as i32)
+}
+
 /// One action, chosen. Ties are broken by the order `legal_actions` returns —
 /// the field's scan order — so the same position always yields the same move.
 pub fn choose(state: &MatchState) -> Action {
@@ -188,11 +261,9 @@ pub fn choose(state: &MatchState) -> Action {
     // 1. A blow that finishes a body. Nothing else is worth more this turn.
     let mut killing: Option<(&Action, i32)> = None;
     for action in &actions {
-        if let Action::Attack { attacker, target } = action {
-            let a = &state.units[*attacker as usize];
-            let t = &state.units[*target as usize];
-            let res = state.blow(a, t);
-            if res.to_health >= t.health.current {
+        if let Some((off, target)) = wound_of(state, action) {
+            let t = &state.units[target as usize];
+            if off >= t.health.current {
                 let score = t.power * 10 + t.health.current;
                 if killing.is_none_or(|(_, best)| score > best) {
                     killing = Some((action, score));
@@ -254,19 +325,34 @@ pub fn choose(state: &MatchState) -> Action {
         return action.clone();
     }
 
-    // 4. Otherwise wound whoever is closest to falling.
+    // 4. Otherwise wound whoever is closest to falling — кулаком или чарой,
+    //    смотря что снимет больше.
     let mut best_hit: Option<(&Action, i32)> = None;
     for action in &actions {
-        if let Action::Attack { attacker, target } = action {
-            let a = &state.units[*attacker as usize];
-            let t = &state.units[*target as usize];
-            let score = state.blow(a, t).to_health - t.health.current;
+        if let Some((off, target)) = wound_of(state, action) {
+            let t = &state.units[target as usize];
+            let score = off - t.health.current;
             if best_hit.is_none_or(|(_, best)| score > best) {
                 best_hit = Some((action, score));
             }
         }
     }
     if let Some((action, _)) = best_hit {
+        return action.clone();
+    }
+
+    // 4½. Достать некого — но можно проклясть, благословить или укрыть щитом.
+    //     Стоит это ПОСЛЕ урона и ДО шага: чара, которой можно воспользоваться
+    //     не двигаясь, лучше шага, а урон лучше её.
+    let mut best_rider: Option<(&Action, i32)> = None;
+    for action in &actions {
+        if let Some(worth) = rider_worth(state, action) {
+            if best_rider.is_none_or(|(_, best)| worth > best) {
+                best_rider = Some((action, worth));
+            }
+        }
+    }
+    if let Some((action, _)) = best_rider {
         return action.clone();
     }
 

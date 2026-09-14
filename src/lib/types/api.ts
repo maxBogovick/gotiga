@@ -3092,7 +3092,16 @@ export interface CardAbility {
     manaCost: number;
     cooldown: number;
     keywords: string[];
+    /** Какой показатель правит всадник — только у `curse` и `bless`.
+     *  Пусто — сила: проклятие без уговора ослабляет удар. */
+    stat: RiderStat | '';
+    /** Слаг карты, которую призывает `summon`. Пусто — призывать нечего, и
+     *  движок такой чары не играет: призыв без тела не призыв. */
+    summon: string;
 }
+
+/** Показатель, который правит всадник. Те же четыре, что знает движок. */
+export type RiderStat = 'power' | 'armor' | 'ward' | 'vulnerable';
 
 /**
  * What the scales say about a card still being written.
@@ -3277,6 +3286,8 @@ export interface BattleBodyCard {
     step: number;
     mend: number;
     channel: BattleChannel;
+    /** Бьёт ли это тело вообще. Котёл, знамя, безоружный лекарь — нет. */
+    strikes?: boolean;
     /** Abilities frozen with the body. Empty on matches begun before this
      *  field existed. The scene lights cells from `legalActions`; this is for
      *  naming why a body can mend when `mend` itself is zero. */
@@ -3293,6 +3304,54 @@ export interface BattleAbilitySnap {
     manaCost: number;
     cooldown: number;
     trigger: string;
+    /** Каким каналом бьёт чара. У лечения, проклятия и щита ничего не значит. */
+    channel?: BattleChannel;
+    /** Сколько ходов носителя держится всадник. Ноль — один ход. */
+    duration?: number;
+    /** Сколько клеток вокруг захватывает опасная клетка. */
+    radius?: number;
+    /** Какой показатель правит всадник. Пусто — сила. */
+    stat?: RiderStat | null;
+    /** Тело, которое призывают, — замороженное вместе с умением. */
+    body?: BattleBodyCard | null;
+}
+
+/** Что наложено на тело со СРОКОМ и правит не числа, а возможности.
+ *
+ * Второй список рядом со всадниками, и различие то же, что в движке: всадник
+ * правит ЧИСЛА, удержание — то, что тело МОЖЕТ. Оберег канала несёт с собой
+ * канал, остальные — просто слово. */
+export type BattleHoldKind =
+    | 'bound'
+    | 'hushed'
+    | 'disarmed'
+    | 'swayed'
+    | 'veiled'
+    | 'guarding'
+    | 'thorned'
+    | 'festering'
+    | 'knitting'
+    | 'rested'
+    | { numb: BattleChannel };
+
+export interface BattleHold {
+    /** Ключ умения, как и у всадника. */
+    name: string;
+    kind: BattleHoldKind;
+    amount: number;
+    turns: number;
+}
+
+/** Опасная клетка поля. Живёт в партии, а не на теле: котёл остаётся стоять и
+ *  когда ведьмы не стало. */
+export interface BattleZone {
+    name: string;
+    side: BattleSide;
+    by: number | null;
+    cells: BattleCell[];
+    amount: number;
+    channel: BattleChannel;
+    turns: number;
 }
 
 export interface BattleStatus {
@@ -3300,6 +3359,13 @@ export interface BattleStatus {
     stat: string;
     amount: number;
     turns: number;
+}
+
+/** Сколько ходов ждать, пока способность вернётся. Ключ — `id` способности, а
+ *  при пустом `id` — её место в списке (`#0`), ровно как у движка. */
+export interface BattleAbilityCd {
+    id: string;
+    left: number;
 }
 
 /** One body on the field. Not a card: a card is a template, this is a copy. */
@@ -3326,6 +3392,16 @@ export interface BattleUnit {
     shield: number;
     statuses: BattleStatus[];
     immune: BattleChannel | null;
+    /** Отсчёт по каждой уже потраченной способности. Пусто на партиях,
+     *  начатых до способностей, — и на теле, которое ещё ничего не тратило.
+     *  Доске он нужен затем, что откат не виден на ней НИЧЕМ: ни расстоянием,
+     *  ни камнями маны, и молчание о нём человек читает как поломку. */
+    abilityCds?: BattleAbilityCd[];
+    /** Что наложено на него со сроком. Пусто на всём, что начато до чар. */
+    holds?: BattleHold[];
+    /** Чем на него дышит поле: всадники от аур, пока те стоят рядом. Не
+     *  тикают и не накладываются — пересчитываются от доски. */
+    aura?: BattleStatus[];
 }
 
 export interface BattleSideState {
@@ -3345,6 +3421,8 @@ export interface BattleMatchState {
     rules: BattleRules;
     openingAttacksUsed: number;
     actsThisTurn: number;
+    /** Опасные клетки. Пусто на всём, что начато до них. */
+    zones?: BattleZone[];
 }
 
 /**
@@ -3356,6 +3434,17 @@ export type BattleAction =
     | { move: { unit: number; to: BattleCell } }
     | { mend: { healer: number; target: number } }
     | { attack: { attacker: number; target: number } }
+    /** Навести чару. `ability` — КЛЮЧ умения: его `id`, а при пустом `id` его
+     *  место на карте (`#0`). Тот же ключ носит откат и тот же — всадник.
+     *  Цель — тело ИЛИ клетка: опасная клетка ставится там, где никто не стоит,
+     *  и призванному телу нужно пустое место. */
+    | {
+          cast: {
+              caster: number;
+              ability: string;
+              target: { unit: number } | { spot: BattleCell };
+          };
+      }
     | 'endTurn';
 
 /** Одна копия одной карты — чья-то. */
@@ -3603,6 +3692,45 @@ export type BattleEvent =
                *  движение лечения начинается у лекаря. */
               by: number | null;
               amount: number;
+          };
+      }
+    | {
+          /** Всадник лёг: проклятие или благословение. `ill` приходит полем, а
+           *  не выводится из знака: у уязвимости вред — это ПЛЮС, и комната,
+           *  гадающая по знаку, назвала бы проклятие подарком. */
+          rider: {
+              target: number;
+              by: number | null;
+              status: BattleStatus;
+              ill: boolean;
+          };
+      }
+    | { shielded: { target: number; by: number | null; amount: number } }
+    | {
+          /** Тело охвачено: оцепенение, немота, смута, покров, стража, оберег
+           *  канала, шипы, порча, заживление. */
+          held: {
+              target: number;
+              by: number | null;
+              /** Ключ умения: по нему комната подставляет слово хранителя. */
+              name: string;
+              kind: BattleHoldKind;
+              amount: number;
+              turns: number;
+          };
+      }
+    /** С тела сняли всадников. `ill` говорит каких: по знаку числа это не
+     *  читается — у уязвимости вред это плюс. */
+    | { lifted: { target: number; by: number | null; ill: boolean; count: number } }
+    /** Сторона добрала маны. Тела это событие не называет вовсе. */
+    | { mana: { side: BattleSide; amount: number } }
+    | {
+          zoned: {
+              by: number | null;
+              side: BattleSide;
+              cells: BattleCell[];
+              amount: number;
+              turns: number;
           };
       }
     | { died: { target: number } }

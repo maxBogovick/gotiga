@@ -7,7 +7,7 @@
 //! format or the shape of a legal action, the stages were cut wrongly.
 
 use crate::board::{Board, Cell, Side};
-use crate::card::CardSnapshot;
+use crate::card::{AbilitySnapshot as CardAbilitySnap, CardSnapshot};
 use crate::damage::{apply, strike};
 use crate::event::{Event, Outcome};
 use crate::unit::{Unit, UnitId};
@@ -319,6 +319,25 @@ pub struct Setup {
     pub keeper_hand: Vec<CardSnapshot>,
 }
 
+/// Опасная клетка поля.
+///
+/// Живёт в состоянии, а не на теле, потому что она и есть не тело: ведьмин
+/// котёл остаётся стоять там, где стоял, даже когда ведьму убили, и уходит по
+/// своему сроку. Чей срок — сказано `side`: тикает зона ходами того, кто её
+/// поставил, ровно как всадник тикает ходами носителя.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Zone {
+    /// Ключ умения: одноимённая зона обновляет срок, а не копится второй.
+    pub name: String,
+    pub side: Side,
+    pub by: Option<UnitId>,
+    pub cells: Vec<Cell>,
+    pub amount: i32,
+    pub channel: crate::damage::Channel,
+    pub turns: u8,
+}
+
 /// The whole of a match at one moment. The only thing `reduce` takes and the
 /// only thing it returns — nothing outside it may affect the result, which is
 /// the entire definition of determinism here.
@@ -341,6 +360,9 @@ pub struct MatchState {
     /// `acts_per_turn` не бесконечен.
     #[serde(default)]
     pub acts_this_turn: u8,
+    /// Опасные клетки. Пусто на всякой партии, начатой до них.
+    #[serde(default)]
+    pub zones: Vec<Zone>,
 }
 
 /// What was asked for. May be refused; refusal is an ordinary answer.
@@ -352,7 +374,44 @@ pub enum Action {
     Move { unit: UnitId, to: Cell },
     Mend { healer: UnitId, target: UnitId },
     Attack { attacker: UnitId, target: UnitId },
+    /// Навести чару. `ability` — КЛЮЧ умения (`ability_key`), а не его номер в
+    /// списке: номер значит одно и то же только пока карту не правили, а карта
+    /// в журнале переживает и правку, и перебалансировку. Тот же ключ носит
+    /// откат и тот же — всадник.
+    Cast {
+        caster: UnitId,
+        ability: String,
+        /// Тело или КЛЕТКА. Двумя словами, а не номером тела: опасная клетка
+        /// ставится там, где никто не стоит, и призванному телу нужно пустое
+        /// место — обе чары в «номер тела» не записываются вовсе.
+        target: Mark,
+    },
     EndTurn,
+}
+
+/// Куда наведена чара.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(rename_all_fields = "camelCase")]
+pub enum Mark {
+    Unit(UnitId),
+    Spot(Cell),
+}
+
+impl Mark {
+    pub fn unit(self) -> Option<UnitId> {
+        match self {
+            Mark::Unit(id) => Some(id),
+            Mark::Spot(_) => None,
+        }
+    }
+
+    pub fn spot(self) -> Option<Cell> {
+        match self {
+            Mark::Spot(cell) => Some(cell),
+            Mark::Unit(_) => None,
+        }
+    }
 }
 
 /// Why it cannot be done. A closed list, so it can be shown to a person in two
@@ -386,6 +445,28 @@ pub enum Illegal {
     /// for a person and noise for the bot.
     NothingToMend,
     TargetIsEnemy,
+    /// У этого тела нет такого умения — или есть, но движок его не играет.
+    /// Одно слово на оба случая нарочно: для спрашивающего это одно и то же, а
+    /// разница между ними — дело свода, а не партии.
+    NoSuchAbility,
+    /// Чара ещё не вернулась.
+    AbilityAsleep,
+    /// Наводить чару на себя, когда она не про себя, — и наоборот. Сюда же
+    /// клетка вместо тела и тело вместо клетки: для спрашивающего это одно и то
+    /// же — «не туда».
+    NotThatAim,
+    /// Тело не делает ничего: оцепенение.
+    Bound,
+    /// Тело не наводит чар: немота.
+    Hushed,
+    /// Тело не бьёт сейчас: разоружено.
+    Disarmed,
+    /// Целью не выбирают: покров. По площади — достаётся.
+    Veiled,
+    /// Только что вышло из-под оцепенения или смуты (§5.3).
+    Rested,
+    /// Сюда встать нельзя: занято или такой клетки нет.
+    NoRoom,
 }
 
 impl MatchState {
@@ -405,6 +486,7 @@ impl MatchState {
             rules,
             opening_attacks_used: 0,
             acts_this_turn: 0,
+            zones: Vec::new(),
         };
         // The coin is laid before the first turn, so that turn's rise adds to it.
         st.keeper.mana_max = rules.second_side_coin.max(0);
@@ -421,6 +503,9 @@ impl MatchState {
         for u in st.units.iter_mut() {
             u.acted = false;
         }
+        // Расставленные дышат с самого начала: аура — это состояние поля, а не
+        // событие, и первый же удар обязан считаться с ней.
+        st.breathe();
         st.open_turn();
         st
     }
@@ -457,6 +542,21 @@ impl MatchState {
             .map(|(_, id)| id)
             .filter(|id| {
                 let u = &self.units[*id as usize];
+                // За КОГО оно стоит, а не чьё оно: смута разводит эти два
+                // вопроса, и бой спрашивает первый. Второй спрашивают там, где
+                // речь о хозяйстве, — `is_spent` и счёт здоровья на исходе.
+                u.side() == side && !u.health.is_dead()
+            })
+            .collect()
+    }
+
+    /// Чьи тела ещё стоят — по хозяину, а не по тому, за кого они бьют.
+    pub fn owned_standing(&self, side: Side) -> Vec<UnitId> {
+        self.board
+            .occupied()
+            .map(|(_, id)| id)
+            .filter(|id| {
+                let u = &self.units[*id as usize];
                 u.owner == side && !u.health.is_dead()
             })
             .collect()
@@ -465,7 +565,11 @@ impl MatchState {
     /// Health left standing on one side — what decides a match that ran out of
     /// rounds.
     pub fn standing_health(&self, side: Side) -> i32 {
-        self.standing(side).iter().map(|id| self.units[*id as usize].health.current).sum()
+        // По хозяину: смута временна, а материал — чей он есть.
+        self.owned_standing(side)
+            .iter()
+            .map(|id| self.units[*id as usize].health.current)
+            .sum()
     }
 
     /// Start of the active side's turn: mana rises, bodies are ready again.
@@ -480,7 +584,10 @@ impl MatchState {
         for u in self.units.iter_mut() {
             // Сдача обнуляется у всех: она тратится в чужой ход, а не в свой.
             u.retaliated = false;
-            if u.owner == side {
+            // Просыпается то, что ходит ЗА эту сторону: уведённое смутой тело
+            // ходит с тем, кто его увёл, — иначе оно стояло бы у него в руках
+            // без права шевельнуться.
+            if u.side() == side {
                 u.acted = false;
                 u.moved = false;
                 u.tick_ability_cds();
@@ -584,6 +691,694 @@ impl MatchState {
         res
     }
 
+    /// Кто ответит на то, что только что случилось.
+    ///
+    /// Читается по СЛЕДАМ — по событиям, которые действие уже положило, — а не
+    /// по тому, что действие собиралось сделать. Разница видна на страже:
+    /// удар был нацелен в соседа, а пришёл ей, и отвечать на него ей же.
+    ///
+    /// Порядок поводов выбран, а не сложился: сперва ударивший («когда я бью»),
+    /// потом раненые («когда меня ранят»), потом павшие («предсмертный»). Он
+    /// же порядок чтения вслух — и он же порядок, в котором это случилось бы за
+    /// столом.
+    fn answer(&mut self, by: Option<UnitId>, since: usize, events: &mut Vec<Event>) {
+        let mut hurt: Vec<UnitId> = Vec::new();
+        let mut fallen: Vec<UnitId> = Vec::new();
+        for e in events.iter().skip(since) {
+            match e {
+                Event::Damaged { target, source, .. } if source.is_felt() => {
+                    if !hurt.contains(target) {
+                        hurt.push(*target);
+                    }
+                }
+                Event::Died { target } => {
+                    if !fallen.contains(target) {
+                        fallen.push(*target);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some(striker) = by
+            && !hurt.is_empty()
+        {
+            self.reacts("onHit", striker, hurt.first().copied(), events);
+        }
+        for id in hurt {
+            if !self.units[id as usize].health.is_dead() {
+                self.reacts("onDamaged", id, by, events);
+            }
+        }
+        // Предсмертный дар срабатывает, пока тело ещё стоит на доске: у чары
+        // должно быть место, откуда она идёт. Убирает павших один общий проход
+        // в конце действия — и потому здесь их убирать не надо.
+        for id in fallen {
+            self.reacts("onDeath", id, by, events);
+        }
+    }
+
+    /// Убрать с доски всех, кто пал за это действие.
+    ///
+    /// Один проход в конце, а не `clear` в каждой ветке: павших за одно
+    /// действие бывает шестеро — от круга, от шипов, от сдачи, от предсмертного
+    /// дара, — и ветка, забывшая убрать своего, оставляет на поле тело, которое
+    /// и не живо, и не убрано.
+    fn bury_the_fallen(&mut self) {
+        let dead: Vec<Cell> = self
+            .board
+            .occupied()
+            .filter(|(_, id)| self.units[*id as usize].health.is_dead())
+            .map(|(cell, _)| cell)
+            .collect();
+        for cell in dead {
+            self.board.clear(cell);
+        }
+    }
+
+    /// Чем дышит поле: пересчитать все ауры заново.
+    ///
+    /// Пересчёт целиком, а не правка по месту, и это главное решение здесь.
+    /// Аура не событие, а СОСТОЯНИЕ: она есть, пока стоит тот, кто ею дышит, и
+    /// пропадает в тот же миг, как он пал, ушёл смутой на другую сторону или
+    /// его сдвинули на клетку дальше. Пытаться поддерживать это правками —
+    /// значит перечислить все способы, которыми доска меняется, и забыть
+    /// седьмой. Пересчёт стоит один обход поля и не может разойтись с доской,
+    /// потому что читает её же.
+    ///
+    /// Аурой бывают только благословение и проклятие. Остальные глаголы — это
+    /// события: «призвать, пока стою» или «толкнуть, пока стою» не значат
+    /// ничего, и стол отказывает в таком сочетании словами.
+    fn breathe(&mut self) {
+        for u in self.units.iter_mut() {
+            u.aura.clear();
+        }
+        for bearer in self.board.occupied().map(|(_, id)| id).collect::<Vec<_>>() {
+            if self.units[bearer as usize].health.is_dead() {
+                continue;
+            }
+            let body = self.units[bearer as usize].clone();
+            let Some(from) = self.board.cell_of(bearer) else { continue };
+            for (i, a) in body.card.abilities.iter().enumerate() {
+                if a.trigger != "aura" || a.amount <= 0 {
+                    continue;
+                }
+                let Some(what) = crate::spell::Casting::of_verb(&a.verb) else { continue };
+                if !matches!(what, crate::spell::Casting::Bless | crate::spell::Casting::Curse) {
+                    continue;
+                }
+                let key = crate::unit::ability_key(a, i);
+                let Some(mut status) = crate::spell::rider(a, what, &key) else { continue };
+                // У ауры нет срока: она держится собой. Число здесь — только
+                // чтобы всадник был правильно устроен; тикать его никто не будет.
+                status.turns = 1;
+                // Дышит она ОТ СЕБЯ: цели у ауры нет, и потому нет и вопроса,
+                // куда наведено, — она берёт то, что стоит вокруг носителя.
+                // Своих или чужих, решает глагол, и решает он так же, как у
+                // приказа: благословение своим, проклятие чужим.
+                let ill = matches!(what, crate::spell::Casting::Curse);
+                let reach = crate::spell::reach_of(&a.shape, a.radius);
+                for id in self.around(reach, from, body.side(), ill, a.range) {
+                    self.units[id as usize].aura.push(status.clone());
+                }
+            }
+        }
+    }
+
+    /// Кого накрывает то, что дышит ОТ НОСИТЕЛЯ: у ауры цели нет, и пригоршня
+    /// считается от его собственной клетки.
+    ///
+    /// `foes` говорит, чью сторону собирать. `range` держит ауру в её
+    /// дальности: «пока стою» не значит «на всё поле», если на карте написано
+    /// иначе; форма `self` — только сам носитель.
+    fn around(
+        &self,
+        reach: crate::spell::Reach,
+        from: Cell,
+        side: Side,
+        foes: bool,
+        range: u8,
+    ) -> Vec<UnitId> {
+        let want = if foes { side.other() } else { side };
+        self.board
+            .occupied()
+            .filter(|(cell, id)| {
+                let u = &self.units[*id as usize];
+                if u.health.is_dead() || u.side() != want {
+                    return false;
+                }
+                if cell.distance(from) > range {
+                    return false;
+                }
+                match reach {
+                    crate::spell::Reach::One => *id == self.board.at(from).unwrap_or(*id),
+                    crate::spell::Reach::Adjacent => cell.distance(from) <= 1,
+                    crate::spell::Reach::Radius(r) => cell.distance(from) <= r,
+                    crate::spell::Reach::Chain(n) => cell.distance(from) <= n,
+                    crate::spell::Reach::Line => cell.x == from.x || cell.y == from.y,
+                    crate::spell::Reach::Side => true,
+                }
+            })
+            .map(|(_, id)| id)
+            .collect()
+    }
+
+    /// Ответить на повод: сработать всем умениям этого тела, заведённым на него.
+    ///
+    /// `other` — тот, кто на другом конце повода: кого ударили, кто ударил, кто
+    /// свалил. Цель реакция выбирает САМА, и в этом её отличие от приказа:
+    /// поводу нечего спрашивать у человека. Правило одно на все поводы —
+    /// **берётся тот, о ком повод; а если повод ни о ком (вышел на поле, начался
+    /// ход), то ближайший** из тех, кого этот глагол берёт. Ближайший, а не
+    /// первый попавшийся: два одинаково близких разрешаются обходом доски, и
+    /// тогда партия переигрывается.
+    ///
+    /// Реакция не тратит ни ход, ни ману — она и есть то, за что платят ценой
+    /// карты, — но откат соблюдает: «раз в два хода» значит раз в два хода,
+    /// кем бы повод ни был подан.
+    ///
+    /// Реакция НЕ вызывает реакций. Это записано здесь тем, что `work` никого
+    /// не зовёт обратно, и это не осторожность, а условие: цепь из «ранили —
+    /// отвечаю — ранил — отвечают» не имеет дна, и одна карта уронила бы доску.
+    fn reacts(
+        &mut self,
+        trigger: &str,
+        bearer: UnitId,
+        other: Option<UnitId>,
+        events: &mut Vec<Event>,
+    ) {
+        let Some(body) = self.units.get(bearer as usize).cloned() else { return };
+        if body.health.is_dead() && trigger != "onDeath" {
+            return;
+        }
+        let Some(from) = self.board.cell_of(bearer) else { return };
+        let side = body.side();
+
+        for (i, a) in body.card.abilities.iter().enumerate() {
+            if a.trigger != trigger || a.amount <= 0 {
+                continue;
+            }
+            let Some(what) = a.casting() else { continue };
+            let key = crate::unit::ability_key(a, i);
+            if self.units[bearer as usize].ability_cd(&key) > 0 {
+                continue;
+            }
+
+            // Куда. Клеточные чары реакцией наводятся себе под ноги: выбирать
+            // клетку некому, а «где-нибудь» — не место.
+            let aim = what.aim(&a.shape);
+            let target = match aim {
+                crate::spell::Aim::Spot { .. } => None,
+                crate::spell::Aim::Bearer => Some(bearer),
+                _ => {
+                    let wants_foe = matches!(aim, crate::spell::Aim::Foe);
+                    let named = other.filter(|id| {
+                        let u = &self.units[*id as usize];
+                        !u.health.is_dead()
+                            && (u.side() != side) == wants_foe
+                            && self
+                                .board
+                                .cell_of(*id)
+                                .is_some_and(|c| c.distance(from) <= a.range)
+                    });
+                    named.or_else(|| {
+                        // Повод ни о ком — берём ближайшего, кого этот глагол
+                        // берёт. Дальше своей дальности реакция не достаёт.
+                        let want = if wants_foe { side.other() } else { side };
+                        self.board
+                            .occupied()
+                            .filter(|(cell, id)| {
+                                let u = &self.units[*id as usize];
+                                !u.health.is_dead()
+                                    && u.side() == want
+                                    && (*id != bearer || !wants_foe)
+                                    && cell.distance(from) <= a.range
+                            })
+                            .min_by_key(|(cell, _)| cell.distance(from))
+                            .map(|(_, id)| id)
+                    })
+                }
+            };
+            let spot = match target {
+                Some(id) => match self.board.cell_of(id) {
+                    Some(cell) => cell,
+                    None => continue,
+                },
+                None if matches!(aim, crate::spell::Aim::Spot { .. }) => from,
+                None => continue,
+            };
+
+            let mut swept: Vec<UnitId> = match (target, what.spreads()) {
+                (Some(id), true) => {
+                    let mut all = self.touched(crate::spell::reach_of(&a.shape, a.radius), from, spot);
+                    all.retain(|x| *x != id);
+                    let mut out = vec![id];
+                    out.append(&mut all);
+                    out
+                }
+                (Some(id), false) => vec![id],
+                (None, _) => Vec::new(),
+            };
+            swept.retain(|id| !self.units[*id as usize].health.is_dead());
+
+            let mine = swept
+                .first()
+                .map(|id| self.units[*id as usize].side() == side)
+                .unwrap_or(false);
+            let span = crate::spell::turns(a) + if mine { 1 } else { 0 };
+            if a.cooldown > 0 {
+                self.units[bearer as usize].start_ability_cd(&key, a.cooldown);
+            }
+            // Отказ реакции — не ошибка партии: призыв без места просто не
+            // случается. Человек его и не просил.
+            let _ = self.work(&body, a, what, &key, &swept, from, spot, span, side, events);
+        }
+    }
+
+    /// ЧТО делает чара, когда уже решено, кто её наводит и в кого.
+    ///
+    /// Вынесено из ветки приказа, потому что приказ у чары не единственный
+    /// повод: аура, предсмертный дар и ответ на удар делают ТО ЖЕ САМОЕ, и
+    /// второе место, где это написано, разошлось бы с первым на первой же
+    /// правке. Здесь — только действие; кто, кого и почём решено выше.
+    #[allow(clippy::too_many_arguments)]
+    fn work(
+        &mut self,
+        c: &Unit,
+        a: &CardAbilitySnap,
+        what: crate::spell::Casting,
+        key: &str,
+        swept: &[UnitId],
+        from: Cell,
+        spot: Cell,
+        span: u8,
+        side: Side,
+        events: &mut Vec<Event>,
+    ) -> Result<(), Illegal> {
+        let swept = swept.to_vec();
+        let t_id = swept.first().copied();
+        match what {
+            crate::spell::Casting::Harm => {
+                for (i, id) in swept.clone().into_iter().enumerate() {
+                    let aimed_at_him = i == 0;
+                    // Стража принимает НАЦЕЛЕННОЕ, а не всё, что сыплется
+                    // кругом: иначе один страж собирал бы на себя весь круг
+                    // и стоил бы вчетверо против написанного.
+                    let hit = if aimed_at_him { self.shielded_by_guard(id) } else { id };
+                    let victim = self.units[hit as usize].clone();
+                    let res = crate::damage::resolve(
+                        Some(&c),
+                        &victim,
+                        crate::damage::DamagePacket::new(
+                            a.amount,
+                            a.channel,
+                            // Задетые кругом чувствуют ПЛЕСК: шипы на него
+                            // не отвечают (`provokes_thorns`), и это не
+                            // мелочь — иначе круг по пятерым в шипах убивал
+                            // бы ведьму об её же чару.
+                            if aimed_at_him {
+                                crate::damage::Source::Ability
+                            } else {
+                                crate::damage::Source::Splash
+                            },
+                        ),
+                    );
+                    events.extend(apply(&mut self.units[hit as usize], &res));
+                    // Сдачи у чары нет, и это правило, а не упущение: сдача
+                    // в движке — ответный УДАР, а мечом на проклятие с
+                    // четырёх клеток не отвечают. Шипы — другое дело: это
+                    // возмездие, и оно достаёт всякого, кто тронул.
+                    if aimed_at_him {
+                        self.prick(hit, c.id, events);
+                    }
+                }
+            }
+            crate::spell::Casting::Shield => {
+                for id in &swept {
+                    events.extend(crate::spell::raise_shield(
+                        Some(c.id),
+                        &mut self.units[*id as usize],
+                        a.amount,
+                    ));
+                }
+            }
+            crate::spell::Casting::Curse | crate::spell::Casting::Bless => {
+                // Имя всадника — ключ умения: по нему одноимённый освежает
+                // срок вместо того, чтобы удвоить число.
+                if let Some(mut status) = crate::spell::rider(&a, what, &key) {
+                    status.turns = span;
+                    for id in &swept {
+                        events.extend(crate::spell::lay_rider(
+                            Some(c.id),
+                            &mut self.units[*id as usize],
+                            status.clone(),
+                            what,
+                        ));
+                    }
+                }
+            }
+            crate::spell::Casting::Cleanse | crate::spell::Casting::Dispel => {
+                // Снимает то, что чужой руке мешает, и только его: очищение
+                // — проклятия со своего, развеивание — благословения с
+                // чужого. `amount` — сколько разом, и ноль значит одно.
+                let ill = matches!(what, crate::spell::Casting::Cleanse);
+                for id in &swept {
+                    events.extend(crate::spell::lift_riders(
+                        Some(c.id),
+                        &mut self.units[*id as usize],
+                        ill,
+                        a.amount.max(1) as usize,
+                    ));
+                }
+            }
+            crate::spell::Casting::Coin => {
+                // Мана — у СТОРОНЫ, и добрать её выше собственного потолка
+                // нельзя: это возврат, а не второй источник.
+                let s = self.side_state_mut(side);
+                let before = s.mana;
+                s.mana = (s.mana + a.amount).min(s.mana_max);
+                let got = s.mana - before;
+                if got > 0 {
+                    events.push(Event::Mana { side, amount: got });
+                }
+            }
+            crate::spell::Casting::Offer => {
+                // Жертва: тело уходит с поля, сторона получает ману. Гибель
+                // настоящая — со снятием всадников и с событием, — потому
+                // что «ушло с поля» и «погибло» в этом движке одно и то же.
+                let given = t_id.unwrap();
+                self.units[given as usize].health.current = 0;
+                self.units[given as usize].statuses.clear();
+                self.units[given as usize].holds.clear();
+                if let Some(cell) = self.board.cell_of(given) {
+                    self.board.clear(cell);
+                }
+                events.push(Event::Died { target: given });
+                let s = self.side_state_mut(side);
+                let before = s.mana;
+                s.mana = (s.mana + a.amount).min(MANA_CAP);
+                let got = s.mana - before;
+                if got > 0 {
+                    events.push(Event::Mana { side, amount: got });
+                }
+            }
+            crate::spell::Casting::Shove => {
+                if let Some(id) = t_id {
+                    // Толчок от себя, притяжение к себе: направление — это
+                    // и есть разница между ними, и берётся оно из того, кто
+                    // кому свой, а не из поля на карте, которого нет.
+                    let away = self.units[id as usize].side() != side;
+                    let to = self.slide(from, spot, a.amount, away);
+                    if to != spot {
+                        self.board.clear(spot);
+                        self.board.place(to, id);
+                        events.push(Event::Moved { unit: id, from: spot, to });
+                    }
+                } else {
+                    // Свой шаг: тело прыгает на пустую клетку в пределах
+                    // чары. Не `reachable`: это чара, а не ходьба, и стоящие
+                    // на пути тела ей не помеха.
+                    self.board.clear(from);
+                    self.board.place(spot, c.id);
+                    events.push(Event::Moved { unit: c.id, from, to: spot });
+                }
+            }
+            crate::spell::Casting::Zone => {
+                // Клетка и её соседи по радиусу. Радиус — то самое поле,
+                // которое у формы уже есть, и здесь оно значит то же, что
+                // везде: сколько шагов короля вокруг.
+                let cells: Vec<Cell> = if a.radius > 0 {
+                    let mut out: Vec<Cell> = crate::board::all_cells()
+                        .filter(|cell| cell.distance(spot) <= a.radius)
+                        .collect();
+                    out.sort();
+                    out
+                } else {
+                    vec![spot]
+                };
+                let zone = Zone {
+                    name: key.to_string(),
+                    side,
+                    by: Some(c.id),
+                    cells: cells.clone(),
+                    amount: a.amount,
+                    channel: a.channel,
+                    turns: crate::spell::turns(&a) + 1,
+                };
+                // Одноимённая зона обновляет срок, а не встаёт второй:
+                // то же правило наложения, что у всадника (§5.1).
+                if let Some(old) = self.zones.iter_mut().find(|z| z.name == zone.name) {
+                    *old = zone.clone();
+                } else {
+                    self.zones.push(zone.clone());
+                }
+                events.push(Event::Zoned {
+                    by: Some(c.id),
+                    side,
+                    cells,
+                    amount: zone.amount,
+                    turns: zone.turns,
+                });
+            }
+            crate::spell::Casting::Summon => {
+                // Тело призванного заморожено вместе с умением — как всё
+                // остальное в партии. Призванное не призывает: иначе карта
+                // призывает карту, которая призывает карту.
+                let body = a.body.clone().ok_or(Illegal::NoSuchAbility)?;
+                let id = self.raise(&body, spot, side);
+                events.push(Event::Played {
+                    side,
+                    unit: id,
+                    cell: spot,
+                    cost: 0,
+                });
+            }
+            _ => {
+                // Всё остальное — удержание: порча, заживление, оцепенение,
+                // немота, разоружение, смута, покров, стража, оберег канала,
+                // шипы. Род один раз назван в грамматике, и здесь его
+                // только кладут.
+                let kind = what
+                    .hold(&a)
+                    .expect("глагол без толкования сюда не доходит");
+                for id in &swept {
+                    let hold = crate::unit::Hold::new(&key, kind, a.amount, span);
+                    events.extend(crate::spell::lay_hold(
+                        Some(c.id),
+                        &mut self.units[*id as usize],
+                        hold,
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Кого зацепит чара, наведённая ОТСЮДА в ЭТУ клетку.
+    ///
+    /// Два правила, и оба записаны здесь, потому что оба обязаны быть одни на
+    /// весь движок.
+    ///
+    /// Первое: пригоршня расширяет ЧИСЛО целей, а не круг тех, кого чара
+    /// берёт. Сглаз, брошенный в чужого, не перекидывается на своих, сколько бы
+    /// их ни стояло рядом, — иначе «круг» у проклятия и «круг» у щита были бы
+    /// двумя разными вещами, и обе пришлось бы держать в голове.
+    ///
+    /// Второе: покров здесь НЕ спрашивается. «Нельзя выбрать целью, но по
+    /// площади достаёт» (§4) — ровно это и значит, что скрытого нет в списке
+    /// законного, но в круге он есть.
+    ///
+    /// Порядок — всегда обход доски, кроме цепи, которая идёт своими прыжками:
+    /// два тела, одинаково подходящие, обязаны выбираться одинаково всегда,
+    /// иначе переигрывание партии расходится.
+    fn touched(
+        &self,
+        reach: crate::spell::Reach,
+        from: Cell,
+        at: Cell,
+    ) -> Vec<UnitId> {
+        let standing: Vec<(Cell, UnitId)> = self
+            .board
+            .occupied()
+            .filter(|(_, id)| !self.units[*id as usize].health.is_dead())
+            .collect();
+        // Кого берёт чара — говорит то тело, в которое ткнули: чара по чужому
+        // цепляет чужих, чара по своему — своих.
+        let aimed_side = self.board.at(at).map(|id| self.units[id as usize].side());
+        let same = |id: UnitId| match aimed_side {
+            Some(s) => self.units[id as usize].side() == s,
+            // Ткнули в пустую клетку: такая чара тел не собирает вовсе.
+            None => false,
+        };
+
+        match reach {
+            crate::spell::Reach::One => self.board.at(at).into_iter().collect(),
+            crate::spell::Reach::Adjacent => standing
+                .iter()
+                .filter(|(cell, id)| cell.distance(at) <= 1 && same(*id))
+                .map(|(_, id)| *id)
+                .collect(),
+            crate::spell::Reach::Radius(r) => standing
+                .iter()
+                .filter(|(cell, id)| cell.distance(at) <= r && same(*id))
+                .map(|(_, id)| *id)
+                .collect(),
+            crate::spell::Reach::Side => standing
+                .iter()
+                .filter(|(_, id)| same(*id))
+                .map(|(_, id)| *id)
+                .collect(),
+            crate::spell::Reach::Line => {
+                // Насквозь: цель и всё, что стоит ЗА ней, если смотреть от
+                // наводящего. Луч начинается у цели, а не у наводящего, и
+                // потому определён всегда — даже когда цель стоит не по прямой
+                // от него и «направление на неё» пришлось бы округлять.
+                let dx = (at.x as i16 - from.x as i16).signum();
+                let dy = (at.y as i16 - from.y as i16).signum();
+                let mut out = Vec::new();
+                let mut cell = Some(at);
+                while let Some(c) = cell {
+                    if let Some(id) = self.board.at(c)
+                        && same(id)
+                        && !self.units[id as usize].health.is_dead()
+                    {
+                        out.push(id);
+                    }
+                    let nx = c.x as i16 + dx;
+                    let ny = c.y as i16 + dy;
+                    cell = if (dx == 0 && dy == 0) || nx < 0 || ny < 0 {
+                        None
+                    } else {
+                        Cell::new(nx as u8, ny as u8)
+                    };
+                }
+                out
+            }
+            crate::spell::Reach::Chain(links) => {
+                // Цепь прыгает от цели к ближайшему ещё не задетому. Равные
+                // разрешаются обходом доски — тем же, что и всё остальное.
+                let mut out = Vec::new();
+                let Some(first) = self.board.at(at) else {
+                    return out;
+                };
+                out.push(first);
+                let mut here = at;
+                for _ in 1..links.max(1) {
+                    let next = standing
+                        .iter()
+                        .filter(|(_, id)| same(*id) && !out.contains(id))
+                        .min_by_key(|(cell, _)| cell.distance(here));
+                    let Some((cell, id)) = next else { break };
+                    out.push(*id);
+                    here = *cell;
+                }
+                out
+            }
+        }
+    }
+
+    /// Кто на самом деле примет удар, нацеленный в это тело.
+    ///
+    /// Стража принимает на себя то, что летит в СОСЕДА, пока у неё есть чем
+    /// принимать (`amount` — сколько ударов ещё). Считается здесь, а не в
+    /// конвейере урона: конвейер отвечает на «сколько», а это вопрос «кому», и
+    /// ответ на него обязан быть виден в событии — иначе число снимается у
+    /// того, в кого не целились, без всякой видимой причины.
+    fn shielded_by_guard(&mut self, aimed: UnitId) -> UnitId {
+        let Some(cell) = self.board.cell_of(aimed) else {
+            return aimed;
+        };
+        let side = self.units[aimed as usize].side();
+        let guard = self
+            .board
+            .occupied()
+            .filter(|(c, id)| *id != aimed && c.distance(cell) <= 1)
+            .map(|(_, id)| id)
+            .find(|id| {
+                let u = &self.units[*id as usize];
+                u.side() == side
+                    && !u.health.is_dead()
+                    && u.hold_amount(crate::unit::HoldKind::Guarding) > 0
+            });
+        let Some(g) = guard else { return aimed };
+        if let Some(hold) = self.units[g as usize]
+            .holds
+            .iter_mut()
+            .find(|h| h.kind.same_as(crate::unit::HoldKind::Guarding))
+        {
+            hold.amount -= 1;
+        }
+        g
+    }
+
+    /// Шипы: тому, кто тронул, прилетает.
+    ///
+    /// Отличается от сдачи двумя вещами, и обе намеренны. Число своё, с умения,
+    /// а не сила тела — поэтому в конвейер бьющим уходит `None`, иначе
+    /// благословение силы на носителе множило бы шипы. И дальности у шипов нет:
+    /// сдача — ответный удар и потому меряется досягаемостью, а возмездие
+    /// достаёт всякого, кто тронул, хоть с другого конца поля.
+    fn prick(&mut self, victim: UnitId, striker: UnitId, events: &mut Vec<Event>) {
+        let back = self.units[victim as usize].hold_amount(crate::unit::HoldKind::Thorned);
+        if back <= 0
+            || victim == striker
+            || self.units[striker as usize].health.is_dead()
+            || self.units[victim as usize].health.is_dead()
+        {
+            return;
+        }
+        let hurt = self.units[striker as usize].clone();
+        let mut res = crate::damage::resolve(
+            None,
+            &hurt,
+            crate::damage::DamagePacket::new(
+                back,
+                crate::damage::Channel::Physical,
+                crate::damage::Source::Thorns,
+            ),
+        );
+        // Число у шипов своё, а автор у них есть: без имени на доске из шести
+        // рядов это здоровье, убывшее само по себе.
+        res.by = Some(victim);
+        events.extend(apply(&mut self.units[striker as usize], &res));
+    }
+
+    /// Куда отъедет тело, которое толкнули от наводящего (или притянули к нему).
+    ///
+    /// Останавливается перед первым занятым — и перед краем поля. Толкнуть в
+    /// стену значит не сдвинуть: продавливать чужие тела было бы вторым
+    /// правилом ходьбы, а она уже написана и обходит стоящих, а не проходит
+    /// сквозь них.
+    fn slide(&self, from: Cell, spot: Cell, amount: i32, away: bool) -> Cell {
+        let sign = if away { 1 } else { -1 };
+        let dx = (spot.x as i16 - from.x as i16).signum() * sign;
+        let dy = (spot.y as i16 - from.y as i16).signum() * sign;
+        if dx == 0 && dy == 0 {
+            return spot;
+        }
+        let mut at = spot;
+        for _ in 0..amount.max(0) {
+            let nx = at.x as i16 + dx;
+            let ny = at.y as i16 + dy;
+            if nx < 0 || ny < 0 {
+                break;
+            }
+            let Some(next) = Cell::new(nx as u8, ny as u8) else {
+                break;
+            };
+            if !self.board.is_free(next) {
+                break;
+            }
+            // Притягивают ДО вплотную, а не мимо: по-королевски шагая наискось,
+            // тело обошло бы наводящего по кругу, не приближаясь, — и «притянул»
+            // значило бы «покрутил вокруг себя».
+            if !away && next.distance(from) >= at.distance(from) {
+                break;
+            }
+            at = next;
+        }
+        at
+    }
+
     /// Бьёт ли это тело дальше своей дальности.
     fn long_shot(&self, attacker: &Unit, target: &Unit) -> bool {
         if attacker.reach <= 1 || self.rules.long_shot_power == 0 {
@@ -603,26 +1398,28 @@ impl MatchState {
             && self.opening_attacks_used >= self.rules.opening_attacks
     }
 
-    /// A side is out when nothing of it stands and nothing can be put where it
-    /// stood.
+    /// A side is out when nothing of it stands. The hand is not counted.
     ///
-    /// Not "the hand is empty". A card costing more than mana will ever reach is
-    /// the same as no card at all, and asking only whether the hand held
-    /// something left the board bare for twelve rounds while both sides passed
-    /// the turn back and forth: the match was long over and only the counter
-    /// disagreed.
+    /// Held cards used to keep a bare board alive: a card that mana would one
+    /// day reach meant the match went on. It was the softer rule and it read as
+    /// a broken one — the board was empty, the match was plainly lost, and the
+    /// room said nothing while both sides passed the turn back and forth.
     ///
-    /// The ceiling is the cap and not "what is reachable before time runs out",
-    /// because mana rises by one every turn and therefore stands at the cap long
-    /// before the rounds do — the clock never gets to decide this. The assertion
-    /// below that constant keeps that true rather than hoped.
+    /// The keeper chose the hard rule: mana is a thing to PLAN, and holding a
+    /// body you cannot afford while the field is taken from you is exactly the
+    /// mistake the match is meant to punish. A challenge is not made
+    /// unwinnable by it — it is made a challenge.
+    ///
+    /// The one thing this rule cannot see is a side that never had a body at
+    /// all: it would lose on its first end of turn having never played. That is
+    /// refused where a deck is assembled (`check_deck`), not excused here — an
+    /// exception in the engine would be a rule that means one thing in round one
+    /// and another in round two.
     fn is_spent(&self, side: Side) -> bool {
-        if !self.standing(side).is_empty() {
-            return false;
-        }
-        let affordable = self.side_state(side).hand.iter().any(|c| c.cost <= MANA_CAP);
-        // Both halves of `Play`: something to lay down, and somewhere to lay it.
-        !(affordable && self.board.free_cells(side).next().is_some())
+        // По ХОЗЯИНУ. Сторона, у которой увели последнее тело, не проиграла:
+        // §4 запрещает массовое подчинение как «конец партии одной картой», и
+        // одиночное не должно кончать её тихо. Смута вернётся — поражение нет.
+        self.owned_standing(side).is_empty()
     }
 
     fn settle(&mut self, events: &mut Vec<Event>) {
@@ -704,15 +1501,21 @@ pub fn reduce(state: &MatchState, action: &Action) -> Result<(MatchState, Vec<Ev
             st.side_state_mut(side).mana -= card.cost;
             let id = st.raise(&card, *cell, side);
             events.push(Event::Played { side, unit: id, cell: *cell, cost: card.cost });
+            let since = events.len();
+            st.reacts("onPlay", id, None, &mut events);
+            st.answer(Some(id), since, &mut events);
         }
 
         Action::Move { unit, to } => {
             let u = st.unit(*unit).ok_or(Illegal::NoSuchUnit)?.clone();
-            if u.owner != side {
+            if u.side() != side {
                 return Err(Illegal::NotYourUnit);
             }
             if u.health.is_dead() {
                 return Err(Illegal::UnitIsDown);
+            }
+            if u.bound() {
+                return Err(Illegal::Bound);
             }
             if u.acted {
                 return Err(Illegal::AlreadyActed);
@@ -741,11 +1544,20 @@ pub fn reduce(state: &MatchState, action: &Action) -> Result<(MatchState, Vec<Ev
 
         Action::Mend { healer, target } => {
             let h = st.unit(*healer).ok_or(Illegal::NoSuchUnit)?.clone();
-            if h.owner != side {
+            if h.side() != side {
                 return Err(Illegal::NotYourUnit);
             }
             if h.health.is_dead() {
                 return Err(Illegal::UnitIsDown);
+            }
+            if h.bound() {
+                return Err(Illegal::Bound);
+            }
+            // Лечение даром — чара, и немота держит его вместе со всеми
+            // остальными; лечение телом (`mend` на карте) она не держит: это
+            // руки, а не слово.
+            if h.hushed() && h.ready_heal(st.side_state(side).mana).is_some() && h.mend == 0 {
+                return Err(Illegal::Hushed);
             }
             if h.acted {
                 return Err(Illegal::AlreadyActed);
@@ -780,7 +1592,7 @@ pub fn reduce(state: &MatchState, action: &Action) -> Result<(MatchState, Vec<Ev
             }
 
             let t = st.unit(*target).ok_or(Illegal::NoSuchUnit)?.clone();
-            if t.owner != side {
+            if t.side() != side {
                 return Err(Illegal::TargetIsEnemy);
             }
             if t.health.is_dead() {
@@ -813,11 +1625,17 @@ pub fn reduce(state: &MatchState, action: &Action) -> Result<(MatchState, Vec<Ev
 
         Action::Attack { attacker, target } => {
             let a = st.unit(*attacker).ok_or(Illegal::NoSuchUnit)?.clone();
-            if a.owner != side {
+            if a.side() != side {
                 return Err(Illegal::NotYourUnit);
             }
             if a.health.is_dead() {
                 return Err(Illegal::UnitIsDown);
+            }
+            if a.bound() {
+                return Err(Illegal::Bound);
+            }
+            if a.disarmed() {
+                return Err(Illegal::Disarmed);
             }
             if a.acted {
                 return Err(Illegal::AlreadyActed);
@@ -830,11 +1648,15 @@ pub fn reduce(state: &MatchState, action: &Action) -> Result<(MatchState, Vec<Ev
             }
 
             let t = st.unit(*target).ok_or(Illegal::NoSuchUnit)?.clone();
-            if t.owner == side {
+            if t.side() == side {
                 return Err(Illegal::TargetIsAlly);
             }
             if t.health.is_dead() {
                 return Err(Illegal::TargetIsDown);
+            }
+            // Покров: целью не выбирают.
+            if t.veiled() {
+                return Err(Illegal::Veiled);
             }
 
             let from = st.board.cell_of(a.id).ok_or(Illegal::UnitIsDown)?;
@@ -843,19 +1665,35 @@ pub fn reduce(state: &MatchState, action: &Action) -> Result<(MatchState, Vec<Ev
                 return Err(Illegal::OutOfReach);
             }
 
-            let res = st.blow(&a, &t);
+            // Стража принимает на себя то, что летит в соседа. Счёт удара при
+            // этом считается ПО НЕЙ: броня у неё своя, и «сколько» зависит от
+            // того, кто принял, а не от того, в кого целились.
+            let hit = st.shielded_by_guard(t.id);
+            let victim = st.units[hit as usize].clone();
+            let res = st.blow(&a, &victim);
             st.units[a.id as usize].acted = true;
             if st.round == 1 && side == Side::Player {
                 st.opening_attacks_used = st.opening_attacks_used.saturating_add(1);
             }
-            events.extend(apply(&mut st.units[t.id as usize], &res));
+            let since = events.len();
+            events.extend(apply(&mut st.units[hit as usize], &res));
+            // Шипы отвечают раньше сдачи: сдача — это удар, и мёртвый его не
+            // наносит, а возмездие срабатывает от самого прикосновения.
+            st.prick(hit, a.id, &mut events);
+            st.answer(Some(a.id), since, &mut events);
+            let t = st.units[hit as usize].clone();
+            let to = st.board.cell_of(hit).unwrap_or(to);
 
             // Сдача. Только если ударенный жив, достаёт до обидчика и ещё не
             // отвечал в этот ход. Отвечает `Recoil`, поэтому ответ на ответ
             // невозможен по построению — не по договорённости.
             if st.rules.retaliation
+                && !st.units[a.id as usize].health.is_dead()
                 && !st.units[t.id as usize].health.is_dead()
                 && !st.units[t.id as usize].retaliated
+                && !st.units[t.id as usize].disarmed()
+                && !st.units[t.id as usize].bound()
+                && st.units[t.id as usize].strikes
                 && to.distance(from) <= st.units[t.id as usize].reach
             {
                 let defender = st.units[t.id as usize].clone();
@@ -869,17 +1707,174 @@ pub fn reduce(state: &MatchState, action: &Action) -> Result<(MatchState, Vec<Ev
                     ),
                 );
                 st.units[t.id as usize].retaliated = true;
+                let since = events.len();
                 events.extend(apply(&mut st.units[a.id as usize], &back));
-                if st.units[a.id as usize].health.is_dead() {
-                    st.board.clear(from);
+                st.answer(Some(t.id), since, &mut events);
+            }
+        }
+
+        Action::Cast {
+            caster,
+            ability,
+            target,
+        } => {
+            // Проверки те же и в том же порядке, что у удара и у лечения.
+            // Выписаны подряд, а не вызовом общей: порядок отказов — это то, что
+            // человек ЧИТАЕТ, и спрятанный в помощник он перестаёт быть виден.
+            let c = st.unit(*caster).ok_or(Illegal::NoSuchUnit)?.clone();
+            if c.side() != side {
+                return Err(Illegal::NotYourUnit);
+            }
+            if c.health.is_dead() {
+                return Err(Illegal::UnitIsDown);
+            }
+            if c.bound() {
+                return Err(Illegal::Bound);
+            }
+            if c.hushed() {
+                return Err(Illegal::Hushed);
+            }
+            if c.acted {
+                return Err(Illegal::AlreadyActed);
+            }
+
+            let a = c.ability_by_key(ability).ok_or(Illegal::NoSuchAbility)?;
+            let what = a.casting().ok_or(Illegal::NoSuchAbility)?;
+            if c.ability_cd(ability) > 0 {
+                return Err(Illegal::AbilityAsleep);
+            }
+            let mana = st.side_state(side).mana;
+            if a.mana_cost > mana {
+                return Err(Illegal::NotEnoughMana);
+            }
+            if what.wounds() && st.holds_at_the_opening() {
+                return Err(Illegal::HeldAtTheOpening);
+            }
+
+            let from = st.board.cell_of(c.id).ok_or(Illegal::UnitIsDown)?;
+            let aim = what.aim(&a.shape);
+
+            // Куда наведено — и достаёт ли туда чара. Клетка и тело
+            // проверяются здесь ОДИНАКОВО, потому что дальность у них одна.
+            let spot = match target {
+                Mark::Unit(id) => st.board.cell_of(*id),
+                Mark::Spot(cell) => Some(*cell),
+            }
+            .ok_or(Illegal::UnitIsDown)?;
+            if from.distance(spot) > a.range {
+                return Err(Illegal::OutOfReach);
+            }
+
+            // Кого взяли. У клеточных чар тела нет вовсе, и это не «цель не
+            // найдена», а другой род цели.
+            let mut aimed: Option<Unit> = None;
+            match aim {
+                crate::spell::Aim::Spot { free } => {
+                    if target.spot().is_none() {
+                        return Err(Illegal::NotThatAim);
+                    }
+                    if free && !st.board.is_free(spot) {
+                        return Err(Illegal::NoRoom);
+                    }
+                }
+                _ => {
+                    let id = target.unit().ok_or(Illegal::NotThatAim)?;
+                    let t = st.unit(id).ok_or(Illegal::NoSuchUnit)?.clone();
+                    if t.health.is_dead() {
+                        return Err(Illegal::TargetIsDown);
+                    }
+                    match aim {
+                        crate::spell::Aim::Bearer if id != *caster => {
+                            return Err(Illegal::NotThatAim);
+                        }
+                        crate::spell::Aim::Ally if id == *caster => {
+                            return Err(Illegal::NotThatAim);
+                        }
+                        crate::spell::Aim::Ally | crate::spell::Aim::Bearer
+                            if t.side() != side =>
+                        {
+                            return Err(Illegal::TargetIsEnemy);
+                        }
+                        crate::spell::Aim::Foe if t.side() == side => {
+                            return Err(Illegal::TargetIsAlly);
+                        }
+                        crate::spell::Aim::Any if id == *caster => {
+                            // Толкнуть себя некуда: у толчка направление берётся
+                            // от наводящего, и от себя до себя его нет.
+                            return Err(Illegal::NotThatAim);
+                        }
+                        _ => {}
+                    }
+                    // Покров: целью не выбирают. По площади — достаётся, и
+                    // потому проверка стоит здесь, а не в конвейере урона.
+                    if t.side() != side && t.veiled() {
+                        return Err(Illegal::Veiled);
+                    }
+                    // Отдых после оцепенения и смуты (§5.3).
+                    if what.is_control() && t.held(crate::unit::HoldKind::Rested) {
+                        return Err(Illegal::Rested);
+                    }
+                    aimed = Some(t);
                 }
             }
 
-            if st.units[t.id as usize].health.is_dead() {
-                // The body leaves the field; its identity stays in the list, so
-                // the journal can still name it a year from now.
-                st.board.clear(to);
+            // Плата одна на все двадцать глаголов, и берётся она ДО того, как
+            // хоть что-то случилось: чара, которая иногда не тратит ход, — это
+            // двадцать развилок вместо одной строки.
+            st.units[c.id as usize].acted = true;
+            if a.mana_cost > 0 {
+                st.side_state_mut(side).mana -= a.mana_cost;
             }
+            // «Однажды» — это откат навсегда: тот же вопрос «вернулось ли»
+            // и тот же ответ, только окончательный.
+            st.units[c.id as usize].start_ability_cd(
+                ability,
+                if a.spent_forever() { crate::unit::Unit::FOREVER } else { a.cooldown },
+            );
+            if what.wounds() && st.round == 1 && side == Side::Player {
+                st.opening_attacks_used = st.opening_attacks_used.saturating_add(1);
+            }
+
+            let key = ability.clone();
+            let t_id = aimed.as_ref().map(|t| t.id);
+            // Кого зацепило. У чары, которая пригоршни не берёт, это ровно то
+            // тело, в которое ткнули; у остальных — то, что насчитала §4.
+            // Первое в списке всегда ОНО ЖЕ: на него приходится и стража, и
+            // шипы, и `Source::Ability`, а на остальных — `Splash`.
+            let mut swept: Vec<UnitId> = match (t_id, what.spreads()) {
+                (Some(id), true) => {
+                    let mut all =
+                        st.touched(crate::spell::reach_of(&a.shape, a.radius), from, spot);
+                    all.retain(|x| *x != id);
+                    let mut out = vec![id];
+                    out.append(&mut all);
+                    out
+                }
+                (Some(id), false) => vec![id],
+                (None, _) => Vec::new(),
+            };
+            swept.retain(|id| !st.units[*id as usize].health.is_dead());
+            // Срок наложенного на СВОЮ сторону берёт лишний ход, и это не
+            // подгонка числа, а §5.4: «2 хода» значит два собственных хода
+            // цели ВСЕГДА. Ход, в котором чара легла, у своего тела уже идёт и
+            // кончится раньше, чем оно успеет им воспользоваться, — на чужом
+            // теле такого хода нет, и прибавки нет тоже.
+            let mine = t_id
+                .map(|id| {
+                    if matches!(what, crate::spell::Casting::Sway) {
+                        // Смута переводит тело на сторону наводящего — то есть
+                        // на ту, что сейчас ходит.
+                        true
+                    } else {
+                        st.units[id as usize].side() == side
+                    }
+                })
+                .unwrap_or(false);
+            let span = crate::spell::turns(&a) + if mine { 1 } else { 0 };
+
+            let since = events.len();
+            st.work(&c, &a, what, &key, &swept, from, spot, span, side, &mut events)?;
+            st.answer(Some(c.id), since, &mut events);
         }
 
         Action::EndTurn => {
@@ -910,6 +1905,83 @@ pub fn reduce(state: &MatchState, action: &Action) -> Result<(MatchState, Vec<Ev
                     }
                 }
             }
+            // ── Всё, что считается ходами, считается ЗДЕСЬ ────────────────
+            //
+            // Один конец хода — один порядок, и порядок этот выбран, а не
+            // сложился: сперва горит поле, потом тлеют раны, потом заживает,
+            // и только после этого сроки становятся короче. Иначе порча на один
+            // ход, наложенная в этот же ход, сходила бы, ни разу не тронув, — то
+            // самое, из-за чего срок и тикает в конце хода НОСИТЕЛЯ, а не в
+            // начале: «2 хода» обязано значить два собственных хода цели (§5.4).
+
+            // Опасные клетки жгут того, кто на них стоял свой ход. Своих тоже:
+            // котёл не разбирает, кто над ним наклонился.
+            let mut burning: Vec<(UnitId, i32, crate::damage::Channel, Option<UnitId>)> =
+                Vec::new();
+            for z in &st.zones {
+                for cell in &z.cells {
+                    let Some(id) = st.board.at(*cell) else { continue };
+                    if st.units[id as usize].side() != side {
+                        continue;
+                    }
+                    burning.push((id, z.amount, z.channel, z.by));
+                }
+            }
+            for (id, amount, channel, by) in burning {
+                let body = st.units[id as usize].clone();
+                let mut res = crate::damage::resolve(
+                    None,
+                    &body,
+                    crate::damage::DamagePacket::new(amount, channel, crate::damage::Source::Zone),
+                );
+                // Автор у клетки есть, а числа его нет: жжёт она сама, и сила
+                // ведьмы на это не влияет — потому конвейеру бьющий не назван.
+                res.by = by;
+                events.extend(apply(&mut st.units[id as usize], &res));
+            }
+
+            // Порча и заживление: то, что тлеет на самом теле.
+            for id in st.standing(side) {
+                let fester = st.units[id as usize]
+                    .hold_amount(crate::unit::HoldKind::Festering);
+                if fester > 0 {
+                    let body = st.units[id as usize].clone();
+                    let res = crate::damage::resolve(
+                        None,
+                        &body,
+                        crate::damage::DamagePacket::new(
+                            fester,
+                            crate::damage::Channel::Pure,
+                            crate::damage::Source::Dot,
+                        ),
+                    );
+                    events.extend(apply(&mut st.units[id as usize], &res));
+                }
+                let knit = st.units[id as usize].hold_amount(crate::unit::HoldKind::Knitting);
+                if knit > 0 && !st.units[id as usize].health.is_dead() {
+                    let mending = crate::heal::resolve_mend(&st.units[id as usize], knit);
+                    events.extend(crate::heal::apply_mend(
+                        None,
+                        &mut st.units[id as usize],
+                        &mending,
+                    ));
+                }
+            }
+
+            // И только теперь сроки. Стоящие берутся заново: кто-то из них
+            // только что пал, и укорачивать сроки павшему нечего.
+            for id in st.standing(side) {
+                st.units[id as usize].tick_statuses();
+                st.units[id as usize].tick_holds();
+            }
+            // Зона тикает ходами того, кто её поставил, — ровно как всадник
+            // тикает ходами носителя.
+            for z in st.zones.iter_mut() {
+                if z.side == side {
+                    z.turns = z.turns.saturating_sub(1);
+                }
+            }
+            st.zones.retain(|z| z.turns > 0);
             events.push(Event::TurnEnded { side, round: st.round });
             st.active = side.other();
             if st.active == Side::Player {
@@ -920,9 +1992,22 @@ pub fn reduce(state: &MatchState, action: &Action) -> Result<(MatchState, Vec<Ev
                 return Ok((st, events));
             }
             st.open_turn();
+            // Начало своего хода — повод. Стоящие берутся после того, как ход
+            // уже перешёл: «свой ход» у тела то, в котором оно ходит.
+            for id in st.standing(st.active) {
+                let since = events.len();
+                st.reacts("turnStart", id, None, &mut events);
+                st.answer(Some(id), since, &mut events);
+            }
         }
     }
 
+    // Три вещи в конце ВСЯКОГО действия, и все три — в одном месте, потому что
+    // забыть их в одной ветке из шести ничего не стоит: убрать павших, дать
+    // полю вздохнуть заново (аура держится тем, кто стоит, а стоят уже другие)
+    // и посмотреть, не кончилась ли партия.
+    st.bury_the_fallen();
+    st.breathe();
     st.settle(&mut events);
     Ok((st, events))
 }
@@ -953,7 +2038,7 @@ pub fn legal_actions(state: &MatchState) -> Vec<Action> {
 
     for unit in state.standing(side) {
         let u = &state.units[unit as usize];
-        if u.acted || u.step == 0 || (!state.rules.walk_spends_turn && u.moved) {
+        if u.acted || u.bound() || u.step == 0 || (!state.rules.walk_spends_turn && u.moved) {
             continue;
         }
         let Some(from) = state.board.cell_of(unit) else { continue };
@@ -964,10 +2049,14 @@ pub fn legal_actions(state: &MatchState) -> Vec<Action> {
 
     for healer in state.standing(side) {
         let h = &state.units[healer as usize];
-        if h.acted {
+        if h.acted || h.bound() {
             continue;
         }
         let mana = state.side_state(side).mana;
+        // Немота держит лечение даром и не держит лечение руками.
+        if h.hushed() && h.ready_heal(mana).is_some() && h.mend == 0 {
+            continue;
+        }
         let ability = h.ready_heal(mana);
         let (amount, reach, allow_self) = if let Some(ref a) = ability {
             (a.amount, a.range, a.shape == "self")
@@ -1005,14 +2094,116 @@ pub fn legal_actions(state: &MatchState) -> Vec<Action> {
     for attacker in state.standing(side) {
         let a = &state.units[attacker as usize];
         // Offered and refused would break the one contract the client relies on.
-        if a.acted || !a.strikes || state.holds_at_the_opening() {
+        if a.acted || !a.strikes || a.bound() || a.disarmed() || state.holds_at_the_opening() {
             continue;
         }
         let Some(from) = state.board.cell_of(attacker) else { continue };
         for target in state.standing(side.other()) {
+            // Покров: целью не выбирают. По площади достаётся — и достанется,
+            // когда площадь появится; ткнуть в него нельзя уже сейчас.
+            if state.units[target as usize].veiled() {
+                continue;
+            }
             let Some(to) = state.board.cell_of(target) else { continue };
             if state.can_reach(a, from, to) {
                 out.push(Action::Attack { attacker, target });
+            }
+        }
+    }
+
+    // Чары ПОСЛЕ ударов, и это не вкус: равные ветки перебора разрешаются
+    // порядком обхода, и список, в который новое вписано посередине, переиграл
+    // бы все прежние замеры молча.
+    for caster in state.standing(side) {
+        let c = &state.units[caster as usize];
+        if c.acted || c.bound() || c.hushed() {
+            continue;
+        }
+        let Some(from) = state.board.cell_of(caster) else { continue };
+        let mana = state.side_state(side).mana;
+        for (key, a, what) in c.casts_ready(mana) {
+            // Чара, наносящая урон, — удар в смысле запрета первого круга.
+            // Иначе в правиле дыра ровно размером с дальнобойную чару: сторона,
+            // которой не дали ударить, «наводит» то же число с того же места.
+            if what.wounds() && state.holds_at_the_opening() {
+                continue;
+            }
+            let mut offer = |target: Mark| {
+                out.push(Action::Cast {
+                    caster,
+                    ability: key.clone(),
+                    target,
+                });
+            };
+            let reaches = |cell: Cell| from.distance(cell) <= a.range;
+            let body_at = |target: UnitId| -> Option<Cell> { state.board.cell_of(target) };
+
+            match what.aim(&a.shape) {
+                crate::spell::Aim::Bearer => offer(Mark::Unit(caster)),
+                crate::spell::Aim::Ally => {
+                    for target in state.standing(side) {
+                        if target == caster {
+                            continue;
+                        }
+                        if body_at(target).is_some_and(&reaches) {
+                            offer(Mark::Unit(target));
+                        }
+                    }
+                }
+                crate::spell::Aim::Foe => {
+                    for target in state.standing(side.other()) {
+                        // Покров: целью не выбирают. Тело при этом на доске
+                        // стоит и по площади достаётся — просто ткнуть в него
+                        // нельзя.
+                        if state.units[target as usize].veiled() {
+                            continue;
+                        }
+                        // Отдых: под оцепенение и смуту снова нельзя (§5.3).
+                        if what.is_control()
+                            && state.units[target as usize].held(crate::unit::HoldKind::Rested)
+                        {
+                            continue;
+                        }
+                        if body_at(target).is_some_and(&reaches) {
+                            offer(Mark::Unit(target));
+                        }
+                    }
+                }
+                crate::spell::Aim::Any => {
+                    // Толчок и притяжение: всякое стоящее тело, кроме себя.
+                    for target in state
+                        .standing(side)
+                        .into_iter()
+                        .chain(state.standing(side.other()))
+                    {
+                        if target == caster {
+                            continue;
+                        }
+                        if state.units[target as usize].side() != side
+                            && state.units[target as usize].veiled()
+                        {
+                            continue;
+                        }
+                        if body_at(target).is_some_and(&reaches) {
+                            offer(Mark::Unit(target));
+                        }
+                    }
+                }
+                crate::spell::Aim::Spot { free } => {
+                    for cell in crate::board::all_cells() {
+                        if !reaches(cell) {
+                            continue;
+                        }
+                        if free && !state.board.is_free(cell) {
+                            continue;
+                        }
+                        // Своим шагом на своё же место не ходят.
+                        if free && cell == from {
+                            continue;
+                        }
+                        offer(Mark::Spot(cell));
+                    }
+                }
             }
         }
     }

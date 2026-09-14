@@ -14,7 +14,7 @@
   import { fade } from 'svelte/transition';
   import { t, lang, brandName } from '$lib/i18n';
   import { api } from '$lib/api';
-  import { HOUSE_RULES, rulesApart } from '$lib/battles';
+  import { HOUSE_RULES, deckFaultLine, rulesApart } from '$lib/battles';
   import { authStore } from '$lib/stores/auth.svelte';
   import BattleScene from '$lib/components/BattleScene.svelte';
   import BattleDoor from '$lib/components/BattleDoor.svelte';
@@ -39,6 +39,8 @@
   let match = $state<BattleMatch | null>(null);
   let busy = $state(false);
   let complaint = $state<string | null>(null);
+  /** Виноват ли стол, а не ход: только тогда у жалобы есть дверь, куда идти. */
+  let deckAtFault = $state(false);
   /** Какой этюд играется — чтобы «начать этот заново» знал, какой «этот». */
   let taken = $state<BattleChallenge | null>(null);
   /**
@@ -273,6 +275,18 @@
     return $t('battleStudyPlay');
   }
 
+  /** Почему партия не началась. Отказ стола (`deck:notYours`) приходит сюда
+   *  тем же четырёхсотым, что и при сохранении колоды: колода, собранная из
+   *  карт, которых у гостя больше нет, начать партию не может, и сказать об
+   *  этом надо теми же словами, а не общим «ход потерян» — по нему не понять
+   *  ни что сломалось, ни куда идти чинить. */
+  function takeUpComplaint(e: unknown): string {
+    deckAtFault = String(e).includes('deck:');
+    if (String(e).includes('nothingToBring')) return $t('battleNothingToBring');
+    if (deckAtFault) return deckFaultLine(e, $t, 'battleActionLost');
+    return $t('battleActionLost');
+  }
+
   async function takeUp(challenge: BattleChallenge) {
     const token = authStore.token;
     if (!token) return;
@@ -282,13 +296,12 @@
     }
     busy = true;
     complaint = null;
+    deckAtFault = false;
     taken = challenge;
     try {
       match = await api.beginBattleMatch(token, challenge.id);
     } catch (e) {
-      complaint = String(e).includes('nothingToBring')
-        ? $t('battleNothingToBring')
-        : $t('battleActionLost');
+      complaint = takeUpComplaint(e);
     } finally {
       busy = false;
     }
@@ -300,14 +313,13 @@
     if (!token || !taken) return;
     busy = true;
     complaint = null;
+    deckAtFault = false;
     leaving = false;
     try {
       match = await api.restartBattleMatch(token, taken.id);
       challenges = await api.getBattleChallenges(token);
     } catch (e) {
-      complaint = String(e).includes('nothingToBring')
-        ? $t('battleNothingToBring')
-        : $t('battleActionLost');
+      complaint = takeUpComplaint(e);
     } finally {
       busy = false;
     }
@@ -384,6 +396,7 @@
     if (!token) return;
     busy = true;
     complaint = null;
+    deckAtFault = false;
     const sent = match.seq;
     try {
       // `seq` — то, что делает двойной щелчок безвредным: сервер отвечает на
@@ -442,6 +455,7 @@
     busy = true;
     leaving = false;
     complaint = null;
+    deckAtFault = false;
     try {
       match = await api.yieldBattleMatch(token, match.id);
       challenges = await api.getBattleChallenges(token);
@@ -456,6 +470,7 @@
     match = null;
     taken = null;
     complaint = null;
+    deckAtFault = false;
     leaving = false;
   }
 
@@ -488,7 +503,14 @@
     {/if}
 
     {#if complaint}
-      <p class="fault" transition:fade={{ duration: 150 }}>{complaint}</p>
+      <p class="fault" transition:fade={{ duration: 150 }}>
+        {complaint}
+        <!-- Жалоба на стол без двери к столу — это тупик: гость узнаёт, что
+             колода не годится, ровно там, где её нельзя поправить. -->
+        {#if deckAtFault}
+          <a class="fault-door" href="/battles/table">{$t('battlesTableTitle')}</a>
+        {/if}
+      </p>
     {/if}
 
     {#if match}
@@ -729,6 +751,18 @@
     margin: 0 0 1.25rem;
     font-size: 0.9rem;
     color: #8f2f22;
+  }
+
+  .fault-door {
+    margin-left: 0.6rem;
+    color: #6f3b24;
+    text-decoration: none;
+    border-bottom: 1px solid rgba(111, 59, 36, 0.45);
+  }
+
+  .fault-door:hover {
+    color: #c65f3c;
+    border-bottom-color: #c65f3c;
   }
 
   .sign,

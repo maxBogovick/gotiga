@@ -18,6 +18,7 @@
   import BattleScene from "$lib/components/BattleScene.svelte";
   import FrameDesk from "$lib/components/studio/FrameDesk.svelte";
   import {
+    CARD_WIDTHS,
     DEFAULT_FRAMES,
     FRAME_MODES,
     LAYOUTS,
@@ -1110,17 +1111,18 @@
   /**
    * Стенд «Лица карты»: одна и та же карта в трёх величинах разом.
    *
-   * Ширины не круглые для красоты — это те самые числа, по которым карта
-   * делит себя сама (281 и 160), взятые по обе стороны от порогов, чтобы
-   * каждый стенд стоял ЗАВЕДОМО в своей полосе, а не на её краю. Первая —
+   * Ширины берутся из `CARD_WIDTHS` — одного списка на весь дом, — а не
+   * выписываются здесь заново: стол резчика ставит карту на те же три, и два
+   * списка разошлись бы на первом же подправленном числе. Первая величина
    * рабочая: за неё тянут строки, остальные две стоят свидетелями, и без них
    * ступень «только крупно» на столе не видна вообще.
    */
-  const FACE_SIZES: { px: number; label: TranslationKey }[] = [
-    { px: 400, label: "adminBattlesFitSheet" },
-    { px: 261, label: "adminBattlesFitShelf" },
-    { px: 140, label: "adminBattlesFitCell" },
-  ];
+  const FACE_LABEL: Record<number, TranslationKey> = {
+    400: "adminBattlesFitSheet",
+    261: "adminBattlesFitShelf",
+    140: "adminBattlesFitCell",
+  };
+  const FACE_SIZES = CARD_WIDTHS.map((px) => ({ px, label: FACE_LABEL[px] }));
 
   /**
    * Ширины, на которых меряют. Клетки боя здесь нет нарочно: уже́ 160 px полоса
@@ -1887,6 +1889,8 @@
     noTitle: "fault-title",
     noEffect: "fault-effect",
     traitsWithoutAbilities: "fault-abilities",
+    forbiddenShape: "fault-abilities",
+    auraNeedsRider: "fault-abilities",
     noHealth: "fault-health",
     costBeyondMana: "fault-cost",
     overTierBudget: "fault-body",
@@ -5509,6 +5513,7 @@
                   bind:abilities={draft.abilities}
                   pointsOf={abilityPoints}
                   editLang={editLang}
+                  shelf={cards}
                 />
               </SheetPanel>
 

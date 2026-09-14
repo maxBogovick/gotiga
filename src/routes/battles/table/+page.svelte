@@ -13,12 +13,11 @@
   // чем дом закрывает пустое — решает сервер; страница показывает присланное и
   // отправляет обратно то, что выбрал человек. Вторая реализация одного правила
   // разошлась бы с той, по которой играют.
-  import { onMount } from 'svelte';
   import { fade } from 'svelte/transition';
   import { t, lang, brandName } from '$lib/i18n';
   import { api } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
-  import { cardCopy } from '$lib/battles';
+  import { cardCopy, deckFaultLine } from '$lib/battles';
   import BattleCard from '$lib/components/BattleCard.svelte';
   import BattleDoor from '$lib/components/BattleDoor.svelte';
   import BattleHotMarks from '$lib/components/BattleHotMarks.svelte';
@@ -118,17 +117,31 @@
   /** Разложить присланный сервером стол в то, что редактируется. Заём при этом
    *  отбрасывается: редактируется только своё. */
   function lay(table: BattleDeck) {
+    // gone исключена намеренно: сервер уже сказал, что это не ваша карта
+    // (снята с публикации либо владение ушло) — держать её в редактируемом
+    // столе значило бы гарантированно провалить следующее же сохранение,
+    // молча повторяя то же самое, что уже один раз отклонили.
     placed = table.board
-      .filter((s) => s.cardId && s.x !== undefined && s.y !== undefined)
+      .filter((s) => s.cardId && !s.gone && s.x !== undefined && s.y !== undefined)
       .map((s) => ({ card: s.cardId as string, x: s.x as number, y: s.y as number }));
-    held = table.hand.map((s) => s.cardId).filter((id): id is string => !!id);
+    held = table.hand
+      .filter((s) => !s.gone)
+      .map((s) => s.cardId)
+      .filter((id): id is string => !!id);
     dirty = false;
     picked = null;
     marks = null;
     aiming = null;
   }
 
-  onMount(readAll);
+  // Эффект, а не onMount: authStore.token читается внутри readAll до первого
+  // await, поэтому смена аккаунта (не только вход с нуля) сама перезапускает
+  // чтение. Без этого стол и «свои карты» молча оставались от предыдущего
+  // пользователя — а сохранение отправляло чужие id карт, и сервер честно
+  // отвечал notYours.
+  $effect(() => {
+    readAll();
+  });
 
   // ── Что на каком месте ───────────────────────────────────────────────────
 
@@ -367,15 +380,7 @@
     said = null;
   }
 
-  /** Отказ приходит словом (`deck:tooManyOnBoard`), а не текстом: текст живёт
-   *  здесь, на двух языках, а сервер, который его сочиняет, сочиняет его на
-   *  одном. Незнакомое слово не молчит — комната говорит общее. */
-  function faultLine(e: unknown): string {
-    const word = String(e).match(/deck:(\w+)/)?.[1];
-    const key = word ? `battlesDeckFault${word[0].toUpperCase()}${word.slice(1)}` : '';
-    const said = key ? $t(key as Parameters<typeof $t>[0]) : '';
-    return said && said !== key ? said : $t('battlesTableSaveFailed');
-  }
+  const faultLine = (e: unknown) => deckFaultLine(e, $t, 'battlesTableSaveFailed');
 
   async function keep() {
     const token = authStore.token;

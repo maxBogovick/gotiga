@@ -18,6 +18,13 @@
   import WaxSeal from '$lib/components/WaxSeal.svelte';
   import {
     DEFAULT_ASPECT,
+    firstToHand,
+    HOLD_WORDS,
+    holdKind,
+    intentLive,
+    intentsOf,
+    riderWord,
+    RIDER_STATS,
     statMark,
     statLabel,
     type MarkedStat,
@@ -32,10 +39,12 @@
     motionSpan,
     motionWound,
     occasionOf,
+    rulesInForce,
     stage,
     struckOf,
     WARD_MOTION,
     type HitWear,
+    type Intent,
     type ScrapFly,
     type Staged,
     type StruckKind,
@@ -192,6 +201,18 @@
     const spot = position.board.find((s) => s.unit === unit);
     return spot ? spot.cell : null;
   };
+  /**
+   * Опасна ли эта клетка — и чья она.
+   *
+   * Читается из партии, а не вычисляется: зона живёт в состоянии, потому что
+   * котёл остаётся стоять и когда ведьмы не стало.
+   */
+  const zoneAt = (x: number, y: number) =>
+    (position.zones ?? []).find((z) => z.cells.some((c) => c.x === x && c.y === y)) ?? null;
+
+  /** Королевский шаг — та же мерка, какой меряет движок (`Cell::distance`). */
+  const stride = (a: BattleCell, b: BattleCell) =>
+    Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
 
   // ── Выбор ─────────────────────────────────────────────────────────────────
   type Picked = { kind: 'unit'; id: number } | { kind: 'hand'; index: number } | null;
@@ -215,14 +236,144 @@
     return out;
   });
 
-  /** Тела, по которым выбранное может ударить или которые может залечить. */
-  let openUnits = $derived.by(() => {
-    const out = new Map<number, 'attack' | 'mend'>();
+  // ── Чем заняться ──────────────────────────────────────────────────────────
+  //
+  // Пока тело умело одно, выбора не было: подсветилось — ткнули. У карты,
+  // которая бьёт, лечит и проклинает, в одну и ту же чужую клетку ведут ТРИ
+  // разных дела, и подсветка перестала отвечать на вопрос «что случится».
+  // Поэтому сперва выбирается СПОСОБ, а доска показывает цели только его.
+  //
+  // Правил здесь по-прежнему нет: способы собраны из `legalActions`, и цель
+  // несёт готовое действие из того же списка, которое уходит назад неизменным.
+
+  /** Способы, которыми выбранное тело может заняться делом. */
+  let intents = $derived.by((): Intent[] => {
+    if (picked?.kind !== 'unit') return [];
+    const u = position.units[picked.id];
+    if (!u || u.owner !== me) return [];
+    return intentsOf(u, dtoOf(u.card.name), legal, position[me].mana, $lang);
+  });
+
+  /**
+   * Что в руке. Ключ намерения, а не оно само: список пересобирается на каждую
+   * посылку, и рука, державшая объект, держала бы вчерашний.
+   */
+  let toolHeld = $state<string | null>(null);
+  /**
+   * Чего коснулись, не взяв. Наведение на печать ПОКАЗЫВАЕТ её цели, не
+   * выбирая: иначе узнать, кого достаёт проклятие, можно только сделав выбор,
+   * а выбор тут тратит ход. Тот же приём, что у колодца движений (`tasting`).
+   */
+  let toolTasted = $state<string | null>(null);
+
+  /** Рука сама берёт то, чем есть что сделать; выбор человека её перебивает. */
+  let toolInHand = $derived.by((): Intent | null => {
+    const byKey = toolHeld ? intents.find((i) => i.key === toolHeld) : null;
+    return byKey ?? firstToHand(intents);
+  });
+  /** Чем доска светится прямо сейчас: тронутое пересиливает взятое. */
+  let toolShown = $derived.by((): Intent | null => {
+    const tasted = toolTasted ? intents.find((i) => i.key === toolTasted) : null;
+    return tasted ?? toolInHand;
+  });
+
+  /**
+   * Поднос выходит тогда, когда тело знает БОЛЬШЕ ОДНОГО способа, — и знает,
+   * а не может: спящая чара, которой не показали, отличается от несуществующей
+   * только памятью хранителя. Одним способом поднос не выходит вовсе: прежний
+   * жест остаётся прежним у всех, кто умеет одно.
+   */
+  let trayShown = $derived(
+    mine && !playing && picked?.kind === 'unit' && intents.length > 1,
+  );
+
+  /**
+   * Где лежит поднос: колонка и ряд СЕТКИ, а не пиксели.
+   *
+   * Местом в сетке, потому что геометрия доски уже посчитана ею самой, а
+   * второй расчёт — в долях или в пикселях — разошёлся бы с ней на первом же
+   * повороте стола вдоль комнаты.
+   *
+   * Лежит он НА теле, чуть ниже середины карты: рука тянется к тому, что
+   * лежит на фигуре, и глазу не надо уходить с неё, чтобы выбрать. Под картой
+   * поднос стоял раньше и был честнее к рисунку — но выбор оказывался в другом
+   * месте, чем то, о чём он.
+   *
+   * Две оговорки о краях, и обе читаются с номера клетки, а не с линейки:
+   * у последнего ряда подпись уходит НАД печатями (под ними ей уже нет места);
+   * крайней колонке некуда расширяться — поднос прижимается к её кромке вместо
+   * того, чтобы встать посередине и уехать за сукно.
+   */
+  let trayAt = $derived.by(() => {
+    if (!trayShown || picked?.kind !== 'unit') return null;
+    const at = cellOf(picked.id);
+    if (!at) return null;
+    const col = along ? at.y + 1 : at.x + 1;
+    const row = along ? at.x + 1 : at.y + 1;
+    const cols = along ? DEPTH : WIDTH;
+    const rows = along ? WIDTH : DEPTH;
+    return {
+      col,
+      row,
+      over: row === rows,
+      edge: col === 1 ? 'start' : col === cols ? 'end' : 'mid',
+    };
+  });
+
+  /** Почему этой печатью сейчас нельзя. Откат, мана, некого — в этом порядке:
+   *  откат единственный из трёх не виден на доске ничем. */
+  function toolWhy(i: Intent): string {
+    if (i.spent) return $t('battleIntentSpent');
+    if (i.asleep !== null) return $t('battleIntentAsleep').replace('{n}', String(i.asleep));
+    if (i.dear) return $t('battleIntentMana');
+    // У клеточной чары «некого» — это «некуда», и слово должно быть своё:
+    // человек ищет глазами тело, а ткнуть надо в пустое место. Спрашивается
+    // это у САМОЙ чары, а не у того, есть ли у неё сейчас клетки: пустой ящик
+    // не говорит, какого рода цель он не нашёл.
+    return $t(i.atSpot ? 'battleIntentNoRoom' : 'battleIntentNoAim');
+  }
+
+  /** Та же подпись словами — для чтения вслух и для наведения мышью. Одна
+   *  строка на оба, иначе читающему с голоса однажды скажут не то, что нарисовано. */
+  function toolSay(i: Intent): string {
+    const out = [i.name || $t(i.word)];
+    if (i.amount !== null) out.push(String(i.amount));
+    if (i.stat) out.push($t(RIDER_STATS[i.stat].label));
+    if (i.turns) out.push(`${$t('battleStatusTurns')} ${i.turns}`);
+    if (i.mana) out.push(`${$t('battleManaShort')} ${i.mana}`);
+    if (!intentLive(i)) out.push(toolWhy(i));
+    return out.join(' · ');
+  }
+
+  /** Чем помечены цели того, что в руке. Разница не в цвете, а в форме. */
+  const MARK_OF = { blow: 'attack', mend: 'mend', cast: 'charm' } as const;
+
+  /**
+   * Клетки, в которые можно ткнуть ТЕМ, ЧТО В РУКЕ: опасная клетка, призыв,
+   * свой шаг. Ключ — `x,y`, значение — готовое действие из `legalActions`.
+   *
+   * Отдельно от `openCells` (куда шагнуть и куда выложить), и не из
+   * аккуратности: одна и та же клетка бывает и тем, и другим, а значит на
+   * нажатие должен отвечать кто-то ОДИН. Отвечает взятое в руку — оно и есть
+   * выбор человека; шаг остаётся доступен, пока в руке ничего клеточного нет.
+   */
+  let openSpots = $derived.by(() => {
+    const out = new Map<string, BattleAction>();
     if (picked?.kind !== 'unit' || !mine) return out;
-    for (const a of legal) {
-      if (typeof a === 'string') continue;
-      if ('attack' in a && a.attack.attacker === picked.id) out.set(a.attack.target, 'attack');
-      if ('mend' in a && a.mend.healer === picked.id) out.set(a.mend.target, 'mend');
+    const tool = toolShown;
+    if (!tool) return out;
+    for (const [cell, action] of tool.spots) out.set(cell, action);
+    return out;
+  });
+
+  /** Тела, которые можно взять ТЕМ, ЧТО В РУКЕ, — и готовое действие к каждому. */
+  let openUnits = $derived.by(() => {
+    const out = new Map<number, { mark: 'attack' | 'mend' | 'charm'; action: BattleAction }>();
+    if (picked?.kind !== 'unit' || !mine) return out;
+    const tool = toolShown;
+    if (!tool) return out;
+    for (const [unit, action] of tool.aims) {
+      out.set(unit, { mark: MARK_OF[tool.kind], action });
     }
     return out;
   });
@@ -235,6 +386,7 @@
       if ('move' in a) out.add(a.move.unit);
       if ('attack' in a) out.add(a.attack.attacker);
       if ('mend' in a) out.add(a.mend.healer);
+      if ('cast' in a) out.add(a.cast.caster);
     }
     return out;
   });
@@ -414,30 +566,108 @@
     return cheapest > position.player.mana ? 'mana' : 'room';
   });
 
+  /** Удар по подсказке, когда ткнули в цель вне досягаемости. */
+  let tipBeat = $state(0);
   /**
-   * Почему выбранное сейчас не бьёт / не ходит / не ложится на стол.
+   * Спросили ли слово. Отказ — ответ на ЖЕСТ, а не подпись к выбору: тело,
+   * которому есть куда идти, не застряло, и висящая над ним причина, почему
+   * оно вдобавок не бьёт, повторяется на каждом теле стороны и читается как
+   * брань. Молча выбранное тело слова не получает — получает ткнувший.
+   */
+  let tipAsked = $state(false);
+  $effect(() => {
+    picked;
+    position;
+    tipAsked = false;
+    // Рука пустеет вместе с выбором: печать, взятая у прошлого тела, на этом
+    // значит другое — а ключ у неё тот же (`blow` есть у всякого, кто бьёт).
+    toolHeld = null;
+    toolTasted = null;
+  });
+
+  /**
+   * Сколько ходов ждать, пока лечение этого тела вернётся, — и только тогда,
+   * когда откат ЕДИНСТВЕННОЕ, что стоит на пути.
+   *
+   * «Единственное» — это условие, а не осторожность. Откат на теле, которому
+   * всё равно некого лечить, назван не был бы причиной, а был бы вторым
+   * ответом на чужой вопрос; поэтому дар считается спящим, только когда
+   * раненый свой стоит в пределах дара и маны на дар хватает.
+   *
+   * Возвращается число, а не слово: «вернётся» без «когда» — та же тишина,
+   * только вежливее.
+   */
+  function mendAsleep(u: BattleUnit): number | null {
+    // Тело, которое лечит само, лечить не перестало: у его лечения отката нет.
+    if (u.mend > 0) return null;
+
+    const from = cellOf(u.id);
+    if (!from) return null;
+
+    const left = new Map((u.abilityCds ?? []).map((c) => [c.id, c.left]));
+    const mana = position[me].mana;
+    let soonest: number | null = null;
+
+    const abilities = u.card.abilities ?? [];
+    for (let i = 0; i < abilities.length; i++) {
+      const a = abilities[i];
+      if (a.verb !== 'heal' || a.trigger !== 'active' || a.amount <= 0) continue;
+      // Те же две пригоршни, что берёт `ready_heal`: остальные движок не играет.
+      if (a.shape !== 'one' && a.shape !== 'self') continue;
+      // Пустой `id` всё равно ключ — так его завёл движок (`ability_key`).
+      const cd = left.get(a.id || `#${i}`) ?? 0;
+      // Хоть один готовый дар — и отказ уже не в откате, что бы ни спало рядом.
+      if (cd === 0) return null;
+      if (a.manaCost > mana) continue; // Держит мана, а не откат.
+      const someone = position.units.some((x) => {
+        if (x.owner !== u.owner || x.health.current <= 0) return false;
+        if (x.health.current >= x.health.max) return false;
+        if (a.shape === 'self') return x.id === u.id;
+        if (x.id === u.id) return false;
+        const to = cellOf(x.id);
+        return !!to && stride(from, to) <= a.range;
+      });
+      if (!someone) continue;
+      soonest = soonest === null ? cd : Math.min(soonest, cd);
+    }
+
+    return soonest;
+  }
+
+  /**
+   * Почему выбранное сейчас не бьёт / не лечит / не ходит / не ложится на стол.
    *
    * Не второе правило: список `legalActions` уже решил, что можно. Здесь только
    * имя отказа — по тем же признакам, которые движок уже положил в тело и в
-   * правила партии (`acted`, opening, mana), плюс по тому, чего в списке нет
-   * (есть шаг — нет удара → вне досягаемости). Иначе человек видит голубое
+   * правила партии (`acted`, opening, mana, откат), плюс по тому, чего в списке
+   * нет (есть шаг — нет удара → вне досягаемости). Иначе человек видит голубое
    * свечение и молчание.
+   *
+   * Слово несёт своё число: отказ «через сколько-то ходов» без числа человек
+   * читает как «никогда».
    */
-  let stuckWord = $derived.by((): TranslationKey | null => {
+  let stuck = $derived.by((): { key: TranslationKey; turns?: number } | null => {
     if (!mine || playing || position.outcome) return null;
 
     if (picked?.kind === 'hand') {
       if (playableHand.has(picked.index)) return null;
       const card = hand[picked.index];
       if (!card) return null;
-      return card.cost > position.player.mana ? 'battleWhyMana' : 'battleWhyRoom';
+      return { key: card.cost > position.player.mana ? 'battleWhyMana' : 'battleWhyRoom' };
     }
 
     if (picked?.kind !== 'unit') return null;
     const u = position.units[picked.id];
     if (!u || u.owner !== me) return null;
 
-    if (openUnits.size > 0) return null;
+    if (openUnits.size > 0 || openSpots.size > 0) return null;
+
+    // Откат назван ПЕРВЫМ, прежде досягаемости, и это не прихоть порядка: он
+    // единственный из отказов не виден на доске ничем — ни расстоянием, ни
+    // камнями маны, — а «шагните ближе» на спящем даре обещает то, чего шаг
+    // не даст. Досягаемость человек и так измеряет глазами.
+    const asleep = mendAsleep(u);
+    if (asleep !== null) return { key: 'battleWhyCooldown', turns: asleep };
 
     const foesAlive = position.units.some((x) => x.owner !== me && x.health.current > 0);
     const canStrike = u.power > 0;
@@ -446,18 +676,18 @@
       (u.card.abilities ?? []).some(
         (a) => a.verb === 'heal' && a.trigger === 'active' && a.amount > 0,
       );
-
-    // Шаг есть, удара нет — ровно случай «выбрана, а бить нельзя».
-    if (openCells.size > 0) {
-      if (canStrike && foesAlive) return 'battleWhyReach';
-      return null;
-    }
-
-    if (u.acted) return 'battleWhyActed';
+    // Чары спрашиваются у уже собранного подноса, а не у карты второй раз:
+    // тело, у которого всё спит, «не наносит ударов» — неправда, и ровно про
+    // такое тело эта строка и печаталась бы чаще всего.
+    const canCast = intents.some((i) => i.kind === 'cast');
 
     const { rules } = position;
-    if (position.actsThisTurn >= rules.actsPerTurn) return 'battleWhyActs';
 
+    // Запрет первого круга держит УДАР, а не шаг, — и потому назван ПРЕЖДЕ
+    // досягаемости, как откат. Стоя под шагом, он молчал у всякого тела,
+    // которому есть куда идти, а «шагните ближе» обещало то, чего шаг не
+    // даст: подойти вплотную к телу, бить которое в этом круге уже нельзя.
+    // Сколько ударов израсходовано, на доске не написано нигде.
     if (
       position.round === 1 &&
       position.active === 'player' &&
@@ -466,22 +696,53 @@
       foesAlive &&
       position.openingAttacksUsed >= rules.openingAttacks
     ) {
-      return 'battleWhyOpening';
+      return { key: 'battleWhyOpening' };
     }
 
-    if (u.moved && rules.walkSpendsTurn) return 'battleWhyActed';
+    // Шаг есть, удара нет — ровно случай «выбрана, а бить нельзя».
+    if (openCells.size > 0) {
+      if (canStrike && foesAlive) return { key: 'battleWhyReach' };
+      return null;
+    }
 
-    if (!canStrike && !canMend) return 'battleWhyPeace';
+    if (u.acted) return { key: 'battleWhyActed' };
+
+    if (position.actsThisTurn >= rules.actsPerTurn) return { key: 'battleWhyActs' };
+
+    if (u.moved && rules.walkSpendsTurn) return { key: 'battleWhyActed' };
+
+    if (!canStrike && !canMend && !canCast) return { key: 'battleWhyPeace' };
 
     if (canStrike && foesAlive) {
-      return u.step === 0 ? 'battleWhyStuck' : 'battleWhyReach';
+      return { key: u.step === 0 ? 'battleWhyStuck' : 'battleWhyReach' };
     }
 
-    return 'battleWhyIdle';
+    return { key: 'battleWhyIdle' };
   });
 
-  /** Удар по подсказке, когда ткнули в цель вне досягаемости. */
-  let tipBeat = $state(0);
+  let stuckWord = $derived(stuck?.key ?? null);
+  /**
+   * Тело, которому нечем ходить вовсе: ни шага, ни удара, ни лечения. Только
+   * оно получает слово без спроса — голубое свечение и молчание и есть та
+   * поломка, ради которой отказ заведён.
+   */
+  let bodyIdle = $derived(
+    picked?.kind === 'unit' &&
+      openCells.size === 0 &&
+      openUnits.size === 0 &&
+      openSpots.size === 0,
+  );
+  /** Видно ли слово сейчас. Своё тело молчит, пока его не спросили. */
+  let stuckShown = $derived(
+    !!stuckWord && (picked?.kind === 'hand' || bodyIdle || tipAsked),
+  );
+  /**
+   * Отказ словами, с уже подставленным числом. Подстановка ОДНА на все места,
+   * где отказ печатается, — иначе строка с `{n}` однажды выйдет на карту как
+   * есть, и ровно в том месте, куда реже всего смотрят.
+   */
+  let stuckSay = $derived(stuck ? $t(stuck.key).replace('{n}', String(stuck.turns ?? '')) : '');
+
 
   let chosen = $derived(picked?.kind === 'unit' ? (position.units[picked.id] ?? null) : null);
   let chosenDto = $derived(chosen ? dtoOf(chosen.card.name) : null);
@@ -507,11 +768,16 @@
   function actionAt(x: number, y: number): BattleAction | null {
     if (!mine) return null;
     const here = unitAt(x, y);
-    if (here && openUnits.has(here.id) && picked?.kind === 'unit') {
-      return openUnits.get(here.id) === 'attack'
-        ? { attack: { attacker: picked.id, target: here.id } }
-        : { mend: { healer: picked.id, target: here.id } };
+    // Действие НЕ собирается здесь: оно лежит готовым в намерении, откуда
+    // пришло из `legalActions`, и уходит назад неизменным. Собранное вручную
+    // пришлось бы собирать и для чары — по ключу умения, которого у сцены нет.
+    if (here && picked?.kind === 'unit') {
+      const aim = openUnits.get(here.id);
+      if (aim) return aim.action;
     }
+    // Клеточная чара отвечает ПЕРВОЙ: она в руке, и значит её и выбрали.
+    const spot = openSpots.get(`${x},${y}`);
+    if (spot) return spot;
     if (!here && picked && openCells.has(`${x},${y}`)) {
       const cell: BattleCell = { x, y };
       return picked.kind === 'hand'
@@ -538,10 +804,12 @@
         const held = position.units[picked.id];
         if (held?.owner === me) {
           if (here && here.owner !== me) {
+            tipAsked = true;
             tipBeat += 1;
             return;
           }
           if (!here && !openCells.has(`${x},${y}`) && stuckWord) {
+            tipAsked = true;
             tipBeat += 1;
             return;
           }
@@ -572,13 +840,57 @@
     }
   }
 
+  /**
+   * Взять печать с подноса.
+   *
+   * Мёртвая печать не отказывает и не молчит: нажатие на неё ПРИКАЛЫВАЕТ её к
+   * подписи, и та говорит, почему нельзя. На мыши это же делает наведение, но
+   * на телефоне наведения нет, а спящая чара без слова — ровно та поломка, из-за
+   * которой отказ в этой комнате вообще завёлся.
+   */
+  function takeTool(intent: Intent) {
+    if (!intentLive(intent)) {
+      toolTasted = intent.key;
+      return;
+    }
+    toolHeld = intent.key;
+    toolTasted = null;
+  }
+
   function tapHand(index: number) {
     if (!mine) return;
     picked = picked?.kind === 'hand' && picked.index === index ? null : { kind: 'hand', index };
   }
 
+  /** Нажатие мимо печати закрывает листок: он лежит поверх доски, и ходить
+   *  сквозь него нельзя. Ловится на `pointerdown`, до нажатия клетки. */
+  function offLeaf(e: PointerEvent) {
+    if (!leafOpen) return;
+    const el = e.target as HTMLElement | null;
+    if (el?.closest?.('.seal-wrap')) return;
+    leafOpen = false;
+  }
+
   function onkey(e: KeyboardEvent) {
+    // Цифра берёт печать с подноса — по порядку, как она на нём лежит. Нигде не
+    // написано и написано не будет: подсказок «нажмите сюда» в этой комнате нет,
+    // а рука, которая однажды попробовала, помнит сама.
+    if (trayShown && !leafOpen && !sheet && /^[1-9]$/.test(e.key)) {
+      const intent = intents[Number(e.key) - 1];
+      if (intent) {
+        takeTool(intent);
+        e.stopImmediatePropagation();
+        return;
+      }
+    }
     if (e.key !== 'Escape') return;
+    // Листок закрывается первым: он лежит поверх всего, и Escape при открытом
+    // листке — про листок, а не про выбранное тело под ним.
+    if (leafOpen) {
+      leafOpen = false;
+      e.stopImmediatePropagation();
+      return;
+    }
     if (sheet) {
       sheet = null;
       e.stopImmediatePropagation();
@@ -724,6 +1036,66 @@
           current: Math.min(u.health.max, u.health.current + e.healed.amount),
         };
       }
+    } else if ('rider' in e) {
+      const u = pos.units[e.rider.target];
+      if (u) {
+        // Одноимённый освежает срок, а не встаёт вторым: то же правило, что у
+        // движка (`apply_status`). Здесь это не решение, а перепись готового —
+        // но перепись, считающая иначе, нарисовала бы лишнюю зарубку.
+        const had = u.statuses.findIndex((st) => st.name === e.rider.status.name);
+        u.statuses =
+          had >= 0
+            ? u.statuses.map((st, i) => (i === had ? e.rider.status : st))
+            : [...u.statuses, e.rider.status];
+      }
+    } else if ('shielded' in e) {
+      const u = pos.units[e.shielded.target];
+      if (u) u.shield += e.shielded.amount;
+    } else if ('held' in e) {
+      const u = pos.units[e.held.target];
+      if (u) {
+        const had = (u.holds ?? []).findIndex((h) => h.name === e.held.name);
+        const laid = {
+          name: e.held.name,
+          kind: e.held.kind,
+          amount: e.held.amount,
+          turns: e.held.turns,
+        };
+        u.holds = had >= 0 ? (u.holds ?? []).map((h, i) => (i === had ? laid : h)) : [...(u.holds ?? []), laid];
+      }
+    } else if ('lifted' in e) {
+      const u = pos.units[e.lifted.target];
+      if (u) {
+        // Сняли столько-то и в одну сторону. Какие именно — событие не
+        // называет, и называть не должно: снимает их движок, а перепись живёт
+        // две секунды и умирает на снимке сервера.
+        let left = e.lifted.count;
+        u.statuses = u.statuses.filter((st) => {
+          if (left <= 0) return true;
+          const against = (st.stat === 'vulnerable') !== st.amount < 0;
+          if (against === e.lifted.ill) {
+            left -= 1;
+            return false;
+          }
+          return true;
+        });
+      }
+    } else if ('mana' in e) {
+      const s = e.mana.side === 'player' ? pos.player : pos.keeper;
+      s.mana = Math.min(s.manaMax, s.mana + e.mana.amount);
+    } else if ('zoned' in e) {
+      pos.zones = [
+        ...(pos.zones ?? []).filter((z) => z.name !== ''),
+        {
+          name: '',
+          side: e.zoned.side,
+          by: e.zoned.by,
+          cells: e.zoned.cells,
+          amount: e.zoned.amount,
+          channel: 'physical',
+          turns: e.zoned.turns,
+        },
+      ];
     } else if ('died' in e) {
       pos.board = pos.board.filter((s) => s.unit !== e.died.target);
     }
@@ -790,17 +1162,37 @@
       return alive();
     }
 
-    // Выставление и лечение: тело должно существовать (или уже быть залечено),
-    // прежде чем ему что-то показывать.
+    // Выставление, лечение, всадник, щит: тело должно существовать (или уже
+    // быть залечено), прежде чем ему что-то показывать.
     transcribe(pos, e);
     live = copy(pos);
-    if ('played' in e || 'healed' in e) {
-      const striker = 'healed' in e ? e.healed.by : null;
-      const target = 'played' in e ? e.played.unit : e.healed.target;
+    // Кто и по кому — одной таблицей, а не лестницей тернарников: поводов
+    // теперь девять, и лестница на девять ступеней читается только сверху вниз.
+    const hands = (): { striker: number | null; target: number | null } => {
+      if ('played' in e) return { striker: e.played.unit, target: null };
+      if ('healed' in e) return { striker: e.healed.by, target: e.healed.target };
+      if ('rider' in e) return { striker: e.rider.by, target: e.rider.target };
+      if ('shielded' in e) return { striker: e.shielded.by, target: e.shielded.target };
+      if ('held' in e) return { striker: e.held.by, target: e.held.target };
+      if ('lifted' in e) return { striker: e.lifted.by, target: e.lifted.target };
+      // У опасной клетки цели-тела нет вовсе: движение играет ведьма одна.
+      if ('zoned' in e) return { striker: e.zoned.by, target: null };
+      return { striker: null, target: null };
+    };
+    if (
+      'played' in e ||
+      'healed' in e ||
+      'rider' in e ||
+      'shielded' in e ||
+      'held' in e ||
+      'lifted' in e ||
+      'zoned' in e
+    ) {
+      const { striker, target } = hands();
       const motion = motionOf(pos, striker ?? target, e);
       // Выставление показывается на самом вышедшем теле, а не на бьющем:
       // у него нет ни автора, ни цели, есть только оно само.
-      put(pos, motion, 'played' in e ? target : striker, 'played' in e ? null : target);
+      put(pos, motion, striker, target);
       if (!calm) await sleep(motionSpan(motion));
       dropActing();
     }
@@ -928,7 +1320,16 @@
 
   const nameOf = (id: number) => titleOf(match.state.units[id]?.card.name ?? String(id));
 
-  type LineKind = 'play' | 'move' | 'hit' | 'mend' | 'fall' | 'ward' | 'turn' | 'other';
+  type LineKind =
+    | 'play'
+    | 'move'
+    | 'hit'
+    | 'mend'
+    | 'fall'
+    | 'ward'
+    | 'turn'
+    | 'charm'
+    | 'other';
   type Line = {
     text: string;
     kind: LineKind;
@@ -949,6 +1350,54 @@
       if ('moved' in e) return bare(`${nameOf(e.moved.unit)} — ${$t('battleLogMoved')}`, 'move');
       if ('healed' in e)
         return bare(`${nameOf(e.healed.target)} — ${$t('battleLogHealed')} ${e.healed.amount}`, 'mend');
+      if ('rider' in e) {
+        // Словом всадника называет та чара, что его навела, а не ключ в записи:
+        // в журнале лежит ключ, и имя ему подставляет комната — ровно так же,
+        // как она подставляет название карты по её слагу.
+        const on = match.state.units[e.rider.target];
+        const word =
+          riderWord(e.rider.status, on ? dtoOf(on.card.name) : null, $lang) ||
+          $t(RIDER_STATS[e.rider.status.stat as keyof typeof RIDER_STATS]?.label ?? 'battlesPowerLabel');
+        const sign = e.rider.status.amount > 0 ? '+' : '−';
+        return bare(
+          `${nameOf(e.rider.target)} — ${$t(
+            e.rider.ill ? 'battleLogCursed' : 'battleLogBlessed',
+          )}: ${word} ${sign}${Math.abs(e.rider.status.amount)}`,
+          'charm',
+        );
+      }
+      if ('shielded' in e)
+        return bare(
+          `${nameOf(e.shielded.target)} — ${$t('battleLogShielded')} ${e.shielded.amount}`,
+          'charm',
+        );
+      if ('held' in e) {
+        // Слово наложенного: своё имя чары, а нет его — род удержания. Тот же
+        // порядок, что у всадника, и по той же причине.
+        const on = match.state.units[e.held.target];
+        const of = HOLD_WORDS[holdKind(e.held.kind)];
+        const own = riderWord({ name: e.held.name }, on ? dtoOf(on.card.name) : null, $lang);
+        const word = own || (of ? $t(of.word) : '');
+        return bare(
+          `${nameOf(e.held.target)} — ${$t('battleLogHeld')}: ${word}`,
+          'charm',
+        );
+      }
+      if ('lifted' in e)
+        return bare(
+          `${nameOf(e.lifted.target)} — ${$t('battleLogLifted')} ${e.lifted.count} ${$t(
+            e.lifted.ill ? 'battleLogLiftedIll' : 'battleLogLiftedGood',
+          )}`,
+          'charm',
+        );
+      if ('mana' in e)
+        return bare(
+          `${e.mana.side === me ? $t('battleManaYours') : $t('battleManaKeeper')} — ${$t(
+            'battleLogMana',
+          )} ${e.mana.amount}`,
+          'charm',
+        );
+      if ('zoned' in e) return bare($t('battleLogZoned'), 'charm');
       if ('died' in e) return bare(`${nameOf(e.died.target)} — ${$t('battleLogDied')}`, 'fall');
       if ('immune' in e) return bare(`${nameOf(e.immune.target)} — ${$t('battleLogImmune')}`, 'ward');
       if ('turnEnded' in e)
@@ -976,19 +1425,91 @@
    *  строки журнала. Пустое «пока ничего» не стоит трети окна. */
   let hasRail = $derived(fill || !!chosen || journal.length > 0);
 
+  /**
+   * Сколько ударов первого круга у вашей стороны ещё есть. `null` — правило
+   * сейчас ничего не держит: круг не первый, потолок снят, или сторона не та.
+   *
+   * Считается из того же, из чего его считает движок (`holds_at_the_opening`),
+   * и потому не второе правило, а его показ. Стоит у слова «Круг», а не у
+   * тела: держит оно СТОРОНУ, и тело, которому это сказали, ни при чём.
+   */
+  let openingLeft = $derived.by((): number | null => {
+    if (position.round !== 1) return null;
+    if (position.rules.openingAttacks >= 255) return null;
+    // Держат только ту сторону, что ходит первой; вторую — никогда.
+    if (me !== 'player') return null;
+    return Math.max(0, position.rules.openingAttacks - position.openingAttacksUsed);
+  });
+  let openingSay = $derived(
+    openingLeft === null
+      ? ''
+      : openingLeft === 0
+        ? $t('battleOpeningSpent')
+        : $t('battleOpeningLeft').replace('{n}', String(openingLeft)),
+  );
+
+  /** Листок правил: открыт ли, и спрашивали ли его в этой партии. */
+  let leafOpen = $state(false);
+  let leafRead = $state(false);
+  /**
+   * Печать зовёт ровно один раз — в тот миг, когда правило впервые укусило:
+   * удары кончились, а листок ещё не открывали. Открыли — зов гаснет
+   * навсегда, потому что мигающее «нажмите сюда» тут и запрещено, и бесполезно
+   * со второго раза.
+   */
+  let leafCalls = $derived(openingLeft === 0 && !leafRead);
+  let leafLines = $derived(rulesInForce(position.rules));
+  function openLeaf() {
+    leafOpen = !leafOpen;
+    if (leafOpen) leafRead = true;
+  }
+
   const MANA_GEMS_CAP = 10;
   let manaCap = $derived(Math.max(0, Math.min(MANA_GEMS_CAP, position.player.manaMax)));
   let manaLit = $derived(
     position.active === 'player' ? Math.max(0, Math.min(manaCap, position.player.mana)) : 0,
   );
   let manaGems = $derived(Array.from({ length: manaCap }, (_, i) => i < manaLit));
+  /** Кого спрашивает то, что в руке. Слово про ЭТО дело, а не про ход вообще:
+   *  «выберите» на взведённом проклятии не говорит ничего. */
+  const AIM_WORD: Record<string, TranslationKey> = {
+    blow: 'battleAimBlow',
+    mend: 'battleAimMend',
+    harm: 'battleAimHarm',
+    curse: 'battleAimCurse',
+    bless: 'battleAimBless',
+    shield: 'battleAimShield',
+    fester: 'battleAimFester',
+    knit: 'battleAimKnit',
+    bind: 'battleAimBind',
+    hush: 'battleAimHush',
+    disarm: 'battleAimDisarm',
+    sway: 'battleAimSway',
+    veil: 'battleAimVeil',
+    guard: 'battleAimGuard',
+    numb: 'battleAimNumb',
+    thorns: 'battleAimThorns',
+    shove: 'battleAimShove',
+    cleanse: 'battleAimCleanse',
+    dispel: 'battleAimDispel',
+    coin: 'battleAimCoin',
+    offer: 'battleAimOffer',
+    zone: 'battleAimZone',
+    summon: 'battleAimSummon',
+  };
   let promptWord = $derived.by((): TranslationKey => {
     if (playing || !mine) return 'battlePromptWait';
-    if (stuckWord) return stuckWord;
+    if (stuckShown && stuckWord) return stuckWord;
     if (handTrouble === 'mana') return 'battlePromptMana';
     if (handTrouble === 'room') return 'battlePromptRoom';
+    const tool = toolShown;
+    if (trayShown && tool && intentLive(tool)) {
+      return AIM_WORD[tool.casting ?? tool.kind] ?? 'battlePromptPick';
+    }
     return 'battlePromptPick';
   });
+  /** Та же строка, что в колокольчике отказа: число подставляется один раз. */
+  let promptSay = $derived(promptWord === stuck?.key ? stuckSay : $t(promptWord));
 
   // ── Доска по высоте окна ──────────────────────────────────────────────────
   //
@@ -1067,12 +1588,54 @@
   );
 </script>
 
-<svelte:window onkeydown={onkey} />
+<svelte:window onkeydown={onkey} onpointerdown={offLeaf} />
 
 <!-- Руки пишутся один раз и ставятся дважды: на широком экране — в боковую
      колонку, на узком — по краям доски. Не два куска разметки, а один снипет
      в двух местах: доска, которая рисует свою руку иначе, чем полка, начнёт
      врать ровно про то, что на ней проверяют. -->
+<!-- Правило первого круга стоит у слова «Круг», а не у тела: держит оно
+     сторону целиком. Печать рядом — вход для того, кто пришёл прочесть; она
+     зовёт один раз, в тот миг, когда правило впервые укусило. -->
+{#snippet roundMark()}
+  {#if openingLeft !== null}
+    <span class="opening" class:opening--spent={openingLeft === 0}>{openingSay}</span>
+  {/if}
+  <span class="seal-wrap">
+    <button
+      type="button"
+      class="rules-seal"
+      class:rules-seal--calls={leafCalls}
+      aria-expanded={leafOpen}
+      aria-label={$t('battleRulesSeal')}
+      title={$t('battleRulesSeal')}
+      onclick={openLeaf}
+    >
+      <BattleIcon name="scroll" size="1em" weight={1.4} />
+    </button>
+    {#if leafOpen}
+      <div class="rules-leaf" role="dialog" aria-label={$t('battleRulesSeal')}
+           transition:fly={{ y: -6, duration: 200 }}>
+        <p class="rules-leaf-head">{$t('battleRulesInForce')}</p>
+        <ul class="rules-leaf-list">
+          {#each leafLines as line (line.key)}
+            <li>
+              <span class="rules-leaf-word">
+                {$t(line.key)}{line.amount === null ? '' : ` — ${line.amount}`}
+              </span>
+              <!-- Пояснение есть только у первого круга: остальные правила
+                   читаются с одного взгляда, а это одно читается как поломка. -->
+              {#if line.key === 'battleRuleOpening'}
+                <span class="rules-leaf-note">{$t('battleRuleOpeningWhole')}</span>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+      </div>
+    {/if}
+  </span>
+{/snippet}
+
 {#snippet keeperHand()}
   {#if theirHand.length}
     <p class="hand-label">{$t('battleHandKeeper')}</p>
@@ -1091,6 +1654,45 @@
   {/if}
 {/snippet}
 
+<!-- Мана стоит в шапке, справа, рядом со словами хода: ход и чем за него
+     платят — одна строка сведений, и внизу, у руки, ей не место. -->
+{#snippet manaTrack()}
+  <!-- `--lit`/`--max` уходят В СТИЛЬ, потому что свет камней ложится на саму
+       бляху: чем больше маны, тем сильнее отсвет на металле. Считать его
+       вторым списком классов («mana--3») значило бы завести одиннадцать имён
+       под одно число. -->
+  <div
+    class="mana-track"
+    style="--lit:{manaLit}; --max:{Math.max(1, manaCap)}"
+    aria-label={`${$t('battleManaYours')} ${
+      position.active === 'player'
+        ? `${position.player.mana}/${position.player.manaMax}`
+        : String(position.player.manaMax)
+    }`}
+  >
+    <span class="mana-word">
+      <BattleIcon name={statMark('mana')} size="1.15em" weight={1.4} />
+      {$t('battleManaShort')}
+    </span>
+    <!-- Число и предел РАЗНЫМ голосом: сколько есть сейчас — это то, что
+         меняется каждый ход, а предел напечатан и молчит. Одним кеглем и
+         одной краской «3/3» читалось одним числом, которого нет. -->
+    <span class="mana-count" aria-hidden="true">
+      {#if position.active === 'player'}
+        <b class="mana-now">{position.player.mana}</b>
+        <i class="mana-of">/{position.player.manaMax}</i>
+      {:else}
+        <i class="mana-of mana-of--alone">{position.player.manaMax}</i>
+      {/if}
+    </span>
+    <span class="mana-gems" aria-hidden="true">
+      {#each manaGems as lit, i (i)}
+        <i class="gem" class:gem--lit={lit} style="--i:{i}"></i>
+      {/each}
+    </span>
+  </div>
+{/snippet}
+
 {#snippet ownHand()}
   {#if hand.length}
     <p class="hand-label">{$t('battleHandYours')}</p>
@@ -1104,7 +1706,8 @@
           class="held held--mine"
           class:held--picked={picked?.kind === 'hand' && picked.index === i}
           class:held--dim={!playableHand.has(i)}
-          style="--i:{i}; --n:{hand.length}"
+          style="--i:{i}; --n:{hand.length}; --arc:{(hand.length - 1) / 2
+            - Math.abs(i - (hand.length - 1) / 2)}"
         >
           {#if dto}
             <BattleCard card={dto} {frames} owned={true} transition={false} interactive={false} />
@@ -1122,12 +1725,12 @@
           {:else}
             <span class="held-name">{titleOf(held.name)}</span>
           {/if}
-          {#if stuckWord && picked?.kind === 'hand' && picked.index === i}
+          {#if stuckShown && picked?.kind === 'hand' && picked.index === i}
             <span class="stuck-anchor">
               {#key `h${picked.index}:${tipBeat}`}
                 <span class="stuck-tip" role="status" transition:fly={{ y: 8, duration: 280 }}>
                   <i class="stuck-tip-flare" aria-hidden="true"></i>
-                  <em class="stuck-tip-word">{$t(stuckWord)}</em>
+                  <em class="stuck-tip-word">{stuckSay}</em>
                 </span>
               {/key}
             </span>
@@ -1148,6 +1751,7 @@
   class:scene--fill={fill}
   class:scene--chamber={fill}
   class:scene--rail={hasRail}
+  style="--fit:{DEFAULT_ASPECT}"
 >
   {#if fill}
     <div class="crest">
@@ -1163,31 +1767,12 @@
         <p class="crest-turn">
           {position.active === me ? $t('battleWhoseTurnYours') : $t('battleWhoseTurnKeeper')}
         </p>
-        <p class="crest-round">{$t('battleRound')} {position.round}</p>
+        <p class="crest-round">
+          {$t('battleRound')} {position.round}
+          {@render roundMark()}
+        </p>
       </div>
-      <div
-        class="mana-track"
-        aria-label={`${$t('battleManaYours')} ${
-          position.active === 'player'
-            ? `${position.player.mana}/${position.player.manaMax}`
-            : String(position.player.manaMax)
-        }`}
-      >
-        <span class="mana-word">
-          <BattleIcon name={statMark('mana')} size="1em" weight={1.4} />
-          {$t('battleManaShort')}
-          {#if position.active === 'player'}
-            {position.player.mana}/{position.player.manaMax}
-          {:else}
-            {position.player.manaMax}
-          {/if}
-        </span>
-        <span class="mana-gems" aria-hidden="true">
-          {#each manaGems as lit, i (i)}
-            <i class="gem" class:gem--lit={lit}></i>
-          {/each}
-        </span>
-      </div>
+      {@render manaTrack()}
     </div>
   {:else}
   <div class="strip">
@@ -1206,7 +1791,7 @@
         — только сам потолок. Дорисовывать ей «будет столько-то» здесь нельзя:
         прибавку на ход считает движок, и вторая её реализация разошлась бы с ним.
       -->
-      <span>{$t('battleRound')} {position.round}</span>
+      <span>{$t('battleRound')} {position.round} {@render roundMark()}</span>
       <span>
         {$t('battleManaYours')}
         <span class="num">
@@ -1237,7 +1822,9 @@
   <div class="table" bind:this={tableEl} style="--room:{room}px">
     <div class="table-hand table-hand--theirs">{@render keeperHand()}</div>
 
-    <div class="well" style="--fit:{DEFAULT_ASPECT}">
+    <!-- Домашняя форма приходит СВЕРХУ, со сцены: гнездо руки и клетка доски
+         обязаны быть одной формы, а два объявления однажды разойдутся. -->
+    <div class="well">
     <div class="field" bind:this={fieldEl}>
       <div class="cloth">
       <div class="face">
@@ -1245,7 +1832,9 @@
         {#each spots as { x, y } (`${x},${y}`)}
           {@const here = unitAt(x, y)}
           {@const open2 = openCells.has(`${x},${y}`)}
-          {@const target = here ? openUnits.get(here.id) : undefined}
+          {@const spot = openSpots.get(`${x},${y}`)}
+          {@const burn = zoneAt(x, y)}
+          {@const target = here ? openUnits.get(here.id)?.mark : undefined}
           {@const dto = here ? dtoOf(here.card.name) : null}
           {@const willTake = here ? toldMine.get(here.id) : undefined}
           {@const willGet = here ? toldTheirs.get(here.id) : undefined}
@@ -1264,10 +1853,22 @@
             class:cell--picked={picked?.kind === 'unit' && here?.id === picked.id}
             class:cell--attack={target === 'attack'}
             class:cell--mend={target === 'mend'}
+            class:cell--charm={target === 'charm'}
+            class:cell--spot={!!spot}
+            class:cell--burn={!!burn}
             class:cell--live={mine && here?.owner === me && ready.has(here.id)}
             class:cell--theirs={y < 3}
             class:cell--mine={y >= 3}
           >
+              {#if burn}
+                <!-- Опасная клетка: та же штриховка, что у сукна, только
+                     гуще, и число — сколько снимет с того, кто здесь
+                     простоит. Рисуется ПОД телом: на клетке можно стоять. -->
+                <span class="burn" aria-label={`${$t('battleZoneHere')} ${burn.amount}`}>
+                  <i class="burn-hatch" aria-hidden="true"></i>
+                  <i class="burn-num">{burn.amount}</i>
+                </span>
+              {/if}
               {#if here}
                 <!-- Погасшим показывается и тело, которое уже сходило, и тело,
                      которому нечем ходить: с тех пор как шаг не тратит ход
@@ -1354,18 +1955,25 @@
                   </span>
                 {/if}
 
-                {#if here.statuses.length}
+                <!-- Зарубки: сколько всего на теле висит. Удержания считаются
+                     наравне со всадниками — для доски это одно и то же
+                     «на нём что-то есть», а что именно, скажет лист. -->
+                {#if here.statuses.length || (here.holds ?? []).length}
                   <span class="nicks" aria-hidden="true">
                     {#each here.statuses as st, i (i)}<i class="nick"></i>{/each}
+                    {#each here.holds ?? [] as h, i (i)}<i class="nick nick--hold"></i>{/each}
                   </span>
                 {/if}
 
-                {#if stuckWord && picked?.kind === 'unit' && here.id === picked.id}
+                <!-- Отказ словами: у тела, которому поднесён поднос, его
+                     печатает сам поднос — две плашки об одном встали бы одна
+                     на другую, и обе под телом. -->
+                {#if stuckShown && !trayShown && picked?.kind === 'unit' && here.id === picked.id}
                   <span class="stuck-anchor">
                     {#key `${picked.id}:${tipBeat}`}
                       <span class="stuck-tip" role="status" transition:fly={{ y: 10, duration: 300 }}>
                         <i class="stuck-tip-flare" aria-hidden="true"></i>
-                        <em class="stuck-tip-word">{$t(stuckWord)}</em>
+                        <em class="stuck-tip-word">{stuckSay}</em>
                       </span>
                     {/key}
                   </span>
@@ -1373,6 +1981,136 @@
               {/if}
             </button>
           {/each}
+        <!-- ── Поднос ──────────────────────────────────────────────────────
+             Чем заняться телу, взятому в руку: по печати на способ, и подпись
+             у той, что в руке. Слово одно, а не по слову под каждой печатью:
+             трёх подписей в клетку не входит, а «подписана та, что в руке» —
+             это и есть поднос, с которого берут.
+
+             Стоит поднос ЧЛЕНОМ СЕТКИ, на месте тела, а не внутри его клетки:
+             клетка — это `<button>`, и кнопка внутри кнопки не нажимается ни в
+             одном браузере. Геометрию при этом считает сама сетка. -->
+        {#if trayAt}
+          <!-- Обе кромки названы числами, а не `span`: у абсолютного ребёнка
+               сетки `auto` на дальней кромке значит НЕ «одна клетка», а край
+               самой сетки, и поднос молча оказывался на клетку ниже. -->
+          <span
+            class="tray-slot"
+            style="grid-column:{trayAt.col}/{trayAt.col + 1}; grid-row:{trayAt.row}/{trayAt.row + 1}"
+          >
+            <span
+              class="tray-anchor"
+              class:tray-anchor--over={trayAt.over}
+              class:tray-anchor--start={trayAt.edge === 'start'}
+              class:tray-anchor--end={trayAt.edge === 'end'}
+            >
+              <span class="tray" role="group" aria-label={$t('battleIntents')}>
+                <span class="tray-row">
+                  {#each intents as intent, i (intent.key)}
+                    {@const live = intentLive(intent)}
+                    {@const inHand = toolInHand?.key === intent.key}
+                    {@const lit = toolShown?.key === intent.key}
+                    <button
+                      type="button"
+                      class="tool"
+                      class:tool--hand={inHand && live}
+                      class:tool--lit={lit && live}
+                      class:tool--dim={!live}
+                      style="--i:{i}"
+                      aria-pressed={inHand && live}
+                      aria-label={toolSay(intent)}
+                      title={toolSay(intent)}
+                      onclick={() => takeTool(intent)}
+                      onpointerenter={() => (toolTasted = intent.key)}
+                      onpointerleave={() => (toolTasted = null)}
+                      onfocus={() => (toolTasted = intent.key)}
+                      onblur={() => (toolTasted = null)}
+                    >
+                      <i class="tool-seal">
+                        <BattleIcon name={intent.mark} size="58%" weight={1.5} />
+                      </i>
+                      {#if intent.amount !== null}
+                        <b class="tool-num">{intent.amount}</b>
+                      {/if}
+                      {#if intent.mana > 0}
+                        <i class="tool-drops" aria-hidden="true">
+                          {#each Array.from({ length: Math.min(3, intent.mana) }) as _, g (g)}<i
+                              class="tool-drop"
+                            ></i>{/each}
+                        </i>
+                      {/if}
+                      {#if intent.spent}
+                        <i class="tool-sleep" aria-hidden="true">×</i>
+                      {:else if intent.asleep !== null}
+                        <i class="tool-sleep" aria-hidden="true">{intent.asleep}</i>
+                      {/if}
+                    </button>
+                  {/each}
+                </span>
+                <!-- Подпись: имя того, что в руке, его число — и, у всадника,
+                     чем он правит и сколько держится. Мёртвой печати та же
+                     подпись говорит, почему нельзя. -->
+                <!-- Подпись меняется ВХОДЯ, а не сменяясь: у `transition`
+                     уходящая плашка ещё занимает строку, пока приходящая уже
+                     встала, и подпись на полсекунды двоилась. -->
+                {#key toolShown?.key ?? (stuckShown ? `why${tipBeat}` : 'none')}
+                  <span class="tray-tag" in:fade={{ duration: calm ? 0 : 130 }}>
+                    {#if toolShown}
+                      {@const tool = toolShown}
+                      <em class="tray-word">{tool.name || $t(tool.word)}</em>
+                      <span class="tray-nums">
+                        {#if tool.amount !== null}
+                          <span class="num">{tool.amount}</span>
+                        {/if}
+                        {#if tool.stat}
+                          <span class="tray-of"
+                            ><BattleIcon
+                              name={RIDER_STATS[tool.stat].mark}
+                              size="0.85em"
+                              weight={1.4}
+                            />{$t(RIDER_STATS[tool.stat].label)}</span
+                          >
+                        {/if}
+                        {#if tool.turns}
+                          <span class="tray-turns"
+                            >{$t('battleStatusTurns')} <span class="num">{tool.turns}</span></span
+                          >
+                        {/if}
+                        {#if tool.range !== null && tool.range > 1}
+                          <span class="tray-reach"
+                            ><BattleIcon name={statMark('reach')} size="0.85em" weight={1.4} />{tool
+                              .range}</span
+                          >
+                        {/if}
+                        <!-- Пригоршня: сколько тел чара берёт разом. Названа
+                             СЛОВОМ, а не показана на доске: доска светит только
+                             то, куда можно ткнуть, а круг считает движок — и
+                             посчитает он его в ответе предвестия, когда человек
+                             наведётся на цель. Второй расчёт здесь был бы
+                             зеркалом правила, которое нечем проверить. -->
+                        {#if tool.reach}
+                          <span class="tray-spread"
+                            ><BattleIcon name={tool.shape} size="0.85em" weight={1.4} />{$t(
+                              tool.reach,
+                            )}{#if tool.radius > 0 && (tool.shape === 'radius' || tool.shape === 'chain')}&nbsp;{tool.radius}{/if}</span
+                          >
+                        {/if}
+                      </span>
+                      {#if !intentLive(tool)}
+                        <span class="tray-why">{toolWhy(tool)}</span>
+                      {/if}
+                    {:else if stuckShown}
+                      <span class="tray-why">{stuckSay}</span>
+                    {:else}
+                      <em class="tray-word">{$t('battleIntents')}</em>
+                    {/if}
+                  </span>
+                {/key}
+              </span>
+            </span>
+          </span>
+        {/if}
+
         <span class="midline" aria-hidden="true">{#if fill}<i class="vs"></i>{/if}</span>
       </div>
 
@@ -1395,7 +2133,7 @@
       {#if fill}
         <div class="prompt">
           <div class="glass" class:glass--run={playing} aria-hidden="true"></div>
-          <p class="prompt-word" class:prompt-word--stuck={!!stuckWord}>{$t(promptWord)}</p>
+          <p class="prompt-word" class:prompt-word--stuck={stuckShown}>{promptSay}</p>
         </div>
       {/if}
       <div class="table-hand table-hand--mine">{@render ownHand()}</div>
@@ -1526,10 +2264,62 @@
         {#if chosenFace?.effect}
           <p class="chosen-effect">{chosenFace.effect}</p>
         {/if}
+        <!-- Всадники: чем эта чара правит, на сколько и ещё сколько ходов.
+             В записи у всадника лежит КЛЮЧ умения — показывать его человеку
+             значило бы показать `#0`, — поэтому слово подставляется по ключу с
+             карты, а не нашлось имя, так называет его сам показатель. -->
+        <!-- Удержания: то, что правит не числа, а возможности. Списком рядом
+             со всадниками, а не вперемешку: «−2 к силе» и «не бьёт» — разного
+             рода сведения, и сложенные в один столбец они читаются как одно. -->
+        {#if (chosen.holds ?? []).length}
+          <ul class="chosen-riders">
+            {#each chosen.holds ?? [] as hold, i (i)}
+              {@const of = HOLD_WORDS[holdKind(hold.kind)]}
+              {@const word = riderWord(hold, chosenDto, $lang)}
+              <li class="rider rider--hold">
+                {#if of}<BattleIcon name={of.mark} size="1em" weight={1.35} />{/if}
+                <span class="rider-word">{word || (of ? $t(of.word) : hold.name)}</span>
+                {#if word && of}<span class="rider-of">{$t(of.word)}</span>{/if}
+                {#if hold.amount > 0}<span class="num rider-num">{hold.amount}</span>{/if}
+                <span class="rider-turns">{$t('battleStatusTurns')} {hold.turns}</span>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+        <!-- Чем на него дышит поле. Отдельным списком, и срок у него не
+             назван: аура держится не ходами, а тем, кто ею дышит, — пал, отошёл
+             или его увели смутой, и её нет в тот же миг. -->
+        {#if (chosen.aura ?? []).length}
+          <ul class="chosen-riders">
+            {#each chosen.aura ?? [] as st, i (i)}
+              {@const of = RIDER_STATS[st.stat as keyof typeof RIDER_STATS]}
+              {@const word = riderWord(st, chosenDto, $lang)}
+              <li class="rider rider--aura" class:rider--ill={st.amount < 0}>
+                {#if of}<BattleIcon name={of.mark} size="1em" weight={1.35} />{/if}
+                <span class="rider-word">{word || (of ? $t(of.label) : st.name)}</span>
+                <span class="num rider-num"
+                  >{st.amount > 0 ? '+' : '−'}{Math.abs(st.amount)}</span
+                >
+                {#if word && of}<span class="rider-of">{$t(of.label)}</span>{/if}
+                <span class="rider-turns">{$t('battleAuraWhile')}</span>
+              </li>
+            {/each}
+          </ul>
+        {/if}
         {#if chosen.statuses.length}
           <ul class="chosen-riders">
             {#each chosen.statuses as st, i (i)}
-              <li>{st.name} <span class="num">{st.amount}</span> · {$t('battleStatusTurns')} {st.turns}</li>
+              {@const of = RIDER_STATS[st.stat as keyof typeof RIDER_STATS]}
+              {@const word = riderWord(st, chosenDto, $lang)}
+              <li class="rider" class:rider--ill={st.amount < 0}>
+                {#if of}<BattleIcon name={of.mark} size="1em" weight={1.35} />{/if}
+                <span class="rider-word">{word || (of ? $t(of.label) : st.name)}</span>
+                <span class="num rider-num"
+                  >{st.amount > 0 ? '+' : '−'}{Math.abs(st.amount)}</span
+                >
+                {#if word && of}<span class="rider-of">{$t(of.label)}</span>{/if}
+                <span class="rider-turns">{$t('battleStatusTurns')} {st.turns}</span>
+              </li>
             {/each}
           </ul>
         {/if}
@@ -1542,7 +2332,7 @@
       {#if journal.length}
       <ul class="journal-lines">
         {#each journal as line, i (i)}
-          <li>
+          <li class="log log--{line.kind}">
             {#if fill}<i class="log-ico log-ico--{line.kind}" aria-hidden="true"></i>{/if}
             <div class="log-body">
             {#if line.trail.length}
@@ -1583,7 +2373,7 @@
   <!-- Исход накрывает комнату, а не клетку поля: внутри 3×6 печать
        становилась узкой карточкой. Сургуч тот же, что при получении карты. -->
   {#if position.outcome && !playing}
-    <div class="seal-wrap" transition:fade={{ duration: 200 }}>
+    <div class="seal-veil" transition:fade={{ duration: 200 }}>
       <div class="verdict" class:verdict--dim={position.outcome !== 'player'}>
         <WaxSeal size={fill ? '9.5rem' : '6.5rem'} dim={position.outcome !== 'player'} />
         <div class="verdict-copy">
@@ -1634,7 +2424,7 @@
 {/if}
 
 <style>
-  .room {
+    .room {
     container-type: inline-size;
   }
 
@@ -1693,6 +2483,17 @@
     align-items: baseline;
     gap: 0.35rem 1.35rem;
     flex: 0 0 auto;
+  }
+
+  /* Листок свисает с шапки на доску, а доска в разметке ПОЗЖЕ и потому
+     рисуется поверх. Поднимается вся шапка, а не листок: `.crest-mark` носит
+     `filter`, фильтр открывает свой контекст наложения, и `z-index` листка
+     внутри него бессилен против соседа шапки — ровно тем же кончился бы
+     захват, положенный внутрь детали рамки. */
+  .crest,
+  .strip {
+    position: relative;
+    z-index: 40;
   }
 
   .strip-meta {
@@ -1862,13 +2663,8 @@
     align-items: stretch;
   }
 
-  .scene.scene--fill .ledger {
-    display: none;
-  }
-
   .scene.scene--fill .well {
     display: grid;
-    grid-area: board;
     place-items: center;
     min-width: 0;
     min-height: 0;
@@ -1878,31 +2674,16 @@
     overflow: hidden;
   }
 
-  .scene.scene--fill .table-hand--theirs {
-    display: flex;
-    grid-area: theirs;
-    align-items: center;
-    justify-content: center;
-    height: 1.7rem;
-    min-height: 1.7rem;
-    overflow: hidden;
-  }
-
   .scene.scene--fill .table,
   .scene.scene--fill.scene--along .table {
-    display: contents;
-    width: auto;
     flex: unset;
     min-height: 0;
-    height: auto;
-    max-width: none;
     gap: 0;
     overflow: visible;
   }
 
   .scene.scene--fill .foot,
   .scene.scene--fill.scene--along .foot {
-    grid-area: foot;
     width: 100%;
     margin: 0;
     max-width: none;
@@ -1918,7 +2699,6 @@
     margin: 0;
     max-width: 100%;
     max-height: 100%;
-    width: min(100cqw, calc(100cqh * var(--cols) * var(--fit, 0.714) / var(--rows)));
     height: auto;
     aspect-ratio: calc(var(--cols) * var(--fit, 0.714) / var(--rows));
     container-type: size;
@@ -1939,11 +2719,8 @@
     max-height: none;
     min-width: 0;
     box-sizing: border-box;
-    padding: 0.28rem;
-    background: #1a1210;
     border-color: #5a4630;
     outline-color: rgba(90, 70, 40, 0.55);
-    box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.45);
   }
 
   .scene.scene--fill .face,
@@ -1961,76 +2738,6 @@
     grid-template-rows: repeat(3, minmax(0, 1fr));
   }
 
-  .scene.scene--fill.scene--along .grid::before {
-    top: 0;
-    bottom: 0;
-    left: 0;
-    right: auto;
-    width: 50%;
-    height: auto;
-    background:
-      linear-gradient(90deg, rgba(110, 32, 24, 0.38), rgba(70, 28, 22, 0.12) 70%, transparent);
-  }
-
-  .scene.scene--fill.scene--along .grid::after {
-    top: 0;
-    bottom: 0;
-    right: 0;
-    left: auto;
-    width: 50%;
-    height: auto;
-    background:
-      radial-gradient(ellipse at 110% 50%, rgba(50, 90, 170, 0.28), transparent 55%),
-      linear-gradient(270deg, rgba(22, 40, 88, 0.42), rgba(24, 40, 72, 0.1) 72%, transparent);
-  }
-
-  .scene.scene--fill.scene--along .midline {
-    border: 0;
-    height: auto;
-    width: 0;
-    top: 0;
-    bottom: 0;
-    left: 50%;
-    right: auto;
-  }
-
-  .scene.scene--fill.scene--along .midline::before {
-    left: 50%;
-    right: auto;
-    top: 50%;
-    width: 88cqh;
-    height: 12px;
-    transform: translate(-50%, -50%) rotate(90deg);
-  }
-
-  .scene.scene--fill.scene--along .vs {
-    top: 50%;
-    left: 50%;
-    width: 4.2rem;
-    height: 4.2rem;
-    transform: translate(-50%, -50%);
-  }
-
-  .scene.scene--fill .zone {
-    font-size: 0.9rem;
-    letter-spacing: 0.16em;
-    padding: 0.32rem 0.8rem 0.28rem;
-    background: rgba(8, 6, 5, 0.88);
-  }
-
-  .scene.scene--fill.scene--along .zone--theirs {
-    top: 0.5rem;
-    left: 0.5rem;
-    bottom: auto;
-  }
-
-  .scene.scene--fill.scene--along .zone--mine {
-    top: 0.5rem;
-    right: 0.5rem;
-    left: auto;
-    bottom: auto;
-  }
-
   .scene.scene--fill .cell {
     aspect-ratio: auto;
     min-height: 0;
@@ -2039,31 +2746,24 @@
     container-type: size;
   }
 
-  .scene.scene--fill .cell:not(:has(.figure)):not(.cell--open):not(.cell--attack):not(.cell--mend):not(.cell--picked) {
+  .scene.scene--fill .cell:not(:has(.figure)):not(.cell--open):not(.cell--attack):not(.cell--mend):not(.cell--charm):not(.cell--spot):not(.cell--picked) {
     background: linear-gradient(160deg, rgba(48, 36, 28, 0.55), rgba(12, 10, 8, 0.8));
     border: 1px solid #4a3828;
     box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.55);
   }
 
-  .scene.scene--fill .cell--theirs:not(:has(.figure)):not(.cell--open):not(.cell--attack):not(.cell--mend):not(.cell--picked) {
+  .scene.scene--fill .cell--theirs:not(:has(.figure)):not(.cell--open):not(.cell--attack):not(.cell--mend):not(.cell--charm):not(.cell--spot):not(.cell--picked) {
     border-color: #6a3028;
     box-shadow:
       inset 0 0 14px rgba(160, 40, 30, 0.32),
       inset 0 0 10px rgba(0, 0, 0, 0.5);
   }
 
-  .scene.scene--fill .cell--mine:not(:has(.figure)):not(.cell--open):not(.cell--attack):not(.cell--mend):not(.cell--picked) {
+  .scene.scene--fill .cell--mine:not(:has(.figure)):not(.cell--open):not(.cell--attack):not(.cell--mend):not(.cell--charm):not(.cell--spot):not(.cell--picked) {
     border-color: #2a4068;
     box-shadow:
       inset 0 0 14px rgba(40, 80, 170, 0.3),
       inset 0 0 10px rgba(0, 0, 0, 0.5);
-  }
-
-  .scene.scene--fill .cell--picked {
-    border-color: transparent;
-    box-shadow:
-      0 0 0 2px #5ad4f0,
-      0 0 18px 4px rgba(62, 200, 232, 0.62);
   }
 
   .scene.scene--fill .figure {
@@ -2085,89 +2785,21 @@
   }
 
   .scene.scene--fill .foot {
-    height: 6.9rem;
-    min-height: 6.9rem;
-    max-height: 6.9rem;
-    overflow: visible;
     flex-wrap: nowrap;
-    align-items: flex-end;
-    padding: 0.1rem 0.2rem 0.15rem;
-    background: transparent;
   }
 
   .scene.scene--fill .foot .hand {
-    padding: 0;
-    height: 6.5rem;
     align-items: flex-end;
   }
 
-  .scene.scene--fill .foot .table-hand--mine {
-    height: 6.5rem;
-    overflow: hidden;
-  }
-
   .scene.scene--fill .aside {
-    grid-area: rail;
-    position: relative;
-    top: auto;
-    right: auto;
-    bottom: auto;
-    z-index: 8;
-    width: auto;
-    max-width: none;
-    margin: 0;
-    padding: 1rem 1.15rem 1rem 1.2rem;
-    background: #100c09;
     border: 1px solid #d4b06a;
-    outline: 1px solid rgba(138, 112, 64, 0.55);
     outline-offset: -4px;
-    overflow: auto;
-    color: #fff8ea;
-    box-shadow: inset 0 0 28px rgba(0, 0, 0, 0.45);
-  }
-
-  .scene.scene--fill .journal-label {
-    margin: 0 0 0.85rem;
-    font-family: Georgia, 'Fraunces', serif;
-    font-size: 1.22rem;
-    font-style: normal;
-    font-weight: 600;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: #ffe08a;
-    text-align: center;
-    text-shadow: 0 1px 0 #1a1208;
-  }
-
-  .scene.scene--fill .journal-lines {
-    font-size: 1.2rem;
-    line-height: 1.55;
-    color: #fff8ea;
-    gap: 0.55rem;
   }
 
   .scene.scene--fill .journal-plain,
   .scene.scene--fill .journal-open,
   .scene.scene--fill .log-body {
-    color: #fff8ea;
-  }
-
-  .scene.scene--fill .journal-open {
-    border-bottom-color: rgba(255, 224, 138, 0.55);
-  }
-
-  .scene.scene--fill .journal-open:hover {
-    color: #fff3c0;
-  }
-
-  .scene.scene--fill .journal-empty {
-    font-size: 1.08rem;
-    color: #f0e4c8;
-  }
-
-  .scene.scene--fill .breakdown {
-    background: #1a1410;
-    border-color: #8a7040;
     color: #fff8ea;
   }
 
@@ -2177,49 +2809,51 @@
     color: #fff8ea;
   }
 
-  .scene.scene--fill .chosen-name,
-  .scene.scene--fill .chosen-effect,
-  .scene.scene--fill .chosen-riders,
-  .scene.scene--fill .chosen-stats {
-    color: #fff8ea;
-  }
-
-  .scene.scene--fill .chosen-kind,
-  .scene.scene--fill .chosen-stats dt {
-    color: #ffe08a;
-  }
-
+  /* ГНЕЗДО руки — коробка домашней формы, ровно как клетка доски: гнездо не
+     смеет менять форму от того, какую раму надела карта, иначе веер выходит
+     ступеньками. Форма берётся из `--fit` со сцены, а не пишется литералом
+     `5 / 7`: литерал был третьим местом, где названа форма карты, и он молча
+     разошёлся с рамой — гнездо 107×150, карта внутри 105×157. */
   .scene.scene--fill .foot .held {
     flex: 0 0 auto;
     width: auto;
-    height: 6.5rem;
-    aspect-ratio: 5 / 7;
-    margin-inline: -0.28rem;
+    aspect-ratio: var(--fit, 0.714);
+    /* Гнёзда НАЛЕЗАЮТ друг на друга только тогда, когда иначе не влезают.
+       Постоянные −0.28rem были заведены под полную руку, а при трёх картах
+       давали ряд, в котором карты трогаются краями посреди пустого стола, —
+       и он читался случайной стопкой, а не разложенной рукой. */
+    margin-inline: calc(-0.28rem * max(0, var(--n, 3) - 5));
     transform: none;
-    filter: drop-shadow(0 2px 5px rgba(52, 37, 28, 0.16));
+    display: grid;
+    /* По НИЗУ: гнездо домашней формы, карта внутри — своей, и центрованная
+       низкая рама всплывала над соседками. Низ у ряда один. */
+    place-items: end center;
   }
 
   .scene.scene--fill .table-hand--theirs .held {
     width: auto;
     height: 2.55rem;
-    aspect-ratio: 5 / 7;
+    aspect-ratio: var(--fit, 0.714);
     margin-inline: -0.22rem;
+    display: grid;
+    place-items: center;
+  }
+
+  /* А КАРТА внутри — своей формы, и удерживается тем же способом, каким доска
+     удерживает её в клетке (`.figure-body`): ширина считается так, чтобы при
+     любой раме карта уместилась в гнездо целиком. До этого `.slot` брал всю
+     ширину гнезда и выводил высоту из своего `--aspect` — рама 0.67 давала
+     карту на 7px выше гнезда, и карты в руке налезали друг на друга.
+     Делитель и форма гнезда — ОДНА переменная: два числа здесь и были
+     болезнью. */
+  .scene.scene--fill .held > :global(.slot) {
+    width: min(100%, calc(100% * var(--aspect, 0.714) / var(--fit, 0.714)));
+    height: auto;
   }
 
   .scene.scene--fill .foot .held--picked,
   .scene.scene--fill .foot .held--mine:hover:not(:disabled) {
     transform: translateY(-0.45rem);
-  }
-
-  .scene.scene--fill .turn {
-    flex: 0 0 auto;
-    width: auto;
-    max-width: none;
-  }
-
-  .scene.scene--fill .end {
-    padding: 0 1.4rem 0.15rem;
-    font-size: 0.72rem;
   }
 
   .scene.scene--fill .omens {
@@ -2230,7 +2864,6 @@
   }
 
   .scene.scene--fill .omen-word {
-    max-width: 9rem;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -2351,7 +2984,7 @@
     transition: background-color 200ms ease, border-color 200ms ease;
   }
 
-  .cell:not(:has(.figure)):not(.cell--open):not(.cell--attack):not(.cell--mend):not(.cell--picked) {
+  .cell:not(:has(.figure)):not(.cell--open):not(.cell--attack):not(.cell--mend):not(.cell--charm):not(.cell--spot):not(.cell--picked) {
     background: radial-gradient(circle at 50% 50%, rgba(52, 37, 28, 0.1) 1.2px, transparent 1.7px);
   }
 
@@ -2379,7 +3012,8 @@
   /* Цель: подложка под картой, выступающая на два пиксела. Сплошная — удар,
      прерывистая — лечение. Ни зелёного, ни красного, и разница не в цвете. */
   .cell--attack::before,
-  .cell--mend::before {
+  .cell--mend::before,
+  .cell--charm::before {
     content: '';
     position: absolute;
     inset: 1px;
@@ -2392,6 +3026,13 @@
 
   .cell--mend::before {
     border: 2px dashed #6f3b24;
+  }
+
+  /* Цель чары — ДВОЙНАЯ кромка, приём обводки дома. Третьего цвета тут нет и
+     быть не должно: удар от лечения отличается формой, и чара отличается ею
+     же, иначе доска начинает говорить цветом то, что сказано формой. */
+  .cell--charm::before {
+    border: 3px double #6f3b24;
   }
 
   .figure {
@@ -2713,6 +3354,597 @@
     bottom: auto;
     top: 0.35rem;
     width: 8rem;
+  }
+
+
+
+  /* Клетка как ЦЕЛЬ чары: опасная клетка, призыв, свой шаг. Пунктирная
+     кромка с уголками — не подложка (та занята ударом) и не двойная кромка
+     (та занята чарой по телу): в клетку ткнут, а не по кому-то. */
+  .cell--spot::after {
+    content: '';
+    position: absolute;
+    inset: 2px;
+    pointer-events: none;
+    border: 1px dashed rgba(198, 95, 60, 0.85);
+    background: rgba(198, 95, 60, 0.07);
+  }
+
+  /* Опасная клетка. Штриховка та же, что у сукна, только гуще и косее: это
+     то же поле, только на нём теперь нельзя стоять. */
+  .burn {
+    position: absolute;
+    inset: 1px;
+    z-index: 0;
+    pointer-events: none;
+  }
+
+  .burn-hatch {
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+      -45deg,
+      rgba(143, 47, 34, 0.22) 0 2px,
+      transparent 2px 6px
+    );
+    border: 1px solid rgba(143, 47, 34, 0.4);
+  }
+
+  .burn-num {
+    position: absolute;
+    top: 2px;
+    left: 3px;
+    font-family: Georgia, 'Fraunces', serif;
+    font-size: 0.58rem;
+    font-style: normal;
+    font-variant-numeric: tabular-nums;
+    color: #8f2f22;
+  }
+
+  .nick--hold {
+    width: 3px;
+    height: 3px;
+    border-radius: 999px;
+  }
+
+  .rider--hold .rider-word,
+  .rider--aura .rider-word {
+    font-style: normal;
+  }
+
+  /* Аура — не наложенное: она держится тем, кто ею дышит, и потому подписана
+     не сроком, а тем, что он стоит. Отличается тем же, чем всё в этом доме, —
+     формой, а не цветом: пунктирная черта слева, как у прерывистой кромки
+     лечения на доске. */
+  .rider--aura {
+    border-inline-start: 1px dashed rgba(111, 59, 36, 0.5);
+    padding-inline-start: 0.3rem;
+  }
+
+  /* ── Поднос ──────────────────────────────────────────────────────────────
+     Печать на способ, и подписана та, что в руке. Разница между взятым и
+     просто тронутым видна: взятое — сургуч (дом говорит им «сделано»), всё
+     остальное — оттиск на бумаге.
+
+     Мёртвая печать отличается ФОРМОЙ, а не тусклостью: кромка пунктиром и
+     никакого сургуча под ней. Это то же правило, по которому удар от лечения
+     на доске отличается сплошной подложкой от прерывистой кромки, а не
+     красным от зелёного. */
+  .tray-slot {
+    /* ВНЕ ПОТОКА, и это обязательно: место в сетке назначено прямо
+       (`grid-area`), а раскладка ставит назначенное ПРЕЖДЕ остального — так
+       что обычным членом сетки поднос занимал клетку доски, и восемнадцатая
+       уезжала в новый ряд под сукно. Абсолютный ребёнок сетки место занимает,
+       не отнимая: сетка ему — содержащий блок, `inset: 0` — та самая клетка. */
+    position: absolute;
+    inset: 0;
+    z-index: 30;
+    /* Поднос накрывает соседние клетки, и брать сквозь него нельзя ничем,
+       кроме самих печатей. */
+    pointer-events: none;
+    /* Печать меряется КЛЕТКОЙ, а не точками: доска растягивается от телефона
+       до окна на всю высоту, и поднос, назначивший себе рост в rem, на одном
+       краю этого пути — заплатка, на другом — пуговица. Потолок и пол всё же
+       есть: ниже полутора рем печать перестаёт быть нажимаемой пальцем. */
+    container-type: inline-size;
+    --tool: clamp(1.55rem, 26cqw, 2.3rem);
+  }
+
+  .tray-anchor {
+    position: absolute;
+    left: 50%;
+    /* Чуть ниже середины КАРТЫ. Не под ней: выбор должен лежать там же, где
+       то, о чём он, — на теле, которое взяли в руку. */
+    top: 58%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: max-content;
+    transform: translate(-50%, -50%);
+  }
+
+  /* Крайней колонке некуда расширяться: поднос прижимается к её кромке вместо
+     того, чтобы встать посередине и уехать за сукно. */
+  .tray-anchor--start {
+    left: 8%;
+    align-items: flex-start;
+    transform: translate(0, -50%);
+  }
+
+  .tray-anchor--end {
+    left: auto;
+    right: 8%;
+    align-items: flex-end;
+    transform: translate(0, -50%);
+  }
+
+  .tray {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: inherit;
+  }
+
+  .tray-row {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.26rem;
+    /* Шесть печатей в ряд, дальше — вторым рядом. Карта дома несёт до шести
+       умений, то есть до восьми печатей вместе с ударом и лечением: в один ряд
+       они не встают, а поднос шире доски — это поднос, который закрывает доску. */
+    max-width: 15rem;
+    pointer-events: auto;
+  }
+
+  .tray-anchor--start .tray-row {
+    justify-content: flex-start;
+  }
+
+  .tray-anchor--end .tray-row {
+    justify-content: flex-end;
+  }
+
+  /* Печать — ЧЕРНИЛЬНЫЙ кружок в светлом ореоле, а не бумажный на бумаге.
+     Лежит она теперь на самой карте, а карта бывает любой: и почти белой
+     бумагой, и тёмной фотографией. Бумажная печать пропадала на первой же
+     светлой; чернильная в ореоле читается на обеих, и это не вкус, а условие —
+     выбор, которого не видно, не выбор.
+
+     Три кольца, и каждое за своё: светлое отделяет от карты, тёмное снаружи
+     держит силуэт на светлом, тень поднимает над бумагой. */
+  .tool {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: var(--tool, 2rem);
+    height: var(--tool, 2rem);
+    padding: 0;
+    border: 1.5px solid rgba(248, 241, 231, 0.92);
+    border-radius: 999px;
+    background: radial-gradient(circle at 34% 28%, #55402f, #2a1f18 76%);
+    color: #f6ecda;
+    cursor: pointer;
+    box-shadow:
+      0 0 0 1px rgba(52, 37, 28, 0.85),
+      0 3px 8px rgba(52, 37, 28, 0.45);
+    transition:
+      transform 160ms cubic-bezier(0.2, 0.8, 0.25, 1),
+      box-shadow 160ms ease,
+      opacity 200ms ease;
+    /* Печати ПРИКЛАДЫВАЮТ по одной, а не выкладывают кучей: каждая падает,
+       чуть переваливает через себя и садится. Задержка — по месту на подносе,
+       и это единственное, для чего `--i` нужен. */
+    animation: tool-press 320ms cubic-bezier(0.22, 0.9, 0.3, 1) backwards;
+    animation-delay: calc(var(--i, 0) * 42ms);
+  }
+
+  /* След от нажатия: кольцо расходится в тот же миг, когда печать села. */
+  .tool::before {
+    content: '';
+    position: absolute;
+    inset: -3px;
+    border: 1px solid rgba(111, 59, 36, 0.6);
+    border-radius: 999px;
+    pointer-events: none;
+    opacity: 0;
+    animation: tool-ripple 460ms ease-out backwards;
+    animation-delay: calc(var(--i, 0) * 42ms + 150ms);
+  }
+
+  @keyframes tool-press {
+    0% {
+      opacity: 0;
+      transform: translateY(-0.5rem) scale(0.5) rotate(-14deg);
+    }
+    60% {
+      opacity: 1;
+      transform: translateY(0) scale(1.12) rotate(3deg);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1) rotate(0deg);
+    }
+  }
+
+  @keyframes tool-ripple {
+    0% {
+      opacity: 0.75;
+      transform: scale(0.62);
+    }
+    100% {
+      opacity: 0;
+      transform: scale(1.6);
+    }
+  }
+
+  .tool:hover,
+  .tool--lit {
+    transform: translateY(-2px);
+    box-shadow:
+      0 0 0 1px rgba(52, 37, 28, 0.85),
+      0 5px 12px rgba(52, 37, 28, 0.5);
+  }
+
+  /* Тронутое, но не взятое: доска СВЕТИТ его цели, и сказать об этом надо —
+     иначе человек читает чужие цели как цели того, что у него в руке.
+     Обводка та же, какой обведено выбранное тело: это одно и то же «сейчас
+     смотрим сюда». */
+  .tool--lit:not(.tool--hand) {
+    box-shadow:
+      0 0 0 2px #c65f3c,
+      0 5px 12px rgba(52, 37, 28, 0.5);
+  }
+
+  /* Взятое — сургуч. */
+  .tool--hand {
+    border-color: rgba(255, 238, 220, 0.95);
+    background: radial-gradient(circle at 36% 28%, #e07a4e, #c65f3c 46%, #8d3a22);
+    color: #fff6ea;
+    transform: translateY(-3px) rotate(-3deg);
+    box-shadow:
+      0 0 0 1px rgba(90, 30, 16, 0.85),
+      inset 0 -2px 6px rgba(90, 30, 16, 0.55),
+      0 5px 13px rgba(52, 37, 28, 0.5);
+  }
+
+  /* Оттиск на сургуче: кольцо внутри, как у печати дома. */
+  .tool--hand::after {
+    content: '';
+    position: absolute;
+    inset: 3px;
+    border: 1px dashed rgba(255, 236, 218, 0.5);
+    border-radius: 999px;
+    pointer-events: none;
+  }
+
+  /* Мёртвая печать отличается ФОРМОЙ, а не тусклостью: кромка пунктиром и
+     бумага вместо чернил. То же правило, по которому удар от лечения на доске
+     отличается сплошной подложкой от прерывистой кромки, а не цветом. */
+  .tool--dim {
+    border-style: dashed;
+    border-color: rgba(52, 37, 28, 0.55);
+    background: rgba(248, 241, 231, 0.9);
+    color: rgba(52, 37, 28, 0.6);
+    cursor: default;
+    transform: none;
+    box-shadow: 0 0 0 1px rgba(248, 241, 231, 0.7);
+  }
+
+  .tool--dim::before {
+    display: none;
+  }
+
+  .tool--dim:hover {
+    transform: none;
+    box-shadow: 0 0 0 1px rgba(248, 241, 231, 0.7);
+  }
+
+  .tool-seal {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    height: 100%;
+  }
+
+  /* Число на печати — тем же кружком, каким карта печатает свои. */
+  .tool-num {
+    position: absolute;
+    right: -0.14rem;
+    bottom: -0.14rem;
+    min-width: 1.05em;
+    padding: 0 0.16em;
+    border: 1px solid #34251c;
+    border-radius: 999px;
+    background: #f8f1e7;
+    font-family: Georgia, 'Fraunces', serif;
+    font-size: 0.56rem;
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.45;
+    color: #34251c;
+  }
+
+  /* Цена — камнями маны, теми же, что в полосе хода. */
+  .tool-drops {
+    position: absolute;
+    top: -0.1rem;
+    left: -0.1rem;
+    display: flex;
+    gap: 1px;
+  }
+
+  .tool-drop {
+    width: 3px;
+    height: 3px;
+    background: #f8f1e7;
+    outline: 1px solid rgba(52, 37, 28, 0.5);
+    transform: rotate(45deg);
+  }
+
+  .tool--dim .tool-drop {
+    background: #6f3b24;
+    outline: none;
+  }
+
+  /* Сколько ходов до возвращения. Стоит на самой печати: отката на доске не
+     видно НИЧЕМ, и молчание о нём читается как поломка. */
+  .tool-sleep {
+    position: absolute;
+    top: -0.2rem;
+    right: -0.2rem;
+    display: grid;
+    place-items: center;
+    width: 0.92rem;
+    height: 0.92rem;
+    border: 1px solid rgba(52, 37, 28, 0.75);
+    border-radius: 999px;
+    background: #f8f1e7;
+    font-family: Georgia, 'Fraunces', serif;
+    font-size: 0.52rem;
+    font-style: normal;
+    font-variant-numeric: tabular-nums;
+    color: #8f2f22;
+  }
+
+  /* Подпись — ВНЕ ПОТОКА, и это не мелочь: пока она стояла в столбце, середина
+     подноса приходилась на печати ВМЕСТЕ с ней, и ряд уезжал выше середины
+     карты ровно на половину подписи. Теперь по месту равняются печати, а
+     подпись висит под ними. */
+  .tray-tag {
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: center;
+    gap: 0 0.34rem;
+    width: max-content;
+    max-width: 12.5rem;
+    margin-top: 0.26rem;
+    transform: translateX(-50%) rotate(-0.6deg);
+    padding: 0.2rem 0.44rem 0.24rem;
+    border: 1px solid rgba(198, 95, 60, 0.5);
+    background: linear-gradient(
+      180deg,
+      rgba(248, 241, 231, 0.97),
+      rgba(232, 214, 190, 0.96)
+    );
+    box-shadow:
+      0 0 0 1px rgba(52, 37, 28, 0.14),
+      0 6px 14px rgba(52, 37, 28, 0.24);
+    font-family: Georgia, 'Fraunces', serif;
+    font-size: 0.64rem;
+    line-height: 1.25;
+    color: #34251c;
+  }
+
+  /* Нижнему ряду подпись уходит НАД печатями: под ними у него уже сукно. */
+  .tray-anchor--over .tray-tag {
+    top: auto;
+    bottom: 100%;
+    margin-top: 0;
+    margin-bottom: 0.26rem;
+  }
+
+  /* У прижатого к кромке подноса подпись равняется по той же кромке: середина
+     чужой ширины увела бы её за сукно. */
+  .tray-anchor--start .tray-tag {
+    left: 0;
+    transform: translateX(0) rotate(-0.6deg);
+  }
+
+  .tray-anchor--end .tray-tag {
+    left: auto;
+    right: 0;
+    transform: translateX(0) rotate(-0.6deg);
+  }
+
+  /* Светлый ореол — тот же приём, что у печатей: подпись лежит на карте, и
+     карта под ней бывает и белой бумагой, и тёмной фотографией. */
+  .tray-tag {
+    border-color: #6f3b24;
+    box-shadow:
+      0 0 0 1.5px rgba(248, 241, 231, 0.9),
+      0 0 0 2.5px rgba(52, 37, 28, 0.5),
+      0 6px 14px rgba(52, 37, 28, 0.3);
+  }
+
+  .tray-word {
+    font-style: italic;
+    font-weight: 600;
+    color: #6f3b24;
+  }
+
+  .tray-nums {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 0.3rem;
+    opacity: 0.85;
+  }
+
+  .tray-of,
+  .tray-turns,
+  .tray-reach,
+  .tray-spread {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.14rem;
+  }
+
+  .tray-why {
+    font-style: italic;
+    color: #8f2f22;
+  }
+
+  /* `prefers-reduced-motion` — обязательство: поднос выкладывается сразу. */
+  @media (prefers-reduced-motion: reduce) {
+    .tool,
+    .tool::before {
+      animation: none;
+    }
+
+    .tool::before {
+      display: none;
+    }
+
+    .tool,
+    .tool:hover,
+    .tool--hand,
+    .tool--lit {
+      transform: none;
+    }
+  }
+
+  /* ── Правило круга и листок ─────────────────────────────────────────────
+     Приписка стоит у слова «Круг», потому что правило держит сторону, а не
+     тело. Печать рядом — вход для того, кто пришёл прочесть; зовёт она один
+     раз, в тот миг, когда правило впервые укусило, и гаснет навсегда, как
+     только листок открыли: мигание, которое не кончается, перестаёт значить
+     что-либо на третьем круге. */
+  .opening {
+    margin-inline-start: 0.5rem;
+    font-size: 0.9em;
+    opacity: 0.8;
+  }
+
+  .opening--spent {
+    opacity: 1;
+    color: #c65f3c;
+  }
+
+  .scene.scene--chamber .opening--spent {
+    color: #ffc978;
+  }
+
+  .seal-wrap {
+    position: relative;
+    display: inline-flex;
+    margin-inline-start: 0.45rem;
+    vertical-align: -0.2em;
+  }
+
+  .rules-seal {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.45rem;
+    height: 1.45rem;
+    padding: 0;
+    border: 1px solid currentColor;
+    border-radius: 999px;
+    background: transparent;
+    color: inherit;
+    opacity: 0.65;
+    cursor: pointer;
+    transition: opacity 200ms ease, color 200ms ease;
+  }
+
+  .rules-seal:hover,
+  .rules-seal[aria-expanded='true'] {
+    opacity: 1;
+  }
+
+  /* Один зов, а не постоянное мигание: класс снимается открытием листка. */
+  .rules-seal--calls {
+    opacity: 1;
+    color: #c65f3c;
+    animation: seal-call 2.2s ease-in-out infinite;
+  }
+
+  .scene.scene--chamber .rules-seal--calls {
+    color: #ffc978;
+  }
+
+  @keyframes seal-call {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 rgba(198, 95, 60, 0);
+    }
+    50% {
+      box-shadow: 0 0 0 5px rgba(198, 95, 60, 0.22);
+    }
+  }
+
+  /* `prefers-reduced-motion` — обязательство: зов остаётся, качание уходит. */
+  @media (prefers-reduced-motion: reduce) {
+    .rules-seal--calls {
+      animation: none;
+      box-shadow: 0 0 0 3px rgba(198, 95, 60, 0.22);
+    }
+  }
+
+  .rules-leaf {
+    position: absolute;
+    top: calc(100% + 0.5rem);
+    inset-inline-end: 0;
+    z-index: 30;
+    width: 20rem;
+    max-width: 72vw;
+    padding: 0.7rem 0.85rem 0.8rem;
+    border: 1px solid #d8c6b1;
+    background: #f8f1e7;
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.35);
+    color: #34251c;
+    /* Герб набран разрядкой и прописными; листок — обычный текст, и наследовать
+       ту разрядку он не должен. */
+    font-family: Georgia, 'Fraunces', serif;
+    letter-spacing: normal;
+    text-transform: none;
+    text-align: start;
+  }
+
+  .rules-leaf-head {
+    margin: 0 0 0.5rem;
+    font-size: 0.72rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: #6f3b24;
+  }
+
+  .rules-leaf-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .rules-leaf-list li {
+    font-size: 0.84rem;
+    line-height: 1.35;
+  }
+
+  .rules-leaf-note {
+    display: block;
+    margin-top: 0.25rem;
+    font-size: 0.78rem;
+    line-height: 1.45;
+    font-style: italic;
+    color: #6f3b24;
   }
 
   /* Комната: стили ЗДЕСЬ, не в chamber.css — scoped `.stuck-tip` иначе
@@ -3238,7 +4470,13 @@
 
   /* ── Печать ────────────────────────────────────────────────────────────── */
 
-  .seal-wrap {
+  /* ПОКРЫВАЛО исхода, и имя у него своё. Оно звалось `.seal-wrap` — тем же
+     словом, что и оправа печати свода правил в шапке, — а правила Svelte при
+     равном весе решает порядком: покрывало стоит в стилях ниже и назначало
+     СВОЁ `position: absolute; inset: 0` ОБОИМ. Оправа в шапке от этого
+     растягивалась на всю табличку, и кружок свода вставал ровно посреди слов
+     «Ваш ход». Надпись была не тусклая — она была ПЕРЕКРЫТА. */
+  .seal-veil {
     position: absolute;
     inset: 0;
     z-index: 6;
@@ -3307,7 +4545,7 @@
 
   /* Комната: печать накрывает зал целиком — не клетку поля. Панель лежит
      вдоль, чернила светлые на тёмном металле. Пергамент сюда не входит. */
-  .scene.scene--fill .seal-wrap {
+  .scene.scene--fill .seal-veil {
     z-index: 40;
     display: grid;
     place-items: center;
@@ -3327,16 +4565,9 @@
     margin: 0;
     padding: 2rem 2.4rem;
     text-align: left;
-    background:
-      linear-gradient(160deg, #221810 0%, #120e0a 55%, #0e0a08 100%);
     border: 2px solid #e0c078;
-    outline: 1px solid #6a5028;
     outline-offset: 6px;
-    box-shadow:
-      0 20px 56px rgba(0, 0, 0, 0.65),
-      inset 0 0 40px rgba(0, 0, 0, 0.35);
     transform: none;
-    color: #fff8ea;
   }
 
   .scene.scene--fill .verdict--dim {
@@ -3355,7 +4586,6 @@
   .scene.scene--fill .seal-word {
     font-size: clamp(2rem, 3.6vw, 2.7rem);
     line-height: 1.12;
-    color: #fff8ea;
     text-shadow: 0 1px 0 #1a1208;
   }
 
@@ -3365,7 +4595,6 @@
     font-size: 1.22rem;
     font-weight: 600;
     line-height: 1.4;
-    color: #fff3d0;
   }
 
   .scene.scene--fill .seal-line--bar {
@@ -3392,7 +4621,6 @@
     padding: 0.7rem 1.1rem 0.62rem;
     border: 1px solid #e0c078;
     background: #2a1c10;
-    color: #fff3d0;
   }
 
   .scene.scene--fill .door:hover {
@@ -3431,5 +4659,4 @@
   .face {
     position: relative;
   }
-
 </style>

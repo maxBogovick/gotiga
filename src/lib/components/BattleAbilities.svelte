@@ -20,6 +20,7 @@
   import StatCell from '$lib/components/sheet/StatCell.svelte';
   import {
     ABILITIES_MAX,
+    RIDER_STATS,
     CHANNELS,
     CHANNEL_ICON,
     CHANNEL_LABELS,
@@ -32,14 +33,18 @@
     VERB_LABELS,
     shapeCarriesNumber,
   } from '$lib/battles';
-  import type { CardAbility } from '$lib/types/api';
+  import type { BattleCard, CardAbility } from '$lib/types/api';
 
   let {
     abilities = $bindable([]),
     pointsOf = () => null,
     editLang = null,
+    shelf = [],
   }: {
     abilities: CardAbility[];
+    /** Полка, из которой призыв выбирает призванного. Пуста — слаг вписывают
+     *  руками: у гостя в студии полки дома под рукой может и не быть. */
+    shelf?: BattleCard[];
     /** Сколько весит способность — числом от сервера или ничего. */
     pointsOf?: (id: string) => number | null;
     /** На каком языке подписывать ленту. Пусто — язык страницы: у стола
@@ -69,6 +74,8 @@
         manaCost: 0,
         cooldown: 0,
         keywords: [],
+        stat: '',
+        summon: '',
       },
     ];
     // Заведённое берётся в руку сразу: его затем и заводили, а лента без этого
@@ -126,6 +133,15 @@
   }
 
   const abilityPoints = (id: string) => pointsOf(id);
+
+  /** Несёт ли это умение радиус: цепь и круг — формой, опасная клетка —
+   *  глаголом. */
+  const carriesRadius = (a: CardAbility) =>
+    shapeCarriesNumber(a.shape) || a.verb === 'zone';
+
+  /** Четыре показателя, которыми правит всадник. Список читается из того же
+   *  словаря, что рисует их на карте и в бою: второй разошёлся бы с ним. */
+  const RIDER_STAT_LIST = Object.keys(RIDER_STATS) as (keyof typeof RIDER_STATS)[];
 </script>
 
   <!-- Лента умений: по медальону на каждое, лицом глагола и своим
@@ -281,13 +297,14 @@
               max={99}
               bind:value={abilities[i].amount}
             />
+            <!-- Радиус несут две пригоршни — и опасная клетка: котёл шириной
+                 в одну клетку и котёл шириной в три это одно поле, а не два
+                 разных умения. -->
             <StatCell
               icon={ability.shape}
               label={$t("cardAbilRadius")}
-              tone={shapeCarriesNumber(ability.shape)
-                ? "plain"
-                : "quiet"}
-              readonly={!shapeCarriesNumber(ability.shape)}
+              tone={carriesRadius(ability) ? "plain" : "quiet"}
+              readonly={!carriesRadius(ability)}
               min={0}
               max={3}
               bind:value={abilities[i].radius}
@@ -346,6 +363,54 @@
             {/each}
           </div>
         </div>
+
+        <!-- Кого призывает призыв. Без карты движок этой чары не играет
+             вовсе: призыв без тела не призыв, и хранитель увидит это не
+             словами, а тем, что чара не выходит в бою. Поэтому список стоит
+             прямо здесь, а не где-нибудь в примечании. -->
+        {#if ability.verb === "summon"}
+          <SheetField label={$t("cardAbilSummon")}>
+            {#if shelf.length}
+              <select bind:value={abilities[i].summon}>
+                <option value="">{$t("cardAbilSummonNone")}</option>
+                {#each shelf as card (card.slug)}
+                  <option value={card.slug}
+                    >{(shownLang === "en" ? card.titleEn : card.titleRu) ||
+                      card.slug}</option
+                  >
+                {/each}
+              </select>
+            {:else}
+              <input bind:value={abilities[i].summon} placeholder="slug" />
+            {/if}
+          </SheetField>
+        {/if}
+
+        <!-- Чем правит всадник — только у проклятия и благословения. У
+             остальных глаголов это поле не значит ничего, и показывать его
+             значило бы предложить выбор, которого нет. Пустое — сила. -->
+        {#if ability.verb === "curse" || ability.verb === "bless"}
+          <div class="col-span-2">
+            <span
+              class="block mb-1.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+              >{$t("cardAbilStat")}</span
+            >
+            <div class="flex items-start gap-4">
+              {#each RIDER_STAT_LIST as stat (stat)}
+                <Medallion
+                  icon={RIDER_STATS[stat].mark}
+                  caption={$t(RIDER_STATS[stat].label)}
+                  size={30}
+                  selected={(ability.stat || "power") === stat}
+                  onclick={() => (abilities[i].stat = stat)}
+                />
+              {/each}
+            </div>
+            <p class="mt-1.5 text-[10px] leading-relaxed italic text-[#8a6a55]">
+              {$t("cardAbilStatHint")}
+            </p>
+          </div>
+        {/if}
 
         <SheetField
           label={`${$t("cardAbilName")} · RU`}

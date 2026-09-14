@@ -12,6 +12,11 @@
 
 import type {
   AbilityShape,
+  BattleAbilitySnap,
+  BattleAction,
+  BattleHoldKind,
+  BattleUnit,
+  RiderStat,
   AbilityTrigger,
   AbilityVerb,
   BattleBadgeShape,
@@ -48,14 +53,14 @@ import type {
   SliceSide,
   SliceSlot,
   SliceTurn,
-} from '$lib/types/api';
-import { fontStack } from '$lib/fonts';
-import type { Lang, TranslationKey } from '$lib/i18n';
+} from "$lib/types/api";
+import { fontStack } from "$lib/fonts";
+import type { Lang, TranslationKey } from "$lib/i18n";
 
 export const TIERS = [1, 2, 3, 4, 5] as const;
 
 /** The two coins. `dust` settles on its own; `feed` is given by hand. */
-export type Coin = 'dust' | 'feed';
+export type Coin = "dust" | "feed";
 
 /**
  * The same five frames the server hands out — kept here so a card still has a
@@ -82,10 +87,15 @@ export const DEFAULT_POWER_X = 86;
 export const DEFAULT_POWER_Y = 88;
 
 export const SLICE_SLOTS: SliceSlot[] = [
-  'corner', 'sideH', 'sideV', 'cornerExtra', 'sideMidH', 'sideMidV',
+  "corner",
+  "sideH",
+  "sideV",
+  "cornerExtra",
+  "sideMidH",
+  "sideMidV",
 ];
-export const SLICE_FITS: SliceFit[] = ['stretch', 'contain', 'cover', 'tile'];
-export const SLICE_TURNS: SliceTurn[] = ['mirror', 'rotate', 'none'];
+export const SLICE_FITS: SliceFit[] = ["stretch", "contain", "cover", "tile"];
+export const SLICE_TURNS: SliceTurn[] = ["mirror", "rotate", "none"];
 /** How far past its band a copy may reach, in % of the card — wide enough for
  *  a corner to swallow a whole edge band, short of a second card face. */
 export const SLICE_GROW_MAX = 40;
@@ -101,23 +111,29 @@ function place(): SlicePlace {
 /** Which shape each named slot is. The six were the five shapes all along —
  *  writing it down is what lets an added ornament pick one. */
 export const SLICE_KIND: Record<SliceSlot, SliceKind> = {
-  corner: 'corner',
-  sideH: 'edgeH',
-  sideV: 'edgeV',
-  cornerExtra: 'corner',
-  sideMidH: 'midH',
-  sideMidV: 'midV',
+  corner: "corner",
+  sideH: "edgeH",
+  sideV: "edgeV",
+  cornerExtra: "corner",
+  sideMidH: "midH",
+  sideMidV: "midV",
 };
 
-export const SLICE_KINDS: SliceKind[] = ['corner', 'edgeH', 'edgeV', 'midH', 'midV'];
+export const SLICE_KINDS: SliceKind[] = [
+  "corner",
+  "edgeH",
+  "edgeV",
+  "midH",
+  "midV",
+];
 
 /** Which copies a shape has. */
 export const KIND_SIDES: Record<SliceKind, SliceSide[]> = {
-  corner: ['tl', 'tr', 'bl', 'br'],
-  edgeH: ['top', 'bottom'],
-  edgeV: ['left', 'right'],
-  midH: ['top', 'bottom'],
-  midV: ['left', 'right'],
+  corner: ["tl", "tr", "bl", "br"],
+  edgeH: ["top", "bottom"],
+  edgeV: ["left", "right"],
+  midH: ["top", "bottom"],
+  midV: ["left", "right"],
 };
 
 /** Which copies each named slot has — read through its shape, so the two can
@@ -145,18 +161,23 @@ export const SLICE_SIDES: Record<SliceSlot, SliceSide[]> = {
  */
 export const SLICE_SIDE_AXES: Record<
   SliceSide,
-  { anchorX: 'left' | 'right'; anchorY: 'top' | 'bottom'; gripX: 'left' | 'right'; gripY: 'top' | 'bottom' }
+  {
+    anchorX: "left" | "right";
+    anchorY: "top" | "bottom";
+    gripX: "left" | "right";
+    gripY: "top" | "bottom";
+  }
 > = {
-  tl: { anchorX: 'left', anchorY: 'top', gripX: 'right', gripY: 'bottom' },
-  tr: { anchorX: 'right', anchorY: 'top', gripX: 'left', gripY: 'bottom' },
-  bl: { anchorX: 'left', anchorY: 'bottom', gripX: 'right', gripY: 'top' },
-  br: { anchorX: 'right', anchorY: 'bottom', gripX: 'left', gripY: 'top' },
+  tl: { anchorX: "left", anchorY: "top", gripX: "right", gripY: "bottom" },
+  tr: { anchorX: "right", anchorY: "top", gripX: "left", gripY: "bottom" },
+  bl: { anchorX: "left", anchorY: "bottom", gripX: "right", gripY: "top" },
+  br: { anchorX: "right", anchorY: "bottom", gripX: "left", gripY: "top" },
   // An edge has one anchored side and one free run. Along the run the anchor is
   // the end the run is measured from, so a nudge reads the same on both edges.
-  top: { anchorX: 'left', anchorY: 'top', gripX: 'right', gripY: 'bottom' },
-  bottom: { anchorX: 'left', anchorY: 'bottom', gripX: 'right', gripY: 'top' },
-  left: { anchorX: 'left', anchorY: 'top', gripX: 'right', gripY: 'bottom' },
-  right: { anchorX: 'right', anchorY: 'top', gripX: 'left', gripY: 'bottom' },
+  top: { anchorX: "left", anchorY: "top", gripX: "right", gripY: "bottom" },
+  bottom: { anchorX: "left", anchorY: "bottom", gripX: "right", gripY: "top" },
+  left: { anchorX: "left", anchorY: "top", gripX: "right", gripY: "bottom" },
+  right: { anchorX: "right", anchorY: "top", gripX: "left", gripY: "bottom" },
 };
 
 /** Which way a drag of `dx`/`dy` counts on this copy. Derived from the axes
@@ -165,15 +186,15 @@ export const SLICE_SIDE_AXES: Record<
 export function sliceSigns(side: SliceSide) {
   const axes = SLICE_SIDE_AXES[side];
   return {
-    nudgeX: axes.anchorX === 'left' ? 1 : -1,
-    nudgeY: axes.anchorY === 'top' ? 1 : -1,
-    growX: axes.gripX === 'right' ? 1 : -1,
-    growY: axes.gripY === 'bottom' ? 1 : -1,
+    nudgeX: axes.anchorX === "left" ? 1 : -1,
+    nudgeY: axes.anchorY === "top" ? 1 : -1,
+    growX: axes.gripX === "right" ? 1 : -1,
+    growY: axes.gripY === "bottom" ? 1 : -1,
   };
 }
 
-export type SliceResizeX = 'left' | 'right';
-export type SliceResizeY = 'top' | 'bottom';
+export type SliceResizeX = "left" | "right";
+export type SliceResizeY = "top" | "bottom";
 
 /**
  * How a drag on one or two edges of a copy's box turns into grow/nudge.
@@ -193,40 +214,46 @@ export function sliceResizeDelta(
   yEdge: SliceResizeY | null,
   dx: number,
   dy: number,
-): Pick<SlicePlace, 'growX' | 'growY' | 'nudgeX' | 'nudgeY'> {
-  const x = xEdge ? resizeAxis(kind, side, 'x', xEdge, dx) : { grow: 0, nudge: 0 };
-  const y = yEdge ? resizeAxis(kind, side, 'y', yEdge, dy) : { grow: 0, nudge: 0 };
+): Pick<SlicePlace, "growX" | "growY" | "nudgeX" | "nudgeY"> {
+  const x = xEdge
+    ? resizeAxis(kind, side, "x", xEdge, dx)
+    : { grow: 0, nudge: 0 };
+  const y = yEdge
+    ? resizeAxis(kind, side, "y", yEdge, dy)
+    : { grow: 0, nudge: 0 };
   return { growX: x.grow, nudgeX: x.nudge, growY: y.grow, nudgeY: y.nudge };
 }
 
 function resizeAxis(
   kind: SliceKind,
   side: SliceSide,
-  axis: 'x' | 'y',
+  axis: "x" | "y",
   edge: SliceResizeX | SliceResizeY,
   d: number,
 ): { grow: number; nudge: number } {
   const axes = SLICE_SIDE_AXES[side];
   const sign = sliceSigns(side);
-  const grip = axis === 'x' ? axes.gripX : axes.gripY;
+  const grip = axis === "x" ? axes.gripX : axes.gripY;
   const fromGrip = edge === grip;
-  const growSign = axis === 'x' ? sign.growX : sign.growY;
-  const nudgeSign = axis === 'x' ? sign.nudgeX : sign.nudgeY;
+  const growSign = axis === "x" ? sign.growX : sign.growY;
+  const nudgeSign = axis === "x" ? sign.nudgeX : sign.nudgeY;
 
   // A medallion is centred on its edge: width/height grows both ways from
   // the midpoint, so planting the far side means the centre has to walk
   // with the pointer at half speed.
   const centred =
-    (kind === 'midH' && axis === 'x') || (kind === 'midV' && axis === 'y');
+    (kind === "midH" && axis === "x") || (kind === "midV" && axis === "y");
   if (centred) {
-    const start = axis === 'x' ? 'left' : 'top';
-    return edge === start ? { grow: -d, nudge: d / 2 } : { grow: d, nudge: d / 2 };
+    const start = axis === "x" ? "left" : "top";
+    return edge === start
+      ? { grow: -d, nudge: d / 2 }
+      : { grow: d, nudge: d / 2 };
   }
 
   // An edge's LENGTH is taken off both ends. Half the delta goes to grow
   // and half to the shift, so the held end moves 1:1 and the far one stays.
   const dual =
-    (kind === 'edgeH' && axis === 'x') || (kind === 'edgeV' && axis === 'y');
+    (kind === "edgeH" && axis === "x") || (kind === "edgeV" && axis === "y");
   if (dual) {
     return fromGrip
       ? { grow: d / 2, nudge: d / 2 }
@@ -240,10 +267,14 @@ function resizeAxis(
   return { grow: -d * growSign, nudge: d * nudgeSign };
 }
 
-function piece(kind: SliceKind, layer: number, fit: SliceFit = 'stretch'): SlicePiece {
+function piece(
+  kind: SliceKind,
+  layer: number,
+  fit: SliceFit = "stretch",
+): SlicePiece {
   const places: Partial<Record<SliceSide, SlicePlace>> = {};
   for (const side of KIND_SIDES[kind]) places[side] = place();
-  return { layer, fit, turn: 'mirror', linked: true, places };
+  return { layer, fit, turn: "mirror", linked: true, places };
 }
 
 /**
@@ -258,28 +289,31 @@ function piece(kind: SliceKind, layer: number, fit: SliceFit = 'stretch'): Slice
  */
 export function defaultSlices(): SlicePieces {
   return {
-    corner: piece('corner', 2),
-    sideH: piece('edgeH', 3),
-    sideV: piece('edgeV', 3),
-    cornerExtra: piece('corner', 5, 'contain'),
-    sideMidH: piece('midH', 5, 'contain'),
-    sideMidV: piece('midV', 5, 'contain'),
+    corner: piece("corner", 2),
+    sideH: piece("edgeH", 3),
+    sideV: piece("edgeV", 3),
+    cornerExtra: piece("corner", 5, "contain"),
+    sideMidH: piece("midH", 5, "contain"),
+    sideMidV: piece("midV", 5, "contain"),
   };
 }
 
 /** A flourish the keeper just added: a picture, a shape, and the accents'
  *  own habits — laid in whole, above the assembly. */
-export function newOrnament(image: string, kind: SliceKind = 'corner'): SliceOrnament {
+export function newOrnament(
+  image: string,
+  kind: SliceKind = "corner",
+): SliceOrnament {
   return {
     id: crypto.randomUUID(),
     image,
     kind,
-    ...piece(kind, 5, 'contain'),
+    ...piece(kind, 5, "contain"),
   };
 }
 
 function span(v: unknown): number | null {
-  return typeof v === 'number' && Number.isFinite(v)
+  return typeof v === "number" && Number.isFinite(v)
     ? Math.min(SLICE_GROW_MAX, Math.max(-SLICE_GROW_MAX, v))
     : null;
 }
@@ -288,15 +322,16 @@ function placesOf(given: SlicePiece | undefined, kind: SliceKind) {
   const places: Partial<Record<SliceSide, SlicePlace>> = {};
   for (const side of KIND_SIDES[kind]) {
     const had = given?.places?.[side];
-    places[side] = had && typeof had === 'object'
-      ? {
-          growX: span(had.growX) ?? 0,
-          growY: span(had.growY) ?? 0,
-          nudgeX: span(had.nudgeX) ?? 0,
-          nudgeY: span(had.nudgeY) ?? 0,
-          shown: had.shown !== false,
-        }
-      : place();
+    places[side] =
+      had && typeof had === "object"
+        ? {
+            growX: span(had.growX) ?? 0,
+            growY: span(had.growY) ?? 0,
+            nudgeX: span(had.nudgeX) ?? 0,
+            nudgeY: span(had.nudgeY) ?? 0,
+            shown: had.shown !== false,
+          }
+        : place();
   }
   return places;
 }
@@ -304,16 +339,22 @@ function placesOf(given: SlicePiece | undefined, kind: SliceKind) {
 /** One piece's picture settings and the placement of each of its copies, held
  *  to the same ranges the server holds them to — the admin's preview paints a
  *  frame that has not been saved yet, and the two must agree on what is seen. */
-function settle(given: SlicePiece | undefined, kind: SliceKind, base: SlicePiece): SlicePiece {
-  if (!given || typeof given !== 'object') return { ...base, places: placesOf(undefined, kind) };
+function settle(
+  given: SlicePiece | undefined,
+  kind: SliceKind,
+  base: SlicePiece,
+): SlicePiece {
+  if (!given || typeof given !== "object")
+    return { ...base, places: placesOf(undefined, kind) };
   const layer = Number(given.layer);
   return {
-    layer: Number.isFinite(layer) && layer >= 1 && layer <= SLICE_LAYERS
-      ? Math.round(layer)
-      : base.layer,
+    layer:
+      Number.isFinite(layer) && layer >= 1 && layer <= SLICE_LAYERS
+        ? Math.round(layer)
+        : base.layer,
     fit: SLICE_FITS.includes(given.fit) ? given.fit : base.fit,
     turn: SLICE_TURNS.includes(given.turn) ? given.turn : base.turn,
-    linked: typeof given.linked === 'boolean' ? given.linked : true,
+    linked: typeof given.linked === "boolean" ? given.linked : true,
     places: placesOf(given, kind),
   };
 }
@@ -334,8 +375,12 @@ export function completeSlices(frame: BattleFrame): BattleFrame {
   const ornaments = (frame.ornaments ?? [])
     .filter((one) => one && one.id && one.image?.trim())
     .map((one) => {
-      const kind = SLICE_KINDS.includes(one.kind) ? one.kind : 'corner';
-      return { ...one, kind, ...settle(one, kind, defaultSlices().cornerExtra) };
+      const kind = SLICE_KINDS.includes(one.kind) ? one.kind : "corner";
+      return {
+        ...one,
+        kind,
+        ...settle(one, kind, defaultSlices().cornerExtra),
+      };
     });
   return {
     ...frame,
@@ -361,7 +406,7 @@ export function slotArt(frame: BattleFrame, slot: SliceSlot): string {
       cornerExtra: frame.cornerExtra,
       sideMidH: frame.sideMidH,
       sideMidV: frame.sideMidV,
-    }[slot] ?? ''
+    }[slot] ?? ""
   ).trim();
 }
 
@@ -389,23 +434,34 @@ export function carving(frame: BattleFrame, showEmpty = false): CarvedPiece[] {
     // не «подсказка», а сама деталь: та же коробка, тот же `data-piece`, тот же
     // захват — просто в ней пока ничего не нарисовано.
     if (!image && !showEmpty) continue;
-    out.push({ id: slot, kind: SLICE_KIND[slot], image, piece: pieceOf(frame, slot) });
+    out.push({
+      id: slot,
+      kind: SLICE_KIND[slot],
+      image,
+      piece: pieceOf(frame, slot),
+    });
   }
   for (const one of frame.ornaments ?? []) {
     const image = one?.image?.trim();
     if (!one?.id || !image) continue;
-    const kind = SLICE_KINDS.includes(one.kind) ? one.kind : 'corner';
-    out.push({ id: one.id, kind, image, piece: settle(one, kind, defaultSlices().cornerExtra) });
+    const kind = SLICE_KINDS.includes(one.kind) ? one.kind : "corner";
+    out.push({
+      id: one.id,
+      kind,
+      image,
+      piece: settle(one, kind, defaultSlices().cornerExtra),
+    });
   }
   return out;
 }
 
 /** What shape a piece is, named slot or added flourish alike. */
 export function kindOf(frame: BattleFrame, id: string): SliceKind | null {
-  if ((SLICE_SLOTS as string[]).includes(id)) return SLICE_KIND[id as SliceSlot];
+  if ((SLICE_SLOTS as string[]).includes(id))
+    return SLICE_KIND[id as SliceSlot];
   const found = frame.ornaments?.find((one) => one.id === id);
   if (!found) return null;
-  return SLICE_KINDS.includes(found.kind) ? found.kind : 'corner';
+  return SLICE_KINDS.includes(found.kind) ? found.kind : "corner";
 }
 
 /** The live piece with this id ON THIS FRAME OBJECT, made if the frame was
@@ -439,24 +495,29 @@ export interface CarvedCopy {
   style: string;
 }
 
-function boxOf(frame: BattleFrame, kind: SliceKind, side: SliceSide, at: SlicePlace): string {
+function boxOf(
+  frame: BattleFrame,
+  kind: SliceKind,
+  side: SliceSide,
+  at: SlicePlace,
+): string {
   const top = frame.insetTop || 0;
   const right = frame.insetRight || 0;
   const bottom = frame.insetBottom || 0;
   const left = frame.insetLeft || 0;
   const { anchorX, anchorY } = SLICE_SIDE_AXES[side];
   // The band this copy starts from: its own two insets.
-  const acrossX = anchorX === 'left' ? left : right;
-  const acrossY = anchorY === 'top' ? top : bottom;
-  if (kind === 'corner') {
+  const acrossX = anchorX === "left" ? left : right;
+  const acrossY = anchorY === "top" ? top : bottom;
+  if (kind === "corner") {
     return [
       `${anchorY}:${at.nudgeY}%`,
       `${anchorX}:${at.nudgeX}%`,
       `width:${acrossX + at.growX}%`,
       `height:${acrossY + at.growY}%`,
-    ].join(';');
+    ].join(";");
   }
-  if (kind === 'edgeH') {
+  if (kind === "edgeH") {
     // `grow` along the run is taken off BOTH ends, so growing it reaches in
     // under the two corners — the join that was impossible while a band was
     // also a boundary.
@@ -465,81 +526,101 @@ function boxOf(frame: BattleFrame, kind: SliceKind, side: SliceSide, at: SlicePl
       `height:${acrossY + at.growY}%`,
       `left:${left - at.growX + at.nudgeX}%`,
       `right:${right - at.growX - at.nudgeX}%`,
-    ].join(';');
+    ].join(";");
   }
-  if (kind === 'edgeV') {
+  if (kind === "edgeV") {
     return [
       `${anchorX}:${at.nudgeX}%`,
       `width:${acrossX + at.growX}%`,
       `top:${top - at.growY + at.nudgeY}%`,
       `bottom:${bottom - at.growY - at.nudgeY}%`,
-    ].join(';');
+    ].join(";");
   }
   // A medallion: centred on its edge, and square to the band it rides on, so it
   // reads at the scale of the border rather than at whatever its file happens
   // to be. The centring translate is composed with the mirror below.
-  const size = kind === 'midH' ? acrossY : acrossX;
-  return kind === 'midH'
+  const size = kind === "midH" ? acrossY : acrossX;
+  return kind === "midH"
     ? [
         `${anchorY}:${at.nudgeY}%`,
         `left:calc(50% + ${at.nudgeX}%)`,
         `width:${size + at.growX}%`,
         `height:${size + at.growY}%`,
-      ].join(';')
+      ].join(";")
     : [
         `${anchorX}:${at.nudgeX}%`,
         `top:calc(50% + ${at.nudgeY}%)`,
         `width:${size + at.growX}%`,
         `height:${size + at.growY}%`,
-      ].join(';');
+      ].join(";");
 }
 
 /** How a copy is turned to reach its side. The FIRST copy of a piece — top-left
  *  corner, lintel, left side — is never turned; the rest are mirrored by
  *  default, so an asymmetric flourish stays right-side up wherever it lands. */
 function turnOf(kind: SliceKind, side: SliceSide, turn: SliceTurn): string {
-  const centring = kind === 'midH' ? 'translateX(-50%)' : kind === 'midV' ? 'translateY(-50%)' : '';
+  const centring =
+    kind === "midH"
+      ? "translateX(-50%)"
+      : kind === "midV"
+        ? "translateY(-50%)"
+        : "";
   const first = KIND_SIDES[kind][0];
-  let face = '';
+  let face = "";
   if (side !== first) {
-    if (turn === 'rotate') {
+    if (turn === "rotate") {
       // Quarter turns run the way a corner round is drawn: clockwise from the
       // top-left, so the piece meets the same two edges it was cut against.
-      face = kind === 'corner'
-        ? { tr: 'rotate(90deg)', br: 'rotate(180deg)', bl: 'rotate(270deg)' }[side as 'tr' | 'br' | 'bl']
-        : 'rotate(180deg)';
-    } else if (turn === 'mirror') {
-      face = kind === 'corner'
-        ? { tr: 'scaleX(-1)', bl: 'scaleY(-1)', br: 'scale(-1, -1)' }[side as 'tr' | 'bl' | 'br']
-        : KIND_SIDES[kind][0] === 'top' ? 'scaleY(-1)' : 'scaleX(-1)';
+      face =
+        kind === "corner"
+          ? { tr: "rotate(90deg)", br: "rotate(180deg)", bl: "rotate(270deg)" }[
+              side as "tr" | "br" | "bl"
+            ]
+          : "rotate(180deg)";
+    } else if (turn === "mirror") {
+      face =
+        kind === "corner"
+          ? { tr: "scaleX(-1)", bl: "scaleY(-1)", br: "scale(-1, -1)" }[
+              side as "tr" | "bl" | "br"
+            ]
+          : KIND_SIDES[kind][0] === "top"
+            ? "scaleY(-1)"
+            : "scaleX(-1)";
     }
   }
-  const both = [centring, face].filter(Boolean).join(' ');
-  return both ? `transform:${both}` : '';
+  const both = [centring, face].filter(Boolean).join(" ");
+  return both ? `transform:${both}` : "";
 }
 
 /** `background-size`/`-repeat`/`-position` for one fit. `tile` is the only one
  *  that has to know which way the band runs: a running vine repeats ALONG its
  *  edge and is scaled across it, never the other way round. */
 function fitOf(kind: SliceKind, fit: SliceFit): string {
-  if (fit === 'contain') return 'background-size:contain;background-position:center';
-  if (fit === 'cover') return 'background-size:cover;background-position:center';
-  if (fit === 'tile') {
+  if (fit === "contain")
+    return "background-size:contain;background-position:center";
+  if (fit === "cover")
+    return "background-size:cover;background-position:center";
+  if (fit === "tile") {
     // A tile has to start from the band's own anchor, or the repeat would begin
     // mid-picture.
     const along =
-      kind === 'edgeH' || kind === 'midH' ? 'background-size:auto 100%;background-repeat:repeat-x'
-      : kind === 'edgeV' || kind === 'midV' ? 'background-size:100% auto;background-repeat:repeat-y'
-      : 'background-size:auto;background-repeat:repeat';
+      kind === "edgeH" || kind === "midH"
+        ? "background-size:auto 100%;background-repeat:repeat-x"
+        : kind === "edgeV" || kind === "midV"
+          ? "background-size:100% auto;background-repeat:repeat-y"
+          : "background-size:auto;background-repeat:repeat";
     return `${along};background-position:left top`;
   }
-  return 'background-size:100% 100%;background-position:center';
+  return "background-size:100% 100%;background-position:center";
 }
 
 /** Every copy of every piece, ready to render. A copy the keeper put out is
  *  simply not here — an accent over the lintel and nothing on the sill is one
  *  unticked box, not a second upload with half of it erased. */
-export function carvedCopies(frame: BattleFrame, showEmpty = false): CarvedCopy[] {
+export function carvedCopies(
+  frame: BattleFrame,
+  showEmpty = false,
+): CarvedCopy[] {
   const out: CarvedCopy[] = [];
   for (const { id, kind, image, piece: settled } of carving(frame, showEmpty)) {
     // Пустая деталь: коробка на месте, картинки нет. Пунктир рисуется здесь же,
@@ -547,7 +628,7 @@ export function carvedCopies(frame: BattleFrame, showEmpty = false): CarvedCopy[
     // второе место, где решается, как копия выглядит, однажды разошлось бы.
     const paint = image
       ? `background-image:url("${cssUrl(image)}");${fitOf(kind, settled.fit)};background-repeat:no-repeat`
-      : 'outline:1px dashed rgba(52,37,28,0.35);outline-offset:-2px;background:rgba(52,37,28,0.04)';
+      : "outline:1px dashed rgba(52,37,28,0.35);outline-offset:-2px;background:rgba(52,37,28,0.04)";
     for (const side of KIND_SIDES[kind]) {
       const at = settled.places[side];
       if (!at || at.shown === false) continue;
@@ -558,7 +639,9 @@ export function carvedCopies(frame: BattleFrame, showEmpty = false): CarvedCopy[
         paint,
         `z-index:${settled.layer}`,
         turnOf(kind, side, settled.turn),
-      ].filter(Boolean).join(';');
+      ]
+        .filter(Boolean)
+        .join(";");
       out.push({ id, side, layer: settled.layer, style });
     }
   }
@@ -576,11 +659,30 @@ export function carvedCopies(frame: BattleFrame, showEmpty = false): CarvedCopy[
 /** Все строки описи, в домашнем порядке. Порядок здесь — порядок на карте у
  *  рамки, которая описи не трогала. */
 export const SHEET_SLOTS: SheetSlot[] = [
-  'raceIcon', 'race', 'kind', 'channel', 'pips',
-  'title', 'rank', 'traits', 'effect', 'lore',
-  'health', 'mana', 'armor', 'ward', 'reach', 'step', 'mend',
-  'stats',
-  'cost', 'power', 'healthMark', 'new', 'costWord', 'powerWord',
+  "raceIcon",
+  "race",
+  "kind",
+  "channel",
+  "pips",
+  "title",
+  "rank",
+  "traits",
+  "effect",
+  "lore",
+  "health",
+  "mana",
+  "armor",
+  "ward",
+  "reach",
+  "step",
+  "mend",
+  "stats",
+  "cost",
+  "power",
+  "healthMark",
+  "new",
+  "costWord",
+  "powerWord",
 ];
 
 /**
@@ -591,7 +693,13 @@ export const SHEET_SLOTS: SheetSlot[] = [
  * щедрое из чисел (см. `statGroupShow`).
  */
 export const SHEET_STATS: BodyStatField[] = [
-  'health', 'mana', 'armor', 'ward', 'reach', 'step', 'mend',
+  "health",
+  "mana",
+  "armor",
+  "ward",
+  "reach",
+  "step",
+  "mend",
 ];
 
 export function isStatSlot(slot: SheetSlot): slot is BodyStatField {
@@ -601,7 +709,13 @@ export function isStatSlot(slot: SheetSlot): slot is BodyStatField {
 /** Ступени в том порядке, в каком их предлагают: от «нигде» к «везде», и
  *  особая пятая — «только в клетке» — последней, потому что она единственная
  *  говорит про потолок, а не про порог. */
-export const SHEET_SHOWS: SheetShow[] = ['never', 'large', 'always', 'cell', 'cellOnly'];
+export const SHEET_SHOWS: SheetShow[] = [
+  "never",
+  "large",
+  "always",
+  "cell",
+  "cellOnly",
+];
 
 /**
  * Коробка паспорта видна с той величины, с какой видно самое щедрое из чисел в
@@ -614,11 +728,12 @@ export function statGroupShow(rows: SheetRow[]): SheetShow {
   // «только в клетке» потолок, а не порог, и по номеру в списке её не сложить
   // с остальными. Чего накрыть нельзя (лист и клетка без полки), накрывается с
   // запасом — лишний раз показанная пустая коробка честнее спрятанного числа.
-  if (has('cell') || ((has('large') || has('always')) && has('cellOnly'))) return 'cell';
-  if (has('always')) return 'always';
-  if (has('cellOnly')) return 'cellOnly';
-  if (has('large')) return 'large';
-  return 'never';
+  if (has("cell") || ((has("large") || has("always")) && has("cellOnly")))
+    return "cell";
+  if (has("always")) return "always";
+  if (has("cellOnly")) return "cellOnly";
+  if (has("large")) return "large";
+  return "never";
 }
 
 /**
@@ -630,30 +745,30 @@ export function statGroupShow(rows: SheetRow[]): SheetShow {
  * что имеет смысл, вместо того чтобы позволить выбрать заведомо сломанное.
  */
 export const SHEET_SLOT_BANDS: Record<SheetSlot, SheetBand[]> = {
-  raceIcon: ['head', 'props', 'foot'],
-  race: ['head', 'props', 'foot'],
-  kind: ['head', 'props', 'foot'],
-  channel: ['head', 'props', 'foot'],
-  pips: ['head', 'props', 'foot'],
-  title: ['props', 'head', 'foot'],
-  rank: ['props', 'head', 'foot'],
-  traits: ['props'],
-  effect: ['props'],
-  lore: ['props'],
-  health: ['props', 'foot', 'head'],
-  mana: ['props', 'foot', 'head'],
-  armor: ['props', 'foot', 'head'],
-  ward: ['props', 'foot', 'head'],
-  reach: ['props', 'foot', 'head'],
-  step: ['props', 'foot', 'head'],
-  mend: ['props', 'foot', 'head'],
-  stats: ['foot', 'head', 'props'],
-  cost: ['over'],
-  power: ['over'],
-  healthMark: ['over'],
-  new: ['over', 'head', 'foot'],
-  costWord: ['over'],
-  powerWord: ['over'],
+  raceIcon: ["head", "props", "foot"],
+  race: ["head", "props", "foot"],
+  kind: ["head", "props", "foot"],
+  channel: ["head", "props", "foot"],
+  pips: ["head", "props", "foot"],
+  title: ["props", "head", "foot"],
+  rank: ["props", "head", "foot"],
+  traits: ["props"],
+  effect: ["props"],
+  lore: ["props"],
+  health: ["props", "foot", "head"],
+  mana: ["props", "foot", "head"],
+  armor: ["props", "foot", "head"],
+  ward: ["props", "foot", "head"],
+  reach: ["props", "foot", "head"],
+  step: ["props", "foot", "head"],
+  mend: ["props", "foot", "head"],
+  stats: ["foot", "head", "props"],
+  cost: ["over"],
+  power: ["over"],
+  healthMark: ["over"],
+  new: ["over", "head", "foot"],
+  costWord: ["over"],
+  powerWord: ["over"],
 };
 
 /**
@@ -676,20 +791,20 @@ export function defaultSheet(): SheetRow[] {
   return SHEET_SLOTS.map((slot) => ({
     slot,
     show:
-      slot === 'costWord' || slot === 'powerWord'
-        ? 'never'
-        : slot === 'healthMark'
+      slot === "costWord" || slot === "powerWord"
+        ? "never"
+        : slot === "healthMark"
           ? // Кружок здоровья — ТОЛЬКО в клетке боя, и «только» здесь
             // существенно: он встаёт ровно туда, где стоит стоимость, и
             // появляется ровно тогда, когда та исчезает. На полке цена и сила
             // напечатаны на бумаге и никуда не денутся; в клетке цена не
             // значит ничего, а здоровье — всё.
-            'cellOnly'
-          : slot === 'title'
-            ? 'cell'
-            : slot === 'lore'
-              ? 'large'
-              : 'always',
+            "cellOnly"
+          : slot === "title"
+            ? "cell"
+            : slot === "lore"
+              ? "large"
+              : "always",
     band: SHEET_SLOT_BANDS[slot][0],
   }));
 }
@@ -699,7 +814,9 @@ export function defaultSheet(): SheetRow[] {
  *  `BATTLE-SCENE.md` держится обратного («числа только у раненых»). */
 export function cellSheet(): SheetRow[] {
   return defaultSheet().map((row) =>
-    row.slot === 'health' || row.slot === 'power' ? { ...row, show: 'cell' } : row,
+    row.slot === "health" || row.slot === "power"
+      ? { ...row, show: "cell" }
+      : row,
   );
 }
 
@@ -712,7 +829,9 @@ export function cellSheet(): SheetRow[] {
  * сохранением. Пустое — это «как в доме», и поэтому переезда данных не
  * потребовалось.
  */
-export function normalizeSheet(given: SheetRow[] | null | undefined): SheetRow[] {
+export function normalizeSheet(
+  given: SheetRow[] | null | undefined,
+): SheetRow[] {
   const seen = new Set<SheetSlot>();
   const rows: SheetRow[] = [];
   for (const row of given ?? []) {
@@ -722,7 +841,7 @@ export function normalizeSheet(given: SheetRow[] | null | undefined): SheetRow[]
     const bands = SHEET_SLOT_BANDS[slot];
     rows.push({
       slot,
-      show: SHEET_SHOWS.includes(row.show) ? row.show : 'always',
+      show: SHEET_SHOWS.includes(row.show) ? row.show : "always",
       band: bands.includes(row.band) ? row.band : bands[0],
     });
   }
@@ -742,7 +861,7 @@ export function normalizeSheet(given: SheetRow[] | null | undefined): SheetRow[]
 
 /** Полосы в том порядке, в каком они стоят на карте. Ими же перечисляются
  *  ящики на столе, чтобы список и карта читались одинаково. */
-export const SHEET_BANDS: SheetBand[] = ['head', 'props', 'foot', 'over'];
+export const SHEET_BANDS: SheetBand[] = ["head", "props", "foot", "over"];
 
 /**
  * Переложить строку описи — в другую полосу, на другое место, или и то и
@@ -809,23 +928,28 @@ export function moveSheetRow(
  * не решают — см. `byWidth` в `BattleCard`), поэтому здесь достаточно «строка
  * не снята», а не ступень `cell`/`cellOnly`.
  */
-export function cellPrints(frame: Pick<BattleFrame, 'sheet'>, slot: SheetSlot): boolean {
-  return sheetOf(frame).some((row) => row.slot === slot && row.show !== 'never');
+export function cellPrints(
+  frame: Pick<BattleFrame, "sheet">,
+  slot: SheetSlot,
+): boolean {
+  return sheetOf(frame).some(
+    (row) => row.slot === slot && row.show !== "never",
+  );
 }
 
 /** Опись этой рамы. Один вход для всех, кто её читает, — и карты, и стола. */
-export function sheetOf(frame: Pick<BattleFrame, 'sheet'>): SheetRow[] {
+export function sheetOf(frame: Pick<BattleFrame, "sheet">): SheetRow[] {
   return normalizeSheet(frame.sheet);
 }
 
 /** Строки одной полосы, в порядке описи. */
 export function sheetBand(rows: SheetRow[], band: SheetBand): SheetRow[] {
-  return rows.filter((row) => row.band === band && row.show !== 'never');
+  return rows.filter((row) => row.band === band && row.show !== "never");
 }
 
 /** Показывается ли строка хоть где-нибудь. */
 export function sheetShows(rows: SheetRow[], slot: SheetSlot): boolean {
-  return rows.some((row) => row.slot === slot && row.show !== 'never');
+  return rows.some((row) => row.slot === slot && row.show !== "never");
 }
 
 /**
@@ -834,6 +958,50 @@ export function sheetShows(rows: SheetRow[], slot: SheetSlot): boolean {
  * второе, своё, развело бы предпросмотр и комнату.
  */
 export const SHEET_LARGE_MIN = 281;
+
+/**
+ * Вторая ступень — порог полки. То же число, по которому карта делит себя сама
+ * (`@container`, 161 px); второе, своё, развело бы предпросмотр и комнату
+ * ровно так же, как развело бы первое.
+ */
+export const SHEET_SHELF_MIN = 161;
+
+/**
+ * Ширины, на которых карта стоит в комнате НА САМОМ ДЕЛЕ.
+ *
+ * Числа не круглые для красоты: это те самые 281 и 161, по которым карта делит
+ * себя сама, взятые по обе стороны от каждого порога, — каждая ширина
+ * ЗАВЕДОМО в своей полосе, а не на её краю. Один список на весь дом: стенд
+ * «Лица карты» и стол резчика обязаны показывать одну и ту же карту, а два
+ * списка разошлись бы на первом же подправленном числе, и один из двух
+ * предпросмотров начал бы врать молча.
+ *
+ * От крупного к мелкому: рамку строят на листе взятия, где видно всё, и
+ * проверяют на полке и в клетке, где видно не всё.
+ */
+export const CARD_WIDTHS = [400, 261, 140] as const;
+
+/**
+ * До какой ступени описи дотягивается карта такой ширины.
+ *
+ * Спрашивается у ШИРИНЫ, а не у величины стенда: карта делит себя сама, теми
+ * же двумя порогами, и назвать полосу вторым способом значило бы завести
+ * вторую правду о том, что на карте напечатано.
+ */
+export function widthShow(width: number): "large" | "always" | "cell" {
+  if (width >= SHEET_LARGE_MIN) return "large";
+  if (width >= SHEET_SHELF_MIN) return "always";
+  return "cell";
+}
+
+/**
+ * Какой высоты карта такой ширины. `aspect` — ширина к высоте (дом: 5 к 7),
+ * поэтому высота делением, а не умножением; округляется, потому что показывают
+ * её хранителю, а не считают из неё.
+ */
+export function cardTallAt(width: number, aspect: number): number {
+  return Math.round(width / (aspect || DEFAULT_ASPECT));
+}
 
 /**
  * Сколько карта обязана уступить значкам стоимости и силы и метке «новая» —
@@ -862,16 +1030,22 @@ export function badgeReserve(
     powerWord: boolean;
     newOver: boolean;
   },
-): { headLeft: number; headRight: number; bodyLeft: number; bodyRight: number } {
+): {
+  headLeft: number;
+  headRight: number;
+  bodyLeft: number;
+  bodyRight: number;
+} {
   let headLeft = 0;
   let headRight = 0;
   let bodyLeft = 0;
   let bodyRight = 0;
-  if (frame.layout === 'corners') {
+  if (frame.layout === "corners") {
     const aspect = frame.aspect || DEFAULT_ASPECT;
     const top = frame.insetTop || 0;
     const bottom = frame.insetBottom || 0;
-    const headBottom = top + (frame.headerShare ?? DEFAULT_HEADER_SHARE) * (100 - top - bottom);
+    const headBottom =
+      top + (frame.headerShare ?? DEFAULT_HEADER_SHARE) * (100 - top - bottom);
     // Величина значка входит в расчёт: увеличенный кружок и лезет дальше в
     // шапку, и просит больше отступа. Отступ, посчитанный по домашним 10.5cqi,
     // молча разошёлся бы с тем, что нарисовано, — ровно та же поломка, что
@@ -897,7 +1071,9 @@ export function badgeReserve(
       const halfSize = badge.extent.w / 2;
       const half = (badge.extent.h / 2) * aspect;
       const inHead = badge.y - half <= headBottom;
-      const reach = badge.word ? Math.max(BADGE_WORD_REACH, halfSize) : halfSize;
+      const reach = badge.word
+        ? Math.max(BADGE_WORD_REACH, halfSize)
+        : halfSize;
       const near = badge.x < 50;
       const room = near
         ? badge.x + reach - (frame.insetLeft || 0)
@@ -911,7 +1087,8 @@ export function badgeReserve(
   }
   // Метка «новая» лежит поверх правого края шапки. В потоке полосы (её можно
   // поставить и туда) она места не занимает и уступать ей нечего.
-  if (opts.isNew && opts.newOver) headRight = Math.max(headRight, NEW_MARK_REACH);
+  if (opts.isNew && opts.newOver)
+    headRight = Math.max(headRight, NEW_MARK_REACH);
   return {
     headLeft: Math.max(0, headLeft),
     headRight: Math.max(0, headRight),
@@ -926,20 +1103,34 @@ export function badgeReserve(
  * значках это была мелкая неопрятность, при трёх стало бы шесть развилок,
  * каждую из которых можно забыть по отдельности.
  */
-export type BadgeKind = 'cost' | 'power' | 'health';
+export type BadgeKind = "cost" | "power" | "health";
 
-export const BADGE_KINDS: BadgeKind[] = ['cost', 'power', 'health'];
+export const BADGE_KINDS: BadgeKind[] = ["cost", "power", "health"];
 
 export const BADGE_FIELDS = {
   cost: {
-    x: 'costX', y: 'costY', shape: 'costShape', fill: 'costFill',
-    ink: 'costInk', size: 'costSize', weight: 'costWeight', plate: 'costPlate',
-    homeX: DEFAULT_COST_X, homeY: DEFAULT_COST_Y,
+    x: "costX",
+    y: "costY",
+    shape: "costShape",
+    fill: "costFill",
+    ink: "costInk",
+    size: "costSize",
+    weight: "costWeight",
+    plate: "costPlate",
+    homeX: DEFAULT_COST_X,
+    homeY: DEFAULT_COST_Y,
   },
   power: {
-    x: 'powerX', y: 'powerY', shape: 'powerShape', fill: 'powerFill',
-    ink: 'powerInk', size: 'powerSize', weight: 'powerWeight', plate: 'powerPlate',
-    homeX: DEFAULT_POWER_X, homeY: DEFAULT_POWER_Y,
+    x: "powerX",
+    y: "powerY",
+    shape: "powerShape",
+    fill: "powerFill",
+    ink: "powerInk",
+    size: "powerSize",
+    weight: "powerWeight",
+    plate: "powerPlate",
+    homeX: DEFAULT_POWER_X,
+    homeY: DEFAULT_POWER_Y,
   },
   // У здоровья поля СВОИ, но пустые они значат «как у стоимости» (см.
   // `BADGE_HOME` ниже). Сперва их не было вовсе — кружок здоровья не «походил
@@ -949,17 +1140,30 @@ export const BADGE_FIELDS = {
   // Откат к стоимости оставлен затем, что старый закон был не глуп: пока
   // хранитель молчит, два кружка остаются одним и разойтись не могут.
   health: {
-    x: 'healthX', y: 'healthY', shape: 'healthShape', fill: 'healthFill',
-    ink: 'healthInk', size: 'healthSize', weight: 'healthWeight', plate: 'healthPlate',
-    homeX: DEFAULT_COST_X, homeY: DEFAULT_COST_Y,
+    x: "healthX",
+    y: "healthY",
+    shape: "healthShape",
+    fill: "healthFill",
+    ink: "healthInk",
+    size: "healthSize",
+    weight: "healthWeight",
+    plate: "healthPlate",
+    homeX: DEFAULT_COST_X,
+    homeY: DEFAULT_COST_Y,
   },
 } as const satisfies Record<
   BadgeKind,
   {
-    x: keyof BattleFrame; y: keyof BattleFrame; shape: keyof BattleFrame;
-    fill: keyof BattleFrame; ink: keyof BattleFrame; size: keyof BattleFrame;
-    weight: keyof BattleFrame; plate: keyof BattleFrame;
-    homeX: number; homeY: number;
+    x: keyof BattleFrame;
+    y: keyof BattleFrame;
+    shape: keyof BattleFrame;
+    fill: keyof BattleFrame;
+    ink: keyof BattleFrame;
+    size: keyof BattleFrame;
+    weight: keyof BattleFrame;
+    plate: keyof BattleFrame;
+    homeX: number;
+    homeY: number;
   }
 >;
 
@@ -969,11 +1173,18 @@ export const BADGE_FIELDS = {
  * Одна запись, а не откат, повторённый в каждом из семи чтений: разойтись
  * семи копиям одного правила — вопрос времени, и разошлись бы они молча.
  */
-export const BADGE_HOME: Partial<Record<BadgeKind, BadgeKind>> = { health: 'cost' };
+export const BADGE_HOME: Partial<Record<BadgeKind, BadgeKind>> = {
+  health: "cost",
+};
 
-type BadgeFieldKey = 'x' | 'y' | 'shape' | 'fill' | 'ink' | 'size' | 'weight' | 'plate';
+type BadgeFieldKey =
+  "x" | "y" | "shape" | "fill" | "ink" | "size" | "weight" | "plate";
 
-function badgeRaw(frame: BattleFrame, kind: BadgeKind, key: BadgeFieldKey): unknown {
+function badgeRaw(
+  frame: BattleFrame,
+  kind: BadgeKind,
+  key: BadgeFieldKey,
+): unknown {
   return frame[BADGE_FIELDS[kind][key] as keyof BattleFrame];
 }
 
@@ -985,28 +1196,39 @@ function badgeRaw(frame: BattleFrame, kind: BadgeKind, key: BadgeFieldKey): unkn
  * путаница, а лестница: снял своё — вернулся к стоимости, снял и у стоимости —
  * вернулся к раме.
  */
-export function badgeText(frame: BattleFrame, kind: BadgeKind, key: BadgeFieldKey): string {
-  const own = ((badgeRaw(frame, kind, key) as string) ?? '').trim();
+export function badgeText(
+  frame: BattleFrame,
+  kind: BadgeKind,
+  key: BadgeFieldKey,
+): string {
+  const own = ((badgeRaw(frame, kind, key) as string) ?? "").trim();
   if (own) return own;
   const home = BADGE_HOME[kind];
-  return home ? ((badgeRaw(frame, home, key) as string) ?? '').trim() : '';
+  return home ? ((badgeRaw(frame, home, key) as string) ?? "").trim() : "";
 }
 
 /** Числовое поле значка. Ноль — «не назначено», как у `typeScale`. */
-export function badgeNum(frame: BattleFrame, kind: BadgeKind, key: 'size' | 'weight'): number {
+export function badgeNum(
+  frame: BattleFrame,
+  kind: BadgeKind,
+  key: "size" | "weight",
+): number {
   const own = badgeRaw(frame, kind, key) as number;
   if (own) return own;
   const home = BADGE_HOME[kind];
-  return home ? ((badgeRaw(frame, home, key) as number) || 0) : 0;
+  return home ? (badgeRaw(frame, home, key) as number) || 0 : 0;
 }
 
 /** Где значок стоит на самом деле — со своим местом, местом донашиваемого и
  *  домашним, в этом порядке, и с прижатием к карте. `null` здесь значит «не
  *  назначено», а ноль — верхний левый угол, поэтому проверка на `!= null`, а
  *  не на истинность. */
-export function badgeAt(frame: BattleFrame, kind: BadgeKind): { x: number; y: number } {
+export function badgeAt(
+  frame: BattleFrame,
+  kind: BadgeKind,
+): { x: number; y: number } {
   const keys = BADGE_FIELDS[kind];
-  const axis = (key: 'x' | 'y', home: number) => {
+  const axis = (key: "x" | "y", home: number) => {
     const own = badgeRaw(frame, kind, key) as number | null | undefined;
     if (own != null) return own;
     const under = BADGE_HOME[kind];
@@ -1017,8 +1239,8 @@ export function badgeAt(frame: BattleFrame, kind: BadgeKind): { x: number; y: nu
     return home;
   };
   return badgeSpot(
-    axis('x', keys.homeX),
-    axis('y', keys.homeY),
+    axis("x", keys.homeX),
+    axis("y", keys.homeY),
     frame.aspect || DEFAULT_ASPECT,
     badgeExtent(frame, kind),
   );
@@ -1089,9 +1311,12 @@ export function badgeSpot(
  * только если заливка выбрана: без заливки цифра лежит на самой карте, и
  * `badgeInk` даёт её чернила.
  */
-export function badgeStyle(frame: BattleFrame, kind: BadgeKind): string | undefined {
-  const fill = badgeText(frame, kind, 'fill');
-  const ink = badgeText(frame, kind, 'ink');
+export function badgeStyle(
+  frame: BattleFrame,
+  kind: BadgeKind,
+): string | undefined {
+  const fill = badgeText(frame, kind, "fill");
+  const ink = badgeText(frame, kind, "ink");
   const plate = badgePlate(frame, kind);
   const size = badgeScale(frame, kind);
   const weight = badgeWeight(frame, kind);
@@ -1112,7 +1337,7 @@ export function badgeStyle(frame: BattleFrame, kind: BadgeKind): string | undefi
   else if (plate) parts.push(`--badge-ink:${frame.ink}`);
   if (size !== 1) parts.push(`--badge-size:${size}`);
   if (weight) parts.push(`--badge-weight:${weight}`);
-  return parts.length ? parts.join(';') : undefined;
+  return parts.length ? parts.join(";") : undefined;
 }
 
 /**
@@ -1125,27 +1350,36 @@ export function badgeStyle(frame: BattleFrame, kind: BadgeKind): string | undefi
  * каждом из трёх мест, где жетон нужен (отрисовщик, коробка, стол).
  */
 export function badgePlate(frame: BattleFrame, kind: BadgeKind): string {
-  return badgeText(frame, kind, 'plate');
+  return badgeText(frame, kind, "plate");
 }
 
 /** Форма значка. Пустая — «как у того, чей наряд донашиваем», а если и там
  *  пусто, то кружок: форма есть у всякого значка, её нельзя не иметь. */
-export function badgeShape(frame: BattleFrame, kind: BadgeKind): BattleBadgeShape {
-  return (badgeText(frame, kind, 'shape') as BattleBadgeShape) || 'circle';
+export function badgeShape(
+  frame: BattleFrame,
+  kind: BadgeKind,
+): BattleBadgeShape {
+  return (badgeText(frame, kind, "shape") as BattleBadgeShape) || "circle";
 }
 
 /** Множитель величины значка. Ноль и мусор — «не назначено», как у `typeScale`:
  *  рамка, сохранённая до этой ручки, несёт ноль. */
 export function badgeScale(frame: BattleFrame, kind: BadgeKind): number {
-  return clampScale(badgeNum(frame, kind, 'size'), BADGE_SCALE_MIN, BADGE_SCALE_MAX);
+  return clampScale(
+    badgeNum(frame, kind, "size"),
+    BADGE_SCALE_MIN,
+    BADGE_SCALE_MAX,
+  );
 }
 
 /** Толщина цифры, или 0 — «как у карты». Округляется к своей ступени: между
  *  начертаниями шрифта промежутка нет, и дробное число обещало бы его. */
 export function badgeWeight(frame: BattleFrame, kind: BadgeKind): number {
-  const given = badgeNum(frame, kind, 'weight');
+  const given = badgeNum(frame, kind, "weight");
   if (!Number.isFinite(given) || !given) return 0;
-  return BADGE_WEIGHTS.reduce((best, w) => (Math.abs(w - given) < Math.abs(best - given) ? w : best));
+  return BADGE_WEIGHTS.reduce((best, w) =>
+    Math.abs(w - given) < Math.abs(best - given) ? w : best,
+  );
 }
 
 export const BADGE_SCALE_MIN = 0.5;
@@ -1209,11 +1443,14 @@ export function badgeExtent(frame: BattleFrame, kind: BadgeKind): BadgeExtent {
   // Жетон — это и есть нарисованная подложка, поэтому коробка у него та же,
   // что у формы, даже когда форма снята: «нет формы — нет коробки» сказано про
   // одинокую цифру, а под цифрой с жетоном коробка нарисована.
-  if (shape !== 'none' || badgePlate(frame, kind)) {
+  if (shape !== "none" || badgePlate(frame, kind)) {
     // Со знаком коробка ШИРЕ своей высоты: знак стоит рядом с цифрой, и
     // квадратная мерка отдала бы карте отступ под кружок там, где нарисована
     // плашка. То же число читают и прижим к карте, и отступ шапки.
-    return { w: BADGE_SIZE * scale * (marked ? BADGE_PILL : 1), h: BADGE_SIZE * scale };
+    return {
+      w: BADGE_SIZE * scale * (marked ? BADGE_PILL : 1),
+      h: BADGE_SIZE * scale,
+    };
   }
   const h = BADGE_BARE * scale * clampScale(frame.typeScale, 0.75, 1.5);
   const bare = h * BADGE_BARE_ASPECT;
@@ -1249,12 +1486,18 @@ export const BADGE_WEIGHTS = [300, 400, 500, 600, 700, 800];
  * Домашний цвет нужен затем, что у «как в раме» и у `transparent` своего цвета
  * нет, а ползунок плотности обязан от чего-то отталкиваться.
  */
-export function fillParts(fill: string, house: string): { hex: string; alpha: number } {
-  const v = (fill ?? '').trim();
+export function fillParts(
+  fill: string,
+  house: string,
+): { hex: string; alpha: number } {
+  const v = (fill ?? "").trim();
   if (!v) return { hex: house, alpha: 100 };
   const eight = /^#([0-9a-f]{6})([0-9a-f]{2})$/i.exec(v);
   if (eight) {
-    return { hex: `#${eight[1]}`, alpha: Math.round((parseInt(eight[2], 16) / 255) * 100) };
+    return {
+      hex: `#${eight[1]}`,
+      alpha: Math.round((parseInt(eight[2], 16) / 255) * 100),
+    };
   }
   if (badgeUnfilled(v)) return { hex: house, alpha: 0 };
   return { hex: v, alpha: 100 };
@@ -1267,7 +1510,9 @@ export function fillJoin(hex: string, alpha: number): string {
   const a = Math.round(Math.min(100, Math.max(0, alpha)));
   if (!/^#[0-9a-f]{6}$/i.test(hex)) return hex;
   if (a >= 100) return hex;
-  return `${hex}${Math.round((a / 100) * 255).toString(16).padStart(2, '0')}`;
+  return `${hex}${Math.round((a / 100) * 255)
+    .toString(16)
+    .padStart(2, "0")}`;
 }
 
 /**
@@ -1295,7 +1540,7 @@ export function badgeInk(fill: string, frame: BattleFrame): string {
  * одной ветки не прибавилось. Знать нужно ровно одному месту, `badgeInk`,
  * потому что цифре теперь нужна не пара к кружку, а краска карты.
  */
-export const BADGE_FILL_NONE = 'transparent';
+export const BADGE_FILL_NONE = "transparent";
 
 /** Снята ли заливка. Кроме своего слова принимает `none` и запись с нулевой
  *  прозрачностью: цифра, ставшая невидимой из-за незнакомой записи, — самая
@@ -1303,8 +1548,8 @@ export const BADGE_FILL_NONE = 'transparent';
 export function badgeUnfilled(fill: string): boolean {
   const v = fill.trim().toLowerCase();
   return (
-    v === 'transparent' ||
-    v === 'none' ||
+    v === "transparent" ||
+    v === "none" ||
     /^#[0-9a-f]{6}00$/.test(v) ||
     /^#[0-9a-f]{3}0$/.test(v)
   );
@@ -1313,19 +1558,24 @@ export function badgeUnfilled(fill: string): boolean {
 /** Светлота цвета, 0..1. Понимает `#rgb` и `#rrggbb` — то, что даёт
  *  `<input type="color">`; всё прочее возвращает «тёмный». */
 function lightness(color: string): number {
-  const hex = color.trim().replace(/^#/, '');
+  const hex = color.trim().replace(/^#/, "");
   const full =
     hex.length === 3
-      ? hex.split('').map((c) => c + c).join('')
+      ? hex
+          .split("")
+          .map((c) => c + c)
+          .join("")
       : hex.length === 6
         ? hex
-        // Плотность на светлоту не влияет: полупрозрачная краска лежит на том,
-        // подо что её положили, и это уже не вопрос к самой краске.
-        : hex.length === 8
+        : // Плотность на светлоту не влияет: полупрозрачная краска лежит на том,
+          // подо что её положили, и это уже не вопрос к самой краске.
+          hex.length === 8
           ? hex.slice(0, 6)
-          : '';
+          : "";
   if (!/^[0-9a-fA-F]{6}$/.test(full)) return 0;
-  const [r, g, b] = [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16) / 255);
+  const [r, g, b] = [0, 2, 4].map(
+    (i) => parseInt(full.slice(i, i + 2), 16) / 255,
+  );
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
@@ -1343,7 +1593,9 @@ const NEW_MARK_REACH = 22;
  * Молча это не чинится: где у ЭТОЙ картинки дыра, знает только тот, кто её
  * рисовал. Стол говорит об этом словами, а не догадывается.
  */
-export function dressWindowMissing(dress: FrameOverride | null | undefined): boolean {
+export function dressWindowMissing(
+  dress: FrameOverride | null | undefined,
+): boolean {
   if (!dress) return false;
   const picture =
     !!dress.frameImage?.trim() ||
@@ -1369,27 +1621,36 @@ function painted(
   foil: string,
 ): BattleFrame {
   return {
-    tier, nameEn, nameRu, paper, ink, border, foil,
-    frameImage: '',
-    frameMode: 'overlay',
-    paperImage: '',
-    backImage: '',
-    cornerImage: '',
-    sideImageH: '',
-    sideImageV: '',
-    cornerExtra: '',
-    sideMidH: '',
-    sideMidV: '',
+    tier,
+    nameEn,
+    nameRu,
+    paper,
+    ink,
+    border,
+    foil,
+    frameImage: "",
+    frameMode: "overlay",
+    paperImage: "",
+    backImage: "",
+    cornerImage: "",
+    sideImageH: "",
+    sideImageV: "",
+    cornerExtra: "",
+    sideMidH: "",
+    sideMidV: "",
     slices: defaultSlices(),
     ornaments: [],
-    insetTop: 0, insetRight: 0, insetBottom: 0, insetLeft: 0,
+    insetTop: 0,
+    insetRight: 0,
+    insetBottom: 0,
+    insetLeft: 0,
     aspect: DEFAULT_ASPECT,
     headerShare: DEFAULT_HEADER_SHARE,
     artShare: DEFAULT_ART_SHARE,
     footShare: DEFAULT_FOOT_SHARE,
-    titleFont: '',
-    titleInk: '',
-    layout: 'corners',
+    titleFont: "",
+    titleInk: "",
+    layout: "corners",
     sheet: defaultSheet(),
     typeScale: 1,
     inkFade: 1,
@@ -1397,22 +1658,22 @@ function painted(
     costY: DEFAULT_COST_Y,
     powerX: DEFAULT_POWER_X,
     powerY: DEFAULT_POWER_Y,
-    costShape: 'circle',
-    powerShape: 'circle',
-    costFill: '',
-    powerFill: '',
-    costInk: '',
-    powerInk: '',
+    costShape: "circle",
+    powerShape: "circle",
+    costFill: "",
+    powerFill: "",
+    costInk: "",
+    powerInk: "",
     costSize: 1,
     powerSize: 1,
     costWeight: 0,
     powerWeight: 0,
-    costPlate: '',
-    powerPlate: '',
-    healthShape: '',
-    healthFill: '',
-    healthInk: '',
-    healthPlate: '',
+    costPlate: "",
+    powerPlate: "",
+    healthShape: "",
+    healthFill: "",
+    healthInk: "",
+    healthPlate: "",
     healthSize: 0,
     healthWeight: 0,
     healthX: null,
@@ -1427,21 +1688,52 @@ function painted(
  * original; change both together.
  */
 export const DEFAULT_FRAMES: BattleFrame[] = [
-  painted(1, 'Humble',     'Скромная',  '#f8f1e7', '#34251c', '#d8c6b1', ''),
-  painted(2, 'Sturdy',     'Крепкая',   '#f3e9db', '#34251c', '#c3ad93', ''),
-  painted(3, 'Remembered', 'Памятная',  '#eeddc8', '#34251c', '#a8845f', 'rgba(198,95,60,0.16)'),
-  painted(4, 'Rare',       'Редкая',    '#e6cfb2', '#2a1a11', '#6f3b24', 'rgba(198,95,60,0.28)'),
-  painted(5, 'Epic',       'Эпическая', '#3a2a1e', '#f3e4cd', '#c99a52', 'rgba(214,178,110,0.42)'),
+  painted(1, "Humble", "Скромная", "#f8f1e7", "#34251c", "#d8c6b1", ""),
+  painted(2, "Sturdy", "Крепкая", "#f3e9db", "#34251c", "#c3ad93", ""),
+  painted(
+    3,
+    "Remembered",
+    "Памятная",
+    "#eeddc8",
+    "#34251c",
+    "#a8845f",
+    "rgba(198,95,60,0.16)",
+  ),
+  painted(
+    4,
+    "Rare",
+    "Редкая",
+    "#e6cfb2",
+    "#2a1a11",
+    "#6f3b24",
+    "rgba(198,95,60,0.28)",
+  ),
+  painted(
+    5,
+    "Epic",
+    "Эпическая",
+    "#3a2a1e",
+    "#f3e4cd",
+    "#c99a52",
+    "rgba(214,178,110,0.42)",
+  ),
 ];
 
-export const LAYOUTS: BattleLayout[] = ['corners', 'plaque'];
+export const LAYOUTS: BattleLayout[] = ["corners", "plaque"];
 /** Порядок — это предложение, а не перечень.
  *
  *  «Собрана из частей» стоит первой, потому что это единственный способ, в
  *  котором раму ДЕЛАЮТ: два других надевают готовую картинку целиком. Первый в
  *  списке — то, с чего начинают, и новая рама начинается именно с него. */
-export const FRAME_MODES: BattleFrameMode[] = ['sliced', 'overlay', 'behind'];
-export const BADGE_SHAPES: BattleBadgeShape[] = ['circle', 'square', 'diamond', 'hex', 'shield', 'none'];
+export const FRAME_MODES: BattleFrameMode[] = ["sliced", "overlay", "behind"];
+export const BADGE_SHAPES: BattleBadgeShape[] = [
+  "circle",
+  "square",
+  "diamond",
+  "hex",
+  "shield",
+  "none",
+];
 
 export function clampTier(tier: number): number {
   if (!Number.isFinite(tier)) return 1;
@@ -1449,11 +1741,13 @@ export function clampTier(tier: number): number {
 }
 
 /** A card is never left undressed: an unknown rank falls back to its default. */
-export function frameFor(tier: number, frames: BattleFrame[] | null | undefined): BattleFrame {
+export function frameFor(
+  tier: number,
+  frames: BattleFrame[] | null | undefined,
+): BattleFrame {
   const rank = clampTier(tier);
   return (
-    frames?.find((f) => clampTier(f.tier) === rank) ??
-    DEFAULT_FRAMES[rank - 1]
+    frames?.find((f) => clampTier(f.tier) === rank) ?? DEFAULT_FRAMES[rank - 1]
   );
 }
 
@@ -1468,7 +1762,9 @@ export function frameFor(tier: number, frames: BattleFrame[] | null | undefined)
  *  Every field is optional and only what is present is worn, so a dress made
  *  the old way — a picture and the four insets around its window — still means
  *  exactly what it meant when it was saved. */
-export type FrameOverride = Partial<Omit<BattleFrame, 'tier' | 'nameEn' | 'nameRu'>>;
+export type FrameOverride = Partial<
+  Omit<BattleFrame, "tier" | "nameEn" | "nameRu">
+>;
 
 /** A frame taken off and folded into a dress — carving, paint and window.
  *
@@ -1503,11 +1799,13 @@ function dressCarving(patch: FrameOverride | null): FrameOverride | null {
 }
 
 /** A broken or empty override is the same as none: the tier's own frame. */
-export function parseFrameOverride(raw: string | null | undefined): FrameOverride | null {
+export function parseFrameOverride(
+  raw: string | null | undefined,
+): FrameOverride | null {
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as FrameOverride;
-    return parsed && typeof parsed === 'object' ? parsed : null;
+    return parsed && typeof parsed === "object" ? parsed : null;
   } catch {
     return null;
   }
@@ -1515,13 +1813,17 @@ export function parseFrameOverride(raw: string | null | undefined): FrameOverrid
 
 /** A race's own dress per level of an owned copy: 5 slots, index 0 = level 1.
  *  Anything unparseable or short comes back as 5 empty slots, never fewer. */
-export function parseLevelFrames(raw: string | null | undefined): (FrameOverride | null)[] {
+export function parseLevelFrames(
+  raw: string | null | undefined,
+): (FrameOverride | null)[] {
   const empty: (FrameOverride | null)[] = [null, null, null, null, null];
   if (!raw) return empty;
   try {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return empty;
-    return empty.map((_, i) => (parsed[i] && typeof parsed[i] === 'object' ? parsed[i] : null));
+    return empty.map((_, i) =>
+      parsed[i] && typeof parsed[i] === "object" ? parsed[i] : null,
+    );
   } catch {
     return empty;
   }
@@ -1535,7 +1837,10 @@ export function parseLevelFrames(raw: string | null | undefined): (FrameOverride
  *  replaces all of them. An empty string is a choice, not an absence — a
  *  sliced dress says "no single photograph" by naming `frameImage: ''`, and
  *  reading that as "unset" would leave the rank's old picture underneath. */
-function patchFrame(base: BattleFrame, patch: FrameOverride | null): BattleFrame {
+function patchFrame(
+  base: BattleFrame,
+  patch: FrameOverride | null,
+): BattleFrame {
   if (!patch) return base;
   const worn = { ...base };
   for (const [key, value] of Object.entries(patch)) {
@@ -1560,14 +1865,20 @@ function patchFrame(base: BattleFrame, patch: FrameOverride | null): BattleFrame
  * The rank itself and its name are the dictionary's alone at every layer.
  */
 export function frameForCard(
-  card: Pick<BattleCard, 'tier' | 'frameOverride' | 'raceLevelFrames'>,
+  card: Pick<BattleCard, "tier" | "frameOverride" | "raceLevelFrames">,
   frames: BattleFrame[] | null | undefined,
   level?: number | null,
 ): BattleFrame {
   let frame = frameFor(card.tier, frames);
   const levelFrames = parseLevelFrames(card.raceLevelFrames);
-  frame = patchFrame(frame, dressCarving(levelFrames[clampTier(level ?? 1) - 1]));
-  frame = patchFrame(frame, dressCarving(parseFrameOverride(card.frameOverride)));
+  frame = patchFrame(
+    frame,
+    dressCarving(levelFrames[clampTier(level ?? 1) - 1]),
+  );
+  frame = patchFrame(
+    frame,
+    dressCarving(parseFrameOverride(card.frameOverride)),
+  );
   return frame;
 }
 
@@ -1596,12 +1907,12 @@ export function isDressed(frame: BattleFrame): boolean {
 
 /** Built from a corner and two side pictures rather than one stretched whole. */
 export function isSliced(frame: BattleFrame): boolean {
-  return frame.frameMode === 'sliced' && isDressed(frame);
+  return frame.frameMode === "sliced" && isDressed(frame);
 }
 
 /** The picture lies on top and the card shows through the hole in it. */
 export function isOverlaid(frame: BattleFrame): boolean {
-  return isDressed(frame) && frame.frameMode !== 'behind';
+  return isDressed(frame) && frame.frameMode !== "behind";
 }
 
 /**
@@ -1622,57 +1933,67 @@ export function frameVars(frame: BattleFrame): Record<string, string> {
   const sideMidHArt = frame.sideMidH?.trim();
   const sideMidVArt = frame.sideMidV?.trim();
   return {
-    '--paper-image': paperArt ? `url("${cssUrl(paperArt)}")` : 'none',
-    '--paper': frame.paper,
-    '--ink': frame.ink,
-    '--edge': frame.border,
-    '--foil': frame.foil || 'transparent',
-    '--frame-image': image ? `url("${cssUrl(image)}")` : 'none',
-    '--back-image': backArt ? `url("${cssUrl(backArt)}")` : 'none',
-    '--corner-image': cornerArt ? `url("${cssUrl(cornerArt)}")` : 'none',
-    '--side-image-h': sideHArt ? `url("${cssUrl(sideHArt)}")` : 'none',
-    '--side-image-v': sideVArt ? `url("${cssUrl(sideVArt)}")` : 'none',
-    '--corner-extra-image': cornerExtraArt ? `url("${cssUrl(cornerExtraArt)}")` : 'none',
-    '--side-mid-h-image': sideMidHArt ? `url("${cssUrl(sideMidHArt)}")` : 'none',
-    '--side-mid-v-image': sideMidVArt ? `url("${cssUrl(sideMidVArt)}")` : 'none',
-    '--pad-top': `${frame.insetTop || 0}%`,
-    '--pad-right': `${frame.insetRight || 0}%`,
-    '--pad-bottom': `${frame.insetBottom || 0}%`,
-    '--pad-left': `${frame.insetLeft || 0}%`,
-    '--aspect': String(frame.aspect || DEFAULT_ASPECT),
+    "--paper-image": paperArt ? `url("${cssUrl(paperArt)}")` : "none",
+    "--paper": frame.paper,
+    "--ink": frame.ink,
+    "--edge": frame.border,
+    "--foil": frame.foil || "transparent",
+    "--frame-image": image ? `url("${cssUrl(image)}")` : "none",
+    "--back-image": backArt ? `url("${cssUrl(backArt)}")` : "none",
+    "--corner-image": cornerArt ? `url("${cssUrl(cornerArt)}")` : "none",
+    "--side-image-h": sideHArt ? `url("${cssUrl(sideHArt)}")` : "none",
+    "--side-image-v": sideVArt ? `url("${cssUrl(sideVArt)}")` : "none",
+    "--corner-extra-image": cornerExtraArt
+      ? `url("${cssUrl(cornerExtraArt)}")`
+      : "none",
+    "--side-mid-h-image": sideMidHArt
+      ? `url("${cssUrl(sideMidHArt)}")`
+      : "none",
+    "--side-mid-v-image": sideMidVArt
+      ? `url("${cssUrl(sideMidVArt)}")`
+      : "none",
+    "--pad-top": `${frame.insetTop || 0}%`,
+    "--pad-right": `${frame.insetRight || 0}%`,
+    "--pad-bottom": `${frame.insetBottom || 0}%`,
+    "--pad-left": `${frame.insetLeft || 0}%`,
+    "--aspect": String(frame.aspect || DEFAULT_ASPECT),
     // The three measured bands. The properties band is not here on purpose: it
     // takes whatever these three leave, so it can never be squeezed to nothing
     // by three sliders that happen to add up.
-    '--header-share': `${((frame.headerShare ?? DEFAULT_HEADER_SHARE) * 100).toFixed(1)}%`,
-    '--art-share': `${((frame.artShare || DEFAULT_ART_SHARE) * 100).toFixed(1)}%`,
-    '--foot-share': `${((frame.footShare ?? DEFAULT_FOOT_SHARE) * 100).toFixed(1)}%`,
-    '--title-face': frame.titleFont ? fontStack(frame.titleFont) : 'inherit',
-    '--title-ink': frame.titleInk?.trim() || frame.ink,
+    "--header-share": `${((frame.headerShare ?? DEFAULT_HEADER_SHARE) * 100).toFixed(1)}%`,
+    "--art-share": `${((frame.artShare || DEFAULT_ART_SHARE) * 100).toFixed(1)}%`,
+    "--foot-share": `${((frame.footShare ?? DEFAULT_FOOT_SHARE) * 100).toFixed(1)}%`,
+    "--title-face": frame.titleFont ? fontStack(frame.titleFont) : "inherit",
+    "--title-ink": frame.titleInk?.trim() || frame.ink,
     // Кегль и насыщенность — множители, а не размеры. Размеры карта считает
     // сама из своей ширины, и рамка, назначающая пиксели, отняла бы у неё
     // ровно то, ради чего она их считает.
-    '--type-scale': String(clampScale(frame.typeScale, 0.75, 1.5)),
-    '--ink-fade': String(clampScale(frame.inkFade, 0.5, 1.6)),
+    "--type-scale": String(clampScale(frame.typeScale, 0.75, 1.5)),
+    "--ink-fade": String(clampScale(frame.inkFade, 0.5, 1.6)),
   };
 }
 
 /** Множитель рамки, приведённый к делу. Ноль и мусор — это «не назначено»,
  *  а не «стереть текст»: рамка, сохранённая до кегля, несёт ноль. */
-function clampScale(given: number | undefined, min: number, max: number): number {
+function clampScale(
+  given: number | undefined,
+  min: number,
+  max: number,
+): number {
   if (!Number.isFinite(given) || !given || given <= 0) return 1;
   return Math.min(max, Math.max(min, given as number));
 }
 
 /** The card's four insets — how far the window sits from each side of the
  *  photograph, in % of the card. */
-export type InsetKey = 'insetTop' | 'insetRight' | 'insetBottom' | 'insetLeft';
+export type InsetKey = "insetTop" | "insetRight" | "insetBottom" | "insetLeft";
 export const INSET_MAX = 45;
 
 const OPPOSITE_INSET: Record<InsetKey, InsetKey> = {
-  insetTop: 'insetBottom',
-  insetBottom: 'insetTop',
-  insetLeft: 'insetRight',
-  insetRight: 'insetLeft',
+  insetTop: "insetBottom",
+  insetBottom: "insetTop",
+  insetLeft: "insetRight",
+  insetRight: "insetLeft",
 };
 
 /**
@@ -1704,9 +2025,9 @@ export function applyInsetDelta(
 }
 
 export function frameName(frame: BattleFrame, lang: Lang): string {
-  const ru = (frame.nameRu ?? '').trim();
-  const en = (frame.nameEn ?? '').trim();
-  return (lang === 'ru' ? ru || en : en || ru) || String(frame.tier);
+  const ru = (frame.nameRu ?? "").trim();
+  const en = (frame.nameEn ?? "").trim();
+  return (lang === "ru" ? ru || en : en || ru) || String(frame.tier);
 }
 
 /**
@@ -1722,9 +2043,9 @@ export function frameName(frame: BattleFrame, lang: Lang): string {
  * missing, not as English.
  */
 function lineInLang(own: string | null | undefined, lang: Lang): string {
-  const s = own?.trim() ?? '';
-  if (!s) return '';
-  if (lang === 'en' && mostlyCyrillic(s)) return '';
+  const s = own?.trim() ?? "";
+  if (!s) return "";
+  if (lang === "en" && mostlyCyrillic(s)) return "";
   return s;
 }
 
@@ -1739,7 +2060,7 @@ export function cardCopy(
   card: BattleCard,
   lang: Lang,
 ): { title: string; effect: string; lore: string } {
-  const ru = lang === 'ru';
+  const ru = lang === "ru";
   return {
     title: lineInLang(ru ? card.titleRu : card.titleEn, lang),
     effect: lineInLang(ru ? card.effectRu : card.effectEn, lang),
@@ -1753,26 +2074,32 @@ export function traitCopy(
   trait: CardTrait,
   lang: Lang,
 ): { name: string; other: string; text: string } {
-  const ru = lang === 'ru';
+  const ru = lang === "ru";
   const name = lineInLang(ru ? trait.nameRu : trait.nameEn, lang);
-  const other = lineInLang(ru ? trait.nameEn : trait.nameRu, ru ? 'en' : 'ru');
+  const other = lineInLang(ru ? trait.nameEn : trait.nameRu, ru ? "en" : "ru");
   const text = lineInLang(ru ? trait.textRu : trait.textEn, lang);
-  return { name, other: name && other && name !== other ? other : '', text };
+  return { name, other: name && other && name !== other ? other : "", text };
 }
 
 /** The ability's own name in the reader's language. The verb is a dictionary
  *  word printed elsewhere — this is only what the keeper wrote on it. */
-export function abilityCopy(ability: CardAbility, lang: Lang): { name: string } {
-  const ru = lang === 'ru';
+export function abilityCopy(
+  ability: CardAbility,
+  lang: Lang,
+): { name: string } {
+  const ru = lang === "ru";
   return { name: lineInLang(ru ? ability.nameRu : ability.nameEn, lang) };
 }
 
 /** The header band: what this is. Kind is a dictionary word, printed elsewhere;
  *  free `type` is no longer the header, and a digit in the field is not a type. */
-export function headerCopy(card: BattleCard, lang: Lang): { race: string; type: string } {
-  const ru = lang === 'ru';
+export function headerCopy(
+  card: BattleCard,
+  lang: Lang,
+): { race: string; type: string } {
+  const ru = lang === "ru";
   const typeRaw = lineInLang(ru ? card.typeRu : card.typeEn, lang);
-  const type = /^\d+$/.test(typeRaw) ? '' : typeRaw;
+  const type = /^\d+$/.test(typeRaw) ? "" : typeRaw;
   return {
     race: lineInLang(ru ? card.raceNameRu : card.raceNameEn, lang),
     type,
@@ -1793,7 +2120,9 @@ export function parseFocal(raw: string | null | undefined): Focal {
   try {
     const parsed = JSON.parse(raw) as Partial<Focal>;
     const num = (v: unknown, fallback: number, lo: number, hi: number) =>
-      typeof v === 'number' && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : fallback;
+      typeof v === "number" && Number.isFinite(v)
+        ? Math.min(hi, Math.max(lo, v))
+        : fallback;
     return {
       x: num(parsed.x, 0.5, 0, 1),
       y: num(parsed.y, 0.5, 0, 1),
@@ -1821,10 +2150,10 @@ export function focalStyle(raw: string | null | undefined): string {
 export function pricesOf(card: BattleCard): { coin: Coin; amount: number }[] {
   const out: { coin: Coin; amount: number }[] = [];
   if (card.priceDust != null && card.priceDust > 0) {
-    out.push({ coin: 'dust', amount: card.priceDust });
+    out.push({ coin: "dust", amount: card.priceDust });
   }
   if (card.priceFeed != null && card.priceFeed > 0) {
-    out.push({ coin: 'feed', amount: card.priceFeed });
+    out.push({ coin: "feed", amount: card.priceFeed });
   }
   return out;
 }
@@ -1945,7 +2274,6 @@ export const VERB_ICON = {
   mana: "drop",
 } as const satisfies Record<AbilityVerb, string>;
 
-
 export const VERBS = Object.keys(VERB_LABELS) as AbilityVerb[];
 export const SHAPES = Object.keys(SHAPE_LABELS) as AbilityShape[];
 export const TRIGGERS = Object.keys(TRIGGER_LABELS) as AbilityTrigger[];
@@ -1957,10 +2285,10 @@ export const shapeCarriesNumber = (shape: string) =>
 /** One dictionary word for the header: body, spell, or relic — never the free `type`. */
 export function kindLabelKey(
   kind: BattleCardKind,
-): 'battlesKindUnit' | 'battlesKindSpell' | 'battlesKindRelic' {
-  if (kind === 'spell') return 'battlesKindSpell';
-  if (kind === 'relic') return 'battlesKindRelic';
-  return 'battlesKindUnit';
+): "battlesKindUnit" | "battlesKindSpell" | "battlesKindRelic" {
+  if (kind === "spell") return "battlesKindSpell";
+  if (kind === "relic") return "battlesKindRelic";
+  return "battlesKindUnit";
 }
 
 /**
@@ -1969,24 +2297,25 @@ export function kindLabelKey(
  */
 export function channelLabelKey(
   channel: BattleChannel,
-): 'battlesChannelMagic' | 'battlesChannelPure' | 'battlesChannelNone' | null {
-  if (channel === 'magic') return 'battlesChannelMagic';
-  if (channel === 'pure') return 'battlesChannelPure';
-  if (channel === 'none') return 'battlesChannelNone';
+): "battlesChannelMagic" | "battlesChannelPure" | "battlesChannelNone" | null {
+  if (channel === "magic") return "battlesChannelMagic";
+  if (channel === "pure") return "battlesChannelPure";
+  if (channel === "none") return "battlesChannelNone";
   return null;
 }
 
-export type BodyStatField = 'health' | 'mana' | 'armor' | 'ward' | 'reach' | 'step' | 'mend';
+export type BodyStatField =
+  "health" | "mana" | "armor" | "ward" | "reach" | "step" | "mend";
 
 /** i18n keys for the body passport — the scene already owns these words. */
 export const BODY_STAT_LABELS = {
-  health: 'battlesHealthLabel',
-  mana: 'battlesManaLabel',
-  armor: 'battleStatArmour',
-  ward: 'battleStatWard',
-  reach: 'battleStatReach',
-  step: 'battleStatStep',
-  mend: 'battleStatMend',
+  health: "battlesHealthLabel",
+  mana: "battlesManaLabel",
+  armor: "battleStatArmour",
+  ward: "battleStatWard",
+  reach: "battleStatReach",
+  step: "battleStatStep",
+  mend: "battleStatMend",
 } as const satisfies Record<BodyStatField, TranslationKey>;
 
 /**
@@ -2010,18 +2339,18 @@ export const BODY_STAT_LABELS = {
  * который пришлось бы красить.
  */
 export const STAT_MARKS = {
-  health: 'heart',
-  mana: 'drop',
-  armor: 'shield',
-  ward: 'ward',
-  reach: 'reach',
-  step: 'boot',
-  mend: 'sprig',
+  health: "heart",
+  mana: "drop",
+  armor: "shield",
+  ward: "ward",
+  reach: "reach",
+  step: "boot",
+  mend: "sprig",
   /** Не в паспорте (`SHEET_STATS`), но на листе взятия стоит и печатается. */
-  speed: 'hourglass',
-  cost: 'coin',
-  power: 'sword',
-} as const satisfies Record<BodyStatField | 'speed' | BadgeKind, string>;
+  speed: "hourglass",
+  cost: "coin",
+  power: "sword",
+} as const satisfies Record<BodyStatField | "speed" | BadgeKind, string>;
 
 /** Слот, у которого есть знак. `healthMark` — не число, а кружок здоровья, и
  *  знак у него тот же, что у здоровья: это одно и то же число. */
@@ -2036,15 +2365,430 @@ export type MarkedStat = keyof typeof STAT_MARKS;
  */
 export const STAT_LABELS = {
   ...BODY_STAT_LABELS,
-  speed: 'battlesSpeedLabel',
-  cost: 'battlesCostLabel',
-  power: 'battlesPowerLabel',
+  speed: "battlesSpeedLabel",
+  cost: "battlesCostLabel",
+  power: "battlesPowerLabel",
 } as const satisfies Record<MarkedStat, TranslationKey>;
 
 /** Слово числа. Пара к `statMark`, и по той же причине функцией: `healthMark`
  *  — это здоровье под другим именем. */
-export function statLabel(slot: MarkedStat | 'healthMark'): TranslationKey {
-  return STAT_LABELS[slot === 'healthMark' ? 'health' : slot];
+export function statLabel(slot: MarkedStat | "healthMark"): TranslationKey {
+  return STAT_LABELS[slot === "healthMark" ? "health" : slot];
+}
+
+// ── Чем заняться: намерения тела ─────────────────────────────────────────────
+//
+// Пока у тела был один способ действовать, выбора не существовало: подсветилось
+// — ткнули. У карты, которая бьёт, лечит и проклинает на расстоянии, в одну и ту
+// же чужую клетку ведут ТРИ разных дела, и «подсветилось» перестало отвечать на
+// вопрос «что сейчас случится». Намерение — это один способ действовать вместе с
+// уже готовым списком его целей.
+//
+// Цели не вычисляются. Каждая — готовое действие ИЗ `legalActions`, положенное
+// в ящик под ключом тела, и отправляется оно назад неизменным: договор сцены
+// («клиент не знает ни одного правила») держится ровно на этом.
+//
+// Правило здесь одно и только ради СЛОВ: `castingOf` — зеркало
+// `AbilitySnapshot::casting` движка. Им ничего не играется; оно выбирает, какой
+// значок нарисовать и какую чару показать спящей, когда её в законном списке
+// нет. Та же терпимость и по той же причине, что у `HOUSE_RULES`, и тот же
+// прецедент, что у `mendAsleep` в сцене: назвать отказ нельзя, не зная, что
+// отказано. Разойдётся — спящая чара покажется лишней или не покажется вовсе;
+// ни одного хода это не сделает.
+
+/** Чем умение становится, когда его просят. Лечения здесь нет: оно играется
+ *  `mend`, и игралось им до чар. Список — зеркало `Casting::of_verb` движка. */
+export type Casting =
+  | "harm"
+  | "fester"
+  | "knit"
+  | "shield"
+  | "bless"
+  | "curse"
+  | "bind"
+  | "hush"
+  | "disarm"
+  | "sway"
+  | "veil"
+  | "guard"
+  | "numb"
+  | "thorns"
+  | "shove"
+  | "cleanse"
+  | "dispel"
+  | "coin"
+  | "offer"
+  | "zone"
+  | "summon";
+
+const CASTINGS: Record<string, Casting> = {
+  damage: "harm",
+  dot: "fester",
+  hot: "knit",
+  shield: "shield",
+  bless: "bless",
+  curse: "curse",
+  control: "bind",
+  silence: "hush",
+  disarm: "disarm",
+  charm: "sway",
+  veil: "veil",
+  guard: "guard",
+  immune: "numb",
+  thorns: "thorns",
+  move: "shove",
+  cleanse: "cleanse",
+  dispel: "dispel",
+  mana: "coin",
+  sacrifice: "offer",
+  zone: "zone",
+  summon: "summon",
+};
+
+/** Чары, которые наводят на КЛЕТКУ, а не на тело. Форма `cell` у них не одна
+ *  из многих, а единственная, какая у них бывает (§4). */
+const SPOT_VERBS = ["zone", "summon"];
+
+/**
+ * Запрещённое §4 сочетание глагола и пригоршни: «✗ — запрещённые, не дорогие».
+ *
+ * Третье место, где это записано, — и терпимо оно по той же причине, что и всё
+ * зеркало: играет правилом движок, отказывает словами стол, а здесь оно только
+ * решает, показывать ли печать. Разойдётся — в веере окажется чара, которой
+ * нечего делать; партию это не сдвинет.
+ */
+function forbiddenShape(verb: string, shape: string, radius: number): boolean {
+  if (verb === "charm") return shape !== "one" && shape !== "self";
+  if (verb === "control" || verb === "veil") {
+    return shape === "side" || (shape === "radius" && radius >= 2);
+  }
+  return false;
+}
+
+/** Столько ходов отката значит НАВСЕГДА — зеркало `Unit::FOREVER`. */
+export const FOREVER = 255;
+
+/** Ключ умения: его `id`, а при пустом — место на карте. Зеркало `ability_key`
+ *  движка — ключ приходит в действии, в откате и в имени всадника, и выдумать
+ *  его второй раз по-своему значит потерять откат у безымянной чары. */
+export function abilityKey(a: { id?: string | null }, index: number): string {
+  const own = a.id?.trim();
+  return own ? own : `#${index}`;
+}
+
+/** Чара, которую движок правда играет, — или ничего. */
+export function castingOf(
+  a: Pick<BattleAbilitySnap, "verb" | "trigger" | "amount" | "shape"> & {
+    radius?: number;
+    body?: unknown;
+  },
+): Casting | null {
+  // Просят рукой `active` и `once`; остальные поводы случаются сами, и в веере
+  // им места нет — обещать выбор там, где его нет, та же ложь, что показать
+  // чару, которой не сыграть.
+  if ((a.trigger !== "active" && a.trigger !== "once") || a.amount <= 0) return null;
+  // Пригоршни считаются все восемь; запрещённые §4 сочетания не играются.
+  if (forbiddenShape(a.verb, a.shape, a.radius ?? 0)) return null;
+  // Призыв без тела не призыв, и движок его не играет.
+  if (a.verb === "summon" && !a.body) return null;
+  return CASTINGS[a.verb] ?? null;
+}
+
+/** Пригоршня, если она не «одно тело»: слово для подписи. Одно тело и «себе»
+ *  не называются вовсе — это и так видно по тому, куда светит доска. */
+export function reachWord(shape: string): TranslationKey | null {
+  if (shape === "one" || shape === "self" || shape === "cell") return null;
+  return SHAPE_LABELS[shape as AbilityShape] ?? null;
+}
+
+/** Слово и знак удержания. Один список на дом — по той же причине, по которой
+ *  один список у чисел карты: оцепенение, названное на доске одним словом, а в
+ *  журнале другим, читается как две разные вещи. */
+export const HOLD_WORDS: Record<string, { word: TranslationKey; mark: string }> = {
+  bound: { word: "battleHoldBound", mark: "control" },
+  hushed: { word: "battleHoldHushed", mark: "silence" },
+  disarmed: { word: "battleHoldDisarmed", mark: "disarm" },
+  swayed: { word: "battleHoldSwayed", mark: "charm" },
+  veiled: { word: "battleHoldVeiled", mark: "veil" },
+  guarding: { word: "battleHoldGuarding", mark: "guard" },
+  numb: { word: "battleHoldNumb", mark: "immune" },
+  thorned: { word: "battleHoldThorned", mark: "thorns" },
+  festering: { word: "battleHoldFestering", mark: "flame" },
+  knitting: { word: "battleHoldKnitting", mark: "bloom" },
+  rested: { word: "battleHoldRested", mark: "hourglass" },
+};
+
+/** Род удержания одним словом: в записи он то строка, то коробка с каналом
+ *  внутри (`{numb: "magic"}`), и разворачивать это в каждом месте, где его
+ *  показывают, значит забыть однажды. */
+export function holdKind(kind: BattleHoldKind): string {
+  return typeof kind === "string" ? kind : "numb";
+}
+
+/** Показатель всадника: его знак и его слово. Список ОДИН, как у чисел карты
+ *  (`STAT_MARKS`), и по той же причине — уязвимость, названная порознь на
+ *  карте и в веере, однажды будет названа по-разному. */
+export const RIDER_STATS: Record<RiderStat, { mark: string; label: TranslationKey }> = {
+  power: { mark: STAT_MARKS.power, label: STAT_LABELS.power },
+  armor: { mark: STAT_MARKS.armor, label: STAT_LABELS.armor },
+  ward: { mark: STAT_MARKS.ward, label: STAT_LABELS.ward },
+  // Своего числа у уязвимости на карте нет — она живёт только всадником.
+  vulnerable: { mark: "curse", label: "battleStatVulnerable" },
+};
+
+/** Слово всадника: своё имя той чары, которая его навела.
+ *
+ * Всадник носит КЛЮЧ умения, а не название: журнал переживает и сессию, и
+ * перевод, и русское слово, впечатанное в запись, отдало бы английскому
+ * читателю русский всадник. Слово подставляет комната — по ключу, ровно так же,
+ * как она подставляет название карты по её слагу. Не нашлось — пусто, и
+ * называть всадника останется его показателю. */
+export function riderWord(
+  status: { name: string },
+  card: BattleCard | null | undefined,
+  lang: Lang,
+): string {
+  const list = card?.abilities ?? [];
+  for (let i = 0; i < list.length; i++) {
+    if (abilityKey(list[i], i) !== status.name) continue;
+    const own = (lang === "ru" ? list[i].nameRu : list[i].nameEn)?.trim();
+    return own || "";
+  }
+  return "";
+}
+
+/** Есть ли этим что делать прямо сейчас — по телам или по клеткам. */
+export const intentLive = (i: Intent) => i.aims.size > 0 || i.spots.size > 0;
+
+/** Один способ действовать — и всё, что о нём надо сказать. */
+export interface Intent {
+  /** `blow` · `mend` · `cast:<ключ умения>`. */
+  key: string;
+  kind: "blow" | "mend" | "cast";
+  casting: Casting | null;
+  /** Своё имя чары на языке читателя. Пусто — слово берётся по глаголу. */
+  name: string;
+  word: TranslationKey;
+  mark: string;
+  /** Число, которое несёт: сила удара, сколько лечит, сколько снимает чара. */
+  amount: number | null;
+  mana: number;
+  range: number | null;
+  /** Показатель и срок всадника — только у проклятия и благословения. */
+  stat: RiderStat | null;
+  turns: number | null;
+  /** Слово пригоршни — у тех, кто берёт больше одного тела. */
+  reach: TranslationKey | null;
+  /** Она же словом с карты: `BattleIcon` рисует пригоршни по этим именам, и
+   *  второй таблицы «форма → значок» заводить не надо. */
+  shape: string;
+  /** Наводится на КЛЕТКУ, а не на тело. Нужно ровно затем, чтобы отказ звучал
+   *  верно: у одной чары «некого», у другой «некуда», и это разные слова. */
+  atSpot: boolean;
+  /** Ширина круга или число звеньев: то же число, что на умении. */
+  radius: number;
+  /** Кого этим можно взять: тело → ГОТОВОЕ действие из `legalActions`. */
+  aims: Map<number, BattleAction>;
+  /** Куда этим можно ткнуть, если оно наводится на КЛЕТКУ: `x,y` → действие.
+   *  Отдельным ящиком, а не общим: у клетки нет номера тела, а у тела нет
+   *  клетки, пока оно не встало, — один ящик пришлось бы спрашивать дважды. */
+  spots: Map<string, BattleAction>;
+  /** Через сколько ходов вернётся. Читается с тела, а не считается. */
+  asleep: number | null;
+  /** Потрачено НАВСЕГДА: умение, которое просят один раз за партию. Отдельным
+   *  признаком, а не числом ходов: «вернётся через 255» — это не срок, это
+   *  «никогда», сказанное числом, которому человек поверит. */
+  spent: boolean;
+  /** Цена выше того, что есть. */
+  dear: boolean;
+}
+
+/**
+ * Чем это тело может заняться — по одному намерению на способ.
+ *
+ * Способ попадает сюда и тогда, когда им сейчас НЕЛЬЗЯ: тело с двумя чарами, из
+ * которых одна спит, обязано показать обе, иначе спящая чара отличается от
+ * несуществующей только памятью хранителя. Но ходить по ним нечем — `aims`
+ * пуст, — и ни одно такое намерение не может превратиться в действие.
+ */
+export function intentsOf(
+  unit: BattleUnit,
+  card: BattleCard | null | undefined,
+  legal: BattleAction[],
+  mana: number,
+  lang: Lang,
+): Intent[] {
+  const blank = (over: Partial<Intent> & Pick<Intent, "key" | "kind" | "word" | "mark">): Intent => ({
+    casting: null,
+    name: "",
+    amount: null,
+    mana: 0,
+    range: null,
+    stat: null,
+    turns: null,
+    reach: null,
+    shape: "one",
+    atSpot: false,
+    radius: 0,
+    aims: new Map(),
+    spots: new Map(),
+    asleep: null,
+    spent: false,
+    dear: false,
+    ...over,
+  });
+
+  const out: Intent[] = [];
+  const blow = blank({
+    key: "blow",
+    kind: "blow",
+    word: "battleIntentBlow",
+    mark: STAT_MARKS.power,
+    amount: unit.power,
+    range: unit.reach,
+  });
+  const mend = blank({
+    key: "mend",
+    kind: "mend",
+    word: "battleIntentMend",
+    mark: STAT_MARKS.mend,
+    amount: unit.mend > 0 ? unit.mend : null,
+    range: unit.reach,
+  });
+
+  // Удар и лечение тела — не умения, и спрашиваются они у тела.
+  if (unit.card.strikes !== false && unit.power > 0) out.push(blow);
+  let mendShown = unit.mend > 0;
+  if (mendShown) out.push(mend);
+
+  const left = new Map((unit.abilityCds ?? []).map((c) => [c.id, c.left]));
+  const abilities = unit.card.abilities ?? [];
+  // Своё имя чары лежит на КАРТЕ, а не в снимке тела: движок названий не
+  // носит, и носить не должен — журнал переживает и перевод. Подставляется
+  // оно по тому же ключу, по которому комната называет всадника.
+  const named = new Map<string, string>();
+  (card?.abilities ?? []).forEach((a, i) => {
+    const own = (lang === "ru" ? a.nameRu : a.nameEn)?.trim();
+    if (own) named.set(abilityKey(a, i), own);
+  });
+  for (let i = 0; i < abilities.length; i++) {
+    const a = abilities[i];
+    const key = abilityKey(a, i);
+    const cd = left.get(key) ?? 0;
+    const dear = a.manaCost > mana;
+
+    // Лечение чарой — то же намерение, что лечение телом: движок играет его
+    // одним действием (`mend`), и двух «лечить» в веере быть не может.
+    if (a.verb === "heal" && (a.trigger === "active" || a.trigger === "once") && a.amount > 0) {
+      if (a.shape !== "one" && a.shape !== "self") continue;
+      if (!mendShown) {
+        out.push(mend);
+        mendShown = true;
+      }
+      mend.amount = mend.amount === null ? a.amount : Math.max(mend.amount, a.amount);
+      mend.range = Math.max(mend.range ?? 0, a.range);
+      mend.mana = mend.mana || a.manaCost;
+      // Спит у лечения то из двух, что названо первым и ещё не проснулось.
+      if (cd > 0 && mend.asleep === null) mend.asleep = cd;
+      if (dear) mend.dear = true;
+      continue;
+    }
+
+    const casting = castingOf(a);
+    if (!casting) continue;
+    out.push(
+      blank({
+        key: `cast:${key}`,
+        kind: "cast",
+        casting,
+        name: named.get(key) ?? "",
+        word: VERB_LABELS[a.verb as AbilityVerb] ?? "battlesVerbDamage",
+        mark: VERB_ICON[a.verb as AbilityVerb] ?? "sword",
+        amount: a.amount,
+        mana: a.manaCost,
+        range: a.range,
+        stat: casting === "curse" || casting === "bless" ? (a.stat || "power") : null,
+        turns: casting === "curse" || casting === "bless" ? Math.max(1, a.duration ?? 0) : null,
+        reach: reachWord(a.shape),
+        shape: a.shape,
+        atSpot:
+          casting === "zone" ||
+          casting === "summon" ||
+          (casting === "shove" && a.shape === "self"),
+        radius: a.radius ?? 0,
+        asleep: cd > 0 && cd < FOREVER ? cd : null,
+        spent: cd >= FOREVER,
+        dear,
+      }),
+    );
+  }
+
+  // Цели — из законного списка, как есть: каждая несёт ГОТОВОЕ действие, и
+  // назад оно уходит неизменным.
+  const by = new Map(out.map((i) => [i.key, i]));
+
+  // Законное, которого тело за собой не знает, всё равно показывается, и это
+  // единственная защита от того, что зеркало (`castingOf`) однажды разойдётся
+  // с движком: список действий — истина, а перечень умений на карте только её
+  // описание. Без этого карта, которой движок умеет больше, чем здесь
+  // перечислено, молча теряла бы ход — тихо и навсегда.
+  for (const action of legal) {
+    if (typeof action === "string") continue;
+    if ("attack" in action && action.attack.attacker === unit.id && !by.has("blow")) {
+      out.unshift(blow);
+      by.set("blow", blow);
+    }
+    if ("mend" in action && action.mend.healer === unit.id && !by.has("mend")) {
+      out.push(mend);
+      by.set("mend", mend);
+    }
+    if ("cast" in action && action.cast.caster === unit.id) {
+      const key = `cast:${action.cast.ability}`;
+      if (!by.has(key)) {
+        const at = abilities.findIndex((a, i) => abilityKey(a, i) === action.cast.ability);
+        const a = at >= 0 ? abilities[at] : null;
+        const made = blank({
+          key,
+          kind: "cast",
+          casting: a ? castingOf(a) : null,
+          name: named.get(action.cast.ability) ?? "",
+          word: (a && VERB_LABELS[a.verb as AbilityVerb]) || "battlesVerbDamage",
+          mark: (a && VERB_ICON[a.verb as AbilityVerb]) || "sword",
+          amount: a?.amount ?? null,
+          mana: a?.manaCost ?? 0,
+          range: a?.range ?? null,
+        });
+        out.push(made);
+        by.set(key, made);
+      }
+    }
+    // Цель у догнанного намерения та же самая: действие уже в руках.
+    if ("attack" in action && action.attack.attacker === unit.id) {
+      by.get("blow")?.aims.set(action.attack.target, action);
+    } else if ("mend" in action && action.mend.healer === unit.id) {
+      by.get("mend")?.aims.set(action.mend.target, action);
+    } else if ("cast" in action && action.cast.caster === unit.id) {
+      const intent = by.get(`cast:${action.cast.ability}`);
+      const aim = action.cast.target;
+      if ("unit" in aim) intent?.aims.set(aim.unit, action);
+      else intent?.spots.set(`${aim.spot.x},${aim.spot.y}`, action);
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Что берётся в руку само.
+ *
+ * Тем, чем есть что сделать, — а если таких несколько, то, чем бьют: это и был
+ * прежний жест, и тело, которое умеет одно лишнее, не должно начинать ход
+ * иначе, чем все остальные.
+ */
+export function firstToHand(intents: Intent[]): Intent | null {
+  const live = intents.filter((i) => i.aims.size > 0 || i.spots.size > 0);
+  if (!live.length) return null;
+  return live.find((i) => i.kind === "blow") ?? live[0];
 }
 
 /**
@@ -2058,15 +2802,15 @@ export function statLabel(slot: MarkedStat | 'healthMark'): TranslationKey {
  * не бывает.
  */
 export function sheetSlotMark(slot: SheetSlot): string | null {
-  if (slot === 'healthMark') return statMark('health');
+  if (slot === "healthMark") return statMark("health");
   return slot in STAT_MARKS ? STAT_MARKS[slot as MarkedStat] : null;
 }
 
 /** Знак числа. Отдельной функцией, а не чтением словаря на месте, потому что
  *  `healthMark` — это здоровье под другим именем, и разворачивать это в каждом
  *  из шести мест значит забыть однажды. */
-export function statMark(slot: MarkedStat | 'healthMark'): string {
-  return STAT_MARKS[slot === 'healthMark' ? 'health' : slot];
+export function statMark(slot: MarkedStat | "healthMark"): string {
+  return STAT_MARKS[slot === "healthMark" ? "health" : slot];
 }
 
 /**
@@ -2077,13 +2821,13 @@ export function bodyPassport(
   card: Pick<BattleCard, BodyStatField>,
 ): { field: BodyStatField; value: number }[] {
   const rows: { field: BodyStatField; value: number }[] = [
-    { field: 'health', value: card.health },
-    { field: 'mana', value: card.mana },
-    { field: 'armor', value: card.armor },
-    { field: 'ward', value: card.ward },
-    { field: 'reach', value: card.reach },
-    { field: 'step', value: card.step },
-    { field: 'mend', value: card.mend },
+    { field: "health", value: card.health },
+    { field: "mana", value: card.mana },
+    { field: "armor", value: card.armor },
+    { field: "ward", value: card.ward },
+    { field: "reach", value: card.reach },
+    { field: "step", value: card.step },
+    { field: "mend", value: card.mend },
   ];
   return rows.filter((row) => row.value);
 }
@@ -2111,9 +2855,9 @@ export function workHref(card: BattleCard): string | null {
  */
 export function pickImageFile(): Promise<File | null> {
   return new Promise((resolve) => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/*';
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
     input.onchange = () => resolve(input.files?.[0] ?? null);
     // No file chosen (the dialog was cancelled) never fires `change`, so the
     // promise is left to resolve later rather than hanging forever — the
@@ -2135,20 +2879,20 @@ export function pickImageFile(): Promise<File | null> {
  */
 export function errandHref(rule: string): string | null {
   switch (rule) {
-    case 'works_seen':
-    case 'works_liked':
-    case 'comments_left':
-    case 'bookings_done':
-    case 'orders_made':
-      return '/figurines';
-    case 'tales_read':
-      return '/tales';
-    case 'deck_laid':
-      return '/battles/table';
-    case 'matches_finished':
-    case 'matches_won':
-    case 'challenges_won':
-      return '/battles/etude';
+    case "works_seen":
+    case "works_liked":
+    case "comments_left":
+    case "bookings_done":
+    case "orders_made":
+      return "/figurines";
+    case "tales_read":
+      return "/tales";
+    case "deck_laid":
+      return "/battles/table";
+    case "matches_finished":
+    case "matches_won":
+    case "challenges_won":
+      return "/battles/etude";
     default:
       return null;
   }
@@ -2165,50 +2909,55 @@ export function errandHref(rule: string): string | null {
 // которое однажды соврёт.
 
 export const MOTION_OCCASIONS: MotionOccasion[] = [
-  'blow',
-  'spell',
-  'mend',
-  'arrive',
-  'fall',
-  'unseen',
+  "blow",
+  "spell",
+  "mend",
+  "arrive",
+  "fall",
+  "unseen",
 ];
-export const GESTURE_WHOMS: GestureWhom[] = ['striker', 'target', 'flight', 'field'];
+export const GESTURE_WHOMS: GestureWhom[] = [
+  "striker",
+  "target",
+  "flight",
+  "field",
+];
 export const GESTURE_BODIES: GestureBody[] = [
-  'none',
-  'lunge',
-  'flinch',
-  'shiver',
-  'sink',
-  'rise',
-  'swell',
-  'bow',
-  'draw',
-  'recoil',
-  'heave',
-  'shudder',
-  'sway',
-  'loom',
-  'kindle',
-  'blanch',
-  'wither',
+  "none",
+  "lunge",
+  "flinch",
+  "shiver",
+  "sink",
+  "rise",
+  "swell",
+  "bow",
+  "draw",
+  "recoil",
+  "heave",
+  "shudder",
+  "sway",
+  "loom",
+  "kindle",
+  "blanch",
+  "wither",
 ];
 
 /** Жесты света. Меняют `filter`, а не `transform`, — значит, их можно дать
  *  телу ВМЕСТЕ с движением, и они сложатся. Список нужен столу: он подсказывает
  *  хранителю, какой жест не отменит уже надетый. */
-export const GESTURE_LIGHTS: GestureBody[] = ['kindle', 'blanch', 'wither'];
+export const GESTURE_LIGHTS: GestureBody[] = ["kindle", "blanch", "wither"];
 /** Замахи. Пишут `transform`, поэтому на одном теле живёт только один. */
 export const GESTURE_MOVES: GestureBody[] = GESTURE_BODIES.filter(
-  (b) => b !== 'none' && !GESTURE_LIGHTS.includes(b),
+  (b) => b !== "none" && !GESTURE_LIGHTS.includes(b),
 );
 
 export const isLight = (body: GestureBody) => GESTURE_LIGHTS.includes(body);
 export const isMove = (body: GestureBody) =>
-  body !== 'none' && !GESTURE_LIGHTS.includes(body);
+  body !== "none" && !GESTURE_LIGHTS.includes(body);
 
 /** Полёт и поле без картинки — слот под стрелу, не пустой жест. */
 export const isSlot = (g: MotionGesture) =>
-  (g.whom === 'flight' || g.whom === 'field') && !g.image;
+  (g.whom === "flight" || g.whom === "field") && !g.image;
 
 /**
  * Два замаха на одном теле не сложатся — победит последний. Свет складывается
@@ -2221,19 +2970,19 @@ export function oneStirPerBody(gestures: MotionGesture[]): MotionGesture[] {
     }
     return -1;
   };
-  const sm = last('striker', isMove);
-  const tm = last('target', isMove);
-  const sl = last('striker', isLight);
-  const tl = last('target', isLight);
+  const sm = last("striker", isMove);
+  const tm = last("target", isMove);
+  const sl = last("striker", isLight);
+  const tl = last("target", isLight);
   return gestures.filter((g, i) => {
-    if (g.whom !== 'striker' && g.whom !== 'target') return true;
-    if (isMove(g.body)) return i === (g.whom === 'striker' ? sm : tm);
-    if (isLight(g.body)) return i === (g.whom === 'striker' ? sl : tl);
+    if (g.whom !== "striker" && g.whom !== "target") return true;
+    if (isMove(g.body)) return i === (g.whom === "striker" ? sm : tm);
+    if (isLight(g.body)) return i === (g.whom === "striker" ? sl : tl);
     return true;
   });
 }
-export const GESTURE_TURNS: GestureTurn[] = ['none', 'toTarget', 'mirror'];
-export const GESTURE_FADES: GestureFade[] = ['hold', 'in', 'out', 'inOut'];
+export const GESTURE_TURNS: GestureTurn[] = ["none", "toTarget", "mirror"];
+export const GESTURE_FADES: GestureFade[] = ["hold", "in", "out", "inOut"];
 
 /** Потолок длительности. Тот же, что на сервере: ход хранителя из трёх
  *  действий обязан укладываться в две-три секунды, а этюд переигрывают. */
@@ -2251,35 +3000,35 @@ export const GESTURE_LAYERS = 12;
  *  движка: угол в клетках и угол на экране — разные числа. */
 const CELL_TALL = 4 / 3;
 
-export function newGesture(whom: GestureWhom = 'striker'): MotionGesture {
+export function newGesture(whom: GestureWhom = "striker"): MotionGesture {
   return {
     whom,
-    body: whom === 'flight' || whom === 'field' ? 'none' : 'lunge',
-    image: '',
+    body: whom === "flight" || whom === "field" ? "none" : "lunge",
+    image: "",
     frames: 1,
     size: 60,
     nudgeX: 0,
     nudgeY: 0,
     at: 0,
     dur: 300,
-    turn: whom === 'flight' ? 'toTarget' : 'none',
-    fade: whom === 'flight' ? 'hold' : 'inOut',
+    turn: whom === "flight" ? "toTarget" : "none",
+    fade: whom === "flight" ? "hold" : "inOut",
     layer: 5,
     strip: [],
   };
 }
 
-export function newMotion(occasion: MotionOccasion = 'blow'): Motion {
+export function newMotion(occasion: MotionOccasion = "blow"): Motion {
   return {
     id:
-      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      typeof crypto !== "undefined" && "randomUUID" in crypto
         ? crypto.randomUUID()
         : `m${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
-    nameEn: '',
-    nameRu: '',
+    nameEn: "",
+    nameRu: "",
     occasion,
     span: 0,
-    gestures: [newGesture('striker')],
+    gestures: [newGesture("striker")],
   };
 }
 
@@ -2289,19 +3038,23 @@ function gesture(
   at: number,
   dur: number,
 ): MotionGesture {
-  return { ...newGesture(whom), body, at, dur, fade: 'hold' };
+  return { ...newGesture(whom), body, at, dur, fade: "hold" };
 }
 
 /** Слот под картинку. Без неё ничего не рисуется, но место живёт в записи. */
-export function newSlot(whom: 'flight' | 'field', at = 80, dur = 320): MotionGesture {
+export function newSlot(
+  whom: "flight" | "field",
+  at = 80,
+  dur = 320,
+): MotionGesture {
   return {
     ...newGesture(whom),
     at,
     dur,
-    image: '',
-    body: 'none',
-    size: whom === 'flight' ? 45 : 80,
-    fade: 'inOut',
+    image: "",
+    body: "none",
+    size: whom === "flight" ? 45 : 80,
+    fade: "inOut",
   };
 }
 
@@ -2310,11 +3063,11 @@ export function newSlot(whom: 'flight' | 'field', at = 80, dur = 320): MotionGes
  * как раненый. Свет без движения: тело стоит, краска уходит.
  */
 export const WARD_MOTION: Motion = {
-  id: 'house-ward',
-  nameEn: 'A ward',
-  nameRu: 'Оберег',
-  occasion: 'unseen',
-  gestures: [gesture('target', 'blanch', 0, 280)],
+  id: "house-ward",
+  nameEn: "A ward",
+  nameRu: "Оберег",
+  occasion: "unseen",
+  gestures: [gesture("target", "blanch", 0, 280)],
 };
 
 /**
@@ -2326,45 +3079,45 @@ export const WARD_MOTION: Motion = {
  */
 export const DEFAULT_MOTIONS: Motion[] = [
   {
-    id: 'house-blow',
-    nameEn: 'A blow',
-    nameRu: 'Удар',
-    occasion: 'blow',
+    id: "house-blow",
+    nameEn: "A blow",
+    nameRu: "Удар",
+    occasion: "blow",
     gestures: [
       // Подача и возврат — ОДИН жест: 220 туда и 180 обратно живут в его
       // собственной кривой, а не в двух записях. Двумя записями хранитель
       // однажды сотрёт вторую и оставит тело поданным.
-      gesture('striker', 'lunge', 0, 400),
-      gesture('target', 'flinch', 220, 160),
+      gesture("striker", "lunge", 0, 400),
+      gesture("target", "flinch", 220, 160),
     ],
   },
   {
-    id: 'house-mend',
-    nameEn: 'Mending',
-    nameRu: 'Лечение',
-    occasion: 'mend',
-    gestures: [gesture('target', 'rise', 0, 300)],
+    id: "house-mend",
+    nameEn: "Mending",
+    nameRu: "Лечение",
+    occasion: "mend",
+    gestures: [gesture("target", "rise", 0, 300)],
   },
   {
-    id: 'house-arrive',
-    nameEn: 'Taking the field',
-    nameRu: 'Выставление',
-    occasion: 'arrive',
-    gestures: [gesture('striker', 'swell', 0, 300)],
+    id: "house-arrive",
+    nameEn: "Taking the field",
+    nameRu: "Выставление",
+    occasion: "arrive",
+    gestures: [gesture("striker", "swell", 0, 300)],
   },
   {
-    id: 'house-fall',
-    nameEn: 'Falling',
-    nameRu: 'Падение',
-    occasion: 'fall',
-    gestures: [gesture('target', 'sink', 0, 500)],
+    id: "house-fall",
+    nameEn: "Falling",
+    nameRu: "Падение",
+    occasion: "fall",
+    gestures: [gesture("target", "sink", 0, 500)],
   },
   {
-    id: 'house-unseen',
-    nameEn: 'No author',
-    nameRu: 'Без автора',
-    occasion: 'unseen',
-    gestures: [gesture('target', 'shiver', 0, 160)],
+    id: "house-unseen",
+    nameEn: "No author",
+    nameRu: "Без автора",
+    occasion: "unseen",
+    gestures: [gesture("target", "shiver", 0, 160)],
   },
 ];
 
@@ -2379,11 +3132,14 @@ export function motionBars(motion: Motion | null): number {
 
 export function motionSpan(motion: Motion | null): number {
   if (!motion) return 0;
-  return Math.min(MOTION_MS_MAX, Math.max(motionBars(motion), motion.span || 0));
+  return Math.min(
+    MOTION_MS_MAX,
+    Math.max(motionBars(motion), motion.span || 0),
+  );
 }
 
 export function motionTitle(motion: Motion, lang: Lang): string {
-  const own = lang === 'ru' ? motion.nameRu : motion.nameEn;
+  const own = lang === "ru" ? motion.nameRu : motion.nameEn;
   return own || motion.nameRu || motion.nameEn || motion.id;
 }
 
@@ -2391,7 +3147,7 @@ export function parseMotionWear(raw: string | null | undefined): MotionWear {
   if (!raw) return {};
   try {
     const found = JSON.parse(raw) as MotionWear;
-    return found && typeof found === 'object' ? found : {};
+    return found && typeof found === "object" ? found : {};
   } catch {
     return {};
   }
@@ -2416,15 +3172,26 @@ export function stringifyMotionWear(wear: MotionWear): string | null {
  * повод `blow` движение с летящим жестом, и знать про это движку незачем.
  */
 export function occasionOf(event: BattleEvent): MotionOccasion | null {
-  if ('played' in event) return 'arrive';
-  if ('died' in event) return 'fall';
-  if ('healed' in event) return event.healed.by == null ? 'unseen' : 'mend';
-  if ('damaged' in event || 'immune' in event) {
-    const by = 'damaged' in event ? event.damaged.by : event.immune.by;
-    if (by == null) return 'unseen';
+  if ("played" in event) return "arrive";
+  if ("died" in event) return "fall";
+  if ("healed" in event) return event.healed.by == null ? "unseen" : "mend";
+  // Всадник и щит — чара по поводу, и иного повода у них нет: это ровно то, на
+  // что хранитель надевает «наводит». Без автора — `unseen`, как у зоны и яда.
+  if ("rider" in event) return event.rider.by == null ? "unseen" : "spell";
+  if ("shielded" in event) return event.shielded.by == null ? "unseen" : "spell";
+  if ("held" in event) return event.held.by == null ? "unseen" : "spell";
+  if ("lifted" in event) return event.lifted.by == null ? "unseen" : "spell";
+  // Опасная клетка — чара по поводу, даже когда гореть на ней ещё некому.
+  if ("zoned" in event) return event.zoned.by == null ? "unseen" : "spell";
+  if ("damaged" in event || "immune" in event) {
+    const by = "damaged" in event ? event.damaged.by : event.immune.by;
+    if (by == null) return "unseen";
     // `source` приходит в событии готовым словом — это не вывод правила, а
     // чтение того, что движок уже сказал.
-    return 'damaged' in event && event.damaged.source === 'ability' ? 'spell' : 'blow';
+    // Плеск — та же чара, только задевшая соседа: движение у них одно, и
+    // разводить их значило бы просить у хранителя два наряда на один жест.
+    const source = "damaged" in event ? event.damaged.source : "";
+    return source === "ability" || source === "splash" ? "spell" : "blow";
   }
   return null;
 }
@@ -2455,12 +3222,13 @@ export function motionFor(
   // Чара, которой карта не назвала, показывается ударом: у большинства карт
   // способность — это тот же замах, и заводить ей отдельную запись ради того,
   // чтобы она выглядела как удар, незачем.
-  if (occasion === 'spell') {
+  if (occasion === "spell") {
     const asBlow = found(own.blow) ?? found(kin.blow);
     if (asBlow) return asBlow;
   }
 
-  const houseOccasion: MotionOccasion = occasion === 'spell' ? 'blow' : occasion;
+  const houseOccasion: MotionOccasion =
+    occasion === "spell" ? "blow" : occasion;
   return DEFAULT_MOTIONS.find((m) => m.occasion === houseOccasion) ?? null;
 }
 
@@ -2479,7 +3247,7 @@ export interface StagedMote {
   /** Готовый инлайновый стиль: коробка, картинка, полоса, слой, поворот. */
   style: string;
   /** Обломок бумаги — не картинка со склада, а кусок самой карты. */
-  kind?: 'scrap';
+  kind?: "scrap";
 }
 
 export interface Staged {
@@ -2492,7 +3260,7 @@ export interface Staged {
 }
 
 /** Синяк на фото или чернильная блоха. Не полоска здоровья: живёт только такт. */
-export type StruckKind = 'bruise' | 'ink';
+export type StruckKind = "bruise" | "ink";
 
 /**
  * Чем этот удар оставляет след на карте. Числа — из события, не из правил:
@@ -2512,16 +3280,16 @@ export interface HitWear {
 
 export function struckOf(hit: HitWear | null | undefined): StruckKind | null {
   if (!hit || hit.blow <= 0) return null;
-  const src = hit.source ?? 'attack';
-  if (src === 'dot' || src === 'zone') return null;
-  if (hit.channel === 'physical') return 'bruise';
-  if (hit.channel === 'magic' || hit.channel === 'pure') return 'ink';
+  const src = hit.source ?? "attack";
+  if (src === "dot" || src === "zone") return null;
+  if (hit.channel === "physical") return "bruise";
+  if (hit.channel === "magic" || hit.channel === "pure") return "ink";
   return null;
 }
 
 /** Когда движение касается цели: первый жест на ней, иначе сразу. */
 export function motionContact(motion: Motion | null): number {
-  const aimed = motion?.gestures.filter((g) => g.whom === 'target') ?? [];
+  const aimed = motion?.gestures.filter((g) => g.whom === "target") ?? [];
   return aimed.length ? Math.min(...aimed.map((g) => g.at || 0)) : 0;
 }
 
@@ -2534,12 +3302,17 @@ export function motionContact(motion: Motion | null): number {
  */
 export function motionWound(motion: Motion | null): number {
   if (!motion) return 0;
-  const pictured = motion.gestures.filter((g) => g.whom === 'target' && g.image);
+  const pictured = motion.gestures.filter(
+    (g) => g.whom === "target" && g.image,
+  );
   if (pictured.length) {
     const g = pictured.reduce((a, b) => ((a.at || 0) <= (b.at || 0) ? a : b));
     const frames = Math.max(1, g.frames || 1);
     const hit = frames > 1 ? 0.62 : 0.45;
-    return Math.min(MOTION_MS_MAX, (g.at || 0) + Math.round((g.dur || 0) * hit));
+    return Math.min(
+      MOTION_MS_MAX,
+      (g.at || 0) + Math.round((g.dur || 0) * hit),
+    );
   }
   return motionContact(motion);
 }
@@ -2556,7 +3329,7 @@ function wearRng(seed: number): () => number {
   };
 }
 
-type PaperEdge = 'top' | 'right' | 'bottom' | 'left';
+type PaperEdge = "top" | "right" | "bottom" | "left";
 
 export interface PaperBite {
   edge: PaperEdge;
@@ -2572,13 +3345,14 @@ export function paperBites(remain: number, seed: number): PaperBite[] {
   const rng = wearRng(seed);
   const n = Math.min(5, 1 + Math.floor(missing * 5));
   const depth = 11 + missing * 16;
-  const edges: PaperEdge[] = ['top', 'right', 'bottom', 'left'];
+  const edges: PaperEdge[] = ["top", "right", "bottom", "left"];
   const bites: PaperBite[] = [];
   for (let i = 0; i < n; i++) {
     const edge = edges[Math.floor(rng() * 4)]!;
     const t = 0.18 + rng() * 0.64;
     const w = 0.07 + rng() * 0.05 + missing * 0.05;
-    if (bites.some((b) => b.edge === edge && Math.abs(b.t - t) < 0.14)) continue;
+    if (bites.some((b) => b.edge === edge && Math.abs(b.t - t) < 0.14))
+      continue;
     bites.push({ edge, t, w, depth });
   }
   return bites;
@@ -2596,32 +3370,33 @@ export function paperClip(remain: number, seed: number): string | null {
     bites.filter((b) => b.edge === edge).sort((a, b) => a.t - b.t);
 
   const pts: string[] = [];
-  const add = (x: number, y: number) => pts.push(`${x.toFixed(2)}% ${y.toFixed(2)}%`);
+  const add = (x: number, y: number) =>
+    pts.push(`${x.toFixed(2)}% ${y.toFixed(2)}%`);
   add(0, 0);
-  for (const b of on('top')) {
+  for (const b of on("top")) {
     add((b.t - b.w) * 100, 0);
     add(b.t * 100, b.depth);
     add((b.t + b.w) * 100, 0);
   }
   add(100, 0);
-  for (const b of on('right')) {
+  for (const b of on("right")) {
     add(100, (b.t - b.w) * 100);
     add(100 - b.depth, b.t * 100);
     add(100, (b.t + b.w) * 100);
   }
   add(100, 100);
-  for (const b of [...on('bottom')].reverse()) {
+  for (const b of [...on("bottom")].reverse()) {
     add((b.t + b.w) * 100, 100);
     add(b.t * 100, 100 - b.depth);
     add((b.t - b.w) * 100, 100);
   }
   add(0, 100);
-  for (const b of [...on('left')].reverse()) {
+  for (const b of [...on("left")].reverse()) {
     add(0, (b.t + b.w) * 100);
     add(b.depth, b.t * 100);
     add(0, (b.t - b.w) * 100);
   }
-  return `polygon(${pts.join(',')})`;
+  return `polygon(${pts.join(",")})`;
 }
 
 /**
@@ -2653,7 +3428,10 @@ export function sealWear(remain: number, seed: number): string | null {
   const marks: string[] = [];
   // Трещин столько же, сколько выщербов у края карты, и по той же формуле:
   // кружок мельче карты, и четвёртая трещина на нём — уже не сургуч, а сетка.
-  const cracks = Math.min(SEAL_CRACKS_MAX, 1 + Math.floor(missing * SEAL_CRACKS_MAX));
+  const cracks = Math.min(
+    SEAL_CRACKS_MAX,
+    1 + Math.floor(missing * SEAL_CRACKS_MAX),
+  );
   for (let i = 0; i < cracks; i++) {
     // Каждая трещина ЦЕЛИКОМ вычерпывается из последовательности, включая
     // изломы, — иначе следующая забирала бы числа предыдущей и первая трещина
@@ -2666,42 +3444,48 @@ export function sealWear(remain: number, seed: number): string | null {
     for (let k = 0; k <= 4; k++) {
       const t = k / 4;
       const r = SEAL_R * (1 - t * reach);
-      const off = (jitters[k % 4]! - 0.5) * 0.30 * (1 - t);
+      const off = (jitters[k % 4]! - 0.5) * 0.3 * (1 - t);
       const a = ang + off;
-      pts.push(`${(50 + Math.cos(a) * r).toFixed(1)},${(50 + Math.sin(a) * r).toFixed(1)}`);
+      pts.push(
+        `${(50 + Math.cos(a) * r).toFixed(1)},${(50 + Math.sin(a) * r).toFixed(1)}`,
+      );
     }
     marks.push(
-      `<polyline points="${pts.join(' ')}" fill="none" stroke="#2a1c14"`
-      // Толщина названа в СОТЫХ ДОЛЯХ кружка, а не в пикселях, и потому
-      // держится на любой величине карты. Но и доля выбрана по самой мелкой:
-      // на клетке боя кружок в двадцать пикселей, и волосок в два процента
-      // его ширины там не рисуется вовсе — трещина, которой не видно ровно
-      // там, где здоровье и меняется, не трещина.
-      + ` stroke-width="${(4.6 - i * 0.8).toFixed(1)}" stroke-linecap="round"`
-      + ` stroke-opacity="${(0.5 + missing * 0.32).toFixed(2)}"/>`,
+      `<polyline points="${pts.join(" ")}" fill="none" stroke="#2a1c14"` +
+        // Толщина названа в СОТЫХ ДОЛЯХ кружка, а не в пикселях, и потому
+        // держится на любой величине карты. Но и доля выбрана по самой мелкой:
+        // на клетке боя кружок в двадцать пикселей, и волосок в два процента
+        // его ширины там не рисуется вовсе — трещина, которой не видно ровно
+        // там, где здоровье и меняется, не трещина.
+        ` stroke-width="${(4.6 - i * 0.8).toFixed(1)}" stroke-linecap="round"` +
+        ` stroke-opacity="${(0.5 + missing * 0.32).toFixed(2)}"/>`,
     );
     // Выщерб — только у сильно битого, и только у первых трещин: край
     // выкрошился там, где лопнуло раньше всего.
     if (missing > 0.45 && i < 2) {
-      const w = 0.16 + rng() * 0.10;
+      const w = 0.16 + rng() * 0.1;
       const p: string[] = [];
       for (const a of [ang - w, ang, ang + w]) {
-        const r = a === ang ? SEAL_R * (1 - 0.16 - missing * 0.10) : SEAL_R;
-        p.push(`${(50 + Math.cos(a) * r).toFixed(1)},${(50 + Math.sin(a) * r).toFixed(1)}`);
+        const r = a === ang ? SEAL_R * (1 - 0.16 - missing * 0.1) : SEAL_R;
+        p.push(
+          `${(50 + Math.cos(a) * r).toFixed(1)},${(50 + Math.sin(a) * r).toFixed(1)}`,
+        );
       }
-      marks.push(`<polygon points="${p.join(' ')}" fill="#2a1c14" fill-opacity="0.5"/>`);
+      marks.push(
+        `<polygon points="${p.join(" ")}" fill="#2a1c14" fill-opacity="0.5"/>`,
+      );
     }
   }
   // Остывший воск темнеет весь, а не только по трещинам. Печатается ПЕРВЫМ,
   // под трещинами: положенное поверх, оно размывало бы их собственный край.
   const dull =
-    `<circle cx="50" cy="50" r="${SEAL_R}" fill="#2a1c14"`
-    + ` fill-opacity="${(missing * 0.12).toFixed(3)}"/>`;
+    `<circle cx="50" cy="50" r="${SEAL_R}" fill="#2a1c14"` +
+    ` fill-opacity="${(missing * 0.12).toFixed(3)}"/>`;
   const svg =
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" preserveAspectRatio="none">`
-    + dull
-    + marks.join('')
-    + `</svg>`;
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" preserveAspectRatio="none">` +
+    dull +
+    marks.join("") +
+    `</svg>`;
   // Кодируется целиком, а не одна решётка: в `data:`-ссылке `#` открывает
   // якорь и обрезает хвост картинки, а `<`/`>`/кавычка часть браузеров
   // принимает лишь по доброте.
@@ -2740,10 +3524,10 @@ export interface ScrapFly {
   seed: number;
 }
 
-const EMPTY_STAGE: Staged = { span: 0, striker: '', target: '', motes: [] };
+const EMPTY_STAGE: Staged = { span: 0, striker: "", target: "", motes: [] };
 
 /** Кривая подачи. Та же, что была написана в сцене до движка. */
-const EASE = 'cubic-bezier(0.2, 0.8, 0.25, 1)';
+const EASE = "cubic-bezier(0.2, 0.8, 0.25, 1)";
 
 /**
  * Полоса кадров, посчитанная точно.
@@ -2783,8 +3567,8 @@ export function blankStripCell(): StripCell {
 function loadStripImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    if (!src.startsWith('blob:') && !src.startsWith('data:')) {
-      img.crossOrigin = 'anonymous';
+    if (!src.startsWith("blob:") && !src.startsWith("data:")) {
+      img.crossOrigin = "anonymous";
     }
     img.onload = () => resolve(img);
     img.onerror = () => reject(new Error(src));
@@ -2802,7 +3586,11 @@ const STRIP_FRINGE_V = 14 / 255;
 const STRIP_FRINGE_R = 2;
 const STRIP_BG_SAT = 0.2;
 
-function stripValueSat(r: number, g: number, b: number): { v: number; s: number } {
+function stripValueSat(
+  r: number,
+  g: number,
+  b: number,
+): { v: number; s: number } {
   const R = r / 255;
   const G = g / 255;
   const B = b / 255;
@@ -2837,11 +3625,11 @@ export async function punchStripGround(file: File): Promise<File> {
   const src = URL.createObjectURL(file);
   try {
     const img = await loadStripImage(src);
-    const canvas = document.createElement('canvas');
+    const canvas = document.createElement("canvas");
     canvas.width = img.width;
     canvas.height = img.height;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('canvas');
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("canvas");
     ctx.drawImage(img, 0, 0);
     const pix = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const { data, width: w, height: h } = pix;
@@ -2858,7 +3646,9 @@ export async function punchStripGround(file: File): Promise<File> {
     const ground = new Uint8Array(n);
     for (let i = 0; i < n; i++) {
       const o = i * 4;
-      ground[i] = isStripGround(data[o], data[o + 1], data[o + 2], data[o + 3]) ? 1 : 0;
+      ground[i] = isStripGround(data[o], data[o + 1], data[o + 2], data[o + 3])
+        ? 1
+        : 0;
     }
 
     const seen = new Uint8Array(n);
@@ -2899,10 +3689,19 @@ export async function punchStripGround(file: File): Promise<File> {
         const i = y * w + x;
         if (punched[i]) continue;
         const o = i * 4;
-        if (!isStripFringe(data[o], data[o + 1], data[o + 2], data[o + 3])) continue;
+        if (!isStripFringe(data[o], data[o + 1], data[o + 2], data[o + 3]))
+          continue;
         let near = false;
-        for (let yy = Math.max(0, y - fringeR); yy <= Math.min(h - 1, y + fringeR) && !near; yy++) {
-          for (let xx = Math.max(0, x - fringeR); xx <= Math.min(w - 1, x + fringeR); xx++) {
+        for (
+          let yy = Math.max(0, y - fringeR);
+          yy <= Math.min(h - 1, y + fringeR) && !near;
+          yy++
+        ) {
+          for (
+            let xx = Math.max(0, x - fringeR);
+            xx <= Math.min(w - 1, x + fringeR);
+            xx++
+          ) {
             if (punched[yy * w + xx]) {
               near = true;
               break;
@@ -2916,10 +3715,12 @@ export async function punchStripGround(file: File): Promise<File> {
       if (seen[i]) data[i * 4 + 3] = 0;
     }
     ctx.putImageData(pix, 0, 0);
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
-    if (!blob) throw new Error('punch');
-    const stem = file.name.replace(/\.[^.]+$/, '') || 'strip';
-    return new File([blob], `${stem}.png`, { type: 'image/png' });
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, "image/png"),
+    );
+    if (!blob) throw new Error("punch");
+    const stem = file.name.replace(/\.[^.]+$/, "") || "strip";
+    return new File([blob], `${stem}.png`, { type: "image/png" });
   } finally {
     URL.revokeObjectURL(src);
   }
@@ -2936,13 +3737,13 @@ export async function splitMotionStrip(
   const sh = img.height;
   const out: string[] = [];
   for (let i = 0; i < n; i++) {
-    const canvas = document.createElement('canvas');
+    const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.round(sw));
     canvas.height = Math.max(1, Math.round(sh));
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('canvas');
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("canvas");
     ctx.drawImage(img, i * sw, 0, sw, sh, 0, 0, canvas.width, canvas.height);
-    out.push(canvas.toDataURL('image/png'));
+    out.push(canvas.toDataURL("image/png"));
   }
   return out;
 }
@@ -2952,13 +3753,15 @@ export async function stitchMotionStrip(
   cells: StripCell[],
   count = STRIP_FRAMES,
 ): Promise<Blob> {
-  const canvas = document.createElement('canvas');
+  const canvas = document.createElement("canvas");
   canvas.width = STRIP_SIDE * count;
   canvas.height = STRIP_SIDE;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('canvas');
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("canvas");
   const imgs = await Promise.all(
-    cells.slice(0, count).map((c) => (c.src ? loadStripImage(c.src) : Promise.resolve(null))),
+    cells
+      .slice(0, count)
+      .map((c) => (c.src ? loadStripImage(c.src) : Promise.resolve(null))),
   );
   for (let i = 0; i < count; i++) {
     const cell = cells[i];
@@ -2982,14 +3785,14 @@ export async function stitchMotionStrip(
     ctx.restore();
   }
   const blob = await new Promise<Blob | null>((resolve) =>
-    canvas.toBlob(resolve, 'image/png'),
+    canvas.toBlob(resolve, "image/png"),
   );
-  if (!blob) throw new Error('strip');
+  if (!blob) throw new Error("strip");
   return blob;
 }
 
 function fadeName(fade: GestureFade): string {
-  return fade === 'hold' ? '' : `gotiga-fade-${fade}`;
+  return fade === "hold" ? "" : `gotiga-fade-${fade}`;
 }
 
 /**
@@ -3049,7 +3852,10 @@ export function stage(
     angle = (Math.atan2(dy * CELL_TALL, dx) * 180) / Math.PI;
   }
 
-  const stir: Record<'striker' | 'target', string[]> = { striker: [], target: [] };
+  const stir: Record<"striker" | "target", string[]> = {
+    striker: [],
+    target: [],
+  };
   const motes: StagedMote[] = [];
   let key = 0;
 
@@ -3057,7 +3863,11 @@ export function stage(
     const at = Math.max(0, g.at || 0);
     const dur = Math.max(0, g.dur || 0);
 
-    if (g.body && g.body !== 'none' && (g.whom === 'striker' || g.whom === 'target')) {
+    if (
+      g.body &&
+      g.body !== "none" &&
+      (g.whom === "striker" || g.whom === "target")
+    ) {
       // Несколько шевелений одного тела складываются в один список анимаций —
       // так их и записывает CSS. Если две из них двигают одно и то же, побеждает
       // последняя: это предсказуемо и это же видно в списке жестов.
@@ -3072,13 +3882,13 @@ export function stage(
     // `100/spanY` его высоты, и величина жеста задана в процентах клетки.
     const w = size / spanX;
     const h = size / spanY;
-    const spot = g.whom === 'target' ? b : a;
+    const spot = g.whom === "target" ? b : a;
 
-    const parts: string[] = ['position:absolute'];
+    const parts: string[] = ["position:absolute"];
     const anims: string[] = [];
 
-    if (g.whom === 'field') {
-      parts.push('inset:0');
+    if (g.whom === "field") {
+      parts.push("inset:0");
     } else if (!spot) {
       // Некому и не над кем: жест просто не выходит. Не ошибка — обычный урон
       // без автора.
@@ -3086,25 +3896,32 @@ export function stage(
     } else {
       const cx = ((spot.x + 0.5) / spanX) * 100 + g.nudgeX / spanX;
       const cy = ((spot.y + 0.5) / spanY) * 100 + g.nudgeY / spanY;
-      parts.push(`left:${(cx - w / 2).toFixed(3)}%`, `top:${(cy - h / 2).toFixed(3)}%`);
+      parts.push(
+        `left:${(cx - w / 2).toFixed(3)}%`,
+        `top:${(cy - h / 2).toFixed(3)}%`,
+      );
       parts.push(`width:${w.toFixed(3)}%`, `height:${h.toFixed(3)}%`);
     }
 
     parts.push(`background-image:url("${cssUrl(g.image)}")`);
-    parts.push('background-repeat:no-repeat');
+    parts.push("background-repeat:no-repeat");
     if (frames > 1) {
       parts.push(`background-size:${frames * 100}% 100%`);
       parts.push(`--strip-end:${stripEnd(frames).toFixed(4)}%`);
       anims.push(`gotiga-strip ${dur}ms steps(${frames}) ${lag(at)}ms both`);
     } else {
-      parts.push('background-size:contain', 'background-position:center');
+      parts.push("background-size:contain", "background-position:center");
     }
 
     const turn =
-      g.turn === 'toTarget' ? `${angle.toFixed(2)}deg` : g.turn === 'mirror' ? '180deg' : '0deg';
+      g.turn === "toTarget"
+        ? `${angle.toFixed(2)}deg`
+        : g.turn === "mirror"
+          ? "180deg"
+          : "0deg";
     parts.push(`--turn:${turn}`);
 
-    if (g.whom === 'flight' && a && b) {
+    if (g.whom === "flight" && a && b) {
       // Перелёт задаётся в процентах СОБСТВЕННОЙ ширины рисунка: проценты в
       // `translate` меряются по самому элементу, а не по полю. Клетка по
       // экрану — это `100/size` его ширин, значит клетка пути — `10000/size`
@@ -3113,7 +3930,7 @@ export function stage(
       parts.push(`--mx:${((b.x - a.x) * own).toFixed(2)}%`);
       parts.push(`--my:${((b.y - a.y) * own).toFixed(2)}%`);
       anims.push(`gotiga-fly ${dur}ms ${EASE} ${lag(at)}ms both`);
-    } else if (g.whom === 'target' && frames === 1 && a && b) {
+    } else if (g.whom === "target" && frames === 1 && a && b) {
       // Одиночная картина на цели. Полоса уже несёт удар в кадрах; без полосы
       // рисунок иначе просто висит вторым портретом. Замах читается с той же
       // стороны, что подача, и свет на металле — тот же, что kindle: яркость
@@ -3123,7 +3940,7 @@ export function stage(
       const len = Math.max(1, Math.abs(dx) + Math.abs(dy));
       parts.push(`--lx:${((dx / len) * 32).toFixed(2)}%`);
       parts.push(`--ly:${((dy / len) * 32).toFixed(2)}%`);
-      parts.push('transform-origin:50% 38%');
+      parts.push("transform-origin:50% 38%");
       anims.push(`gotiga-cleave ${dur}ms ${EASE} ${lag(at)}ms both`);
     }
 
@@ -3135,23 +3952,23 @@ export function stage(
     // Поворот ставится ВСЕГДА, а не только когда анимации нет: полоса кадров
     // не трогает `transform`, и рисунок с ней терял бы свой угол. Перелёт свой
     // поворот несёт внутри собственных кадров и потому эту строку перебивает.
-    parts.push('transform:rotate(var(--turn))');
-    if (anims.length) parts.push(`animation:${anims.join(',')}`);
-    if (frozen && anims.length) parts.push('animation-play-state:paused');
+    parts.push("transform:rotate(var(--turn))");
+    if (anims.length) parts.push(`animation:${anims.join(",")}`);
+    if (frozen && anims.length) parts.push("animation-play-state:paused");
 
-    motes.push({ key: `${motion.id}-${key++}`, layer, style: parts.join(';') });
+    motes.push({ key: `${motion.id}-${key++}`, layer, style: parts.join(";") });
   }
 
-  const dress = (who: 'striker' | 'target') =>
+  const dress = (who: "striker" | "target") =>
     stir[who].length
-      ? `--lx:${lx.toFixed(2)}%;--ly:${ly.toFixed(2)}%;animation:${stir[who].join(',')}` +
-        (frozen ? ';animation-play-state:paused' : '')
-      : '';
+      ? `--lx:${lx.toFixed(2)}%;--ly:${ly.toFixed(2)}%;animation:${stir[who].join(",")}` +
+        (frozen ? ";animation-play-state:paused" : "")
+      : "";
 
   return {
     span: motionSpan(motion),
-    striker: dress('striker'),
-    target: dress('target'),
+    striker: dress("striker"),
+    target: dress("target"),
     motes,
   };
 }
@@ -3177,146 +3994,151 @@ export function stage(
 
 /** Полосы ближнего удара. Дом нарисовал их сам; хранитель может заменить. */
 export const STRIKE_STRIPS = {
-  axe: '/battles/motion/axe.png',
-  sword: '/battles/motion/sword.png',
-  mace: '/battles/motion/mace.png',
+  axe: "/battles/motion/axe.png",
+  sword: "/battles/motion/sword.png",
+  mace: "/battles/motion/mace.png",
 } as const;
 
 function strikeArt(image: string, at: number, dur: number): MotionGesture {
   return {
-    ...newGesture('target'),
-    body: 'none',
+    ...newGesture("target"),
+    body: "none",
     image,
     frames: STRIP_FRAMES,
     size: 118,
     at,
     dur,
-    fade: 'inOut',
+    fade: "inOut",
     layer: 8,
   };
 }
 
-export const STOCK_MOTIONS: { nameEn: string; nameRu: string; occasion: MotionOccasion; gestures: MotionGesture[] }[] = [
+export const STOCK_MOTIONS: {
+  nameEn: string;
+  nameRu: string;
+  occasion: MotionOccasion;
+  gestures: MotionGesture[];
+}[] = [
   {
-    nameEn: 'An axe',
-    nameRu: 'Секира',
-    occasion: 'blow',
+    nameEn: "An axe",
+    nameRu: "Секира",
+    occasion: "blow",
     gestures: [
-      gesture('striker', 'heave', 0, 600),
+      gesture("striker", "heave", 0, 600),
       strikeArt(STRIKE_STRIPS.axe, 180, 480),
-      gesture('target', 'recoil', 420, 280),
+      gesture("target", "recoil", 420, 280),
     ],
   },
   {
-    nameEn: 'A sword',
-    nameRu: 'Меч',
-    occasion: 'blow',
+    nameEn: "A sword",
+    nameRu: "Меч",
+    occasion: "blow",
     gestures: [
-      gesture('striker', 'lunge', 0, 500),
+      gesture("striker", "lunge", 0, 500),
       strikeArt(STRIKE_STRIPS.sword, 140, 440),
-      gesture('target', 'flinch', 340, 200),
+      gesture("target", "flinch", 340, 200),
     ],
   },
   {
-    nameEn: 'A mace',
-    nameRu: 'Булава',
-    occasion: 'blow',
+    nameEn: "A mace",
+    nameRu: "Булава",
+    occasion: "blow",
     gestures: [
-      gesture('striker', 'heave', 0, 620),
+      gesture("striker", "heave", 0, 620),
       strikeArt(STRIKE_STRIPS.mace, 200, 500),
-      gesture('target', 'shudder', 440, 280),
+      gesture("target", "shudder", 440, 280),
     ],
   },
   {
-    nameEn: 'A heavy blow',
-    nameRu: 'Тяжёлый удар',
-    occasion: 'blow',
+    nameEn: "A heavy blow",
+    nameRu: "Тяжёлый удар",
+    occasion: "blow",
     gestures: [
-      gesture('striker', 'heave', 0, 520),
+      gesture("striker", "heave", 0, 520),
       // Один замах на цель: recoil и shudder оба пишут transform, и второй
       // убивал первый. Отдача — то, чем тяжёлый удар читается.
-      gesture('target', 'recoil', 320, 280),
+      gesture("target", "recoil", 320, 280),
     ],
   },
   {
-    nameEn: 'A shot',
-    nameRu: 'Выстрел',
-    occasion: 'blow',
+    nameEn: "A shot",
+    nameRu: "Выстрел",
+    occasion: "blow",
     gestures: [
-      gesture('striker', 'draw', 0, 420),
+      gesture("striker", "draw", 0, 420),
       // Слот: без картинки ничего не летит, но место уже есть — кладут стрелу,
       // а не заводят жест. След удара в комнате рисуется отдельно.
-      newSlot('flight', 80, 340),
-      gesture('target', 'flinch', 400, 160),
+      newSlot("flight", 80, 340),
+      gesture("target", "flinch", 400, 160),
     ],
   },
   {
-    nameEn: 'A charm',
-    nameRu: 'Чара',
-    occasion: 'spell',
+    nameEn: "A charm",
+    nameRu: "Чара",
+    occasion: "spell",
     gestures: [
-      gesture('striker', 'sway', 0, 460),
-      gesture('striker', 'kindle', 0, 460),
-      newSlot('field', 200, 400),
-      gesture('target', 'kindle', 380, 320),
-      gesture('target', 'shiver', 380, 200),
+      gesture("striker", "sway", 0, 460),
+      gesture("striker", "kindle", 0, 460),
+      newSlot("field", 200, 400),
+      gesture("target", "kindle", 380, 320),
+      gesture("target", "shiver", 380, 200),
     ],
   },
   {
-    nameEn: 'A curse',
-    nameRu: 'Проклятие',
-    occasion: 'spell',
+    nameEn: "A curse",
+    nameRu: "Проклятие",
+    occasion: "spell",
     gestures: [
-      gesture('striker', 'loom', 0, 420),
-      newSlot('field', 180, 400),
-      gesture('target', 'wither', 340, 340),
-      gesture('target', 'shudder', 340, 280),
+      gesture("striker", "loom", 0, 420),
+      newSlot("field", 180, 400),
+      gesture("target", "wither", 340, 340),
+      gesture("target", "shudder", 340, 280),
     ],
   },
   {
-    nameEn: 'The evil eye',
-    nameRu: 'Сглаз',
-    occasion: 'blow',
+    nameEn: "The evil eye",
+    nameRu: "Сглаз",
+    occasion: "blow",
     gestures: [
-      gesture('striker', 'sway', 0, 380),
-      gesture('target', 'blanch', 260, 380),
+      gesture("striker", "sway", 0, 380),
+      gesture("target", "blanch", 260, 380),
     ],
   },
   {
-    nameEn: 'Tending',
-    nameRu: 'Врачевание',
-    occasion: 'mend',
+    nameEn: "Tending",
+    nameRu: "Врачевание",
+    occasion: "mend",
     gestures: [
-      gesture('striker', 'bow', 0, 380),
-      gesture('target', 'kindle', 200, 340),
-      gesture('target', 'rise', 200, 340),
+      gesture("striker", "bow", 0, 380),
+      gesture("target", "kindle", 200, 340),
+      gesture("target", "rise", 200, 340),
     ],
   },
   {
-    nameEn: 'Stepping out',
-    nameRu: 'Явление',
-    occasion: 'arrive',
+    nameEn: "Stepping out",
+    nameRu: "Явление",
+    occasion: "arrive",
     gestures: [
-      gesture('striker', 'swell', 0, 340),
-      gesture('striker', 'kindle', 60, 320),
+      gesture("striker", "swell", 0, 340),
+      gesture("striker", "kindle", 60, 320),
     ],
   },
   {
-    nameEn: 'Guttering out',
-    nameRu: 'Угасание',
-    occasion: 'fall',
+    nameEn: "Guttering out",
+    nameRu: "Угасание",
+    occasion: "fall",
     gestures: [
-      gesture('target', 'sink', 0, 560),
-      gesture('target', 'blanch', 0, 560),
+      gesture("target", "sink", 0, 560),
+      gesture("target", "blanch", 0, 560),
     ],
   },
   {
-    nameEn: 'Poison',
-    nameRu: 'Яд',
-    occasion: 'unseen',
+    nameEn: "Poison",
+    nameRu: "Яд",
+    occasion: "unseen",
     gestures: [
-      gesture('target', 'wither', 0, 320),
-      gesture('target', 'shiver', 0, 200),
+      gesture("target", "wither", 0, 320),
+      gesture("target", "shiver", 0, 200),
     ],
   },
 ];
@@ -3380,6 +4202,40 @@ export interface RuleApart {
 }
 
 /**
+ * Что держит игрока в ЭТОМ бою — не отличия, а всё, обо что можно удариться.
+ *
+ * Не противоречит соседке и не отменяет её правила: `rulesApart` печатается
+ * на полке НЕПРОШЕННОЙ, и свод из десяти ручек там не сообщал бы ничего.
+ * Этот список читают, только когда за ним пришли, — и тогда молчать о
+ * домашнем правиле нельзя вдвойне: домашнее не названо нигде больше, а
+ * кусается оно точно так же, как чужое. Ровно на этом обжигается первый
+ * круг: он домашний, поэтому отличием не был никогда.
+ *
+ * Названо только то, обо что можно удариться, — ручка, стоящая в положении
+ * «ничего не делает», молчит.
+ */
+export function rulesInForce(rules: BattleRules | null | undefined): RuleApart[] {
+  if (!rules) return [];
+  const out: RuleApart[] = [];
+  const say = (key: TranslationKey, amount: number | null = null) =>
+    out.push({ key, amount });
+
+  // Порядок — по тому, обо что ударяются раньше, а не по полю в структуре.
+  if (rules.openingAttacks < 255) say("battleRuleOpening", rules.openingAttacks);
+  if (rules.actsPerTurn < 255) say("battleRuleActs", rules.actsPerTurn);
+  say(rules.walkSpendsTurn ? "battleRuleWalkSpends" : "battleRuleWalkFree");
+  if (rules.retaliation) say("battleRuleRetaliation");
+  if (rules.idleToll > 0) say("battleRuleIdleToll", rules.idleToll);
+  if (rules.escalationFrom > 0) say("battleRuleEscalation", rules.escalationFrom);
+  if (rules.pointBlankPower < 100) say("battleRulePointBlank", rules.pointBlankPower);
+  if (rules.longShotPower < 100) say("battleRuleLongShot", rules.longShotPower);
+  if (rules.secondSideCoin > 0) say("battleRuleCoin", rules.secondSideCoin);
+  say("battleRuleRounds", rules.maxRounds);
+
+  return out;
+}
+
+/**
  * Чем эти правила отличаются от домашних.
  *
  * Названо только отличие, а не весь свод: этюд, у которого перечислены все
@@ -3390,41 +4246,63 @@ export interface RuleApart {
 export function rulesApart(rules: BattleRules | null | undefined): RuleApart[] {
   if (!rules) return [];
   const out: RuleApart[] = [];
-  const say = (key: TranslationKey, amount: number | null = null) => out.push({ key, amount });
+  const say = (key: TranslationKey, amount: number | null = null) =>
+    out.push({ key, amount });
 
   if (rules.walkSpendsTurn !== HOUSE_RULES.walkSpendsTurn) {
-    say(rules.walkSpendsTurn ? 'battleRuleWalkSpends' : 'battleRuleWalkFree');
+    say(rules.walkSpendsTurn ? "battleRuleWalkSpends" : "battleRuleWalkFree");
   }
   if (rules.retaliation !== HOUSE_RULES.retaliation) {
-    say(rules.retaliation ? 'battleRuleRetaliation' : 'battleRuleNoRetaliation');
+    say(
+      rules.retaliation ? "battleRuleRetaliation" : "battleRuleNoRetaliation",
+    );
   }
   // 255 — «сколько угодно», то есть каждое тело по разу. Число рядом с этим
   // словом было бы враньём, поэтому и потолок называется, только когда он есть.
-  if (rules.actsPerTurn !== HOUSE_RULES.actsPerTurn && rules.actsPerTurn < 255) {
-    say('battleRuleActs', rules.actsPerTurn);
+  if (
+    rules.actsPerTurn !== HOUSE_RULES.actsPerTurn &&
+    rules.actsPerTurn < 255
+  ) {
+    say("battleRuleActs", rules.actsPerTurn);
   }
   if (rules.openingAttacks !== HOUSE_RULES.openingAttacks) {
-    say(rules.openingAttacks >= 255 ? 'battleRuleOpeningFree' : 'battleRuleOpening',
-      rules.openingAttacks >= 255 ? null : rules.openingAttacks);
+    say(
+      rules.openingAttacks >= 255
+        ? "battleRuleOpeningFree"
+        : "battleRuleOpening",
+      rules.openingAttacks >= 255 ? null : rules.openingAttacks,
+    );
   }
   if (rules.idleToll !== HOUSE_RULES.idleToll) {
-    say(rules.idleToll === 0 ? 'battleRuleNoIdleToll' : 'battleRuleIdleToll',
-      rules.idleToll === 0 ? null : rules.idleToll);
+    say(
+      rules.idleToll === 0 ? "battleRuleNoIdleToll" : "battleRuleIdleToll",
+      rules.idleToll === 0 ? null : rules.idleToll,
+    );
   }
-  if (rules.escalationFrom !== HOUSE_RULES.escalationFrom && rules.escalationFrom > 0) {
-    say('battleRuleEscalation', rules.escalationFrom);
+  if (
+    rules.escalationFrom !== HOUSE_RULES.escalationFrom &&
+    rules.escalationFrom > 0
+  ) {
+    say("battleRuleEscalation", rules.escalationFrom);
   }
-  if (rules.maxRounds !== HOUSE_RULES.maxRounds) say('battleRuleRounds', rules.maxRounds);
+  if (rules.maxRounds !== HOUSE_RULES.maxRounds)
+    say("battleRuleRounds", rules.maxRounds);
   if (rules.secondSideCoin !== HOUSE_RULES.secondSideCoin) {
-    say('battleRuleCoin', rules.secondSideCoin);
+    say("battleRuleCoin", rules.secondSideCoin);
   }
   if (rules.pointBlankPower !== HOUSE_RULES.pointBlankPower) {
-    say(rules.pointBlankPower >= 100 ? 'battleRuleNoPointBlank' : 'battleRulePointBlank',
-      rules.pointBlankPower >= 100 ? null : rules.pointBlankPower);
+    say(
+      rules.pointBlankPower >= 100
+        ? "battleRuleNoPointBlank"
+        : "battleRulePointBlank",
+      rules.pointBlankPower >= 100 ? null : rules.pointBlankPower,
+    );
   }
   if (rules.longShotPower !== HOUSE_RULES.longShotPower) {
-    say(rules.longShotPower === 0 ? 'battleRuleNoLongShot' : 'battleRuleLongShot',
-      rules.longShotPower === 0 ? null : rules.longShotPower);
+    say(
+      rules.longShotPower === 0 ? "battleRuleNoLongShot" : "battleRuleLongShot",
+      rules.longShotPower === 0 ? null : rules.longShotPower,
+    );
   }
   return out;
 }
@@ -3547,4 +4425,27 @@ export function emptyBattleCard(): BattleCard {
     createdAt: "",
     updatedAt: "",
   };
+}
+
+/** Отказ стола приходит СЛОВОМ (`deck:notYours`), а не текстом: текст живёт
+ *  здесь, на двух языках, а сервер, который его сочиняет, сочиняет его на
+ *  одном. Незнакомое слово не молчит — комната говорит общее.
+ *
+ *  Лежит в одном месте, потому что спрашивают его ДВОЕ: стол колоды, когда её
+ *  сохраняют, и этюд, когда с нею начинают партию. Второй не спрашивал вовсе —
+ *  колода, собранная из карт, которых у гостя больше нет, отвечала гостю
+ *  «ход потерян» на четырёхсотый ответ сервера, и починить её по этим словам
+ *  было нельзя.
+ */
+export function deckFaultLine(
+  e: unknown,
+  tr: (key: TranslationKey) => string,
+  fallback: TranslationKey,
+): string {
+  const word = String(e).match(/deck:(\w+)/)?.[1];
+  if (!word) return tr(fallback);
+  const key =
+    `battlesDeckFault${word[0].toUpperCase()}${word.slice(1)}` as TranslationKey;
+  const said = tr(key);
+  return said && said !== key ? said : tr(fallback);
 }

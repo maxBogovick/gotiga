@@ -433,6 +433,26 @@
   let rowMark = $state<{ left: number; top: number; width: number; height: number } | null>(null);
   let rowMoved = false;
 
+  /**
+   * Во сколько раз стол увеличил карту — и почему это приходится спрашивать.
+   *
+   * Стол резчика ставит карту той ширины, на какой она стоит в комнате, а
+   * крупнее делает увеличением (`zoom`): тогда опись, резьба и кегль остаются
+   * ровно теми, что увидит гость, — ширится не карта, а стекло. Мерки от этого
+   * раздваиваются. `getBoundingClientRect` отвечает в точках ЭКРАНА, а число,
+   * вписанное в стиль ВНУТРИ карты, читается в её собственных, и под
+   * четырёхкратным стеклом второе вчетверо крупнее первого.
+   *
+   * Считанное в ДОЛЯХ проходит сквозь увеличение само — обе половины дроби
+   * увеличены одинаково, — поэтому делить приходится только то немногое, что
+   * переносится точками: черта вставки и сдвиг стола значка.
+   */
+  function cardScale(): number {
+    const el = root;
+    if (!el?.offsetWidth) return 1;
+    return el.getBoundingClientRect().width / el.offsetWidth || 1;
+  }
+
   function rowTake(slot: SheetSlot, event: PointerEvent) {
     if (!rowsEditable || event.button !== 0) return;
     event.preventDefault();
@@ -510,10 +530,27 @@
     const before = (boxes[index]?.slot as SheetSlot | undefined) ?? null;
     const near = boxes[Math.min(index, boxes.length - 1)]?.box;
     const room = host.getBoundingClientRect();
+    // Из точек ЭКРАНА — в собственные точки карты. Черту меряют по экрану, а
+    // рисуют внутри карты, и под стеклом это разные точки: непереведённая
+    // черта уехала бы от своего места ровно во столько раз, во сколько
+    // увеличен стол. Толщина проходит тем же ходом нарочно — черта обязана
+    // оставаться волоском на любом увеличении, а не толстеть вместе с резьбой.
+    const k = cardScale();
+    const own = (mark: { left: number; top: number; width: number; height: number }) => ({
+      left: mark.left / k,
+      top: mark.top / k,
+      width: mark.width / k,
+      height: mark.height / k,
+    });
     if (!near) {
       return {
         before,
-        mark: { left: room.left - card.left, top: room.top - card.top, width: room.width, height: 2 },
+        mark: own({
+          left: room.left - card.left,
+          top: room.top - card.top,
+          width: room.width,
+          height: 2,
+        }),
       };
     }
     const after = index >= boxes.length;
@@ -531,7 +568,7 @@
             width: 2,
             height: near.height,
           };
-    return { before, mark };
+    return { before, mark: own(mark) };
   }
 
   function rowLet() {
@@ -1232,8 +1269,12 @@
     if (box.top + dy < pad) dy = pad - box.top;
     if (box.right > window.innerWidth - pad) dx = window.innerWidth - pad - box.right;
     if (box.left + dx < pad) dx = pad - box.left;
-    el.style.setProperty('--bi-shift-x', `${dx}px`);
-    el.style.setProperty('--bi-shift-y', `${dy}px`);
+    // Сдвиг посчитан по краю ЭКРАНА, а вписывается внутрь увеличенной карты:
+    // без перевода стол под четырёхкратным стеклом увёз бы панель вчетверо
+    // дальше, чем просили, — то есть с одного края экрана за другой.
+    const k = cardScale();
+    el.style.setProperty('--bi-shift-x', `${dx / k}px`);
+    el.style.setProperty('--bi-shift-y', `${dy / k}px`);
   }
 
   // Мерить приходится и после открытия, и после всякого движения под панелью:
