@@ -50,6 +50,7 @@
 
   let {
     kind,
+    value,
     frame,
     write,
     onEditStart,
@@ -58,6 +59,10 @@
     onclose,
   }: {
     kind: BadgeKind;
+    /** Число, которое значок печатает. Мерка значка считается по нему: на
+     *  столе двигают ровно тот значок, что нарисован, и ширина у «1» и у «10»
+     *  разная. */
+    value: number | null | undefined;
     /** Рамка, какой её видит карта, — для чтения. */
     frame: BattleFrame;
     /** Куда писать. Функция, а не объект: цель зависит от того, что открыто на
@@ -109,9 +114,9 @@
   let size = $derived(badgeScale(frame, kind));
   /** Сколько значок занимает — по нарисованному, а не по кружку: без формы
    *  это цифра, и место ей отмеряется по ней. */
-  let extent = $derived(badgeExtent(frame, kind));
+  let extent = $derived(badgeExtent(frame, kind, value));
   let weight = $derived(badgeWeight(frame, kind));
-  let spot = $derived(badgeAt(frame, kind));
+  let spot = $derived(badgeAt(frame, kind, value));
 
   function set<K extends keyof BattleFrame>(key: K, value: BattleFrame[K]) {
     (write() as BattleFrame)[key] = value;

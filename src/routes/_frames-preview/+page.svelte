@@ -7,7 +7,7 @@
 
   let presets = $state<{ id: string; name: string; frame: BattleFrame }[]>([]);
   let cards = $state<CardDto[]>([]);
-  const SIZES = [640];
+  const SIZES = [400, 261];
 
   onMount(async () => {
     lang.set('ru');

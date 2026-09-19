@@ -45,6 +45,7 @@
   import BattleCard from "$lib/components/BattleCard.svelte";
   import BattleIcon from "$lib/components/BattleIcon.svelte";
   import BattleFramePicker from "$lib/components/admin/BattleFramePicker.svelte";
+  import BattleFrameFace from "$lib/components/BattleFrameFace.svelte";
   import type {
     BattleAssetRole,
     BattleCard as BattleCardDto,
@@ -470,7 +471,121 @@
     none: 'adminBattlesSliceTurnNone',
   };
 
-  const ZOOMS = [1, 1.5, 2, 3, 4];
+  /** Кратности стекла. Полутора среди них больше нет: оно стояло умолчанием
+   *  ровно потому, что при 1× карта терялась, а «вписать» отвечает на это
+   *  лучше и само. Лишняя кнопка на ленте стоит дороже редкой кратности. */
+  const ZOOMS = [1, 2, 3, 4];
+
+  /**
+   * Ширина колонки. Тянется за ручку и помнится между заходами.
+   *
+   * Была жёсткой (27rem), и место на столе оказалось роздано наоборот: сцене
+   * доставалось на полтысячи точек больше, чем занимает карта, а в колонке
+   * ползунки и поля переносились по два в ряд и обрезали свои подписи. Кто
+   * режет крупную резьбу, тому нужна сцена; кто правит числа — колонка; и
+   * выбирать это должен тот, кто работает, а не тот, кто размечал.
+   */
+  const SIDE_MIN = 380;
+  const SIDE_MAX = 640;
+  let sideWide = $state(432);
+
+  /**
+   * Какую долю колонки занимает верстак детали.
+   *
+   * Была жёсткая доля, и она не могла быть верной: у детали без украшения
+   * настроек на треть меньше, чем у украшения, а список бывает и из шести
+   * строк, и из восемнадцати. Долю выбирает тот, кто работает, — как и ширину
+   * колонки.
+   */
+  const PANE_MIN = 0.3;
+  const PANE_MAX = 0.82;
+  let paneShare = $state(0.66);
+
+  /** Обе мерки стола в одной памяти: два ключа под две половины одной
+   *  настройки разошлись бы на первом же забытом обновлении. */
+  const DESK_KEY = "gotiga_battle_desk";
+
+  onMount(() => {
+    try {
+      const put = JSON.parse(localStorage.getItem(DESK_KEY) || "null");
+      if (put && Number.isFinite(put.side)) sideWide = clampSide(put.side);
+      if (put && Number.isFinite(put.pane)) paneShare = clampPane(put.pane);
+    } catch {
+      /* стол просто останется домашних мерок */
+    }
+  });
+
+  function keepDesk() {
+    try {
+      localStorage.setItem(
+        DESK_KEY,
+        JSON.stringify({ side: sideWide, pane: paneShare }),
+      );
+    } catch {
+      /* не запомнилось — мерки живут до конца сеанса */
+    }
+  }
+
+  function clampSide(px: number): number {
+    return Math.min(SIDE_MAX, Math.max(SIDE_MIN, Math.round(px)));
+  }
+
+  function clampPane(share: number): number {
+    return Math.min(PANE_MAX, Math.max(PANE_MIN, Math.round(share * 100) / 100));
+  }
+
+  /** Верстак тянут за ручку над ним. Считается долей КОЛОНКИ, а не точками:
+   *  колонку тоже тянут, и доля переживает это сама. */
+  let paneGrab = $state(false);
+  let paneFrom = 0;
+  let paneAt = 0;
+  let asideBox = $state<HTMLElement | null>(null);
+  function paneTake(event: PointerEvent & { currentTarget: HTMLElement }) {
+    paneGrab = true;
+    paneFrom = paneShare;
+    paneAt = event.clientY;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }
+  function paneDrag(event: PointerEvent) {
+    if (!paneGrab || !asideBox?.clientHeight) return;
+    paneShare = clampPane(
+      paneFrom - (event.clientY - paneAt) / asideBox.clientHeight,
+    );
+  }
+  function paneDrop(event: PointerEvent & { currentTarget: HTMLElement }) {
+    if (!paneGrab) return;
+    paneGrab = false;
+    if (event.currentTarget.hasPointerCapture(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    keepDesk();
+  }
+
+  /** Тянут за ручку на левой кромке колонки. Считается ПРИРАЩЕНИЕМ от того,
+   *  где взяли, а не расстоянием до края окна: стол не обязан упираться в
+   *  край — у студии над ним своя шапка комнаты, — и ширина, отмеренная от
+   *  окна, врала бы ровно на неё. */
+  let sideGrab = $state(false);
+  let sideFrom = 0;
+  let sideAt = 0;
+  function sideTake(event: PointerEvent & { currentTarget: HTMLElement }) {
+    sideGrab = true;
+    sideFrom = sideWide;
+    sideAt = event.clientX;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }
+  function sideDrag(event: PointerEvent) {
+    if (!sideGrab) return;
+    sideWide = clampSide(sideFrom - (event.clientX - sideAt));
+  }
+  function sideDrop(event: PointerEvent & { currentTarget: HTMLElement }) {
+    if (!sideGrab) return;
+    sideGrab = false;
+    if (event.currentTarget.hasPointerCapture(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    keepDesk();
+  }
 
   /** Сколько места отведено мерке слева. Одно число на обе половины: верхняя
    *  подпись отступает ровно на него, иначе мерка ширины встала бы не по краям
@@ -504,14 +619,70 @@
    * остался бы честным лишь наполовину. И не ширина контейнера, как было: та
    * увеличивала резьбу и кегль по-настоящему, но вместе с ними — и саму карту,
    * то есть меняла ответ на вопрос «что на ней напечатано».
+   *
+   * «Вписать» — не шестая кратность, а ОТКАЗ называть её: столько, сколько
+   * нужно, чтобы карта поместилась целиком. Оно же умолчание, потому что стол
+   * открывают, чтобы посмотреть на карту, а не чтобы сперва подобрать число,
+   * при котором её видно.
    */
-  let stageZoom = $state(1.5);
+  let glass = $state<number | "fit">("fit");
 
   /** Высота карты при выбранной ширине: отношение сторон у каждого чина своё,
    *  и высота — не вторая ручка, а следствие первой. */
   let cardTall = $derived(
     cardTallAt(stageWidth, frames[frameIndex]?.aspect || DEFAULT_ASPECT),
   );
+
+  /** Сколько места у сцены на самом деле. Меряется САМА сцена, а не окно:
+   *  между ними стоят вкладки, известие комнаты, лента стола и колонка, и
+   *  число, посчитанное от окна, врёт ровно на их сумму. */
+  let stageWide = $state(0);
+  let stageTall = $state(0);
+
+  /** Что сцена тратит не на карту: свой отступ (`p-8`), мерка сверху, подпись
+   *  снизу и жёлоб мерки слева. Названы числами, потому что мерить их в рантайме
+   *  значило бы мерить то, что сам же и поставил. */
+  const STAGE_PAD = 32;
+  const RULER_TALL = 24;
+  const CAPTION_TALL = 30;
+  /** Запас, ради которого «вписать» не колеблется. Без него подогнанная точно
+   *  в край карта вызывает полосу прокрутки, полоса отнимает ширину, ширина
+   *  уменьшает подгонку, полоса пропадает — и так до бесконечности. */
+  const FIT_SLACK = 14;
+
+  /**
+   * Во сколько раз карта влезает целиком.
+   *
+   * Заведено потому, что умолчание стола ГАРАНТИРОВАЛО обратное: над сценой
+   * стояли четыре полосы, карта листа взятия под полуторным стеклом — 840 px
+   * ростом, и подвал (насечки уровня, стоимость, сила) не показывался ни на
+   * одном разумном экране. Увидеть карту целиком можно было, только угадав,
+   * что для этого надо отказаться от увеличения.
+   */
+  let fitGlass = $derived.by(() => {
+    const room = stageTall - STAGE_PAD * 2 - RULER_TALL - CAPTION_TALL - FIT_SLACK;
+    const across = stageWide - STAGE_PAD * 2 - RULER_GUTTER - FIT_SLACK;
+    if (room <= 0 || across <= 0) return 1;
+    const fits = Math.min(room / cardTall, across / stageWidth);
+    // До сотых: сцена меняет ширину на пиксель от полосы прокрутки колонки, и
+    // незакруглённое число пересобирало бы карту на каждом таком пикселе.
+    return Math.min(4, Math.max(0.25, Math.round(fits * 100) / 100));
+  });
+
+  /**
+   * Ящик нарядов. Держится ссылкой ровно затем, чтобы ЗАКРЫВАТЬСЯ: наряд
+   * достают, чтобы посмотреть на него на карте, а открытый ящик стоит поверх
+   * ленты и половины сцены — то есть поверх того, ради чего его открывали.
+   */
+  let presetDrawer = $state<HTMLDetailsElement | null>(null);
+  function shutDrawer() {
+    if (presetDrawer) presetDrawer.open = false;
+  }
+
+  /** Стекло числом — то, чем меряют все остальные. «Вписать» здесь уже
+   *  разрешилось в число: у отрисовщика, у мерки и у подписи не должно быть
+   *  второго случая, про который надо помнить. */
+  let stageZoom = $derived(glass === "fit" ? fitGlass : glass);
 
   /** Сколько карта занимает НА СТОЛЕ. Отличается от её собственной ширины ровно
    *  стеклом, и говорится об этом вслух: иначе «400» на кнопке и полметра
@@ -525,6 +696,15 @@
     400: "adminBattlesWidthSheet",
     261: "adminBattlesWidthShelf",
     140: "adminBattlesWidthCell",
+  };
+
+  /** То же имя одним словом. На кнопке ленты стоит оно, полное — всплывающей
+   *  подписью: «взятия» и «боя» вместе стоили шестидесяти точек ленты и не
+   *  различали ни одной пары. */
+  const WIDTH_SHORT: Record<number, TranslationKey> = {
+    400: "adminBattlesWidthSheetShort",
+    261: "adminBattlesWidthShelfShort",
+    140: "adminBattlesWidthCellShort",
   };
 
   /** До какой ступени описи дотягивается карта такой ширины. Та же лестница,
@@ -996,7 +1176,7 @@
     {@const side = sliceHeld?.id === id ? sliceHeld.side : sides[0]}
     {@const at = piece.places[side]}
     <div
-      class="mb-5 pl-3 border-l {sliceHeld?.id === id
+      class="mb-1 pl-3 border-l {sliceHeld?.id === id
         ? 'border-[#c65f3c]'
         : 'border-[#34251c]/10'}"
     >
@@ -1044,7 +1224,7 @@
           </span>
         {/each}
         <label
-          class="flex items-center gap-1.5 ml-2 text-[9px] uppercase tracking-[0.14em] text-[#8a6a55] cursor-pointer"
+          class="flex items-center gap-1.5 ml-2 text-[11px] text-[#8a6a55] cursor-pointer"
         >
           <input
             type="checkbox"
@@ -1057,10 +1237,13 @@
 
       <!-- Картинка одна на все копии, поэтому слой, заполнение и разворот —
            детали, а не стороны. -->
-      <div class="flex flex-wrap items-end gap-2 mb-2">
-        <label class="block w-52">
+      <!-- Заполнение и разворот — в один ряд по половине. Стояли друг под
+           другом во всю ширину, и на каждой детали это была лишняя строка
+           верстака, у которого высота на счету. -->
+      <div class="grid grid-cols-2 items-end gap-2 mb-2">
+        <label class="block min-w-0">
           <span
-            class="block mb-1 text-[9px] uppercase tracking-[0.14em] text-[#8a6a55]"
+            class="block mb-1 text-[11px] text-[#8a6a55]"
             >{$t("adminBattlesSliceFit")}</span
           >
           <select
@@ -1072,9 +1255,9 @@
             {/each}
           </select>
         </label>
-        <label class="block w-44">
+        <label class="block min-w-0">
           <span
-            class="block mb-1 text-[9px] uppercase tracking-[0.14em] text-[#8a6a55]"
+            class="block mb-1 text-[11px] text-[#8a6a55]"
             >{$t("adminBattlesSliceTurn")}</span
           >
           <select
@@ -1095,7 +1278,7 @@
           {#each SLICE_NUMBERS as row (row.key)}
             <label class="block w-[4.5rem]">
               <span
-                class="block mb-1 text-[9px] uppercase tracking-[0.14em] text-[#8a6a55]"
+                class="block mb-1 text-[11px] text-[#8a6a55]"
                 >{$t(row.label)}</span
               >
               <input
@@ -1116,12 +1299,6 @@
               />
             </label>
           {/each}
-          <button
-            type="button"
-            onclick={() => resetSlice(id)}
-            class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
-            >{$t("adminBattlesSliceReset")}</button
-          >
         </div>
       {/if}
     </div>
@@ -1139,101 +1316,43 @@
       <!-- Ящик нарядов и его соседи — только у хозяина. У гостя рамка одна,
            своя, и «взять наряд из ящика» ему нечего: прячется это не флагом
            `guest`, а отсутствием самого ящика. -->
-      {#if frames[frameIndex] && presets}
-        <div
-          class="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 border-b border-[#34251c]/10 bg-[#f8f1e7]"
-        >
-          <div class="w-[22rem] max-w-full">
-            <BattleFramePicker
-              presets={presets ?? []}
-              bind:chosen={presetOpen}
-              onchoose={wearPresetOnRank}
-              onforget={forgetPreset}
-              disabled={saving}
-              size="desk"
-              label={$t("adminBattlesPresetChoose")}
-            />
-          </div>
-          <div class="flex flex-wrap items-center gap-2">
-            <input
-              bind:this={frameNameBox}
-              bind:value={presetName}
-              maxlength="60"
-              placeholder={presetWorn
-                ? $t("adminBattlesPresetCopyName")
-                : $t("adminBattlesPresetName")}
-              onkeydown={(e) =>
-                e.key === "Enter" &&
-                (presetWorn ? keepFrameAsNew() : keepFrameAsPreset())}
-              class="w-44 px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-            />
-            {#if presetWorn}
-              <button
-                onclick={keepFrameAsNew}
-                disabled={saving}
-                title={$t("adminBattlesPresetKeepNewHint")}
-                class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5 disabled:opacity-40"
-                ><BattleIcon name="twin" />{$t(
-                  "adminBattlesPresetKeepNew",
-                )}</button
-              >
-              <button
-                onclick={updateOpenPreset}
-                disabled={saving || !presetChanged}
-                title={$t("adminBattlesPresetUpdateHint")}
-                class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5 disabled:opacity-40"
-                ><BattleIcon name="keep" />{$t(
-                  "adminBattlesPresetUpdate",
-                )}</button
-              >
-              {#if presetChanged}
-                <span
-                  class="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-[#8f2f22]"
-                >
-                  <span class="w-1.5 h-1.5 rounded-full bg-[#c65f3c]"></span>
-                  {$t("adminBattlesPresetDrifted")}
-                </span>
-              {/if}
-              <button
-                onclick={() => presetWorn && forgetPreset(presetWorn)}
-                disabled={saving}
-                title={$t("adminBattlesPresetForgetSure").replace(
-                  "{name}",
-                  presetWorn.name,
-                )}
-                class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#c65f3c]/40 text-[#8f2f22] hover:bg-[#c65f3c]/10 disabled:opacity-40"
-                ><BattleIcon name="trash" />{$t(
-                  "adminBattlesFrameDrop",
-                )}</button
-              >
-            {:else}
-              <button
-                onclick={keepFrameAsPreset}
-                disabled={saving || !presetName.trim()}
-                title={$t("adminBattlesPresetKeep")}
-                class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5 disabled:opacity-40"
-                ><BattleIcon name="keep" />{$t("adminBattlesPresetKeep")}</button
-              >
-            {/if}
-            <button
-              onclick={beginNewFrame}
-              title={$t("adminBattlesFrameNewHint")}
-              class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5"
-              ><BattleIcon name="plus" />{$t("adminBattlesFrameNew")}</button
-            >
-          </div>
-        </div>
-      {/if}
+      <!-- ЛЕНТА СТОЛА. Одна, а не две, и над ОБЕИМИ колонками.
+           Полос было две — ящик нарядов отдельной строкой над столом, — и
+           вместе они съедали 136 px высоты у сцены, которой высоты и так не
+           хватало: карта листа взятия не помещалась целиком НИ ПРИ КАКОМ
+           разумном окне. Ящик ушёл сюда же, в свой ящик справа: его
+           открывают раз в сеанс, а место он занимал постоянно.
+           Заодно это развело полномочия, которые стояли в 40 px друг от
+           друга без всякой границы: всё, что делает ящик, делается ВНУТРИ
+           ящика и подписано нарядом, а лента снаружи — про чин. -->
+      <div
+        class="flex items-center gap-3 px-4 py-1.5 border-b border-[#34251c]/10"
+      >
+        <!-- Левая половина переносится ВНУТРИ СЕБЯ, правая не переносится
+             никогда. Переносилась вся лента разом, и с `ml-auto` на правой
+             половине это давало худший из возможных исходов: первая строка
+             наполовину пустая, «ящик» и «сохранить рамки» сиротами на второй.
+             Свободное место теперь достаётся тому, что его переживёт. -->
+        <div class="flex-1 min-w-0 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        <!-- Пять чинов ЛИЦАМИ. Только когда чинов больше одного: у гостя
+             рамка одна, и «выберите чин» из одной кнопки это не выбор.
 
-      <div class="flex-1 flex min-h-0">
-      <section class="flex-1 min-w-0 flex flex-col bg-[#f1e8db]">
-        <div
-          class="flex flex-wrap items-center gap-3 px-4 py-2 border-b border-[#34251c]/10"
-        >
-          <!-- Полоса чинов — только когда чинов больше одного. У гостя рамка
-               одна, и «выберите чин» из одной кнопки это не выбор. -->
-          {#if frames.length > 1}
-          <div class="flex border border-[#34251c]/15">
+             Были пять кнопок с именами, и по именам чин не выбирают: рамки —
+             семья, и правят их на согласованность («второй темнее первого,
+             пятый — золото»), а слова «Крепкая» и «Памятная» про это не
+             говорят ничего. Лицо говорит всё и стоит вчетверо меньше места;
+             имя печатается у одного, выбранного, остальные названы всплывающей
+             подписью — прочитать из пяти имён нужно ровно одно: какой чин
+             сейчас на столе.
+
+             Это же и единственное на столе место, где семью видно ЦЕЛИКОМ:
+             карта всегда одна, а бумага, кайма и угол пяти чинов стоят здесь
+             рядом. -->
+        {#if frames.length > 1}
+          <div
+            class="flex items-center border border-[#34251c]/15"
+            title={$t("adminBattlesTier")}
+          >
             {#each frames as frame, i (frame.tier)}
               <button
                 onclick={() => {
@@ -1245,123 +1364,283 @@
                   presetOpen = null;
                   presetName = "";
                 }}
-                class="px-3 py-1 text-[11px] {frameIndex === i
+                title="{frame.tier} · {frameName(frame, $lang)}"
+                class="flex items-center gap-1.5 px-1.5 py-1 {frameIndex === i
                   ? 'bg-[#34251c] text-[#f8f1e7]'
                   : 'hover:bg-[#34251c]/5'}"
-                >{frame.tier} · {frameName(frame, $lang)}</button
               >
+                <BattleFrameFace
+                  {frame}
+                  class="w-5 h-7 {frameIndex === i
+                    ? 'shadow-[0_0_0_1px_#f8f1e7]'
+                    : ''}"
+                />
+                {#if frameIndex === i}
+                  <span class="text-[11px] whitespace-nowrap"
+                    >{frame.tier} · {frameName(frame, $lang)}</span
+                  >
+                {/if}
+              </button>
             {/each}
           </div>
-          {/if}
+        {/if}
 
-          <!-- Ширина карты. Три настоящие, а не величина предпросмотра: от
-               ширины зависит и то, какие строки описи печатаются, и сколько
-               точек приходится на врезку, — и резчику надо знать оба числа
-               до того, как он нарисует уголок, а не после. -->
-          <div
-            class="flex border border-[#34251c]/15"
-            title={$t("adminBattlesCardWidthHint")}
-          >
-            {#each CARD_WIDTHS as w (w)}
-              <button
-                onclick={() => (stageWidth = w)}
-                class="px-2.5 py-1 text-[10px] whitespace-nowrap {stageWidth ===
-                w
-                  ? 'bg-[#34251c] text-[#f8f1e7]'
-                  : 'hover:bg-[#34251c]/5'}"
-                >{$t(WIDTH_KEY[w])} · <span class="tabular-nums">{w}</span
-                ></button
-              >
-            {/each}
+        <!-- Наряд, надетый на этот чин. Стоит НА ленте, а не в ящике:
+             `BattleFramePicker` сам по себе выдвижной — одна строка с лицом
+             рамки и её именем, — и прятать его за кнопкой значило спрятать
+             ровно то, по чему наряд узнают. Высокой полосу делал не он, а
+             пятеро его соседей; они и уехали в ящик. -->
+        {#if frames[frameIndex] && presets}
+          <div class="w-[12rem]">
+            <BattleFramePicker
+              presets={presets ?? []}
+              bind:chosen={presetOpen}
+              onchoose={wearPresetOnRank}
+              onforget={forgetPreset}
+              disabled={saving}
+              size="slim"
+              label={$t("adminBattlesPresetChoose")}
+            />
           </div>
+        {/if}
 
-          <!-- Стекло. Только увеличивает показ: собственная ширина карты от
-               него не меняется, поэтому и опись, и резьба, и кегль остаются
-               ровно теми, что будут у гостя. -->
-          <div
-            class="flex border border-[#34251c]/15"
-            title={$t("adminBattlesStageGlassHint")}
-          >
-            {#each ZOOMS as z (z)}
-              <button
-                onclick={() => (stageZoom = z)}
-                class="px-2 py-1 text-[10px] {stageZoom === z
-                  ? 'bg-[#34251c] text-[#f8f1e7]'
-                  : 'hover:bg-[#34251c]/5'}">{z}×</button
-              >
-            {/each}
-          </div>
-
-          <!-- Клетка боя. Стоит рядом с увеличением, а не в колонке справа:
-               это способ СМОТРЕТЬ на карту, как и увеличение, а не её
-               свойство. Без него кружок здоровья на столе недостижим — он
-               выходит только в бою, а стол не бой. -->
-          <div class="flex items-center gap-2 border border-[#34251c]/15 px-2 py-1">
-            <label
-              class="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] cursor-pointer"
-            >
-              <input type="checkbox" bind:checked={stageInMatch} class="accent-[#34251c]" />
-              {$t("adminBattlesStageInMatch")}
-            </label>
-            {#if stageInMatch}
-              <input
-                type="range"
-                min="0.05"
-                max="1"
-                step="0.05"
-                bind:value={stageHurt}
-                title={$t("adminBattlesStageHurt")}
-                class="w-24 accent-[#c65f3c]"
-              />
-              <span class="text-[10px] tabular-nums text-[#8a6a55]"
-                >{Math.round(stageHurt * 100)}%</span
-              >
-            {/if}
-          </div>
-
-          <div class="flex border border-[#34251c]/15">
+        <!-- Ширина карты. Три настоящие, а не величина предпросмотра: от
+             ширины зависит и то, какие строки описи печатаются, и сколько
+             точек приходится на врезку, — и резчику надо знать оба числа
+             до того, как он нарисует уголок, а не после. -->
+        <div
+          class="flex border border-[#34251c]/15"
+          title={$t("adminBattlesCardWidthHint")}
+        >
+          {#each CARD_WIDTHS as w (w)}
             <button
-              onclick={stepBack}
-              disabled={!history.length}
-              title="{$t('adminBattlesUndo')} · ⌘Z"
-              class="px-2.5 py-1 text-[11px] hover:bg-[#34251c]/5 disabled:opacity-30"
-              >↺</button
+              onclick={() => (stageWidth = w)}
+              title={$t(WIDTH_KEY[w])}
+              class="px-2.5 py-1 text-[10px] whitespace-nowrap {stageWidth ===
+              w
+                ? 'bg-[#34251c] text-[#f8f1e7]'
+                : 'hover:bg-[#34251c]/5'}"
+              >{$t(WIDTH_SHORT[w])} · <span class="tabular-nums">{w}</span
+              ></button
             >
-            <button
-              onclick={stepOn}
-              disabled={!ahead.length}
-              title="{$t('adminBattlesRedo')} · ⇧⌘Z"
-              class="px-2.5 py-1 text-[11px] hover:bg-[#34251c]/5 disabled:opacity-30"
-              >↻</button
-            >
-          </div>
-
-          <div class="ml-auto flex items-center gap-3">
-            {#if dirty}
-              <span
-                class="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-[#8f2f22]"
-              >
-                <span class="w-1.5 h-1.5 rounded-full bg-[#c65f3c]"></span>
-                {$t("adminBattlesUnsaved")}
-              </span>
-            {/if}
-            <!-- Своя кнопка сохранения — только если её дали. У студии она в
-                 шапке комнаты, и вторая здесь была бы вторым способом сделать
-                 одно и то же. Отметка «не сохранено» остаётся в обоих случаях:
-                 она не кнопка, а известие. -->
-            {#if save}
-              <button
-                onclick={save}
-                disabled={saving}
-                class="px-4 py-1.5 text-[10px] uppercase tracking-[0.16em] {dirty
-                  ? 'bg-[#34251c] text-[#f8f1e7]'
-                  : 'border border-[#34251c]/25'} disabled:opacity-40"
-                >{$t("adminBattlesFramesSave")}</button
-              >
-            {/if}
-          </div>
+          {/each}
         </div>
 
+        <!-- Стекло. Только увеличивает показ: собственная ширина карты от
+             него не меняется, поэтому и опись, и резьба, и кегль остаются
+             ровно теми, что будут у гостя.
+             «Вписать» стоит ПЕРВЫМ и оно же умолчание: до него карта не
+             помещалась на столе целиком ни разу, и подвал — насечки уровня,
+             стоимость, сила — был виден только прокруткой вслепую. -->
+        <div
+          class="flex border border-[#34251c]/15"
+          title={$t("adminBattlesStageGlassHint")}
+        >
+          <button
+            onclick={() => (glass = "fit")}
+            class="px-2 py-1 text-[10px] whitespace-nowrap {glass === 'fit'
+              ? 'bg-[#34251c] text-[#f8f1e7]'
+              : 'hover:bg-[#34251c]/5'}">{$t("adminBattlesStageFit")}</button
+          >
+          {#each ZOOMS as z (z)}
+            <button
+              onclick={() => (glass = z)}
+              class="px-2 py-1 text-[10px] {glass === z
+                ? 'bg-[#34251c] text-[#f8f1e7]'
+                : 'hover:bg-[#34251c]/5'}">{z}×</button
+            >
+          {/each}
+        </div>
+
+        <!-- Клетка боя. Стоит рядом с увеличением, а не в колонке справа:
+             это способ СМОТРЕТЬ на карту, как и увеличение, а не её
+             свойство. Без него кружок здоровья на столе недостижим — он
+             выходит только в бою, а стол не бой. -->
+        <div
+          class="flex items-center gap-2 border border-[#34251c]/15 px-2 py-0.5"
+        >
+          <label
+            class="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] cursor-pointer"
+          >
+            <input
+              type="checkbox"
+              bind:checked={stageInMatch}
+              class="accent-[#34251c]"
+            />
+            {$t("adminBattlesStageInMatch")}
+          </label>
+          {#if stageInMatch}
+            <input
+              type="range"
+              min="0.05"
+              max="1"
+              step="0.05"
+              bind:value={stageHurt}
+              title={$t("adminBattlesStageHurt")}
+              class="w-24 accent-[#c65f3c]"
+            />
+            <span class="text-[10px] tabular-nums text-[#8a6a55]"
+              >{Math.round(stageHurt * 100)}%</span
+            >
+          {/if}
+        </div>
+
+        <div class="flex border border-[#34251c]/15">
+          <button
+            onclick={stepBack}
+            disabled={!history.length}
+            title="{$t('adminBattlesUndo')} · ⌘Z"
+            class="px-2.5 py-1 text-[11px] hover:bg-[#34251c]/5 disabled:opacity-30"
+            >↺</button
+          >
+          <button
+            onclick={stepOn}
+            disabled={!ahead.length}
+            title="{$t('adminBattlesRedo')} · ⇧⌘Z"
+            class="px-2.5 py-1 text-[11px] hover:bg-[#34251c]/5 disabled:opacity-30"
+            >↻</button
+          >
+        </div>
+
+        </div>
+
+        <div class="flex-shrink-0 flex items-center gap-3">
+          <!-- ЯЩИК: что с нарядом ДЕЛАЮТ — отложить, обновить, забыть,
+               начать новую рамку. Занимало целую полосу над столом, а нужно
+               раз в сеанс. Заодно это дало двум областям полномочий границу,
+               которой у них не было: «удалить» больше не стоит в сорока
+               точках от «сохранить рамки», относясь при этом к другому.
+               ВЫБОР наряда сюда не входит — он на ленте, лицом вверх: сам
+               `BattleFramePicker` и есть выдвижной список, и спрятать его за
+               кнопкой значило спрятать то, по чему наряд узнают. -->
+          {#if frames[frameIndex] && presets}
+            <details class="relative" bind:this={presetDrawer}>
+              <summary
+                class="flex items-center gap-1.5 px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 cursor-pointer hover:bg-[#34251c]/5 list-none [&::-webkit-details-marker]:hidden"
+              >
+                <BattleIcon name="keep" />
+                {$t("adminBattlesPresetDrawer")}
+                {#if presetChanged}
+                  <span class="w-1.5 h-1.5 rounded-full bg-[#c65f3c]"></span>
+                {/if}
+              </summary>
+              <div
+                class="absolute right-0 top-full z-30 mt-1 w-[32rem] max-w-[90vw] flex flex-col gap-3 p-4 bg-[#f8f1e7] border border-[#34251c]/25 shadow-[0_6px_24px_rgba(52,37,28,0.18)]"
+              >
+            <div class="flex flex-wrap items-center gap-2">
+              <input
+                bind:this={frameNameBox}
+                bind:value={presetName}
+                maxlength="60"
+                placeholder={presetWorn
+                  ? $t("adminBattlesPresetCopyName")
+                  : $t("adminBattlesPresetName")}
+                onkeydown={(e) =>
+                  e.key === "Enter" &&
+                  (presetWorn ? keepFrameAsNew() : keepFrameAsPreset())}
+                class="w-44 px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+              />
+              {#if presetWorn}
+                <button
+                  onclick={() => {
+                keepFrameAsNew?.();
+                shutDrawer();
+              }}
+                  disabled={saving}
+                  title={$t("adminBattlesPresetKeepNewHint")}
+                  class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5 disabled:opacity-40"
+                  ><BattleIcon name="twin" />{$t(
+                    "adminBattlesPresetKeepNew",
+                  )}</button
+                >
+                <button
+                  onclick={() => {
+                updateOpenPreset?.();
+                shutDrawer();
+              }}
+                  disabled={saving || !presetChanged}
+                  title={$t("adminBattlesPresetUpdateHint")}
+                  class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5 disabled:opacity-40"
+                  ><BattleIcon name="keep" />{$t(
+                    "adminBattlesPresetUpdate",
+                  )}</button
+                >
+                {#if presetChanged}
+                  <span
+                    class="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-[#8f2f22]"
+                  >
+                    <span class="w-1.5 h-1.5 rounded-full bg-[#c65f3c]"></span>
+                    {$t("adminBattlesPresetDrifted")}
+                  </span>
+                {/if}
+                <button
+                  onclick={() => {
+                if (presetWorn) forgetPreset?.(presetWorn);
+                shutDrawer();
+              }}
+                  disabled={saving}
+                  title={$t("adminBattlesPresetForgetSure").replace(
+                    "{name}",
+                    presetWorn.name,
+                  )}
+                  class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#c65f3c]/40 text-[#8f2f22] hover:bg-[#c65f3c]/10 disabled:opacity-40"
+                  ><BattleIcon name="trash" />{$t(
+                    "adminBattlesFrameDrop",
+                  )}</button
+                >
+              {:else}
+                <button
+                  onclick={() => {
+                keepFrameAsPreset?.();
+                shutDrawer();
+              }}
+                  disabled={saving || !presetName.trim()}
+                  title={$t("adminBattlesPresetKeep")}
+                  class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5 disabled:opacity-40"
+                  ><BattleIcon name="keep" />{$t("adminBattlesPresetKeep")}</button
+                >
+              {/if}
+              <button
+                onclick={() => {
+                beginNewFrame?.();
+                shutDrawer();
+              }}
+                title={$t("adminBattlesFrameNewHint")}
+                class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5"
+                ><BattleIcon name="plus" />{$t("adminBattlesFrameNew")}</button
+              >
+            </div>
+              </div>
+            </details>
+          {/if}
+
+          {#if dirty}
+            <span
+              class="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-[#8f2f22]"
+            >
+              <span class="w-1.5 h-1.5 rounded-full bg-[#c65f3c]"></span>
+              {$t("adminBattlesUnsaved")}
+            </span>
+          {/if}
+          <!-- Своя кнопка сохранения — только если её дали. У студии она в
+               шапке комнаты, и вторая здесь была бы вторым способом сделать
+               одно и то же. Отметка «не сохранено» остаётся в обоих случаях:
+               она не кнопка, а известие. -->
+          {#if save}
+            <button
+              onclick={save}
+              disabled={saving}
+              class="px-4 py-1.5 text-[10px] uppercase tracking-[0.16em] {dirty
+                ? 'bg-[#34251c] text-[#f8f1e7]'
+                : 'border border-[#34251c]/25'} disabled:opacity-40"
+              >{$t("adminBattlesFramesSave")}</button
+            >
+          {/if}
+        </div>
+      </div>
+
+      <div class="flex-1 flex min-h-0">
+      <section class="flex-1 min-w-0 flex flex-col bg-[#f1e8db]">
         <!-- Сцена. Своя прокрутка, поэтому увеличенная карта возится по столу
              вместо того, чтобы гнать колонку настроек за собой. Слушает
              клавиши: стрелки двигают взятую копию на 0.1 % (с Shift — на 1 %,
@@ -1374,6 +1653,8 @@
           tabindex="0"
           onkeydown={stageKeys}
           bind:this={stageBox}
+          bind:clientWidth={stageWide}
+          bind:clientHeight={stageTall}
           onscroll={() =>
             (stageScroll = {
               x: stageBox?.scrollLeft ?? 0,
@@ -1482,7 +1763,10 @@
               onpointerdowncapture={mark}
               onpointerupcapture={() => barTick++}
               style="left:{barSpot.x}px; top:{barSpot.y}px"
-              class="absolute z-20 flex -translate-x-1/2 items-center gap-0.5 p-1 bg-[#f8f1e7] border border-[#34251c]/25 shadow-[0_2px_10px_rgba(52,37,28,0.18)]"
+              title={heldRow ? undefined : $t("adminBattlesBarIdle")}
+              class="absolute z-20 flex -translate-x-1/2 items-center gap-0.5 p-1 bg-[#f8f1e7] border border-[#34251c]/25 shadow-[0_2px_10px_rgba(52,37,28,0.18)] {heldRow
+                ? ''
+                : 'opacity-45 hover:opacity-100'}"
             >
               <!-- Рукоять и гвоздь. Полоску таскают за рукоять и прибивают
                    гвоздём: прибитая стоит на своём месте, а не выскакивает
@@ -1616,14 +1900,14 @@
                   ><BattleIcon name="trash" /></button
                 >
               {:else}
-                <!-- Прибитая полоска с пустой рукой. Кнопкам нечего делать,
-                     но место — это и есть то, за чем её прибивали: пусть
-                     стоит и ждёт, а не пропадает, чтобы появиться в другом
-                     углу. -->
-                <span
-                  class="px-2 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                  >{$t("adminBattlesBarIdle")}</span
-                >
+                <!-- Прибитая полоска с пустой рукой. Место — это и есть то, за
+                     чем её прибивали: пусть стоит и ждёт, а не пропадает,
+                     чтобы появиться в другом углу.
+                     Но ждёт она КОРЕШКОМ: слова «В РУКЕ НИЧЕГО» делали её
+                     полосой в полкарты шириной, и прибитая у верхнего края
+                     она закрывала собой угол — то самое место, ради которого
+                     на этот стол приходят. Что она пуста, сказано её
+                     бледностью и всплывающей подписью; места это не стоит. -->
               {/if}
             </div>
           {/if}
@@ -1634,281 +1918,70 @@
            отмены перед любой правкой — иначе каждый из полутораста органов
            управления пришлось бы оборачивать руками. -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <!-- КОЛОНКА. Две панели, а не одна прокрутка.
+           Была одна: разделы рамы, список деталей и настройки взятой детали
+           лежали в общем потоке без единой прибитой вещи (`sticky` — ноль,
+           `max-h` — ноль). Оборот работы у резчика такой: взять деталь в
+           списке — поправить число — посмотреть; а список и числа НЕ
+           помещались на экран вместе, и каждый оборот начинался с прокрутки
+           колонки то вверх, то вниз. Теперь верстак детали прибит внизу и
+           прокручивается сам, а разделы рамы — сами.
+
+           Порядок разделов — порядок работы, а не порядок появления: чем
+           рамку начинают (как надета, бумага, окно), то и сверху, и первые
+           две открыты. Справка о носителях сложена и ушла вниз. -->
+      <!-- Ручка колонки. Своя полоска в шесть точек, а не кромка самой
+           колонки: кромка — это граница, за неё промахиваются, и всякое
+           нажатие рядом с ней уходило бы в первый же орган под ней. -->
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={$t("adminBattlesSideGrip")}
+        title={$t("adminBattlesSideGrip")}
+        onpointerdown={sideTake}
+        onpointermove={sideDrag}
+        onpointerup={sideDrop}
+        onpointercancel={sideDrop}
+        ondblclick={() => (sideWide = clampSide(432))}
+        class="flex-shrink-0 w-1.5 cursor-col-resize touch-none border-l border-[#34251c]/10 {sideGrab
+          ? 'bg-[#c65f3c]/40'
+          : 'hover:bg-[#34251c]/10'}"
+      ></div>
+
       <aside
-        class="w-[27rem] flex-shrink-0 border-l border-[#34251c]/10 overflow-y-auto"
+        bind:this={asideBox}
+        class="flex-shrink-0 flex flex-col min-h-0"
+        style="width:{sideWide}px"
         onpointerdowncapture={mark}
         onfocusincapture={mark}
       >
         {#if frames[frameIndex]}
-          <!-- ── Кто это носит ────────────────────────────────────────────
-               Стоит ПЕРВЫМ и над ящиком нарядов, потому что это не настройка,
-               а обстановка: стол правит ЧИН, а гость видит КАРТУ, и между ними
-               стоит цепочка нарядов. Без этой полки чин красят вслепую — и не
-               узнают, что он не виден ни на одной карте. -->
-          {#if worn}
-          <div class="p-4 border-b border-[#34251c]/10">
-            <p class="mb-2 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]">
-              {$t("adminBattlesWornBy")}
-            </p>
-            {#if !worn.mine.length}
-              <p class="text-[11px] italic text-[#8a6a55]">
-                {$t("adminBattlesWornNone")}
-              </p>
-            {:else}
-              <p class="text-[11px] leading-relaxed text-[#6f3b24]">
-                {$t("adminBattlesWornPlain")}
-                <b class="tabular-nums">{worn.plain.length}</b>
-                {$t("adminBattlesWornOf")}
-                <b class="tabular-nums">{worn.mine.length}</b>
-              </p>
-              {#if !worn.plain.length}
-                <p
-                  class="mt-1 flex items-start gap-1.5 text-[11px] leading-relaxed text-[#8f2f22]"
-                >
-                  <span class="mt-1.5 w-1.5 h-1.5 flex-shrink-0 rounded-full bg-[#c65f3c]"
-                  ></span>
-                  {$t("adminBattlesWornBlind")}
-                </p>
-              {/if}
-              {#each [{ list: worn.own, word: "adminBattlesWornOwn" as TranslationKey }, { list: worn.byRace, word: "adminBattlesWornRace" as TranslationKey }] as group (group.word)}
-                {#if group.list.length}
-                  <p
-                    class="mt-2 mb-0.5 text-[9px] uppercase tracking-[0.14em] text-[#8a6a55]"
-                  >
-                    {$t(group.word)} · {group.list.length}
-                  </p>
-                  <ul class="space-y-0.5">
-                    {#each group.list as one (one.id)}
-                      <li>
-                        <button
-                          onclick={() => onOpenCard(one)}
-                          class="text-left text-[11px] leading-snug text-[#6f3b24] hover:underline"
-                          >{titleOf(one)}</button
-                        >
-                      </li>
-                    {/each}
-                  </ul>
-                {/if}
-              {/each}
-            {/if}
-          </div>
-          {/if}
-
-          <!-- Как надета. Первое решение о раме, а не настройка в середине
-               списка. Список рамок стоит на табличке над столом. -->
-          <div class="p-4 border-b border-[#34251c]/10">
-            <p
-              class="mb-2 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
-            >
-              {$t("adminBattlesFrameMode")}
-            </p>
-            <div class="flex border border-[#34251c]/20">
-              {#each FRAME_MODES as mode (mode)}
-                <button
-                  onclick={() => setFrameMode(mode)}
-                  class="flex-1 px-2 py-1.5 text-[10px] leading-tight {frames[
-                    frameIndex
-                  ].frameMode === mode
-                    ? 'bg-[#34251c] text-[#f8f1e7]'
-                    : 'hover:bg-[#34251c]/5'}"
-                  >{mode === "overlay"
-                    ? $t("adminBattlesFrameOverlay")
-                    : mode === "behind"
-                      ? $t("adminBattlesFrameBehind")
-                      : $t("adminBattlesFrameSliced")}</button
-                >
-              {/each}
-            </div>
-            {#if frames[frameIndex].frameMode === "sliced"}
-              <details class="mt-2">
-                <summary
-                  class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
-                  >{$t("adminBattlesHintOpen")}</summary
-                >
-                <p
-                  class="mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
-                >
-                  {$t("adminBattlesFrameSlicedHint")}
-                </p>
-              </details>
-            {/if}
-          </div>
-
-          {#if frames[frameIndex].frameMode === "sliced"}
-            <!-- Список деталей. Сверху то, что рисуется поверх; порядок задают
-                 здесь, и только здесь, поэтому невидимых ничьих между равными
-                 слоями больше нет. -->
+          <div class="flex-1 min-h-0 overflow-y-auto">
             <div class="p-4 border-b border-[#34251c]/10">
               <p
                 class="mb-2 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
               >
-                {$t("adminBattlesStack")}
+                {$t("adminBattlesFrameMode")}
               </p>
-              <details class="mb-3">
-                <summary
-                  class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
-                  >{$t("adminBattlesHintOpen")}</summary
-                >
-                <p
-                  class="mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
-                >
-                  {$t("adminBattlesStackHint")}
-                </p>
-              </details>
-              <div class="border border-[#34251c]/12">
-                {#each stack as row (row.id)}
-                  <div
-                    class="flex items-center gap-2 px-1.5 py-1 border-b last:border-b-0 border-[#34251c]/8 {sliceHeld?.id ===
-                    row.id
-                      ? 'bg-[#c65f3c]/[0.09]'
-                      : ''}"
+              <div class="flex border border-[#34251c]/20">
+                {#each FRAME_MODES as mode (mode)}
+                  <button
+                    onclick={() => setFrameMode(mode)}
+                    class="flex-1 px-2 py-1.5 text-[10px] leading-tight {frames[
+                      frameIndex
+                    ].frameMode === mode
+                      ? 'bg-[#34251c] text-[#f8f1e7]'
+                      : 'hover:bg-[#34251c]/5'}"
+                    >{mode === "overlay"
+                      ? $t("adminBattlesFrameOverlay")
+                      : mode === "behind"
+                        ? $t("adminBattlesFrameBehind")
+                        : $t("adminBattlesFrameSliced")}</button
                   >
-                    <span class="flex flex-col leading-none">
-                      <button
-                        onclick={() => restack(row.id, -1)}
-                        title={$t("adminBattlesStackUp")}
-                        class="px-1 text-[8px] text-[#8a6a55] hover:text-[#34251c]"
-                        >▲</button
-                      >
-                      <button
-                        onclick={() => restack(row.id, 1)}
-                        title={$t("adminBattlesStackDown")}
-                        class="px-1 text-[8px] text-[#8a6a55] hover:text-[#34251c]"
-                        >▼</button
-                      >
-                    </span>
-                    <button
-                      onclick={() => showPiece(row, !pieceShown(row))}
-                      title={$t("adminBattlesSliceShown")}
-                      class="w-4 text-[11px] {pieceShown(row)
-                        ? 'text-[#34251c]'
-                        : 'text-[#34251c]/25'}"
-                      >{pieceShown(row) ? "◉" : "○"}</button
-                    >
-                    <button
-                      onclick={() =>
-                        ((pokedAt = null),
-                        (sliceHeld = {
-                          id: row.id,
-                          side: KIND_SIDES[row.kind][0],
-                        }))}
-                      class="flex-1 flex items-center gap-2 py-0.5 text-left min-w-0"
-                    >
-                      <!-- Миниатюра. До неё в слоте стояла строка вида
-                           `/static/assets/0158db49-….webp`, по которой нельзя
-                           узнать ни одну деталь. -->
-                      <span
-                        class="w-8 h-8 flex-shrink-0 border border-[#34251c]/15 bg-[#34251c]/[0.04] bg-center bg-contain bg-no-repeat"
-                        style:background-image={row.image
-                          ? `url("${row.image}")`
-                          : "none"}
-                      ></span>
-                      <span class="min-w-0">
-                        <span
-                          class="block text-[11px] truncate {row.image
-                            ? ''
-                            : 'text-[#8a6a55] italic'}">{row.label}</span
-                        >
-                        <span
-                          class="block text-[9px] uppercase tracking-[0.14em] text-[#8a6a55] truncate"
-                        >
-                          {row.image
-                            ? $t(KIND_KEY[row.kind])
-                            : $t("adminBattlesPieceEmpty")}
-                        </span>
-                      </span>
-                    </button>
-                  </div>
                 {/each}
               </div>
-              <div class="flex flex-wrap items-center gap-2 mt-3">
-                <button
-                  onclick={addOrnamentUpload}
-                  disabled={uploading}
-                  class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
-                  >{uploading ? "…" : $t("adminBattlesOrnamentAdd")}</button
-                >
-                <button
-                  onclick={addOrnamentFromStore}
-                  class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
-                  >{$t("adminBattlesOrnamentAddStore")}</button
-                >
-              </div>
-            </div>
-
-            <!-- Настройки ТОЛЬКО взятой детали. Шесть блоков разом были прежде
-                 всегда открыты, и колонка не помещалась на экран. -->
-            {#if heldRow}
-              <div class="p-4 border-b border-[#34251c]/10">
-                <p
-                  class="mb-3 text-[10px] uppercase tracking-[0.16em] text-[#c65f3c]"
-                >
-                  {heldRow.label}
-                </p>
-                <div class="flex flex-wrap items-end gap-2 mb-3">
-                  <button
-                    onclick={() => uploadPiece(heldRow!)}
-                    disabled={uploading}
-                    class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
-                    >{uploading
-                      ? "…"
-                      : $t("adminBattlesFrameArtUpload")}</button
-                  >
-                  <button
-                    onclick={() =>
-                      pickFromStore(
-                        heldRow!.ornament
-                          ? "accent"
-                          : STORE_ROLE[heldRow!.id as SliceSlot],
-                        (url) => setPieceImage(heldRow!, url),
-                      )}
-                    class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
-                    >{$t("adminAssetsPick")}</button
-                  >
-                  {#if heldRow.image}
-                    <button
-                      onclick={() => setPieceImage(heldRow!, "")}
-                      class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
-                      >{$t("adminBattlesFrameArtClear")}</button
-                    >
-                  {/if}
-                  {#if heldRow.ornament}
-                    <button
-                      onclick={() => dropOrnament(heldRow!.id)}
-                      class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#c65f3c]/40 text-[#8f2f22] hover:bg-[#c65f3c]/10"
-                      >{$t("adminBattlesOrnamentDrop")}</button
-                    >
-                  {/if}
-                </div>
-                {#if heldRow.ornament}
-                  <label class="block w-full mb-3">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("adminBattlesOrnamentKind")}</span
-                    >
-                    <select
-                      value={heldRow.ornament.kind}
-                      onchange={(e) =>
-                        reshapeOrnament(
-                          heldRow!.ornament!,
-                          e.currentTarget.value as SliceKind,
-                        )}
-                      class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none"
-                    >
-                      {#each SLICE_KINDS as kind (kind)}
-                        <option value={kind}>{$t(KIND_KEY[kind])}</option>
-                      {/each}
-                    </select>
-                  </label>
-                {/if}
-                <input
-                  value={heldRow.image}
-                  oninput={(e) =>
-                    setPieceImage(heldRow!, e.currentTarget.value)}
-                  placeholder="/static/assets/…"
-                  class="w-full mb-3 px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                />
-                {@render placement(heldRow.id, heldRow.kind, heldRow.piece)}
+              {#if frames[frameIndex].frameMode === "sliced"}
                 <details class="mt-2">
                   <summary
                     class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
@@ -1917,396 +1990,690 @@
                   <p
                     class="mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
                   >
-                    {$t("adminBattlesSliceHint")}
+                    {$t("adminBattlesFrameSlicedHint")}
                   </p>
                 </details>
-              </div>
-            {:else}
-              <p
-                class="p-4 border-b border-[#34251c]/10 text-[11px] leading-relaxed italic text-[#8a6a55]"
-              >
-                {$t("adminBattlesStackNothingHeld")}
-              </p>
-            {/if}
-          {/if}
-
-          <details class="border-b border-[#34251c]/10">
-            <summary
-              class="px-4 py-2.5 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
-              >{$t("adminBattlesFrameArt")}</summary
-            >
-            <div class="px-4 pb-4 space-y-4">
-              <div class="flex flex-wrap items-end gap-4">
-                <label class="block">
-                  <span
-                    class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                    >{$t("adminBattlesFrameName")} · EN</span
-                  >
-                  <input
-                    bind:value={frames[frameIndex].nameEn}
-                    class="px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                  />
-                </label>
-                <label class="block">
-                  <span
-                    class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                    >{$t("adminBattlesFrameName")} · RU</span
-                  >
-                  <input
-                    bind:value={frames[frameIndex].nameRu}
-                    class="px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                  />
-                </label>
-                <label class="block">
-                  <span
-                    class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                    >{$t("adminBattlesFrameLayout")}</span
-                  >
-                  <select
-                    bind:value={frames[frameIndex].layout}
-                    class="px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none"
-                  >
-                    {#each LAYOUTS as option (option)}
-                      <option value={option}>
-                        {option === "corners"
-                          ? $t("adminBattlesLayoutCorners")
-                          : $t("adminBattlesLayoutPlaque")}
-                      </option>
-                    {/each}
-                  </select>
-                </label>
-              </div>
-              <!-- Одна целая фотография рамы — для `overlay` и `behind`.
-                 Собранной из частей она не нужна: та строит себя из деталей. -->
-              {#if frames[frameIndex].frameMode !== "sliced"}
-                <div class="flex flex-wrap items-end gap-3">
-                  <button
-                    onclick={uploadFrameArt}
-                    disabled={uploading}
-                    class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
-                    >{uploading
-                      ? "…"
-                      : $t("adminBattlesFrameArtUpload")}</button
-                  >
-                  <label class="block flex-1 min-w-[12rem]">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                    >
-                      {#if !frames[frameIndex].frameImage.trim()}{$t(
-                          "adminBattlesFrameArtNone",
-                        )}{:else}URL{/if}
-                    </span>
-                    <input
-                      bind:value={frames[frameIndex].frameImage}
-                      placeholder="/static/frames/…"
-                      class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                    />
-                  </label>
-                  {#if frames[frameIndex].frameImage.trim()}
-                    <button
-                      onclick={() => (frames[frameIndex].frameImage = "")}
-                      class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
-                      >{$t("adminBattlesFrameArtClear")}</button
-                    >
-                  {/if}
-                </div>
               {/if}
+            </div>
 
-              <!-- What shows through the hole in a cut-out frame. -->
-              <div class="flex flex-wrap items-end gap-3 mt-4">
-                <button
-                  onclick={uploadPaperArt}
-                  disabled={uploading}
-                  class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
-                  >{uploading ? "…" : $t("adminBattlesPaperUpload")}</button
-                >
-                <label class="block flex-1 min-w-[16rem]">
-                  <span
-                    class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                  >
-                    {#if !frames[frameIndex].paperImage.trim()}{$t(
-                        "adminBattlesPaperNone",
-                      )}{:else}URL{/if}
-                  </span>
-                  <input
-                    bind:value={frames[frameIndex].paperImage}
-                    placeholder="/static/images/preview/…"
-                    class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                  />
-                </label>
-                {#if frames[frameIndex].paperImage.trim()}
-                  <button
-                    onclick={() => (frames[frameIndex].paperImage = "")}
-                    class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
-                    >{$t("adminBattlesFrameArtClear")}</button
-                  >
-                {/if}
-              </div>
 
-              <!-- The reverse. Never wears the frame above, whatever picture it shows —
-               the carving is the front's own dress. -->
-              <div class="pt-5 border-t border-[#34251c]/10">
-                <p
-                  class="mb-3 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+            <details open class="border-b border-[#34251c]/10">
+              <summary
+                class="px-4 py-2.5 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+                >{$t("adminBattlesFramePaper")}</summary
+              >
+              <div class="px-4 pb-4">
+                <!-- The name, and the colours the renderer paints when there is no
+                   photograph — still the ground under one that fails to load. -->
+                <div
+                  class="pt-5 border-t border-[#34251c]/10 flex flex-wrap items-end gap-4"
                 >
-                  {$t("adminBattlesBackArt")}
-                </p>
-                <details class="mb-3">
-                  <summary
-                    class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
-                    >{$t("adminBattlesHintOpen")}</summary
-                  >
-                  <p
-                    class="max-w-[62ch] mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
-                  >
-                    {$t("adminBattlesBackArtHint")}
-                  </p>
-                </details>
-                <div class="flex flex-wrap items-end gap-3">
-                  <button
-                    onclick={uploadBackArt}
-                    disabled={uploading}
-                    class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
-                    >{uploading ? "…" : $t("adminBattlesBackArtUpload")}</button
-                  >
-                  <label class="block flex-1 min-w-[16rem]">
+                  <label class="block">
                     <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                      class="block mb-1 text-[11px] text-[#8a6a55]"
+                      >{$t("adminBattlesTitleFont")}</span
                     >
-                      {#if !frames[frameIndex].backImage.trim()}{$t(
-                          "adminBattlesBackArtNone",
-                        )}{:else}URL{/if}
+                    <select
+                      bind:value={frames[frameIndex].titleFont}
+                      class="px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none"
+                    >
+                      <option value=""
+                        >{$t("adminBattlesTitleFontDefault")}</option
+                      >
+                      {#each SITE_FONTS as font (font.id)}
+                        <option value={font.id}>{font.name}</option>
+                      {/each}
+                    </select>
+                  </label>
+                  <label class="block">
+                    <span
+                      class="block mb-1 text-[11px] text-[#8a6a55]"
+                      >{$t("adminBattlesTitleInk")}</span
+                    >
+                    <input
+                      type="color"
+                      value={frames[frameIndex].titleInk ||
+                        frames[frameIndex].ink}
+                      oninput={(e) =>
+                        (frames[frameIndex].titleInk = e.currentTarget.value)}
+                      class="w-12 h-8 bg-transparent border border-[#34251c]/15"
+                    />
+                  </label>
+                  {#each [["paper", $t("adminBattlesFramePaper")], ["ink", $t("adminBattlesFrameInk")], ["border", $t("adminBattlesFrameBorder")]] as [key, label] (key)}
+                    <label class="block">
+                      <span
+                        class="block mb-1 text-[11px] text-[#8a6a55]"
+                        >{label}</span
+                      >
+                      <input
+                        type="color"
+                        value={frames[frameIndex][
+                          key as "paper" | "ink" | "border"
+                        ]}
+                        oninput={(e) =>
+                          (frames[frameIndex][key as "paper" | "ink" | "border"] =
+                            e.currentTarget.value)}
+                        class="w-12 h-8 bg-transparent border border-[#34251c]/15"
+                      />
+                    </label>
+                  {/each}
+                  <label class="block flex-1 min-w-[14rem]">
+                    <span
+                      class="block mb-1 text-[11px] text-[#8a6a55]"
+                    >
+                      {$t("adminBattlesFrameFoil")}
+                      {#if !frames[frameIndex].foil.trim()}<span
+                          class="normal-case tracking-normal italic"
+                        >
+                          — {$t("adminBattlesFrameNoFoil")}</span
+                        >{/if}
                     </span>
                     <input
-                      bind:value={frames[frameIndex].backImage}
-                      placeholder="/static/frames/…"
+                      bind:value={frames[frameIndex].foil}
+                      placeholder="rgba(198,95,60,0.28)"
                       class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
                     />
                   </label>
-                  {#if frames[frameIndex].backImage.trim()}
-                    <button
-                      onclick={() => (frames[frameIndex].backImage = "")}
-                      class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
-                      >{$t("adminBattlesFrameArtClear")}</button
-                    >
-                  {/if}
                 </div>
               </div>
-            </div>
-          </details>
+            </details>
 
-          <details class="border-b border-[#34251c]/10">
-            <summary
-              class="px-4 py-2.5 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
-              >{$t("adminBattlesFrameWindow")}</summary
-            >
-            <div class="px-4 pb-4">
-              <!-- Where the opening in that frame actually is. -->
-              <div class="pt-5 border-t border-[#34251c]/10">
-                <p
-                  class="mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                >
-                  {$t("adminBattlesFrameWindow")}
-                </p>
-                <details class="mb-3">
-                  <summary
-                    class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
-                    >{$t("adminBattlesHintOpen")}</summary
-                  >
+            <details open class="border-b border-[#34251c]/10">
+              <summary
+                class="px-4 py-2.5 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+                >{$t("adminBattlesFrameWindow")}</summary
+              >
+              <div class="px-4 pb-4">
+                <!-- Where the opening in that frame actually is. -->
+                <div class="pt-5 border-t border-[#34251c]/10">
                   <p
-                    class="max-w-[62ch] mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
+                    class="mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
                   >
-                    {$t("adminBattlesFrameWindowHint")}
+                    {$t("adminBattlesFrameWindow")}
                   </p>
-                  <p
-                    class="max-w-[62ch] mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
-                  >
-                    {$t("adminBattlesBandsHint")}
-                  </p>
-                </details>
-                <div class="flex flex-wrap gap-5">
-                  <!-- Четыре врезки одним списком: разница между ними — одно
-                       слово и одна ось, и четыре списанных друг с друга блока
-                       расходились бы по одному. Рядом с процентом стоят
-                       ТОЧКИ — те самые, что на выбранной ширине карты: резать
-                       картинку по процентам нельзя. -->
-                  {#each INSETS as row (row.key)}
-                    <label class="block w-40">
+                  <details class="mb-3">
+                    <summary
+                      class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+                      >{$t("adminBattlesHintOpen")}</summary
+                    >
+                    <p
+                      class="max-w-[62ch] mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
+                    >
+                      {$t("adminBattlesFrameWindowHint")}
+                    </p>
+                    <p
+                      class="max-w-[62ch] mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
+                    >
+                      {$t("adminBattlesBandsHint")}
+                    </p>
+                  </details>
+                  <!-- В один столбец, а не в два по 160 px: у ползунка в
+                       колонке 432 px нет причин быть шириной в треть её, а
+                       подпись при такой ширине обрезалась на «ВРЕЗКА СВЕ…».
+                       Имя слева, число справа — по числам эти ручки и ищут. -->
+                  <div class="space-y-3">
+                    <!-- Четыре врезки одним списком: разница между ними — одно
+                         слово и одна ось, и четыре списанных друг с друга блока
+                         расходились бы по одному. Рядом с процентом стоят
+                         ТОЧКИ — те самые, что на выбранной ширине карты: резать
+                         картинку по процентам нельзя. -->
+                    {#each INSETS as row (row.key)}
+                      <label class="block">
+                        <span
+                          class="flex items-baseline justify-between gap-2 mb-1 text-[11px] text-[#8a6a55]"
+                        >
+                          <span class="truncate">{$t(row.label)}</span>
+                          <span class="flex-shrink-0 tabular-nums"
+                            >{frames[frameIndex][row.key].toFixed(0)}% ·
+                            <b class="font-normal text-[#34251c]/70"
+                              >{insetPx(
+                                row.key,
+                                frames[frameIndex][row.key],
+                              )} px</b
+                            ></span
+                          >
+                        </span>
+                        <input
+                          type="range"
+                          min="0"
+                          max="45"
+                          step="0.5"
+                          value={frames[frameIndex][row.key]}
+                          oninput={(e) =>
+                            setInset(row.key, Number(e.currentTarget.value))}
+                          class="w-full"
+                        />
+                      </label>
+                    {/each}
+                    <label class="block">
                       <span
-                        class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                        >{$t(row.label)} · {frames[frameIndex][
-                          row.key
-                        ].toFixed(0)}% ·
-                        <span class="tabular-nums text-[#34251c]/70"
-                          >{insetPx(
-                            row.key,
-                            frames[frameIndex][row.key],
-                          )} px</span
-                        ></span
+                        class="block mb-1 text-[11px] text-[#8a6a55]"
+                        >{$t("adminBattlesAspect")} · {frames[
+                          frameIndex
+                        ].aspect.toFixed(2)}</span
+                      >
+                      <input
+                        type="range"
+                        min="0.45"
+                        max="1.4"
+                        step="0.01"
+                        bind:value={frames[frameIndex].aspect}
+                        class="w-full"
+                      />
+                    </label>
+                    <label class="block">
+                      <span
+                        class="block mb-1 text-[11px] text-[#8a6a55]"
+                        >{$t("adminBattlesHeaderShare")} · {(
+                          frames[frameIndex].headerShare * 100
+                        ).toFixed(0)}%</span
                       >
                       <input
                         type="range"
                         min="0"
-                        max="45"
-                        step="0.5"
-                        value={frames[frameIndex][row.key]}
-                        oninput={(e) =>
-                          setInset(row.key, Number(e.currentTarget.value))}
+                        max="0.3"
+                        step="0.005"
+                        bind:value={frames[frameIndex].headerShare}
                         class="w-full"
                       />
                     </label>
-                  {/each}
-                  <label class="block w-40">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("adminBattlesAspect")} · {frames[
-                        frameIndex
-                      ].aspect.toFixed(2)}</span
-                    >
-                    <input
-                      type="range"
-                      min="0.45"
-                      max="1.4"
-                      step="0.01"
-                      bind:value={frames[frameIndex].aspect}
-                      class="w-full"
-                    />
-                  </label>
-                  <label class="block w-40">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("adminBattlesHeaderShare")} · {(
-                        frames[frameIndex].headerShare * 100
-                      ).toFixed(0)}%</span
-                    >
-                    <input
-                      type="range"
-                      min="0"
-                      max="0.3"
-                      step="0.005"
-                      bind:value={frames[frameIndex].headerShare}
-                      class="w-full"
-                    />
-                  </label>
-                  <label class="block w-40">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("adminBattlesArtShare")} · {(
-                        frames[frameIndex].artShare * 100
-                      ).toFixed(0)}%</span
-                    >
-                    <input
-                      type="range"
-                      min="0.12"
-                      max="0.85"
-                      step="0.01"
-                      bind:value={frames[frameIndex].artShare}
-                      class="w-full"
-                    />
-                  </label>
-                  <label class="block w-40">
-                    <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{$t("adminBattlesFootShare")} · {(
-                        frames[frameIndex].footShare * 100
-                      ).toFixed(0)}%</span
-                    >
-                    <input
-                      type="range"
-                      min="0"
-                      max="0.3"
-                      step="0.005"
-                      bind:value={frames[frameIndex].footShare}
-                      class="w-full"
-                    />
-                  </label>
+                    <label class="block">
+                      <span
+                        class="block mb-1 text-[11px] text-[#8a6a55]"
+                        >{$t("adminBattlesArtShare")} · {(
+                          frames[frameIndex].artShare * 100
+                        ).toFixed(0)}%</span
+                      >
+                      <input
+                        type="range"
+                        min="0.12"
+                        max="0.85"
+                        step="0.01"
+                        bind:value={frames[frameIndex].artShare}
+                        class="w-full"
+                      />
+                    </label>
+                    <label class="block">
+                      <span
+                        class="block mb-1 text-[11px] text-[#8a6a55]"
+                        >{$t("adminBattlesFootShare")} · {(
+                          frames[frameIndex].footShare * 100
+                        ).toFixed(0)}%</span
+                      >
+                      <input
+                        type="range"
+                        min="0"
+                        max="0.3"
+                        step="0.005"
+                        bind:value={frames[frameIndex].footShare}
+                        class="w-full"
+                      />
+                    </label>
+                  </div>
                 </div>
               </div>
-            </div>
-          </details>
+            </details>
 
-          <details class="border-b border-[#34251c]/10">
-            <summary
-              class="px-4 py-2.5 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
-              >{$t("adminBattlesFramePaper")}</summary
-            >
-            <div class="px-4 pb-4">
-              <!-- The name, and the colours the renderer paints when there is no
-                 photograph — still the ground under one that fails to load. -->
-              <div
-                class="pt-5 border-t border-[#34251c]/10 flex flex-wrap items-end gap-4"
+
+            <details class="border-b border-[#34251c]/10">
+              <summary
+                class="px-4 py-2.5 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+                >{$t("adminBattlesFrameArt")}</summary
               >
-                <label class="block">
-                  <span
-                    class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                    >{$t("adminBattlesTitleFont")}</span
-                  >
-                  <select
-                    bind:value={frames[frameIndex].titleFont}
-                    class="px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none"
-                  >
-                    <option value=""
-                      >{$t("adminBattlesTitleFontDefault")}</option
-                    >
-                    {#each SITE_FONTS as font (font.id)}
-                      <option value={font.id}>{font.name}</option>
-                    {/each}
-                  </select>
-                </label>
-                <label class="block">
-                  <span
-                    class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                    >{$t("adminBattlesTitleInk")}</span
-                  >
-                  <input
-                    type="color"
-                    value={frames[frameIndex].titleInk ||
-                      frames[frameIndex].ink}
-                    oninput={(e) =>
-                      (frames[frameIndex].titleInk = e.currentTarget.value)}
-                    class="w-12 h-8 bg-transparent border border-[#34251c]/15"
-                  />
-                </label>
-                {#each [["paper", $t("adminBattlesFramePaper")], ["ink", $t("adminBattlesFrameInk")], ["border", $t("adminBattlesFrameBorder")]] as [key, label] (key)}
+              <div class="px-4 pb-4 space-y-4">
+                <div class="flex flex-wrap items-end gap-4">
                   <label class="block">
                     <span
-                      class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                      >{label}</span
+                      class="block mb-1 text-[11px] text-[#8a6a55]"
+                      >{$t("adminBattlesFrameName")} · EN</span
                     >
                     <input
-                      type="color"
-                      value={frames[frameIndex][
-                        key as "paper" | "ink" | "border"
-                      ]}
-                      oninput={(e) =>
-                        (frames[frameIndex][key as "paper" | "ink" | "border"] =
-                          e.currentTarget.value)}
-                      class="w-12 h-8 bg-transparent border border-[#34251c]/15"
+                      bind:value={frames[frameIndex].nameEn}
+                      class="px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
                     />
                   </label>
-                {/each}
-                <label class="block flex-1 min-w-[14rem]">
-                  <span
-                    class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                  >
-                    {$t("adminBattlesFrameFoil")}
-                    {#if !frames[frameIndex].foil.trim()}<span
-                        class="normal-case tracking-normal italic"
+                  <label class="block">
+                    <span
+                      class="block mb-1 text-[11px] text-[#8a6a55]"
+                      >{$t("adminBattlesFrameName")} · RU</span
+                    >
+                    <input
+                      bind:value={frames[frameIndex].nameRu}
+                      class="px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                    />
+                  </label>
+                  <label class="block">
+                    <span
+                      class="block mb-1 text-[11px] text-[#8a6a55]"
+                      >{$t("adminBattlesFrameLayout")}</span
+                    >
+                    <select
+                      bind:value={frames[frameIndex].layout}
+                      class="px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none"
+                    >
+                      {#each LAYOUTS as option (option)}
+                        <option value={option}>
+                          {option === "corners"
+                            ? $t("adminBattlesLayoutCorners")
+                            : $t("adminBattlesLayoutPlaque")}
+                        </option>
+                      {/each}
+                    </select>
+                  </label>
+                </div>
+                <!-- Одна целая фотография рамы — для `overlay` и `behind`.
+                   Собранной из частей она не нужна: та строит себя из деталей. -->
+                {#if frames[frameIndex].frameMode !== "sliced"}
+                  <div class="flex flex-wrap items-end gap-3">
+                    <button
+                      onclick={uploadFrameArt}
+                      disabled={uploading}
+                      class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
+                      >{uploading
+                        ? "…"
+                        : $t("adminBattlesFrameArtUpload")}</button
+                    >
+                    <label class="block flex-1 min-w-[12rem]">
+                      <span
+                        class="block mb-1 text-[11px] text-[#8a6a55]"
                       >
-                        — {$t("adminBattlesFrameNoFoil")}</span
-                      >{/if}
-                  </span>
-                  <input
-                    bind:value={frames[frameIndex].foil}
-                    placeholder="rgba(198,95,60,0.28)"
-                    class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
-                  />
-                </label>
-              </div>
-            </div>
-          </details>
-        {/if}
+                        {#if !frames[frameIndex].frameImage.trim()}{$t(
+                            "adminBattlesFrameArtNone",
+                          )}{:else}URL{/if}
+                      </span>
+                      <input
+                        bind:value={frames[frameIndex].frameImage}
+                        placeholder="/static/frames/…"
+                        class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                      />
+                    </label>
+                    {#if frames[frameIndex].frameImage.trim()}
+                      <button
+                        onclick={() => (frames[frameIndex].frameImage = "")}
+                        class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
+                        >{$t("adminBattlesFrameArtClear")}</button
+                      >
+                    {/if}
+                  </div>
+                {/if}
 
+                <!-- What shows through the hole in a cut-out frame. -->
+                <div class="flex flex-wrap items-end gap-3 mt-4">
+                  <button
+                    onclick={uploadPaperArt}
+                    disabled={uploading}
+                    class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
+                    >{uploading ? "…" : $t("adminBattlesPaperUpload")}</button
+                  >
+                  <label class="block flex-1 min-w-[16rem]">
+                    <span
+                      class="block mb-1 text-[11px] text-[#8a6a55]"
+                    >
+                      {#if !frames[frameIndex].paperImage.trim()}{$t(
+                          "adminBattlesPaperNone",
+                        )}{:else}URL{/if}
+                    </span>
+                    <input
+                      bind:value={frames[frameIndex].paperImage}
+                      placeholder="/static/images/preview/…"
+                      class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                    />
+                  </label>
+                  {#if frames[frameIndex].paperImage.trim()}
+                    <button
+                      onclick={() => (frames[frameIndex].paperImage = "")}
+                      class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
+                      >{$t("adminBattlesFrameArtClear")}</button
+                    >
+                  {/if}
+                </div>
+
+                <!-- The reverse. Never wears the frame above, whatever picture it shows —
+                 the carving is the front's own dress. -->
+                <div class="pt-5 border-t border-[#34251c]/10">
+                  <p
+                    class="mb-3 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                  >
+                    {$t("adminBattlesBackArt")}
+                  </p>
+                  <details class="mb-3">
+                    <summary
+                      class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+                      >{$t("adminBattlesHintOpen")}</summary
+                    >
+                    <p
+                      class="max-w-[62ch] mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
+                    >
+                      {$t("adminBattlesBackArtHint")}
+                    </p>
+                  </details>
+                  <div class="flex flex-wrap items-end gap-3">
+                    <button
+                      onclick={uploadBackArt}
+                      disabled={uploading}
+                      class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
+                      >{uploading ? "…" : $t("adminBattlesBackArtUpload")}</button
+                    >
+                    <label class="block flex-1 min-w-[16rem]">
+                      <span
+                        class="block mb-1 text-[11px] text-[#8a6a55]"
+                      >
+                        {#if !frames[frameIndex].backImage.trim()}{$t(
+                            "adminBattlesBackArtNone",
+                          )}{:else}URL{/if}
+                      </span>
+                      <input
+                        bind:value={frames[frameIndex].backImage}
+                        placeholder="/static/frames/…"
+                        class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                      />
+                    </label>
+                    {#if frames[frameIndex].backImage.trim()}
+                      <button
+                        onclick={() => (frames[frameIndex].backImage = "")}
+                        class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
+                        >{$t("adminBattlesFrameArtClear")}</button
+                      >
+                    {/if}
+                  </div>
+                </div>
+              </div>
+            </details>
+
+
+            <!-- Кто это носит. Справка, а не настройка: стояла ПЕРВОЙ и своими
+                 десятью строками толкала вниз всё, чем работают. Оставлена на
+                 столе (без неё чин красят вслепую и не узнают, что его не видно
+                 ни на одной карте), но сложена и убрана в конец — туда, где ей
+                 и место по частоте обращения. -->
+            {#if worn}
+              <details class="border-b border-[#34251c]/10">
+                <summary
+                  class="flex items-center gap-2 px-4 py-2.5 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer list-none [&::-webkit-details-marker]:hidden"
+                >
+                  {#if !worn.plain.length && worn.mine.length}
+                    <span class="w-1.5 h-1.5 rounded-full bg-[#c65f3c]"></span>
+                  {/if}
+                  {$t("adminBattlesWornBy")}
+                  <span class="tabular-nums">· {worn.mine.length}</span>
+                </summary>
+                <div class="px-4 pb-4">
+                {#if !worn.mine.length}
+                  <p class="text-[11px] italic text-[#8a6a55]">
+                    {$t("adminBattlesWornNone")}
+                  </p>
+                {:else}
+                  <p class="text-[11px] leading-relaxed text-[#6f3b24]">
+                    {$t("adminBattlesWornPlain")}
+                    <b class="tabular-nums">{worn.plain.length}</b>
+                    {$t("adminBattlesWornOf")}
+                    <b class="tabular-nums">{worn.mine.length}</b>
+                  </p>
+                  {#if !worn.plain.length}
+                    <p
+                      class="mt-1 flex items-start gap-1.5 text-[11px] leading-relaxed text-[#8f2f22]"
+                    >
+                      <span class="mt-1.5 w-1.5 h-1.5 flex-shrink-0 rounded-full bg-[#c65f3c]"
+                      ></span>
+                      {$t("adminBattlesWornBlind")}
+                    </p>
+                  {/if}
+                  {#each [{ list: worn.own, word: "adminBattlesWornOwn" as TranslationKey }, { list: worn.byRace, word: "adminBattlesWornRace" as TranslationKey }] as group (group.word)}
+                    {#if group.list.length}
+                      <p
+                        class="mt-2 mb-0.5 text-[9px] uppercase tracking-[0.14em] text-[#8a6a55]"
+                      >
+                        {$t(group.word)} · {group.list.length}
+                      </p>
+                      <ul class="space-y-0.5">
+                        {#each group.list as one (one.id)}
+                          <li>
+                            <button
+                              onclick={() => onOpenCard(one)}
+                              class="text-left text-[11px] leading-snug text-[#6f3b24] hover:underline"
+                              >{titleOf(one)}</button
+                            >
+                          </li>
+                        {/each}
+                      </ul>
+                    {/if}
+                  {/each}
+                {/if}
+                </div>
+              </details>
+            {/if}
+          </div>
+
+          <!-- ВЕРСТАК ДЕТАЛИ. Прибит книзу и держит ровно то, чем работают
+               каждую минуту: список деталей своей прокруткой и настройки той,
+               что в руке, — под ним, всегда на виду. -->
+          {#if frames[frameIndex].frameMode === "sliced"}
+            <!-- Ручка верстака: им делят колонку по высоте. -->
+            <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+            <div
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label={$t("adminBattlesPaneGrip")}
+              title={$t("adminBattlesPaneGrip")}
+              onpointerdown={paneTake}
+              onpointermove={paneDrag}
+              onpointerup={paneDrop}
+              onpointercancel={paneDrop}
+              ondblclick={() => ((paneShare = 0.66), keepDesk())}
+              class="flex-shrink-0 h-1.5 cursor-row-resize touch-none border-t border-[#34251c]/10 {paneGrab
+                ? 'bg-[#c65f3c]/40'
+                : 'hover:bg-[#34251c]/10'}"
+            ></div>
+
+            <section
+              class="flex-shrink-0 flex flex-col min-h-0 border-t border-[#34251c]/15 bg-[#f4ede2]"
+              style="max-height:{Math.round(paneShare * 100)}%"
+            >
+              <!-- ШАПКА ВЕРСТАКА. Прибита, а не прокручивается вместе со
+                   списком: заголовок, подсказка и две кнопки «добавить» стояли
+                   ВНУТРИ прокрутки и съедали у неё шестьдесят точек из ста
+                   сорока — то есть от списка оставалась одна строка с
+                   половиной. Кнопки стали значками по той же причине: два
+                   слова в разрядку на «добавить — со склада» стоили строки. -->
+              <div
+                class="flex-shrink-0 flex items-center gap-2 px-3 py-1.5 border-b border-[#34251c]/12"
+              >
+                <p
+                  class="min-w-0 truncate text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                >
+                  {$t("adminBattlesStack")}
+                </p>
+                <div class="ml-auto flex-shrink-0 flex items-center gap-0.5">
+                  <button
+                    onclick={addOrnamentUpload}
+                    disabled={uploading}
+                    title={$t("adminBattlesOrnamentAdd")}
+                    class="p-1.5 text-[#8a6a55] hover:bg-[#34251c]/8 hover:text-[#34251c] disabled:opacity-40"
+                    ><BattleIcon name="upload" /></button
+                  >
+                  <button
+                    onclick={addOrnamentFromStore}
+                    title={$t("adminBattlesOrnamentAddStore")}
+                    class="p-1.5 text-[#8a6a55] hover:bg-[#34251c]/8 hover:text-[#34251c]"
+                    ><BattleIcon name="store" /></button
+                  >
+                  <details class="relative">
+                    <summary
+                      title={$t("adminBattlesHintOpen")}
+                      class="p-1.5 text-[10px] leading-none text-[#8a6a55] cursor-pointer list-none [&::-webkit-details-marker]:hidden hover:text-[#34251c]"
+                      >?</summary
+                    >
+                    <p
+                      class="absolute right-0 top-full z-30 mt-1 w-[22rem] max-w-[80vw] p-3 text-[11px] leading-relaxed italic text-[#8a6a55] bg-[#f8f1e7] border border-[#34251c]/25 shadow-[0_6px_24px_rgba(52,37,28,0.18)]"
+                    >
+                      {$t("adminBattlesStackHint")}
+                    </p>
+                  </details>
+                </div>
+              </div>
+
+              <div class="flex-1 min-h-[9rem] overflow-y-auto">
+                <!-- Список деталей. Сверху то, что рисуется поверх; порядок задают
+                     здесь, и только здесь, поэтому невидимых ничьих между равными
+                     слоями больше нет. -->
+                <div class="p-3">
+                  <div class="border border-[#34251c]/12">
+                    {#each stack as row (row.id)}
+                      <div
+                        class="flex items-center gap-2 px-1.5 py-1 border-b last:border-b-0 border-[#34251c]/8 {sliceHeld?.id ===
+                        row.id
+                          ? 'bg-[#c65f3c]/[0.09]'
+                          : ''}"
+                      >
+                        <span class="flex flex-col leading-none">
+                          <button
+                            onclick={() => restack(row.id, -1)}
+                            title={$t("adminBattlesStackUp")}
+                            class="px-1 text-[8px] text-[#8a6a55] hover:text-[#34251c]"
+                            >▲</button
+                          >
+                          <button
+                            onclick={() => restack(row.id, 1)}
+                            title={$t("adminBattlesStackDown")}
+                            class="px-1 text-[8px] text-[#8a6a55] hover:text-[#34251c]"
+                            >▼</button
+                          >
+                        </span>
+                        <button
+                          onclick={() => showPiece(row, !pieceShown(row))}
+                          title={$t("adminBattlesSliceShown")}
+                          class="w-4 text-[11px] {pieceShown(row)
+                            ? 'text-[#34251c]'
+                            : 'text-[#34251c]/25'}"
+                          >{pieceShown(row) ? "◉" : "○"}</button
+                        >
+                        <button
+                          onclick={() =>
+                            ((pokedAt = null),
+                            (sliceHeld = {
+                              id: row.id,
+                              side: KIND_SIDES[row.kind][0],
+                            }))}
+                          class="flex-1 flex items-center gap-2 py-0.5 text-left min-w-0"
+                        >
+                          <!-- Миниатюра. До неё в слоте стояла строка вида
+                               `/static/assets/0158db49-….webp`, по которой нельзя
+                               узнать ни одну деталь. -->
+                          <span
+                            class="w-7 h-7 flex-shrink-0 border border-[#34251c]/15 bg-[#34251c]/[0.04] bg-center bg-contain bg-no-repeat"
+                            style:background-image={row.image
+                              ? `url("${row.image}")`
+                              : "none"}
+                          ></span>
+                          <span
+                            class="min-w-0 flex-1 text-[11px] truncate {row.image
+                              ? ''
+                              : 'text-[#8a6a55] italic'}">{row.label}</span
+                          >
+                          <span
+                            class="flex-shrink-0 text-[11px] text-[#8a6a55] truncate max-w-[9rem]"
+                          >
+                            {row.image
+                              ? $t(KIND_KEY[row.kind])
+                              : $t("adminBattlesPieceEmpty")}
+                          </span>
+                        </button>
+                      </div>
+                    {/each}
+                  </div>
+                </div>
+              </div>
+              <!-- Настройки ужимаются и прокручиваются, а не выталкивают
+                   список: на низком окне верстак упирается в свой потолок, и
+                   неужимаемые настройки вылезли бы за край колонки — то есть
+                   из виду ушло бы ровно то, ради чего верстак прибит. -->
+              <div
+                class="min-h-0 max-h-[20rem] overflow-y-auto border-t border-[#34251c]/12 bg-[#f8f1e7]"
+              >
+                <!-- Настройки ТОЛЬКО взятой детали. Шесть блоков разом были прежде
+                     всегда открыты, и колонка не помещалась на экран. -->
+                {#if heldRow}
+                  <div class="p-4">
+                    <!-- Не `<p>`: ниже стоит `<details>`, а абзац его в себе
+                         держать не может — браузер закрывает абзац перед ним,
+                         и разметка расходится с той, которую обходит Svelte.
+                         Стоило это не съехавшей вёрстки, а падения на
+                         `get_first_child`: весь верстак переставал слушать
+                         мышь, и ни одна кнопка списка не работала. -->
+                    <div
+                      class="flex items-center gap-2 mb-3 text-[10px] uppercase tracking-[0.16em] text-[#c65f3c]"
+                    >
+                      <span class="min-w-0 truncate">{heldRow.label}</span>
+                      <!-- Подсказка значком, а не строкой внизу: нужна она
+                           однажды, а место занимала всегда. -->
+                      <details class="relative ml-auto flex-shrink-0">
+                        <summary
+                          title={$t("adminBattlesHintOpen")}
+                          class="px-1 text-[10px] leading-none text-[#8a6a55] cursor-pointer list-none [&::-webkit-details-marker]:hidden hover:text-[#34251c]"
+                          >?</summary
+                        >
+                        <span
+                          class="absolute right-0 top-full z-30 mt-1 block w-[22rem] max-w-[80vw] p-3 text-[11px] normal-case tracking-normal leading-relaxed italic text-[#8a6a55] bg-[#f8f1e7] border border-[#34251c]/25 shadow-[0_6px_24px_rgba(52,37,28,0.18)]"
+                        >
+                          {$t("adminBattlesSliceHint")}
+                        </span>
+                      </details>
+                    </div>
+                    {#if heldRow.ornament}
+                      <label class="block w-full mb-3">
+                        <span
+                          class="block mb-1 text-[11px] text-[#8a6a55]"
+                          >{$t("adminBattlesOrnamentKind")}</span
+                        >
+                        <select
+                          value={heldRow.ornament.kind}
+                          onchange={(e) =>
+                            reshapeOrnament(
+                              heldRow!.ornament!,
+                              e.currentTarget.value as SliceKind,
+                            )}
+                          class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none"
+                        >
+                          {#each SLICE_KINDS as kind (kind)}
+                            <option value={kind}>{$t(KIND_KEY[kind])}</option>
+                          {/each}
+                        </select>
+                      </label>
+                    {/if}
+                    <!-- Картинка детали. Здесь стояли четыре кнопки — загрузить ·
+                         со склада · убрать картинку · убрать украшение, — и все
+                         четыре до одной есть на полоске, которая висит у самой
+                         детали: один поступок был напечатан дважды, и хранитель
+                         всякий раз выбирал, каким из двух его сделать. Полоске —
+                         ДЕЙСТВИЯ, колонке — слова и числа. Осталось поле пути:
+                         оно и есть ответ на «что за картинка», и второй строкой
+                         с именем файла над ним было бы то же самое, сказанное
+                         дважды. -->
+                    <label class="block w-full mb-2">
+                      <span class="block mb-1 text-[11px] text-[#8a6a55]"
+                        >{$t("adminBattlesPieceArt")}</span
+                      >
+                      <input
+                        value={heldRow.image}
+                        oninput={(e) =>
+                          setPieceImage(heldRow!, e.currentTarget.value)}
+                        placeholder={$t("adminBattlesPieceEmpty")}
+                        class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                      />
+                    </label>
+                    {@render placement(heldRow.id, heldRow.kind, heldRow.piece)}
+                  </div>
+                {:else}
+                  <p
+                    class="p-4 text-[11px] leading-relaxed italic text-[#8a6a55]"
+                  >
+                    {$t("adminBattlesStackNothingHeld")}
+                  </p>
+                {/if}
+              </div>
+            </section>
+          {/if}
+        {/if}
       </aside>
       </div>
     </div>

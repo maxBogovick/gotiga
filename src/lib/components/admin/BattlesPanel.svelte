@@ -2531,12 +2531,21 @@
   <!-- Чего не хватает комнате. Стоит под вкладками, а не внутри одной из них:
        нехватка заёмных карт видна в карточном редакторе, а мешает она на столе
        гостя, и искать её там, где она мешает, поздно. -->
+  <!-- Складывается, и это не «спрятать неудобное»: известие о нехватке стоит
+       ВСЕГДА, но одной строкой со счётчиком, а не списком во всю ширину.
+       Оно про КАРТЫ, а живёт над всеми вкладками разом — и у стола рамок,
+       где его читать нечего, отнимало 62 px высоты каждую секунду работы,
+       у сцены, которой высоты и так не хватало. -->
   {#if roomTrouble.length}
-    <div class="px-4 py-2 border-b border-[#c65f3c]/25 bg-[#c65f3c]/[0.06]">
-      <p class="text-[10px] uppercase tracking-[0.16em] text-[#8f2f22]">
+    <details class="border-b border-[#c65f3c]/25 bg-[#c65f3c]/[0.06]">
+      <summary
+        class="flex items-center gap-2 px-4 py-1.5 text-[10px] uppercase tracking-[0.16em] text-[#8f2f22] cursor-pointer list-none [&::-webkit-details-marker]:hidden"
+      >
+        <span class="w-1.5 h-1.5 rounded-full bg-[#c65f3c]"></span>
         {$t("adminBattlesRoomTitle")}
-      </p>
-      <ul class="mt-1 space-y-0.5">
+        <span class="tabular-nums">· {roomTrouble.length}</span>
+      </summary>
+      <ul class="px-4 pb-2 space-y-0.5">
         {#each roomTrouble as trouble (trouble)}
           <li class="text-[11px] leading-relaxed text-[#6f3b24]">
             {$t(
@@ -2546,7 +2555,7 @@
           </li>
         {/each}
       </ul>
-    </div>
+    </details>
   {/if}
 
   {#if view === "frames"}

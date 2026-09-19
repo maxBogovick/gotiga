@@ -1026,6 +1026,9 @@ export function badgeReserve(
     costOn: boolean;
     powerOn: boolean;
     healthOn: boolean;
+    /** Числа, которые значки печатают. Отступ считается по НАРИСОВАННОЙ
+     *  ширине, а она зависит от числа: «1» уже «0» в полтора раза. */
+    numbers: Record<BadgeKind, number | null | undefined>;
     costWord: boolean;
     powerWord: boolean;
     newOver: boolean;
@@ -1063,9 +1066,9 @@ export function badgeReserve(
       health: false,
     };
     const badges = BADGE_KINDS.filter((kind) => worn[kind]).map((kind) => ({
-      ...badgeAt(frame, kind),
+      ...badgeAt(frame, kind, opts.numbers[kind]),
       word: worded[kind],
-      extent: badgeExtent(frame, kind),
+      extent: badgeExtent(frame, kind, opts.numbers[kind]),
     }));
     for (const badge of badges) {
       const halfSize = badge.extent.w / 2;
@@ -1226,6 +1229,7 @@ export function badgeNum(
 export function badgeAt(
   frame: BattleFrame,
   kind: BadgeKind,
+  value: number | null | undefined,
 ): { x: number; y: number } {
   const keys = BADGE_FIELDS[kind];
   const axis = (key: "x" | "y", home: number) => {
@@ -1242,7 +1246,7 @@ export function badgeAt(
     axis("x", keys.homeX),
     axis("y", keys.homeY),
     frame.aspect || DEFAULT_ASPECT,
-    badgeExtent(frame, kind),
+    badgeExtent(frame, kind, value),
   );
 }
 
@@ -1382,6 +1386,15 @@ export function badgeWeight(frame: BattleFrame, kind: BadgeKind): number {
   );
 }
 
+/**
+ * Каким начертанием дом печатает цифру значка. Зеркало `--badge-weight` в
+ * `.corner-num`: на монете в 10.5cqi светлое начертание тонет, и дом берёт
+ * полужирное. Названо числом здесь потому, что по нему мерится ШИРИНА цифры, а
+ * `badgeWeight` отдаёт ноль, когда хранитель начертания не назначал, — ноль
+ * значит «как дома», и мерка обязана знать, что это за дом.
+ */
+export const BADGE_WEIGHT_HOME = 600;
+
 export const BADGE_SCALE_MIN = 0.5;
 export const BADGE_SCALE_MAX = 4;
 
@@ -1400,24 +1413,50 @@ export const BADGE_BARE = 6.6;
 export const BADGE_GLYPH = BADGE_BARE * 0.72;
 export const BADGE_GLYPH_GAP = 1.5;
 
+/** Боковые поля плашки и её наименьшая ширина, в cqi. Зеркало `padding` и
+ *  `min-width` у `.corner`: правятся только вместе с ними. */
+export const BADGE_PAD = 2.4;
+
 /**
- * Во сколько раз плашка со знаком шире своей высоты.
+ * Ширина каждой цифры Georgia, в долях кегля.
  *
- * Знак стоит РЯДОМ с цифрой, а не под ней: оттиск, положенный в ту же клетку,
- * — это не «цифра со значком», а две вещи, наложенные одна на другую, и число
- * от него мутнеет. Поэтому кружок со знаком перестаёт быть кружком и
- * становится плашкой.
+ * Замерено в браузере на той самой цепочке, которой набран значок
+ * (`Georgia, 'Fraunces', serif`), двумя начертаниями — тем, которым дом печатает
+ * число (полужирным), и светлым, на случай если хранитель назначил его сам.
  *
- * Взято по ДВУЗНАЧНОМУ числу, а рисуется по месту (`width: auto`): цифр у
- * стоимости одна, у силы и здоровья бывает две, и ширина, посчитанная по
- * одной, обрезала бы вторую. Мерка, взятая с запасом, ошибается в безопасную
- * сторону — значок не подпускается к самому углу карты на пару процентов её
- * ширины; мерка в притык дала бы срез, а срез виден.
+ * Таблица, а не одно число, потому что Georgia набирает СТАРОСТИЛЬНЫЕ цифры и
+ * ширина у них разная: «1» — 0.49 кегля, «0» — 0.70, то есть в полтора раза
+ * шире. Одним усреднённым числом мерка либо режет двузначное, либо отодвигает
+ * однозначное от края карты на пустое место шириной почти в цифру — а это
+ * ровно то, из-за чего значок не удавалось прижать к самому углу.
  */
-export const BADGE_PILL = 1.72;
-/** Ширина цифры к её кеглю. Замерено на цифрах Georgia (0.565); взято с
- *  запасом, потому что цифр бывает две. */
-export const BADGE_BARE_ASPECT = 0.62;
+const GEORGIA_FIGURE_BOLD = [
+  0.7012, 0.4898, 0.6265, 0.6245, 0.6494, 0.5991, 0.648, 0.5542, 0.6763, 0.648,
+];
+const GEORGIA_FIGURE_PLAIN = [
+  0.6138, 0.4297, 0.5586, 0.5518, 0.5649, 0.5283, 0.5659, 0.5024, 0.5962,
+  0.5659,
+];
+
+/**
+ * Сколько занимает САМО ЧИСЛО значка, в долях кегля.
+ *
+ * Спрашивается у числа, а не у количества знаков в нём: «11» и «00» — две
+ * цифры в обоих, а шириной они отличаются на две пятых кегля.
+ *
+ * Начертание у Georgia настоящих всего два, и промежуточных она не рисует —
+ * браузер берёт полужирное со ступени 600. Поэтому и здесь ступень одна.
+ */
+export function badgeFigures(
+  value: number | null | undefined,
+  weight: number,
+): number {
+  const table = weight >= 600 ? GEORGIA_FIGURE_BOLD : GEORGIA_FIGURE_PLAIN;
+  const text = String(Math.abs(Math.round(Number(value) || 0)));
+  let sum = 0;
+  for (const ch of text) sum += table[Number(ch)] ?? table[0];
+  return sum;
+}
 
 /** Что значок занимает по ширине и по высоте, в cqi. Двумя числами, а не
  *  одним: у кружка они равны, у цифры — нет, и одно число на двоих оставило бы
@@ -1432,31 +1471,62 @@ export type BadgeExtent = { w: number; h: number };
  * шапки, и в том, куда значок вообще пускают: кружок вдвое крупнее цифры не
  * подпускал её к краю карты на полкружка пустоты.
  *
+ * Мерится по ЧИСЛУ, которое на значке напечатано, а не по двузначному с
+ * запасом, как было. Запас был заведён затем, чтобы мерка не обрезала вторую
+ * цифру, — но рисуется-то плашка по месту (`width: auto`), и на однозначном
+ * числе мерка выходила на четыре с половиной cqi шире нарисованного: половина
+ * этого с каждой стороны и была тем полем, из-за которого значок не удавалось
+ * прижать к самому краю карты. Число значку известно; гадать про него не
+ * нужно, и поэтому `value` — не необязательный довесок, а обязательный довод:
+ * пусть лучше не соберётся тот, кто забыл его передать, чем разойдутся
+ * отрисовщик, перетаскивание и отступ шапки.
+ *
  * Прозрачная заливка коробку НЕ снимает: форму хранитель выбрал, и коробка —
  * это форма. Снимает её только «без формы», и правило целиком: нет формы — нет
  * коробки.
  */
-export function badgeExtent(frame: BattleFrame, kind: BadgeKind): BadgeExtent {
+export function badgeExtent(
+  frame: BattleFrame,
+  kind: BadgeKind,
+  value: number | null | undefined,
+): BadgeExtent {
   const shape = badgeShape(frame, kind);
   const scale = badgeScale(frame, kind);
   const marked = badgeWearsMark(frame, kind);
+  // Кегль числа — тот же, что в CSS: 6.6cqi, помноженные на плотность рамы и
+  // на величину значка.
+  const font = BADGE_BARE * scale * clampScale(frame.typeScale, 0.75, 1.5);
+  const figures =
+    badgeFigures(value, badgeWeight(frame, kind) || BADGE_WEIGHT_HOME) * font;
+  const withMark = marked ? (BADGE_GLYPH + BADGE_GLYPH_GAP) * scale : 0;
   // Жетон — это и есть нарисованная подложка, поэтому коробка у него та же,
   // что у формы, даже когда форма снята: «нет формы — нет коробки» сказано про
   // одинокую цифру, а под цифрой с жетоном коробка нарисована.
-  if (shape !== "none" || badgePlate(frame, kind)) {
-    // Со знаком коробка ШИРЕ своей высоты: знак стоит рядом с цифрой, и
-    // квадратная мерка отдала бы карте отступ под кружок там, где нарисована
-    // плашка. То же число читают и прижим к карте, и отступ шапки.
+  //
+  // И коробка эта КВАДРАТНАЯ, раз и навсегда: `.corner--plate` назначает
+  // ширину числом, а не по месту, — жетон рисуют целиком, и растягивать чужую
+  // картинку под трёхзначное число никто не станет. Мерка, выросшая вместе с
+  // числом, отодвигала бы жетон от края карты тем дальше, чем больше на нём
+  // напечатано, — при том что нарисован он всегда одинаково.
+  if (badgePlate(frame, kind)) {
+    return { w: BADGE_SIZE * scale, h: BADGE_SIZE * scale };
+  }
+  if (shape !== "none") {
+    // Ширину держит либо содержимое с полями, либо наименьшая ширина кружка —
+    // ровно как в CSS, где стоят `padding` и `min-width`. Со знаком коробка
+    // ШИРЕ своей высоты: знак стоит рядом с цифрой, и квадратная мерка отдала
+    // бы карте отступ под кружок там, где нарисована плашка.
     return {
-      w: BADGE_SIZE * scale * (marked ? BADGE_PILL : 1),
+      w: Math.max(
+        BADGE_SIZE * scale,
+        figures + withMark + BADGE_PAD * 2 * scale,
+      ),
       h: BADGE_SIZE * scale,
     };
   }
-  const h = BADGE_BARE * scale * clampScale(frame.typeScale, 0.75, 1.5);
-  const bare = h * BADGE_BARE_ASPECT;
   return {
-    w: marked ? bare + (BADGE_GLYPH + BADGE_GLYPH_GAP) * scale : bare,
-    h: marked ? Math.max(h, BADGE_GLYPH * scale) : h,
+    w: figures + withMark,
+    h: marked ? Math.max(font, BADGE_GLYPH * scale) : font,
   };
 }
 

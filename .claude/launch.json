@@ -2,6 +2,15 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "gotiga-api",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd src-tauri/server && cargo run"
+      ],
+      "port": 3000
+    },
+    {
       "name": "gotiga-dev",
       "runtimeExecutable": "npm",
       "runtimeArgs": [

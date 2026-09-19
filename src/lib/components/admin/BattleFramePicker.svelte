@@ -13,6 +13,7 @@
   // без единой картинки всё равно узнаётся по цвету бумаги, поэтому квадратик
   // рисуется всегда.
   import { t } from '$lib/i18n';
+  import BattleFrameFace from '$lib/components/BattleFrameFace.svelte';
   import type { BattleFramePreset } from '$lib/types/api';
 
   let {
@@ -43,11 +44,15 @@
     /** `drawer` — строка, которую раскрывают. `rack` — все наряды сразу. */
     layout?: 'drawer' | 'rack';
     /** `desk` — табличка на столе рамок: имя крупнее, список шире, забыть
-     *  видно сразу, а не при наведении. */
-    size?: 'compact' | 'desk';
+     *  видно сразу, а не при наведении. `slim` — строка на ЛЕНТЕ: лицо ростом
+     *  с соседние кнопки. Лицо в сорок четыре точки делало ленту вдвое выше
+     *  всего, что на ней стоит, и пустой наряд читался на ней не списком, а
+     *  забытой пустой панелью. */
+    size?: 'compact' | 'desk' | 'slim';
   }>();
 
   let desk = $derived(size === 'desk');
+  let slim = $derived(size === 'slim');
 
   let open = $state(false);
   /** Строка под стрелками. Отдельно от выбранной: по списку ходят, ничего не
@@ -58,22 +63,6 @@
   let taken = $derived(
     presets.find((p: BattleFramePreset) => p.id === chosen) ?? null,
   );
-
-  /** Лицо наряда: его картинка, если она есть, — угол или притолока у собранной
-   *  из частей, целая фотография у прочих. */
-  function face(preset: BattleFramePreset): string {
-    const art =
-      preset.frame.frameMode === 'sliced'
-        ? preset.frame.cornerImage?.trim() ||
-          preset.frame.sideImageH?.trim() ||
-          preset.frame.sideImageV?.trim()
-        : preset.frame.frameImage?.trim();
-    return art ? `url("${art}")` : 'none';
-  }
-
-  function swatchStyle(preset: BattleFramePreset): string {
-    return `background-color:${preset.frame.paper}; border-color:${preset.frame.border}; background-image:${face(preset)}`;
-  }
 
   function unfold() {
     if (disabled) return;
@@ -175,13 +164,12 @@
         >
           <!-- Обводка тенью, а не рамкой: рамка на выбранной плитке шире на
                пиксель, и весь ряд разъезжается от одного нажатия. -->
-          <span
-            class="w-full border bg-center bg-contain bg-no-repeat {preset.id ===
-            chosen
+          <BattleFrameFace
+            frame={preset.frame}
+            class="w-full aspect-[5/7] {preset.id === chosen
               ? 'shadow-[0_0_0_2px_#c65f3c]'
               : ''}"
-            style="aspect-ratio: 5 / 7; {swatchStyle(preset)}"
-          ></span>
+          />
           <span
             class="text-[10px] leading-snug break-words {preset.id === chosen
               ? 'text-[#c65f3c]'
@@ -209,33 +197,36 @@
     aria-expanded={open}
     class="w-full flex items-center gap-2 text-left bg-transparent border border-[#34251c]/20 hover:border-[#34251c]/35 disabled:opacity-40 {desk
       ? 'px-2 py-2'
-      : 'px-1.5 py-1.5'}"
+      : slim
+        ? 'px-1.5 py-1'
+        : 'px-1.5 py-1.5'}"
   >
     {#if taken}
-      <span
-        class="flex-shrink-0 border bg-center bg-contain bg-no-repeat {desk
-          ? 'w-9 h-[3.15rem]'
-          : 'w-8 h-11'}"
-        style={swatchStyle(taken)}
-      ></span>
+      <BattleFrameFace
+        frame={taken.frame}
+        class={desk ? 'w-9 h-[3.15rem]' : slim ? 'w-5 h-7' : 'w-8 h-11'}
+      />
       <span
         class="flex-1 min-w-0 truncate {desk
           ? 'text-[1.15rem] leading-tight'
-          : 'text-xs'}"
+          : slim
+            ? 'text-[11px]'
+            : 'text-xs'}"
         style={desk
           ? "font-family: 'Cormorant Garamond', Georgia, serif;"
           : undefined}>{taken.name}</span
       >
     {:else}
-      <span
-        class="flex-shrink-0 border border-dashed border-[#34251c]/25 {desk
-          ? 'w-9 h-[3.15rem]'
-          : 'w-8 h-11'}"
-      ></span>
+      <BattleFrameFace
+        dashed
+        class={desk ? 'w-9 h-[3.15rem]' : slim ? 'w-5 h-7' : 'w-8 h-11'}
+      />
       <span
         class="flex-1 min-w-0 italic text-[#8a6a55] {desk
           ? 'text-sm'
-          : 'text-xs'}">{$t('adminBattlesPresetNone')}</span
+          : slim
+            ? 'text-[11px]'
+            : 'text-xs'}">{$t('adminBattlesPresetNone')}</span
       >
     {/if}
     <span class="flex-shrink-0 px-1 text-[10px] text-[#8a6a55]"
@@ -289,10 +280,7 @@
               ? 'bg-[#34251c]/8'
               : ''} {preset.id === chosen ? 'text-[#c65f3c]' : ''}"
           >
-            <span
-              class="flex-shrink-0 w-8 h-11 border bg-center bg-contain bg-no-repeat"
-              style={swatchStyle(preset)}
-            ></span>
+            <BattleFrameFace frame={preset.frame} class="w-8 h-11" />
             <span class="flex-1 min-w-0 truncate {desk ? 'text-sm' : 'text-xs'}"
               >{preset.name}</span
             >

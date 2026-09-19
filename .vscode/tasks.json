@@ -2,6 +2,20 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "label": "mix lesson 0",
+      "type": "shell",
+      "command": "mix lesson 0",
+      "options": {
+        "cwd": "${workspaceFolder}/live_drop"
+      },
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
       "label": "mix lesson 1",
       "type": "shell",
       "command": "mix lesson 1",
@@ -22,6 +36,20 @@
       "label": "mix test",
       "type": "shell",
       "command": "mix test",
+      "options": {
+        "cwd": "${workspaceFolder}/live_drop"
+      },
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "mix course.verify",
+      "type": "shell",
+      "command": "mix course.verify",
       "options": {
         "cwd": "${workspaceFolder}/live_drop"
       },
